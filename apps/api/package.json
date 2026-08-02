@@ -1,0 +1,29 @@
+{
+  "name": "@vereinswerk/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsup src/server.ts --format esm --dts --out-dir dist",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.1.0",
+    "@vereinswerk/config": "workspace:*",
+    "@vereinswerk/content-engine": "workspace:*",
+    "@vereinswerk/contracts": "workspace:*",
+    "@vereinswerk/domain": "workspace:*",
+    "@vereinswerk/observability": "workspace:*",
+    "fastify": "^5.11.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.1.0",
+    "tsup": "^8.5.0",
+    "tsx": "^4.20.3",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  }
+}

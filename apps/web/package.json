@@ -1,0 +1,28 @@
+{
+  "name": "@vereinswerk/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "nuxt build",
+    "dev": "nuxt dev --port 3000",
+    "preview": "nuxt preview",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "nuxt typecheck"
+  },
+  "dependencies": {
+    "@nuxtjs/tailwindcss": "^6.14.0",
+    "@supabase/supabase-js": "^2.55.0",
+    "@vereinswerk/contracts": "workspace:*",
+    "@lucide/vue": "^1.28.0",
+    "nuxt": "^4.5.1",
+    "tailwindcss": "^3.4.19",
+    "vue": "^3.5.18",
+    "vue-router": "^5.2.0"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "vue-tsc": "^3.3.9",
+    "vitest": "^4.1.10"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "@vereinswerk/remotion",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "remotion bundle src/index.ts --out-dir dist",
+    "dev": "remotion studio src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.504",
+    "@remotion/google-fonts": "^4.0.504",
+    "@vereinswerk/contracts": "workspace:*",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "remotion": "^4.0.504",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  }
+}
