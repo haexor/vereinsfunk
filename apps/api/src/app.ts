@@ -8,7 +8,7 @@ import {
   UuidSchema,
 } from '@vereinsfunk/contracts'
 import { createIdempotencyKey, evaluateMediaGate } from '@vereinsfunk/domain'
-import { FakeOrchestrator, type Orchestrator } from '@vereinsfunk/orchestration'
+import { FakeOrchestrator, priorityToHatchet, type Orchestrator } from '@vereinsfunk/orchestration'
 import Fastify, { LogController, type FastifyInstance, type FastifyReply, type FastifyRequest, type FastifyServerOptions } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
@@ -86,7 +86,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (accepted.status === 'queued') await orchestrator.trigger('process-submission', {
       submissionId, entityId: submissionId, organizationId: input.organizationId, departmentId: input.departmentId,
       correlationId, sourceRevision: input.sourceRevision, idempotencyKey: accepted.idempotencyKey,
-    })
+    }, { priority: priorityToHatchet(input.priority) })
 
     request.log.info(
       {

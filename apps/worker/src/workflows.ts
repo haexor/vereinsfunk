@@ -1,6 +1,7 @@
 import { ConcurrencyLimitStrategy, HatchetClient, NonRetryableError, type Worker } from '@hatchet-dev/typescript-sdk/v1/index.js'
 import { WorkflowPayloadSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
 import { createIdempotencyKey } from '@vereinsfunk/domain'
+import { priorityToHatchet } from '@vereinsfunk/orchestration'
 
 export const concurrency = {
   llm: { global: 20, organization: 4, department: 2 }, image: { global: 12, organization: 3, department: 1 },
@@ -13,7 +14,6 @@ export interface WorkflowContext {
 }
 export class NonRetryableWorkflowError extends NonRetryableError {}
 export function fairnessKey(payload: Pick<WorkflowPayload, 'organizationId' | 'departmentId'>) { return `${payload.organizationId}:${payload.departmentId}` }
-export function priorityToHatchet(priority: number): 1 | 2 | 3 { return priority >= 70 ? 3 : priority >= 40 ? 2 : 1 }
 const DEFAULT_SUBMISSION_PRIORITY = 40 // matches CreateSubmissionSchema's priority default
 
 export async function processSubmission(raw: unknown, context: WorkflowContext): Promise<void> {
@@ -21,7 +21,7 @@ export async function processSubmission(raw: unknown, context: WorkflowContext):
   const submissionId = payload.submissionId ?? payload.entityId
   const submission = await context.loadSubmission(submissionId)
   if (!submission) {
-    await context.updateSubmission(submissionId, 'failed')
+    await context.updateSubmission(submissionId, 'failed').catch(() => {})
     throw new NonRetryableWorkflowError('submission_not_found')
   }
   if (submission.status !== 'queued' || (submission.sourceRevision !== undefined && submission.sourceRevision !== payload.sourceRevision)) return
@@ -29,7 +29,7 @@ export async function processSubmission(raw: unknown, context: WorkflowContext):
   try {
     await context.enqueueDraft({ ...payload, submissionId, entityId: submissionId, idempotencyKey: createIdempotencyKey('draft', submissionId, payload.sourceRevision) })
   } catch (error) {
-    await context.updateSubmission(submissionId, 'failed')
+    await context.updateSubmission(submissionId, 'failed').catch(() => {})
     throw error
   }
 }
