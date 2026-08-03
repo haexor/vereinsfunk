@@ -9,7 +9,7 @@ import {
 } from '@vereinsfunk/contracts'
 import { createIdempotencyKey, evaluateMediaGate } from '@vereinsfunk/domain'
 import { FakeOrchestrator, type Orchestrator } from '@vereinsfunk/orchestration'
-import Fastify, { LogController, type FastifyInstance, type FastifyServerOptions } from 'fastify'
+import Fastify, { LogController, type FastifyInstance, type FastifyReply, type FastifyRequest, type FastifyServerOptions } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 
@@ -63,10 +63,16 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     }),
   )
 
-  app.post('/v1/submissions', async (request, reply) => {
+  const requireAuth = (request: FastifyRequest, reply: FastifyReply) => {
     if (environment.NODE_ENV === 'production' && !request.headers.authorization) {
-      return reply.code(401).send({ error: 'unauthorized' })
+      reply.code(401).send({ error: 'unauthorized' })
+      return false
     }
+    return true
+  }
+
+  app.post('/v1/submissions', async (request, reply) => {
+    if (!requireAuth(request, reply)) return
     const input = CreateSubmissionSchema.parse(request.body)
     const submissionId = randomUUID()
     const correlationId = request.id
@@ -98,15 +104,18 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   const UploadInitiateSchema = z.object({ organizationId: UuidSchema, departmentId: UuidSchema, filename: z.string().min(1).max(120).regex(/^[^/\\]+$/), mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp', 'video/mp4']), byteSize: z.int().positive().max(100 * 1024 * 1024) })
   app.post('/v1/media/uploads', async (request, reply) => {
+    if (!requireAuth(request, reply)) return
     const input = UploadInitiateSchema.parse(request.body); const assetId = randomUUID()
     const upload = await uploads.create({ ...input, assetId })
     return reply.code(201).send({ assetId, ...upload })
   })
   app.post('/v1/media/:assetId/complete', async (request, reply) => {
+    if (!requireAuth(request, reply)) return
     const params = z.object({ assetId: UuidSchema }).parse(request.params); const body = z.object({ sha256: z.string().regex(/^[a-f0-9]{64}$/i) }).parse(request.body)
     return reply.code(202).send(await uploads.complete({ ...params, ...body }))
   })
-  app.post('/v1/media/gate', async (request) => {
+  app.post('/v1/media/gate', async (request, reply) => {
+    if (!requireAuth(request, reply)) return
     const input = z.object({ scanStatus: z.enum(['pending', 'clean', 'failed']), facesConfirmedComplete: z.boolean(), hasOriginalSelected: z.boolean(), derivativeCurrent: z.boolean(), minorReviewConfirmed: z.boolean(), faces: z.array(z.object({ subjectKind: z.enum(['adult', 'minor', 'unknown']), decision: z.enum(['pending', 'consented', 'obscure', 'exclude']), consentValid: z.boolean().optional() })) }).parse(request.body)
     return evaluateMediaGate(input)
   })

@@ -50,7 +50,7 @@ services:
       MIXPOST_BASE_URL: ${MIXPOST_BASE_URL:-}
       MIXPOST_TOKEN: ${MIXPOST_TOKEN:-}
     ports:
-      - "4201:4201"
+      - "127.0.0.1:4201:4201"
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4201/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
       interval: 10s
@@ -71,7 +71,7 @@ services:
       NUXT_PUBLIC_SUPABASE_URL: http://localhost:4260
       NUXT_PUBLIC_SUPABASE_ANON_KEY: ${NUXT_PUBLIC_SUPABASE_ANON_KEY:-replace-with-local-anon-key}
     ports:
-      - "4200:4200"
+      - "127.0.0.1:4200:4200"
 
   worker:
     <<: *app-base
@@ -95,7 +95,7 @@ services:
       deps:
         condition: service_completed_successfully
     ports:
-      - "4202:4202"
+      - "127.0.0.1:4202:4202"
 
 volumes:
   pnpm-store:

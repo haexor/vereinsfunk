@@ -8,4 +8,8 @@ WORKDIR /workspace
 
 RUN corepack enable && corepack prepare pnpm@11.11.0 --activate
 
+RUN mkdir -p "${PNPM_HOME}" "${PNPM_STORE_DIR}" \
+ && chown -R node:node /workspace "${PNPM_HOME}" "${PNPM_STORE_DIR}"
+USER node
+
 CMD ["pnpm", "dev"]

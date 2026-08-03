@@ -24,14 +24,32 @@ export class MetaPublisher implements SocialPublisher {
     const validation = await this.validate(input); if (!validation.valid) throw new Error(validation.errors.join(', '))
     const base = `https://graph.facebook.com/${this.options.graphVersion}`
     const target = input.platform === 'instagram' ? this.options.instagramAccountId! : this.options.facebookPageId!
+    const headers = { 'content-type': 'application/x-www-form-urlencoded', authorization: `Bearer ${this.options.accessToken}` }
     const endpoint = input.platform === 'instagram' ? `${base}/${target}/media` : `${base}/${target}/photos`
     const media = input.media[0]!
-    const body = new URLSearchParams({ access_token: this.options.accessToken, caption: input.caption, ...(input.platform === 'instagram' ? { image_url: media.grantUrl } : { url: media.grantUrl }) })
-    const response = await this.request(endpoint, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body })
+    const body = new URLSearchParams({ caption: input.caption, ...(input.platform === 'instagram' ? { image_url: media.grantUrl } : { url: media.grantUrl }) })
+    const response = await this.request(endpoint, { method: 'POST', headers, body })
     if (!response.ok) throw new Error(`Meta publish request failed (${response.status})`)
-    const data: unknown = await response.json(); const externalId = typeof data === 'object' && data !== null && 'id' in data && typeof data.id === 'string' ? data.id : undefined
-    if (!externalId) throw new Error('Meta response did not contain an ID; reconcile before retrying')
-    return { externalId, status: input.platform === 'instagram' ? 'processing' : 'published' }
+    const data: unknown = await response.json(); const containerId = typeof data === 'object' && data !== null && 'id' in data && typeof data.id === 'string' ? data.id : undefined
+    if (!containerId) throw new Error('Meta response did not contain an ID; reconcile before retrying')
+    if (input.platform === 'facebook') return { externalId: containerId, status: 'published' }
+    const publishResponse = await this.request(`${base}/${target}/media_publish`, { method: 'POST', headers, body: new URLSearchParams({ creation_id: containerId }) })
+    if (!publishResponse.ok) throw new Error(`Meta media_publish request failed (${publishResponse.status})`)
+    const publishData: unknown = await publishResponse.json(); const externalId = typeof publishData === 'object' && publishData !== null && 'id' in publishData && typeof publishData.id === 'string' ? publishData.id : undefined
+    if (!externalId) throw new Error('Meta response did not contain a published media ID; reconcile before retrying')
+    return { externalId, status: 'published' }
   }
-  async reconcile(input: PublicationReference): Promise<PublicationResult> { if (!input.externalId) return { externalId: `unknown_${input.publicationId}`, status: 'unknown' }; const response = await this.request(`https://graph.facebook.com/${this.options.graphVersion}/${input.externalId}?fields=id,permalink&access_token=${encodeURIComponent(this.options.accessToken)}`); if (response.status === 404) return { externalId: input.externalId, status: 'unknown' }; if (!response.ok) throw new Error(`Meta reconciliation failed (${response.status})`); const data: unknown = await response.json(); const permalink = typeof data === 'object' && data !== null && 'permalink' in data && typeof data.permalink === 'string' ? data.permalink : undefined; return permalink ? { externalId: input.externalId, status: 'published', permalink } : { externalId: input.externalId, status: 'published' } }
+  async reconcile(input: PublicationReference): Promise<PublicationResult> {
+    if (!input.externalId) return { externalId: `unknown_${input.publicationId}`, status: 'unknown' }
+    const response = await this.request(`https://graph.facebook.com/${this.options.graphVersion}/${input.externalId}?fields=id,permalink,status_code`, { headers: { authorization: `Bearer ${this.options.accessToken}` } })
+    if (response.status === 404) return { externalId: input.externalId, status: 'unknown' }
+    if (!response.ok) throw new Error(`Meta reconciliation failed (${response.status})`)
+    const data: unknown = await response.json()
+    const record = typeof data === 'object' && data !== null ? data as Record<string, unknown> : {}
+    const permalink = typeof record.permalink === 'string' ? record.permalink : undefined
+    const statusCode = typeof record.status_code === 'string' ? record.status_code : undefined
+    if (statusCode === 'ERROR' || statusCode === 'EXPIRED') return { externalId: input.externalId, status: 'failed' }
+    if (statusCode === 'IN_PROGRESS' || statusCode === 'FINISHED') return { externalId: input.externalId, status: 'processing' }
+    return permalink ? { externalId: input.externalId, status: 'published', permalink } : { externalId: input.externalId, status: 'published' }
+  }
 }

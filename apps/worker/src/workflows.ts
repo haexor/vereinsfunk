@@ -1,4 +1,4 @@
-import { ConcurrencyLimitStrategy, HatchetClient, type Worker } from '@hatchet-dev/typescript-sdk/v1/index.js'
+import { ConcurrencyLimitStrategy, HatchetClient, NonRetryableError, type Worker } from '@hatchet-dev/typescript-sdk/v1/index.js'
 import { WorkflowPayloadSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
 import { createIdempotencyKey } from '@vereinsfunk/domain'
 
@@ -11,7 +11,7 @@ export interface WorkflowContext {
   updateSubmission(id: string, status: 'generating' | 'failed'): Promise<void>
   enqueueDraft(input: WorkflowPayload): Promise<void>
 }
-export class NonRetryableWorkflowError extends Error { readonly retryable = false }
+export class NonRetryableWorkflowError extends NonRetryableError {}
 export function fairnessKey(payload: Pick<WorkflowPayload, 'organizationId' | 'departmentId'>) { return `${payload.organizationId}:${payload.departmentId}` }
 export function priorityToHatchet(priority: number): 1 | 2 | 3 { return priority >= 70 ? 3 : priority >= 40 ? 2 : 1 }
 
@@ -19,10 +19,18 @@ export async function processSubmission(raw: unknown, context: WorkflowContext):
   const payload = WorkflowPayloadSchema.parse(raw)
   const submissionId = payload.submissionId ?? payload.entityId
   const submission = await context.loadSubmission(submissionId)
-  if (!submission) throw new NonRetryableWorkflowError('submission_not_found')
+  if (!submission) {
+    await context.updateSubmission(submissionId, 'failed')
+    throw new NonRetryableWorkflowError('submission_not_found')
+  }
   if (submission.status !== 'queued' || (submission.sourceRevision !== undefined && submission.sourceRevision !== payload.sourceRevision)) return
   await context.updateSubmission(submissionId, 'generating')
-  await context.enqueueDraft({ ...payload, submissionId, entityId: submissionId, idempotencyKey: createIdempotencyKey('draft', submissionId, payload.sourceRevision) })
+  try {
+    await context.enqueueDraft({ ...payload, submissionId, entityId: submissionId, idempotencyKey: createIdempotencyKey('draft', submissionId, payload.sourceRevision) })
+  } catch (error) {
+    await context.updateSubmission(submissionId, 'failed')
+    throw error
+  }
 }
 
 /** Real SDK declarations; starting needs explicit credentials and a Supabase-backed context. */
@@ -31,7 +39,7 @@ export async function createHatchetWorker(context: WorkflowContext, env: NodeJS.
   if (!token) throw new Error('HATCHET_CLIENT_TOKEN is required to start the worker')
   const client = HatchetClient.init<WorkflowPayload>({ token, host_port: env.HATCHET_SERVER_URL ?? 'localhost:4270', api_url: env.HATCHET_API_URL ?? 'http://localhost:4271', tenant_id: env.HATCHET_TENANT_ID ?? 'default', tls_config: { tls_strategy: env.HATCHET_TLS === 'true' ? 'tls' : 'none' } })
   const workflow = client.task({ name: 'process-submission', inputValidator: WorkflowPayloadSchema,
-    concurrency: [{ expression: "input.organizationId + ':' + input.departmentId", maxRuns: concurrency.llm.department, limitStrategy: ConcurrencyLimitStrategy.GROUP_ROUND_ROBIN }, { expression: 'input.organizationId', maxRuns: concurrency.llm.organization, limitStrategy: ConcurrencyLimitStrategy.GROUP_ROUND_ROBIN }],
+    concurrency: [{ expression: "input.organizationId + ':' + input.departmentId", maxRuns: concurrency.llm.department, limitStrategy: ConcurrencyLimitStrategy.GROUP_ROUND_ROBIN }, { expression: 'input.organizationId', maxRuns: concurrency.llm.organization, limitStrategy: ConcurrencyLimitStrategy.GROUP_ROUND_ROBIN }, { expression: "'global'", maxRuns: concurrency.llm.global, limitStrategy: ConcurrencyLimitStrategy.GROUP_ROUND_ROBIN }],
     idempotency: { expression: 'input.idempotencyKey', strategy: 'status', fallbackTtlMs: 86_400_000 }, retries: 3, executionTimeout: '5m', fn: async (input) => { await processSubmission(input, context); return {} } })
   const worker = await client.worker('vereinsfunk-worker', { slots: Number(env.HATCHET_WORKER_SLOTS ?? 8) })
   await worker.registerWorkflows([workflow])

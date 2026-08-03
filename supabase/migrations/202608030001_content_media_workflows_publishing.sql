@@ -31,7 +31,7 @@ create table public.media_assets (
   foreign key (organization_id,submission_id) references public.submissions(organization_id,id)
 );
 create table public.consent_records (
-  id uuid primary key default gen_random_uuid(), organization_id uuid not null, pseudonymous_subject_ref text not null check (char_length(pseudonymous_subject_ref) between 8 and 160),
+  id uuid primary key default gen_random_uuid(), organization_id uuid not null references public.organizations(id) on delete cascade, pseudonymous_subject_ref text not null check (char_length(pseudonymous_subject_ref) between 8 and 160),
   scope text not null check (char_length(scope) <= 500), guardian_confirmed boolean not null default false, valid_from timestamptz not null default now(), valid_until timestamptz,
   revoked_at timestamptz, evidence_bucket text not null default 'raw-media', evidence_path text not null, created_by uuid not null references public.profiles(id), created_at timestamptz not null default now(), updated_at timestamptz not null default now(),
   unique (organization_id,id), check (valid_until is null or valid_until > valid_from)
@@ -85,7 +85,7 @@ create table public.workflow_runs (
 );
 
 create table public.social_connections (
-  id uuid primary key default gen_random_uuid(), organization_id uuid not null, platform text not null check (platform in ('instagram','facebook')), external_account_id text not null, display_name text not null,
+  id uuid primary key default gen_random_uuid(), organization_id uuid not null references public.organizations(id) on delete cascade, platform text not null check (platform in ('instagram','facebook')), external_account_id text not null, display_name text not null,
   scopes text[] not null default '{}', token_ciphertext bytea not null, token_key_version text not null, token_expires_at timestamptz, status text not null default 'active' check (status in ('active','action_required','disconnected')), last_verified_at timestamptz, metadata jsonb not null default '{}'::jsonb check (jsonb_typeof(metadata) = 'object'), created_at timestamptz not null default now(), updated_at timestamptz not null default now(),
   unique (organization_id,id), unique (organization_id,platform,external_account_id)
 );

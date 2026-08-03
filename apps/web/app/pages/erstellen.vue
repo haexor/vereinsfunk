@@ -9,7 +9,7 @@ const apiNotice = ref('')
 const selectedPreset = ref<ContentPresetSlug>('training_insight')
 const goal = ref<CommunicationGoal>('inform')
 const formats = ref<OutputFormat[]>(['feed_image', 'story'])
-const form = reactive({ title: '', date: '', location: '', audience: '', contact: '', observation: '', quote: '', doNotMention: '' })
+const form = reactive({ title: '', date: '', location: '', audience: '', observation: '', quote: '', doNotMention: '' })
 const preview = ref<GeneratedPost | null>(null)
 const scope = useState<{ organizationId: string; departmentId: string } | null>('content-scope', () => null)
 const presets: { id: ContentPresetSlug; label: string; description: string }[] = [
@@ -20,7 +20,7 @@ const presets: { id: ContentPresetSlug; label: string; description: string }[] =
 ]
 const goals: { id: CommunicationGoal; label: string }[] = [{ id: 'inform', label: 'Informieren' }, { id: 'inspire', label: 'Inspirieren' }, { id: 'thank', label: 'Danken' }, { id: 'invite', label: 'Einladen' }, { id: 'recruit', label: 'Gewinnen' }, { id: 'educate', label: 'Wissen teilen' }, { id: 'strengthen_community', label: 'Gemeinschaft stärken' }]
 const availableFormats: { id: OutputFormat; label: string }[] = [{ id: 'feed_image', label: 'Feed-Bild' }, { id: 'carousel', label: 'Carousel' }, { id: 'story', label: 'Story' }, { id: 'reel', label: 'Reel-Entwurf' }]
-const facts = computed<Record<string, string>>(() => Object.fromEntries(Object.entries({ title: form.title, date: form.date, location: form.location, audience: form.audience, contact: form.contact }).filter(([, value]) => value.trim())))
+const facts = computed<Record<string, string>>(() => Object.fromEntries(Object.entries({ title: form.title, date: form.date, location: form.location, audience: form.audience }).filter(([, value]) => value.trim())))
 function toggleFormat(format: OutputFormat) { formats.value = formats.value.includes(format) ? formats.value.filter((item) => item !== format) : [...formats.value, format] }
 function localPreview(): GeneratedPost {
   const claims = [...Object.entries(facts.value).map(([key, value]) => ({ sourceId: `fact:${key}`, text: `${key}: ${value}` })), ...(form.observation.trim() ? [{ sourceId: 'observation:1', text: form.observation.trim() }] : []), ...(form.quote.trim() ? [{ sourceId: 'quote:1', text: form.quote.trim() }] : [])]
@@ -35,10 +35,20 @@ async function createPreview() {
     if (!body.organizationId || !body.departmentId) throw new Error('scope_missing')
     const response = await $fetch<{ preview: GeneratedPost }>(`${config.public.apiBase}/v1/submissions`, { method: 'POST', body })
     preview.value = response.preview
+    step.value = 4
   } catch (error) {
-    preview.value = localPreview()
-    apiNotice.value = error instanceof Error && error.message === 'scope_missing' ? 'Bitte wähle zuerst Verein und Abteilung. Die lokale Vorschau speichert nichts.' : 'Lokale Vorschau – starte die API für den vollständigen Workflow.'
-  } finally { loading.value = false; step.value = 4 }
+    if (error instanceof Error && error.message === 'scope_missing') {
+      preview.value = localPreview()
+      apiNotice.value = 'Bitte wähle zuerst Verein und Abteilung. Die lokale Vorschau speichert nichts.'
+      step.value = 4
+    } else if (error && typeof error === 'object' && 'response' in error) {
+      apiNotice.value = 'Die Submission konnte nicht gesendet werden. Bitte erneut versuchen.'
+    } else {
+      preview.value = localPreview()
+      apiNotice.value = 'Lokale Vorschau – starte die API für den vollständigen Workflow.'
+      step.value = 4
+    }
+  } finally { loading.value = false }
 }
 </script>
 
@@ -49,6 +59,7 @@ async function createPreview() {
       <div v-if="step === 1" class="grid gap-3 sm:grid-cols-2"><button v-for="preset in presets" :key="preset.id" class="focus-ring rounded-2xl border bg-white p-4 text-left" :class="selectedPreset === preset.id ? 'border-forest ring-2 ring-forest/10' : 'border-[#e0e1da]'" @click="selectedPreset = preset.id"><span class="block font-display text-sm font-bold">{{ preset.label }}</span><span class="mt-1 block text-[11px] text-[#7a817c]">{{ preset.description }}</span></button></div>
       <div v-else-if="step === 2" class="card grid gap-5 p-5 sm:p-7"><div><span class="mb-2 block text-xs font-semibold">Kommunikationsziel</span><div class="flex flex-wrap gap-2"><button v-for="item in goals" :key="item.id" class="focus-ring rounded-full border px-3 py-2 text-xs font-semibold" :class="goal === item.id ? 'border-forest bg-forest text-white' : 'border-[#dfe0d9]'" @click="goal = item.id">{{ item.label }}</button></div></div><div><span class="mb-2 block text-xs font-semibold">Ausgabeformate</span><div class="flex flex-wrap gap-2"><button v-for="item in availableFormats" :key="item.id" class="focus-ring rounded-full border px-3 py-2 text-xs font-semibold" :class="formats.includes(item.id) ? 'border-forest bg-[#eff4e6] text-forest' : 'border-[#dfe0d9]'" @click="toggleFormat(item.id)">{{ item.label }}</button></div></div></div>
       <div v-else class="card grid gap-4 p-5 sm:p-7"><label><span class="mb-2 block text-xs font-semibold">Bestätigte Beobachtung</span><textarea v-model="form.observation" rows="3" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-3 text-sm" placeholder="z. B. Heute haben die Kinder Balancieren und Werfen geübt." /></label><div class="grid gap-4 sm:grid-cols-2"><label><span class="mb-2 block text-xs font-semibold">Titel oder Anlass</span><input v-model="form.title" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-3 text-sm" /></label><label><span class="mb-2 block text-xs font-semibold">Zielgruppe</span><input v-model="form.audience" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-3 text-sm" /></label><label><span class="mb-2 block text-xs font-semibold">Datum</span><input v-model="form.date" type="date" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-3 text-sm" /></label><label><span class="mb-2 block text-xs font-semibold">Ort oder Kontakt</span><input v-model="form.location" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-3 text-sm" /></label></div><label><span class="mb-2 block text-xs font-semibold">Ausdrücklich freigegebenes Zitat</span><input v-model="form.quote" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-3 text-sm" /></label><label><span class="mb-2 block text-xs font-semibold">Nicht erwähnen</span><input v-model="form.doNotMention" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-3 text-sm" /></label><label class="focus-ring flex cursor-pointer flex-col items-center rounded-2xl border border-dashed border-[#cfd2cb] px-6 py-6 text-center"><input type="file" class="sr-only" accept="image/*,video/*" multiple /><UploadCloud :size="22" class="mb-2 text-forest" /><span class="text-xs font-semibold">Medien privat hochladen</span><span class="mt-1 text-[10px] text-[#898f8a]">Der sichere Upload wird nach Auswahl von Verein und Abteilung gestartet.</span></label><div class="flex items-start gap-3 rounded-xl bg-[#eff4e6] p-3 text-[11px] text-[#5d685d]"><ImagePlus :size="16" class="shrink-0 text-forest" /><span>Gesicht verdeckt reduziert Sichtbarkeit, ist aber keine Rechtsgarantie. Minderjährige benötigen eine explizite zusätzliche Prüfung.</span></div></div>
+      <p v-if="apiNotice" class="mt-4 text-sm text-amber-800">{{ apiNotice }}</p>
       <div class="mt-7 flex justify-between"><button v-if="step > 1" class="focus-ring rounded-xl border border-[#dadcd4] bg-white px-5 py-3 text-xs font-semibold" @click="step--"><ArrowLeft :size="14" /> Zurück</button><span v-else /><button v-if="step < 3" class="focus-ring flex items-center gap-2 rounded-xl bg-forest px-6 py-3 text-xs font-bold text-white" @click="step++">Weiter <ArrowRight :size="14" /></button><button v-else class="focus-ring flex items-center gap-2 rounded-xl bg-forest px-6 py-3 text-xs font-bold text-white disabled:opacity-60" :disabled="loading" @click="createPreview"><LoaderCircle v-if="loading" :size="15" class="animate-spin" /><Sparkles v-else :size="15" /> Entwurf erstellen</button></div>
     </div>
     <div v-else-if="preview" class="mx-auto max-w-[920px]"><div class="mb-7"><div class="eyebrow mb-3">Entwurf bereit</div><h1 class="font-display text-3xl font-extrabold tracking-[-.045em]">Euer Beitrag nimmt Form an.</h1><p v-if="apiNotice" class="mt-2 text-sm text-amber-800">{{ apiNotice }}</p></div><div class="grid gap-6 lg:grid-cols-[.85fr_1.15fr]"><div class="aspect-[4/5] rounded-[24px] bg-forest p-8 text-white"><div class="flex h-full flex-col"><span class="eyebrow !text-white/55">Vereinsfunk</span><h2 class="mt-auto font-display text-4xl font-extrabold leading-[.95]">{{ preview.headline }}</h2></div></div><div class="card p-5 sm:p-7"><div class="eyebrow mb-2">Varianten für Instagram & Facebook</div><textarea v-model="preview.caption" rows="10" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-4 text-sm" /><div class="mt-3 flex flex-wrap gap-1.5"><span v-for="tag in preview.hashtags" :key="tag" class="rounded-full bg-[#eef1e9] px-2.5 py-1 text-[10px] font-semibold text-forest">{{ tag }}</span></div><div class="mt-5 rounded-xl bg-emerald-50 p-3 text-[11px] text-emerald-800"><strong>Faktencheck:</strong> {{ preview.verifiedFacts.length }} Aussagen belegt · {{ preview.missingFacts.length }} offen</div><button class="focus-ring mt-6 w-full rounded-xl bg-forest px-4 py-3 text-xs font-bold text-white" @click="navigateTo('/freigaben')"><Check :size="14" /> Zur Freigabe geben</button></div></div></div>

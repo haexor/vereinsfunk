@@ -22,7 +22,21 @@ export class FakeContentGenerator implements ContentGenerator {
     const first = claims[0]?.text ?? 'Deine Geschichte braucht noch einen bestätigten Moment.'
     const headline = first.length <= 80 ? first : first.slice(0, 77) + '…'
     const caption = [headline, ...claims.map((claim) => `• ${claim.text}`)].join('\n\n')
-    const variants = input.requestedFormats.flatMap((format) => (['instagram', 'facebook'] as const).map((platform) => ({ platform, format, headline, caption: caption.slice(0, platform === 'instagram' ? 2200 : 1800), callToAction: 'Teile diesen echten Vereinsmoment mit deinem Team.', hashtags: ['#vereinsleben', '#gemeinsamstark'], altText: `Vereinsmotiv: ${headline}`, layoutFamily: layoutFor(input.presetSlug), claimSourceIds: claims.map((claim) => claim.sourceId) })))
+    const buildVariant = (limit: number) => {
+      let text = headline
+      const included: typeof claims = []
+      for (const claim of claims) {
+        const next = `${text}\n\n• ${claim.text}`
+        if (next.length > limit) break
+        text = next
+        included.push(claim)
+      }
+      return { caption: text, claimSourceIds: included.map((claim) => claim.sourceId) }
+    }
+    const variants = input.requestedFormats.flatMap((format) => (['instagram', 'facebook'] as const).map((platform) => {
+      const built = buildVariant(platform === 'instagram' ? 2200 : 1800)
+      return { platform, format, headline, caption: built.caption, callToAction: 'Teile diesen echten Vereinsmoment mit deinem Team.', hashtags: ['#vereinsleben', '#gemeinsamstark'], altText: `Vereinsmotiv: ${headline}`, layoutFamily: layoutFor(input.presetSlug), claimSourceIds: built.claimSourceIds }
+    }))
     return GeneratedPostSchema.parse({ verifiedFacts: claims.map((claim) => claim.text), missingFacts: brief.missingFacts, headline, caption: caption.slice(0, 1800), shortCaption: caption.slice(0, 500), callToAction: 'Teile diesen echten Vereinsmoment mit deinem Team.', hashtags: ['#vereinsleben', '#gemeinsamstark'], altText: `Vereinsmotiv: ${headline}`, templateId: `${input.presetSlug}-v1`, safetyFlags: brief.missingFacts.length ? ['uncertain_fact'] : [], generatedClaims: claims, variants })
   }
 }
