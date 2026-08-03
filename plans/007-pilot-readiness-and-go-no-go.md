@@ -2,7 +2,7 @@
 
 ## Ergebnis
 
-Vereinswerk läuft mit ein bis zwei Abteilungen sicher im echten Alltag. Das Team misst, ob die Content-Werkstatt regelmäßig genutzt wird, Zeit spart und genügend Zahlungsbereitschaft erzeugt. Erst diese Evidenz entscheidet über Ausbau, externe Publishingplattform oder Stopp.
+Vereinsfunk läuft mit ein bis zwei Abteilungen sicher im echten Alltag. Das Team misst, ob die Content-Werkstatt regelmäßig genutzt wird, Zeit spart und genügend Zahlungsbereitschaft erzeugt. Erst diese Evidenz entscheidet über Ausbau, externe Publishingplattform oder Stopp.
 
 ## Abhängigkeiten
 

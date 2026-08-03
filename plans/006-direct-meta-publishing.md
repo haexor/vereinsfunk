@@ -126,9 +126,9 @@ interface SocialPublisher {
 ## Verifikation
 
 ```bash
-pnpm --filter @vereinswerk/publishing test
-pnpm --filter @vereinswerk/api test
-pnpm --filter @vereinswerk/worker test
+pnpm --filter @vereinsfunk/publishing test
+pnpm --filter @vereinsfunk/api test
+pnpm --filter @vereinsfunk/worker test
 pnpm db:reset
 pnpm db:test
 pnpm check

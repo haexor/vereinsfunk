@@ -129,9 +129,9 @@ concurrency: [
 ## Verifikation
 
 ```bash
-pnpm --filter @vereinswerk/orchestration test
-pnpm --filter @vereinswerk/worker test
-pnpm --filter @vereinswerk/api test
+pnpm --filter @vereinsfunk/orchestration test
+pnpm --filter @vereinsfunk/worker test
+pnpm --filter @vereinsfunk/api test
 pnpm db:reset
 pnpm db:test
 pnpm check

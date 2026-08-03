@@ -114,9 +114,9 @@ Komponententests: Tastaturbedienung, Preset-Wechsel ohne stille Datenverluste, V
 ## Verifikation
 
 ```bash
-pnpm --filter @vereinswerk/contracts test
-pnpm --filter @vereinswerk/content-engine test
-pnpm --filter @vereinswerk/web typecheck
+pnpm --filter @vereinsfunk/contracts test
+pnpm --filter @vereinsfunk/content-engine test
+pnpm --filter @vereinsfunk/web typecheck
 pnpm db:reset
 pnpm db:test
 pnpm check

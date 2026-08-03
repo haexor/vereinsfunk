@@ -1,5 +1,5 @@
-import { WorkflowPayloadSchema, type WorkflowPayload } from '@vereinswerk/contracts'
-import { createIdempotencyKey } from '@vereinswerk/domain'
+import { WorkflowPayloadSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
+import { createIdempotencyKey } from '@vereinsfunk/domain'
 
 export const concurrency = {
   llm: { global: 20, organization: 4, department: 2 },

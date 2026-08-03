@@ -110,10 +110,10 @@ Tests: Props, Textüberlauf, Farbkontrast, fehlende Assets, deterministischer Pr
 ## Verifikation
 
 ```bash
-pnpm --filter @vereinswerk/content-engine test
-pnpm --filter @vereinswerk/remotion test
-pnpm --filter @vereinswerk/worker test
-pnpm --filter @vereinswerk/web test
+pnpm --filter @vereinsfunk/content-engine test
+pnpm --filter @vereinsfunk/remotion test
+pnpm --filter @vereinsfunk/worker test
+pnpm --filter @vereinsfunk/web test
 pnpm check
 ```
 
