@@ -67,6 +67,32 @@ hatchet server start
 
 Die Workflow-Implementierung bleibt beim lokalen Adapter, solange `HATCHET_CLIENT_TOKEN` nicht gesetzt und der produktive SDK-Adapter nicht als eigenes Arbeitspaket umgesetzt ist.
 
+## Lokaler Start mit Docker Compose
+
+Alle Node-Services lassen sich auch containerisiert starten:
+
+```bash
+docker compose up --build
+```
+
+Danach sind die Services hier erreichbar:
+
+- Web: `http://localhost:3000`
+- API: `http://localhost:3001/health`
+- Remotion Studio: `http://localhost:3002`
+
+Die Compose-Umgebung startet Web, API, Worker und Remotion Studio. Abhängigkeiten werden vorab im `deps`-Service in Docker-Volumes installiert, damit der lokale Arbeitsbaum nicht mit Container-`node_modules` überschrieben wird.
+
+Supabase bleibt lokal bei der offiziellen CLI, weil sie selbst einen abgestimmten Container-Stack verwaltet:
+
+```bash
+pnpm db:start
+pnpm db:reset
+docker compose up --build
+```
+
+Wenn Supabase auf dem Host läuft, nutzt die API im Container standardmäßig `http://host.docker.internal:54321`. Die Browser-URLs für Web bleiben weiterhin `http://localhost:3001` und `http://localhost:54321`.
+
 ## Qualitätssicherung
 
 ```bash
