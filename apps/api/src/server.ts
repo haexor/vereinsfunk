@@ -1,4 +1,4 @@
-import { parseApiEnvironment } from '@vereinswerk/config'
+import { parseApiEnvironment } from '@vereinsfunk/config'
 import { buildApp } from './app.js'
 
 const environment = parseApiEnvironment()

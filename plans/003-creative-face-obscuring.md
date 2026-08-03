@@ -94,10 +94,10 @@ Unit-Tests: Randboxen, überlappende Gesichter, sehr kleine Gesichter, Rotation,
 ## Verifikation
 
 ```bash
-pnpm --filter @vereinswerk/media-processing test
-pnpm --filter @vereinswerk/worker test
-pnpm --filter @vereinswerk/api test
-pnpm --filter @vereinswerk/web test
+pnpm --filter @vereinsfunk/media-processing test
+pnpm --filter @vereinsfunk/worker test
+pnpm --filter @vereinsfunk/api test
+pnpm --filter @vereinsfunk/web test
 pnpm check
 ```
 

@@ -50,19 +50,19 @@ importers:
       '@fastify/cors':
         specifier: ^11.1.0
         version: 11.3.0
-      '@vereinswerk/config':
+      '@vereinsfunk/config':
         specifier: workspace:*
         version: link:../../packages/config
-      '@vereinswerk/content-engine':
+      '@vereinsfunk/content-engine':
         specifier: workspace:*
         version: link:../../packages/content-engine
-      '@vereinswerk/contracts':
+      '@vereinsfunk/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
-      '@vereinswerk/domain':
+      '@vereinsfunk/domain':
         specifier: workspace:*
         version: link:../../packages/domain
-      '@vereinswerk/observability':
+      '@vereinsfunk/observability':
         specifier: workspace:*
         version: link:../../packages/observability
       fastify:
@@ -93,7 +93,7 @@ importers:
       '@remotion/google-fonts':
         specifier: ^4.0.504
         version: 4.0.504(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
-      '@vereinswerk/contracts':
+      '@vereinsfunk/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       react:
@@ -130,7 +130,7 @@ importers:
       '@supabase/supabase-js':
         specifier: ^2.55.0
         version: 2.111.0
-      '@vereinswerk/contracts':
+      '@vereinsfunk/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       nuxt:
@@ -158,13 +158,13 @@ importers:
 
   apps/worker:
     dependencies:
-      '@vereinswerk/contracts':
+      '@vereinsfunk/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
-      '@vereinswerk/domain':
+      '@vereinsfunk/domain':
         specifier: workspace:*
         version: link:../../packages/domain
-      '@vereinswerk/observability':
+      '@vereinsfunk/observability':
         specifier: workspace:*
         version: link:../../packages/observability
     devDependencies:
@@ -208,7 +208,7 @@ importers:
 
   packages/content-engine:
     dependencies:
-      '@vereinswerk/contracts':
+      '@vereinsfunk/contracts':
         specifier: workspace:*
         version: link:../contracts
     devDependencies:

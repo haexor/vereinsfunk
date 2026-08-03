@@ -2,7 +2,7 @@ import {
   GeneratedPostSchema,
   type CreateSubmission,
   type GeneratedPost,
-} from '@vereinswerk/contracts'
+} from '@vereinsfunk/contracts'
 
 export interface ContentGenerator {
   generate(input: CreateSubmission): Promise<GeneratedPost>

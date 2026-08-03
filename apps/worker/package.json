@@ -1,5 +1,5 @@
 {
-  "name": "@vereinswerk/worker",
+  "name": "@vereinsfunk/worker",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,9 +11,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@vereinswerk/contracts": "workspace:*",
-    "@vereinswerk/domain": "workspace:*",
-    "@vereinswerk/observability": "workspace:*"
+    "@vereinsfunk/contracts": "workspace:*",
+    "@vereinsfunk/domain": "workspace:*",
+    "@vereinsfunk/observability": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.1.0",

@@ -1,12 +1,12 @@
 import cors from '@fastify/cors'
-import { parseApiEnvironment } from '@vereinswerk/config'
-import { FakeContentGenerator } from '@vereinswerk/content-engine'
+import { parseApiEnvironment } from '@vereinsfunk/config'
+import { FakeContentGenerator } from '@vereinsfunk/content-engine'
 import {
   CreateSubmissionSchema,
   HealthSchema,
   SubmissionAcceptedSchema,
-} from '@vereinswerk/contracts'
-import { createIdempotencyKey } from '@vereinswerk/domain'
+} from '@vereinsfunk/contracts'
+import { createIdempotencyKey } from '@vereinsfunk/domain'
 import Fastify, { LogController, type FastifyInstance, type FastifyServerOptions } from 'fastify'
 import { randomUUID } from 'node:crypto'
 

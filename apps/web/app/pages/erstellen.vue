@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ArrowLeft, ArrowRight, CalendarDays, Check, ImagePlus, LoaderCircle, MapPin, Sparkles, UploadCloud, Users, X } from '@lucide/vue'
-import type { ContentType, GeneratedPost } from '@vereinswerk/contracts'
+import type { ContentType, GeneratedPost } from '@vereinsfunk/contracts'
 
 const config = useRuntimeConfig()
 const step = ref(1)
@@ -46,7 +46,7 @@ const createPreview = async () => {
       verifiedFacts,
       missingFacts: [],
       headline: selectedType.value === 'match_result' ? 'Drei Punkte. Ein Team.' : form.title || 'Gemeinsam wird’s besonders.',
-      caption: `Was für ein Tag für unseren Verein! 💚\n\n${verifiedFacts.map((item) => `• ${item}`).join('\n')}\n\nDanke an alle, die dabei waren und uns unterstützt haben. Gemeinsam sind wir Vereinswerk.`,
+      caption: `Was für ein Tag für unseren Verein! 💚\n\n${verifiedFacts.map((item) => `• ${item}`).join('\n')}\n\nDanke an alle, die dabei waren und uns unterstützt haben. Gemeinsam sind wir Vereinsfunk.`,
       shortCaption: 'Gemeinsam stark – auf und neben dem Platz.',
       callToAction: 'Teile den Beitrag mit deinem Team.',
       hashtags: ['#vereinsleben', '#gemeinsamstark', '#svnorthstadt'],

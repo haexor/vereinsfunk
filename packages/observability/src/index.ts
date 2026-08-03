@@ -14,7 +14,7 @@ export function createLogger(options: LoggerOptions = {}) {
   return pino({
     level: process.env.LOG_LEVEL ?? 'info',
     redact: { paths: REDACT_PATHS, censor: '[REDACTED]' },
-    base: { service: options.name ?? 'vereinswerk' },
+    base: { service: options.name ?? 'vereinsfunk' },
     ...options,
   })
 }

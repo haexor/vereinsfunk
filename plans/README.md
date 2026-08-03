@@ -1,10 +1,10 @@
-# Vereinswerk – ausführbarer Umsetzungsplan
+# Vereinsfunk – ausführbarer Umsetzungsplan
 
 Stand: 2026-08-02. Das Repository besitzt noch keinen ersten Git-Commit (`unborn HEAD`). Deshalb enthält jedes Arbeitspaket Baseline-Hashes für seine wichtigsten Ausgangsdateien. Vor der Umsetzung müssen diese geprüft werden; bei Abweichungen gilt die jeweilige STOP-Bedingung.
 
 ## Zielbild
 
-Vereinswerk wird eine Content-Werkstatt für das gesamte Vereinsleben: Abteilungen erfassen echte Beobachtungen, Fakten, Zitate, Bilder und Clips; das System erstellt daraus markenkonforme Varianten, schützt Personen auf Medien, führt eine konkrete Version durch die Freigabe und veröffentlicht sie geplant auf Instagram und Facebook.
+Vereinsfunk wird eine Content-Werkstatt für das gesamte Vereinsleben: Abteilungen erfassen echte Beobachtungen, Fakten, Zitate, Bilder und Clips; das System erstellt daraus markenkonforme Varianten, schützt Personen auf Medien, führt eine konkrete Version durch die Freigabe und veröffentlicht sie geplant auf Instagram und Facebook.
 
 Die Systemgrenzen sind verbindlich:
 
