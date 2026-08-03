@@ -32,7 +32,7 @@ cp .env.example .env
 pnpm dev:web
 ```
 
-Die Oberfläche läuft unter `http://localhost:3000`. Sie funktioniert im lokalen Demo-Modus auch ohne Datenbank und API.
+Die Oberfläche läuft unter `http://localhost:4200`. Sie funktioniert im lokalen Demo-Modus auch ohne Datenbank und API.
 
 ## Vollständige lokale Umgebung
 
@@ -57,7 +57,7 @@ Terminal 3:
 pnpm dev:web
 ```
 
-API-Health-Check: `http://localhost:3001/health`
+API-Health-Check: `http://localhost:4201/health`
 
 Für Hatchet lokal die offizielle CLI installieren und separat starten:
 
@@ -66,6 +66,32 @@ hatchet server start
 ```
 
 Die Workflow-Implementierung bleibt beim lokalen Adapter, solange `HATCHET_CLIENT_TOKEN` nicht gesetzt und der produktive SDK-Adapter nicht als eigenes Arbeitspaket umgesetzt ist.
+
+## Lokaler Start mit Docker Compose
+
+Alle Node-Services lassen sich auch containerisiert starten:
+
+```bash
+docker compose up --build
+```
+
+Danach sind die Services hier erreichbar:
+
+- Web: `http://localhost:4200`
+- API: `http://localhost:4201/health`
+- Remotion Studio: `http://localhost:4202`
+
+Die Compose-Umgebung startet Web, API, Worker und Remotion Studio. Abhängigkeiten werden vorab im `deps`-Service in Docker-Volumes installiert, damit der lokale Arbeitsbaum nicht mit Container-`node_modules` überschrieben wird.
+
+Supabase bleibt lokal bei der offiziellen CLI, weil sie selbst einen abgestimmten Container-Stack verwaltet:
+
+```bash
+pnpm db:start
+pnpm db:reset
+docker compose up --build
+```
+
+Wenn Supabase auf dem Host läuft, nutzt die API im Container standardmäßig `http://host.docker.internal:4260`. Die Browser-URLs für Web bleiben weiterhin `http://localhost:4201` und `http://localhost:4260`.
 
 ## Qualitätssicherung
 

@@ -11,9 +11,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@hatchet-dev/typescript-sdk": "1.28.0",
     "@vereinsfunk/contracts": "workspace:*",
     "@vereinsfunk/domain": "workspace:*",
-    "@vereinsfunk/observability": "workspace:*"
+    "@vereinsfunk/media-processing": "workspace:*",
+    "@vereinsfunk/observability": "workspace:*",
+    "@vereinsfunk/orchestration": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.1.0",

@@ -19,13 +19,13 @@ Die Systemgrenzen sind verbindlich:
 
 | Nr. | Arbeitspaket | Abhängigkeiten | Status |
 |---|---|---|---|
-| 001 | [Inhaltsmodell und authentische Erfassung](001-content-domain-and-authentic-capture.md) | keine | bereit |
-| 002 | [Private Medien, Einwilligungen und Freigabegate](002-private-media-consent-and-approval-gate.md) | 001 | bereit |
-| 003 | [Kreative Gesichtsverdeckung für Bilder](003-creative-face-obscuring.md) | 002 | bereit |
-| 004 | [Hatchet produktionsreif integrieren](004-hatchet-production-orchestration.md) | keine; parallel zu 001–003 möglich | bereit |
-| 005 | [Kreative Plattformvarianten und Rendering](005-creative-platform-variants-and-rendering.md) | 001, 002, 003, 004 | bereit |
-| 006 | [Direkte Meta-Veröffentlichung](006-direct-meta-publishing.md) | 002, 004, 005 | bereit |
-| 007 | [Pilotbetrieb, Messung und Go/No-Go](007-pilot-readiness-and-go-no-go.md) | 001–006 | bereit |
+| 001 | [Inhaltsmodell und authentische Erfassung](001-content-domain-and-authentic-capture.md) | keine | in Arbeit |
+| 002 | [Private Medien, Einwilligungen und Freigabegate](002-private-media-consent-and-approval-gate.md) | 001 | in Arbeit |
+| 003 | [Kreative Gesichtsverdeckung für Bilder](003-creative-face-obscuring.md) | 002 | in Arbeit |
+| 004 | [Hatchet produktionsreif integrieren](004-hatchet-production-orchestration.md) | keine; parallel zu 001–003 möglich | in Arbeit |
+| 005 | [Kreative Plattformvarianten und Rendering](005-creative-platform-variants-and-rendering.md) | 001, 002, 003, 004 | in Arbeit |
+| 006 | [Direkte Meta-Veröffentlichung](006-direct-meta-publishing.md) | 002, 004, 005 | in Arbeit |
+| 007 | [Pilotbetrieb, Messung und Go/No-Go](007-pilot-readiness-and-go-no-go.md) | 001–006 | blockiert: externe Pilot-/Provider-Gates |
 
 Empfohlener Ablauf: zuerst 001 und den technischen Spike aus 004; danach 002 und 003; anschließend 005 und 006; zum Schluss 007. Ein Paket wird erst als abgeschlossen markiert, wenn alle Done-Kriterien erfüllt sind. Statuswerte sind `bereit`, `in Arbeit`, `blockiert`, `erledigt`.
 

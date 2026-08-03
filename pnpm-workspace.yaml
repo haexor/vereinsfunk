@@ -3,7 +3,9 @@ packages:
   - packages/*
 
 allowBuilds:
+  '@hatchet-dev/typescript-sdk': true
   esbuild: true
+  protobufjs: true
 
 minimumReleaseAgeExclude:
   - '@remotion/bundler@4.0.504'
@@ -34,5 +36,7 @@ minimumReleaseAgeExclude:
   - remotion@4.0.504
 
 onlyBuiltDependencies:
+  - '@hatchet-dev/typescript-sdk'
   - esbuild
+  - protobufjs
   - sharp

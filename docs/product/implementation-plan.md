@@ -20,6 +20,10 @@ Das Produkt soll insbesondere:
 - Datenschutz, Einwilligungen und Minderjährigenschutz berücksichtigen,
 - später als SaaS mit unterschiedlichen Tarifen angeboten werden können.
 
+### 1.1 Inhaltswerkstatt und Grounding
+
+Die Erfassung ist nicht auf Spielberichte beschränkt. Anlass (`preset_slug`), Kommunikationsziel und Ausgabeformat sind orthogonal. Die Oberfläche bietet unter anderem Ballschule, Training, Vereinsleben, Ehrenamt und einen freien Anlass prominent an. KI-Ausgaben dürfen nur bestätigte Fakten, Beobachtungen und explizit freigegebene Zitate verwenden; offene Angaben bleiben sichtbar offen.
+
 Der wichtigste Produktgrundsatz lautet:
 
 > Die KI formuliert und gestaltet; Menschen liefern und bestätigen die Fakten.

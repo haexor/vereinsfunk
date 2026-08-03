@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "build": "remotion bundle src/index.ts --out-dir dist",
-    "dev": "remotion studio src/index.ts",
+    "dev": "remotion studio src/index.ts --port 4202",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

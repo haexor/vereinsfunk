@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "nuxt build",
-    "dev": "nuxt dev --port 3000",
+    "dev": "nuxt dev --port 4200",
     "preview": "nuxt preview",
     "test": "vitest run --passWithNoTests",
     "typecheck": "nuxt typecheck"

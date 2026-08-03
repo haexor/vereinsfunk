@@ -95,3 +95,29 @@ export function createIdempotencyKey(
   }
   return [kind, ...parts].join(':')
 }
+
+export type MediaGateInput = {
+  scanStatus: 'pending' | 'clean' | 'failed'
+  facesConfirmedComplete: boolean
+  hasOriginalSelected: boolean
+  derivativeCurrent: boolean
+  faces: readonly { subjectKind: 'adult' | 'minor' | 'unknown'; decision: 'pending' | 'consented' | 'obscure' | 'exclude'; consentValid?: boolean | undefined }[]
+  minorReviewConfirmed: boolean
+}
+
+export function evaluateMediaGate(input: MediaGateInput): { publishable: boolean; blockers: Array<'scan_pending' | 'face_pending' | 'consent_invalid' | 'derivative_stale' | 'minor_review_required' | 'original_selected'> } {
+  const blockers: Array<'scan_pending' | 'face_pending' | 'consent_invalid' | 'derivative_stale' | 'minor_review_required' | 'original_selected'> = []
+  if (input.scanStatus !== 'clean') blockers.push('scan_pending')
+  if (!input.facesConfirmedComplete || input.faces.some((face) => face.decision === 'pending')) blockers.push('face_pending')
+  if (input.faces.some((face) => face.decision === 'consented' && !face.consentValid)) blockers.push('consent_invalid')
+  if (!input.derivativeCurrent) blockers.push('derivative_stale')
+  if (input.hasOriginalSelected) blockers.push('original_selected')
+  if (input.faces.some((face) => face.subjectKind === 'minor') && !input.minorReviewConfirmed) blockers.push('minor_review_required')
+  return { publishable: blockers.length === 0, blockers }
+}
+
+export function assertApprovalSnapshot(input: MediaGateInput, derivativeHashes: readonly string[]): void {
+  const gate = evaluateMediaGate(input)
+  if (!gate.publishable) throw new Error(`Media approval is blocked: ${gate.blockers.join(',')}`)
+  if (derivativeHashes.length === 0 || derivativeHashes.some((hash) => !/^[a-f0-9]{64}$/i.test(hash))) throw new Error('Approval requires immutable derivative hashes')
+}

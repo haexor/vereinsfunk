@@ -10,8 +10,10 @@ describe('contracts', () => {
       CreateSubmissionSchema.parse({
         organizationId: 'not-an-id',
         departmentId: department,
-        contentType: 'event',
-        facts: {},
+        presetSlug: 'event',
+        communicationGoal: 'inform',
+        requestedFormats: ['feed_image'],
+        sourceMaterial: { facts: {}, observations: ['Sommerfest'], quotes: [], doNotMention: [] },
       }),
     ).toThrow()
   })
@@ -20,8 +22,10 @@ describe('contracts', () => {
     const result = CreateSubmissionSchema.parse({
       organizationId: org,
       departmentId: department,
-      contentType: 'event',
-      facts: { title: 'Sommerfest' },
+      presetSlug: 'event',
+      communicationGoal: 'invite',
+      requestedFormats: ['feed_image'],
+      sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [], doNotMention: [] },
     })
     expect(result.priority).toBe(40)
     expect(result.sourceRevision).toBe(1)
