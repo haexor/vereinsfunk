@@ -1,4 +1,4 @@
-import { GeneratedPostSchema, type CreateSubmission, type GeneratedPost, type PlatformVariant } from '@vereinswerk/contracts'
+import { GeneratedPostSchema, type CreateSubmission, type GeneratedPost, type PlatformVariant } from '@vereinsfunk/contracts'
 import { getPreset, validateSourceMaterial } from './presets.js'
 
 export interface GroundedContentBrief { allowedClaims: readonly { sourceId: string; text: string }[]; approvedQuotes: readonly { sourceId: string; text: string; attribution?: string }[]; missingFacts: readonly string[]; prohibitedClaims: readonly string[]; goal: CreateSubmission['communicationGoal']; requestedFormats: CreateSubmission['requestedFormats']; presetSlug: string }

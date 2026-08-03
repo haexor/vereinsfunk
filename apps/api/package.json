@@ -1,5 +1,5 @@
 {
-  "name": "@vereinswerk/api",
+  "name": "@vereinsfunk/api",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,12 +12,12 @@
   },
   "dependencies": {
     "@fastify/cors": "^11.1.0",
-    "@vereinswerk/config": "workspace:*",
-    "@vereinswerk/content-engine": "workspace:*",
-    "@vereinswerk/contracts": "workspace:*",
-    "@vereinswerk/domain": "workspace:*",
-    "@vereinswerk/observability": "workspace:*",
-    "@vereinswerk/orchestration": "workspace:*",
+    "@vereinsfunk/config": "workspace:*",
+    "@vereinsfunk/content-engine": "workspace:*",
+    "@vereinsfunk/contracts": "workspace:*",
+    "@vereinsfunk/domain": "workspace:*",
+    "@vereinsfunk/observability": "workspace:*",
+    "@vereinsfunk/orchestration": "workspace:*",
     "fastify": "^5.11.0",
     "zod": "^4.4.3"
   },

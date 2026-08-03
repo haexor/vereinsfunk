@@ -59,7 +59,7 @@ services:
 
   web:
     <<: *app-base
-    command: pnpm --filter @vereinswerk/web exec nuxt dev --host 0.0.0.0 --port 4200
+    command: pnpm --filter @vereinsfunk/web exec nuxt dev --host 0.0.0.0 --port 4200
     depends_on:
       deps:
         condition: service_completed_successfully
@@ -75,7 +75,7 @@ services:
 
   worker:
     <<: *app-base
-    command: pnpm --filter @vereinswerk/worker dev
+    command: pnpm --filter @vereinsfunk/worker dev
     depends_on:
       deps:
         condition: service_completed_successfully
@@ -90,7 +90,7 @@ services:
 
   remotion:
     <<: *app-base
-    command: pnpm --filter @vereinswerk/remotion exec remotion studio src/index.ts --host 0.0.0.0 --port 4202
+    command: pnpm --filter @vereinsfunk/remotion exec remotion studio src/index.ts --host 0.0.0.0 --port 4202
     depends_on:
       deps:
         condition: service_completed_successfully

@@ -1,4 +1,4 @@
-import { WorkflowNameSchema, WorkflowPayloadSchema, type WorkflowPayload } from '@vereinswerk/contracts'
+import { WorkflowNameSchema, WorkflowPayloadSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
 
 export type WorkflowName = ReturnType<typeof WorkflowNameSchema.parse>
 export interface Orchestrator { trigger(workflow: WorkflowName, payload: WorkflowPayload, options?: { scheduledFor?: Date }): Promise<{ runId: string }>; cancel(runId: string): Promise<void> }

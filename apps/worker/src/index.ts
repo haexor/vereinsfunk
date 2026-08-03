@@ -1,4 +1,4 @@
-import { createLogger } from '@vereinswerk/observability'
+import { createLogger } from '@vereinsfunk/observability'
 import { concurrency } from './workflows.js'
 
 const logger = createLogger({ name: 'worker' })

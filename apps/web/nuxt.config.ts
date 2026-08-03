@@ -5,7 +5,7 @@ export default defineNuxtConfig({
   css: ['~/assets/css/main.css'],
   app: {
     head: {
-      title: 'Vereinswerk — Social Media, das mitspielt',
+      title: 'Vereinsfunk — Social Media, das mitspielt',
       htmlAttrs: { lang: 'de' },
       meta: [
         { name: 'description', content: 'Social-Media-Planung für Sportvereine' },

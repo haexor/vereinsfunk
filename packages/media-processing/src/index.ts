@@ -1,4 +1,4 @@
-import { ObscuringStyleSchema, type FaceDecision } from '@vereinswerk/contracts'
+import { ObscuringStyleSchema, type FaceDecision } from '@vereinsfunk/contracts'
 
 export interface NormalizedBox { x: number; y: number; width: number; height: number }
 export interface DetectedFace { box: NormalizedBox; confidence: number }

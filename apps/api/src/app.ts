@@ -1,14 +1,14 @@
 import cors from '@fastify/cors'
-import { parseApiEnvironment } from '@vereinswerk/config'
-import { FakeContentGenerator } from '@vereinswerk/content-engine'
+import { parseApiEnvironment } from '@vereinsfunk/config'
+import { FakeContentGenerator } from '@vereinsfunk/content-engine'
 import {
   CreateSubmissionSchema,
   HealthSchema,
   SubmissionAcceptedSchema,
   UuidSchema,
-} from '@vereinswerk/contracts'
-import { createIdempotencyKey, evaluateMediaGate } from '@vereinswerk/domain'
-import { FakeOrchestrator, type Orchestrator } from '@vereinswerk/orchestration'
+} from '@vereinsfunk/contracts'
+import { createIdempotencyKey, evaluateMediaGate } from '@vereinsfunk/domain'
+import { FakeOrchestrator, type Orchestrator } from '@vereinsfunk/orchestration'
 import Fastify, { LogController, type FastifyInstance, type FastifyServerOptions } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'

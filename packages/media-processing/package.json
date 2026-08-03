@@ -1,10 +1,10 @@
 {
-  "name": "@vereinswerk/media-processing",
+  "name": "@vereinsfunk/media-processing",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "exports": { ".": "./src/index.ts" },
   "scripts": { "build": "tsup src/index.ts --format esm --dts --out-dir dist", "test": "vitest run", "typecheck": "tsc -p tsconfig.json --noEmit" },
-  "dependencies": { "@vereinswerk/contracts": "workspace:*" },
+  "dependencies": { "@vereinsfunk/contracts": "workspace:*" },
   "devDependencies": { "@types/node": "^24.1.0", "tsup": "^8.5.0", "typescript": "^6.0.3", "vitest": "^4.1.10" }
 }

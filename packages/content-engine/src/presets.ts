@@ -1,4 +1,4 @@
-import type { ContentPresetSlug, SourceMaterial } from '@vereinswerk/contracts'
+import type { ContentPresetSlug, SourceMaterial } from '@vereinsfunk/contracts'
 
 export interface ContentPreset { slug: ContentPresetSlug; label: string; helpText: string; requiredFacts: readonly string[]; requiresObservation?: boolean }
 export const contentPresets: readonly ContentPreset[] = [

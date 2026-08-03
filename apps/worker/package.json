@@ -1,5 +1,5 @@
 {
-  "name": "@vereinswerk/worker",
+  "name": "@vereinsfunk/worker",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,11 +12,11 @@
   },
   "dependencies": {
     "@hatchet-dev/typescript-sdk": "1.28.0",
-    "@vereinswerk/contracts": "workspace:*",
-    "@vereinswerk/domain": "workspace:*",
-    "@vereinswerk/media-processing": "workspace:*",
-    "@vereinswerk/observability": "workspace:*"
-    ,"@vereinswerk/orchestration": "workspace:*"
+    "@vereinsfunk/contracts": "workspace:*",
+    "@vereinsfunk/domain": "workspace:*",
+    "@vereinsfunk/media-processing": "workspace:*",
+    "@vereinsfunk/observability": "workspace:*",
+    "@vereinsfunk/orchestration": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.1.0",

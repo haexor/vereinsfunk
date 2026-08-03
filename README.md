@@ -1,4 +1,4 @@
-# Vereinswerk
+# Vereinsfunk
 
 Multi-Tenant Social-Media-SaaS für Sportvereine. Das Repository setzt die sichere technische Basis und einen vollständig navigierbaren MVP-Produktprototyp aus dem Umsetzungsplan um.
 

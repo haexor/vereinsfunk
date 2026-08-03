@@ -11,8 +11,8 @@
   "scripts": {
     "build": "turbo build",
     "dev": "turbo dev --parallel",
-    "dev:web": "pnpm --filter @vereinswerk/web dev",
-    "dev:api": "pnpm --filter @vereinswerk/api dev",
+    "dev:web": "pnpm --filter @vereinsfunk/web dev",
+    "dev:api": "pnpm --filter @vereinsfunk/api dev",
     "db:start": "supabase start",
     "db:stop": "supabase stop",
     "db:reset": "supabase db reset",

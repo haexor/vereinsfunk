@@ -104,9 +104,9 @@ type MediaGateResult = {
 ## Tests und Verifikation
 
 ```bash
-pnpm --filter @vereinswerk/contracts test
-pnpm --filter @vereinswerk/domain test
-pnpm --filter @vereinswerk/api test
+pnpm --filter @vereinsfunk/contracts test
+pnpm --filter @vereinsfunk/domain test
+pnpm --filter @vereinsfunk/api test
 pnpm db:reset
 pnpm db:test
 pnpm check

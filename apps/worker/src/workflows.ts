@@ -1,6 +1,6 @@
 import { ConcurrencyLimitStrategy, HatchetClient, type Worker } from '@hatchet-dev/typescript-sdk/v1/index.js'
-import { WorkflowPayloadSchema, type WorkflowPayload } from '@vereinswerk/contracts'
-import { createIdempotencyKey } from '@vereinswerk/domain'
+import { WorkflowPayloadSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
+import { createIdempotencyKey } from '@vereinsfunk/domain'
 
 export const concurrency = {
   llm: { global: 20, organization: 4, department: 2 }, image: { global: 12, organization: 3, department: 1 },
@@ -33,7 +33,7 @@ export async function createHatchetWorker(context: WorkflowContext, env: NodeJS.
   const workflow = client.task({ name: 'process-submission', inputValidator: WorkflowPayloadSchema,
     concurrency: [{ expression: "input.organizationId + ':' + input.departmentId", maxRuns: concurrency.llm.department, limitStrategy: ConcurrencyLimitStrategy.GROUP_ROUND_ROBIN }, { expression: 'input.organizationId', maxRuns: concurrency.llm.organization, limitStrategy: ConcurrencyLimitStrategy.GROUP_ROUND_ROBIN }],
     idempotency: { expression: 'input.idempotencyKey', strategy: 'status', fallbackTtlMs: 86_400_000 }, retries: 3, executionTimeout: '5m', fn: async (input) => { await processSubmission(input, context); return {} } })
-  const worker = await client.worker('vereinswerk-worker', { slots: Number(env.HATCHET_WORKER_SLOTS ?? 8) })
+  const worker = await client.worker('vereinsfunk-worker', { slots: Number(env.HATCHET_WORKER_SLOTS ?? 8) })
   await worker.registerWorkflows([workflow])
   return worker
 }
