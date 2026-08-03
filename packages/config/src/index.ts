@@ -7,7 +7,7 @@ const optionalUrl = z.preprocess(emptyStringToUndefined, z.url().optional())
 export const ApiEnvironmentSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   API_HOST: z.string().default('0.0.0.0'),
-  API_PORT: z.coerce.number().int().min(1).max(65_535).default(3001),
+  API_PORT: z.coerce.number().int().min(1).max(65_535).default(4201),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   SUPABASE_URL: optionalUrl,
   SUPABASE_SERVICE_ROLE_KEY: optionalSecret,

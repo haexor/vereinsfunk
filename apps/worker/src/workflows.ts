@@ -29,7 +29,7 @@ export async function processSubmission(raw: unknown, context: WorkflowContext):
 export async function createHatchetWorker(context: WorkflowContext, env: NodeJS.ProcessEnv = process.env): Promise<Worker> {
   const token = env.HATCHET_CLIENT_TOKEN
   if (!token) throw new Error('HATCHET_CLIENT_TOKEN is required to start the worker')
-  const client = HatchetClient.init<WorkflowPayload>({ token, host_port: env.HATCHET_SERVER_URL ?? 'localhost:7077', api_url: env.HATCHET_API_URL ?? 'http://localhost:8080', tenant_id: env.HATCHET_TENANT_ID ?? 'default', tls_config: { tls_strategy: env.HATCHET_TLS === 'true' ? 'tls' : 'none' } })
+  const client = HatchetClient.init<WorkflowPayload>({ token, host_port: env.HATCHET_SERVER_URL ?? 'localhost:4270', api_url: env.HATCHET_API_URL ?? 'http://localhost:4271', tenant_id: env.HATCHET_TENANT_ID ?? 'default', tls_config: { tls_strategy: env.HATCHET_TLS === 'true' ? 'tls' : 'none' } })
   const workflow = client.task({ name: 'process-submission', inputValidator: WorkflowPayloadSchema,
     concurrency: [{ expression: "input.organizationId + ':' + input.departmentId", maxRuns: concurrency.llm.department, limitStrategy: ConcurrencyLimitStrategy.GROUP_ROUND_ROBIN }, { expression: 'input.organizationId', maxRuns: concurrency.llm.organization, limitStrategy: ConcurrencyLimitStrategy.GROUP_ROUND_ROBIN }],
     idempotency: { expression: 'input.idempotencyKey', strategy: 'status', fallbackTtlMs: 86_400_000 }, retries: 3, executionTimeout: '5m', fn: async (input) => { await processSubmission(input, context); return {} } })

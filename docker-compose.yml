@@ -40,9 +40,9 @@ services:
     environment:
       NODE_ENV: development
       API_HOST: 0.0.0.0
-      API_PORT: 3001
+      API_PORT: 4201
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      SUPABASE_URL: ${SUPABASE_URL:-http://host.docker.internal:54321}
+      SUPABASE_URL: http://host.docker.internal:4260
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-replace-with-local-service-role-key}
       HATCHET_CLIENT_TOKEN: ${HATCHET_CLIENT_TOKEN:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -50,16 +50,16 @@ services:
       MIXPOST_BASE_URL: ${MIXPOST_BASE_URL:-}
       MIXPOST_TOKEN: ${MIXPOST_TOKEN:-}
     ports:
-      - "3001:3001"
+      - "4201:4201"
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3001/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4201/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
       interval: 10s
       timeout: 5s
       retries: 12
 
   web:
     <<: *app-base
-    command: pnpm --filter @vereinswerk/web exec nuxt dev --host 0.0.0.0 --port 3000
+    command: pnpm --filter @vereinswerk/web exec nuxt dev --host 0.0.0.0 --port 4200
     depends_on:
       deps:
         condition: service_completed_successfully
@@ -67,11 +67,11 @@ services:
         condition: service_started
     environment:
       NODE_ENV: development
-      NUXT_PUBLIC_API_BASE: ${NUXT_PUBLIC_API_BASE:-http://localhost:3001}
-      NUXT_PUBLIC_SUPABASE_URL: ${NUXT_PUBLIC_SUPABASE_URL:-http://localhost:54321}
+      NUXT_PUBLIC_API_BASE: http://localhost:4201
+      NUXT_PUBLIC_SUPABASE_URL: http://localhost:4260
       NUXT_PUBLIC_SUPABASE_ANON_KEY: ${NUXT_PUBLIC_SUPABASE_ANON_KEY:-replace-with-local-anon-key}
     ports:
-      - "3000:3000"
+      - "4200:4200"
 
   worker:
     <<: *app-base
@@ -83,19 +83,19 @@ services:
       NODE_ENV: development
       LOG_LEVEL: ${LOG_LEVEL:-info}
       HATCHET_CLIENT_TOKEN: ${HATCHET_CLIENT_TOKEN:-}
-      HATCHET_SERVER_URL: ${HATCHET_SERVER_URL:-host.docker.internal:7077}
-      HATCHET_API_URL: ${HATCHET_API_URL:-http://host.docker.internal:8080}
+      HATCHET_SERVER_URL: host.docker.internal:4270
+      HATCHET_API_URL: http://host.docker.internal:4271
       HATCHET_TENANT_ID: ${HATCHET_TENANT_ID:-default}
       HATCHET_TLS: ${HATCHET_TLS:-false}
 
   remotion:
     <<: *app-base
-    command: pnpm --filter @vereinswerk/remotion exec remotion studio src/index.ts --host 0.0.0.0 --port 3002
+    command: pnpm --filter @vereinswerk/remotion exec remotion studio src/index.ts --host 0.0.0.0 --port 4202
     depends_on:
       deps:
         condition: service_completed_successfully
     ports:
-      - "3002:3002"
+      - "4202:4202"
 
 volumes:
   pnpm-store:

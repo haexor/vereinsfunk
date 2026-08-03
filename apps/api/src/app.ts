@@ -51,7 +51,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const uploads = options.uploads ?? new LocalUploadService()
 
   await app.register(cors, {
-    origin: environment.NODE_ENV === 'production' ? false : ['http://localhost:3000'],
+    origin: environment.NODE_ENV === 'production' ? false : ['http://localhost:4200'],
   })
 
   app.get('/health', async () =>
