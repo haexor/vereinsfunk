@@ -1,0 +1,32 @@
+language: "de-DE"
+early_access: false
+
+reviews:
+  profile: "chill"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  collapse_walkthrough: true
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - "main"
+  path_filters:
+    - "!pnpm-lock.yaml"
+    - "!**/dist/**"
+    - "!**/.output/**"
+    - "!**/.nuxt/**"
+  path_instructions:
+    - path: "packages/**"
+      instructions: >
+        Achte auf Breaking Changes für abhängige Workspace-Packages
+        (@vereinsfunk/*) und darauf, dass Contracts (Zod-Schemas) rückwärtskompatibel
+        bleiben, sofern nicht explizit als Breaking Change gekennzeichnet.
+    - path: "supabase/migrations/**"
+      instructions: >
+        Prüfe RLS-Policies, zusammengesetzte Tenant-Fremdschlüssel (organization_id)
+        und private Storage-Zugriffspfade besonders sorgfältig.
+
+chat:
+  auto_reply: true
