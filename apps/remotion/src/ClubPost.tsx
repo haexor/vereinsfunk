@@ -8,6 +8,7 @@ export const ClubPostPropsSchema = z.object({
   detail: z.string().max(140),
   primaryColor: z.string().regex(/^#[0-9a-f]{6}$/i),
   accentColor: z.string().regex(/^#[0-9a-f]{6}$/i),
+  layoutFamily: z.enum(['photo_moment', 'training', 'quote', 'collage', 'invitation', 'thanks', 'result']).default('photo_moment'),
 })
 
 export type ClubPostProps = z.infer<typeof ClubPostPropsSchema>
@@ -43,7 +44,7 @@ export function ClubPost(props: ClubPostProps) {
       />
       <div style={{ position: 'relative', opacity, transform: `translateY(${(1 - enter) * 60}px)` }}>
         <div style={{ fontSize: 30, fontWeight: 700, letterSpacing: 4, textTransform: 'uppercase' }}>
-          {safeProps.eyebrow}
+          {safeProps.layoutFamily === 'training' ? 'TRAININGSMOMENT' : safeProps.eyebrow}
         </div>
         <h1 style={{ fontSize: 104, lineHeight: 0.95, maxWidth: 840, margin: '180px 0 52px' }}>
           {safeProps.headline}

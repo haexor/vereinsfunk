@@ -5,13 +5,28 @@ import {
   CreateSubmissionSchema,
   HealthSchema,
   SubmissionAcceptedSchema,
+  UuidSchema,
 } from '@vereinswerk/contracts'
-import { createIdempotencyKey } from '@vereinswerk/domain'
+import { createIdempotencyKey, evaluateMediaGate } from '@vereinswerk/domain'
+import { FakeOrchestrator, type Orchestrator } from '@vereinswerk/orchestration'
 import Fastify, { LogController, type FastifyInstance, type FastifyServerOptions } from 'fastify'
 import { randomUUID } from 'node:crypto'
+import { z } from 'zod'
 
 export interface BuildAppOptions {
   logger?: boolean
+  orchestrator?: Orchestrator
+  uploads?: MediaUploadService
+}
+
+export interface MediaUploadService {
+  create(input: { organizationId: string; departmentId: string; assetId: string; filename: string; mimeType: string; byteSize: number }): Promise<{ uploadUrl: string; objectPath: string; expiresAt: string }>
+  complete(input: { assetId: string; sha256: string }): Promise<{ accepted: true }>
+}
+
+class LocalUploadService implements MediaUploadService {
+  async create(input: { organizationId: string; departmentId: string; assetId: string; filename: string; mimeType: string; byteSize: number }) { return { uploadUrl: `https://storage.invalid/upload/${input.assetId}`, objectPath: `organizations/${input.organizationId}/departments/${input.departmentId}/assets/${input.assetId}/${input.filename}`, expiresAt: new Date(Date.now() + 10 * 60_000).toISOString() } }
+  async complete(): Promise<{ accepted: true }> { return { accepted: true } }
 }
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
@@ -32,6 +47,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
           },
   }
   const app = Fastify(fastifyOptions)
+  const orchestrator = options.orchestrator ?? new FakeOrchestrator()
+  const uploads = options.uploads ?? new LocalUploadService()
 
   await app.register(cors, {
     origin: environment.NODE_ENV === 'production' ? false : ['http://localhost:3000'],
@@ -60,6 +77,10 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       status: generated.missingFacts.length > 0 ? 'facts_required' : 'queued',
       idempotencyKey: createIdempotencyKey('submission', submissionId, input.sourceRevision),
     })
+    if (accepted.status === 'queued') await orchestrator.trigger('process-submission', {
+      submissionId, entityId: submissionId, organizationId: input.organizationId, departmentId: input.departmentId,
+      correlationId, sourceRevision: input.sourceRevision, idempotencyKey: accepted.idempotencyKey,
+    })
 
     request.log.info(
       {
@@ -73,6 +94,21 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     )
 
     return reply.code(202).send({ ...accepted, preview: generated })
+  })
+
+  const UploadInitiateSchema = z.object({ organizationId: UuidSchema, departmentId: UuidSchema, filename: z.string().min(1).max(120).regex(/^[^/\\]+$/), mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp', 'video/mp4']), byteSize: z.int().positive().max(100 * 1024 * 1024) })
+  app.post('/v1/media/uploads', async (request, reply) => {
+    const input = UploadInitiateSchema.parse(request.body); const assetId = randomUUID()
+    const upload = await uploads.create({ ...input, assetId })
+    return reply.code(201).send({ assetId, ...upload })
+  })
+  app.post('/v1/media/:assetId/complete', async (request, reply) => {
+    const params = z.object({ assetId: UuidSchema }).parse(request.params); const body = z.object({ sha256: z.string().regex(/^[a-f0-9]{64}$/i) }).parse(request.body)
+    return reply.code(202).send(await uploads.complete({ ...params, ...body }))
+  })
+  app.post('/v1/media/gate', async (request) => {
+    const input = z.object({ scanStatus: z.enum(['pending', 'clean', 'failed']), facesConfirmedComplete: z.boolean(), hasOriginalSelected: z.boolean(), derivativeCurrent: z.boolean(), minorReviewConfirmed: z.boolean(), faces: z.array(z.object({ subjectKind: z.enum(['adult', 'minor', 'unknown']), decision: z.enum(['pending', 'consented', 'obscure', 'exclude']), consentValid: z.boolean().optional() })) }).parse(request.body)
+    return evaluateMediaGate(input)
   })
 
   app.setErrorHandler((error, request, reply) => {

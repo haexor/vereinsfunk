@@ -17,7 +17,9 @@
     "@vereinswerk/contracts": "workspace:*",
     "@vereinswerk/domain": "workspace:*",
     "@vereinswerk/observability": "workspace:*",
-    "fastify": "^5.11.0"
+    "@vereinswerk/orchestration": "workspace:*",
+    "fastify": "^5.11.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^24.1.0",

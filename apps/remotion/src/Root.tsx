@@ -19,6 +19,7 @@ export function RemotionRoot() {
           detail: 'Anpfiff um 15:30 Uhr. Wir sehen uns am Sportplatz.',
           primaryColor: '#142C24',
           accentColor: '#C7FF4A',
+          layoutFamily: 'photo_moment',
         }}
       />
       <Composition
@@ -36,8 +37,12 @@ export function RemotionRoot() {
           detail: 'Ein starker Auftritt vor heimischem Publikum.',
           primaryColor: '#142C24',
           accentColor: '#C7FF4A',
+          layoutFamily: 'result',
         }}
       />
+      <Composition id="TrainingFeed" component={ClubPost} durationInFrames={1} fps={30} width={1080} height={1350} schema={ClubPostPropsSchema} defaultProps={{ clubName: 'SV Nordstadt', eyebrow: 'Ballschule', headline: 'Werfen, Balancieren, gemeinsam lernen.', detail: 'Heute stand Bewegung im Mittelpunkt.', primaryColor: '#142C24', accentColor: '#C7FF4A', layoutFamily: 'training' }} />
+      <Composition id="ThankYouStory" component={ClubPost} durationInFrames={150} fps={30} width={1080} height={1920} schema={ClubPostPropsSchema} defaultProps={{ clubName: 'SV Nordstadt', eyebrow: 'Danke', headline: 'Ohne euch geht es nicht.', detail: 'Ein ehrlicher Dank an unser Ehrenamt.', primaryColor: '#142C24', accentColor: '#C7FF4A', layoutFamily: 'thanks' }} />
+      <Composition id="InvitationStory" component={ClubPost} durationInFrames={150} fps={30} width={1080} height={1920} schema={ClubPostPropsSchema} defaultProps={{ clubName: 'SV Nordstadt', eyebrow: 'Einladung', headline: 'Kommt zum Sommerfest.', detail: 'Ein Tag für den ganzen Verein.', primaryColor: '#142C24', accentColor: '#C7FF4A', layoutFamily: 'invitation' }} />
     </>
   )
 }

@@ -1,40 +1,39 @@
+import { ConcurrencyLimitStrategy, HatchetClient, type Worker } from '@hatchet-dev/typescript-sdk/v1/index.js'
 import { WorkflowPayloadSchema, type WorkflowPayload } from '@vereinswerk/contracts'
 import { createIdempotencyKey } from '@vereinswerk/domain'
 
 export const concurrency = {
-  llm: { global: 20, organization: 4, department: 2 },
-  image: { global: 12, organization: 3, department: 1 },
-  video: { global: 4, organization: 1, department: 1 },
-  publishing: { global: 20, organization: 4, department: 2 },
+  llm: { global: 20, organization: 4, department: 2 }, image: { global: 12, organization: 3, department: 1 },
+  video: { global: 4, organization: 1, department: 1 }, publishing: { global: 20, organization: 4, department: 2 },
 } as const
-
 export interface WorkflowContext {
-  loadSubmission(id: string): Promise<{ status: string } | null>
+  loadSubmission(id: string): Promise<{ status: string; sourceRevision?: number } | null>
   updateSubmission(id: string, status: 'generating' | 'failed'): Promise<void>
-  enqueueDraft(input: WorkflowPayload & { idempotencyKey: string }): Promise<void>
+  enqueueDraft(input: WorkflowPayload): Promise<void>
 }
+export class NonRetryableWorkflowError extends Error { readonly retryable = false }
+export function fairnessKey(payload: Pick<WorkflowPayload, 'organizationId' | 'departmentId'>) { return `${payload.organizationId}:${payload.departmentId}` }
+export function priorityToHatchet(priority: number): 1 | 2 | 3 { return priority >= 70 ? 3 : priority >= 40 ? 2 : 1 }
 
 export async function processSubmission(raw: unknown, context: WorkflowContext): Promise<void> {
   const payload = WorkflowPayloadSchema.parse(raw)
-  const submission = await context.loadSubmission(payload.submissionId)
+  const submissionId = payload.submissionId ?? payload.entityId
+  const submission = await context.loadSubmission(submissionId)
   if (!submission) throw new NonRetryableWorkflowError('submission_not_found')
-  if (submission.status !== 'queued') return
-
-  await context.updateSubmission(payload.submissionId, 'generating')
-  await context.enqueueDraft({
-    ...payload,
-    idempotencyKey: createIdempotencyKey(
-      'draft',
-      payload.submissionId,
-      payload.sourceRevision,
-    ),
-  })
+  if (submission.status !== 'queued' || (submission.sourceRevision !== undefined && submission.sourceRevision !== payload.sourceRevision)) return
+  await context.updateSubmission(submissionId, 'generating')
+  await context.enqueueDraft({ ...payload, submissionId, entityId: submissionId, idempotencyKey: createIdempotencyKey('draft', submissionId, payload.sourceRevision) })
 }
 
-export class NonRetryableWorkflowError extends Error {
-  readonly retryable = false
-}
-
-export function fairnessKey(payload: Pick<WorkflowPayload, 'organizationId' | 'departmentId'>) {
-  return `${payload.organizationId}:${payload.departmentId}`
+/** Real SDK declarations; starting needs explicit credentials and a Supabase-backed context. */
+export async function createHatchetWorker(context: WorkflowContext, env: NodeJS.ProcessEnv = process.env): Promise<Worker> {
+  const token = env.HATCHET_CLIENT_TOKEN
+  if (!token) throw new Error('HATCHET_CLIENT_TOKEN is required to start the worker')
+  const client = HatchetClient.init<WorkflowPayload>({ token, host_port: env.HATCHET_SERVER_URL ?? 'localhost:7077', api_url: env.HATCHET_API_URL ?? 'http://localhost:8080', tenant_id: env.HATCHET_TENANT_ID ?? 'default', tls_config: { tls_strategy: env.HATCHET_TLS === 'true' ? 'tls' : 'none' } })
+  const workflow = client.task({ name: 'process-submission', inputValidator: WorkflowPayloadSchema,
+    concurrency: [{ expression: "input.organizationId + ':' + input.departmentId", maxRuns: concurrency.llm.department, limitStrategy: ConcurrencyLimitStrategy.GROUP_ROUND_ROBIN }, { expression: 'input.organizationId', maxRuns: concurrency.llm.organization, limitStrategy: ConcurrencyLimitStrategy.GROUP_ROUND_ROBIN }],
+    idempotency: { expression: 'input.idempotencyKey', strategy: 'status', fallbackTtlMs: 86_400_000 }, retries: 3, executionTimeout: '5m', fn: async (input) => { await processSubmission(input, context); return {} } })
+  const worker = await client.worker('vereinswerk-worker', { slots: Number(env.HATCHET_WORKER_SLOTS ?? 8) })
+  await worker.registerWorkflows([workflow])
+  return worker
 }
