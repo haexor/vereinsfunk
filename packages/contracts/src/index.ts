@@ -27,6 +27,7 @@ export const HealthSchema = z.object({
 export const ContentTypeSchema = ContentPresetSlugSchema
 export const SafetyFlagSchema = z.enum(['minor', 'missing_consent', 'uncertain_fact', 'sensitive_data'])
 
+// Breaking: replaces the earlier contentType/facts shape; WorkflowPayloadSchema now requires entityId/idempotencyKey too.
 export const CreateSubmissionSchema = z.object({
   organizationId: UuidSchema,
   departmentId: UuidSchema,
