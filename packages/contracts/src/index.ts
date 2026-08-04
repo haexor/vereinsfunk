@@ -23,6 +23,19 @@ export const HealthSchema = z.object({
   status: z.literal('ok'), service: z.string().min(1), version: z.string().min(1), timestamp: z.iso.datetime(),
 })
 
+const RoleNameSchema = z.string().min(1)
+export const MembershipTeamScopeSchema = z.object({
+  id: UuidSchema, name: z.string().min(1), roles: z.array(RoleNameSchema),
+})
+export const MembershipDepartmentScopeSchema = z.object({
+  id: UuidSchema, name: z.string().min(1), roles: z.array(RoleNameSchema), teams: z.array(MembershipTeamScopeSchema),
+})
+export const MembershipScopeSchema = z.object({
+  organizationId: UuidSchema, organizationName: z.string().min(1),
+  organizationRoles: z.array(RoleNameSchema), departments: z.array(MembershipDepartmentScopeSchema),
+})
+export const MembershipScopesSchema = z.array(MembershipScopeSchema)
+
 // Kept as an exported alias for integrations compiled against the prototype.
 export const ContentTypeSchema = ContentPresetSlugSchema
 export const SafetyFlagSchema = z.enum(['minor', 'missing_consent', 'uncertain_fact', 'sensitive_data'])
@@ -87,3 +100,4 @@ export type PlatformVariant = z.infer<typeof PlatformVariantSchema>
 export type FaceDecision = z.infer<typeof FaceDecisionSchema>
 export type MediaGateResult = z.infer<typeof MediaGateResultSchema>
 export type WorkflowPayload = z.infer<typeof WorkflowPayloadSchema>
+export type MembershipScope = z.infer<typeof MembershipScopeSchema>

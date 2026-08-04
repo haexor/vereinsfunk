@@ -1,16 +1,49 @@
 <script setup lang="ts">
-import { BarChart3, CalendarDays, CheckCircle2, ChevronDown, FileText, LayoutDashboard, Menu, Palette, Plus, Settings, Users, X } from '@lucide/vue'
+import { BarChart3, CalendarDays, CheckCircle2, ChevronDown, FileText, LayoutDashboard, LogOut, Menu, Palette, Plus, Settings, Users, X } from '@lucide/vue'
+
+const roleLabels: Record<string, string> = {
+  organization_owner: 'Vereinsinhaber',
+  organization_admin: 'Vereinsadmin',
+  social_manager: 'Social Managerin',
+  billing_admin: 'Abrechnung',
+  organization_viewer: 'Betrachterin',
+  department_admin: 'Abteilungsadmin',
+  editor: 'Redakteurin',
+  approver: 'Prüferin',
+  contributor: 'Mitwirkende',
+  viewer: 'Betrachterin',
+  team_manager: 'Teamleitung',
+}
 
 const mobileOpen = ref(false)
-const { organization, department, departments } = useDemoData()
 const route = useRoute()
+const session = await useSession()
+const scope = await useScope()
 
 watch(() => route.path, () => { mobileOpen.value = false })
 
-const navigation = [
+const activeOrganization = computed(() => session.value?.scopes.find((item) => item.organizationId === scope.value?.organizationId) ?? null)
+const organizationInitials = computed(() => (activeOrganization.value?.organizationName ?? '').split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join('').toUpperCase())
+const activeDepartmentRoles = computed(() => activeOrganization.value?.departments.find((item) => item.id === scope.value?.departmentId)?.roles ?? [])
+const topRoleLabel = computed(() => {
+  const role = activeOrganization.value?.organizationRoles[0] ?? activeDepartmentRoles.value[0]
+  return role ? roleLabels[role] ?? role : ''
+})
+const userInitials = computed(() => (session.value?.displayName ?? '').split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join('').toUpperCase())
+
+function selectDepartment(departmentId: string) {
+  if (scope.value) scope.value = { ...scope.value, departmentId }
+}
+
+async function logout() {
+  await signOut()
+  await navigateTo('/anmelden')
+}
+
+const navigation: { label: string; to: string; icon: typeof LayoutDashboard; badge?: number }[] = [
   { label: 'Übersicht', to: '/', icon: LayoutDashboard },
   { label: 'Beiträge', to: '/beitraege', icon: FileText },
-  { label: 'Freigaben', to: '/freigaben', icon: CheckCircle2, badge: 2 },
+  { label: 'Freigaben', to: '/freigaben', icon: CheckCircle2 },
   { label: 'Kalender', to: '/kalender', icon: CalendarDays },
   { label: 'Auswertung', to: '/auswertung', icon: BarChart3 },
 ]
@@ -38,23 +71,24 @@ const organizationNav = [
     >
       <div class="hidden px-2 pb-7 lg:block"><AppLogo /></div>
 
-      <div class="mb-5 rounded-2xl border border-white/10 bg-white/[.06] p-2">
-        <button class="focus-ring flex w-full items-center gap-3 rounded-xl p-2 text-left hover:bg-white/[.06]">
-          <span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-lime font-display text-sm font-extrabold text-forest">{{ organization.initials }}</span>
+      <div v-if="activeOrganization" class="mb-5 rounded-2xl border border-white/10 bg-white/[.06] p-2">
+        <div class="flex w-full items-center gap-3 p-2 text-left">
+          <span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-lime font-display text-sm font-extrabold text-forest">{{ organizationInitials }}</span>
           <span class="min-w-0 flex-1">
-            <span class="block truncate text-sm font-semibold">{{ organization.name }}</span>
+            <span class="block truncate text-sm font-semibold">{{ activeOrganization.organizationName }}</span>
             <span class="block text-[11px] text-white/55">Vereinskonto</span>
           </span>
-          <ChevronDown :size="15" class="text-white/50" />
-        </button>
-        <div class="mx-2 my-1 h-px bg-white/10" />
-        <label class="relative block">
-          <span class="sr-only">Abteilung auswählen</span>
-          <select v-model="department" class="focus-ring w-full appearance-none rounded-lg bg-transparent py-2 pl-2 pr-8 text-xs font-medium text-white/80">
-            <option v-for="item in departments" :key="item" :value="item" class="text-ink">{{ item }}</option>
-          </select>
-          <ChevronDown :size="14" class="pointer-events-none absolute right-2 top-2.5 text-white/50" />
-        </label>
+        </div>
+        <template v-if="activeOrganization.departments.length">
+          <div class="mx-2 my-1 h-px bg-white/10" />
+          <label class="relative block">
+            <span class="sr-only">Abteilung auswählen</span>
+            <select :value="scope?.departmentId" class="focus-ring w-full appearance-none rounded-lg bg-transparent py-2 pl-2 pr-8 text-xs font-medium text-white/80" @change="selectDepartment(($event.target as HTMLSelectElement).value)">
+              <option v-for="item in activeOrganization.departments" :key="item.id" :value="item.id" class="text-ink">{{ item.name }}</option>
+            </select>
+            <ChevronDown :size="14" class="pointer-events-none absolute right-2 top-2.5 text-white/50" />
+          </label>
+        </template>
       </div>
 
       <NuxtLink to="/erstellen" class="focus-ring mb-6 flex items-center justify-center gap-2 rounded-xl bg-lime px-4 py-3 text-sm font-bold text-forest transition hover:-translate-y-0.5 hover:bg-[#d5ff6c]">
@@ -77,9 +111,9 @@ const organizationNav = [
       </nav>
 
       <div class="mt-auto flex items-center gap-3 border-t border-white/10 px-2 pt-4">
-        <span class="grid h-9 w-9 place-items-center rounded-full bg-[#d2c7ff] text-xs font-bold text-[#3c3260]">LM</span>
-        <span class="min-w-0 flex-1"><span class="block truncate text-xs font-semibold">Lena Müller</span><span class="block text-[10px] text-white/45">Social Managerin</span></span>
-        <button class="focus-ring rounded-lg p-1.5 text-white/45 hover:text-white"><Settings :size="15" /></button>
+        <span class="grid h-9 w-9 place-items-center rounded-full bg-[#d2c7ff] text-xs font-bold text-[#3c3260]">{{ userInitials }}</span>
+        <span class="min-w-0 flex-1"><span class="block truncate text-xs font-semibold">{{ session?.displayName }}</span><span class="block text-[10px] text-white/45">{{ topRoleLabel }}</span></span>
+        <button class="focus-ring rounded-lg p-1.5 text-white/45 hover:text-white" aria-label="Abmelden" @click="logout"><LogOut :size="15" /></button>
       </div>
     </aside>
 
