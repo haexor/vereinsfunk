@@ -198,7 +198,7 @@ Neuer Endpunkt `GET /v1/analytics/posts?from&to&sort=reach|likes|comments` für 
 - Adaptertests gegen aufgezeichnete Antworten: Instagram-Feed-Bild, Instagram-Reel, Facebook-Seitenbeitrag; fehlende Kennzahl wird `null`, nicht `0`; unbekannte Schlüssel werden verworfen und gezählt; 429 mit `retry_after` wird korrekt gelesen; 400 mit Berechtigungsfehler wird als `permission_denied` klassifiziert.
 - Aggregationstests: Aggregat nutzt den letzten Schnappschuss je Publikation, nicht die Summe; die `*_available`-Zähler stimmen je Kennzahl und weichen voneinander ab, wenn eine Publikation `saves` nicht liefert; Publikation ohne Werte senkt keine Summe.
 - pgTAP: zwei Schnappschüsse mit gleichem `collected_at` verstoßen gegen den Unique-Index; Metriken eines fremden Vereins sind unsichtbar; Löschen einer Publikation entfernt ihre Metriken.
-- Workflow-Tests: alle sechs Stufen werden geplant; doppelte Auslösung erzeugt keinen zweiten Abruf; `rate_limited` plant neu statt zu wiederholen; nach +30 Tagen wird nichts mehr geplant.
+- Workflow-Tests: alle sechs Stufen werden geplant; doppelte Auslösung erzeugt keinen zweiten Abruf; `rate_limited` plant neu statt zu wiederholen; nach +30 Tagen wird nichts mehr geplant; **der Insights-Schlüssel einer Publikation ist verschieden vom Veröffentlichungsschlüssel derselben Publikation** — mit `'publish'` als Kind wären sie gleich, und der Insights-Abruf würde als bereits erledigt gelten und nie laufen.
 - manuell mit Meta-Testkonto: einen Beitrag veröffentlichen, nach einer Stunde liegt ein Schnappschuss vor, die Zahlen entsprechen der Meta-Oberfläche. Diese Gegenprobe ist unverzichtbar — eine Zahl, die von der Plattformansicht abweicht, kostet mehr Vertrauen als eine fehlende.
 
 ## Risiken und offene Entscheidungen

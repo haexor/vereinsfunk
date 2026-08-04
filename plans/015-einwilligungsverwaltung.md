@@ -143,8 +143,13 @@ create table public.consent_requests (
   check ((status in ('sent')) = (responded_at is null)),
   foreign key (organization_id, directory_person_id)
     references public.directory_people(organization_id, id) on delete cascade,
+  -- restrict, nicht set null: der CHECK oben bindet status = 'granted' an eine
+  -- vorhandene Einwilligungszeile. Ein SET NULL wuerde ihn verletzen und die
+  -- Loeschung mit einer schwer lesbaren CHECK-Meldung scheitern lassen. Eine
+  -- erteilte Einwilligung ist ohnehin ein Nachweis und wird nicht geloescht,
+  -- sondern widerrufen oder abgeloest -- restrict sagt genau das.
   foreign key (organization_id, consent_record_id)
-    references public.consent_records(organization_id, id) on delete set null (consent_record_id)
+    references public.consent_records(organization_id, id) on delete restrict
 );
 
 create unique index consent_requests_open_unique
@@ -250,7 +255,8 @@ Im Medien-Review (Paket 002/003) wird je Gesichtsregion die Zuordnung zu einer P
 - `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm db:reset`, `pnpm db:test`
 - Domain-Tests für `evaluateConsent`: jeder Blocker einzeln; Umfangsprüfung für Plattform, Zweck, Medienart, Kontext, Abteilung; Grenzfälle an `valid_from` und `valid_until`; Widerruf gewinnt gegen jede Gültigkeit; **eine abgelöste Zeile ist nie gültig, auch wenn sie sonst jede Prüfung bestehen würde, und die Nachfolgerzeile mit engerem Umfang blockiert**; `person_left` je nach Richtlinie.
 - Gate-Tests: Bild mit Kind ohne Einwilligung ist nicht freigebbar; mit gültiger Einwilligung freigebbar; mit Einwilligung nur für Facebook ist ein Instagram-Beitrag nicht freigebbar; bei `namingAllowed = false` blockiert ein Name im Text.
-- pgTAP: Einwilligung mit `signer_role = 'guardian'` ohne `guardian_confirmed` verstößt gegen CHECK; `face_regions` mit `decision = 'consented'` ohne `consent_record_id` verstößt gegen den bestehenden CHECK; Widerruf invalidiert die verknüpfte `approval_request`; zweite offene Anfrage für gleiche Person und Adresse verstößt gegen den Unique-Index; `status = 'granted'` ohne `consent_record_id` verstößt gegen CHECK; eine zweite Zeile, die dieselbe Einwilligung ablöst, verstößt gegen den Unique-Index; `source_id` bei `origin = 'paper'` verstößt gegen CHECK.
+- pgTAP: Einwilligung mit `signer_role = 'guardian'` ohne `guardian_confirmed` verstößt gegen CHECK; `face_regions` mit `decision = 'consented'` ohne `consent_record_id` verstößt gegen den bestehenden CHECK; Widerruf invalidiert die verknüpfte `approval_request`; zweite offene Anfrage für gleiche Person und Adresse verstößt gegen den Unique-Index; `status = 'granted'` ohne `consent_record_id` verstößt gegen CHECK; `status = 'sent'` mit gesetztem `responded_at` verstößt gegen CHECK und `status = 'declined'` ohne `responded_at` ebenso; eine zweite Zeile, die dieselbe Einwilligung ablöst, verstößt gegen den Unique-Index; eine Einwilligung, die sich selbst ablöst, verstößt gegen CHECK; `source_id` bei `origin = 'paper'` verstößt gegen CHECK; eine Quelle aus einem **fremden** Verein als `source_id` verstößt gegen den zusammengesetzten Fremdschlüssel.
+- pgTAP zum Löschverhalten: Löschen der ablösenden Einwilligung lässt die abgelöste bestehen und setzt nur `superseded_by` auf `null`, `organization_id` bleibt gesetzt; eine Einwilligung mit erteilter Anfrage ist **nicht** löschbar (`restrict`) — die Anfrage bleibt beweiskräftig; Löschen der Quelle einer importierten Einwilligung setzt nur `source_id` und behält `origin = 'imported'`.
 - Sicherheitstests für die öffentlichen Seiten: ungültiges, abgelaufenes und schon beantwortetes Token liefern **dieselbe** Antwort; Rate-Limit greift; die Seite gibt außer der betroffenen Person und dem Vereinsnamen keine Daten preis; `noindex` gesetzt.
 - manuell: Papiererklärung hinterlegen, Kind auf einem Bild zuordnen, Beitrag wird freigebbar; Widerruf auslösen, offene Freigabe verschwindet, geplante Publikation wird storniert, veröffentlichter Beitrag erscheint in der Prüfliste.
 

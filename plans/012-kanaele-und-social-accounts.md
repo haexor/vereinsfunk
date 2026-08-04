@@ -218,7 +218,7 @@ Neue Seite `pages/kanaele.vue`:
 ## Verifikation
 
 - `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm db:reset`, `pnpm db:test`
-- pgTAP: `authenticated` liest keine Zeile aus `social_connection_secrets`; `select token_ciphertext` auf `social_connections` schlägt fehl bzw. die Spalte existiert nicht mehr; `channel_scopes` mit falscher Scope-Kombination verstößt gegen CHECK; Abteilungskanal ohne `owner_department_id` verstößt gegen CHECK.
+- pgTAP: `authenticated` liest keine Zeile aus `social_connection_secrets`; `select token_ciphertext` auf `social_connections` schlägt fehl bzw. die Spalte existiert nicht mehr; `channel_scopes` mit falscher Scope-Kombination verstößt gegen CHECK; **zwei vereinsweite `channel_scopes`-Zeilen für denselben Kanal verstoßen gegen den Unique-Index** — mit `NULL` in `department_id` und `team_id`, also genau dem Fall, den ein gewöhnlicher Unique-Key durchlässt; Abteilungskanal ohne `owner_department_id` verstößt gegen CHECK.
 - `packages/secrets`-Tests: Runde durch `seal`/`open`; Entschlüsselung mit falscher `keyVersion` schlägt fehl; Entschlüsselung mit fremder AAD schlägt fehl; verändertes Ciphertext-Byte schlägt fehl (GCM-Auth-Tag); ein aus dem Backfill übernommenes Geheimnis ohne AAD ist lesbar und wird von der Rotation auf die aktuelle Form gehoben.
 - Migrationstest: eine bestehende Verbindung mit Token behält nach der Migration ihr Geheimnis in `social_connection_secrets`; ein künstlich unterbrochener Backfill lässt die Migration scheitern statt die Spalten zu entfernen.
 - API-Tests: Callback mit manipuliertem `state` → 400; Abteilungskanal bei verbotener Richtlinie → 403; Einplanen auf nicht freigegebenem Kanal → 409; Einplanen auf Kanal mit `action_required` → 409.
