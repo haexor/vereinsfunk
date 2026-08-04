@@ -58,7 +58,7 @@ Nicht enthalten: Kanalverbindungen (012 — hier wird festgelegt, **welche** Kan
 
 Jeder Knoten kann **eine** Prüfstufe für alles unter sich verlangen. Die Route eines Beitrags ist die Liste dieser Stufen, geordnet von innen nach außen:
 
-```
+```text
 Beitrag entsteht im Team "E-Jugend" (Abteilung Fußball, Verein SV Nordstadt)
 
 Stufe 1  Team E-Jugend      → benannt: Trainer
@@ -221,13 +221,21 @@ create table public.member_review_trust (
   check ((scope = 'organization' and department_id is null and team_id is null)
       or (scope = 'department'   and department_id is not null and team_id is null)
       or (scope = 'team'         and department_id is not null and team_id is not null)),
-  unique (organization_id, scope,
-    coalesce(department_id, '00000000-0000-0000-0000-000000000000'::uuid),
-    coalesce(team_id, '00000000-0000-0000-0000-000000000000'::uuid), user_id),
   foreign key (organization_id, department_id)
     references public.departments(organization_id, id) on delete cascade,
   foreign key (organization_id, department_id, team_id)
     references public.teams(organization_id, department_id, id) on delete cascade
+);
+
+-- Als Index, nicht als UNIQUE-Constraint: PostgreSQL erlaubt Ausdruecke wie
+-- coalesce() nur in Indexdefinitionen. Und ohne die Normalisierung waeren zwei
+-- Zeilen mit NULL-Scope voneinander verschieden -- NULL ist in einem Unique-Key
+-- nicht gleich NULL.
+create unique index member_review_trust_unique on public.member_review_trust (
+  organization_id, scope,
+  coalesce(department_id, '00000000-0000-0000-0000-000000000000'::uuid),
+  coalesce(team_id, '00000000-0000-0000-0000-000000000000'::uuid),
+  user_id
 );
 ```
 
@@ -257,14 +265,30 @@ create table public.approval_stages (
     references public.approval_requests(organization_id, id) on delete cascade
 );
 
+-- approval_stages traegt approval_request_id, damit der Fremdschluessel unten
+-- die Stufe an *dieselbe* Anfrage bindet.
+alter table public.approval_stages
+  add constraint approval_stages_request_scoped
+  unique (organization_id, approval_request_id, id);
+
 alter table public.approval_decisions add column approval_stage_id uuid;
+-- Bestandsentscheidungen einer Stufe zuordnen, bevor die Spalte pflichtig wird:
+-- je Anfrage entsteht eine einzige Stufe aus required_approvals, und jede
+-- vorhandene Entscheidung wird ihr zugewiesen.
+update public.approval_decisions set approval_stage_id = ... ;
+alter table public.approval_decisions alter column approval_stage_id set not null;
+
+-- Dreispaltig, nicht zweispaltig: sonst laesst sich eine Entscheidung an eine
+-- Stufe einer *fremden* Anfrage haengen, und die Route wird umgehbar.
 alter table public.approval_decisions add constraint approval_decisions_stage_fk
-  foreign key (organization_id, approval_stage_id)
-  references public.approval_stages(organization_id, id) on delete cascade;
+  foreign key (organization_id, approval_request_id, approval_stage_id)
+  references public.approval_stages(organization_id, approval_request_id, id) on delete cascade;
 alter table public.approval_decisions drop constraint approval_decisions_approval_request_id_decided_by_key;
 alter table public.approval_decisions
   add constraint approval_decisions_stage_unique unique (approval_stage_id, decided_by);
 ```
+
+`approval_stage_id` muss `not null` werden, und das ist keine Kosmetik: `unique (approval_stage_id, decided_by)` greift bei `NULL` nicht, weil NULL in einem Unique-Key von jedem anderen NULL verschieden ist. Eine Person könnte also beliebig viele Entscheidungen ohne Stufenbezug schreiben — und da der alte `unique (approval_request_id, decided_by)` in derselben Migration fällt, gäbe es dann gar keine Sicherung mehr gegen Mehrfachzustimmung.
 
 `reviewer_snapshot` friert die zum Zeitpunkt der Routenauflösung aufgelösten Prüfer ein — als Namen und IDs, nicht als Referenzregel. Sonst ändert eine Rollenänderung mitten in einer laufenden Freigabe, wer zustimmen darf. Das ist dieselbe Immutabilitätslogik, die `ADR-003` für Inhalte fordert.
 
@@ -283,7 +307,27 @@ create table public.channel_quotas (
   max_publications integer not null check (max_publications between 1 and 1000),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (organization_id, scope, department_id, team_id, social_connection_id, period)
+  check ((scope = 'organization' and department_id is null and team_id is null)
+      or (scope = 'department'   and department_id is not null and team_id is null)
+      or (scope = 'team'         and department_id is not null and team_id is not null)),
+  foreign key (organization_id, department_id)
+    references public.departments(organization_id, id) on delete cascade,
+  foreign key (organization_id, department_id, team_id)
+    references public.teams(organization_id, department_id, id) on delete cascade,
+  foreign key (organization_id, social_connection_id)
+    references public.social_connections(organization_id, id) on delete cascade
+);
+
+-- Dieselbe Normalisierung wie bei member_review_trust, aus demselben Grund: ein
+-- vereinsweites Kontingent hat NULL in drei Spalten, und ohne coalesce() liesse
+-- die Datenbank zwei davon gleichzeitig zu. Die effektive Grenze waere dann
+-- nicht eindeutig bestimmbar.
+create unique index channel_quotas_unique on public.channel_quotas (
+  organization_id, scope,
+  coalesce(department_id, '00000000-0000-0000-0000-000000000000'::uuid),
+  coalesce(team_id, '00000000-0000-0000-0000-000000000000'::uuid),
+  coalesce(social_connection_id, '00000000-0000-0000-0000-000000000000'::uuid),
+  period
 );
 ```
 
@@ -449,6 +493,10 @@ Vertrauen je Mitglied liegt bei der Mitgliederliste aus Paket 010, nicht in den 
   - derselbe Prüfer liest **nicht** `media_assets`, **nicht** `face_regions`, **nicht** `submissions`
   - nach `skipped` verliert er den Zugriff wieder
   - `approval_decisions` zweimal auf derselben Stufe verstößt gegen den Unique-Index
+  - `approval_decisions` mit einer Stufe, die zu einer **anderen** `approval_request` gehört, verstößt gegen den Fremdschlüssel
+  - `approval_decisions` ohne `approval_stage_id` verstößt gegen `not null`
+  - zwei `channel_quotas` für denselben Scope und dieselbe Periode verstoßen gegen den Unique-Index, auch wenn beide vereinsweit sind (`NULL` in allen Scope-Spalten)
+  - zwei `member_review_trust`-Zeilen für dieselbe Person auf Vereinsebene verstoßen gegen den Unique-Index
   - `review_mode = 'named'` ohne `review_required = true` verstößt gegen CHECK
   - `policy_reviewers` mit gemischter Feldkombination verstößt gegen CHECK
   - `count_publications_in_period` zählt `failed` und `cancelled` nicht

@@ -8,11 +8,11 @@ Die Auswertung zeigt echte Zahlen aus dem eigenen System: wie viele Beiträge in
 
 Geplant auf `b5c2eda6` am 2026-08-04.
 
-- `apps/web/app/pages/auswertung.vue:2` ist eine Zeile: vier erfundene Kennzahlen („Reichweite 24.812 +18 %“, „Interaktionen 1.946 +11 %“, „Profilaufrufe 683 +24 %“, „Link-Klicks 214 +8 %“) und ein Array `bars=[38,52,44,68,61,78,74,88,65,92,81,96]` als „Reichweitenentwicklung nach Woche“. Alle vier Kennzahlen sind Plattformwerte, die es ohne Meta-Anbindung nicht geben kann.
+- `apps/web/app/pages/auswertung.vue:1` ist eine Zeile: vier erfundene Kennzahlen („Reichweite 24.812 +18 %“, „Interaktionen 1.946 +11 %“, „Profilaufrufe 683 +24 %“, „Link-Klicks 214 +8 %“) und ein Array `bars=[38,52,44,68,61,78,74,88,65,92,81,96]` als „Reichweitenentwicklung nach Woche“. Alle vier Kennzahlen sind Plattformwerte, die es ohne Meta-Anbindung nicht geben kann.
 - Der Balkenchart hat keine Achsenbeschriftung außer „W1“–„W12“, keine Skala, keinen Bezugszeitraum und keine Datenquelle. Er ist Dekoration.
-- `apps/web/app/pages/index.vue:113-118` wiederholt dieselbe Erfindung im Dashboard, inklusive „Veröffentlicht 18 diesen Monat +12 %“.
+- `apps/web/app/pages/index.vue:10-15` wiederholt dieselbe Erfindung im Dashboard, inklusive „Veröffentlicht 18 diesen Monat +12 %“.
 - Es gibt **keine Analytics-Tabelle**, kein Aggregat, keine Query und keinen Endpunkt.
-- `packages/contracts/src/index.ts:135` enthält `'collect-analytics'` bereits in `WorkflowNameSchema` — der Workflow ist vorgesehen und nicht implementiert.
+- `packages/contracts/src/index.ts:82` enthält `'collect-analytics'` bereits in `WorkflowNameSchema` — der Workflow ist vorgesehen und nicht implementiert.
 - Auswertbare Rohdaten sind reichlich vorhanden: `posts` mit `status`, `created_at`, `scheduled_for` (`202608020001:151-170`); `submissions` mit `preset_slug`, `communication_goal`, `requested_formats` (`202608030001:4-7`); `post_versions` mit `version_number` (`202608020001:172-192`); `approval_requests` und `approval_decisions` mit `decision` und `reason` (`:200-232`); `publications` mit `status` und `scheduled_for` (`202608030001:92-98`); `workflow_runs` mit `technical_status`, `attempt`, `error_class` (`:81-85`).
 - Indizes für Zeitreihenabfragen sind teilweise vorhanden: `posts_scope_status_idx (organization_id, department_id, status, created_at desc)` (`202608020001:447`), `submissions_scope_idx` (`:446`). Für Statusübergänge fehlt jede Grundlage.
 - **Der entscheidende Mangel**: es gibt keine Statushistorie. `posts.status` ist ein aktueller Wert. Wie lange ein Beitrag in `awaiting_approval` lag, ist heute nicht rekonstruierbar. Ohne Historie sind Durchlaufzeiten nicht messbar.
@@ -163,9 +163,9 @@ export function computeTrend(current: RangeMetrics, previous: RangeMetrics | nul
 
 ### 2. Aggregationsjob
 
-- Hatchet-Cron `aggregate-metrics`, täglich kurz nach Mitternacht je Vereinszeitzone, plus Nachberechnung eines Zeitraums auf Anfrage. Der Workflow-Name muss in `WorkflowNameSchema` ergänzt werden (`packages/contracts/src/index.ts:135`).
+- Hatchet-Cron `aggregate-metrics`, täglich kurz nach Mitternacht je Vereinszeitzone, plus Nachberechnung eines Zeitraums auf Anfrage. Der Workflow-Name muss in `WorkflowNameSchema` ergänzt werden (`packages/contracts/src/index.ts:82`).
 - Idempotent: dasselbe Datum zweimal zu rechnen erzeugt dasselbe Ergebnis (`insert ... on conflict do update`). `idempotency_keys` (`202608020001:234-244`) ist dafür vorhanden.
-- Fairness-Key `organizationId`, damit ein großer Verein die anderen nicht blockiert — analog zu `fairnessKey` in `apps/worker/src/workflows.ts:361`.
+- Fairness-Key `organizationId`, damit ein großer Verein die anderen nicht blockiert — analog zu `fairnessKey` in `apps/worker/src/workflows.ts:16`.
 - Nachricht enthält nur `organizationId`, `day`, `correlationId`. Keine Kennzahlen in der Nachricht, entsprechend `ADR-002`.
 
 ### 3. Endpunkte
@@ -198,11 +198,11 @@ Für die Darstellung gilt: eine Kennzahl ohne Bezugsgröße ist keine Aussage. J
 
 | Ort | Heute | Danach |
 |---|---|---|
-| `pages/auswertung.vue:2` | vier erfundene Plattformkennzahlen mit erfundenen Trends | echte interne Kennzahlen; Plattformwerte als benannt leerer Bereich |
-| `pages/auswertung.vue:2` | `bars=[38,52,...]` ohne Skala und Quelle | echte Zeitreihe mit Achsen und `coverage` |
-| `pages/auswertung.vue:3` | „Die letzten 30 Tage über alle Abteilungen“ als fester Text | tatsächlich gewählter Zeitraum und Scope |
-| `pages/index.vue:113-118` | Kennzahlen inkl. „Reichweite 24,8k +18 %“ | drei echte Zählwerte aus `GET /v1/analytics/summary` |
-| `pages/index.vue:206-209` | „18 / 24 Beiträge“, „3 / 4 Abteilungen aktiv“ | entfällt bzw. echte aktive Einheiten ohne erfundenes Ziel |
+| `pages/auswertung.vue:1` | vier erfundene Plattformkennzahlen mit erfundenen Trends | echte interne Kennzahlen; Plattformwerte als benannt leerer Bereich |
+| `pages/auswertung.vue:1` | `bars=[38,52,...]` ohne Skala und Quelle | echte Zeitreihe mit Achsen und `coverage` |
+| `pages/auswertung.vue:1` | „Die letzten 30 Tage über alle Abteilungen“ als fester Text | tatsächlich gewählter Zeitraum und Scope |
+| `pages/index.vue:10-15` | Kennzahlen inkl. „Reichweite 24,8k +18 %“ | drei echte Zählwerte aus `GET /v1/analytics/summary` |
+| `pages/index.vue:88-95` | „18 / 24 Beiträge“, „3 / 4 Abteilungen aktiv“ | entfällt bzw. echte aktive Einheiten ohne erfundenes Ziel |
 
 ## Verifikation
 

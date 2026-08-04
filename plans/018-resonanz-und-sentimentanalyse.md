@@ -23,7 +23,7 @@ Ohne diese beiden Zusagen ist das Paket nicht verantwortbar, und mit ihnen liefe
 Geplant auf `b5c2eda6` am 2026-08-04.
 
 - Paket 017 liefert `publication_metrics` mit `comments` als Zahl. Der Sprung von der Zahl zum Inhalt ist der Gegenstand dieses Pakets.
-- `packages/config/src/index.ts:171` enthält `OPENAI_API_KEY` als optionales Secret. Es gibt **keinen LLM-Adapter im Code** — `packages/content-engine` liefert ausschließlich `FakeContentGenerator` (`src/index.ts:200-224`). Das erste echte Modell im Projekt wäre entweder hier oder in Paket 001; die Adaptergrenze muss für beide taugen.
+- `packages/config/src/index.ts:17` enthält `OPENAI_API_KEY` als optionales Secret. Es gibt **keinen LLM-Adapter im Code** — `packages/content-engine` liefert ausschließlich `FakeContentGenerator` (`src/index.ts:18-42`). Das erste echte Modell im Projekt wäre entweder hier oder in Paket 001; die Adaptergrenze muss für beide taugen.
 - `packages/contracts/src/index.ts:94` `SafetyFlagSchema` kennt `minor`, `missing_consent`, `uncertain_fact`, `sensitive_data`. Für Kommentarbewertung braucht es eigene Kategorien; diese Flags sind für Inhalte gedacht, nicht für Reaktionen.
 - `plans/README.md` schließt „Gesichtserkennung, Personenabgleich oder biometrische Datenhaltung“ aus. Der Geist dieser Regel — keine Profile über Personen — gilt hier analog und wird oben ausdrücklich übernommen.
 - `apps/api/src/app.ts:44` redigiert bereits `'*.access_token'` und `'*.media'` in Logs. Kommentartexte gehören in dieselbe Liste, sobald sie durch die API laufen.
@@ -158,6 +158,8 @@ export interface SentimentAnalyzer {
 }
 ```
 
+- **Redaktion vor der Übermittlung, nicht danach.** `analyze()` bekommt `body` und schickt ihn an das Modell; die Kategorie `personal_data` kommt aus derselben Antwort **zurück**. Damit ist der Kommentar längst übermittelt, wenn festgestellt wird, dass er Namen, Adressen oder Kontaktdaten Dritter enthält — die Kategorie ist ein Befund, keine Kontrolle. Vor dem Aufruf läuft deshalb eine regelbasierte Vorredaktion: E-Mail-Adressen, Telefonnummern, Straßen mit Hausnummer, URLs und die Namen aus `directory_people` desselben Vereins werden durch Marker wie `[NAME]`, `[MAIL]` ersetzt. Was ersetzt wurde, wird gezählt und protokolliert, nicht im Klartext. Die Bewertung arbeitet auf dem redigierten Text; für die Aufmerksamkeitsliste bleibt der Originaltext lokal und wird dort angezeigt.
+  - Das ist bewusst grob und fängt nicht jeden Fall. Es senkt die Menge übermittelter Personendaten deutlich, und mehr ist ohne genau die Personenerkennung nicht erreichbar, die dieses Paket ausschließt. Ein Verein, der auch dieses Restrisiko nicht tragen will, braucht das lokal betriebene Modell — deshalb bleibt die Adaptergrenze in beide Richtungen offen.
 - Structured Output per Zod-Schema, damit die Antwort validiert und nicht geparst wird. Ungültige Antworten werden verworfen und als `unclear` protokolliert, nie geraten.
 - Stapelverarbeitung: 20 Kommentare pro Aufruf senkt Kosten deutlich. Die Zuordnung erfolgt über mitgegebene IDs, und eine Antwort mit fehlenden oder zusätzlichen IDs wird komplett verworfen — teilweise Zuordnung ist die stille Fehlerquelle bei Stapeln.
 - **Prompt-Regeln**: bewerte den Kommentar in Bezug auf den Beitrag, nicht die Person; gib `unclear` bei Ironie, Dialekt oder zu kurzem Text; erfinde keine Kategorie; melde `personal_data`, wenn der Kommentar Namen, Adressen oder Kontaktdaten Dritter enthält.
@@ -188,6 +190,7 @@ Dieser Job ist keine Aufräumarbeit, sondern die Einhaltung einer Zusage. Er geh
 - `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm db:reset`, `pnpm db:test`
 - Adaptertests gegen aufgezeichnete Antworten; Autorreferenz erscheint nirgends im Klartext; derselbe Autor erhält an zwei Publikationen verschiedene Hashes.
 - Analyzer-Tests: Stapel mit fehlender ID in der Antwort wird vollständig verworfen; ungültige Kategorie wird verworfen; Kostengrenze stoppt die Verarbeitung; deterministischer Fake liefert stabile Ergebnisse.
+- Redaktionstests: ein Kommentar mit E-Mail-Adresse, Telefonnummer und dem Namen eines Kindes aus dem Verzeichnis erreicht den Adapter ausschließlich mit Markern — geprüft am Aufrufargument, nicht am Ergebnis. Das ist der Test, der die Zusage dieses Abschnitts trägt.
 - Löschtests: nach `purge_after` ist `body` `null`, das Aggregat unverändert, die Bewertung erhalten; **eine Volltextsuche über alle Tabellen findet den Text nicht mehr.**
 - pgTAP: Kommentare sind ohne `analytics.view` unsichtbar; Kommentare sind bei deaktiviertem Opt-in unsichtbar; `body` ist ohne erweiterte Berechtigung nicht lesbar; Kommentare eines fremden Vereins sind unsichtbar.
 - manuell: Beitrag mit Kommentaren auf einem Testkonto, Abruf, Bewertung, Resonanzanzeige; ein beleidigender Testkommentar erscheint in der Aufmerksamkeitsliste; Löschfrist manuell vordatieren, Text verschwindet, Auswertung bleibt.

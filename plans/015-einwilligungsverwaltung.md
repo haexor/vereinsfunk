@@ -15,7 +15,7 @@ Geplant auf `b5c2eda6` am 2026-08-04.
 - `packages/domain/src/index.ts:108-117` `evaluateMediaGate` erwartet je Gesicht ein `consentValid?: boolean`. **Wer diesen Wert bestimmt, ist bisher nicht implementiert.** Genau das liefert dieses Paket.
 - `:112` blockiert bei `decision === 'consented' && !consentValid` mit `consent_invalid`; `:115` blockiert bei minderjähriger Person ohne `minorReviewConfirmed` mit `minor_review_required`. Die Blocker existieren, sie werden nur nie befüllt.
 - `packages/domain/src/index.ts:119-123` `assertApprovalSnapshot` verlangt Derivat-Hashes bei jeder Freigabe. `approval_media_snapshots` (`202608030001:69-73`) hält sie fest. Ein Widerruf muss über diesen Weg auf veröffentlichte Inhalte zurückschließen können.
-- `apps/web/app/pages/freigaben.vue:94-97` behauptet in einer Karte „Minderjährige · Einwilligung geprüft“ als hartkodierten Text. Es gibt nichts, was das prüft.
+- `apps/web/app/pages/freigaben.vue:3-6` behauptet in einer Karte „Minderjährige · Einwilligung geprüft“ als hartkodierten Text. Es gibt nichts, was das prüft.
 - Der Trigger `invalidate_approvals_for_media_change` (`202608030001:110-111`) invalidiert Freigaben bei Änderung eines Derivats. Das Muster für „Widerruf invalidiert Freigaben“ ist damit vorhanden und wird übernommen.
 
 ## Scope
@@ -56,7 +56,9 @@ export function evaluateConsent(record, at: Date, required: RequiredConsent):
   { valid: boolean; reasons: readonly ConsentBlocker[] }
 ```
 
-Blocker: `revoked`, `not_yet_valid`, `expired`, `guardian_missing`, `purpose_not_covered`, `platform_not_covered`, `media_kind_not_covered`, `context_not_covered`, `department_not_covered`, `person_left`.
+Blocker: `revoked`, `superseded`, `not_yet_valid`, `expired`, `guardian_missing`, `purpose_not_covered`, `platform_not_covered`, `media_kind_not_covered`, `context_not_covered`, `department_not_covered`, `person_left`.
+
+`superseded` gehört zwingend dazu und wäre leicht zu vergessen: weil eine Einwilligung nie bearbeitet, sondern verkettet wird, bleibt die alte Zeile mit ihrem alten — womöglich weiteren — Umfang gültig, solange nichts sie ausschließt. Gültig ist ausschließlich die Zeile am Ende der Kette. Eine Auswertung, die eine Zeile mit gesetztem `superseded_by` akzeptiert, veröffentlicht auf Grundlage einer zurückgezogenen Fassung.
 
 `person_left` ist der Grund, warum Paket 014 vorausgeht: verlässt eine Person den Verein, ist die Grundlage für weitere Veröffentlichung in der Regel entfallen. Ob dies eine Einwilligung automatisch beendet, ist eine bewusste Vereinsentscheidung und wird als Richtlinie in `policy_settings` abgebildet (`consent_expires_on_leave boolean`), nicht fest verdrahtet. Bereits veröffentlichte Beiträge werden davon nicht rückwirkend rechtswidrig, aber neue Verwendung wird blockiert.
 
@@ -70,7 +72,7 @@ alter table public.consent_records
     check (jsonb_typeof(scope_structured) = 'object'),
   add column origin text not null default 'paper'
     check (origin in ('paper','digital','imported')),
-  add column source_id uuid,                        -- bei origin = 'imported'
+  add column source_id uuid,                        -- nur bei origin = 'imported'
   add column signed_at date,
   add column signer_name text,
   add column signer_role text check (signer_role in ('self','guardian')),
@@ -78,13 +80,32 @@ alter table public.consent_records
   add column revocation_reason text,
   add column superseded_by uuid;
 
+-- Spaltenliste bei SET NULL: ohne sie setzt PostgreSQL alle Spalten des
+-- Fremdschluessels auf NULL, also auch organization_id -- die ist not null.
 alter table public.consent_records add constraint consent_records_superseded_fk
   foreign key (organization_id, superseded_by)
-  references public.consent_records(organization_id, id) on delete set null;
+  references public.consent_records(organization_id, id) on delete set null (superseded_by);
 
 -- Minderjährige brauchen eine bestätigte Erziehungsberechtigung.
 alter table public.consent_records add constraint consent_records_guardian_check
   check (signer_role is distinct from 'guardian' or guardian_confirmed);
+
+-- Eine Einwilligung loest sich nicht selbst ab, und zwei Nachfolger derselben
+-- Zeile machen unentscheidbar, welche Version gilt.
+alter table public.consent_records add constraint consent_records_not_self_superseded
+  check (superseded_by is null or superseded_by <> id);
+create unique index consent_records_superseded_unique
+  on public.consent_records (organization_id, superseded_by)
+  where superseded_by is not null;
+
+-- source_id gehoert zur Herkunft: mandantengetreu verankert und nur bei Import.
+alter table public.consent_records add constraint consent_records_source_fk
+  foreign key (organization_id, source_id)
+  references public.integration_sources(organization_id, id) on delete set null (source_id);
+-- Nur in dieser Richtung: eine importierte Einwilligung behaelt ihre Herkunft,
+-- auch wenn die Quelle spaeter geloescht wird und source_id auf NULL faellt.
+alter table public.consent_records add constraint consent_records_origin_source_check
+  check (source_id is null or origin = 'imported');
 ```
 
 `superseded_by` statt Änderung: eine Einwilligung wird **nie bearbeitet**. Ändert sich der Umfang, entsteht eine neue Zeile und die alte wird verkettet. Das ist dasselbe Prinzip wie bei `post_versions` und der einzige Weg, im Streitfall zu belegen, was wann galt.
@@ -115,10 +136,15 @@ create table public.consent_requests (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (organization_id, id),
+  -- 'granted' ohne Einwilligungszeile waere eine Anfrage, die als erteilt
+  -- erscheint, ohne dass etwas erteilt wurde. Beides entsteht in einer
+  -- Transaktion; der CHECK ist die Sicherung dahinter.
+  check ((status = 'granted') = (consent_record_id is not null)),
+  check ((status in ('sent')) = (responded_at is null)),
   foreign key (organization_id, directory_person_id)
     references public.directory_people(organization_id, id) on delete cascade,
   foreign key (organization_id, consent_record_id)
-    references public.consent_records(organization_id, id) on delete set null
+    references public.consent_records(organization_id, id) on delete set null (consent_record_id)
 );
 
 create unique index consent_requests_open_unique
@@ -143,7 +169,7 @@ alter table public.policy_settings add column consent_validity_months integer ch
 
 Die Kette ist heute vollständig vorhanden und nur nicht verbunden:
 
-```
+```text
 face_regions.decision = 'consented' → consent_record_id (CHECK erzwingt es)
   → evaluateConsent(record, now, requiredConsent(post))
   → consentValid je Gesicht
@@ -155,7 +181,7 @@ face_regions.decision = 'consented' → consent_record_id (CHECK erzwingt es)
 
 Der letzte Punkt ist der schwierigste und wird bewusst einfach gelöst: enthält der Beitragstext den Vor- oder Nachnamen einer verknüpften Person, während `namingAllowed = false` gilt, entsteht ein Blocker mit genauer Fundstelle. Kein NLP, nur ein Namensabgleich gegen die verknüpften Personen. Falsch positive Treffer sind hinnehmbar, falsch negative nicht.
 
-`evaluateMediaGate` wird um zwei Blocker erweitert: `consent_scope_mismatch` und `naming_not_allowed`. `MediaGateBlockerSchema` (`packages/contracts/src/index.ts:132`) muss mit.
+`evaluateMediaGate` wird um zwei Blocker erweitert: `consent_scope_mismatch` und `naming_not_allowed`. `MediaGateBlockerSchema` (`packages/contracts/src/index.ts:79`) muss mit.
 
 ### 2. Registratur
 
@@ -193,7 +219,7 @@ Ein Widerruf löst eine Kette aus, umgesetzt als Trigger plus Workflow:
 1. Trigger auf `consent_records`: bei gesetztem `revoked_at` werden alle `approval_requests` invalidiert, die über `post_media → media_derivatives → media_assets → face_regions` auf diese Einwilligung zeigen. Das Muster existiert bereits in `invalidate_approvals_for_media_change` (`202608030001:110-111`).
 2. Alle betroffenen Posts mit Status vor `published` gehen auf `changes_requested`. Der bestehende Statusautomat erlaubt diesen Übergang aus `awaiting_approval` (`packages/domain/src/index.ts:28`).
 3. Geplante, noch nicht ausgeführte `publications` werden `cancelled`.
-4. Bereits veröffentlichte Beiträge werden in einer Liste „Prüfung nach Widerruf“ geführt, mit Permalink und der Aktion „auf der Plattform entfernen“. **Automatisches Löschen fremder Inhalte findet nicht statt** — `SocialPublisher.delete` ist optional (`packages/publishing/src/index.ts:275`), und ein Verein muss diese Entscheidung selbst treffen. Die Frist dafür gehört in eine Richtlinie.
+4. Bereits veröffentlichte Beiträge werden in einer Liste „Prüfung nach Widerruf“ geführt, mit Permalink und der Aktion „auf der Plattform entfernen“. **Automatisches Löschen fremder Inhalte findet nicht statt** — `SocialPublisher.delete` ist optional (`packages/publishing/src/index.ts:8`), und ein Verein muss diese Entscheidung selbst treffen. Die Frist dafür gehört in eine Richtlinie.
 5. Alle Schritte erzeugen `audit_events` mit gemeinsamer `correlation_id`.
 
 Ein täglicher Cron behandelt Ablauf statt Widerruf: Einwilligungen, die in 30 Tagen ablaufen, erscheinen als Aufgabe; abgelaufene wirken wie widerrufen für neue Verwendung.
@@ -214,17 +240,17 @@ Im Medien-Review (Paket 002/003) wird je Gesichtsregion die Zuordnung zu einer P
 
 | Ort | Heute | Danach |
 |---|---|---|
-| `pages/freigaben.vue:94-97` | zwei erfundene Beiträge, „Minderjährige · Einwilligung geprüft“ als Text, `image`-Feld mit Fantasietext, `color`-Feld | echte offene Freigaben aus `approval_requests`, echte Blocker aus `evaluateMediaGate`, echte Medienvorschau |
-| `pages/freigaben.vue:98,103` | `approved`-Array im lokalen State, Freigabe ohne Serveraufruf | `approval_decisions`-Insert über die API, echter Mehrfach-Freigabe-Zähler |
+| `pages/freigaben.vue:3-6` | zwei erfundene Beiträge, „Minderjährige · Einwilligung geprüft“ als Text, `image`-Feld mit Fantasietext, `color`-Feld | echte offene Freigaben aus `approval_requests`, echte Blocker aus `evaluateMediaGate`, echte Medienvorschau |
+| `pages/freigaben.vue:7,12` | `approved`-Array im lokalen State, Freigabe ohne Serveraufruf | `approval_decisions`-Insert über die API, echter Mehrfach-Freigabe-Zähler |
 | `consent_records.scope` | reiner Freitext | bleibt als Wiedergabe, ergänzt um prüfbares `scope_structured` |
 | `evaluateMediaGate` `consentValid` | nie befüllt | aus `evaluateConsent` |
 
 ## Verifikation
 
 - `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm db:reset`, `pnpm db:test`
-- Domain-Tests für `evaluateConsent`: jeder Blocker einzeln; Umfangsprüfung für Plattform, Zweck, Medienart, Kontext, Abteilung; Grenzfälle an `valid_from` und `valid_until`; Widerruf gewinnt gegen jede Gültigkeit; `person_left` je nach Richtlinie.
+- Domain-Tests für `evaluateConsent`: jeder Blocker einzeln; Umfangsprüfung für Plattform, Zweck, Medienart, Kontext, Abteilung; Grenzfälle an `valid_from` und `valid_until`; Widerruf gewinnt gegen jede Gültigkeit; **eine abgelöste Zeile ist nie gültig, auch wenn sie sonst jede Prüfung bestehen würde, und die Nachfolgerzeile mit engerem Umfang blockiert**; `person_left` je nach Richtlinie.
 - Gate-Tests: Bild mit Kind ohne Einwilligung ist nicht freigebbar; mit gültiger Einwilligung freigebbar; mit Einwilligung nur für Facebook ist ein Instagram-Beitrag nicht freigebbar; bei `namingAllowed = false` blockiert ein Name im Text.
-- pgTAP: Einwilligung mit `signer_role = 'guardian'` ohne `guardian_confirmed` verstößt gegen CHECK; `face_regions` mit `decision = 'consented'` ohne `consent_record_id` verstößt gegen den bestehenden CHECK; Widerruf invalidiert die verknüpfte `approval_request`; zweite offene Anfrage für gleiche Person und Adresse verstößt gegen den Unique-Index.
+- pgTAP: Einwilligung mit `signer_role = 'guardian'` ohne `guardian_confirmed` verstößt gegen CHECK; `face_regions` mit `decision = 'consented'` ohne `consent_record_id` verstößt gegen den bestehenden CHECK; Widerruf invalidiert die verknüpfte `approval_request`; zweite offene Anfrage für gleiche Person und Adresse verstößt gegen den Unique-Index; `status = 'granted'` ohne `consent_record_id` verstößt gegen CHECK; eine zweite Zeile, die dieselbe Einwilligung ablöst, verstößt gegen den Unique-Index; `source_id` bei `origin = 'paper'` verstößt gegen CHECK.
 - Sicherheitstests für die öffentlichen Seiten: ungültiges, abgelaufenes und schon beantwortetes Token liefern **dieselbe** Antwort; Rate-Limit greift; die Seite gibt außer der betroffenen Person und dem Vereinsnamen keine Daten preis; `noindex` gesetzt.
 - manuell: Papiererklärung hinterlegen, Kind auf einem Bild zuordnen, Beitrag wird freigebbar; Widerruf auslösen, offene Freigabe verschwindet, geplante Publikation wird storniert, veröffentlichter Beitrag erscheint in der Prüfliste.
 

@@ -11,7 +11,7 @@ Geplant auf `b5c2eda6` am 2026-08-04.
 - `supabase/migrations/202608030001_content_media_workflows_publishing.sql:87-91`: `social_connections` existiert vollständig — `platform`, `external_account_id`, `display_name`, `scopes`, `token_ciphertext bytea`, `token_key_version`, `token_expires_at`, `status`, `last_verified_at`, `metadata`. Das Modell ist gut.
 - Es gibt **nur `organization_id`** auf `social_connections`. Kein `department_id`, keine Zuordnungstabelle. Ein Kanal gehört heute zwangsläufig dem ganzen Verein, und jede Abteilung darf jeden Kanal bespielen. Die Anforderung nach abteilungseigenen Kanälen und nach Beschränkung ist nicht abbildbar.
 - Es gibt **keine verantwortliche Person pro Kanal**. `organization_profiles.responsible_person_profile_id` aus Paket 009 gilt vereinsweit; pro Kanal fehlt sie.
-- Es gibt **keinen OAuth-Pfad**. `packages/config/src/index.ts:170-174` kennt `OPENAI_API_KEY`, `PUBLISHING_PROVIDER`, `MIXPOST_BASE_URL`, `MIXPOST_TOKEN` — aber **keine Meta-App-Zugangsdaten**, obwohl `plans/README.md` Mixpost ausdrücklich aus dem MVP ausschließt und `packages/publishing/src/index.ts:284-322` bereits einen direkten `MetaPublisher` enthält. Die Konfiguration passt nicht zur Architekturentscheidung.
+- Es gibt **keinen OAuth-Pfad**. `packages/config/src/index.ts:17-20` kennt `OPENAI_API_KEY`, `PUBLISHING_PROVIDER`, `MIXPOST_BASE_URL`, `MIXPOST_TOKEN` — aber **keine Meta-App-Zugangsdaten**, obwohl `plans/README.md` Mixpost ausdrücklich aus dem MVP ausschließt und `packages/publishing/src/index.ts:19-55` bereits einen direkten `MetaPublisher` enthält. Die Konfiguration passt nicht zur Architekturentscheidung.
 - `token_ciphertext` ist `bytea` mit `token_key_version` — Verschlüsselung ist vorgesehen, aber es existiert **keine Implementierung** und kein Schlüsselmanagement.
 - Für `social_connections` gibt es nur `connections_select` für Vereinsmitglieder (`202608030001:125`) und `select` für `authenticated` (`:131`). **Jedes Vereinsmitglied kann jede Kanalzeile lesen** — inklusive `token_ciphertext`, weil die Policy spaltenblind ist und der Grant die ganze Tabelle umfasst. Das ist der ernsteste Befund dieses Pakets.
 - `apps/web/app/pages/einstellungen.vue:1` behauptet „Instagram Verbunden · @sv_nordstadt“ und „Facebook Verbunden · SV Nordstadt 1921“ als reinen Text.
@@ -59,7 +59,28 @@ alter table public.social_connection_secrets force row level security;
 grant all privileges on public.social_connection_secrets to service_role;
 ```
 
-Maßnahme 2 ist die belastbarere: Spaltenrechte sind leicht durch eine spätere `grant all`-Zeile zu verlieren, eine getrennte Tabelle ohne Policy nicht. Beide umsetzen, dann die Spalten aus `social_connections` entfernen. Ein pgTAP-Test muss belegen, dass `authenticated` aus `social_connection_secrets` keine Zeile liest.
+Maßnahme 2 ist die belastbarere: Spaltenrechte sind leicht durch eine spätere `grant all`-Zeile zu verlieren, eine getrennte Tabelle ohne Policy nicht. Ein pgTAP-Test muss belegen, dass `authenticated` aus `social_connection_secrets` keine Zeile liest.
+
+Zwischen „neue Tabelle anlegen“ und „alte Spalten entfernen“ gehört ein Schritt, der leicht übersehen wird: `social_connections.token_ciphertext` ist `not null` (`202608030001:89`), bestehende Zeilen tragen also echte Tokens. Ein `drop column` ohne Umzug macht jede bestehende Verbindung geheimnislos — Reconnect wird zur Pflicht, und bis dahin schlägt jede Veröffentlichung fehl. Die Migration läuft deshalb in dieser Reihenfolge, in einer Transaktion:
+
+```sql
+insert into public.social_connection_secrets
+  (organization_id, social_connection_id, token_ciphertext, token_key_version)
+select organization_id, id, token_ciphertext, token_key_version
+  from public.social_connections;
+
+-- Abbruch, wenn nicht jede Verbindung ihr Geheimnis mitgenommen hat.
+do $$ begin
+  if (select count(*) from public.social_connections)
+     <> (select count(*) from public.social_connection_secrets)
+  then raise exception 'token backfill incomplete'; end if;
+end $$;
+
+alter table public.social_connections drop column token_ciphertext;
+alter table public.social_connections drop column token_key_version;
+```
+
+Der Backfill kopiert den Ciphertext unverändert; er wird nicht neu verschlüsselt. Die AAD-Bindung an `organizationId` und `socialConnectionId` gilt erst für neu geschriebene Geheimnisse, weshalb `open` beide Formen kennen muss, bis die Rotation einmal durchgelaufen ist. Das ist der eigentliche Zweck des Rotations-Crons und gehört als Testfall dazu.
 
 ## Datenmodell
 
@@ -93,10 +114,20 @@ create table public.channel_scopes (
   check ((scope = 'organization' and department_id is null and team_id is null)
       or (scope = 'department'   and department_id is not null and team_id is null)
       or (scope = 'team'         and department_id is not null and team_id is not null)),
-  unique (social_connection_id, scope, department_id, team_id),
   foreign key (organization_id, social_connection_id) references public.social_connections(organization_id, id) on delete cascade,
   foreign key (organization_id, department_id) references public.departments(organization_id, id) on delete cascade,
   foreign key (organization_id, department_id, team_id) references public.teams(organization_id, department_id, id) on delete cascade
+);
+
+-- Wie bei den Kontingenten in Paket 011: die Scope-Spalten sind bei einer
+-- vereinsweiten Freigabe NULL, und NULL ist in einem Unique-Key nicht gleich
+-- NULL. Ohne Normalisierung koennte derselbe Kanal zweimal fuer dieselbe Ebene
+-- freigegeben sein -- bei unterschiedlichem can_schedule waere unentscheidbar,
+-- welche Zeile gilt. Ausdruecke gehen nur im Index, nicht im Constraint.
+create unique index channel_scopes_unique on public.channel_scopes (
+  social_connection_id, scope,
+  coalesce(department_id, '00000000-0000-0000-0000-000000000000'::uuid),
+  coalesce(team_id, '00000000-0000-0000-0000-000000000000'::uuid)
 );
 ```
 
@@ -182,13 +213,14 @@ Neue Seite `pages/kanaele.vue`:
 | `pages/einstellungen.vue:1` | „Instagram Verbunden · @sv_nordstadt“, „Facebook Verbunden · SV Nordstadt 1921“ | echte Verbindungen auf `pages/kanaele.vue`, Zeilen aus den Einstellungen entfernt |
 | `packages/config:172-174` | `PUBLISHING_PROVIDER: 'fake' \| 'mixpost'`, Mixpost-URL und -Token | `'fake' \| 'meta'`, Meta-App-Variablen |
 | `social_connections.token_ciphertext` für `authenticated` lesbar | Grant und Policy umfassen die ganze Tabelle | Geheimnisse in eigener Tabelle ohne Policy |
-| `useDemoData.ts:9` | `platforms: readonly ('instagram' \| 'facebook')[]` in Demo-Entwürfen | echte Publikationsziele; Datei ist ab Paket 010 gelöscht |
+| Publikationsziele im Beitragsentwurf | ✓ 008: `useDemoData.ts` mit seinen `platforms`-Strings gelöscht, Liste ist ein Empty State | echte Ziele aus `channel_scopes` und `publications` |
 
 ## Verifikation
 
 - `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm db:reset`, `pnpm db:test`
 - pgTAP: `authenticated` liest keine Zeile aus `social_connection_secrets`; `select token_ciphertext` auf `social_connections` schlägt fehl bzw. die Spalte existiert nicht mehr; `channel_scopes` mit falscher Scope-Kombination verstößt gegen CHECK; Abteilungskanal ohne `owner_department_id` verstößt gegen CHECK.
-- `packages/secrets`-Tests: Runde durch `seal`/`open`; Entschlüsselung mit falscher `keyVersion` schlägt fehl; Entschlüsselung mit fremder AAD schlägt fehl; verändertes Ciphertext-Byte schlägt fehl (GCM-Auth-Tag).
+- `packages/secrets`-Tests: Runde durch `seal`/`open`; Entschlüsselung mit falscher `keyVersion` schlägt fehl; Entschlüsselung mit fremder AAD schlägt fehl; verändertes Ciphertext-Byte schlägt fehl (GCM-Auth-Tag); ein aus dem Backfill übernommenes Geheimnis ohne AAD ist lesbar und wird von der Rotation auf die aktuelle Form gehoben.
+- Migrationstest: eine bestehende Verbindung mit Token behält nach der Migration ihr Geheimnis in `social_connection_secrets`; ein künstlich unterbrochener Backfill lässt die Migration scheitern statt die Spalten zu entfernen.
 - API-Tests: Callback mit manipuliertem `state` → 400; Abteilungskanal bei verbotener Richtlinie → 403; Einplanen auf nicht freigegebenem Kanal → 409; Einplanen auf Kanal mit `action_required` → 409.
 - manuell mit Meta-Testkonto: verbinden, Konto wählen, Kanal erscheint aktiv; Abteilung freigeben, Beitrag dort einplanbar; Freigabe entziehen, Kanal verschwindet aus der Auswahl; Token in der Datenbank manuell invalidieren, täglicher Check setzt `action_required`.
 

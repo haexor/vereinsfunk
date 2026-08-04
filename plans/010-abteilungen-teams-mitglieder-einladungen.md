@@ -152,7 +152,7 @@ Annehmen (`POST /v1/invitations/accept` mit Rohtoken):
 
 Weitere Aktionen: `POST /v1/invitations/:id/resend` (Rate-Limit: höchstens einmal pro Stunde, `send_count` ≤ 10, erzeugt ein **neues** Token und invalidiert das alte), `POST /v1/invitations/:id/revoke`.
 
-Ein Hatchet-Cron räumt abgelaufene Einladungen nach 90 Tagen ab. Der Workflow-Name gehört in `WorkflowNameSchema` (`packages/contracts/src/index.ts:135`), sonst lässt er sich nicht triggern.
+Ein Hatchet-Cron räumt abgelaufene Einladungen nach 90 Tagen ab. Der Workflow-Name gehört in `WorkflowNameSchema` (`packages/contracts/src/index.ts:82`), sonst lässt er sich nicht triggern.
 
 ### 4. Oberfläche
 
@@ -166,15 +166,15 @@ Ein Hatchet-Cron räumt abgelaufene Einladungen nach 90 Tagen ab. Der Workflow-N
 - Empty State: „Noch seid ihr allein hier“ mit direkter Einladungsaktion
 - **Platz für das Vertrauen je Mitglied aus Paket 011.** Ob eine Person einreichen darf und ob ihre Beiträge geprüft werden müssen, wird über eine Person entschieden und gehört deshalb hierhin, nicht in die Einstellungen. Diese Seite ist so zu bauen, dass je Mitglied eine Detailebene aufklappt — 011 füllt sie mit Einreichrecht, Prüfpflicht, Befristung und der für diese Person geltenden Freigaberoute.
 
-Neue Seite `pages/struktur.vue`: Baum aus Verein → Abteilungen → Teams mit Mitgliederzahl je Knoten, Anlegen, Umbenennen, Archivieren. Der Abteilungswähler in `layouts/default.vue:275-281` wird von der Demo-Stringliste auf echte Abteilungen aus `useSession()` umgestellt und um eine Teamebene ergänzt.
+Neue Seite `pages/struktur.vue`: Baum aus Verein → Abteilungen → Teams mit Mitgliederzahl je Knoten, Anlegen, Umbenennen, Archivieren. Der Abteilungswähler in `layouts/default.vue:82-91` liest seit Paket 008 echte Abteilungen aus `useSession()`; hier kommt die Teamebene dazu.
 
 ### 5. Rückbau
 
 | Ort | Heute | Danach |
 |---|---|---|
 | `pages/mitglieder.vue:1` | vier hartkodierte Namen, funktionsloser Button | echte Mitglieder und Einladungen |
-| `layouts/default.vue:275-281` | `departments` als String-Array aus `useDemoData` | echte Abteilungen und Teams mit IDs |
-| `useDemoData.ts:23-24` | `department`, `departments` | mit diesem Paket vollständig überflüssig; die Datei wird gelöscht |
+| `layouts/default.vue:82-91` | ✓ 008: echte Abteilungen aus `useSession()`, nur Abteilungsebene | zusätzlich Teamebene |
+| `useDemoData.ts` | ✓ 008: Datei gelöscht | – |
 
 ## Verifikation
 

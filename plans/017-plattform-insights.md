@@ -14,11 +14,11 @@ Zusätzlich hängt es an einem **externen Gate**: die Meta-App braucht `pages_re
 
 Geplant auf `b5c2eda6` am 2026-08-04.
 
-- `packages/contracts/src/index.ts:135`: `'collect-analytics'` steht in `WorkflowNameSchema` und ist nicht implementiert.
+- `packages/contracts/src/index.ts:82`: `'collect-analytics'` steht in `WorkflowNameSchema` und ist nicht implementiert.
 - `supabase/migrations/202608030001:92-98` `publications` hält `provider_publication_id` — der Schlüssel für jeden Insights-Abruf ist vorhanden.
-- `packages/publishing/src/index.ts:275` `SocialPublisher` kennt `validate`, `publish`, `reconcile` und optional `delete`. **Keine Methode für Metriken.** Die Provider-Grenze muss erweitert werden, und zwar getrennt, nicht durch Anhängen an `SocialPublisher`.
-- `MetaPublisher.reconcile` (`:309-321`) ruft bereits `graph.facebook.com` mit `fields=id,permalink,status_code` ab. Das Muster für Graph-Abfragen inklusive Fehlerbehandlung existiert und ist übernehmbar.
-- `packages/publishing/src/index.ts:269`: `PublicationStatus` enthält `'unknown'`, und die Regel aus `plans/README.md` verlangt Reconciliation statt blindem Retry. Für Insights gilt dasselbe: ein fehlender Wert ist nicht 0.
+- `packages/publishing/src/index.ts:8` `SocialPublisher` kennt `validate`, `publish`, `reconcile` und optional `delete`. **Keine Methode für Metriken.** Die Provider-Grenze muss erweitert werden, und zwar getrennt, nicht durch Anhängen an `SocialPublisher`.
+- `MetaPublisher.reconcile` (`:42-53`) ruft bereits `graph.facebook.com` mit `fields=id,permalink,status_code` ab. Das Muster für Graph-Abfragen inklusive Fehlerbehandlung existiert und ist übernehmbar.
+- `packages/publishing/src/index.ts:2`: `PublicationStatus` enthält `'unknown'`, und die Regel aus `plans/README.md` verlangt Reconciliation statt blindem Retry. Für Insights gilt dasselbe: ein fehlender Wert ist nicht 0.
 - `publication_attempts` (`:99-102`) protokolliert Versuche mit `error_class` und `response_summary`. Insights-Abrufe brauchen ein eigenes, ähnliches Protokoll, damit Ratenlimits und Fehler nachvollziehbar bleiben.
 - Es gibt **keine Metriktabelle** für Plattformwerte.
 
@@ -100,13 +100,19 @@ create table public.platform_metrics_daily (
   publications integer not null default 0,
   reach_sum integer, views_sum integer,
   likes_sum integer, comments_sum integer, shares_sum integer, saves_sum integer,
-  metrics_available integer not null default 0,   -- wie viele Publikationen Werte lieferten
+  -- Abdeckung je Kennzahl, nicht global: Instagram liefert saves und shares
+  -- nicht fuer jeden Medientyp, also hat jede Summe ihre eigene Grundgesamtheit.
+  reach_available integer not null default 0, views_available integer not null default 0,
+  likes_available integer not null default 0, comments_available integer not null default 0,
+  shares_available integer not null default 0, saves_available integer not null default 0,
   computed_at timestamptz not null default now(),
   primary key (organization_id, day, social_connection_id, department_id)
 );
 ```
 
-`metrics_available` neben den Summen: eine Summe über fünf von zwölf Publikationen ist keine Wochenreichweite. Ohne diese Spalte entstehen genau die Zahlen, die dieses Projekt zurückbauen will.
+Die `*_available`-Zähler neben den Summen: eine Summe über fünf von zwölf Publikationen ist keine Wochenreichweite. Ohne sie entstehen genau die Zahlen, die dieses Projekt zurückbauen will.
+
+Ein **einziger** globaler Zähler würde dafür nicht reichen, und zwar aus demselben Grund, aus dem oben `null` statt `0` steht: Reichweite kann für zwölf Publikationen vorliegen und Likes nur für fünf. Ein gemeinsamer Wert müsste dann für beide gelten und wäre für mindestens eine der beiden Summen falsch. Je Kennzahl ein Zähler ist die einzige Form, in der `metricsAvailable` in `GET /v1/analytics/summary` eine wahre Aussage sein kann.
 
 Für Aggregate wird je Publikation der **letzte** Schnappschuss verwendet, nicht die Summe der Schnappschüsse. Insights sind kumulativ.
 
@@ -135,7 +141,7 @@ export interface InsightsProvider {
 Begründung für die Trennung: Veröffentlichen und Messen haben unterschiedliche Berechtigungen, unterschiedliche Ratenlimits, unterschiedliche Fehlerklassen und einen völlig anderen Lebenszyklus. Ein gemeinsames Interface würde beide Seiten verkomplizieren.
 
 - `MetaInsightsProvider` nutzt `/{media-id}/insights` für Instagram und `/{post-id}/insights` für Facebook. Die abgefragten Kennzahlen unterscheiden sich je Medientyp — ein Reel liefert andere als ein Feed-Bild. Die Zuordnung Format → Kennzahlenliste ist Teil des Adapters und wird als Tabelle im Evidenzdokument festgehalten.
-- `FakeInsightsProvider` liefert deterministische Werte aus dem `externalId`-Hash, damit lokale Entwicklung und Tests ohne Meta funktionieren — dasselbe Muster wie `FakePublisher` (`packages/publishing/src/index.ts:277-282`). Er wird über `PUBLISHING_PROVIDER` gewählt und ist im Produktivbetrieb nicht erreichbar.
+- `FakeInsightsProvider` liefert deterministische Werte aus dem `externalId`-Hash, damit lokale Entwicklung und Tests ohne Meta funktionieren — dasselbe Muster wie `FakePublisher` (`packages/publishing/src/index.ts:10-15`). Er wird über `PUBLISHING_PROVIDER` gewählt und ist im Produktivbetrieb nicht erreichbar.
 - **Kein `raw`-Feld ungefiltert durchreichen.** Der Adapter kennt eine Whitelist erlaubter Schlüssel; alles andere wird verworfen und die Anzahl protokolliert. Ändert Meta die Antwort, ist das sichtbar statt still gespeichert.
 
 ### 2. Abrufplan
@@ -157,10 +163,10 @@ Sechs Schnappschüsse je Publikation. Bei zwanzig Beiträgen pro Monat und zwei 
 
 Umsetzung als Hatchet-Workflow `collect-analytics`:
 
-- geplant beim Übergang einer Publikation auf `published`, mit `scheduledFor` je Stufe. Der `Orchestrator` unterstützt `scheduledFor` bereits (`packages/orchestration/src/index.ts:260`).
-- Idempotenzschlüssel `createIdempotencyKey('publish', publicationId, stage)` — die Kind-Werte in `createIdempotencyKey` (`packages/domain/src/index.ts:90`) müssen um `'insights'` erweitert werden, statt `'publish'` zweckzuentfremden.
+- geplant beim Übergang einer Publikation auf `published`, mit `scheduledFor` je Stufe. Der `Orchestrator` unterstützt `scheduledFor` bereits (`packages/orchestration/src/index.ts:6`).
+- Idempotenzschlüssel `createIdempotencyKey('insights', publicationId, stage)` — die Kind-Werte in `createIdempotencyKey` (`packages/domain/src/index.ts:90`) müssen dafür um `'insights'` erweitert werden. `'publish'` zweckzuentfremden wäre falsch: die Schlüssel kollidierten dann mit denen des Veröffentlichungspfads für dieselbe Publikation.
 - Fairness-Key `organizationId:socialConnectionId`, weil Meta-Ratenlimits pro App und pro Konto greifen.
-- Concurrency-Gruppe: `concurrency` in `apps/worker/src/workflows.ts:351-354` um `insights: { global: 8, organization: 2, department: 1 }` erweitern.
+- Concurrency-Gruppe: `concurrency` in `apps/worker/src/workflows.ts:6-9` um `insights: { global: 8, organization: 2, department: 1 }` erweitern.
 - Fehlerbehandlung: `rate_limited` mit `retry_after` wird respektiert und neu geplant, **nicht** sofort wiederholt. `permission_denied` ist nicht wiederholbar und setzt den Kanal auf `action_required` (Paket 012), weil in der Regel eine Berechtigung fehlt. `not_available` bei zu jungen oder gelöschten Beiträgen wird protokolliert und beendet den Plan für diese Publikation.
 - Ein fehlgeschlagener Abruf schreibt **keine** Metrikzeile. Eine Zeile mit Nullen wäre eine Falschaussage.
 
@@ -190,7 +196,7 @@ Neuer Endpunkt `GET /v1/analytics/posts?from&to&sort=reach|likes|comments` für 
 
 - `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm db:reset`, `pnpm db:test`
 - Adaptertests gegen aufgezeichnete Antworten: Instagram-Feed-Bild, Instagram-Reel, Facebook-Seitenbeitrag; fehlende Kennzahl wird `null`, nicht `0`; unbekannte Schlüssel werden verworfen und gezählt; 429 mit `retry_after` wird korrekt gelesen; 400 mit Berechtigungsfehler wird als `permission_denied` klassifiziert.
-- Aggregationstests: Aggregat nutzt den letzten Schnappschuss je Publikation, nicht die Summe; `metrics_available` zählt korrekt; Publikation ohne Werte senkt keine Summe.
+- Aggregationstests: Aggregat nutzt den letzten Schnappschuss je Publikation, nicht die Summe; die `*_available`-Zähler stimmen je Kennzahl und weichen voneinander ab, wenn eine Publikation `saves` nicht liefert; Publikation ohne Werte senkt keine Summe.
 - pgTAP: zwei Schnappschüsse mit gleichem `collected_at` verstoßen gegen den Unique-Index; Metriken eines fremden Vereins sind unsichtbar; Löschen einer Publikation entfernt ihre Metriken.
 - Workflow-Tests: alle sechs Stufen werden geplant; doppelte Auslösung erzeugt keinen zweiten Abruf; `rate_limited` plant neu statt zu wiederholen; nach +30 Tagen wird nichts mehr geplant.
 - manuell mit Meta-Testkonto: einen Beitrag veröffentlichen, nach einer Stunde liegt ein Schnappschuss vor, die Zahlen entsprechen der Meta-Oberfläche. Diese Gegenprobe ist unverzichtbar — eine Zahl, die von der Plattformansicht abweicht, kostet mehr Vertrauen als eine fehlende.

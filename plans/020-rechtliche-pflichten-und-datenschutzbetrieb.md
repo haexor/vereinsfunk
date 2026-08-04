@@ -16,7 +16,7 @@ Geplant auf `b5c2eda6` am 2026-08-04.
 
 - `apps/web/app/pages/einstellungen.vue:1` behauptet „Rohmedien · Automatische Löschung nach 90 Tagen“. Es existiert **kein Job, keine Frist im Datenmodell und kein Löschpfad.** Das ist die gefährlichste der fünf Dummy-Zeilen, weil sie eine Datenschutzzusage macht, die nichts einhält.
 - Es gibt **keine Impressums- oder Datenschutzseite** in `apps/web/app/pages/`, weder für die Anwendung noch für die Vereinskanäle.
-- `nuxt.config.ts:327-334` lädt Schriften von `fonts.googleapis.com` bei jedem Seitenaufruf. Paket 013 behebt das durch Selbst-Hosting; hier wird geprüft, dass keine weitere Verbindung zu Dritten übrig ist.
+- `nuxt.config.ts:14-21` lädt Schriften von `fonts.googleapis.com` bei jedem Seitenaufruf. Paket 013 behebt das durch Selbst-Hosting; hier wird geprüft, dass keine weitere Verbindung zu Dritten übrig ist.
 - `media_assets` (`202608030001:21-32`) hat `upload_status` mit dem Wert `'deleted'` und `exif_stripped_at`. Ein Löschzustand ist vorgesehen, wird aber von nichts gesetzt.
 - `media_derivatives` hat `status = 'invalidated'` und einen Immutabilitätstrigger (`:108-109`), der Updates auf `ready`-Zeilen verhindert. **Das erschwert das Löschen**: eine Aufbewahrungsroutine muss Zeilen entfernen oder den Trigger gezielt umgehen dürfen. Das ist beim Entwurf zu berücksichtigen und nicht durch Abschalten des Triggers zu lösen.
 - `audit_events` (`202608020001:246-256`) ist als Append-only-Protokoll kommentiert (`:451`) und hat keine Löschpolicy. Ein Audit-Log, das personenbezogene Daten enthält und nie gelöscht wird, ist selbst ein Datenschutzthema.
@@ -75,14 +75,19 @@ create table public.data_subject_requests (
   directory_person_id uuid,
   subject_label text not null,
   received_at date not null, due_at date not null,
+  -- Verlängerung um bis zu zwei Monate, nachweisbar statt stillschweigend.
+  extended_until date check (extended_until is null or extended_until > due_at),
+  extension_reason text, extension_notified_at timestamptz,
+  check (extension_reason is null or extended_until is not null),
   status text not null default 'open'
     check (status in ('open','in_progress','completed','rejected','partially_completed')),
   resolution_note text,
   handled_by uuid references public.profiles(id), completed_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
+  -- Spaltenliste bei SET NULL: sonst wuerde auch organization_id genullt.
   foreign key (organization_id, directory_person_id)
-    references public.directory_people(organization_id, id) on delete set null
+    references public.directory_people(organization_id, id) on delete set null (directory_person_id)
 );
 
 -- Dokumentation der Verarbeitungen und der Auftragsverarbeiter.
@@ -104,14 +109,21 @@ create table public.processor_agreements (
   organization_id uuid not null references public.organizations(id) on delete cascade,
   processor_name text not null, purpose text not null,
   signed_at date, valid_until date,
-  document_bucket text not null default 'brand-assets', document_path text,
+  -- Eigener privater Bucket, in derselben Migration angelegt: brand-assets
+  -- erlaubt nur SVG, PNG, JPEG und WOFF2 (`202608020002:5`) und kann einen
+  -- Vertrag als PDF oder DOCX gar nicht aufnehmen.
+  document_bucket text not null default 'compliance-docs'
+    check (document_bucket = 'compliance-docs'),
+  document_path text,
   status text not null default 'pending' check (status in ('pending','active','expired','terminated')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 ```
 
-`due_at` in `data_subject_requests` wird beim Anlegen auf `received_at + 30 Tage` gesetzt. Die Frist ist der Grund, warum diese Tabelle existiert: eine Anfrage, die in einem Postfach liegt, wird übersehen.
+`due_at` in `data_subject_requests` wird beim Anlegen auf `received_at + interval '1 month'` gesetzt — **ein Monat, keine 30 Tage.** Die DSGVO rechnet in Kalendermonaten, und die beiden Werte fallen je nach Monat auseinander. Ist `extended_until` gesetzt, gilt dieses Datum; die Verlängerung ist auf zwei zusätzliche Monate begrenzt und verlangt eine Begründung und eine Benachrichtigung der betroffenen Person — beides Spalten, damit es belegbar ist und nicht behauptet. Die Frist ist der Grund, warum diese Tabelle existiert: eine Anfrage, die in einem Postfach liegt, wird übersehen.
+
+Der Bucket `compliance-docs` entsteht in derselben Migration: privat, mit `application/pdf`, `application/msword` und `application/vnd.openxmlformats-officedocument.wordprocessingml.document`, Pfadschema `organizations/<orgId>/compliance/<agreementId>/…`, damit `storage_read_own_organization` greift (`202608020002:8-13`) — die Policy muss dazu um den neuen Bucket erweitert werden. Zugriff nur mit `organization.manage`, jeder Abruf über einen kurzlebigen signierten Link und mit `audit_events`-Eintrag.
 
 `retention_deletions` zählt nur — keine IDs, keine Namen. Ein Löschprotokoll, das die gelöschten Daten benennt, hat nichts gelöscht.
 
@@ -131,7 +143,7 @@ Getrennt von `responsible_profile_id` aus Paket 012: dort geht es darum, wer im 
 
 ### 1. Aufbewahrung durchsetzen
 
-Ein täglicher Hatchet-Cron `enforce-retention`, je Verein, mit Fairness-Key `organizationId`. Der Workflow-Name muss in `WorkflowNameSchema` (`packages/contracts/src/index.ts:135`) ergänzt werden.
+Ein täglicher Hatchet-Cron `enforce-retention`, je Verein, mit Fairness-Key `organizationId`. Der Workflow-Name muss in `WorkflowNameSchema` (`packages/contracts/src/index.ts:82`) ergänzt werden.
 
 Regeln, je eigener Schritt und einzeln abschaltbar:
 
@@ -190,7 +202,7 @@ Ein Verein, der Paket 014 (Personenverzeichnis) oder 018 (Kommentaranalyse) akti
 | Ort | Heute | Danach |
 |---|---|---|
 | `pages/einstellungen.vue:1` | „Rohmedien · Automatische Löschung nach 90 Tagen“ als Text ohne Job | echte Frist in `retention_settings`, durchgesetzt durch `enforce-retention`, mit Löschprotokoll |
-| `nuxt.config.ts:327-334` | Verbindung zu Google Fonts bei jedem Aufruf | in Paket 013 abgelöst, hier durch Test abgesichert |
+| `nuxt.config.ts:14-21` | Verbindung zu Google Fonts bei jedem Aufruf | in Paket 013 abgelöst, hier durch Test abgesichert |
 | fehlende Rechtstexte | keine Impressums- oder Datenschutzseite | vorhanden, ohne Anmeldung erreichbar |
 | `audit_events` unbegrenzt | kein Löschpfad | Frist mit ausdrücklicher Ausnahme für Einwilligungsnachweise |
 
@@ -200,7 +212,7 @@ Ein Verein, der Paket 014 (Personenverzeichnis) oder 018 (Kommentaranalyse) akti
 - Aufbewahrungstests je Regel: Rohmedium über der Frist ohne freigegebenes Derivat wird gelöscht; **mit** freigegebenem Derivat nicht; Kommentartext verschwindet, Bewertung bleibt; Einwilligungsnachweis wird erst nach Ende der Gültigkeit plus Frist gelöscht; abgelaufene Token verschwinden; der Job ist bei zweimaligem Lauf idempotent; der Trockenlauf schreibt nichts.
 - Löschnachweis: nach dem Lauf existiert das Storage-Objekt nicht mehr — nicht nur die Datenbankzeile. Ein Test, der nur die Zeile prüft, belegt die Zusage nicht.
 - Exporttests: das Auskunftsbündel enthält alle Kategorien und **keine** Daten anderer Personen. Ein Export, der ein Gruppenfoto mit fünf Kindern enthält, ist ein Datenschutzvorfall im Namen der Auskunft — der Export enthält Verweise und Metadaten, keine Medien Dritter.
-- pgTAP: `retention_settings` außerhalb der Grenzen verstößt gegen CHECK; `retention_deletions` ist ohne `organization.manage` nicht lesbar; `due_at` wird korrekt gesetzt; Anfragen und Verarbeitungsdokumente fremder Vereine sind unsichtbar.
+- pgTAP: `retention_settings` außerhalb der Grenzen verstößt gegen CHECK; `retention_deletions` ist ohne `organization.manage` nicht lesbar; `due_at` liegt genau einen Kalendermonat nach `received_at`, auch bei Eingang am 31. Januar; `extended_until` vor `due_at` verstößt gegen CHECK; eine Begründung ohne Verlängerungsdatum verstößt gegen CHECK; Anfragen und Verarbeitungsdokumente fremder Vereine sind unsichtbar.
 - Netzwerktest: Laden von Start-, Anmelde- und Dashboardseite erzeugt keine Anfrage an einen fremden Host.
 - manuell: Frist auf 7 Tage senken, Trockenlauf ansehen, scharfen Lauf ausführen, Protokoll prüfen; Betroffenenanfrage anlegen, Export erzeugen, Löschung ausführen, Antwort benennt Ausnahmen.
 

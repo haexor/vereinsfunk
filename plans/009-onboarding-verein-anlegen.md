@@ -8,15 +8,15 @@ Wer sich zum ersten Mal anmeldet, landet nicht auf einem leeren Dashboard, sonde
 
 Geplant auf `b5c2eda6` am 2026-08-04. Nach Abschluss von Paket 008 (2026-08-04) einmal gegen den Code nachverifiziert — Ergebnisse und Korrekturen direkt unten eingearbeitet, Details im Rückbau-Abschnitt.
 
-**Was Paket 008 bereits erledigt hat, bevor 009 anfängt:** `apps/web/app/pages/index.vue` bezieht `firstName`/`department` inzwischen aus `useSession()`/`useScope()`, nicht mehr aus `useDemoData()` (die Datei existiert nicht mehr). `layouts/default.vue` hat einen echten Abteilungs-Umschalter (die Rolle/Anzeigename kommen aus `useSession()`). Was **weiterhin** wie im Plan beschrieben aussteht: die Kennzahlen/Wochenausschnitt/Ideen-Karte/Monatsziel-Balken in `index.vue` sind unverändert erfunden, und der **Vereins**-Umschalter (nicht der Abteilungs-Umschalter) in der Sidebar ist weiterhin ein Button ohne Funktion.
+**Was Paket 008 bereits erledigt hat, bevor 009 anfängt:** `apps/web/app/pages/index.vue` bezieht `firstName`/`department` inzwischen aus `useSession()`/`useScope()`, nicht mehr aus `useDemoData()` (die Datei existiert nicht mehr). `layouts/default.vue` hat einen echten Abteilungs-Umschalter (die Rolle/Anzeigename kommen aus `useSession()`). Was **weiterhin** wie im Plan beschrieben aussteht: die Kennzahlen/Wochenausschnitt/Ideen-Karte/Monatsziel-Balken in `index.vue` sind unverändert erfunden, und ein **Vereins**-Umschalter (nicht der Abteilungs-Umschalter) fehlt weiterhin: `layouts/default.vue:74-81` zeigt Name und Initialen des aktiven Vereins als reine Anzeige ohne Bedienelement.
 
 - Für `public.organizations` existiert **keine INSERT-Policy**. Ein Verein ist heute ausschließlich über die Service Role anlegbar. Onboarding braucht daher zwingend einen privilegierten Serverpfad, entweder eine `security definer`-Funktion oder einen API-Endpunkt.
 - `supabase/migrations/202608020001_initial_tenant_foundation.sql:32-39`: `organizations` kennt nur `name`, `slug`, `timezone`. **Keine Anschrift, kein Kontakt, keine Rechtsform, kein Registereintrag.** Die vom Produkt geforderte Adresse existiert im Modell nicht.
 - `:120-130` `organization_brand_profiles` kennt `logo_path`, `primary_color`, `accent_color`, `tone` und ein freies `settings`-Objekt. **Keine Schriftarten, keine Logo-Varianten.**
 - `:41-50` `departments` erlaubt beliebig viele, aber **nichts erzwingt die mindestens eine Abteilung**, die die Architektur vorschreibt.
-- `apps/web/app/pages/index.vue:113-128`: `stats` und `week` sind vollständig erfunden — „18 veröffentlicht“, „24,8k Reichweite“, „+18 %“, ein fester Kalenderausschnitt vom 3.–9. August mit drei Fantasie-Terminen.
+- `apps/web/app/pages/index.vue:10-25`: `stats` und `week` sind vollständig erfunden — „18 veröffentlicht“, „24,8k Reichweite“, „+18 %“, ein fester Kalenderausschnitt vom 3.–9. August mit drei Fantasie-Terminen.
 - `:135` schreibt „Sonntag, 2. August“ hartkodiert in den Header; `:111` setzt `firstName = 'Lena'`.
-- `:196-199` bewirbt eine „Idee für diese Woche“ als statischen Text und verlinkt auf `/erstellen?type=people`, einen Parameter, den `erstellen.vue` nicht auswertet.
+- `:81-84` bewirbt eine „Idee für diese Woche“ als statischen Text und verlinkt auf `/erstellen?type=people`, einen Parameter, den `erstellen.vue` nicht auswertet.
 - `:206-209` zeigt „18 / 24 Beiträge“ und „3 / 4 Abteilungen aktiv“ mit einem hartkodierten `w-3/4`-Balken. Es gibt kein Monatsziel im Datenmodell.
 - `apps/web/app/pages/marke.vue:1` hält Farben und Tonalität in lokalem `reactive`-State; „Speichern“ setzt `saved = true` und schreibt nichts.
 - `supabase/migrations/202608020002_private_storage.sql`: Bucket `brand-assets` existiert und erlaubt bereits `image/svg+xml`, `image/png`, `image/jpeg` **und `font/woff2`**. Es gibt jedoch nur eine SELECT-Policy; `storage_upload_department` gilt ausschließlich für `raw-media`. Branding-Uploads müssen über die API laufen.
@@ -49,6 +49,7 @@ create table public.organization_profiles (
   founded_year integer check (founded_year between 1800 and 2100),
   -- Verantwortliche Person für veröffentlichte Inhalte. Pflicht, bevor
   -- ein Kanal verbunden werden darf (Paket 012, Begründung in 020).
+  -- Muss Mitglied *dieses* Vereins sein -- durchgesetzt per Trigger, siehe unten.
   responsible_person_profile_id uuid references public.profiles(id),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -63,6 +64,31 @@ create table public.organization_onboarding (
 );
 ```
 
+`responsible_person_profile_id` verweist auf `profiles(id)` und damit auf **jedes** Profil im System. Ein zusammengesetzter Fremdschlüssel wäre hier das richtige Mittel, ist aber nicht verfügbar: `organization_memberships` hat `unique (organization_id, user_id, role)`, also keinen Schlüssel über `(organization_id, user_id)`. Die Regel steht deshalb in einem Trigger:
+
+```sql
+-- Ohne diese Prüfung ist eine vereinsfremde Person als Verantwortliche
+-- eintragbar -- das ist ein Cross-Tenant-Verweis, und der Schutz beim Entfernen
+-- in Paket 010 repariert eine falsche Erstzuweisung nicht.
+create or replace function public.assert_responsible_person_is_member() returns trigger
+language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if new.responsible_person_profile_id is not null and not exists (
+    select 1 from public.organization_memberships m
+    where m.organization_id = new.organization_id
+      and m.user_id = new.responsible_person_profile_id
+      and (m.expires_at is null or m.expires_at > now())
+  ) then
+    raise exception 'responsible person must be an active member of this organization';
+  end if;
+  return new;
+end $$;
+
+create trigger organization_profiles_responsible_member
+  before insert or update of responsible_person_profile_id on public.organization_profiles
+  for each row execute function public.assert_responsible_person_is_member();
+```
+
 Alle Felder außer `country_code` sind bewusst nullable. Der Wizard fragt sie ab, aber ein Verein darf mit Namen und einer Abteilung starten und die Stammdaten später vervollständigen. Das ist der Unterschied zwischen einem Formular, das Menschen ausfüllen wollen, und einem, das sie abbrechen.
 
 `organization_brand_profiles` wird additiv erweitert:
@@ -74,7 +100,7 @@ alter table public.organization_brand_profiles
   add column body_font_key text not null default 'dm_sans';
 ```
 
-Die Font-Schlüssel verweisen auf eine kuratierte Registry in `packages/domain` (Paket 013 ergänzt eigene Uploads). Heute lädt `nuxt.config.ts:327-334` Manrope und DM Sans fest von Google Fonts — die Defaults spiegeln also den Bestand.
+Die Font-Schlüssel verweisen auf eine kuratierte Registry in `packages/domain` (Paket 013 ergänzt eigene Uploads). Heute lädt `nuxt.config.ts:14-21` Manrope und DM Sans fest von Google Fonts — die Defaults spiegeln also den Bestand.
 
 Pflichtabteilung als abfragbare Invariante statt als Constraint:
 
@@ -104,7 +130,7 @@ Regeln:
 
 - `auth.uid()` muss vorhanden sein, sonst Abbruch. Die Funktion ist `security definer` und darf nicht anonym aufrufbar sein.
 - Slug wird serverseitig aus dem Namen normalisiert und bei Kollision mit einem Zähler versehen. Der Slug ist global unique (`202608020001:35`) und deshalb ein potenzieller Informationsleck-Kanal: die Fehlermeldung nennt nie einen fremden Vereinsnamen.
-- **Missbrauchsgrenze**: ein Nutzer darf nicht beliebig viele Vereine anlegen. Ohne Grenze ist das ein offener Schreibpfad in eine geteilte Produktionsdatenbank. Vorschlag: maximal drei Vereine mit `organization_owner` pro Profil, danach 429 mit Hinweis auf Kontaktaufnahme. Der Wert gehört in `packages/config`, nicht in die SQL-Funktion.
+- **Missbrauchsgrenze**: ein Nutzer darf nicht beliebig viele Vereine anlegen. Ohne Grenze ist das ein offener Schreibpfad in eine geteilte Produktionsdatenbank. Vorschlag: maximal drei Vereine mit `organization_owner` pro Profil, danach 429 mit Hinweis auf Kontaktaufnahme. Der Wert gehört in `packages/config`, **die Prüfung aber in die Funktion**: eine Grenze, die nur der API-Endpunkt kennt, ist wirkungslos, solange `execute` auf `create_organization` für `authenticated` besteht — ein `rpc('create_organization', …)` aus dem Browser umgeht sie. Die Funktion nimmt das Limit deshalb als Parameter, zählt die `organization_owner`-Zeilen für `auth.uid()` innerhalb derselben `security definer`-Transaktion und bricht ab, bevor die Organisation entsteht. Nur so ist die Zählung auch gegen zwei parallele Anfragen dicht.
 - Alternative Umsetzung: statt `security definer`-Funktion ein API-Endpunkt mit Service-Role-Client. Empfehlung ist die SQL-Funktion, weil die Transaktion dann garantiert atomar ist und `auth.uid()` nicht durch die API weitergereicht werden muss. Die API ruft die Funktion mit dem **Nutzer**-Client auf, nicht mit der Service Role.
 
 ### 2. API-Endpunkte
@@ -172,27 +198,27 @@ Schritt 1 und 2 werden gemeinsam abgesendet und erzeugen den Verein. Schritte 3 
 
 | Ort | Heute | Danach |
 |---|---|---|
-| `pages/index.vue:111` | `firstName = 'Lena'` | `useSession().displayName` |
-| `pages/index.vue:113-118` | vier erfundene Kennzahlen inkl. Reichweite und Trends | drei echte Zählwerte, keine Trends |
-| `pages/index.vue:120-128` | fester Wochenausschnitt mit Fantasie-Terminen | echte `scheduled_for`-Daten |
-| `pages/index.vue:135` | „Sonntag, 2. August“ | formatiertes aktuelles Datum in Vereinszeitzone |
-| `pages/index.vue:192-201` | statische Wochenidee, toter `?type=`-Parameter | Nächste-Schritte-Karte aus echtem Zustand |
-| `pages/index.vue:203-210` | „18 / 24“, „3 / 4“, `w-3/4` | entfällt. Es gibt kein Monatsziel im Produkt. |
-| `pages/index.vue:110` | `useDemoData()` | echte Abfragen |
+| `pages/index.vue:8` | ✓ 008: `firstName` kommt aus `useSession()` | bleibt |
+| `pages/index.vue:10-15` | vier erfundene Kennzahlen inkl. Reichweite und Trends | drei echte Zählwerte, keine Trends |
+| `pages/index.vue:17-25` | fester Wochenausschnitt mit Fantasie-Terminen | echte `scheduled_for`-Daten |
+| `pages/index.vue:32` | „Sonntag, 2. August“ | formatiertes aktuelles Datum in Vereinszeitzone |
+| `pages/index.vue:77-86` | statische Wochenidee, toter `?type=`-Parameter | Nächste-Schritte-Karte aus echtem Zustand |
+| `pages/index.vue:88-95` | „18 / 24“, „3 / 4“, `w-3/4` | entfällt. Es gibt kein Monatsziel im Produkt. |
+| `pages/index.vue:4-7` | ✓ 008: `useDemoData()` gelöscht, Scope aus `useSession()`/`useScope()` | echte Abfragen für Kennzahlen und Redaktionsplan |
 | `pages/marke.vue:1` | lokaler State, Scheinspeichern | `PUT /v1/organizations/:id/brand`, echter Ladezustand, echte Fehler |
 | `pages/kalender.vue:1` | 5 Fantasietermine, fest „August 2026“ | echte Beiträge, navigierbarer Monat, Empty State |
-| `nuxt.config.ts:327-334` | Fonts fest von Google Fonts | bleibt zunächst, wird in 013 durch die Font-Registry ersetzt |
+| `nuxt.config.ts:14-21` | Fonts fest von Google Fonts | bleibt zunächst, wird in 013 durch die Font-Registry ersetzt |
 
 ## Verifikation
 
 - `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm db:reset`, `pnpm db:test`
-- pgTAP: `create_organization` erzeugt genau eine Organisation, ein Profil, eine Abteilung und zwei Mitgliedschaften; ein zweiter Nutzer sieht die Organisation nicht; Slug-Kollision erzeugt einen abweichenden Slug ohne Fehler; Aufruf ohne `auth.uid()` schlägt fehl.
+- pgTAP: `create_organization` erzeugt genau eine Organisation, ein Profil, eine Abteilung und zwei Mitgliedschaften; ein zweiter Nutzer sieht die Organisation nicht; Slug-Kollision erzeugt einen abweichenden Slug ohne Fehler; Aufruf ohne `auth.uid()` schlägt fehl; **direkter Aufruf über dem Limit schlägt fehl, nicht nur der über die API**; eine Person aus einem anderen Verein als `responsible_person_profile_id` schlägt am Trigger fehl, ebenso ein Profil ohne Mitgliedschaft und eine abgelaufene Mitgliedschaft.
 - API-Tests: Stammdaten-Update ohne `organization.manage` → 403; Logo-Upload mit unerlaubtem MIME-Typ → 400; Vereinsanlage über dem Limit → 429.
 - manuell: Registrieren → automatische Weiterleitung nach `/onboarding` → Verein anlegen → Dashboard zeigt Empty State und die Nächste-Schritte-Liste → Neuladen behält den Verein → zweiter frischer Nutzer sieht ihn nicht.
 
 ## Risiken und offene Entscheidungen
 
 - **SVG-Logos** sind entschieden unterstützt und damit auch der sicherheitskritischste Teil dieses Pakets. `packages/svg-safe` ist Sicherheitscode: Allowlist, Größengrenzen vor dem Parser, XXE aus, Neuserialisierung, CSP bei der Auslieferung. Wer daran später etwas lockert, muss den Testkorpus erweitern, nicht kürzen. Sollte die Sanitisierung im Zeitplan nicht in der nötigen Qualität fertig werden, ist der richtige Zwischenstand, SVG-Uploads **abzulehnen** — nicht sie mit halber Prüfung anzunehmen.
-- **Ein Nutzer, mehrere Vereine**: das Modell erlaubt es (`organization_memberships` ist n:m), der Wizard behandelt es aber als Ausnahme. Der Vereinswechsler in der Sidebar (`layouts/default.vue:266-273`) ist heute ein Button ohne Funktion und wird in diesem Paket zu einem echten Umschalter.
+- **Ein Nutzer, mehrere Vereine**: das Modell erlaubt es (`organization_memberships` ist n:m), der Wizard behandelt es aber als Ausnahme. Der aktive Verein steht in der Sidebar (`layouts/default.vue:74-81`) nur als Anzeige; ein Umschalter existiert nicht und entsteht in diesem Paket.
 - **Zeitzone**: `organizations.timezone` existiert und wird bisher nirgends benutzt. Ab hier ist sie verbindlich für jede Datumsanzeige und jede Terminplanung. Alle Zeitstempel bleiben `timestamptz` in UTC; formatiert wird ausschließlich in der Anzeigeschicht.
 - **Verantwortliche Person**: rechtlich relevant (siehe 020) und referenziert ein Profil, das den Verein verlassen kann. Beim Entfernen dieser Person aus dem Verein muss die Zuweisung erzwungen neu gesetzt werden — das gehört in Paket 010.

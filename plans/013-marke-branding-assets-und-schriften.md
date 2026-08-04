@@ -11,8 +11,8 @@ Geplant auf `b5c2eda6` am 2026-08-04.
 - `supabase/migrations/202608020001_initial_tenant_foundation.sql:120-130`: `organization_brand_profiles` kennt `logo_path`, `primary_color`, `accent_color`, `tone` und ein schemaloses `settings jsonb`. **Keine Schriftarten, keine Logo-Varianten, keine Abteilungsebene.**
 - Die Tabelle hat SELECT- und UPDATE-Policies (`:405-408`), aber **keine INSERT-Policy**. Ein Markenprofil entsteht nur über die Service Role — Paket 009 legt es bei der Vereinserstellung mit an.
 - `supabase/migrations/202608020002_private_storage.sql`: Bucket `brand-assets` ist privat, 20 MB Limit, erlaubt `image/svg+xml`, `image/png`, `image/jpeg` und **`font/woff2`**. Es gibt nur `storage_read_own_organization`; `storage_upload_department` gilt ausschließlich für `raw-media`. Uploads müssen über die API laufen — das ist die richtige Grenze, weil Fonts und SVG serverseitig geprüft werden müssen.
-- `apps/web/nuxt.config.ts:327-334` lädt Manrope und DM Sans fest von `fonts.googleapis.com`. Zwei Konsequenzen: das Erscheinungsbild ist nicht vereinsspezifisch, und jeder Seitenaufruf kontaktiert Google — datenschutzrechtlich in Deutschland heikel und in Paket 020 ohnehin zu beheben.
-- `apps/web/tailwind.config.ts` definiert `font-display`, `forest`, `lime`, `coral`, `oat`, `ink`. Diese Farben sind über alle Seiten fest verdrahtet, unter anderem `bg-forest` in `layouts/default.vue:250` und `pages/index.vue:139`.
+- `apps/web/nuxt.config.ts:14-21` lädt Manrope und DM Sans fest von `fonts.googleapis.com`. Zwei Konsequenzen: das Erscheinungsbild ist nicht vereinsspezifisch, und jeder Seitenaufruf kontaktiert Google — datenschutzrechtlich in Deutschland heikel und in Paket 020 ohnehin zu beheben.
+- `apps/web/tailwind.config.ts` definiert `font-display`, `forest`, `lime`, `coral`, `oat`, `ink`. Diese Farben sind über alle Seiten fest verdrahtet, unter anderem `bg-forest` in `layouts/default.vue:69` und `pages/index.vue:36`.
 - `apps/web/app/pages/marke.vue:1` hält Farben in lokalem `reactive`, Tonalität in `ref`, und „Änderungen speichern“ setzt nur `saved = true`. Nichts wird geladen, nichts gespeichert.
 - `apps/web/app/components/AppLogo.vue` rendert ein statisches Logo; `pages/marke.vue` zeigt „SN“ als Platzhalter-Initialen aus dem Demo-Verein.
 - `apps/remotion/src/ClubPost.tsx` existiert für Story- und Feed-Formate. Ob und wie es Marken-Props entgegennimmt, ist beim Umsetzen zu prüfen — Fonts müssen im Renderer registriert sein, sonst fällt das Rendering stumm auf eine Ersatzschrift zurück.
@@ -64,11 +64,15 @@ create table public.brand_assets (
   unique (bucket_id, object_path),
   foreign key (organization_id, department_id)
     references public.departments(organization_id, id) on delete cascade,
-  check (kind <> 'font' or (font_family is not null and license_confirmed_at is not null))
+  -- Die Lizenzpflicht haengt am Status, nicht am Insert: eine Schriftdatei muss
+  -- sich hochladen und pruefen lassen, bevor der Verein die Lizenz bestaetigt.
+  check (kind <> 'font' or status <> 'ready'
+         or (font_family is not null and license_holder is not null
+             and license_confirmed_at is not null and license_confirmed_by is not null))
 );
 ```
 
-Der letzte CHECK ist der wichtige: **eine Schriftdatei ohne bestätigte Lizenz kann nicht `ready` werden.** Die Bestätigung ist keine Rechtsprüfung durch uns, sondern eine dokumentierte Erklärung des Vereins mit Person und Zeitstempel — nachweisbar im Audit.
+Der letzte CHECK ist der wichtige: **eine Schriftdatei ohne bestätigte Lizenz kann nicht `ready` werden.** Sie kann sehr wohl in `processing` liegen — sonst gäbe es keinen Zustand, in dem Datei und Lizenzformular nebeneinander existieren, und der Upload würde vor der Bestätigung scheitern. Erst der Übergang nach `ready` verlangt `font_family`, `license_holder`, `license_confirmed_at` und `license_confirmed_by`. Die Bestätigung ist keine Rechtsprüfung durch uns, sondern eine dokumentierte Erklärung des Vereins mit Person und Zeitstempel — nachweisbar im Audit.
 
 Markenprofil erweitern (Paket 009 hat bereits `logo_dark_path`, `display_font_key`, `body_font_key` ergänzt):
 
@@ -99,6 +103,20 @@ create table public.department_brand_profiles (
 `display_font_key` bleibt für die kuratierte Auswahl, `display_font_asset_id` für eine eigene Schrift. Genau eines von beiden ist wirksam; ist ein Asset gesetzt, gewinnt es. Ein CHECK ist hier nicht sinnvoll, weil der Schlüssel immer einen Default trägt und als Rückfallebene taugt, wenn ein Asset abgelehnt wird.
 
 `locked_fields` erlaubt dem Verein, einzelne Felder für Abteilungen zu sperren — feiner als das globale `allow_department_overrides`. Werte sind Feldnamen aus `department_brand_profiles`.
+
+Beide neuen Tabellen sind mandantenbezogen und gehören deshalb ausdrücklich in den RLS-Block derselben Migration — die private Storage-Policy schützt nur Objekte, nicht die Metadatenzeilen:
+
+```sql
+alter table public.brand_assets enable row level security;
+alter table public.brand_assets force row level security;
+alter table public.department_brand_profiles enable row level security;
+alter table public.department_brand_profiles force row level security;
+-- select: authz.is_organization_member(organization_id)
+-- insert/update: brand.manage im Scope; Abteilungszeilen zusaetzlich
+--   authz.has_department_permission(department_id, 'brand.manage')
+-- Schreiben auf brand_assets laeuft ausschliesslich ueber die API mit Service
+-- Role, weil Pruefung, Sanitisierung und Rasterderivat serverseitig entstehen.
+```
 
 **Vererbung** folgt derselben Richtung wie Paket 011: die Abteilung darf abweichen, nur wenn der Verein es zulässt. `resolveBrand(organizationProfile, departmentProfile?)` in `packages/domain` ist die einzige Auflösungsfunktion und respektiert `allow_department_overrides` und `locked_fields`.
 
@@ -136,7 +154,7 @@ Bilder:
 
 Schriften:
 
-- nur WOFF2 (Bucket erlaubt bereits `font/woff2`); optional TTF/OTF, dann serverseitig nach WOFF2 konvertieren, damit im Web nur ein Format ausgeliefert wird
+- nur WOFF2 (Bucket erlaubt bereits `font/woff2`); optional TTF/OTF, dann serverseitig nach WOFF2 konvertieren, damit im Web nur ein Format ausgeliefert wird. **Dazu gehört eine Migrationszeile**: `brand-assets` erlaubt heute ausschließlich `image/svg+xml`, `image/png`, `image/jpeg` und `font/woff2` (`202608020002:5`). Eine signierte Upload-URL für TTF/OTF würde am `mimetype` des Objekts scheitern. Entweder wird die MIME-Liste des Buckets in derselben Migration um `font/ttf` und `font/otf` erweitert, oder der TTF/OTF-Pfad entfällt und die Oberfläche verlangt WOFF2. Die Entscheidung gehört in diesen Plan, nicht in die Implementierung.
 - Signatur prüfen, Tabellenstruktur validieren, `family`, `weight`, `style` aus der Datei lesen und **nicht** aus der Nutzereingabe übernehmen
 - `OS/2`-Einbettungsbits (`fsType`) lesen. Verbietet die Datei Einbettung, wird sie abgelehnt mit Hinweis auf die Lizenz. Das schützt den Verein, nicht uns.
 - Lizenzbestätigung ist Pflicht: Rechteinhaber, freie Notiz, Checkbox „Wir besitzen eine Lizenz, die die Nutzung in unseren Social-Media-Beiträgen erlaubt“. Erst danach `status = 'ready'`, plus `audit_events`-Eintrag mit Person und Zeitstempel.
@@ -174,7 +192,7 @@ Tailwind wird von festen Farben auf CSS-Variablen umgestellt: `--brand-primary`,
 | Ort | Heute | Danach |
 |---|---|---|
 | `pages/marke.vue:1` | lokaler `reactive`-State, `saved = true` ohne Persistenz, „SN“ als Platzhalter | echtes Laden und Speichern, echtes Logo, echte Fehler und Ladezustände |
-| `nuxt.config.ts:327-334` | Manrope und DM Sans von `fonts.googleapis.com` | selbst gehostete Dateien aus der Registry, keine Verbindung zu Google |
+| `nuxt.config.ts:14-21` | Manrope und DM Sans von `fonts.googleapis.com` | selbst gehostete Dateien aus der Registry, keine Verbindung zu Google |
 | `tailwind.config.ts` | feste Hexwerte für `forest`, `lime`, `oat`, `ink` | CSS-Variablen aus dem Markenprofil, alte Namen als Aliase |
 | `components/AppLogo.vue` | statisches Logo | Vereinslogo aus `brand_assets`, Fallback auf Initialen |
 | `organization_brand_profiles.settings` | schemaloses `jsonb` | bleibt bestehen, wird aber nicht weiter befüllt; neue Felder sind typisiert |
@@ -183,8 +201,8 @@ Tailwind wird von festen Farben auf CSS-Variablen umgestellt: `--brand-primary`,
 
 - `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm db:reset`, `pnpm db:test`
 - Domain-Tests: `resolveBrand` respektiert `allow_department_overrides` und `locked_fields`; Kontrastberechnung gegen bekannte WCAG-Referenzwerte; Font-Asset schlägt Font-Key.
-- pgTAP: Schrift-Asset ohne `license_confirmed_at` verstößt gegen CHECK; Asset einer fremden Organisation ist nicht lesbar; `department_brand_profiles` einer fremden Abteilung ist nicht schreibbar.
-- Upload-Tests: PNG mit falsch deklariertem MIME-Typ → 400; SVG mit `<script>` → sanitisiert oder abgelehnt, nie unverändert gespeichert; WOFF2 mit gesperrten Einbettungsbits → abgelehnt mit Begründung; Font ohne Lizenzbestätigung bleibt `processing`.
+- pgTAP: Schrift-Asset ohne `license_confirmed_at` lässt sich in `processing` anlegen, aber nicht auf `ready` setzen; Asset einer fremden Organisation ist nicht lesbar; `department_brand_profiles` einer fremden Abteilung ist nicht schreibbar.
+- Upload-Tests: PNG mit falsch deklariertem MIME-Typ → 400; SVG mit `<script>` → sanitisiert oder abgelehnt, nie unverändert gespeichert; WOFF2 mit gesperrten Einbettungsbits → abgelehnt mit Begründung; Font ohne Lizenzbestätigung bleibt `processing`; ein Upload je unterstütztem Schriftformat kommt tatsächlich im Bucket an — das findet eine MIME-Liste, die zur Oberfläche nicht passt.
 - Rendering: eine Komposition mit eigener Schrift rendert sichtbar in dieser Schrift. **Ein Test, der nur prüft, dass das Rendering nicht abbricht, genügt hier nicht** — der stumme Fallback ist genau der Fehler, den es zu finden gilt. Pixelvergleich gegen eine Referenz oder Prüfung der eingebetteten Schriftmetadaten.
 - manuell: Farben ändern, Vorschau folgt sofort; Abteilung überschreibt Akzentfarbe; Verein sperrt das Feld, Abteilung sieht es deaktiviert mit Begründung; Logo austauschen, ein bereits freigegebener Beitrag zeigt weiterhin das alte Logo.
 
@@ -192,6 +210,6 @@ Tailwind wird von festen Farben auf CSS-Variablen umgestellt: `--brand-primary`,
 
 - **SVG-Sanitisierung** kommt aus Paket 009 und ist damit eine Abhängigkeit, nicht ein Risiko dieses Pakets. Das Risiko hier ist Nachlässigkeit im Umgang damit: jeder neue Asset-Typ muss durch denselben Sanitizer, und der Testkorpus wächst mit. Ein zweiter, „schnellerer“ Pfad für Assets, die man für harmlos hält, ist die Art Abkürzung, die eine Sicherheitsmaßnahme wirkungslos macht.
 - **Schriftlizenzen**: Vereine besitzen häufig eine Desktop-Lizenz und keine Web- oder Einbettungslizenz. Die Bestätigung verlagert die Verantwortung, beseitigt das Risiko aber nicht. Der Bestätigungstext sollte juristisch geprüft und in Paket 020 mit den übrigen Rechtstexten behandelt werden.
-- **Tailwind auf CSS-Variablen** umzustellen berührt viele Templates. Der Alias-Ansatz begrenzt das, aber Farben, die per `:style` gesetzt werden (etwa `pages/index.vue:164`, `pages/freigaben.vue:103`) verschwinden mit ihren Dummy-Daten ohnehin in den Paketen 009 und 015.
+- **Tailwind auf CSS-Variablen** umzustellen berührt viele Templates. Der Alias-Ansatz begrenzt das, aber Farben, die per `:style` gesetzt werden (etwa `pages/index.vue:70`, `pages/freigaben.vue:12`) verschwinden mit ihren Dummy-Daten ohnehin in den Paketen 009 und 015.
 - **Kontrast als Warnung, nicht als Blockade** ist eine bewusste Produktentscheidung. Wer Barrierefreiheit erzwingen will, muss sie hier zur Pflicht machen — das würde manche Vereinsfarben ausschließen und sollte dann ausdrücklich beschlossen werden.
 - **Abteilungsbranding und Wiedererkennbarkeit** stehen in Spannung. `allow_department_overrides` steht per Default auf `true`; ein Verein, dem Einheitlichkeit wichtig ist, muss es aktiv abschalten. Der umgekehrte Default wäre auch vertretbar und ist eine Produktentscheidung.

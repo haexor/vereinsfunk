@@ -38,7 +38,7 @@ Geplant auf `b5c2eda6` am 2026-08-04.
 - `packages/domain/src/index.ts:99-117` `evaluateMediaGate` prüft `consentValid` als von außen gelieferten Wert. Wer ihn bestimmt, ist bisher offen.
 - `public.teams` (`202608020001:52-62`) trägt keine Herkunftsinformation. Eine Mannschaft ist heute ausschließlich manuell anlegbar.
 - Es gibt **keine Tabelle für Personen**, keinen Import, keine Quellenverwaltung, keinen Provider und keine Synchronisation im Code.
-- `packages/contracts/src/index.ts:135` `WorkflowNameSchema` kennt keinen Sync-Workflow.
+- `packages/contracts/src/index.ts:82` `WorkflowNameSchema` kennt keinen Sync-Workflow.
 
 ## Scope
 
@@ -63,10 +63,11 @@ Nicht enthalten: Mannschaften, Spielpläne, Ergebnisse und Veranstaltungen (019 
 
 ```ts
 export type IntegrationDomain = 'people' | 'teams' | 'fixtures' | 'events'
+export type SourceTransportKind = 'file' | 'http' | 'ical' | 'webhook'
 
 /** Transport: woher kommen rohe Datensätze? */
 export interface SourceTransport {
-  readonly kind: 'file' | 'http' | 'ical' | 'webhook'
+  readonly kind: SourceTransportKind          // deckungsgleich mit integration_transport
   readonly key: string
   read(options: { since?: Date }): AsyncIterable<Readonly<Record<string, unknown>>>
 }
@@ -113,7 +114,9 @@ Migration `2026080407_integration_framework.sql`:
 
 ```sql
 create type public.integration_domain as enum ('people','teams','fixtures','events');
-create type public.integration_transport as enum ('manual','file','http','ical','webhook');
+-- Deckungsgleich mit SourceTransport.kind. Handgepflegte Datensaetze sind keine
+-- Quelle, sondern tragen source_id = null -- deshalb kein 'manual' im Enum.
+create type public.integration_transport as enum ('file','http','ical','webhook');
 
 create table public.integration_sources (
   id uuid primary key default gen_random_uuid(),
@@ -121,8 +124,10 @@ create table public.integration_sources (
   transport public.integration_transport not null,
   provider_key text not null,                    -- 'csv','ical','easyverein', …
   display_name text not null,
+  -- cardinality, nicht array_length: array_length('{}', 1) ist NULL, und ein
+  -- CHECK mit NULL gilt als erfuellt -- der leere Wert umgeht die Grenze sonst.
   enabled_domains public.integration_domain[] not null
-    check (array_length(enabled_domains, 1) between 1 and 4),
+    check (cardinality(enabled_domains) between 1 and 4),
   department_id uuid,                            -- optional auf eine Abteilung begrenzt
   endpoint_url text,
   credentials_secret_id uuid,                    -- packages/secrets, nie Klartext
@@ -160,20 +165,32 @@ create table public.integration_sync_runs (
 create table public.integration_sync_conflicts (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null, sync_run_id uuid not null,
+  source_id uuid not null,
   domain public.integration_domain not null,
   external_id text, local_id uuid, label text not null,
   field text not null, current_value text, incoming_value text,
   kind text not null check (kind in ('ambiguous_match','unknown_structure','value_conflict','invalid_record')),
+  -- Stabiler Wiedererkennungsschluessel ueber Laufgrenzen hinweg, damit
+  -- ignore_permanently beim naechsten Lauf ueberhaupt greifen kann.
+  fingerprint text not null,
   resolution text not null default 'pending'
     check (resolution in ('pending','keep_current','take_incoming','ignore_permanently')),
   resolved_by uuid references public.profiles(id), resolved_at timestamptz,
   created_at timestamptz not null default now(),
   foreign key (organization_id, sync_run_id)
-    references public.integration_sync_runs(organization_id, id) on delete cascade
+    references public.integration_sync_runs(organization_id, id) on delete cascade,
+  foreign key (organization_id, source_id)
+    references public.integration_sources(organization_id, id) on delete cascade
 );
+-- Dauerhaft ignorierte Konflikte werden nicht neu angelegt, sondern gefunden.
+create unique index integration_sync_conflicts_ignored_unique
+  on public.integration_sync_conflicts (organization_id, source_id, fingerprint)
+  where resolution = 'ignore_permanently';
 ```
 
-`label` in der Konfliktzeile statt eines Verweises auf den Zieldatensatz: ein Konflikt muss auch dann verständlich bleiben, wenn der zugehörige Datensatz noch nicht existiert. `ignore_permanently` verhindert, dass derselbe Konflikt bei jedem Lauf erneut erscheint.
+`label` in der Konfliktzeile statt eines Verweises auf den Zieldatensatz: ein Konflikt muss auch dann verständlich bleiben, wenn der zugehörige Datensatz noch nicht existiert.
+
+`fingerprint` ist der Grund, warum `ignore_permanently` funktioniert. Die `id` ist pro Lauf neu, und die Zeile hängt per `on delete cascade` am Lauf — ohne stabilen Schlüssel wäre eine Ignorier-Entscheidung beim nächsten Lauf vergessen. Der Wert wird deterministisch aus Quelle, Bereich, Konfliktart, Feld und der Identität des Datensatzes (`external_id`, sonst `local_id`, sonst dem normalisierten `label`) gebildet. Bevor ein Konflikt angelegt wird, prüft der Lauf den Fingerabdruck gegen die dauerhaft ignorierten Einträge derselben Quelle.
 
 ### Mitgliederverzeichnis
 
@@ -207,9 +224,12 @@ create table public.directory_people (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (organization_id, id),
-  foreign key (organization_id, department_id) references public.departments(organization_id, id) on delete set null,
-  foreign key (organization_id, department_id, team_id) references public.teams(organization_id, department_id, id) on delete set null,
-  foreign key (organization_id, source_id) references public.integration_sources(organization_id, id) on delete set null,
+  -- Spaltenliste bei SET NULL ist Pflicht: ohne sie setzt PostgreSQL *alle*
+  -- Spalten des Fremdschluessels auf NULL, also auch organization_id -- die ist
+  -- not null, und das Loeschen der Abteilung wuerde daran scheitern.
+  foreign key (organization_id, department_id) references public.departments(organization_id, id) on delete set null (department_id),
+  foreign key (organization_id, department_id, team_id) references public.teams(organization_id, department_id, id) on delete set null (team_id),
+  foreign key (organization_id, source_id) references public.integration_sources(organization_id, id) on delete set null (source_id),
   check (not is_minor or guardian_email is not null or status <> 'active')
 );
 
@@ -252,6 +272,7 @@ Elternkontakte und Geburtsjahre sind nicht für jedes Vereinsmitglied bestimmt. 
 - **iCal** — der pragmatische Universaladapter für Termine. Viele Verbands- und Mannschaftssysteme bieten einen Kalender-Feed, auch wenn sie keine API haben. Wird primär von Paket 019 gebraucht, entsteht aber hier, weil er zum Rahmen gehört.
 - **HTTP-API** — ein Adapter nach dokumentiertem Spike in `docs/evidence/integration-spike.md`. Je Kandidat zu beantworten: dokumentierte API, Authentifizierung, Ratenlimits, welche Bereiche geliefert werden, Auftragsverarbeitungsvertrag möglich, Kosten, Stabilitätszusage. Kandidaten im deutschen Markt sind unter anderem easyVerein, Vereinsflieger, SpielerPlus, ClubDesk, Campai, Kurabu, WISO MeinVerein und SAMS.
 - **Webhook** ist als Transportart im Enum vorgesehen und wird in diesem Paket **nicht** implementiert. Er braucht Signaturprüfung und eine öffentliche Route und ist erst sinnvoll, wenn ein Anbieter ihn anbietet.
+- **Manuell** ist ausdrücklich **keine** Transportart. Ein handgepflegter Datensatz hat keine Quelle: `source_id`, `external_id` und `source_updated_at` bleiben `null`, der partielle Unique-Index greift nicht, und `planSync` sieht ihn nie. Deshalb steht `manual` weder im Enum noch im TypeScript-Vertrag.
 
 Ehrliche Erwartung, die im Plan stehen soll: die meisten dieser Systeme haben keine offene, dokumentierte API für Vereine. Datei-Import und iCal bleiben auf absehbare Zeit die Hauptwege, und das ist kein Notbehelf — ein zuverlässiger Import mit Trockenlauf ist besser als eine brüchige Integration.
 
@@ -259,7 +280,7 @@ Ehrliche Erwartung, die im Plan stehen soll: die meisten dieser Systeme haben ke
 
 ### 2. Ausführung
 
-Hatchet-Workflow `sync-integration-source` mit Fairness-Key `organizationId`, weil ein API-Sync langsam und ratenlimitiert sein kann. Der Name muss in `WorkflowNameSchema` (`packages/contracts/src/index.ts:135`) ergänzt werden. Die Nachricht enthält nur `sourceId`, `domain`, `mode` und `correlationId` — keine Fachdaten, entsprechend `ADR-002`.
+Hatchet-Workflow `sync-integration-source` mit Fairness-Key `organizationId`, weil ein API-Sync langsam und ratenlimitiert sein kann. Der Name muss in `WorkflowNameSchema` (`packages/contracts/src/index.ts:82`) ergänzt werden. Die Nachricht enthält nur `sourceId`, `domain`, `mode` und `correlationId` — keine Fachdaten, entsprechend `ADR-002`.
 
 Ein Cron führt Quellen mit `sync_cron` automatisch aus, **immer als `dry_run`**, wenn Konflikte offen sind. Automatische Übernahme ist nur zulässig, wenn der letzte Lauf konfliktfrei war; sonst wartet der Lauf auf einen Menschen.
 

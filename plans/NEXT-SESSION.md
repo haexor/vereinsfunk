@@ -10,7 +10,9 @@ Wir setzen die Planserie `plans/008`–`plans/020` um. Lies zuerst `plans/README
 
 ## Vorgehen je Arbeitspaket
 
-Arbeite **ein Paket zu Ende**, bevor du das nächste anfängst. Halte dich an die Reihenfolge aus `plans/README.md`: 008 → 009 → 010 → 011 → 012, dann 013 (unabhängig, kann früher), 014 → 019 → 015, 016 jederzeit ab 011.
+Arbeite **ein Paket zu Ende**, bevor du das nächste anfängst. Halte dich an die Reihenfolge aus `plans/README.md`: 008 → 009 → 010 → 011 → 012, dann 013 (unabhängig, kann früher), 014 → 019 → 015, 016 jederzeit ab 011, 020 danach.
+
+Die übrigen drei hängen an externen Gates und stehen deshalb nicht in der laufenden Kette: **017** braucht 006 und 016 plus das Meta App Review, **018** braucht 017 plus Rechtsgrundlage und AVV mit dem LLM-Anbieter. **020 ist das Produktions-Gate**: die Pakete 014, 015 und 018 dürfen vorher gebaut, aber nicht mit echten Personendaten betrieben werden. Wenn du 014 oder 015 fertig hast und niemand 020 umgesetzt hat, ist das Paket „gebaut“ und nicht „produktiv“ — sag mir das ausdrücklich, statt es als erledigt zu melden.
 
 Beginne mit **008**. Ohne echte Authentifizierung lässt sich kein Dummy-Datensatz ehrlich ersetzen.
 
