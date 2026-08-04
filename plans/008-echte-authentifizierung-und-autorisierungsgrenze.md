@@ -2,7 +2,7 @@
 
 ## Ergebnis
 
-Ein Mensch registriert sich, bestätigt seine E-Mail, meldet sich an und erhält eine echte Sitzung. Die Oberfläche kennt danach den angemeldeten Nutzer, seine Mitgliedschaften und seinen aktiven Scope aus der Datenbank statt aus einem Demo-Composable. Die Fastify-API verifiziert jedes Token kryptografisch und lehnt jede Anfrage ohne passende Permission ab. Es existiert kein Codepfad mehr, der fachliche Daten ohne verifizierte Identität liefert.
+Ein Mensch registriert sich, bestätigt seine E-Mail, meldet sich an und erhält eine echte Sitzung. Die Oberfläche kennt danach den angemeldeten Nutzer, seine Mitgliedschaften und seinen aktiven Scope aus der Datenbank statt aus einem Demo-Composable. Die Fastify-API verifiziert jedes Token kryptografisch. Scope-gebundene Endpunkte prüfen zusätzlich die passende Permission; `/health` bleibt öffentlich, `/v1/media/:assetId/complete` und `/v1/media/gate` verlangen ausschließlich eine verifizierte Authentifizierung (siehe Risiken). Es existiert kein Codepfad mehr, der fachliche Daten ohne verifizierte Identität liefert.
 
 Dieses Paket ist die Voraussetzung für alle folgenden. Ohne es lässt sich kein Dummy-Datensatz ehrlich ersetzen, weil es keinen Nutzerkontext gibt, gegen den echte Daten geladen werden könnten.
 
@@ -138,7 +138,8 @@ interface SessionState {
 - `pnpm db:start && pnpm db:reset && pnpm db:test`
 - neue pgTAP-Fälle in `supabase/tests/`: Trigger legt Profil an; Nutzer sieht ausschließlich eigenes Profil; `authz.has_team_permission` positiv für Teammitglied, negativ für fremdes Team, positiv für Abteilungsadmin; `authz.membership_scopes()` gibt für einen fremden Nutzer keine Zeile zurück.
 - neue API-Tests: Anfrage ohne Token → 401; Anfrage mit gefälschter Signatur → 401; Anfrage mit gültigem Token ohne Permission → 403; Anfrage mit Permission → 2xx. Der Fall „gefälschte Signatur“ ist der wichtigste, weil er heute durchgeht.
-- manuell, per Browsertest ausgeführt und bestätigt: Registrieren, Bestätigungsmail im lokalen Inbucket, Anmelden, Neuladen behält Sitzung, Abmelden verwirft sie, geschützte Route leitet um.
+- Browser-Ende-zu-Ende nachvollzogen (Playwright gegen den laufenden lokalen Stack, 2026-08-04, Reviewer-Anmerkung zur vorherigen unbelegten Behauptung damit ausgeräumt): Registrieren → Bestätigungsmail aus Mailpit abgerufen → Bestätigungslink über `/auth/callback` gefolgt → Sitzung etabliert, Landung auf `/onboarding` (korrekt, da der neue Nutzer noch keine Organisation hat) → Neuladen behält die Sitzung. Zusätzlich mit einem Seed-Nutzer mit echter Vereinsmitgliedschaft: Anmelden zeigt echten Vereinsnamen und Anzeigenamen in der Sidebar, Neuladen behält die Sitzung, Abmelden leitet auf `/anmelden` um, ein Aufruf einer geschützten Route im abgemeldeten Zustand leitet mit `?redirect=`-Parameter um, erneutes Anmelden kehrt zur ursprünglich angefragten Seite zurück.
+- Dabei einen echten, vorher unentdeckten Bug gefunden und behoben: `supabase/seed.sql` legte `confirmation_token`/`recovery_token`/`email_change_token_new`/`email_change` als `NULL` an (keine Spaltenvorgabe). GoTrue schlägt beim Passwort-Login mit `converting NULL to string is unsupported` fehl, sobald diese Spalten `NULL` sind — die Seed-Nutzer (`lena@example.local`, `jonas@example.local`) konnten sich dadurch nie anmelden. Behoben durch explizite `''`-Werte beim Insert.
 
 ## Risiken und offene Entscheidungen
 
@@ -157,3 +158,19 @@ Fünf unabhängige Prüfungen (Mandantentrennung, Rechte, Geheimnisse, Verträge
 - **Geheimnisse**: der im Scope zugesicherte Lint-/Testcheck gegen `SUPABASE_SERVICE_ROLE_KEY` unter `apps/web/app/` existierte nicht. Ergänzt als `apps/web/app/security.test.ts`.
 
 Rechte- und Rückbau-Prüfung ergaben keine Befunde. Nicht übernommen (Vorschläge, kein Defekt): Cross-Org-Testfall für die neuen `authz`-Funktionen, Kommentar-Parität für `/v1/media/gate` (ergänzt, da trivial).
+
+## Phase 3b – CodeRabbit-Review auf PR #3
+
+Zusätzlich zur eigenen adversarialen Prüfung meldete CodeRabbit 13 Befunde auf der PR. Reale Befunde, behoben:
+
+- **Offener Redirect (CWE-601)**: `route.query.redirect.startsWith('/') && !startsWith('//')` ließ `/\evil.example` durch — Browser normalisieren `\` zu `/` bei speziellen Schemas, das Ziel landet außerhalb der eigenen Origin. Behoben mit `resolveSafeRedirect()` (`apps/web/app/utils/safeRedirect.ts`), das über `new URL(ziel, location.origin)` auflöst und nur bei gleicher Origin akzeptiert. Betraf `pages/auth/callback.vue` und `pages/anmelden.vue`.
+- **SSR überschrieb den Scope-Cookie**: `useScope()` schrieb `remembered.value = active.value` unconditional — auf dem Server ist `useSession()` immer leer, also wurde der echte, zuvor gespeicherte Cookie bei jedem SSR-Durchlauf mit `null` überschrieben. Behoben: der Schreibzugriff läuft nur noch clientseitig (`if (import.meta.client)`). Per Browsertest verifiziert, dass ein Reload die Sitzung jetzt tatsächlich behält.
+- **`useSession()` markierte sich vor Fehlerprüfung als geladen**: `loaded.value = true` stand vor den Supabase-Aufrufen, Fehler von `getUser()`/`membership_scopes()` wurden ignoriert und eine leere Scope-Liste dauerhaft gecacht — ein transienter Fehler hätte einen echten Nutzer dauerhaft als „ausgeloggt“ erscheinen lassen. Behoben mit einem geteilten Ladevorgang (`useSessionLoad()`), der bei Fehlschlag zurückgesetzt wird, damit der nächste Aufruf erneut versucht, statt den Fehlerzustand zwischenzuspeichern.
+- **`passwort-vergessen.vue` meldete „E-Mail unterwegs“ auch bei echtem API-Fehler**: `resetPasswordForEmail()` liefert `{data, error}`, der `finally`-Block setzte `sent = true` unabhängig vom Ergebnis. Behoben: `error` wird geprüft, nur ein echter Fehlschlag zeigt jetzt eine Fehlermeldung; die Uneindeutigkeit „E-Mail existiert oder nicht“ bleibt bewusst erhalten.
+- **`jsonb_agg` ohne `order by`**: die Oberfläche wählt `scopes[0]` als Standard-Scope; ohne stabile Sortierung kann die Reihenfolge zwischen Aufrufen wechseln. Alle sechs Aggregationen in `membership_scopes()` sortieren jetzt stabil (Name bzw. Rolle).
+- **`handle_new_user()` konnte NULL in eine `not null`-Spalte schreiben**: bei fehlender E-Mail (z. B. Telefon-/OAuth-Signup ohne E-Mail-Scope) war der `display_name`-Fallback leer. Zusätzlicher letzter Fallback `'Mitglied'` ergänzt.
+- **Tote Bedienelemente**: Vereinsauswahl-Button in `layouts/default.vue` (Chevron ohne Funktion, kein Mehrfach-Verein-Feature in diesem Paket) zu statischer Anzeige reduziert; Such-/Filterzeile in `beitraege.vue` entfernt, solange die Liste ausschließlich den Empty State zeigt (keine Funktion, die sie beeinflussen könnte).
+- **Dokumentationsungenauigkeit**: „lehnt jede Anfrage ohne passende Permission ab“ war zu pauschal (`/health` offen, zwei Endpunkte nur `requireAuth`) — Ergebnis-Absatz und `README.md:35` präzisiert.
+- **Unbelegte „erledigt“-Behauptung**: siehe Verifikation oben — durch echten, reproduzierten Playwright-Lauf ersetzt, der dabei zusätzlich den Seed-Login-Bug aufdeckte.
+
+Bewusst nicht übernommen: Vollständiger Rückbau der verbleibenden Demo-Zahlen in `pages/index.vue` (`stats`, `week`, feste Kalenderwoche) — laut Rückbau-Inventar in `plans/README.md` ausdrücklich den Paketen 009/016/019 zugewiesen, nicht 008. Deaktivierung von `/v1/media/:assetId/complete` — der Stub persistiert nichts und hat aktuell keinen Effekt jenseits einer festen 202-Antwort; die Route ist im Code bereits als temporär und unvollständig dokumentiert, echte Berechtigungsprüfung kommt mit echter Medien-Persistenz. Idempotenz von `create trigger`/`create policy` in der Migration — Nitpick, diese Migration läuft nur per `db reset` (Neuaufbau), nicht als wiederholtes Apply auf bestehende Datenbanken.

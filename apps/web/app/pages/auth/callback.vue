@@ -6,7 +6,7 @@ const errorMessage = ref('')
 
 onMounted(async () => {
   const supabase = useSupabaseClient()
-  const redirectTarget = typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/') && !route.query.redirect.startsWith('//') ? route.query.redirect : '/'
+  const redirectTarget = resolveSafeRedirect(route.query.redirect)
 
   // detectSessionInUrl verarbeitet das Hash-Fragment asynchron im Hintergrund; ein einmaliger
   // onAuthStateChange-Listener kann das Ereignis verpassen, falls es vor dem Abonnieren feuert.

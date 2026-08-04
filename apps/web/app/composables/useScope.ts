@@ -28,7 +28,9 @@ export async function useScope() {
     const firstScope = scopes[0]
     active.value = firstScope ? { organizationId: firstScope.organizationId, departmentId: firstScope.departments[0]?.id ?? null } : null
   }
-  remembered.value = active.value
+  // useSession() is always empty on the server, so a server-side write here would
+  // overwrite the real, previously remembered cookie with null on every SSR pass.
+  if (import.meta.client) remembered.value = active.value
 
   return active
 }

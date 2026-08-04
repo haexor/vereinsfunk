@@ -72,14 +72,13 @@ const organizationNav = [
       <div class="hidden px-2 pb-7 lg:block"><AppLogo /></div>
 
       <div v-if="activeOrganization" class="mb-5 rounded-2xl border border-white/10 bg-white/[.06] p-2">
-        <button class="focus-ring flex w-full items-center gap-3 rounded-xl p-2 text-left hover:bg-white/[.06]">
+        <div class="flex w-full items-center gap-3 p-2 text-left">
           <span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-lime font-display text-sm font-extrabold text-forest">{{ organizationInitials }}</span>
           <span class="min-w-0 flex-1">
             <span class="block truncate text-sm font-semibold">{{ activeOrganization.organizationName }}</span>
             <span class="block text-[11px] text-white/55">Vereinskonto</span>
           </span>
-          <ChevronDown :size="15" class="text-white/50" />
-        </button>
+        </div>
         <template v-if="activeOrganization.departments.length">
           <div class="mx-2 my-1 h-px bg-white/10" />
           <label class="relative block">

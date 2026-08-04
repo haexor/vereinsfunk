@@ -8,8 +8,14 @@ security definer
 set search_path = public, pg_temp
 as $$
 begin
+  -- display_name is not null; auth.users.email is nullable in general (phone/OAuth signup),
+  -- so the email-derived fallback needs its own fallback to guarantee a non-empty value.
   insert into public.profiles (id, display_name)
-  values (new.id, coalesce(nullif(trim(new.raw_user_meta_data->>'display_name'), ''), split_part(new.email, '@', 1)))
+  values (new.id, coalesce(
+    nullif(trim(new.raw_user_meta_data->>'display_name'), ''),
+    nullif(split_part(coalesce(new.email, ''), '@', 1), ''),
+    'Mitglied'
+  ))
   on conflict (id) do nothing;
   return new;
 end;
@@ -81,39 +87,41 @@ stable
 security definer
 set search_path = public, pg_temp
 as $$
-  select coalesce(jsonb_agg(org_scope), '[]'::jsonb)
+  -- The UI picks scopes[0] as the default active scope, so the aggregation order must
+  -- be stable across calls -- jsonb_agg without order by has no guaranteed order.
+  select coalesce(jsonb_agg(org_scope order by org_scope->>'organizationName'), '[]'::jsonb)
   from (
     select jsonb_build_object(
       'organizationId', organization.id,
       'organizationName', organization.name,
       'organizationRoles', (
-        select coalesce(jsonb_agg(org_membership.role), '[]'::jsonb)
+        select coalesce(jsonb_agg(org_membership.role order by org_membership.role), '[]'::jsonb)
         from public.organization_memberships org_membership
         where org_membership.organization_id = organization.id
           and org_membership.user_id = auth.uid()
           and (org_membership.expires_at is null or org_membership.expires_at > now())
       ),
       'departments', (
-        select coalesce(jsonb_agg(department_scope), '[]'::jsonb)
+        select coalesce(jsonb_agg(department_scope order by department_scope->>'name'), '[]'::jsonb)
         from (
           select jsonb_build_object(
             'id', department.id,
             'name', department.name,
             'roles', (
-              select coalesce(jsonb_agg(department_membership.role), '[]'::jsonb)
+              select coalesce(jsonb_agg(department_membership.role order by department_membership.role), '[]'::jsonb)
               from public.department_memberships department_membership
               where department_membership.department_id = department.id
                 and department_membership.user_id = auth.uid()
                 and (department_membership.expires_at is null or department_membership.expires_at > now())
             ),
             'teams', (
-              select coalesce(jsonb_agg(team_scope), '[]'::jsonb)
+              select coalesce(jsonb_agg(team_scope order by team_scope->>'name'), '[]'::jsonb)
               from (
                 select jsonb_build_object(
                   'id', team.id,
                   'name', team.name,
                   'roles', (
-                    select coalesce(jsonb_agg(team_membership.role), '[]'::jsonb)
+                    select coalesce(jsonb_agg(team_membership.role order by team_membership.role), '[]'::jsonb)
                     from public.team_memberships team_membership
                     where team_membership.team_id = team.id
                       and team_membership.user_id = auth.uid()

@@ -16,8 +16,7 @@ async function submit() {
     const supabase = useSupabaseClient()
     const { error } = await supabase.auth.signInWithPassword({ email: email.value, password: password.value })
     if (error) throw error
-    const redirect = typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/') && !route.query.redirect.startsWith('//') ? route.query.redirect : '/'
-    await navigateTo(redirect)
+    await navigateTo(resolveSafeRedirect(route.query.redirect))
   } catch {
     errorMessage.value = 'Anmeldung nicht möglich. Bitte E-Mail und Passwort prüfen.'
   } finally {
