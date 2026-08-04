@@ -69,30 +69,32 @@ Vollständige Liste der erfundenen Daten im Anwendungscode, mit dem Paket, das s
 | `layouts/default.vue:13` | `badge: 2` bei Freigaben | ✓ 008 (kein Badge statt erfundener Zahl) |
 | `pages/index.vue:5` | `firstName = 'Lena'` | ✓ 008 |
 | `pages/index.vue:4` (`drafts`) | „Aktuelle Beiträge“-Liste aus dem Demo-Composable | ✓ 008 (Empty State), 009/010 (echte Liste steht noch aus) |
-| `pages/index.vue:8-11` | vier Kennzahlen inkl. „Reichweite 24,8k +18 %“ | 009 (Zählwerte), 016 (Kennzahlen), 017 (Reichweite) |
-| `pages/index.vue:14-22,29` | erfundene Woche, „Sonntag, 2. August“ | 009, 019 |
-| `pages/index.vue:86-95` | statische „Idee für diese Woche“, toter `?type=`-Parameter | 009 (Nächste Schritte), 019 (Anlassvorschläge) |
-| `pages/index.vue:97-104` | „18 / 24 Beiträge“, „3 / 4 Abteilungen aktiv“, fester `w-3/4`-Balken | 009 (entfällt), 016 |
+| `pages/index.vue:10-15` | vier Kennzahlen inkl. „Reichweite 24,8k +18 %“ | 009 (Zählwerte), 016 (Kennzahlen), 017 (Reichweite) |
+| `pages/index.vue:17-25,32` | erfundene Woche, „Sonntag, 2. August“ | 009, 019 |
+| `pages/index.vue:77-86` | statische „Idee für diese Woche“, toter `?type=`-Parameter | 009 (Nächste Schritte), 019 (Anlassvorschläge) |
+| `pages/index.vue:88-95` | „18 / 24 Beiträge“, „3 / 4 Abteilungen aktiv“, fester `w-3/4`-Balken | 009 (entfällt), 016 |
 | `pages/beitraege.vue:3` | Liste aus dem Demo-Composable | ✓ 008 (Empty State), 010 (echte Liste steht noch aus) |
 | `pages/erstellen.vue:14` | `useState('content-scope')`, das nirgends gesetzt wird | ✓ 008 |
 | `pages/erstellen.vue:25-29,41,47` | `localPreview()` erzeugt eine Vorschau ohne API und ohne Persistenz | ✓ 008 (entfällt vollständig) |
-| `pages/erstellen.vue:35` | leere Felder `title`, `date`, `location` bei jedem Beitrag neu | 019 (vorbelegt mit Herkunftsangabe) |
-| `pages/freigaben.vue:94-97` | zwei erfundene Beiträge, „Minderjährige · Einwilligung geprüft“ als Text | 015 |
-| `pages/freigaben.vue:98,103` | Freigabe nur im lokalen State, kein Serveraufruf | 015 |
+| `pages/erstellen.vue:12` | leere Felder `title`, `date`, `location` bei jedem Beitrag neu | 019 (vorbelegt mit Herkunftsangabe) |
+| `pages/freigaben.vue:3-6` | zwei erfundene Beiträge, „Minderjährige · Einwilligung geprüft“ als Text | 015 |
+| `pages/freigaben.vue:7,12` | Freigabe nur im lokalen State, kein Serveraufruf | 015 |
 | `pages/kalender.vue:1` | fest „August 2026“, fünf Fantasietermine, hartkodierte Vorlauftage | 019 |
-| `pages/auswertung.vue:2` | vier erfundene Plattformkennzahlen, `bars`-Array ohne Skala und Quelle | 016, 017 |
+| `pages/auswertung.vue:1` | vier erfundene Plattformkennzahlen, `bars`-Array ohne Skala und Quelle | 016, 017 |
 | `pages/marke.vue:1` | Farben und Tonalität im lokalen State, „Speichern“ setzt nur ein Flag | 009, 013 |
 | `pages/mitglieder.vue:1` | vier hartkodierte Namen, „Einladen“ ohne Handler | 010 |
 | `pages/einstellungen.vue:1` | fünf behauptete Einstellungen, jeder Button ohne Handler | 011 (Freigabe, Minderjährige), 012 (Kanäle), 020 (Löschfrist) |
-| `nuxt.config.ts:327-334` | Schriften von `fonts.googleapis.com` bei jedem Aufruf | 013, geprüft in 020 |
-| `packages/config:172-174` | `PUBLISHING_PROVIDER: 'mixpost'`, Mixpost-URL und -Token — widerspricht der Meta-Entscheidung | 012 |
-| `packages/domain:47-87` | `mergeEffectiveConfig` existiert korrekt, wird aber nur von Tests aufgerufen | 011 |
+| `apps/web/nuxt.config.ts:14-21` | Schriften von `fonts.googleapis.com` bei jedem Aufruf | 013, geprüft in 020 |
+| `packages/config/src/index.ts:17-20` | `PUBLISHING_PROVIDER: 'mixpost'`, Mixpost-URL und -Token — widerspricht der Meta-Entscheidung | 012 |
+| `packages/domain/src/index.ts:47-87` | `mergeEffectiveConfig` existiert korrekt, wird aber nur von Tests aufgerufen | 011 |
 | `post_versions.effective_config_snapshot` | Spalte ist `not null` und wird von nichts gefüllt | 011, 013 |
 | `evaluateMediaGate` `consentValid` | Blocker existiert, Wert wird nie bestimmt | 015 |
 | `WorkflowNameSchema` `collect-analytics` | Name reserviert, Workflow nicht implementiert | 017 |
-| `apps/api/src/app.ts:27-30` | `LocalUploadService` liefert `https://storage.invalid/...` | 002 (008 hat die Route nur mit echter Autorisierung versehen, den Stub aber nicht ersetzt — bleibt offen) |
-| `apps/api/src/app.ts:74-103` | `/v1/submissions` persistiert nichts | 011 (008 hat die Route nur mit echter Autorisierung versehen, die Persistenz aber nicht ergänzt — bleibt offen) |
+| `apps/api/src/app.ts:29-32` | `LocalUploadService` liefert `https://storage.invalid/...` | 002 (008 hat die Route nur mit echter Autorisierung versehen, den Stub aber nicht ersetzt — bleibt offen) |
+| `apps/api/src/app.ts:70-100` | `/v1/submissions` persistiert nichts | 011 (008 hat die Route nur mit echter Autorisierung versehen, die Persistenz aber nicht ergänzt — bleibt offen) |
 | `README.md:35` | „funktioniert im lokalen Demo-Modus auch ohne Datenbank und API“ | ✓ 008 (Aussage entfernt) |
+
+Zu den Zeilenangaben: die **offenen** Zeilen dieser Tabelle zeigen auf den aktuellen Stand und sind gegen den Code geprüft. Die mit ✓ markierten Zeilen beschreiben einen Zustand, den Paket 008 beseitigt hat — ihre Zeilennummern beziehen sich auf den Baseline-Commit `b5c2eda6` und zeigen heute auf anderen oder gelöschten Code. Sie bleiben als Nachweis stehen, was ersetzt wurde, und sind nicht als Sprungziel gedacht.
 
 `supabase/seed.sql` bleibt bewusst erhalten. Es ist ein **Entwicklungs-Seed** für den lokalen Stack und wird in den Paketen 009, 010, 014 und 019 erweitert. Es darf nie Datenquelle für Anwendungscode sein und nie in Staging oder Produktion laufen — das steht bereits in seiner ersten Zeile und gilt weiter.
 
