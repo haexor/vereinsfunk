@@ -119,6 +119,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   })
   app.post('/v1/media/gate', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
+    // Keine requirePermission-Pruefung: reine, zustandslose Regelauswertung ohne Scope-Bezug
+    // und ohne Datenzugriff -- es gibt nichts scope-Gebundenes, gegen das zu pruefen waere.
     const input = z.object({ scanStatus: z.enum(['pending', 'clean', 'failed']), facesConfirmedComplete: z.boolean(), hasOriginalSelected: z.boolean(), derivativeCurrent: z.boolean(), minorReviewConfirmed: z.boolean(), faces: z.array(z.object({ subjectKind: z.enum(['adult', 'minor', 'unknown']), decision: z.enum(['pending', 'consented', 'obscure', 'exclude']), consentValid: z.boolean().optional() })) }).parse(request.body)
     return evaluateMediaGate(input)
   })

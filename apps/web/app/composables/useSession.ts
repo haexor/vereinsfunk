@@ -1,4 +1,5 @@
 import type { Role } from '@vereinsfunk/authorization'
+import { MembershipScopesSchema } from '@vereinsfunk/contracts'
 
 export interface SessionTeam {
   id: string
@@ -57,11 +58,13 @@ export async function useSession() {
     supabase.schema('authz').rpc('membership_scopes'),
   ])
 
+  // membership_scopes() ueberquert die Grenze DB-RPC -> Client; ein unerwartet geformtes
+  // Ergebnis soll hier laut werden statt still als kaputte Sidebar in useScope.ts aufzufallen.
   state.value = {
     userId: userResult.user.id,
     displayName: profileResult.data?.display_name ?? userResult.user.email ?? '',
     avatarPath: profileResult.data?.avatar_path ?? null,
-    scopes: (scopesResult.data ?? []) as SessionScope[],
+    scopes: MembershipScopesSchema.parse(scopesResult.data ?? []) as SessionScope[],
   }
   return state
 }

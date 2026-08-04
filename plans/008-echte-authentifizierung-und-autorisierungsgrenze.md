@@ -147,3 +147,13 @@ interface SessionState {
 - **E-Mail-Versand**: lokal übernimmt Inbucket. Für Staging und Produktion braucht Supabase Auth einen SMTP-Anbieter. Das ist eine Beschaffungsentscheidung und blockiert dieses Paket nicht, aber Paket 010 (Einladungen) hängt daran.
 - Die Middleware-Regel „Sitzung ohne Organisation → `/onboarding`“ zeigt bis 009 auf eine Platzhalterseite. Beide Pakete sollten unmittelbar hintereinander umgesetzt werden.
 - **`/v1/media/:assetId/complete` bleibt ohne `requirePermission`**: Die Route erhält nur `requireAuth`, weil weder `assetId` noch `sha256` eine `organizationId`/`departmentId` tragen und `LocalUploadService` (noch ein Stub) keine Zuordnung persistiert, die sich nachschlagen ließe. Sobald ein künftiges Paket echte Medien-Assets persistiert, muss die Zugehörigkeit dort nachgeschlagen und gegen `post.edit` geprüft werden — im Code an der Stelle vermerkt.
+
+## Phase 3 – adversariale Prüfung (nachträglich, vor Merge)
+
+Fünf unabhängige Prüfungen (Mandantentrennung, Rechte, Geheimnisse, Verträge, Rückbau) liefen gegen den Stand vor dem Merge. Drei reale Befunde, alle behoben:
+
+- **Mandantentrennung**: `authz.membership_scopes()` filterte Organisation und Abteilung ausschließlich über `is_organization_member`/`is_department_member`. Ein Nutzer, der ausschließlich über `team_memberships` an einem Team hängt (keine Abteilungs- oder Vereinsmitgliedschaft), bekam `[]` zurück, obwohl `authz.has_team_permission` für ihn korrekt eine Berechtigung bestätigt — die Sidebar hätte für diesen Nutzer trotz echter Berechtigung nichts angezeigt. Behoben durch neue Hilfsfunktion `authz.has_team_membership(team_id)`, bewusst getrennt von `is_department_member`, damit reine Teammitgliedschaft keinen zusätzlichen RLS-Zugriff auf `submissions`/`posts` eröffnet. Zwei neue pgTAP-Fälle: `membership_scopes()` für Team-only-Mitglied, negativer Insert-Test für `profiles_insert_self`.
+- **Verträge**: `useSession.ts` übernahm die Antwort von `authz.membership_scopes()` per Type-Cast ohne Laufzeitprüfung — eine echte Systemgrenze ohne Zod. Behoben mit `MembershipScopesSchema` in `packages/contracts` (dort bereits Zod-Abhängigkeit vorhanden, kein neuer Cross-Package-Zugriff nötig).
+- **Geheimnisse**: der im Scope zugesicherte Lint-/Testcheck gegen `SUPABASE_SERVICE_ROLE_KEY` unter `apps/web/app/` existierte nicht. Ergänzt als `apps/web/app/security.test.ts`.
+
+Rechte- und Rückbau-Prüfung ergaben keine Befunde. Nicht übernommen (Vorschläge, kein Defekt): Cross-Org-Testfall für die neuen `authz`-Funktionen, Kommentar-Parität für `/v1/media/gate` (ergänzt, da trivial).

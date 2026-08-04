@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(13);
+select plan(15);
 
 set local role postgres;
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -35,10 +35,15 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub', '30000000-0000-4000-8000-000000000001', true);
 select is((select count(*)::integer from public.profiles), 1, 'authenticated user sees only their own profile row');
 select is((select count(*)::integer from public.profiles where id = '30000000-0000-4000-8000-000000000002'), 0, 'authenticated user cannot see another users profile row');
+select throws_ok(
+  $$insert into public.profiles (id, display_name) values ('30000000-0000-4000-8000-000000000002', 'Hijacked')$$,
+  '42501', null, 'authenticated user cannot insert a profile row for another user id'
+);
 
 select set_config('request.jwt.claim.sub', '30000000-0000-4000-8000-000000000003', true);
 select ok(authz.has_team_permission('30000000-1200-4000-8000-000000000001', 'analytics.view'), 'team viewer role grants analytics.view');
 select ok(not authz.has_team_permission('30000000-1200-4000-8000-000000000001', 'post.create'), 'team viewer role does not grant post.create');
+select is((select authz.membership_scopes()->0->'departments'->0->'teams'->0->>'id'), '30000000-1200-4000-8000-000000000001', 'membership_scopes includes a team-only members team without any department or organization membership row');
 
 select set_config('request.jwt.claim.sub', '30000000-0000-4000-8000-000000000005', true);
 select ok(not authz.has_team_permission('30000000-1200-4000-8000-000000000001', 'analytics.view'), 'user with no relationship to the team has no team permission');

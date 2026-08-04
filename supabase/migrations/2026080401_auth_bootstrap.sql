@@ -48,8 +48,32 @@ $$;
 
 grant execute on function authz.has_team_permission(uuid, text) to authenticated, service_role;
 
+-- Reine Sichtbarkeits-Hilfsfunktion fuer membership_scopes(): ob auth.uid() Mitglied
+-- eines bestimmten Teams ist. Absichtlich getrennt von is_department_member/
+-- is_organization_member, weil jene auch RLS-Policies auf submissions/posts/department
+-- tragen -- Team-Mitgliedschaft allein soll dort keinen zusaetzlichen Zugriff eroeffnen.
+create or replace function authz.has_team_membership(target_team_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select exists (
+    select 1 from public.team_memberships membership
+    where membership.team_id = target_team_id
+      and membership.user_id = auth.uid()
+      and (membership.expires_at is null or membership.expires_at > now())
+  );
+$$;
+
+grant execute on function authz.has_team_membership(uuid) to authenticated, service_role;
+
 -- Liefert fuer auth.uid() alle Scopes mit Rollen in einem Aufruf, damit die Oberflaeche
 -- nicht drei Membership-Tabellen einzeln abfragen muss, um Sidebar und Scope-Wahl zu fuellen.
+-- Ein Nutzer, der ausschliesslich ueber team_memberships an einem Team haengt (keine
+-- Abteilungs- oder Vereinsmitgliedschaft), muss trotzdem seine Organisation, Abteilung
+-- und sein Team sehen -- sonst zeigt die Sidebar trotz echter Berechtigung nichts an.
 create or replace function authz.membership_scopes()
 returns jsonb
 language sql
@@ -98,18 +122,35 @@ as $$
                 ) as team_scope
                 from public.teams team
                 where team.department_id = department.id
-                  and authz.is_department_member(department.id)
+                  and (authz.is_department_member(department.id) or authz.has_team_membership(team.id))
               ) team_rows
             )
           ) as department_scope
           from public.departments department
           where department.organization_id = organization.id
-            and authz.is_department_member(department.id)
+            and (
+              authz.is_department_member(department.id)
+              or exists (
+                select 1 from public.teams team
+                where team.department_id = department.id and authz.has_team_membership(team.id)
+              )
+            )
         ) department_rows
       )
     ) as org_scope
     from public.organizations organization
     where authz.is_organization_member(organization.id)
+      or exists (
+        select 1 from public.departments department
+        where department.organization_id = organization.id
+          and (
+            authz.is_department_member(department.id)
+            or exists (
+              select 1 from public.teams team
+              where team.department_id = department.id and authz.has_team_membership(team.id)
+            )
+          )
+      )
   ) org_rows;
 $$;
 
