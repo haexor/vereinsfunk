@@ -13,6 +13,7 @@
   "dependencies": {
     "@nuxtjs/tailwindcss": "^6.14.0",
     "@supabase/supabase-js": "^2.55.0",
+    "@vereinsfunk/authorization": "workspace:*",
     "@vereinsfunk/contracts": "workspace:*",
     "@lucide/vue": "^1.28.0",
     "nuxt": "^4.5.1",

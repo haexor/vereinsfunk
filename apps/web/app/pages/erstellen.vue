@@ -11,7 +11,7 @@ const goal = ref<CommunicationGoal>('inform')
 const formats = ref<OutputFormat[]>(['feed_image', 'story'])
 const form = reactive({ title: '', date: '', location: '', audience: '', observation: '', quote: '', doNotMention: '' })
 const preview = ref<GeneratedPost | null>(null)
-const scope = useState<{ organizationId: string; departmentId: string } | null>('content-scope', () => null)
+const scope = await useScope()
 const presets: { id: ContentPresetSlug; label: string; description: string }[] = [
   { id: 'children_program', label: 'Ballschule & Kinderangebote', description: 'Lernmomente und Bewegung' }, { id: 'training_insight', label: 'Trainingseinblick', description: 'Konkrete Übungen und Beobachtungen' }, { id: 'club_life', label: 'Vereinsleben', description: 'Echte Momente aus dem Alltag' }, { id: 'volunteering', label: 'Ehrenamt', description: 'Helfenden Danke sagen' },
   { id: 'people_spotlight', label: 'Menschen im Verein', description: 'Porträts mit freigegebenem Zitat' }, { id: 'behind_the_scenes', label: 'Hinter den Kulissen', description: 'Einblicke in die Arbeit' }, { id: 'new_offer', label: 'Neues Angebot', description: 'Neue Kurse und Möglichkeiten' }, { id: 'event', label: 'Veranstaltung', description: 'Fest, Turnier oder Vereinsabend' },
@@ -22,32 +22,24 @@ const goals: { id: CommunicationGoal; label: string }[] = [{ id: 'inform', label
 const availableFormats: { id: OutputFormat; label: string }[] = [{ id: 'feed_image', label: 'Feed-Bild' }, { id: 'carousel', label: 'Carousel' }, { id: 'story', label: 'Story' }, { id: 'reel', label: 'Reel-Entwurf' }]
 const facts = computed<Record<string, string>>(() => Object.fromEntries(Object.entries({ title: form.title, date: form.date, location: form.location, audience: form.audience }).filter(([, value]) => value.trim())))
 function toggleFormat(format: OutputFormat) { formats.value = formats.value.includes(format) ? formats.value.filter((item) => item !== format) : [...formats.value, format] }
-function localPreview(): GeneratedPost {
-  const claims = [...Object.entries(facts.value).map(([key, value]) => ({ sourceId: `fact:${key}`, text: `${key}: ${value}` })), ...(form.observation.trim() ? [{ sourceId: 'observation:1', text: form.observation.trim() }] : []), ...(form.quote.trim() ? [{ sourceId: 'quote:1', text: form.quote.trim() }] : [])]
-  const headline = claims[0]?.text ?? 'Noch ein bestätigter Moment fehlt.'
-  return { verifiedFacts: claims.map((claim) => claim.text), missingFacts: claims.length ? [] : ['confirmed_observation_or_fact'], headline, caption: claims.map((claim) => `• ${claim.text}`).join('\n'), shortCaption: headline, callToAction: 'Teile diesen echten Vereinsmoment.', hashtags: ['#vereinsleben', '#gemeinsamstark'], altText: `Vereinsmotiv: ${headline}`, templateId: `${selectedPreset.value}-v1`, safetyFlags: claims.length ? [] : ['uncertain_fact'], generatedClaims: claims, variants: [] }
-}
 async function createPreview() {
   if (!formats.value.length) { apiNotice.value = 'Wähle mindestens ein Ausgabeformat.'; return }
+  if (!scope.value?.organizationId || !scope.value.departmentId) { apiNotice.value = 'Bitte wähle zuerst Verein und Abteilung.'; return }
   loading.value = true; apiNotice.value = ''
-  const body = { organizationId: scope.value?.organizationId, departmentId: scope.value?.departmentId, presetSlug: selectedPreset.value, communicationGoal: goal.value, requestedFormats: formats.value, sourceMaterial: { facts: facts.value, observations: form.observation.trim() ? [form.observation.trim()] : [], quotes: form.quote.trim() ? [{ text: form.quote.trim(), approved: true }] : [], doNotMention: form.doNotMention.trim() ? [form.doNotMention.trim()] : [] } }
+  const body = { organizationId: scope.value.organizationId, departmentId: scope.value.departmentId, presetSlug: selectedPreset.value, communicationGoal: goal.value, requestedFormats: formats.value, sourceMaterial: { facts: facts.value, observations: form.observation.trim() ? [form.observation.trim()] : [], quotes: form.quote.trim() ? [{ text: form.quote.trim(), approved: true }] : [], doNotMention: form.doNotMention.trim() ? [form.doNotMention.trim()] : [] } }
   try {
-    if (!body.organizationId || !body.departmentId) throw new Error('scope_missing')
-    const response = await $fetch<{ preview: GeneratedPost }>(`${config.public.apiBase}/v1/submissions`, { method: 'POST', body })
+    const { data } = await useSupabaseClient().auth.getSession()
+    const accessToken = data.session?.access_token
+    if (!accessToken) throw new Error('not_authenticated')
+    const response = await $fetch<{ preview: GeneratedPost }>(`${config.public.apiBase}/v1/submissions`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${accessToken}` },
+      body,
+    })
     preview.value = response.preview
     step.value = 4
-  } catch (error) {
-    if (error instanceof Error && error.message === 'scope_missing') {
-      preview.value = localPreview()
-      apiNotice.value = 'Bitte wähle zuerst Verein und Abteilung. Die lokale Vorschau speichert nichts.'
-      step.value = 4
-    } else if (error && typeof error === 'object' && 'response' in error) {
-      apiNotice.value = 'Die Submission konnte nicht gesendet werden. Bitte erneut versuchen.'
-    } else {
-      preview.value = localPreview()
-      apiNotice.value = 'Lokale Vorschau – starte die API für den vollständigen Workflow.'
-      step.value = 4
-    }
+  } catch {
+    apiNotice.value = 'Die Submission konnte nicht gesendet werden. Bitte erneut versuchen.'
   } finally { loading.value = false }
 }
 </script>

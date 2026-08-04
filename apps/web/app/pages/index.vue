@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { ArrowRight, CalendarDays, Check, Clock3, FileText, MoreHorizontal, Plus, Sparkles, TrendingUp, Users } from '@lucide/vue'
+import { ArrowRight, CalendarDays, Check, Clock3, FileText, Plus, Sparkles, TrendingUp, Users } from '@lucide/vue'
 
-const { drafts, department } = useDemoData()
-const firstName = 'Lena'
+const session = await useSession()
+const scope = await useScope()
+const activeOrganization = computed(() => session.value?.scopes.find((item) => item.organizationId === scope.value?.organizationId) ?? null)
+const department = computed(() => activeOrganization.value?.departments.find((item) => item.id === scope.value?.departmentId)?.name ?? activeOrganization.value?.organizationName ?? '')
+const firstName = computed(() => session.value?.displayName.split(/\s+/)[0] ?? '')
 
 const stats = [
   { label: 'Veröffentlicht', value: '18', detail: 'diesen Monat', icon: Check, trend: '+12 %', color: 'bg-emerald-100 text-emerald-700' },
@@ -53,19 +56,7 @@ const week = [
             <div><h2 class="font-display text-base font-bold tracking-[-.02em]">Aktuelle Beiträge</h2><p class="mt-0.5 text-[11px] text-[#7a817d]">Eure nächsten Inhalte auf einen Blick</p></div>
             <NuxtLink to="/beitraege" class="focus-ring flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-forest hover:bg-stone-100">Alle ansehen <ArrowRight :size="13" /></NuxtLink>
           </div>
-          <div class="divide-y divide-[#ecece5]">
-            <div v-for="item in drafts" :key="item.id" class="group flex items-center gap-3 px-4 py-3.5 transition hover:bg-white sm:gap-4 sm:px-6">
-              <div class="grid h-11 w-11 shrink-0 place-items-center rounded-xl font-display text-base font-extrabold text-ink" :style="{ background: item.color }">{{ item.title.charAt(0) }}</div>
-              <div class="min-w-0 flex-1">
-                <div class="truncate text-[13px] font-semibold text-ink">{{ item.title }}</div>
-                <div class="mt-1 flex items-center gap-2 text-[10px] text-[#838984]"><span>{{ item.type }}</span><span>·</span><span>{{ item.department }}</span></div>
-              </div>
-              <div class="hidden items-center gap-1 sm:flex"><PlatformIcon v-for="platform in item.platforms" :key="platform" :platform="platform" /></div>
-              <StatusPill :status="item.status" />
-              <div class="hidden w-24 text-right text-[10px] text-[#747b76] md:block"><div class="font-medium text-ink">{{ item.date }}</div><div v-if="item.time">{{ item.time }} Uhr</div></div>
-              <button class="focus-ring rounded-lg p-1.5 text-[#9ca19d] opacity-50 hover:bg-stone-100 hover:text-ink group-hover:opacity-100" aria-label="Weitere Aktionen"><MoreHorizontal :size="17" /></button>
-            </div>
-          </div>
+          <div class="p-8 text-center text-xs text-[#7b827d]">Es liegen noch keine Beiträge vor. Diese Liste befüllt sich, sobald echte Beiträge erstellt werden.</div>
         </article>
 
         <article class="card overflow-hidden">

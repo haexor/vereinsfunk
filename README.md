@@ -32,7 +32,7 @@ cp .env.example .env
 pnpm dev:web
 ```
 
-Die Oberfläche läuft unter `http://localhost:4200`. Sie funktioniert im lokalen Demo-Modus auch ohne Datenbank und API.
+Die Oberfläche läuft unter `http://localhost:4200`. Anmeldung, Registrierung und alle Inhalte setzen eine laufende lokale Supabase-Instanz und die API voraus.
 
 ## Vollständige lokale Umgebung
 

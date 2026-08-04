@@ -9,7 +9,8 @@ values
   ('00000000-0000-0000-0000-000000000000', '20000000-0000-4000-8000-000000000002', 'authenticated', 'authenticated', 'b@test.local', '', '{}', '{}', now(), now());
 insert into public.profiles (id, display_name) values
   ('10000000-0000-4000-8000-000000000001', 'User A'),
-  ('20000000-0000-4000-8000-000000000002', 'User B');
+  ('20000000-0000-4000-8000-000000000002', 'User B')
+on conflict (id) do update set display_name = excluded.display_name;
 insert into public.organizations (id, name, slug) values
   ('10000000-1000-4000-8000-000000000001', 'Organization A', 'organization-a'),
   ('20000000-2000-4000-8000-000000000002', 'Organization B', 'organization-b');
