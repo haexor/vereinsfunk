@@ -430,6 +430,18 @@ resolveReviewers(refs, memberships): { userIds: string[]; unresolved: ReviewerRe
 
 Die Kontingentprüfung gehört **an das Einplanen, nicht an den Entwurf** — ein Entwurf verbraucht kein Kontingent, sonst blockieren Ideen die Umsetzung. Beim tatsächlichen Veröffentlichen wird erneut geprüft, weil zwischen Planung und Ausführung Zeit liegt.
 
+Zwei Prüfungen sind aber keine atomare Prüfung. `count_publications_in_period` ist eine Aggregatabfrage: prüfen zwei Anfragen gleichzeitig, sehen beide denselben Stand, beide sind unter dem Limit, und beide legen an. Bei einem Tageskontingent von drei entstehen vier Publikationen, und die zweite Prüfung vor dem Veröffentlichen findet dasselbe Ergebnis erneut vor. Prüfung und Einplanung laufen deshalb in **einer** Transaktion, die den Kontingent-Scope vorher sperrt:
+
+```sql
+-- Serialisiert alle gleichzeitigen Einplanungen desselben Scopes, ohne eine
+-- Zeile zu sperren, die es noch nicht gibt. Der Schluessel wird deterministisch
+-- aus organization_id und dem Scope gebildet.
+select pg_advisory_xact_lock(hashtextextended(quota_scope_key, 0));
+-- danach zaehlen, entscheiden, einplanen -- alles in derselben Transaktion
+```
+
+Ein Advisory Lock je Scope statt einer Zählerspalte: der Zähler weicht von der Wahrheit ab, sobald ein Beitrag storniert oder verschoben wird (siehe oben), das Lock nicht. Der Test dafür ist zwei parallele Einplanungen an der Kontingentgrenze — genau eine gewinnt.
+
 `authz.can_decide_stage` liest den eingefrorenen `reviewer_snapshot`, nicht die aktuelle Richtlinie. Eine Richtlinienänderung wirkt auf neue Routen, nicht auf laufende Freigaben.
 
 ### 3. Snapshot und Benachrichtigung
@@ -488,6 +500,7 @@ Vertrauen je Mitglied liegt bei der Mitgliederliste aus Paket 010, nicht in den 
   - `ReviewerRef` auf eine Rolle, die niemand innehat, erzeugt einen `blocker`
 - `mergeEffectiveConfig`: Lockerungsversuch auf jeder Ebene wird ignoriert; `null` gegen leere Liste; Stufen sind additiv
 - `evaluateQuota`: an der Grenze, exakt darüber, exakt darunter; Periodengrenzen über Zeitzonenwechsel und Sommerzeitumstellung
+- Nebenläufigkeit: zwei gleichzeitige Einplanungen an der Kontingentgrenze erzeugen genau eine Publikation und einen 409 — ohne die Sperre gehen beide durch
 - pgTAP:
   - Marketing-Prüfer **ohne** Mitgliedschaft in Fußball liest `post_versions` und `media_derivatives` des zu prüfenden Beitrags
   - derselbe Prüfer liest **nicht** `media_assets`, **nicht** `face_regions`, **nicht** `submissions`
