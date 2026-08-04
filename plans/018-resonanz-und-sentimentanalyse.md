@@ -73,6 +73,7 @@ create table public.publication_comments (
   purge_after date not null,
   purged_at timestamptz,
   unique (publication_id, external_comment_id),
+  unique (organization_id, id),
   foreign key (organization_id, publication_id)
     references public.publications(organization_id, id) on delete cascade
 );
@@ -93,7 +94,7 @@ create table public.comment_assessments (
   assessed_at timestamptz not null default now(),
   unique (publication_comment_id, prompt_version),
   foreign key (organization_id, publication_comment_id)
-    references public.publication_comments(id) on delete cascade
+    references public.publication_comments(organization_id, id) on delete cascade
 );
 
 -- Aggregat je Publikation; überlebt die Löschung der Texte.

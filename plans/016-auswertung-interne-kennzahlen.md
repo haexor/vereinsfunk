@@ -81,9 +81,14 @@ Gefüllt per Trigger auf `posts`, nicht per Anwendungscode:
 
 ```sql
 create or replace function public.record_post_status_event() returns trigger ...
-create trigger posts_status_history
-  after insert or update of status on public.posts
-  for each row when (tg_op = 'INSERT' or old.status is distinct from new.status)
+-- TG_OP und OLD stehen im WHEN-Ausdruck nicht zur Verfuegung (OLD zusaetzlich
+-- gar nicht bei INSERT) -- deshalb zwei Trigger statt einer kombinierten Bedingung.
+create trigger posts_status_history_insert
+  after insert on public.posts
+  for each row execute function public.record_post_status_event();
+create trigger posts_status_history_update
+  after update of status on public.posts
+  for each row when (old.status is distinct from new.status)
   execute function public.record_post_status_event();
 ```
 
@@ -94,10 +99,13 @@ Ein Trigger ist hier richtig, weil Status auch von Workern und künftigen Migrat
 Tagesaggregate:
 
 ```sql
+-- Dimensionsspalten sind NOT NULL mit einer Sentinel-UUID statt NULL: PostgreSQL
+-- erlaubt keinen ausdrucksbasierten (coalesce(...)) Primary Key, nur Spalten.
 create table public.metrics_daily (
   organization_id uuid not null,
-  department_id uuid, team_id uuid,
-  social_connection_id uuid,
+  department_id uuid not null default '00000000-0000-0000-0000-000000000000'::uuid,
+  team_id uuid not null default '00000000-0000-0000-0000-000000000000'::uuid,
+  social_connection_id uuid not null default '00000000-0000-0000-0000-000000000000'::uuid,
   day date not null,
   posts_created integer not null default 0,
   posts_published integer not null default 0,
@@ -110,18 +118,17 @@ create table public.metrics_daily (
   revisions_sum integer not null default 0, revisions_count integer not null default 0,
   workflow_runs integer not null default 0, workflow_failures integer not null default 0,
   computed_at timestamptz not null default now(),
-  primary key (organization_id, day,
-    coalesce(department_id, '00000000-0000-0000-0000-000000000000'::uuid),
-    coalesce(team_id, '00000000-0000-0000-0000-000000000000'::uuid),
-    coalesce(social_connection_id, '00000000-0000-0000-0000-000000000000'::uuid))
+  primary key (organization_id, day, department_id, team_id, social_connection_id)
 );
 
 create table public.metrics_by_preset_daily (
-  organization_id uuid not null, department_id uuid, day date not null,
+  organization_id uuid not null,
+  department_id uuid not null default '00000000-0000-0000-0000-000000000000'::uuid,
+  day date not null,
   preset_slug text not null, communication_goal text not null,
   posts_created integer not null default 0, posts_published integer not null default 0,
   computed_at timestamptz not null default now(),
-  primary key (organization_id, day, coalesce(department_id, '00000000-0000-0000-0000-000000000000'::uuid), preset_slug, communication_goal)
+  primary key (organization_id, day, department_id, preset_slug, communication_goal)
 );
 ```
 

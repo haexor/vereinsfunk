@@ -90,16 +90,19 @@ create table public.publication_metric_collections (
 Aggregat für die Auswertung, analog zu `metrics_daily` aus Paket 016:
 
 ```sql
+-- department_id ist NOT NULL mit einer Sentinel-UUID statt NULL: PostgreSQL
+-- erlaubt keinen ausdrucksbasierten (coalesce(...)) Primary Key, nur Spalten.
 create table public.platform_metrics_daily (
-  organization_id uuid not null, department_id uuid, social_connection_id uuid not null,
+  organization_id uuid not null,
+  department_id uuid not null default '00000000-0000-0000-0000-000000000000'::uuid,
+  social_connection_id uuid not null,
   platform text not null, day date not null,
   publications integer not null default 0,
   reach_sum integer, views_sum integer,
   likes_sum integer, comments_sum integer, shares_sum integer, saves_sum integer,
   metrics_available integer not null default 0,   -- wie viele Publikationen Werte lieferten
   computed_at timestamptz not null default now(),
-  primary key (organization_id, day, social_connection_id,
-    coalesce(department_id, '00000000-0000-0000-0000-000000000000'::uuid))
+  primary key (organization_id, day, social_connection_id, department_id)
 );
 ```
 
