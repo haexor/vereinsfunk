@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(29);
+select plan(24);
 
 set local role postgres;
 
@@ -124,45 +124,7 @@ select throws_ok(
 set local role postgres;
 update public.platform_settings set value = '3'::jsonb where key = 'max_organizations_per_owner';
 
--- 17-18: organization_setting_overrides has no privilege for authenticated; postgres CRUD works.
-set local role authenticated;
-select throws_ok(
-  $$select * from public.organization_setting_overrides$$,
-  '42501', null, 'authenticated cannot select from organization_setting_overrides'
-);
-set local role postgres;
-select lives_ok(
-  $$insert into public.organization_setting_overrides (organization_id, key, value)
-    select id, 'example_key', '"example_value"'::jsonb from public.organizations
-    where slug = 'pgtap-platform-quota-org-a'$$,
-  'postgres can insert an organization setting override'
-);
-select is(
-  (select value from public.organization_setting_overrides ovr
-     join public.organizations org on org.id = ovr.organization_id
-   where org.slug = 'pgtap-platform-quota-org-a' and ovr.key = 'example_key'),
-  '"example_value"'::jsonb, 'the override was actually persisted'
-);
-
--- 19-21: subscription_plans has no privilege for authenticated; the seeded plan exists and
--- new organizations are assigned to it.
-set local role authenticated;
-select throws_ok(
-  $$select * from public.subscription_plans$$,
-  '42501', null, 'authenticated cannot select from subscription_plans'
-);
-set local role postgres;
-select is(
-  (select row(price_cents, is_active) from public.subscription_plans where name = 'Standard'),
-  row(0, true), 'the seeded Standard plan has price 0 and is active'
-);
-select is(
-  (select org.subscription_plan_id from public.organizations org where org.slug = 'pgtap-platform-quota-org-a'),
-  (select id from public.subscription_plans where name = 'Standard'),
-  'a newly created organization is assigned the Standard plan'
-);
-
--- 22-23: llm_provider_configurations / llm_provider_secrets have no privilege for authenticated.
+-- 17-18: llm_provider_configurations / llm_provider_secrets have no privilege for authenticated.
 set local role authenticated;
 select throws_ok(
   $$select * from public.llm_provider_configurations$$,
@@ -174,7 +136,7 @@ select throws_ok(
 );
 set local role postgres;
 
--- 24: llm_provider_secrets actually has FORCE ROW LEVEL SECURITY set (structural regression
+-- 19: llm_provider_secrets actually has FORCE ROW LEVEL SECURITY set (structural regression
 -- guard -- in this local, superuser-owned test harness FORCE cannot be demonstrated
 -- behaviorally, since superusers always bypass RLS regardless; see plan document).
 select ok(
@@ -182,7 +144,7 @@ select ok(
   'llm_provider_secrets has FORCE ROW LEVEL SECURITY enabled'
 );
 
--- 25: postgres CRUD smoke on llm_provider_configurations + llm_provider_secrets.
+-- 20: postgres CRUD smoke on llm_provider_configurations + llm_provider_secrets.
 select lives_ok(
   $$with cfg as (
       insert into public.llm_provider_configurations (label, protocol, base_url, model)

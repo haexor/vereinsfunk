@@ -158,10 +158,10 @@ export const BrandLogoUploadResponseSchema = z.object({
 export const OnboardingStepSchema = z.enum(['branding', 'responsible_person'])
 export const OnboardingStateSchema = z.object({
   completedSteps: z.array(OnboardingStepSchema),
-  dismissedAt: z.iso.datetime().nullable(),
+  dismissedAt: z.iso.datetime({ offset: true }).nullable(),
 })
 
-// Plattform-Administration (Paket 021): der SaaS-Betreiber, orthogonal zu allen
+// Plattform-Administration (Paket 022): der SaaS-Betreiber, orthogonal zu allen
 // vereinsbezogenen Rollen oben. Jede Schreiboperation hier ist requirePlatformAdmin-gated.
 export const JsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
   z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(JsonValueSchema), z.record(z.string(), JsonValueSchema)]),
@@ -171,7 +171,9 @@ export const PlatformAdminStatusSchema = z.object({ isPlatformAdmin: z.boolean()
 export const PlatformAdminSchema = z.object({
   userId: UuidSchema,
   isDefaultAdmin: z.boolean(),
-  createdAt: z.iso.datetime(),
+  // offset: true -- PostgREST serialisiert timestamptz mit numerischem Offset (z.B. +00:00),
+  // nicht mit dem "Z"-Suffix, den z.iso.datetime() sonst zwingend verlangt.
+  createdAt: z.iso.datetime({ offset: true }),
 })
 export const AddPlatformAdminRequestSchema = z.object({
   email: z.string().trim().toLowerCase().pipe(z.email()),
@@ -186,49 +188,9 @@ export const PlatformSettingValueSchemas = {
 export const PlatformSettingSchema = z.object({
   key: z.string().min(1),
   value: JsonValueSchema,
-  updatedAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime({ offset: true }),
 })
 export const UpdatePlatformSettingRequestSchema = z.object({ value: JsonValueSchema })
-
-// Generischer Mechanismus ohne heute existierenden konkreten Schluessel (siehe Plan 021,
-// Risiken) -- Format wird geprueft, der Wertebereich pro Schluessel folgt erst mit dessen
-// erstem Konsumenten (Paket 011/019).
-export const OrganizationSettingOverrideKeySchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(80)
-  .regex(/^[a-z][a-z0-9_]*$/, 'must be a lower_snake_case key')
-export const OrganizationSettingOverrideSchema = z.object({
-  organizationId: UuidSchema,
-  key: OrganizationSettingOverrideKeySchema,
-  value: JsonValueSchema,
-  updatedAt: z.iso.datetime(),
-})
-export const UpdateOrganizationSettingOverrideRequestSchema = z.object({ value: JsonValueSchema })
-
-export const SubscriptionPlanSchema = z.object({
-  id: UuidSchema,
-  name: z.string().trim().min(1).max(80),
-  priceCents: z.int().min(0),
-  currency: z.string().length(3),
-  limits: JsonValueSchema,
-  isActive: z.boolean(),
-})
-export const CreateSubscriptionPlanRequestSchema = z.object({
-  name: z.string().trim().min(1).max(80),
-  priceCents: z.int().min(0),
-  currency: z.string().length(3).default('EUR'),
-  limits: JsonValueSchema.default({}),
-})
-export const UpdateSubscriptionPlanRequestSchema = z.object({
-  name: z.string().trim().min(1).max(80).optional(),
-  priceCents: z.int().min(0).optional(),
-  currency: z.string().length(3).optional(),
-  limits: JsonValueSchema.optional(),
-  isActive: z.boolean().optional(),
-})
-export const AssignSubscriptionPlanRequestSchema = z.object({ planId: UuidSchema })
 
 export const LlmProviderProtocolSchema = z.enum(['anthropic', 'openai'])
 export const LlmProviderConfigurationSchema = z.object({
@@ -270,10 +232,9 @@ export const PlatformAdminOrganizationSummarySchema = z.object({
   organizationId: UuidSchema,
   name: z.string().min(1),
   slug: z.string().min(1),
-  subscriptionPlanName: z.string().nullable(),
   memberCount: z.int().min(0),
   departmentCount: z.int().min(0),
-  createdAt: z.iso.datetime(),
+  createdAt: z.iso.datetime({ offset: true }),
 })
 export const UsageMetricsQuerySchema = z.object({
   from: z.iso.datetime(),
@@ -314,12 +275,6 @@ export type AddPlatformAdminRequest = z.infer<typeof AddPlatformAdminRequestSche
 export type PlatformSettingKey = z.infer<typeof PlatformSettingKeySchema>
 export type PlatformSetting = z.infer<typeof PlatformSettingSchema>
 export type UpdatePlatformSettingRequest = z.infer<typeof UpdatePlatformSettingRequestSchema>
-export type OrganizationSettingOverride = z.infer<typeof OrganizationSettingOverrideSchema>
-export type UpdateOrganizationSettingOverrideRequest = z.infer<typeof UpdateOrganizationSettingOverrideRequestSchema>
-export type SubscriptionPlan = z.infer<typeof SubscriptionPlanSchema>
-export type CreateSubscriptionPlanRequest = z.infer<typeof CreateSubscriptionPlanRequestSchema>
-export type UpdateSubscriptionPlanRequest = z.infer<typeof UpdateSubscriptionPlanRequestSchema>
-export type AssignSubscriptionPlanRequest = z.infer<typeof AssignSubscriptionPlanRequestSchema>
 export type LlmProviderProtocol = z.infer<typeof LlmProviderProtocolSchema>
 export type LlmProviderConfigurationDto = z.infer<typeof LlmProviderConfigurationSchema>
 export type CreateLlmProviderConfigurationRequest = z.infer<typeof CreateLlmProviderConfigurationRequestSchema>

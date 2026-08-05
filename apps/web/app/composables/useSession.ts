@@ -39,7 +39,7 @@ async function loadPlatformAdminStatus(): Promise<{ isPlatformAdmin: boolean; is
   try {
     const config = useRuntimeConfig()
     const headers = await useAuthHeader()
-    return await $fetch(`${config.public.apiBase}/v1/me/platform-admin-status`, { headers })
+    return await $fetch<{ isPlatformAdmin: boolean; isDefaultAdmin: boolean }>(`${config.public.apiBase}/v1/me/platform-admin-status`, { headers })
   } catch {
     return { isPlatformAdmin: false, isDefaultAdmin: false }
   }

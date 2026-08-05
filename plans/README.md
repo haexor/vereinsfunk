@@ -58,7 +58,9 @@ Orthogonal zur Serie 008–020: Diese Pakete betreffen den SaaS-Betreiber selbst
 
 | Nr. | Arbeitspaket | Abhängigkeiten | Status |
 |---|---|---|---|
-| 021 | [Plattform-Administration](021-plattform-administration.md) | 008, 009 | in Arbeit |
+| 022 | [Plattform-Administration](022-plattform-administration.md) | 008, 009 | erledigt |
+
+Hinweis zu 021: dessen `platform.manage`-Endpunkt (operative Speicher-/Kontingent-Übersteuerung, `plans/021-abomodelle-und-speicherkontingent.md:245,281`) setzt die in 022 gebaute Plattform-Admin-Identität voraus — die Package-Nummern zeigen hier in die falsche Reihenfolge.
 
 ### Kritischster Befund
 

@@ -7,7 +7,6 @@ interface OrganizationSummary {
   organizationId: string
   name: string
   slug: string
-  subscriptionPlanName: string | null
   memberCount: number
   departmentCount: number
   createdAt: string
@@ -68,7 +67,6 @@ await load()
           <thead>
             <tr class="text-[#7b827d]">
               <th class="pb-2 pr-4 font-semibold">Verein</th>
-              <th class="pb-2 pr-4 font-semibold">Abo</th>
               <th class="pb-2 pr-4 font-semibold">Mitglieder</th>
               <th class="pb-2 pr-4 font-semibold">Abteilungen</th>
               <th class="pb-2 font-semibold">Angelegt</th>
@@ -77,7 +75,6 @@ await load()
           <tbody>
             <tr v-for="org in organizations" :key="org.organizationId" class="border-t border-[#e9ebe4]">
               <td class="py-2 pr-4 font-medium">{{ org.name }}</td>
-              <td class="py-2 pr-4">{{ org.subscriptionPlanName ?? '—' }}</td>
               <td class="py-2 pr-4">{{ org.memberCount }}</td>
               <td class="py-2 pr-4">{{ org.departmentCount }}</td>
               <td class="py-2">{{ new Date(org.createdAt).toLocaleDateString('de-DE') }}</td>

@@ -5,6 +5,13 @@ begin;
 -- ihn referenziert -- jeglicher Zugriff laeuft ausschliesslich ueber apps/api's
 -- Service-Role-Client, gated durch requirePlatformAdmin. RLS ist trotzdem aktiv (deny-all
 -- fuer authenticated/anon) als Verteidigung in der Tiefe.
+--
+-- Paket 021 (Abomodelle, plans/021-abomodelle-und-speicherkontingent.md:245,281) verlangt
+-- bereits ein neues Recht "platform.manage" ausserhalb des Vereinsmodells, ohne dessen
+-- Durchsetzung zu spezifizieren. Genau das liefert diese Tabelle: eine Zeile in
+-- platform_admins ist "platform.manage" besessen. Wenn 021 umgesetzt wird, sollte es
+-- requirePlatformAdmin (apps/api/src/auth.ts) direkt wiederverwenden statt einen zweiten
+-- Mechanismus zu bauen.
 create table public.platform_admins (
   user_id uuid primary key references public.profiles(id) on delete cascade,
   is_default_admin boolean not null default false,
@@ -100,40 +107,6 @@ create trigger set_platform_settings_updated_at before update on public.platform
   for each row execute function public.set_updated_at();
 insert into public.platform_settings (key, value) values ('max_organizations_per_owner', '3'::jsonb);
 
--- Vereins-spezifische Ausnahmen: generischer Mechanismus, von 011/019 fuer eigene Limits
--- wiederverwendbar, sobald diese existieren -- analog zu packages/domain's
--- mergeEffectiveConfig, das ebenfalls vor seinem Aufrufer fertig war.
-create table public.organization_setting_overrides (
-  organization_id uuid not null references public.organizations(id) on delete cascade,
-  key text not null,
-  value jsonb not null,
-  updated_at timestamptz not null default now(),
-  updated_by uuid references public.profiles(id),
-  primary key (organization_id, key)
-);
-alter table public.organization_setting_overrides enable row level security;
-create trigger set_organization_setting_overrides_updated_at before update on public.organization_setting_overrides
-  for each row execute function public.set_updated_at();
-
--- Abo-Plaene: nur interne Konfiguration, keine Zahlungsabwicklung.
-create table public.subscription_plans (
-  id uuid primary key default gen_random_uuid(),
-  name text not null unique,
-  price_cents integer not null check (price_cents >= 0),
-  currency text not null default 'EUR',
-  limits jsonb not null default '{}'::jsonb check (jsonb_typeof(limits) = 'object'),
-  is_active boolean not null default true,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-alter table public.subscription_plans enable row level security;
-create trigger set_subscription_plans_updated_at before update on public.subscription_plans
-  for each row execute function public.set_updated_at();
-insert into public.subscription_plans (name, price_cents, limits) values ('Standard', 0, '{}'::jsonb);
-
-alter table public.organizations add column subscription_plan_id uuid references public.subscription_plans(id);
-update public.organizations set subscription_plan_id = (select id from public.subscription_plans where name = 'Standard');
-
 -- LLM-Provider-Konfiguration: Metadaten getrennt vom Geheimnis, analog zum in Plan 012
 -- spezifizierten social_connection_secrets-Muster (dort noch nicht umgesetzt). Die
 -- Geheimnis-Tabelle bekommt zusaetzlich FORCE ROW LEVEL SECURITY und keinerlei Policy --
@@ -165,7 +138,7 @@ create table public.llm_provider_secrets (
 alter table public.llm_provider_secrets enable row level security;
 alter table public.llm_provider_secrets force row level security;
 
--- Keine der sechs neuen Tabellen hat eine Policy oder ein Grant fuer authenticated/anon --
+-- Keine der vier neuen Tabellen hat eine Policy oder ein Grant fuer authenticated/anon --
 -- RLS ohne Policy sperrt ohnehin auf null Zeilen, aber ohne Grant scheitert der Zugriff
 -- schon auf Privilegienebene (42501), bevor RLS ueberhaupt ausgewertet wird. service_role
 -- braucht den Zugriff explizit, weil 202608020003_api_grants.sql's blanket grant nur
@@ -174,8 +147,6 @@ alter table public.llm_provider_secrets force row level security;
 grant all privileges on
   public.platform_admins,
   public.platform_settings,
-  public.organization_setting_overrides,
-  public.subscription_plans,
   public.llm_provider_configurations,
   public.llm_provider_secrets
   to service_role;
@@ -241,11 +212,8 @@ begin
 
   loop
     begin
-      insert into public.organizations (name, slug, timezone, subscription_plan_id)
-      values (
-        trim(organization_name), candidate_slug, organization_timezone,
-        (select id from public.subscription_plans where name = 'Standard')
-      )
+      insert into public.organizations (name, slug, timezone)
+      values (trim(organization_name), candidate_slug, organization_timezone)
       returning id into new_organization_id;
       exit;
     exception when unique_violation then

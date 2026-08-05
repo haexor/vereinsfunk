@@ -4,14 +4,12 @@ import { parseApiEnvironment } from '@vereinsfunk/config'
 import { FakeContentGenerator } from '@vereinsfunk/content-engine'
 import {
   AddPlatformAdminRequestSchema,
-  AssignSubscriptionPlanRequestSchema,
   BrandLogoUploadResponseSchema,
   BrandLogoVariantSchema,
   CreateLlmProviderConfigurationRequestSchema,
   CreateOrganizationRequestSchema,
   CreateOrganizationResponseSchema,
   CreateSubmissionSchema,
-  CreateSubscriptionPlanRequestSchema,
   HealthSchema,
   LlmProviderConfigurationSchema,
   OnboardingStateSchema,
@@ -20,8 +18,6 @@ import {
   OrganizationBrandUpdateSchema,
   OrganizationProfileSchema,
   OrganizationProfileUpdateSchema,
-  OrganizationSettingOverrideKeySchema,
-  OrganizationSettingOverrideSchema,
   PlatformAdminOrganizationSummarySchema,
   PlatformAdminSchema,
   PlatformAdminStatusSchema,
@@ -29,11 +25,8 @@ import {
   PlatformSettingSchema,
   PlatformSettingValueSchemas,
   SubmissionAcceptedSchema,
-  SubscriptionPlanSchema,
   UpdateLlmProviderConfigurationRequestSchema,
-  UpdateOrganizationSettingOverrideRequestSchema,
   UpdatePlatformSettingRequestSchema,
-  UpdateSubscriptionPlanRequestSchema,
   UsageMetricsQuerySchema,
   UsageMetricsResponseSchema,
   UuidSchema,
@@ -132,17 +125,6 @@ function mapBrandRow(row: Record<string, unknown>) {
     bodyFontKey: row.body_font_key,
     logoPath: row.logo_path,
     logoDarkPath: row.logo_dark_path,
-  }
-}
-
-function mapSubscriptionPlanRow(row: Record<string, unknown>) {
-  return {
-    id: row.id,
-    name: row.name,
-    priceCents: row.price_cents,
-    currency: row.currency,
-    limits: row.limits,
-    isActive: row.is_active,
   }
 }
 
@@ -416,7 +398,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     )
   })
 
-  // --- Plattform-Administration (Paket 021) -------------------------------------------
+  // --- Plattform-Administration (Paket 022) -------------------------------------------
   // Alle Routen ab hier sind requirePlatformAdmin-gated und verwenden ausschliesslich den
   // Service-Role-Client: die betroffenen Tabellen haben keinerlei Grant/Policy fuer
   // authenticated (siehe 2026080502_platform_administration.sql).
@@ -499,123 +481,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     )
   })
 
-  app.get('/v1/organizations/:id/setting-overrides', async (request, reply) => {
-    if (!(await requireAuth(request, reply))) return
-    if (!(await requirePlatformAdmin(request, reply))) return
-    const params = z.object({ id: UuidSchema }).parse(request.params)
-    const service = supabaseClients.forService()
-    const result = await service
-      .from('organization_setting_overrides')
-      .select('organization_id, key, value, updated_at')
-      .eq('organization_id', params.id)
-      .order('key')
-    if (result.error) throw result.error
-    return reply.code(200).send(
-      result.data.map((row) =>
-        OrganizationSettingOverrideSchema.parse({ organizationId: row.organization_id, key: row.key, value: row.value, updatedAt: row.updated_at }),
-      ),
-    )
-  })
-
-  app.put('/v1/organizations/:id/setting-overrides/:key', async (request, reply) => {
-    if (!(await requireAuth(request, reply))) return
-    if (!(await requirePlatformAdmin(request, reply))) return
-    const params = z.object({ id: UuidSchema, key: OrganizationSettingOverrideKeySchema }).parse(request.params)
-    const body = UpdateOrganizationSettingOverrideRequestSchema.parse(request.body)
-    const service = supabaseClients.forService()
-    const upsert = await service
-      .from('organization_setting_overrides')
-      .upsert(
-        { organization_id: params.id, key: params.key, value: body.value, updated_by: request.auth!.userId },
-        { onConflict: 'organization_id,key' },
-      )
-      .select('organization_id, key, value, updated_at')
-      .single()
-    if (upsert.error) throw upsert.error
-    return reply.code(200).send(
-      OrganizationSettingOverrideSchema.parse({
-        organizationId: upsert.data.organization_id,
-        key: upsert.data.key,
-        value: upsert.data.value,
-        updatedAt: upsert.data.updated_at,
-      }),
-    )
-  })
-
-  app.delete('/v1/organizations/:id/setting-overrides/:key', async (request, reply) => {
-    if (!(await requireAuth(request, reply))) return
-    if (!(await requirePlatformAdmin(request, reply))) return
-    const params = z.object({ id: UuidSchema, key: OrganizationSettingOverrideKeySchema }).parse(request.params)
-    const service = supabaseClients.forService()
-    const del = await service.from('organization_setting_overrides').delete().eq('organization_id', params.id).eq('key', params.key)
-    if (del.error) throw del.error
-    return reply.code(204).send()
-  })
-
-  app.get('/v1/subscription-plans', async (request, reply) => {
-    if (!(await requireAuth(request, reply))) return
-    if (!(await requirePlatformAdmin(request, reply))) return
-    const service = supabaseClients.forService()
-    const result = await service.from('subscription_plans').select('id, name, price_cents, currency, limits, is_active').order('price_cents')
-    if (result.error) throw result.error
-    return reply.code(200).send(result.data.map((row) => SubscriptionPlanSchema.parse(mapSubscriptionPlanRow(row))))
-  })
-
-  app.post('/v1/subscription-plans', async (request, reply) => {
-    if (!(await requireAuth(request, reply))) return
-    if (!(await requirePlatformAdmin(request, reply))) return
-    const input = CreateSubscriptionPlanRequestSchema.parse(request.body)
-    const service = supabaseClients.forService()
-    const insert = await service
-      .from('subscription_plans')
-      .insert({ name: input.name, price_cents: input.priceCents, currency: input.currency, limits: input.limits })
-      .select('id, name, price_cents, currency, limits, is_active')
-      .single()
-    if (insert.error) throw insert.error
-    return reply.code(201).send(SubscriptionPlanSchema.parse(mapSubscriptionPlanRow(insert.data)))
-  })
-
-  app.patch('/v1/subscription-plans/:id', async (request, reply) => {
-    if (!(await requireAuth(request, reply))) return
-    if (!(await requirePlatformAdmin(request, reply))) return
-    const params = z.object({ id: UuidSchema }).parse(request.params)
-    const input = UpdateSubscriptionPlanRequestSchema.parse(request.body)
-    const payload: Record<string, unknown> = {}
-    if (input.name !== undefined) payload.name = input.name
-    if (input.priceCents !== undefined) payload.price_cents = input.priceCents
-    if (input.currency !== undefined) payload.currency = input.currency
-    if (input.limits !== undefined) payload.limits = input.limits
-    if (input.isActive !== undefined) payload.is_active = input.isActive
-    const service = supabaseClients.forService()
-    const update = await service
-      .from('subscription_plans')
-      .update(payload)
-      .eq('id', params.id)
-      .select('id, name, price_cents, currency, limits, is_active')
-      .single()
-    if (update.error) throw update.error
-    return reply.code(200).send(SubscriptionPlanSchema.parse(mapSubscriptionPlanRow(update.data)))
-  })
-
-  app.put('/v1/organizations/:id/subscription-plan', async (request, reply) => {
-    if (!(await requireAuth(request, reply))) return
-    if (!(await requirePlatformAdmin(request, reply))) return
-    const params = z.object({ id: UuidSchema }).parse(request.params)
-    const input = AssignSubscriptionPlanRequestSchema.parse(request.body)
-    const service = supabaseClients.forService()
-    const update = await service.from('organizations').update({ subscription_plan_id: input.planId }).eq('id', params.id).select('id').single()
-    if (update.error) throw update.error
-    return reply.code(204).send()
-  })
-
   app.get('/v1/platform-admin/organizations', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     if (!(await requirePlatformAdmin(request, reply))) return
     const service = supabaseClients.forService()
-    const orgs = await service
-      .from('organizations')
-      .select('id, name, slug, created_at, subscription_plans(name)')
-      .order('created_at', { ascending: false })
+    const orgs = await service.from('organizations').select('id, name, slug, created_at').order('created_at', { ascending: false })
     if (orgs.error) throw orgs.error
     const [members, departments] = await Promise.all([
       service.from('organization_memberships').select('organization_id'),
@@ -631,7 +501,6 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
           organizationId: row.id,
           name: row.name,
           slug: row.slug,
-          subscriptionPlanName: (row.subscription_plans as unknown as { name: string } | null)?.name ?? null,
           memberCount: memberCounts.get(row.id as string) ?? 0,
           departmentCount: departmentCounts.get(row.id as string) ?? 0,
           createdAt: row.created_at,
