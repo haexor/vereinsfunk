@@ -38,7 +38,8 @@ Stand: 2026-08-04, geplant auf `b5c2eda6`. Die Pakete 001–007 bauen die Inhalt
 | 008 | [Echte Authentifizierung und Autorisierungsgrenze](008-echte-authentifizierung-und-autorisierungsgrenze.md) | keine | erledigt |
 | 009 | [Onboarding: Verein anlegen](009-onboarding-verein-anlegen.md) | 008 | erledigt |
 | 010 | [Abteilungen, Teams, Mitglieder und Einladungen](010-abteilungen-teams-mitglieder-einladungen.md) | 008, 009 | erledigt |
-| 011 | [Regelwerk: Freigaberouten, Vertrauen je Mitglied und Kontingente](011-regelwerk-richtlinien-und-kontingente.md) | 010 | bereit |
+| 023 | [Sichtbarkeit, Mitgliederverwaltung und Richtliniengrundlage](023-sichtbarkeit-mitgliederverwaltung-und-richtliniengrundlage.md) | 010 | bereit; **kommt vor 011**, trotz höherer Nummer |
+| 011 | [Regelwerk: Freigaberouten, Vertrauen je Mitglied und Kontingente](011-regelwerk-richtlinien-und-kontingente.md) | 010, 023 | bereit |
 | 012 | [Kanäle und Social-Accounts](012-kanaele-und-social-accounts.md) | 011 | bereit; Meta App Review als externes Gate |
 | 013 | [Marke, Branding-Assets und Schriften](013-marke-branding-assets-und-schriften.md) | 009 | bereit |
 | 014 | [Integrationsrahmen und Mitgliederverzeichnis](014-integrationsrahmen-und-mitgliederverzeichnis.md) | 010 | bereit; Produktivbetrieb erst nach 020 |
@@ -50,7 +51,7 @@ Stand: 2026-08-04, geplant auf `b5c2eda6`. Die Pakete 001–007 bauen die Inhalt
 | 020 | [Rechtliche Pflichten und Datenschutzbetrieb](020-rechtliche-pflichten-und-datenschutzbetrieb.md) | 009, 012, 015 | bereit |
 | 021 | [Abomodelle, Speicherkontingent und Nutzungsgrenzen](021-abomodelle-und-speicherkontingent.md) | 009, 010, 011 | bereit; Zahlungsabwicklung als eigenes Vorhaben |
 
-Empfohlener Ablauf: **008 und 009 unmittelbar hintereinander** — ohne Authentifizierung lässt sich kein Prototyp-Datensatz ehrlich ersetzen, und ohne Onboarding zeigt die Oberfläche nach der Anmeldung nichts. Danach 010 und 011 als Verwaltungsgrundlage, 013 parallel dazu. Anschließend 012, dann 014 mit 019 als erstem Nutzen des Integrationsrahmens, dann 015. 016 ist ab 011 jederzeit möglich; 017 und 018 hängen an externen Gates. **020 vor dem Produktivbetrieb mit echten Personendaten.** 021 ist ab 011 möglich und vor dem ersten zahlenden Verein nötig — ohne Kontingent ist der Speicher eines geteilten Systems unbegrenzt beschreibbar.
+Empfohlener Ablauf: **008 und 009 unmittelbar hintereinander** — ohne Authentifizierung lässt sich kein Prototyp-Datensatz ehrlich ersetzen, und ohne Onboarding zeigt die Oberfläche nach der Anmeldung nichts. Danach 010, dann **023** und darauf 011 als Verwaltungsgrundlage, 013 parallel dazu. Anschließend 012, dann 014 mit 019 als erstem Nutzen des Integrationsrahmens, dann 015. 016 ist ab 011 jederzeit möglich; 017 und 018 hängen an externen Gates. **020 vor dem Produktivbetrieb mit echten Personendaten.** 021 ist ab 011 möglich und vor dem ersten zahlenden Verein nötig — ohne Kontingent ist der Speicher eines geteilten Systems unbegrenzt beschreibbar.
 
 ## Dritte Ebene: Plattform-Administration (SaaS-Betreiber)
 
@@ -59,6 +60,8 @@ Orthogonal zur Serie 008–020: Diese Pakete betreffen den SaaS-Betreiber selbst
 | Nr. | Arbeitspaket | Abhängigkeiten | Status |
 |---|---|---|---|
 | 022 | [Plattform-Administration](022-plattform-administration.md) | 008, 009 | erledigt |
+
+Hinweis zu 023: das Paket ist beim Review von 010 aus 011 herausgelöst worden (Sichtbarkeit, Mitglieder-Detailebene, Einladungsrecht als Richtlinie) und gehört **direkt nach 010**, vor 011 — es legt `policy_settings` und die Vererbungsauflösung an, die 011 dann erweitert. Die Nummer folgt nur dem nächsten freien Platz; eine Umnummerierung von 011–022 wäre teurer als diese Notiz. 012 nutzt `policy_scope` aus 023 mit.
 
 Hinweis zu 021: dessen `platform.manage`-Endpunkt (operative Speicher-/Kontingent-Übersteuerung, `plans/021-abomodelle-und-speicherkontingent.md:245,281`) setzt die in 022 gebaute Plattform-Admin-Identität voraus — die Package-Nummern zeigen hier in die falsche Reihenfolge.
 
