@@ -84,6 +84,8 @@ Der Backfill kopiert den Ciphertext unverändert; er wird nicht neu verschlüsse
 
 ## Datenmodell
 
+**Nachtrag aus dem Review von Paket 010** (Entscheidung des Nutzers am 2026-08-05): veröffentlichte Beiträge werden vereinsweit sichtbar (siehe Paket 023, „Sichtbarkeit richtet sich nach dem Lebenszyklus“). Dabei kam die Frage auf, ob ein Beitrag auch nur in einem **vertraulichen Kanal** landen kann — dann darf er nicht vereinsweit sichtbar sein. Diese Vertraulichkeit gehört an den Kanal, nicht an den Beitrag: der Einreichende kennt den Kanal noch nicht, die Kanalwahl trifft der Freigebende. Deshalb trägt `social_connections` unten das Feld `confidential boolean not null default false` — ein Beitrag, dessen Veröffentlichungsziele ausschließlich vertrauliche Kanäle sind, bleibt bei der abteilungsweiten Sichtbarkeit. Offen bleibt allein, **wie** die Sichtbarkeitsprüfung dieses Feld auswertet: als eigene Bedingung in `posts_select` oder abgeleitet über das `policy_settings`-Feld `posts_visible_org_wide` aus Paket 023. Beim Umsetzen einen der beiden Wege wählen, nicht beide unabhängig voneinander bauen.
+
 Migration `2026080405_channel_scoping_and_secrets.sql`:
 
 ```sql
@@ -93,6 +95,9 @@ alter table public.social_connections add column owner_department_id uuid;
 alter table public.social_connections add column responsible_profile_id uuid references public.profiles(id);
 alter table public.social_connections add column purpose text;      -- z. B. "Hauptkanal", "Jugendabteilung"
 alter table public.social_connections add column archived_at timestamptz;
+-- Vertraulicher Kanal: ein Beitrag, der ausschliesslich hierhin veroeffentlicht wird, bleibt
+-- von der vereinsweiten Sichtbarkeit ausgenommen (siehe Nachtrag oben und Paket 023).
+alter table public.social_connections add column confidential boolean not null default false;
 alter table public.social_connections add constraint social_connections_owner_check check (
   (owner_scope = 'organization' and owner_department_id is null) or
   (owner_scope = 'department' and owner_department_id is not null)
@@ -131,7 +136,7 @@ create unique index channel_scopes_unique on public.channel_scopes (
 );
 ```
 
-Vereinsweite Richtlinie, ergänzt in `policy_settings` aus Paket 011:
+Vereinsweite Richtlinie, ergänzt in `policy_settings` (angelegt in Paket 023, erweitert in 011):
 
 ```sql
 alter table public.policy_settings add column allow_department_owned_channels boolean;
@@ -230,4 +235,4 @@ Neue Seite `pages/kanaele.vue`:
 - **Instagram-Voraussetzungen**: Publishing über die Graph API verlangt ein Instagram-**Professional**-Konto, verknüpft mit einer Facebook-Seite. Ein privates Vereinskonto funktioniert nicht. Das muss die Oberfläche beim Verbinden erklären, sonst wird jeder Fehlschlag als Softwarefehler gelesen.
 - **Schlüsselmanagement**: `SOCIAL_TOKEN_KEYS` in Umgebungsvariablen ist für den Start angemessen und für den Dauerbetrieb dünn. Ein KMS oder Supabase Vault ist der nächste Schritt; das Interface `SecretBox` ist genau dafür die Grenze.
 - **Ein Konto in zwei Vereinen**: `unique (organization_id, platform, external_account_id)` erlaubt dasselbe Instagram-Konto in zwei Vereinen. Technisch unkritisch, fachlich ein Warnsignal. Beim Verbinden sollte ein Hinweis erscheinen, wenn das Konto bereits anderswo verbunden ist — ohne den anderen Verein zu nennen.
-- **`policy_scope`-Enum** wird hier aus Paket 011 mitgenutzt. Wird 012 vor 011 umgesetzt, muss der Typ in dieser Migration entstehen. Reihenfolge einhalten oder Abhängigkeit auflösen.
+- **`policy_scope`-Enum** wird hier mitgenutzt; angelegt wird es in Paket 023 (nicht mehr in 011). Wird 012 vor 023 umgesetzt, muss der Typ in dieser Migration entstehen. Reihenfolge einhalten oder Abhängigkeit auflösen.

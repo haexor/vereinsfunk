@@ -307,6 +307,27 @@ Neue Seite `pages/verzeichnis.vue`, nur für Berechtigte:
 - manuelles Anlegen und Bearbeiten — das Verzeichnis muss ohne jede Integration vollständig benutzbar sein
 - ein sichtbarer Hinweis, welche Felder das System bewusst **nicht** speichert
 
+### 5. Personenstammdaten: zwei Datensatzarten, nicht eine
+
+**Anforderung des Nutzers am 2026-08-05**, aufgekommen beim Review von Paket 010. Der Wunsch lautete: „jedes Mitglied hat eine Profilseite, wo derjenige ein paar Daten und Foto von sich einstellen kann“ und gleichzeitig „wenn ein Vereinsadmin Mitglieder hinzufügt, dann sollte er einstellen können, seit wann das Mitglied dabei ist — genauso wie Geburtstag, Adresse, Eltern, Einwilligungen, Foto“, importierbar aus einem Drittsystem oder per CSV/JSON.
+
+Das sind **zwei** Datensatzarten mit verschiedenen Eigentümern und verschiedenen Rechtsgrundlagen; sie dürfen nicht zu einer verschmelzen:
+
+| | `public.profiles` | `public.directory_people` (dieses Paket) |
+|---|---|---|
+| Was | App-Konto einer angemeldeten Person | Person, die auf Fotos vorkommen kann — mit oder ohne Konto |
+| Gepflegt von | der Person selbst | Vereins-/Abteilungsadmin, oder Import |
+| Heute vorhanden | `display_name`, `avatar_path` (die Sidebar nutzt es), keine Profilseite | dieses Paket |
+
+Zu bauen:
+
+- **Profilseite** für `profiles` (Anzeigename, Foto über das vorhandene `avatar_path`) — Selbstbedienung, keine Vereinsdaten. Die Vereinszugehörigkeit erscheint dort nur lesend: sie entsteht ausschließlich über Einladung oder Admin (Paket 010) und ist bereits heute nicht selbst setzbar.
+- **Verknüpfung** `directory_people.profile_id` (nullable): eine Verzeichnisperson kann ein Konto haben, muss aber nicht.
+- **`joined_at date`** auf `directory_people` — heute existiert nur `left_at`. „Seit wann dabei“ ist eine der ausdrücklich genannten Import- und Pflegeangaben und fehlt bisher.
+- **Adresse und vollständiges Geburtsdatum** sind heute bewusst **nicht** im Modell (Datenminimierung: nur `birth_year`, siehe „Warum das Mitgliederverzeichnis ein Bruch ist“). Beide aufzunehmen erweitert den Datenschutzumfang erneut und gehört in dasselbe ADR, das dieses Paket ohnehin verlangt — mit Zweckbindung und Löschkonzept, nicht als stille Spaltenergänzung.
+
+**Kein generischer Profileditor.** Der Wunsch dahinter ist DRY, und der ist berechtigt — der Weg dorthin sind gemeinsame Feld- und Formularkomponenten plus je Datensatz ein Zod-Schema aus `packages/contracts` (schema-getriebene Formulare). Ein generischer Editor über drei Datensatzarten mit unterschiedlichen Rechten und Rechtsgrundlagen wird dagegen zum Formular-Baukasten, in dem Pflichtfelder und Berechtigungen generisch werden — genau das, was hier nicht generisch sein darf.
+
 ## Verifikation
 
 - `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm db:reset`, `pnpm db:test`

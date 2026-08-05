@@ -24,6 +24,18 @@ Geplant auf `b5c2eda6` am 2026-08-04.
 - Es gibt **keine Kontingente**: keine Tabelle, kein Zähler, keine Prüfung.
 - `apps/api/src/app.ts:74-103` nimmt eine Submission an, ohne irgendeine Richtlinie zu konsultieren.
 
+## Abhängigkeit: Paket 023 kommt zuerst
+
+Beim Review von Paket 010 sind drei Anforderungen entstanden, die dieselbe Vererbungsmechanik brauchen wie dieses Paket, aber deutlich kleiner sind: vereinsweite Sichtbarkeit veröffentlichter Beiträge, die Mitglieder-Detailebene und das delegierbare Einladungsrecht. Sie sind nach `plans/023-sichtbarkeit-mitgliederverwaltung-und-richtliniengrundlage.md` ausgelagert und **vor** diesem Paket zu bauen.
+
+Was 023 mitbringt und dieses Paket voraussetzt:
+
+- `public.policy_scope` und `public.policy_settings` **existieren bereits** — dieses Paket erweitert die Tabelle um die Freigabe- und Kontingentfelder, legt sie nicht neu an. Der Ausschnitt unter „Datenmodell“ zeigt sie deshalb vollständig, umzusetzen ist die Differenz.
+- `authz.resolve_policy_flag(...)` und die Vererbungsregel („`null` = erben, untere Ebenen dürfen nur verschärfen“) sind an zwei booleschen Feldern gebaut und getestet.
+- Die Mitglieder-Detailebene auf `/mitglieder` existiert mit Rolle, Befristung und Einladungsrecht. Dieses Paket **füllt sie** mit Freigabe-Zuständigkeit (`policy_reviewers`) und Vertrauen (`member_review_trust`), statt eine zweite zu bauen.
+- Die drei Vererbungszustände der Oberfläche (**geerbt**, **verschärft**, **gesperrt**) sind dort entstanden und werden hier nicht neu erfunden.
+- **Verbindlich übernommen**: die erlaubten Aktionen kommen aus der API-Antwort, das Frontend leitet Berechtigungen nicht selbst her (Begründung in 023).
+
 ## Scope
 
 - Migration: Richtlinien je Scope, Prüferreferenzen, Vertrauen je Mitglied, mehrstufige Freigabeanfragen, Kontingente
@@ -167,6 +179,8 @@ create unique index policy_settings_team_unique on public.policy_settings (organ
 ```
 
 Alle Regelfelder sind nullable: `null` heißt „von oben erben“. Nur die additiven Array-Felder haben `default '{}'`.
+
+**Achtung, Reihenfolge:** `policy_settings` wird nicht hier angelegt, sondern in Paket 023 — zusammen mit `public.policy_scope`, der Auflösungsfunktion und den beiden Feldern `invite_allowed` und `posts_visible_org_wide`. Der Block oben zeigt die Tabelle vollständig; umzusetzen ist hier nur die Erweiterung um die Freigabe-, Medien- und Kontingentfelder. Die beiden Felder aus 023 bleiben unverändert bestehen.
 
 Prüferreferenzen:
 
@@ -464,7 +478,7 @@ Prüfer müssen erfahren, dass sie gefragt sind — ein Trainer schaut nicht tä
 - Kontingente als Liste mit aktueller Auslastung
 - eine Prosa-Zusammenfassung „Was bedeutet das konkret?“ — für Ehrenamtliche der wichtigste Teil der Seite
 
-Vertrauen je Mitglied liegt bei der Mitgliederliste aus Paket 010, nicht in den Einstellungen. Dort wird über eine Person entschieden, und dort sucht man sie:
+Vertrauen je Mitglied liegt bei der Mitgliederliste aus Paket 010, nicht in den Einstellungen. Dort wird über eine Person entschieden, und dort sucht man sie. **Hinweis aus der Umsetzung von 010**: `pages/mitglieder.vue` hat keine aufklappbare Detailebene je Mitglied — dieses Paket muss sie selbst ergänzen, nicht nur befüllen.
 
 - je Mitglied und Scope: Einreichen erlaubt, Prüfung erforderlich / befreit / geerbt, Befristung, Begründung
 - direkt daneben, welche Route für diese Person gilt — inklusive der Stufen, die eine Befreiung **nicht** entfällt

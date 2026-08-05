@@ -25,11 +25,13 @@
     "@vereinsfunk/svg-safe": "workspace:*",
     "fastify": "^5.11.0",
     "jose": "^6.1.0",
+    "nodemailer": "^9.0.4",
     "sharp": "^0.35.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^24.1.0",
+    "@types/nodemailer": "^8.0.1",
     "tsup": "^8.5.0",
     "tsx": "^4.20.3",
     "typescript": "^6.0.3",

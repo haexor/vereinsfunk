@@ -1,19 +1,5 @@
 <script setup lang="ts">
-import { BarChart3, CalendarDays, CheckCircle2, ChevronDown, FileText, LayoutDashboard, LogOut, Menu, Palette, Plus, Settings, ShieldCheck, Users, X } from '@lucide/vue'
-
-const roleLabels: Record<string, string> = {
-  organization_owner: 'Vereinsinhaber',
-  organization_admin: 'Vereinsadmin',
-  social_manager: 'Social Managerin',
-  billing_admin: 'Abrechnung',
-  organization_viewer: 'Betrachterin',
-  department_admin: 'Abteilungsadmin',
-  editor: 'Redakteurin',
-  approver: 'Prüferin',
-  contributor: 'Mitwirkende',
-  viewer: 'Betrachterin',
-  team_manager: 'Teamleitung',
-}
+import { BarChart3, Building2, CalendarDays, CheckCircle2, ChevronDown, FileText, LayoutDashboard, LogOut, Menu, Palette, Plus, Settings, ShieldCheck, Users, X } from '@lucide/vue'
 
 const mobileOpen = ref(false)
 const route = useRoute()
@@ -54,6 +40,7 @@ const navigation: { label: string; to: string; icon: typeof LayoutDashboard; bad
 ]
 const organizationNav = [
   { label: 'Marke & Tonalität', to: '/marke', icon: Palette },
+  { label: 'Struktur', to: '/struktur', icon: Building2 },
   { label: 'Mitglieder', to: '/mitglieder', icon: Users },
   { label: 'Einstellungen', to: '/einstellungen', icon: Settings },
 ]

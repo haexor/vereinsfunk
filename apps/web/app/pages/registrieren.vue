@@ -3,6 +3,8 @@ import { LoaderCircle, MailCheck } from '@lucide/vue'
 
 definePageMeta({ layout: 'auth' })
 
+const route = useRoute()
+
 const displayName = ref('')
 const email = ref('')
 const password = ref('')
@@ -15,12 +17,17 @@ async function submit() {
   loading.value = true
   try {
     const supabase = useSupabaseClient()
+    // Traegt einen Einladungslink (siehe /einladung) ueber die E-Mail-Bestaetigung hinweg
+    // weiter -- auth/callback.vue leitet redirect bereits generisch weiter.
+    const redirectTarget = resolveSafeRedirect(route.query.redirect)
+    const emailRedirectTo = new URL('/auth/callback', window.location.origin)
+    if (redirectTarget !== '/') emailRedirectTo.searchParams.set('redirect', redirectTarget)
     const { error } = await supabase.auth.signUp({
       email: email.value,
       password: password.value,
       options: {
         data: { display_name: displayName.value },
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
+        emailRedirectTo: emailRedirectTo.toString(),
       },
     })
     if (error) throw error

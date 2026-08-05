@@ -1,4 +1,6 @@
-const publicPaths = new Set(['/anmelden', '/registrieren', '/passwort-vergessen', '/passwort-neu', '/auth/callback'])
+// /einladung ist bewusst oeffentlich: die Seite selbst entscheidet je nach Session, ob sie
+// sofort annimmt oder zu /registrieren bzw. /anmelden weiterleitet (siehe pages/einladung.vue).
+const publicPaths = new Set(['/anmelden', '/registrieren', '/passwort-vergessen', '/passwort-neu', '/auth/callback', '/einladung'])
 
 export default defineNuxtRouteMiddleware(async (to) => {
   if (publicPaths.has(to.path)) return
