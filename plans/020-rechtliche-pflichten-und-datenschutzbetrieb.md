@@ -191,6 +191,25 @@ Ein Verein, der Paket 014 (Personenverzeichnis) oder 018 (Kommentaranalyse) akti
 
 `processor_agreements` hält die eigene Auftragsverarbeitung und die der eingesetzten Dienste fest — Supabase, Hosting, E-Mail-Versand, LLM-Anbieter, Meta, Quellsysteme aus Paket 014. Ablaufende Vereinbarungen erscheinen als Aufgabe.
 
+### 4b. Manipulationssicherer Audit-Trail
+
+**Anforderung des Nutzers am 2026-08-05**, aufgekommen beim Review von Paket 010: es muss nachvollziehbar sein, wer wann welche Berechtigung vergeben oder entzogen hat, „im besten Fall kryptografisch gesichert“.
+
+Stand heute: `audit_events` ist für Nutzer append-only — `authenticated` hat keinen `insert`/`update`/`delete`-Grant und keine entsprechende Policy, gelesen wird nur mit `organization.manage` (`202608020001:427`). Geschrieben wird ausschließlich privilegiert, über den Service-Client oder aus `security definer`-Funktionen. Alle Rollen- und Mitgliedschaftsänderungen aus Paket 010 landen dort mit `actor_user_id`, `action`, `entity_type`/`entity_id`, `correlation_id` und Metadaten (`fromRole`/`toRole`). Das deckt die Nachvollziehbarkeit ab.
+
+Was fehlt: die Einträge sind **unverkettet und unsigniert**. Wer Datenbankzugriff hat — der Betreiber selbst, oder jemand mit einem geleakten Service-Key — kann sie unbemerkt ändern oder löschen. Für ein System, das genau diesen Betreiber gegenüber einem Verein rechenschaftspflichtig macht, ist das die relevante Lücke.
+
+Umsetzung ohne neue Abhängigkeit, etablierte Bauform (Hash-Kette, wie sie tamper-evident logs allgemein verwenden):
+
+- zwei Spalten `prev_hash text` und `hash text` auf `audit_events`, Kette **je Verein**
+- ein `before insert`-Trigger, der `hash = encode(extensions.digest(prev_hash || <kanonische Nutzlast>, 'sha256'), 'hex')` setzt; `extensions.digest` ist bereits im Einsatz (`accept_invitation()` in `2026080601`)
+- ein periodischer Lauf, der den aktuellen Kopf-Hash je Verein mit einem Schlüssel signiert, der **nicht** in der Datenbank liegt (`packages/secrets`, `SECRET_BOX_KEYS`) und die Signatur mit Zeitstempel ablegt
+- Prüffunktion, die eine Kette nachrechnet, plus ein Export „Berechtigungsverlauf“ für den Verein
+
+Damit ist jede nachträgliche Änderung und jede Löschung erkennbar. Bewusst **nicht** gebaut: Merkle-Baum, externe Transparency-Log-Verankerung (Certificate Transparency, Trillian) oder ein Ledger-Produkt (immudb, QLDB) — der Aufwand steht für einen Vereins-SaaS nicht im Verhältnis, und die Hash-Kette liefert die Eigenschaft, auf die es ankommt.
+
+Ebenfalls bewusst nicht: das Berechtigungsmodell in eine externe Policy-Engine (OpenFGA, SpiceDB, Cedar, Casbin) auslagern. Es ist absichtlich zweimal implementiert — in `packages/authorization` und noch einmal in Postgres-RLS —, damit die Datenbank eine unabhängige zweite Durchsetzungsebene bleibt. Eine externe Engine nähme RLS aus dem Spiel und machte die Datenbank zum schwächsten Punkt; die Hierarchie Verein → Abteilung → Team ist genau das, was RLS gut ausdrückt.
+
 ### 5. Die Anwendung selbst
 
 - Impressum und Datenschutzerklärung für Vereinsfunk als Produkt, erreichbar auch ohne Anmeldung.

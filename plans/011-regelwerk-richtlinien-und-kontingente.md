@@ -400,14 +400,29 @@ Die Sichtbarkeit richtet sich nach dem **Lebenszyklus**, nicht nach einer Angabe
 |---|---|
 | Beiträge im Status veröffentlicht/geplant | vereinsweit: `posts_select` (`202608020001:417`) auf `authz.is_organization_member` für diese Zustände |
 | Entwürfe, Einreichungen, Freigabeverkehr | unverändert Abteilung plus Freigabekette (siehe „Prüferzugang“ oben) |
+| Entwürfe des **eigenen Teams** | zusätzlich für Teammitglieder: `or authz.has_team_membership(team_id)` in `posts_select`/`submissions_select` |
 | `media_assets`, `face_regions`, `consent_records` | unverändert abteilungsweit — Medienrecht und Minderjährigenschutz, nicht Geheimhaltung |
 | Ausnahme „diese Abteilung nicht vereinsweit“ | neues `policy_settings`-Feld `posts_visible_org_wide boolean` (`null` = erben), dieselbe Richtung wie oben: eine untere Ebene darf nur verschärfen |
+
+**Die automatische `viewer`-Zeile aus Paket 010 muss mit dieser Änderung entfernt werden** — sie ist nicht nur überflüssig, sie widerspricht der Regel. `accept_invitation()` legt bei einer Team-Einladung heute eine `viewer`-Mitgliedschaft in der Elternabteilung an, damit das Teammitglied überhaupt Inhalte sieht. Weil `authz.is_department_member` die *Mitgliedschaft* prüft und nicht die Rolle, macht diese Zeile das Teammitglied aber zum vollwertigen Abteilungsmitglied: es sieht damit auch **Entwürfe und Einreichungen der ganzen Abteilung**. Verbindlich ist stattdessen: ein Teammitglied sieht, was die Abteilung **veröffentlicht** hat (über die vereinsweite Sichtbarkeit oben), plus die Entwürfe des **eigenen Teams** (über die `has_team_membership`-Zeile in der Tabelle) — nicht die Entwürfe der Abteilung.
+
+Die drei Änderungen gehören deshalb in **eine** Migration: vereinsweite Sichtbarkeit veröffentlichter Beiträge, `has_team_membership`-Klausel für eigene Team-Entwürfe, Wegfall der `viewer`-Zeile in `accept_invitation()`. Einzeln angewendet entsteht jeweils eine Lücke — ohne die ersten beiden verliert ein reines Teammitglied jeden Inhaltszugriff, ohne die dritte bleibt der zu breite Zugriff bestehen. `authz.is_department_member` selbst wird **nicht** angefasst: darauf setzt jede bestehende Inhaltspolicy auf, die zusätzliche `or`-Bedingung an genau zwei Policies ist der kleinere Eingriff.
 
 Das löst zugleich einen **bestehenden Widerspruch** im Datenmodell: `post_versions_select` (`202608020001:418`) prüft schon heute `authz.is_organization_member`, während `posts_select` (`:417`), `submissions_select` (`:410`) und `media_assets_select` (`202608030001:114`) `is_department_member` verlangen. Wer eine Post-ID kennt, liest heute also den Fassungstext, kann den Beitrag selbst aber nicht auflisten. Beim Umsetzen beide Policies gemeinsam anfassen, damit die Ebene nicht wieder auseinanderläuft.
 
 Falls doch ein Ersteller-Schalter gewünscht wird: als Opt-out **beim Veröffentlichen**, wenn der Kanal bekannt ist — nicht beim Einreichen.
 
-Folge für Paket 010: die automatische Abteilungs-`viewer`-Zeile, die `accept_invitation()` bei einer Team-Einladung anlegt (damit die Person überhaupt Inhalte sieht), wird damit weitgehend überflüssig statt zu breit. Sie bleibt vorerst bestehen und wird hier gemeinsam mit den Policies bewertet, nicht vorher einzeln geändert.
+## Mitglieder-Detailebene: ein Vertrag für Oberfläche und API
+
+**Anforderung des Nutzers am 2026-08-05**, aufgekommen beim Review von Paket 010. Paket 010 hat bewusst nur „Rolle entfernen“ gebaut; `PATCH /v1/memberships/:id` (Rollenwechsel, atomar über `change_membership_role`), `POST /v1/memberships` (weitere Rolle auf anderer Ebene) und `expires_at` auf allen drei Mitgliedschaftstabellen existieren und sind getestet, es fehlt nur die Oberfläche. Diese entsteht hier — als **eine** aufklappbare Detailebene je Mitglied, nicht als separater Rollen-Editor, sonst konkurrieren zwei Mitglieder-Detail-Oberflächen miteinander.
+
+Sie trägt zusammen: Rolle je Ebene (Verein/Abteilung/Team), Befristung (`expires_at`), Einladungsrecht (`invite_allowed`, siehe oben), Freigabe-Zuständigkeit (`policy_reviewers`, `review_mode = 'named'`) und Prüfpflicht/Vertrauen (`member_review_trust`). Der Nutzer nennt als Begründung, dass sich Zuständigkeiten im Verein laufend ändern: „Leute kommen und gehen und übernehmen mal mehr mal weniger Aufgaben. Wer z. B. verantwortlich für die Freigabe von Posts ist, kann sich häufiger mal ändern.“
+
+**Verbindlich: die Berechtigung kommt aus einer Quelle, nicht aus zwei.** Die Antwort der API trägt je Mitglied und je Aktion mit, ob der Handelnde sie ausführen darf (`canChangeRole`, `canRemove`, `canSetExpiry`, …), server-seitig berechnet aus denselben Funktionen, die die Route selbst durchsetzt. Die Oberfläche zeigt und schickt nur, was dort steht, statt die Regeln mit `useCan`/`canAssignRole` ein zweites Mal herzuleiten; Fehlschläge werden mit der Fehlerkennung der API benannt, nicht generisch verschluckt.
+
+Grund ist Erfahrung aus 010, nicht Vorsicht: **beide funktionalen Fehler, die das Nachfolge-Review dort fand, waren genau diese Doppelherleitung.** Das Einladungsformular hing an vereinsweitem `member.invite` und war für Abteilungs- und Teamverantwortliche unsichtbar, obwohl API und RLS ihre Einladungen erlauben; und die Team-Einladung schickte eine Scope-Kette, die das Contract-Schema serverseitig verlangt, aber clientseitig niemand kannte. Beides kann nicht auftreten, wenn die Oberfläche die Berechtigungen nicht selbst herleitet.
+
+Folge für Paket 010: die dort dokumentierte Zurückstellung („kein Rollenwechsel-Button, keine Befristung aus der Oberfläche“) wird hier eingelöst.
 
 ## Umsetzung
 
