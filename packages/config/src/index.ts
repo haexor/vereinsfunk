@@ -18,6 +18,13 @@ const ApiEnvironmentBaseSchema = z.object({
   PUBLISHING_PROVIDER: z.enum(['fake', 'mixpost']).default('fake'),
   MIXPOST_BASE_URL: optionalUrl,
   MIXPOST_TOKEN: optionalSecret,
+  // Paket 022: bootstrappt genau einen Default-Plattform-Admin beim Serverstart, wenn
+  // gesetzt. Unset ist ein gueltiger Zustand (noch kein Bootstrap gewuenscht).
+  PLATFORM_ADMIN_DEFAULT_EMAIL: optionalSecret,
+  // packages/secrets' SecretBox: JSON-Map { "<version>": "<base64 32 bytes>" }. Geparst und
+  // validiert in apps/api, nicht hier -- packages/config liest nur die Rohwerte.
+  SECRET_BOX_KEYS: optionalSecret,
+  SECRET_BOX_CURRENT_KEY_VERSION: optionalSecret,
 })
 
 // In production the API cannot start without a real database and token-verification secret.

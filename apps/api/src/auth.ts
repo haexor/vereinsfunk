@@ -1,5 +1,6 @@
 import { hasPermission, type Permission, type Role } from '@vereinsfunk/authorization'
 import type { ApiEnvironment } from '@vereinsfunk/config'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import { jwtVerify } from 'jose'
 import { createUserClient } from './supabase.js'
@@ -7,6 +8,7 @@ import { createUserClient } from './supabase.js'
 declare module 'fastify' {
   interface FastifyRequest {
     auth?: { userId: string; accessToken: string }
+    platformAdmin?: { isDefaultAdmin: boolean }
   }
 }
 
@@ -79,7 +81,32 @@ export class SupabaseRoleProvider implements RoleProvider {
   }
 }
 
-export function createAuthGuards(environment: ApiEnvironment, roleProvider: RoleProvider) {
+// Orthogonal zu RoleProvider/PermissionScope: ein Plattform-Admin ist keiner Organisation
+// zugeordnet. Die Tabelle platform_admins hat keinerlei Grant/Policy fuer authenticated
+// (siehe 2026080502_platform_administration.sql) -- nur der Service-Role-Client kommt heran.
+export interface PlatformAdminProvider {
+  statusFor(userId: string): Promise<{ isPlatformAdmin: boolean; isDefaultAdmin: boolean }>
+}
+
+export class SupabasePlatformAdminProvider implements PlatformAdminProvider {
+  constructor(private readonly forService: () => SupabaseClient) {}
+
+  async statusFor(userId: string): Promise<{ isPlatformAdmin: boolean; isDefaultAdmin: boolean }> {
+    const result = await this.forService()
+      .from('platform_admins')
+      .select('is_default_admin')
+      .eq('user_id', userId)
+      .maybeSingle()
+    if (result.error) throw result.error
+    return { isPlatformAdmin: result.data !== null, isDefaultAdmin: result.data?.is_default_admin === true }
+  }
+}
+
+export function createAuthGuards(
+  environment: ApiEnvironment,
+  roleProvider: RoleProvider,
+  platformAdminProvider: PlatformAdminProvider,
+) {
   const requireAuth = async (request: FastifyRequest, reply: FastifyReply): Promise<boolean> => {
     const header = request.headers.authorization
     const accessToken = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : undefined
@@ -115,5 +142,19 @@ export function createAuthGuards(environment: ApiEnvironment, roleProvider: Role
     return true
   }
 
-  return { requireAuth, requirePermission }
+  const requirePlatformAdmin = async (request: FastifyRequest, reply: FastifyReply): Promise<boolean> => {
+    if (!request.auth) {
+      reply.code(401).send({ error: 'unauthorized', correlationId: request.id })
+      return false
+    }
+    const status = await platformAdminProvider.statusFor(request.auth.userId)
+    if (!status.isPlatformAdmin) {
+      reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+      return false
+    }
+    request.platformAdmin = { isDefaultAdmin: status.isDefaultAdmin }
+    return true
+  }
+
+  return { requireAuth, requirePermission, requirePlatformAdmin }
 }

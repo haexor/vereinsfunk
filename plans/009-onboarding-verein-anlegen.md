@@ -6,9 +6,14 @@ Wer sich zum ersten Mal anmeldet, landet nicht auf einem leeren Dashboard, sonde
 
 ## Ausgangslage und Evidenz
 
-Geplant auf `b5c2eda6` am 2026-08-04. Nach Abschluss von Paket 008 (2026-08-04) einmal gegen den Code nachverifiziert — Ergebnisse und Korrekturen direkt unten eingearbeitet, Details im Rückbau-Abschnitt.
+Geplant auf `b5c2eda6` am 2026-08-04. Nach Abschluss von Paket 008 (2026-08-04) einmal gegen den Code nachverifiziert — Ergebnisse und Korrekturen direkt unten eingearbeitet, Details im Rückbau-Abschnitt. Am 2026-08-05, unmittelbar vor Umsetzungsbeginn, ein zweites Mal vollständig gegen `main` verifiziert (drei parallele Agents: Datenbank, Frontend, API/Packages). Alle Kernbehauptungen bestätigt; zwei reale Abweichungen unten eingearbeitet, der Rest war exakt oder nur um Zeilennummern verschoben.
 
 **Was Paket 008 bereits erledigt hat, bevor 009 anfängt:** `apps/web/app/pages/index.vue` bezieht `firstName`/`department` inzwischen aus `useSession()`/`useScope()`, nicht mehr aus `useDemoData()` (die Datei existiert nicht mehr). `layouts/default.vue` hat einen echten Abteilungs-Umschalter (die Rolle/Anzeigename kommen aus `useSession()`). Was **weiterhin** wie im Plan beschrieben aussteht: die Kennzahlen/Wochenausschnitt/Ideen-Karte/Monatsziel-Balken in `index.vue` sind unverändert erfunden, und ein **Vereins**-Umschalter (nicht der Abteilungs-Umschalter) fehlt weiterhin: `layouts/default.vue:74-81` zeigt Name und Initialen des aktiven Vereins als reine Anzeige ohne Bedienelement.
+
+**Zwei Korrekturen aus der Nachverifikation vom 2026-08-05:**
+
+- `apps/web/app/pages/onboarding.vue` existiert bereits als einzelne Platzhalterdatei (Logout-Button, Text „Noch kein Verein"). Sie wurde von Paket 008 als Sackgasse für Nutzer ohne Mitgliedschaft angelegt. Sie **kollidiert routingtechnisch** mit dem in diesem Plan vorgesehenen Verzeichnis `pages/onboarding/` — Nuxt erlaubt nicht beide gleichzeitig. Die Datei wird durch den Wizard **ersetzt**, nicht ergänzt. Das ist keine Design-Entscheidung, sondern eine mechanische Notwendigkeit: der Plan sah diese Datei nicht vor, weil sie erst mit 008 entstand.
+- `apps/web/app/middleware/auth.global.ts:17` leitet bereits jetzt auf `/onboarding` um, wenn `session.value.scopes.length === 0`. Diese Redirect-Infrastruktur existiert vollständig und muss nicht gebaut werden — das Paket liefert nur das Wizard-Ziel. Nach erfolgreichem Onboarding entsteht durch `create_organization` eine Mitgliedschaft, wodurch `scopes.length > 0` wird und die Weiterleitung automatisch ausbleibt; das ist als Verifikationspunkt unten ergänzt.
 
 - Für `public.organizations` existiert **keine INSERT-Policy**. Ein Verein ist heute ausschließlich über die Service Role anlegbar. Onboarding braucht daher zwingend einen privilegierten Serverpfad, entweder eine `security definer`-Funktion oder einen API-Endpunkt.
 - `supabase/migrations/202608020001_initial_tenant_foundation.sql:32-39`: `organizations` kennt nur `name`, `slug`, `timezone`. **Keine Anschrift, kein Kontakt, keine Rechtsform, kein Registereintrag.** Die vom Produkt geforderte Adresse existiert im Modell nicht.
@@ -34,7 +39,7 @@ Nicht enthalten: Einladungen und Mitgliederverwaltung (010), Richtlinien und Fre
 
 ## Datenmodell
 
-Migration `2026080402_organization_profile_and_onboarding.sql`:
+Migration `2026080501_organization_profile_and_onboarding.sql` (Paket 008s `2026080401_auth_bootstrap.sql` lief am 2026-08-04; die Umsetzung von 009 beginnt am 2026-08-05, daher das neue Datumspräfix mit dem in 008 eingeführten zweistelligen Sequenzformat):
 
 ```sql
 create table public.organization_profiles (
@@ -119,7 +124,7 @@ Ein echter Datenbank-Constraint „mindestens eine Abteilung“ ist über zwei T
 
 ```sql
 create or replace function public.create_organization(
-  organization_name text, organization_slug text, first_department_name text,
+  organization_name text, first_department_name text,
   organization_timezone text default 'Europe/Berlin'
 ) returns uuid language plpgsql security definer set search_path = public, pg_temp as $$
 ```
@@ -129,8 +134,9 @@ Die Funktion legt in einer Transaktion an: `organizations`, `organization_profil
 Regeln:
 
 - `auth.uid()` muss vorhanden sein, sonst Abbruch. Die Funktion ist `security definer` und darf nicht anonym aufrufbar sein.
-- Slug wird serverseitig aus dem Namen normalisiert und bei Kollision mit einem Zähler versehen. Der Slug ist global unique (`202608020001:35`) und deshalb ein potenzieller Informationsleck-Kanal: die Fehlermeldung nennt nie einen fremden Vereinsnamen.
-- **Missbrauchsgrenze**: ein Nutzer darf nicht beliebig viele Vereine anlegen. Ohne Grenze ist das ein offener Schreibpfad in eine geteilte Produktionsdatenbank. Vorschlag: maximal drei Vereine mit `organization_owner` pro Profil, danach 429 mit Hinweis auf Kontaktaufnahme. Der Wert gehört in `packages/config`, **die Prüfung aber in die Funktion**: eine Grenze, die nur der API-Endpunkt kennt, ist wirkungslos, solange `execute` auf `create_organization` für `authenticated` besteht — ein `rpc('create_organization', …)` aus dem Browser umgeht sie. Die Funktion nimmt das Limit deshalb als Parameter, zählt die `organization_owner`-Zeilen für `auth.uid()` innerhalb derselben `security definer`-Transaktion und bricht ab, bevor die Organisation entsteht. Nur so ist die Zählung auch gegen zwei parallele Anfragen dicht.
+- Kein `organization_slug`-Parameter: der Plan hatte ursprünglich einen vorgesehen, aber der Slug ist serverseitig aus dem Namen abgeleitet und laut Wizard-Schritt 1 „nicht editierbar“ — ein Parameter, den die Funktion ohnehin verwirft, ist tote Konfigurierbarkeit. Slug wird aus dem Namen normalisiert und bei Kollision mit einem Zähler versehen. Der Slug ist global unique (`202608020001:35`) und deshalb ein potenzieller Informationsleck-Kanal: die Fehlermeldung nennt nie einen fremden Vereinsnamen.
+- **Missbrauchsgrenze**: ein Nutzer darf nicht beliebig viele Vereine anlegen. Ohne Grenze ist das ein offener Schreibpfad in eine geteilte Produktionsdatenbank. Maximal drei Vereine mit `organization_owner` pro Profil, danach 429 mit Hinweis auf Kontaktaufnahme.
+  **Korrektur nach adversarialer Prüfung**: die ursprüngliche Idee, das Limit als Funktions**parameter** mit Default 3 zu übergeben, wurde probeweise gebaut und in der Adversarial-Phase von zwei unabhängigen Agents unabhängig voneinander als Lücke gefunden — ein Aufruf über `supabase.rpc('create_organization', { max_organizations_per_owner: 999999 })` direkt aus dem Browser hätte das Limit exakt so ausgehebelt, wie es der ursprüngliche API-only-Check tat, den diese Funktion ersetzen sollte. Das Limit ist deshalb eine feste Konstante **im Funktionskörper** (`max_organizations_per_owner constant integer := 3;`), nicht überschreibbar durch keinen Aufrufer, keine Konfigurierbarkeit über `packages/config`. Die Funktion zählt die `organization_owner`-Zeilen für `auth.uid()` innerhalb derselben `security definer`-Transaktion, seriealisiert über `pg_advisory_xact_lock(hashtext('create_organization:' || auth.uid()))` gegen parallele Aufrufe desselben Nutzers, und bricht ab, bevor die Organisation entsteht.
 - Alternative Umsetzung: statt `security definer`-Funktion ein API-Endpunkt mit Service-Role-Client. Empfehlung ist die SQL-Funktion, weil die Transaktion dann garantiert atomar ist und `auth.uid()` nicht durch die API weitergereicht werden muss. Die API ruft die Funktion mit dem **Nutzer**-Client auf, nicht mit der Service Role.
 
 ### 2. API-Endpunkte
@@ -138,7 +144,7 @@ Regeln:
 - `POST /v1/organizations` → validiert per Zod, ruft `create_organization`, gibt `organizationId` und Slug zurück.
 - `PATCH /v1/organizations/:id/profile` → Stammdaten, `requirePermission('organization.manage')`.
 - `PUT /v1/organizations/:id/brand` → Farben, Tonalität, Font-Schlüssel.
-- `POST /v1/organizations/:id/brand/logo` → signierte Upload-URL in `brand-assets` unter `organizations/<id>/brand/<variant>-<hash>.<ext>`. Der Pfad muss zum bestehenden `storage_read_own_organization`-Policy-Schema passen, das `(storage.foldername(name))[1] = 'organizations'` und `[2] = organization_id` erwartet (`202608020002:8-13`).
+- `POST /v1/organizations/:id/brand/logo` → **direkter Multipart-Upload an die API**, nicht die signierte Direct-to-Storage-URL des generischen Medien-Uploads. Korrektur gegenüber der ersten Planfassung: eine signierte Upload-URL lässt die Bytes am Server vorbei direkt in den Bucket fließen — dann kann der Server weder den MIME-Typ aus dem Inhalt bestimmen noch das SVG sanitisieren, beides unten explizit gefordert. Die Datei muss also durch die API laufen, dort verarbeitet und erst danach über die Service Role nach `brand-assets` unter `organizations/<id>/brand/<variant>-<hash>.<ext>` geschrieben werden. Der Pfad passt weiterhin zum bestehenden `storage_read_own_organization`-Policy-Schema, das `(storage.foldername(name))[1] = 'organizations'` und `[2] = organization_id` erwartet (`202608020002:8-13`).
   - Serverseitig: MIME-Typ **aus dem Dateiinhalt** bestimmen und nicht aus dem Header, Bytegröße begrenzen, bei Rasterbildern Dimensionen und Mindestgröße validieren, EXIF entfernen.
   - SVG wird unterstützt, aber ausschließlich nach Sanitisierung — siehe den folgenden Abschnitt.
 
@@ -212,9 +218,11 @@ Schritt 1 und 2 werden gemeinsam abgesendet und erzeugen den Verein. Schritte 3 
 ## Verifikation
 
 - `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm db:reset`, `pnpm db:test`
-- pgTAP: `create_organization` erzeugt genau eine Organisation, ein Profil, eine Abteilung und zwei Mitgliedschaften; ein zweiter Nutzer sieht die Organisation nicht; Slug-Kollision erzeugt einen abweichenden Slug ohne Fehler; Aufruf ohne `auth.uid()` schlägt fehl; **direkter Aufruf über dem Limit schlägt fehl, nicht nur der über die API**; zwei gleichzeitige Aufrufe an der Limitgrenze erzeugen genau einen Verein; eine Person aus einem anderen Verein als `responsible_person_profile_id` schlägt am Trigger fehl, ebenso ein Profil ohne Mitgliedschaft und eine abgelaufene Mitgliedschaft; der umgekehrte Fall — Entfernen einer bereits zugewiesenen Person — wird in Paket 010 abgewiesen und dort getestet („Entfernen der verantwortlichen Ansprechperson → 409“), sodass Trigger und Löschschutz zusammen die Regel tragen.
-- API-Tests: Stammdaten-Update ohne `organization.manage` → 403; Logo-Upload mit unerlaubtem MIME-Typ → 400; Vereinsanlage über dem Limit → 429.
-- manuell: Registrieren → automatische Weiterleitung nach `/onboarding` → Verein anlegen → Dashboard zeigt Empty State und die Nächste-Schritte-Liste → Neuladen behält den Verein → zweiter frischer Nutzer sieht ihn nicht.
+- pgTAP (`supabase/tests/organization_onboarding.test.sql`, 30 Assertions): `create_organization` erzeugt genau eine Organisation, ein Profil, eine Abteilung und zwei Mitgliedschaften; ein zweiter Nutzer sieht weder die Organisation noch ihre `organization_profiles`-/`organization_onboarding`-Zeile; Slug-Kollision erzeugt einen abweichenden Slug ohne Fehler; Aufruf ohne `auth.uid()` schlägt fehl; **der 4-Parameter-Aufruf mit einem Limit-Override existiert nicht mehr** (`42883 undefined_function`) und drei reale Vereinsanlagen zeigen, dass der vierte direkte Aufruf am fest einprogrammierten Limit scheitert; eine Person aus einem anderen Verein als `responsible_person_profile_id` schlägt am Trigger fehl, ebenso ein Profil ohne Mitgliedschaft und eine abgelaufene Mitgliedschaft; `organization_department_count` ist für `authenticated` nicht aufrufbar (nur `service_role`), da die Funktion keine Mitgliedschaft prüft und sonst ein Cross-Tenant-Auskunftskanal wäre; der umgekehrte Fall — Entfernen einer bereits zugewiesenen Person — wird in Paket 010 abgewiesen und dort getestet („Entfernen der verantwortlichen Ansprechperson → 409“), sodass Trigger und Löschschutz zusammen die Regel tragen.
+  **Bewusst nicht getestet**: zwei tatsächlich *gleichzeitige* Aufrufe an der Limitgrenze über zwei echte Datenbankverbindungen. Der pgTAP-Testlauf dieses Repos führt jede Testdatei in einer einzigen, am Ende zurückgerollten Transaktion aus; zwei parallele Backends ließen sich nur über `dblink` simulieren, dessen Seiteneffekte (dort committen unabhängig vom äußeren Rollback) die Seed-Daten dauerhaft verändern würden. Die Schutzwirkung von `pg_advisory_xact_lock` gegen dieses Szenario ist ein Standard-Postgres-Muster für „Zählen dann Schreiben“ und wurde per Code-Review, nicht per Testlauf, verifiziert.
+- API-Tests: Stammdaten-Update ohne `organization.manage` → 403; Logo-Upload mit unerlaubtem MIME-Typ → 400; Vereinsanlage über dem Limit → 429 (über einen injizierbaren `SupabaseClientFactory`-Fake, damit `pnpm test` ohne laufenden Supabase-Stack bleibt); Upload über dem Multipart-Limit → 413 statt eines unbehandelten 500ers (in der Adversarial-Phase gefunden und behoben).
+- manuell (zweimal per Playwright/chromium gegen den echten lokalen Supabase-Stack durchgespielt, vor und nach den Adversarial-Fixes): Registrieren → Mailpit-Bestätigung → automatische Weiterleitung nach `/onboarding` (bestehende Middleware `auth.global.ts:17`, kein neuer Redirect-Code) → Verein anlegen → Dashboard zeigt Empty State und die Nächste-Schritte-Liste → Neuladen behält den Verein → erneuter Aufruf von `/onboarding` leitet nicht mehr um, weil `scopes.length > 0` → zweiter frischer Nutzer sieht ihn nicht. Dabei gefunden und behoben: `supabase/seed.sql` brauchte `organization_profiles`-/`organization_onboarding`-Zeilen für die beiden Vor-009-Demo-Vereine, sonst 404 beim Onboarding-Fortschritt bestehender Nutzer.
+- Build/Route-Check: `pages/onboarding.vue` (Platzhalter aus Paket 008) ist durch `pages/onboarding/index.vue` ersetzt, nicht doppelt vorhanden — `pnpm build` schlägt bei einer Routenkollision ohnehin fehl, das ist der Absicherungspunkt.
 
 ## Risiken und offene Entscheidungen
 

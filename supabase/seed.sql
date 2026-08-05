@@ -39,3 +39,16 @@ on conflict do nothing;
 insert into public.organization_brand_profiles (organization_id, primary_color, accent_color, tone)
 values ('11111111-1111-4111-8111-111111111111', '#163a2c', '#caff4a', 'nahbar')
 on conflict (organization_id) do nothing;
+
+-- Beide Organisationen sind vor Paket 009 direkt per INSERT entstanden, nicht ueber
+-- create_organization(); ohne diese Zeilen fehlt ihnen das Vereinsprofil und der
+-- Onboarding-Zustand, den jede echte Organisation seit diesem Paket besitzt.
+insert into public.organization_profiles (organization_id) values
+  ('11111111-1111-4111-8111-111111111111'),
+  ('99999999-9999-4999-8999-999999999999')
+on conflict (organization_id) do nothing;
+
+insert into public.organization_onboarding (organization_id, completed_steps) values
+  ('11111111-1111-4111-8111-111111111111', array['branding', 'responsible_person']),
+  ('99999999-9999-4999-8999-999999999999', '{}')
+on conflict (organization_id) do nothing;

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { BarChart3, CalendarDays, CheckCircle2, ChevronDown, FileText, LayoutDashboard, LogOut, Menu, Palette, Plus, Settings, Users, X } from '@lucide/vue'
+import { BarChart3, CalendarDays, CheckCircle2, ChevronDown, FileText, LayoutDashboard, LogOut, Menu, Palette, Plus, Settings, ShieldCheck, Users, X } from '@lucide/vue'
 
 const roleLabels: Record<string, string> = {
   organization_owner: 'Vereinsinhaber',
@@ -33,6 +33,11 @@ const userInitials = computed(() => (session.value?.displayName ?? '').split(/\s
 
 function selectDepartment(departmentId: string) {
   if (scope.value) scope.value = { ...scope.value, departmentId }
+}
+
+function selectOrganization(organizationId: string) {
+  const organization = session.value?.scopes.find((item) => item.organizationId === organizationId)
+  if (organization) scope.value = { organizationId, departmentId: organization.departments[0]?.id ?? null }
 }
 
 async function logout() {
@@ -74,10 +79,18 @@ const organizationNav = [
       <div v-if="activeOrganization" class="mb-5 rounded-2xl border border-white/10 bg-white/[.06] p-2">
         <div class="flex w-full items-center gap-3 p-2 text-left">
           <span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-lime font-display text-sm font-extrabold text-forest">{{ organizationInitials }}</span>
-          <span class="min-w-0 flex-1">
+          <span v-if="(session?.scopes.length ?? 0) <= 1" class="min-w-0 flex-1">
             <span class="block truncate text-sm font-semibold">{{ activeOrganization.organizationName }}</span>
             <span class="block text-[11px] text-white/55">Vereinskonto</span>
           </span>
+          <label v-else class="relative block min-w-0 flex-1">
+            <span class="sr-only">Verein auswählen</span>
+            <select :value="scope?.organizationId" class="focus-ring w-full appearance-none rounded-lg bg-transparent py-1 pl-0 pr-6 text-sm font-semibold text-white" @change="selectOrganization(($event.target as HTMLSelectElement).value)">
+              <option v-for="item in session?.scopes" :key="item.organizationId" :value="item.organizationId" class="text-ink">{{ item.organizationName }}</option>
+            </select>
+            <ChevronDown :size="14" class="pointer-events-none absolute right-1 top-1.5 text-white/50" />
+            <span class="block text-[11px] text-white/55">Vereinskonto</span>
+          </label>
         </div>
         <template v-if="activeOrganization.departments.length">
           <div class="mx-2 my-1 h-px bg-white/10" />
@@ -109,6 +122,15 @@ const organizationNav = [
           <component :is="item.icon" :size="17" />{{ item.label }}
         </NuxtLink>
       </nav>
+
+      <template v-if="session?.isPlatformAdmin">
+        <div class="mb-2 mt-7 px-3 text-[10px] font-bold uppercase tracking-[.14em] text-white/35">Plattform</div>
+        <nav class="space-y-1" aria-label="Plattform-Administration">
+          <NuxtLink to="/plattform-admin" class="focus-ring flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium text-white/65 transition hover:bg-white/[.07] hover:text-white" active-class="!bg-white/[.11] !text-white">
+            <ShieldCheck :size="17" />Plattform-Admin
+          </NuxtLink>
+        </nav>
+      </template>
 
       <div class="mt-auto flex items-center gap-3 border-t border-white/10 px-2 pt-4">
         <span class="grid h-9 w-9 place-items-center rounded-full bg-[#d2c7ff] text-xs font-bold text-[#3c3260]">{{ userInitials }}</span>

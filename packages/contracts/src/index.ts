@@ -31,7 +31,7 @@ export const MembershipDepartmentScopeSchema = z.object({
   id: UuidSchema, name: z.string().min(1), roles: z.array(RoleNameSchema), teams: z.array(MembershipTeamScopeSchema),
 })
 export const MembershipScopeSchema = z.object({
-  organizationId: UuidSchema, organizationName: z.string().min(1),
+  organizationId: UuidSchema, organizationName: z.string().min(1), organizationTimezone: z.string().min(1),
   organizationRoles: z.array(RoleNameSchema), departments: z.array(MembershipDepartmentScopeSchema),
 })
 export const MembershipScopesSchema = z.array(MembershipScopeSchema)
@@ -89,6 +89,170 @@ export const WorkflowPayloadSchema = z.object({
 
 export const SubmissionAcceptedSchema = z.object({ submissionId: UuidSchema, correlationId: UuidSchema, status: z.enum(['queued', 'facts_required']), idempotencyKey: z.string().min(1) })
 
+const HexColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/)
+const CountryCodeSchema = z.string().regex(/^[A-Z]{2}$/)
+export const LegalFormSchema = z.enum(['e_v', 'gmbh', 'gugmbh', 'ggmbh', 'nicht_eingetragen', 'sonstige'])
+export const CuratedFontKeySchema = z.enum(['manrope', 'dm_sans'])
+export const BrandToneSchema = z.enum(['nahbar', 'dynamisch', 'sachlich'])
+// Rejects garbage before it ever reaches organizations.timezone -- an invalid IANA zone
+// would otherwise only fail later, as a RangeError inside Intl.DateTimeFormat calls that
+// format every date and scheduling deadline in the organization's timezone.
+const IanaTimezoneSchema = z.string().min(1).max(64).refine((value) => {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value })
+    return true
+  } catch {
+    return false
+  }
+}, { message: 'must be a valid IANA time zone' })
+
+export const CreateOrganizationRequestSchema = z.object({
+  name: z.string().trim().min(1).max(160),
+  firstDepartmentName: z.string().trim().min(1).max(120),
+  timezone: IanaTimezoneSchema.default('Europe/Berlin'),
+})
+export const CreateOrganizationResponseSchema = z.object({ organizationId: UuidSchema, slug: z.string().min(1) })
+
+const OrganizationProfileFieldsSchema = z.object({
+  legalName: z.string().trim().min(1).max(160).nullable().optional(),
+  legalForm: LegalFormSchema.nullable().optional(),
+  registerCourt: z.string().trim().min(1).max(160).nullable().optional(),
+  registerNumber: z.string().trim().min(1).max(80).nullable().optional(),
+  street: z.string().trim().min(1).max(160).nullable().optional(),
+  houseNumber: z.string().trim().min(1).max(20).nullable().optional(),
+  postalCode: z.string().trim().min(1).max(20).nullable().optional(),
+  city: z.string().trim().min(1).max(120).nullable().optional(),
+  countryCode: CountryCodeSchema.optional(),
+  contactEmail: z.string().trim().toLowerCase().pipe(z.email()).nullable().optional(),
+  contactPhone: z.string().trim().min(1).max(40).nullable().optional(),
+  websiteUrl: z.url().nullable().optional(),
+  foundedYear: z.int().min(1800).max(2100).nullable().optional(),
+  responsiblePersonProfileId: UuidSchema.nullable().optional(),
+})
+export const OrganizationProfileUpdateSchema = OrganizationProfileFieldsSchema.refine(
+  (value) => Object.keys(value).length > 0,
+  { message: 'at least one field must be provided' },
+)
+export const OrganizationProfileSchema = OrganizationProfileFieldsSchema.extend({
+  organizationId: UuidSchema,
+  countryCode: CountryCodeSchema,
+})
+
+export const OrganizationBrandUpdateSchema = z.object({
+  primaryColor: HexColorSchema,
+  accentColor: HexColorSchema,
+  tone: BrandToneSchema,
+  displayFontKey: CuratedFontKeySchema,
+  bodyFontKey: CuratedFontKeySchema,
+})
+export const OrganizationBrandSchema = OrganizationBrandUpdateSchema.extend({
+  organizationId: UuidSchema,
+  logoPath: z.string().nullable(),
+  logoDarkPath: z.string().nullable(),
+})
+
+export const BrandLogoVariantSchema = z.enum(['light', 'dark'])
+export const BrandLogoUploadResponseSchema = z.object({
+  variant: BrandLogoVariantSchema,
+  path: z.string().min(1),
+  signedUrl: z.url(),
+  sanitized: z.boolean(),
+})
+
+export const OnboardingStepSchema = z.enum(['branding', 'responsible_person'])
+export const OnboardingStateSchema = z.object({
+  completedSteps: z.array(OnboardingStepSchema),
+  dismissedAt: z.iso.datetime({ offset: true }).nullable(),
+})
+
+// Plattform-Administration (Paket 022): der SaaS-Betreiber, orthogonal zu allen
+// vereinsbezogenen Rollen oben. Jede Schreiboperation hier ist requirePlatformAdmin-gated.
+export const JsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
+  z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(JsonValueSchema), z.record(z.string(), JsonValueSchema)]),
+)
+
+export const PlatformAdminStatusSchema = z.object({ isPlatformAdmin: z.boolean(), isDefaultAdmin: z.boolean() })
+export const PlatformAdminSchema = z.object({
+  userId: UuidSchema,
+  isDefaultAdmin: z.boolean(),
+  // offset: true -- PostgREST serialisiert timestamptz mit numerischem Offset (z.B. +00:00),
+  // nicht mit dem "Z"-Suffix, den z.iso.datetime() sonst zwingend verlangt.
+  createdAt: z.iso.datetime({ offset: true }),
+})
+export const AddPlatformAdminRequestSchema = z.object({
+  email: z.string().trim().toLowerCase().pipe(z.email()),
+})
+
+// Nur ein Schluessel existiert heute (loest 009s hartkodierte Konstante ab). Ein unbekannter
+// Schluessel wird von der API abgelehnt statt stillschweigend ungeprueft gespeichert zu werden.
+export const PlatformSettingKeySchema = z.enum(['max_organizations_per_owner'])
+export const PlatformSettingValueSchemas = {
+  max_organizations_per_owner: z.int().positive().max(1000),
+} as const satisfies Record<z.infer<typeof PlatformSettingKeySchema>, z.ZodType<unknown>>
+export const PlatformSettingSchema = z.object({
+  key: PlatformSettingKeySchema,
+  value: JsonValueSchema,
+  updatedAt: z.iso.datetime({ offset: true }),
+})
+export const UpdatePlatformSettingRequestSchema = z.object({ value: JsonValueSchema })
+
+export const LlmProviderProtocolSchema = z.enum(['anthropic', 'openai'])
+export const LlmProviderConfigurationSchema = z.object({
+  id: UuidSchema,
+  label: z.string().trim().min(1).max(160),
+  protocol: LlmProviderProtocolSchema,
+  baseUrl: z.url(),
+  model: z.string().trim().min(1).max(120),
+  purpose: z.string().trim().min(1).max(60),
+  priority: z.int(),
+  isActive: z.boolean(),
+  systemPromptOverride: z.string().trim().min(1).max(8000).nullable(),
+  hasSecret: z.boolean(),
+})
+export const CreateLlmProviderConfigurationRequestSchema = z.object({
+  label: z.string().trim().min(1).max(160),
+  protocol: LlmProviderProtocolSchema,
+  baseUrl: z.url(),
+  model: z.string().trim().min(1).max(120),
+  purpose: z.string().trim().min(1).max(60).default('default'),
+  priority: z.int().default(100),
+  isActive: z.boolean().default(true),
+  systemPromptOverride: z.string().trim().min(1).max(8000).nullable().optional(),
+  apiKey: z.string().trim().min(1).max(4000),
+})
+export const UpdateLlmProviderConfigurationRequestSchema = z.object({
+  label: z.string().trim().min(1).max(160).optional(),
+  protocol: LlmProviderProtocolSchema.optional(),
+  baseUrl: z.url().optional(),
+  model: z.string().trim().min(1).max(120).optional(),
+  purpose: z.string().trim().min(1).max(60).optional(),
+  priority: z.int().optional(),
+  isActive: z.boolean().optional(),
+  systemPromptOverride: z.string().trim().min(1).max(8000).nullable().optional(),
+  apiKey: z.string().trim().min(1).max(4000).optional(),
+})
+
+export const PlatformAdminOrganizationSummarySchema = z.object({
+  organizationId: UuidSchema,
+  name: z.string().min(1),
+  slug: z.string().min(1),
+  memberCount: z.int().min(0),
+  departmentCount: z.int().min(0),
+  createdAt: z.iso.datetime({ offset: true }),
+})
+export const UsageMetricsQuerySchema = z.object({
+  from: z.iso.datetime(),
+  to: z.iso.datetime(),
+})
+export const UsageMetricsBucketSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  postsCreated: z.int().min(0),
+  llmGeneratedVersions: z.int().min(0),
+  workflowRunsFailed: z.int().min(0),
+  publicationsFailed: z.int().min(0),
+})
+export const UsageMetricsResponseSchema = z.object({ buckets: z.array(UsageMetricsBucketSchema) })
+
 export type Health = z.infer<typeof HealthSchema>
 export type ContentPresetSlug = z.infer<typeof ContentPresetSlugSchema>
 export type CommunicationGoal = z.infer<typeof CommunicationGoalSchema>
@@ -101,3 +265,25 @@ export type FaceDecision = z.infer<typeof FaceDecisionSchema>
 export type MediaGateResult = z.infer<typeof MediaGateResultSchema>
 export type WorkflowPayload = z.infer<typeof WorkflowPayloadSchema>
 export type MembershipScope = z.infer<typeof MembershipScopeSchema>
+export type CreateOrganizationRequest = z.infer<typeof CreateOrganizationRequestSchema>
+export type OrganizationProfileUpdate = z.infer<typeof OrganizationProfileUpdateSchema>
+export type OrganizationProfile = z.infer<typeof OrganizationProfileSchema>
+export type OrganizationBrandUpdate = z.infer<typeof OrganizationBrandUpdateSchema>
+export type OrganizationBrand = z.infer<typeof OrganizationBrandSchema>
+export type BrandLogoVariant = z.infer<typeof BrandLogoVariantSchema>
+export type OnboardingStep = z.infer<typeof OnboardingStepSchema>
+export type OnboardingState = z.infer<typeof OnboardingStateSchema>
+export type PlatformAdminStatus = z.infer<typeof PlatformAdminStatusSchema>
+export type PlatformAdmin = z.infer<typeof PlatformAdminSchema>
+export type AddPlatformAdminRequest = z.infer<typeof AddPlatformAdminRequestSchema>
+export type PlatformSettingKey = z.infer<typeof PlatformSettingKeySchema>
+export type PlatformSetting = z.infer<typeof PlatformSettingSchema>
+export type UpdatePlatformSettingRequest = z.infer<typeof UpdatePlatformSettingRequestSchema>
+export type LlmProviderProtocol = z.infer<typeof LlmProviderProtocolSchema>
+export type LlmProviderConfigurationDto = z.infer<typeof LlmProviderConfigurationSchema>
+export type CreateLlmProviderConfigurationRequest = z.infer<typeof CreateLlmProviderConfigurationRequestSchema>
+export type UpdateLlmProviderConfigurationRequest = z.infer<typeof UpdateLlmProviderConfigurationRequestSchema>
+export type PlatformAdminOrganizationSummary = z.infer<typeof PlatformAdminOrganizationSummarySchema>
+export type UsageMetricsQuery = z.infer<typeof UsageMetricsQuerySchema>
+export type UsageMetricsBucket = z.infer<typeof UsageMetricsBucketSchema>
+export type UsageMetricsResponse = z.infer<typeof UsageMetricsResponseSchema>

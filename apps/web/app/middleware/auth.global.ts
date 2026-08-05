@@ -14,5 +14,13 @@ export default defineNuxtRouteMiddleware(async (to) => {
 
   const session = await useSession()
   if (!session.value) return navigateTo({ path: '/anmelden', query: { redirect: to.fullPath } })
+
+  // Plattform-Admins sind keinem Verein zugeordnet -- ein Admin ohne eigenen Vereins-Scope
+  // darf trotzdem sein Dashboard erreichen, statt in den Onboarding-Wizard gezwungen zu werden.
+  if (to.path.startsWith('/plattform-admin')) {
+    if (!session.value.isPlatformAdmin) return navigateTo('/')
+    return
+  }
+
   if (to.path !== '/onboarding' && session.value.scopes.length === 0) return navigateTo('/onboarding')
 })
