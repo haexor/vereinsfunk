@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(55);
+select plan(60);
 
 set local role postgres;
 
@@ -443,6 +443,31 @@ select is(
 select is(
   (select count(*)::integer from pg_policies where schemaname = 'public' and tablename = 'audit_events' and cmd in ('INSERT', 'ALL')),
   0, 'there is no audit_events insert policy that would make the user client work'
+);
+
+-- Regression: der Tabellen-Grant auf invitations war spaltenblind -- jeder Inhaber von
+-- member.invite konnte token_hash, email oder expires_at einer fremden offenen Einladung direkt
+-- ueber PostgREST aendern, an der API und am Audit-Trail vorbei. Geschrieben wird jetzt nur noch
+-- ueber die security-definer-RPCs; einzig das Widerrufen laeuft als gewoehnliches Update.
+select is(
+  has_table_privilege('authenticated', 'public.invitations', 'INSERT'),
+  false, 'authenticated cannot insert invitations directly -- only create_invitation() may'
+);
+select is(
+  has_column_privilege('authenticated', 'public.invitations', 'revoked_at', 'UPDATE'),
+  true, 'authenticated may still revoke an invitation'
+);
+select is(
+  has_column_privilege('authenticated', 'public.invitations', 'token_hash', 'UPDATE'),
+  false, 'authenticated cannot rewrite an invitation token directly'
+);
+select is(
+  has_column_privilege('authenticated', 'public.invitations', 'email', 'UPDATE'),
+  false, 'authenticated cannot redirect an invitation to another address directly'
+);
+select is(
+  has_column_privilege('authenticated', 'public.invitations', 'expires_at', 'UPDATE'),
+  false, 'authenticated cannot extend an invitation directly'
 );
 
 select * from finish();

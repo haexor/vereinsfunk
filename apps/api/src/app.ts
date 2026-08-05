@@ -1054,9 +1054,19 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
     const client = supabaseClients.forUser(request.auth!.accessToken)
-    const existing = await client.from('invitations').select('organization_id, department_id, team_id, email').eq('id', params.id).maybeSingle()
+    const existing = await client
+      .from('invitations')
+      .select('organization_id, department_id, team_id, email, accepted_at, revoked_at')
+      .eq('id', params.id)
+      .maybeSingle()
     if (existing.error) throw existing.error
-    if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    // Dieselbe Bedingung wie /resend: nur eine offene Einladung ist widerrufbar. Ein Widerruf auf
+    // einer bereits angenommenen Zeile aendert nichts an der entstandenen Mitgliedschaft, setzte
+    // aber revoked_at und schrieb einen irrefuehrenden Audit-Eintrag; ein zweiter Widerruf
+    // erzeugte nur Rauschen (im Nachfolge-Review dieses PRs gefunden).
+    if (!existing.data || existing.data.accepted_at || existing.data.revoked_at) {
+      return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    }
     const scope = toPermissionScope(
       existing.data.organization_id as string,
       existing.data.department_id as string | null,

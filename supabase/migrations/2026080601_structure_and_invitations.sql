@@ -365,7 +365,17 @@ create policy invitations_update on public.invitations for update to authenticat
 grant update, delete on table public.departments to authenticated;
 grant insert, update, delete on table public.teams to authenticated;
 grant insert, delete on table public.organization_memberships, public.department_memberships, public.team_memberships to authenticated;
-grant insert, update on table public.invitations to authenticated;
+-- Einladungen werden ausschliesslich ueber die security-definer-RPCs create_invitation() und
+-- resend_invitation() geschrieben; beide gehoeren postgres (bypassrls) und brauchen deshalb
+-- keinerlei Grant fuer authenticated. Ein Tabellen-Grant fuer insert/update war spaltenblind:
+-- jeder Inhaber von member.invite konnte token_hash, email oder expires_at einer fremden offenen
+-- Einladung direkt ueber PostgREST aendern -- an der API und damit am Audit-Trail vorbei (im
+-- Nachfolge-Review dieses PRs gefunden). Keine Rechteausweitung, aber unnoetige Angriffsflaeche.
+-- Einzig das Widerrufen laeuft als gewoehnliches Update ueber den Nutzer-Client, deshalb ein
+-- Grant nur auf diese eine Spalte. Die Policies invitations_insert/invitations_update bleiben
+-- bestehen: ohne Grant sind sie fuer authenticated unerreichbar, greifen aber sofort wieder,
+-- falls ein Grant jemals zurueckkehrt.
+grant update (revoked_at) on table public.invitations to authenticated;
 
 -- profiles_select_self (2026080401_auth_bootstrap.sql) only ever let a user read their own row --
 -- the members roster (GET /v1/organizations/:id/members) needs display_name for co-members too,

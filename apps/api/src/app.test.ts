@@ -784,6 +784,49 @@ describe('structure, memberships and invitations', () => {
     expect(response.json()).toMatchObject({ error: 'cannot_remove_last_owner' })
   })
 
+  // Regression: revoke pruefte accepted_at/revoked_at nicht. Ein Widerruf auf einer bereits
+  // angenommenen Einladung aenderte nichts an der Mitgliedschaft, setzte aber revoked_at und
+  // schrieb einen irrefuehrenden Audit-Eintrag.
+  it('refuses to revoke an invitation that was already accepted', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'invitations') {
+              return {
+                select: () => ({
+                  eq: () => ({
+                    maybeSingle: async () => ({
+                      data: {
+                        organization_id: ORGANIZATION_ID,
+                        department_id: null,
+                        team_id: null,
+                        email: 'invitee@example.com',
+                        accepted_at: '2026-08-06T00:00:00+00:00',
+                        revoked_at: null,
+                      },
+                      error: null,
+                    }),
+                  }),
+                }),
+              }
+            }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/invitations/${INVITATION_ID}/revoke`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(404)
+    expect(response.json()).toMatchObject({ error: 'not_found' })
+  })
+
   // Regression: die Scope-Kette aus organizationId + departmentId wurde ungeprueft an
   // requirePermission gegeben -- ein department_admin einer FREMDEN Organisation kam damit durch
   // die Berechtigungspruefung fuer eine beliebige organizationId (kein Leck, weil der
