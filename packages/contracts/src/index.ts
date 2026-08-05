@@ -31,7 +31,7 @@ export const MembershipDepartmentScopeSchema = z.object({
   id: UuidSchema, name: z.string().min(1), roles: z.array(RoleNameSchema), teams: z.array(MembershipTeamScopeSchema),
 })
 export const MembershipScopeSchema = z.object({
-  organizationId: UuidSchema, organizationName: z.string().min(1),
+  organizationId: UuidSchema, organizationName: z.string().min(1), organizationTimezone: z.string().min(1),
   organizationRoles: z.array(RoleNameSchema), departments: z.array(MembershipDepartmentScopeSchema),
 })
 export const MembershipScopesSchema = z.array(MembershipScopeSchema)
@@ -89,6 +89,78 @@ export const WorkflowPayloadSchema = z.object({
 
 export const SubmissionAcceptedSchema = z.object({ submissionId: UuidSchema, correlationId: UuidSchema, status: z.enum(['queued', 'facts_required']), idempotencyKey: z.string().min(1) })
 
+const HexColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/)
+const CountryCodeSchema = z.string().regex(/^[A-Z]{2}$/)
+export const LegalFormSchema = z.enum(['e_v', 'gmbh', 'gugmbh', 'ggmbh', 'nicht_eingetragen', 'sonstige'])
+export const CuratedFontKeySchema = z.enum(['manrope', 'dm_sans'])
+export const BrandToneSchema = z.enum(['nahbar', 'dynamisch', 'sachlich'])
+// Rejects garbage before it ever reaches organizations.timezone -- an invalid IANA zone
+// would otherwise only fail later, as a RangeError inside Intl.DateTimeFormat calls that
+// format every date and scheduling deadline in the organization's timezone.
+const IanaTimezoneSchema = z.string().min(1).max(64).refine((value) => {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value })
+    return true
+  } catch {
+    return false
+  }
+}, { message: 'must be a valid IANA time zone' })
+
+export const CreateOrganizationRequestSchema = z.object({
+  name: z.string().trim().min(1).max(160),
+  firstDepartmentName: z.string().trim().min(1).max(120),
+  timezone: IanaTimezoneSchema.default('Europe/Berlin'),
+})
+export const CreateOrganizationResponseSchema = z.object({ organizationId: UuidSchema, slug: z.string().min(1) })
+
+export const OrganizationProfileUpdateSchema = z.object({
+  legalName: z.string().trim().min(1).max(160).nullable().optional(),
+  legalForm: LegalFormSchema.nullable().optional(),
+  registerCourt: z.string().trim().min(1).max(160).nullable().optional(),
+  registerNumber: z.string().trim().min(1).max(80).nullable().optional(),
+  street: z.string().trim().min(1).max(160).nullable().optional(),
+  houseNumber: z.string().trim().min(1).max(20).nullable().optional(),
+  postalCode: z.string().trim().min(1).max(20).nullable().optional(),
+  city: z.string().trim().min(1).max(120).nullable().optional(),
+  countryCode: CountryCodeSchema.optional(),
+  contactEmail: z.string().trim().toLowerCase().pipe(z.email()).nullable().optional(),
+  contactPhone: z.string().trim().min(1).max(40).nullable().optional(),
+  websiteUrl: z.url().nullable().optional(),
+  foundedYear: z.int().min(1800).max(2100).nullable().optional(),
+  responsiblePersonProfileId: UuidSchema.nullable().optional(),
+})
+export const OrganizationProfileSchema = OrganizationProfileUpdateSchema.extend({
+  organizationId: UuidSchema,
+  countryCode: CountryCodeSchema,
+})
+
+export const OrganizationBrandUpdateSchema = z.object({
+  primaryColor: HexColorSchema,
+  accentColor: HexColorSchema,
+  tone: BrandToneSchema,
+  displayFontKey: CuratedFontKeySchema,
+  bodyFontKey: CuratedFontKeySchema,
+})
+export const OrganizationBrandSchema = OrganizationBrandUpdateSchema.extend({
+  organizationId: UuidSchema,
+  logoPath: z.string().nullable(),
+  logoDarkPath: z.string().nullable(),
+})
+
+export const BrandLogoVariantSchema = z.enum(['light', 'dark'])
+export const BrandLogoUploadResponseSchema = z.object({
+  variant: BrandLogoVariantSchema,
+  path: z.string().min(1),
+  signedUrl: z.url(),
+  sanitized: z.boolean(),
+})
+
+export const OnboardingStepSchema = z.enum(['branding', 'responsible_person'])
+export const OnboardingStateSchema = z.object({
+  completedSteps: z.array(OnboardingStepSchema),
+  dismissedAt: z.iso.datetime().nullable(),
+})
+
 export type Health = z.infer<typeof HealthSchema>
 export type ContentPresetSlug = z.infer<typeof ContentPresetSlugSchema>
 export type CommunicationGoal = z.infer<typeof CommunicationGoalSchema>
@@ -101,3 +173,11 @@ export type FaceDecision = z.infer<typeof FaceDecisionSchema>
 export type MediaGateResult = z.infer<typeof MediaGateResultSchema>
 export type WorkflowPayload = z.infer<typeof WorkflowPayloadSchema>
 export type MembershipScope = z.infer<typeof MembershipScopeSchema>
+export type CreateOrganizationRequest = z.infer<typeof CreateOrganizationRequestSchema>
+export type OrganizationProfileUpdate = z.infer<typeof OrganizationProfileUpdateSchema>
+export type OrganizationProfile = z.infer<typeof OrganizationProfileSchema>
+export type OrganizationBrandUpdate = z.infer<typeof OrganizationBrandUpdateSchema>
+export type OrganizationBrand = z.infer<typeof OrganizationBrandSchema>
+export type BrandLogoVariant = z.infer<typeof BrandLogoVariantSchema>
+export type OnboardingStep = z.infer<typeof OnboardingStepSchema>
+export type OnboardingState = z.infer<typeof OnboardingStateSchema>

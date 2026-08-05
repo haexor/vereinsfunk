@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@fastify/cors": "^11.1.0",
+    "@fastify/multipart": "^10.1.0",
     "@supabase/supabase-js": "^2.55.0",
     "@vereinsfunk/authorization": "workspace:*",
     "@vereinsfunk/config": "workspace:*",
@@ -20,8 +21,10 @@
     "@vereinsfunk/domain": "workspace:*",
     "@vereinsfunk/observability": "workspace:*",
     "@vereinsfunk/orchestration": "workspace:*",
+    "@vereinsfunk/svg-safe": "workspace:*",
     "fastify": "^5.11.0",
     "jose": "^6.1.0",
+    "sharp": "^0.35.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {

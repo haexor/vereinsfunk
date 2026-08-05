@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canTransition, createIdempotencyKey, mergeEffectiveConfig } from './index.js'
+import { canTransition, createIdempotencyKey, curatedFontPairings, mergeEffectiveConfig } from './index.js'
 
 describe('post state machine', () => {
   it('allows the approval happy path', () => {
@@ -41,5 +41,12 @@ describe('effective config', () => {
 describe('idempotency keys', () => {
   it('creates deterministic scoped keys', () => {
     expect(createIdempotencyKey('submission', 'abc', 2)).toBe('submission:abc:2')
+  })
+})
+
+describe('curated font pairings', () => {
+  it('matches the organization_brand_profiles column defaults', () => {
+    expect(curatedFontPairings.length).toBeGreaterThan(0)
+    expect(curatedFontPairings[0]).toMatchObject({ displayFontKey: 'manrope', bodyFontKey: 'dm_sans' })
   })
 })

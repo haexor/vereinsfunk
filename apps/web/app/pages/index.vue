@@ -1,36 +1,105 @@
 <script setup lang="ts">
-import { ArrowRight, CalendarDays, Check, Clock3, FileText, Plus, Sparkles, TrendingUp, Users } from '@lucide/vue'
+import { ArrowRight, CalendarDays, CheckCircle2, Clock3, FileText, Palette, Plus, ShieldCheck } from '@lucide/vue'
 
+const config = useRuntimeConfig()
 const session = await useSession()
 const scope = await useScope()
+
 const activeOrganization = computed(() => session.value?.scopes.find((item) => item.organizationId === scope.value?.organizationId) ?? null)
 const department = computed(() => activeOrganization.value?.departments.find((item) => item.id === scope.value?.departmentId)?.name ?? activeOrganization.value?.organizationName ?? '')
 const firstName = computed(() => session.value?.displayName.split(/\s+/)[0] ?? '')
+const timezone = computed(() => activeOrganization.value?.organizationTimezone ?? 'Europe/Berlin')
+const todayLabel = computed(() => new Intl.DateTimeFormat('de-DE', { weekday: 'long', day: 'numeric', month: 'long', timeZone: timezone.value }).format(new Date()))
 
-const stats = [
-  { label: 'Veröffentlicht', value: '18', detail: 'diesen Monat', icon: Check, trend: '+12 %', color: 'bg-emerald-100 text-emerald-700' },
-  { label: 'In Vorbereitung', value: '7', detail: 'Beiträge', icon: FileText, trend: '', color: 'bg-sky-100 text-sky-700' },
-  { label: 'Offene Freigaben', value: '2', detail: 'warten auf dich', icon: Clock3, trend: '', color: 'bg-amber-100 text-amber-700' },
-  { label: 'Reichweite', value: '24,8k', detail: 'letzte 30 Tage', icon: TrendingUp, trend: '+18 %', color: 'bg-violet-100 text-violet-700' },
-]
+interface WeekDay { key: string; label: string; dayNumber: number; isToday: boolean; posts: { id: string }[] }
+interface DashboardPost { id: string; status: string; scheduled_for: string | null }
 
-const week = [
-  { day: 'Mo', date: 3, items: [] },
-  { day: 'Di', date: 4, items: [{ color: '#ff8a73', text: 'Trainerin' }] },
-  { day: 'Mi', date: 5, items: [] },
-  { day: 'Do', date: 6, items: [{ color: '#bbec51', text: 'Derbysieg' }] },
-  { day: 'Fr', date: 7, items: [] },
-  { day: 'Sa', date: 8, items: [{ color: '#7dd3fc', text: 'Heimspiel' }] },
-  { day: 'So', date: 9, items: [] },
-]
+const loadingDashboard = ref(true)
+const stats = ref<{ published: number; openApprovals: number; scheduledNext7Days: number } | null>(null)
+const weekDays = ref<WeekDay[]>([])
+const nextSteps = ref<{ key: string; label: string; href: string }[]>([])
+
+function localDateKey(date: Date, timeZone: string) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date)
+}
+
+function buildWeek(timeZone: string, posts: readonly DashboardPost[]): WeekDay[] {
+  const todayKey = localDateKey(new Date(), timeZone)
+  const monday = new Date(`${todayKey}T00:00:00Z`)
+  const weekday = monday.getUTCDay()
+  monday.setUTCDate(monday.getUTCDate() + (weekday === 0 ? -6 : 1 - weekday))
+
+  const labels = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So']
+  const days: WeekDay[] = Array.from({ length: 7 }, (_, index) => {
+    const day = new Date(monday)
+    day.setUTCDate(day.getUTCDate() + index)
+    const key = localDateKey(day, 'UTC')
+    return { key, label: labels[index] ?? '', dayNumber: day.getUTCDate(), isToday: key === todayKey, posts: [] }
+  })
+  for (const post of posts) {
+    if (!post.scheduled_for) continue
+    const key = localDateKey(new Date(post.scheduled_for), timeZone)
+    days.find((day) => day.key === key)?.posts.push({ id: post.id })
+  }
+  return days
+}
+
+async function loadDashboard() {
+  if (import.meta.server) return
+  const organizationId = scope.value?.organizationId
+  if (!organizationId) { loadingDashboard.value = false; return }
+  const departmentId = scope.value?.departmentId
+  const supabase = useSupabaseClient()
+
+  let postsQuery = supabase.from('posts').select('id, status, scheduled_for').eq('organization_id', organizationId)
+  if (departmentId) postsQuery = postsQuery.eq('department_id', departmentId)
+
+  const [postsResult, approvalsResult, brandResult, profileResult] = await Promise.all([
+    postsQuery,
+    supabase.from('approval_requests').select('id', { count: 'exact', head: true }).eq('organization_id', organizationId).is('invalidated_at', null),
+    supabase.from('organization_brand_profiles').select('logo_path').eq('organization_id', organizationId).maybeSingle(),
+    supabase.from('organization_profiles').select('responsible_person_profile_id').eq('organization_id', organizationId).maybeSingle(),
+  ])
+
+  const posts = (postsResult.data ?? []) as DashboardPost[]
+  const now = Date.now()
+  const in7Days = now + 7 * 24 * 60 * 60 * 1000
+  stats.value = {
+    published: posts.filter((post) => post.status === 'published').length,
+    openApprovals: approvalsResult.count ?? 0,
+    scheduledNext7Days: posts.filter((post) => {
+      if (!post.scheduled_for) return false
+      const time = new Date(post.scheduled_for).getTime()
+      return time >= now && time <= in7Days
+    }).length,
+  }
+  weekDays.value = buildWeek(timezone.value, posts)
+
+  const onboarding = await $fetch<{ completedSteps: string[] }>(`${config.public.apiBase}/v1/onboarding`, {
+    headers: await useAuthHeader(),
+    query: { organizationId },
+  }).catch(() => ({ completedSteps: [] as string[] }))
+
+  const steps: { key: string; label: string; href: string }[] = []
+  if (!brandResult.data?.logo_path && !onboarding.completedSteps.includes('branding')) {
+    steps.push({ key: 'branding', label: 'Logo und Farben festlegen', href: '/marke' })
+  }
+  if (!profileResult.data?.responsible_person_profile_id && !onboarding.completedSteps.includes('responsible_person')) {
+    steps.push({ key: 'responsible_person', label: 'Verantwortliche Ansprechperson bestätigen', href: '/onboarding' })
+  }
+  nextSteps.value = steps
+  loadingDashboard.value = false
+}
+
+await loadDashboard()
 </script>
 
 <template>
   <div class="mx-auto max-w-[1480px] px-5 py-7 sm:px-8 lg:px-10 lg:py-9 xl:px-12">
     <header class="mb-8 flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
       <div>
-        <div class="eyebrow mb-3">{{ department }} · Sonntag, 2. August</div>
-        <h1 class="font-display text-3xl font-extrabold tracking-[-.045em] text-ink sm:text-[38px]">Guten Morgen, {{ firstName }}.</h1>
+        <div class="eyebrow mb-3">{{ department }} · {{ todayLabel }}</div>
+        <h1 class="font-display text-3xl font-extrabold tracking-[-.045em] text-ink sm:text-[38px]">Guten Tag, {{ firstName }}.</h1>
         <p class="mt-2 text-sm text-[#6c756f]">Was möchtest du heute für euren Verein bewegen?</p>
       </div>
       <NuxtLink to="/erstellen" class="focus-ring inline-flex items-center justify-center gap-2 rounded-xl bg-forest px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-[#1d4b39]">
@@ -38,14 +107,21 @@ const week = [
       </NuxtLink>
     </header>
 
-    <section class="mb-7 grid grid-cols-2 gap-3 xl:grid-cols-4" aria-label="Kennzahlen">
-      <article v-for="stat in stats" :key="stat.label" class="card p-4 sm:p-5">
-        <div class="mb-5 flex items-start justify-between">
-          <span class="grid h-9 w-9 place-items-center rounded-xl" :class="stat.color"><component :is="stat.icon" :size="17" /></span>
-          <span v-if="stat.trend" class="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700">{{ stat.trend }}</span>
-        </div>
-        <div class="font-display text-2xl font-extrabold tracking-[-.04em] sm:text-[29px]">{{ stat.value }}</div>
-        <div class="mt-1 text-[11px] text-[#7a817d]"><span class="font-semibold text-ink">{{ stat.label }}</span><span class="hidden sm:inline"> · {{ stat.detail }}</span></div>
+    <section v-if="!loadingDashboard && stats" class="mb-7 grid grid-cols-1 gap-3 sm:grid-cols-3" aria-label="Kennzahlen">
+      <article class="card p-4 sm:p-5">
+        <div class="mb-5 flex items-start justify-between"><span class="grid h-9 w-9 place-items-center rounded-xl bg-emerald-100 text-emerald-700"><CheckCircle2 :size="17" /></span></div>
+        <div class="font-display text-2xl font-extrabold tracking-[-.04em] sm:text-[29px]">{{ stats.published }}</div>
+        <div class="mt-1 text-[11px] text-[#7a817d]"><span class="font-semibold text-ink">Veröffentlicht</span></div>
+      </article>
+      <article class="card p-4 sm:p-5">
+        <div class="mb-5 flex items-start justify-between"><span class="grid h-9 w-9 place-items-center rounded-xl bg-amber-100 text-amber-700"><Clock3 :size="17" /></span></div>
+        <div class="font-display text-2xl font-extrabold tracking-[-.04em] sm:text-[29px]">{{ stats.openApprovals }}</div>
+        <div class="mt-1 text-[11px] text-[#7a817d]"><span class="font-semibold text-ink">Offene Freigaben</span></div>
+      </article>
+      <article class="card p-4 sm:p-5">
+        <div class="mb-5 flex items-start justify-between"><span class="grid h-9 w-9 place-items-center rounded-xl bg-sky-100 text-sky-700"><FileText :size="17" /></span></div>
+        <div class="font-display text-2xl font-extrabold tracking-[-.04em] sm:text-[29px]">{{ stats.scheduledNext7Days }}</div>
+        <div class="mt-1 text-[11px] text-[#7a817d]"><span class="font-semibold text-ink">Geplant, nächste 7 Tage</span></div>
       </article>
     </section>
 
@@ -61,37 +137,34 @@ const week = [
 
         <article class="card overflow-hidden">
           <div class="flex items-center justify-between border-b border-[#e7e7df] px-5 py-4 sm:px-6">
-            <div><h2 class="font-display text-base font-bold tracking-[-.02em]">Redaktionsplan</h2><p class="mt-0.5 text-[11px] text-[#7a817d]">3.–9. August 2026</p></div>
+            <div><h2 class="font-display text-base font-bold tracking-[-.02em]">Redaktionsplan</h2><p class="mt-0.5 text-[11px] text-[#7a817d]">Diese Woche, {{ timezone }}</p></div>
             <NuxtLink to="/kalender" class="focus-ring flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-forest hover:bg-stone-100">Zum Kalender <CalendarDays :size="13" /></NuxtLink>
           </div>
           <div class="grid min-w-[620px] grid-cols-7 divide-x divide-[#ecece5] overflow-x-auto">
-            <div v-for="day in week" :key="day.day" class="min-h-32 p-3">
-              <div class="mb-3 flex items-center justify-between"><span class="text-[10px] font-bold uppercase text-[#929792]">{{ day.day }}</span><span class="grid h-6 w-6 place-items-center rounded-full text-xs font-semibold" :class="day.date === 6 ? 'bg-forest text-white' : 'text-ink'">{{ day.date }}</span></div>
-              <div v-for="event in day.items" :key="event.text" class="rounded-lg p-2 text-[10px] font-semibold leading-tight text-ink" :style="{ backgroundColor: event.color }">{{ event.text }}</div>
+            <div v-for="day in weekDays" :key="day.key" class="min-h-32 p-3">
+              <div class="mb-3 flex items-center justify-between"><span class="text-[10px] font-bold uppercase text-[#929792]">{{ day.label }}</span><span class="grid h-6 w-6 place-items-center rounded-full text-xs font-semibold" :class="day.isToday ? 'bg-forest text-white' : 'text-ink'">{{ day.dayNumber }}</span></div>
+              <div v-if="day.posts.length === 0" class="text-[10px] text-[#c4c8c1]">—</div>
+              <div v-for="post in day.posts" :key="post.id" class="rounded-lg bg-[#eef1e9] p-2 text-[10px] font-semibold leading-tight text-forest">Beitrag geplant</div>
             </div>
           </div>
         </article>
       </div>
 
       <aside class="space-y-7">
-        <article class="relative overflow-hidden rounded-[22px] bg-forest p-6 text-white shadow-sm">
-          <div class="absolute -right-12 -top-10 h-40 w-40 rounded-full bg-lime/10" />
-          <div class="relative">
-            <span class="mb-5 grid h-10 w-10 place-items-center rounded-xl bg-lime text-forest"><Sparkles :size="19" /></span>
-            <p class="eyebrow !text-white/45">Idee für diese Woche</p>
-            <h2 class="mt-3 font-display text-xl font-extrabold leading-tight tracking-[-.035em]">Zeigt die Menschen hinter eurem Verein.</h2>
-            <p class="mt-3 text-xs leading-relaxed text-white/60">Ein kurzer Blick hinter die Kulissen schafft Nähe und gibt Ehrenamtlichen die Bühne, die sie verdienen.</p>
-            <NuxtLink to="/erstellen?type=people" class="focus-ring mt-6 inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-xs font-bold text-forest transition hover:bg-lime">Idee verwenden <ArrowRight :size="13" /></NuxtLink>
-          </div>
+        <article v-if="nextSteps.length > 0" class="card p-5">
+          <div class="mb-4 flex items-center justify-between"><h2 class="font-display text-sm font-bold">Nächste Schritte</h2><span class="grid h-8 w-8 place-items-center rounded-xl bg-violet-100 text-violet-700"><ShieldCheck :size="15" /></span></div>
+          <ul class="space-y-2">
+            <li v-for="item in nextSteps" :key="item.key">
+              <NuxtLink :to="item.href" class="focus-ring flex items-center justify-between gap-2 rounded-xl border border-[#e6e7e0] p-3 text-xs font-semibold text-ink hover:bg-stone-50">
+                <span class="flex items-center gap-2"><Palette v-if="item.key === 'branding'" :size="14" class="text-forest" /><ShieldCheck v-else :size="14" class="text-forest" />{{ item.label }}</span>
+                <ArrowRight :size="13" class="text-[#9aa196]" />
+              </NuxtLink>
+            </li>
+          </ul>
         </article>
-
-        <article class="card p-5">
-          <div class="mb-5 flex items-center justify-between"><div><h2 class="font-display text-sm font-bold">Euer Monat</h2><p class="mt-0.5 text-[10px] text-[#858b86]">August · Zielerreichung</p></div><span class="grid h-8 w-8 place-items-center rounded-xl bg-violet-100 text-violet-700"><Users :size="15" /></span></div>
-          <div class="space-y-4">
-            <div><div class="mb-1.5 flex justify-between text-[11px]"><span>Beiträge</span><strong>18 / 24</strong></div><div class="h-2 overflow-hidden rounded-full bg-[#ecece6]"><div class="h-full w-3/4 rounded-full bg-forest" /></div></div>
-            <div><div class="mb-1.5 flex justify-between text-[11px]"><span>Abteilungen aktiv</span><strong>3 / 4</strong></div><div class="h-2 overflow-hidden rounded-full bg-[#ecece6]"><div class="h-full w-3/4 rounded-full bg-lime" /></div></div>
-          </div>
-          <p class="mt-5 rounded-xl bg-[#f3f4ee] p-3 text-[10px] leading-relaxed text-[#707771]"><strong class="text-ink">Fast geschafft:</strong> Noch 6 Beiträge bis zu eurem Monatsziel.</p>
+        <article v-else-if="!loadingDashboard" class="card p-5 text-center">
+          <CheckCircle2 :size="22" class="mx-auto mb-2 text-forest" />
+          <p class="text-xs font-semibold">Startklar. Alle Einrichtungsschritte sind erledigt.</p>
         </article>
       </aside>
     </section>

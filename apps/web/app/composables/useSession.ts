@@ -17,6 +17,7 @@ export interface SessionDepartment {
 export interface SessionScope {
   organizationId: string
   organizationName: string
+  organizationTimezone: string
   organizationRoles: readonly Role[]
   departments: readonly SessionDepartment[]
 }
@@ -79,6 +80,14 @@ export async function useSession() {
   }
   await load.value
   return state
+}
+
+// Forces a fresh membership_scopes() load. Needed right after create_organization(), since
+// useSession() otherwise keeps serving the cached pre-onboarding state (no scopes) for the
+// rest of the client session.
+export async function refreshSession() {
+  useSessionLoad().value = null
+  return useSession()
 }
 
 export async function signOut() {

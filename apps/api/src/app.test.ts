@@ -1,6 +1,7 @@
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { SignJWT } from 'jose'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { buildApp, type BuildAppOptions } from './app.js'
+import { buildApp, type BuildAppOptions, type SupabaseClientFactory } from './app.js'
 import type { RoleProvider } from './auth.js'
 
 const TEST_JWT_SECRET = 'test-only-secret-at-least-32-characters-long'
@@ -26,6 +27,12 @@ const grantingRoleProvider: RoleProvider = {
 const denyingRoleProvider: RoleProvider = {
   async rolesForScope() {
     return ['viewer']
+  },
+}
+
+const organizationManagerRoleProvider: RoleProvider = {
+  async rolesForScope() {
+    return ['organization_admin']
   },
 }
 
@@ -124,5 +131,60 @@ describe('api', () => {
       },
     })
     expect(response.statusCode).toBe(202)
+  })
+})
+
+describe('onboarding', () => {
+  it('rejects a profile update without organization.manage', async () => {
+    const app = await startApp({ roleProvider: denyingRoleProvider })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PATCH',
+      url: `/v1/organizations/${ORGANIZATION_ID}/profile`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { legalName: 'Hijacked e.V.' },
+    })
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toMatchObject({ error: 'forbidden' })
+  })
+
+  it('rejects a logo upload whose content is not one of the supported formats', async () => {
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider })
+    const token = await signAccessToken(USER_ID)
+    const boundary = '----vereinsfunkTestBoundary'
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="variant"\r\n\r\nlight\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="logo.txt"\r\nContent-Type: text/plain\r\n\r\n`),
+      Buffer.from('this is not an image'),
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ])
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${ORGANIZATION_ID}/brand/logo`,
+      headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` },
+      payload: body,
+    })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ error: 'invalid_logo' })
+  })
+
+  it('maps the SQL owner-limit rejection to 429, independent of any client-side check', async () => {
+    const rejectingClients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          rpc: async () => ({ data: null, error: { message: 'organization limit reached for this account' } }),
+        }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: rejectingClients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/organizations',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'Zu viele Vereine e.V.', firstDepartmentName: 'Hauptabteilung' },
+    })
+    expect(response.statusCode).toBe(429)
+    expect(response.json()).toMatchObject({ error: 'organization_limit_reached' })
   })
 })

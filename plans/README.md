@@ -36,7 +36,7 @@ Stand: 2026-08-04, geplant auf `b5c2eda6`. Die Pakete 001–007 bauen die Inhalt
 | Nr. | Arbeitspaket | Abhängigkeiten | Status |
 |---|---|---|---|
 | 008 | [Echte Authentifizierung und Autorisierungsgrenze](008-echte-authentifizierung-und-autorisierungsgrenze.md) | keine | erledigt |
-| 009 | [Onboarding: Verein anlegen](009-onboarding-verein-anlegen.md) | 008 | bereit |
+| 009 | [Onboarding: Verein anlegen](009-onboarding-verein-anlegen.md) | 008 | erledigt |
 | 010 | [Abteilungen, Teams, Mitglieder und Einladungen](010-abteilungen-teams-mitglieder-einladungen.md) | 008, 009 | bereit |
 | 011 | [Regelwerk: Freigaberouten, Vertrauen je Mitglied und Kontingente](011-regelwerk-richtlinien-und-kontingente.md) | 010 | bereit |
 | 012 | [Kanäle und Social-Accounts](012-kanaele-und-social-accounts.md) | 011 | bereit; Meta App Review als externes Gate |
@@ -69,19 +69,19 @@ Vollständige Liste der erfundenen Daten im Anwendungscode, mit dem Paket, das s
 | `layouts/default.vue:13` | `badge: 2` bei Freigaben | ✓ 008 (kein Badge statt erfundener Zahl) |
 | `pages/index.vue:5` | `firstName = 'Lena'` | ✓ 008 |
 | `pages/index.vue:4` (`drafts`) | „Aktuelle Beiträge“-Liste aus dem Demo-Composable | ✓ 008 (Empty State), 009/010 (echte Liste steht noch aus) |
-| `pages/index.vue:10-15` | vier Kennzahlen inkl. „Reichweite 24,8k +18 %“ | 009 (Zählwerte), 016 (Kennzahlen), 017 (Reichweite) |
-| `pages/index.vue:17-25,32` | erfundene Woche, „Sonntag, 2. August“ | 009, 019 |
-| `pages/index.vue:77-86` | statische „Idee für diese Woche“, toter `?type=`-Parameter | 009 (Nächste Schritte), 019 (Anlassvorschläge) |
-| `pages/index.vue:88-95` | „18 / 24 Beiträge“, „3 / 4 Abteilungen aktiv“, fester `w-3/4`-Balken | 009 (entfällt), 016 |
+| `pages/index.vue:10-15` | vier Kennzahlen inkl. „Reichweite 24,8k +18 %“ | ✓ 009 (drei echte Zählwerte: Veröffentlicht, Offene Freigaben, Geplant nächste 7 Tage), 016 (weitere Kennzahlen), 017 (Reichweite) |
+| `pages/index.vue:17-25,32` | erfundene Woche, „Sonntag, 2. August“ | ✓ 009 (echte `scheduled_for`-Daten der laufenden Woche in Vereinszeitzone, echtes formatiertes Datum), 019 (Anlassvorschläge) |
+| `pages/index.vue:77-86` | statische „Idee für diese Woche“, toter `?type=`-Parameter | ✓ 009 (Nächste-Schritte-Karte aus `organization_brand_profiles`/`organization_profiles`/`organization_onboarding`), 019 (Anlassvorschläge) |
+| `pages/index.vue:88-95` | „18 / 24 Beiträge“, „3 / 4 Abteilungen aktiv“, fester `w-3/4`-Balken | ✓ 009 (entfällt ersatzlos), 016 |
 | `pages/beitraege.vue:3` | Liste aus dem Demo-Composable | ✓ 008 (Empty State), 010 (echte Liste steht noch aus) |
 | `pages/erstellen.vue:14` | `useState('content-scope')`, das nirgends gesetzt wird | ✓ 008 |
 | `pages/erstellen.vue:25-29,41,47` | `localPreview()` erzeugt eine Vorschau ohne API und ohne Persistenz | ✓ 008 (entfällt vollständig) |
 | `pages/erstellen.vue:12` | leere Felder `title`, `date`, `location` bei jedem Beitrag neu | 019 (vorbelegt mit Herkunftsangabe) |
 | `pages/freigaben.vue:3-6` | zwei erfundene Beiträge, „Minderjährige · Einwilligung geprüft“ als Text | 015 |
 | `pages/freigaben.vue:7,12` | Freigabe nur im lokalen State, kein Serveraufruf | 015 |
-| `pages/kalender.vue:1` | fest „August 2026“, fünf Fantasietermine, hartkodierte Vorlauftage | 019 |
+| `pages/kalender.vue:1` | fest „August 2026“, fünf Fantasietermine, hartkodierte Vorlauftage | ✓ 009 (echte `posts.scheduled_for`, navigierbarer Monat, Empty State — der Plan zu 009 listete diese Zeile bereits in seinem eigenen Rückbau-Abschnitt, diese Tabelle hier nicht; beim Abgleich in der Adversarial-Phase von 009 nachgezogen), 019 (echte Anlässe/Spielpläne als Inhalt der Termine) |
 | `pages/auswertung.vue:1` | vier erfundene Plattformkennzahlen, `bars`-Array ohne Skala und Quelle | 016, 017 |
-| `pages/marke.vue:1` | Farben und Tonalität im lokalen State, „Speichern“ setzt nur ein Flag | 009, 013 |
+| `pages/marke.vue:1` | Farben und Tonalität im lokalen State, „Speichern“ setzt nur ein Flag | ✓ 009 (`PUT /v1/organizations/:id/brand`, echter Ladezustand, echte Fehler), 013 (Schrift-Upload, Abteilungsbranding) |
 | `pages/mitglieder.vue:1` | vier hartkodierte Namen, „Einladen“ ohne Handler | 010 |
 | `pages/einstellungen.vue:1` | fünf behauptete Einstellungen, jeder Button ohne Handler | 011 (Freigabe, Minderjährige), 012 (Kanäle), 020 (Löschfrist) |
 | `apps/web/nuxt.config.ts:14-21` | Schriften von `fonts.googleapis.com` bei jedem Aufruf | 013, geprüft in 020 |
