@@ -3,15 +3,26 @@ import cors from '@fastify/cors'
 import { parseApiEnvironment } from '@vereinsfunk/config'
 import { FakeContentGenerator } from '@vereinsfunk/content-engine'
 import {
+  AcceptInvitationRequestSchema,
+  AcceptInvitationResponseSchema,
   AddPlatformAdminRequestSchema,
   BrandLogoUploadResponseSchema,
   BrandLogoVariantSchema,
+  CreateDepartmentRequestSchema,
+  CreateInvitationRequestSchema,
   CreateLlmProviderConfigurationRequestSchema,
+  CreateMembershipRequestSchema,
   CreateOrganizationRequestSchema,
   CreateOrganizationResponseSchema,
   CreateSubmissionSchema,
+  CreateTeamRequestSchema,
+  DepartmentSchema,
   HealthSchema,
+  InvitationSchema,
   LlmProviderConfigurationSchema,
+  MemberRoleEntrySchema,
+  rolesForScopeLevel,
+  MemberSchema,
   OnboardingStateSchema,
   OnboardingStepSchema,
   OrganizationBrandSchema,
@@ -24,21 +35,30 @@ import {
   PlatformSettingKeySchema,
   PlatformSettingSchema,
   PlatformSettingValueSchemas,
+  ScopeLevelSchema,
   SubmissionAcceptedSchema,
+  TeamSchema,
+  UpdateDepartmentRequestSchema,
   UpdateLlmProviderConfigurationRequestSchema,
+  UpdateMembershipRequestSchema,
   UpdatePlatformSettingRequestSchema,
+  UpdateTeamRequestSchema,
   UsageMetricsQuerySchema,
   UsageMetricsResponseSchema,
   UuidSchema,
+  type ScopeLevel,
 } from '@vereinsfunk/contracts'
+import { canAssignRole, canRemoveRole, type Role } from '@vereinsfunk/authorization'
 import { createIdempotencyKey, evaluateMediaGate } from '@vereinsfunk/domain'
 import { FakeOrchestrator, priorityToHatchet, type Orchestrator } from '@vereinsfunk/orchestration'
 import Fastify, { LogController, type FastifyInstance, type FastifyServerOptions } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { createAuthGuards, SupabasePlatformAdminProvider, SupabaseRoleProvider, type PlatformAdminProvider, type RoleProvider } from './auth.js'
+import { createAuthGuards, SupabasePlatformAdminProvider, SupabaseRoleProvider, type PermissionScope, type PlatformAdminProvider, type RoleProvider } from './auth.js'
 import { hashLogoBuffer, LogoDimensionsError, processBrandLogoUpload, UnsupportedLogoFormatError } from './brandLogo.js'
+import { createEmailSender, type EmailSender } from './email.js'
+import { buildInvitationEmail, generateInvitationToken } from './invitations.js'
 import { ciphertextToBytea, createSecretBoxFromEnvironment, mapLlmProviderConfigurationRow } from './llmProviders.js'
 import { createServiceClient, createUserClient } from './supabase.js'
 
@@ -58,6 +78,7 @@ export interface BuildAppOptions {
   roleProvider?: RoleProvider
   supabaseClients?: SupabaseClientFactory
   platformAdminProvider?: PlatformAdminProvider
+  emailSender?: EmailSender
 }
 
 export interface MediaUploadService {
@@ -114,6 +135,105 @@ function mapBrandRow(row: Record<string, unknown>) {
   }
 }
 
+function mapDepartmentRow(row: Record<string, unknown>) {
+  return { id: row.id, organizationId: row.organization_id, name: row.name, slug: row.slug, archivedAt: row.archived_at, createdAt: row.created_at }
+}
+
+function mapTeamRow(row: Record<string, unknown>) {
+  return { id: row.id, organizationId: row.organization_id, departmentId: row.department_id, name: row.name, archivedAt: row.archived_at, createdAt: row.created_at }
+}
+
+function mapInvitationRow(row: Record<string, unknown>) {
+  return {
+    id: row.id,
+    organizationId: row.organization_id,
+    departmentId: row.department_id,
+    teamId: row.team_id,
+    email: row.email,
+    role: row.role,
+    invitedBy: row.invited_by,
+    expiresAt: row.expires_at,
+    acceptedAt: row.accepted_at,
+    revokedAt: row.revoked_at,
+    lastSentAt: row.last_sent_at,
+    sendCount: row.send_count,
+    createdAt: row.created_at,
+  }
+}
+
+function membershipTableFor(scope: ScopeLevel): 'organization_memberships' | 'department_memberships' | 'team_memberships' {
+  return scope === 'organization' ? 'organization_memberships' : scope === 'department' ? 'department_memberships' : 'team_memberships'
+}
+
+// Loest scope+scopeId (aus CreateMembershipRequestSchema) in einen PermissionScope auf --
+// organizationId muss fuer department/team erst nachgeschlagen werden, damit requirePermission
+// und canAssignRole (beide brauchen den vollen Scope-Pfad) korrekt kaskadieren koennen.
+async function resolveMembershipScope(
+  client: SupabaseClient,
+  scope: ScopeLevel,
+  scopeId: string,
+): Promise<PermissionScope | null> {
+  if (scope === 'organization') return { organizationId: scopeId }
+  if (scope === 'department') {
+    const department = await client.from('departments').select('organization_id').eq('id', scopeId).maybeSingle()
+    if (department.error) throw department.error
+    return department.data ? { organizationId: department.data.organization_id as string, departmentId: scopeId } : null
+  }
+  const team = await client.from('teams').select('organization_id, department_id').eq('id', scopeId).maybeSingle()
+  if (team.error) throw team.error
+  return team.data ? { organizationId: team.data.organization_id as string, departmentId: team.data.department_id as string, teamId: scopeId } : null
+}
+
+// exactOptionalPropertyTypes verbietet departmentId/teamId: undefined -- die Schluessel muessen
+// bei Abwesenheit ganz fehlen statt explizit auf undefined gesetzt zu sein.
+function toPermissionScope(organizationId: string, departmentId?: string | null, teamId?: string | null): PermissionScope {
+  return { organizationId, ...(departmentId ? { departmentId } : {}), ...(teamId ? { teamId } : {}) }
+}
+
+// POST /v1/invitations nimmt organizationId/departmentId/teamId direkt vom Client entgegen.
+// Ungeprueft wuerde requirePermission auf einer Scope-Kette pruefen, die client-seitig frei
+// kombinierbar ist (z. B. eine fremde organizationId zusammen mit der eigenen departmentId) --
+// beim Mandantentrennung-Review gefunden, dort nur zufaellig durch den FK-Constraint auf
+// invitations abgefangen. Hier wird departmentId/teamId serverseitig gegen ihre echte
+// organization_id/department_id verifiziert, bevor irgendeine Berechtigung geprueft wird.
+async function resolveInvitationScope(
+  client: SupabaseClient,
+  input: { organizationId: string; departmentId?: string | null | undefined; teamId?: string | null | undefined },
+): Promise<{ scope: PermissionScope; scopeName: string } | null> {
+  if (input.teamId) {
+    const team = await client.from('teams').select('organization_id, department_id, name').eq('id', input.teamId).maybeSingle()
+    if (team.error) throw team.error
+    if (!team.data || team.data.organization_id !== input.organizationId || team.data.department_id !== input.departmentId) return null
+    return {
+      scope: { organizationId: team.data.organization_id as string, departmentId: team.data.department_id as string, teamId: input.teamId },
+      scopeName: team.data.name as string,
+    }
+  }
+  if (input.departmentId) {
+    const department = await client.from('departments').select('organization_id, name').eq('id', input.departmentId).maybeSingle()
+    if (department.error) throw department.error
+    if (!department.data || department.data.organization_id !== input.organizationId) return null
+    return { scope: { organizationId: department.data.organization_id as string, departmentId: input.departmentId }, scopeName: department.data.name as string }
+  }
+  return { scope: { organizationId: input.organizationId }, scopeName: '' }
+}
+
+// Fuer Routen, die den Scope bereits aus einer vertrauenswuerdigen Quelle kennen (z. B. der
+// invitations-Zeile selbst bei /resend) -- reine Namensauskunft, keine erneute Verifikation.
+async function resolveScopeName(client: SupabaseClient, scope: PermissionScope, organizationName: string): Promise<string> {
+  if (scope.teamId) {
+    const team = await client.from('teams').select('name').eq('id', scope.teamId).single()
+    if (team.error) throw team.error
+    return team.data.name as string
+  }
+  if (scope.departmentId) {
+    const department = await client.from('departments').select('name').eq('id', scope.departmentId).single()
+    if (department.error) throw department.error
+    return department.data.name as string
+  }
+  return organizationName
+}
+
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
   const environment = parseApiEnvironment()
   const fastifyOptions: FastifyServerOptions = {
@@ -140,6 +260,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     forService: () => createServiceClient(environment),
   }
   const platformAdminProvider = options.platformAdminProvider ?? new SupabasePlatformAdminProvider(() => supabaseClients.forService())
+  const emailSender =
+    options.emailSender ??
+    // Ohne echten Versand ist der Log die einzige Stelle, an der der Einladungslink (inkl.
+    // Rohtoken) ueberhaupt sichtbar wird -- ohne message.text waere die Einladung lokal nicht
+    // einloesbar, obwohl sie serverseitig korrekt erzeugt wurde.
+    createEmailSender(environment, (message) => app.log.info({ to: message.to, subject: message.subject, text: message.text }, 'invitation email (fake provider)'))
   const { requireAuth, requirePermission, requirePlatformAdmin } = createAuthGuards(environment, roleProvider, platformAdminProvider)
 
   await app.register(cors, {
@@ -379,6 +505,510 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     return reply.code(200).send(
       OnboardingStateSchema.parse({ completedSteps: update.data.completed_steps, dismissedAt: update.data.dismissed_at }),
     )
+  })
+
+  // --- Abteilungen, Teams, Mitgliedschaften und Einladungen (Paket 010) ----------------
+
+  app.post('/v1/organizations/:orgId/departments', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ orgId: UuidSchema }).parse(request.params)
+    const input = CreateDepartmentRequestSchema.parse(request.body)
+    if (!(await requirePermission(request, reply, 'department.manage', { organizationId: params.orgId }))) return
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const rpc = await client.rpc('create_department', { target_organization_id: params.orgId, department_name: input.name })
+    if (rpc.error) throw rpc.error
+    const department = await client.from('departments').select('id, organization_id, name, slug, archived_at, created_at').eq('id', rpc.data as string).single()
+    if (department.error) throw department.error
+    const audit = await client.from('audit_events').insert({
+      organization_id: params.orgId,
+      actor_user_id: request.auth!.userId,
+      action: 'department.created',
+      entity_type: 'departments',
+      entity_id: department.data.id,
+      correlation_id: request.id,
+      metadata: { name: input.name },
+    })
+    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+    return reply.code(201).send(DepartmentSchema.parse(mapDepartmentRow(department.data)))
+  })
+
+  app.patch('/v1/departments/:id', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const input = UpdateDepartmentRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const existing = await client.from('departments').select('organization_id').eq('id', params.id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'department.manage', { organizationId: existing.data.organization_id as string }))) return
+    const payload: Record<string, unknown> = {}
+    if (input.name !== undefined) payload.name = input.name
+    if (input.archived !== undefined) payload.archived_at = input.archived ? new Date().toISOString() : null
+    const update = await client.from('departments').update(payload).eq('id', params.id).select('id, organization_id, name, slug, archived_at, created_at').single()
+    if (update.error) throw update.error
+    const audit = await client.from('audit_events').insert({
+      organization_id: existing.data.organization_id,
+      actor_user_id: request.auth!.userId,
+      action: 'department.updated',
+      entity_type: 'departments',
+      entity_id: params.id,
+      correlation_id: request.id,
+      metadata: payload,
+    })
+    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+    return reply.code(200).send(DepartmentSchema.parse(mapDepartmentRow(update.data)))
+  })
+
+  app.delete('/v1/departments/:id', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const existing = await client.from('departments').select('organization_id').eq('id', params.id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'department.manage', { organizationId: existing.data.organization_id as string }))) return
+    const del = await client.from('departments').delete().eq('id', params.id)
+    if (del.error) {
+      if (del.error.message.includes('cannot be deleted')) return reply.code(409).send({ error: 'department_delete_blocked', correlationId: request.id })
+      throw del.error
+    }
+    const audit = await client.from('audit_events').insert({
+      organization_id: existing.data.organization_id,
+      actor_user_id: request.auth!.userId,
+      action: 'department.deleted',
+      entity_type: 'departments',
+      entity_id: params.id,
+      correlation_id: request.id,
+    })
+    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+    return reply.code(204).send()
+  })
+
+  app.post('/v1/departments/:id/teams', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const input = CreateTeamRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const department = await client.from('departments').select('organization_id').eq('id', params.id).maybeSingle()
+    if (department.error) throw department.error
+    if (!department.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'team.manage', { organizationId: department.data.organization_id as string, departmentId: params.id }))) return
+    const insert = await client
+      .from('teams')
+      .insert({ organization_id: department.data.organization_id, department_id: params.id, name: input.name })
+      .select('id, organization_id, department_id, name, archived_at, created_at')
+      .single()
+    if (insert.error) throw insert.error
+    const audit = await client.from('audit_events').insert({
+      organization_id: department.data.organization_id,
+      actor_user_id: request.auth!.userId,
+      action: 'team.created',
+      entity_type: 'teams',
+      entity_id: insert.data.id,
+      correlation_id: request.id,
+      metadata: { name: input.name, departmentId: params.id },
+    })
+    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+    return reply.code(201).send(TeamSchema.parse(mapTeamRow(insert.data)))
+  })
+
+  app.patch('/v1/teams/:id', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const input = UpdateTeamRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const existing = await client.from('teams').select('organization_id, department_id').eq('id', params.id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'team.manage', { organizationId: existing.data.organization_id as string, departmentId: existing.data.department_id as string }))) return
+    const payload: Record<string, unknown> = {}
+    if (input.name !== undefined) payload.name = input.name
+    if (input.archived !== undefined) payload.archived_at = input.archived ? new Date().toISOString() : null
+    const update = await client.from('teams').update(payload).eq('id', params.id).select('id, organization_id, department_id, name, archived_at, created_at').single()
+    if (update.error) throw update.error
+    const audit = await client.from('audit_events').insert({
+      organization_id: existing.data.organization_id,
+      actor_user_id: request.auth!.userId,
+      action: 'team.updated',
+      entity_type: 'teams',
+      entity_id: params.id,
+      correlation_id: request.id,
+      metadata: payload,
+    })
+    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+    return reply.code(200).send(TeamSchema.parse(mapTeamRow(update.data)))
+  })
+
+  app.delete('/v1/teams/:id', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const existing = await client.from('teams').select('organization_id, department_id').eq('id', params.id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'team.manage', { organizationId: existing.data.organization_id as string, departmentId: existing.data.department_id as string }))) return
+    const del = await client.from('teams').delete().eq('id', params.id)
+    if (del.error) {
+      if (del.error.message.includes('cannot be deleted')) return reply.code(409).send({ error: 'team_delete_blocked', correlationId: request.id })
+      throw del.error
+    }
+    const audit = await client.from('audit_events').insert({
+      organization_id: existing.data.organization_id,
+      actor_user_id: request.auth!.userId,
+      action: 'team.deleted',
+      entity_type: 'teams',
+      entity_id: params.id,
+      correlation_id: request.id,
+    })
+    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+    return reply.code(204).send()
+  })
+
+  app.get('/v1/organizations/:id/members', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const [orgRows, deptRows, teamRows] = await Promise.all([
+      client.from('organization_memberships').select('id, user_id, role, expires_at').eq('organization_id', params.id),
+      client.from('department_memberships').select('id, user_id, role, expires_at, department_id').eq('organization_id', params.id),
+      client.from('team_memberships').select('id, user_id, role, expires_at, team_id').eq('organization_id', params.id),
+    ])
+    if (orgRows.error) throw orgRows.error
+    if (deptRows.error) throw deptRows.error
+    if (teamRows.error) throw teamRows.error
+
+    const userIds = new Set<string>()
+    for (const row of [...orgRows.data, ...deptRows.data, ...teamRows.data]) userIds.add(row.user_id as string)
+    const profiles = userIds.size > 0 ? await client.from('profiles').select('id, display_name').in('id', Array.from(userIds)) : { data: [], error: null }
+    if (profiles.error) throw profiles.error
+    const displayNameById = new Map(profiles.data.map((row) => [row.id as string, row.display_name as string]))
+
+    const membersById = new Map<string, { userId: string; displayName: string; roles: unknown[] }>()
+    const addRole = (userId: string, entry: unknown) => {
+      const existing = membersById.get(userId)
+      if (existing) existing.roles.push(entry)
+      else membersById.set(userId, { userId, displayName: displayNameById.get(userId) ?? 'Unbekannt', roles: [entry] })
+    }
+    for (const row of orgRows.data) addRole(row.user_id as string, { membershipId: row.id, scope: 'organization', scopeId: params.id, role: row.role, expiresAt: row.expires_at })
+    for (const row of deptRows.data) addRole(row.user_id as string, { membershipId: row.id, scope: 'department', scopeId: row.department_id, role: row.role, expiresAt: row.expires_at })
+    for (const row of teamRows.data) addRole(row.user_id as string, { membershipId: row.id, scope: 'team', scopeId: row.team_id, role: row.role, expiresAt: row.expires_at })
+
+    return reply.code(200).send(Array.from(membersById.values()).map((member) => MemberSchema.parse(member)))
+  })
+
+  app.post('/v1/memberships', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const input = CreateMembershipRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const scope = await resolveMembershipScope(client, input.scope, input.scopeId)
+    if (!scope) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'member.invite', scope))) return
+    const roles = await roleProvider.rolesForScope(request.auth!, scope)
+    if (!canAssignRole(roles, input.role)) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+    const table = membershipTableFor(input.scope)
+    const row: Record<string, unknown> = { organization_id: scope.organizationId, user_id: input.userId, role: input.role }
+    if (input.scope === 'department') row.department_id = input.scopeId
+    if (input.scope === 'team') {
+      row.department_id = scope.departmentId
+      row.team_id = input.scopeId
+    }
+    const insert = await client.from(table).insert(row).select('id, user_id, role, expires_at').single()
+    if (insert.error) {
+      if (insert.error.code === '23505') return reply.code(409).send({ error: 'already_a_member', correlationId: request.id })
+      if (insert.error.code === '22P02') return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+      throw insert.error
+    }
+    const audit = await client.from('audit_events').insert({
+      organization_id: scope.organizationId,
+      actor_user_id: request.auth!.userId,
+      action: 'membership.created',
+      entity_type: table,
+      entity_id: insert.data.id,
+      correlation_id: request.id,
+      metadata: { userId: input.userId, role: input.role, scope: input.scope, scopeId: input.scopeId },
+    })
+    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+    return reply.code(201).send(
+      MemberRoleEntrySchema.parse({ membershipId: insert.data.id, scope: input.scope, scopeId: input.scopeId, role: insert.data.role, expiresAt: insert.data.expires_at }),
+    )
+  })
+
+  app.patch('/v1/memberships/:id', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const query = z.object({ scope: ScopeLevelSchema }).parse(request.query)
+    const input = UpdateMembershipRequestSchema.parse(request.body)
+    // UpdateMembershipRequestSchema traegt scope nicht im Body (das kommt aus der Query) und kann
+    // Rolle-gegen-Scope deshalb nicht selbst per superRefine pruefen (anders als
+    // CreateMembershipRequestSchema) -- ohne diesen Check waere eine falsche Kombination erst am
+    // Enum-Cast beim Insert als ungehandelter 500 sichtbar geworden.
+    if (!rolesForScopeLevel(query.scope).includes(input.role)) {
+      return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+    }
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const table = membershipTableFor(query.scope)
+    const existing = await client.from(table).select('organization_id, department_id, team_id, user_id, role').eq('id', params.id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const scope = toPermissionScope(
+      existing.data.organization_id as string,
+      existing.data.department_id as string | null,
+      existing.data.team_id as string | null,
+    )
+    if (!(await requirePermission(request, reply, 'member.invite', scope))) return
+    const roles = await roleProvider.rolesForScope(request.auth!, scope)
+    // Ein Rollenwechsel ist intern Delete+Insert (siehe Plan 010) -- ohne canRemoveRole gegen die
+    // AKTUELLE Rolle koennte z. B. ein organization_admin einen organization_owner degradieren,
+    // obwohl canAssignRole eine Neuzuweisung von organization_owner korrekt verweigert (beim
+    // Rechte-Review dieses Pakets gefunden).
+    if (!canRemoveRole(roles, existing.data.role as Role)) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+    if (!canAssignRole(roles, input.role)) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+    const del = await client.from(table).delete().eq('id', params.id)
+    if (del.error) {
+      if (del.error.message.includes('cannot be removed')) return reply.code(409).send({ error: 'cannot_remove_last_owner', correlationId: request.id })
+      throw del.error
+    }
+    const row: Record<string, unknown> = { organization_id: scope.organizationId, user_id: existing.data.user_id, role: input.role }
+    if (query.scope === 'department') row.department_id = scope.departmentId
+    if (query.scope === 'team') {
+      row.department_id = scope.departmentId
+      row.team_id = existing.data.team_id
+    }
+    const insert = await client.from(table).insert(row).select('id, user_id, role, expires_at').single()
+    if (insert.error) throw insert.error
+    const scopeId = query.scope === 'organization' ? scope.organizationId : query.scope === 'department' ? scope.departmentId! : (existing.data.team_id as string)
+    const audit = await client.from('audit_events').insert({
+      organization_id: scope.organizationId,
+      actor_user_id: request.auth!.userId,
+      action: 'membership.role_changed',
+      entity_type: table,
+      entity_id: params.id,
+      correlation_id: request.id,
+      metadata: { userId: existing.data.user_id, fromRole: existing.data.role, toRole: input.role, scope: query.scope, scopeId },
+    })
+    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+    return reply.code(200).send(
+      MemberRoleEntrySchema.parse({ membershipId: insert.data.id, scope: query.scope, scopeId, role: insert.data.role, expiresAt: insert.data.expires_at }),
+    )
+  })
+
+  app.delete('/v1/memberships/:id', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const query = z.object({ scope: ScopeLevelSchema }).parse(request.query)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const table = membershipTableFor(query.scope)
+    const existing = await client.from(table).select('organization_id, department_id, team_id, user_id, role').eq('id', params.id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const scope = toPermissionScope(
+      existing.data.organization_id as string,
+      existing.data.department_id as string | null,
+      existing.data.team_id as string | null,
+    )
+    if (!(await requirePermission(request, reply, 'member.remove', scope))) return
+    // Siehe PATCH oben: derselbe Rang-gegen-aktuelle-Rolle-Check, sonst kann ein Akteur mit
+    // member.remove jemanden entfernen, der maechtiger ist als er selbst.
+    const roles = await roleProvider.rolesForScope(request.auth!, scope)
+    if (!canRemoveRole(roles, existing.data.role as Role)) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+    const profile = await client.from('organization_profiles').select('responsible_person_profile_id').eq('organization_id', scope.organizationId).maybeSingle()
+    if (profile.error) throw profile.error
+    if (profile.data?.responsible_person_profile_id === existing.data.user_id) {
+      return reply.code(409).send({ error: 'responsible_person_cannot_be_removed', correlationId: request.id })
+    }
+    const del = await client.from(table).delete().eq('id', params.id)
+    if (del.error) {
+      if (del.error.message.includes('cannot be removed')) return reply.code(409).send({ error: 'cannot_remove_last_owner', correlationId: request.id })
+      throw del.error
+    }
+    const audit = await client.from('audit_events').insert({
+      organization_id: scope.organizationId,
+      actor_user_id: request.auth!.userId,
+      action: 'membership.removed',
+      entity_type: table,
+      entity_id: params.id,
+      correlation_id: request.id,
+      metadata: { userId: existing.data.user_id, role: existing.data.role, scope: query.scope },
+    })
+    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+    return reply.code(204).send()
+  })
+
+  app.get('/v1/organizations/:id/invitations', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    if (!(await requirePermission(request, reply, 'member.invite', { organizationId: params.id }))) return
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const result = await client
+      .from('invitations')
+      .select('id, organization_id, department_id, team_id, email, role, invited_by, expires_at, accepted_at, revoked_at, last_sent_at, send_count, created_at')
+      .eq('organization_id', params.id)
+      .is('accepted_at', null)
+      .is('revoked_at', null)
+      .order('created_at', { ascending: false })
+    if (result.error) throw result.error
+    return reply.code(200).send(result.data.map((row) => InvitationSchema.parse(mapInvitationRow(row))))
+  })
+
+  app.post('/v1/invitations', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const input = CreateInvitationRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const resolved = await resolveInvitationScope(client, input)
+    if (!resolved) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const { scope } = resolved
+    if (!(await requirePermission(request, reply, 'member.invite', scope))) return
+    const roles = await roleProvider.rolesForScope(request.auth!, scope)
+    if (!canAssignRole(roles, input.role)) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+    const alreadyMember = await client.rpc('email_has_membership', {
+      target_organization_id: scope.organizationId,
+      target_department_id: scope.departmentId ?? null,
+      target_team_id: scope.teamId ?? null,
+      target_email: input.email,
+    })
+    if (alreadyMember.error) throw alreadyMember.error
+    if (alreadyMember.data) return reply.code(409).send({ error: 'already_a_member', correlationId: request.id })
+
+    const { rawToken, tokenHash } = generateInvitationToken()
+    const insert = await client
+      .from('invitations')
+      .insert({
+        organization_id: scope.organizationId,
+        department_id: scope.departmentId ?? null,
+        team_id: scope.teamId ?? null,
+        email: input.email,
+        role: input.role,
+        token_hash: tokenHash,
+        invited_by: request.auth!.userId,
+        expires_at: new Date(Date.now() + 14 * 24 * 60 * 60_000).toISOString(),
+      })
+      .select('id, organization_id, department_id, team_id, email, role, invited_by, expires_at, accepted_at, revoked_at, last_sent_at, send_count, created_at')
+      .single()
+    if (insert.error) {
+      if (insert.error.code === '23505') return reply.code(409).send({ error: 'invitation_already_open', correlationId: request.id })
+      if (insert.error.code === '23514' || insert.error.code === '23503') return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+      throw insert.error
+    }
+
+    const organization = await client.from('organizations').select('name').eq('id', scope.organizationId).single()
+    if (organization.error) throw organization.error
+    const organizationName = organization.data.name as string
+    const acceptUrl = `${environment.WEB_BASE_URL ?? 'http://localhost:4200'}/einladung?token=${rawToken}`
+    await emailSender.send(
+      buildInvitationEmail({ to: input.email, organizationName, scopeName: resolved.scopeName || organizationName, acceptUrl }),
+    )
+    const audit = await client.from('audit_events').insert({
+      organization_id: scope.organizationId,
+      actor_user_id: request.auth!.userId,
+      action: 'invitation.created',
+      entity_type: 'invitations',
+      entity_id: insert.data.id,
+      correlation_id: request.id,
+      metadata: { email: input.email, role: input.role, departmentId: scope.departmentId ?? null, teamId: scope.teamId ?? null },
+    })
+    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+
+    return reply.code(201).send(InvitationSchema.parse(mapInvitationRow(insert.data)))
+  })
+
+  app.post('/v1/invitations/:id/resend', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const existing = await client
+      .from('invitations')
+      .select('organization_id, department_id, team_id, email, send_count, accepted_at, revoked_at')
+      .eq('id', params.id)
+      .maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data || existing.data.accepted_at || existing.data.revoked_at) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const scope = toPermissionScope(
+      existing.data.organization_id as string,
+      existing.data.department_id as string | null,
+      existing.data.team_id as string | null,
+    )
+    if (!(await requirePermission(request, reply, 'member.invite', scope))) return
+    if ((existing.data.send_count as number) >= 10) return reply.code(429).send({ error: 'resend_limit_reached', correlationId: request.id })
+    const { rawToken, tokenHash } = generateInvitationToken()
+    const update = await client
+      .from('invitations')
+      .update({
+        token_hash: tokenHash,
+        expires_at: new Date(Date.now() + 14 * 24 * 60 * 60_000).toISOString(),
+        last_sent_at: new Date().toISOString(),
+        send_count: (existing.data.send_count as number) + 1,
+      })
+      .eq('id', params.id)
+      .select('id, organization_id, department_id, team_id, email, role, invited_by, expires_at, accepted_at, revoked_at, last_sent_at, send_count, created_at')
+      .single()
+    if (update.error) {
+      if (update.error.message.includes('resent at most once per hour')) return reply.code(429).send({ error: 'resend_rate_limited', correlationId: request.id })
+      throw update.error
+    }
+    const organization = await client.from('organizations').select('name').eq('id', scope.organizationId).single()
+    if (organization.error) throw organization.error
+    const organizationName = organization.data.name as string
+    const scopeName = await resolveScopeName(client, scope, organizationName)
+    const acceptUrl = `${environment.WEB_BASE_URL ?? 'http://localhost:4200'}/einladung?token=${rawToken}`
+    await emailSender.send(buildInvitationEmail({ to: existing.data.email as string, organizationName, scopeName, acceptUrl }))
+    const audit = await client.from('audit_events').insert({
+      organization_id: scope.organizationId,
+      actor_user_id: request.auth!.userId,
+      action: 'invitation.resent',
+      entity_type: 'invitations',
+      entity_id: params.id,
+      correlation_id: request.id,
+      metadata: { email: existing.data.email },
+    })
+    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+    return reply.code(200).send(InvitationSchema.parse(mapInvitationRow(update.data)))
+  })
+
+  app.post('/v1/invitations/:id/revoke', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const existing = await client.from('invitations').select('organization_id, department_id, team_id, email').eq('id', params.id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const scope = toPermissionScope(
+      existing.data.organization_id as string,
+      existing.data.department_id as string | null,
+      existing.data.team_id as string | null,
+    )
+    if (!(await requirePermission(request, reply, 'member.invite', scope))) return
+    const update = await client
+      .from('invitations')
+      .update({ revoked_at: new Date().toISOString() })
+      .eq('id', params.id)
+      .select('id, organization_id, department_id, team_id, email, role, invited_by, expires_at, accepted_at, revoked_at, last_sent_at, send_count, created_at')
+      .single()
+    if (update.error) throw update.error
+    const audit = await client.from('audit_events').insert({
+      organization_id: scope.organizationId,
+      actor_user_id: request.auth!.userId,
+      action: 'invitation.revoked',
+      entity_type: 'invitations',
+      entity_id: params.id,
+      correlation_id: request.id,
+      metadata: { email: existing.data.email },
+    })
+    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+    return reply.code(200).send(InvitationSchema.parse(mapInvitationRow(update.data)))
+  })
+
+  app.post('/v1/invitations/accept', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const input = AcceptInvitationRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const rpc = await client.rpc('accept_invitation', { raw_token: input.token })
+    if (rpc.error) {
+      if (rpc.error.message.includes('invitation_not_found_or_expired')) return reply.code(410).send({ error: 'invitation_not_found_or_expired', correlationId: request.id })
+      if (rpc.error.message.includes('invitation_email_mismatch')) return reply.code(403).send({ error: 'invitation_email_mismatch', correlationId: request.id })
+      throw rpc.error
+    }
+    const data = rpc.data as { organizationId: string; departmentId: string | null; teamId: string | null; role: string }
+    return reply.code(200).send(AcceptInvitationResponseSchema.parse(data))
   })
 
   // --- Plattform-Administration (Paket 022) -------------------------------------------

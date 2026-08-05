@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
   AddPlatformAdminRequestSchema,
+  CreateInvitationRequestSchema,
+  CreateMembershipRequestSchema,
   CreateSubmissionSchema,
+  DepartmentSchema,
   GeneratedPostSchema,
+  InvitationSchema,
+  MemberRoleEntrySchema,
   OnboardingStateSchema,
   OrganizationProfileUpdateSchema,
   PlatformAdminOrganizationSummarySchema,
@@ -10,6 +15,8 @@ import {
   PlatformSettingKeySchema,
   PlatformSettingSchema,
   PlatformSettingValueSchemas,
+  TeamSchema,
+  UpdateDepartmentRequestSchema,
 } from './index.js'
 
 const org = '11111111-1111-4111-8111-111111111111'
@@ -120,5 +127,127 @@ describe('organization profile contracts', () => {
 
   it('accepts a profile update with at least one field', () => {
     expect(OrganizationProfileUpdateSchema.safeParse({ legalName: 'Verein e.V.' }).success).toBe(true)
+  })
+})
+
+describe('structure and invitation contracts', () => {
+  it('rejects an empty department update payload', () => {
+    expect(UpdateDepartmentRequestSchema.safeParse({}).success).toBe(false)
+  })
+
+  it('accepts archiving alone, without a name change', () => {
+    expect(UpdateDepartmentRequestSchema.safeParse({ archived: true }).success).toBe(true)
+  })
+
+  it('rejects a team-scoped invitation without a departmentId', () => {
+    expect(
+      CreateInvitationRequestSchema.safeParse({
+        organizationId: org,
+        teamId: department,
+        email: 'person@example.com',
+        role: 'team_manager',
+      }).success,
+    ).toBe(false)
+  })
+
+  it('rejects a role that does not match the invitation scope', () => {
+    expect(
+      CreateInvitationRequestSchema.safeParse({
+        organizationId: org,
+        email: 'person@example.com',
+        role: 'department_admin',
+      }).success,
+    ).toBe(false)
+    expect(
+      CreateInvitationRequestSchema.safeParse({
+        organizationId: org,
+        departmentId: department,
+        email: 'person@example.com',
+        role: 'organization_admin',
+      }).success,
+    ).toBe(false)
+  })
+
+  it('accepts a scope-consistent invitation', () => {
+    expect(
+      CreateInvitationRequestSchema.safeParse({
+        organizationId: org,
+        departmentId: department,
+        email: 'Person@Example.com',
+        role: 'editor',
+      }).success,
+    ).toBe(true)
+  })
+
+  it('never validates organization_owner as an assignable role', () => {
+    expect(
+      CreateInvitationRequestSchema.safeParse({
+        organizationId: org,
+        email: 'person@example.com',
+        role: 'organization_owner',
+      }).success,
+    ).toBe(false)
+  })
+
+  // Regression: same class of bug as the platform administration schemas -- invitations carry
+  // four independent timestamptz columns, all fed directly by PostgREST.
+  it('accepts PostgREST-shaped timestamps on every invitation datetime field', () => {
+    const offsetTimestamp = '2026-08-05T12:34:56.789+00:00'
+    expect(
+      InvitationSchema.safeParse({
+        id: org,
+        organizationId: org,
+        departmentId: department,
+        teamId: null,
+        email: 'person@example.com',
+        role: 'editor',
+        invitedBy: org,
+        expiresAt: offsetTimestamp,
+        acceptedAt: offsetTimestamp,
+        revokedAt: null,
+        lastSentAt: offsetTimestamp,
+        sendCount: 1,
+        createdAt: offsetTimestamp,
+      }).success,
+    ).toBe(true)
+  })
+
+  it('still accepts a false archived flag, not just true', () => {
+    expect(UpdateDepartmentRequestSchema.safeParse({ archived: false }).success).toBe(true)
+  })
+
+  // Regression: same offset:true class of bug as InvitationSchema above, for the other two
+  // Paket 010 schemas fed directly by real timestamptz columns.
+  it('accepts PostgREST-shaped timestamps on DepartmentSchema and TeamSchema', () => {
+    const offsetTimestamp = '2026-08-05T12:34:56.789+00:00'
+    expect(
+      DepartmentSchema.safeParse({ id: org, organizationId: org, name: 'Fussball', slug: 'fussball', archivedAt: offsetTimestamp, createdAt: offsetTimestamp })
+        .success,
+    ).toBe(true)
+    expect(
+      TeamSchema.safeParse({ id: org, organizationId: org, departmentId: department, name: 'Team A', archivedAt: null, createdAt: offsetTimestamp }).success,
+    ).toBe(true)
+  })
+
+  it('accepts a PostgREST-shaped expiresAt on MemberRoleEntrySchema', () => {
+    expect(
+      MemberRoleEntrySchema.safeParse({
+        membershipId: org,
+        scope: 'department',
+        scopeId: department,
+        role: 'organization_owner',
+        expiresAt: '2026-08-05T12:34:56.789+00:00',
+      }).success,
+    ).toBe(true)
+  })
+
+  it('rejects an organization-level role for a department-scoped membership', () => {
+    expect(CreateMembershipRequestSchema.safeParse({ scope: 'department', scopeId: department, userId: org, role: 'organization_admin' }).success).toBe(
+      false,
+    )
+  })
+
+  it('accepts a scope-consistent membership request', () => {
+    expect(CreateMembershipRequestSchema.safeParse({ scope: 'department', scopeId: department, userId: org, role: 'editor' }).success).toBe(true)
   })
 })

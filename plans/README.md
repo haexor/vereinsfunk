@@ -37,7 +37,7 @@ Stand: 2026-08-04, geplant auf `b5c2eda6`. Die Pakete 001–007 bauen die Inhalt
 |---|---|---|---|
 | 008 | [Echte Authentifizierung und Autorisierungsgrenze](008-echte-authentifizierung-und-autorisierungsgrenze.md) | keine | erledigt |
 | 009 | [Onboarding: Verein anlegen](009-onboarding-verein-anlegen.md) | 008 | erledigt |
-| 010 | [Abteilungen, Teams, Mitglieder und Einladungen](010-abteilungen-teams-mitglieder-einladungen.md) | 008, 009 | bereit |
+| 010 | [Abteilungen, Teams, Mitglieder und Einladungen](010-abteilungen-teams-mitglieder-einladungen.md) | 008, 009 | erledigt |
 | 011 | [Regelwerk: Freigaberouten, Vertrauen je Mitglied und Kontingente](011-regelwerk-richtlinien-und-kontingente.md) | 010 | bereit |
 | 012 | [Kanäle und Social-Accounts](012-kanaele-und-social-accounts.md) | 011 | bereit; Meta App Review als externes Gate |
 | 013 | [Marke, Branding-Assets und Schriften](013-marke-branding-assets-und-schriften.md) | 009 | bereit |
@@ -93,7 +93,7 @@ Vollständige Liste der erfundenen Daten im Anwendungscode, mit dem Paket, das s
 | `pages/kalender.vue:1` | fest „August 2026“, fünf Fantasietermine, hartkodierte Vorlauftage | ✓ 009 (echte `posts.scheduled_for`, navigierbarer Monat, Empty State — der Plan zu 009 listete diese Zeile bereits in seinem eigenen Rückbau-Abschnitt, diese Tabelle hier nicht; beim Abgleich in der Adversarial-Phase von 009 nachgezogen), 019 (echte Anlässe/Spielpläne als Inhalt der Termine) |
 | `pages/auswertung.vue:1` | vier erfundene Plattformkennzahlen, `bars`-Array ohne Skala und Quelle | 016, 017 |
 | `pages/marke.vue:1` | Farben und Tonalität im lokalen State, „Speichern“ setzt nur ein Flag | ✓ 009 (`PUT /v1/organizations/:id/brand`, echter Ladezustand, echte Fehler), 013 (Schrift-Upload, Abteilungsbranding) |
-| `pages/mitglieder.vue:1` | vier hartkodierte Namen, „Einladen“ ohne Handler | 010 |
+| `pages/mitglieder.vue:1` | vier hartkodierte Namen, „Einladen“ ohne Handler | ✓ 010 (echte Mitglieder/Rollen/Einladungen aus der Datenbank) |
 | `pages/einstellungen.vue:1` | fünf behauptete Einstellungen, jeder Button ohne Handler | 011 (Freigabe, Minderjährige), 012 (Kanäle), 020 (Löschfrist) |
 | `apps/web/nuxt.config.ts:14-21` | Schriften von `fonts.googleapis.com` bei jedem Aufruf | 013, geprüft in 020 |
 | `packages/config/src/index.ts:17-20` | `PUBLISHING_PROVIDER: 'mixpost'`, Mixpost-URL und -Token — widerspricht der Meta-Entscheidung | 012 |

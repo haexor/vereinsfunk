@@ -354,3 +354,282 @@ describe('platform administration', () => {
     expect(Object.keys(body)).not.toContain('apiKeyCiphertext')
   })
 })
+
+describe('structure, memberships and invitations', () => {
+  it('rejects creating a department without department.manage', async () => {
+    const app = await startApp({ roleProvider: denyingRoleProvider })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${ORGANIZATION_ID}/departments`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'Handball' },
+    })
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toMatchObject({ error: 'forbidden' })
+  })
+
+  it('creates a department via the create_department RPC', async () => {
+    const departmentRow = {
+      id: '10000000-1100-4000-8000-000000000099',
+      organization_id: ORGANIZATION_ID,
+      name: 'Handball',
+      slug: 'handball',
+      archived_at: null,
+      created_at: '2026-08-06T10:00:00+00:00',
+    }
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          rpc: async () => ({ data: departmentRow.id, error: null }),
+          from: (table: string) => {
+            if (table === 'audit_events') return { insert: async () => ({ error: null }) }
+            return { select: () => ({ eq: () => ({ single: async () => ({ data: departmentRow, error: null }) }) }) }
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${ORGANIZATION_ID}/departments`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'Handball' },
+    })
+    expect(response.statusCode).toBe(201)
+    expect(response.json()).toMatchObject({ id: departmentRow.id, name: 'Handball', slug: 'handball' })
+  })
+
+  it('rejects an invitation payload whose role does not match its scope, before any DB call', async () => {
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/invitations',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { organizationId: ORGANIZATION_ID, email: 'person@example.com', role: 'department_admin' },
+    })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ error: 'invalid_request' })
+  })
+
+  it('rejects an organization-level role for a department-scoped membership, before any DB call', async () => {
+    // CreateMembershipRequestSchema validates role against scope itself (superRefine) -- an
+    // organization-level role is never valid for a department-scoped membership, regardless of
+    // the actor's rank. See packages/authorization's canAssignRole tests for the rank check
+    // itself; every role that holds member.invite at a given level is already that level's
+    // highest-ranked role, so a scope-valid rank violation cannot occur independently of an
+    // invalid scope/role combination in this role model.
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/memberships',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { scope: 'department', scopeId: DEPARTMENT_ID, userId: '10000000-0000-4000-8000-000000000099', role: 'organization_admin' },
+    })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ error: 'invalid_request' })
+  })
+
+  it('rejects organization_owner as a role for POST /v1/memberships, before any DB call', async () => {
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/memberships',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { scope: 'organization', scopeId: ORGANIZATION_ID, userId: '10000000-0000-4000-8000-000000000099', role: 'organization_owner' },
+    })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ error: 'invalid_request' })
+  })
+
+  it('rejects an invitation for an address that is already a member', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ rpc: async () => ({ data: true, error: null }) }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/invitations',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { organizationId: ORGANIZATION_ID, email: 'already-member@example.com', role: 'organization_viewer' },
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'already_a_member' })
+  })
+
+  it('never returns the raw invitation token in the create response', async () => {
+    const invitationRow = {
+      id: '30000000-0000-4000-8000-000000000001',
+      organization_id: ORGANIZATION_ID,
+      department_id: null,
+      team_id: null,
+      email: 'invitee@example.com',
+      role: 'organization_viewer',
+      invited_by: USER_ID,
+      expires_at: '2026-08-20T00:00:00+00:00',
+      accepted_at: null,
+      revoked_at: null,
+      last_sent_at: '2026-08-06T00:00:00+00:00',
+      send_count: 1,
+      created_at: '2026-08-06T00:00:00+00:00',
+    }
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          rpc: async () => ({ data: false, error: null }),
+          from: (table: string) => {
+            if (table === 'invitations') return { insert: () => ({ select: () => ({ single: async () => ({ data: invitationRow, error: null }) }) }) }
+            if (table === 'organizations') return { select: () => ({ eq: () => ({ single: async () => ({ data: { name: 'SV Test' }, error: null }) }) }) }
+            if (table === 'audit_events') return { insert: async () => ({ error: null }) }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const capturedMessages: { to: string; subject: string; text: string }[] = []
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+      emailSender: { send: async (message) => { capturedMessages.push(message) } },
+    })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/invitations',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { organizationId: ORGANIZATION_ID, email: 'invitee@example.com', role: 'organization_viewer' },
+    })
+    expect(response.statusCode).toBe(201)
+    const body = response.json()
+    expect(Object.keys(body)).not.toContain('rawToken')
+    expect(Object.keys(body)).not.toContain('token')
+    expect(Object.keys(body)).not.toContain('tokenHash')
+    // The raw token IS present in the captured outgoing email (that's the whole point of sending
+    // it) -- extracting it from there proves it specifically never also leaks into the HTTP
+    // response, rather than just asserting an absence that could be a fixture mistake.
+    expect(capturedMessages).toHaveLength(1)
+    const acceptUrlMatch = capturedMessages[0]!.text.match(/token=([a-f0-9]+)/)
+    expect(acceptUrlMatch).not.toBeNull()
+    expect(JSON.stringify(body)).not.toContain(acceptUrlMatch![1]!)
+  })
+
+  it('maps the resend send-count limit to 429 before touching the database', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: () => ({
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: { organization_id: ORGANIZATION_ID, department_id: null, team_id: null, email: 'x@example.com', send_count: 10, accepted_at: null, revoked_at: null },
+                  error: null,
+                }),
+              }),
+            }),
+          }),
+        }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/invitations/${DEPARTMENT_ID}/resend`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(429)
+    expect(response.json()).toMatchObject({ error: 'resend_limit_reached' })
+  })
+
+  it('maps an email/account mismatch on accept to 403', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ rpc: async () => ({ data: null, error: { message: 'invitation_email_mismatch' } }) }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/invitations/accept',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { token: 'some-raw-token' },
+    })
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toMatchObject({ error: 'invitation_email_mismatch' })
+  })
+
+  it('maps an expired or unknown invitation on accept to 410', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ rpc: async () => ({ data: null, error: { message: 'invitation_not_found_or_expired' } }) }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/invitations/accept',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { token: 'some-raw-token' },
+    })
+    expect(response.statusCode).toBe(410)
+    expect(response.json()).toMatchObject({ error: 'invitation_not_found_or_expired' })
+  })
+
+  it('refuses to remove the organization\'s responsible person', async () => {
+    const membershipRow = { organization_id: ORGANIZATION_ID, department_id: null, team_id: null, user_id: '10000000-0000-4000-8000-000000000099', role: 'organization_viewer' }
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'organization_memberships') {
+              return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: membershipRow, error: null }) }) }) }
+            }
+            if (table === 'organization_profiles') {
+              return {
+                select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { responsible_person_profile_id: membershipRow.user_id }, error: null }) }) }),
+              }
+            }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'DELETE',
+      url: `/v1/memberships/${membershipRow.user_id}?scope=organization`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'responsible_person_cannot_be_removed' })
+  })
+
+  it('maps the department content-delete trigger rejection to 409', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: () => ({
+            select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { organization_id: ORGANIZATION_ID }, error: null }) }) }),
+            delete: () => ({ eq: async () => ({ error: { message: 'a department with existing posts cannot be deleted, archive it instead' } }) }),
+          }),
+        }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'DELETE',
+      url: `/v1/departments/${DEPARTMENT_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'department_delete_blocked' })
+  })
+})
