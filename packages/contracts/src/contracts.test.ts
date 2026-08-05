@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { CreateSubmissionSchema, GeneratedPostSchema } from './index.js'
+import {
+  AddPlatformAdminRequestSchema,
+  CreateSubmissionSchema,
+  GeneratedPostSchema,
+  OrganizationSettingOverrideKeySchema,
+  PlatformSettingKeySchema,
+  PlatformSettingValueSchemas,
+} from './index.js'
 
 const org = '11111111-1111-4111-8111-111111111111'
 const department = '22222222-2222-4222-8222-222222222222'
@@ -46,5 +53,23 @@ describe('contracts', () => {
     expect(GeneratedPostSchema.safeParse({ ...base, hashtags: Array(13).fill('#sport') }).success).toBe(
       false,
     )
+  })
+})
+
+describe('platform administration contracts', () => {
+  it('lowercases and validates admin emails', () => {
+    expect(AddPlatformAdminRequestSchema.parse({ email: 'Admin@Example.COM' }).email).toBe('admin@example.com')
+    expect(AddPlatformAdminRequestSchema.safeParse({ email: 'not-an-email' }).success).toBe(false)
+  })
+
+  it('rejects an unknown platform settings key before it reaches the database', () => {
+    expect(PlatformSettingKeySchema.safeParse('unknown_key').success).toBe(false)
+    expect(PlatformSettingValueSchemas.max_organizations_per_owner.safeParse(0).success).toBe(false)
+    expect(PlatformSettingValueSchemas.max_organizations_per_owner.safeParse(5).success).toBe(true)
+  })
+
+  it('requires organization setting override keys to be lower_snake_case', () => {
+    expect(OrganizationSettingOverrideKeySchema.safeParse('Not Valid').success).toBe(false)
+    expect(OrganizationSettingOverrideKeySchema.safeParse('max_departments').success).toBe(true)
   })
 })

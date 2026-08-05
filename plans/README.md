@@ -51,6 +51,14 @@ Stand: 2026-08-04, geplant auf `b5c2eda6`. Die Pakete 001–007 bauen die Inhalt
 
 Empfohlener Ablauf: **008 und 009 unmittelbar hintereinander** — ohne Authentifizierung lässt sich kein Prototyp-Datensatz ehrlich ersetzen, und ohne Onboarding zeigt die Oberfläche nach der Anmeldung nichts. Danach 010 und 011 als Verwaltungsgrundlage, 013 parallel dazu. Anschließend 012, dann 014 mit 019 als erstem Nutzen des Integrationsrahmens, dann 015. 016 ist ab 011 jederzeit möglich; 017 und 018 hängen an externen Gates. **020 vor dem Produktivbetrieb mit echten Personendaten.**
 
+## Dritte Ebene: Plattform-Administration (SaaS-Betreiber)
+
+Orthogonal zur Serie 008–020: Diese Pakete betreffen den SaaS-Betreiber selbst, nicht einen einzelnen Verein. Sie sind nicht Teil der Rückbau-Kette (keine Prototyp-Daten werden ersetzt) und können unabhängig von der Reihenfolge oben eingeschoben werden.
+
+| Nr. | Arbeitspaket | Abhängigkeiten | Status |
+|---|---|---|---|
+| 021 | [Plattform-Administration](021-plattform-administration.md) | 008, 009 | in Arbeit |
+
 ### Kritischster Befund
 
 `apps/api/src/app.ts:66-72` ist die gesamte Autorisierung der API. `requireAuth` prüft nur, **ob** ein `authorization`-Header vorhanden ist, und das ausschließlich bei `NODE_ENV === 'production'`. Der Inhalt wird nie gelesen, keine Signatur geprüft, keine Permission ausgewertet. In Entwicklung und Test ist jeder Endpunkt offen. Das behebt Paket 008 und ist der Grund, warum es zuerst kommt. **✓ Behoben in Paket 008**: echte JWT-Verifikation und `requirePermission` an allen Endpunkten, die Scope-Daten in der Anfrage tragen.

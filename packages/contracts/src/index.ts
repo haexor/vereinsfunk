@@ -161,6 +161,133 @@ export const OnboardingStateSchema = z.object({
   dismissedAt: z.iso.datetime().nullable(),
 })
 
+// Plattform-Administration (Paket 021): der SaaS-Betreiber, orthogonal zu allen
+// vereinsbezogenen Rollen oben. Jede Schreiboperation hier ist requirePlatformAdmin-gated.
+export const JsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
+  z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(JsonValueSchema), z.record(z.string(), JsonValueSchema)]),
+)
+
+export const PlatformAdminStatusSchema = z.object({ isPlatformAdmin: z.boolean(), isDefaultAdmin: z.boolean() })
+export const PlatformAdminSchema = z.object({
+  userId: UuidSchema,
+  isDefaultAdmin: z.boolean(),
+  createdAt: z.iso.datetime(),
+})
+export const AddPlatformAdminRequestSchema = z.object({
+  email: z.string().trim().toLowerCase().pipe(z.email()),
+})
+
+// Nur ein Schluessel existiert heute (loest 009s hartkodierte Konstante ab). Ein unbekannter
+// Schluessel wird von der API abgelehnt statt stillschweigend ungeprueft gespeichert zu werden.
+export const PlatformSettingKeySchema = z.enum(['max_organizations_per_owner'])
+export const PlatformSettingValueSchemas = {
+  max_organizations_per_owner: z.int().positive().max(1000),
+} as const satisfies Record<z.infer<typeof PlatformSettingKeySchema>, z.ZodType<unknown>>
+export const PlatformSettingSchema = z.object({
+  key: z.string().min(1),
+  value: JsonValueSchema,
+  updatedAt: z.iso.datetime(),
+})
+export const UpdatePlatformSettingRequestSchema = z.object({ value: JsonValueSchema })
+
+// Generischer Mechanismus ohne heute existierenden konkreten Schluessel (siehe Plan 021,
+// Risiken) -- Format wird geprueft, der Wertebereich pro Schluessel folgt erst mit dessen
+// erstem Konsumenten (Paket 011/019).
+export const OrganizationSettingOverrideKeySchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(80)
+  .regex(/^[a-z][a-z0-9_]*$/, 'must be a lower_snake_case key')
+export const OrganizationSettingOverrideSchema = z.object({
+  organizationId: UuidSchema,
+  key: OrganizationSettingOverrideKeySchema,
+  value: JsonValueSchema,
+  updatedAt: z.iso.datetime(),
+})
+export const UpdateOrganizationSettingOverrideRequestSchema = z.object({ value: JsonValueSchema })
+
+export const SubscriptionPlanSchema = z.object({
+  id: UuidSchema,
+  name: z.string().trim().min(1).max(80),
+  priceCents: z.int().min(0),
+  currency: z.string().length(3),
+  limits: JsonValueSchema,
+  isActive: z.boolean(),
+})
+export const CreateSubscriptionPlanRequestSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  priceCents: z.int().min(0),
+  currency: z.string().length(3).default('EUR'),
+  limits: JsonValueSchema.default({}),
+})
+export const UpdateSubscriptionPlanRequestSchema = z.object({
+  name: z.string().trim().min(1).max(80).optional(),
+  priceCents: z.int().min(0).optional(),
+  currency: z.string().length(3).optional(),
+  limits: JsonValueSchema.optional(),
+  isActive: z.boolean().optional(),
+})
+export const AssignSubscriptionPlanRequestSchema = z.object({ planId: UuidSchema })
+
+export const LlmProviderProtocolSchema = z.enum(['anthropic', 'openai'])
+export const LlmProviderConfigurationSchema = z.object({
+  id: UuidSchema,
+  label: z.string().trim().min(1).max(160),
+  protocol: LlmProviderProtocolSchema,
+  baseUrl: z.url(),
+  model: z.string().trim().min(1).max(120),
+  purpose: z.string().trim().min(1).max(60),
+  priority: z.int(),
+  isActive: z.boolean(),
+  systemPromptOverride: z.string().trim().min(1).max(8000).nullable(),
+  hasSecret: z.boolean(),
+})
+export const CreateLlmProviderConfigurationRequestSchema = z.object({
+  label: z.string().trim().min(1).max(160),
+  protocol: LlmProviderProtocolSchema,
+  baseUrl: z.url(),
+  model: z.string().trim().min(1).max(120),
+  purpose: z.string().trim().min(1).max(60).default('default'),
+  priority: z.int().default(100),
+  isActive: z.boolean().default(true),
+  systemPromptOverride: z.string().trim().min(1).max(8000).nullable().optional(),
+  apiKey: z.string().trim().min(1).max(4000),
+})
+export const UpdateLlmProviderConfigurationRequestSchema = z.object({
+  label: z.string().trim().min(1).max(160).optional(),
+  protocol: LlmProviderProtocolSchema.optional(),
+  baseUrl: z.url().optional(),
+  model: z.string().trim().min(1).max(120).optional(),
+  purpose: z.string().trim().min(1).max(60).optional(),
+  priority: z.int().optional(),
+  isActive: z.boolean().optional(),
+  systemPromptOverride: z.string().trim().min(1).max(8000).nullable().optional(),
+  apiKey: z.string().trim().min(1).max(4000).optional(),
+})
+
+export const PlatformAdminOrganizationSummarySchema = z.object({
+  organizationId: UuidSchema,
+  name: z.string().min(1),
+  slug: z.string().min(1),
+  subscriptionPlanName: z.string().nullable(),
+  memberCount: z.int().min(0),
+  departmentCount: z.int().min(0),
+  createdAt: z.iso.datetime(),
+})
+export const UsageMetricsQuerySchema = z.object({
+  from: z.iso.datetime(),
+  to: z.iso.datetime(),
+})
+export const UsageMetricsBucketSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  postsCreated: z.int().min(0),
+  llmGeneratedVersions: z.int().min(0),
+  workflowRunsFailed: z.int().min(0),
+  publicationsFailed: z.int().min(0),
+})
+export const UsageMetricsResponseSchema = z.object({ buckets: z.array(UsageMetricsBucketSchema) })
+
 export type Health = z.infer<typeof HealthSchema>
 export type ContentPresetSlug = z.infer<typeof ContentPresetSlugSchema>
 export type CommunicationGoal = z.infer<typeof CommunicationGoalSchema>
@@ -181,3 +308,23 @@ export type OrganizationBrand = z.infer<typeof OrganizationBrandSchema>
 export type BrandLogoVariant = z.infer<typeof BrandLogoVariantSchema>
 export type OnboardingStep = z.infer<typeof OnboardingStepSchema>
 export type OnboardingState = z.infer<typeof OnboardingStateSchema>
+export type PlatformAdminStatus = z.infer<typeof PlatformAdminStatusSchema>
+export type PlatformAdmin = z.infer<typeof PlatformAdminSchema>
+export type AddPlatformAdminRequest = z.infer<typeof AddPlatformAdminRequestSchema>
+export type PlatformSettingKey = z.infer<typeof PlatformSettingKeySchema>
+export type PlatformSetting = z.infer<typeof PlatformSettingSchema>
+export type UpdatePlatformSettingRequest = z.infer<typeof UpdatePlatformSettingRequestSchema>
+export type OrganizationSettingOverride = z.infer<typeof OrganizationSettingOverrideSchema>
+export type UpdateOrganizationSettingOverrideRequest = z.infer<typeof UpdateOrganizationSettingOverrideRequestSchema>
+export type SubscriptionPlan = z.infer<typeof SubscriptionPlanSchema>
+export type CreateSubscriptionPlanRequest = z.infer<typeof CreateSubscriptionPlanRequestSchema>
+export type UpdateSubscriptionPlanRequest = z.infer<typeof UpdateSubscriptionPlanRequestSchema>
+export type AssignSubscriptionPlanRequest = z.infer<typeof AssignSubscriptionPlanRequestSchema>
+export type LlmProviderProtocol = z.infer<typeof LlmProviderProtocolSchema>
+export type LlmProviderConfigurationDto = z.infer<typeof LlmProviderConfigurationSchema>
+export type CreateLlmProviderConfigurationRequest = z.infer<typeof CreateLlmProviderConfigurationRequestSchema>
+export type UpdateLlmProviderConfigurationRequest = z.infer<typeof UpdateLlmProviderConfigurationRequestSchema>
+export type PlatformAdminOrganizationSummary = z.infer<typeof PlatformAdminOrganizationSummarySchema>
+export type UsageMetricsQuery = z.infer<typeof UsageMetricsQuerySchema>
+export type UsageMetricsBucket = z.infer<typeof UsageMetricsBucketSchema>
+export type UsageMetricsResponse = z.infer<typeof UsageMetricsResponseSchema>

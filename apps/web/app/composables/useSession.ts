@@ -27,6 +27,22 @@ export interface SessionState {
   displayName: string
   avatarPath: string | null
   scopes: readonly SessionScope[]
+  isPlatformAdmin: boolean
+  isDefaultAdmin: boolean
+}
+
+// Additiv, nicht sicherheitskritisch fuer normale Vereinsnutzer: platform_admins verweigert
+// authenticated jeglichen Direktzugriff, deshalb geht das nur ueber die API. Ein API-Ausfall
+// darf aber nicht den gesamten Session-Load fuer alle Nutzer blockieren -- fail-closed statt
+// fail-loud, anders als bei membership_scopes() unten.
+async function loadPlatformAdminStatus(): Promise<{ isPlatformAdmin: boolean; isDefaultAdmin: boolean }> {
+  try {
+    const config = useRuntimeConfig()
+    const headers = await useAuthHeader()
+    return await $fetch(`${config.public.apiBase}/v1/me/platform-admin-status`, { headers })
+  } catch {
+    return { isPlatformAdmin: false, isDefaultAdmin: false }
+  }
 }
 
 function useSessionState() {
@@ -46,9 +62,10 @@ async function loadSession(state: ReturnType<typeof useSessionState>) {
     return
   }
 
-  const [profileResult, scopesResult] = await Promise.all([
+  const [profileResult, scopesResult, platformAdminStatus] = await Promise.all([
     supabase.from('profiles').select('display_name, avatar_path').eq('id', userResult.user.id).single(),
     supabase.schema('authz').rpc('membership_scopes'),
+    loadPlatformAdminStatus(),
   ])
   if (scopesResult.error) throw scopesResult.error
 
@@ -59,6 +76,8 @@ async function loadSession(state: ReturnType<typeof useSessionState>) {
     displayName: profileResult.data?.display_name ?? userResult.user.email ?? '',
     avatarPath: profileResult.data?.avatar_path ?? null,
     scopes: MembershipScopesSchema.parse(scopesResult.data ?? []) as SessionScope[],
+    isPlatformAdmin: platformAdminStatus.isPlatformAdmin,
+    isDefaultAdmin: platformAdminStatus.isDefaultAdmin,
   }
 }
 
