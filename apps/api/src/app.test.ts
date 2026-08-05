@@ -714,7 +714,10 @@ describe('structure, memberships and invitations', () => {
             if (table === 'audit_events') return { insert: async () => ({ error: null }) }
             throw new Error(`unexpected table in test fake: ${table}`)
           },
-          rpc: async () => ({ data: rpcResult, error: null }),
+          rpc: async (fn: string) => {
+            expect(fn).toBe('change_membership_role')
+            return { data: rpcResult, error: null }
+          },
         }) as unknown as SupabaseClient,
       forService: () => ({}) as unknown as SupabaseClient,
     }
@@ -744,7 +747,10 @@ describe('structure, memberships and invitations', () => {
             if (table === 'organization_memberships') return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: existingRow, error: null }) }) }) }
             throw new Error(`unexpected table in test fake: ${table}`)
           },
-          rpc: async () => ({ data: null, error: { message: 'the last organization_owner cannot be removed' } }),
+          rpc: async (fn: string) => {
+            expect(fn).toBe('change_membership_role')
+            return { data: null, error: { message: 'the last organization_owner cannot be removed' } }
+          },
         }) as unknown as SupabaseClient,
       forService: () => ({}) as unknown as SupabaseClient,
     }

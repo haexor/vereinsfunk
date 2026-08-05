@@ -618,8 +618,22 @@ begin
         and department_id is not distinct from target_department_id
         and team_id is not distinct from target_team_id;
   else
+    -- Ohne Zeile gibt es nichts, das `for update` oben haette sperren koennen -- zwei
+    -- gleichzeitige Erstsendungen an dieselbe neue Adresse liefen sonst beide in diesen Zweig,
+    -- und der zweite Insert schlaegt mit einer ungefangenen unique_violation fehl statt mit einer
+    -- kontrollierten Fehlermeldung (beim Review dieses Pakets gefunden). `on conflict do nothing`
+    -- macht den Insert selbst konfliktsicher; verliert er den Wettlauf, wird das wie ein Treffer
+    -- auf das Stundenlimit behandelt.
     insert into public.invitation_send_counters (organization_id, email, department_id, team_id, send_count, last_sent_at)
-      values (target_organization_id, normalized_email, target_department_id, target_team_id, 1, now());
+      values (target_organization_id, normalized_email, target_department_id, target_team_id, 1, now())
+      on conflict (
+        organization_id, email,
+        coalesce(department_id, '00000000-0000-0000-0000-000000000000'::uuid),
+        coalesce(team_id, '00000000-0000-0000-0000-000000000000'::uuid)
+      ) do nothing;
+    if not found then
+      raise exception 'an invitation can be resent at most once per hour';
+    end if;
   end if;
 end;
 $$;
@@ -756,17 +770,18 @@ declare
   member_team_id uuid;
   member_user_id uuid;
   member_current_role text;
+  member_expires_at timestamptz;
   new_membership_id uuid;
   new_expires_at timestamptz;
 begin
   if target_scope = 'organization' then
-    select organization_id, user_id, role::text into member_organization_id, member_user_id, member_current_role
+    select organization_id, user_id, role::text, expires_at into member_organization_id, member_user_id, member_current_role, member_expires_at
       from public.organization_memberships where id = target_membership_id for update;
   elsif target_scope = 'department' then
-    select organization_id, department_id, user_id, role::text into member_organization_id, member_department_id, member_user_id, member_current_role
+    select organization_id, department_id, user_id, role::text, expires_at into member_organization_id, member_department_id, member_user_id, member_current_role, member_expires_at
       from public.department_memberships where id = target_membership_id for update;
   elsif target_scope = 'team' then
-    select organization_id, department_id, team_id, user_id, role::text into member_organization_id, member_department_id, member_team_id, member_user_id, member_current_role
+    select organization_id, department_id, team_id, user_id, role::text, expires_at into member_organization_id, member_department_id, member_team_id, member_user_id, member_current_role, member_expires_at
       from public.team_memberships where id = target_membership_id for update;
   else
     raise exception 'invalid_scope';
@@ -792,18 +807,18 @@ begin
 
   if target_scope = 'organization' then
     delete from public.organization_memberships where id = target_membership_id;
-    insert into public.organization_memberships (organization_id, user_id, role)
-      values (member_organization_id, member_user_id, target_role::public.organization_role)
+    insert into public.organization_memberships (organization_id, user_id, role, expires_at)
+      values (member_organization_id, member_user_id, target_role::public.organization_role, member_expires_at)
       returning id, expires_at into new_membership_id, new_expires_at;
   elsif target_scope = 'department' then
     delete from public.department_memberships where id = target_membership_id;
-    insert into public.department_memberships (organization_id, department_id, user_id, role)
-      values (member_organization_id, member_department_id, member_user_id, target_role::public.department_role)
+    insert into public.department_memberships (organization_id, department_id, user_id, role, expires_at)
+      values (member_organization_id, member_department_id, member_user_id, target_role::public.department_role, member_expires_at)
       returning id, expires_at into new_membership_id, new_expires_at;
   else
     delete from public.team_memberships where id = target_membership_id;
-    insert into public.team_memberships (organization_id, department_id, team_id, user_id, role)
-      values (member_organization_id, member_department_id, member_team_id, member_user_id, target_role::public.team_role)
+    insert into public.team_memberships (organization_id, department_id, team_id, user_id, role, expires_at)
+      values (member_organization_id, member_department_id, member_team_id, member_user_id, target_role::public.team_role, member_expires_at)
       returning id, expires_at into new_membership_id, new_expires_at;
   end if;
 
