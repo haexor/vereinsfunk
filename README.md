@@ -29,8 +29,11 @@ Echte LLM-, Hatchet-, Remotion-Lambda- und Publishing-Zugänge sind bewusst noch
 ```bash
 pnpm install
 cp .env.example .env
+cp apps/web/.env.example apps/web/.env
 pnpm dev:web
 ```
+
+Es gibt zwei Env-Dateien, und zwar mit Absicht: Nuxt lädt `.env` aus seinem eigenen `rootDir`, also aus `apps/web/`. Dort stehen ausschließlich die `NUXT_PUBLIC_*`-Werte, die ohnehin im Client-Payload landen. Die Root-`.env` enthält die serverseitigen Geheimnisse für API und Worker — so hat der Web-Prozess den Service-Role-Key nie in seiner Umgebung. Fehlt `apps/web/.env`, antwortet die Oberfläche mit `500 supabaseUrl is required`.
 
 Die Oberfläche läuft unter `http://localhost:4200`. Anmeldung, Registrierung und Passwortverwaltung setzen eine laufende lokale Supabase-Instanz voraus. Geschützte Inhalte benötigen zusätzlich die API.
 
@@ -43,7 +46,9 @@ pnpm db:start
 pnpm db:reset
 ```
 
-Die von Supabase ausgegebenen lokalen Schlüssel in `.env` eintragen. Die lokale Umgebung ist laut offizieller Supabase-Dokumentation nur für Entwicklung vorgesehen und darf nicht öffentlich erreichbar sein.
+Die von Supabase ausgegebenen lokalen Schlüssel eintragen: Service-Role-Key und `SUPABASE_*` in die Root-`.env`, den Anon-Key zusätzlich als `NUXT_PUBLIC_SUPABASE_ANON_KEY` in `apps/web/.env`. Die lokale Umgebung ist laut offizieller Supabase-Dokumentation nur für Entwicklung vorgesehen und darf nicht öffentlich erreichbar sein.
+
+Wer die Plattform-Administration braucht, setzt `PLATFORM_ADMIN_DEFAULT_EMAIL` in der Root-`.env` auf die Adresse eines **bereits registrierten** Kontos — der Seed liefert `lena@example.local` und `jonas@example.local` mit dem Passwort `local-demo-password`. Die API bootstrappt daraus beim nächsten Start den Default-Admin. Der Vorgang ist einmalig: eine Rotation der Adresse ist danach eine bewusste Ops-Aktion mit direktem DB-Zugriff.
 
 Terminal 2:
 

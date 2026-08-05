@@ -1,0 +1,53 @@
+name: Images
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+# The host pulls `latest` (podman-auto-update.timer on haex.cloud, Watchtower elsewhere), so
+# only main moves that tag. Every build also gets an immutable sha-<sha> tag, which is what the
+# Ansible role pins to when a deploy needs to stay put.
+jobs:
+  images:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [api, worker, web]
+    steps:
+      - uses: actions/checkout@v4
+      # haex.cloud is aarch64. An amd64-only image lands there and dies with
+      # `exec format error` on first start -- that is exactly how the Kodus
+      # deploy failed on that host. QEMU makes the arm64 leg cross-buildable
+      # from the amd64 runner; it is the slow part of this workflow, so switch
+      # to a native arm64 runner in the matrix if the build time starts to hurt.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/vereinsfunk-${{ matrix.app }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+            type=ref,event=tag
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/${{ matrix.app }}/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
