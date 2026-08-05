@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(38);
+select plan(50);
 
 set local role postgres;
 
@@ -10,7 +10,7 @@ values
   ('00000000-0000-0000-0000-000000000000', '60000000-0000-4000-8000-000000000002', 'authenticated', 'authenticated', 'deptadminf@pgtap-structure.local', '', '{}', '{}', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '60000000-0000-4000-8000-000000000003', 'authenticated', 'authenticated', 'deptadminh@pgtap-structure.local', '', '{}', '{}', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '60000000-0000-4000-8000-000000000004', 'authenticated', 'authenticated', 'teammanager@pgtap-structure.local', '', '{}', '{}', now(), now()),
-  ('00000000-0000-4000-8000-000000000000', '60000000-0000-4000-8000-000000000005', 'authenticated', 'authenticated', 'invitee@pgtap-structure.local', '', '{}', '{}', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '60000000-0000-4000-8000-000000000005', 'authenticated', 'authenticated', 'invitee@pgtap-structure.local', '', '{}', '{}', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '60000000-0000-4000-8000-000000000006', 'authenticated', 'authenticated', 'teaminvitee@pgtap-structure.local', '', '{}', '{}', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '60000000-0000-4000-8000-000000000007', 'authenticated', 'authenticated', 'wrongemail@pgtap-structure.local', '', '{}', '{}', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '60000000-0000-4000-8000-000000000008', 'authenticated', 'authenticated', 'plainviewer@pgtap-structure.local', '', '{}', '{}', now(), now()),
@@ -84,9 +84,17 @@ select throws_ok(
   'P0001', null, 'the last department of an organization cannot be deleted'
 );
 
--- 6: removing the last organization_owner fails.
+-- 6: removing the last organization_owner fails. Uses a dedicated organization with exactly one
+-- owner: the main fixture organization deliberately holds two organization_owner rows (needed by
+-- tests 30-32 below), and a single DELETE statement targeting both at once would let each row's
+-- BEFORE DELETE trigger see the other as "not yet deleted" in the same statement snapshot,
+-- silently passing both through without ever exercising this protection (found in this
+-- package's review).
+insert into public.organizations (id, name, slug) values ('60000000-4000-4000-8000-000000000001', 'PGTAP Owner Solo Verein', 'pgtap-owner-solo-verein');
+insert into public.organization_memberships (organization_id, user_id, role) values
+  ('60000000-4000-4000-8000-000000000001', '60000000-0000-4000-8000-000000000001', 'organization_owner');
 select throws_ok(
-  $$delete from public.organization_memberships where organization_id = '60000000-1000-4000-8000-000000000001' and role = 'organization_owner'$$,
+  $$delete from public.organization_memberships where organization_id = '60000000-4000-4000-8000-000000000001' and user_id = '60000000-0000-4000-8000-000000000001'$$,
   'P0001', null, 'the last organization_owner cannot be removed'
 );
 
@@ -297,6 +305,106 @@ select ok(
   authz.can_remove_role('60000000-1000-4000-8000-000000000001', null, null, 'organization_admin'),
   'can_remove_role confirms organization_admin can remove a peer organization_admin (rank 90 <= 90)'
 );
+
+-- 33-37: create_invitation() -- permission check, happy path, blocked by a still-open invitation,
+-- replaces an EXPIRED open invitation instead of being blocked by it (Vertraege-Review fix, Plan
+-- 010 "Weitere Aktionen"), and enforces the address-level send counter even after a revoke (closes
+-- the bypass documented in Plan 010 "Risiken").
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '60000000-0000-4000-8000-000000000008', true);
+select throws_ok(
+  $$select public.create_invitation('60000000-1000-4000-8000-000000000001', null, null, 'newinvite@pgtap-structure.local', 'organization_viewer', repeat('1', 64))$$,
+  'P0001', 'insufficient_permission', 'create_invitation rejects a caller without member.invite'
+);
+
+select set_config('request.jwt.claim.sub', '60000000-0000-4000-8000-000000000001', true);
+select isnt(
+  (select id from public.create_invitation('60000000-1000-4000-8000-000000000001', null, null, 'freshinvite@pgtap-structure.local', 'organization_viewer', repeat('2', 64))),
+  null, 'create_invitation succeeds for an organization_owner and returns the new invitation'
+);
+select throws_ok(
+  $$select public.create_invitation('60000000-1000-4000-8000-000000000001', null, null, 'freshinvite@pgtap-structure.local', 'organization_viewer', repeat('3', 64))$$,
+  'P0001', 'invitation_already_open', 'create_invitation rejects a duplicate open invitation for the same address and scope'
+);
+set local role postgres;
+
+-- now() is frozen for the whole transaction (see the comment on tests 15-16 above) -- without
+-- backdating last_sent_at here, the address-level hourly gate from test 34's create above would
+-- itself block this call, masking the behaviour actually under test.
+update public.invitations set expires_at = now() - interval '1 day' where email = 'freshinvite@pgtap-structure.local';
+update public.invitation_send_counters set last_sent_at = now() - interval '2 hours' where email = 'freshinvite@pgtap-structure.local';
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '60000000-0000-4000-8000-000000000001', true);
+select isnt(
+  (select id from public.create_invitation('60000000-1000-4000-8000-000000000001', null, null, 'freshinvite@pgtap-structure.local', 'organization_viewer', repeat('4', 64))),
+  null, 'create_invitation replaces an expired open invitation instead of being blocked by it'
+);
+set local role postgres;
+select is(
+  (select count(*)::integer from public.invitations where email = 'freshinvite@pgtap-structure.local' and accepted_at is null and revoked_at is null),
+  1, 'the expired invitation row was replaced, not duplicated'
+);
+
+update public.invitation_send_counters set send_count = 10, last_sent_at = now() - interval '2 hours' where email = 'freshinvite@pgtap-structure.local';
+update public.invitations set revoked_at = now() where email = 'freshinvite@pgtap-structure.local';
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '60000000-0000-4000-8000-000000000001', true);
+select throws_ok(
+  $$select public.create_invitation('60000000-1000-4000-8000-000000000001', null, null, 'freshinvite@pgtap-structure.local', 'organization_viewer', repeat('5', 64))$$,
+  'P0001', 'resend_limit_reached', 'create_invitation enforces the address-level send limit even after a revoke (revoke+recreate bypass closed)'
+);
+set local role postgres;
+
+-- 38-39: resend_invitation() rotates the token/expiry atomically with the same address-level
+-- counter check, and rejects an immediate second resend.
+insert into public.invitations (id, organization_id, email, role, token_hash, invited_by, expires_at, last_sent_at)
+values ('60000000-3000-4000-8000-000000000002', '60000000-1000-4000-8000-000000000001', 'resendrpc@pgtap-structure.local', 'organization_viewer', repeat('6', 64), '60000000-0000-4000-8000-000000000001', now() + interval '14 days', now() - interval '2 hours');
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '60000000-0000-4000-8000-000000000001', true);
+select isnt(
+  (select token_hash from public.resend_invitation('60000000-3000-4000-8000-000000000002', repeat('7', 64))),
+  repeat('6', 64), 'resend_invitation rotates the token hash'
+);
+select throws_ok(
+  $$select public.resend_invitation('60000000-3000-4000-8000-000000000002', repeat('8', 64))$$,
+  'P0001', null, 'resend_invitation rejects an immediate second resend of the same address'
+);
+set local role postgres;
+
+-- 40-42: change_membership_role() -- atomic role change replaces the former delete()+insert()
+-- pair (Vertraege-Review fix: a failed insert used to lose the membership entirely, and an
+-- RLS-filtered delete used to leave two memberships behind), and enforces the same
+-- authz.can_remove_role escalation protection as the *_memberships_delete RLS policies.
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '60000000-0000-4000-8000-000000000001', true);
+select is(
+  (select (public.change_membership_role(
+    'department',
+    (select id from public.department_memberships where department_id = '60000000-1100-4000-8000-000000000001' and user_id = '60000000-0000-4000-8000-000000000002'),
+    'editor'
+  ))->>'role'),
+  'editor', 'change_membership_role changes the role for an authorized actor'
+);
+set local role postgres;
+select is(
+  (select count(*)::integer from public.department_memberships where department_id = '60000000-1100-4000-8000-000000000001' and user_id = '60000000-0000-4000-8000-000000000002'),
+  1, 'the department membership was replaced, not duplicated, by the role change'
+);
+select is(
+  (select role::text from public.department_memberships where department_id = '60000000-1100-4000-8000-000000000001' and user_id = '60000000-0000-4000-8000-000000000002'),
+  'editor', 'the new role was actually persisted'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '60000000-0000-4000-8000-000000000009', true);
+select throws_ok(
+  format(
+    $$select public.change_membership_role('organization', %L, 'organization_admin')$$,
+    (select id from public.organization_memberships where organization_id = '60000000-1000-4000-8000-000000000001' and user_id = '60000000-0000-4000-8000-000000000010')
+  ),
+  'P0001', 'insufficient_permission', 'change_membership_role rejects an organization_admin demoting an organization_owner'
+);
+set local role postgres;
 
 select * from finish();
 rollback;

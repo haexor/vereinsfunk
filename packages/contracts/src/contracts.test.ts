@@ -235,8 +235,35 @@ describe('structure and invitation contracts', () => {
         membershipId: org,
         scope: 'department',
         scopeId: department,
-        role: 'organization_owner',
+        role: 'editor',
         expiresAt: '2026-08-05T12:34:56.789+00:00',
+      }).success,
+    ).toBe(true)
+  })
+
+  // Regression: organization_owner is a valid MemberRoleEntrySchema role only for
+  // scope: 'organization' -- department_memberships/team_memberships cannot hold it at the
+  // database level at all, so a department-scoped entry with this role can never be real data.
+  it('rejects organization_owner for a department-scoped member role entry', () => {
+    expect(
+      MemberRoleEntrySchema.safeParse({
+        membershipId: org,
+        scope: 'department',
+        scopeId: department,
+        role: 'organization_owner',
+        expiresAt: null,
+      }).success,
+    ).toBe(false)
+  })
+
+  it('accepts organization_owner for an organization-scoped member role entry', () => {
+    expect(
+      MemberRoleEntrySchema.safeParse({
+        membershipId: org,
+        scope: 'organization',
+        scopeId: org,
+        role: 'organization_owner',
+        expiresAt: null,
       }).success,
     ).toBe(true)
   })

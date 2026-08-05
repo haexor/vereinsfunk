@@ -242,6 +242,17 @@ export const MemberRoleEntrySchema = z.object({
   scopeId: UuidSchema,
   role: RoleSchema,
   expiresAt: z.iso.datetime({ offset: true }).nullable(),
+}).superRefine((value, context) => {
+  // organization_owner ist nie durch AssignableRoleSchema/rolesForScopeLevel abgedeckt (nicht
+  // vergebbar), taucht in einer Mitgliederliste fuer scope: 'organization' aber lesend auf --
+  // hier deshalb separat erlaubt, sonst wuerde ein echter Vereinsinhaber die Antwort ungueltig
+  // machen. Jede andere Rolle/Scope-Kombination ist unmoeglich (department_role/team_role in der
+  // Datenbank kennen organization_owner gar nicht) und war vor diesem Check unbemerkt vom Schema
+  // akzeptiert worden (beim Review dieses Pakets gefunden).
+  const validRoles: readonly string[] = value.scope === 'organization' ? ['organization_owner', ...ORGANIZATION_SCOPED_ROLES] : rolesForScopeLevel(value.scope)
+  if (!validRoles.includes(value.role)) {
+    context.addIssue({ code: 'custom', message: `role must be one of ${validRoles.join(', ')} for scope "${value.scope}"` })
+  }
 })
 export const MemberSchema = z.object({
   userId: UuidSchema,

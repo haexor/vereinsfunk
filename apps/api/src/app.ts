@@ -165,6 +165,24 @@ function membershipTableFor(scope: ScopeLevel): 'organization_memberships' | 'de
   return scope === 'organization' ? 'organization_memberships' : scope === 'department' ? 'department_memberships' : 'team_memberships'
 }
 
+// supabase/config.toml caps a single response at max_rows=1000 -- a plain select() on a large
+// organization's membership table would silently truncate the roster. Pages through range()
+// until a page comes back short.
+async function fetchAllRows<T>(
+  fetchPage: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+): Promise<T[]> {
+  const pageSize = 1000
+  const rows: T[] = []
+  for (let from = 0; ; from += pageSize) {
+    const page = await fetchPage(from, from + pageSize - 1)
+    if (page.error) throw page.error
+    const data = page.data ?? []
+    rows.push(...data)
+    if (data.length < pageSize) break
+  }
+  return rows
+}
+
 // Loest scope+scopeId (aus CreateMembershipRequestSchema) in einen PermissionScope auf --
 // organizationId muss fuer department/team erst nachgeschlagen werden, damit requirePermission
 // und canAssignRole (beide brauchen den vollen Scope-Pfad) korrekt kaskadieren koennen.
@@ -567,11 +585,17 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (existing.error) throw existing.error
     if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     if (!(await requirePermission(request, reply, 'department.manage', { organizationId: existing.data.organization_id as string }))) return
-    const del = await client.from('departments').delete().eq('id', params.id)
+    const del = await client.from('departments').delete().eq('id', params.id).select('id')
     if (del.error) {
+      if (del.error.message.includes('the last department')) return reply.code(409).send({ error: 'last_department_cannot_be_deleted', correlationId: request.id })
       if (del.error.message.includes('cannot be deleted')) return reply.code(409).send({ error: 'department_delete_blocked', correlationId: request.id })
       throw del.error
     }
+    // PostgREST reports no error when RLS filters the target row out of a DELETE -- it simply
+    // matches zero rows (see supabase/tests' pgTAP regression for this). Without checking the
+    // returned row count, a caller without department.manage in this row's scope would see a
+    // misleading 204 for a department that still exists (found in this package's review).
+    if (del.data.length === 0) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
     const audit = await client.from('audit_events').insert({
       organization_id: existing.data.organization_id,
       actor_user_id: request.auth!.userId,
@@ -647,11 +671,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (existing.error) throw existing.error
     if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     if (!(await requirePermission(request, reply, 'team.manage', { organizationId: existing.data.organization_id as string, departmentId: existing.data.department_id as string }))) return
-    const del = await client.from('teams').delete().eq('id', params.id)
+    const del = await client.from('teams').delete().eq('id', params.id).select('id')
     if (del.error) {
       if (del.error.message.includes('cannot be deleted')) return reply.code(409).send({ error: 'team_delete_blocked', correlationId: request.id })
       throw del.error
     }
+    if (del.data.length === 0) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
     const audit = await client.from('audit_events').insert({
       organization_id: existing.data.organization_id,
       actor_user_id: request.auth!.userId,
@@ -669,16 +694,19 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const params = z.object({ id: UuidSchema }).parse(request.params)
     const client = supabaseClients.forUser(request.auth!.accessToken)
     const [orgRows, deptRows, teamRows] = await Promise.all([
-      client.from('organization_memberships').select('id, user_id, role, expires_at').eq('organization_id', params.id),
-      client.from('department_memberships').select('id, user_id, role, expires_at, department_id').eq('organization_id', params.id),
-      client.from('team_memberships').select('id, user_id, role, expires_at, team_id').eq('organization_id', params.id),
+      fetchAllRows<{ id: string; user_id: string; role: string; expires_at: string | null }>((from, to) =>
+        client.from('organization_memberships').select('id, user_id, role, expires_at').eq('organization_id', params.id).range(from, to),
+      ),
+      fetchAllRows<{ id: string; user_id: string; role: string; expires_at: string | null; department_id: string }>((from, to) =>
+        client.from('department_memberships').select('id, user_id, role, expires_at, department_id').eq('organization_id', params.id).range(from, to),
+      ),
+      fetchAllRows<{ id: string; user_id: string; role: string; expires_at: string | null; team_id: string }>((from, to) =>
+        client.from('team_memberships').select('id, user_id, role, expires_at, team_id').eq('organization_id', params.id).range(from, to),
+      ),
     ])
-    if (orgRows.error) throw orgRows.error
-    if (deptRows.error) throw deptRows.error
-    if (teamRows.error) throw teamRows.error
 
     const userIds = new Set<string>()
-    for (const row of [...orgRows.data, ...deptRows.data, ...teamRows.data]) userIds.add(row.user_id as string)
+    for (const row of [...orgRows, ...deptRows, ...teamRows]) userIds.add(row.user_id)
     const profiles = userIds.size > 0 ? await client.from('profiles').select('id, display_name').in('id', Array.from(userIds)) : { data: [], error: null }
     if (profiles.error) throw profiles.error
     const displayNameById = new Map(profiles.data.map((row) => [row.id as string, row.display_name as string]))
@@ -689,9 +717,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       if (existing) existing.roles.push(entry)
       else membersById.set(userId, { userId, displayName: displayNameById.get(userId) ?? 'Unbekannt', roles: [entry] })
     }
-    for (const row of orgRows.data) addRole(row.user_id as string, { membershipId: row.id, scope: 'organization', scopeId: params.id, role: row.role, expiresAt: row.expires_at })
-    for (const row of deptRows.data) addRole(row.user_id as string, { membershipId: row.id, scope: 'department', scopeId: row.department_id, role: row.role, expiresAt: row.expires_at })
-    for (const row of teamRows.data) addRole(row.user_id as string, { membershipId: row.id, scope: 'team', scopeId: row.team_id, role: row.role, expiresAt: row.expires_at })
+    for (const row of orgRows) addRole(row.user_id, { membershipId: row.id, scope: 'organization', scopeId: params.id, role: row.role, expiresAt: row.expires_at })
+    for (const row of deptRows) addRole(row.user_id, { membershipId: row.id, scope: 'department', scopeId: row.department_id, role: row.role, expiresAt: row.expires_at })
+    for (const row of teamRows) addRole(row.user_id, { membershipId: row.id, scope: 'team', scopeId: row.team_id, role: row.role, expiresAt: row.expires_at })
 
     return reply.code(200).send(Array.from(membersById.values()).map((member) => MemberSchema.parse(member)))
   })
@@ -763,32 +791,35 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     // Rechte-Review dieses Pakets gefunden).
     if (!canRemoveRole(roles, existing.data.role as Role)) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
     if (!canAssignRole(roles, input.role)) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
-    const del = await client.from(table).delete().eq('id', params.id)
-    if (del.error) {
-      if (del.error.message.includes('cannot be removed')) return reply.code(409).send({ error: 'cannot_remove_last_owner', correlationId: request.id })
-      throw del.error
+    // Delete+Insert als zwei getrennte PostgREST-Aufrufe war nicht atomar: ein fehlschlagender
+    // Insert liess die bereits geloeschte alte Mitgliedschaft verloren zurueck, ein durch RLS
+    // still gefiltertes Delete fuehrte zu zwei gleichzeitigen Mitgliedschaften (beim
+    // Vertraege-Review dieses Pakets gefunden). change_membership_role fuehrt beide Schritte in
+    // einer Transaktion aus und wiederholt dieselben Berechtigungs-/Rang-Checks server-seitig.
+    const rpc = await client.rpc('change_membership_role', {
+      target_scope: query.scope,
+      target_membership_id: params.id,
+      target_role: input.role,
+    })
+    if (rpc.error) {
+      if (rpc.error.message.includes('cannot be removed')) return reply.code(409).send({ error: 'cannot_remove_last_owner', correlationId: request.id })
+      if (rpc.error.message.includes('not_found')) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+      throw rpc.error
     }
-    const row: Record<string, unknown> = { organization_id: scope.organizationId, user_id: existing.data.user_id, role: input.role }
-    if (query.scope === 'department') row.department_id = scope.departmentId
-    if (query.scope === 'team') {
-      row.department_id = scope.departmentId
-      row.team_id = existing.data.team_id
-    }
-    const insert = await client.from(table).insert(row).select('id, user_id, role, expires_at').single()
-    if (insert.error) throw insert.error
+    const result = rpc.data as { membershipId: string; userId: string; role: string; expiresAt: string | null; fromRole: string }
     const scopeId = query.scope === 'organization' ? scope.organizationId : query.scope === 'department' ? scope.departmentId! : (existing.data.team_id as string)
     const audit = await client.from('audit_events').insert({
       organization_id: scope.organizationId,
       actor_user_id: request.auth!.userId,
       action: 'membership.role_changed',
       entity_type: table,
-      entity_id: params.id,
+      entity_id: result.membershipId,
       correlation_id: request.id,
-      metadata: { userId: existing.data.user_id, fromRole: existing.data.role, toRole: input.role, scope: query.scope, scopeId },
+      metadata: { userId: result.userId, fromRole: result.fromRole, toRole: result.role, scope: query.scope, scopeId },
     })
     if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
     return reply.code(200).send(
-      MemberRoleEntrySchema.parse({ membershipId: insert.data.id, scope: query.scope, scopeId, role: insert.data.role, expiresAt: insert.data.expires_at }),
+      MemberRoleEntrySchema.parse({ membershipId: result.membershipId, scope: query.scope, scopeId, role: result.role, expiresAt: result.expiresAt }),
     )
   })
 
@@ -811,16 +842,22 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     // member.remove jemanden entfernen, der maechtiger ist als er selbst.
     const roles = await roleProvider.rolesForScope(request.auth!, scope)
     if (!canRemoveRole(roles, existing.data.role as Role)) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
-    const profile = await client.from('organization_profiles').select('responsible_person_profile_id').eq('organization_id', scope.organizationId).maybeSingle()
-    if (profile.error) throw profile.error
-    if (profile.data?.responsible_person_profile_id === existing.data.user_id) {
-      return reply.code(409).send({ error: 'responsible_person_cannot_be_removed', correlationId: request.id })
+    // Die verantwortliche Person muss nur ihre Organisationsmitgliedschaft behalten (Paket 009) --
+    // dieser Guard darf ein Verlassen/Entfernen aus einem Team oder einer Abteilung nicht
+    // blockieren, nur den Austritt aus dem Verein selbst (beim Vertraege-Review gefunden).
+    if (query.scope === 'organization') {
+      const profile = await client.from('organization_profiles').select('responsible_person_profile_id').eq('organization_id', scope.organizationId).maybeSingle()
+      if (profile.error) throw profile.error
+      if (profile.data?.responsible_person_profile_id === existing.data.user_id) {
+        return reply.code(409).send({ error: 'responsible_person_cannot_be_removed', correlationId: request.id })
+      }
     }
-    const del = await client.from(table).delete().eq('id', params.id)
+    const del = await client.from(table).delete().eq('id', params.id).select('id')
     if (del.error) {
       if (del.error.message.includes('cannot be removed')) return reply.code(409).send({ error: 'cannot_remove_last_owner', correlationId: request.id })
       throw del.error
     }
+    if (del.data.length === 0) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
     const audit = await client.from('audit_events').insert({
       organization_id: scope.organizationId,
       actor_user_id: request.auth!.userId,
@@ -837,15 +874,25 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   app.get('/v1/organizations/:id/invitations', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
-    if (!(await requirePermission(request, reply, 'member.invite', { organizationId: params.id }))) return
+    // Optionale Scope-Parameter: die RLS-Policy invitations_select_admin erlaubt einem
+    // department_admin/team_manager bereits, offene Einladungen der eigenen Abteilung/des
+    // eigenen Teams zu sehen -- ohne diese Parameter verlangte diese Route immer
+    // organisationsweites member.invite, sodass ein Abteilungsverantwortlicher seine eigenen
+    // offenen Einladungen nie auflisten konnte (beim Review dieses Pakets gefunden). Ohne
+    // Parameter bleibt das Verhalten unveraendert organisationsweit.
+    const query = z.object({ departmentId: UuidSchema.optional(), teamId: UuidSchema.optional() }).parse(request.query)
+    const scope = toPermissionScope(params.id, query.departmentId, query.teamId)
+    if (!(await requirePermission(request, reply, 'member.invite', scope))) return
     const client = supabaseClients.forUser(request.auth!.accessToken)
-    const result = await client
+    let invitationsQuery = client
       .from('invitations')
       .select('id, organization_id, department_id, team_id, email, role, invited_by, expires_at, accepted_at, revoked_at, last_sent_at, send_count, created_at')
       .eq('organization_id', params.id)
       .is('accepted_at', null)
       .is('revoked_at', null)
-      .order('created_at', { ascending: false })
+    if (query.teamId) invitationsQuery = invitationsQuery.eq('team_id', query.teamId)
+    else if (query.departmentId) invitationsQuery = invitationsQuery.eq('department_id', query.departmentId)
+    const result = await invitationsQuery.order('created_at', { ascending: false })
     if (result.error) throw result.error
     return reply.code(200).send(result.data.map((row) => InvitationSchema.parse(mapInvitationRow(row))))
   })
@@ -870,45 +917,57 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (alreadyMember.data) return reply.code(409).send({ error: 'already_a_member', correlationId: request.id })
 
     const { rawToken, tokenHash } = generateInvitationToken()
-    const insert = await client
-      .from('invitations')
-      .insert({
-        organization_id: scope.organizationId,
-        department_id: scope.departmentId ?? null,
-        team_id: scope.teamId ?? null,
-        email: input.email,
-        role: input.role,
-        token_hash: tokenHash,
-        invited_by: request.auth!.userId,
-        expires_at: new Date(Date.now() + 14 * 24 * 60 * 60_000).toISOString(),
-      })
-      .select('id, organization_id, department_id, team_id, email, role, invited_by, expires_at, accepted_at, revoked_at, last_sent_at, send_count, created_at')
-      .single()
-    if (insert.error) {
-      if (insert.error.code === '23505') return reply.code(409).send({ error: 'invitation_already_open', correlationId: request.id })
-      if (insert.error.code === '23514' || insert.error.code === '23503') return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
-      throw insert.error
+    // create_invitation() ist eine security-definer-RPC statt eines direkten Inserts: sie
+    // invalidiert eine abgelaufene, aber noch offene Einladung fuer dieselbe Adresse/denselben
+    // Scope in derselben Transaktion (sonst blockiert invitations_open_unique eine neue
+    // Einladung bis zum manuellen Widerruf, beim Vertraege-Review gefunden) und prueft
+    // zusaetzlich das adressbezogene Rate-Limit ueber alle Einladungs-Zeilen hinweg (schliesst
+    // eine Umgehung per revoke()+erneutem create(), siehe Plan 010 "Risiken").
+    const rpc = await client.rpc('create_invitation', {
+      target_organization_id: scope.organizationId,
+      target_department_id: scope.departmentId ?? null,
+      target_team_id: scope.teamId ?? null,
+      target_email: input.email,
+      target_role: input.role,
+      target_token_hash: tokenHash,
+    })
+    if (rpc.error) {
+      if (rpc.error.message.includes('invitation_already_open')) return reply.code(409).send({ error: 'invitation_already_open', correlationId: request.id })
+      if (rpc.error.message.includes('resend_limit_reached')) return reply.code(429).send({ error: 'resend_limit_reached', correlationId: request.id })
+      if (rpc.error.message.includes('resent at most once per hour')) return reply.code(429).send({ error: 'resend_rate_limited', correlationId: request.id })
+      if (rpc.error.code === '23514' || rpc.error.code === '23503') return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+      throw rpc.error
     }
+    const insertData = rpc.data as Record<string, unknown>
 
     const organization = await client.from('organizations').select('name').eq('id', scope.organizationId).single()
     if (organization.error) throw organization.error
     const organizationName = organization.data.name as string
     const acceptUrl = `${environment.WEB_BASE_URL ?? 'http://localhost:4200'}/einladung?token=${rawToken}`
-    await emailSender.send(
-      buildInvitationEmail({ to: input.email, organizationName, scopeName: resolved.scopeName || organizationName, acceptUrl }),
-    )
+    let emailDelivered = true
+    try {
+      await emailSender.send(
+        buildInvitationEmail({ to: input.email, organizationName, scopeName: resolved.scopeName || organizationName, acceptUrl }),
+      )
+    } catch (error) {
+      // Die Einladung besteht bereits in der Datenbank -- ein SMTP-Fehler soll den Request nicht
+      // mit 500 scheitern lassen, sondern nur den Versandstatus sichtbar machen (beim
+      // Stabilitaets-Review dieses Pakets gefunden: bisher lief der Versand ungefangen).
+      emailDelivered = false
+      request.log.error({ err: error, correlationId: request.id }, 'invitation email delivery failed')
+    }
     const audit = await client.from('audit_events').insert({
       organization_id: scope.organizationId,
       actor_user_id: request.auth!.userId,
       action: 'invitation.created',
       entity_type: 'invitations',
-      entity_id: insert.data.id,
+      entity_id: insertData.id,
       correlation_id: request.id,
-      metadata: { email: input.email, role: input.role, departmentId: scope.departmentId ?? null, teamId: scope.teamId ?? null },
+      metadata: { email: input.email, role: input.role, departmentId: scope.departmentId ?? null, teamId: scope.teamId ?? null, emailDelivered },
     })
     if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
 
-    return reply.code(201).send(InvitationSchema.parse(mapInvitationRow(insert.data)))
+    return reply.code(201).send({ ...InvitationSchema.parse(mapInvitationRow(insertData)), emailDelivered })
   })
 
   app.post('/v1/invitations/:id/resend', async (request, reply) => {
@@ -930,27 +989,28 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (!(await requirePermission(request, reply, 'member.invite', scope))) return
     if ((existing.data.send_count as number) >= 10) return reply.code(429).send({ error: 'resend_limit_reached', correlationId: request.id })
     const { rawToken, tokenHash } = generateInvitationToken()
-    const update = await client
-      .from('invitations')
-      .update({
-        token_hash: tokenHash,
-        expires_at: new Date(Date.now() + 14 * 24 * 60 * 60_000).toISOString(),
-        last_sent_at: new Date().toISOString(),
-        send_count: (existing.data.send_count as number) + 1,
-      })
-      .eq('id', params.id)
-      .select('id, organization_id, department_id, team_id, email, role, invited_by, expires_at, accepted_at, revoked_at, last_sent_at, send_count, created_at')
-      .single()
-    if (update.error) {
-      if (update.error.message.includes('resent at most once per hour')) return reply.code(429).send({ error: 'resend_rate_limited', correlationId: request.id })
-      throw update.error
+    // resend_invitation() ist eine security-definer-RPC: sie prueft und erhoeht dasselbe
+    // adressbezogene Rate-Limit wie create_invitation() atomar mit dem Update selbst (siehe dort).
+    const rpc = await client.rpc('resend_invitation', { target_invitation_id: params.id, target_token_hash: tokenHash })
+    if (rpc.error) {
+      if (rpc.error.message.includes('resend_limit_reached')) return reply.code(429).send({ error: 'resend_limit_reached', correlationId: request.id })
+      if (rpc.error.message.includes('resent at most once per hour')) return reply.code(429).send({ error: 'resend_rate_limited', correlationId: request.id })
+      if (rpc.error.message.includes('not_found')) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+      throw rpc.error
     }
+    const updateData = rpc.data as Record<string, unknown>
     const organization = await client.from('organizations').select('name').eq('id', scope.organizationId).single()
     if (organization.error) throw organization.error
     const organizationName = organization.data.name as string
     const scopeName = await resolveScopeName(client, scope, organizationName)
     const acceptUrl = `${environment.WEB_BASE_URL ?? 'http://localhost:4200'}/einladung?token=${rawToken}`
-    await emailSender.send(buildInvitationEmail({ to: existing.data.email as string, organizationName, scopeName, acceptUrl }))
+    let emailDelivered = true
+    try {
+      await emailSender.send(buildInvitationEmail({ to: existing.data.email as string, organizationName, scopeName, acceptUrl }))
+    } catch (error) {
+      emailDelivered = false
+      request.log.error({ err: error, correlationId: request.id }, 'invitation email delivery failed')
+    }
     const audit = await client.from('audit_events').insert({
       organization_id: scope.organizationId,
       actor_user_id: request.auth!.userId,
@@ -958,10 +1018,10 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       entity_type: 'invitations',
       entity_id: params.id,
       correlation_id: request.id,
-      metadata: { email: existing.data.email },
+      metadata: { email: existing.data.email, emailDelivered },
     })
     if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
-    return reply.code(200).send(InvitationSchema.parse(mapInvitationRow(update.data)))
+    return reply.code(200).send({ ...InvitationSchema.parse(mapInvitationRow(updateData)), emailDelivered })
   })
 
   app.post('/v1/invitations/:id/revoke', async (request, reply) => {

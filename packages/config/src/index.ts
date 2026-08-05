@@ -39,8 +39,18 @@ const ApiEnvironmentBaseSchema = z.object({
 
 // In production the API cannot start without a real database and token-verification secret.
 export const ApiEnvironmentSchema = ApiEnvironmentBaseSchema.superRefine((environment, context) => {
+  // SmtpEmailSender's constructor already throws on a missing field, but that surfaces as a
+  // generic startup crash instead of a clear, field-scoped config validation error -- checked
+  // here regardless of NODE_ENV, since EMAIL_PROVIDER=smtp can be used outside production too.
+  if (environment.EMAIL_PROVIDER === 'smtp') {
+    const requiredSmtpFields = ['SMTP_HOST', 'SMTP_USER', 'SMTP_PASSWORD', 'SMTP_FROM'] as const
+    for (const key of requiredSmtpFields) {
+      if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required when EMAIL_PROVIDER=smtp` })
+    }
+  }
+
   if (environment.NODE_ENV !== 'production') return
-  const required = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_JWT_SECRET'] as const
+  const required = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_JWT_SECRET', 'WEB_BASE_URL'] as const
   for (const key of required) {
     if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required in production` })
   }

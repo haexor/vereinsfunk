@@ -35,6 +35,11 @@ export class SmtpEmailSender implements EmailSender {
       host: environment.SMTP_HOST,
       port: environment.SMTP_PORT,
       auth: { user: environment.SMTP_USER, pass: environment.SMTP_PASSWORD },
+      // Ohne Timeout kann ein haengender SMTP-Relay den Request-Thread unbegrenzt blockieren
+      // (beim Stabilitaets-Review dieses Pakets gefunden).
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 10_000,
     })
   }
 

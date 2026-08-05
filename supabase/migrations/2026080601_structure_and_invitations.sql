@@ -87,6 +87,10 @@ alter table public.invitations add constraint invitations_role_matches_scope che
   (team_id is null and department_id is not null and role = any(array['department_admin', 'editor', 'approver', 'contributor', 'viewer'])) or
   (department_id is null and role = any(array['organization_admin', 'social_manager', 'billing_admin', 'organization_viewer']))
 );
+-- Erzwingt serverseitig, was die Contracts-Schemas clientseitig bereits normalisieren --
+-- accept_invitation()'s E-Mail-Abgleich darf sich nicht auf diese Normalisierung verlassen,
+-- ohne dass die Spalte sie selbst garantiert.
+alter table public.invitations add constraint invitations_email_lowercase check (email = lower(email));
 
 -- Verhindert doppelte offene Einladungen fuer dieselbe Adresse im selben Scope. Wichtiger
 -- Nebeneffekt: "erneut senden" ist dadurch ein Update der bestehenden Zeile, kein Insert.
@@ -428,6 +432,11 @@ begin
       exit;
     exception when unique_violation then
       suffix := suffix + 1;
+      -- Schuetzt gegen eine Endlosschleife, falls eine andere Unique-Bedingung auf
+      -- public.departments verletzt wird, die der Slug-Suffix nicht beheben kann.
+      if suffix > 100 then
+        raise exception 'could not generate a unique department slug';
+      end if;
       candidate_slug := base_slug || '-' || suffix;
     end;
   end loop;
@@ -504,7 +513,7 @@ begin
     where token_hash = encode(extensions.digest(raw_token, 'sha256'), 'hex')
     for update;
 
-  if invitation is null
+  if not found
     or invitation.accepted_at is not null
     or invitation.revoked_at is not null
     or invitation.expires_at < now()
@@ -513,7 +522,7 @@ begin
   end if;
 
   select email into actor_email from auth.users where id = actor_profile_id;
-  if actor_email is null or lower(actor_email) <> invitation.email then
+  if actor_email is null or lower(actor_email) <> lower(invitation.email) then
     raise exception 'invitation_email_mismatch';
   end if;
 
@@ -551,5 +560,263 @@ end;
 $$;
 revoke all on function public.accept_invitation(text) from public;
 grant execute on function public.accept_invitation(text) to authenticated;
+
+-- 6. Adressbezogenes Rate-Limit fuer Einladungen, unabhaengig vom Lebenszyklus einzelner
+-- invitations-Zeilen (beim Geheimnisse-Review dieses Pakets als Umgehungsmoeglichkeit erkannt,
+-- siehe Plan 010 "Risiken"): send_count/last_sent_at hingen bisher an der jeweiligen Zeile, ein
+-- revoke() gefolgt von einem neuen create() setzte beide Zaehler zurueck. Diese Tabelle zaehlt
+-- stattdessen pro (organization_id, normalisierte E-Mail, Scope) ueber die gesamte Zeit, auch
+-- ueber widerrufene/abgelaufene Einladungen hinweg.
+create table public.invitation_send_counters (
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  email text not null,
+  department_id uuid,
+  team_id uuid,
+  send_count integer not null default 0,
+  last_sent_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create unique index invitation_send_counters_key on public.invitation_send_counters (
+  organization_id, email,
+  coalesce(department_id, '00000000-0000-0000-0000-000000000000'::uuid),
+  coalesce(team_id, '00000000-0000-0000-0000-000000000000'::uuid)
+);
+alter table public.invitation_send_counters enable row level security;
+-- Ausschliesslich ueber die security-definer-Funktionen unten erreichbar, analog zu
+-- invitation_send_counters selbst: kein Grant fuer authenticated/anon.
+revoke all on table public.invitation_send_counters from authenticated, anon;
+
+create or replace function authz.register_invitation_send(
+  target_organization_id uuid, target_department_id uuid, target_team_id uuid, target_email text
+) returns void
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  normalized_email text := lower(trim(target_email));
+  counter record;
+begin
+  select * into counter from public.invitation_send_counters
+    where organization_id = target_organization_id
+      and email = normalized_email
+      and department_id is not distinct from target_department_id
+      and team_id is not distinct from target_team_id
+    for update;
+
+  if found then
+    if counter.last_sent_at is not null and counter.last_sent_at > now() - interval '1 hour' then
+      raise exception 'an invitation can be resent at most once per hour';
+    end if;
+    if counter.send_count >= 10 then
+      raise exception 'resend_limit_reached';
+    end if;
+    update public.invitation_send_counters
+      set send_count = send_count + 1, last_sent_at = now()
+      where organization_id = target_organization_id
+        and email = normalized_email
+        and department_id is not distinct from target_department_id
+        and team_id is not distinct from target_team_id;
+  else
+    insert into public.invitation_send_counters (organization_id, email, department_id, team_id, send_count, last_sent_at)
+      values (target_organization_id, normalized_email, target_department_id, target_team_id, 1, now());
+  end if;
+end;
+$$;
+revoke all on function authz.register_invitation_send(uuid, uuid, uuid, text) from public;
+grant execute on function authz.register_invitation_send(uuid, uuid, uuid, text) to authenticated, service_role;
+
+-- 7. Einladung anlegen als security-definer-RPC statt eines direkten Inserts ueber RLS: eine
+-- abgelaufene, aber noch offene Einladung erfuellt weiterhin invitations_open_unique und
+-- blockiert damit eine neue Einladung an dieselbe Adresse bis zum manuellen Widerruf (beim
+-- Vertraege-Review dieses Pakets gefunden, siehe Plan 010 "Weitere Aktionen"). Diese Funktion
+-- sperrt eine passende offene Zeile per for update, verwirft sie falls abgelaufen und legt die
+-- neue Einladung in derselben Transaktion an -- inklusive Rate-Limit-Pruefung. Fuehrt dieselben
+-- Berechtigungs-/Eskalationschecks wie invitations_insert selbst durch, da RLS hier umgangen wird.
+create or replace function public.create_invitation(
+  target_organization_id uuid,
+  target_department_id uuid,
+  target_team_id uuid,
+  target_email text,
+  target_role text,
+  target_token_hash text
+) returns public.invitations
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  normalized_email text := lower(trim(target_email));
+  existing record;
+  result public.invitations;
+begin
+  if target_team_id is not null then
+    if not authz.has_team_permission(target_team_id, 'member.invite') then raise exception 'insufficient_permission'; end if;
+  elsif target_department_id is not null then
+    if not authz.has_department_permission(target_department_id, 'member.invite') then raise exception 'insufficient_permission'; end if;
+  else
+    if not authz.has_organization_permission(target_organization_id, 'member.invite') then raise exception 'insufficient_permission'; end if;
+  end if;
+  if not authz.can_assign_role(target_organization_id, target_department_id, target_team_id, target_role) then
+    raise exception 'insufficient_permission';
+  end if;
+
+  select * into existing from public.invitations
+    where organization_id = target_organization_id
+      and email = normalized_email
+      and department_id is not distinct from target_department_id
+      and team_id is not distinct from target_team_id
+      and accepted_at is null
+      and revoked_at is null
+    for update;
+
+  if found then
+    if existing.expires_at >= now() then
+      raise exception 'invitation_already_open';
+    end if;
+    delete from public.invitations where id = existing.id;
+  end if;
+
+  perform authz.register_invitation_send(target_organization_id, target_department_id, target_team_id, normalized_email);
+
+  begin
+    insert into public.invitations (organization_id, department_id, team_id, email, role, token_hash, invited_by, expires_at)
+      values (target_organization_id, target_department_id, target_team_id, normalized_email, target_role, target_token_hash, auth.uid(), now() + interval '14 days')
+      returning * into result;
+  exception when unique_violation then
+    raise exception 'invitation_already_open';
+  end;
+
+  return result;
+end;
+$$;
+revoke all on function public.create_invitation(uuid, uuid, uuid, text, text, text) from public;
+grant execute on function public.create_invitation(uuid, uuid, uuid, text, text, text) to authenticated;
+
+-- Erneutes Senden als security-definer-RPC aus demselben Grund wie create_invitation: das
+-- adressbezogene Rate-Limit muss in derselben Transaktion wie das Update selbst geprueft und
+-- erhoeht werden. Der bestehende Zeilen-Trigger enforce_invitation_resend_rate_limit bleibt
+-- als zusaetzliche, unabhaengige Absicherung bestehen (Trigger feuern unabhaengig davon, ueber
+-- welchen Weg geschrieben wird).
+create or replace function public.resend_invitation(target_invitation_id uuid, target_token_hash text) returns public.invitations
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  invitation record;
+  result public.invitations;
+begin
+  select * into invitation from public.invitations where id = target_invitation_id for update;
+  if not found or invitation.accepted_at is not null or invitation.revoked_at is not null then
+    raise exception 'not_found';
+  end if;
+
+  if invitation.team_id is not null then
+    if not authz.has_team_permission(invitation.team_id, 'member.invite') then raise exception 'insufficient_permission'; end if;
+  elsif invitation.department_id is not null then
+    if not authz.has_department_permission(invitation.department_id, 'member.invite') then raise exception 'insufficient_permission'; end if;
+  else
+    if not authz.has_organization_permission(invitation.organization_id, 'member.invite') then raise exception 'insufficient_permission'; end if;
+  end if;
+
+  perform authz.register_invitation_send(invitation.organization_id, invitation.department_id, invitation.team_id, invitation.email);
+
+  update public.invitations
+    set token_hash = target_token_hash,
+        expires_at = now() + interval '14 days',
+        last_sent_at = now(),
+        send_count = least(send_count + 1, 10)
+    where id = target_invitation_id
+    returning * into result;
+
+  return result;
+end;
+$$;
+revoke all on function public.resend_invitation(uuid, text) from public;
+grant execute on function public.resend_invitation(uuid, text) to authenticated;
+
+-- 8. Rollenwechsel als security-definer-RPC statt Loeschen+Anlegen ueber zwei getrennte
+-- PostgREST-Aufrufe (beim Vertraege-Review dieses Pakets als nicht-atomar erkannt): schlaegt der
+-- Insert fehl, war die alte Mitgliedschaft bereits geloescht (Rollenverlust ohne Rollback);
+-- filtert RLS das Delete still (0 Zeilen getroffen), laeuft der Insert trotzdem und die Person
+-- haelt danach zwei Mitgliedschaften. Beide Schritte laufen hier in derselben Transaktion.
+-- Wiederholt denselben has_*_permission- und can_remove_role/can_assign_role-Check wie die
+-- *_memberships_insert/_delete-RLS-Policies, da diese Funktion RLS umgeht.
+create or replace function public.change_membership_role(
+  target_scope text, target_membership_id uuid, target_role text
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  member_organization_id uuid;
+  member_department_id uuid;
+  member_team_id uuid;
+  member_user_id uuid;
+  member_current_role text;
+  new_membership_id uuid;
+  new_expires_at timestamptz;
+begin
+  if target_scope = 'organization' then
+    select organization_id, user_id, role::text into member_organization_id, member_user_id, member_current_role
+      from public.organization_memberships where id = target_membership_id for update;
+  elsif target_scope = 'department' then
+    select organization_id, department_id, user_id, role::text into member_organization_id, member_department_id, member_user_id, member_current_role
+      from public.department_memberships where id = target_membership_id for update;
+  elsif target_scope = 'team' then
+    select organization_id, department_id, team_id, user_id, role::text into member_organization_id, member_department_id, member_team_id, member_user_id, member_current_role
+      from public.team_memberships where id = target_membership_id for update;
+  else
+    raise exception 'invalid_scope';
+  end if;
+
+  if not found then
+    raise exception 'not_found';
+  end if;
+
+  if target_scope = 'organization' then
+    if not authz.has_organization_permission(member_organization_id, 'member.invite') then raise exception 'insufficient_permission'; end if;
+  elsif target_scope = 'department' then
+    if not authz.has_department_permission(member_department_id, 'member.invite') then raise exception 'insufficient_permission'; end if;
+  else
+    if not authz.has_team_permission(member_team_id, 'member.invite') then raise exception 'insufficient_permission'; end if;
+  end if;
+  if not authz.can_remove_role(member_organization_id, member_department_id, member_team_id, member_current_role) then
+    raise exception 'insufficient_permission';
+  end if;
+  if not authz.can_assign_role(member_organization_id, member_department_id, member_team_id, target_role) then
+    raise exception 'insufficient_permission';
+  end if;
+
+  if target_scope = 'organization' then
+    delete from public.organization_memberships where id = target_membership_id;
+    insert into public.organization_memberships (organization_id, user_id, role)
+      values (member_organization_id, member_user_id, target_role::public.organization_role)
+      returning id, expires_at into new_membership_id, new_expires_at;
+  elsif target_scope = 'department' then
+    delete from public.department_memberships where id = target_membership_id;
+    insert into public.department_memberships (organization_id, department_id, user_id, role)
+      values (member_organization_id, member_department_id, member_user_id, target_role::public.department_role)
+      returning id, expires_at into new_membership_id, new_expires_at;
+  else
+    delete from public.team_memberships where id = target_membership_id;
+    insert into public.team_memberships (organization_id, department_id, team_id, user_id, role)
+      values (member_organization_id, member_department_id, member_team_id, member_user_id, target_role::public.team_role)
+      returning id, expires_at into new_membership_id, new_expires_at;
+  end if;
+
+  return jsonb_build_object(
+    'membershipId', new_membership_id,
+    'userId', member_user_id,
+    'role', target_role,
+    'expiresAt', new_expires_at,
+    'fromRole', member_current_role
+  );
+end;
+$$;
+revoke all on function public.change_membership_role(text, uuid, text) from public;
+grant execute on function public.change_membership_role(text, uuid, text) to authenticated;
 
 commit;

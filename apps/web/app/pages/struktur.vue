@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { Archive, ArchiveRestore, Plus, Trash2 } from '@lucide/vue'
+import { z } from 'zod'
 
-interface TeamRow { id: string; name: string; department_id: string; archived_at: string | null }
-interface DepartmentRow { id: string; name: string; slug: string; archived_at: string | null }
+const DepartmentRowSchema = z.object({ id: z.string(), name: z.string(), slug: z.string(), archived_at: z.string().nullable() })
+const TeamRowSchema = z.object({ id: z.string(), name: z.string(), department_id: z.string(), archived_at: z.string().nullable() })
+type DepartmentRow = z.infer<typeof DepartmentRowSchema>
+type TeamRow = z.infer<typeof TeamRowSchema>
 
 const config = useRuntimeConfig()
 const scope = await useScope()
@@ -23,6 +26,8 @@ const teamsByDepartment = computed(() => {
   return map
 })
 
+const renameDraft = reactive<Record<string, string>>({})
+
 async function load() {
   if (!organizationId.value) { loading.value = false; return }
   loading.value = true
@@ -37,8 +42,17 @@ async function load() {
     loading.value = false
     return
   }
-  departments.value = departmentsResult.data
-  teams.value = teamsResult.data
+  const parsedDepartments = DepartmentRowSchema.array().safeParse(departmentsResult.data)
+  const parsedTeams = TeamRowSchema.array().safeParse(teamsResult.data)
+  if (!parsedDepartments.success || !parsedTeams.success) {
+    errorMessage.value = 'Die Vereinsstruktur konnte nicht geladen werden.'
+    loading.value = false
+    return
+  }
+  departments.value = parsedDepartments.data
+  teams.value = parsedTeams.data
+  for (const department of departments.value) renameDraft[department.id] ??= department.name
+  for (const team of teams.value) renameDraft[team.id] ??= team.name
   loading.value = false
 }
 await load()
@@ -47,7 +61,6 @@ const newDepartmentName = ref('')
 const creatingDepartment = ref(false)
 const newTeamNameByDepartment = reactive<Record<string, string>>({})
 const creatingTeamFor = ref<string | null>(null)
-const renameDraft = reactive<Record<string, string>>({})
 const actionError = ref('')
 
 async function createDepartment() {
@@ -117,9 +130,11 @@ async function deleteDepartment(department: DepartmentRow) {
     await load()
   } catch (error) {
     const code = (error as { data?: { error?: string } })?.data?.error
-    actionError.value = code === 'department_delete_blocked'
-      ? 'Diese Abteilung enthält bereits Beiträge oder ist die letzte im Verein und kann nicht gelöscht werden. Bitte archivieren.'
-      : 'Die Abteilung konnte nicht gelöscht werden.'
+    actionError.value = code === 'last_department_cannot_be_deleted'
+      ? 'Dies ist die letzte Abteilung im Verein und kann nicht gelöscht werden.'
+      : code === 'department_delete_blocked'
+        ? 'Diese Abteilung enthält bereits Beiträge und kann nicht gelöscht werden. Bitte archivieren.'
+        : 'Die Abteilung konnte nicht gelöscht werden.'
   }
 }
 
@@ -160,6 +175,16 @@ async function deleteTeam(team: TeamRow) {
 }
 
 const canManageOrganization = computed(() => useCan('department.manage', { organizationId: organizationId.value ?? '' }))
+// Die Umbenennen-/Archivieren-/Loeschen-Steuerelemente waren fuer alle Mitglieder sichtbar,
+// auch fuer einen viewer -- ein Klick erzeugte einen API-Aufruf, den der Server korrekt ablehnt,
+// aber die Oberflaeche wirkte dadurch irrefuehrend (beim Review dieses Pakets gefunden). Die
+// Durchsetzung selbst lag bereits korrekt in API und RLS.
+function canManageDepartment(departmentId: string) {
+  return useCan('department.manage', { organizationId: organizationId.value ?? '', departmentId })
+}
+function canManageTeam(departmentId: string) {
+  return useCan('team.manage', { organizationId: organizationId.value ?? '', departmentId })
+}
 </script>
 
 <template>
@@ -189,12 +214,13 @@ const canManageOrganization = computed(() => useCan('department.manage', { organ
         <div class="mb-3 flex items-center justify-between gap-3">
           <input
             v-model="renameDraft[department.id]"
+            :aria-label="`Abteilung ${department.name} umbenennen`"
             :placeholder="department.name"
             class="focus-ring w-full max-w-[280px] rounded-lg border border-transparent bg-transparent px-1 font-display text-lg font-bold hover:border-[#dfe0d9] focus:border-[#dfe0d9]"
             @keyup.enter="renameDepartment(department)"
             @blur="renameDepartment(department)"
           />
-          <div class="flex shrink-0 gap-2">
+          <div v-if="canManageDepartment(department.id)" class="flex shrink-0 gap-2">
             <span v-if="department.archived_at" class="self-center text-[10px] font-semibold text-[#9aa096]">Archiviert</span>
             <button type="button" class="focus-ring rounded-lg border border-[#dfe0d9] p-2" :title="department.archived_at ? 'Wiederherstellen' : 'Archivieren'" @click="toggleDepartmentArchived(department)">
               <ArchiveRestore v-if="department.archived_at" :size="14" />
@@ -210,12 +236,13 @@ const canManageOrganization = computed(() => useCan('department.manage', { organ
           <div v-for="team in teamsByDepartment.get(department.id) ?? []" :key="team.id" class="flex items-center justify-between gap-3" :class="{ 'opacity-60': team.archived_at }">
             <input
               v-model="renameDraft[team.id]"
+              :aria-label="`Team ${team.name} umbenennen`"
               :placeholder="team.name"
               class="focus-ring w-full max-w-[240px] rounded-lg border border-transparent bg-transparent px-1 text-sm hover:border-[#dfe0d9] focus:border-[#dfe0d9]"
               @keyup.enter="renameTeam(team)"
               @blur="renameTeam(team)"
             />
-            <div class="flex shrink-0 gap-2">
+            <div v-if="canManageTeam(department.id)" class="flex shrink-0 gap-2">
               <span v-if="team.archived_at" class="self-center text-[10px] font-semibold text-[#9aa096]">Archiviert</span>
               <button type="button" class="focus-ring rounded-lg border border-[#dfe0d9] p-1.5" :title="team.archived_at ? 'Wiederherstellen' : 'Archivieren'" @click="toggleTeamArchived(team)">
                 <ArchiveRestore v-if="team.archived_at" :size="12" />
@@ -226,7 +253,7 @@ const canManageOrganization = computed(() => useCan('department.manage', { organ
               </button>
             </div>
           </div>
-          <form v-if="!department.archived_at" class="flex gap-2 pt-1" @submit.prevent="createTeam(department.id)">
+          <form v-if="!department.archived_at && canManageTeam(department.id)" class="flex gap-2 pt-1" @submit.prevent="createTeam(department.id)">
             <input v-model="newTeamNameByDepartment[department.id]" placeholder="Neues Team" class="focus-ring flex-1 rounded-lg border border-[#dfe0d9] p-2 text-xs" />
             <button type="submit" :disabled="creatingTeamFor === department.id" class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-2 text-[10px] font-semibold disabled:opacity-60">
               + Team

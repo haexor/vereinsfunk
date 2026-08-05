@@ -8,6 +8,8 @@ const TEST_JWT_SECRET = 'test-only-secret-at-least-32-characters-long'
 const USER_ID = '10000000-0000-4000-8000-000000000001'
 const ORGANIZATION_ID = '10000000-1000-4000-8000-000000000001'
 const DEPARTMENT_ID = '10000000-1100-4000-8000-000000000001'
+const INVITATION_ID = '10000000-2000-4000-8000-000000000001'
+const MEMBERSHIP_ID = '10000000-3000-4000-8000-000000000001'
 
 async function signAccessToken(userId: string): Promise<string> {
   return new SignJWT({ aud: 'authenticated', role: 'authenticated' })
@@ -482,9 +484,11 @@ describe('structure, memberships and invitations', () => {
     const clients: SupabaseClientFactory = {
       forUser: () =>
         ({
-          rpc: async () => ({ data: false, error: null }),
+          // email_has_membership() checks whether the invitee is already a member (false here);
+          // create_invitation() is the atomic RPC that replaces the former direct insert (see
+          // apps/api/src/app.ts).
+          rpc: async (fn: string) => (fn === 'email_has_membership' ? { data: false, error: null } : { data: invitationRow, error: null }),
           from: (table: string) => {
-            if (table === 'invitations') return { insert: () => ({ select: () => ({ single: async () => ({ data: invitationRow, error: null }) }) }) }
             if (table === 'organizations') return { select: () => ({ eq: () => ({ single: async () => ({ data: { name: 'SV Test' }, error: null }) }) }) }
             if (table === 'audit_events') return { insert: async () => ({ error: null }) }
             throw new Error(`unexpected table in test fake: ${table}`)
@@ -540,11 +544,52 @@ describe('structure, memberships and invitations', () => {
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'POST',
-      url: `/v1/invitations/${DEPARTMENT_ID}/resend`,
+      url: `/v1/invitations/${INVITATION_ID}/resend`,
       headers: { authorization: `Bearer ${token}` },
     })
     expect(response.statusCode).toBe(429)
     expect(response.json()).toMatchObject({ error: 'resend_limit_reached' })
+  })
+
+  it('resends an invitation via the resend_invitation RPC', async () => {
+    const existingRow = { organization_id: ORGANIZATION_ID, department_id: null, team_id: null, email: 'invitee@example.com', send_count: 2, accepted_at: null, revoked_at: null }
+    const resentRow = {
+      id: INVITATION_ID,
+      organization_id: ORGANIZATION_ID,
+      department_id: null,
+      team_id: null,
+      email: 'invitee@example.com',
+      role: 'organization_viewer',
+      invited_by: USER_ID,
+      expires_at: '2026-08-20T00:00:00+00:00',
+      accepted_at: null,
+      revoked_at: null,
+      last_sent_at: '2026-08-06T00:00:00+00:00',
+      send_count: 3,
+      created_at: '2026-08-05T00:00:00+00:00',
+    }
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          rpc: async () => ({ data: resentRow, error: null }),
+          from: (table: string) => {
+            if (table === 'invitations') return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: existingRow, error: null }) }) }) }
+            if (table === 'organizations') return { select: () => ({ eq: () => ({ single: async () => ({ data: { name: 'SV Test' }, error: null }) }) }) }
+            if (table === 'audit_events') return { insert: async () => ({ error: null }) }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/invitations/${INVITATION_ID}/resend`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ id: INVITATION_ID, sendCount: 3 })
   })
 
   it('maps an email/account mismatch on accept to 403', async () => {
@@ -604,7 +649,7 @@ describe('structure, memberships and invitations', () => {
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'DELETE',
-      url: `/v1/memberships/${membershipRow.user_id}?scope=organization`,
+      url: `/v1/memberships/${MEMBERSHIP_ID}?scope=organization`,
       headers: { authorization: `Bearer ${token}` },
     })
     expect(response.statusCode).toBe(409)
@@ -617,7 +662,7 @@ describe('structure, memberships and invitations', () => {
         ({
           from: () => ({
             select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { organization_id: ORGANIZATION_ID }, error: null }) }) }),
-            delete: () => ({ eq: async () => ({ error: { message: 'a department with existing posts cannot be deleted, archive it instead' } }) }),
+            delete: () => ({ eq: () => ({ select: async () => ({ data: null, error: { message: 'a department with existing posts cannot be deleted, archive it instead' } }) }) }),
           }),
         }) as unknown as SupabaseClient,
       forService: () => ({}) as unknown as SupabaseClient,
@@ -631,5 +676,87 @@ describe('structure, memberships and invitations', () => {
     })
     expect(response.statusCode).toBe(409)
     expect(response.json()).toMatchObject({ error: 'department_delete_blocked' })
+  })
+
+  // Regression: PostgREST reports no error when an RLS policy filters the DELETE's target row
+  // out -- del.error is null and exactly zero rows come back, which used to be indistinguishable
+  // from "deleted successfully" (found in this package's review).
+  it('maps a silently RLS-filtered department delete to 403 instead of 204', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: () => ({
+            select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { organization_id: ORGANIZATION_ID }, error: null }) }) }),
+            delete: () => ({ eq: () => ({ select: async () => ({ data: [], error: null }) }) }),
+          }),
+        }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'DELETE',
+      url: `/v1/departments/${DEPARTMENT_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toMatchObject({ error: 'forbidden' })
+  })
+
+  it('changes a membership role atomically via the change_membership_role RPC', async () => {
+    const existingRow = { organization_id: ORGANIZATION_ID, department_id: null, team_id: null, user_id: '10000000-0000-4000-8000-000000000099', role: 'organization_viewer' }
+    const rpcResult = { membershipId: MEMBERSHIP_ID, userId: existingRow.user_id, role: 'social_manager', expiresAt: null, fromRole: 'organization_viewer' }
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'organization_memberships') return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: existingRow, error: null }) }) }) }
+            if (table === 'audit_events') return { insert: async () => ({ error: null }) }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+          rpc: async () => ({ data: rpcResult, error: null }),
+        }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PATCH',
+      url: `/v1/memberships/${MEMBERSHIP_ID}?scope=organization`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { role: 'social_manager' },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ membershipId: MEMBERSHIP_ID, role: 'social_manager', scope: 'organization' })
+  })
+
+  it('maps the change_membership_role RPC last-owner rejection to 409', async () => {
+    // An organization_owner demoting another organization_owner passes the client-side rank
+    // check (rank 100 <= 100, canRemoveRole has no organization_owner exception, see
+    // packages/authorization) -- only prevent_last_owner_removal's count of remaining owners can
+    // reject this, so the actor must itself be an organization_owner for the RPC to ever run.
+    const ownerRoleProvider: RoleProvider = { async rolesForScope() { return ['organization_owner'] } }
+    const existingRow = { organization_id: ORGANIZATION_ID, department_id: null, team_id: null, user_id: '10000000-0000-4000-8000-000000000099', role: 'organization_owner' }
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'organization_memberships') return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: existingRow, error: null }) }) }) }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+          rpc: async () => ({ data: null, error: { message: 'the last organization_owner cannot be removed' } }),
+        }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: ownerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PATCH',
+      url: `/v1/memberships/${MEMBERSHIP_ID}?scope=organization`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { role: 'organization_admin' },
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'cannot_remove_last_owner' })
   })
 })

@@ -3,15 +3,12 @@ import { canAssignRole, type Role } from '@vereinsfunk/authorization'
 import {
   InvitationSchema,
   MemberSchema,
+  rolesForScopeLevel,
   type AssignableRole,
   type Invitation,
   type Member,
   type ScopeLevel,
 } from '@vereinsfunk/contracts'
-
-const ORG_ROLES: readonly AssignableRole[] = ['organization_admin', 'social_manager', 'billing_admin', 'organization_viewer']
-const DEPARTMENT_ROLES: readonly AssignableRole[] = ['department_admin', 'editor', 'approver', 'contributor', 'viewer']
-const TEAM_ROLES: readonly AssignableRole[] = ['team_manager', 'contributor', 'viewer']
 
 const config = useRuntimeConfig()
 const session = await useSession()
@@ -22,6 +19,7 @@ const organization = computed(() => session.value?.scopes.find((item) => item.or
 
 const loading = ref(true)
 const errorMessage = ref('')
+const actionError = ref('')
 const members = ref<Member[]>([])
 const invitations = ref<Invitation[]>([])
 
@@ -59,9 +57,18 @@ function actorRolesFor(scopeLevel: ScopeLevel, scopeId: string): Role[] {
   return roles
 }
 
+// Fuer useCan() im Template: departmentId muss bei einem Team-Scope die ID der ELTERN-Abteilung
+// sein, nicht die Team-ID selbst -- sonst pruefte useCan faelschlich gegen ein Team, das als
+// Abteilung behandelt wird (beim Review dieses Pakets gefunden).
+function departmentIdFor(scopeLevel: ScopeLevel, scopeId: string): string | undefined {
+  if (scopeLevel === 'organization') return undefined
+  if (scopeLevel === 'department') return scopeId
+  return organization.value?.departments.find((item) => item.teams.some((team) => team.id === scopeId))?.id
+}
+
 const availableRolesForInvite = computed(() => {
   if (!inviteScopeId.value && inviteScope.value !== 'organization') return []
-  const candidates = inviteScope.value === 'organization' ? ORG_ROLES : inviteScope.value === 'department' ? DEPARTMENT_ROLES : TEAM_ROLES
+  const candidates = rolesForScopeLevel(inviteScope.value)
   const actorRoles = actorRolesFor(inviteScope.value, inviteScope.value === 'organization' ? (organizationId.value ?? '') : inviteScopeId.value)
   return candidates.filter((role) => canAssignRole(actorRoles, role))
 })
@@ -77,7 +84,10 @@ async function load() {
       $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/invitations`, { headers }),
     ])
     members.value = MemberSchema.array().parse(membersResponse)
-    invitations.value = InvitationSchema.array().parse(invitationsResponse)
+    // Der Invitations-Endpunkt filtert nur accepted_at/revoked_at -- eine abgelaufene, aber noch
+    // offene Einladung wuerde sonst weiter unter "Offene Einladungen" erscheinen, obwohl
+    // "Erneut senden"/"Widerrufen" nichts mehr an ihr aendern koennen (beim Review gefunden).
+    invitations.value = InvitationSchema.array().parse(invitationsResponse).filter((invitation) => new Date(invitation.expiresAt) > new Date())
   } catch {
     errorMessage.value = 'Mitglieder und Einladungen konnten nicht geladen werden.'
   } finally {
@@ -85,6 +95,15 @@ async function load() {
   }
 }
 await load()
+
+// Ein Wechsel des aktiven Vereins in der Sidebar aktualisierte diese Seite bisher nicht -- load()
+// lief nur einmal beim Setup (beim Review dieses Pakets gefunden).
+watch(organizationId, () => {
+  inviteScopeId.value = ''
+  inviteRole.value = ''
+  inviteSuccess.value = false
+  void load()
+})
 
 async function sendInvitation() {
   if (!organizationId.value || !inviteRole.value) return
@@ -115,7 +134,11 @@ async function sendInvitation() {
         ? 'Diese Person ist in diesem Bereich bereits Mitglied.'
         : code === 'invitation_already_open'
           ? 'Für diese Adresse liegt in diesem Bereich schon eine offene Einladung vor.'
-          : 'Die Einladung konnte nicht versendet werden.'
+          : code === 'resend_limit_reached'
+            ? 'An diese Adresse wurden bereits zu viele Einladungen versendet.'
+            : code === 'resend_rate_limited'
+              ? 'Bitte warte etwas, bevor du an diese Adresse erneut eine Einladung sendest.'
+              : 'Die Einladung konnte nicht versendet werden.'
   } finally {
     inviteSubmitting.value = false
   }
@@ -123,33 +146,36 @@ async function sendInvitation() {
 
 async function removeMembership(membershipId: string, scopeLevel: ScopeLevel) {
   if (!confirm('Mitgliedschaft wirklich entfernen?')) return
+  actionError.value = ''
   try {
     const headers = await useAuthHeader()
     await $fetch(`${config.public.apiBase}/v1/memberships/${membershipId}`, { method: 'DELETE', headers, query: { scope: scopeLevel } })
     await load()
   } catch {
-    errorMessage.value = 'Die Mitgliedschaft konnte nicht entfernt werden.'
+    actionError.value = 'Die Mitgliedschaft konnte nicht entfernt werden.'
   }
 }
 
 async function resendInvitation(id: string) {
+  actionError.value = ''
   try {
     const headers = await useAuthHeader()
     await $fetch(`${config.public.apiBase}/v1/invitations/${id}/resend`, { method: 'POST', headers })
     await load()
   } catch {
-    errorMessage.value = 'Die Einladung konnte nicht erneut versendet werden.'
+    actionError.value = 'Die Einladung konnte nicht erneut versendet werden.'
   }
 }
 
 async function revokeInvitation(id: string) {
   if (!confirm('Einladung wirklich widerrufen?')) return
+  actionError.value = ''
   try {
     const headers = await useAuthHeader()
     await $fetch(`${config.public.apiBase}/v1/invitations/${id}/revoke`, { method: 'POST', headers })
     await load()
   } catch {
-    errorMessage.value = 'Die Einladung konnte nicht widerrufen werden.'
+    actionError.value = 'Die Einladung konnte nicht widerrufen werden.'
   }
 }
 
@@ -167,6 +193,8 @@ const canInviteHere = computed(() => useCan('member.invite', { organizationId: o
     <div v-if="loading" class="p-8 text-center text-xs text-[#7b827d]">Wird geladen …</div>
     <p v-else-if="errorMessage" class="text-sm text-amber-800">{{ errorMessage }}</p>
     <template v-else>
+      <p v-if="actionError" class="mb-4 text-sm text-amber-800">{{ actionError }}</p>
+
       <section v-if="canInviteHere" class="card mb-6 p-6">
         <h2 class="mb-4 font-display text-base font-bold">Person einladen</h2>
         <form class="grid gap-3 sm:grid-cols-2" @submit.prevent="sendInvitation">
@@ -223,8 +251,9 @@ const canInviteHere = computed(() => useCan('member.invite', { organizationId: o
               >
                 {{ roleLabels[entry.role] ?? entry.role }} · {{ scopeName(entry.scope, entry.scopeId) }}
                 <button
-                  v-if="useCan('member.remove', { organizationId: organizationId ?? '', departmentId: entry.scope !== 'organization' ? entry.scopeId : undefined, teamId: entry.scope === 'team' ? entry.scopeId : undefined })"
+                  v-if="useCan('member.remove', { organizationId: organizationId ?? '', departmentId: departmentIdFor(entry.scope, entry.scopeId), teamId: entry.scope === 'team' ? entry.scopeId : undefined })"
                   type="button"
+                  :aria-label="`${roleLabels[entry.role] ?? entry.role} in ${scopeName(entry.scope, entry.scopeId)} entfernen`"
                   class="focus-ring text-[#8a9186] hover:text-amber-800"
                   @click="removeMembership(entry.membershipId, entry.scope)"
                 >
