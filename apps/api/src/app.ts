@@ -707,9 +707,17 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
     const userIds = new Set<string>()
     for (const row of [...orgRows, ...deptRows, ...teamRows]) userIds.add(row.user_id)
-    const profiles = userIds.size > 0 ? await client.from('profiles').select('id, display_name').in('id', Array.from(userIds)) : { data: [], error: null }
-    if (profiles.error) throw profiles.error
-    const displayNameById = new Map(profiles.data.map((row) => [row.id as string, row.display_name as string]))
+    // Ein einzelnes .in() mit allen Nutzer-IDs waere doppelt begrenzt: max_rows=1000 kappt die
+    // Antwort (derselbe Grund wie bei fetchAllRows oben), und die IDs stehen als Query-String in
+    // der URL, die schon bei einigen hundert UUIDs die Header-Grenze des Gateways reisst. Ohne
+    // Bloecke fielen betroffene Mitglieder still auf "Unbekannt" zurueck.
+    const allUserIds = Array.from(userIds)
+    const displayNameById = new Map<string, string>()
+    for (let offset = 0; offset < allUserIds.length; offset += 100) {
+      const profiles = await client.from('profiles').select('id, display_name').in('id', allUserIds.slice(offset, offset + 100))
+      if (profiles.error) throw profiles.error
+      for (const row of profiles.data) displayNameById.set(row.id as string, row.display_name as string)
+    }
 
     const membersById = new Map<string, { userId: string; displayName: string; roles: unknown[] }>()
     const addRole = (userId: string, entry: unknown) => {

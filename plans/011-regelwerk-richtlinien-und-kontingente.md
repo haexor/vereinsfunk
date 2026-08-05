@@ -168,6 +168,8 @@ create unique index policy_settings_team_unique on public.policy_settings (organ
 
 Alle Regelfelder sind nullable: `null` heißt „von oben erben“. Nur die additiven Array-Felder haben `default '{}'`.
 
+**Nachtrag aus dem Review von Paket 010** (Entscheidung des Nutzers, hier zu bauen, nicht in 010): dieses Paket ergänzt ein Feld `invite_allowed boolean` (`null` = erben) in derselben Tabelle. Heute steckt `member.invite` fest in den Rollen `department_admin` und `team_manager` — der Verein bestimmt dadurch nur indirekt über die Rollenvergabe, wer einladen darf, und kann es einer Abteilung nicht rollenunabhängig entziehen. Verbindlich ist dieselbe Richtung wie oben: eine untere Ebene darf das Einladungsrecht weiter einschränken, nie über die obere hinaus erweitern. Betrifft `authz.has_department_permission`/`has_team_permission` (Permission `member.invite`), die drei `*_memberships_insert`-Policies, `public.create_invitation()` sowie die Ebenenauswahl in `pages/mitglieder.vue`.
+
 Prüferreferenzen:
 
 ```sql
@@ -387,6 +389,25 @@ Der Prüfer erhält den **Einwilligungs-Status** als abgeleiteten Wert über den
 `authz.can_approve_post_version` (`202608020001:351-365`) wird durch `authz.can_decide_stage(stage_id)` ersetzt. Diese prüft: Stufe ist `open`, Person steht im `reviewer_snapshot`, Person hat nicht schon auf dieser Stufe entschieden, Person ist nicht der Autor bei `self_approval_allowed = false`, Person hat nicht auf einer inneren Stufe entschieden bei `allow_same_reviewer_across_stages = false`.
 
 Die alte Funktion bleibt als Wrapper erhalten, bis alle Aufrufer umgestellt sind, und wird dann entfernt.
+
+## Vereinsweite Sichtbarkeit veröffentlichter Beiträge
+
+**Entscheidung des Nutzers am 2026-08-05** (aufgekommen beim Review von Paket 010, dort bewusst nicht umgesetzt): veröffentlichte Beiträge sollen **vereinsweit** sichtbar sein, nicht nur innerhalb ihrer Abteilung. Begründung des Nutzers: was auf Social Media steht, ist ohnehin öffentlich, und die Leute im Verein erfahren so mehr über die anderen Abteilungen und Teams.
+
+Die Sichtbarkeit richtet sich nach dem **Lebenszyklus**, nicht nach einer Angabe des Erstellers. Der Ersteller ist der falsche Ort für einen Sichtbarkeitsschalter: ob ein Beitrag in einem vertraulichen Kanal landet, entscheidet die Kanalwahl — und die trifft der Freigebende bzw. Veröffentlichende später, nicht der Einreichende. Vertraulichkeit ist eine Eigenschaft des Kanals, nicht des Beitrags (siehe Paket 012).
+
+| Was | Sichtbarkeit |
+|---|---|
+| Beiträge im Status veröffentlicht/geplant | vereinsweit: `posts_select` (`202608020001:417`) auf `authz.is_organization_member` für diese Zustände |
+| Entwürfe, Einreichungen, Freigabeverkehr | unverändert Abteilung plus Freigabekette (siehe „Prüferzugang“ oben) |
+| `media_assets`, `face_regions`, `consent_records` | unverändert abteilungsweit — Medienrecht und Minderjährigenschutz, nicht Geheimhaltung |
+| Ausnahme „diese Abteilung nicht vereinsweit“ | neues `policy_settings`-Feld `posts_visible_org_wide boolean` (`null` = erben), dieselbe Richtung wie oben: eine untere Ebene darf nur verschärfen |
+
+Das löst zugleich einen **bestehenden Widerspruch** im Datenmodell: `post_versions_select` (`202608020001:418`) prüft schon heute `authz.is_organization_member`, während `posts_select` (`:417`), `submissions_select` (`:410`) und `media_assets_select` (`202608030001:114`) `is_department_member` verlangen. Wer eine Post-ID kennt, liest heute also den Fassungstext, kann den Beitrag selbst aber nicht auflisten. Beim Umsetzen beide Policies gemeinsam anfassen, damit die Ebene nicht wieder auseinanderläuft.
+
+Falls doch ein Ersteller-Schalter gewünscht wird: als Opt-out **beim Veröffentlichen**, wenn der Kanal bekannt ist — nicht beim Einreichen.
+
+Folge für Paket 010: die automatische Abteilungs-`viewer`-Zeile, die `accept_invitation()` bei einer Team-Einladung anlegt (damit die Person überhaupt Inhalte sieht), wird damit weitgehend überflüssig statt zu breit. Sie bleibt vorerst bestehen und wird hier gemeinsam mit den Policies bewertet, nicht vorher einzeln geändert.
 
 ## Umsetzung
 

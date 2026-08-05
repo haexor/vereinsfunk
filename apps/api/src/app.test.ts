@@ -8,6 +8,7 @@ const TEST_JWT_SECRET = 'test-only-secret-at-least-32-characters-long'
 const USER_ID = '10000000-0000-4000-8000-000000000001'
 const ORGANIZATION_ID = '10000000-1000-4000-8000-000000000001'
 const DEPARTMENT_ID = '10000000-1100-4000-8000-000000000001'
+const TEAM_ID = '10000000-1200-4000-8000-000000000001'
 const INVITATION_ID = '10000000-2000-4000-8000-000000000001'
 const MEMBERSHIP_ID = '10000000-3000-4000-8000-000000000001'
 
@@ -764,5 +765,123 @@ describe('structure, memberships and invitations', () => {
     })
     expect(response.statusCode).toBe(409)
     expect(response.json()).toMatchObject({ error: 'cannot_remove_last_owner' })
+  })
+
+  // Regression: pages/mitglieder.vue sendete fuer eine Team-Einladung nur teamId, nie die
+  // Eltern-Abteilung -- CreateInvitationRequestSchema verlangt beides, jede Team-Einladung aus
+  // der Oberflaeche schlug deshalb mit 400 fehl (im Nachfolge-Review dieses PRs gefunden).
+  it('rejects a team-scoped invitation that omits the parent department', async () => {
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/invitations',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { organizationId: ORGANIZATION_ID, teamId: TEAM_ID, email: 'person@example.com', role: 'team_manager' },
+    })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ error: 'invalid_request' })
+  })
+
+  it('accepts a team-scoped invitation that carries the parent department and names the team in the email', async () => {
+    const invitationRow = {
+      id: INVITATION_ID,
+      organization_id: ORGANIZATION_ID,
+      department_id: DEPARTMENT_ID,
+      team_id: TEAM_ID,
+      email: 'invitee@example.com',
+      role: 'team_manager',
+      invited_by: USER_ID,
+      expires_at: '2026-08-20T00:00:00+00:00',
+      accepted_at: null,
+      revoked_at: null,
+      last_sent_at: '2026-08-06T00:00:00+00:00',
+      send_count: 1,
+      created_at: '2026-08-06T00:00:00+00:00',
+    }
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          rpc: async (fn: string) => (fn === 'email_has_membership' ? { data: false, error: null } : { data: invitationRow, error: null }),
+          from: (table: string) => {
+            if (table === 'teams') {
+              return {
+                select: () => ({
+                  eq: () => ({
+                    maybeSingle: async () => ({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, name: 'Erste Mannschaft' }, error: null }),
+                  }),
+                }),
+              }
+            }
+            if (table === 'organizations') return { select: () => ({ eq: () => ({ single: async () => ({ data: { name: 'SV Test' }, error: null }) }) }) }
+            if (table === 'audit_events') return { insert: async () => ({ error: null }) }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const capturedMessages: { to: string; subject: string; text: string }[] = []
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+      emailSender: { send: async (message) => { capturedMessages.push(message) } },
+    })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/invitations',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { organizationId: ORGANIZATION_ID, departmentId: DEPARTMENT_ID, teamId: TEAM_ID, email: 'invitee@example.com', role: 'team_manager' },
+    })
+    expect(response.statusCode).toBe(201)
+    expect(response.json()).toMatchObject({ id: INVITATION_ID, teamId: TEAM_ID, emailDelivered: true })
+    // resolveInvitationScope() liefert den echten Team-Namen, nicht den Vereinsnamen.
+    expect(capturedMessages[0]!.text).toContain('Erste Mannschaft')
+  })
+
+  // Regression: die drei Mitgliedschaftstabellen werden ueber fetchAllRows() geblaettert, der
+  // Profil-Nachschlag lief aber als ein einzelnes .in() ueber alle Nutzer-IDs -- betroffene
+  // Mitglieder fielen jenseits der Kappungsgrenze still auf "Unbekannt" zurueck.
+  it('resolves display names for a roster larger than one profiles lookup chunk', async () => {
+    const memberCount = 250
+    const organizationRows = Array.from({ length: memberCount }, (_, index) => ({
+      id: `20000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+      user_id: `10000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+      role: 'organization_viewer',
+      expires_at: null,
+    }))
+    const requestedChunkSizes: number[] = []
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'profiles') {
+              return {
+                select: () => ({
+                  in: async (_column: string, values: string[]) => {
+                    requestedChunkSizes.push(values.length)
+                    return { data: values.map((id) => ({ id, display_name: `Person ${id.slice(-4)}` })), error: null }
+                  },
+                }),
+              }
+            }
+            const rows = table === 'organization_memberships' ? organizationRows : []
+            return { select: () => ({ eq: () => ({ range: async (from: number) => ({ data: from === 0 ? rows : [], error: null }) }) }) }
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${ORGANIZATION_ID}/members`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(200)
+    const body = response.json() as { displayName: string }[]
+    expect(body).toHaveLength(memberCount)
+    expect(body.filter((member) => member.displayName === 'Unbekannt')).toHaveLength(0)
+    expect(requestedChunkSizes).toEqual([100, 100, 50])
   })
 })

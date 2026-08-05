@@ -30,6 +30,7 @@ const inviteRole = ref<AssignableRole | ''>('')
 const inviteSubmitting = ref(false)
 const inviteError = ref('')
 const inviteSuccess = ref(false)
+const inviteEmailDelivered = ref(true)
 
 function scopeName(scopeLevel: ScopeLevel, scopeId: string): string {
   if (!organization.value) return ''
@@ -57,14 +58,54 @@ function actorRolesFor(scopeLevel: ScopeLevel, scopeId: string): Role[] {
   return roles
 }
 
-// Fuer useCan() im Template: departmentId muss bei einem Team-Scope die ID der ELTERN-Abteilung
-// sein, nicht die Team-ID selbst -- sonst pruefte useCan faelschlich gegen ein Team, das als
-// Abteilung behandelt wird (beim Review dieses Pakets gefunden).
+// Fuer useCan() im Template und fuer die Einladungs-Payload: departmentId muss bei einem
+// Team-Scope die ID der ELTERN-Abteilung sein, nicht die Team-ID selbst -- sonst pruefte useCan
+// faelschlich gegen ein Team, das als Abteilung behandelt wird (beim Review dieses Pakets
+// gefunden).
 function departmentIdFor(scopeLevel: ScopeLevel, scopeId: string): string | undefined {
   if (scopeLevel === 'organization') return undefined
   if (scopeLevel === 'department') return scopeId
   return organization.value?.departments.find((item) => item.teams.some((team) => team.id === scopeId))?.id
 }
+
+// member.invite gilt je Ebene: ein department_admin oder team_manager hat es in seinem eigenen
+// Bereich, aber nicht vereinsweit (siehe authz.has_department_permission/has_team_permission).
+// Die Auswahl zeigt deshalb nur die Ebenen und Bereiche, in denen der Handelnde wirklich
+// einladen darf -- eine reine Vereins-Pruefung blendete das Formular fuer beide komplett aus,
+// obwohl API und RLS ihre Einladungen erlauben (im Nachfolge-Review dieses PRs gefunden).
+const invitableDepartments = computed(() =>
+  (organization.value?.departments ?? []).filter((department) =>
+    useCan('member.invite', { organizationId: organizationId.value ?? '', departmentId: department.id }),
+  ),
+)
+const invitableTeams = computed(() =>
+  (organization.value?.departments ?? []).flatMap((department) =>
+    department.teams
+      .filter((team) => useCan('member.invite', { organizationId: organizationId.value ?? '', departmentId: department.id, teamId: team.id }))
+      .map((team) => ({ id: team.id, label: `${department.name} · ${team.name}` })),
+  ),
+)
+const availableInviteScopes = computed(() => {
+  const scopes: { value: ScopeLevel; label: string }[] = []
+  if (useCan('member.invite', { organizationId: organizationId.value ?? '' })) scopes.push({ value: 'organization', label: 'Ganzer Verein' })
+  if (invitableDepartments.value.length > 0) scopes.push({ value: 'department', label: 'Abteilung' })
+  if (invitableTeams.value.length > 0) scopes.push({ value: 'team', label: 'Team' })
+  return scopes
+})
+
+// v-model braucht einen Wert, der auch als <option> existiert -- sonst zeigt die Ebenen-Auswahl
+// fuer jemanden ohne vereinsweites member.invite leer an.
+watch(
+  availableInviteScopes,
+  (scopes) => {
+    if (scopes.length > 0 && !scopes.some((item) => item.value === inviteScope.value)) {
+      inviteScope.value = scopes[0]!.value
+      inviteScopeId.value = ''
+      inviteRole.value = ''
+    }
+  },
+  { immediate: true },
+)
 
 const availableRolesForInvite = computed(() => {
   if (!inviteScopeId.value && inviteScope.value !== 'organization') return []
@@ -112,17 +153,24 @@ async function sendInvitation() {
   inviteSuccess.value = false
   try {
     const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/invitations`, {
+    // Eine Team-Einladung muss die ELTERN-Abteilung mitschicken: CreateInvitationRequestSchema
+    // verlangt departmentId zusammen mit teamId, und resolveInvitationScope() in apps/api prueft
+    // beide gegeneinander. Ohne die Abteilung schlug jede Team-Einladung mit 400 fehl.
+    const response = await $fetch<{ emailDelivered?: boolean }>(`${config.public.apiBase}/v1/invitations`, {
       method: 'POST',
       headers,
       body: {
         organizationId: organizationId.value,
-        departmentId: inviteScope.value === 'department' ? inviteScopeId.value : undefined,
+        departmentId: departmentIdFor(inviteScope.value, inviteScopeId.value),
         teamId: inviteScope.value === 'team' ? inviteScopeId.value : undefined,
         email: inviteEmail.value,
         role: inviteRole.value,
       },
     })
+    // Die Einladung existiert auch dann, wenn der SMTP-Versand fehlschlug (die API antwortet
+    // dafuer mit 201 und emailDelivered: false) -- ein pauschales "Einladung versendet" waere
+    // dort schlicht falsch.
+    inviteEmailDelivered.value = response?.emailDelivered !== false
     inviteSuccess.value = true
     inviteEmail.value = ''
     inviteRole.value = ''
@@ -160,7 +208,12 @@ async function resendInvitation(id: string) {
   actionError.value = ''
   try {
     const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/invitations/${id}/resend`, { method: 'POST', headers })
+    const response = await $fetch<{ emailDelivered?: boolean }>(`${config.public.apiBase}/v1/invitations/${id}/resend`, { method: 'POST', headers })
+    // Siehe sendInvitation(): ein fehlgeschlagener SMTP-Versand ist kein Fehlerstatus, muss aber
+    // sichtbar sein -- sonst wartet die eingeladene Person auf eine Mail, die nie ankam.
+    if (response?.emailDelivered === false) {
+      actionError.value = 'Die Einladung wurde erneuert, aber die E-Mail konnte nicht versendet werden.'
+    }
     await load()
   } catch {
     actionError.value = 'Die Einladung konnte nicht erneut versendet werden.'
@@ -179,7 +232,7 @@ async function revokeInvitation(id: string) {
   }
 }
 
-const canInviteHere = computed(() => useCan('member.invite', { organizationId: organizationId.value ?? '' }))
+const canInviteHere = computed(() => availableInviteScopes.value.length > 0)
 </script>
 
 <template>
@@ -203,21 +256,17 @@ const canInviteHere = computed(() => useCan('member.invite', { organizationId: o
           </label>
           <label><span class="mb-1 block text-xs font-semibold">Ebene</span>
             <select v-model="inviteScope" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm" @change="inviteScopeId = ''; inviteRole = ''">
-              <option value="organization">Ganzer Verein</option>
-              <option value="department">Abteilung</option>
-              <option value="team">Team</option>
+              <option v-for="scopeOption in availableInviteScopes" :key="scopeOption.value" :value="scopeOption.value">{{ scopeOption.label }}</option>
             </select>
           </label>
           <label v-if="inviteScope === 'department'"><span class="mb-1 block text-xs font-semibold">Abteilung</span>
             <select v-model="inviteScopeId" required class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm">
-              <option v-for="dept in organization?.departments ?? []" :key="dept.id" :value="dept.id">{{ dept.name }}</option>
+              <option v-for="dept in invitableDepartments" :key="dept.id" :value="dept.id">{{ dept.name }}</option>
             </select>
           </label>
           <label v-if="inviteScope === 'team'"><span class="mb-1 block text-xs font-semibold">Team</span>
             <select v-model="inviteScopeId" required class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm">
-              <template v-for="dept in organization?.departments ?? []" :key="dept.id">
-                <option v-for="team in dept.teams" :key="team.id" :value="team.id">{{ dept.name }} · {{ team.name }}</option>
-              </template>
+              <option v-for="team in invitableTeams" :key="team.id" :value="team.id">{{ team.label }}</option>
             </select>
           </label>
           <label><span class="mb-1 block text-xs font-semibold">Rolle</span>
@@ -228,7 +277,9 @@ const canInviteHere = computed(() => useCan('member.invite', { organizationId: o
           </label>
           <div class="sm:col-span-2">
             <p v-if="inviteError" class="mb-2 text-xs text-amber-800">{{ inviteError }}</p>
-            <p v-if="inviteSuccess" class="mb-2 text-xs text-emerald-700">Einladung versendet.</p>
+            <p v-if="inviteSuccess" class="mb-2 text-xs" :class="inviteEmailDelivered ? 'text-emerald-700' : 'text-amber-800'">
+              {{ inviteEmailDelivered ? 'Einladung versendet.' : 'Einladung angelegt, die E-Mail konnte aber nicht versendet werden. Bitte unten erneut senden.' }}
+            </p>
             <button type="submit" :disabled="inviteSubmitting" class="focus-ring rounded-xl bg-forest px-4 py-2.5 text-xs font-bold text-white disabled:opacity-60">
               {{ inviteSubmitting ? 'Wird gesendet …' : 'Einladen' }}
             </button>

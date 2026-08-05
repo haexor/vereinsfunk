@@ -63,6 +63,24 @@ const newTeamNameByDepartment = reactive<Record<string, string>>({})
 const creatingTeamFor = ref<string | null>(null)
 const actionError = ref('')
 
+// Ein Wechsel des aktiven Vereins in der Sidebar aktualisierte diese Seite nicht -- load() lief
+// nur einmal beim Setup. Dieselbe Luecke wie auf /mitglieder, dort bereits behoben.
+watch(organizationId, () => {
+  newDepartmentName.value = ''
+  actionError.value = ''
+  void load()
+})
+
+// Abteilungen und Teams stecken auch in useSession() (authz.membership_scopes speist den
+// Abteilungswaehler der Sidebar und die Ebenen-/Rollenauswahl auf /mitglieder). Ohne
+// refreshSession() taucht eine hier neu angelegte Abteilung bzw. ein neues Team dort erst nach
+// einem vollen Seiten-Reload auf -- eine Einladung in ein frisch angelegtes Team war deshalb
+// nicht moeglich.
+async function reload() {
+  await refreshSession()
+  await load()
+}
+
 async function createDepartment() {
   if (!organizationId.value || !newDepartmentName.value.trim()) return
   creatingDepartment.value = true
@@ -75,7 +93,7 @@ async function createDepartment() {
       body: { name: newDepartmentName.value.trim() },
     })
     newDepartmentName.value = ''
-    await load()
+    await reload()
   } catch {
     actionError.value = 'Die Abteilung konnte nicht angelegt werden.'
   } finally {
@@ -92,7 +110,7 @@ async function createTeam(departmentId: string) {
     const headers = await useAuthHeader()
     await $fetch(`${config.public.apiBase}/v1/departments/${departmentId}/teams`, { method: 'POST', headers, body: { name } })
     newTeamNameByDepartment[departmentId] = ''
-    await load()
+    await reload()
   } catch {
     actionError.value = 'Das Team konnte nicht angelegt werden.'
   } finally {
@@ -106,7 +124,7 @@ async function renameDepartment(department: DepartmentRow) {
   try {
     const headers = await useAuthHeader()
     await $fetch(`${config.public.apiBase}/v1/departments/${department.id}`, { method: 'PATCH', headers, body: { name } })
-    await load()
+    await reload()
   } catch {
     actionError.value = 'Die Abteilung konnte nicht umbenannt werden.'
   }
@@ -116,7 +134,7 @@ async function toggleDepartmentArchived(department: DepartmentRow) {
   try {
     const headers = await useAuthHeader()
     await $fetch(`${config.public.apiBase}/v1/departments/${department.id}`, { method: 'PATCH', headers, body: { archived: !department.archived_at } })
-    await load()
+    await reload()
   } catch {
     actionError.value = 'Der Archivstatus konnte nicht geändert werden.'
   }
@@ -127,7 +145,7 @@ async function deleteDepartment(department: DepartmentRow) {
   try {
     const headers = await useAuthHeader()
     await $fetch(`${config.public.apiBase}/v1/departments/${department.id}`, { method: 'DELETE', headers })
-    await load()
+    await reload()
   } catch (error) {
     const code = (error as { data?: { error?: string } })?.data?.error
     actionError.value = code === 'last_department_cannot_be_deleted'
@@ -144,7 +162,7 @@ async function renameTeam(team: TeamRow) {
   try {
     const headers = await useAuthHeader()
     await $fetch(`${config.public.apiBase}/v1/teams/${team.id}`, { method: 'PATCH', headers, body: { name } })
-    await load()
+    await reload()
   } catch {
     actionError.value = 'Das Team konnte nicht umbenannt werden.'
   }
@@ -154,7 +172,7 @@ async function toggleTeamArchived(team: TeamRow) {
   try {
     const headers = await useAuthHeader()
     await $fetch(`${config.public.apiBase}/v1/teams/${team.id}`, { method: 'PATCH', headers, body: { archived: !team.archived_at } })
-    await load()
+    await reload()
   } catch {
     actionError.value = 'Der Archivstatus konnte nicht geändert werden.'
   }
@@ -165,7 +183,7 @@ async function deleteTeam(team: TeamRow) {
   try {
     const headers = await useAuthHeader()
     await $fetch(`${config.public.apiBase}/v1/teams/${team.id}`, { method: 'DELETE', headers })
-    await load()
+    await reload()
   } catch (error) {
     const code = (error as { data?: { error?: string } })?.data?.error
     actionError.value = code === 'team_delete_blocked'

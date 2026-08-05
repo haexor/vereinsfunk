@@ -34,6 +34,10 @@ export class SmtpEmailSender implements EmailSender {
     this.transport = nodemailer.createTransport({
       host: environment.SMTP_HOST,
       port: environment.SMTP_PORT,
+      // Port 465 ist implizites TLS; nodemailers secure-Standard (false) wuerde dort einen
+      // Klartext-Handshake versuchen und niemals eine Verbindung aufbauen. 587 bleibt bei
+      // secure: false und wird ueber STARTTLS hochgehandelt.
+      secure: environment.SMTP_PORT === 465,
       auth: { user: environment.SMTP_USER, pass: environment.SMTP_PASSWORD },
       // Ohne Timeout kann ein haengender SMTP-Relay den Request-Thread unbegrenzt blockieren
       // (beim Stabilitaets-Review dieses Pakets gefunden).

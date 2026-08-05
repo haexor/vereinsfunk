@@ -21,6 +21,7 @@ import {
 
 const org = '11111111-1111-4111-8111-111111111111'
 const department = '22222222-2222-4222-8222-222222222222'
+const team = '33333333-3333-4333-8333-333333333333'
 
 describe('contracts', () => {
   it('rejects an invalid tenant boundary', () => {
@@ -137,6 +138,20 @@ describe('structure and invitation contracts', () => {
 
   it('accepts archiving alone, without a name change', () => {
     expect(UpdateDepartmentRequestSchema.safeParse({ archived: true }).success).toBe(true)
+  })
+
+  // Gegenstueck zum Fall darunter: das ist die Payload-Form, die pages/mitglieder.vue senden
+  // muss -- teamId allein liess jede Team-Einladung aus der Oberflaeche an dieser Regel scheitern.
+  it('accepts a team-scoped invitation that carries both departmentId and teamId', () => {
+    expect(
+      CreateInvitationRequestSchema.safeParse({
+        organizationId: org,
+        departmentId: department,
+        teamId: team,
+        email: 'person@example.com',
+        role: 'team_manager',
+      }).success,
+    ).toBe(true)
   })
 
   it('rejects a team-scoped invitation without a departmentId', () => {

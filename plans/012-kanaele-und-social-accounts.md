@@ -84,6 +84,8 @@ Der Backfill kopiert den Ciphertext unverändert; er wird nicht neu verschlüsse
 
 ## Datenmodell
 
+**Nachtrag aus dem Review von Paket 010** (Entscheidung des Nutzers am 2026-08-05): veröffentlichte Beiträge werden vereinsweit sichtbar (siehe Paket 011, „Vereinsweite Sichtbarkeit veröffentlichter Beiträge“). Dabei kam die Frage auf, ob ein Beitrag auch nur in einem **vertraulichen Kanal** landen kann — dann darf er nicht vereinsweit sichtbar sein. Diese Vertraulichkeit gehört an den Kanal, nicht an den Beitrag: der Einreichende kennt den Kanal noch nicht, die Kanalwahl trifft der Freigebende. Deshalb hier ein Feld `confidential boolean not null default false` auf `social_connections` — ein Beitrag, dessen Veröffentlichungsziele ausschließlich vertrauliche Kanäle sind, bleibt bei der abteilungsweiten Sichtbarkeit. Ob das über die Kanalvertraulichkeit oder allein über das `policy_settings`-Feld `posts_visible_org_wide` aus 011 gelöst wird, ist beim Umsetzen zu entscheiden — nicht beides unabhängig voneinander bauen.
+
 Migration `2026080405_channel_scoping_and_secrets.sql`:
 
 ```sql
