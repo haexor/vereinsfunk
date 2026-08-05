@@ -896,9 +896,20 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     // offenen Einladungen nie auflisten konnte (beim Review dieses Pakets gefunden). Ohne
     // Parameter bleibt das Verhalten unveraendert organisationsweit.
     const query = z.object({ departmentId: UuidSchema.optional(), teamId: UuidSchema.optional() }).parse(request.query)
-    const scope = toPermissionScope(params.id, query.departmentId, query.teamId)
-    if (!(await requirePermission(request, reply, 'member.invite', scope))) return
     const client = supabaseClients.forUser(request.auth!.accessToken)
+    // Dieselbe serverseitige Verifikation der Scope-Kette wie in POST /v1/invitations: ohne sie
+    // pruefte requirePermission auf einer frei vom Client zusammengesetzten Kette (fremde
+    // organizationId plus eigene departmentId) und liess den Aufruf durch. Ein Leck entstand
+    // dadurch nur nicht, weil der zusammengesetzte Fremdschluessel auf invitations eine solche
+    // Kombination ohnehin auf null Zeilen filtert -- die Sicherheit haengt damit an einem
+    // Fremdschluessel statt an einer Pruefung (im Nachfolge-Review dieses PRs gefunden).
+    const resolved = await resolveInvitationScope(client, {
+      organizationId: params.id,
+      departmentId: query.departmentId ?? null,
+      teamId: query.teamId ?? null,
+    })
+    if (!resolved) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'member.invite', resolved.scope))) return
     let invitationsQuery = client
       .from('invitations')
       .select('id, organization_id, department_id, team_id, email, role, invited_by, expires_at, accepted_at, revoked_at, last_sent_at, send_count, created_at')

@@ -784,6 +784,32 @@ describe('structure, memberships and invitations', () => {
     expect(response.json()).toMatchObject({ error: 'cannot_remove_last_owner' })
   })
 
+  // Regression: die Scope-Kette aus organizationId + departmentId wurde ungeprueft an
+  // requirePermission gegeben -- ein department_admin einer FREMDEN Organisation kam damit durch
+  // die Berechtigungspruefung fuer eine beliebige organizationId (kein Leck, weil der
+  // zusammengesetzte Fremdschluessel auf invitations die Kombination auf null Zeilen filtert).
+  it('rejects listing invitations for a department that does not belong to the organization', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'departments') return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }) }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${ORGANIZATION_ID}/invitations?departmentId=${DEPARTMENT_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(404)
+    expect(response.json()).toMatchObject({ error: 'not_found' })
+  })
+
   // Regression: pages/mitglieder.vue sendete fuer eine Team-Einladung nur teamId, nie die
   // Eltern-Abteilung -- CreateInvitationRequestSchema verlangt beides, jede Team-Einladung aus
   // der Oberflaeche schlug deshalb mit 400 fehl (im Nachfolge-Review dieses PRs gefunden).
