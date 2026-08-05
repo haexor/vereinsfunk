@@ -42,9 +42,11 @@ describe('createSecretBox', () => {
   })
 
   it('supports rotation: new seals use the current version, old ciphertexts still open', () => {
-    const box = createSecretBox({ v1: key(), v2: key() }, 'v2')
-    const sealed = box.seal('rotated-secret', 'config-1')
+    const keys = { v1: key(), v2: key() }
+    const oldSealed = createSecretBox(keys, 'v1').seal('rotated-secret', 'config-1')
+    const box = createSecretBox(keys, 'v2')
+    const sealed = box.seal('new-secret', 'config-1')
     expect(sealed.keyVersion).toBe('v2')
-    expect(box.open(sealed.ciphertext, sealed.keyVersion, 'config-1')).toBe('rotated-secret')
+    expect(box.open(oldSealed.ciphertext, oldSealed.keyVersion, 'config-1')).toBe('rotated-secret')
   })
 })

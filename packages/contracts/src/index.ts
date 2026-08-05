@@ -113,7 +113,7 @@ export const CreateOrganizationRequestSchema = z.object({
 })
 export const CreateOrganizationResponseSchema = z.object({ organizationId: UuidSchema, slug: z.string().min(1) })
 
-export const OrganizationProfileUpdateSchema = z.object({
+const OrganizationProfileFieldsSchema = z.object({
   legalName: z.string().trim().min(1).max(160).nullable().optional(),
   legalForm: LegalFormSchema.nullable().optional(),
   registerCourt: z.string().trim().min(1).max(160).nullable().optional(),
@@ -129,7 +129,11 @@ export const OrganizationProfileUpdateSchema = z.object({
   foundedYear: z.int().min(1800).max(2100).nullable().optional(),
   responsiblePersonProfileId: UuidSchema.nullable().optional(),
 })
-export const OrganizationProfileSchema = OrganizationProfileUpdateSchema.extend({
+export const OrganizationProfileUpdateSchema = OrganizationProfileFieldsSchema.refine(
+  (value) => Object.keys(value).length > 0,
+  { message: 'at least one field must be provided' },
+)
+export const OrganizationProfileSchema = OrganizationProfileFieldsSchema.extend({
   organizationId: UuidSchema,
   countryCode: CountryCodeSchema,
 })
@@ -186,7 +190,7 @@ export const PlatformSettingValueSchemas = {
   max_organizations_per_owner: z.int().positive().max(1000),
 } as const satisfies Record<z.infer<typeof PlatformSettingKeySchema>, z.ZodType<unknown>>
 export const PlatformSettingSchema = z.object({
-  key: z.string().min(1),
+  key: PlatformSettingKeySchema,
   value: JsonValueSchema,
   updatedAt: z.iso.datetime({ offset: true }),
 })

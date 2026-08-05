@@ -1,29 +1,19 @@
 <script setup lang="ts">
 import { AlertTriangle } from '@lucide/vue'
+import {
+  PlatformAdminOrganizationSummarySchema,
+  UsageMetricsResponseSchema,
+  type PlatformAdminOrganizationSummary,
+  type UsageMetricsBucket,
+} from '@vereinsfunk/contracts'
 
 definePageMeta({ layout: 'admin' })
-
-interface OrganizationSummary {
-  organizationId: string
-  name: string
-  slug: string
-  memberCount: number
-  departmentCount: number
-  createdAt: string
-}
-interface UsageBucket {
-  date: string
-  postsCreated: number
-  llmGeneratedVersions: number
-  workflowRunsFailed: number
-  publicationsFailed: number
-}
 
 const config = useRuntimeConfig()
 const loading = ref(true)
 const errorMessage = ref('')
-const organizations = ref<OrganizationSummary[]>([])
-const usage = ref<UsageBucket[]>([])
+const organizations = ref<PlatformAdminOrganizationSummary[]>([])
+const usage = ref<UsageMetricsBucket[]>([])
 
 async function load() {
   loading.value = true
@@ -32,15 +22,15 @@ async function load() {
     const headers = await useAuthHeader()
     const to = new Date()
     const from = new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000)
-    const [orgs, metrics] = await Promise.all([
-      $fetch<OrganizationSummary[]>(`${config.public.apiBase}/v1/platform-admin/organizations`, { headers }),
-      $fetch<{ buckets: UsageBucket[] }>(`${config.public.apiBase}/v1/platform-admin/usage-metrics`, {
+    const [orgsResponse, metricsResponse] = await Promise.all([
+      $fetch(`${config.public.apiBase}/v1/platform-admin/organizations`, { headers }),
+      $fetch(`${config.public.apiBase}/v1/platform-admin/usage-metrics`, {
         headers,
         query: { from: from.toISOString(), to: to.toISOString() },
       }),
     ])
-    organizations.value = orgs
-    usage.value = metrics.buckets
+    organizations.value = PlatformAdminOrganizationSummarySchema.array().parse(orgsResponse)
+    usage.value = UsageMetricsResponseSchema.parse(metricsResponse).buckets
   } catch {
     errorMessage.value = 'Daten konnten nicht geladen werden.'
   } finally {

@@ -15,6 +15,7 @@ interface WeekDay { key: string; label: string; dayNumber: number; isToday: bool
 interface DashboardPost { id: string; status: string; scheduled_for: string | null }
 
 const loadingDashboard = ref(true)
+const dashboardError = ref(false)
 const stats = ref<{ published: number; openApprovals: number; scheduledNext7Days: number } | null>(null)
 const weekDays = ref<WeekDay[]>([])
 const nextSteps = ref<{ key: string; label: string; href: string }[]>([])
@@ -60,6 +61,12 @@ async function loadDashboard() {
     supabase.from('organization_brand_profiles').select('logo_path').eq('organization_id', organizationId).maybeSingle(),
     supabase.from('organization_profiles').select('responsible_person_profile_id').eq('organization_id', organizationId).maybeSingle(),
   ])
+
+  if (postsResult.error || approvalsResult.error) {
+    dashboardError.value = true
+    loadingDashboard.value = false
+    return
+  }
 
   const posts = (postsResult.data ?? []) as DashboardPost[]
   const now = Date.now()
@@ -107,7 +114,10 @@ await loadDashboard()
       </NuxtLink>
     </header>
 
-    <section v-if="!loadingDashboard && stats" class="mb-7 grid grid-cols-1 gap-3 sm:grid-cols-3" aria-label="Kennzahlen">
+    <section v-if="dashboardError" class="card mb-7 p-5 text-sm font-semibold text-red-700">
+      Die Kennzahlen konnten nicht geladen werden. Bitte lade die Seite neu.
+    </section>
+    <section v-else-if="!loadingDashboard && stats" class="mb-7 grid grid-cols-1 gap-3 sm:grid-cols-3" aria-label="Kennzahlen">
       <article class="card p-4 sm:p-5">
         <div class="mb-5 flex items-start justify-between"><span class="grid h-9 w-9 place-items-center rounded-xl bg-emerald-100 text-emerald-700"><CheckCircle2 :size="17" /></span></div>
         <div class="font-display text-2xl font-extrabold tracking-[-.04em] sm:text-[29px]">{{ stats.published }}</div>
@@ -140,11 +150,14 @@ await loadDashboard()
             <div><h2 class="font-display text-base font-bold tracking-[-.02em]">Redaktionsplan</h2><p class="mt-0.5 text-[11px] text-[#7a817d]">Diese Woche, {{ timezone }}</p></div>
             <NuxtLink to="/kalender" class="focus-ring flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-forest hover:bg-stone-100">Zum Kalender <CalendarDays :size="13" /></NuxtLink>
           </div>
-          <div class="grid min-w-[620px] grid-cols-7 divide-x divide-[#ecece5] overflow-x-auto">
-            <div v-for="day in weekDays" :key="day.key" class="min-h-32 p-3">
-              <div class="mb-3 flex items-center justify-between"><span class="text-[10px] font-bold uppercase text-[#929792]">{{ day.label }}</span><span class="grid h-6 w-6 place-items-center rounded-full text-xs font-semibold" :class="day.isToday ? 'bg-forest text-white' : 'text-ink'">{{ day.dayNumber }}</span></div>
-              <div v-if="day.posts.length === 0" class="text-[10px] text-[#c4c8c1]">—</div>
-              <div v-for="post in day.posts" :key="post.id" class="rounded-lg bg-[#eef1e9] p-2 text-[10px] font-semibold leading-tight text-forest">Beitrag geplant</div>
+          <div v-if="dashboardError" class="p-8 text-center text-xs font-semibold text-red-700">Der Redaktionsplan konnte nicht geladen werden.</div>
+          <div v-else class="overflow-x-auto">
+            <div class="grid min-w-[620px] grid-cols-7 divide-x divide-[#ecece5]">
+              <div v-for="day in weekDays" :key="day.key" class="min-h-32 p-3">
+                <div class="mb-3 flex items-center justify-between"><span class="text-[10px] font-bold uppercase text-[#929792]">{{ day.label }}</span><span class="grid h-6 w-6 place-items-center rounded-full text-xs font-semibold" :class="day.isToday ? 'bg-forest text-white' : 'text-ink'">{{ day.dayNumber }}</span></div>
+                <div v-if="day.posts.length === 0" class="text-[10px] text-[#c4c8c1]">—</div>
+                <div v-for="post in day.posts" :key="post.id" class="rounded-lg bg-[#eef1e9] p-2 text-[10px] font-semibold leading-tight text-forest">Beitrag geplant</div>
+              </div>
             </div>
           </div>
         </article>

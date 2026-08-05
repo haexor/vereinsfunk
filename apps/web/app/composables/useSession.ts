@@ -1,5 +1,5 @@
 import type { Role } from '@vereinsfunk/authorization'
-import { MembershipScopesSchema } from '@vereinsfunk/contracts'
+import { MembershipScopesSchema, PlatformAdminStatusSchema } from '@vereinsfunk/contracts'
 
 export interface SessionTeam {
   id: string
@@ -39,7 +39,8 @@ async function loadPlatformAdminStatus(): Promise<{ isPlatformAdmin: boolean; is
   try {
     const config = useRuntimeConfig()
     const headers = await useAuthHeader()
-    return await $fetch<{ isPlatformAdmin: boolean; isDefaultAdmin: boolean }>(`${config.public.apiBase}/v1/me/platform-admin-status`, { headers })
+    const response = await $fetch(`${config.public.apiBase}/v1/me/platform-admin-status`, { headers })
+    return PlatformAdminStatusSchema.parse(response)
   } catch {
     return { isPlatformAdmin: false, isDefaultAdmin: false }
   }
@@ -53,12 +54,18 @@ function useSessionLoad() {
   return useState<Promise<void> | null>('vf-session-load', () => null)
 }
 
-async function loadSession(state: ReturnType<typeof useSessionState>) {
+// Bumped by refreshSession() so a load already in flight at that point can recognize it has
+// been superseded and must not overwrite the newer state once it resolves.
+function useSessionGeneration() {
+  return useState<number>('vf-session-generation', () => 0)
+}
+
+async function loadSession(state: ReturnType<typeof useSessionState>, generation: ReturnType<typeof useSessionGeneration>, expectedGeneration: number) {
   const supabase = useSupabaseClient()
   const { data: userResult, error: userError } = await supabase.auth.getUser()
   if (userError) throw userError
   if (!userResult.user) {
-    state.value = null
+    if (generation.value === expectedGeneration) state.value = null
     return
   }
 
@@ -68,6 +75,7 @@ async function loadSession(state: ReturnType<typeof useSessionState>) {
     loadPlatformAdminStatus(),
   ])
   if (scopesResult.error) throw scopesResult.error
+  if (generation.value !== expectedGeneration) return
 
   // membership_scopes() crosses the DB-RPC -> client boundary; an unexpectedly shaped
   // result must fail loudly here instead of silently showing a broken sidebar in useScope.ts.
@@ -88,11 +96,13 @@ export async function useSession() {
   const state = useSessionState()
   if (import.meta.server) return state
   const load = useSessionLoad()
+  const generation = useSessionGeneration()
   if (!load.value) {
+    const expectedGeneration = generation.value
     // Shared in-flight load: concurrent callers await the same request instead of
     // observing an intermediate empty state. On failure the load is reset so the
     // next call retries instead of permanently caching a transient error as "logged out".
-    load.value = loadSession(state).catch((error) => {
+    load.value = loadSession(state, generation, expectedGeneration).catch((error) => {
       load.value = null
       throw error
     })
@@ -105,6 +115,7 @@ export async function useSession() {
 // useSession() otherwise keeps serving the cached pre-onboarding state (no scopes) for the
 // rest of the client session.
 export async function refreshSession() {
+  useSessionGeneration().value += 1
   useSessionLoad().value = null
   return useSession()
 }

@@ -47,7 +47,12 @@ export async function processBrandLogoUpload(buffer: Buffer): Promise<ProcessedL
   const rasterFormat = detectRasterFormat(buffer)
   if (!rasterFormat) throw new UnsupportedLogoFormatError('unsupported logo file type')
 
-  const metadata = await sharp(buffer).metadata()
+  let metadata
+  try {
+    metadata = await sharp(buffer).metadata()
+  } catch {
+    throw new UnsupportedLogoFormatError('logo file could not be decoded')
+  }
   const width = metadata.width ?? 0
   const height = metadata.height ?? 0
   if (width < MIN_DIMENSION_PX || height < MIN_DIMENSION_PX) {

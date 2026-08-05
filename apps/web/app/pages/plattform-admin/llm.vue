@@ -1,23 +1,19 @@
 <script setup lang="ts">
-definePageMeta({ layout: 'admin' })
+import {
+  CreateLlmProviderConfigurationRequestSchema,
+  LlmProviderConfigurationSchema,
+  UpdateLlmProviderConfigurationRequestSchema,
+  UuidSchema,
+  type LlmProviderConfigurationDto,
+} from '@vereinsfunk/contracts'
 
-interface LlmProvider {
-  id: string
-  label: string
-  protocol: 'anthropic' | 'openai'
-  baseUrl: string
-  model: string
-  purpose: string
-  priority: number
-  isActive: boolean
-  hasSecret: boolean
-}
+definePageMeta({ layout: 'admin' })
 
 const config = useRuntimeConfig()
 const loading = ref(true)
 const saving = ref(false)
 const errorMessage = ref('')
-const providers = ref<LlmProvider[]>([])
+const providers = ref<LlmProviderConfigurationDto[]>([])
 
 const newProvider = reactive({
   label: '',
@@ -32,7 +28,8 @@ async function load() {
   errorMessage.value = ''
   try {
     const headers = await useAuthHeader()
-    providers.value = await $fetch<LlmProvider[]>(`${config.public.apiBase}/v1/llm-providers`, { headers })
+    const response = await $fetch(`${config.public.apiBase}/v1/llm-providers`, { headers })
+    providers.value = LlmProviderConfigurationSchema.array().parse(response)
   } catch {
     errorMessage.value = 'LLM-Provider konnten nicht geladen werden.'
   } finally {
@@ -47,17 +44,14 @@ async function createProvider() {
   errorMessage.value = ''
   try {
     const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/llm-providers`, {
-      method: 'POST',
-      headers,
-      body: {
-        label: newProvider.label,
-        protocol: newProvider.protocol,
-        baseUrl: newProvider.baseUrl,
-        model: newProvider.model,
-        apiKey: newProvider.apiKey,
-      },
+    const body = CreateLlmProviderConfigurationRequestSchema.parse({
+      label: newProvider.label,
+      protocol: newProvider.protocol,
+      baseUrl: newProvider.baseUrl,
+      model: newProvider.model,
+      apiKey: newProvider.apiKey,
     })
+    await $fetch(`${config.public.apiBase}/v1/llm-providers`, { method: 'POST', headers, body })
     newProvider.label = ''
     newProvider.baseUrl = ''
     newProvider.model = ''
@@ -70,16 +64,14 @@ async function createProvider() {
   }
 }
 
-async function toggleActive(provider: LlmProvider) {
+async function toggleActive(provider: LlmProviderConfigurationDto) {
   saving.value = true
   errorMessage.value = ''
   try {
     const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/llm-providers/${provider.id}`, {
-      method: 'PATCH',
-      headers,
-      body: { isActive: !provider.isActive },
-    })
+    const id = UuidSchema.parse(provider.id)
+    const body = UpdateLlmProviderConfigurationRequestSchema.parse({ isActive: !provider.isActive })
+    await $fetch(`${config.public.apiBase}/v1/llm-providers/${id}`, { method: 'PATCH', headers, body })
     await load()
   } catch {
     errorMessage.value = 'Status konnte nicht geändert werden.'
@@ -93,7 +85,8 @@ async function removeProvider(id: string) {
   errorMessage.value = ''
   try {
     const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/llm-providers/${id}`, { method: 'DELETE', headers })
+    const providerId = UuidSchema.parse(id)
+    await $fetch(`${config.public.apiBase}/v1/llm-providers/${providerId}`, { method: 'DELETE', headers })
     await load()
   } catch {
     errorMessage.value = 'Provider konnte nicht entfernt werden.'

@@ -74,7 +74,10 @@ describe('selectProviderConfiguration', () => {
   })
 
   it('falls back to the default purpose when no exact match is active', () => {
-    const configs = [config({ id: 'default', purpose: 'default' })]
+    const configs = [
+      config({ id: 'inactive-caption', purpose: 'caption', isActive: false }),
+      config({ id: 'default', purpose: 'default' }),
+    ]
     expect(selectProviderConfiguration('caption', configs)?.id).toBe('default')
   })
 

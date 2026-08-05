@@ -174,6 +174,27 @@ describe('onboarding', () => {
     expect(response.json()).toMatchObject({ error: 'invalid_logo' })
   })
 
+  it('rejects a logo upload exceeding the size limit with 413, not an unhandled 500', async () => {
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider })
+    const token = await signAccessToken(USER_ID)
+    const boundary = '----vereinsfunkTestBoundaryLarge'
+    const oversized = Buffer.alloc(9 * 1024 * 1024, 0x41)
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="variant"\r\n\r\nlight\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="logo.png"\r\nContent-Type: image/png\r\n\r\n`),
+      oversized,
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ])
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${ORGANIZATION_ID}/brand/logo`,
+      headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` },
+      payload: body,
+    })
+    expect(response.statusCode).toBe(413)
+    expect(response.json()).toMatchObject({ error: 'file_too_large' })
+  })
+
   it('maps the SQL owner-limit rejection to 429, independent of any client-side check', async () => {
     const rejectingClients: SupabaseClientFactory = {
       forUser: () =>

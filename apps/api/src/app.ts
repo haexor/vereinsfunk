@@ -96,23 +96,9 @@ function toProfileUpdatePayload(input: Record<string, unknown>): Record<string, 
 }
 
 function mapProfileRow(row: Record<string, unknown>) {
-  return {
-    organizationId: row.organization_id,
-    legalName: row.legal_name,
-    legalForm: row.legal_form,
-    registerCourt: row.register_court,
-    registerNumber: row.register_number,
-    street: row.street,
-    houseNumber: row.house_number,
-    postalCode: row.postal_code,
-    city: row.city,
-    countryCode: row.country_code,
-    contactEmail: row.contact_email,
-    contactPhone: row.contact_phone,
-    websiteUrl: row.website_url,
-    foundedYear: row.founded_year,
-    responsiblePersonProfileId: row.responsible_person_profile_id,
-  }
+  const mapped: Record<string, unknown> = { organizationId: row.organization_id }
+  for (const [key, column] of Object.entries(PROFILE_UPDATE_COLUMNS)) mapped[key] = row[column]
+  return mapped
 }
 
 function mapBrandRow(row: Record<string, unknown>) {
@@ -126,15 +112,6 @@ function mapBrandRow(row: Record<string, unknown>) {
     logoPath: row.logo_path,
     logoDarkPath: row.logo_dark_path,
   }
-}
-
-// Zaehlt Zeilen pro organization_id in JS statt per SQL GROUP BY -- PostgREST hat keine
-// generische Aggregations-API. Bei der heutigen Datengroesse unproblematisch; bei
-// wachsender Mandantenzahl waere eine dedizierte SQL-Funktion faellig.
-function countByOrganization(rows: readonly { organization_id: string }[]): Map<string, number> {
-  const counts = new Map<string, number>()
-  for (const row of rows) counts.set(row.organization_id, (counts.get(row.organization_id) ?? 0) + 1)
-  return counts
 }
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
@@ -308,13 +285,18 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
     const filePart = await request.file()
     if (!filePart) return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
-    const variantField = filePart.fields.variant
-    const variantValue = variantField && 'value' in variantField ? variantField.value : undefined
-    const variant = BrandLogoVariantSchema.parse(variantValue)
 
     let processed
+    let variant: 'light' | 'dark'
     try {
+      // `filePart.fields` is populated as busboy parses the multipart stream, so a field
+      // declared after the file part is only present once the file's stream -- drained here
+      // via toBuffer() -- has fully flushed. Reading it afterwards makes the route independent
+      // of whether the client sends `variant` before or after the file part.
       const buffer = await filePart.toBuffer()
+      const variantField = filePart.fields.variant
+      const variantValue = variantField && 'value' in variantField ? variantField.value : undefined
+      variant = BrandLogoVariantSchema.parse(variantValue)
       processed = await processBrandLogoUpload(buffer)
     } catch (error) {
       if (error instanceof UnsupportedLogoFormatError || error instanceof LogoDimensionsError) {
@@ -342,7 +324,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const brandUpdate = await service.from('organization_brand_profiles').update({ [column]: objectPath }).eq('organization_id', params.id)
     if (brandUpdate.error) throw brandUpdate.error
 
-    await service.from('audit_events').insert({
+    const audit = await service.from('audit_events').insert({
       organization_id: params.id,
       actor_user_id: request.auth!.userId,
       action: 'organization.brand_logo_uploaded',
@@ -351,6 +333,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       correlation_id: request.id,
       metadata: { variant, sanitized: processed.sanitized },
     })
+    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
 
     return reply.code(201).send(
       BrandLogoUploadResponseSchema.parse({ variant, path: objectPath, signedUrl: signed.data.signedUrl, sanitized: processed.sanitized }),
@@ -487,25 +470,31 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const service = supabaseClients.forService()
     const orgs = await service.from('organizations').select('id, name, slug, created_at').order('created_at', { ascending: false })
     if (orgs.error) throw orgs.error
-    const [members, departments] = await Promise.all([
-      service.from('organization_memberships').select('organization_id'),
-      service.from('departments').select('organization_id'),
-    ])
-    if (members.error) throw members.error
-    if (departments.error) throw departments.error
-    const memberCounts = countByOrganization(members.data)
-    const departmentCounts = countByOrganization(departments.data)
-    return reply.code(200).send(
+    // Zaehlt pro Organisation ueber `count: 'exact', head: true` statt alle Zeilen zu laden --
+    // eine ungefilterte select() koennte an supabase/config.tomls max_rows=1000 abgeschnitten
+    // werden und countByOrganization wuerde dann zu niedrige Werte liefern.
+    const counts = await Promise.all(
       orgs.data.map((row) =>
-        PlatformAdminOrganizationSummarySchema.parse({
+        Promise.all([
+          service.from('organization_memberships').select('*', { count: 'exact', head: true }).eq('organization_id', row.id as string),
+          service.from('departments').select('*', { count: 'exact', head: true }).eq('organization_id', row.id as string),
+        ]),
+      ),
+    )
+    return reply.code(200).send(
+      orgs.data.map((row, index) => {
+        const [members, departments] = counts[index]!
+        if (members.error) throw members.error
+        if (departments.error) throw departments.error
+        return PlatformAdminOrganizationSummarySchema.parse({
           organizationId: row.id,
           name: row.name,
           slug: row.slug,
-          memberCount: memberCounts.get(row.id as string) ?? 0,
-          departmentCount: departmentCounts.get(row.id as string) ?? 0,
+          memberCount: members.count ?? 0,
+          departmentCount: departments.count ?? 0,
           createdAt: row.created_at,
-        }),
-      ),
+        })
+      }),
     )
   })
 
@@ -589,7 +578,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       api_key_ciphertext: ciphertextToBytea(sealed.ciphertext),
       key_version: sealed.keyVersion,
     })
-    if (secretInsert.error) throw secretInsert.error
+    if (secretInsert.error) {
+      // Ohne Rollback bliebe eine aktive Konfiguration ohne Schluessel zurueck.
+      await service.from('llm_provider_configurations').delete().eq('id', insert.data.id)
+      throw secretInsert.error
+    }
     return reply.code(201).send(LlmProviderConfigurationSchema.parse(mapLlmProviderConfigurationRow(insert.data, true)))
   })
 

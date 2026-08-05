@@ -17,7 +17,7 @@ const viewedMonth = computed(() => {
   const base = new Date(Date.UTC(year, month - 1 + monthOffset.value, 1))
   return { year: base.getUTCFullYear(), month: base.getUTCMonth() }
 })
-const monthLabel = computed(() => new Intl.DateTimeFormat('de-DE', { month: 'long', year: 'numeric' }).format(new Date(Date.UTC(viewedMonth.value.year, viewedMonth.value.month, 1))))
+const monthLabel = computed(() => new Intl.DateTimeFormat('de-DE', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(Date.UTC(viewedMonth.value.year, viewedMonth.value.month, 1))))
 const daysInMonth = computed(() => new Date(Date.UTC(viewedMonth.value.year, viewedMonth.value.month + 1, 0)).getUTCDate())
 const leadingBlanks = computed(() => {
   const firstWeekday = new Date(Date.UTC(viewedMonth.value.year, viewedMonth.value.month, 1)).getUTCDay()
@@ -27,10 +27,12 @@ const leadingBlanks = computed(() => {
 interface CalendarPost { id: string; scheduled_for: string }
 const postsByDay = ref<Record<number, { id: string }[]>>({})
 const loading = ref(true)
+const loadError = ref(false)
 
 async function loadMonth() {
   if (import.meta.server) return
   loading.value = true
+  loadError.value = false
   const organizationId = scope.value?.organizationId
   if (!organizationId) { postsByDay.value = {}; loading.value = false; return }
   const departmentId = scope.value?.departmentId
@@ -49,6 +51,12 @@ async function loadMonth() {
   if (departmentId) query = query.eq('department_id', departmentId)
 
   const result = await query
+  if (result.error) {
+    postsByDay.value = {}
+    loadError.value = true
+    loading.value = false
+    return
+  }
   const byDay: Record<number, { id: string }[]> = {}
   for (const post of (result.data ?? []) as CalendarPost[]) {
     const [postYear, postMonth, postDay] = localDateKey(new Date(post.scheduled_for), timezone.value).split('-').map(Number)
@@ -84,7 +92,10 @@ const hasAnyPost = computed(() => Object.keys(postsByDay.value).length > 0)
       <div class="grid grid-cols-7 border-b border-[#e5e6df] bg-[#f5f5ef] text-center text-[10px] font-bold uppercase tracking-wider text-[#818782]">
         <div v-for="day in ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So']" :key="day" class="p-3">{{ day }}</div>
       </div>
-      <div v-if="!loading && !hasAnyPost" class="border-b border-[#e5e6df] bg-[#f9faf5] p-3 text-center text-[11px] text-[#7b827d]">
+      <div v-if="loadError" class="border-b border-[#e5e6df] bg-[#f9faf5] p-3 text-center text-[11px] font-semibold text-red-700">
+        Die Beiträge für diesen Monat konnten nicht geladen werden.
+      </div>
+      <div v-else-if="!loading && !hasAnyPost" class="border-b border-[#e5e6df] bg-[#f9faf5] p-3 text-center text-[11px] text-[#7b827d]">
         Für diesen Monat sind noch keine Beiträge geplant.
       </div>
       <div class="grid grid-cols-7">

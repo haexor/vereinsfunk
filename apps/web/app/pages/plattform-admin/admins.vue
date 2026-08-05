@@ -1,11 +1,7 @@
 <script setup lang="ts">
-definePageMeta({ layout: 'admin' })
+import { AddPlatformAdminRequestSchema, PlatformAdminSchema, type PlatformAdmin } from '@vereinsfunk/contracts'
 
-interface PlatformAdmin {
-  userId: string
-  isDefaultAdmin: boolean
-  createdAt: string
-}
+definePageMeta({ layout: 'admin' })
 
 const config = useRuntimeConfig()
 const session = await useSession()
@@ -20,7 +16,8 @@ async function load() {
   errorMessage.value = ''
   try {
     const headers = await useAuthHeader()
-    admins.value = await $fetch<PlatformAdmin[]>(`${config.public.apiBase}/v1/platform-admins`, { headers })
+    const response = await $fetch(`${config.public.apiBase}/v1/platform-admins`, { headers })
+    admins.value = PlatformAdminSchema.array().parse(response)
   } catch {
     errorMessage.value = 'Admins konnten nicht geladen werden.'
   } finally {
@@ -35,7 +32,8 @@ async function addAdmin() {
   errorMessage.value = ''
   try {
     const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/platform-admins`, { method: 'POST', headers, body: { email: newEmail.value } })
+    const body = AddPlatformAdminRequestSchema.parse({ email: newEmail.value })
+    await $fetch(`${config.public.apiBase}/v1/platform-admins`, { method: 'POST', headers, body })
     newEmail.value = ''
     await load()
   } catch {

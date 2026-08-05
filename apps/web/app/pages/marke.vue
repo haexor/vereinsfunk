@@ -4,6 +4,7 @@ import { AlertTriangle, Check, LoaderCircle, Upload } from '@lucide/vue'
 const config = useRuntimeConfig()
 const scope = await useScope()
 const loading = ref(true)
+const loadError = ref(false)
 const saving = ref(false)
 const errorMessage = ref('')
 const sanitizedNotice = ref(false)
@@ -24,6 +25,11 @@ async function loadBrand() {
     .select('primary_color, accent_color, tone, logo_path')
     .eq('organization_id', organizationId.value)
     .maybeSingle()
+  if (result.error) {
+    loadError.value = true
+    loading.value = false
+    return
+  }
   if (result.data) {
     colors.primary = result.data.primary_color
     colors.accent = result.data.accent_color
@@ -39,6 +45,7 @@ await loadBrand()
 
 function onLogoSelected(event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0] ?? null
+  if (logoPreviewUrl.value) URL.revokeObjectURL(logoPreviewUrl.value)
   logoFile.value = file
   logoPreviewUrl.value = file ? URL.createObjectURL(file) : ''
 }
@@ -60,6 +67,7 @@ async function save() {
       logoUrl.value = uploaded.signedUrl
       sanitizedNotice.value = uploaded.sanitized
       logoFile.value = null
+      URL.revokeObjectURL(logoPreviewUrl.value)
       logoPreviewUrl.value = ''
     }
     await $fetch(`${config.public.apiBase}/v1/organizations/${organizationId.value}/brand`, {
@@ -84,6 +92,7 @@ async function save() {
     </header>
 
     <div v-if="loading" class="p-8 text-center text-xs text-[#7b827d]">Wird geladen …</div>
+    <div v-else-if="loadError" class="card p-8 text-center text-sm font-semibold text-red-700">Die Markendaten konnten nicht geladen werden. Bitte lade die Seite neu.</div>
     <template v-else>
       <div class="grid gap-6 lg:grid-cols-2">
         <section class="card p-6">

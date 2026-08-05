@@ -112,6 +112,11 @@ describe('sanitizeSvg: known XSS/SSRF payload corpus', () => {
     expect(() => sanitizeSvg(huge)).toThrow(SvgTooComplexError)
   })
 
+  it('rejects a document with too many nodes while staying under the byte limit', () => {
+    const many = `<svg xmlns="http://www.w3.org/2000/svg">${'<circle r="1"/>'.repeat(6_000)}</svg>`
+    expect(() => sanitizeSvg(many)).toThrow(SvgTooComplexError)
+  })
+
   it('rejects a document with excessive nesting depth', () => {
     const deep = `<svg xmlns="http://www.w3.org/2000/svg">${'<g>'.repeat(200)}<circle r="1"/>${'</g>'.repeat(200)}</svg>`
     expect(() => sanitizeSvg(deep)).toThrow(SvgTooComplexError)
@@ -125,6 +130,11 @@ describe('sanitizeSvg: known XSS/SSRF payload corpus', () => {
 
   it('rejects a document without a root <svg> element', () => {
     expect(() => sanitizeSvg('<html><body>not an svg</body></html>')).toThrow(SvgRejectedError)
+  })
+
+  it('accepts a standard DOCTYPE without an internal subset, as emitted by Illustrator/Inkscape', () => {
+    const payload = '<?xml version="1.0"?><!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd"><svg xmlns="http://www.w3.org/2000/svg"><circle r="1"/></svg>'
+    expect(() => sanitizeSvg(payload)).not.toThrow()
   })
 })
 

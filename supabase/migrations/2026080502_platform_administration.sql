@@ -201,7 +201,9 @@ begin
 
   select count(*) into owner_count
   from public.organization_memberships
-  where user_id = acting_user and role = 'organization_owner';
+  where user_id = acting_user
+    and role = 'organization_owner'
+    and (expires_at is null or expires_at > now());
   if owner_count >= max_organizations_per_owner then
     raise exception 'organization limit reached for this account';
   end if;

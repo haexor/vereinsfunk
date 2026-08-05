@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { PlatformSettingSchema, PlatformSettingValueSchemas } from '@vereinsfunk/contracts'
+
 definePageMeta({ layout: 'admin' })
 
 const config = useRuntimeConfig()
@@ -13,9 +15,11 @@ async function load() {
   errorMessage.value = ''
   try {
     const headers = await useAuthHeader()
-    const settings = await $fetch<{ key: string; value: unknown }[]>(`${config.public.apiBase}/v1/platform-settings`, { headers })
+    const response = await $fetch(`${config.public.apiBase}/v1/platform-settings`, { headers })
+    const settings = PlatformSettingSchema.array().parse(response)
     const limitSetting = settings.find((setting) => setting.key === 'max_organizations_per_owner')
-    if (typeof limitSetting?.value === 'number') maxOrganizationsPerOwner.value = limitSetting.value
+    const limitValue = PlatformSettingValueSchemas.max_organizations_per_owner.safeParse(limitSetting?.value)
+    if (limitValue.success) maxOrganizationsPerOwner.value = limitValue.data
   } catch {
     errorMessage.value = 'Einstellungen konnten nicht geladen werden.'
   } finally {
@@ -29,10 +33,11 @@ async function saveLimit() {
   errorMessage.value = ''
   try {
     const headers = await useAuthHeader()
+    const value = PlatformSettingValueSchemas.max_organizations_per_owner.parse(maxOrganizationsPerOwner.value)
     await $fetch(`${config.public.apiBase}/v1/platform-settings/max_organizations_per_owner`, {
       method: 'PUT',
       headers,
-      body: { value: maxOrganizationsPerOwner.value },
+      body: { value },
     })
   } catch {
     errorMessage.value = 'Limit konnte nicht gespeichert werden.'

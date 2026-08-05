@@ -4,6 +4,7 @@ import {
   CreateSubmissionSchema,
   GeneratedPostSchema,
   OnboardingStateSchema,
+  OrganizationProfileUpdateSchema,
   PlatformAdminOrganizationSummarySchema,
   PlatformAdminSchema,
   PlatformSettingKeySchema,
@@ -69,6 +70,9 @@ describe('platform administration contracts', () => {
     expect(PlatformSettingKeySchema.safeParse('unknown_key').success).toBe(false)
     expect(PlatformSettingValueSchemas.max_organizations_per_owner.safeParse(0).success).toBe(false)
     expect(PlatformSettingValueSchemas.max_organizations_per_owner.safeParse(5).success).toBe(true)
+    expect(PlatformSettingValueSchemas.max_organizations_per_owner.safeParse(1000).success).toBe(true)
+    expect(PlatformSettingValueSchemas.max_organizations_per_owner.safeParse(1001).success).toBe(false)
+    expect(PlatformSettingValueSchemas.max_organizations_per_owner.safeParse(1.5).success).toBe(false)
   })
 
   // Regression: PostgREST serializes timestamptz with a numeric UTC offset (+00:00), not the
@@ -106,5 +110,15 @@ describe('onboarding contracts', () => {
 
   it('still accepts a null dismissedAt', () => {
     expect(OnboardingStateSchema.safeParse({ completedSteps: [], dismissedAt: null }).success).toBe(true)
+  })
+})
+
+describe('organization profile contracts', () => {
+  it('rejects an empty profile update payload', () => {
+    expect(OrganizationProfileUpdateSchema.safeParse({}).success).toBe(false)
+  })
+
+  it('accepts a profile update with at least one field', () => {
+    expect(OrganizationProfileUpdateSchema.safeParse({ legalName: 'Verein e.V.' }).success).toBe(true)
   })
 })

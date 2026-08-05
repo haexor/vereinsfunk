@@ -5,8 +5,8 @@ select plan(30);
 set local role postgres;
 
 -- Test personas. U_expired_member and U_viewer get their organization_memberships row on
--- org X inserted further below, once org X's id is known (via slug lookup, see comment
--- near the top of the file about why this file avoids psql variable capture).
+-- org X inserted further below, once org X's id is known (via slug lookup, since a plain
+-- SQL script has no psql variables to capture it into).
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
 values
   ('00000000-0000-0000-0000-000000000000', '40000000-0000-4000-8000-000000000001', 'authenticated', 'authenticated', 'owner@pgtap-onboarding.local', '', '{}', '{}', now(), now()),
@@ -62,7 +62,7 @@ select isnt(
   public.create_organization('PGTAP Onboarding Owner Org', 'Zweite Abteilung'),
   null, 'a colliding organization name still succeeds'
 );
-select is((select slug from public.organizations where name = 'PGTAP Onboarding Owner Org'), 'pgtap-onboarding-owner-org-1', 'the colliding organization receives a numeric slug suffix');
+select is((select count(*)::integer from public.organizations where slug = 'pgtap-onboarding-owner-org-1'), 1, 'the colliding organization receives a numeric slug suffix');
 
 -- 6: the per-owner limit is enforced inside the function itself, not only by the API caller.
 set local role postgres;

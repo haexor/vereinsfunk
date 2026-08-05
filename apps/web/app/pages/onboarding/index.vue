@@ -73,13 +73,15 @@ async function submitOrganization() {
   errorMessage.value = ''
   try {
     const headers = await useAuthHeader()
-    const created = await $fetch<{ organizationId: string; slug: string }>(`${config.public.apiBase}/v1/organizations`, {
-      method: 'POST',
-      headers,
-      body: { name: org.value.name.trim(), firstDepartmentName: departmentName.value.trim(), timezone: org.value.timezone },
-    })
-    organizationId.value = created.organizationId
-    createdSlug.value = created.slug
+    if (!organizationId.value) {
+      const created = await $fetch<{ organizationId: string; slug: string }>(`${config.public.apiBase}/v1/organizations`, {
+        method: 'POST',
+        headers,
+        body: { name: org.value.name.trim(), firstDepartmentName: departmentName.value.trim(), timezone: org.value.timezone },
+      })
+      organizationId.value = created.organizationId
+      createdSlug.value = created.slug
+    }
 
     const profilePatch: Record<string, unknown> = {}
     if (org.value.legalForm) profilePatch.legalForm = org.value.legalForm
@@ -91,7 +93,7 @@ async function submitOrganization() {
     if (org.value.websiteUrl.trim()) profilePatch.websiteUrl = org.value.websiteUrl.trim()
     if (org.value.foundedYear.trim()) profilePatch.foundedYear = Number(org.value.foundedYear)
     if (Object.keys(profilePatch).length > 0) {
-      await $fetch(`${config.public.apiBase}/v1/organizations/${created.organizationId}/profile`, {
+      await $fetch(`${config.public.apiBase}/v1/organizations/${organizationId.value}/profile`, {
         method: 'PATCH',
         headers,
         body: profilePatch,
@@ -112,6 +114,7 @@ async function submitOrganization() {
 
 function onLogoSelected(event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0] ?? null
+  if (logoPreviewUrl.value) URL.revokeObjectURL(logoPreviewUrl.value)
   logoFile.value = file
   logoPreviewUrl.value = file ? URL.createObjectURL(file) : ''
 }
@@ -130,6 +133,7 @@ async function saveBranding() {
         `${config.public.apiBase}/v1/organizations/${organizationId.value}/brand/logo`,
         { method: 'POST', headers, body: formData },
       )
+      URL.revokeObjectURL(logoPreviewUrl.value)
       logoPreviewUrl.value = uploaded.signedUrl
       logoSanitizedNotice.value = uploaded.sanitized
     }
@@ -191,7 +195,7 @@ const session = await useSession()
         <div class="inline-flex rounded-xl bg-forest px-3 py-2"><AppLogo /></div>
       </div>
 
-      <div class="mb-6 flex items-center justify-center gap-2">
+      <div class="mb-6 flex items-center justify-center gap-2" role="progressbar" :aria-valuenow="step" aria-valuemin="1" aria-valuemax="4">
         <div v-for="n in 4" :key="n" class="h-1.5 w-10 rounded-full" :class="n <= step ? 'bg-forest' : 'bg-[#e1e2db]'" />
       </div>
 

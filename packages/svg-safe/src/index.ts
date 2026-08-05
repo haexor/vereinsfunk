@@ -38,8 +38,14 @@ function guardRawInput(raw: string): void {
   if (Buffer.byteLength(raw, 'utf8') > MAX_BYTES) {
     throw new SvgTooComplexError('SVG exceeds the maximum allowed byte size')
   }
-  if (/<!entity/i.test(raw) || /<!doctype/i.test(raw)) {
-    throw new SvgRejectedError('SVG must not declare a DOCTYPE or a custom entity')
+  if (/<!entity/i.test(raw)) {
+    throw new SvgRejectedError('SVG must not declare a custom entity')
+  }
+  // An internal subset ("[") is what carries any XXE/entity-expansion payload; a DOCTYPE
+  // without one -- as emitted by Illustrator/Inkscape -- is harmless and would otherwise
+  // reject real-world logo exports.
+  if (/<!doctype[^>]*\[/i.test(raw)) {
+    throw new SvgRejectedError('SVG must not declare a DOCTYPE with an internal subset')
   }
   if (/<\?(?!xml\s)/i.test(raw)) {
     throw new SvgRejectedError('SVG must not contain processing instructions other than the XML declaration')
