@@ -186,12 +186,29 @@ face_regions.decision = 'consented' → consent_record_id (CHECK erzwingt es)
 
 Der letzte Punkt ist der schwierigste und wird bewusst einfach gelöst: enthält der Beitragstext den Vor- oder Nachnamen einer verknüpften Person, während `namingAllowed = false` gilt, entsteht ein Blocker mit genauer Fundstelle. Kein NLP, nur ein Namensabgleich gegen die verknüpften Personen. Falsch positive Treffer sind hinnehmbar, falsch negative nicht.
 
-`evaluateMediaGate` wird um zwei Blocker erweitert: `consent_scope_mismatch` und `naming_not_allowed`. `MediaGateBlockerSchema` (`packages/contracts/src/index.ts:79`) muss mit.
+### Sensible Angaben im Text, nicht nur im Bild
+
+Das Gate hängt bisher an Gesichtern. Ein Text kann aber ohne jedes Foto zu viel preisgeben: „Lisa M. (11) erzielte das Siegtor“, eine Handynummer für Rückfragen, eine Privatadresse als Treffpunkt, eine Krankheit als Ausfallgrund. Ein Verein veröffentlicht das nicht in böser Absicht, sondern weil beim Schreiben niemand daran denkt.
+
+`SafetyFlagSchema` (`packages/contracts/src/index.ts:41`) kennt dafür bereits `sensitive_data`, `minor` und `missing_consent`. **Bestimmt wird keines davon.** `FakeContentGenerator` setzt ausschließlich `uncertain_fact` bei fehlenden Fakten (`packages/content-engine/src/index.ts:40`) — dieselbe Lücke wie bei `consentValid` vor diesem Paket: der Blocker existiert, der Wert entsteht nie.
+
+Die Prüfung läuft zweistufig, weil beide Stufen unterschiedliche Fehler machen:
+
+- **Regelbasiert und verbindlich**: Telefonnummern, E-Mail-Adressen, IBANs, Straße mit Hausnummer, Geburtsdaten und Namen verknüpfter Personen. Deterministisch, testbar, und blockiert die Freigabe bei `namingAllowed = false` oder fehlender Einwilligung.
+- **Durch das Sprachmodell und beratend**: Alter in Verbindung mit einem Namen, Gesundheitsangaben, familiäre Verhältnisse, Schulzugehörigkeit — Dinge, die eine Regel nicht fasst. Das Modell setzt `sensitive_data` mit Fundstelle und Begründung; der Prüfer sieht einen Hinweis und entscheidet.
+
+Die Aufteilung ist wichtig: ein Modell darf eine Freigabe nicht **erteilen**, und es darf sie auch nicht allein **verhindern** — beides würde eine Fehlklassifikation zur letzten Instanz machen. Was blockiert, ist eine Regel; was aufmerksam macht, ist das Modell. Der Hinweis wird beim Beitrag protokolliert, damit im Streitfall belegbar ist, dass gewarnt wurde.
+
+Dass der eigene Beitragstext dafür an ein externes Modell geht, ist eine andere Lage als bei fremden Kommentaren (Paket 018): der Autor weiß, dass er das Werkzeug benutzt, der Verein ist Verantwortlicher, und der Zweck ist eng. Ein Auftragsverarbeitungsvertrag mit Trainingsausschluss ist trotzdem Voraussetzung, und die Prüfung gehört in den Worker, nicht in die API — der Text darf nicht durch einen Request-Log laufen.
+
+`evaluateMediaGate` wird um drei Blocker erweitert: `consent_scope_mismatch`, `naming_not_allowed` und `sensitive_text_data`. `MediaGateBlockerSchema` (`packages/contracts/src/index.ts:79`) muss mit.
 
 ### 2. Registratur
 
 - `POST /v1/consents` — Person aus dem Verzeichnis wählen oder pseudonym erfassen, Umfang strukturiert setzen, Freitext eingeben, Unterschriftsdatum, Unterzeichner und Rolle, Nachweisdatei hochladen. Ohne Nachweisdatei kein `paper`-Eintrag.
 - Nachweise liegen in `raw-media` unter `organizations/<orgId>/consents/<consentId>/...`, damit die bestehende `storage_read_own_organization`-Policy greift (`202608020002:8-13`). Es sind private Dokumente mit Unterschriften — sie dürfen nie über eine dauerhafte URL erreichbar sein, nur über kurzlebige signierte Links, und jeder Zugriff wird auditiert.
+- **Der Bucket muss dafür erst PDFs annehmen.** `raw-media` erlaubt heute nur `image/jpeg`, `image/png`, `image/webp` und `video/mp4` (`202608020002:3`). Eine eingescannte Papiererklärung ist aber in der Regel ein PDF, oft mehrseitig — ein Verein, der einen Stapel Erklärungen einscannt, bekommt PDFs und keine JPEGs. Diese Migration erweitert die MIME-Liste um `application/pdf`. Ohne diesen Schritt scheitert der Upload genau an dem Punkt, an dem das Paket seinen Nutzen hätte, und `Ohne Nachweisdatei kein 'paper'-Eintrag` würde bedeuten: keine Papiererklärung ist erfassbar.
+- PDF ist ein aktives Format. Es wird nie an einen Browser als `inline` ausgeliefert, sondern ausschließlich als `Content-Disposition: attachment` mit `X-Content-Type-Options: nosniff` — dieselbe Überlegung wie beim SVG in Paket 009, nur mit weniger Aufwand, weil ein Nachweis nicht angezeigt, sondern heruntergeladen wird. Eine Sanitisierung findet nicht statt; das Original ist der Nachweis und bleibt unverändert.
 - `POST /v1/consents/:id/revoke` — Widerruf mit Grund und Widerrufendem.
 - `POST /v1/consents/:id/supersede` — neue Version mit geändertem Umfang.
 - Massenerfassung: viele Vereine haben einen Stapel Papier. Ein Ablauf „Person wählen, Umfang aus Vorlage übernehmen, Datei anhängen, weiter zur nächsten Person“ ohne Formularwechsel ist hier mehr wert als jede andere Verfeinerung.
@@ -255,6 +272,8 @@ Im Medien-Review (Paket 002/003) wird je Gesichtsregion die Zuordnung zu einer P
 - `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm db:reset`, `pnpm db:test`
 - Domain-Tests für `evaluateConsent`: jeder Blocker einzeln; Umfangsprüfung für Plattform, Zweck, Medienart, Kontext, Abteilung; Grenzfälle an `valid_from` und `valid_until`; Widerruf gewinnt gegen jede Gültigkeit; **eine abgelöste Zeile ist nie gültig, auch wenn sie sonst jede Prüfung bestehen würde, und die Nachfolgerzeile mit engerem Umfang blockiert**; `person_left` je nach Richtlinie.
 - Gate-Tests: Bild mit Kind ohne Einwilligung ist nicht freigebbar; mit gültiger Einwilligung freigebbar; mit Einwilligung nur für Facebook ist ein Instagram-Beitrag nicht freigebbar; bei `namingAllowed = false` blockiert ein Name im Text.
+- Textprüfung: Telefonnummer, E-Mail, IBAN und Straße mit Hausnummer werden regelbasiert erkannt und blockieren; ein Beitrag **ohne** Foto, aber mit „Lisa M. (11)“ ist bei `namingAllowed = false` nicht freigebbar — das Gate hängt nicht an der Existenz eines Bildes; das Sprachmodell setzt `sensitive_data` mit Fundstelle, blockiert aber nicht allein; ein Modellausfall lässt die regelbasierte Prüfung unberührt und wird als Hinweis „nicht geprüft“ sichtbar, nicht als „unbedenklich“.
+- Der Beitragstext erscheint in keinem Request-Log der API (Prüfung an `redact` analog Paket 018).
 - pgTAP: Einwilligung mit `signer_role = 'guardian'` ohne `guardian_confirmed` verstößt gegen CHECK; `face_regions` mit `decision = 'consented'` ohne `consent_record_id` verstößt gegen den bestehenden CHECK; Widerruf invalidiert die verknüpfte `approval_request`; zweite offene Anfrage für gleiche Person und Adresse verstößt gegen den Unique-Index; `status = 'granted'` ohne `consent_record_id` verstößt gegen CHECK; `status = 'sent'` mit gesetztem `responded_at` verstößt gegen CHECK und `status = 'declined'` ohne `responded_at` ebenso; eine zweite Zeile, die dieselbe Einwilligung ablöst, verstößt gegen den Unique-Index; eine Einwilligung, die sich selbst ablöst, verstößt gegen CHECK; `source_id` bei `origin = 'paper'` verstößt gegen CHECK; eine Quelle aus einem **fremden** Verein als `source_id` verstößt gegen den zusammengesetzten Fremdschlüssel.
 - pgTAP zum Löschverhalten: Löschen der ablösenden Einwilligung lässt die abgelöste bestehen und setzt nur `superseded_by` auf `null`, `organization_id` bleibt gesetzt; eine Einwilligung mit erteilter Anfrage ist **nicht** löschbar (`restrict`) — die Anfrage bleibt beweiskräftig; Löschen der Quelle einer importierten Einwilligung setzt nur `source_id` und behält `origin = 'imported'`.
 - Sicherheitstests für die öffentlichen Seiten: ungültiges, abgelaufenes und schon beantwortetes Token liefern **dieselbe** Antwort; Rate-Limit greift; die Seite gibt außer der betroffenen Person und dem Vereinsnamen keine Daten preis; `noindex` gesetzt.

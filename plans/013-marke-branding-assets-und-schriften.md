@@ -2,7 +2,7 @@
 
 ## Ergebnis
 
-Ein Verein pflegt sein Erscheinungsbild vollständig selbst: Logo in mehreren Varianten, Farbrollen mit geprüftem Kontrast, ein Schriftpaar aus kuratierter Auswahl **oder** eigene lizenzierte Schriftdateien. Abteilungen dürfen innerhalb eines vom Verein gesetzten Rahmens abweichen. Dieselben Werte gelten in der Web-Vorschau und im Remotion-Rendering — kein Beitrag sieht in der Vorschau anders aus als im Ergebnis.
+Ein Verein pflegt sein Erscheinungsbild vollständig selbst: Logo in mehreren Varianten, Farbrollen mit geprüftem Kontrast, ein Schriftpaar aus kuratierter Auswahl **oder** eigene lizenzierte Schriftdateien in WOFF2, WOFF, TTF oder OTF. Abteilungen und Mannschaften dürfen innerhalb eines vom Verein gesetzten Rahmens eigenes Branding führen — eigene Logos, eigene Schriften — und was sie hochladen, ist für andere Abteilungen und Mannschaften nicht nutzbar. Dieselben Werte gelten in der Web-Vorschau und im Remotion-Rendering — kein Beitrag sieht in der Vorschau anders aus als im Ergebnis.
 
 ## Ausgangslage und Evidenz
 
@@ -19,12 +19,13 @@ Geplant auf `b5c2eda6` am 2026-08-04.
 
 ## Scope
 
-- Migration: Markenprofil erweitern, Abteilungsbranding, Schrift-Registry und eigene Schriften, Asset-Tabelle
+- Migration: Markenprofil erweitern, Abteilungs- **und** Mannschaftsbranding, Schrift-Registry und eigene Schriften, Asset-Tabelle mit Besitzebene und Abschottung
+- `raw-media` um die Schriftformate erweitern, damit Originale dort liegen können
 - kuratierte Font-Registry in `packages/domain`
 - API: Asset-Upload mit Validierung, SVG-Sanitisierung, Font-Prüfung, Lizenzbestätigung
 - Farbrollen und Kontrastprüfung
 - Anbindung an Web-Darstellung und Remotion
-- Nuxt: echte Markenseite mit Live-Vorschau, Abteilungs-Overrides
+- Nuxt: echte Markenseite mit Live-Vorschau, Abteilungs- und Mannschafts-Overrides
 - Ablösung der fest eingebundenen Google Fonts
 
 Nicht enthalten: Vorlagengestaltung und Layoutfamilien (Paket 005), Rechtstexte (020).
@@ -41,7 +42,10 @@ create type public.brand_asset_kind as enum (
 create table public.brand_assets (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations(id) on delete cascade,
-  department_id uuid,                              -- null = gilt vereinsweit
+  -- Besitzebene: beide null = vereinsweit, department_id gesetzt = Abteilung,
+  -- beide gesetzt = Mannschaft. Ein Asset ist nur auf seiner Ebene und darunter
+  -- waehlbar -- die Abteilung Handball benutzt kein Fussball-Logo.
+  department_id uuid, team_id uuid,
   kind public.brand_asset_kind not null,
   bucket_id text not null default 'brand-assets' check (bucket_id = 'brand-assets'),
   object_path text not null,
@@ -62,8 +66,11 @@ create table public.brand_assets (
   updated_at timestamptz not null default now(),
   unique (organization_id, id),
   unique (bucket_id, object_path),
+  check (department_id is not null or team_id is null),
   foreign key (organization_id, department_id)
     references public.departments(organization_id, id) on delete cascade,
+  foreign key (organization_id, department_id, team_id)
+    references public.teams(organization_id, department_id, id) on delete cascade,
   -- Die Lizenzpflicht haengt am Status, nicht am Insert: eine Schriftdatei muss
   -- sich hochladen und pruefen lassen, bevor der Verein die Lizenz bestaetigt.
   check (kind <> 'font' or status <> 'ready'
@@ -91,6 +98,9 @@ create table public.department_brand_profiles (
   primary_color text check (primary_color ~ '^#[0-9a-fA-F]{6}$'),
   accent_color text check (accent_color ~ '^#[0-9a-fA-F]{6}$'),
   logo_asset_id uuid, tone text,
+  display_font_asset_id uuid, body_font_asset_id uuid,
+  allow_team_overrides boolean not null default true,
+  locked_fields text[] not null default '{}',
   updated_by uuid not null references public.profiles(id),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -98,7 +108,26 @@ create table public.department_brand_profiles (
   foreign key (organization_id, department_id)
     references public.departments(organization_id, id) on delete cascade
 );
+
+-- Dritte Ebene, gleiche Felder, gleiche Vererbungsrichtung.
+create table public.team_brand_profiles (
+  organization_id uuid not null, department_id uuid not null, team_id uuid not null,
+  primary_color text check (primary_color ~ '^#[0-9a-fA-F]{6}$'),
+  accent_color text check (accent_color ~ '^#[0-9a-fA-F]{6}$'),
+  logo_asset_id uuid, tone text,
+  display_font_asset_id uuid, body_font_asset_id uuid,
+  updated_by uuid not null references public.profiles(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (organization_id, department_id, team_id),
+  foreign key (organization_id, department_id, team_id)
+    references public.teams(organization_id, department_id, id) on delete cascade
+);
 ```
+
+**Eigenes Branding auf jeder Ebene, aber keine Quervermischung.** Eine Abteilung und eine Mannschaft dürfen eigene Logos und eigene Schriften haben und hochladen. Was sie hochladen, gehört ihnen: ein Asset mit `department_id` der Abteilung Fußball ist für Handball nicht wählbar, ein Team-Asset nicht für die Schwesternmannschaft. Diese Abschottung ist die Anforderung — sie steht nicht automatisch aus der Mandantentrennung, weil alle Zeilen dieselbe `organization_id` tragen. Sie braucht deshalb eine eigene Policy und einen eigenen negativen Test.
+
+Wählbar für einen Beitrag im Scope S sind genau die Assets auf S **oder einer übergeordneten Ebene** — das Vereinslogo darf jede Mannschaft benutzen, das Mannschaftslogo nur sie selbst. `resolveBrand` und die Asset-Auswahl in der Oberfläche benutzen dieselbe Funktion dafür, damit die Liste im Formular und die Prüfung im Endpunkt nicht auseinanderlaufen können.
 
 `display_font_key` bleibt für die kuratierte Auswahl, `display_font_asset_id` für eine eigene Schrift. Genau eines von beiden ist wirksam; ist ein Asset gesetzt, gewinnt es. Ein CHECK ist hier nicht sinnvoll, weil der Schlüssel immer einen Default trägt und als Rückfallebene taugt, wenn ein Asset abgelehnt wird.
 
@@ -118,7 +147,9 @@ alter table public.department_brand_profiles force row level security;
 -- Role, weil Pruefung, Sanitisierung und Rasterderivat serverseitig entstehen.
 ```
 
-**Vererbung** folgt derselben Richtung wie Paket 011: die Abteilung darf abweichen, nur wenn der Verein es zulässt. `resolveBrand(organizationProfile, departmentProfile?)` in `packages/domain` ist die einzige Auflösungsfunktion und respektiert `allow_department_overrides` und `locked_fields`.
+**Vererbung** folgt derselben Richtung wie Paket 011, jetzt über drei Ebenen: die Abteilung darf abweichen, wenn der Verein es zulässt, die Mannschaft, wenn die Abteilung es zulässt. `resolveBrand(organizationProfile, departmentProfile?, teamProfile?)` in `packages/domain` ist die einzige Auflösungsfunktion und respektiert `allow_department_overrides`, `allow_team_overrides` und `locked_fields` auf beiden Ebenen.
+
+Anders als bei den Richtlinien in Paket 011 ist Branding keine Verschärfung, sondern eine Ersetzung — eine Abteilungsfarbe ist nicht „strenger“ als die Vereinsfarbe. Die Erlaubnis vererbt sich trotzdem nur nach unten: was der Verein sperrt, kann die Abteilung nicht für ihre Mannschaften öffnen.
 
 ## Umsetzung
 
@@ -154,7 +185,9 @@ Bilder:
 
 Schriften:
 
-- nur WOFF2 (Bucket erlaubt bereits `font/woff2`); optional TTF/OTF, dann serverseitig nach WOFF2 konvertieren, damit im Web nur ein Format ausgeliefert wird. **Dazu gehört eine Migrationszeile**: `brand-assets` erlaubt heute ausschließlich `image/svg+xml`, `image/png`, `image/jpeg` und `font/woff2` (`202608020002:5`). Eine signierte Upload-URL für TTF/OTF würde am `mimetype` des Objekts scheitern. Entweder wird die MIME-Liste des Buckets in derselben Migration um `font/ttf` und `font/otf` erweitert, oder der TTF/OTF-Pfad entfällt und die Oberfläche verlangt WOFF2. Die Entscheidung gehört in diesen Plan, nicht in die Implementierung.
+- **Akzeptiert werden WOFF2, WOFF, TTF und OTF.** Ein Verein, der eine eigene Schrift besitzt, hat sie in der Regel als TTF oder OTF — ihn auf WOFF2 zu verweisen heißt, ihn zu einem Onlinekonverter zu schicken. Serverseitig wird nach WOFF2 konvertiert; ausgeliefert wird ausschließlich das WOFF2.
+- Das löst auch den Bucket-Konflikt, ohne die MIME-Liste von `brand-assets` aufzuweichen: **das Original geht nach `raw-media`, das konvertierte WOFF2 nach `brand-assets`.** Das ist genau das Muster, das das Projekt schon zweimal benutzt — `media_assets` → `media_derivatives` und der SVG-Sanitizer aus Paket 009, wo das Original als Nachweis privat bleibt und nur das Ergebnis ausgeliefert wird. `raw-media` braucht dafür `font/woff2`, `font/woff`, `font/ttf` und `font/otf` in seiner MIME-Liste (`202608020002:3`); `brand-assets` bleibt unverändert.
+- Konvertierung mit dem WOFF2-Encoder von Google (als `wawoff2` in Node verfügbar). Das ist eine Abhängigkeit und wenige Zeilen, kein Teilprojekt — der Aufwand liegt nicht in der Konvertierung, sondern in der Validierung darunter.
 - Signatur prüfen, Tabellenstruktur validieren, `family`, `weight`, `style` aus der Datei lesen und **nicht** aus der Nutzereingabe übernehmen
 - `OS/2`-Einbettungsbits (`fsType`) lesen. Verbietet die Datei Einbettung, wird sie abgelehnt mit Hinweis auf die Lizenz. Das schützt den Verein, nicht uns.
 - Lizenzbestätigung ist Pflicht: Rechteinhaber, freie Notiz, Checkbox „Wir besitzen eine Lizenz, die die Nutzung in unseren Social-Media-Beiträgen erlaubt“. Erst danach `status = 'ready'`, plus `audit_events`-Eintrag mit Person und Zeitstempel.
@@ -180,7 +213,8 @@ Tailwind wird von festen Farben auf CSS-Variablen umgestellt: `--brand-primary`,
 
 `pages/marke.vue` wird ersetzt:
 
-- Scope-Umschalter Verein / Abteilung, mit sichtbarer Vererbung wie in Paket 011
+- Scope-Umschalter Verein / Abteilung / Mannschaft, mit sichtbarer Vererbung wie in Paket 011
+- Assetliste zeigt Herkunft je Eintrag („vom Verein“, „aus dieser Abteilung“) und blendet fremde Abteilungs- und Mannschaftsassets aus, statt sie deaktiviert anzuzeigen — ein gesperrtes fremdes Logo in der Liste verrät bereits, dass es existiert
 - Logo-Bereich mit Varianten und Vorschau auf hellem **und** dunklem Grund. Ein Logo, das nur auf Weiß funktioniert, fällt hier auf.
 - Farbrollen mit Live-Kontrastanzeige neben jedem Paar
 - Schriften: kuratierte Paare als visuelle Karten mit echtem Satzbeispiel, plus Bereich „Eigene Schrift“ mit Upload, Lizenzformular und Prüfstatus. Eine abgelehnte Datei nennt den Grund im Klartext.
@@ -200,9 +234,10 @@ Tailwind wird von festen Farben auf CSS-Variablen umgestellt: `--brand-primary`,
 ## Verifikation
 
 - `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm db:reset`, `pnpm db:test`
-- Domain-Tests: `resolveBrand` respektiert `allow_department_overrides` und `locked_fields`; Kontrastberechnung gegen bekannte WCAG-Referenzwerte; Font-Asset schlägt Font-Key.
-- pgTAP: Schrift-Asset ohne `license_confirmed_at` lässt sich in `processing` anlegen, aber nicht auf `ready` setzen; ein `ready`-Font ohne `license_holder` oder `license_confirmed_by` verstößt ebenso gegen CHECK; Asset einer fremden Organisation ist nicht lesbar; `department_brand_profiles` einer fremden Abteilung ist nicht schreibbar; `authenticated` kann in `brand_assets` **nicht** direkt schreiben (Prüfung, Sanitisierung und Rasterderivat entstehen serverseitig) — beide Tabellen tragen RLS, was ein positiver *und* ein negativer Fall belegen muss.
-- Upload-Tests: PNG mit falsch deklariertem MIME-Typ → 400; SVG mit `<script>` → sanitisiert oder abgelehnt, nie unverändert gespeichert; WOFF2 mit gesperrten Einbettungsbits → abgelehnt mit Begründung; Font ohne Lizenzbestätigung bleibt `processing`; ein Upload je unterstütztem Schriftformat kommt tatsächlich im Bucket an — das findet eine MIME-Liste, die zur Oberfläche nicht passt.
+- Domain-Tests: `resolveBrand` respektiert `allow_department_overrides`, `allow_team_overrides` und `locked_fields` beider Ebenen; die Mannschaft erbt von der Abteilung, nicht direkt vom Verein, wenn die Abteilung abweicht; Kontrastberechnung gegen bekannte WCAG-Referenzwerte; Font-Asset schlägt Font-Key.
+- pgTAP: Schrift-Asset ohne `license_confirmed_at` lässt sich in `processing` anlegen, aber nicht auf `ready` setzen; ein `ready`-Font ohne `license_holder` oder `license_confirmed_by` verstößt ebenso gegen CHECK; Asset einer fremden Organisation ist nicht lesbar; `department_brand_profiles` einer fremden Abteilung ist nicht schreibbar; `authenticated` kann in `brand_assets` **nicht** direkt schreiben (Prüfung, Sanitisierung und Rasterderivat entstehen serverseitig) — alle Brandingtabellen tragen RLS, was ein positiver *und* ein negativer Fall belegen muss; ein Team-Asset mit `department_id is null` verstößt gegen CHECK.
+- pgTAP zur Abschottung, die eigentliche Anforderung: ein Asset der Abteilung Fußball ist für ein Mitglied der Abteilung Handball **nicht** lesbar und nicht referenzierbar, obwohl beide zum selben Verein gehören; ein Mannschaftsasset ist für die Schwesternmannschaft unsichtbar; das Vereinsasset ist für beide sichtbar. Ohne diese drei Fälle ist „eigenes Branding, das andere nicht nutzen können“ nur eine Absichtserklärung.
+- Upload-Tests: PNG mit falsch deklariertem MIME-Typ → 400; SVG mit `<script>` → sanitisiert oder abgelehnt, nie unverändert gespeichert; WOFF2 mit gesperrten Einbettungsbits → abgelehnt mit Begründung; Font ohne Lizenzbestätigung bleibt `processing`; **je Format — WOFF2, WOFF, TTF, OTF — kommt das Original in `raw-media` an und das konvertierte WOFF2 in `brand-assets`**, geprüft am tatsächlichen Objekt und nicht an der Antwort; das findet eine MIME-Liste, die zur Oberfläche nicht passt.
 - Rendering: eine Komposition mit eigener Schrift rendert sichtbar in dieser Schrift. **Ein Test, der nur prüft, dass das Rendering nicht abbricht, genügt hier nicht** — der stumme Fallback ist genau der Fehler, den es zu finden gilt. Pixelvergleich gegen eine Referenz oder Prüfung der eingebetteten Schriftmetadaten.
 - manuell: Farben ändern, Vorschau folgt sofort; Abteilung überschreibt Akzentfarbe; Verein sperrt das Feld, Abteilung sieht es deaktiviert mit Begründung; Logo austauschen, ein bereits freigegebener Beitrag zeigt weiterhin das alte Logo.
 
@@ -212,4 +247,4 @@ Tailwind wird von festen Farben auf CSS-Variablen umgestellt: `--brand-primary`,
 - **Schriftlizenzen**: Vereine besitzen häufig eine Desktop-Lizenz und keine Web- oder Einbettungslizenz. Die Bestätigung verlagert die Verantwortung, beseitigt das Risiko aber nicht. Der Bestätigungstext sollte juristisch geprüft und in Paket 020 mit den übrigen Rechtstexten behandelt werden.
 - **Tailwind auf CSS-Variablen** umzustellen berührt viele Templates. Der Alias-Ansatz begrenzt das, aber Farben, die per `:style` gesetzt werden (etwa `pages/index.vue:70`, `pages/freigaben.vue:12`) verschwinden mit ihren Dummy-Daten ohnehin in den Paketen 009 und 015.
 - **Kontrast als Warnung, nicht als Blockade** ist eine bewusste Produktentscheidung. Wer Barrierefreiheit erzwingen will, muss sie hier zur Pflicht machen — das würde manche Vereinsfarben ausschließen und sollte dann ausdrücklich beschlossen werden.
-- **Abteilungsbranding und Wiedererkennbarkeit** stehen in Spannung. `allow_department_overrides` steht per Default auf `true`; ein Verein, dem Einheitlichkeit wichtig ist, muss es aktiv abschalten. Der umgekehrte Default wäre auch vertretbar und ist eine Produktentscheidung.
+- **Abteilungsbranding und Wiedererkennbarkeit** stehen in Spannung. `allow_department_overrides` und `allow_team_overrides` stehen per Default auf `true` — entschieden, weil Abteilungen und Mannschaften ausdrücklich eigenes Branding führen können sollen. Ein Verein, dem Einheitlichkeit wichtig ist, schaltet es ab oder sperrt einzelne Felder über `locked_fields`. Mit drei Ebenen wächst allerdings die Zahl der Kombinationen, die die Oberfläche erklären muss: die Prosa-Zusammenfassung „was gilt hier konkret und woher kommt es“ ist auf Mannschaftsebene wichtiger als auf Vereinsebene.

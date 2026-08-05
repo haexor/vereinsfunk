@@ -472,6 +472,18 @@ Vertrauen je Mitglied liegt bei der Mitgliederliste aus Paket 010, nicht in den 
 
 `pages/freigaben.vue` zeigt die Route als Fortschritt: erfüllte Stufen, die offene Stufe mit Prüfern und Frist, die wartenden. Wer nicht auf der offenen Stufe steht, sieht den Stand, aber keine Aktion.
 
+### Der Autor muss die Ablehnung lesen können
+
+Der Prüferzugang oben regelt, wer **hinein** sieht. Die Gegenrichtung fehlt sonst: eine Ablehnung ohne sichtbare Begründung ist für den Autor nur ein Beitrag, der zurückkommt.
+
+- `approval_decisions.reason` ist für den **Autor der Version** lesbar, zusätzlich zu den Prüfern. Ohne diese Policy-Erweiterung steht die Begründung in der Datenbank und nirgends sonst.
+- Lesbar ist die Begründung und wer entschieden hat — nicht die Zusammensetzung äußerer Stufen, die noch nicht geöffnet wurden. Ein Autor muss nicht wissen, wer im Marketing sitzt, um seinen Text zu verbessern.
+- `pages/beitraege.vue` wird die Übersicht, die es heute nicht gibt: je Beitrag Status, aktuelle Stufe, und bei `changes_requested` oder `rejected` die Begründung im Klartext direkt in der Zeile. Filter „wartet auf mich“, „wartet auf andere“, „zurückgewiesen“, „freigegeben“.
+- Dieselbe Seite dient dem Prüfer für seine eigene Historie: was habe ich entschieden und wie. Es ist dieselbe Abfrage mit anderem Filter, keine zweite Ansicht.
+- Bei `changes_requested` führt eine Aktion direkt zurück in die Bearbeitung; das erneute Einreichen erzeugt eine neue Version und löst die Route neu auf. Es wird **keine** abgeschlossene Stufe wiederverwendet — sonst gilt eine alte Zustimmung für einen geänderten Text.
+
+Diese Rückrichtung ist der Unterschied zwischen einem Freigabeprozess und einem Beitrag, der ohne Erklärung verschwindet. Sie ist der Grund, warum Ehrenamtliche das Werkzeug weiter benutzen, nachdem ihr erster Beitrag abgelehnt wurde.
+
 ### 5. Rückbau
 
 | Ort | Heute | Danach |
@@ -483,6 +495,7 @@ Vertrauen je Mitglied liegt bei der Mitgliederliste aus Paket 010, nicht in den 
 | „Rohmedien · Löschung nach 90 Tagen“ | Behauptung ohne Job | wandert nach Paket 020 als echte Aufbewahrungsregel mit Cron |
 | `packages/domain/mergeEffectiveConfig` | nur in Tests benutzt | einziger Auflösungspfad im Produktionscode |
 | `approval_requests.required_approvals` als einzige Route | eine Zahl | abgeleitet aus `approval_stages` |
+| `pages/beitraege.vue:1` | Empty State aus Paket 008, keine Statusansicht | eigene Beiträge mit Status, Stufe und Ablehnungsbegründung; für Prüfer dieselbe Ansicht mit Filter |
 
 ## Verifikation
 
@@ -513,7 +526,7 @@ Vertrauen je Mitglied liegt bei der Mitgliederliste aus Paket 010, nicht in den 
   - `review_mode = 'named'` ohne `review_required = true` verstößt gegen CHECK
   - `policy_reviewers` mit gemischter Feldkombination verstößt gegen CHECK
   - `count_publications_in_period` zählt `failed` und `cancelled` nicht
-- API-Tests: Einreichen bei `submit_allowed = false` → 403; Submission mit nicht erlaubtem Preset → 422; Freigabeanfrage mit unerfüllbarer Stufe → 422 mit Nennung der Ebene; Entscheidung auf einer noch nicht offenen Stufe → 409; Selbstfreigabe → 403; Einplanen über dem Tageskontingent → 409 mit Nennung des Limits
+- API-Tests: der Autor einer abgelehnten Version liest `reason` und den Namen des Entscheidenden; ein unbeteiligtes Vereinsmitglied liest beides **nicht**; der Autor liest nicht den `reviewer_snapshot` einer noch nicht geöffneten äußeren Stufe; erneutes Einreichen nach `changes_requested` erzeugt eine neue Version und eine neu aufgelöste Route statt eine erfüllte Stufe wiederzuverwenden. Einreichen bei `submit_allowed = false` → 403; Submission mit nicht erlaubtem Preset → 422; Freigabeanfrage mit unerfüllbarer Stufe → 422 mit Nennung der Ebene; Entscheidung auf einer noch nicht offenen Stufe → 409; Selbstfreigabe → 403; Einplanen über dem Tageskontingent → 409 mit Nennung des Limits
 - manuell, der Zielfall: Verein setzt Vereinsstufe „Rolle `approver` in Abteilung Marketing“. Abteilung Fußball setzt Abteilungsstufe „Medienverantwortliche“. Team E-Jugend setzt Teamstufe „Trainer“ und erlaubt einem Elternkonto das Einreichen. Das Elternkonto reicht einen Spielbericht ein → nur der Trainer sieht die Aktion. Nach seiner Zustimmung sieht die Medienverantwortliche sie, danach das Marketing. Die Medienverantwortliche wird auf Abteilungsebene befreit → ihre eigenen Beiträge gehen direkt ans Marketing, nicht ohne Prüfung hinaus. Ein Bild mit einem Kind erzeugt zusätzlich die Minderjährigenstufe, auch bei ihr.
 
 ## Risiken und offene Entscheidungen

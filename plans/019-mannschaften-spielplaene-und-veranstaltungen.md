@@ -270,38 +270,25 @@ Das ersetzt den statischen Ideenblock in `pages/index.vue:77-86`. Der Unterschie
 
 Vorschläge sind **kein automatisches Erstellen**. Sie sind eine Liste, die ein Mensch abarbeitet oder wegklickt.
 
-Damit „weggeklickt“ hält, braucht der Vorschlag eine stabile Identität und einen Ort. Der Job rechnet ihn jeden Tag neu aus Ereignissen, Beiträgen und Kontingenten aus — ohne gespeicherte Ablehnung erscheint derselbe Vorschlag am nächsten Morgen wieder, und die Liste wird zu Lärm:
+Damit „weggeklickt“ hält, braucht es einen Ort für den Zustand. Der Job rechnet die Liste jeden Tag neu aus Ereignissen, Beiträgen und Kontingenten — ohne gespeicherte Ablehnung erscheint derselbe Vorschlag am nächsten Morgen wieder, und die Liste wird zu Lärm.
+
+Der Zustand gehört an das Ereignis, nicht in eine eigene Tabelle. Jede der drei ereignisgebundenen Regeln bekommt einen Zeitstempel:
 
 ```sql
-create table public.content_suggestion_dismissals (
-  id uuid primary key default gen_random_uuid(),
-  organization_id uuid not null references public.organizations(id) on delete cascade,
-  department_id uuid not null,
-  rule_key text not null check (rule_key in
-    ('match_announcement_missing','match_result_missing','event_invitation_missing','quota_unused')),
-  fixture_id uuid, club_event_id uuid,
-  -- Stand der Quelle beim Wegklicken. Aendert sich das Ereignis danach, ist es
-  -- ein anderer Anlass und der Vorschlag darf wiederkommen.
-  source_revision_at timestamptz,
-  dismissed_by uuid not null references public.profiles(id),
-  dismissed_at timestamptz not null default now(),
-  foreign key (organization_id, department_id)
-    references public.departments(organization_id, id) on delete cascade,
-  foreign key (organization_id, fixture_id)
-    references public.fixtures(organization_id, id) on delete cascade,
-  foreign key (organization_id, club_event_id)
-    references public.club_events(organization_id, id) on delete cascade,
-  check ((fixture_id is not null) <> (club_event_id is not null) or rule_key = 'quota_unused')
-);
-create unique index content_suggestion_dismissals_unique
-  on public.content_suggestion_dismissals (
-    organization_id, department_id, rule_key,
-    coalesce(fixture_id, '00000000-0000-0000-0000-000000000000'::uuid),
-    coalesce(club_event_id, '00000000-0000-0000-0000-000000000000'::uuid)
-  );
+alter table public.fixtures
+  add column announcement_dismissed_at timestamptz,
+  add column result_dismissed_at timestamptz;
+alter table public.club_events
+  add column invitation_dismissed_at timestamptz;
 ```
 
-Wann ein weggeklickter Vorschlag **doch** wiederkommt, ist eine bewusste Regel und keine Nebenwirkung: wenn `source_updated_at` des Ereignisses neuer ist als `source_revision_at` — ein verlegtes Spiel ist eine neue Ankündigung. Reines Zeitablaufen bringt ihn nicht zurück. Der allgemeine Kontingent-Anstoß (`quota_unused`) hängt an keinem Ereignis und wird für die laufende Periode weggeklickt.
+Zwei Spalten an `fixtures`, weil dasselbe Spiel zwei unabhängige Vorschläge erzeugt: vorher die Ankündigung, nachher das Ergebnis. Wer die Ankündigung wegklickt, will das Ergebnis trotzdem erzählen.
+
+Die Wiederkehr wird damit ein Vergleich ohne Zusatzspalte: **erscheint wieder, sobald `source_updated_at` neuer ist als der Zeitstempel** — ein verlegtes Spiel ist eine neue Ankündigung. Reines Zeitablaufen bringt keinen Vorschlag zurück.
+
+Der vierte, allgemeine Anstoß („Kontingent unausgeschöpft, nichts geplant“) hängt an keinem Ereignis und wird deshalb nicht weggeklickt, sondern gilt für die laufende Periode und verschwindet mit ihr von selbst. Damit braucht auch er keinen Speicher.
+
+Eine eigene Tabelle wäre hier die falsche Wahl: sie kostet drei Fremdschlüssel und einen Unique-Index über normalisierte `NULL`-Spalten, um denselben Zustand zu halten — und der Vorschlag hat außerhalb seines Ereignisses ohnehin keine Identität.
 
 ### 5. Redaktionskalender
 

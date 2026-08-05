@@ -8,7 +8,7 @@ Uploads werden wirklich privat gespeichert, geprüft und mit nachvollziehbaren E
 
 Geplant auf `unborn HEAD` am 2026-08-02.
 
-- `apps/web/app/pages/erstellen.vue:90` zeigt einen Datei-Input, lädt aber nichts hoch.
+- `apps/web/app/pages/erstellen.vue:53` zeigt einen Datei-Input, lädt aber nichts hoch.
 - `202608020002_private_storage.sql` legt private Buckets an, aber keine fachlichen Medientabellen.
 - `202608020001_initial_tenant_foundation.sql:172-231` modelliert unveränderliche Versionen und Freigaben, referenziert aber keine konkreten Derivate.
 - `packages/contracts/src/index.ts:19-24` kennt `minor` und `missing_consent` nur als grobe Safety Flags.
