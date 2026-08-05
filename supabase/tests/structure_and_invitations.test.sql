@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(50);
+select plan(55);
 
 set local role postgres;
 
@@ -405,6 +405,45 @@ select throws_ok(
   'P0001', 'insufficient_permission', 'change_membership_role rejects an organization_admin demoting an organization_owner'
 );
 set local role postgres;
+
+-- Regression: das authz-Schema ist ueber PostgREST exponiert (supabase/config.toml). Mit einem
+-- Execute-Grant konnte jeder authentifizierte Nutzer register_invitation_send direkt fuer eine
+-- fremde organization_id und Adresse aufrufen und deren Einladungskontingent verbrauchen, bis
+-- diese Adresse dauerhaft nicht mehr einladbar war. Die Funktion braucht den Grant nicht: ihre
+-- beiden Aufrufer sind security definer.
+select is(
+  has_function_privilege('authenticated', 'authz.register_invitation_send(uuid,uuid,uuid,text)', 'EXECUTE'),
+  false, 'authenticated cannot execute authz.register_invitation_send directly'
+);
+select is(
+  has_function_privilege('service_role', 'authz.register_invitation_send(uuid,uuid,uuid,text)', 'EXECUTE'),
+  true, 'service_role can still execute authz.register_invitation_send'
+);
+-- Die Funktion bleibt ueber ihre security-definer-Aufrufer erreichbar -- ohne diese Prüfung
+-- koennte der Revoke oben den Einladungsflow unbemerkt komplett blockieren.
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '60000000-0000-4000-8000-000000000001', true);
+select isnt(
+  (select (public.create_invitation(
+    '60000000-1000-4000-8000-000000000001', null, null,
+    'grantcheck@pgtap-structure.local', 'organization_viewer', 'hash-grant-check'
+  )).id::text),
+  null, 'create_invitation still reaches register_invitation_send after the revoke'
+);
+set local role postgres;
+
+-- Regression: alle audit_events-Inserts der API laufen ueber den Service-Client, weil
+-- authenticated auf dieser Tabelle weder Insert-Grant noch Insert-Policy hat (append-only, siehe
+-- Tabellenkommentar). Mit dem Nutzer-Client scheiterte jeder Insert still und der Audit-Trail
+-- dieses Pakets war wirkungslos.
+select is(
+  has_table_privilege('authenticated', 'public.audit_events', 'INSERT'),
+  false, 'authenticated cannot insert audit_events directly -- the API must use the service client'
+);
+select is(
+  (select count(*)::integer from pg_policies where schemaname = 'public' and tablename = 'audit_events' and cmd in ('INSERT', 'ALL')),
+  0, 'there is no audit_events insert policy that would make the user client work'
+);
 
 select * from finish();
 rollback;

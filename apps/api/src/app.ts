@@ -537,7 +537,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (rpc.error) throw rpc.error
     const department = await client.from('departments').select('id, organization_id, name, slug, archived_at, created_at').eq('id', rpc.data as string).single()
     if (department.error) throw department.error
-    const audit = await client.from('audit_events').insert({
+    // audit_events ist append-only und wird ausschliesslich privilegiert beschrieben ("Inserts
+    // happen through privileged API procedures", 202608020001_initial_tenant_foundation.sql):
+    // authenticated hat weder Insert-Grant noch Insert-Policy. Mit dem Nutzer-Client lief jeder
+    // dieser Inserts in "permission denied for table audit_events", wurde nur geloggt und der
+    // Request antwortete trotzdem mit 2xx -- der komplette Audit-Trail dieses Pakets war damit
+    // wirkungslos (im Nachfolge-Review dieses PRs gefunden). Gilt fuer alle audit_events-Inserts
+    // unten genauso; der Service-Client ist dasselbe Muster wie im Brand-Logo-Upload (Paket 022).
+    const audit = await supabaseClients.forService().from('audit_events').insert({
       organization_id: params.orgId,
       actor_user_id: request.auth!.userId,
       action: 'department.created',
@@ -564,7 +571,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (input.archived !== undefined) payload.archived_at = input.archived ? new Date().toISOString() : null
     const update = await client.from('departments').update(payload).eq('id', params.id).select('id, organization_id, name, slug, archived_at, created_at').single()
     if (update.error) throw update.error
-    const audit = await client.from('audit_events').insert({
+    const audit = await supabaseClients.forService().from('audit_events').insert({
       organization_id: existing.data.organization_id,
       actor_user_id: request.auth!.userId,
       action: 'department.updated',
@@ -596,7 +603,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     // returned row count, a caller without department.manage in this row's scope would see a
     // misleading 204 for a department that still exists (found in this package's review).
     if (del.data.length === 0) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
-    const audit = await client.from('audit_events').insert({
+    const audit = await supabaseClients.forService().from('audit_events').insert({
       organization_id: existing.data.organization_id,
       actor_user_id: request.auth!.userId,
       action: 'department.deleted',
@@ -623,7 +630,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       .select('id, organization_id, department_id, name, archived_at, created_at')
       .single()
     if (insert.error) throw insert.error
-    const audit = await client.from('audit_events').insert({
+    const audit = await supabaseClients.forService().from('audit_events').insert({
       organization_id: department.data.organization_id,
       actor_user_id: request.auth!.userId,
       action: 'team.created',
@@ -650,7 +657,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (input.archived !== undefined) payload.archived_at = input.archived ? new Date().toISOString() : null
     const update = await client.from('teams').update(payload).eq('id', params.id).select('id, organization_id, department_id, name, archived_at, created_at').single()
     if (update.error) throw update.error
-    const audit = await client.from('audit_events').insert({
+    const audit = await supabaseClients.forService().from('audit_events').insert({
       organization_id: existing.data.organization_id,
       actor_user_id: request.auth!.userId,
       action: 'team.updated',
@@ -677,7 +684,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       throw del.error
     }
     if (del.data.length === 0) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
-    const audit = await client.from('audit_events').insert({
+    const audit = await supabaseClients.forService().from('audit_events').insert({
       organization_id: existing.data.organization_id,
       actor_user_id: request.auth!.userId,
       action: 'team.deleted',
@@ -754,7 +761,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       if (insert.error.code === '22P02') return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
       throw insert.error
     }
-    const audit = await client.from('audit_events').insert({
+    const audit = await supabaseClients.forService().from('audit_events').insert({
       organization_id: scope.organizationId,
       actor_user_id: request.auth!.userId,
       action: 'membership.created',
@@ -816,7 +823,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     }
     const result = rpc.data as { membershipId: string; userId: string; role: string; expiresAt: string | null; fromRole: string }
     const scopeId = query.scope === 'organization' ? scope.organizationId : query.scope === 'department' ? scope.departmentId! : (existing.data.team_id as string)
-    const audit = await client.from('audit_events').insert({
+    const audit = await supabaseClients.forService().from('audit_events').insert({
       organization_id: scope.organizationId,
       actor_user_id: request.auth!.userId,
       action: 'membership.role_changed',
@@ -866,7 +873,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       throw del.error
     }
     if (del.data.length === 0) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
-    const audit = await client.from('audit_events').insert({
+    const audit = await supabaseClients.forService().from('audit_events').insert({
       organization_id: scope.organizationId,
       actor_user_id: request.auth!.userId,
       action: 'membership.removed',
@@ -964,7 +971,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       emailDelivered = false
       request.log.error({ err: error, correlationId: request.id }, 'invitation email delivery failed')
     }
-    const audit = await client.from('audit_events').insert({
+    const audit = await supabaseClients.forService().from('audit_events').insert({
       organization_id: scope.organizationId,
       actor_user_id: request.auth!.userId,
       action: 'invitation.created',
@@ -1019,7 +1026,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       emailDelivered = false
       request.log.error({ err: error, correlationId: request.id }, 'invitation email delivery failed')
     }
-    const audit = await client.from('audit_events').insert({
+    const audit = await supabaseClients.forService().from('audit_events').insert({
       organization_id: scope.organizationId,
       actor_user_id: request.auth!.userId,
       action: 'invitation.resent',
@@ -1052,7 +1059,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       .select('id, organization_id, department_id, team_id, email, role, invited_by, expires_at, accepted_at, revoked_at, last_sent_at, send_count, created_at')
       .single()
     if (update.error) throw update.error
-    const audit = await client.from('audit_events').insert({
+    const audit = await supabaseClients.forService().from('audit_events').insert({
       organization_id: scope.organizationId,
       actor_user_id: request.auth!.userId,
       action: 'invitation.revoked',

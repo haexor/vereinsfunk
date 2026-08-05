@@ -637,8 +637,17 @@ begin
   end if;
 end;
 $$;
+-- KEIN grant fuer authenticated: das authz-Schema ist ueber PostgREST exponiert
+-- (supabase/config.toml, schemas = [..., "authz"]), diese Funktion hat als einzige der neuen
+-- authz-Funktionen keine eigene Berechtigungspruefung, und sie wird von keiner RLS-Policy
+-- ausgewertet -- ihre beiden Aufrufer create_invitation()/resend_invitation() sind security
+-- definer und rufen sie mit den Rechten des Eigentuemers auf. Mit einem Grant konnte jeder
+-- authentifizierte Nutzer sie direkt fuer eine beliebige organization_id und Adresse aufrufen
+-- und deren Einladungskontingent bis send_count = 10 verbrauchen, ohne dass diese Adresse je
+-- eingeladen wurde -- danach ist sie in diesem Verein dauerhaft nicht mehr einladbar (es gibt
+-- keinen Weg, den Zaehler zurueckzusetzen). Im Nachfolge-Review dieses PRs gefunden.
 revoke all on function authz.register_invitation_send(uuid, uuid, uuid, text) from public;
-grant execute on function authz.register_invitation_send(uuid, uuid, uuid, text) to authenticated, service_role;
+grant execute on function authz.register_invitation_send(uuid, uuid, uuid, text) to service_role;
 
 -- 7. Einladung anlegen als security-definer-RPC statt eines direkten Inserts ueber RLS: eine
 -- abgelaufene, aber noch offene Einladung erfuellt weiterhin invitations_open_unique und

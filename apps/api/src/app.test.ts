@@ -39,6 +39,21 @@ const organizationManagerRoleProvider: RoleProvider = {
   },
 }
 
+// audit_events ist append-only und hat fuer authenticated keinen Insert-Grant -- die API schreibt
+// den Trail deshalb ausschliesslich ueber den Service-Client. Die Fakes erwarten den Insert
+// entsprechend dort; ein Rueckfall auf den Nutzer-Client laesst den betroffenen Test an
+// "unexpected table in test fake: audit_events" scheitern.
+function serviceClientCapturingAudit(captured: Record<string, unknown>[]): SupabaseClient {
+  return {
+    from: (table: string) => {
+      if (table === 'audit_events') {
+        return { insert: async (row: Record<string, unknown>) => { captured.push(row); return { error: null } } }
+      }
+      throw new Error(`unexpected table in service test fake: ${table}`)
+    },
+  } as unknown as SupabaseClient
+}
+
 const apps: Awaited<ReturnType<typeof buildApp>>[] = []
 afterEach(async () => Promise.all(apps.splice(0).map((app) => app.close())))
 
@@ -381,16 +396,17 @@ describe('structure, memberships and invitations', () => {
       archived_at: null,
       created_at: '2026-08-06T10:00:00+00:00',
     }
+    const auditRows: Record<string, unknown>[] = []
     const clients: SupabaseClientFactory = {
       forUser: () =>
         ({
           rpc: async () => ({ data: departmentRow.id, error: null }),
           from: (table: string) => {
-            if (table === 'audit_events') return { insert: async () => ({ error: null }) }
-            return { select: () => ({ eq: () => ({ single: async () => ({ data: departmentRow, error: null }) }) }) }
+            if (table === 'departments') return { select: () => ({ eq: () => ({ single: async () => ({ data: departmentRow, error: null }) }) }) }
+            throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
-      forService: () => ({}) as unknown as SupabaseClient,
+      forService: () => serviceClientCapturingAudit(auditRows),
     }
     const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
     const token = await signAccessToken(USER_ID)
@@ -402,6 +418,10 @@ describe('structure, memberships and invitations', () => {
     })
     expect(response.statusCode).toBe(201)
     expect(response.json()).toMatchObject({ id: departmentRow.id, name: 'Handball', slug: 'handball' })
+    // Regression: der Audit-Trail lief ueber den Nutzer-Client und scheiterte an jeder Schreibung
+    // still an "permission denied for table audit_events" (im Nachfolge-Review dieses PRs
+    // gefunden) -- hier wird belegt, dass wirklich ein Eintrag entsteht.
+    expect(auditRows[0]).toMatchObject({ action: 'department.created', entity_type: 'departments', actor_user_id: USER_ID })
   })
 
   it('rejects an invitation payload whose role does not match its scope, before any DB call', async () => {
@@ -491,11 +511,10 @@ describe('structure, memberships and invitations', () => {
           rpc: async (fn: string) => (fn === 'email_has_membership' ? { data: false, error: null } : { data: invitationRow, error: null }),
           from: (table: string) => {
             if (table === 'organizations') return { select: () => ({ eq: () => ({ single: async () => ({ data: { name: 'SV Test' }, error: null }) }) }) }
-            if (table === 'audit_events') return { insert: async () => ({ error: null }) }
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
-      forService: () => ({}) as unknown as SupabaseClient,
+      forService: () => serviceClientCapturingAudit([]),
     }
     const capturedMessages: { to: string; subject: string; text: string }[] = []
     const app = await startApp({
@@ -576,11 +595,10 @@ describe('structure, memberships and invitations', () => {
           from: (table: string) => {
             if (table === 'invitations') return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: existingRow, error: null }) }) }) }
             if (table === 'organizations') return { select: () => ({ eq: () => ({ single: async () => ({ data: { name: 'SV Test' }, error: null }) }) }) }
-            if (table === 'audit_events') return { insert: async () => ({ error: null }) }
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
-      forService: () => ({}) as unknown as SupabaseClient,
+      forService: () => serviceClientCapturingAudit([]),
     }
     const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
     const token = await signAccessToken(USER_ID)
@@ -712,7 +730,6 @@ describe('structure, memberships and invitations', () => {
         ({
           from: (table: string) => {
             if (table === 'organization_memberships') return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: existingRow, error: null }) }) }) }
-            if (table === 'audit_events') return { insert: async () => ({ error: null }) }
             throw new Error(`unexpected table in test fake: ${table}`)
           },
           rpc: async (fn: string) => {
@@ -720,7 +737,7 @@ describe('structure, memberships and invitations', () => {
             return { data: rpcResult, error: null }
           },
         }) as unknown as SupabaseClient,
-      forService: () => ({}) as unknown as SupabaseClient,
+      forService: () => serviceClientCapturingAudit([]),
     }
     const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
     const token = await signAccessToken(USER_ID)
@@ -814,11 +831,10 @@ describe('structure, memberships and invitations', () => {
               }
             }
             if (table === 'organizations') return { select: () => ({ eq: () => ({ single: async () => ({ data: { name: 'SV Test' }, error: null }) }) }) }
-            if (table === 'audit_events') return { insert: async () => ({ error: null }) }
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
-      forService: () => ({}) as unknown as SupabaseClient,
+      forService: () => serviceClientCapturingAudit([]),
     }
     const capturedMessages: { to: string; subject: string; text: string }[] = []
     const app = await startApp({
