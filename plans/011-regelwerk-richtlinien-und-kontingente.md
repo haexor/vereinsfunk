@@ -464,7 +464,7 @@ Prüfer müssen erfahren, dass sie gefragt sind — ein Trainer schaut nicht tä
 - Kontingente als Liste mit aktueller Auslastung
 - eine Prosa-Zusammenfassung „Was bedeutet das konkret?“ — für Ehrenamtliche der wichtigste Teil der Seite
 
-Vertrauen je Mitglied liegt bei der Mitgliederliste aus Paket 010, nicht in den Einstellungen. Dort wird über eine Person entschieden, und dort sucht man sie:
+Vertrauen je Mitglied liegt bei der Mitgliederliste aus Paket 010, nicht in den Einstellungen. Dort wird über eine Person entschieden, und dort sucht man sie. **Hinweis aus der Umsetzung von 010**: `pages/mitglieder.vue` hat keine aufklappbare Detailebene je Mitglied — dieses Paket muss sie selbst ergänzen, nicht nur befüllen.
 
 - je Mitglied und Scope: Einreichen erlaubt, Prüfung erforderlich / befreit / geerbt, Befristung, Begründung
 - direkt daneben, welche Route für diese Person gilt — inklusive der Stufen, die eine Befreiung **nicht** entfällt
