@@ -14,7 +14,7 @@ Arbeite **ein Paket zu Ende**, bevor du das nächste anfängst. Halte dich an di
 
 Die übrigen drei hängen an externen Gates und stehen deshalb nicht in der laufenden Kette: **017** braucht 006 und 016 plus das Meta App Review, **018** braucht 017 plus Rechtsgrundlage und AVV mit dem LLM-Anbieter. **020 ist das Produktions-Gate**: die Pakete 014, 015 und 018 dürfen vorher gebaut, aber nicht mit echten Personendaten betrieben werden. Wenn du 014 oder 015 fertig hast und niemand 020 umgesetzt hat, ist das Paket „gebaut“ und nicht „produktiv“ — sag mir das ausdrücklich, statt es als erledigt zu melden. **021** bringt Tarife und Speichergrenzen; die Zahlungsabwicklung ist ausdrücklich nicht Teil davon.
 
-Beginne mit **008**. Ohne echte Authentifizierung lässt sich kein Dummy-Datensatz ehrlich ersetzen.
+**Paket 008 ist erledigt** (echte JWT-Verifikation, `requirePermission`, `useDemoData.ts` gelöscht). Beginne mit **009**: ohne Onboarding zeigt die Oberfläche nach der Anmeldung nichts, und die Dashboard-Kennzahlen sind weiterhin erfunden.
 
 Je Paket in drei Phasen:
 
@@ -77,13 +77,13 @@ Alles muss grün sein. Ein rotes Ergebnis wird gemeldet, nicht umgangen. Danach 
 
 Zwei Sicherheitsbefunde, die Paket 008 und 012 begründen:
 
-- `apps/api/src/app.ts:66-72` ist die gesamte Autorisierung der API. Es wird nur geprüft, **ob** ein `authorization`-Header existiert, und das nur bei `NODE_ENV === 'production'`. Keine Signaturprüfung, keine Permission. Lokal und im Test ist jeder Endpunkt offen.
-- `social_connections` gewährt `authenticated` `select` auf die ganze Tabelle einschließlich `token_ciphertext` (Migration `202608030001:125,131`). Policy und Grant sind spaltenblind.
+- ✓ **Behoben in 008**: die Autorisierung der API war nur eine Prüfung, *ob* ein `authorization`-Header existiert, und das nur bei `NODE_ENV === 'production'`. Jetzt echte JWT-Verifikation und `requirePermission`. Ebenfalls in 008: `public.profiles` bekam den fehlenden Trigger auf `auth.users`, und der Supabase-Client existiert.
+- **Offen, begründet Paket 012**: `social_connections` gewährt `authenticated` `select` auf die ganze Tabelle einschließlich `token_ciphertext` (`202608030001:88-90`). Policy und Grant sind spaltenblind.
 
-Weiterhin: es gibt keinen Supabase-Client im Code, `@supabase/supabase-js` ist zwar Abhängigkeit von `apps/web`, wird aber nirgends importiert. `public.profiles` hat keinen Trigger auf `auth.users`, ein echter Neuregistrierter hätte kein Profil. Für `public.organizations` existiert keine INSERT-Policy.
+Weiterhin offen: für `public.organizations` existiert keine INSERT-Policy — deshalb braucht 009 zwingend einen privilegierten Serverpfad. `apps/api/src/app.ts:29-32` liefert Upload-URLs auf `https://storage.invalid/...`, und `/v1/submissions` (`:70-100`) persistiert nichts.
 
 ## Offene Entscheidungen
 
 `plans/README.md` listet sie am Ende. Für 008 bis 013 blockiert keine davon — fang an. Vor 014, 015 und 020 brauchst du meine Antworten, und bei 021 alles, was Geld betrifft: Zahlungsdienstleister, endgültige Preise, Bestandspreisgarantie, Video im kostenlosen Tarif. Tarife und Speichergrenzen lassen sich ohne diese Antworten bauen, kassieren nicht. Frag gezielt nach, statt eine Annahme zu treffen.
 
-Fang mit Paket 008 an. Zeig mir nach Phase 1 kurz, was von der Evidenz abgewichen ist, bevor du baust.
+Fang mit Paket 009 an. Zeig mir nach Phase 1 kurz, was von der Evidenz abgewichen ist, bevor du baust.
