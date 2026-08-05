@@ -1,18 +1,18 @@
 # Prompt für die nächste Session
 
-Alles unter der Trennlinie in eine neue Claude-Code-Session kopieren. Die Pläne selbst liegen in `plans/008`–`plans/020`, der Index in [plans/README.md](README.md).
+Alles unter der Trennlinie in eine neue Claude-Code-Session kopieren. Die Pläne selbst liegen in `plans/008`–`plans/021`, der Index in [plans/README.md](README.md).
 
 ---
 
-Wir setzen die Planserie `plans/008`–`plans/020` um. Lies zuerst `plans/README.md` vollständig — dort stehen die Reihenfolge, die übergreifenden Regeln, das Rückbau-Inventar und die noch offenen Entscheidungen. Danach `AGENTS.md` und `docs/product/implementation-plan.md`.
+Wir setzen die Planserie `plans/008`–`plans/021` um. Lies zuerst `plans/README.md` vollständig — dort stehen die Reihenfolge, die übergreifenden Regeln, das Rückbau-Inventar und die noch offenen Entscheidungen. Danach `AGENTS.md` und `docs/product/implementation-plan.md`.
 
 **Du darfst und sollst Subagents und Workflows benutzen.** Das ist ausdrücklich gewünscht, weil die Pläne breit sind und viele Prüfungen unabhängig voneinander laufen können.
 
 ## Vorgehen je Arbeitspaket
 
-Arbeite **ein Paket zu Ende**, bevor du das nächste anfängst. Halte dich an die Reihenfolge aus `plans/README.md`: 008 → 009 → 010 → 011 → 012, dann 013 (unabhängig, kann früher), 014 → 019 → 015, 016 jederzeit ab 011, 020 danach.
+Arbeite **ein Paket zu Ende**, bevor du das nächste anfängst. Halte dich an die Reihenfolge aus `plans/README.md`: 008 → 009 → 010 → 011 → 012, dann 013 (unabhängig, kann früher), 014 → 019 → 015, 016 und 021 jederzeit ab 011, 020 danach.
 
-Die übrigen drei hängen an externen Gates und stehen deshalb nicht in der laufenden Kette: **017** braucht 006 und 016 plus das Meta App Review, **018** braucht 017 plus Rechtsgrundlage und AVV mit dem LLM-Anbieter. **020 ist das Produktions-Gate**: die Pakete 014, 015 und 018 dürfen vorher gebaut, aber nicht mit echten Personendaten betrieben werden. Wenn du 014 oder 015 fertig hast und niemand 020 umgesetzt hat, ist das Paket „gebaut“ und nicht „produktiv“ — sag mir das ausdrücklich, statt es als erledigt zu melden.
+Die übrigen drei hängen an externen Gates und stehen deshalb nicht in der laufenden Kette: **017** braucht 006 und 016 plus das Meta App Review, **018** braucht 017 plus Rechtsgrundlage und AVV mit dem LLM-Anbieter. **020 ist das Produktions-Gate**: die Pakete 014, 015 und 018 dürfen vorher gebaut, aber nicht mit echten Personendaten betrieben werden. Wenn du 014 oder 015 fertig hast und niemand 020 umgesetzt hat, ist das Paket „gebaut“ und nicht „produktiv“ — sag mir das ausdrücklich, statt es als erledigt zu melden. **021** bringt Tarife und Speichergrenzen; die Zahlungsabwicklung ist ausdrücklich nicht Teil davon.
 
 Beginne mit **008**. Ohne echte Authentifizierung lässt sich kein Dummy-Datensatz ehrlich ersetzen.
 
@@ -20,7 +20,7 @@ Je Paket in drei Phasen:
 
 ### Phase 1 — Plan gegen den Code verifizieren (parallel)
 
-Die Pläne zitieren konkrete `file:line`-Stellen, geplant auf `b5c2eda6`. Bevor du etwas baust, lass mehrere Agents parallel prüfen, ob diese Aussagen noch stimmen. Jeder Agent nimmt einen Abschnitt „Ausgangslage und Evidenz“ und meldet je Behauptung: bestätigt, verschoben (neue Stelle), oder falsch.
+Die Pläne zitieren konkrete `file:line`-Stellen, geplant auf `b5c2eda6` (Paket 021 auf `a77904a0`). Sie wurden zuletzt am 2026-08-05 gegen den Code geprüft und korrigiert — Verweise in Zeilen des Rückbau-Inventars, die mit ✓ markiert sind, beziehen sich bewusst auf den Baseline-Stand und nicht auf heute. Bevor du etwas baust, lass mehrere Agents parallel prüfen, ob diese Aussagen noch stimmen. Jeder Agent nimmt einen Abschnitt „Ausgangslage und Evidenz“ und meldet je Behauptung: bestätigt, verschoben (neue Stelle), oder falsch.
 
 Weicht etwas ab, aktualisiere zuerst den Plan und sag mir, was sich geändert hat. Baue nicht gegen eine veraltete Annahme.
 
@@ -84,6 +84,6 @@ Weiterhin: es gibt keinen Supabase-Client im Code, `@supabase/supabase-js` ist z
 
 ## Offene Entscheidungen
 
-`plans/README.md` listet sie am Ende. Für 008 bis 013 blockiert keine davon — fang an. Vor 014, 015 und 020 brauchst du meine Antworten; frag dann gezielt nach, statt eine Annahme zu treffen.
+`plans/README.md` listet sie am Ende. Für 008 bis 013 blockiert keine davon — fang an. Vor 014, 015 und 020 brauchst du meine Antworten, und bei 021 alles, was Geld betrifft: Zahlungsdienstleister, endgültige Preise, Bestandspreisgarantie, Video im kostenlosen Tarif. Tarife und Speichergrenzen lassen sich ohne diese Antworten bauen, kassieren nicht. Frag gezielt nach, statt eine Annahme zu treffen.
 
 Fang mit Paket 008 an. Zeig mir nach Phase 1 kurz, was von der Evidenz abgewichen ist, bevor du baust.

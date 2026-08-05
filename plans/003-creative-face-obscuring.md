@@ -6,7 +6,7 @@ Das System lokalisiert Gesichter automatisch, erlaubt manuelle Korrekturen und e
 
 ## Abhängigkeit und Ausgangslage
 
-Plan 002 muss mindestens Schema, private Assets und Gate-Vertrag bereitstellen. Der aktuelle Code besitzt weder Media-Paket noch Detektor/Anonymizer. `202608020002_private_storage.sql` erlaubt private JPG/PNG/WebP-Dateien; `apps/web/app/pages/erstellen.vue:90-92` zeigt nur Uploadhinweis und Minderjährigenwarnung.
+Plan 002 muss mindestens Schema, private Assets und Gate-Vertrag bereitstellen. Der aktuelle Code besitzt weder Media-Paket noch Detektor/Anonymizer. `202608020002_private_storage.sql` erlaubt private JPG/PNG/WebP-Dateien; `apps/web/app/pages/erstellen.vue:53-58` zeigt nur Uploadhinweis und Minderjährigenwarnung.
 
 Baseline:
 

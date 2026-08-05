@@ -109,11 +109,11 @@ create table public.processor_agreements (
   organization_id uuid not null references public.organizations(id) on delete cascade,
   processor_name text not null, purpose text not null,
   signed_at date, valid_until date,
-  -- Eigener privater Bucket, in derselben Migration angelegt: brand-assets
-  -- erlaubt nur SVG, PNG, JPEG und WOFF2 (`202608020002:5`) und kann einen
-  -- Vertrag als PDF oder DOCX gar nicht aufnehmen.
-  document_bucket text not null default 'compliance-docs'
-    check (document_bucket = 'compliance-docs'),
+  -- raw-media, nicht brand-assets: dort liegen schon die Einwilligungsnachweise
+  -- aus Paket 015, und brand-assets erlaubt nur SVG, PNG, JPEG und WOFF2
+  -- (`202608020002:5`) -- ein Vertrag als PDF passt dort nicht hinein.
+  document_bucket text not null default 'raw-media'
+    check (document_bucket = 'raw-media'),
   document_path text,
   status text not null default 'pending' check (status in ('pending','active','expired','terminated')),
   created_at timestamptz not null default now(),
@@ -123,7 +123,9 @@ create table public.processor_agreements (
 
 `due_at` in `data_subject_requests` wird beim Anlegen auf `received_at + interval '1 month'` gesetzt — **ein Monat, keine 30 Tage.** Die DSGVO rechnet in Kalendermonaten, und die beiden Werte fallen je nach Monat auseinander. Ist `extended_until` gesetzt, gilt dieses Datum; die Verlängerung ist auf zwei zusätzliche Monate begrenzt und verlangt eine Begründung und eine Benachrichtigung der betroffenen Person — beides Spalten, damit es belegbar ist und nicht behauptet. Die Frist ist der Grund, warum diese Tabelle existiert: eine Anfrage, die in einem Postfach liegt, wird übersehen.
 
-Der Bucket `compliance-docs` entsteht in derselben Migration: privat, mit `application/pdf`, `application/msword` und `application/vnd.openxmlformats-officedocument.wordprocessingml.document`, Pfadschema `organizations/<orgId>/compliance/<agreementId>/…`, damit `storage_read_own_organization` greift (`202608020002:8-13`) — die Policy muss dazu um den neuen Bucket erweitert werden. Zugriff nur mit `organization.manage`, jeder Abruf über einen kurzlebigen signierten Link und mit `audit_events`-Eintrag.
+Verträge liegen unter `organizations/<orgId>/compliance/<agreementId>/…` in `raw-media` — kein vierter Bucket. Paket 015 legt Einwilligungsnachweise nach demselben Muster dort ab und erweitert die MIME-Liste bereits um `application/pdf`; dieses Paket ergänzt `application/vnd.openxmlformats-officedocument.wordprocessingml.document` für DOCX, falls Vereine Verträge als Word-Datei erhalten. Damit greift `storage_read_own_organization` unverändert (`202608020002:8-13`), und die Aufbewahrungsjobs dieses Pakets müssen nur einen Bucket kennen statt zwei.
+
+Ein Bucket für alles Private hat einen Preis: die Zugriffsregeln unterscheiden nicht mehr nach Bucket, sondern nach Pfadpräfix. `compliance/` ist deshalb nur mit `organization.manage` lesbar, `consents/` nur mit `department.manage` oder höher, `media/` nach der bestehenden Regel — durchgesetzt in der Storage-Policy und nicht erst in der API. Jeder Abruf läuft über einen kurzlebigen signierten Link und erzeugt einen `audit_events`-Eintrag.
 
 `retention_deletions` zählt nur — keine IDs, keine Namen. Ein Löschprotokoll, das die gelöschten Daten benennt, hat nichts gelöscht.
 
@@ -213,7 +215,8 @@ Ein Verein, der Paket 014 (Personenverzeichnis) oder 018 (Kommentaranalyse) akti
 - Löschnachweis: nach dem Lauf existiert das Storage-Objekt nicht mehr — nicht nur die Datenbankzeile. Ein Test, der nur die Zeile prüft, belegt die Zusage nicht.
 - Exporttests: das Auskunftsbündel enthält alle Kategorien und **keine** Daten anderer Personen. Ein Export, der ein Gruppenfoto mit fünf Kindern enthält, ist ein Datenschutzvorfall im Namen der Auskunft — der Export enthält Verweise und Metadaten, keine Medien Dritter.
 - pgTAP: `retention_settings` außerhalb der Grenzen verstößt gegen CHECK; `retention_deletions` ist ohne `organization.manage` nicht lesbar; `due_at` liegt genau einen Kalendermonat nach `received_at`, auch bei Eingang am 31. Januar; `extended_until` vor `due_at` verstößt gegen CHECK; eine Begründung ohne Verlängerungsdatum verstößt gegen CHECK; Anfragen und Verarbeitungsdokumente fremder Vereine sind unsichtbar; Löschen einer Verzeichnisperson lässt die Betroffenenanfrage bestehen und setzt nur `directory_person_id` auf `null` — `subject_label` und die Frist bleiben, sonst verschwindet der Nachweis der Bearbeitung mit der Löschung, die er dokumentiert.
-- Bucket-Test: ein PDF und ein DOCX lassen sich nach `compliance-docs` hochladen und aus `brand-assets` nicht; ein fremder Verein erreicht das Objekt nicht; der Abruf erzeugt einen `audit_events`-Eintrag. Der erste Teil ist der Punkt — eine MIME-Liste, die Vertragsdokumente ablehnt, fällt sonst erst beim ersten echten AVV auf.
+- Bucket-Test: ein PDF und ein DOCX lassen sich nach `raw-media` unter `compliance/` hochladen, aus `brand-assets` nicht; ein fremder Verein erreicht das Objekt nicht; der Abruf erzeugt einen `audit_events`-Eintrag. Der erste Teil ist der Punkt — eine MIME-Liste, die Vertragsdokumente ablehnt, fällt sonst erst beim ersten echten AVV auf.
+- Pfadpräfix-Tests, weil ein gemeinsamer Bucket die Trennung an den Pfad verlagert: ein `editor` liest `media/`, aber **nicht** `consents/` und **nicht** `compliance/`; ein `department_admin` liest `consents/` seiner Abteilung, aber nicht `compliance/`; Pfad-Traversal (`../`) im Objektnamen greift keine fremde Ebene ab.
 - Netzwerktest: Laden von Start-, Anmelde- und Dashboardseite erzeugt keine Anfrage an einen fremden Host.
 - manuell: Frist auf 7 Tage senken, Trockenlauf ansehen, scharfen Lauf ausführen, Protokoll prüfen; Betroffenenanfrage anlegen, Export erzeugen, Löschung ausführen, Antwort benennt Ausnahmen.
 
