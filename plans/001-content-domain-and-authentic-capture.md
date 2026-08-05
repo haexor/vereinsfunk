@@ -12,7 +12,7 @@ Geplant auf `unborn HEAD` am 2026-08-02.
 - `packages/content-engine/src/index.ts:11-16` verlangt Fakten ausschließlich für diese vier Typen.
 - `apps/web/app/pages/erstellen.vue:12-26` verdrahtet dieselben vier Typen und deren Formulare hart.
 - `supabase/migrations/202608020001_initial_tenant_foundation.sql:137` begrenzt `submissions.content_type` per CHECK auf diese Werte.
-- Der Upload in `apps/web/app/pages/erstellen.vue:90` ist bisher nur Darstellung; die Umsetzung folgt in Plan 002.
+- Der Upload in `apps/web/app/pages/erstellen.vue:53` ist bisher nur Darstellung; die Umsetzung folgt in Plan 002.
 
 Baseline-Hashes:
 

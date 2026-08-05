@@ -31,7 +31,7 @@ Empfohlener Ablauf: zuerst 001 und den technischen Spike aus 004; danach 002 und
 
 ## Zweite Serie: Produktausbau und Rückbau der Prototyp-Daten
 
-Stand: 2026-08-04, geplant auf `b5c2eda6`. Die Pakete 001–007 bauen die Inhalts- und Veröffentlichungskette. Die Serie 008–020 macht daraus ein Produkt, das ein Verein selbst einrichten und betreiben kann, und ersetzt dabei die Prototyp-Daten durch echte Workflows.
+Stand: 2026-08-04, geplant auf `b5c2eda6`. Die Pakete 001–007 bauen die Inhalts- und Veröffentlichungskette. Die Serie 008–021 macht daraus ein Produkt, das ein Verein selbst einrichten und betreiben kann, und ersetzt dabei die Prototyp-Daten durch echte Workflows.
 
 | Nr. | Arbeitspaket | Abhängigkeiten | Status |
 |---|---|---|---|
@@ -48,8 +48,9 @@ Stand: 2026-08-04, geplant auf `b5c2eda6`. Die Pakete 001–007 bauen die Inhalt
 | 018 | [Resonanz- und Sentimentanalyse](018-resonanz-und-sentimentanalyse.md) | 017 | blockiert: Rechtsgrundlage und AVV mit LLM-Anbieter |
 | 019 | [Mannschaften, Spielpläne und Veranstaltungen](019-mannschaften-spielplaene-und-veranstaltungen.md) | 014 | bereit |
 | 020 | [Rechtliche Pflichten und Datenschutzbetrieb](020-rechtliche-pflichten-und-datenschutzbetrieb.md) | 009, 012, 015 | bereit |
+| 021 | [Abomodelle, Speicherkontingent und Nutzungsgrenzen](021-abomodelle-und-speicherkontingent.md) | 009, 010, 011 | bereit; Zahlungsabwicklung als eigenes Vorhaben |
 
-Empfohlener Ablauf: **008 und 009 unmittelbar hintereinander** — ohne Authentifizierung lässt sich kein Prototyp-Datensatz ehrlich ersetzen, und ohne Onboarding zeigt die Oberfläche nach der Anmeldung nichts. Danach 010 und 011 als Verwaltungsgrundlage, 013 parallel dazu. Anschließend 012, dann 014 mit 019 als erstem Nutzen des Integrationsrahmens, dann 015. 016 ist ab 011 jederzeit möglich; 017 und 018 hängen an externen Gates. **020 vor dem Produktivbetrieb mit echten Personendaten.**
+Empfohlener Ablauf: **008 und 009 unmittelbar hintereinander** — ohne Authentifizierung lässt sich kein Prototyp-Datensatz ehrlich ersetzen, und ohne Onboarding zeigt die Oberfläche nach der Anmeldung nichts. Danach 010 und 011 als Verwaltungsgrundlage, 013 parallel dazu. Anschließend 012, dann 014 mit 019 als erstem Nutzen des Integrationsrahmens, dann 015. 016 ist ab 011 jederzeit möglich; 017 und 018 hängen an externen Gates. **020 vor dem Produktivbetrieb mit echten Personendaten.** 021 ist ab 011 möglich und vor dem ersten zahlenden Verein nötig — ohne Kontingent ist der Speicher eines geteilten Systems unbegrenzt beschreibbar.
 
 ## Dritte Ebene: Plattform-Administration (SaaS-Betreiber)
 
@@ -97,6 +98,8 @@ Vollständige Liste der erfundenen Daten im Anwendungscode, mit dem Paket, das s
 | `packages/domain/src/index.ts:47-87` | `mergeEffectiveConfig` existiert korrekt, wird aber nur von Tests aufgerufen | 011 |
 | `post_versions.effective_config_snapshot` | Spalte ist `not null` und wird von nichts gefüllt | 011, 013 |
 | `evaluateMediaGate` `consentValid` | Blocker existiert, Wert wird nie bestimmt | 015 |
+| `SafetyFlagSchema` `sensitive_data`, `minor`, `missing_consent` | drei von vier Flags werden nirgends bestimmt; `FakeContentGenerator` setzt ausschließlich `uncertain_fact` (`packages/content-engine/src/index.ts:40`) | 015 (Textprüfung), 002 (Medien) |
+| Bucket-Größen ohne Vereinsgrenze | `file_size_limit` begrenzt eine Datei, nicht die Summe; ein Verein kann unbegrenzt viele 100-MB-Videos hochladen | 021 |
 | `WorkflowNameSchema` `collect-analytics` | Name reserviert, Workflow nicht implementiert | 017 |
 | `apps/api/src/app.ts:29-32` | `LocalUploadService` liefert `https://storage.invalid/...` | 002 (008 hat die Route nur mit echter Autorisierung versehen, den Stub aber nicht ersetzt — bleibt offen) |
 | `apps/api/src/app.ts:70-100` | `/v1/submissions` persistiert nichts | 011 (008 hat die Route nur mit echter Autorisierung versehen, die Persistenz aber nicht ergänzt — bleibt offen) |
@@ -139,6 +142,13 @@ Ergänzend zu den Regeln der ersten Serie:
 | Sentimentanalyse | eigenes späteres Paket mit eigenem Rechts-Gate | 018 |
 | Freigabe | jeder Knoten bestimmt für alles unter sich, wer einreichen darf und ob geprüft wird — bis auf die einzelne Person. Mehrstufige Route: Trainer → Medienverantwortliche → Marketing. Prüfer dürfen abteilungsfremd sein. Minderjährigenstufe ist unbefreibar. | 011 |
 | SVG-Logos | unterstützt, aber nur nach Allowlist-Sanitisierung mit eigenem Modul `packages/svg-safe` und Testkorpus bekannter Payloads | 009, 013 |
+| Schriftformate | WOFF2, WOFF, TTF und OTF werden angenommen; Original nach `raw-media`, ausgeliefert wird nur das serverseitig konvertierte WOFF2 | 013 |
+| Abteilungs- und Mannschaftsbranding | jede Ebene darf eigene Logos und Schriften führen, Default `true`; was eine Abteilung oder Mannschaft hochlädt, ist für andere nicht nutzbar | 013 |
+| Speicher und Tarife | drei Tarife als Daten (kostenlos 3 GB / Einstieg / Premium), Preise und Grenzen ohne Deployment änderbar, operative Übersteuerung im Einzelfall; Verein teilt seinen Speicher auf Abteilungen und Mannschaften auf | 021 |
+| Volle Speichergrenze | neue Uploads blockiert, geplante Veröffentlichungen laufen weiter, **nichts wird automatisch gelöscht** | 021 |
+| Handgepflegte Datensätze | sind keine Integrationsquelle: `source_id = null` statt eines `manual`-Transports | 014 |
+| Sensible Angaben im Beitragstext | zweistufig — regelbasiert blockierend (Kontaktdaten, IBAN, Namen), Sprachmodell nur beratend mit `sensitive_data`. Ein Modell erteilt keine Freigabe und verhindert keine allein. | 015 |
+| Weggeklickte Anlassvorschläge | Zeitstempel am Ereignis statt eigener Tabelle; erscheinen wieder, sobald `source_updated_at` neuer ist | 019 |
 
 ## Offene Entscheidungen der zweiten Serie
 
@@ -150,8 +160,12 @@ Diese Punkte sind in den jeweiligen Paketen begründet und brauchen eine Festleg
 - **Einwilligungstext je Verein oder global** (Paket 015) — beeinflusst, ob `text_version` global oder pro Verein geführt wird.
 - **Aufbewahrung von Einwilligungsnachweisen**: Vorschlag fünf Jahre ab Ende der Gültigkeit (Paket 020).
 - **E-Mail-Versand**: eigener Anbieter oder Supabase Auth Invite (Paket 010). Empfehlung eigener Versand, weil Einladungen auch an bestehende Nutzer gehen. Beschaffungsentscheidung.
-- **Abteilungsbranding per Default erlaubt oder gesperrt** (Paket 013).
 - **Verlegte Spiele**: ob ein bereits veröffentlichter Ankündigungsbeitrag automatisch als überholt markiert wird (Paket 019).
+
+- **Zahlungsdienstleister und Rechnungsstellung** (Paket 021): Stripe, Mollie und Paddle unterscheiden sich vor allem darin, wer Händler ist und wer die Umsatzsteuer schuldet. Dazu Kleinunternehmerregelung, fortlaufende Rechnungsnummern, SEPA-Mandate und das Verhalten bei ausbleibender Zahlung. Beschaffungs- und Steuerentscheidung, kein Implementierungsdetail.
+- **Preise und Deckungsrechnung** (Paket 021): 20 € und 50 € sind Platzhalter mit Vorzeichen. Speicher, Rendering und LLM-Aufrufe sind die drei Kostenposten, und der teuerste ist nicht der Speicher. Vor dem ersten zahlenden Verein braucht es eine Deckungsrechnung je Tarif.
+- **Bestandspreise** (Paket 021): ändert man den Preis in `subscription_plans`, gilt er für alle Bestandsvereine. Wer garantierte Preise will, braucht eine Preishistorie — die Entscheidung ist vor der ersten Erhöhung billig und danach teuer.
+- **Video im kostenlosen Tarif** (Paket 021): 3 GB sind nach etwa zehn Videobeiträgen voll. Entweder die Oberfläche sagt das vorher deutlich, oder der kostenlose Tarif lässt nur Bilder zu.
 
 Anwaltliche Prüfung ist für Einwilligungstext, Datenschutzerklärung, AVV und die Lizenzbestätigung für Schriften Voraussetzung, nicht Option. Der Beschaffungsvorlauf ist größer als der Entwicklungsaufwand.
 
