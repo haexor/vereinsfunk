@@ -1714,6 +1714,46 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
     expect(response.statusCode).toBe(403)
   })
 
+  it('keeps stalled stages in the list waiting for the caller and flags them overdue', async () => {
+    // Eine Frist darf weder zustimmen noch blockieren (Plan 011). mark_stalled_approval_stages()
+    // setzt eine ueberfaellige Stufe auf 'stalled' -- ein Filter nur auf 'open' haette sie aus genau
+    // der Liste entfernt, in der die zustaendige Person sie noch entscheiden soll.
+    const statusFilters: unknown[][] = []
+    const stageRow = {
+      id: STAGE_ID, position: 1, scope: 'department', label: 'Abteilung', mode: 'named', minimum_approvals: 1, is_minor_stage: false,
+      status: 'stalled', reviewer_snapshot: [{ userId: USER_ID }], deadline_at: new Date(Date.now() - 3_600_000).toISOString(),
+    }
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table !== 'approval_stages') throw new Error(`unexpected table in test fake: ${table}`)
+            const builder: Record<string, unknown> = {
+              select: () => builder,
+              eq: () => builder,
+              in: (column: string, values: unknown[]) => {
+                if (column === 'status') statusFilters.push(values)
+                return builder
+              },
+              then: (resolve: (value: { data: unknown; error: unknown }) => unknown) => resolve({ data: [stageRow], error: null }),
+            }
+            return builder
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used') } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/approval-stages/mine?organizationId=${ORGANIZATION_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(statusFilters).toEqual([['open', 'stalled']])
+    expect(response.json()).toMatchObject([{ id: STAGE_ID, status: 'stalled', isOverdue: true }])
+  })
+
   it('requires an organizationId when listing the stages waiting for the caller', async () => {
     // Ohne Organisationsbezug saehe eine Person mit Pruefrollen in mehreren Vereinen die Freigaben
     // aller ihrer Vereine in der Liste eines einzelnen.

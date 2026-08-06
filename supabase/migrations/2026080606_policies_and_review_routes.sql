@@ -314,9 +314,19 @@ language sql stable security definer set search_path = public, pg_temp as $$
 $$;
 
 -- Ersetzt authz.can_approve_post_version als Durchsetzung von approval_decisions_insert. Prueft:
--- Stufe ist offen, die Person steht im eingefrorenen reviewer_snapshot, hat auf dieser Stufe noch
--- nicht entschieden, ist nicht Autor bei self_approval_allowed = false, und hat nicht bereits auf
--- einer INNEREN Stufe entschieden bei allow_same_reviewer_across_stages = false.
+-- Stufe ist offen oder ueberfaellig, die Person steht im eingefrorenen reviewer_snapshot, hat auf
+-- dieser Stufe noch nicht entschieden, ist nicht Autor bei self_approval_allowed = false, und hat
+-- nicht bereits auf einer INNEREN Stufe entschieden bei allow_same_reviewer_across_stages = false.
+--
+-- 'stalled' zaehlt hier ausdruecklich wie 'open': eine Frist ist laut Plan 011 ein Label plus
+-- Benachrichtigungsauslöser ("Keine automatische Freigabe nach Fristablauf -- eine Frist, die zur
+-- Zustimmung fuehrt, ist keine Pruefung"), und das gilt in beide Richtungen -- sie darf ebenso wenig
+-- blockieren. Mit "status = 'open'" allein waere jede von mark_stalled_approval_stages() markierte
+-- Stufe dauerhaft unentscheidbar geworden, sobald ein Scheduler die Funktion aufruft (Paket 004):
+-- eine Regression, die ohne Codeaenderung ausgeloest wird. Wer eine ueberfaellige Stufe an einen
+-- ANDEREN Prueferkreis geben will, loest die Route neu auf (Plan 011, "Prüfer verlässt den Verein":
+-- auditiert und begruendet) -- nicht ueber ein Aufweichen dieser Funktion, sonst waere die selbst
+-- gesetzte Frist ein Selbstfreigabe-Pfad fuer jeden mit Verwaltungsrecht.
 create or replace function authz.can_decide_stage(target_stage_id uuid)
 returns boolean
 language sql stable security definer set search_path = public, pg_temp as $$
@@ -326,7 +336,7 @@ language sql stable security definer set search_path = public, pg_temp as $$
     join public.approval_requests request on request.id = stage.approval_request_id and request.organization_id = stage.organization_id
     join public.post_versions version on version.id = request.post_version_id and version.organization_id = request.organization_id
     where stage.id = target_stage_id
-      and stage.status = 'open'
+      and stage.status in ('open', 'stalled')
       and exists (select 1 from jsonb_array_elements(stage.reviewer_snapshot) elem where (elem->>'userId')::uuid = auth.uid())
       and not exists (select 1 from public.approval_decisions decision where decision.approval_stage_id = stage.id and decision.decided_by = auth.uid())
       and (request.self_approval_allowed or version.created_by_user_id is distinct from auth.uid())
@@ -345,7 +355,9 @@ language sql stable security definer set search_path = public, pg_temp as $$
 $$;
 
 -- Wrapper fuer Bestandsaufrufer, bis alle auf can_decide_stage umgestellt sind (Plan 011,
--- "Pruferzugang"): true, wenn irgendeine OFFENE Stufe der Version fuer auth.uid() entscheidbar ist.
+-- "Pruferzugang"): true, wenn irgendeine offene oder ueberfaellige Stufe der Version fuer auth.uid()
+-- entscheidbar ist -- dieselbe Statusmenge wie in can_decide_stage, sonst liefe der Wrapper der
+-- eigentlichen Pruefung hinterher.
 create or replace function authz.can_approve_post_version(target_post_version_id uuid)
 returns boolean
 language sql stable security definer set search_path = public, pg_temp as $$
@@ -354,7 +366,7 @@ language sql stable security definer set search_path = public, pg_temp as $$
     from public.approval_requests request
     join public.approval_stages stage on stage.approval_request_id = request.id and stage.organization_id = request.organization_id
     where request.post_version_id = target_post_version_id
-      and stage.status = 'open'
+      and stage.status in ('open', 'stalled')
       and authz.can_decide_stage(stage.id)
   );
 $$;
@@ -1047,6 +1059,8 @@ grant execute on function public.schedule_publication(uuid, uuid, timestamptz) t
 -- Scheduler sie nur noch verdrahten muss, statt die Logik selbst neu zu schreiben. Bis dahin liest
 -- die API "ueberfaellig" live aus deadline_at, ohne den Status physisch zu aendern (siehe apps/api).
 -- Nur service_role darf sie aufrufen -- es gibt noch keinen legitimen authenticated-Aufrufer.
+-- Der Aufruf nimmt niemandem ein Recht: 'stalled' ist wie 'open' entscheidbar (can_decide_stage) und
+-- erscheint weiter in "wartet auf mich" (GET /v1/approval-stages/mine).
 create or replace function public.mark_stalled_approval_stages()
 returns integer
 language sql security definer set search_path = public, pg_temp as $$

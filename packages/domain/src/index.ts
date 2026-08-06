@@ -342,31 +342,15 @@ export function evaluateSubmitPermission(input: {
   return { allowed: true }
 }
 
-export interface QuotaLimit {
-  scope: ScopeLevelName
-  period: 'day' | 'week' | 'month'
-  max: number
-}
-
-export interface QuotaCount {
-  scope: ScopeLevelName
-  period: 'day' | 'week' | 'month'
-  count: number
-}
-
-// Prueft ALLE anwendbaren Limits (Verein, Abteilung, Team koennen gleichzeitig Kontingente fuer
-// denselben Kanal fuehren) und meldet das ERSTE ueberschrittene -- die Datenbank serialisiert die
-// eigentliche Pruefung-und-Einplanung ueber einen Advisory Lock (public.schedule_publication).
-export function evaluateQuota(input: {
-  limits: readonly QuotaLimit[]
-  counts: readonly QuotaCount[]
-}): { allowed: boolean; blockingLimit?: QuotaLimit } {
-  for (const limit of input.limits) {
-    const count = input.counts.find((entry) => entry.scope === limit.scope && entry.period === limit.period)
-    if ((count?.count ?? 0) >= limit.max) return { allowed: false, blockingLimit: limit }
-  }
-  return { allowed: true }
-}
+// Hier stand evaluateQuota (Plan 011). Entfernt, statt unbenutzt liegen zu bleiben: die Durchsetzung
+// gehoert aus Atomaritaetsgruenden in public.schedule_publication (Advisory Lock um Zaehlung und
+// Einplanung), und die Signatur paarte Limit und Zaehlung nur ueber (scope, period) -- damit liessen
+// sich zwei Kontingente derselben Ebene und Periode fuer VERSCHIEDENE Kanaele nicht unterscheiden,
+// obwohl channel_quotas genau das erlaubt (unique ueber scope/department/team/social_connection_id/
+// period). Wer die Auslastung anzeigen will ("2 von 3 diese Woche"), baut sie mit der
+// Kanaldimension neu -- sinnvoll zusammen mit der Kanal-Oberflaeche in Paket 012 und einem
+// Endpunkt, der count_publications_in_period service-seitig aufruft (an authenticated bewusst
+// nicht vergeben). Als Anzeige, nie als Gate.
 
 export function createIdempotencyKey(
   kind: 'submission' | 'draft' | 'render' | 'approval' | 'publish',

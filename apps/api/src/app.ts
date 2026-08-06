@@ -2454,7 +2454,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
           // Geheimnisse-Review gefunden).
           reviewerUserIds: isAuthor && stage.opened_at === null ? null : (stage.reviewer_snapshot as { userId: string }[]).map((entry) => entry.userId),
           deadlineAt: stage.deadline_at,
-          isOverdue: stage.status === 'open' && stage.deadline_at !== null && new Date(stage.deadline_at as string).getTime() < now,
+          // 'stalled' ist der markierte Fall derselben Sache -- sonst zeigte eine vom Job markierte
+          // Stufe "nicht überfällig" an, obwohl sie es gerade deswegen ist.
+          isOverdue: (stage.status === 'open' || stage.status === 'stalled') && stage.deadline_at !== null && new Date(stage.deadline_at as string).getTime() < now,
         })),
         decisions: decisionsResult.data.map((decision) => ({
           id: decision.id, approvalStageId: decision.approval_stage_id, decidedBy: decision.decided_by,
@@ -2473,11 +2475,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (!(await requireAuth(request, reply))) return
     const query = z.object({ organizationId: UuidSchema }).parse(request.query)
     const client = supabaseClients.forUser(request.auth!.accessToken)
+    // 'stalled' gehoert dazu: mark_stalled_approval_stages() markiert eine ueberfaellige Stufe, nimmt
+    // ihr aber kein Recht (siehe authz.can_decide_stage). Ein Filter nur auf 'open' haette sie aus
+    // genau der Liste verschwinden lassen, in der die zustaendige Person sie noch entscheiden soll.
     const rows = await client
       .from('approval_stages')
       .select('id, position, scope, label, mode, minimum_approvals, is_minor_stage, status, reviewer_snapshot, deadline_at')
       .eq('organization_id', query.organizationId)
-      .eq('status', 'open')
+      .in('status', ['open', 'stalled'])
     if (rows.error) throw rows.error
     const userId = request.auth!.userId
     const now = Date.now()

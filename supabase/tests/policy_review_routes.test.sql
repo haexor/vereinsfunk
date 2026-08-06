@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(42);
+select plan(44);
 
 set local role postgres;
 
@@ -391,6 +391,21 @@ select throws_ok(
   )$$,
   'P0001', 'user_not_a_member', 'set_member_review_trust rejects a target person from another club'
 );
+
+-- 43-44: eine Frist darf weder zustimmen noch blockieren (Plan 011: "Keine automatische Freigabe
+-- nach Fristablauf"). mark_stalled_approval_stages() markiert die ueberschrittene Stufe, und der
+-- zugewiesene Pruefer kann sie danach weiterhin entscheiden -- mit "status = 'open'" in
+-- can_decide_stage waere sie ab dem ersten Scheduler-Lauf dauerhaft unentscheidbar geworden.
+set local role postgres;
+update public.approval_stages
+set status = 'open', deadline_at = now() - interval '1 hour', reviewer_snapshot = '[{"userId":"64000000-0000-4000-8000-000000000003"}]'::jsonb
+where id = '64000000-5000-4000-8000-000000000002';
+select is(public.mark_stalled_approval_stages(), 1, 'mark_stalled_approval_stages marks exactly the one stage whose deadline has passed');
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '64000000-0000-4000-8000-000000000003', true);
+select ok(authz.can_decide_stage('64000000-5000-4000-8000-000000000002'),
+  'the assigned reviewer can still decide a stage that was marked stalled after its deadline passed');
 
 select * from finish();
 rollback;

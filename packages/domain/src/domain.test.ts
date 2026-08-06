@@ -3,7 +3,6 @@ import {
   canTransition,
   createIdempotencyKey,
   curatedFontPairings,
-  evaluateQuota,
   evaluateSubmitPermission,
   mergeEffectiveConfig,
   resolveReviewers,
@@ -141,21 +140,9 @@ describe('evaluateSubmitPermission', () => {
   })
 })
 
-describe('evaluateQuota', () => {
-  it('allows exactly under the limit', () => {
-    expect(evaluateQuota({ limits: [{ scope: 'organization', period: 'day', max: 3 }], counts: [{ scope: 'organization', period: 'day', count: 2 }] })).toEqual({ allowed: true })
-  })
-
-  it('blocks exactly at the limit', () => {
-    const result = evaluateQuota({ limits: [{ scope: 'organization', period: 'day', max: 3 }], counts: [{ scope: 'organization', period: 'day', count: 3 }] })
-    expect(result.allowed).toBe(false)
-    expect(result.blockingLimit).toEqual({ scope: 'organization', period: 'day', max: 3 })
-  })
-
-  it('allows exactly over a count with no matching limit', () => {
-    expect(evaluateQuota({ limits: [], counts: [{ scope: 'organization', period: 'day', count: 999 }] })).toEqual({ allowed: true })
-  })
-})
+// Die drei evaluateQuota-Tests sind mit der Funktion entfernt worden (siehe Kommentar an ihrer
+// Stelle in index.ts). Die Kontingentgrenze wird in public.schedule_publication durchgesetzt und
+// dort von supabase/tests/policy_review_routes.test.sql geprueft.
 
 describe('resolveReviewRoute', () => {
   const teamStage: StageDefinition = { scope: 'team', scopeTeamId: 'team-ejugend', scopeDepartmentId: 'dep-fussball', label: 'Trainer', mode: 'named', minimumApprovals: 1, reviewerUserIds: ['trainer'] }
