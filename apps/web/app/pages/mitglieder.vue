@@ -2,6 +2,7 @@
 import { canAssignRole, type Role } from '@vereinsfunk/authorization'
 import {
   InvitationSchema,
+  MemberReviewTrustSchema,
   MemberSchema,
   PolicySettingSchema,
   rolesForScopeLevel,
@@ -9,7 +10,9 @@ import {
   type Invitation,
   type Member,
   type MemberRoleEntry,
+  type MemberReviewTrust,
   type PolicySetting,
+  type ReviewRequirement,
   type ScopeLevel,
 } from '@vereinsfunk/contracts'
 
@@ -27,6 +30,7 @@ const actionError = ref('')
 const members = ref<Member[]>([])
 const invitations = ref<Invitation[]>([])
 const policySettings = ref<PolicySetting[]>([])
+const memberReviewTrust = ref<MemberReviewTrust[]>([])
 
 const inviteScope = ref<ScopeLevel>('organization')
 const inviteScopeId = ref('')
@@ -155,6 +159,14 @@ async function load() {
     } catch {
       policySettings.value = []
     }
+    // Vertrauen ist ebenfalls sekundaer -- ohne sichtbare Eintraege gilt fuer jede Person "geerbt"
+    // (Paket 011).
+    try {
+      const trustResponse = await $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/member-review-trust`, { headers })
+      memberReviewTrust.value = MemberReviewTrustSchema.array().parse(trustResponse)
+    } catch {
+      memberReviewTrust.value = []
+    }
   } catch {
     errorMessage.value = 'Mitglieder und Einladungen konnten nicht geladen werden.'
   } finally {
@@ -266,7 +278,7 @@ function endOfDayIso(dateKey: string, timeZone: string): string {
   return new Date(utcGuess - tzOffsetMinutes(new Date(utcGuess), timeZone) * 60000).toISOString()
 }
 
-function toggleExpanded(entry: MemberRoleEntry) {
+function toggleExpanded(entry: MemberRoleEntry, userId: string) {
   if (expandedMembershipId.value === entry.membershipId) {
     expandedMembershipId.value = null
     return
@@ -275,6 +287,7 @@ function toggleExpanded(entry: MemberRoleEntry) {
   roleDraft[entry.membershipId] = entry.role as AssignableRole
   expiryDraft[entry.membershipId] = entry.expiresAt ? localDateKey(new Date(entry.expiresAt), timezone.value) : ''
   roleChangeError.value = ''
+  initTrustDraft(entry, userId)
 }
 
 function availableRolesFor(entry: MemberRoleEntry): AssignableRole[] {
@@ -316,6 +329,58 @@ async function setExpiry(entry: MemberRoleEntry) {
     roleChangeError.value = 'Die Befristung konnte nicht geändert werden.'
   } finally {
     expirySubmitting.value = null
+  }
+}
+
+// Vertrauen je Mitglied (Paket 011): liegt bewusst hier, nicht in einstellungen.vue -- dort wird
+// eine Person gesucht, nicht eine Ebene konfiguriert. Sichtbar nur fuer wer diese Ebene ohnehin
+// verwalten darf (dieselbe Berechtigung wie fuer die Richtlinienseite selbst).
+function canManageTrust(entry: MemberRoleEntry): boolean {
+  const permission = entry.scope === 'organization' ? 'organization.manage' : entry.scope === 'department' ? 'department.manage' : 'team.manage'
+  return useCan(permission, { organizationId: organizationId.value ?? '', ...(departmentIdFor(entry.scope, entry.scopeId) ? { departmentId: departmentIdFor(entry.scope, entry.scopeId) } : {}), ...(entry.scope === 'team' ? { teamId: entry.scopeId } : {}) })
+}
+
+function trustFor(entry: MemberRoleEntry, userId: string): MemberReviewTrust | undefined {
+  return memberReviewTrust.value.find((record) => record.scope === entry.scope && record.scopeId === entry.scopeId && record.userId === userId)
+}
+
+const trustSubmitAllowedDraft = reactive<Record<string, boolean>>({})
+const trustRequirementDraft = reactive<Record<string, ReviewRequirement>>({})
+const trustReasonDraft = reactive<Record<string, string>>({})
+const trustExpiryDraft = reactive<Record<string, string>>({})
+const trustSubmitting = ref<string | null>(null)
+const trustError = ref('')
+
+function initTrustDraft(entry: MemberRoleEntry, userId: string) {
+  const key = entry.membershipId
+  const existing = trustFor(entry, userId)
+  trustSubmitAllowedDraft[key] = existing?.submitAllowed ?? true
+  trustRequirementDraft[key] = existing?.reviewRequirement ?? 'inherit'
+  trustReasonDraft[key] = existing?.reason ?? ''
+  trustExpiryDraft[key] = existing?.expiresAt ? localDateKey(new Date(existing.expiresAt), timezone.value) : ''
+}
+
+async function saveTrust(entry: MemberRoleEntry, userId: string) {
+  trustSubmitting.value = entry.membershipId
+  trustError.value = ''
+  try {
+    const headers = await useAuthHeader()
+    await $fetch(`${config.public.apiBase}/v1/member-review-trust`, {
+      method: 'PUT',
+      headers,
+      body: {
+        scope: entry.scope, scopeId: entry.scopeId, userId,
+        submitAllowed: trustSubmitAllowedDraft[entry.membershipId],
+        reviewRequirement: trustRequirementDraft[entry.membershipId],
+        reason: trustReasonDraft[entry.membershipId]?.trim() || null,
+        expiresAt: trustExpiryDraft[entry.membershipId] ? endOfDayIso(trustExpiryDraft[entry.membershipId]!, timezone.value) : null,
+      },
+    })
+    await load()
+  } catch {
+    trustError.value = 'Das Vertrauen konnte nicht gespeichert werden.'
+  } finally {
+    trustSubmitting.value = null
   }
 }
 
@@ -421,7 +486,7 @@ const canInviteHere = computed(() => availableInviteScopes.value.length > 0)
                   :aria-expanded="expandedMembershipId === entry.membershipId"
                   :aria-controls="`membership-detail-${entry.membershipId}`"
                   class="focus-ring"
-                  @click="toggleExpanded(entry)"
+                  @click="toggleExpanded(entry, member.userId)"
                 >
                   {{ roleLabels[entry.role] ?? entry.role }} · {{ scopeName(entry.scope, entry.scopeId) }}
                 </button>
@@ -472,6 +537,35 @@ const canInviteHere = computed(() => availableInviteScopes.value.length > 0)
                 </div>
               </label>
               <p v-if="roleChangeError" class="text-xs text-amber-800 sm:col-span-2">{{ roleChangeError }}</p>
+
+              <div v-if="canManageTrust(entry)" class="grid gap-3 border-t border-[#e8e9e2] pt-3 sm:col-span-2 sm:grid-cols-2">
+                <p class="text-xs font-semibold sm:col-span-2">Vertrauen in {{ scopeName(entry.scope, entry.scopeId) }}</p>
+                <label class="flex items-center gap-2"><input v-model="trustSubmitAllowedDraft[entry.membershipId]" type="checkbox" /> <span class="text-xs">Darf einreichen</span></label>
+                <label><span class="mb-1 block text-xs font-semibold">Prüfung</span>
+                  <select v-model="trustRequirementDraft[entry.membershipId]" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs">
+                    <option value="inherit">geerbt</option>
+                    <option value="always">immer erforderlich</option>
+                    <option value="waived">befreit (außer Minderjährigenstufe)</option>
+                  </select>
+                </label>
+                <label class="sm:col-span-2"><span class="mb-1 block text-xs font-semibold">Begründung</span>
+                  <input v-model="trustReasonDraft[entry.membershipId]" maxlength="500" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" />
+                </label>
+                <label><span class="mb-1 block text-xs font-semibold">Befristet bis</span>
+                  <input v-model="trustExpiryDraft[entry.membershipId]" type="date" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" />
+                </label>
+                <div class="flex items-end">
+                  <button
+                    type="button"
+                    :disabled="trustSubmitting === entry.membershipId"
+                    class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-2 text-[10px] font-semibold disabled:opacity-60"
+                    @click="saveTrust(entry, member.userId)"
+                  >
+                    {{ trustSubmitting === entry.membershipId ? 'Wird gespeichert …' : 'Speichern' }}
+                  </button>
+                </div>
+                <p v-if="trustError" class="text-xs text-amber-800 sm:col-span-2">{{ trustError }}</p>
+              </div>
             </div>
           </div>
         </div>
