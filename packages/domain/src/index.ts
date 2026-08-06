@@ -127,6 +127,33 @@ export function mergeEffectiveConfig(
 
 // --- Paket 011: Freigaberouten, Vertrauen je Mitglied, Kontingente ------------------------------
 
+// SaaS-Standard, bevor irgendeine Vereins-/Abteilungs-/Team-Ebene etwas festlegt (Plan 023/011,
+// "Vererbung: SaaS Defaults -> Organization -> Department -> Team").
+export const DEFAULT_EFFECTIVE_CONFIG: EffectiveConfig = {
+  policies: {
+    approvalRequired: false,
+    minorApprovalRequired: false,
+    minimumApprovals: 1,
+    forbiddenTopics: [],
+    requiredHashtags: [],
+    selfApprovalAllowed: true,
+    allowSameReviewerAcrossStages: true,
+    mediaRequiresConsentCheck: false,
+    allowedPresets: null,
+    allowedFormats: null,
+    allowedChannelIds: null,
+  },
+}
+
+export function resolveEffectiveConfig(
+  organization?: ConfigOverride | null,
+  department?: ConfigOverride | null,
+  team?: ConfigOverride | null,
+): EffectiveConfig {
+  const overrides = [organization, department, team].filter((override): override is ConfigOverride => override != null)
+  return mergeEffectiveConfig(DEFAULT_EFFECTIVE_CONFIG, ...overrides)
+}
+
 export type ScopeLevelName = 'organization' | 'department' | 'team'
 export type ReviewMode = 'any_with_permission' | 'named'
 export type ReviewRequirement = 'inherit' | 'always' | 'waived'
