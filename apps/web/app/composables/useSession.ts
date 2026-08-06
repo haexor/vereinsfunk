@@ -31,18 +31,18 @@ export interface SessionState {
   isDefaultAdmin: boolean
 }
 
-// Additiv, nicht sicherheitskritisch fuer normale Vereinsnutzer: platform_admins verweigert
-// authenticated jeglichen Direktzugriff, deshalb geht das nur ueber die API. Ein API-Ausfall
-// darf aber nicht den gesamten Session-Load fuer alle Nutzer blockieren -- fail-closed statt
-// fail-loud, anders als bei membership_scopes() unten.
-async function loadPlatformAdminStatus(): Promise<{ isPlatformAdmin: boolean; isDefaultAdmin: boolean }> {
+// platform_admins verweigert authenticated jeglichen Direktzugriff, der Status geht deshalb
+// nur ueber die API. Ein Ausfall wird hier bewusst nicht geworfen, sondern als "unbekannt"
+// (null) zurueckgegeben -- ob das folgenlos ist, entscheidet loadSession() unten anhand der
+// Vereins-Scopes.
+async function loadPlatformAdminStatus(): Promise<{ isPlatformAdmin: boolean; isDefaultAdmin: boolean } | null> {
   try {
     const config = useRuntimeConfig()
     const headers = await useAuthHeader()
     const response = await $fetch(`${config.public.apiBase}/v1/me/platform-admin-status`, { headers })
     return PlatformAdminStatusSchema.parse(response)
   } catch {
-    return { isPlatformAdmin: false, isDefaultAdmin: false }
+    return null
   }
 }
 
@@ -79,13 +79,30 @@ async function loadSession(state: ReturnType<typeof useSessionState>, generation
 
   // membership_scopes() crosses the DB-RPC -> client boundary; an unexpectedly shaped
   // result must fail loudly here instead of silently showing a broken sidebar in useScope.ts.
+  const scopes = MembershipScopesSchema.parse(scopesResult.data ?? []) as SessionScope[]
+
+  // Ohne Vereins-Scope entscheidet allein dieses Flag, wohin der Nutzer gehoert: Onboarding-
+  // Wizard oder Betreiberbereich (middleware/auth.global.ts). Ein stilles `false` waere hier
+  // geraten -- der Betreiber landete im Wizard "Verein anlegen", den sein Konto seit
+  // 2026080602_platform_admin_separation.sql gar nicht abschliessen kann, und zwar
+  // ununterscheidbar davon, dass er wirklich kein Admin ist. Wer dagegen einen Verein hat,
+  // merkt vom fehlenden Status nichts: fuer ihn aendert das Flag nichts an der Navigation,
+  // und ein API-Ausfall darf ihm nicht die ganze Anwendung nehmen.
+  if (!platformAdminStatus && scopes.length === 0) {
+    throw createError({
+      statusCode: 503,
+      statusMessage: 'Der Kontostatus konnte nicht geladen werden. Bitte lade die Seite neu.',
+      fatal: true,
+    })
+  }
+
   state.value = {
     userId: userResult.user.id,
     displayName: profileResult.data?.display_name ?? userResult.user.email ?? '',
     avatarPath: profileResult.data?.avatar_path ?? null,
-    scopes: MembershipScopesSchema.parse(scopesResult.data ?? []) as SessionScope[],
-    isPlatformAdmin: platformAdminStatus.isPlatformAdmin,
-    isDefaultAdmin: platformAdminStatus.isDefaultAdmin,
+    scopes,
+    isPlatformAdmin: platformAdminStatus?.isPlatformAdmin ?? false,
+    isDefaultAdmin: platformAdminStatus?.isDefaultAdmin ?? false,
   }
 }
 
