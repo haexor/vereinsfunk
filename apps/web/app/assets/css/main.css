@@ -1,6 +1,21 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+/* Ersetzt den content-Glob auf app/ aus der frueheren tailwind.config.ts.
+   Ohne @source wuerde v4 selbst nach Quellen suchen und im Monorepo zu weit greifen. */
+@source '../../';
+
+/* Frueher theme.extend in tailwind.config.ts. Die Werte doppeln sich mit dem
+   :root-Block darunter -- das war vorher schon so, den nutzt das handgeschriebene CSS. */
+@theme {
+  --color-ink: #14221d;
+  --color-forest: #163a2c;
+  --color-lime: #caff4a;
+  --color-oat: #f4f2e9;
+  --color-coral: #ff795f;
+
+  --font-sans: 'DM Sans', sans-serif;
+  --font-display: 'Manrope', sans-serif;
+}
 
 :root {
   color-scheme: light;
@@ -14,20 +29,28 @@
   --coral: #ff795f;
 }
 
-* { box-sizing: border-box; }
-html { background: var(--oat); }
-body {
-  margin: 0;
-  color: var(--ink);
-  background: var(--oat);
-  font-family: 'DM Sans', sans-serif;
-  -webkit-font-smoothing: antialiased;
-}
-button, input, textarea, select { font: inherit; }
-button, a { -webkit-tap-highlight-color: transparent; }
-button { cursor: pointer; }
+/* Diese Element-Regeln muessen in @layer base stehen. Ungelayertes CSS schlaegt in v4
+   jede gelayerte Regel -- `font: inherit` wuerde sonst auf jedem button/input/textarea/
+   select die text-*-Utilities aushebeln und die Felder auf 16px aufblasen. In v3 gab es
+   keine Layer, dort gewann .text-sm schon ueber die hoehere Spezifitaet.
+   Die Klassenregeln darunter bleiben bewusst ungelayert: .card & Co. haben in v3 bei
+   gleicher Spezifitaet als spaetere Regel gewonnen, das bleibt so richtig. */
+@layer base {
+  * { box-sizing: border-box; }
+  html { background: var(--oat); }
+  body {
+    margin: 0;
+    color: var(--ink);
+    background: var(--oat);
+    font-family: 'DM Sans', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  button, input, textarea, select { font: inherit; }
+  button, a { -webkit-tap-highlight-color: transparent; }
+  button { cursor: pointer; }
 
-::selection { background: var(--lime); color: var(--ink); }
+  ::selection { background: var(--lime); color: var(--ink); }
+}
 
 .page-enter-active, .page-leave-active { transition: opacity .18s ease, transform .18s ease; }
 .page-enter-from, .page-leave-to { opacity: 0; transform: translateY(4px); }

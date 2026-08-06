@@ -1,7 +1,10 @@
+import tailwindcss from '@tailwindcss/vite'
+
 export default defineNuxtConfig({
   compatibilityDate: '2026-08-02',
   devtools: { enabled: true },
-  modules: ['@nuxtjs/tailwindcss'],
+  // Tailwind 4 laeuft als Vite-Plugin. @nuxtjs/tailwindcss gibt es nur fuer v3.
+  vite: { plugins: [tailwindcss()] },
   css: ['~/assets/css/main.css'],
   app: {
     head: {

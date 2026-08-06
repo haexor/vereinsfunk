@@ -271,7 +271,7 @@ const session = await useSession()
               </div>
               <p class="mt-4 text-[11px] text-[#8a9086]">Schriftpaar: Manrope / DM Sans. Weitere Schriften folgen mit dem Marken-Baustein.</p>
             </div>
-            <div class="relative overflow-hidden rounded-[22px] p-6 text-white shadow-sm" :style="{ backgroundColor: brand.primaryColor }">
+            <div class="relative overflow-hidden rounded-[22px] p-6 text-white shadow-xs" :style="{ backgroundColor: brand.primaryColor }">
               <img v-if="logoPreviewUrl" :src="logoPreviewUrl" alt="Vereinslogo" class="mb-4 h-10 w-10 rounded-lg bg-white/10 object-contain p-1" />
               <p class="eyebrow !text-white/60">Vorschau</p>
               <h2 class="mt-3 font-display text-xl font-extrabold leading-tight tracking-[-.035em]">Euer nächster Beitrag könnte so aussehen.</h2>
