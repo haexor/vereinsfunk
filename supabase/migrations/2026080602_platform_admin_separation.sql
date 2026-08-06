@@ -21,9 +21,19 @@ begin;
 -- waehrend derselbe Mensch eine Einladung annimmt". Das Ergebnis waere eine geduldete
 -- Ueberschneidung wie oben, kein Rechteproblem -- der Aufwand einer Serialisierung jedes
 -- Mitgliedschafts-Inserts steht dazu in keinem Verhaeltnis.
+--
+-- Security definer, weil der Trigger sonst mit den Rechten des Einfuegenden laeuft: eine
+-- Mitgliedschaft entsteht auch als gewoehnlicher Insert des Nutzer-Clients (POST
+-- /v1/memberships, Policies organization_memberships_insert & Co.), und authenticated hat auf
+-- platform_admins bewusst kein einziges Privileg (2026080502_platform_administration.sql:141).
+-- Ohne definer-Rechte scheitert jeder solche Insert an "permission denied for table
+-- platform_admins" (42501) statt an der eigentlichen Bedingung. Ein blosses GRANT SELECT waere
+-- die falsche Antwort: platform_admins hat RLS ohne Policy, die Pruefung saehe null Zeilen und
+-- wuerde die Trennung still durchwinken -- genau umgekehrt zum Zweck dieser Migration.
 create or replace function public.reject_membership_for_platform_admin()
 returns trigger
 language plpgsql
+security definer
 set search_path = public, pg_temp
 as $$
 begin

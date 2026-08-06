@@ -509,6 +509,28 @@ describe('structure, memberships and invitations', () => {
     expect(response.json()).toMatchObject({ error: 'invalid_request' })
   })
 
+  it('maps the platform-admin separation trigger on a direct membership insert to 409', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: () => ({
+            insert: () => ({ select: () => ({ single: async () => ({ data: null, error: { code: 'P0001', message: 'platform_admin_cannot_hold_membership' } }) }) }),
+          }),
+        }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/memberships',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { scope: 'organization', scopeId: ORGANIZATION_ID, userId: '10000000-0000-4000-8000-000000000099', role: 'organization_viewer' },
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'platform_admin_cannot_hold_membership' })
+  })
+
   it('rejects an invitation for an address that is already a member', async () => {
     const clients: SupabaseClientFactory = {
       forUser: () => ({ rpc: async () => ({ data: true, error: null }) }) as unknown as SupabaseClient,

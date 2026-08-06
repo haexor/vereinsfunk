@@ -765,6 +765,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (insert.error) {
       if (insert.error.code === '23505') return reply.code(409).send({ error: 'already_a_member', correlationId: request.id })
       if (insert.error.code === '22P02') return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+      // Anders als die Organisations- und Einladungsroute schreibt diese hier direkt in die
+      // Tabelle, laeuft also unmittelbar in den Trigger aus
+      // 2026080602_platform_admin_separation.sql.
+      if (insert.error.message.includes('platform_admin_cannot_hold_membership')) {
+        return reply.code(409).send({ error: 'platform_admin_cannot_hold_membership', correlationId: request.id })
+      }
       throw insert.error
     }
     const audit = await supabaseClients.forService().from('audit_events').insert({

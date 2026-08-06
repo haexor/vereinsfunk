@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(30);
+select plan(32);
 
 set local role postgres;
 
@@ -13,7 +13,8 @@ values
   ('00000000-0000-0000-0000-000000000000', '50000000-0000-4000-8000-000000000002', 'authenticated', 'authenticated', 'secondadmin@pgtap-platform.local', '', '{}', '{}', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '50000000-0000-4000-8000-000000000003', 'authenticated', 'authenticated', 'quotaowner@pgtap-platform.local', '', '{}', '{}', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '50000000-0000-4000-8000-000000000004', 'authenticated', 'authenticated', 'operator@pgtap-platform.local', '', '{}', '{}', now(), now()),
-  ('00000000-0000-0000-0000-000000000000', '50000000-0000-4000-8000-000000000005', 'authenticated', 'authenticated', 'clubmember@pgtap-platform.local', '', '{}', '{}', now(), now());
+  ('00000000-0000-0000-0000-000000000000', '50000000-0000-4000-8000-000000000005', 'authenticated', 'authenticated', 'clubmember@pgtap-platform.local', '', '{}', '{}', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '50000000-0000-4000-8000-000000000006', 'authenticated', 'authenticated', 'deptadmin@pgtap-platform.local', '', '{}', '{}', now(), now());
 
 -- 1-2: authenticated has no privilege at all on platform_admins -- denied before RLS is even
 -- evaluated (no GRANT was issued to authenticated/anon anywhere in the migration).
@@ -200,6 +201,28 @@ select lives_ok(
     values ('50000000-1000-4000-8000-000000000001', '50000000-0000-4000-8000-000000000005', 'organization_viewer')$$,
   'a user who is not a platform admin can still become an organization member'
 );
+
+-- 27-28: derselbe Trigger auf dem Weg, den die App tatsaechlich nimmt. POST /v1/memberships
+-- schreibt mit dem Nutzer-Client direkt in die Tabelle (Policy department_memberships_insert),
+-- also als Rolle authenticated -- und die hat auf platform_admins bewusst kein Privileg. Ohne
+-- security definer scheitert dort JEDER Mitgliedschafts-Insert an 42501, unabhaengig davon, wer
+-- eingetragen wird; die Tests oben laufen als postgres und sehen das nicht.
+insert into public.department_memberships (organization_id, department_id, user_id, role)
+  values ('50000000-1000-4000-8000-000000000001', '50000000-1100-4000-8000-000000000001', '50000000-0000-4000-8000-000000000006', 'department_admin');
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '50000000-0000-4000-8000-000000000006', true);
+select throws_ok(
+  $$insert into public.department_memberships (organization_id, department_id, user_id, role)
+    values ('50000000-1000-4000-8000-000000000001', '50000000-1100-4000-8000-000000000001', '50000000-0000-4000-8000-000000000001', 'viewer')$$,
+  'P0001', 'platform_admin_cannot_hold_membership', 'a department_admin cannot add a platform admin as a member'
+);
+select lives_ok(
+  $$insert into public.department_memberships (organization_id, department_id, user_id, role)
+    values ('50000000-1000-4000-8000-000000000001', '50000000-1100-4000-8000-000000000001', '50000000-0000-4000-8000-000000000005', 'viewer')$$,
+  'a department_admin can still add a regular member as authenticated'
+);
+set local role postgres;
 
 select * from finish();
 rollback;
