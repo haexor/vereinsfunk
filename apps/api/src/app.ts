@@ -856,12 +856,21 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     })
   }
 
+  // Eine befristete Mitgliedschaft oder Befreiung ist nach expires_at wirkungslos. Jede Abfrage auf
+  // organization_memberships/department_memberships/team_memberships/member_review_trust, deren
+  // Ergebnis eine Berechtigung traegt, filtert damit -- dieselbe Bedingung, die die authz-Funktionen
+  // in SQL verwenden ("expires_at is null or expires_at > now()"). Als gemeinsamer Helfer, damit die
+  // Stellen nicht auseinanderlaufen (beim Review dieses Pakets gefunden: drei Stellen ohne Filter).
+  function notExpiredFilter(): string {
+    return `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`
+  }
+
   // Deckt dieselbe Mitgliedschaft ab wie authz.is_any_member_of_organization (RLS-Grundlage von
   // policy_settings_select): Organisationsrolle ODER Abteilungs- ODER Teammitgliedschaft, nicht
   // nur eine Organisationsrolle wie roleProvider.rolesForScope(..., { organizationId }) allein
   // prueft.
   async function isAnyMemberOfOrganization(client: SupabaseClient, userId: string, organizationId: string): Promise<boolean> {
-    const notExpired = `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`
+    const notExpired = notExpiredFilter()
     const [org, department, team] = await Promise.all([
       client.from('organization_memberships').select('id').eq('organization_id', organizationId).eq('user_id', userId).or(notExpired).limit(1),
       client.from('department_memberships').select('id').eq('organization_id', organizationId).eq('user_id', userId).or(notExpired).limit(1),
@@ -1030,14 +1039,31 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     tone: string | null
   }
 
-  async function fetchOwnPolicyRuleRow(
-    client: SupabaseClient, organizationId: string, scope: ScopeLevel, departmentId: string | null, teamId: string | null,
-  ): Promise<PolicyRuleRow | null> {
-    let query = client.from('policy_settings').select(POLICY_RULE_COLUMNS).eq('organization_id', organizationId).eq('scope', scope)
-    query = scope === 'organization' ? query.is('department_id', null) : scope === 'department' ? query.eq('department_id', departmentId!).is('team_id', null) : query.eq('team_id', teamId!)
-    const result = await query.maybeSingle()
-    if (result.error) throw result.error
-    return result.data as PolicyRuleRow | null
+  // Alle Regelzeilen einer Organisation in EINER Abfrage, indiziert je Ebene -- dasselbe Muster wie
+  // fetchPolicyRows fuer die zwei booleschen Flags aus 023. Eine Auflösung je Ebene mit eigener
+  // Abfrage erzeugte ueber alle Ebenen hinweg eine N+1-Kette (bei 10 Abteilungen und 40 Teams 141
+  // Abfragen auf policy_settings allein, beim Review dieses Pakets gefunden).
+  interface PolicyRuleRows {
+    orgRow: PolicyRuleRow | null
+    deptRowById: Map<string, PolicyRuleRow>
+    teamRowById: Map<string, PolicyRuleRow>
+  }
+
+  async function fetchPolicyRuleRows(client: SupabaseClient, organizationId: string): Promise<PolicyRuleRows> {
+    const rows = await client.from('policy_settings').select(`${POLICY_RULE_COLUMNS}, scope, department_id, team_id`).eq('organization_id', organizationId)
+    if (rows.error) throw rows.error
+    const data = rows.data as (PolicyRuleRow & { scope: ScopeLevel; department_id: string | null; team_id: string | null })[]
+    return {
+      orgRow: data.find((row) => row.scope === 'organization') ?? null,
+      deptRowById: new Map(data.filter((row) => row.scope === 'department').map((row) => [row.department_id as string, row])),
+      teamRowById: new Map(data.filter((row) => row.scope === 'team').map((row) => [row.team_id as string, row])),
+    }
+  }
+
+  function ownPolicyRuleRow(rows: PolicyRuleRows, scope: ScopeLevel, departmentId: string | null, teamId: string | null): PolicyRuleRow | null {
+    if (scope === 'organization') return rows.orgRow
+    if (scope === 'department') return rows.deptRowById.get(departmentId!) ?? null
+    return rows.teamRowById.get(teamId!) ?? null
   }
 
   // Nur die Felder mit echter Vererbungssemantik fliessen in mergeEffectiveConfig ein.
@@ -1104,23 +1130,21 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     }
   }
 
-  // Loest die effektive Konfiguration einer beliebigen Ebene frisch auf, indem sie die Kette
-  // Verein -> (Abteilung) -> (Team) erneut durchlaeuft. Etwas mehr Datenbankzugriffe als eine
-  // Zwischenspeicherung ueber mehrere Ebenen, aber deutlich weniger fehleranfaellig (Plan 011 gilt
-  // fuer GET-alle wie PUT-eine-Ebene gleich).
-  async function computeRuleEntry(
-    client: SupabaseClient, organizationId: string, scope: ScopeLevel, scopeId: string, departmentIdForTeam: string | null,
-  ): Promise<{ ownRow: PolicyRuleRow | null; config: ReturnType<typeof resolveEffectiveConfig> }> {
-    const orgRow = await fetchOwnPolicyRuleRow(client, organizationId, 'organization', null, null)
-    let config = resolveEffectiveConfig(toRuleOverride(orgRow))
-    let ownRow = orgRow
+  // Loest die effektive Konfiguration einer Ebene aus den bereits geladenen Regelzeilen auf, indem
+  // sie die Kette Verein -> (Abteilung) -> (Team) durchlaeuft (Plan 011 gilt fuer GET-alle wie
+  // PUT-eine-Ebene gleich).
+  function computeRuleEntry(
+    rows: PolicyRuleRows, scope: ScopeLevel, scopeId: string, departmentIdForTeam: string | null,
+  ): { ownRow: PolicyRuleRow | null; config: ReturnType<typeof resolveEffectiveConfig> } {
+    let config = resolveEffectiveConfig(toRuleOverride(rows.orgRow))
+    let ownRow = rows.orgRow
     if (scope !== 'organization') {
       const departmentId = scope === 'department' ? scopeId : departmentIdForTeam!
-      const departmentRow = await fetchOwnPolicyRuleRow(client, organizationId, 'department', departmentId, null)
+      const departmentRow = ownPolicyRuleRow(rows, 'department', departmentId, null)
       config = mergeEffectiveConfig(config, toRuleOverride(departmentRow))
       ownRow = departmentRow
       if (scope === 'team') {
-        const teamRow = await fetchOwnPolicyRuleRow(client, organizationId, 'team', departmentId, scopeId)
+        const teamRow = ownPolicyRuleRow(rows, 'team', departmentId, scopeId)
         config = mergeEffectiveConfig(config, toRuleOverride(teamRow))
         ownRow = teamRow
       }
@@ -1128,26 +1152,39 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     return { ownRow, config }
   }
 
+  const REVIEWER_COLUMNS = 'id, policy_settings_id, kind, user_id, role, target_department_id, target_team_id, created_at'
+  type ReviewerRow = { id: string; policy_settings_id: string; kind: string; user_id: string | null; role: string | null; target_department_id: string | null; target_team_id: string | null; created_at: string }
+
+  function mapPolicyReviewer(row: ReviewerRow, scope: ScopeLevel, scopeId: string) {
+    return PolicyReviewerSchema.parse({
+      id: row.id, scope, scopeId, kind: row.kind, userId: row.user_id, role: row.role,
+      targetDepartmentId: row.target_department_id, targetTeamId: row.target_team_id, createdAt: row.created_at,
+    })
+  }
+
   async function reviewersForPolicySettings(client: SupabaseClient, policySettingsId: string | undefined, scope: ScopeLevel, scopeId: string) {
     if (!policySettingsId) return []
-    const rows = await client.from('policy_reviewers').select('id, kind, user_id, role, target_department_id, target_team_id, created_at').eq('policy_settings_id', policySettingsId)
+    const rows = await client.from('policy_reviewers').select(REVIEWER_COLUMNS).eq('policy_settings_id', policySettingsId)
     if (rows.error) throw rows.error
-    return rows.data.map((row) =>
-      PolicyReviewerSchema.parse({
-        id: row.id, scope, scopeId, kind: row.kind, userId: row.user_id, role: row.role,
-        targetDepartmentId: row.target_department_id, targetTeamId: row.target_team_id, createdAt: row.created_at,
-      }),
-    )
+    return (rows.data as ReviewerRow[]).map((row) => mapPolicyReviewer(row, scope, scopeId))
   }
 
   async function resolveScopedEffectiveConfig(client: SupabaseClient, organizationId: string, departmentId: string, teamId: string | null) {
-    return (await computeRuleEntry(client, organizationId, teamId ? 'team' : 'department', teamId ?? departmentId, departmentId)).config
+    const rows = await fetchPolicyRuleRows(client, organizationId)
+    return computeRuleEntry(rows, teamId ? 'team' : 'department', teamId ?? departmentId, departmentId).config
   }
 
   async function fetchMemberTrust(
     client: SupabaseClient, userId: string, organizationId: string, departmentId: string, teamId: string | null,
   ): Promise<TrustRecord[]> {
-    const rows = await client.from('member_review_trust').select('scope, department_id, team_id, submit_allowed, review_requirement').eq('organization_id', organizationId).eq('user_id', userId)
+    // Eine abgelaufene Befreiung darf keine Freigabestufe mehr entfernen -- deshalb derselbe
+    // Ablauffilter wie bei den Mitgliedschaften (beim Review dieses Pakets gefunden).
+    const rows = await client
+      .from('member_review_trust')
+      .select('scope, department_id, team_id, submit_allowed, review_requirement')
+      .eq('organization_id', organizationId)
+      .eq('user_id', userId)
+      .or(notExpiredFilter())
     if (rows.error) throw rows.error
     return rows.data
       .filter((row) => row.scope === 'organization' || (row.scope === 'department' && row.department_id === departmentId) || (row.scope === 'team' && teamId !== null && row.team_id === teamId))
@@ -1164,12 +1201,31 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const organization = await supabaseClients.forService().from('organizations').select('name').eq('id', params.id).maybeSingle()
     if (organization.error) throw organization.error
     if (!organization.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
-    const [departments, teams] = await Promise.all([
+    const [departments, teams, ruleRows] = await Promise.all([
       client.from('departments').select('id, name').eq('organization_id', params.id).order('name'),
       client.from('teams').select('id, name, department_id').eq('organization_id', params.id).order('name'),
+      fetchPolicyRuleRows(client, params.id),
     ])
     if (departments.error) throw departments.error
     if (teams.error) throw teams.error
+
+    // Prueferzuweisungen fuer alle Ebenen in einer Abfrage statt einer je Eintrag, aus demselben
+    // Grund wie fetchPolicyRuleRows oben.
+    const policySettingsIds = [
+      ...(ruleRows.orgRow ? [ruleRows.orgRow.id] : []),
+      ...Array.from(ruleRows.deptRowById.values()).map((row) => row.id),
+      ...Array.from(ruleRows.teamRowById.values()).map((row) => row.id),
+    ]
+    const reviewersByPolicySettingsId = new Map<string, ReviewerRow[]>()
+    if (policySettingsIds.length > 0) {
+      const reviewerRows = await client.from('policy_reviewers').select(REVIEWER_COLUMNS).in('policy_settings_id', policySettingsIds)
+      if (reviewerRows.error) throw reviewerRows.error
+      for (const row of reviewerRows.data as ReviewerRow[]) {
+        const bucket = reviewersByPolicySettingsId.get(row.policy_settings_id) ?? []
+        bucket.push(row)
+        reviewersByPolicySettingsId.set(row.policy_settings_id, bucket)
+      }
+    }
 
     const rolesByScopeKey = new Map<string, readonly Role[]>()
     rolesByScopeKey.set('organization', await roleProvider.rolesForScope(request.auth!, { organizationId: params.id }))
@@ -1183,21 +1239,21 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     ])
     const canEditFor = (scope: ScopeLevel, scopeId: string) => hasPermission(rolesByScopeKey.get(scope === 'organization' ? 'organization' : `${scope}:${scopeId}`) ?? [], POLICY_MANAGE_PERMISSION[scope])
 
-    async function buildEntry(scope: ScopeLevel, scopeId: string, name: string, departmentIdForTeam: string | null) {
-      const { ownRow, config } = await computeRuleEntry(client, params.id, scope, scopeId, departmentIdForTeam)
+    function buildEntry(scope: ScopeLevel, scopeId: string, name: string, departmentIdForTeam: string | null) {
+      const { ownRow, config } = computeRuleEntry(ruleRows, scope, scopeId, departmentIdForTeam)
       return PolicyRuleSettingSchema.parse({
         scope, scopeId, name,
         own: mapOwnRowToRuleValues(ownRow),
         effective: mapConfigToRuleValues(config, ownRow),
         canEdit: canEditFor(scope, scopeId),
-        reviewers: await reviewersForPolicySettings(client, ownRow?.id, scope, scopeId),
+        reviewers: (ownRow ? reviewersByPolicySettingsId.get(ownRow.id) ?? [] : []).map((row) => mapPolicyReviewer(row, scope, scopeId)),
       })
     }
 
     const entries = [
-      await buildEntry('organization', params.id, organization.data.name as string, null),
-      ...(await Promise.all(departments.data.map((department) => buildEntry('department', department.id as string, department.name as string, null)))),
-      ...(await Promise.all(teams.data.map((team) => buildEntry('team', team.id as string, team.name as string, team.department_id as string)))),
+      buildEntry('organization', params.id, organization.data.name as string, null),
+      ...departments.data.map((department) => buildEntry('department', department.id as string, department.name as string, null)),
+      ...teams.data.map((team) => buildEntry('team', team.id as string, team.name as string, team.department_id as string)),
     ]
     return reply.code(200).send(entries)
   })
@@ -1233,11 +1289,19 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
 
     const departmentIdForTeam = input.scope === 'team' ? scope.departmentId! : null
-    const { ownRow, config } = await computeRuleEntry(client, scope.organizationId, input.scope, input.scopeId, departmentIdForTeam)
-    let name = ''
-    if (input.scope === 'organization') name = (await supabaseClients.forService().from('organizations').select('name').eq('id', scope.organizationId).single()).data?.name as string
-    else if (input.scope === 'department') name = (await client.from('departments').select('name').eq('id', scope.departmentId!).single()).data?.name as string
-    else name = (await client.from('teams').select('name').eq('id', scope.teamId!).single()).data?.name as string
+    const { ownRow, config } = computeRuleEntry(await fetchPolicyRuleRows(client, scope.organizationId), input.scope, input.scopeId, departmentIdForTeam)
+    // .error jeder Namensabfrage einzeln pruefen, wie an jeder anderen Stelle dieser Datei: ohne die
+    // Pruefung waere name bei einem Datenbankfehler undefined, PolicyRuleSettingSchema.parse wuerfe
+    // einen ZodError, und der Error-Handler antwortete mit 400 invalid_request auf einen
+    // Datenbankfehler (beim Review dieses Pakets gefunden).
+    const nameQuery =
+      input.scope === 'organization'
+        ? await supabaseClients.forService().from('organizations').select('name').eq('id', scope.organizationId).single()
+        : input.scope === 'department'
+          ? await client.from('departments').select('name').eq('id', scope.departmentId!).single()
+          : await client.from('teams').select('name').eq('id', scope.teamId!).single()
+    if (nameQuery.error) throw nameQuery.error
+    const name = nameQuery.data.name as string
 
     return reply.code(200).send(
       PolicyRuleSettingSchema.parse({
@@ -1312,10 +1376,16 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     return reply.code(204).send()
   })
 
+  // Wie die beiden Policy-Routen oben: ein Nicht-Mitglied bekommt 403, nicht eine leere Liste.
+  // Welche Zeilen ein Mitglied sieht, entscheidet member_review_trust_select -- die eigene Zeile und
+  // die Ebenen, die es verwaltet; reason ist damit schon zeilenweise geschuetzt.
   app.get('/v1/organizations/:id/member-review-trust', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
     const client = supabaseClients.forUser(request.auth!.accessToken)
+    if (!(await isAnyMemberOfOrganization(client, request.auth!.userId, params.id))) {
+      return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+    }
     const rows = await client
       .from('member_review_trust')
       .select('id, scope, department_id, team_id, user_id, submit_allowed, review_requirement, reason, expires_at')
@@ -1346,6 +1416,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     })
     if (rpc.error) {
       if (rpc.error.message.includes('insufficient_permission')) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+      // Vertrauen fuer eine Person, die diesem Verein nicht angehoert -- user_id traegt keinen
+      // zusammengesetzten Fremdschluessel auf den Verein, die RPC prueft es deshalb selbst.
+      if (rpc.error.message.includes('user_not_a_member')) return reply.code(422).send({ error: 'user_not_a_member', correlationId: request.id })
       throw rpc.error
     }
     const audit = await supabaseClients.forService().from('audit_events').insert({
@@ -2151,26 +2224,43 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const TEAM_ROLES_WITH_APPROVE = (['team_manager', 'contributor', 'viewer'] as const).filter((role) => hasPermission([role], 'post.approve'))
 
   // "any_with_permission" ist keine feste Namensliste, sondern jede Person, die JETZT die
-  // Berechtigung im Scope haelt (Plan 011, "Fachliches Modell"). Fuer Teams ist diese Liste immer
-  // leer -- keine Teamrolle traegt post.approve --, "any_with_permission" auf Teamebene erzeugt
-  // deshalb konsequent einen Blocker, bis die Ebene auf "named" umgestellt wird.
-  async function membersWithApprovePermission(client: SupabaseClient, scope: ScopeLevel, scopeId: string): Promise<string[]> {
-    if (scope === 'organization') {
-      if (ORG_ROLES_WITH_APPROVE.length === 0) return []
-      const rows = await client.from('organization_memberships').select('user_id').eq('organization_id', scopeId).in('role', ORG_ROLES_WITH_APPROVE)
-      if (rows.error) throw rows.error
-      return rows.data.map((row) => row.user_id as string)
+  // Berechtigung im Scope haelt (Plan 011, "Fachliches Modell") -- einschliesslich der aeusseren
+  // Ebenen: authz.has_team_permission faellt auf has_department_permission zurueck, dieses auf
+  // has_organization_permission. Eine Abteilungsstufe darf deshalb auch die Vereinsleitung
+  // entscheiden, eine Teamstufe die Freigabeberechtigten der Elternabteilung. Ohne diese Kaskade
+  // blieb der Pruefkreis einer Abteilung ohne eigene "approver"-Rolle leer, und resolveReviewRoute
+  // meldete einen empty_reviewer_pool-Blocker (422) fuer eine Konfiguration, die tatsaechlich
+  // erfuellbar ist -- der Normalfall in einem kleinen Verein, in dem nur die Vereinsleitung
+  // freigibt (beim eigenen Review dieses Pakets gefunden).
+  async function membersWithApprovePermission(
+    client: SupabaseClient, organizationId: string, scope: ScopeLevel, departmentId: string | null, teamId: string | null,
+  ): Promise<string[]> {
+    const notExpired = notExpiredFilter()
+    // Ueber fetchAllRows wie GET /v1/organizations/:id/members: max_rows=1000 wuerde den
+    // Prueferkreis eines grossen Vereins still abschneiden und einzelne Berechtigte aus dem
+    // eingefrorenen reviewer_snapshot fallen lassen.
+    const pages = [
+      ...(ORG_ROLES_WITH_APPROVE.length > 0
+        ? [fetchAllRows<{ user_id: string }>((from, to) =>
+            client.from('organization_memberships').select('user_id').eq('organization_id', organizationId).in('role', ORG_ROLES_WITH_APPROVE).or(notExpired).range(from, to),
+          )]
+        : []),
+      ...(scope !== 'organization' && DEPARTMENT_ROLES_WITH_APPROVE.length > 0
+        ? [fetchAllRows<{ user_id: string }>((from, to) =>
+            client.from('department_memberships').select('user_id').eq('department_id', departmentId!).in('role', DEPARTMENT_ROLES_WITH_APPROVE).or(notExpired).range(from, to),
+          )]
+        : []),
+      ...(scope === 'team' && TEAM_ROLES_WITH_APPROVE.length > 0
+        ? [fetchAllRows<{ user_id: string }>((from, to) =>
+            client.from('team_memberships').select('user_id').eq('team_id', teamId!).in('role', TEAM_ROLES_WITH_APPROVE).or(notExpired).range(from, to),
+          )]
+        : []),
+    ]
+    const userIds = new Set<string>()
+    for (const rows of await Promise.all(pages)) {
+      for (const row of rows) userIds.add(row.user_id)
     }
-    if (scope === 'department') {
-      if (DEPARTMENT_ROLES_WITH_APPROVE.length === 0) return []
-      const rows = await client.from('department_memberships').select('user_id').eq('department_id', scopeId).in('role', DEPARTMENT_ROLES_WITH_APPROVE)
-      if (rows.error) throw rows.error
-      return rows.data.map((row) => row.user_id as string)
-    }
-    if (TEAM_ROLES_WITH_APPROVE.length === 0) return []
-    const rows = await client.from('team_memberships').select('user_id').eq('team_id', scopeId).in('role', TEAM_ROLES_WITH_APPROVE)
-    if (rows.error) throw rows.error
-    return rows.data.map((row) => row.user_id as string)
+    return Array.from(userIds)
   }
 
   function mapReviewerRow(row: { kind: string; user_id: string | null; role: string | null; target_department_id: string | null; target_team_id: string | null }): DomainReviewerRef {
@@ -2180,19 +2270,29 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     return { kind: 'team_role', departmentId: row.target_department_id!, teamId: row.target_team_id!, role: row.role! }
   }
 
+  // Grundlage der Prueferauflösung fuer "named"-Stufen -- eine abgelaufene Mitgliedschaft traegt
+  // keine Rolle mehr und darf deshalb nicht als Pruefer in den reviewer_snapshot einfrieren.
+  // request_approval wuerde eine solche Route ohnehin mit invalid_reviewer_snapshot ablehnen, weil
+  // authz.is_user_member_of_organization dort denselben Ablauffilter anwendet.
   async function fetchAllMemberships(client: SupabaseClient, organizationId: string): Promise<MembershipRecord[]> {
+    const notExpired = notExpiredFilter()
+    // fetchAllRows aus demselben Grund wie in membersWithApprovePermission: eine benannte Rolle
+    // duerfte in einem grossen Verein nicht daran scheitern, dass die Mitgliederseite abgeschnitten ist.
     const [orgRows, deptRows, teamRows] = await Promise.all([
-      client.from('organization_memberships').select('user_id, role').eq('organization_id', organizationId),
-      client.from('department_memberships').select('user_id, role, department_id').eq('organization_id', organizationId),
-      client.from('team_memberships').select('user_id, role, team_id, department_id').eq('organization_id', organizationId),
+      fetchAllRows<{ user_id: string; role: string }>((from, to) =>
+        client.from('organization_memberships').select('user_id, role').eq('organization_id', organizationId).or(notExpired).range(from, to),
+      ),
+      fetchAllRows<{ user_id: string; role: string; department_id: string }>((from, to) =>
+        client.from('department_memberships').select('user_id, role, department_id').eq('organization_id', organizationId).or(notExpired).range(from, to),
+      ),
+      fetchAllRows<{ user_id: string; role: string; team_id: string; department_id: string }>((from, to) =>
+        client.from('team_memberships').select('user_id, role, team_id, department_id').eq('organization_id', organizationId).or(notExpired).range(from, to),
+      ),
     ])
-    if (orgRows.error) throw orgRows.error
-    if (deptRows.error) throw deptRows.error
-    if (teamRows.error) throw teamRows.error
     return [
-      ...orgRows.data.map((row) => ({ userId: row.user_id as string, scope: 'organization' as const, role: row.role as string })),
-      ...deptRows.data.map((row) => ({ userId: row.user_id as string, scope: 'department' as const, departmentId: row.department_id as string, role: row.role as string })),
-      ...teamRows.data.map((row) => ({ userId: row.user_id as string, scope: 'team' as const, departmentId: row.department_id as string, teamId: row.team_id as string, role: row.role as string })),
+      ...orgRows.map((row) => ({ userId: row.user_id, scope: 'organization' as const, role: row.role })),
+      ...deptRows.map((row) => ({ userId: row.user_id, scope: 'department' as const, departmentId: row.department_id, role: row.role })),
+      ...teamRows.map((row) => ({ userId: row.user_id, scope: 'team' as const, departmentId: row.department_id, teamId: row.team_id, role: row.role })),
     ]
   }
 
@@ -2200,7 +2300,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   // Baut die Stufendefinitionen innen (Team) nach aussen (Verein) -- nur Ebenen, deren EIGENE
   // Zeile review_required = true setzt, tragen eine Stufe bei (Plan 011: additiv, nicht vererbt).
-  async function buildStageDefinitions(client: SupabaseClient, organizationId: string, departmentId: string, teamId: string | null): Promise<StageDefinition[]> {
+  async function buildStageDefinitions(
+    client: SupabaseClient, ruleRows: PolicyRuleRows, organizationId: string, departmentId: string, teamId: string | null,
+  ): Promise<StageDefinition[]> {
     const levels: { scope: ScopeLevel; scopeId: string; scopeDepartmentId: string | null; scopeTeamId: string | null }[] = [
       ...(teamId ? [{ scope: 'team' as const, scopeId: teamId, scopeDepartmentId: departmentId, scopeTeamId: teamId }] : []),
       { scope: 'department' as const, scopeId: departmentId, scopeDepartmentId: departmentId, scopeTeamId: null },
@@ -2209,7 +2311,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const memberships = await fetchAllMemberships(client, organizationId)
     const stages: StageDefinition[] = []
     for (const level of levels) {
-      const row = await fetchOwnPolicyRuleRow(client, organizationId, level.scope, level.scopeDepartmentId, level.scopeTeamId)
+      const row = ownPolicyRuleRow(ruleRows, level.scope, level.scopeDepartmentId, level.scopeTeamId)
       if (!row?.review_required) continue
       const mode = row.review_mode ?? 'any_with_permission'
       let reviewerUserIds: string[]
@@ -2218,7 +2320,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         if (reviewerRows.error) throw reviewerRows.error
         reviewerUserIds = resolveReviewers(reviewerRows.data.map(mapReviewerRow), memberships).userIds
       } else {
-        reviewerUserIds = await membersWithApprovePermission(client, level.scope, level.scopeId)
+        reviewerUserIds = await membersWithApprovePermission(client, organizationId, level.scope, level.scopeDepartmentId, level.scopeTeamId)
       }
       stages.push({
         scope: level.scope,
@@ -2248,15 +2350,16 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
     const departmentId = post.data.department_id as string
     const teamId = post.data.team_id as string | null
-    const [stages, orgRow, config] = await Promise.all([
-      buildStageDefinitions(client, post.data.organization_id, departmentId, teamId),
-      fetchOwnPolicyRuleRow(client, post.data.organization_id, 'organization', null, null),
-      resolveScopedEffectiveConfig(client, post.data.organization_id, departmentId, teamId),
-    ])
+    // Alle Ebenen einmal laden -- Stufenaufbau, die Vereinszeile (allow_review_exemptions) und die
+    // effektive Konfiguration lesen dieselben Zeilen.
+    const ruleRows = await fetchPolicyRuleRows(client, post.data.organization_id)
+    const orgRow = ruleRows.orgRow
+    const config = computeRuleEntry(ruleRows, teamId ? 'team' : 'department', teamId ?? departmentId, departmentId).config
+    const stages = await buildStageDefinitions(client, ruleRows, post.data.organization_id, departmentId, teamId)
     const authorId = version.data.created_by_user_id as string
     const trust = await fetchMemberTrust(client, authorId, post.data.organization_id, departmentId, teamId)
     const containsMinors = ((version.data.safety_flags as string[]) ?? []).includes('minor')
-    const minorReviewerUserIds = containsMinors ? await membersWithApprovePermission(client, 'organization', post.data.organization_id) : []
+    const minorReviewerUserIds = containsMinors ? await membersWithApprovePermission(client, post.data.organization_id, 'organization', null, null) : []
 
     const route = resolveReviewRoute({
       stages,
@@ -2288,6 +2391,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       if (rpc.error.message.includes('minor_stage_required')) return reply.code(422).send({ error: 'minor_stage_required', correlationId: request.id })
       if (rpc.error.message.includes('review_required')) return reply.code(422).send({ error: 'review_required', correlationId: request.id })
       if (rpc.error.message.includes('invalid_reviewer_snapshot')) return reply.code(422).send({ error: 'invalid_reviewer_snapshot', correlationId: request.id })
+      // Beide sind auf diesem Weg nicht erreichbar -- resolveReviewRoute nummeriert die Stufen selbst
+      // von 1 an durch und meldet einen leeren Prueferkreis vorher als Blocker. request_approval ist
+      // aber per Grant direkt per RPC erreichbar und prueft deshalb beides selbst.
+      if (rpc.error.message.includes('invalid_stage_positions')) return reply.code(422).send({ error: 'invalid_stage_positions', correlationId: request.id })
+      if (rpc.error.message.includes('empty_reviewer_snapshot')) return reply.code(422).send({ error: 'empty_reviewer_snapshot', correlationId: request.id })
       if (rpc.error.message.includes('only_author_as_reviewer')) return reply.code(403).send({ error: 'only_author_as_reviewer', correlationId: request.id })
       throw rpc.error
     }
@@ -2359,10 +2467,17 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   // Fuer freigaben.vue ("wartet auf mich"): RLS liefert jede Stufe, die auth.uid() ueberhaupt sehen
   // darf (u. a. jedes Vereinsmitglied mit Organisationsrolle) -- der Filter auf den eigenen
   // reviewer_snapshot-Eintrag engt das hier auf tatsaechlich zugewiesene Stufen ein.
+  // organizationId ist pflichtig: eine Person mit Pruefrollen in mehreren Vereinen saehe sonst die
+  // Freigaben ALLER ihrer Vereine in der Liste eines einzelnen (beim Review dieses Pakets gefunden).
   app.get('/v1/approval-stages/mine', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
+    const query = z.object({ organizationId: UuidSchema }).parse(request.query)
     const client = supabaseClients.forUser(request.auth!.accessToken)
-    const rows = await client.from('approval_stages').select('id, position, scope, label, mode, minimum_approvals, is_minor_stage, status, reviewer_snapshot, deadline_at').eq('status', 'open')
+    const rows = await client
+      .from('approval_stages')
+      .select('id, position, scope, label, mode, minimum_approvals, is_minor_stage, status, reviewer_snapshot, deadline_at')
+      .eq('organization_id', query.organizationId)
+      .eq('status', 'open')
     if (rows.error) throw rows.error
     const userId = request.auth!.userId
     const now = Date.now()
@@ -2407,6 +2522,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
     const client = supabaseClients.forUser(request.auth!.accessToken)
+    if (!(await isAnyMemberOfOrganization(client, request.auth!.userId, params.id))) {
+      return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+    }
     const rows = await client.from('channel_quotas').select('id, scope, department_id, team_id, social_connection_id, period, max_publications').eq('organization_id', params.id)
     if (rows.error) throw rows.error
     return reply.code(200).send(
@@ -2458,12 +2576,17 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     const scope = toPermissionScope(existing.data.organization_id as string, existing.data.department_id as string | null, existing.data.team_id as string | null)
     if (!(await requirePermission(request, reply, POLICY_MANAGE_PERMISSION[existing.data.scope as ScopeLevel], scope))) return
-    const update = await client.from('channel_quotas').update({ max_publications: input.maxPublications }).eq('id', params.id).select('id, scope, department_id, team_id, social_connection_id, period, max_publications').single()
+    const update = await client.from('channel_quotas').update({ max_publications: input.maxPublications }).eq('id', params.id).select('id, scope, department_id, team_id, social_connection_id, period, max_publications')
     if (update.error) throw update.error
+    // Wie bei DELETE unten: filtert RLS die Zielzeile aus dem UPDATE, trifft die Anweisung null
+    // Zeilen ohne Fehler. Ein abschliessendes .single() haette daraus einen 500 gemacht statt eines
+    // 403 (derselbe Grund wie bei DELETE /v1/departments/:id, siehe Kommentar dort).
+    const updated = update.data[0]
+    if (!updated) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
     return reply.code(200).send(
       ChannelQuotaSchema.parse({
-        id: update.data.id, scope: update.data.scope, scopeId: update.data.team_id ?? update.data.department_id ?? existing.data.organization_id,
-        socialConnectionId: update.data.social_connection_id, period: update.data.period, maxPublications: update.data.max_publications,
+        id: updated.id, scope: updated.scope, scopeId: updated.team_id ?? updated.department_id ?? existing.data.organization_id,
+        socialConnectionId: updated.social_connection_id, period: updated.period, maxPublications: updated.max_publications,
       }),
     )
   })

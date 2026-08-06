@@ -82,6 +82,15 @@ function splitList(text: string): string[] {
   return text.split(',').map((item) => item.trim()).filter(Boolean)
 }
 
+// Ein geleertes Text- oder Zahlenfeld liefert '' (bei v-model.number auch dort). Ohne diese
+// Normalisierung wäre ein einmal gesetzter Wert nicht mehr auf „geerbt“ zurückzunehmen: tone,
+// Mindestanzahl und Frist lehnt das Contracts-Schema als '' mit 400 ab, und eine leere
+// Stufenbezeichnung landete in der Datenbank und ließ danach jede Freigabeliste am
+// ApprovalStageSchema scheitern (eigener Review-Fund). '' heißt hier „geerbt“, also null.
+function blankToNull(value: unknown): unknown {
+  return value === '' ? null : value
+}
+
 async function save() {
   if (!selectedEntry.value) return
   saving.value = true
@@ -96,6 +105,10 @@ async function save() {
         scopeId: selectedEntry.value.scopeId,
         patch: {
           ...draft,
+          reviewStageLabel: blankToNull(draft.reviewStageLabel),
+          reviewMinimumApprovals: blankToNull(draft.reviewMinimumApprovals),
+          reviewDeadlineHours: blankToNull(draft.reviewDeadlineHours),
+          tone: blankToNull(draft.tone),
           forbiddenTopics: splitList(forbiddenTopicsText.value),
           requiredHashtags: splitList(requiredHashtagsText.value),
           allowedPresets: allowedPresetsText.value.trim() ? splitList(allowedPresetsText.value) : null,
@@ -117,6 +130,40 @@ const reviewerRole = ref('')
 const reviewerAdding = ref(false)
 const reviewerError = ref('')
 
+// Eine Rollenreferenz benennt immer eine Rolle auf der gewählten Ebene oder darüber — die Abteilung
+// bzw. das Team leitet sich aus der gewählten Ebene ab, es gibt hier keine eigene Auswahl dafür.
+// Deshalb sind nur diese Kombinationen abbildbar: eine Team-Rolle nur auf einer Team-Ebene, eine
+// Abteilungsrolle nur auf einer Abteilungs- oder Team-Ebene. Vorher stand die Auswahl unabhängig von
+// der Ebene offen und schickte etwa die Team-ID als departmentId (beim Review gefunden).
+const reviewerKindOptions: { value: ReviewerRef['kind']; label: string }[] = [
+  { value: 'user', label: 'Person' },
+  { value: 'organization_role', label: 'Rolle im Verein' },
+  { value: 'department_role', label: 'Rolle in Abteilung' },
+  { value: 'team_role', label: 'Rolle im Team' },
+]
+
+// Die Elternabteilung der gewählten Team-Ebene, bzw. die Ebene selbst, wenn sie eine Abteilung ist.
+const selectedDepartmentId = computed(() => {
+  const entry = selectedEntry.value
+  if (!entry) return null
+  if (entry.scope === 'department') return entry.scopeId
+  if (entry.scope === 'team') return organization.value?.departments.find((department) => department.teams.some((team) => team.id === entry.scopeId))?.id ?? null
+  return null
+})
+
+const availableKindsForReviewer = computed(() => {
+  const entry = selectedEntry.value
+  if (!entry) return []
+  return reviewerKindOptions.filter((option) => {
+    if (option.value === 'team_role') return entry.scope === 'team'
+    if (option.value === 'department_role') return selectedDepartmentId.value !== null
+    return true
+  })
+})
+watch(availableKindsForReviewer, (options) => {
+  if (!options.some((option) => option.value === reviewerKind.value)) reviewerKind.value = 'user'
+})
+
 const availableRolesForReviewer = computed(() => {
   if (!selectedEntry.value) return []
   if (reviewerKind.value === 'organization_role') return rolesForScopeLevel('organization')
@@ -131,21 +178,24 @@ async function addReviewer() {
   reviewerError.value = ''
   try {
     const headers = await useAuthHeader()
-    let ref: ReviewerRef
+    let reviewerRef: ReviewerRef
     if (reviewerKind.value === 'user') {
       if (!reviewerUserId.value) { reviewerError.value = 'Bitte eine Person wählen.'; return }
-      ref = { kind: 'user', userId: reviewerUserId.value }
+      reviewerRef = { kind: 'user', userId: reviewerUserId.value }
     } else if (reviewerKind.value === 'organization_role') {
-      ref = { kind: 'organization_role', role: reviewerRole.value as never }
+      reviewerRef = { kind: 'organization_role', role: reviewerRole.value as never }
     } else if (reviewerKind.value === 'department_role') {
-      const departmentId = selectedEntry.value.scope === 'organization' ? '' : selectedEntry.value.scopeId
-      ref = { kind: 'department_role', departmentId, role: reviewerRole.value as never }
+      if (!selectedDepartmentId.value) { reviewerError.value = 'Für diese Ebene ist keine Abteilung bestimmbar.'; return }
+      reviewerRef = { kind: 'department_role', departmentId: selectedDepartmentId.value, role: reviewerRole.value as never }
     } else {
-      const departmentId = organization.value?.departments.find((department) => department.teams.some((team) => team.id === selectedEntry.value!.scopeId))?.id ?? ''
-      ref = { kind: 'team_role', departmentId, teamId: selectedEntry.value.scopeId, role: reviewerRole.value as never }
+      if (selectedEntry.value.scope !== 'team' || !selectedDepartmentId.value) {
+        reviewerError.value = 'Eine Team-Rolle ist nur auf einer Team-Ebene möglich.'
+        return
+      }
+      reviewerRef = { kind: 'team_role', departmentId: selectedDepartmentId.value, teamId: selectedEntry.value.scopeId, role: reviewerRole.value as never }
     }
     await $fetch(`${config.public.apiBase}/v1/policy-reviewers`, {
-      method: 'POST', headers, body: { scope: selectedEntry.value.scope, scopeId: selectedEntry.value.scopeId, ref },
+      method: 'POST', headers, body: { scope: selectedEntry.value.scope, scopeId: selectedEntry.value.scopeId, ref: reviewerRef },
     })
     reviewerUserId.value = ''
     reviewerRole.value = ''
@@ -272,10 +322,7 @@ function reviewerLabel(reviewer: { kind: string; userId: string | null; role: st
           <form v-if="selectedEntry.canEdit" class="grid gap-3 sm:grid-cols-3" @submit.prevent="addReviewer">
             <label><span class="mb-1 block text-xs font-semibold">Art</span>
               <select v-model="reviewerKind" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-sm">
-                <option value="user">Person</option>
-                <option value="organization_role">Rolle im Verein</option>
-                <option value="department_role">Rolle in Abteilung</option>
-                <option value="team_role">Rolle im Team</option>
+                <option v-for="option in availableKindsForReviewer" :key="option.value" :value="option.value">{{ option.label }}</option>
               </select>
             </label>
             <label v-if="reviewerKind === 'user'" class="sm:col-span-2"><span class="mb-1 block text-xs font-semibold">Person</span>

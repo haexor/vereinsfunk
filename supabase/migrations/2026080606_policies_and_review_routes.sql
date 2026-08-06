@@ -156,17 +156,44 @@ alter table public.approval_requests
 -- requires_minor_approval, und jede vorhandene Entscheidung wird ihr zugewiesen.
 alter table public.approval_decisions add column approval_stage_id uuid;
 
+-- reviewer_snapshot wird aus dem bisher berechtigten Prueferkreis befuellt, nicht als leeres Array:
+-- authz.can_decide_stage (unten) verlangt einen Treffer im Snapshot, und authz.is_assigned_reviewer
+-- gibt daraus den Lesezugriff. Ein leerer Snapshot haette jede laufende Freigabe dauerhaft
+-- unentscheidbar gemacht und den bisherigen Pruefern den Lesezugriff genommen. Der Kreis ist genau
+-- der, den authz.can_approve_post_version bis zu dieser Migration durchgesetzt hat:
+-- has_department_permission(post.department_id, 'post.approve') -- also die Abteilungsrollen mit
+-- post.approve plus die Organisationsrollen, die dieselbe Berechtigung nach unten durchreichen.
 insert into public.approval_stages (
   organization_id, approval_request_id, position, scope, scope_department_id, scope_team_id,
   label, mode, minimum_approvals, is_minor_stage, reviewer_snapshot, status, opened_at
 )
 select
   request.organization_id, request.id, 1, 'organization', null, null,
-  'Migriert', 'any_with_permission', request.required_approvals, request.requires_minor_approval, '[]'::jsonb,
+  'Migriert', 'any_with_permission', request.required_approvals, request.requires_minor_approval,
+  coalesce(
+    (
+      select jsonb_agg(jsonb_build_object('userId', reviewer.user_id))
+      from (
+        select membership.user_id
+        from public.department_memberships membership
+        where membership.department_id = post.department_id
+          and membership.role in ('department_admin', 'approver')
+          and (membership.expires_at is null or membership.expires_at > now())
+        union
+        select membership.user_id
+        from public.organization_memberships membership
+        where membership.organization_id = post.organization_id
+          and membership.role in ('organization_owner', 'organization_admin', 'social_manager')
+          and (membership.expires_at is null or membership.expires_at > now())
+      ) reviewer
+    ),
+    '[]'::jsonb
+  ),
   case when exists (select 1 from public.approval_decisions decision where decision.approval_request_id = request.id)
     then 'satisfied' else 'open' end,
   request.created_at
-from public.approval_requests request;
+from public.approval_requests request
+join public.posts post on post.id = request.post_id and post.organization_id = request.organization_id;
 
 update public.approval_decisions decision
 set approval_stage_id = stage.id
@@ -455,6 +482,12 @@ create policy policy_reviewers_select on public.policy_reviewers for select to a
 create policy policy_reviewers_insert on public.policy_reviewers for insert to authenticated
   with check (
     created_by = auth.uid()
+    -- user_id zeigt nur auf public.profiles und kann deshalb keinen zusammengesetzten
+    -- Fremdschluessel auf (organization_id, user_id) tragen -- ohne diese Pruefung liesse sich eine
+    -- Person aus einem FREMDEN Verein als Pruefer eintragen. request_approval lehnt eine solche
+    -- Route spaeter ab (invalid_reviewer_snapshot), die Ebene waere damit aber dauerhaft
+    -- freigabeunfaehig statt die falsche Zuweisung schon hier zu verhindern.
+    and (kind <> 'user' or authz.is_user_member_of_organization(user_id, organization_id))
     and exists (
       select 1 from public.policy_settings setting
       where setting.id = policy_reviewers.policy_settings_id and setting.organization_id = policy_reviewers.organization_id
@@ -513,8 +546,13 @@ create trigger set_member_review_trust_updated_at before update on public.member
 -- Scope/Kanal/Periode ist ein eigener, unabhaengiger Datensatz).
 alter table public.channel_quotas enable row level security;
 alter table public.channel_quotas force row level security;
+-- is_any_member_of_organization statt is_organization_member, aus demselben Grund wie bei
+-- policy_settings_select (2026080604): is_organization_member verlangt eine ORGANISATIONSROLLE. Ein
+-- reiner Abteilungs- oder Team-Admin darf ueber channel_quotas_insert unten ein Kontingent seiner
+-- Ebene anlegen, haette es danach aber nicht lesen koennen -- schon das "insert ... returning" der
+-- API waere an der Select-Policy gescheitert (beim eigenen Review dieses Pakets gefunden).
 create policy channel_quotas_select on public.channel_quotas for select to authenticated
-  using (authz.is_organization_member(organization_id));
+  using (authz.is_any_member_of_organization(organization_id));
 create policy channel_quotas_insert on public.channel_quotas for insert to authenticated
   with check (
     (scope = 'organization' and authz.has_organization_permission(organization_id, 'organization.manage'))
@@ -668,6 +706,14 @@ begin
     raise exception 'insufficient_permission';
   end if;
 
+  -- user_id zeigt wie bei policy_reviewers nur auf public.profiles, trägt also keinen
+  -- zusammengesetzten Fremdschluessel auf den Verein. Ohne diese Pruefung liesse sich eine
+  -- Vertrauenszeile fuer eine Person aus einem fremden Verein anlegen -- die diese Zeile ueber
+  -- member_review_trust_select ("user_id = auth.uid()") sogar lesen koennte, samt Begruendung.
+  if not authz.is_user_member_of_organization(target_user_id, target_organization_id) then
+    raise exception 'user_not_a_member';
+  end if;
+
   -- Eine Befreiung entfaellt niemals die Minderjaehrigenstufe (Plan 011, "Vertrauen je Mitglied") --
   -- das gilt bei der ROUTENAUFLOESUNG, nicht hier; diese Funktion speichert nur die Einstellung.
   select id into existing_id from public.member_review_trust
@@ -797,6 +843,28 @@ begin
   if jsonb_array_length(stages) = 0 then
     update public.posts set status = 'approved', updated_at = now() where id = post.id;
     return jsonb_build_object('postId', post.id, 'status', 'approved', 'stages', '[]'::jsonb);
+  end if;
+
+  -- Die Positionen muessen 1..n lueckenlos und eindeutig sein. decide_approval_stage sucht die
+  -- Folgestufe ueber position + 1 (siehe dort) -- eine Luecke wuerde jede aeussere Stufe hinter der
+  -- Luecke fuer immer auf 'pending' stehen lassen und den Beitrag stattdessen sofort auf 'approved'
+  -- setzen. Mit stages der Positionen 1 und 3 waere so auch die unbefreibare Minderjaehrigenstufe
+  -- umgehbar; fehlt Position 1 ganz, oeffnet keine Stufe und der Beitrag haengt dauerhaft in
+  -- 'awaiting_approval' (beim Review dieses Pakets gefunden).
+  if (select count(distinct (s->>'position')::integer) from jsonb_array_elements(stages) s) <> jsonb_array_length(stages)
+     or (select min((s->>'position')::integer) from jsonb_array_elements(stages) s) <> 1
+     or (select max((s->>'position')::integer) from jsonb_array_elements(stages) s) <> jsonb_array_length(stages) then
+    raise exception 'invalid_stage_positions';
+  end if;
+
+  -- Eine Stufe ohne Pruefer ist von niemandem entscheidbar (can_decide_stage verlangt einen Treffer
+  -- im Snapshot) und liesse den Beitrag lautlos fuer immer liegen -- genau das, was
+  -- resolveReviewRoute (packages/domain) auf dem regulaeren Weg als Blocker verhindert.
+  if exists (
+    select 1 from jsonb_array_elements(stages) s
+    where jsonb_array_length(coalesce(s->'reviewerSnapshot', '[]'::jsonb)) = 0
+  ) then
+    raise exception 'empty_reviewer_snapshot';
   end if;
 
   insert into public.approval_requests (
@@ -930,7 +998,12 @@ begin
     raise exception 'channel_not_allowed';
   end if;
 
-  quota_scope_key := post.organization_id::text || ':' || coalesce(post.department_id::text, '') || ':' || coalesce(post.team_id::text, '');
+  -- Auf Vereinsebene gesperrt, nicht je Abteilung/Team: die Schleife unten liest auch
+  -- vereinsweite Kontingentzeilen, die fuer ALLE Abteilungen gelten. Ein abteilungsfeiner Schluessel
+  -- haette zwei gleichzeitige Einplanungen aus verschiedenen Abteilungen an der Grenze desselben
+  -- vereinsweiten Kontingents beide durchgelassen (beim Review dieses Pakets gefunden). Der
+  -- Kontingentraum ist ohnehin je Verein serialisiert.
+  quota_scope_key := post.organization_id::text;
   perform pg_advisory_xact_lock(hashtextextended(quota_scope_key, 0));
 
   for quota_row in

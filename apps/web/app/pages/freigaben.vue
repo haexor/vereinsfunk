@@ -18,11 +18,16 @@ const reasonDraft = reactive<Record<string, string>>({})
 const decidingStageId = ref<string | null>(null)
 
 async function load() {
+  if (!organizationId.value) { stages.value = []; loading.value = false; return }
   loading.value = true
   errorMessage.value = ''
   try {
     const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/approval-stages/mine`, { headers })
+    // Auf den aktiven Verein begrenzt: wer in mehreren Vereinen prüft, soll hier nur die Freigaben
+    // des gerade gewählten sehen.
+    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/approval-stages/mine`, {
+      headers, query: { organizationId: organizationId.value },
+    })
     stages.value = ApprovalStageSchema.array().parse(response)
   } catch {
     errorMessage.value = 'Die offenen Freigaben konnten nicht geladen werden.'

@@ -66,7 +66,9 @@ function membershipRowsStub(rows: { id: string }[]) {
 // Kette direkt (kein PostgREST-Query-Builder ist wirklich ein Promise, aber beide sind thenable).
 // chain() bildet beides identisch nach, unabhaengig davon, welche Filter dazwischen aufgerufen wurden.
 // Alle policy_settings-Regelfelder auf "geerbt" (null), damit ein Test nur das eine Feld ueberschreiben
-// muss, das er tatsaechlich pruefen will (Paket 011).
+// muss, das er tatsaechlich pruefen will (Paket 011). fetchPolicyRuleRows laedt alle Ebenen einer
+// Organisation in EINER Abfrage -- eine Regelzeile im Fake traegt deshalb ihre Ebene selbst
+// (scope/department_id/team_id), statt sich auf die weggelassenen Filter des Stubs zu verlassen.
 function emptyPolicyRuleColumns() {
   return {
     review_required: null, review_mode: null, review_stage_label: null, review_minimum_approvals: null, review_deadline_hours: null,
@@ -78,7 +80,7 @@ function emptyPolicyRuleColumns() {
 
 function chain(result: { data: unknown; error: unknown }): PromiseLike<{ data: unknown; error: unknown }> & Record<string, unknown> {
   const builder: Record<string, unknown> = {
-    eq: () => builder, is: () => builder, in: () => builder, order: () => builder, limit: () => builder, select: () => builder,
+    eq: () => builder, is: () => builder, in: () => builder, or: () => builder, order: () => builder, limit: () => builder, range: () => builder, select: () => builder,
     maybeSingle: async () => result,
     single: async () => result,
     then: (resolve: (value: { data: unknown; error: unknown }) => unknown) => resolve(result),
@@ -209,7 +211,7 @@ describe('api', () => {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'policy_settings') return chain({ data: null, error: null })
+            if (table === 'policy_settings') return chain({ data: [], error: null })
             if (table === 'member_review_trust') return chain({ data: [], error: null })
             if (table === 'submissions') return { insert: () => chain({ data: { id: '10000000-4000-4000-8000-000000000001', status: 'draft' }, error: null }) }
             throw new Error(`unexpected table in test fake: ${table}`)
@@ -1430,14 +1432,20 @@ describe('policy settings', () => {
 
 describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
   const STAGE_ID = '10000000-5000-4000-8000-000000000001'
+  const OUTER_STAGE_ID = '10000000-5000-4000-8000-000000000009'
   const POST_VERSION_ID = '10000000-3000-4000-8000-000000000099'
+  const POST_ID = '10000000-2000-4000-8000-000000000099'
+  const APPROVAL_REQUEST_ID = '10000000-4000-4000-8000-000000000099'
+  const OTHER_USER_ID = '10000000-0000-4000-8000-000000000002'
 
   it("rejects submitting a preset outside the department's allowed list with 422", async () => {
     const clients: SupabaseClientFactory = {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'policy_settings') return chain({ data: { id: 'p1', ...emptyPolicyRuleColumns(), allowed_presets: ['match_result'] }, error: null })
+            if (table === 'policy_settings') {
+              return chain({ data: [{ id: 'p1', scope: 'department', department_id: DEPARTMENT_ID, team_id: null, ...emptyPolicyRuleColumns(), allowed_presets: ['match_result'] }], error: null })
+            }
             if (table === 'member_review_trust') return chain({ data: [], error: null })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
@@ -1464,7 +1472,7 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'policy_settings') return chain({ data: null, error: null })
+            if (table === 'policy_settings') return chain({ data: [], error: null })
             if (table === 'member_review_trust') return chain({ data: [{ scope: 'department', department_id: DEPARTMENT_ID, team_id: null, submit_allowed: false, review_requirement: 'inherit' }], error: null })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
@@ -1494,7 +1502,7 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'policy_settings') return chain({ data: null, error: null })
+            if (table === 'policy_settings') return chain({ data: [], error: null })
             if (table === 'member_review_trust') return chain({ data: [{ scope: 'department', department_id: DEPARTMENT_ID, team_id: null, submit_allowed: false, review_requirement: 'inherit' }], error: null })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
@@ -1567,6 +1575,157 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
     })
     expect(response.statusCode).toBe(422)
     expect(response.json()).toMatchObject({ error: 'channel_not_allowed' })
+  })
+
+  it('hides the reviewer composition of a never-opened stage from the author, even after it was skipped', async () => {
+    // Regression: eine abgelehnte innere Stufe setzt alle FOLGENDEN Stufen direkt aus 'pending' auf
+    // 'skipped', ohne dass sie je 'open' waren. Eine Sichtbarkeitspruefung auf status === 'pending'
+    // haette die Zusammensetzung der aeusseren Stufe dem Autor nach der Ablehnung offengelegt --
+    // deshalb prueft die Route opened_at (beim Geheimnisse-Review gefunden).
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'post_versions') return chain({ data: { id: POST_VERSION_ID, created_by_user_id: USER_ID }, error: null })
+            if (table === 'approval_requests') return chain({ data: { id: APPROVAL_REQUEST_ID, post_id: POST_ID, post_version_id: POST_VERSION_ID }, error: null })
+            if (table === 'approval_stages') {
+              return chain({
+                data: [
+                  {
+                    id: STAGE_ID, position: 1, scope: 'department', label: 'Abteilung', mode: 'named', minimum_approvals: 1, is_minor_stage: false,
+                    status: 'rejected', reviewer_snapshot: [{ userId: OTHER_USER_ID }], deadline_at: null, opened_at: new Date().toISOString(),
+                  },
+                  {
+                    id: OUTER_STAGE_ID, position: 2, scope: 'organization', label: 'Verein', mode: 'named', minimum_approvals: 1, is_minor_stage: false,
+                    status: 'skipped', reviewer_snapshot: [{ userId: OTHER_USER_ID }], deadline_at: null, opened_at: null,
+                  },
+                ],
+                error: null,
+              })
+            }
+            if (table === 'approval_decisions') return chain({ data: [], error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used') } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/post-versions/${POST_VERSION_ID}/approval`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(200)
+    const stages = response.json().stages as { id: string; reviewerUserIds: string[] | null }[]
+    expect(stages.find((stage) => stage.id === STAGE_ID)?.reviewerUserIds).toEqual([OTHER_USER_ID])
+    expect(stages.find((stage) => stage.id === OUTER_STAGE_ID)?.reviewerUserIds).toBeNull()
+  })
+
+  it('rejects requesting approval with 422 and names the unfulfillable level', async () => {
+    // Plan 011, "Verifikation": eine Route mit einer Stufe ohne auflösbaren Prueferkreis wird nicht
+    // erzeugt -- sie wuerde den Beitrag lautlos fuer immer liegen lassen.
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'post_versions') return chain({ data: { id: POST_VERSION_ID, post_id: POST_ID, created_by_user_id: USER_ID, safety_flags: [] }, error: null })
+            if (table === 'posts') return chain({ data: { id: POST_ID, organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: null, status: 'draft_ready' }, error: null })
+            if (table === 'policy_settings') {
+              return chain({ data: [{ id: 'p1', scope: 'department', department_id: DEPARTMENT_ID, team_id: null, ...emptyPolicyRuleColumns(), review_required: true }], error: null })
+            }
+            if (table === 'organization_memberships' || table === 'department_memberships' || table === 'team_memberships') return chain({ data: [], error: null })
+            if (table === 'member_review_trust') return chain({ data: [], error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+          rpc: async () => { throw new Error('request_approval should not be called for an unfulfillable route') },
+        }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used') } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/post-versions/${POST_VERSION_ID}/request-approval`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(422)
+    expect(response.json()).toMatchObject({ error: 'unfulfillable_stage', blockers: [{ kind: 'empty_reviewer_pool', stageLabel: 'Abteilung' }] })
+  })
+
+  it('resolves an organization-level approver into the reviewer snapshot of a DEPARTMENT stage', async () => {
+    // Regression: der Prueferkreis einer "any_with_permission"-Stufe wurde nur aus den Rollen DER
+    // EIGENEN Ebene gebildet. authz.has_department_permission reicht post.approve aber von der
+    // Vereinsebene nach unten durch -- eine Abteilung ohne eigene "approver"-Rolle bekam deshalb
+    // einen empty_reviewer_pool-Blocker, obwohl die Vereinsleitung freigeben darf.
+    const rpcCalls: Record<string, unknown>[] = []
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'post_versions') return chain({ data: { id: POST_VERSION_ID, post_id: POST_ID, created_by_user_id: USER_ID, safety_flags: [] }, error: null })
+            if (table === 'posts') return chain({ data: { id: POST_ID, organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: null, status: 'draft_ready' }, error: null })
+            if (table === 'policy_settings') {
+              return chain({ data: [{ id: 'p1', scope: 'department', department_id: DEPARTMENT_ID, team_id: null, ...emptyPolicyRuleColumns(), review_required: true }], error: null })
+            }
+            if (table === 'organization_memberships') return chain({ data: [{ user_id: OTHER_USER_ID, role: 'organization_admin' }], error: null })
+            if (table === 'department_memberships' || table === 'team_memberships') return chain({ data: [], error: null })
+            if (table === 'member_review_trust') return chain({ data: [], error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+          rpc: async (fn: string, args: Record<string, unknown>) => {
+            rpcCalls.push({ fn, args })
+            return { data: { postId: POST_ID, status: 'awaiting_approval', approvalRequestId: APPROVAL_REQUEST_ID }, error: null }
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used') } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/post-versions/${POST_VERSION_ID}/request-approval`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(202)
+    const sentStages = (rpcCalls[0]!.args as { stages: { position: number; scope: string; reviewerSnapshot: { userId: string }[] }[] }).stages
+    expect(sentStages).toHaveLength(1)
+    expect(sentStages[0]).toMatchObject({ position: 1, scope: 'department', reviewerSnapshot: [{ userId: OTHER_USER_ID }] })
+  })
+
+  it('rejects reading member review trust of an organization the caller does not belong to with 403', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'organization_memberships' || table === 'department_memberships' || table === 'team_memberships') return membershipRowsStub([])
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used') } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${ORGANIZATION_ID}/member-review-trust`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(403)
+  })
+
+  it('requires an organizationId when listing the stages waiting for the caller', async () => {
+    // Ohne Organisationsbezug saehe eine Person mit Pruefrollen in mehreren Vereinen die Freigaben
+    // aller ihrer Vereine in der Liste eines einzelnen.
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ from: () => { throw new Error('the query must be rejected before any table access') } }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used') } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: '/v1/approval-stages/mine', headers: { authorization: `Bearer ${token}` } })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ error: 'invalid_request' })
   })
 
   it('maps an exceeded quota to 409 naming the blocking limit when scheduling a publication', async () => {

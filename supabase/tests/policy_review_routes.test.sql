@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(29);
+select plan(42);
 
 set local role postgres;
 
@@ -263,6 +263,133 @@ select is(
 select ok(
   has_column_privilege('authenticated', 'public.policy_reviewers', 'user_id', 'SELECT'),
   'authenticated can still read who the reviewer is'
+);
+
+-- 30-42: Mandantentrennung der vier neuen Tabellen (AGENTS.md: "Neue exponierte Tabellen brauchen
+-- RLS sowie positive und negative Isolationstests"). Dafuer ein ZWEITER Verein mit eigenem
+-- Mitglied -- mit nur einem Verein im Datensatz war Mandantentrennung nicht pruefbar. Ausserdem ein
+-- Abteilungsverwalter OHNE Organisationsrolle: er ist der Fall, an dem sich
+-- is_organization_member von is_any_member_of_organization unterscheidet.
+set local role postgres;
+
+insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
+values
+  ('00000000-0000-0000-0000-000000000000', '64000000-0000-4000-8000-000000000005', 'authenticated', 'authenticated', 'abteilungsleitung@pgtap-route.local', '', '{}', '{}', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '64000000-0000-4000-8000-000000000098', 'authenticated', 'authenticated', 'fremdverein@pgtap-route.local', '', '{}', '{}', now(), now());
+
+insert into public.organizations (id, name, slug) values
+  ('64000000-1000-4000-8000-000000000002', 'PGTAP Route Fremdverein', 'pgtap-route-fremdverein');
+insert into public.departments (id, organization_id, name, slug) values
+  ('64000000-1100-4000-8000-000000000009', '64000000-1000-4000-8000-000000000002', 'Handball', 'handball');
+insert into public.department_memberships (organization_id, department_id, user_id, role) values
+  ('64000000-1000-4000-8000-000000000001', '64000000-1100-4000-8000-000000000001', '64000000-0000-4000-8000-000000000005', 'department_admin'),
+  ('64000000-1000-4000-8000-000000000002', '64000000-1100-4000-8000-000000000009', '64000000-0000-4000-8000-000000000098', 'department_admin');
+
+-- Je eine echte Zeile der drei uebrigen neuen Tabellen im ERSTEN Verein (channel_quotas hat oben
+-- schon eine vereinsweite Zeile).
+insert into public.policy_reviewers (organization_id, policy_settings_id, kind, user_id, created_by) values
+  ('64000000-1000-4000-8000-000000000001',
+   (select id from public.policy_settings where organization_id = '64000000-1000-4000-8000-000000000001' and scope = 'department' limit 1),
+   'user', '64000000-0000-4000-8000-000000000002', '64000000-0000-4000-8000-000000000001');
+insert into public.member_review_trust (organization_id, scope, department_id, user_id, review_requirement, reason, granted_by) values
+  ('64000000-1000-4000-8000-000000000001', 'department', '64000000-1100-4000-8000-000000000001', '64000000-0000-4000-8000-000000000001',
+   'waived', 'Langjaehrige Medienverantwortliche.', '64000000-0000-4000-8000-000000000005');
+
+set local role authenticated;
+
+-- 30-31: channel_quotas. Der Abteilungsverwalter ohne Organisationsrolle darf ein Kontingent seiner
+-- Ebene anlegen (channel_quotas_insert) und muss es deshalb auch lesen koennen -- mit
+-- is_organization_member waere schon das "insert ... returning" der API an der Select-Policy
+-- gescheitert (eigener Review-Fund).
+select set_config('request.jwt.claim.sub', '64000000-0000-4000-8000-000000000005', true);
+select is((select count(*)::integer from public.channel_quotas where organization_id = '64000000-1000-4000-8000-000000000001'), 1,
+  'a department admin without an organization role reads the channel quota of their own club');
+select set_config('request.jwt.claim.sub', '64000000-0000-4000-8000-000000000098', true);
+select is((select count(*)::integer from public.channel_quotas where organization_id = '64000000-1000-4000-8000-000000000001'), 0,
+  'a member of another club reads no channel_quotas row of this club');
+
+-- 32-33: approval_stages -- der zugewiesene Pruefer des eigenen Vereins liest seine Stufe, das
+-- Mitglied des fremden Vereins keine.
+-- Nutzer ...0002 steht seit Test 12 im reviewer_snapshot dieser Stufe (siehe update dort).
+select set_config('request.jwt.claim.sub', '64000000-0000-4000-8000-000000000002', true);
+select is((select count(*)::integer from public.approval_stages where id = '64000000-5000-4000-8000-000000000002'), 1,
+  'a reviewer named in reviewer_snapshot reads their own stage');
+select set_config('request.jwt.claim.sub', '64000000-0000-4000-8000-000000000098', true);
+select is((select count(*)::integer from public.approval_stages where organization_id = '64000000-1000-4000-8000-000000000001'), 0,
+  'a member of another club reads no approval_stages row of this club');
+
+-- 34-35: policy_reviewers -- vereinsweit lesbar (jede Ebene soll die volle Freigaberoute sehen),
+-- aber nicht ueber die Vereinsgrenze.
+select set_config('request.jwt.claim.sub', '64000000-0000-4000-8000-000000000004', true);
+select is((select count(*)::integer from public.policy_reviewers where organization_id = '64000000-1000-4000-8000-000000000001'), 1,
+  'any member of the club reads the reviewer assignments of the club');
+select set_config('request.jwt.claim.sub', '64000000-0000-4000-8000-000000000098', true);
+select is((select count(*)::integer from public.policy_reviewers where organization_id = '64000000-1000-4000-8000-000000000001'), 0,
+  'a member of another club reads no policy_reviewers row of this club');
+
+-- 36-38: member_review_trust ist enger als die uebrigen drei -- nur die Person selbst und wer die
+-- betroffene Ebene verwaltet.
+select set_config('request.jwt.claim.sub', '64000000-0000-4000-8000-000000000005', true);
+select is((select count(*)::integer from public.member_review_trust where department_id = '64000000-1100-4000-8000-000000000001'), 1,
+  'the admin of the department reads the trust row of that department');
+select set_config('request.jwt.claim.sub', '64000000-0000-4000-8000-000000000004', true);
+select is((select count(*)::integer from public.member_review_trust), 0,
+  'a member of the same club without management permission and without an own row reads no trust row');
+select set_config('request.jwt.claim.sub', '64000000-0000-4000-8000-000000000098', true);
+select is((select count(*)::integer from public.member_review_trust where organization_id = '64000000-1000-4000-8000-000000000001'), 0,
+  'a member of another club reads no member_review_trust row of this club');
+
+-- 39-40: request_approval() muss die STRUKTUR der Stufenliste pruefen, nicht nur ihren Inhalt.
+-- decide_approval_stage sucht die Folgestufe ueber position + 1: mit den Positionen 1 und 3 wuerde
+-- Stufe 3 nie oeffnen und der Beitrag nach Stufe 1 sofort auf 'approved' gehen -- so liesse sich
+-- jede aeussere Stufe ueberspringen, auch die unbefreibare Minderjaehrigenstufe.
+select set_config('request.jwt.claim.sub', '64000000-0000-4000-8000-000000000001', true);
+select throws_ok(
+  $$select public.request_approval(
+    '64000000-3000-4000-8000-000000000005'::uuid,
+    jsonb_build_array(
+      jsonb_build_object('position', 1, 'scope', 'department', 'scopeDepartmentId', '64000000-1100-4000-8000-000000000001', 'scopeTeamId', null,
+        'label', 'Abteilung', 'mode', 'named', 'minimumApprovals', 1, 'isMinorStage', false,
+        'reviewerSnapshot', jsonb_build_array(jsonb_build_object('userId', '64000000-0000-4000-8000-000000000002')), 'deadlineHours', null),
+      jsonb_build_object('position', 3, 'scope', 'organization', 'scopeDepartmentId', null, 'scopeTeamId', null,
+        'label', 'Uebersprungen', 'mode', 'named', 'minimumApprovals', 1, 'isMinorStage', true,
+        'reviewerSnapshot', jsonb_build_array(jsonb_build_object('userId', '64000000-0000-4000-8000-000000000003')), 'deadlineHours', null)
+    )
+  )$$,
+  'P0001', 'invalid_stage_positions', 'request_approval rejects a gap in the stage positions that would silently skip the outer stage'
+);
+select throws_ok(
+  $$select public.request_approval(
+    '64000000-3000-4000-8000-000000000005'::uuid,
+    jsonb_build_array(jsonb_build_object(
+      'position', 1, 'scope', 'department', 'scopeDepartmentId', '64000000-1100-4000-8000-000000000001', 'scopeTeamId', null,
+      'label', 'Ohne Pruefer', 'mode', 'named', 'minimumApprovals', 1, 'isMinorStage', false,
+      'reviewerSnapshot', '[]'::jsonb, 'deadlineHours', null
+    ))
+  )$$,
+  'P0001', 'empty_reviewer_snapshot', 'request_approval rejects a stage without any reviewer, which nobody could ever decide'
+);
+
+-- 41: policy_reviewers.user_id verweist nur auf public.profiles und kann deshalb keinen
+-- zusammengesetzten Fremdschluessel auf den Verein tragen -- policy_reviewers_insert prueft die
+-- Mitgliedschaft stattdessen selbst.
+select set_config('request.jwt.claim.sub', '64000000-0000-4000-8000-000000000005', true);
+select throws_ok(
+  $$insert into public.policy_reviewers (organization_id, policy_settings_id, kind, user_id, created_by)
+    values ('64000000-1000-4000-8000-000000000001',
+            (select id from public.policy_settings where organization_id = '64000000-1000-4000-8000-000000000001' and scope = 'department' limit 1),
+            'user', '64000000-0000-4000-8000-000000000098', '64000000-0000-4000-8000-000000000005')$$,
+  '42501', null, 'policy_reviewers rejects a reviewer from another club'
+);
+
+-- 42: dieselbe Luecke bei set_member_review_trust -- eine Vertrauenszeile fuer eine vereinsfremde
+-- Person waere fuer diese Person sogar lesbar (member_review_trust_select, "user_id = auth.uid()").
+select throws_ok(
+  $$select public.set_member_review_trust(
+    '64000000-1000-4000-8000-000000000001'::uuid, 'department', '64000000-1100-4000-8000-000000000001'::uuid, null,
+    '64000000-0000-4000-8000-000000000098'::uuid, true, 'waived', null, null
+  )$$,
+  'P0001', 'user_not_a_member', 'set_member_review_trust rejects a target person from another club'
 );
 
 select * from finish();

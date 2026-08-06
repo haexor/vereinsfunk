@@ -286,7 +286,9 @@ export const CreatePolicyReviewerRequestSchema = z.object({
 export const PolicyRuleValuesSchema = z.object({
   reviewRequired: z.boolean().nullable(),
   reviewMode: ReviewModeSchema.nullable(),
-  reviewStageLabel: z.string().max(80).nullable(),
+  // min(1) wie tone und wie ApprovalStageSchema.label: eine leere Bezeichnung waere in der Datenbank
+  // erlaubt (char_length <= 80), liesse danach aber jede Freigabeliste am label-Schema scheitern.
+  reviewStageLabel: z.string().trim().min(1).max(80).nullable(),
   reviewMinimumApprovals: z.int().min(1).max(5).nullable(),
   reviewDeadlineHours: z.int().min(1).max(720).nullable(),
   minorApprovalRequired: z.boolean().nullable(),

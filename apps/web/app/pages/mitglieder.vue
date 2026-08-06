@@ -481,7 +481,7 @@ const canInviteHere = computed(() => availableInviteScopes.value.length > 0)
                 class="inline-flex items-center gap-1.5 rounded-full bg-[#eef1ea] px-2.5 py-1 text-[10px] font-semibold text-[#3d453f]"
               >
                 <button
-                  v-if="entry.canChangeRole || entry.canSetExpiry"
+                  v-if="entry.canChangeRole || entry.canSetExpiry || canManageTrust(entry)"
                   type="button"
                   :aria-expanded="expandedMembershipId === entry.membershipId"
                   :aria-controls="`membership-detail-${entry.membershipId}`"
