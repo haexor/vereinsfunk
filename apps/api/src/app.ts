@@ -6,7 +6,6 @@ import {
   AcceptInvitationRequestSchema,
   AcceptInvitationResponseSchema,
   AddPlatformAdminRequestSchema,
-  ApprovalDecisionTypeSchema,
   ApprovalRequestSchema,
   ApprovalStageSchema,
   BrandLogoUploadResponseSchema,

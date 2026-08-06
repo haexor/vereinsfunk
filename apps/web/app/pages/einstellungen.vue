@@ -2,7 +2,6 @@
 import { X } from '@lucide/vue'
 import {
   MemberSchema,
-  PolicyReviewerSchema,
   PolicyRuleSettingSchema,
   rolesForScopeLevel,
   type Member,
