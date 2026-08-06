@@ -384,7 +384,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const trust = await fetchMemberTrust(client, request.auth!.userId, input.organizationId, input.departmentId, input.teamId ?? null)
     const submitCheck = evaluateSubmitPermission({
       hasCreatePermission: true,
-      submitAllowed: trust.find((record) => record.scope === (input.teamId ? 'team' : 'department'))?.submitAllowed ?? true,
+      // fetchMemberTrust liefert bereits alle zutreffenden Ebenen (Verein, die Abteilung, das
+      // Team) -- ein find() auf nur EINE Ebene liesse sich durch die Wahl von teamId umgehen
+      // (Abteilungssperre bleibt unbeachtet) oder pruefte die Vereinsebene nie (beim
+      // Rechte-Review gefunden). Verschaerfung wirkt wie ueberall sonst: jede Ebene kann
+      // sperren, keine kann eine Sperre einer anderen Ebene aufheben.
+      submitAllowed: trust.every((record) => record.submitAllowed !== false),
       presetSlug: input.presetSlug,
       requestedFormats: input.requestedFormats,
       allowedPresets: config.policies.allowedPresets,

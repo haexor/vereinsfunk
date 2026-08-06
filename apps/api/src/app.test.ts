@@ -1486,6 +1486,36 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
     expect(response.json()).toMatchObject({ error: 'submit_not_allowed' })
   })
 
+  it('rejects submitting with a teamId when the DEPARTMENT-level trust record disallows it, not just the team-level one', async () => {
+    // Regression: fruehere Fassung pruefte bei vorhandener teamId ausschliesslich die
+    // Team-Ebene und ignorierte die Abteilungsebene komplett -- eine Abteilungssperre liess sich
+    // dadurch einfach durch Mitschicken einer teamId umgehen (beim Rechte-Review gefunden).
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'policy_settings') return chain({ data: null, error: null })
+            if (table === 'member_review_trust') return chain({ data: [{ scope: 'department', department_id: DEPARTMENT_ID, team_id: null, submit_allowed: false, review_requirement: 'inherit' }], error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used') } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/submissions',
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        organizationId: ORGANIZATION_ID, departmentId: DEPARTMENT_ID, teamId: TEAM_ID, presetSlug: 'training_insight', communicationGoal: 'inform',
+        requestedFormats: ['feed_image'], sourceMaterial: { facts: {}, observations: ['x'], quotes: [], doNotMention: [] },
+      },
+    })
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toMatchObject({ error: 'submit_not_allowed' })
+  })
+
   it('maps insufficient_permission from decide_approval_stage to 403', async () => {
     const clients: SupabaseClientFactory = {
       forUser: () => ({ rpc: async () => ({ data: null, error: { message: 'insufficient_permission' } }) }) as unknown as SupabaseClient,
