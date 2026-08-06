@@ -47,6 +47,14 @@ Die Regel folgt der von `decide_approval_stage`: „eine bereits erfüllte inner
 
 Der letzte Fall ist der Grund für „erweitern" statt „ersetzen": `approval_decisions.approval_stage_id` hängt per Fremdschlüssel mit `on delete cascade` an der Stufe (`2026080606:207`). Ein Ersetzen würde eine bereits abgegebene, echte Freigabe löschen. Eine Stufe, auf der jemand entschieden hat, ist außerdem nicht der Blockadefall — sie braucht nur einen zweiten Prüfer, der noch kann.
 
+**Die Zuordnung alt zu neu läuft nicht über `position`.** `position` ist eine Reihenfolge, keine Identität: eine Richtlinienänderung kann eine Ebene einfügen, entfernen oder verschieben, und dann bezeichnet dieselbe Nummer eine andere Stufe. Der Schlüssel ist stattdessen `(scope, scope_department_id, scope_team_id, is_minor_stage)` — genau die Felder, aus denen `buildStageDefinitions` eine Stufe erzeugt, und die eine Ebene eindeutig benennen. Daraus folgen drei Fälle, die der Plan explizit festlegen muss:
+
+- **Neue Route enthält eine erfüllte Stufe nicht mehr** (die Ebene verlangt jetzt keine Prüfung): die erfüllte Stufe **bleibt** stehen, samt Entscheidungen, und wird vor den neuen Stufen einsortiert. Eine erbrachte Freigabe wird nicht nachträglich weggeräumt, nur weil die Regel sich geändert hat.
+- **Neue Route enthält eine Stufe, die es vorher nicht gab**: wird als neue Stufe angelegt, `status = 'pending'`, und öffnet nach der Reihe.
+- **Schlüssel doppelt** (zwei Stufen derselben Ebene): kann `buildStageDefinitions` nicht erzeugen — genau eine Stufe je Ebene plus höchstens eine Minderjährigenstufe. Tritt es doch auf, ist das ein Datenfehler und die RPC bricht mit `ambiguous_stage_mapping` ab, statt zu raten.
+
+Die Tests dazu sind nicht optional: eingefügte, entfernte, verschobene und doppelte Stufe je ein Fall.
+
 Was die Neuauflösung **nicht** darf, weil `resolveReviewRoute` es von sich aus verhindert und `request_approval` es zusätzlich prüft: die Minderjährigenstufe entfernen, einen leeren Prüferkreis erzeugen, Positionen mit Lücken hinterlassen, oder eine vereinsfremde Person als Prüferin eintragen. Die Neuauflösung muss deshalb **denselben Validierungsblock** benutzen wie `request_approval` — nicht eine zweite, ähnliche Fassung. Praktisch: den Block aus `request_approval` in eine eigene SQL-Funktion ziehen und aus beiden aufrufen.
 
 ### Wer darf das
@@ -73,17 +81,22 @@ create table public.approval_route_changes (
   organization_id uuid not null,
   approval_request_id uuid not null,
   changed_by uuid not null references public.profiles(id),
-  reason text not null check (char_length(reason) between 10 and 2000),
-  stages_before jsonb not null,   -- Positionen, Labels und Prüferkreise vor dem Eingriff
+  reason text not null check (char_length(btrim(reason)) between 10 and 2000),
+  -- Bewusst OHNE Prüfer-IDs: nur Position, Label, Ebene und die ANZAHL der Prüfer je Stufe.
+  stages_before jsonb not null,
   created_at timestamptz not null default now(),
   foreign key (organization_id, approval_request_id)
-    references public.approval_requests(organization_id, id) on delete cascade
+    references public.approval_requests(organization_id, id) on delete restrict
 );
 ```
 
+`on delete restrict`, nicht `cascade` — dieselbe Wahl wie bei `audit_events.organization_id` (`202608020001:248`). Ein Audit-Eintrag, der mit dem auditierten Objekt verschwindet, ist kein Audit-Eintrag. Praktische Folge: eine `approval_request` mit Route-Änderungen ist nicht mehr löschbar, solange diese Zeilen stehen. Das ist gewollt; wer einen Verein löscht, muss den Trail bewusst mit abräumen (dieselbe Aufgabe, die `audit_events` schon heute stellt und die Paket 020, Datenschutzbetrieb, ohnehin für alle Trails lösen muss).
+
 RLS: lesbar für dieselben Personen wie `approval_requests_select` (`2026080606:445`) — Vereinsmitglieder mit Organisationsrolle, zugewiesene Prüfer und **der Autor der Version**. Schreibend ausschließlich über die RPC. `changed_by` bleibt lesbar, anders als bei `policy_reviewers.created_by`: wer in eine laufende Freigabe eingreift, muss dem Autor gegenüber benannt sein — das ist der Zweck der Begründungspflicht.
 
-`stages_before` als `jsonb` statt einer Historientabelle je Stufe: der Zweck ist Nachvollziehbarkeit („vorher standen dort X und Y"), nicht Abfragbarkeit. Eine zweite Stufentabelle wäre teurer und würde die Fremdschlüssel der `approval_decisions` verdoppeln.
+**`stages_before` darf keine Prüfer-IDs enthalten.** Sonst wäre die Tabelle ein Umweg um genau die Regel, die Paket 011 in der Review-Runde eingezogen hat: der Autor sieht die Zusammensetzung einer nie geöffneten Stufe nicht (`opened_at is null` → `reviewerUserIds: null`). Ein Verlauf, der die alten Snapshots vollständig speichert und dem Autor zeigt, gibt ihm genau die Namen, die die Live-Antwort verbirgt — und zusätzlich die Namen, die inzwischen ausgetauscht wurden. Gespeichert wird deshalb eine **redigierte Projektion**: je Stufe `position`, `label`, `scope`, `status` und `reviewerCount`. Wer die vollen Snapshots forensisch braucht, findet sie im `audit_events`-Eintrag desselben Vorgangs, der `organization.manage` verlangt. Ein API-Test hält das fest.
+
+`stages_before` als `jsonb` statt einer Historientabelle je Stufe: der Zweck ist Nachvollziehbarkeit („vorher standen dort drei Prüfer der Abteilung"), nicht Abfragbarkeit. Eine zweite Stufentabelle wäre teurer und würde die Fremdschlüssel der `approval_decisions` verdoppeln.
 
 Zusätzlich: `authz.can_decide_stage` bekommt `and request.invalidated_at is null`, gemeinsam mit dieser RPC ausgeliefert.
 
@@ -95,36 +108,59 @@ Zusätzlich: `authz.can_decide_stage` bekommt `and request.invalidated_at is nul
 
 Verifizieren: die 44 bestehenden pgTAP-Tests von `policy_review_routes.test.sql` laufen unverändert grün, insbesondere die vier, die `invalid_stage_positions`, `empty_reviewer_snapshot`, `invalid_reviewer_snapshot` und `minor_stage_required` prüfen.
 
-### 2. `public.reresolve_approval_route(target_approval_request_id uuid, stages jsonb, reason text)`
+### 2. `public.reresolve_approval_route(target_approval_request_id uuid, reason text)`
 
-`security definer`, Grant an `authenticated` — und damit dieselbe Sorgfalt wie bei `request_approval`: jeder Parameter wird als vom Angreifer gewählt behandelt.
+`security definer`. **Kein `stages`-Parameter** — und das ist der wichtigste Satz dieses Plans.
 
-1. Anfrage und Beitrag `for update` laden; `post.status = 'awaiting_approval'` verlangen, sonst `invalid_status`.
+Der erste Entwurf ließ die API die Route berechnen und als `stages` an die RPC übergeben, wie `request_approval` es tut. Das ist derselbe Fehler, den Paket 011 bei `request_approval` gefunden und dort nur *halb* behoben hat: bei einem Grant an `authenticated` ist die RPC direkt aufrufbar, die sorgfältige TS-Berechnung in `apps/api` ist dann nicht beteiligt, und `assert_valid_stage_list` prüft Struktur und Mitgliedschaft — **nicht**, ob die Liste der aktuellen Richtlinie und dem aktuellen Vertrauen entspricht. Ein Verwalter könnte damit jede beliebige Vereinsperson als Prüferin einsetzen und `review_mode = 'named'` seiner eigenen Ebene aushebeln. Bei einer Funktion, deren Zweck das Umschreiben eines laufenden Prüfkreises ist, wäre das die Lücke selbst, nicht ein Randfall.
+
+Die RPC leitet die Route deshalb **selbst** ab. Das ist die eigentliche Arbeit dieses Pakets und die Stelle, an der eine Entscheidung fällt:
+
+- **Variante A (empfohlen): Routenauflösung in SQL.** `buildStageDefinitions` + `resolveReviewRoute` als SQL-Funktion `authz.resolve_review_route(post_version_id)` nachbauen, die aus `policy_settings`, `policy_reviewers`, `member_review_trust` und den Mitgliedschaften dieselbe Route liefert. Die RPC ruft nur sie. Preis: die Routenlogik existiert zweimal (TS für die Vorschau, SQL für die Durchsetzung) und muss durch Tests aneinander gebunden werden — dieselbe Route für denselben Zustand, geprüft über beide Wege.
+- **Variante B: Grant zurücknehmen.** `reresolve_approval_route` nur an `service_role`; die API ruft sie mit dem Service-Client, nachdem sie Berechtigung und Route selbst geprüft hat. Preis: Fastify wird für diesen Pfad zur einzigen Durchsetzung, RLS ist keine zweite Verteidigungslinie mehr. `AGENTS.md` deckt das („Fastify ist die vertrauenswürdige Servergrenze für … Service-Role-Zugriffe"), es weicht aber vom Muster jeder bisherigen privilegierten Funktion in diesem Projekt ab.
+
+**Dieselbe Frage steht für `request_approval` offen** und betrifft bereits ausgelieferten Code — siehe „Risiken und offene Entscheidungen". Beide Pfade sollten dieselbe Variante wählen; sie in diesem Paket zu trennen, hieße die Lücke einmal zu schließen und einmal offen zu lassen.
+
+Ablauf der RPC, unabhängig von der Variante:
+
+1. Anfrage, Version und Beitrag `for update` laden; `post.status = 'awaiting_approval'` verlangen, sonst `invalid_status`.
 2. `has_department_permission(post.department_id, 'department.manage')`, sonst `insufficient_permission`.
 3. `version.created_by_user_id <> auth.uid()`, sonst `author_cannot_reresolve`.
-4. `authz.assert_valid_stage_list(...)` auf die gelieferte Liste.
-5. `stages_before` aus den aktuellen Stufen bilden, Zeile in `approval_route_changes` schreiben.
-6. Stufen nach der Tabelle in „Fachliches Modell" ersetzen bzw. deren Snapshot erweitern; Positionen der bleibenden erfüllten Stufen beibehalten und die neuen dahinter lückenlos einreihen.
-7. Genau eine Stufe öffnen: die niedrigste nicht erfüllte. `opened_at`/`deadline_at` aus `deadline_hours` neu berechnen, wie `request_approval` es für Position 1 tut.
-8. `required_approvals`/`requires_minor_approval` der Anfrage nachziehen, `invalidated_at` auf `null` zurücksetzen (die Route ist bewusst neu bewertet worden).
+4. `char_length(btrim(reason)) >= 10`, sonst `reason_required` — in der RPC, nicht nur im Zod-Schema der API: eine direkt aufgerufene RPC sieht das Schema nicht.
+5. `invalidated_at` **nach** dem `for update` erneut prüfen (siehe Schritt 5 unten): zwischen einer `stable` Vorprüfung und dem Schreiben kann der Medien-Trigger dazwischenkommen.
+6. Route ableiten, `assert_valid_stage_list` darauf anwenden (Gürtel und Hosenträger, auch wenn die Liste jetzt selbst berechnet ist).
+7. Redigierte `stages_before`-Projektion bilden, Zeile in `approval_route_changes` schreiben, vollständigen Vorher-Nachher-Zustand zusätzlich in `audit_events`.
+8. Stufen über den Schlüssel `(scope, scope_department_id, scope_team_id, is_minor_stage)` zuordnen und nach der Tabelle in „Fachliches Modell" ersetzen, erweitern oder stehen lassen; Positionen anschließend lückenlos neu durchnummerieren, erfüllte zuerst.
+9. Genau eine Stufe öffnen: die niedrigste nicht erfüllte. `opened_at`/`deadline_at` aus `deadline_hours` neu berechnen, wie `request_approval` es für Position 1 tut.
+10. `required_approvals`/`requires_minor_approval` der Anfrage nachziehen, `invalidated_at` auf `null` zurücksetzen (die Route ist bewusst neu bewertet worden).
 
-Verifizieren: pgTAP für jede Zeile der Tabelle plus die vier Ablehnungsfälle aus Schritt 2–4.
+Verifizieren: pgTAP für jede Zeile der Zustandstabelle, die vier Zuordnungsfälle, die vier Ablehnungsfälle aus Schritt 1–4, und — bei Variante A — ein Test, der TS- und SQL-Auflösung für denselben Datenstand gegeneinander stellt.
 
 ### 3. `POST /v1/approval-requests/:id/reresolve`
 
-Analog zu `POST /v1/post-versions/:id/request-approval` (`apps/api/src/app.ts:2339`): Route über `buildStageDefinitions` + `resolveReviewRoute` **frisch** berechnen, Blocker als `422 unfulfillable_stage` mit Nennung der Ebene melden, sonst die RPC aufrufen. Contract: `ReresolveApprovalRouteRequestSchema { reason: z.string().trim().min(10).max(2000) }`, Antwort wie `RequestApprovalResponseSchema` plus die neue Stufenliste. Fehlerabbildung: `author_cannot_reresolve` → 403, `invalid_status` → 409, der Rest wie bei `request-approval`.
+Analog zu `POST /v1/post-versions/:id/request-approval` (`apps/api/src/app.ts:2339`), aber ohne Routen-Parameter: die API prüft, meldet Blocker aus `resolveReviewRoute` als `422 unfulfillable_stage` mit Nennung der Ebene (**Vorschau**, damit die Verwaltung vor dem Absenden sieht, was entsteht) und ruft dann die RPC, die die Route selbst ableitet. Contract: `ReresolveApprovalRouteRequestSchema { reason: z.string().trim().min(10).max(2000) }`, Antwort wie `RequestApprovalResponseSchema` plus die neue Stufenliste. Fehlerabbildung: `author_cannot_reresolve` → 403, `invalid_status` → 409, `reason_required` → 400, `ambiguous_stage_mapping` → 409, der Rest wie bei `request-approval`.
 
-Verifizieren: API-Tests für 403 (Autor), 409 (falscher Status), 422 (unerfüllbare neue Route) und den Erfolgsfall mit geprüftem RPC-Argument.
+Verifizieren: API-Tests für 403 (Autor), 409 (falscher Status), 422 (unerfüllbare neue Route) und den Erfolgsfall.
 
 ### 4. Oberfläche
 
-`/freigaben` zeigt heute nur Stufen, die auf die anfragende Person warten. Für diesen Eingriff braucht es die Gegenansicht: **festhängende Freigaben der eigenen Ebene**. Kleinste ehrliche Fassung: ein Abschnitt „Festhängende Freigaben" mit den überfälligen Stufen (`isOverdue`) der Ebenen, die die Person verwaltet, je Eintrag der aktuelle Prüferkreis, die Frist und ein Button „Route neu auflösen" mit Pflicht-Begründungsfeld und einer Vorschau der neu aufgelösten Stufen vor dem Absenden.
+`/freigaben` zeigt heute nur Stufen, die auf die anfragende Person warten. Für diesen Eingriff braucht es die Gegenansicht: **festhängende Freigaben der eigenen Ebene**.
 
-In `GET /v1/post-versions/:id/approval` die Einträge aus `approval_route_changes` mitliefern, damit der Autor in der Freigabeansicht liest, dass und warum die Route geändert wurde. Die Sichtbarkeitsregel für `reviewerUserIds` (`opened_at is null` → `null` für den Autor) bleibt unberührt.
+Der Filter ist dabei **nicht** `isOverdue` allein. Die beiden Fälle, um die es in diesem Paket eigentlich geht, treten vor Ablauf einer Frist auf — und ohne Frist überhaupt nie: eine Stufe hat keine, wenn `review_deadline_hours` nicht gesetzt ist, und `deadline_at` bleibt dann `null`. Eine Liste, die nur auf überfällig filtert, zeigt genau die Blockaden nicht, für die die Neuauflösung gebaut wird. Aufgenommen wird deshalb jede offene oder überfällige Stufe der verwalteten Ebenen, die mindestens eines erfüllt:
+
+- die Frist ist überschritten (`isOverdue`),
+- die Anfrage ist invalidiert (`invalidated_at`, Medium hat sich geändert),
+- der `reviewer_snapshot` ist nicht mehr erfüllbar: keine der genannten Personen ist noch aktives Vereinsmitglied, oder es sind weniger nicht-abgelaufene Mitglieder darin als `minimum_approvals` verlangt.
+
+Der dritte Punkt braucht einen eigenen Endpunkt oder ein Feld in der Stufenantwort (`unresolvableReviewers`), das die API aus dem Snapshot gegen die aktuellen Mitgliedschaften berechnet — dieselbe Ablaufprüfung, die `authz.is_user_member_of_organization` in SQL macht. API- und UI-Pfad für alle drei Auslöser sind zu testen.
+
+In `GET /v1/post-versions/:id/approval` die Einträge aus `approval_route_changes` mitliefern (die redigierte Projektion, siehe „Datenmodell"), damit der Autor in der Freigabeansicht liest, dass und warum die Route geändert wurde. Die Sichtbarkeitsregel für `reviewerUserIds` (`opened_at is null` → `null` für den Autor) bleibt unberührt und darf über den Verlauf nicht umgangen werden.
 
 ### 5. `invalidated_at` wirksam machen
 
 `and request.invalidated_at is null` in `authz.can_decide_stage`. Damit ist eine Freigabe, deren Medium sich geändert hat, nicht mehr entscheidbar — und die Neuauflösung aus Schritt 2 ist der Weg zurück. Beides zusammen ausliefern, nie getrennt.
+
+Der Guard im Helper genügt für den Lesepfad und für `approval_decisions_insert` (`2026080606:469`), und `decide_approval_stage` ruft `can_decide_stage` unbedingt als erstes auf. Er genügt aber **nicht** gegen ein Rennen: `can_decide_stage` ist `stable` und läuft vor dem `for update` auf die Stufe, der Medien-Trigger kann dazwischen zuschlagen. `decide_approval_stage` prüft `invalidated_at` deshalb **nach** dem Sperren der Anfrage ein zweites Mal und bricht dann mit `approval_invalidated` ab (→ 409). Der pgTAP-Test geht über den echten Entscheidungs-RPC, nicht nur über den Helper: Medium ändern, `decide_approval_stage` aufrufen, Ablehnung prüfen, neu auflösen, erneut aufrufen, Erfolg prüfen.
 
 Verifizieren: pgTAP — Mediumderivat ändern, Trigger setzt `invalidated_at`, `can_decide_stage` ist danach `false`, nach `reresolve_approval_route` wieder `true`.
 
@@ -136,6 +172,7 @@ Verifizieren: pgTAP — Mediumderivat ändern, Trigger setzt `invalidated_at`, `
 
 ## Risiken und offene Entscheidungen
 
+- **`request_approval` hat dieselbe Lücke, und die ist bereits ausgeliefert.** Die Funktion nimmt `stages` samt `reviewerSnapshot` vom Aufrufer und ist per Grant an `authenticated` direkt aufrufbar. Paket 011 hat daran das Wesentliche behoben — `self_approval_allowed`/`allow_same_reviewer_across_stages` werden selbst berechnet, die Minderjährigenstufe ist erzwungen, Positionen sind lückenlos, jede genannte Person muss echtes Vereinsmitglied sein — aber **nicht**, dass die genannten Prüfer die *konfigurierten* sind. Eine Person mit `post.submit` kann ihre Freigabe also per direktem RPC-Aufruf an einen selbst gewählten, wohlwollenden Vereinskollegen richten statt an die unter `review_mode = 'named'` eingetragenen Prüfer. Nicht umgehbar bleiben dabei: Selbstfreigabe bei `self_approval_allowed = false` und die Vereinsgrenze. Die Wirkung ist „falscher Prüfer innerhalb des Vereins", nicht „gar kein Prüfer" — aber bei einer `named`-Konfiguration ist genau das der Zweck der Konfiguration. **Am schwersten wiegt es bei der Minderjährigenstufe**: geprüft wird, dass eine Stufe mit `isMinorStage` *vorhanden* ist, nicht dass ihr Prüfkreis die Freigabeberechtigten der Vereinsebene sind. Ein Einreichender kann sie also mit einem beliebigen Vereinsmitglied besetzen und damit formal erfüllen. Nach `plans/011` („Vertrauen und Minderjährige") ist gerade diese Stufe der Grund, warum Spieler und Eltern überhaupt einreichen dürfen — sie darf nicht nur der Form nach existieren. **Das ist eine Entscheidung, die vor diesem Paket fällt**, weil beide Pfade dieselbe Variante wählen müssen (A oder B aus Abschnitt 2). Bis dahin gilt: die Konfiguration `review_mode = 'named'` ist gegen einen wohlmeinenden Verein wirksam, nicht gegen einen Einreichenden, der die RPC direkt aufruft.
 - **Der Eingriff ist mächtig.** Wer die Route neu auflöst, bestimmt neu, wer freigibt. Die Gegengewichte sind: Verwaltungsrecht im Scope, Autor ausgeschlossen, Begründung ab zehn Zeichen Pflicht, vorheriger Zustand festgehalten, für den Autor lesbar. Das ist bewusst kein technisches Verbot, sondern Nachvollziehbarkeit — ein Verein, der sich selbst betrügen will, kann das über die Richtlinie ohnehin.
 - **„Alle offenen Freigaben neu bewerten"** (der Notfallknopf aus `plans/011`) bleibt draußen. Ein Massen-Eingriff hat ein anderes Risikoprofil: er ändert viele Routen gleichzeitig, braucht eine Vorschau über alle betroffenen Beiträge und eine Begründung je Verein statt je Beitrag. Erst sinnvoll, wenn dieser Einzelfall in Betrieb ist.
 - **Benachrichtigung** der neu benannten Prüfer: die RPC läuft synchron auf Nutzeraktion, eine E-Mail wäre hier ohne Scheduler möglich. Die Bündelungsregel aus Paket 011 („höchstens eine E-Mail pro Stunde") ist aber nicht gebaut. Vorschlag: in diesem Paket keine E-Mail, sondern gemeinsam mit der übrigen Prüfer-Benachrichtigung nach Paket 004.
