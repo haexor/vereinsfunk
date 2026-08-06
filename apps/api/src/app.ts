@@ -1217,6 +1217,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (rpc.error) {
       if (rpc.error.message.includes('insufficient_permission')) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
       if (rpc.error.message.includes('unknown_policy_rule_field')) return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+      // 23514 = check_violation. Zod kann die Kombination reviewMode='named'/reviewRequired nur
+      // innerhalb DESSELBEN patch pruefen -- ein frueherer Patch koennte reviewRequired bereits
+      // gesetzt haben, ein spaeterer patch={reviewMode:'named'} allein sieht dann fuer Zod
+      // vollstaendig gueltig aus und verletzt erst am policy_settings_named_requires_review-Check
+      // (beim Vertraege-Review als 500 statt 400 gefunden).
+      if (rpc.error.code === '23514') return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
       throw rpc.error
     }
     const audit = await supabaseClients.forService().from('audit_events').insert({
@@ -1275,6 +1281,10 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const insert = await client.from('policy_reviewers').insert(row).select('id, kind, user_id, role, target_department_id, target_team_id, created_at').single()
     if (insert.error) {
       if (insert.error.code === '23505') return reply.code(409).send({ error: 'already_a_reviewer', correlationId: request.id })
+      // 23503 = foreign_key_violation: eine department_role/team_role-Referenz mit einer
+      // departmentId/teamId, die nicht existiert (Fremdschluessel schuetzt bereits gegen eine
+      // fremde Organisation, siehe Migration -- das hier ist der Tippfehler-/Vertraege-Fall).
+      if (insert.error.code === '23503') return reply.code(404).send({ error: 'not_found', correlationId: request.id })
       throw insert.error
     }
     return reply.code(201).send(
@@ -2426,6 +2436,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       .single()
     if (insert.error) {
       if (insert.error.code === '23505') return reply.code(409).send({ error: 'quota_already_exists', correlationId: request.id })
+      // 23503 = foreign_key_violation, z. B. ein nicht existierender socialConnectionId.
+      if (insert.error.code === '23503') return reply.code(404).send({ error: 'not_found', correlationId: request.id })
       throw insert.error
     }
     return reply.code(201).send(
