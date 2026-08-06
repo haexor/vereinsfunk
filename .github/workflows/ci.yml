@@ -9,10 +9,15 @@ jobs:
   quality:
     runs-on: ubuntu-latest
     steps:
+      # Der Job macht keine Git-Schreiboperation, braucht den Token nach dem Checkout
+      # also nicht. Persistiert liegt er in .git/config, waehrend `pnpm install` die
+      # Build-Skripte aus onlyBuiltDependencies ausfuehrt -- die kaemen sonst dran.
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
         with:
-          version: 11.11.0
+          persist-credentials: false
+      # Ohne `version` liest action-setup das packageManager-Feld aus package.json.
+      # Das haelt die pnpm-Version an einer Stelle -- Renovate pflegt sie dort mit.
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24

@@ -1,0 +1,74 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "timezone": "Europe/Berlin",
+  "schedule": ["before 6am on monday"],
+  "minimumReleaseAge": "3 days",
+  "automerge": true,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on monday"]
+  },
+  "packageRules": [
+    {
+      "description": "Generische Regeln zuerst -- bei mehreren Treffern gewinnt die letzte Regel.",
+      "matchPackageNames": ["@types/*"],
+      "groupName": "types"
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "github-actions"
+    },
+    {
+      "matchManagers": ["dockerfile"],
+      "groupName": "docker-base-images"
+    },
+    {
+      "description": "Remotion rendert mit React -- Renderer, CLI und React-Stack nur im Gleichschritt.",
+      "matchPackageNames": [
+        "remotion",
+        "@remotion/*",
+        "react",
+        "react-dom",
+        "@types/react"
+      ],
+      "groupName": "remotion"
+    },
+    {
+      "description": "Fastify-Plugins sind an das Fastify-Major gebunden.",
+      "matchPackageNames": ["fastify", "@fastify/*"],
+      "groupName": "fastify"
+    },
+    {
+      "description": "Nuxt zieht Vue, Router und vue-tsc mit.",
+      "matchPackageNames": [
+        "nuxt",
+        "vue",
+        "vue-router",
+        "vue-tsc",
+        "@nuxtjs/tailwindcss",
+        "tailwindcss"
+      ],
+      "groupName": "nuxt"
+    },
+    {
+      "description": "typescript-eslint und eslint-plugin-vue haengen an ESLint- und TypeScript-Version.",
+      "matchPackageNames": [
+        "eslint",
+        "@eslint/js",
+        "typescript-eslint",
+        "eslint-plugin-vue",
+        "vue-eslint-parser",
+        "globals",
+        "prettier",
+        "typescript"
+      ],
+      "groupName": "lint-toolchain"
+    },
+    {
+      "description": "CLI und Client teilen sich das Supabase-Release.",
+      "matchPackageNames": ["supabase", "@supabase/*"],
+      "groupName": "supabase"
+    }
+  ]
+}
