@@ -11,7 +11,12 @@
   },
   "packageRules": [
     {
-      "description": "Generische Regeln zuerst -- bei mehreren Treffern gewinnt die letzte Regel.",
+      "description": "Majors immer manuell. Gruene Pipeline heisst kompilierbar, nicht verhaltensgleich.",
+      "matchUpdateTypes": ["major"],
+      "automerge": false
+    },
+    {
+      "description": "Generische Regeln zuerst -- bei mehreren Treffern gewinnt die letzte Regel je Feld.",
       "matchPackageNames": ["@types/*"],
       "groupName": "types"
     },
