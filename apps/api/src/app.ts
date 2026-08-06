@@ -371,6 +371,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       if (rpc.error.message.includes('organization limit reached')) {
         return reply.code(429).send({ error: 'organization_limit_reached', correlationId: request.id })
       }
+      // Der Trigger aus 2026080602_platform_admin_separation.sql schlaegt erst beim
+      // Mitgliedschafts-Insert am Ende von create_organization() zu; die Funktion laeuft in
+      // einer Transaktion, die angelegte Organisation wird also vollstaendig zurueckgerollt.
+      if (rpc.error.message.includes('platform_admin_cannot_hold_membership')) {
+        return reply.code(409).send({ error: 'platform_admin_cannot_hold_membership', correlationId: request.id })
+      }
       throw rpc.error
     }
     const organizationId = rpc.data as string
@@ -759,6 +765,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (insert.error) {
       if (insert.error.code === '23505') return reply.code(409).send({ error: 'already_a_member', correlationId: request.id })
       if (insert.error.code === '22P02') return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+      // Anders als die Organisations- und Einladungsroute schreibt diese hier direkt in die
+      // Tabelle, laeuft also unmittelbar in den Trigger aus
+      // 2026080602_platform_admin_separation.sql.
+      if (insert.error.message.includes('platform_admin_cannot_hold_membership')) {
+        return reply.code(409).send({ error: 'platform_admin_cannot_hold_membership', correlationId: request.id })
+      }
       throw insert.error
     }
     const audit = await supabaseClients.forService().from('audit_events').insert({
@@ -1101,6 +1113,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (rpc.error) {
       if (rpc.error.message.includes('invitation_not_found_or_expired')) return reply.code(410).send({ error: 'invitation_not_found_or_expired', correlationId: request.id })
       if (rpc.error.message.includes('invitation_email_mismatch')) return reply.code(403).send({ error: 'invitation_email_mismatch', correlationId: request.id })
+      if (rpc.error.message.includes('platform_admin_cannot_hold_membership')) return reply.code(409).send({ error: 'platform_admin_cannot_hold_membership', correlationId: request.id })
       throw rpc.error
     }
     const data = rpc.data as { organizationId: string; departmentId: string | null; teamId: string | null; role: string }
@@ -1126,6 +1139,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const rpc = await service.rpc('add_platform_admin', { target_email: input.email, added_by: request.auth!.userId })
     if (rpc.error) {
       if (rpc.error.message.includes('no auth.users row')) return reply.code(404).send({ error: 'user_not_found', correlationId: request.id })
+      if (rpc.error.message.includes('member_cannot_become_platform_admin')) return reply.code(409).send({ error: 'member_cannot_become_platform_admin', correlationId: request.id })
       throw rpc.error
     }
     const row = await service.from('platform_admins').select('user_id, is_default_admin, created_at').eq('user_id', rpc.data as string).single()

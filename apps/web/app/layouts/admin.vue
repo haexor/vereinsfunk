@@ -30,7 +30,6 @@ const adminNav = [
         </nav>
       </div>
       <div class="flex items-center gap-3">
-        <NuxtLink to="/" class="focus-ring rounded-lg px-3 py-2 text-xs font-semibold hover:bg-white/10">Zum Verein</NuxtLink>
         <button class="focus-ring rounded-lg px-3 py-2 text-xs font-semibold hover:bg-white/10" @click="logout">Abmelden</button>
       </div>
     </header>

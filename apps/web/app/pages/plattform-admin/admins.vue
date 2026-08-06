@@ -36,8 +36,12 @@ async function addAdmin() {
     await $fetch(`${config.public.apiBase}/v1/platform-admins`, { method: 'POST', headers, body })
     newEmail.value = ''
     await load()
-  } catch {
-    errorMessage.value = 'Admin konnte nicht hinzugefügt werden. Ist die E-Mail-Adresse bereits registriert?'
+  } catch (error) {
+    const code = (error as { data?: { error?: string } })?.data?.error
+    errorMessage.value =
+      code === 'member_cannot_become_platform_admin'
+        ? 'Dieses Konto ist Mitglied in einem Verein. Betreiber- und Vereinskonten sind getrennt.'
+        : 'Admin konnte nicht hinzugefügt werden. Ist die E-Mail-Adresse bereits registriert?'
   } finally {
     saving.value = false
   }

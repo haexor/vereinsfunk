@@ -28,10 +28,11 @@ async function acceptInvitation() {
   } catch (error) {
     status.value = 'error'
     const code = (error as { data?: { error?: string } })?.data?.error
-    errorMessage.value =
-      code === 'invitation_email_mismatch'
-        ? 'Diese Einladung wurde an eine andere E-Mail-Adresse geschickt als die, mit der du angemeldet bist.'
-        : 'Der Einladungslink ist ungültig, abgelaufen oder wurde bereits verwendet.'
+    const messages: Record<string, string> = {
+      invitation_email_mismatch: 'Diese Einladung wurde an eine andere E-Mail-Adresse geschickt als die, mit der du angemeldet bist.',
+      platform_admin_cannot_hold_membership: 'Dieses Konto verwaltet die Plattform und kann deshalb keinem Verein beitreten.',
+    }
+    errorMessage.value = messages[code ?? ''] ?? 'Der Einladungslink ist ungültig, abgelaufen oder wurde bereits verwendet.'
   }
 }
 

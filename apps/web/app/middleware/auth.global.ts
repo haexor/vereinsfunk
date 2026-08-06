@@ -17,12 +17,15 @@ export default defineNuxtRouteMiddleware(async (to) => {
   const session = await useSession()
   if (!session.value) return navigateTo({ path: '/anmelden', query: { redirect: to.fullPath } })
 
-  // Plattform-Admins sind keinem Verein zugeordnet -- ein Admin ohne eigenen Vereins-Scope
-  // darf trotzdem sein Dashboard erreichen, statt in den Onboarding-Wizard gezwungen zu werden.
-  if (to.path.startsWith('/plattform-admin')) {
-    if (!session.value.isPlatformAdmin) return navigateTo('/')
+  // Der Plattform-Admin ist der Betreiber, kein Vereinsnutzer: sein Konto kann seit
+  // 2026080602_platform_admin_separation.sql ueberhaupt keine Vereinsmitgliedschaft mehr
+  // halten. Damit hat es weder in der Vereinsoberflaeche noch im Onboarding-Wizard etwas
+  // verloren -- der gesamte Vereinsteil der App liegt hinter dieser Weiche.
+  if (session.value.isPlatformAdmin) {
+    if (!to.path.startsWith('/plattform-admin')) return navigateTo('/plattform-admin')
     return
   }
+  if (to.path.startsWith('/plattform-admin')) return navigateTo('/')
 
   if (to.path !== '/onboarding' && session.value.scopes.length === 0) return navigateTo('/onboarding')
 })
