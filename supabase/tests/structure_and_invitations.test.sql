@@ -218,8 +218,10 @@ select throws_ok(
 );
 set local role postgres;
 
--- 23-24: a team-scoped invitation, once accepted, creates both the team membership and an
--- automatic viewer membership in the parent department (otherwise no content policy applies).
+-- 23-24: a team-scoped invitation, once accepted, creates the team membership. Paket 023 removed
+-- the automatic viewer membership this used to create in the parent department -- posts_select/
+-- submissions_select now grant a team-only member the same content access directly via
+-- authz.has_team_membership, without making them a full department member.
 insert into public.invitations (organization_id, department_id, team_id, email, role, token_hash, invited_by, expires_at)
 values ('60000000-1000-4000-8000-000000000001', '60000000-1100-4000-8000-000000000001', '60000000-1200-4000-8000-000000000001', 'teaminvitee@pgtap-structure.local', 'contributor', encode(digest('pgtap-raw-token-team', 'sha256'), 'hex'), '60000000-0000-4000-8000-000000000001', now() + interval '14 days');
 set local role authenticated;
@@ -234,8 +236,8 @@ select is(
   'contributor', 'the team membership was created with the invited role'
 );
 select is(
-  (select role::text from public.department_memberships where department_id = '60000000-1100-4000-8000-000000000001' and user_id = '60000000-0000-4000-8000-000000000006'),
-  'viewer', 'an automatic viewer membership was created in the parent department'
+  (select count(*)::integer from public.department_memberships where department_id = '60000000-1100-4000-8000-000000000001' and user_id = '60000000-0000-4000-8000-000000000006'),
+  0, 'no automatic viewer membership is created in the parent department anymore (Paket 023)'
 );
 
 -- 25-27: email_has_membership requires member.invite at the target scope (Mandantentrennung

@@ -24,17 +24,18 @@ Geplant auf `b5c2eda6` am 2026-08-04.
 - Es gibt **keine Kontingente**: keine Tabelle, kein Zähler, keine Prüfung.
 - `apps/api/src/app.ts:74-103` nimmt eine Submission an, ohne irgendeine Richtlinie zu konsultieren.
 
-## Abhängigkeit: Paket 023 kommt zuerst
+## Abhängigkeit: Paket 023 ist erledigt
 
-Beim Review von Paket 010 sind drei Anforderungen entstanden, die dieselbe Vererbungsmechanik brauchen wie dieses Paket, aber deutlich kleiner sind: vereinsweite Sichtbarkeit veröffentlichter Beiträge, die Mitglieder-Detailebene und das delegierbare Einladungsrecht. Sie sind nach `plans/023-sichtbarkeit-mitgliederverwaltung-und-richtliniengrundlage.md` ausgelagert und **vor** diesem Paket zu bauen.
+Beim Review von Paket 010 sind drei Anforderungen entstanden, die dieselbe Vererbungsmechanik brauchen wie dieses Paket, aber deutlich kleiner sind: vereinsweite Sichtbarkeit veröffentlichter Beiträge, die Mitglieder-Detailebene und das delegierbare Einladungsrecht. Sie sind nach `plans/023-sichtbarkeit-mitgliederverwaltung-und-richtliniengrundlage.md` ausgelagert und am 2026-08-06 **vor** diesem Paket umgesetzt worden (siehe dort, Abschnitt „Umsetzung: Ergebnis und Abweichungen vom Plan“).
 
 Was 023 mitbringt und dieses Paket voraussetzt:
 
-- `public.policy_scope` und `public.policy_settings` **existieren bereits** — dieses Paket erweitert die Tabelle um die Freigabe- und Kontingentfelder, legt sie nicht neu an. Der Ausschnitt unter „Datenmodell“ zeigt sie deshalb vollständig, umzusetzen ist die Differenz.
-- `authz.resolve_policy_flag(...)` und die Vererbungsregel („`null` = erben, untere Ebenen dürfen nur verschärfen“) sind an zwei booleschen Feldern gebaut und getestet.
-- Die Mitglieder-Detailebene auf `/mitglieder` existiert mit Rolle, Befristung und Einladungsrecht. Dieses Paket **füllt sie** mit Freigabe-Zuständigkeit (`policy_reviewers`) und Vertrauen (`member_review_trust`), statt eine zweite zu bauen.
-- Die drei Vererbungszustände der Oberfläche (**geerbt**, **verschärft**, **gesperrt**) sind dort entstanden und werden hier nicht neu erfunden.
-- **Verbindlich übernommen**: die erlaubten Aktionen kommen aus der API-Antwort, das Frontend leitet Berechtigungen nicht selbst her (Begründung in 023).
+- `public.policy_scope` und `public.policy_settings` **existieren bereits** (Migration `2026080604_policy_settings_and_invite_rights.sql`) — dieses Paket erweitert die Tabelle um die Freigabe- und Kontingentfelder, legt sie nicht neu an. Der Ausschnitt unter „Datenmodell“ zeigt sie deshalb vollständig, umzusetzen ist die Differenz.
+- `authz.resolve_policy_flag(...)` und die Vererbungsregel („`null` = erben, untere Ebenen dürfen nur verschärfen“) sind an zwei booleschen Feldern gebaut und getestet (AND-Reduktion über Verein/Abteilung/Team).
+- Die Mitglieder-Detailebene auf `/mitglieder` existiert mit Rolle und Befristung. Dieses Paket **füllt sie** mit Freigabe-Zuständigkeit (`policy_reviewers`) und Vertrauen (`member_review_trust`), statt eine zweite zu bauen. **Abweichung vom ursprünglichen Plan**: `invite_allowed` sitzt NICHT in dieser Detailebene, sondern als Scope-Feld auf `/struktur` (Komponente `PolicyFlagToggles.vue`, je Verein/Abteilung/Team) — es ist eine Eigenschaft der Ebene, nicht der einzelnen Mitgliedschaft. Freigabe-Zuständigkeit und Vertrauen gehören dagegen wirklich zur Person und damit in die Mitglieder-Detailebene.
+- Die drei Vererbungszustände der Oberfläche (**geerbt**, **verschärft**, **gesperrt**) sind dort entstanden (`PolicyFlagToggles.vue`) und werden hier nicht neu erfunden.
+- **Verbindlich übernommen**: die erlaubten Aktionen kommen aus der API-Antwort (`canChangeRole`/`canRemove`/`canSetExpiry` auf `MemberRoleEntrySchema`), das Frontend leitet Berechtigungen nicht selbst her (Begründung in 023).
+- **Neu, nicht im ursprünglichen 023-Plan vorgesehen**: `authz.is_any_member_of_organization` (statt des bestehenden `authz.is_organization_member`) für „vereinsweit“ — die bestehende Funktion prüft nur Organisationsrollen, nicht Abteilungs-/Teammitgliedschaft. Falls 011 an anderer Stelle „jedes Vereinsmitglied“ meint (nicht nur Organisationsrollen), diese Funktion wiederverwenden, nicht `is_organization_member`.
 
 ## Scope
 
