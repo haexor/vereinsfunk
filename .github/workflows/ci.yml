@@ -10,9 +10,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Ohne `version` liest action-setup das packageManager-Feld aus package.json.
+      # Das haelt die pnpm-Version an einer Stelle -- Renovate pflegt sie dort mit.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 11.11.0
       - uses: actions/setup-node@v4
         with:
           node-version: 24
