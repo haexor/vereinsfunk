@@ -1,6 +1,21 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+/* Ersetzt den content-Glob auf app/ aus der frueheren tailwind.config.ts.
+   Ohne @source wuerde v4 selbst nach Quellen suchen und im Monorepo zu weit greifen. */
+@source '../../';
+
+/* Frueher theme.extend in tailwind.config.ts. Die Werte doppeln sich mit dem
+   :root-Block darunter -- das war vorher schon so, den nutzt das handgeschriebene CSS. */
+@theme {
+  --color-ink: #14221d;
+  --color-forest: #163a2c;
+  --color-lime: #caff4a;
+  --color-oat: #f4f2e9;
+  --color-coral: #ff795f;
+
+  --font-sans: 'DM Sans', sans-serif;
+  --font-display: 'Manrope', sans-serif;
+}
 
 :root {
   color-scheme: light;

@@ -109,7 +109,7 @@ await loadDashboard()
         <h1 class="font-display text-3xl font-extrabold tracking-[-.045em] text-ink sm:text-[38px]">Guten Tag, {{ firstName }}.</h1>
         <p class="mt-2 text-sm text-[#6c756f]">Was möchtest du heute für euren Verein bewegen?</p>
       </div>
-      <NuxtLink to="/erstellen" class="focus-ring inline-flex items-center justify-center gap-2 rounded-xl bg-forest px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-[#1d4b39]">
+      <NuxtLink to="/erstellen" class="focus-ring inline-flex items-center justify-center gap-2 rounded-xl bg-forest px-5 py-3 text-sm font-bold text-white shadow-xs transition hover:-translate-y-0.5 hover:bg-[#1d4b39]">
         <Plus :size="17" /> Neuer Beitrag
       </NuxtLink>
     </header>

@@ -46,8 +46,8 @@
         "vue",
         "vue-router",
         "vue-tsc",
-        "@nuxtjs/tailwindcss",
-        "tailwindcss"
+        "tailwindcss",
+        "@tailwindcss/vite"
       ],
       "groupName": "nuxt"
     },
