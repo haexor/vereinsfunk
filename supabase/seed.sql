@@ -8,12 +8,17 @@ insert into auth.users (
   confirmation_token, recovery_token, email_change_token_new, email_change
 ) values
   ('00000000-0000-0000-0000-000000000000', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', 'authenticated', 'authenticated', 'lena@example.local', crypt('local-demo-password', gen_salt('bf')), now(), '{"provider":"email","providers":["email"]}', '{"display_name":"Lena Müller"}', now(), now(), '', '', '', ''),
-  ('00000000-0000-0000-0000-000000000000', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2', 'authenticated', 'authenticated', 'jonas@example.local', crypt('local-demo-password', gen_salt('bf')), now(), '{"provider":"email","providers":["email"]}', '{"display_name":"Jonas Weber"}', now(), now(), '', '', '', '')
+  ('00000000-0000-0000-0000-000000000000', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2', 'authenticated', 'authenticated', 'jonas@example.local', crypt('local-demo-password', gen_salt('bf')), now(), '{"provider":"email","providers":["email"]}', '{"display_name":"Jonas Weber"}', now(), now(), '', '', '', ''),
+  -- Betreiberkonto fuer PLATFORM_ADMIN_DEFAULT_EMAIL. Bewusst ohne jede Mitgliedschaft: seit
+  -- 2026080602_platform_admin_separation.sql schliessen sich Plattform-Admin und
+  -- Vereinsmitgliedschaft gegenseitig aus, ein Vorstandskonto scheitert am Bootstrap.
+  ('00000000-0000-0000-0000-000000000000', 'cccccccc-cccc-4ccc-8ccc-ccccccccccc3', 'authenticated', 'authenticated', 'betreiber@example.local', crypt('local-demo-password', gen_salt('bf')), now(), '{"provider":"email","providers":["email"]}', '{"display_name":"Vereinsfunk Betrieb"}', now(), now(), '', '', '', '')
 on conflict (id) do nothing;
 
 insert into public.profiles (id, display_name) values
   ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', 'Lena Müller'),
-  ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2', 'Jonas Weber')
+  ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2', 'Jonas Weber'),
+  ('cccccccc-cccc-4ccc-8ccc-ccccccccccc3', 'Vereinsfunk Betrieb')
 on conflict (id) do nothing;
 
 insert into public.organizations (id, name, slug) values

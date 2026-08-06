@@ -232,6 +232,26 @@ describe('onboarding', () => {
     expect(response.statusCode).toBe(429)
     expect(response.json()).toMatchObject({ error: 'organization_limit_reached' })
   })
+
+  it('maps the platform-admin separation trigger on organization creation to 409', async () => {
+    const rejectingClients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          rpc: async () => ({ data: null, error: { message: 'platform_admin_cannot_hold_membership' } }),
+        }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: rejectingClients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/organizations',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'Betreiber-Verein e.V.', firstDepartmentName: 'Hauptabteilung' },
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'platform_admin_cannot_hold_membership' })
+  })
 })
 
 describe('platform administration', () => {
@@ -270,6 +290,26 @@ describe('platform administration', () => {
     })
     expect(response.statusCode).toBe(400)
     expect(response.json()).toMatchObject({ error: 'invalid_request' })
+  })
+
+  it('maps the separation trigger when promoting an existing club member to 409', async () => {
+    const rejectingClients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          rpc: async () => ({ data: null, error: { message: 'member_cannot_become_platform_admin' } }),
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: rejectingClients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/platform-admins',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { email: 'lena@example.local' },
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'member_cannot_become_platform_admin' })
   })
 
   it('rejects a non-default admin deleting another admin', async () => {
@@ -643,6 +683,23 @@ describe('structure, memberships and invitations', () => {
     })
     expect(response.statusCode).toBe(410)
     expect(response.json()).toMatchObject({ error: 'invitation_not_found_or_expired' })
+  })
+
+  it('maps the platform-admin separation trigger on invitation accept to 409', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ rpc: async () => ({ data: null, error: { message: 'platform_admin_cannot_hold_membership' } }) }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/invitations/accept',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { token: 'some-raw-token' },
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'platform_admin_cannot_hold_membership' })
   })
 
   it('refuses to remove the organization\'s responsible person', async () => {

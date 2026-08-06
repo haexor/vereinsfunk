@@ -48,7 +48,9 @@ pnpm db:reset
 
 Die von Supabase ausgegebenen lokalen Schlüssel eintragen: Service-Role-Key und `SUPABASE_*` in die Root-`.env`, den Anon-Key zusätzlich als `NUXT_PUBLIC_SUPABASE_ANON_KEY` in `apps/web/.env`. Die lokale Umgebung ist laut offizieller Supabase-Dokumentation nur für Entwicklung vorgesehen und darf nicht öffentlich erreichbar sein.
 
-Wer die Plattform-Administration braucht, setzt `PLATFORM_ADMIN_DEFAULT_EMAIL` in der Root-`.env` auf die Adresse eines **bereits registrierten** Kontos — der Seed liefert `lena@example.local` und `jonas@example.local` mit dem Passwort `local-demo-password`. Die API bootstrappt daraus beim nächsten Start den Default-Admin. Der Vorgang ist einmalig: eine Rotation der Adresse ist danach eine bewusste Ops-Aktion mit direktem DB-Zugriff.
+Wer die Plattform-Administration braucht, setzt `PLATFORM_ADMIN_DEFAULT_EMAIL` in der Root-`.env` auf die Adresse eines **bereits registrierten Kontos ohne Vereinsmitgliedschaft** — der Seed liefert dafür `betreiber@example.local` (Passwort wie bei allen Seed-Konten: `local-demo-password`). Die API bootstrappt daraus beim nächsten Start den Default-Admin. Der Vorgang ist einmalig: eine Rotation der Adresse ist danach eine bewusste Ops-Aktion mit direktem DB-Zugriff.
+
+Betreiber- und Vereinskonten sind seit `2026080602_platform_admin_separation.sql` strikt getrennt: ein Plattform-Admin kann keiner Organisation, Abteilung oder Mannschaft angehören und umgekehrt. `lena@example.local`/`jonas@example.local` sind Vereinsvorstände und taugen deshalb **nicht** als Default-Admin — der Bootstrap scheitert dann beim Serverstart mit einer Warnung im Log.
 
 Terminal 2:
 

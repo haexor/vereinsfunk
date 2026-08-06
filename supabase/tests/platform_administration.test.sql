@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(24);
+select plan(30);
 
 set local role postgres;
 
@@ -11,7 +11,9 @@ insert into auth.users (instance_id, id, aud, role, email, encrypted_password, r
 values
   ('00000000-0000-0000-0000-000000000000', '50000000-0000-4000-8000-000000000001', 'authenticated', 'authenticated', 'defaultadmin@pgtap-platform.local', '', '{}', '{}', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '50000000-0000-4000-8000-000000000002', 'authenticated', 'authenticated', 'secondadmin@pgtap-platform.local', '', '{}', '{}', now(), now()),
-  ('00000000-0000-0000-0000-000000000000', '50000000-0000-4000-8000-000000000003', 'authenticated', 'authenticated', 'quotaowner@pgtap-platform.local', '', '{}', '{}', now(), now());
+  ('00000000-0000-0000-0000-000000000000', '50000000-0000-4000-8000-000000000003', 'authenticated', 'authenticated', 'quotaowner@pgtap-platform.local', '', '{}', '{}', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '50000000-0000-4000-8000-000000000004', 'authenticated', 'authenticated', 'operator@pgtap-platform.local', '', '{}', '{}', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '50000000-0000-4000-8000-000000000005', 'authenticated', 'authenticated', 'clubmember@pgtap-platform.local', '', '{}', '{}', now(), now());
 
 -- 1-2: authenticated has no privilege at all on platform_admins -- denied before RLS is even
 -- evaluated (no GRANT was issued to authenticated/anon anywhere in the migration).
@@ -154,6 +156,49 @@ select lives_ok(
     insert into public.llm_provider_secrets (llm_provider_configuration_id, api_key_ciphertext, key_version)
     select id, '\x00', 'v1' from cfg$$,
   'postgres can insert an llm provider configuration with its secret row'
+);
+
+-- 21-26: Betreiber und Vereinsmitglied schliessen sich gegenseitig aus
+-- (2026080602_platform_admin_separation.sql). Eigene Fixtur statt der Quota-Organisation
+-- oben, damit diese Gruppe unabhaengig von der Reihenfolge der Tests davor bleibt.
+insert into public.organizations (id, name, slug)
+  values ('50000000-1000-4000-8000-000000000001', 'PGTAP Separation Org', 'pgtap-separation-org');
+insert into public.departments (id, organization_id, name, slug)
+  values ('50000000-1100-4000-8000-000000000001', '50000000-1000-4000-8000-000000000001', 'Abteilung', 'abteilung');
+insert into public.teams (id, organization_id, department_id, name)
+  values ('50000000-1200-4000-8000-000000000001', '50000000-1000-4000-8000-000000000001', '50000000-1100-4000-8000-000000000001', 'Mannschaft');
+
+select throws_ok(
+  $$insert into public.organization_memberships (organization_id, user_id, role)
+    values ('50000000-1000-4000-8000-000000000001', '50000000-0000-4000-8000-000000000001', 'organization_viewer')$$,
+  'P0001', 'platform_admin_cannot_hold_membership', 'a platform admin cannot become an organization member'
+);
+select throws_ok(
+  $$insert into public.department_memberships (organization_id, department_id, user_id, role)
+    values ('50000000-1000-4000-8000-000000000001', '50000000-1100-4000-8000-000000000001', '50000000-0000-4000-8000-000000000001', 'viewer')$$,
+  'P0001', 'platform_admin_cannot_hold_membership', 'a platform admin cannot become a department member'
+);
+select throws_ok(
+  $$insert into public.team_memberships (organization_id, department_id, team_id, user_id, role)
+    values ('50000000-1000-4000-8000-000000000001', '50000000-1100-4000-8000-000000000001', '50000000-1200-4000-8000-000000000001', '50000000-0000-4000-8000-000000000001', 'viewer')$$,
+  'P0001', 'platform_admin_cannot_hold_membership', 'a platform admin cannot become a team member'
+);
+
+-- Gegenrichtung: quotaowner besitzt seit Test 15 eine Vereinsmitgliedschaft.
+select throws_ok(
+  $$select public.add_platform_admin('quotaowner@pgtap-platform.local', '50000000-0000-4000-8000-000000000001')$$,
+  'P0001', 'member_cannot_become_platform_admin', 'an organization member cannot be made a platform admin'
+);
+
+-- Kontrollen, damit die Trigger nicht pauschal blockieren.
+select lives_ok(
+  $$select public.add_platform_admin('operator@pgtap-platform.local', '50000000-0000-4000-8000-000000000001')$$,
+  'a user without any membership can still be made a platform admin'
+);
+select lives_ok(
+  $$insert into public.organization_memberships (organization_id, user_id, role)
+    values ('50000000-1000-4000-8000-000000000001', '50000000-0000-4000-8000-000000000005', 'organization_viewer')$$,
+  'a user who is not a platform admin can still become an organization member'
 );
 
 select * from finish();
