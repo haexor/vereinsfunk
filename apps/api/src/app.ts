@@ -286,8 +286,16 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     createEmailSender(environment, (message) => app.log.info({ to: message.to, subject: message.subject, text: message.text }, 'invitation email (fake provider)'))
   const { requireAuth, requirePermission, requirePlatformAdmin } = createAuthGuards(environment, roleProvider, platformAdminProvider)
 
+  // Genau der eine Ursprung, unter dem das Frontend laeuft -- dieselbe Quelle wie fuer die
+  // Einladungslinks weiter unten. Vorher stand hier in Entwicklung Port 4200 fest verdrahtet
+  // (ein Dev-Server auf einem anderen Port scheiterte still an der Preflight-Pruefung) und in
+  // Produktion origin: false, was jeden Cross-Origin-Aufruf verbietet -- damit haette sich das
+  // ausgelieferte Frontend selbst ausgesperrt, sobald es nicht unter derselben Herkunft wie die
+  // API liegt. WEB_BASE_URL ist in Produktion Pflicht (packages/config), der Fallback greift
+  // also nur lokal. Ueber .origin, weil ein abschliessender Slash oder ein Pfad in der
+  // Konfiguration sonst gegen den Origin-Header nie matcht und wieder still fehlschluege.
   await app.register(cors, {
-    origin: environment.NODE_ENV === 'production' ? false : ['http://localhost:4200'],
+    origin: [new URL(environment.WEB_BASE_URL ?? 'http://localhost:4200').origin],
   })
   await app.register(multipart, { limits: { fileSize: 8 * 1024 * 1024, files: 1 } })
 

@@ -81,6 +81,38 @@ describe('api', () => {
     expect(response.json()).toMatchObject({ status: 'ok', service: 'api' })
   })
 
+  it('allows the configured web origin and no other', async () => {
+    process.env.WEB_BASE_URL = 'https://app.example.test/'
+    try {
+      const app = await startApp()
+      const allowed = await app.inject({
+        method: 'OPTIONS',
+        url: '/health',
+        headers: { origin: 'https://app.example.test', 'access-control-request-method': 'GET' },
+      })
+      // Der abschliessende Slash in der Konfiguration darf den Abgleich nicht kippen.
+      expect(allowed.headers['access-control-allow-origin']).toBe('https://app.example.test')
+      const foreign = await app.inject({
+        method: 'OPTIONS',
+        url: '/health',
+        headers: { origin: 'https://angreifer.example.test', 'access-control-request-method': 'GET' },
+      })
+      expect(foreign.headers['access-control-allow-origin']).toBeUndefined()
+    } finally {
+      delete process.env.WEB_BASE_URL
+    }
+  })
+
+  it('falls back to the local dev origin when WEB_BASE_URL is unset', async () => {
+    const app = await startApp()
+    const response = await app.inject({
+      method: 'OPTIONS',
+      url: '/health',
+      headers: { origin: 'http://localhost:4200', 'access-control-request-method': 'GET' },
+    })
+    expect(response.headers['access-control-allow-origin']).toBe('http://localhost:4200')
+  })
+
   it('rejects a request without a token', async () => {
     const app = await startApp()
     const response = await app.inject({ method: 'POST', url: '/v1/submissions', payload: {} })
