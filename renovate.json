@@ -69,6 +69,12 @@
       "description": "CLI und Client teilen sich das Supabase-Release.",
       "matchPackageNames": ["supabase", "@supabase/*"],
       "groupName": "supabase"
+    },
+    {
+      "description": "Node steht in .nvmrc und in den Dockerfiles. Muss zuletzt stehen, sonst zieht die dockerfile-Regel das Base-Image weg.",
+      "matchDatasources": ["node-version", "docker"],
+      "matchPackageNames": ["node"],
+      "groupName": "node"
     }
   ]
 }
