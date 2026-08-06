@@ -29,20 +29,28 @@
   --coral: #ff795f;
 }
 
-* { box-sizing: border-box; }
-html { background: var(--oat); }
-body {
-  margin: 0;
-  color: var(--ink);
-  background: var(--oat);
-  font-family: 'DM Sans', sans-serif;
-  -webkit-font-smoothing: antialiased;
-}
-button, input, textarea, select { font: inherit; }
-button, a { -webkit-tap-highlight-color: transparent; }
-button { cursor: pointer; }
+/* Diese Element-Regeln muessen in @layer base stehen. Ungelayertes CSS schlaegt in v4
+   jede gelayerte Regel -- `font: inherit` wuerde sonst auf jedem button/input/textarea/
+   select die text-*-Utilities aushebeln und die Felder auf 16px aufblasen. In v3 gab es
+   keine Layer, dort gewann .text-sm schon ueber die hoehere Spezifitaet.
+   Die Klassenregeln darunter bleiben bewusst ungelayert: .card & Co. haben in v3 bei
+   gleicher Spezifitaet als spaetere Regel gewonnen, das bleibt so richtig. */
+@layer base {
+  * { box-sizing: border-box; }
+  html { background: var(--oat); }
+  body {
+    margin: 0;
+    color: var(--ink);
+    background: var(--oat);
+    font-family: 'DM Sans', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  button, input, textarea, select { font: inherit; }
+  button, a { -webkit-tap-highlight-color: transparent; }
+  button { cursor: pointer; }
 
-::selection { background: var(--lime); color: var(--ink); }
+  ::selection { background: var(--lime); color: var(--ink); }
+}
 
 .page-enter-active, .page-leave-active { transition: opacity .18s ease, transform .18s ease; }
 .page-enter-from, .page-leave-to { opacity: 0; transform: translateY(4px); }
