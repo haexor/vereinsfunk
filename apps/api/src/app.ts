@@ -55,7 +55,7 @@ import {
 import { canAssignRole, canRemoveRole, hasPermission, type Permission, type Role } from '@vereinsfunk/authorization'
 import { createIdempotencyKey, evaluateMediaGate } from '@vereinsfunk/domain'
 import { FakeOrchestrator, priorityToHatchet, type Orchestrator } from '@vereinsfunk/orchestration'
-import Fastify, { LogController, type FastifyInstance, type FastifyRequest, type FastifyServerOptions } from 'fastify'
+import Fastify, { LogController, type FastifyInstance, type FastifyServerOptions } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -756,20 +756,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     return { orgRow, deptRowById, teamRowById }
   }
 
-  async function buildPolicySetting(
-    request: FastifyRequest,
+  function buildPolicySetting(
     scope: ScopeLevel,
     scopeId: string,
     name: string,
-    organizationId: string,
-    departmentId: string | null,
     ownRow: { invite_allowed: boolean | null; posts_visible_org_wide: boolean | null } | null,
     ancestorInviteAllowed: boolean,
     ancestorPostsVisible: boolean,
+    canEdit: boolean,
   ) {
-    const permissionScope = toPermissionScope(organizationId, departmentId, scope === 'team' ? scopeId : null)
-    const roles = await roleProvider.rolesForScope(request.auth!, permissionScope)
-    const canEdit = hasPermission(roles, POLICY_MANAGE_PERMISSION[scope])
     return PolicySettingSchema.parse({
       scope,
       scopeId,
@@ -779,22 +774,45 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     })
   }
 
+  // Deckt dieselbe Mitgliedschaft ab wie authz.is_any_member_of_organization (RLS-Grundlage von
+  // policy_settings_select): Organisationsrolle ODER Abteilungs- ODER Teammitgliedschaft, nicht
+  // nur eine Organisationsrolle wie roleProvider.rolesForScope(..., { organizationId }) allein
+  // prueft.
+  async function isAnyMemberOfOrganization(client: SupabaseClient, userId: string, organizationId: string): Promise<boolean> {
+    const notExpired = `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`
+    const [org, department, team] = await Promise.all([
+      client.from('organization_memberships').select('id').eq('organization_id', organizationId).eq('user_id', userId).or(notExpired).limit(1),
+      client.from('department_memberships').select('id').eq('organization_id', organizationId).eq('user_id', userId).or(notExpired).limit(1),
+      client.from('team_memberships').select('id').eq('organization_id', organizationId).eq('user_id', userId).or(notExpired).limit(1),
+    ])
+    if (org.error) throw org.error
+    if (department.error) throw department.error
+    if (team.error) throw team.error
+    return org.data.length > 0 || department.data.length > 0 || team.data.length > 0
+  }
+
   app.get('/v1/organizations/:id/policy-settings', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
     const client = supabaseClients.forUser(request.auth!.accessToken)
+    if (!(await isAnyMemberOfOrganization(client, request.auth!.userId, params.id))) {
+      return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+    }
     // organizations_select_member verlangt eine Organisationsrolle -- ein reiner Abteilungs- oder
     // Team-Admin ohne Organisationsrolle (der Richtlinien fuer seine eigene Ebene durchaus sehen
     // und setzen darf) saehe hier sonst "not found" statt seiner eigenen Einstellungen (beim
     // Rechte-Review dieses Pakets gefunden). Der Name ist ohnehin nicht sensibel -- authz.
-    // membership_scopes() liefert ihn schon heute jedem Mitglied unabhaengig von der Rolle.
-    const organization = await supabaseClients.forService().from('organizations').select('name').eq('id', params.id).single()
+    // membership_scopes() liefert ihn schon heute jedem Mitglied unabhaengig von der Rolle. Die
+    // Mitgliedschaftspruefung oben laeuft davor, damit kein Nicht-Mitglied ueberhaupt bis hierher
+    // kommt.
+    const organization = await supabaseClients.forService().from('organizations').select('name').eq('id', params.id).maybeSingle()
+    if (organization.error) throw organization.error
+    if (!organization.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     const [departments, teams, policyRows] = await Promise.all([
       client.from('departments').select('id, name').eq('organization_id', params.id).order('name'),
       client.from('teams').select('id, name, department_id').eq('organization_id', params.id).order('name'),
       fetchPolicyRows(client, params.id),
     ])
-    if (organization.error) throw organization.error
     if (departments.error) throw departments.error
     if (teams.error) throw teams.error
     const { orgRow, deptRowById, teamRowById } = policyRows
@@ -802,20 +820,41 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const orgInviteAllowed = orgRow?.invite_allowed ?? true
     const orgPostsVisible = orgRow?.posts_visible_org_wide ?? true
 
-    const entries = await Promise.all([
-      buildPolicySetting(request, 'organization', params.id, organization.data.name as string, params.id, null, orgRow, true, true),
+    // Eine Ebene wird fuer die Rollenermittlung nur einmal nachgeschlagen, nach demselben Muster
+    // wie rolesByScopeKey in GET /v1/organizations/:id/members -- sonst loest buildPolicySetting
+    // pro Eintrag einen eigenen rolesForScope-Aufruf aus (51 Aufrufe bei 10 Abteilungen/40 Teams).
+    const rolesByScopeKey = new Map<string, readonly Role[]>()
+    rolesByScopeKey.set('organization', await roleProvider.rolesForScope(request.auth!, { organizationId: params.id }))
+    await Promise.all([
+      ...departments.data.map(async (department) => {
+        rolesByScopeKey.set(`department:${department.id}`, await roleProvider.rolesForScope(request.auth!, { organizationId: params.id, departmentId: department.id as string }))
+      }),
+      ...teams.data.map(async (team) => {
+        rolesByScopeKey.set(
+          `team:${team.id}`,
+          await roleProvider.rolesForScope(request.auth!, { organizationId: params.id, departmentId: team.department_id as string, teamId: team.id as string }),
+        )
+      }),
+    ])
+    const canEditFor = (scope: ScopeLevel, scopeId: string) => {
+      const roles = rolesByScopeKey.get(scope === 'organization' ? 'organization' : `${scope}:${scopeId}`) ?? []
+      return hasPermission(roles, POLICY_MANAGE_PERMISSION[scope])
+    }
+
+    const entries = [
+      buildPolicySetting('organization', params.id, organization.data.name as string, orgRow, true, true, canEditFor('organization', params.id)),
       ...departments.data.map((department) => {
         const ownRow = deptRowById.get(department.id as string) ?? null
-        return buildPolicySetting(request, 'department', department.id as string, department.name as string, params.id, department.id as string, ownRow, orgInviteAllowed, orgPostsVisible)
+        return buildPolicySetting('department', department.id as string, department.name as string, ownRow, orgInviteAllowed, orgPostsVisible, canEditFor('department', department.id as string))
       }),
       ...teams.data.map((team) => {
         const ownRow = teamRowById.get(team.id as string) ?? null
         const deptRow = deptRowById.get(team.department_id as string) ?? null
         const ancestorInviteAllowed = orgInviteAllowed && (deptRow?.invite_allowed ?? true)
         const ancestorPostsVisible = orgPostsVisible && (deptRow?.posts_visible_org_wide ?? true)
-        return buildPolicySetting(request, 'team', team.id as string, team.name as string, params.id, team.department_id as string, ownRow, ancestorInviteAllowed, ancestorPostsVisible)
+        return buildPolicySetting('team', team.id as string, team.name as string, ownRow, ancestorInviteAllowed, ancestorPostsVisible, canEditFor('team', team.id as string))
       }),
-    ])
+    ]
     return reply.code(200).send(entries)
   })
 
@@ -834,7 +873,10 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       target_flag: input.flag,
       target_value: input.value,
     })
-    if (rpc.error) throw rpc.error
+    if (rpc.error) {
+      if (rpc.error.message.includes('insufficient_permission')) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+      throw rpc.error
+    }
     const audit = await supabaseClients.forService().from('audit_events').insert({
       organization_id: scope.organizationId,
       actor_user_id: request.auth!.userId,
@@ -877,9 +919,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         ancestorPostsVisible = orgPostsVisible && (deptRow?.posts_visible_org_wide ?? true)
       }
     }
-    return reply.code(200).send(
-      await buildPolicySetting(request, input.scope, input.scopeId, name, scope.organizationId, scope.departmentId ?? null, ownRow, ancestorInviteAllowed, ancestorPostsVisible),
-    )
+    // canEdit ist hier immer true: requirePermission oben hat POLICY_MANAGE_PERMISSION[input.scope]
+    // fuer genau diesen Scope bereits bestaetigt, ein erneuter rolesForScope-Aufruf waere redundant.
+    return reply.code(200).send(buildPolicySetting(input.scope, input.scopeId, name, ownRow, ancestorInviteAllowed, ancestorPostsVisible, true))
   })
 
   app.get('/v1/organizations/:id/members', async (request, reply) => {
@@ -1098,7 +1140,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     )
     if (!(await requirePermission(request, reply, 'member.invite', scope))) return
     const roles = await roleProvider.rolesForScope(request.auth!, scope)
-    if (!canRemoveRole(roles, existing.data.role as Role)) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+    const canRemoveTarget = canRemoveRole(roles, existing.data.role as Role)
+    if (!canRemoveTarget) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
     const rpc = await client.rpc('set_membership_expiry', {
       target_scope: query.scope,
       target_membership_id: params.id,
@@ -1106,6 +1149,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     })
     if (rpc.error) {
       if (rpc.error.message.includes('not_found')) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+      if (rpc.error.message.includes('insufficient_permission')) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+      if (rpc.error.message.includes('cannot be removed')) return reply.code(409).send({ error: 'cannot_remove_last_owner', correlationId: request.id })
       throw rpc.error
     }
     const result = rpc.data as { membershipId: string; expiresAt: string | null }
@@ -1120,7 +1165,6 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       metadata: { userId: existing.data.user_id, expiresAt: result.expiresAt, scope: query.scope, scopeId },
     })
     if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
-    const canRemoveTarget = canRemoveRole(roles, existing.data.role as Role)
     return reply.code(200).send(
       MemberRoleEntrySchema.parse({
         membershipId: result.membershipId, scope: query.scope, scopeId, role: existing.data.role, expiresAt: result.expiresAt,

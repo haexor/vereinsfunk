@@ -27,13 +27,15 @@ function toggle(flag: PolicyFlag) {
   <div class="flex flex-wrap gap-3">
     <div v-for="field in fields" :key="field.flag" class="flex items-center gap-1.5 text-[10px]">
       <span class="font-semibold text-[#5b625d]">{{ field.label }}:</span>
-      <span v-if="stateFor(field.flag).lockedByAncestor" class="rounded-full bg-[#eef1ea] px-2 py-0.5 text-[#9aa096]" title="Eine höhere Ebene hat das bereits eingeschränkt -- hier nicht lockerbar.">
-        gesperrt
+      <span v-if="stateFor(field.flag).lockedByAncestor" class="rounded-full bg-[#eef1ea] px-2 py-0.5 text-[#9aa096]">
+        gesperrt <span class="text-[#c2c7bd]">(höhere Ebene hat das bereits eingeschränkt)</span>
       </span>
       <button
-        v-else-if="setting.inviteAllowed.canEdit || setting.postsVisibleOrgWide.canEdit"
+        v-else-if="stateFor(field.flag).canEdit"
         type="button"
-        :disabled="pending || !stateFor(field.flag).canEdit"
+        :disabled="pending"
+        :aria-pressed="stateFor(field.flag).ownValue === false"
+        :aria-label="`${field.label} für ${setting.name}`"
         class="focus-ring rounded-full px-2 py-0.5 disabled:opacity-60"
         :class="stateFor(field.flag).ownValue === false ? 'bg-amber-100 text-amber-800' : 'bg-[#eef1ea] text-[#5b625d]'"
         @click="toggle(field.flag)"

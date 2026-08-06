@@ -279,7 +279,7 @@ alter policy posts_select on public.posts
     (
       status in ('published', 'scheduled')
       and authz.is_any_member_of_organization(organization_id)
-      and authz.resolve_policy_flag(organization_id, department_id, null, 'posts_visible_org_wide')
+      and authz.resolve_policy_flag(organization_id, department_id, team_id, 'posts_visible_org_wide')
     )
     or authz.is_department_member(department_id)
     or (team_id is not null and authz.has_team_membership(team_id))
@@ -295,7 +295,7 @@ alter policy post_versions_select on public.post_versions
           (
             post.status in ('published', 'scheduled')
             and authz.is_any_member_of_organization(post.organization_id)
-            and authz.resolve_policy_flag(post.organization_id, post.department_id, null, 'posts_visible_org_wide')
+            and authz.resolve_policy_flag(post.organization_id, post.department_id, post.team_id, 'posts_visible_org_wide')
           )
           or authz.is_department_member(post.department_id)
           or (post.team_id is not null and authz.has_team_membership(post.team_id))

@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(17);
+select plan(19);
 
 set local role postgres;
 
@@ -34,6 +34,8 @@ insert into public.team_memberships (organization_id, department_id, team_id, us
 insert into public.posts (id, organization_id, department_id, status, created_by) values
   ('63000000-2000-4000-8000-000000000001', '63000000-1000-4000-8000-000000000001', '63000000-1100-4000-8000-000000000001', 'published', '63000000-0000-4000-8000-000000000002'),
   ('63000000-2000-4000-8000-000000000002', '63000000-1000-4000-8000-000000000001', '63000000-1100-4000-8000-000000000002', 'published', '63000000-0000-4000-8000-000000000003');
+insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type, created_by_user_id) values
+  ('63000000-3000-4000-8000-000000000001', '63000000-1000-4000-8000-000000000001', '63000000-2000-4000-8000-000000000001', 1, '{}', '{}', 'user', '63000000-0000-4000-8000-000000000002');
 
 set local role authenticated;
 
@@ -139,7 +141,21 @@ select is(
   1, 'Abteilung A''s own members still see their department''s published post regardless of the club-wide opt-out'
 );
 
--- 15-16: the scope/department_id/team_id check constraint holds -- a department-scoped row
+-- 15-16: post_versions_select follows the same posts_visible_org_wide rule as posts_select --
+-- resolve_policy_flag is folded into both policies, not just posts_select, otherwise the version
+-- text would stay club-wide readable even after a department opts out of the post list itself.
+select set_config('request.jwt.claim.sub', '63000000-0000-4000-8000-000000000006', true);
+select is(
+  (select count(*)::integer from public.post_versions where post_id = '63000000-2000-4000-8000-000000000001'),
+  0, 'an Abteilung B member no longer sees Abteilung A''s post_versions once it opts out club-wide'
+);
+select set_config('request.jwt.claim.sub', '63000000-0000-4000-8000-000000000002', true);
+select is(
+  (select count(*)::integer from public.post_versions where post_id = '63000000-2000-4000-8000-000000000001'),
+  1, 'Abteilung A''s own members still see their department''s post_versions regardless of the club-wide opt-out'
+);
+
+-- 17-18: the scope/department_id/team_id check constraint holds -- a department-scoped row
 -- without a department_id, or a team-scoped row without a team_id, is rejected outright.
 set local role postgres;
 select throws_ok(
@@ -153,7 +169,7 @@ select throws_ok(
   '23514', null, 'a team-scoped policy row without a team_id is rejected'
 );
 
--- 17: Regression (Geheimnisse-Review) -- der Tabellen-Grant war zunaechst spaltenblind und liess
+-- 19: Regression (Geheimnisse-Review) -- der Tabellen-Grant war zunaechst spaltenblind und liess
 -- jeden Vereinsangehoerigen sehen, WER zuletzt eine Richtlinie geaendert hat, ausserhalb der
 -- betroffenen Ebene. Der Grant ist jetzt spaltenweise ohne updated_by; die beiden Schalter
 -- bleiben wie gewollt lesbar.

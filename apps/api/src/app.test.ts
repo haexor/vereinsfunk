@@ -54,6 +54,13 @@ function serviceClientCapturingAudit(captured: Record<string, unknown>[]): Supab
   } as unknown as SupabaseClient
 }
 
+// isAnyMemberOfOrganization (GET /v1/organizations/:id/policy-settings) queries all three
+// membership tables in parallel with the same select().eq().eq().or().limit() chain -- this stub
+// fakes that chain so policy-settings test fakes don't have to model it by hand each time.
+function membershipRowsStub(rows: { id: string }[]) {
+  return { select: () => ({ eq: () => ({ eq: () => ({ or: () => ({ limit: async () => ({ data: rows, error: null }) }) }) }) }) }
+}
+
 const apps: Awaited<ReturnType<typeof buildApp>>[] = []
 afterEach(async () => Promise.all(apps.splice(0).map((app) => app.close())))
 
@@ -1192,6 +1199,9 @@ describe('policy settings', () => {
       forUser: () =>
         ({
           from: (table: string) => {
+            if (table === 'organization_memberships') return membershipRowsStub([{ id: MEMBERSHIP_ID }])
+            if (table === 'department_memberships') return membershipRowsStub([])
+            if (table === 'team_memberships') return membershipRowsStub([])
             if (table === 'departments') return { select: () => ({ eq: () => ({ order: async () => ({ data: [{ id: DEPARTMENT_ID, name: 'Fussball' }], error: null }) }) }) }
             if (table === 'teams') return { select: () => ({ eq: () => ({ order: async () => ({ data: [], error: null }) }) }) }
             if (table === 'policy_settings') {
@@ -1209,7 +1219,7 @@ describe('policy settings', () => {
         }) as unknown as SupabaseClient,
       // organizations wird ueber den Service-Client gelesen (Rechte-Review-Fix): eine
       // Organisationsrolle ist fuer diese Route nicht Voraussetzung.
-      forService: () => ({ from: () => ({ select: () => ({ eq: () => ({ single: async () => ({ data: { name: 'SV Test' }, error: null }) }) }) }) }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { name: 'SV Test' }, error: null }) }) }) }) }) as unknown as SupabaseClient,
     }
     const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
     const token = await signAccessToken(USER_ID)
@@ -1260,13 +1270,16 @@ describe('policy settings', () => {
         ({
           from: (table: string) => {
             if (table === 'organizations') throw new Error('organizations must be read via the service client here')
+            if (table === 'organization_memberships') return membershipRowsStub([])
+            if (table === 'department_memberships') return membershipRowsStub([{ id: MEMBERSHIP_ID }])
+            if (table === 'team_memberships') return membershipRowsStub([])
             if (table === 'departments') return { select: () => ({ eq: () => ({ order: async () => ({ data: [], error: null }) }) }) }
             if (table === 'teams') return { select: () => ({ eq: () => ({ order: async () => ({ data: [], error: null }) }) }) }
             if (table === 'policy_settings') return { select: () => ({ eq: async () => ({ data: [], error: null }) }) }
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
-      forService: () => ({ from: () => ({ select: () => ({ eq: () => ({ single: async () => ({ data: { name: 'SV Test' }, error: null }) }) }) }) }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { name: 'SV Test' }, error: null }) }) }) }) }) as unknown as SupabaseClient,
     }
     const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
     const token = await signAccessToken(USER_ID)
@@ -1277,5 +1290,101 @@ describe('policy settings', () => {
     })
     expect(response.statusCode).toBe(200)
     expect(response.json()).toEqual(expect.arrayContaining([expect.objectContaining({ scope: 'organization', name: 'SV Test' })]))
+  })
+
+  it('rejects GET policy-settings for a user with no membership in the target organization', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'organization_memberships') return membershipRowsStub([])
+            if (table === 'department_memberships') return membershipRowsStub([])
+            if (table === 'team_memberships') return membershipRowsStub([])
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: denyingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${ORGANIZATION_ID}/policy-settings`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(403)
+  })
+
+  it('reports a non-existent organization as not_found instead of throwing', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'organization_memberships') return membershipRowsStub([{ id: MEMBERSHIP_ID }])
+            if (table === 'department_memberships') return membershipRowsStub([])
+            if (table === 'team_memberships') return membershipRowsStub([])
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }) }) }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${ORGANIZATION_ID}/policy-settings`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(404)
+  })
+
+  it('applies a policy-setting update and returns the recalculated PolicySetting (PUT success path)', async () => {
+    const auditRows: Record<string, unknown>[] = []
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'policy_settings') {
+              return {
+                select: () => ({
+                  eq: async () => ({
+                    data: [{ scope: 'organization', department_id: null, team_id: null, invite_allowed: false, posts_visible_org_wide: null }],
+                    error: null,
+                  }),
+                }),
+              }
+            }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+          rpc: async (fn: string) => {
+            if (fn === 'set_policy_setting') return { data: { id: MEMBERSHIP_ID }, error: null }
+            throw new Error(`unexpected rpc in test fake: ${fn}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { auditRows.push(row); return { error: null } } }
+            if (table === 'organizations') return { select: () => ({ eq: () => ({ single: async () => ({ data: { name: 'SV Test' }, error: null }) }) }) }
+            throw new Error(`unexpected table in service test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/v1/policy-settings',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { scope: 'organization', scopeId: ORGANIZATION_ID, flag: 'invite_allowed', value: false },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({
+      scope: 'organization',
+      name: 'SV Test',
+      inviteAllowed: { effective: false, ownValue: false, canEdit: true },
+    })
+    expect(auditRows).toHaveLength(1)
+    expect(auditRows[0]).toMatchObject({ action: 'policy_setting.changed', organization_id: ORGANIZATION_ID })
   })
 })

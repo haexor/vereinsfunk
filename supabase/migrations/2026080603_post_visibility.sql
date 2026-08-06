@@ -26,8 +26,7 @@ as $$
   select authz.is_organization_member(target_organization_id)
     or exists (
       select 1 from public.department_memberships membership
-      join public.departments department on department.id = membership.department_id
-      where department.organization_id = target_organization_id
+      where membership.organization_id = target_organization_id
         and membership.user_id = auth.uid()
         and (membership.expires_at is null or membership.expires_at > now())
     )
@@ -141,5 +140,20 @@ begin
   );
 end;
 $$;
+
+-- Rueckwirkende Bereinigung zum Rueckbau oben: die accept_invitation-Fassung vor diesem Paket
+-- (Plan 010) legte fuer jede Team-Einladung zusaetzlich eine viewer-Zeile in der Elternabteilung
+-- an. Diese Zeile macht authz.is_department_member() fuer die GESAMTE Abteilung wahr (nicht nur
+-- fuer das eigene Team) und gaebe betroffenen Nutzern damit ueber posts_select/submissions_select
+-- weiterhin die vollstaendige Abteilungssicht, die dieses Paket bewusst auf has_team_membership
+-- einschraenkt. Geloescht wird nur, wo dieselbe Person eine Teammitgliedschaft in genau dieser
+-- Abteilung hat -- also exakt die Kombination, die ausschliesslich durch den alten Nebeneffekt
+-- entstehen konnte; eine eigenstaendig vergebene Abteilungsmitgliedschaft ohne Teambezug bleibt
+-- unangetastet.
+delete from public.department_memberships viewer_row
+  using public.team_memberships team_row
+  where viewer_row.role = 'viewer'
+    and viewer_row.department_id = team_row.department_id
+    and viewer_row.user_id = team_row.user_id;
 
 commit;

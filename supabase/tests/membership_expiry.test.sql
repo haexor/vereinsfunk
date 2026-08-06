@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(6);
+select plan(8);
 
 set local role postgres;
 
@@ -64,6 +64,22 @@ select lives_ok(
 select throws_ok(
   $$select public.set_membership_expiry('department', '64000000-9999-4000-8000-000000000099', now())$$,
   'P0001', 'not_found', 'a non-existent membership id is reported as not_found'
+);
+
+-- 7: an unknown target_scope is rejected before any permission or membership lookup runs.
+select set_config('request.jwt.claim.sub', '64000000-0000-4000-8000-000000000004', true);
+select throws_ok(
+  $$select public.set_membership_expiry('bogus_scope', '64000000-3000-4000-8000-000000000004', now())$$,
+  'P0001', 'invalid_scope', 'an unknown target_scope raises invalid_scope'
+);
+
+-- 8: last-owner protection -- unlike a DELETE, expiring the sole organization_owner's own
+-- membership never fires prevent_last_owner_removal(), since the row is never removed, only
+-- timed out later. set_membership_expiry must reject it the same way regardless.
+select set_config('request.jwt.claim.sub', '64000000-0000-4000-8000-000000000001', true);
+select throws_ok(
+  $$select public.set_membership_expiry('organization', '64000000-3000-4000-8000-000000000001', now() + interval '30 days')$$,
+  'P0001', 'the last organization_owner cannot be removed', 'expiring the sole organization_owner is rejected'
 );
 
 select * from finish();

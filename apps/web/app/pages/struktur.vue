@@ -36,14 +36,24 @@ async function load() {
   loading.value = true
   errorMessage.value = ''
   const supabase = useSupabaseClient()
-  const [departmentsResult, teamsResult, policySettingsResponse] = await Promise.all([
-    supabase.from('departments').select('id, name, slug, archived_at').eq('organization_id', organizationId.value).order('name'),
-    supabase.from('teams').select('id, name, department_id, archived_at').eq('organization_id', organizationId.value).order('name'),
-    // Die Berechtigung (canEdit) und der geerbte/effektive Wert kommen fertig aus der API, damit
-    // die Oberflaeche resolve_policy_flag()/die Manage-Permission nicht selbst nachbildet (Plan
-    // 023, "eine Quelle, nicht aus zwei").
-    useAuthHeader().then((headers) => $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/policy-settings`, { headers })),
-  ])
+  let departmentsResult, teamsResult, policySettingsResponse
+  try {
+    // Ohne eigenes try/catch verwirft ein fehlschlagender Policy-Settings-Request den gesamten
+    // Promise.all -- load() wuerde den Fehler weiterwerfen, loading bliebe aktiv, und await load()
+    // koennte das Seiten-Setup abbrechen (beim Review gefunden).
+    ;[departmentsResult, teamsResult, policySettingsResponse] = await Promise.all([
+      supabase.from('departments').select('id, name, slug, archived_at').eq('organization_id', organizationId.value).order('name'),
+      supabase.from('teams').select('id, name, department_id, archived_at').eq('organization_id', organizationId.value).order('name'),
+      // Die Berechtigung (canEdit) und der geerbte/effektive Wert kommen fertig aus der API, damit
+      // die Oberflaeche resolve_policy_flag()/die Manage-Permission nicht selbst nachbildet (Plan
+      // 023, "eine Quelle, nicht aus zwei").
+      useAuthHeader().then((headers) => $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/policy-settings`, { headers })),
+    ])
+  } catch {
+    errorMessage.value = 'Die Vereinsstruktur konnte nicht geladen werden.'
+    loading.value = false
+    return
+  }
   if (departmentsResult.error || teamsResult.error) {
     errorMessage.value = 'Die Vereinsstruktur konnte nicht geladen werden.'
     loading.value = false

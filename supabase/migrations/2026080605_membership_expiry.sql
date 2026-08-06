@@ -47,6 +47,23 @@ begin
     raise exception 'insufficient_permission';
   end if;
 
+  -- prevent_last_owner_removal() greift nur bei einem echten DELETE -- eine Befristung entfernt
+  -- die Zeile nie, sie laesst sie nur irgendwann als abgelaufen gelten (dieselbe Semantik wie
+  -- expires_at is null or expires_at > now() ueberall sonst). Ohne diese Pruefung koennte ein
+  -- organization_owner sich selbst befristen und den Verein dadurch eigentuemerlos zuruecklassen,
+  -- ohne dass der DELETE-Trigger je greift (beim Review gefunden).
+  if target_scope = 'organization' and member_role = 'organization_owner' and target_expires_at is not null then
+    if not exists (
+      select 1 from public.organization_memberships
+      where organization_id = member_organization_id
+        and role = 'organization_owner'
+        and id <> target_membership_id
+        and (expires_at is null or expires_at > now())
+    ) then
+      raise exception 'the last organization_owner cannot be removed';
+    end if;
+  end if;
+
   if target_scope = 'organization' then
     update public.organization_memberships set expires_at = target_expires_at where id = target_membership_id;
   elsif target_scope = 'department' then

@@ -19,6 +19,7 @@ const scope = await useScope()
 
 const organizationId = computed(() => scope.value?.organizationId ?? null)
 const organization = computed(() => session.value?.scopes.find((item) => item.organizationId === organizationId.value) ?? null)
+const timezone = computed(() => organization.value?.organizationTimezone ?? 'Europe/Berlin')
 
 const loading = ref(true)
 const errorMessage = ref('')
@@ -137,17 +138,23 @@ async function load() {
   errorMessage.value = ''
   try {
     const headers = await useAuthHeader()
-    const [membersResponse, invitationsResponse, policySettingsResponse] = await Promise.all([
+    const [membersResponse, invitationsResponse] = await Promise.all([
       $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/members`, { headers }),
       $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/invitations`, { headers }),
-      $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/policy-settings`, { headers }),
     ])
     members.value = MemberSchema.array().parse(membersResponse)
     // Der Invitations-Endpunkt filtert nur accepted_at/revoked_at -- eine abgelaufene, aber noch
     // offene Einladung wuerde sonst weiter unter "Offene Einladungen" erscheinen, obwohl
     // "Erneut senden"/"Widerrufen" nichts mehr an ihr aendern koennen (beim Review gefunden).
     invitations.value = InvitationSchema.array().parse(invitationsResponse).filter((invitation) => new Date(invitation.expiresAt) > new Date())
-    policySettings.value = PolicySettingSchema.array().parse(policySettingsResponse)
+    // Die Richtlinien sind sekundaer: ohne sie bleibt die Mitgliederliste bedienbar, und
+    // inviteAllowedFor() faellt auf "erlaubt" zurueck. Die API entscheidet ohnehin endgueltig.
+    try {
+      const policySettingsResponse = await $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/policy-settings`, { headers })
+      policySettings.value = PolicySettingSchema.array().parse(policySettingsResponse)
+    } catch {
+      policySettings.value = []
+    }
   } catch {
     errorMessage.value = 'Mitglieder und Einladungen konnten nicht geladen werden.'
   } finally {
@@ -233,6 +240,32 @@ const roleChangeError = ref('')
 const roleChangeSubmitting = ref<string | null>(null)
 const expirySubmitting = ref<string | null>(null)
 
+// type="date" kennt nur ein Kalenderdatum, keine Uhrzeit. Ein reines .slice(0, 10) auf einem
+// ISO-Zeitstempel liest das UTC-Kalenderdatum aus -- in Zeitzonen mit negativem Offset zeigt das
+// Feld dann den Vortag an (beim Review gefunden). localDateKey liest stattdessen den Kalendertag
+// in der Vereinszeitzone, wie schon in kalender.vue/index.vue.
+function localDateKey(date: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date)
+}
+
+function tzOffsetMinutes(date: Date, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(date)
+  const value = (type: string) => Number(parts.find((part) => part.type === type)?.value)
+  const asUtc = Date.UTC(value('year'), value('month') - 1, value('day'), value('hour'), value('minute'), value('second'))
+  return (asUtc - date.getTime()) / 60000
+}
+
+// Das Tagesende (nicht Mitternacht UTC) in der Vereinszeitzone haelt den gewaehlten Tag
+// vollstaendig gueltig -- vorher lief eine Befristung in Zeitzonen mit positivem Offset (z. B.
+// Europe/Berlin) schon in der ersten Morgenstunde des gewaehlten Tages ab (beim Review gefunden).
+function endOfDayIso(dateKey: string, timeZone: string): string {
+  const [year, month, day] = dateKey.split('-').map(Number) as [number, number, number]
+  const utcGuess = Date.UTC(year, month - 1, day, 23, 59, 59, 999)
+  return new Date(utcGuess - tzOffsetMinutes(new Date(utcGuess), timeZone) * 60000).toISOString()
+}
+
 function toggleExpanded(entry: MemberRoleEntry) {
   if (expandedMembershipId.value === entry.membershipId) {
     expandedMembershipId.value = null
@@ -240,7 +273,7 @@ function toggleExpanded(entry: MemberRoleEntry) {
   }
   expandedMembershipId.value = entry.membershipId
   roleDraft[entry.membershipId] = entry.role as AssignableRole
-  expiryDraft[entry.membershipId] = entry.expiresAt ? entry.expiresAt.slice(0, 10) : ''
+  expiryDraft[entry.membershipId] = entry.expiresAt ? localDateKey(new Date(entry.expiresAt), timezone.value) : ''
   roleChangeError.value = ''
 }
 
@@ -276,7 +309,7 @@ async function setExpiry(entry: MemberRoleEntry) {
     const draft = expiryDraft[entry.membershipId]
     await $fetch(`${config.public.apiBase}/v1/memberships/${entry.membershipId}/expiry`, {
       method: 'PATCH', headers, query: { scope: entry.scope },
-      body: { expiresAt: draft ? new Date(`${draft}T00:00:00Z`).toISOString() : null },
+      body: { expiresAt: draft ? endOfDayIso(draft, timezone.value) : null },
     })
     await load()
   } catch {
@@ -385,6 +418,8 @@ const canInviteHere = computed(() => availableInviteScopes.value.length > 0)
                 <button
                   v-if="entry.canChangeRole || entry.canSetExpiry"
                   type="button"
+                  :aria-expanded="expandedMembershipId === entry.membershipId"
+                  :aria-controls="`membership-detail-${entry.membershipId}`"
                   class="focus-ring"
                   @click="toggleExpanded(entry)"
                 >
@@ -405,6 +440,7 @@ const canInviteHere = computed(() => availableInviteScopes.value.length > 0)
             <div
               v-for="entry in member.roles.filter((item) => item.membershipId === expandedMembershipId)"
               :key="`${entry.membershipId}-detail`"
+              :id="`membership-detail-${entry.membershipId}`"
               class="mt-3 grid gap-3 rounded-xl border border-[#e8e9e2] bg-[#f7f8f4] p-3 sm:grid-cols-2"
             >
               <label v-if="entry.canChangeRole"><span class="mb-1 block text-xs font-semibold">Rolle in {{ scopeName(entry.scope, entry.scopeId) }}</span>
