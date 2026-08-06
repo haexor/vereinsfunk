@@ -392,7 +392,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       allowedFormats: config.policies.allowedFormats,
     })
     if (!submitCheck.allowed) {
-      return reply.code(422).send({ error: submitCheck.reason, correlationId: request.id })
+      // submit_not_allowed ist eine Berechtigungsfrage (das Vertrauen dieser Person, Plan 011:
+      // "Einreichen bei submit_allowed = false -> 403"); preset_not_allowed/format_not_allowed sind
+      // inhaltliche Verstoesse gegen die Richtlinie dieses Scopes -> 422 mit maschinenlesbarem Grund.
+      const status = submitCheck.reason === 'submit_not_allowed' ? 403 : 422
+      return reply.code(status).send({ error: submitCheck.reason, correlationId: request.id })
     }
 
     // forbiddenTopics wird additiv zu doNotMention ergaenzt (Plan 011, "Durchsetzung an vier

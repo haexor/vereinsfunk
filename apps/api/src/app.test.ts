@@ -65,6 +65,17 @@ function membershipRowsStub(rows: { id: string }[]) {
 // wechselnder Reihenfolge und schliessen entweder mit maybeSingle()/single() ab oder awaiten die
 // Kette direkt (kein PostgREST-Query-Builder ist wirklich ein Promise, aber beide sind thenable).
 // chain() bildet beides identisch nach, unabhaengig davon, welche Filter dazwischen aufgerufen wurden.
+// Alle policy_settings-Regelfelder auf "geerbt" (null), damit ein Test nur das eine Feld ueberschreiben
+// muss, das er tatsaechlich pruefen will (Paket 011).
+function emptyPolicyRuleColumns() {
+  return {
+    review_required: null, review_mode: null, review_stage_label: null, review_minimum_approvals: null, review_deadline_hours: null,
+    minor_approval_required: null, self_approval_allowed: null, allow_same_reviewer_across_stages: null, allow_review_exemptions: null,
+    media_requires_consent_check: null, allowed_presets: null, allowed_formats: null, allowed_channel_ids: null,
+    forbidden_topics: [], required_hashtags: [], tone: null,
+  }
+}
+
 function chain(result: { data: unknown; error: unknown }): PromiseLike<{ data: unknown; error: unknown }> & Record<string, unknown> {
   const builder: Record<string, unknown> = {
     eq: () => builder, is: () => builder, in: () => builder, order: () => builder, limit: () => builder, select: () => builder,
@@ -1414,5 +1425,134 @@ describe('policy settings', () => {
     })
     expect(auditRows).toHaveLength(1)
     expect(auditRows[0]).toMatchObject({ action: 'policy_setting.changed', organization_id: ORGANIZATION_ID })
+  })
+})
+
+describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
+  const STAGE_ID = '10000000-5000-4000-8000-000000000001'
+  const POST_VERSION_ID = '10000000-3000-4000-8000-000000000099'
+
+  it("rejects submitting a preset outside the department's allowed list with 422", async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'policy_settings') return chain({ data: { id: 'p1', ...emptyPolicyRuleColumns(), allowed_presets: ['match_result'] }, error: null })
+            if (table === 'member_review_trust') return chain({ data: [], error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used') } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/submissions',
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        organizationId: ORGANIZATION_ID, departmentId: DEPARTMENT_ID, presetSlug: 'training_insight', communicationGoal: 'inform',
+        requestedFormats: ['feed_image'], sourceMaterial: { facts: {}, observations: ['x'], quotes: [], doNotMention: [] },
+      },
+    })
+    expect(response.statusCode).toBe(422)
+    expect(response.json()).toMatchObject({ error: 'preset_not_allowed' })
+  })
+
+  it("rejects submitting when the member's own trust record disallows it with 403", async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'policy_settings') return chain({ data: null, error: null })
+            if (table === 'member_review_trust') return chain({ data: [{ scope: 'department', department_id: DEPARTMENT_ID, team_id: null, submit_allowed: false, review_requirement: 'inherit' }], error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used') } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/submissions',
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        organizationId: ORGANIZATION_ID, departmentId: DEPARTMENT_ID, presetSlug: 'training_insight', communicationGoal: 'inform',
+        requestedFormats: ['feed_image'], sourceMaterial: { facts: {}, observations: ['x'], quotes: [], doNotMention: [] },
+      },
+    })
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toMatchObject({ error: 'submit_not_allowed' })
+  })
+
+  it('maps insufficient_permission from decide_approval_stage to 403', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ rpc: async () => ({ data: null, error: { message: 'insufficient_permission' } }) }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used') } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/approval-stages/${STAGE_ID}/decide`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { decision: 'approved' },
+    })
+    expect(response.statusCode).toBe(403)
+  })
+
+  it('opens the next stage when decide_approval_stage reports the current one satisfied', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          rpc: async () => ({ data: { stageId: STAGE_ID, stageStatus: 'satisfied', postStatus: 'awaiting_approval', nextStageId: '10000000-5000-4000-8000-000000000002' }, error: null }),
+        }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used') } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/approval-stages/${STAGE_ID}/decide`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { decision: 'approved' },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ stageStatus: 'satisfied', nextStageId: '10000000-5000-4000-8000-000000000002' })
+  })
+
+  it('maps a channel outside the allowlist to 422 when scheduling a publication', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ rpc: async () => ({ data: null, error: { message: 'channel_not_allowed' } }) }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used') } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/post-versions/${POST_VERSION_ID}/schedule`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { socialConnectionId: '10000000-8000-4000-8000-000000000001', scheduledFor: null },
+    })
+    expect(response.statusCode).toBe(422)
+    expect(response.json()).toMatchObject({ error: 'channel_not_allowed' })
+  })
+
+  it('maps an exceeded quota to 409 naming the blocking limit when scheduling a publication', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ rpc: async () => ({ data: null, error: { message: 'quota_exceeded: organization/day' } }) }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used') } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/post-versions/${POST_VERSION_ID}/schedule`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { socialConnectionId: '10000000-8000-4000-8000-000000000001', scheduledFor: null },
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'quota_exceeded', detail: 'quota_exceeded: organization/day' })
   })
 })
