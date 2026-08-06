@@ -38,7 +38,7 @@ Stand: 2026-08-04, geplant auf `b5c2eda6`. Die Pakete 001–007 bauen die Inhalt
 | 008 | [Echte Authentifizierung und Autorisierungsgrenze](008-echte-authentifizierung-und-autorisierungsgrenze.md) | keine | erledigt |
 | 009 | [Onboarding: Verein anlegen](009-onboarding-verein-anlegen.md) | 008 | erledigt |
 | 010 | [Abteilungen, Teams, Mitglieder und Einladungen](010-abteilungen-teams-mitglieder-einladungen.md) | 008, 009 | erledigt |
-| 023 | [Sichtbarkeit, Mitgliederverwaltung und Richtliniengrundlage](023-sichtbarkeit-mitgliederverwaltung-und-richtliniengrundlage.md) | 010 | bereit; **kommt vor 011**, trotz höherer Nummer |
+| 023 | [Sichtbarkeit, Mitgliederverwaltung und Richtliniengrundlage](023-sichtbarkeit-mitgliederverwaltung-und-richtliniengrundlage.md) | 010 | erledigt |
 | 011 | [Regelwerk: Freigaberouten, Vertrauen je Mitglied und Kontingente](011-regelwerk-richtlinien-und-kontingente.md) | 010, 023 | bereit |
 | 012 | [Kanäle und Social-Accounts](012-kanaele-und-social-accounts.md) | 011 | bereit; Meta App Review als externes Gate |
 | 013 | [Marke, Branding-Assets und Schriften](013-marke-branding-assets-und-schriften.md) | 009 | bereit |

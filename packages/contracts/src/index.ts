@@ -221,6 +221,31 @@ export function rolesForScopeLevel(scope: ScopeLevel): readonly AssignableRole[]
   return scope === 'organization' ? ORGANIZATION_SCOPED_ROLES : scope === 'department' ? DEPARTMENT_SCOPED_ROLES : TEAM_SCOPED_ROLES
 }
 
+// Richtlinien mit Vererbung (Paket 023): zwei boolesche Felder je Ebene, `null` heisst "von oben
+// erben". Die Antwort traegt den effektiven Wert, den eigenen (ungeerbten) Wert, ob eine hoehere
+// Ebene bereits verschaerft hat (lockedByAncestor -- ein Lockern an dieser Ebene waere wirkungslos)
+// und ob der Anfragende diese Ebene ueberhaupt bearbeiten darf.
+export const PolicyFlagSchema = z.enum(['invite_allowed', 'posts_visible_org_wide'])
+export const PolicyFlagStateSchema = z.object({
+  effective: z.boolean(),
+  ownValue: z.boolean().nullable(),
+  lockedByAncestor: z.boolean(),
+  canEdit: z.boolean(),
+})
+export const PolicySettingSchema = z.object({
+  scope: ScopeLevelSchema,
+  scopeId: UuidSchema,
+  name: z.string().min(1),
+  inviteAllowed: PolicyFlagStateSchema,
+  postsVisibleOrgWide: PolicyFlagStateSchema,
+})
+export const UpdatePolicySettingRequestSchema = z.object({
+  scope: ScopeLevelSchema,
+  scopeId: UuidSchema,
+  flag: PolicyFlagSchema,
+  value: z.boolean().nullable(),
+})
+
 export const CreateMembershipRequestSchema = z.object({
   scope: ScopeLevelSchema,
   scopeId: UuidSchema,
@@ -232,16 +257,29 @@ export const CreateMembershipRequestSchema = z.object({
   }
 })
 export const UpdateMembershipRequestSchema = z.object({ role: AssignableRoleSchema })
+// Getrennt von UpdateMembershipRequestSchema (Paket 023): eine Befristung zu setzen ist kein
+// Rollenwechsel und braucht keine can_assign_role-Pruefung einer neuen Rolle, siehe
+// public.set_membership_expiry() in supabase/migrations.
+export const UpdateMembershipExpiryRequestSchema = z.object({ expiresAt: z.iso.datetime({ offset: true }).nullable() })
 
 // scopeName ist bewusst nicht Teil dieses Schemas: die Oberflaeche kennt Abteilungs-/Team-Namen
 // bereits aus useSession()/useScope() (siehe authz.membership_scopes()) und kann sie ueber
 // scope+scopeId nachschlagen, ohne dass dieser Endpunkt sie redundant mitliefern muss.
+// Capability-Felder (Paket 023): die Antwort traegt mit, ob DER ANFRAGENDE diese Zeile aendern
+// darf -- serverseitig aus denselben Funktionen berechnet, die PATCH/DELETE /v1/memberships auch
+// selbst durchsetzen (authz.can_remove_role/can_assign_role via canRemoveRole/canAssignRole). Die
+// Oberflaeche zeigt und sendet nur, was hier steht, statt useCan()/canAssignRole ein zweites Mal
+// gegen die eigene Rolle herzuleiten -- genau die Doppelherleitung, die im Nachfolge-Review von
+// Paket 010 zwei funktionale Fehler verursacht hat.
 export const MemberRoleEntrySchema = z.object({
   membershipId: UuidSchema,
   scope: ScopeLevelSchema,
   scopeId: UuidSchema,
   role: RoleSchema,
   expiresAt: z.iso.datetime({ offset: true }).nullable(),
+  canChangeRole: z.boolean(),
+  canRemove: z.boolean(),
+  canSetExpiry: z.boolean(),
 }).superRefine((value, context) => {
   // organization_owner ist nie durch AssignableRoleSchema/rolesForScopeLevel abgedeckt (nicht
   // vergebbar), taucht in einer Mitgliederliste fuer scope: 'organization' aber lesend auf --
@@ -419,8 +457,13 @@ export type UpdateDepartmentRequest = z.infer<typeof UpdateDepartmentRequestSche
 export type Team = z.infer<typeof TeamSchema>
 export type CreateTeamRequest = z.infer<typeof CreateTeamRequestSchema>
 export type UpdateTeamRequest = z.infer<typeof UpdateTeamRequestSchema>
+export type PolicyFlag = z.infer<typeof PolicyFlagSchema>
+export type PolicyFlagState = z.infer<typeof PolicyFlagStateSchema>
+export type PolicySetting = z.infer<typeof PolicySettingSchema>
+export type UpdatePolicySettingRequest = z.infer<typeof UpdatePolicySettingRequestSchema>
 export type CreateMembershipRequest = z.infer<typeof CreateMembershipRequestSchema>
 export type UpdateMembershipRequest = z.infer<typeof UpdateMembershipRequestSchema>
+export type UpdateMembershipExpiryRequest = z.infer<typeof UpdateMembershipExpiryRequestSchema>
 export type MemberRoleEntry = z.infer<typeof MemberRoleEntrySchema>
 export type Member = z.infer<typeof MemberSchema>
 export type Invitation = z.infer<typeof InvitationSchema>

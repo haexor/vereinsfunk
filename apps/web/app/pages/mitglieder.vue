@@ -3,10 +3,13 @@ import { canAssignRole, type Role } from '@vereinsfunk/authorization'
 import {
   InvitationSchema,
   MemberSchema,
+  PolicySettingSchema,
   rolesForScopeLevel,
   type AssignableRole,
   type Invitation,
   type Member,
+  type MemberRoleEntry,
+  type PolicySetting,
   type ScopeLevel,
 } from '@vereinsfunk/contracts'
 
@@ -22,6 +25,7 @@ const errorMessage = ref('')
 const actionError = ref('')
 const members = ref<Member[]>([])
 const invitations = ref<Invitation[]>([])
+const policySettings = ref<PolicySetting[]>([])
 
 const inviteScope = ref<ScopeLevel>('organization')
 const inviteScopeId = ref('')
@@ -68,6 +72,15 @@ function departmentIdFor(scopeLevel: ScopeLevel, scopeId: string): string | unde
   return organization.value?.departments.find((item) => item.teams.some((team) => team.id === scopeId))?.id
 }
 
+// Ob eine Ebene ueberhaupt einladen darf, kommt jetzt aus zwei unabhaengigen Quellen: der eigenen
+// Rolle (useCan, wie bisher) UND policy_settings.invite_allowed (Paket 023) -- eine Abteilung
+// kann das Einladungsrecht fuer sich selbst sperren, unabhaengig davon, wer dort
+// department_admin ist. Der effektive Wert kommt fertig berechnet aus der API
+// (GET .../policy-settings), nicht aus einer zweiten Herleitung hier.
+function inviteAllowedFor(scopeLevel: ScopeLevel, scopeId: string): boolean {
+  return policySettings.value.find((entry) => entry.scope === scopeLevel && entry.scopeId === scopeId)?.inviteAllowed.effective ?? true
+}
+
 // member.invite gilt je Ebene: ein department_admin oder team_manager hat es in seinem eigenen
 // Bereich, aber nicht vereinsweit (siehe authz.has_department_permission/has_team_permission).
 // Die Auswahl zeigt deshalb nur die Ebenen und Bereiche, in denen der Handelnde wirklich
@@ -75,19 +88,23 @@ function departmentIdFor(scopeLevel: ScopeLevel, scopeId: string): string | unde
 // obwohl API und RLS ihre Einladungen erlauben (im Nachfolge-Review dieses PRs gefunden).
 const invitableDepartments = computed(() =>
   (organization.value?.departments ?? []).filter((department) =>
-    useCan('member.invite', { organizationId: organizationId.value ?? '', departmentId: department.id }),
+    useCan('member.invite', { organizationId: organizationId.value ?? '', departmentId: department.id }) && inviteAllowedFor('department', department.id),
   ),
 )
 const invitableTeams = computed(() =>
   (organization.value?.departments ?? []).flatMap((department) =>
     department.teams
-      .filter((team) => useCan('member.invite', { organizationId: organizationId.value ?? '', departmentId: department.id, teamId: team.id }))
+      .filter((team) =>
+        useCan('member.invite', { organizationId: organizationId.value ?? '', departmentId: department.id, teamId: team.id }) && inviteAllowedFor('team', team.id),
+      )
       .map((team) => ({ id: team.id, label: `${department.name} · ${team.name}` })),
   ),
 )
 const availableInviteScopes = computed(() => {
   const scopes: { value: ScopeLevel; label: string }[] = []
-  if (useCan('member.invite', { organizationId: organizationId.value ?? '' })) scopes.push({ value: 'organization', label: 'Ganzer Verein' })
+  if (useCan('member.invite', { organizationId: organizationId.value ?? '' }) && inviteAllowedFor('organization', organizationId.value ?? '')) {
+    scopes.push({ value: 'organization', label: 'Ganzer Verein' })
+  }
   if (invitableDepartments.value.length > 0) scopes.push({ value: 'department', label: 'Abteilung' })
   if (invitableTeams.value.length > 0) scopes.push({ value: 'team', label: 'Team' })
   return scopes
@@ -120,15 +137,17 @@ async function load() {
   errorMessage.value = ''
   try {
     const headers = await useAuthHeader()
-    const [membersResponse, invitationsResponse] = await Promise.all([
+    const [membersResponse, invitationsResponse, policySettingsResponse] = await Promise.all([
       $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/members`, { headers }),
       $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/invitations`, { headers }),
+      $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/policy-settings`, { headers }),
     ])
     members.value = MemberSchema.array().parse(membersResponse)
     // Der Invitations-Endpunkt filtert nur accepted_at/revoked_at -- eine abgelaufene, aber noch
     // offene Einladung wuerde sonst weiter unter "Offene Einladungen" erscheinen, obwohl
     // "Erneut senden"/"Widerrufen" nichts mehr an ihr aendern koennen (beim Review gefunden).
     invitations.value = InvitationSchema.array().parse(invitationsResponse).filter((invitation) => new Date(invitation.expiresAt) > new Date())
+    policySettings.value = PolicySettingSchema.array().parse(policySettingsResponse)
   } catch {
     errorMessage.value = 'Mitglieder und Einladungen konnten nicht geladen werden.'
   } finally {
@@ -201,6 +220,69 @@ async function removeMembership(membershipId: string, scopeLevel: ScopeLevel) {
     await load()
   } catch {
     actionError.value = 'Die Mitgliedschaft konnte nicht entfernt werden.'
+  }
+}
+
+// Aufklappbare Detailebene je Mitgliedschaft (Plan 023, "Umsetzung 2."): Rolle, Befristung und
+// Einladungsrecht statt eines separaten Rollen-Editors. canChangeRole/canRemove/canSetExpiry
+// kommen fertig aus der API -- die Oberflaeche leitet die Berechtigung nicht selbst her.
+const expandedMembershipId = ref<string | null>(null)
+const roleDraft = reactive<Record<string, AssignableRole | ''>>({})
+const expiryDraft = reactive<Record<string, string>>({})
+const roleChangeError = ref('')
+const roleChangeSubmitting = ref<string | null>(null)
+const expirySubmitting = ref<string | null>(null)
+
+function toggleExpanded(entry: MemberRoleEntry) {
+  if (expandedMembershipId.value === entry.membershipId) {
+    expandedMembershipId.value = null
+    return
+  }
+  expandedMembershipId.value = entry.membershipId
+  roleDraft[entry.membershipId] = entry.role as AssignableRole
+  expiryDraft[entry.membershipId] = entry.expiresAt ? entry.expiresAt.slice(0, 10) : ''
+  roleChangeError.value = ''
+}
+
+function availableRolesFor(entry: MemberRoleEntry): AssignableRole[] {
+  const actorRoles = actorRolesFor(entry.scope, entry.scopeId)
+  return rolesForScopeLevel(entry.scope).filter((role) => canAssignRole(actorRoles, role))
+}
+
+async function changeRole(entry: MemberRoleEntry) {
+  const nextRole = roleDraft[entry.membershipId]
+  if (!nextRole || nextRole === entry.role) return
+  roleChangeSubmitting.value = entry.membershipId
+  roleChangeError.value = ''
+  try {
+    const headers = await useAuthHeader()
+    await $fetch(`${config.public.apiBase}/v1/memberships/${entry.membershipId}`, {
+      method: 'PATCH', headers, query: { scope: entry.scope }, body: { role: nextRole },
+    })
+    expandedMembershipId.value = null
+    await load()
+  } catch {
+    roleChangeError.value = 'Die Rolle konnte nicht geändert werden.'
+  } finally {
+    roleChangeSubmitting.value = null
+  }
+}
+
+async function setExpiry(entry: MemberRoleEntry) {
+  expirySubmitting.value = entry.membershipId
+  roleChangeError.value = ''
+  try {
+    const headers = await useAuthHeader()
+    const draft = expiryDraft[entry.membershipId]
+    await $fetch(`${config.public.apiBase}/v1/memberships/${entry.membershipId}/expiry`, {
+      method: 'PATCH', headers, query: { scope: entry.scope },
+      body: { expiresAt: draft ? new Date(`${draft}T00:00:00Z`).toISOString() : null },
+    })
+    await load()
+  } catch {
+    roleChangeError.value = 'Die Befristung konnte nicht geändert werden.'
+  } finally {
+    expirySubmitting.value = null
   }
 }
 
@@ -300,9 +382,17 @@ const canInviteHere = computed(() => availableInviteScopes.value.length > 0)
                 :key="entry.membershipId"
                 class="inline-flex items-center gap-1.5 rounded-full bg-[#eef1ea] px-2.5 py-1 text-[10px] font-semibold text-[#3d453f]"
               >
-                {{ roleLabels[entry.role] ?? entry.role }} · {{ scopeName(entry.scope, entry.scopeId) }}
                 <button
-                  v-if="useCan('member.remove', { organizationId: organizationId ?? '', departmentId: departmentIdFor(entry.scope, entry.scopeId), teamId: entry.scope === 'team' ? entry.scopeId : undefined })"
+                  v-if="entry.canChangeRole || entry.canSetExpiry"
+                  type="button"
+                  class="focus-ring"
+                  @click="toggleExpanded(entry)"
+                >
+                  {{ roleLabels[entry.role] ?? entry.role }} · {{ scopeName(entry.scope, entry.scopeId) }}
+                </button>
+                <span v-else>{{ roleLabels[entry.role] ?? entry.role }} · {{ scopeName(entry.scope, entry.scopeId) }}</span>
+                <button
+                  v-if="entry.canRemove"
                   type="button"
                   :aria-label="`${roleLabels[entry.role] ?? entry.role} in ${scopeName(entry.scope, entry.scopeId)} entfernen`"
                   class="focus-ring text-[#8a9186] hover:text-amber-800"
@@ -311,6 +401,41 @@ const canInviteHere = computed(() => availableInviteScopes.value.length > 0)
                   ×
                 </button>
               </span>
+            </div>
+            <div
+              v-for="entry in member.roles.filter((item) => item.membershipId === expandedMembershipId)"
+              :key="`${entry.membershipId}-detail`"
+              class="mt-3 grid gap-3 rounded-xl border border-[#e8e9e2] bg-[#f7f8f4] p-3 sm:grid-cols-2"
+            >
+              <label v-if="entry.canChangeRole"><span class="mb-1 block text-xs font-semibold">Rolle in {{ scopeName(entry.scope, entry.scopeId) }}</span>
+                <div class="flex gap-2">
+                  <select v-model="roleDraft[entry.membershipId]" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs">
+                    <option v-for="role in availableRolesFor(entry)" :key="role" :value="role">{{ roleLabels[role] ?? role }}</option>
+                  </select>
+                  <button
+                    type="button"
+                    :disabled="roleChangeSubmitting === entry.membershipId || roleDraft[entry.membershipId] === entry.role"
+                    class="focus-ring shrink-0 rounded-lg bg-forest px-3 py-2 text-[10px] font-bold text-white disabled:opacity-60"
+                    @click="changeRole(entry)"
+                  >
+                    Ändern
+                  </button>
+                </div>
+              </label>
+              <label v-if="entry.canSetExpiry"><span class="mb-1 block text-xs font-semibold">Befristet bis</span>
+                <div class="flex gap-2">
+                  <input v-model="expiryDraft[entry.membershipId]" type="date" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" />
+                  <button
+                    type="button"
+                    :disabled="expirySubmitting === entry.membershipId"
+                    class="focus-ring shrink-0 rounded-lg border border-[#dfe0d9] px-3 py-2 text-[10px] font-semibold disabled:opacity-60"
+                    @click="setExpiry(entry)"
+                  >
+                    Speichern
+                  </button>
+                </div>
+              </label>
+              <p v-if="roleChangeError" class="text-xs text-amber-800 sm:col-span-2">{{ roleChangeError }}</p>
             </div>
           </div>
         </div>

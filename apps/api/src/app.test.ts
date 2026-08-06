@@ -1067,7 +1067,7 @@ describe('structure, memberships and invitations', () => {
         }) as unknown as SupabaseClient,
       forService: () => ({}) as unknown as SupabaseClient,
     }
-    const app = await startApp({ supabaseClients: clients })
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'GET',
@@ -1079,5 +1079,203 @@ describe('structure, memberships and invitations', () => {
     expect(body).toHaveLength(memberCount)
     expect(body.filter((member) => member.displayName === 'Unbekannt')).toHaveLength(0)
     expect(requestedChunkSizes).toEqual([100, 100, 50])
+  })
+
+  it('derives per-role capability fields from the actor\'s own rank (Paket 023)', async () => {
+    const ownerUserId = '10000000-0000-4000-8000-000000000101'
+    const editorUserId = '10000000-0000-4000-8000-000000000102'
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'profiles') {
+              return { select: () => ({ in: async (_c: string, ids: string[]) => ({ data: ids.map((id) => ({ id, display_name: 'Person' })), error: null }) }) }
+            }
+            if (table === 'organization_memberships') {
+              return { select: () => ({ eq: () => ({ range: async (from: number) => ({ data: from === 0 ? [{ id: '10000000-3000-4000-8000-000000000101', user_id: ownerUserId, role: 'organization_owner', expires_at: null }] : [], error: null }) }) }) }
+            }
+            if (table === 'department_memberships') {
+              return { select: () => ({ eq: () => ({ range: async (from: number) => ({ data: from === 0 ? [{ id: '10000000-3000-4000-8000-000000000102', user_id: editorUserId, role: 'editor', expires_at: null, department_id: DEPARTMENT_ID }] : [], error: null }) }) }) }
+            }
+            return { select: () => ({ eq: () => ({ range: async () => ({ data: [], error: null }) }) }) }
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    // organizationManagerRoleProvider returns ['organization_admin'] (rank 90) for every scope --
+    // enough to manage the editor (rank 20) but not the organization_owner (rank 100).
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${ORGANIZATION_ID}/members`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(200)
+    const body = response.json() as { userId: string; roles: { canChangeRole: boolean; canRemove: boolean; canSetExpiry: boolean }[] }[]
+    const owner = body.find((member) => member.userId === ownerUserId)!.roles[0]!
+    const editor = body.find((member) => member.userId === editorUserId)!.roles[0]!
+    expect(owner).toMatchObject({ canChangeRole: false, canRemove: false, canSetExpiry: false })
+    expect(editor).toMatchObject({ canChangeRole: true, canRemove: true, canSetExpiry: true })
+  })
+
+  it('maps an RLS rejection on a direct membership insert to a friendly invite_not_allowed error (Paket 023: invite_allowed = false)', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: () => ({
+            insert: () => ({ select: () => ({ single: async () => ({ data: null, error: { code: '42501', message: 'new row violates row-level security policy' } }) }) }),
+          }),
+        }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/memberships',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { scope: 'organization', scopeId: ORGANIZATION_ID, userId: '10000000-0000-4000-8000-000000000099', role: 'organization_viewer' },
+    })
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toMatchObject({ error: 'invite_not_allowed' })
+  })
+
+  it('maps create_invitation\'s insufficient_permission to the same friendly invite_not_allowed error', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          rpc: async (fn: string) => (fn === 'email_has_membership' ? { data: false, error: null } : { data: null, error: { code: 'P0001', message: 'insufficient_permission' } }),
+          from: (table: string) => { throw new Error(`unexpected table in test fake: ${table}`) },
+        }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/invitations',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { organizationId: ORGANIZATION_ID, email: 'closed-department@example.com', role: 'organization_viewer' },
+    })
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toMatchObject({ error: 'invite_not_allowed' })
+  })
+
+  it('sets a membership expiry via the dedicated expiry endpoint, separately from a role change', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: () => ({
+            select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { organization_id: ORGANIZATION_ID, department_id: null, team_id: null, user_id: USER_ID, role: 'organization_viewer' }, error: null }) }) }),
+          }),
+          rpc: async () => ({ data: { membershipId: MEMBERSHIP_ID, expiresAt: '2026-09-01T00:00:00+00:00' }, error: null }),
+        }) as unknown as SupabaseClient,
+      forService: () => serviceClientCapturingAudit([]),
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PATCH',
+      url: `/v1/memberships/${MEMBERSHIP_ID}/expiry?scope=organization`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { expiresAt: '2026-09-01T00:00:00+00:00' },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ expiresAt: '2026-09-01T00:00:00+00:00' })
+  })
+})
+
+describe('policy settings', () => {
+  it('resolves inherited effective policy values for a department without its own override', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'departments') return { select: () => ({ eq: () => ({ order: async () => ({ data: [{ id: DEPARTMENT_ID, name: 'Fussball' }], error: null }) }) }) }
+            if (table === 'teams') return { select: () => ({ eq: () => ({ order: async () => ({ data: [], error: null }) }) }) }
+            if (table === 'policy_settings') {
+              return {
+                select: () => ({
+                  eq: async () => ({
+                    data: [{ scope: 'organization', department_id: null, team_id: null, invite_allowed: false, posts_visible_org_wide: null }],
+                    error: null,
+                  }),
+                }),
+              }
+            }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      // organizations wird ueber den Service-Client gelesen (Rechte-Review-Fix): eine
+      // Organisationsrolle ist fuer diese Route nicht Voraussetzung.
+      forService: () => ({ from: () => ({ select: () => ({ eq: () => ({ single: async () => ({ data: { name: 'SV Test' }, error: null }) }) }) }) }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${ORGANIZATION_ID}/policy-settings`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(200)
+    const body = response.json() as {
+      scope: string
+      inviteAllowed: { effective: boolean; ownValue: boolean | null; lockedByAncestor: boolean }
+      postsVisibleOrgWide: { effective: boolean }
+    }[]
+    const org = body.find((entry) => entry.scope === 'organization')!
+    const department = body.find((entry) => entry.scope === 'department')!
+    expect(org.inviteAllowed).toMatchObject({ effective: false, ownValue: false, lockedByAncestor: false })
+    // The department never set its own row -- it inherits the organization's false, and cannot
+    // loosen it back to true itself (lockedByAncestor), while the untouched second flag stays true.
+    expect(department.inviteAllowed).toMatchObject({ effective: false, ownValue: null, lockedByAncestor: true })
+    expect(department.postsVisibleOrgWide.effective).toBe(true)
+  })
+
+  it('rejects setting a department-level policy without department.manage', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { organization_id: ORGANIZATION_ID }, error: null }) }) }) }) }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: denyingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/v1/policy-settings',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { scope: 'department', scopeId: DEPARTMENT_ID, flag: 'invite_allowed', value: false },
+    })
+    expect(response.statusCode).toBe(403)
+  })
+
+  it('resolves the organization name for a department admin without an organization role (Rechte-Review fix)', async () => {
+    // organizations_select_member requires an organization-level role -- a department_admin
+    // without one would see the user client's `organizations` table as empty/forbidden under
+    // real RLS. The route must use the service client for this specific, non-sensitive lookup;
+    // this fake makes the user client throw if it is ever queried for organizations, so the test
+    // fails loudly if that regresses.
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'organizations') throw new Error('organizations must be read via the service client here')
+            if (table === 'departments') return { select: () => ({ eq: () => ({ order: async () => ({ data: [], error: null }) }) }) }
+            if (table === 'teams') return { select: () => ({ eq: () => ({ order: async () => ({ data: [], error: null }) }) }) }
+            if (table === 'policy_settings') return { select: () => ({ eq: async () => ({ data: [], error: null }) }) }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => ({ select: () => ({ eq: () => ({ single: async () => ({ data: { name: 'SV Test' }, error: null }) }) }) }) }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${ORGANIZATION_ID}/policy-settings`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual(expect.arrayContaining([expect.objectContaining({ scope: 'organization', name: 'SV Test' })]))
   })
 })

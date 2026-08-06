@@ -15,8 +15,11 @@ import {
   PlatformSettingKeySchema,
   PlatformSettingSchema,
   PlatformSettingValueSchemas,
+  PolicySettingSchema,
   TeamSchema,
   UpdateDepartmentRequestSchema,
+  UpdateMembershipExpiryRequestSchema,
+  UpdatePolicySettingRequestSchema,
 } from './index.js'
 
 const org = '11111111-1111-4111-8111-111111111111'
@@ -252,6 +255,9 @@ describe('structure and invitation contracts', () => {
         scopeId: department,
         role: 'editor',
         expiresAt: '2026-08-05T12:34:56.789+00:00',
+        canChangeRole: true,
+        canRemove: true,
+        canSetExpiry: true,
       }).success,
     ).toBe(true)
   })
@@ -267,6 +273,9 @@ describe('structure and invitation contracts', () => {
         scopeId: department,
         role: 'organization_owner',
         expiresAt: null,
+        canChangeRole: false,
+        canRemove: false,
+        canSetExpiry: false,
       }).success,
     ).toBe(false)
   })
@@ -279,6 +288,9 @@ describe('structure and invitation contracts', () => {
         scopeId: org,
         role: 'organization_owner',
         expiresAt: null,
+        canChangeRole: false,
+        canRemove: false,
+        canSetExpiry: false,
       }).success,
     ).toBe(true)
   })
@@ -291,5 +303,45 @@ describe('structure and invitation contracts', () => {
 
   it('accepts a scope-consistent membership request', () => {
     expect(CreateMembershipRequestSchema.safeParse({ scope: 'department', scopeId: department, userId: org, role: 'editor' }).success).toBe(true)
+  })
+})
+
+describe('policy settings contracts (Paket 023)', () => {
+  it('accepts a policy setting with a locked, inherited flag and an editable, overridden one', () => {
+    expect(
+      PolicySettingSchema.safeParse({
+        scope: 'department',
+        scopeId: department,
+        name: 'Fussball',
+        inviteAllowed: { effective: false, ownValue: null, lockedByAncestor: true, canEdit: false },
+        postsVisibleOrgWide: { effective: false, ownValue: false, lockedByAncestor: false, canEdit: true },
+      }).success,
+    ).toBe(true)
+  })
+
+  it('rejects an unknown policy flag before it reaches the database', () => {
+    expect(
+      UpdatePolicySettingRequestSchema.safeParse({ scope: 'department', scopeId: department, flag: 'analytics_visible', value: false }).success,
+    ).toBe(false)
+  })
+
+  it('accepts a null value to clear an override back to "erben"', () => {
+    expect(
+      UpdatePolicySettingRequestSchema.safeParse({ scope: 'team', scopeId: team, flag: 'invite_allowed', value: null }).success,
+    ).toBe(true)
+  })
+})
+
+describe('membership expiry contract (Paket 023)', () => {
+  it('accepts a PostgREST-shaped expiresAt', () => {
+    expect(UpdateMembershipExpiryRequestSchema.safeParse({ expiresAt: '2026-08-05T12:34:56.789+00:00' }).success).toBe(true)
+  })
+
+  it('accepts null to clear an expiry', () => {
+    expect(UpdateMembershipExpiryRequestSchema.safeParse({ expiresAt: null }).success).toBe(true)
+  })
+
+  it('rejects a plain date without a time component', () => {
+    expect(UpdateMembershipExpiryRequestSchema.safeParse({ expiresAt: '2026-08-05' }).success).toBe(false)
   })
 })

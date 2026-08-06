@@ -23,7 +23,7 @@ Alles Folgende stammt aus dem Review von PR #7 (Paket 010) am 2026-08-05 und ist
 - `authz.is_department_member` (`202608020001:284`) prüft die **Mitgliedschaft**, nicht die Rolle. Jede Inhaltspolicy setzt darauf auf: `posts_select` (`:417`), `submissions_select` (`:410`), `media_assets_select` (`202608030001:114`).
 - `post_versions_select` (`202608020001:418`) prüft dagegen schon heute `authz.is_organization_member`. Der Fassungstext ist damit vereinsweit lesbar, der Beitrag selbst nicht auflistbar — ein bestehender Widerspruch.
 - `public.accept_invitation()` (`2026080601`) legt bei einer Team-Einladung zusätzlich eine `viewer`-Mitgliedschaft in der Elternabteilung an, damit das Teammitglied überhaupt Inhalte sieht. Wegen des ersten Punktes macht das aus ihm ein vollwertiges Abteilungsmitglied.
-- `member.invite` steckt fest in den Rollen `department_admin` und `team_manager` (`packages/authorization/src/index.ts`, `authz.has_department_permission`/`has_team_permission`). Der Verein bestimmt nur indirekt über die Rollenvergabe, wer einladen darf.
+- `member.invite` steckt fest in den Rollen `department_admin` und `team_manager` (`authz.has_department_permission`/`has_team_permission`, SQL-Funktionen in `supabase/migrations/2026080601_structure_and_invitations.sql:115,141`; die Rollen-Permission-Tabelle der API-Schicht in `packages/authorization/src/index.ts:63` trägt dieselbe Bindung ein zweites Mal). Der Verein bestimmt nur indirekt über die Rollenvergabe, wer einladen darf.
 - `PATCH /v1/memberships/:id` (Rollenwechsel, atomar über `change_membership_role`), `POST /v1/memberships` und `expires_at` auf allen drei Mitgliedschaftstabellen existieren und sind getestet — es fehlt ausschließlich die Oberfläche.
 
 ## Fachliches Modell
@@ -47,7 +47,7 @@ Nicht nach einer Angabe des Erstellers. Der Ersteller ist der falsche Ort für e
 
 | Was | Sichtbarkeit |
 |---|---|
-| Beiträge im Status veröffentlicht/geplant | vereinsweit: `posts_select` auf `authz.is_organization_member` für diese Zustände |
+| Beiträge im Status veröffentlicht/geplant | vereinsweit: `posts_select` auf `authz.is_any_member_of_organization` für diese Zustände — **Korrektur beim Umsetzen**: `authz.is_organization_member` prüft ausschließlich `organization_memberships` und wäre für die meisten Mitglieder (reine Abteilungs- oder Teamrolle, ohne Organisationsrolle) immer falsch geblieben — die vereinsweite Sichtbarkeit hätte damit nur organization_admin/owner & Co. erreicht, nicht den ganzen Verein. Eine neue, eng gefasste Funktion `authz.is_any_member_of_organization` (Organisationsrolle oder eine beliebige Abteilungs-/Teammitgliedschaft) übernimmt das stattdessen, ohne `authz.is_organization_member` selbst zu verändern (das sichert u. a. `organizations_select_member`, `brand_profiles_select`, `consent_records_select`, `media_derivatives`/`social_connections`/`publications_select` — deren Sichtbarkeitsradius bleibt unverändert). |
 | Entwürfe, Einreichungen, Freigabeverkehr | unverändert Abteilung plus Freigabekette |
 | Entwürfe des **eigenen Teams** | zusätzlich für Teammitglieder: `or authz.has_team_membership(team_id)` in `posts_select`/`submissions_select` |
 | `media_assets`, `face_regions`, `consent_records` | unverändert abteilungsweit — Medienrecht und Minderjährigenschutz, nicht Geheimhaltung |
@@ -104,19 +104,21 @@ create or replace function authz.resolve_policy_flag(
 ) returns boolean
 ```
 
-Sichtbarkeit, drei Änderungen in **einer** Migration:
+Sichtbarkeit, drei Änderungen, umgesetzt in zwei Migrationen (`2026080603_post_visibility.sql`, unbedingt vor allem anderen und mit eigener pgTAP-Abdeckung; `2026080604_policy_settings_and_invite_rights.sql` legt danach die Policy-Grundlage an und schichtet die `posts_visible_org_wide`-Ausnahme auf `posts_select`/`post_versions_select` drauf, siehe Risiken):
 
-1. `posts_select` für veröffentlichte/geplante Beiträge auf `authz.is_organization_member`, sonst weiter `is_department_member`
+1. `posts_select` für veröffentlichte/geplante Beiträge auf `authz.is_any_member_of_organization`, sonst weiter `is_department_member`
 2. `or authz.has_team_membership(team_id)` in `posts_select` und `submissions_select`
 3. Wegfall der `viewer`-Zeile in `accept_invitation()`
 
-Einzeln angewendet entsteht jeweils eine Lücke: ohne (1) und (2) verliert ein reines Teammitglied jeden Inhaltszugriff, ohne (3) bleibt der zu breite Zugriff bestehen. `authz.is_department_member` selbst wird **nicht** angefasst — darauf setzt jede bestehende Inhaltspolicy auf, die zusätzliche `or`-Bedingung an genau zwei Policies ist der kleinere Eingriff. `post_versions_select` wird gemeinsam mit `posts_select` angefasst, damit die Ebene nicht wieder auseinanderläuft.
+Einzeln angewendet entsteht jeweils eine Lücke: ohne (1) und (2) verliert ein reines Teammitglied jeden Inhaltszugriff, ohne (3) bleibt der zu breite Zugriff bestehen. `authz.is_department_member` selbst wird **nicht** angefasst — darauf setzt jede bestehende Inhaltspolicy auf, die zusätzliche `or`-Bedingung an genau zwei Policies ist der kleinere Eingriff. `post_versions_select` wird gemeinsam mit `posts_select` angefasst (per `exists`-Join auf `posts`, da `post_versions` kein `department_id`/`team_id` trägt), damit die Ebene nicht wieder auseinanderläuft.
 
 ## Umsetzung
 
 ### 1. Einladungsrecht als Richtlinie
 
-`invite_allowed` wirkt dort, wo `member.invite` heute ausgewertet wird: `authz.has_department_permission`/`has_team_permission`, die drei `*_memberships_insert`-Policies, `public.create_invitation()` und die Ebenenauswahl in `pages/mitglieder.vue`. Eine Abteilung, für die der Verein `invite_allowed = false` setzt, kann niemanden mehr einladen — unabhängig davon, wer dort `department_admin` ist.
+`invite_allowed` wirkt dort, wo eine **neue** Mitgliedschaft oder Einladung entsteht: die drei `*_memberships_insert`-Policies, `invitations_insert` und `public.create_invitation()` (dort zusätzlich zum bestehenden `has_*_permission`-Check, da die Funktion RLS umgeht) sowie die Ebenenauswahl in `pages/mitglieder.vue`. Eine Abteilung, für die der Verein `invite_allowed = false` setzt, kann niemanden mehr einladen — unabhängig davon, wer dort `department_admin` ist.
+
+**Korrektur beim Umsetzen**: *nicht* in `authz.has_department_permission`/`has_team_permission` selbst, wie ursprünglich hier notiert. Diese beiden Funktionen werten `member.invite` auch innerhalb von `change_membership_role()` (Paket 010) aus, um einen **Rollenwechsel** eines bereits bestehenden Mitglieds zu autorisieren — eine Änderung dort hätte `invite_allowed = false` also auch das Verwalten bestehender Mitglieder entzogen, was mit „kann niemanden mehr einladen“ nicht gemeint ist. Der Check sitzt deshalb einzeln an den oben genannten Neuanlage-Stellen.
 
 ### 2. Mitglieder-Detailebene: ein Vertrag für Oberfläche und API
 
@@ -140,9 +142,9 @@ Zwei Schalter je Ebene mit sichtbarer Vererbung: **geerbt** (Wert grau, Herkunft
 
 | Ort | Heute | Danach |
 |---|---|---|
-| `accept_invitation()` | legt bei Team-Einladung eine Abteilungs-`viewer`-Zeile an | entfällt, ersetzt durch die Policy-Änderung |
-| `pages/mitglieder.vue` | Rollen-Chip entfernen, sonst keine Bearbeitung | Detailebene mit Rolle, Befristung, Einladungsrecht |
-| `POST /v1/memberships` | legt für Team-Mitgliedschaften keine Abteilungszeile an (Paket 010, offener Punkt) | erledigt sich mit dem Wegfall der `viewer`-Zeile |
+| `accept_invitation()` | legt bei Team-Einladung eine Abteilungs-`viewer`-Zeile an | ✓ entfällt, ersetzt durch die Policy-Änderung (`2026080603_post_visibility.sql`) |
+| `pages/mitglieder.vue` | Rollen-Chip entfernen, sonst keine Bearbeitung | ✓ Detailebene mit Rolle und Befristung je Mitgliedschaft; Einladungsrecht sitzt als Scope-Feld bewusst auf `/struktur`, nicht pro Mitgliedschaftszeile |
+| `POST /v1/memberships` | legt für Team-Mitgliedschaften keine Abteilungszeile an (Paket 010, offener Punkt) | ✓ erledigt sich mit dem Wegfall der `viewer`-Zeile |
 
 ## Verifikation
 
@@ -153,6 +155,21 @@ Zwei Schalter je Ebene mit sichtbarer Vererbung: **geerbt** (Wert grau, Herkunft
 
 ## Risiken und offene Entscheidungen
 
-- **Die Sichtbarkeitsmigration fasst Policies an, auf denen alles aufsetzt.** Sie gehört in eine eigene Migration mit vollständiger pgTAP-Abdeckung vor allem anderen in diesem Paket, damit ein Fehler dort nicht mit Oberflächenarbeit vermischt ist.
-- **`posts.status`**: die Sichtbarkeitsregel unterscheidet veröffentlicht/geplant von allem davor. Beim Umsetzen prüfen, ob der vorhandene Status das ohne neue Spalte hergibt.
-- **Vertrauliche Kanäle** (`social_connections.confidential`, Paket 012) können die vereinsweite Sichtbarkeit einschränken. Offen ist, ob das als eigene Bedingung in `posts_select` oder abgeleitet über `posts_visible_org_wide` gelöst wird — einen Weg wählen, nicht beide bauen.
+- **Die Sichtbarkeitsmigration fasst Policies an, auf denen alles aufsetzt.** Sie gehört in eine eigene Migration mit vollständiger pgTAP-Abdeckung vor allem anderen in diesem Paket, damit ein Fehler dort nicht mit Oberflächenarbeit vermischt ist. **Umgesetzt** als eigene, zuerst angewendete Migration `2026080603_post_visibility.sql`.
+- **`posts.status`**: die Sichtbarkeitsregel unterscheidet veröffentlicht/geplant von allem davor. Beim Umsetzen prüfen, ob der vorhandene Status das ohne neue Spalte hergibt. **Geklärt**: der vorhandene Enum reicht; die Regel greift genau auf `status in ('published', 'scheduled')`. `publishing`/`partially_published`/`failed`/`cancelled` bleiben bewusst abteilungs-/teamgebunden (kein Publikationszustand, für den der Plan ausdrücklich vereinsweite Sichtbarkeit fordert) — falls das im Betrieb als Lücke auffällt, ist es eine bewusste Nachschärfung, keine vergessene Fallunterscheidung.
+- **Vertrauliche Kanäle** (`social_connections.confidential`, Paket 012) können die vereinsweite Sichtbarkeit einschränken. Offen ist, ob das als eigene Bedingung in `posts_select` oder abgeleitet über `posts_visible_org_wide` gelöst wird — einen Weg wählen, nicht beide bauen. **Weiterhin offen**, da `social_connections.confidential` erst in Paket 012 entsteht.
+
+## Umsetzung: Ergebnis und Abweichungen vom Plan
+
+Umgesetzt in drei Migrationen (`2026080603_post_visibility.sql`, `2026080604_policy_settings_and_invite_rights.sql`, `2026080605_membership_expiry.sql`), den entsprechenden Contracts/API-Erweiterungen und der Oberfläche auf `/struktur` (Richtlinien je Ebene) und `/mitglieder` (Detailebene). 189 pgTAP-Tests, 51 API-Tests, `pnpm lint`/`typecheck`/`test`/`build` grün, manuell im Browser gegengeprüft (Login, Toggle-Klick mit echtem PUT-Roundtrip, Rollenwechsel- und Befristungsformular).
+
+Abweichungen, die sich beim Bauen als nötig erwiesen und oben bereits an der jeweiligen Stelle korrigiert sind:
+
+- **`authz.is_any_member_of_organization` statt `authz.is_organization_member`** für die vereinsweite Sichtbarkeit (siehe "Sichtbarkeit richtet sich nach dem Lebenszyklus" oben) — die bestehende Funktion hätte die vereinsweite Sichtbarkeit auf Organisationsrollen beschränkt, nicht auf jedes Vereinsmitglied.
+- **`invite_allowed` sitzt an den Neuanlage-Stellen selbst** (die drei `*_memberships_insert`-Policies, `invitations_insert`, `create_invitation()`), **nicht** in `authz.has_department_permission`/`has_team_permission` — sonst hätte es auch `change_membership_role()` (Rollenwechsel bestehender Mitglieder) betroffen, was nicht gemeint ist (siehe "Umsetzung 1." oben).
+- **Befristung braucht eine eigene RPC** (`public.set_membership_expiry`, Migration `2026080605`) und einen eigenen Endpunkt (`PATCH /v1/memberships/:id/expiry`): weder `POST /v1/memberships` noch `PATCH /v1/memberships/:id` konnten vor diesem Paket überhaupt `expires_at` setzen — die Phase-1-Evidenz ("existieren und sind getestet") bezog sich auf die Spalte, nicht auf einen Schreibpfad.
+- **`policy_settings.updated_by` erhält einen spaltenweisen statt tabellenweiten Grant** (adversariale Prüfung, Geheimnisse): sonst hätte jedes Vereinsmitglied gesehen, wer zuletzt eine fremde Abteilung/Team-Richtlinie geändert hat.
+- **`GET`/`PUT` der Policy-Settings lesen den Organisationsnamen über den Service-Client**, nicht den Nutzer-Client (adversariale Prüfung, Rechte): `organizations_select_member` verlangt eine Organisationsrolle, die ein reiner Abteilungs- oder Team-Admin nicht hat, aber laut diesem Paket Richtlinien für seine eigene Ebene sehen und setzen darf.
+- **Kritischer Fund beim manuellen Browser-Test, außerhalb dieses Pakets, aber hier behoben, weil er die neue Oberfläche blockierte**: die CORS-Konfiguration in `apps/api/src/app.ts` (seit Paket 008/009) setzte nie `methods`, wodurch `@fastify/cors` auf seinen Default `GET,HEAD,POST` zurückfiel — jede PATCH/PUT/DELETE-Anfrage aus dem echten Browser scheiterte am Preflight, unabhängig vom Paket. Betraf nicht nur die neuen Routen, sondern auch bestehende Aktionen auf `/struktur` (Umbenennen, Archivieren, Löschen) und `/mitglieder` (Entfernen, Rollenwechsel). `vitest`/`app.inject()` umgeht CORS vollständig und deckte das nie auf. Jetzt behoben durch einen expliziten `methods`-Wert.
+- **Bekannte, nicht behobene Randbeobachtung** (adversariale Prüfung, Mandantentrennung): `POST /v1/invitations` und `POST /v1/invitations/:id/resend` lesen den Organisationsnamen ebenfalls über den Nutzer-Client (`apps/api/src/app.ts`, vor diesem Paket entstanden) — hätte für einen Abteilungs-Admin ohne Organisationsrolle denselben Fehler wie oben beheben können, war aber nicht Teil dieses Pakets und wurde nicht angefasst.
+- **Restbeobachtung, nicht behoben**: `UpdateMembershipExpiryRequestSchema` akzeptiert ein Datum in der Vergangenheit ohne Warnung — wirkt dann wie ein sofortiger, stiller Entzug der Mitgliedschaft (RLS behandelt eine abgelaufene Mitgliedschaft bereits heute so). Funktional korrekt, aber unbedacht dokumentiert; als bewusst offen gelassen markiert statt spekulativ verändert.

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Archive, ArchiveRestore, Plus, Trash2 } from '@lucide/vue'
 import { z } from 'zod'
+import { PolicySettingSchema, type PolicyFlag, type PolicySetting, type ScopeLevel } from '@vereinsfunk/contracts'
 
 const DepartmentRowSchema = z.object({ id: z.string(), name: z.string(), slug: z.string(), archived_at: z.string().nullable() })
 const TeamRowSchema = z.object({ id: z.string(), name: z.string(), department_id: z.string(), archived_at: z.string().nullable() })
@@ -15,6 +16,8 @@ const loading = ref(true)
 const errorMessage = ref('')
 const departments = ref<DepartmentRow[]>([])
 const teams = ref<TeamRow[]>([])
+const policySettings = ref<PolicySetting[]>([])
+const policyUpdating = ref<string | null>(null)
 
 const teamsByDepartment = computed(() => {
   const map = new Map<string, TeamRow[]>()
@@ -33,9 +36,13 @@ async function load() {
   loading.value = true
   errorMessage.value = ''
   const supabase = useSupabaseClient()
-  const [departmentsResult, teamsResult] = await Promise.all([
+  const [departmentsResult, teamsResult, policySettingsResponse] = await Promise.all([
     supabase.from('departments').select('id, name, slug, archived_at').eq('organization_id', organizationId.value).order('name'),
     supabase.from('teams').select('id, name, department_id, archived_at').eq('organization_id', organizationId.value).order('name'),
+    // Die Berechtigung (canEdit) und der geerbte/effektive Wert kommen fertig aus der API, damit
+    // die Oberflaeche resolve_policy_flag()/die Manage-Permission nicht selbst nachbildet (Plan
+    // 023, "eine Quelle, nicht aus zwei").
+    useAuthHeader().then((headers) => $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/policy-settings`, { headers })),
   ])
   if (departmentsResult.error || teamsResult.error) {
     errorMessage.value = 'Die Vereinsstruktur konnte nicht geladen werden.'
@@ -44,13 +51,15 @@ async function load() {
   }
   const parsedDepartments = DepartmentRowSchema.array().safeParse(departmentsResult.data)
   const parsedTeams = TeamRowSchema.array().safeParse(teamsResult.data)
-  if (!parsedDepartments.success || !parsedTeams.success) {
+  const parsedPolicySettings = PolicySettingSchema.array().safeParse(policySettingsResponse)
+  if (!parsedDepartments.success || !parsedTeams.success || !parsedPolicySettings.success) {
     errorMessage.value = 'Die Vereinsstruktur konnte nicht geladen werden.'
     loading.value = false
     return
   }
   departments.value = parsedDepartments.data
   teams.value = parsedTeams.data
+  policySettings.value = parsedPolicySettings.data
   for (const department of departments.value) renameDraft[department.id] ??= department.name
   for (const team of teams.value) renameDraft[team.id] ??= team.name
   loading.value = false
@@ -203,6 +212,26 @@ function canManageDepartment(departmentId: string) {
 function canManageTeam(departmentId: string) {
   return useCan('team.manage', { organizationId: organizationId.value ?? '', departmentId })
 }
+
+function policySettingFor(scopeLevel: ScopeLevel, scopeId: string): PolicySetting | undefined {
+  return policySettings.value.find((entry) => entry.scope === scopeLevel && entry.scopeId === scopeId)
+}
+
+async function updatePolicySetting(scopeLevel: ScopeLevel, scopeId: string, flag: PolicyFlag, value: boolean | null) {
+  policyUpdating.value = scopeId
+  actionError.value = ''
+  try {
+    const headers = await useAuthHeader()
+    await $fetch(`${config.public.apiBase}/v1/policy-settings`, {
+      method: 'PUT', headers, body: { scope: scopeLevel, scopeId, flag, value },
+    })
+    await load()
+  } catch {
+    actionError.value = 'Die Richtlinie konnte nicht geändert werden.'
+  } finally {
+    policyUpdating.value = null
+  }
+}
 </script>
 
 <template>
@@ -217,6 +246,16 @@ function canManageTeam(departmentId: string) {
     <p v-else-if="errorMessage" class="text-sm text-amber-800">{{ errorMessage }}</p>
     <template v-else>
       <p v-if="actionError" class="mb-4 text-sm text-amber-800">{{ actionError }}</p>
+
+      <section v-if="policySettingFor('organization', organizationId ?? '')" class="card mb-6 p-6">
+        <h2 class="mb-3 font-display text-base font-bold">Vereinsweite Richtlinien</h2>
+        <p class="mb-3 text-[10px] text-[#7b827d]">Gelten für den ganzen Verein, sofern eine Abteilung oder ein Team nicht selbst verschärft.</p>
+        <PolicyFlagToggles
+          :setting="policySettingFor('organization', organizationId ?? '')!"
+          :pending="policyUpdating === organizationId"
+          @change="(flag, value) => updatePolicySetting('organization', organizationId ?? '', flag, value)"
+        />
+      </section>
 
       <section v-if="canManageOrganization" class="card mb-6 p-6">
         <h2 class="mb-3 font-display text-base font-bold">Neue Abteilung</h2>
@@ -250,26 +289,43 @@ function canManageTeam(departmentId: string) {
           </div>
         </div>
 
-        <div class="ml-4 space-y-2 border-l border-[#e8e9e2] pl-4">
-          <div v-for="team in teamsByDepartment.get(department.id) ?? []" :key="team.id" class="flex items-center justify-between gap-3" :class="{ 'opacity-60': team.archived_at }">
-            <input
-              v-model="renameDraft[team.id]"
-              :aria-label="`Team ${team.name} umbenennen`"
-              :placeholder="team.name"
-              class="focus-ring w-full max-w-[240px] rounded-lg border border-transparent bg-transparent px-1 text-sm hover:border-[#dfe0d9] focus:border-[#dfe0d9]"
-              @keyup.enter="renameTeam(team)"
-              @blur="renameTeam(team)"
-            />
-            <div v-if="canManageTeam(department.id)" class="flex shrink-0 gap-2">
-              <span v-if="team.archived_at" class="self-center text-[10px] font-semibold text-[#9aa096]">Archiviert</span>
-              <button type="button" class="focus-ring rounded-lg border border-[#dfe0d9] p-1.5" :title="team.archived_at ? 'Wiederherstellen' : 'Archivieren'" @click="toggleTeamArchived(team)">
-                <ArchiveRestore v-if="team.archived_at" :size="12" />
-                <Archive v-else :size="12" />
-              </button>
-              <button type="button" class="focus-ring rounded-lg border border-[#dfe0d9] p-1.5 text-amber-800" title="Löschen" @click="deleteTeam(team)">
-                <Trash2 :size="12" />
-              </button>
+        <PolicyFlagToggles
+          v-if="policySettingFor('department', department.id)"
+          class="mb-4"
+          :setting="policySettingFor('department', department.id)!"
+          :pending="policyUpdating === department.id"
+          @change="(flag, value) => updatePolicySetting('department', department.id, flag, value)"
+        />
+
+        <div class="ml-4 space-y-3 border-l border-[#e8e9e2] pl-4">
+          <div v-for="team in teamsByDepartment.get(department.id) ?? []" :key="team.id" :class="{ 'opacity-60': team.archived_at }">
+            <div class="flex items-center justify-between gap-3">
+              <input
+                v-model="renameDraft[team.id]"
+                :aria-label="`Team ${team.name} umbenennen`"
+                :placeholder="team.name"
+                class="focus-ring w-full max-w-[240px] rounded-lg border border-transparent bg-transparent px-1 text-sm hover:border-[#dfe0d9] focus:border-[#dfe0d9]"
+                @keyup.enter="renameTeam(team)"
+                @blur="renameTeam(team)"
+              />
+              <div v-if="canManageTeam(department.id)" class="flex shrink-0 gap-2">
+                <span v-if="team.archived_at" class="self-center text-[10px] font-semibold text-[#9aa096]">Archiviert</span>
+                <button type="button" class="focus-ring rounded-lg border border-[#dfe0d9] p-1.5" :title="team.archived_at ? 'Wiederherstellen' : 'Archivieren'" @click="toggleTeamArchived(team)">
+                  <ArchiveRestore v-if="team.archived_at" :size="12" />
+                  <Archive v-else :size="12" />
+                </button>
+                <button type="button" class="focus-ring rounded-lg border border-[#dfe0d9] p-1.5 text-amber-800" title="Löschen" @click="deleteTeam(team)">
+                  <Trash2 :size="12" />
+                </button>
+              </div>
             </div>
+            <PolicyFlagToggles
+              v-if="policySettingFor('team', team.id)"
+              class="mt-1.5"
+              :setting="policySettingFor('team', team.id)!"
+              :pending="policyUpdating === team.id"
+              @change="(flag, value) => updatePolicySetting('team', team.id, flag, value)"
+            />
           </div>
           <form v-if="!department.archived_at && canManageTeam(department.id)" class="flex gap-2 pt-1" @submit.prevent="createTeam(department.id)">
             <input v-model="newTeamNameByDepartment[department.id]" placeholder="Neues Team" class="focus-ring flex-1 rounded-lg border border-[#dfe0d9] p-2 text-xs" />
