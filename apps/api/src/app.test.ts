@@ -61,6 +61,20 @@ function membershipRowsStub(rows: { id: string }[]) {
   return { select: () => ({ eq: () => ({ eq: () => ({ or: () => ({ limit: async () => ({ data: rows, error: null }) }) }) }) }) }
 }
 
+// Ein generischer Query-Builder-Stub fuer Paket 011: die Aufrufer verketten eq()/is()/in() in
+// wechselnder Reihenfolge und schliessen entweder mit maybeSingle()/single() ab oder awaiten die
+// Kette direkt (kein PostgREST-Query-Builder ist wirklich ein Promise, aber beide sind thenable).
+// chain() bildet beides identisch nach, unabhaengig davon, welche Filter dazwischen aufgerufen wurden.
+function chain(result: { data: unknown; error: unknown }): PromiseLike<{ data: unknown; error: unknown }> & Record<string, unknown> {
+  const builder: Record<string, unknown> = {
+    eq: () => builder, is: () => builder, in: () => builder, order: () => builder, limit: () => builder, select: () => builder,
+    maybeSingle: async () => result,
+    single: async () => result,
+    then: (resolve: (value: { data: unknown; error: unknown }) => unknown) => resolve(result),
+  }
+  return builder as PromiseLike<{ data: unknown; error: unknown }> & Record<string, unknown>
+}
+
 const apps: Awaited<ReturnType<typeof buildApp>>[] = []
 afterEach(async () => Promise.all(apps.splice(0).map((app) => app.close())))
 
@@ -178,7 +192,21 @@ describe('api', () => {
   })
 
   it('accepts a valid token with the required permission', async () => {
-    const app = await startApp({ roleProvider: grantingRoleProvider })
+    // Paket 011: die Route persistiert jetzt echt und prueft evaluateSubmitPermission vorher --
+    // ohne eigene policy_settings/member_review_trust-Zeilen bleiben beide Pruefungen permissiv.
+    const submissionClients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'policy_settings') return chain({ data: null, error: null })
+            if (table === 'member_review_trust') return chain({ data: [], error: null })
+            if (table === 'submissions') return { insert: () => chain({ data: { id: '10000000-4000-4000-8000-000000000001', status: 'draft' }, error: null }) }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used by this test') } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: submissionClients })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'POST',
