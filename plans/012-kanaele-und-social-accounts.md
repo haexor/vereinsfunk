@@ -17,6 +17,10 @@ Geplant auf `b5c2eda6` am 2026-08-04.
 - `apps/web/app/pages/einstellungen.vue:1` behauptet „Instagram Verbunden · @sv_nordstadt“ und „Facebook Verbunden · SV Nordstadt 1921“ als reinen Text.
 - `apps/web/app/components/PlatformIcon.vue` existiert und wird in Listen benutzt, ist aber nirgends an echte Verbindungen gekoppelt.
 
+## Bereits vorhanden aus Paket 011
+
+Paket 011 hat `channel_quotas` bereits angelegt: eine Zeile pro Scope/Periode mit einer **nullable** Fremdschlüsselspalte `social_connection_id` auf `social_connections`, plus vier CRUD-Endpunkte (`GET/POST/PATCH/DELETE /v1/channel-quotas`) und `public.count_publications_in_period()`. Vereinsweite Kontingente (`social_connection_id = null`) sind heute nutzbar; kanalspezifische Kontingente lassen sich technisch schon anlegen, sobald irgendeine `social_connections`-Zeile existiert — vor diesem Paket nur per manuellem Insert, nicht über die Produkt-UI (die es für Kanäle noch nicht gibt). `policy_settings.allowed_channel_ids` (ebenfalls aus 011) prüft nur UUID-Syntax, keine Existenz — dieses Paket sollte das nicht als bereits abgesichert annehmen.
+
 ## Scope
 
 - Migration: Tokenspalten aus dem Lesepfad nehmen, Kanalzuordnung je Scope, verantwortliche Person je Kanal, Richtlinie für eigene Abteilungskanäle
@@ -202,6 +206,8 @@ export interface SecretBox {
 - dem `publish-content`-Workflow unmittelbar vor dem Provideraufruf
 
 Die dritte Prüfung ist nicht redundant: zwischen Planung und Ausführung kann ein Token ablaufen, eine Freigabe entzogen oder ein Kontingent erschöpft werden. Fällt sie negativ aus, wird die Publikation auf `action_required` gesetzt und **nicht** blind wiederholt — das entspricht der Regel aus `plans/README.md`, nach einem unklaren Ergebnis zu reconciliieren statt zu retryen.
+
+**Wichtig für die Umsetzung**: der tatsächliche Einplanungspfad aus Paket 011 ist `POST /v1/post-versions/:id/schedule` → die SQL-Funktion `public.schedule_publication` (`security definer`, `grant execute … to authenticated` — direkt per RPC erreichbar, wie jede privilegierte Funktion in diesem Projekt). Diese Funktion kennt heute nur `allowedChannelIds` und das Kontingent; sie kennt keine Kanal-Scope-Zuordnung, keinen `archived`/`confidential`-Status und keine verantwortliche Person, weil diese Konzepte erst mit diesem Paket entstehen. `resolveAvailableChannels(scope)` allein reicht nicht — wer die neuen Prüfungen durchsetzen will, muss den **Funktionskörper von `schedule_publication` selbst ändern**, sonst bleibt der direkte RPC-Aufruf ein Bypass genau der Art, die Paket 011 adversarial bei `request_approval` gefunden und beheben musste (siehe `plans/011-regelwerk-richtlinien-und-kontingente.md`, Abschnitt „Umsetzung: Ergebnis und Abweichungen vom Plan“).
 
 ### 5. Oberfläche
 

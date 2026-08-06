@@ -39,7 +39,7 @@ Stand: 2026-08-04, geplant auf `b5c2eda6`. Die Pakete 001–007 bauen die Inhalt
 | 009 | [Onboarding: Verein anlegen](009-onboarding-verein-anlegen.md) | 008 | erledigt |
 | 010 | [Abteilungen, Teams, Mitglieder und Einladungen](010-abteilungen-teams-mitglieder-einladungen.md) | 008, 009 | erledigt |
 | 023 | [Sichtbarkeit, Mitgliederverwaltung und Richtliniengrundlage](023-sichtbarkeit-mitgliederverwaltung-und-richtliniengrundlage.md) | 010 | erledigt |
-| 011 | [Regelwerk: Freigaberouten, Vertrauen je Mitglied und Kontingente](011-regelwerk-richtlinien-und-kontingente.md) | 010, 023 | bereit |
+| 011 | [Regelwerk: Freigaberouten, Vertrauen je Mitglied und Kontingente](011-regelwerk-richtlinien-und-kontingente.md) | 010, 023 | erledigt; Freigabe-/Einplanungsendpunkte sind echt, aber ohne die Inhalts-Pipeline (001–007) fehlt weiterhin der Weg, wie ein `post_version`-Datensatz entsteht — end-to-end erst nach 005/006 vorführbar |
 | 012 | [Kanäle und Social-Accounts](012-kanaele-und-social-accounts.md) | 011 | bereit; Meta App Review als externes Gate |
 | 013 | [Marke, Branding-Assets und Schriften](013-marke-branding-assets-und-schriften.md) | 009 | bereit |
 | 014 | [Integrationsrahmen und Mitgliederverzeichnis](014-integrationsrahmen-und-mitgliederverzeichnis.md) | 010 | bereit; Produktivbetrieb erst nach 020 |
@@ -50,8 +50,9 @@ Stand: 2026-08-04, geplant auf `b5c2eda6`. Die Pakete 001–007 bauen die Inhalt
 | 019 | [Mannschaften, Spielpläne und Veranstaltungen](019-mannschaften-spielplaene-und-veranstaltungen.md) | 014 | bereit |
 | 020 | [Rechtliche Pflichten und Datenschutzbetrieb](020-rechtliche-pflichten-und-datenschutzbetrieb.md) | 009, 012, 015 | bereit |
 | 021 | [Abomodelle, Speicherkontingent und Nutzungsgrenzen](021-abomodelle-und-speicherkontingent.md) | 009, 010, 011 | bereit; Zahlungsabwicklung als eigenes Vorhaben |
+| 024 | [Freigaberoute bewusst neu auflösen](024-freigaberoute-neu-aufloesen.md) | 011 | Entwurf aus der zweiten Review-Runde zu 011; noch nicht bestätigt |
 
-Empfohlener Ablauf: **008 und 009 unmittelbar hintereinander** — ohne Authentifizierung lässt sich kein Prototyp-Datensatz ehrlich ersetzen, und ohne Onboarding zeigt die Oberfläche nach der Anmeldung nichts. Danach 010, dann **023** und darauf 011 als Verwaltungsgrundlage, 013 parallel dazu. Anschließend 012, dann 014 mit 019 als erstem Nutzen des Integrationsrahmens, dann 015. 016 ist ab 011 jederzeit möglich; 017 und 018 hängen an externen Gates. **020 vor dem Produktivbetrieb mit echten Personendaten.** 021 ist ab 011 möglich und vor dem ersten zahlenden Verein nötig — ohne Kontingent ist der Speicher eines geteilten Systems unbegrenzt beschreibbar.
+Empfohlener Ablauf: **008 und 009 unmittelbar hintereinander** — ohne Authentifizierung lässt sich kein Prototyp-Datensatz ehrlich ersetzen, und ohne Onboarding zeigt die Oberfläche nach der Anmeldung nichts. Danach 010, dann **023** und darauf 011 als Verwaltungsgrundlage, 013 parallel dazu. Anschließend 012, dann 014 mit 019 als erstem Nutzen des Integrationsrahmens, dann 015. 016 ist ab 011 jederzeit möglich; 017 und 018 hängen an externen Gates. **020 vor dem Produktivbetrieb mit echten Personendaten.** 021 ist ab 011 möglich und vor dem ersten zahlenden Verein nötig — ohne Kontingent ist der Speicher eines geteilten Systems unbegrenzt beschreibbar. **024** ist ab 011 möglich und wird dringlicher, sobald 004 den „Stufen als überfällig markieren“-Job verdrahtet oder ein Verein seine erste benannte Prüferin verliert; es ist der einzige geplante Ausweg aus einer festhängenden Freigabe.
 
 ## Dritte Ebene: Plattform-Administration (SaaS-Betreiber)
 
@@ -63,6 +64,8 @@ Orthogonal zur Serie 008–020: Diese Pakete betreffen den SaaS-Betreiber selbst
 
 Hinweis zu 023: das Paket ist beim Review von 010 aus 011 herausgelöst worden (Sichtbarkeit, Mitglieder-Detailebene, Einladungsrecht als Richtlinie) und gehört **direkt nach 010**, vor 011 — es legt `policy_settings` und die Vererbungsauflösung an, die 011 dann erweitert. Die Nummer folgt nur dem nächsten freien Platz; eine Umnummerierung von 011–022 wäre teurer als diese Notiz. 012 nutzt `policy_scope` aus 023 mit.
 
+Hinweis zu 011: das Paket baut die vollständige Regel-Engine (Migration, `authz`-Funktionen, Domain-Funktionen, API-Endpunkte, Oberfläche) für Freigaberouten, Vertrauen je Mitglied und Kontingente — aber **nicht** die Inhalts-Pipeline (Submission → Post → Post-Version), die Teil der ersten Planserie (001–007) ist und weiterhin fehlt. `POST /v1/submissions` persistiert seit 011 echt, erzeugt aber keinen `post`/keine `post_version`. Die drei anderen Durchsetzungsstellen (Freigabe anfordern, entscheiden, einplanen) sind echte, funktionsfähige Endpunkte und RPCs — nur ohne einen Weg, wie eine echte Nutzerin je eine `post_version` anlegt, die sie durchlaufen könnte. `post_versions.effective_config_snapshot` bleibt deshalb strukturell ungefüllt, bis Paket 005/006 diesen Anlegepfad bauen. Details und ein in der adversarialen Prüfung gefundener, in 011 selbst behobener kritischer Fund (`request_approval` vertraute Client-Eingaben blind) stehen in `plans/011-regelwerk-richtlinien-und-kontingente.md`, Abschnitt „Umsetzung: Ergebnis und Abweichungen vom Plan“.
+
 Hinweis zu 021: dessen `platform.manage`-Endpunkt (operative Speicher-/Kontingent-Übersteuerung, `plans/021-abomodelle-und-speicherkontingent.md:245,281`) setzt die in 022 gebaute Plattform-Admin-Identität voraus — die Package-Nummern zeigen hier in die falsche Reihenfolge.
 
 ### Kritischster Befund
@@ -70,6 +73,8 @@ Hinweis zu 021: dessen `platform.manage`-Endpunkt (operative Speicher-/Kontingen
 `apps/api/src/app.ts:66-72` ist die gesamte Autorisierung der API. `requireAuth` prüft nur, **ob** ein `authorization`-Header vorhanden ist, und das ausschließlich bei `NODE_ENV === 'production'`. Der Inhalt wird nie gelesen, keine Signatur geprüft, keine Permission ausgewertet. In Entwicklung und Test ist jeder Endpunkt offen. Das behebt Paket 008 und ist der Grund, warum es zuerst kommt. **✓ Behoben in Paket 008**: echte JWT-Verifikation und `requirePermission` an allen Endpunkten, die Scope-Daten in der Anfrage tragen.
 
 Zweitwichtigster Befund: `social_connections` gewährt `authenticated` `select` auf die ganze Tabelle einschließlich `token_ciphertext` (`202608030001:125,131`). Behoben in Paket 012.
+
+Dritter Befund, adversarial in Paket 011 gefunden: `public.request_approval` (per RPC direkt für `authenticated` erreichbar, wie jede privilegierte Funktion in diesem Projekt) übernahm `stages` inklusive `reviewerSnapshot` sowie `self_approval_allowed`/`allow_same_reviewer_across_stages` ungeprüft vom Aufrufer — jede Person mit `post.submit` hätte eine fremde `userId` als Prüfer eintragen, mit leerer Stufenliste jede Prüfung inklusive der Minderjährigenstufe umgehen und sich selbst freigeben können. **✓ Behoben in Paket 011**: die Funktion berechnet die sicherheitsrelevanten Werte selbst aus `policy_settings` und prüft jede genannte Person gegen echte Vereinsmitgliedschaft. Details in `plans/011-regelwerk-richtlinien-und-kontingente.md`, Abschnitt „Umsetzung: Ergebnis und Abweichungen vom Plan“.
 
 ## Rückbau-Inventar: jeder Prototyp-Datensatz und sein Ersatz
 
@@ -91,23 +96,23 @@ Vollständige Liste der erfundenen Daten im Anwendungscode, mit dem Paket, das s
 | `pages/erstellen.vue:14` | `useState('content-scope')`, das nirgends gesetzt wird | ✓ 008 |
 | `pages/erstellen.vue:25-29,41,47` | `localPreview()` erzeugt eine Vorschau ohne API und ohne Persistenz | ✓ 008 (entfällt vollständig) |
 | `pages/erstellen.vue:12` | leere Felder `title`, `date`, `location` bei jedem Beitrag neu | 019 (vorbelegt mit Herkunftsangabe) |
-| `pages/freigaben.vue:3-6` | zwei erfundene Beiträge, „Minderjährige · Einwilligung geprüft“ als Text | 015 |
-| `pages/freigaben.vue:7,12` | Freigabe nur im lokalen State, kein Serveraufruf | 015 |
+| `pages/freigaben.vue:3-6` | zwei erfundene Beiträge, „Minderjährige · Einwilligung geprüft“ als Text | ✓ 011 (echte Stufen aus `GET /v1/approval-stages/mine`, ehrlicher Leerzustand statt Fakedaten — ursprünglich 015 zugeordnet, 011 baute den dafür nötigen Mechanismus schon mit) |
+| `pages/freigaben.vue:7,12` | Freigabe nur im lokalen State, kein Serveraufruf | ✓ 011 (`POST /v1/approval-stages/:id/decide`) |
 | `pages/kalender.vue:1` | fest „August 2026“, fünf Fantasietermine, hartkodierte Vorlauftage | ✓ 009 (echte `posts.scheduled_for`, navigierbarer Monat, Empty State — der Plan zu 009 listete diese Zeile bereits in seinem eigenen Rückbau-Abschnitt, diese Tabelle hier nicht; beim Abgleich in der Adversarial-Phase von 009 nachgezogen), 019 (echte Anlässe/Spielpläne als Inhalt der Termine) |
 | `pages/auswertung.vue:1` | vier erfundene Plattformkennzahlen, `bars`-Array ohne Skala und Quelle | 016, 017 |
 | `pages/marke.vue:1` | Farben und Tonalität im lokalen State, „Speichern“ setzt nur ein Flag | ✓ 009 (`PUT /v1/organizations/:id/brand`, echter Ladezustand, echte Fehler), 013 (Schrift-Upload, Abteilungsbranding) |
 | `pages/mitglieder.vue:1` | vier hartkodierte Namen, „Einladen“ ohne Handler | ✓ 010 (echte Mitglieder/Rollen/Einladungen aus der Datenbank) |
-| `pages/einstellungen.vue:1` | fünf behauptete Einstellungen, jeder Button ohne Handler | 011 (Freigabe, Minderjährige), 012 (Kanäle), 020 (Löschfrist) |
+| `pages/einstellungen.vue:1` | fünf behauptete Einstellungen, jeder Button ohne Handler | ✓ 011 (Freigabe, Minderjährigenschutz, Kontingente — echte scopeabhängige Richtlinienseite), 012 (Kanäle noch offen), 020 (Löschfrist noch offen) |
 | `apps/web/nuxt.config.ts:14-21` | Schriften von `fonts.googleapis.com` bei jedem Aufruf | 013, geprüft in 020 |
 | `packages/config/src/index.ts:17-20` | `PUBLISHING_PROVIDER: 'mixpost'`, Mixpost-URL und -Token — widerspricht der Meta-Entscheidung | 012 |
-| `packages/domain/src/index.ts:47-87` | `mergeEffectiveConfig` existiert korrekt, wird aber nur von Tests aufgerufen | 011 |
-| `post_versions.effective_config_snapshot` | Spalte ist `not null` und wird von nichts gefüllt | 011, 013 |
+| `packages/domain/src/index.ts:47-87` | `mergeEffectiveConfig` existiert korrekt, wird aber nur von Tests aufgerufen | ✓ 011 (aus `apps/api/src/app.ts` über `resolveEffectiveConfig`/`computeRuleEntry` aufgerufen, kein Testpfad mehr) |
+| `post_versions.effective_config_snapshot` | Spalte ist `not null` und wird von nichts gefüllt | **bewusst weiterhin offen nach 011**: es gibt keinen Code, der überhaupt eine `post_versions`-Zeile anlegt (Inhalts-Pipeline 001–007 fehlt) — 011 kann die Spalte deshalb strukturell nicht befüllen, siehe Plan 011 „Umsetzung: Ergebnis und Abweichungen“. Bleibt bei 013 bzw. bei wer auch immer den Anlegepfad baut. |
 | `evaluateMediaGate` `consentValid` | Blocker existiert, Wert wird nie bestimmt | 015 |
 | `SafetyFlagSchema` `sensitive_data`, `minor`, `missing_consent` | drei von vier Flags werden nirgends bestimmt; `FakeContentGenerator` setzt ausschließlich `uncertain_fact` (`packages/content-engine/src/index.ts:40`) | 015 (Textprüfung), 002 (Medien) |
 | Bucket-Größen ohne Vereinsgrenze | `file_size_limit` begrenzt eine Datei, nicht die Summe; ein Verein kann unbegrenzt viele 100-MB-Videos hochladen | 021 |
 | `WorkflowNameSchema` `collect-analytics` | Name reserviert, Workflow nicht implementiert | 017 |
 | `apps/api/src/app.ts:29-32` | `LocalUploadService` liefert `https://storage.invalid/...` | 002 (008 hat die Route nur mit echter Autorisierung versehen, den Stub aber nicht ersetzt — bleibt offen) |
-| `apps/api/src/app.ts:70-100` | `/v1/submissions` persistiert nichts | 011 (008 hat die Route nur mit echter Autorisierung versehen, die Persistenz aber nicht ergänzt — bleibt offen) |
+| `apps/api/src/app.ts:70-100` | `/v1/submissions` persistiert nichts | ✓ 011 (echtes `insert` in `submissions`, `evaluateSubmitPermission` davor; die Route erzeugt weiterhin keinen `post`/keine `post_version` — das bleibt Aufgabe der Inhalts-Pipeline 001–007) |
 | `README.md:35` | „funktioniert im lokalen Demo-Modus auch ohne Datenbank und API“ | ✓ 008 (Aussage entfernt) |
 
 Zu den Zeilenangaben: die **offenen** Zeilen dieser Tabelle zeigen auf den aktuellen Stand und sind gegen den Code geprüft. Die mit ✓ markierten Zeilen beschreiben einen Zustand, den Paket 008 beseitigt hat — ihre Zeilennummern beziehen sich auf den Baseline-Commit `b5c2eda6` und zeigen heute auf anderen oder gelöschten Code. Sie bleiben als Nachweis stehen, was ersetzt wurde, und sind nicht als Sprungziel gedacht.

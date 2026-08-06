@@ -6,20 +6,28 @@ import {
   AcceptInvitationRequestSchema,
   AcceptInvitationResponseSchema,
   AddPlatformAdminRequestSchema,
+  ApprovalRequestSchema,
+  ApprovalStageSchema,
   BrandLogoUploadResponseSchema,
   BrandLogoVariantSchema,
+  ChannelQuotaSchema,
+  CreateChannelQuotaRequestSchema,
   CreateDepartmentRequestSchema,
   CreateInvitationRequestSchema,
   CreateLlmProviderConfigurationRequestSchema,
   CreateMembershipRequestSchema,
   CreateOrganizationRequestSchema,
   CreateOrganizationResponseSchema,
+  CreatePolicyReviewerRequestSchema,
   CreateSubmissionSchema,
   CreateTeamRequestSchema,
+  DecideApprovalStageRequestSchema,
+  DecideApprovalStageResponseSchema,
   DepartmentSchema,
   HealthSchema,
   InvitationSchema,
   LlmProviderConfigurationSchema,
+  MemberReviewTrustSchema,
   MemberRoleEntrySchema,
   rolesForScopeLevel,
   MemberSchema,
@@ -35,25 +43,49 @@ import {
   PlatformSettingKeySchema,
   PlatformSettingSchema,
   PlatformSettingValueSchemas,
+  PolicyReviewerSchema,
+  PolicyRuleSettingSchema,
   PolicySettingSchema,
+  PublicationSchema,
+  RequestApprovalResponseSchema,
   ScopeLevelSchema,
+  SchedulePublicationRequestSchema,
+  SetMemberReviewTrustRequestSchema,
   SubmissionAcceptedSchema,
   TeamSchema,
+  UpdateChannelQuotaRequestSchema,
   UpdateDepartmentRequestSchema,
   UpdateLlmProviderConfigurationRequestSchema,
   UpdateMembershipExpiryRequestSchema,
   UpdateMembershipRequestSchema,
   UpdatePlatformSettingRequestSchema,
+  UpdatePolicyRulesRequestSchema,
   UpdatePolicySettingRequestSchema,
   UpdateTeamRequestSchema,
   UsageMetricsQuerySchema,
   UsageMetricsResponseSchema,
   UuidSchema,
+  type OutputFormat,
   type PolicyFlagState,
+  type PolicyRuleValues,
+  type ReviewerRef,
   type ScopeLevel,
 } from '@vereinsfunk/contracts'
 import { canAssignRole, canRemoveRole, hasPermission, type Permission, type Role } from '@vereinsfunk/authorization'
-import { createIdempotencyKey, evaluateMediaGate } from '@vereinsfunk/domain'
+import {
+  createIdempotencyKey,
+  evaluateMediaGate,
+  evaluateSubmitPermission,
+  mergeEffectiveConfig,
+  resolveEffectiveConfig,
+  resolveReviewers,
+  resolveReviewRoute,
+  type ConfigOverride,
+  type MembershipRecord,
+  type ReviewerRef as DomainReviewerRef,
+  type StageDefinition,
+  type TrustRecord,
+} from '@vereinsfunk/domain'
 import { FakeOrchestrator, priorityToHatchet, type Orchestrator } from '@vereinsfunk/orchestration'
 import Fastify, { LogController, type FastifyInstance, type FastifyServerOptions } from 'fastify'
 import { randomUUID } from 'node:crypto'
@@ -344,7 +376,57 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (!(await requireAuth(request, reply))) return
     const input = CreateSubmissionSchema.parse(request.body)
     if (!(await requirePermission(request, reply, 'post.create', { organizationId: input.organizationId, departmentId: input.departmentId }))) return
-    const submissionId = randomUUID()
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+
+    // Paket 011: evaluateSubmitPermission vor der ersten Persistenz -- Berechtigung im Scope ist
+    // durch requirePermission oben schon bestaetigt, Vertrauen/Preset/Format sind es noch nicht.
+    const config = await resolveScopedEffectiveConfig(client, input.organizationId, input.departmentId, input.teamId ?? null)
+    const trust = await fetchMemberTrust(client, request.auth!.userId, input.organizationId, input.departmentId, input.teamId ?? null)
+    const submitCheck = evaluateSubmitPermission({
+      hasCreatePermission: true,
+      // fetchMemberTrust liefert bereits alle zutreffenden Ebenen (Verein, die Abteilung, das
+      // Team) -- ein find() auf nur EINE Ebene liesse sich durch die Wahl von teamId umgehen
+      // (Abteilungssperre bleibt unbeachtet) oder pruefte die Vereinsebene nie (beim
+      // Rechte-Review gefunden). Verschaerfung wirkt wie ueberall sonst: jede Ebene kann
+      // sperren, keine kann eine Sperre einer anderen Ebene aufheben.
+      submitAllowed: trust.every((record) => record.submitAllowed !== false),
+      presetSlug: input.presetSlug,
+      requestedFormats: input.requestedFormats,
+      allowedPresets: config.policies.allowedPresets,
+      allowedFormats: config.policies.allowedFormats,
+    })
+    if (!submitCheck.allowed) {
+      // submit_not_allowed ist eine Berechtigungsfrage (das Vertrauen dieser Person, Plan 011:
+      // "Einreichen bei submit_allowed = false -> 403"); preset_not_allowed/format_not_allowed sind
+      // inhaltliche Verstoesse gegen die Richtlinie dieses Scopes -> 422 mit maschinenlesbarem Grund.
+      const status = submitCheck.reason === 'submit_not_allowed' ? 403 : 422
+      return reply.code(status).send({ error: submitCheck.reason, correlationId: request.id })
+    }
+
+    // forbiddenTopics wird additiv zu doNotMention ergaenzt (Plan 011, "Durchsetzung an vier
+    // Stellen") -- die Content-Engine kennt beide nicht getrennt, nur eine gemeinsame Verbotsliste.
+    const insert = await client
+      .from('submissions')
+      .insert({
+        organization_id: input.organizationId,
+        department_id: input.departmentId,
+        team_id: input.teamId ?? null,
+        content_type: input.presetSlug,
+        preset_slug: input.presetSlug,
+        communication_goal: input.communicationGoal,
+        requested_formats: input.requestedFormats,
+        facts: input.sourceMaterial.facts,
+        source_material: {
+          ...input.sourceMaterial,
+          doNotMention: Array.from(new Set([...input.sourceMaterial.doNotMention, ...config.policies.forbiddenTopics])),
+        },
+        source_revision: input.sourceRevision,
+        created_by: request.auth!.userId,
+      })
+      .select('id, status')
+      .single()
+    if (insert.error) throw insert.error
+    const submissionId = insert.data.id as string
     const correlationId = request.id
     const generated = await new FakeContentGenerator().generate(input)
     const accepted = SubmissionAcceptedSchema.parse({
@@ -774,12 +856,21 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     })
   }
 
+  // Eine befristete Mitgliedschaft oder Befreiung ist nach expires_at wirkungslos. Jede Abfrage auf
+  // organization_memberships/department_memberships/team_memberships/member_review_trust, deren
+  // Ergebnis eine Berechtigung traegt, filtert damit -- dieselbe Bedingung, die die authz-Funktionen
+  // in SQL verwenden ("expires_at is null or expires_at > now()"). Als gemeinsamer Helfer, damit die
+  // Stellen nicht auseinanderlaufen (beim Review dieses Pakets gefunden: drei Stellen ohne Filter).
+  function notExpiredFilter(): string {
+    return `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`
+  }
+
   // Deckt dieselbe Mitgliedschaft ab wie authz.is_any_member_of_organization (RLS-Grundlage von
   // policy_settings_select): Organisationsrolle ODER Abteilungs- ODER Teammitgliedschaft, nicht
   // nur eine Organisationsrolle wie roleProvider.rolesForScope(..., { organizationId }) allein
   // prueft.
   async function isAnyMemberOfOrganization(client: SupabaseClient, userId: string, organizationId: string): Promise<boolean> {
-    const notExpired = `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`
+    const notExpired = notExpiredFilter()
     const [org, department, team] = await Promise.all([
       client.from('organization_memberships').select('id').eq('organization_id', organizationId).eq('user_id', userId).or(notExpired).limit(1),
       client.from('department_memberships').select('id').eq('organization_id', organizationId).eq('user_id', userId).or(notExpired).limit(1),
@@ -922,6 +1013,426 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     // canEdit ist hier immer true: requirePermission oben hat POLICY_MANAGE_PERMISSION[input.scope]
     // fuer genau diesen Scope bereits bestaetigt, ein erneuter rolesForScope-Aufruf waere redundant.
     return reply.code(200).send(buildPolicySetting(input.scope, input.scopeId, name, ownRow, ancestorInviteAllowed, ancestorPostsVisible, true))
+  })
+
+  // --- Paket 011: Freigaberouten, Vertrauen je Mitglied, Kontingente -------------------------
+
+  const POLICY_RULE_COLUMNS =
+    'id, submit_requires_permission, review_required, review_mode, review_stage_label, review_minimum_approvals, review_deadline_hours, minor_approval_required, self_approval_allowed, allow_same_reviewer_across_stages, allow_review_exemptions, media_requires_consent_check, allowed_presets, allowed_formats, allowed_channel_ids, forbidden_topics, required_hashtags, tone'
+  interface PolicyRuleRow {
+    id: string
+    review_required: boolean | null
+    review_mode: 'any_with_permission' | 'named' | null
+    review_stage_label: string | null
+    review_minimum_approvals: number | null
+    review_deadline_hours: number | null
+    minor_approval_required: boolean | null
+    self_approval_allowed: boolean | null
+    allow_same_reviewer_across_stages: boolean | null
+    allow_review_exemptions: boolean | null
+    media_requires_consent_check: boolean | null
+    allowed_presets: string[] | null
+    allowed_formats: OutputFormat[] | null
+    allowed_channel_ids: string[] | null
+    forbidden_topics: string[]
+    required_hashtags: string[]
+    tone: string | null
+  }
+
+  // Alle Regelzeilen einer Organisation in EINER Abfrage, indiziert je Ebene -- dasselbe Muster wie
+  // fetchPolicyRows fuer die zwei booleschen Flags aus 023. Eine Auflösung je Ebene mit eigener
+  // Abfrage erzeugte ueber alle Ebenen hinweg eine N+1-Kette (bei 10 Abteilungen und 40 Teams 141
+  // Abfragen auf policy_settings allein, beim Review dieses Pakets gefunden).
+  interface PolicyRuleRows {
+    orgRow: PolicyRuleRow | null
+    deptRowById: Map<string, PolicyRuleRow>
+    teamRowById: Map<string, PolicyRuleRow>
+  }
+
+  async function fetchPolicyRuleRows(client: SupabaseClient, organizationId: string): Promise<PolicyRuleRows> {
+    const rows = await client.from('policy_settings').select(`${POLICY_RULE_COLUMNS}, scope, department_id, team_id`).eq('organization_id', organizationId)
+    if (rows.error) throw rows.error
+    const data = rows.data as (PolicyRuleRow & { scope: ScopeLevel; department_id: string | null; team_id: string | null })[]
+    return {
+      orgRow: data.find((row) => row.scope === 'organization') ?? null,
+      deptRowById: new Map(data.filter((row) => row.scope === 'department').map((row) => [row.department_id as string, row])),
+      teamRowById: new Map(data.filter((row) => row.scope === 'team').map((row) => [row.team_id as string, row])),
+    }
+  }
+
+  function ownPolicyRuleRow(rows: PolicyRuleRows, scope: ScopeLevel, departmentId: string | null, teamId: string | null): PolicyRuleRow | null {
+    if (scope === 'organization') return rows.orgRow
+    if (scope === 'department') return rows.deptRowById.get(departmentId!) ?? null
+    return rows.teamRowById.get(teamId!) ?? null
+  }
+
+  // Nur die Felder mit echter Vererbungssemantik fliessen in mergeEffectiveConfig ein.
+  // review_required/review_mode/review_stage_label/review_minimum_approvals/review_deadline_hours
+  // und allow_review_exemptions sind additiv/knotenlokal (Plan 011, "Freigabestufen: additiv") --
+  // sie werden direkt aus der eigenen Zeile gelesen, nicht ueber Ebenen gemischt.
+  function toRuleOverride(row: PolicyRuleRow | null): ConfigOverride {
+    if (!row) return {}
+    return {
+      policies: {
+        ...(row.review_required !== null ? { approvalRequired: row.review_required } : {}),
+        ...(row.minor_approval_required !== null ? { minorApprovalRequired: row.minor_approval_required } : {}),
+        forbiddenTopics: row.forbidden_topics,
+        requiredHashtags: row.required_hashtags,
+        ...(row.self_approval_allowed !== null ? { selfApprovalAllowed: row.self_approval_allowed } : {}),
+        ...(row.allow_same_reviewer_across_stages !== null ? { allowSameReviewerAcrossStages: row.allow_same_reviewer_across_stages } : {}),
+        ...(row.media_requires_consent_check !== null ? { mediaRequiresConsentCheck: row.media_requires_consent_check } : {}),
+        allowedPresets: row.allowed_presets,
+        allowedFormats: row.allowed_formats,
+        allowedChannelIds: row.allowed_channel_ids,
+      },
+    }
+  }
+
+  function mapOwnRowToRuleValues(row: PolicyRuleRow | null): PolicyRuleValues {
+    return {
+      reviewRequired: row?.review_required ?? null,
+      reviewMode: row?.review_mode ?? null,
+      reviewStageLabel: row?.review_stage_label ?? null,
+      reviewMinimumApprovals: row?.review_minimum_approvals ?? null,
+      reviewDeadlineHours: row?.review_deadline_hours ?? null,
+      minorApprovalRequired: row?.minor_approval_required ?? null,
+      selfApprovalAllowed: row?.self_approval_allowed ?? null,
+      allowSameReviewerAcrossStages: row?.allow_same_reviewer_across_stages ?? null,
+      allowReviewExemptions: row?.allow_review_exemptions ?? null,
+      mediaRequiresConsentCheck: row?.media_requires_consent_check ?? null,
+      allowedPresets: row?.allowed_presets ?? null,
+      allowedFormats: row?.allowed_formats ?? null,
+      allowedChannelIds: row?.allowed_channel_ids ?? null,
+      forbiddenTopics: row?.forbidden_topics ?? [],
+      requiredHashtags: row?.required_hashtags ?? [],
+      tone: row?.tone ?? null,
+    }
+  }
+
+  function mapConfigToRuleValues(config: ReturnType<typeof resolveEffectiveConfig>, ownRow: PolicyRuleRow | null): PolicyRuleValues {
+    return {
+      reviewRequired: ownRow?.review_required ?? null,
+      reviewMode: ownRow?.review_mode ?? null,
+      reviewStageLabel: ownRow?.review_stage_label ?? null,
+      reviewMinimumApprovals: ownRow?.review_minimum_approvals ?? null,
+      reviewDeadlineHours: ownRow?.review_deadline_hours ?? null,
+      minorApprovalRequired: config.policies.minorApprovalRequired,
+      selfApprovalAllowed: config.policies.selfApprovalAllowed,
+      allowSameReviewerAcrossStages: config.policies.allowSameReviewerAcrossStages,
+      allowReviewExemptions: ownRow?.allow_review_exemptions ?? null,
+      mediaRequiresConsentCheck: config.policies.mediaRequiresConsentCheck,
+      allowedPresets: config.policies.allowedPresets ? [...config.policies.allowedPresets] : null,
+      allowedFormats: config.policies.allowedFormats ? ([...config.policies.allowedFormats] as OutputFormat[]) : null,
+      allowedChannelIds: config.policies.allowedChannelIds ? [...config.policies.allowedChannelIds] : null,
+      forbiddenTopics: [...config.policies.forbiddenTopics],
+      requiredHashtags: [...config.policies.requiredHashtags],
+      tone: config.tone ?? null,
+    }
+  }
+
+  // Loest die effektive Konfiguration einer Ebene aus den bereits geladenen Regelzeilen auf, indem
+  // sie die Kette Verein -> (Abteilung) -> (Team) durchlaeuft (Plan 011 gilt fuer GET-alle wie
+  // PUT-eine-Ebene gleich).
+  function computeRuleEntry(
+    rows: PolicyRuleRows, scope: ScopeLevel, scopeId: string, departmentIdForTeam: string | null,
+  ): { ownRow: PolicyRuleRow | null; config: ReturnType<typeof resolveEffectiveConfig> } {
+    let config = resolveEffectiveConfig(toRuleOverride(rows.orgRow))
+    let ownRow = rows.orgRow
+    if (scope !== 'organization') {
+      const departmentId = scope === 'department' ? scopeId : departmentIdForTeam!
+      const departmentRow = ownPolicyRuleRow(rows, 'department', departmentId, null)
+      config = mergeEffectiveConfig(config, toRuleOverride(departmentRow))
+      ownRow = departmentRow
+      if (scope === 'team') {
+        const teamRow = ownPolicyRuleRow(rows, 'team', departmentId, scopeId)
+        config = mergeEffectiveConfig(config, toRuleOverride(teamRow))
+        ownRow = teamRow
+      }
+    }
+    return { ownRow, config }
+  }
+
+  const REVIEWER_COLUMNS = 'id, policy_settings_id, kind, user_id, role, target_department_id, target_team_id, created_at'
+  type ReviewerRow = { id: string; policy_settings_id: string; kind: string; user_id: string | null; role: string | null; target_department_id: string | null; target_team_id: string | null; created_at: string }
+
+  function mapPolicyReviewer(row: ReviewerRow, scope: ScopeLevel, scopeId: string) {
+    return PolicyReviewerSchema.parse({
+      id: row.id, scope, scopeId, kind: row.kind, userId: row.user_id, role: row.role,
+      targetDepartmentId: row.target_department_id, targetTeamId: row.target_team_id, createdAt: row.created_at,
+    })
+  }
+
+  async function reviewersForPolicySettings(client: SupabaseClient, policySettingsId: string | undefined, scope: ScopeLevel, scopeId: string) {
+    if (!policySettingsId) return []
+    const rows = await client.from('policy_reviewers').select(REVIEWER_COLUMNS).eq('policy_settings_id', policySettingsId)
+    if (rows.error) throw rows.error
+    return (rows.data as ReviewerRow[]).map((row) => mapPolicyReviewer(row, scope, scopeId))
+  }
+
+  async function resolveScopedEffectiveConfig(client: SupabaseClient, organizationId: string, departmentId: string, teamId: string | null) {
+    const rows = await fetchPolicyRuleRows(client, organizationId)
+    return computeRuleEntry(rows, teamId ? 'team' : 'department', teamId ?? departmentId, departmentId).config
+  }
+
+  async function fetchMemberTrust(
+    client: SupabaseClient, userId: string, organizationId: string, departmentId: string, teamId: string | null,
+  ): Promise<TrustRecord[]> {
+    // Eine abgelaufene Befreiung darf keine Freigabestufe mehr entfernen -- deshalb derselbe
+    // Ablauffilter wie bei den Mitgliedschaften (beim Review dieses Pakets gefunden).
+    const rows = await client
+      .from('member_review_trust')
+      .select('scope, department_id, team_id, submit_allowed, review_requirement')
+      .eq('organization_id', organizationId)
+      .eq('user_id', userId)
+      .or(notExpiredFilter())
+    if (rows.error) throw rows.error
+    return rows.data
+      .filter((row) => row.scope === 'organization' || (row.scope === 'department' && row.department_id === departmentId) || (row.scope === 'team' && teamId !== null && row.team_id === teamId))
+      .map((row) => ({ scope: row.scope as ScopeLevel, submitAllowed: row.submit_allowed as boolean, reviewRequirement: row.review_requirement as TrustRecord['reviewRequirement'] }))
+  }
+
+  app.get('/v1/organizations/:id/policy-rules', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    if (!(await isAnyMemberOfOrganization(client, request.auth!.userId, params.id))) {
+      return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+    }
+    const organization = await supabaseClients.forService().from('organizations').select('name').eq('id', params.id).maybeSingle()
+    if (organization.error) throw organization.error
+    if (!organization.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const [departments, teams, ruleRows] = await Promise.all([
+      client.from('departments').select('id, name').eq('organization_id', params.id).order('name'),
+      client.from('teams').select('id, name, department_id').eq('organization_id', params.id).order('name'),
+      fetchPolicyRuleRows(client, params.id),
+    ])
+    if (departments.error) throw departments.error
+    if (teams.error) throw teams.error
+
+    // Prueferzuweisungen fuer alle Ebenen in einer Abfrage statt einer je Eintrag, aus demselben
+    // Grund wie fetchPolicyRuleRows oben.
+    const policySettingsIds = [
+      ...(ruleRows.orgRow ? [ruleRows.orgRow.id] : []),
+      ...Array.from(ruleRows.deptRowById.values()).map((row) => row.id),
+      ...Array.from(ruleRows.teamRowById.values()).map((row) => row.id),
+    ]
+    const reviewersByPolicySettingsId = new Map<string, ReviewerRow[]>()
+    if (policySettingsIds.length > 0) {
+      const reviewerRows = await client.from('policy_reviewers').select(REVIEWER_COLUMNS).in('policy_settings_id', policySettingsIds)
+      if (reviewerRows.error) throw reviewerRows.error
+      for (const row of reviewerRows.data as ReviewerRow[]) {
+        const bucket = reviewersByPolicySettingsId.get(row.policy_settings_id) ?? []
+        bucket.push(row)
+        reviewersByPolicySettingsId.set(row.policy_settings_id, bucket)
+      }
+    }
+
+    const rolesByScopeKey = new Map<string, readonly Role[]>()
+    rolesByScopeKey.set('organization', await roleProvider.rolesForScope(request.auth!, { organizationId: params.id }))
+    await Promise.all([
+      ...departments.data.map(async (department) => {
+        rolesByScopeKey.set(`department:${department.id}`, await roleProvider.rolesForScope(request.auth!, { organizationId: params.id, departmentId: department.id as string }))
+      }),
+      ...teams.data.map(async (team) => {
+        rolesByScopeKey.set(`team:${team.id}`, await roleProvider.rolesForScope(request.auth!, { organizationId: params.id, departmentId: team.department_id as string, teamId: team.id as string }))
+      }),
+    ])
+    const canEditFor = (scope: ScopeLevel, scopeId: string) => hasPermission(rolesByScopeKey.get(scope === 'organization' ? 'organization' : `${scope}:${scopeId}`) ?? [], POLICY_MANAGE_PERMISSION[scope])
+
+    function buildEntry(scope: ScopeLevel, scopeId: string, name: string, departmentIdForTeam: string | null) {
+      const { ownRow, config } = computeRuleEntry(ruleRows, scope, scopeId, departmentIdForTeam)
+      return PolicyRuleSettingSchema.parse({
+        scope, scopeId, name,
+        own: mapOwnRowToRuleValues(ownRow),
+        effective: mapConfigToRuleValues(config, ownRow),
+        canEdit: canEditFor(scope, scopeId),
+        reviewers: (ownRow ? reviewersByPolicySettingsId.get(ownRow.id) ?? [] : []).map((row) => mapPolicyReviewer(row, scope, scopeId)),
+      })
+    }
+
+    const entries = [
+      buildEntry('organization', params.id, organization.data.name as string, null),
+      ...departments.data.map((department) => buildEntry('department', department.id as string, department.name as string, null)),
+      ...teams.data.map((team) => buildEntry('team', team.id as string, team.name as string, team.department_id as string)),
+    ]
+    return reply.code(200).send(entries)
+  })
+
+  app.put('/v1/policy-rules', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const input = UpdatePolicyRulesRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const scope = await resolveMembershipScope(client, input.scope, input.scopeId)
+    if (!scope) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, POLICY_MANAGE_PERMISSION[input.scope], scope))) return
+    const rpc = await client.rpc('set_policy_rules', {
+      target_organization_id: scope.organizationId, target_scope: input.scope,
+      target_department_id: scope.departmentId ?? null, target_team_id: scope.teamId ?? null,
+      patch: input.patch,
+    })
+    if (rpc.error) {
+      if (rpc.error.message.includes('insufficient_permission')) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+      if (rpc.error.message.includes('unknown_policy_rule_field')) return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+      // 23514 = check_violation. Zod kann die Kombination reviewMode='named'/reviewRequired nur
+      // innerhalb DESSELBEN patch pruefen -- ein frueherer Patch koennte reviewRequired bereits
+      // gesetzt haben, ein spaeterer patch={reviewMode:'named'} allein sieht dann fuer Zod
+      // vollstaendig gueltig aus und verletzt erst am policy_settings_named_requires_review-Check
+      // (beim Vertraege-Review als 500 statt 400 gefunden).
+      if (rpc.error.code === '23514') return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+      throw rpc.error
+    }
+    const audit = await supabaseClients.forService().from('audit_events').insert({
+      organization_id: scope.organizationId, actor_user_id: request.auth!.userId, action: 'policy_rules.changed',
+      entity_type: 'policy_settings', entity_id: rpc.data.id, correlation_id: request.id,
+      metadata: { scope: input.scope, scopeId: input.scopeId, patch: input.patch },
+    })
+    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+
+    const departmentIdForTeam = input.scope === 'team' ? scope.departmentId! : null
+    const { ownRow, config } = computeRuleEntry(await fetchPolicyRuleRows(client, scope.organizationId), input.scope, input.scopeId, departmentIdForTeam)
+    // .error jeder Namensabfrage einzeln pruefen, wie an jeder anderen Stelle dieser Datei: ohne die
+    // Pruefung waere name bei einem Datenbankfehler undefined, PolicyRuleSettingSchema.parse wuerfe
+    // einen ZodError, und der Error-Handler antwortete mit 400 invalid_request auf einen
+    // Datenbankfehler (beim Review dieses Pakets gefunden).
+    const nameQuery =
+      input.scope === 'organization'
+        ? await supabaseClients.forService().from('organizations').select('name').eq('id', scope.organizationId).single()
+        : input.scope === 'department'
+          ? await client.from('departments').select('name').eq('id', scope.departmentId!).single()
+          : await client.from('teams').select('name').eq('id', scope.teamId!).single()
+    if (nameQuery.error) throw nameQuery.error
+    const name = nameQuery.data.name as string
+
+    return reply.code(200).send(
+      PolicyRuleSettingSchema.parse({
+        scope: input.scope, scopeId: input.scopeId, name,
+        own: mapOwnRowToRuleValues(ownRow),
+        effective: mapConfigToRuleValues(config, ownRow),
+        canEdit: true,
+        reviewers: await reviewersForPolicySettings(client, ownRow?.id, input.scope, input.scopeId),
+      }),
+    )
+  })
+
+  // Reviewer-Referenzen sind eng an eine policy_settings-Zeile gebunden -- fehlt sie fuer diesen
+  // Scope noch, wird sie ueber set_policy_rules mit einem leeren Patch angelegt (dieselbe
+  // Race-sichere Select-fuer-Update-dann-Upsert-Logik wie beim eigentlichen Schreiben von Regeln).
+  app.post('/v1/policy-reviewers', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const input = CreatePolicyReviewerRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const scope = await resolveMembershipScope(client, input.scope, input.scopeId)
+    if (!scope) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, POLICY_MANAGE_PERMISSION[input.scope], scope))) return
+
+    const ensured = await client.rpc('set_policy_rules', {
+      target_organization_id: scope.organizationId, target_scope: input.scope,
+      target_department_id: scope.departmentId ?? null, target_team_id: scope.teamId ?? null, patch: {},
+    })
+    if (ensured.error) {
+      if (ensured.error.message.includes('insufficient_permission')) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+      throw ensured.error
+    }
+
+    const ref: ReviewerRef = input.ref
+    const row: Record<string, unknown> = {
+      organization_id: scope.organizationId, policy_settings_id: ensured.data.id, kind: ref.kind, created_by: request.auth!.userId,
+      user_id: ref.kind === 'user' ? ref.userId : null,
+      role: ref.kind === 'user' ? null : ref.role,
+      target_department_id: ref.kind === 'department_role' || ref.kind === 'team_role' ? ref.departmentId : null,
+      target_team_id: ref.kind === 'team_role' ? ref.teamId : null,
+    }
+    const insert = await client.from('policy_reviewers').insert(row).select('id, kind, user_id, role, target_department_id, target_team_id, created_at').single()
+    if (insert.error) {
+      if (insert.error.code === '23505') return reply.code(409).send({ error: 'already_a_reviewer', correlationId: request.id })
+      // 23503 = foreign_key_violation: eine department_role/team_role-Referenz mit einer
+      // departmentId/teamId, die nicht existiert (Fremdschluessel schuetzt bereits gegen eine
+      // fremde Organisation, siehe Migration -- das hier ist der Tippfehler-/Vertraege-Fall).
+      if (insert.error.code === '23503') return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+      throw insert.error
+    }
+    return reply.code(201).send(
+      PolicyReviewerSchema.parse({
+        id: insert.data.id, scope: input.scope, scopeId: input.scopeId, kind: insert.data.kind, userId: insert.data.user_id,
+        role: insert.data.role, targetDepartmentId: insert.data.target_department_id, targetTeamId: insert.data.target_team_id, createdAt: insert.data.created_at,
+      }),
+    )
+  })
+
+  app.delete('/v1/policy-reviewers/:id', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const existing = await client.from('policy_reviewers').select('policy_settings_id').eq('id', params.id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const setting = await client.from('policy_settings').select('scope, department_id, team_id, organization_id').eq('id', existing.data.policy_settings_id).single()
+    if (setting.error) throw setting.error
+    const scope = toPermissionScope(setting.data.organization_id as string, setting.data.department_id as string | null, setting.data.team_id as string | null)
+    if (!(await requirePermission(request, reply, POLICY_MANAGE_PERMISSION[setting.data.scope as ScopeLevel], scope))) return
+    const del = await client.from('policy_reviewers').delete().eq('id', params.id).select('id')
+    if (del.error) throw del.error
+    if (del.data.length === 0) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+    return reply.code(204).send()
+  })
+
+  // Wie die beiden Policy-Routen oben: ein Nicht-Mitglied bekommt 403, nicht eine leere Liste.
+  // Welche Zeilen ein Mitglied sieht, entscheidet member_review_trust_select -- die eigene Zeile und
+  // die Ebenen, die es verwaltet; reason ist damit schon zeilenweise geschuetzt.
+  app.get('/v1/organizations/:id/member-review-trust', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    if (!(await isAnyMemberOfOrganization(client, request.auth!.userId, params.id))) {
+      return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+    }
+    const rows = await client
+      .from('member_review_trust')
+      .select('id, scope, department_id, team_id, user_id, submit_allowed, review_requirement, reason, expires_at')
+      .eq('organization_id', params.id)
+    if (rows.error) throw rows.error
+    return reply.code(200).send(
+      rows.data.map((row) =>
+        MemberReviewTrustSchema.parse({
+          id: row.id, scope: row.scope, scopeId: row.team_id ?? row.department_id ?? params.id, userId: row.user_id,
+          submitAllowed: row.submit_allowed, reviewRequirement: row.review_requirement, reason: row.reason, expiresAt: row.expires_at,
+        }),
+      ),
+    )
+  })
+
+  app.put('/v1/member-review-trust', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const input = SetMemberReviewTrustRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const scope = await resolveMembershipScope(client, input.scope, input.scopeId)
+    if (!scope) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, POLICY_MANAGE_PERMISSION[input.scope], scope))) return
+    const rpc = await client.rpc('set_member_review_trust', {
+      target_organization_id: scope.organizationId, target_scope: input.scope,
+      target_department_id: scope.departmentId ?? null, target_team_id: scope.teamId ?? null,
+      target_user_id: input.userId, target_submit_allowed: input.submitAllowed, target_review_requirement: input.reviewRequirement,
+      target_reason: input.reason, target_expires_at: input.expiresAt,
+    })
+    if (rpc.error) {
+      if (rpc.error.message.includes('insufficient_permission')) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+      // Vertrauen fuer eine Person, die diesem Verein nicht angehoert -- user_id traegt keinen
+      // zusammengesetzten Fremdschluessel auf den Verein, die RPC prueft es deshalb selbst.
+      if (rpc.error.message.includes('user_not_a_member')) return reply.code(422).send({ error: 'user_not_a_member', correlationId: request.id })
+      throw rpc.error
+    }
+    const audit = await supabaseClients.forService().from('audit_events').insert({
+      organization_id: scope.organizationId, actor_user_id: request.auth!.userId, action: 'member_review_trust.changed',
+      entity_type: 'member_review_trust', entity_id: rpc.data.id, correlation_id: request.id,
+      metadata: { scope: input.scope, scopeId: input.scopeId, userId: input.userId, reviewRequirement: input.reviewRequirement },
+    })
+    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+    return reply.code(200).send(
+      MemberReviewTrustSchema.parse({
+        id: rpc.data.id, scope: input.scope, scopeId: input.scopeId, userId: input.userId,
+        submitAllowed: rpc.data.submit_allowed, reviewRequirement: rpc.data.review_requirement, reason: rpc.data.reason, expiresAt: rpc.data.expires_at,
+      }),
+    )
   })
 
   app.get('/v1/organizations/:id/members', async (request, reply) => {
@@ -1703,6 +2214,400 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const service = supabaseClients.forService()
     const del = await service.from('llm_provider_configurations').delete().eq('id', params.id)
     if (del.error) throw del.error
+    return reply.code(204).send()
+  })
+
+  // --- Paket 011: Durchsetzung an vier Stellen -- Freigabe anfordern, entscheiden, einplanen ---
+
+  const ORG_ROLES_WITH_APPROVE = (['organization_owner', 'organization_admin', 'social_manager', 'billing_admin', 'organization_viewer'] as const).filter((role) => hasPermission([role], 'post.approve'))
+  const DEPARTMENT_ROLES_WITH_APPROVE = (['department_admin', 'editor', 'approver', 'contributor', 'viewer'] as const).filter((role) => hasPermission([role], 'post.approve'))
+  const TEAM_ROLES_WITH_APPROVE = (['team_manager', 'contributor', 'viewer'] as const).filter((role) => hasPermission([role], 'post.approve'))
+
+  // "any_with_permission" ist keine feste Namensliste, sondern jede Person, die JETZT die
+  // Berechtigung im Scope haelt (Plan 011, "Fachliches Modell") -- einschliesslich der aeusseren
+  // Ebenen: authz.has_team_permission faellt auf has_department_permission zurueck, dieses auf
+  // has_organization_permission. Eine Abteilungsstufe darf deshalb auch die Vereinsleitung
+  // entscheiden, eine Teamstufe die Freigabeberechtigten der Elternabteilung. Ohne diese Kaskade
+  // blieb der Pruefkreis einer Abteilung ohne eigene "approver"-Rolle leer, und resolveReviewRoute
+  // meldete einen empty_reviewer_pool-Blocker (422) fuer eine Konfiguration, die tatsaechlich
+  // erfuellbar ist -- der Normalfall in einem kleinen Verein, in dem nur die Vereinsleitung
+  // freigibt (beim eigenen Review dieses Pakets gefunden).
+  async function membersWithApprovePermission(
+    client: SupabaseClient, organizationId: string, scope: ScopeLevel, departmentId: string | null, teamId: string | null,
+  ): Promise<string[]> {
+    const notExpired = notExpiredFilter()
+    // Ueber fetchAllRows wie GET /v1/organizations/:id/members: max_rows=1000 wuerde den
+    // Prueferkreis eines grossen Vereins still abschneiden und einzelne Berechtigte aus dem
+    // eingefrorenen reviewer_snapshot fallen lassen.
+    const pages = [
+      ...(ORG_ROLES_WITH_APPROVE.length > 0
+        ? [fetchAllRows<{ user_id: string }>((from, to) =>
+            client.from('organization_memberships').select('user_id').eq('organization_id', organizationId).in('role', ORG_ROLES_WITH_APPROVE).or(notExpired).range(from, to),
+          )]
+        : []),
+      ...(scope !== 'organization' && DEPARTMENT_ROLES_WITH_APPROVE.length > 0
+        ? [fetchAllRows<{ user_id: string }>((from, to) =>
+            client.from('department_memberships').select('user_id').eq('department_id', departmentId!).in('role', DEPARTMENT_ROLES_WITH_APPROVE).or(notExpired).range(from, to),
+          )]
+        : []),
+      ...(scope === 'team' && TEAM_ROLES_WITH_APPROVE.length > 0
+        ? [fetchAllRows<{ user_id: string }>((from, to) =>
+            client.from('team_memberships').select('user_id').eq('team_id', teamId!).in('role', TEAM_ROLES_WITH_APPROVE).or(notExpired).range(from, to),
+          )]
+        : []),
+    ]
+    const userIds = new Set<string>()
+    for (const rows of await Promise.all(pages)) {
+      for (const row of rows) userIds.add(row.user_id)
+    }
+    return Array.from(userIds)
+  }
+
+  function mapReviewerRow(row: { kind: string; user_id: string | null; role: string | null; target_department_id: string | null; target_team_id: string | null }): DomainReviewerRef {
+    if (row.kind === 'user') return { kind: 'user', userId: row.user_id! }
+    if (row.kind === 'organization_role') return { kind: 'organization_role', role: row.role! }
+    if (row.kind === 'department_role') return { kind: 'department_role', departmentId: row.target_department_id!, role: row.role! }
+    return { kind: 'team_role', departmentId: row.target_department_id!, teamId: row.target_team_id!, role: row.role! }
+  }
+
+  // Grundlage der Prueferauflösung fuer "named"-Stufen -- eine abgelaufene Mitgliedschaft traegt
+  // keine Rolle mehr und darf deshalb nicht als Pruefer in den reviewer_snapshot einfrieren.
+  // request_approval wuerde eine solche Route ohnehin mit invalid_reviewer_snapshot ablehnen, weil
+  // authz.is_user_member_of_organization dort denselben Ablauffilter anwendet.
+  async function fetchAllMemberships(client: SupabaseClient, organizationId: string): Promise<MembershipRecord[]> {
+    const notExpired = notExpiredFilter()
+    // fetchAllRows aus demselben Grund wie in membersWithApprovePermission: eine benannte Rolle
+    // duerfte in einem grossen Verein nicht daran scheitern, dass die Mitgliederseite abgeschnitten ist.
+    const [orgRows, deptRows, teamRows] = await Promise.all([
+      fetchAllRows<{ user_id: string; role: string }>((from, to) =>
+        client.from('organization_memberships').select('user_id, role').eq('organization_id', organizationId).or(notExpired).range(from, to),
+      ),
+      fetchAllRows<{ user_id: string; role: string; department_id: string }>((from, to) =>
+        client.from('department_memberships').select('user_id, role, department_id').eq('organization_id', organizationId).or(notExpired).range(from, to),
+      ),
+      fetchAllRows<{ user_id: string; role: string; team_id: string; department_id: string }>((from, to) =>
+        client.from('team_memberships').select('user_id, role, team_id, department_id').eq('organization_id', organizationId).or(notExpired).range(from, to),
+      ),
+    ])
+    return [
+      ...orgRows.map((row) => ({ userId: row.user_id, scope: 'organization' as const, role: row.role })),
+      ...deptRows.map((row) => ({ userId: row.user_id, scope: 'department' as const, departmentId: row.department_id, role: row.role })),
+      ...teamRows.map((row) => ({ userId: row.user_id, scope: 'team' as const, departmentId: row.department_id, teamId: row.team_id, role: row.role })),
+    ]
+  }
+
+  const DEFAULT_STAGE_LABEL: Record<ScopeLevel, string> = { organization: 'Verein', department: 'Abteilung', team: 'Team' }
+
+  // Baut die Stufendefinitionen innen (Team) nach aussen (Verein) -- nur Ebenen, deren EIGENE
+  // Zeile review_required = true setzt, tragen eine Stufe bei (Plan 011: additiv, nicht vererbt).
+  async function buildStageDefinitions(
+    client: SupabaseClient, ruleRows: PolicyRuleRows, organizationId: string, departmentId: string, teamId: string | null,
+  ): Promise<StageDefinition[]> {
+    const levels: { scope: ScopeLevel; scopeId: string; scopeDepartmentId: string | null; scopeTeamId: string | null }[] = [
+      ...(teamId ? [{ scope: 'team' as const, scopeId: teamId, scopeDepartmentId: departmentId, scopeTeamId: teamId }] : []),
+      { scope: 'department' as const, scopeId: departmentId, scopeDepartmentId: departmentId, scopeTeamId: null },
+      { scope: 'organization' as const, scopeId: organizationId, scopeDepartmentId: null, scopeTeamId: null },
+    ]
+    const memberships = await fetchAllMemberships(client, organizationId)
+    const stages: StageDefinition[] = []
+    for (const level of levels) {
+      const row = ownPolicyRuleRow(ruleRows, level.scope, level.scopeDepartmentId, level.scopeTeamId)
+      if (!row?.review_required) continue
+      const mode = row.review_mode ?? 'any_with_permission'
+      let reviewerUserIds: string[]
+      if (mode === 'named') {
+        const reviewerRows = await client.from('policy_reviewers').select('kind, user_id, role, target_department_id, target_team_id').eq('policy_settings_id', row.id)
+        if (reviewerRows.error) throw reviewerRows.error
+        reviewerUserIds = resolveReviewers(reviewerRows.data.map(mapReviewerRow), memberships).userIds
+      } else {
+        reviewerUserIds = await membersWithApprovePermission(client, organizationId, level.scope, level.scopeDepartmentId, level.scopeTeamId)
+      }
+      stages.push({
+        scope: level.scope,
+        ...(level.scopeDepartmentId ? { scopeDepartmentId: level.scopeDepartmentId } : {}),
+        ...(level.scopeTeamId ? { scopeTeamId: level.scopeTeamId } : {}),
+        label: row.review_stage_label ?? DEFAULT_STAGE_LABEL[level.scope],
+        mode,
+        minimumApprovals: row.review_minimum_approvals ?? 1,
+        ...(row.review_deadline_hours ? { deadlineHours: row.review_deadline_hours } : {}),
+        reviewerUserIds,
+      })
+    }
+    return stages
+  }
+
+  app.post('/v1/post-versions/:id/request-approval', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const version = await client.from('post_versions').select('id, post_id, created_by_user_id, safety_flags').eq('id', params.id).maybeSingle()
+    if (version.error) throw version.error
+    if (!version.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const post = await client.from('posts').select('id, organization_id, department_id, team_id, status').eq('id', version.data.post_id).maybeSingle()
+    if (post.error) throw post.error
+    if (!post.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'post.submit', { organizationId: post.data.organization_id, departmentId: post.data.department_id }))) return
+
+    const departmentId = post.data.department_id as string
+    const teamId = post.data.team_id as string | null
+    // Alle Ebenen einmal laden -- Stufenaufbau, die Vereinszeile (allow_review_exemptions) und die
+    // effektive Konfiguration lesen dieselben Zeilen.
+    const ruleRows = await fetchPolicyRuleRows(client, post.data.organization_id)
+    const orgRow = ruleRows.orgRow
+    const config = computeRuleEntry(ruleRows, teamId ? 'team' : 'department', teamId ?? departmentId, departmentId).config
+    const stages = await buildStageDefinitions(client, ruleRows, post.data.organization_id, departmentId, teamId)
+    const authorId = version.data.created_by_user_id as string
+    const trust = await fetchMemberTrust(client, authorId, post.data.organization_id, departmentId, teamId)
+    const containsMinors = ((version.data.safety_flags as string[]) ?? []).includes('minor')
+    const minorReviewerUserIds = containsMinors ? await membersWithApprovePermission(client, post.data.organization_id, 'organization', null, null) : []
+
+    const route = resolveReviewRoute({
+      stages,
+      trust,
+      author: { userId: authorId },
+      media: { containsMinors, reviewerUserIds: minorReviewerUserIds },
+      selfApprovalAllowed: config.policies.selfApprovalAllowed,
+      allowReviewExemptions: orgRow?.allow_review_exemptions ?? true,
+    })
+    if (route.blockers.length > 0) {
+      return reply.code(422).send({ error: 'unfulfillable_stage', blockers: route.blockers, correlationId: request.id })
+    }
+
+    // self_approval_allowed/allow_same_reviewer_across_stages werden von request_approval selbst
+    // aus policy_settings neu berechnet, nicht von hier uebernommen -- die RPC ist per Grant direkt
+    // erreichbar und darf diese sicherheitsrelevanten Werte nicht vom Aufrufer entgegennehmen
+    // (beim Rechte-/Mandantentrennung-Review gefunden).
+    const rpc = await client.rpc('request_approval', {
+      target_post_version_id: params.id,
+      stages: route.stages.map((stage) => ({
+        position: stage.position, scope: stage.scope, scopeDepartmentId: stage.scopeDepartmentId ?? null, scopeTeamId: stage.scopeTeamId ?? null,
+        label: stage.label, mode: stage.mode, minimumApprovals: stage.minimumApprovals, isMinorStage: stage.isMinorStage,
+        reviewerSnapshot: stage.reviewerUserIds.map((userId) => ({ userId })), deadlineHours: stage.deadlineHours ?? null,
+      })),
+    })
+    if (rpc.error) {
+      if (rpc.error.message.includes('insufficient_permission')) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+      if (rpc.error.message.includes('invalid_status')) return reply.code(409).send({ error: 'invalid_status', correlationId: request.id })
+      if (rpc.error.message.includes('minor_stage_required')) return reply.code(422).send({ error: 'minor_stage_required', correlationId: request.id })
+      if (rpc.error.message.includes('review_required')) return reply.code(422).send({ error: 'review_required', correlationId: request.id })
+      if (rpc.error.message.includes('invalid_reviewer_snapshot')) return reply.code(422).send({ error: 'invalid_reviewer_snapshot', correlationId: request.id })
+      // Beide sind auf diesem Weg nicht erreichbar -- resolveReviewRoute nummeriert die Stufen selbst
+      // von 1 an durch und meldet einen leeren Prueferkreis vorher als Blocker. request_approval ist
+      // aber per Grant direkt per RPC erreichbar und prueft deshalb beides selbst.
+      if (rpc.error.message.includes('invalid_stage_positions')) return reply.code(422).send({ error: 'invalid_stage_positions', correlationId: request.id })
+      if (rpc.error.message.includes('empty_reviewer_snapshot')) return reply.code(422).send({ error: 'empty_reviewer_snapshot', correlationId: request.id })
+      if (rpc.error.message.includes('only_author_as_reviewer')) return reply.code(403).send({ error: 'only_author_as_reviewer', correlationId: request.id })
+      throw rpc.error
+    }
+    return reply.code(202).send(
+      RequestApprovalResponseSchema.parse({ postId: rpc.data.postId, status: rpc.data.status, approvalRequestId: rpc.data.approvalRequestId ?? null }),
+    )
+  })
+
+  app.post('/v1/approval-stages/:id/decide', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const input = DecideApprovalStageRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const rpc = await client.rpc('decide_approval_stage', { target_stage_id: params.id, target_decision: input.decision, target_reason: input.reason ?? null })
+    if (rpc.error) {
+      if (rpc.error.message.includes('insufficient_permission')) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+      if (rpc.error.message.includes('invalid_decision')) return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+      throw rpc.error
+    }
+    return reply.code(200).send(
+      DecideApprovalStageResponseSchema.parse({
+        stageId: rpc.data.stageId, stageStatus: rpc.data.stageStatus, postStatus: rpc.data.postStatus,
+        ...(rpc.data.nextStageId ? { nextStageId: rpc.data.nextStageId } : {}),
+      }),
+    )
+  })
+
+  app.get('/v1/post-versions/:id/approval', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const version = await client.from('post_versions').select('id, created_by_user_id').eq('id', params.id).maybeSingle()
+    if (version.error) throw version.error
+    if (!version.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const approvalRequest = await client.from('approval_requests').select('id, post_id, post_version_id').eq('post_version_id', params.id).order('created_at', { ascending: false }).limit(1).maybeSingle()
+    if (approvalRequest.error) throw approvalRequest.error
+    if (!approvalRequest.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const isAuthor = version.data.created_by_user_id === request.auth!.userId
+    const [stagesResult, decisionsResult] = await Promise.all([
+      client.from('approval_stages').select('id, position, scope, label, mode, minimum_approvals, is_minor_stage, status, reviewer_snapshot, deadline_at, opened_at').eq('approval_request_id', approvalRequest.data.id).order('position'),
+      client.from('approval_decisions').select('id, approval_stage_id, decided_by, decision, reason, created_at').eq('approval_request_id', approvalRequest.data.id),
+    ])
+    if (stagesResult.error) throw stagesResult.error
+    if (decisionsResult.error) throw decisionsResult.error
+    const now = Date.now()
+    return reply.code(200).send(
+      ApprovalRequestSchema.parse({
+        id: approvalRequest.data.id, postId: approvalRequest.data.post_id, postVersionId: approvalRequest.data.post_version_id,
+        stages: stagesResult.data.map((stage) => ({
+          id: stage.id, position: stage.position, scope: stage.scope, label: stage.label, mode: stage.mode,
+          minimumApprovals: stage.minimum_approvals, isMinorStage: stage.is_minor_stage, status: stage.status,
+          // Der Autor sieht die Zusammensetzung einer noch nicht geoeffneten Stufe nicht (Plan 011).
+          // Ueber opened_at statt einzelner Statuswerte: eine abgelehnte innere Stufe skipped alle
+          // FOLGENDEN Stufen direkt aus 'pending', ohne dass sie je 'open' waren -- ein Check nur
+          // auf status === 'pending' haette das nach der Ablehnung wieder offengelegt (beim
+          // Geheimnisse-Review gefunden).
+          reviewerUserIds: isAuthor && stage.opened_at === null ? null : (stage.reviewer_snapshot as { userId: string }[]).map((entry) => entry.userId),
+          deadlineAt: stage.deadline_at,
+          // 'stalled' ist der markierte Fall derselben Sache -- sonst zeigte eine vom Job markierte
+          // Stufe "nicht überfällig" an, obwohl sie es gerade deswegen ist.
+          isOverdue: (stage.status === 'open' || stage.status === 'stalled') && stage.deadline_at !== null && new Date(stage.deadline_at as string).getTime() < now,
+        })),
+        decisions: decisionsResult.data.map((decision) => ({
+          id: decision.id, approvalStageId: decision.approval_stage_id, decidedBy: decision.decided_by,
+          decision: decision.decision, reason: decision.reason, createdAt: decision.created_at,
+        })),
+      }),
+    )
+  })
+
+  // Fuer freigaben.vue ("wartet auf mich"): RLS liefert jede Stufe, die auth.uid() ueberhaupt sehen
+  // darf (u. a. jedes Vereinsmitglied mit Organisationsrolle) -- der Filter auf den eigenen
+  // reviewer_snapshot-Eintrag engt das hier auf tatsaechlich zugewiesene Stufen ein.
+  // organizationId ist pflichtig: eine Person mit Pruefrollen in mehreren Vereinen saehe sonst die
+  // Freigaben ALLER ihrer Vereine in der Liste eines einzelnen (beim Review dieses Pakets gefunden).
+  app.get('/v1/approval-stages/mine', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const query = z.object({ organizationId: UuidSchema }).parse(request.query)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    // 'stalled' gehoert dazu: mark_stalled_approval_stages() markiert eine ueberfaellige Stufe, nimmt
+    // ihr aber kein Recht (siehe authz.can_decide_stage). Ein Filter nur auf 'open' haette sie aus
+    // genau der Liste verschwinden lassen, in der die zustaendige Person sie noch entscheiden soll.
+    const rows = await client
+      .from('approval_stages')
+      .select('id, position, scope, label, mode, minimum_approvals, is_minor_stage, status, reviewer_snapshot, deadline_at')
+      .eq('organization_id', query.organizationId)
+      .in('status', ['open', 'stalled'])
+    if (rows.error) throw rows.error
+    const userId = request.auth!.userId
+    const now = Date.now()
+    const mine = rows.data.filter((row) => (row.reviewer_snapshot as { userId: string }[]).some((entry) => entry.userId === userId))
+    return reply.code(200).send(
+      mine.map((row) =>
+        ApprovalStageSchema.parse({
+          id: row.id, position: row.position, scope: row.scope, label: row.label, mode: row.mode,
+          minimumApprovals: row.minimum_approvals, isMinorStage: row.is_minor_stage, status: row.status,
+          reviewerUserIds: (row.reviewer_snapshot as { userId: string }[]).map((entry) => entry.userId),
+          deadlineAt: row.deadline_at, isOverdue: row.deadline_at !== null && new Date(row.deadline_at as string).getTime() < now,
+        }),
+      ),
+    )
+  })
+
+  app.post('/v1/post-versions/:id/schedule', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const input = SchedulePublicationRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const rpc = await client.rpc('schedule_publication', {
+      target_post_version_id: params.id, target_social_connection_id: input.socialConnectionId, target_scheduled_for: input.scheduledFor,
+    })
+    if (rpc.error) {
+      if (rpc.error.message.includes('insufficient_permission')) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+      if (rpc.error.message.includes('not_found')) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+      if (rpc.error.message.includes('invalid_status')) return reply.code(409).send({ error: 'invalid_status', correlationId: request.id })
+      if (rpc.error.message.includes('channel_not_allowed')) return reply.code(422).send({ error: 'channel_not_allowed', correlationId: request.id })
+      if (rpc.error.message.includes('quota_exceeded')) return reply.code(409).send({ error: 'quota_exceeded', detail: rpc.error.message, correlationId: request.id })
+      throw rpc.error
+    }
+    return reply.code(201).send(
+      PublicationSchema.parse({
+        id: rpc.data.id, postVersionId: rpc.data.post_version_id, socialConnectionId: rpc.data.social_connection_id,
+        platform: rpc.data.platform, status: rpc.data.status, scheduledFor: rpc.data.scheduled_for,
+      }),
+    )
+  })
+
+  app.get('/v1/organizations/:id/channel-quotas', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    if (!(await isAnyMemberOfOrganization(client, request.auth!.userId, params.id))) {
+      return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+    }
+    const rows = await client.from('channel_quotas').select('id, scope, department_id, team_id, social_connection_id, period, max_publications').eq('organization_id', params.id)
+    if (rows.error) throw rows.error
+    return reply.code(200).send(
+      rows.data.map((row) =>
+        ChannelQuotaSchema.parse({
+          id: row.id, scope: row.scope, scopeId: row.team_id ?? row.department_id ?? params.id, socialConnectionId: row.social_connection_id,
+          period: row.period, maxPublications: row.max_publications,
+        }),
+      ),
+    )
+  })
+
+  app.post('/v1/channel-quotas', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const input = CreateChannelQuotaRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const scope = await resolveMembershipScope(client, input.scope, input.scopeId)
+    if (!scope) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, POLICY_MANAGE_PERMISSION[input.scope], scope))) return
+    const insert = await client
+      .from('channel_quotas')
+      .insert({
+        organization_id: scope.organizationId, scope: input.scope, department_id: scope.departmentId ?? null, team_id: scope.teamId ?? null,
+        social_connection_id: input.socialConnectionId ?? null, period: input.period, max_publications: input.maxPublications,
+      })
+      .select('id, scope, department_id, team_id, social_connection_id, period, max_publications')
+      .single()
+    if (insert.error) {
+      if (insert.error.code === '23505') return reply.code(409).send({ error: 'quota_already_exists', correlationId: request.id })
+      // 23503 = foreign_key_violation, z. B. ein nicht existierender socialConnectionId.
+      if (insert.error.code === '23503') return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+      throw insert.error
+    }
+    return reply.code(201).send(
+      ChannelQuotaSchema.parse({
+        id: insert.data.id, scope: insert.data.scope, scopeId: input.scopeId, socialConnectionId: insert.data.social_connection_id,
+        period: insert.data.period, maxPublications: insert.data.max_publications,
+      }),
+    )
+  })
+
+  app.patch('/v1/channel-quotas/:id', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const input = UpdateChannelQuotaRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const existing = await client.from('channel_quotas').select('organization_id, scope, department_id, team_id').eq('id', params.id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const scope = toPermissionScope(existing.data.organization_id as string, existing.data.department_id as string | null, existing.data.team_id as string | null)
+    if (!(await requirePermission(request, reply, POLICY_MANAGE_PERMISSION[existing.data.scope as ScopeLevel], scope))) return
+    const update = await client.from('channel_quotas').update({ max_publications: input.maxPublications }).eq('id', params.id).select('id, scope, department_id, team_id, social_connection_id, period, max_publications')
+    if (update.error) throw update.error
+    // Wie bei DELETE unten: filtert RLS die Zielzeile aus dem UPDATE, trifft die Anweisung null
+    // Zeilen ohne Fehler. Ein abschliessendes .single() haette daraus einen 500 gemacht statt eines
+    // 403 (derselbe Grund wie bei DELETE /v1/departments/:id, siehe Kommentar dort).
+    const updated = update.data[0]
+    if (!updated) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+    return reply.code(200).send(
+      ChannelQuotaSchema.parse({
+        id: updated.id, scope: updated.scope, scopeId: updated.team_id ?? updated.department_id ?? existing.data.organization_id,
+        socialConnectionId: updated.social_connection_id, period: updated.period, maxPublications: updated.max_publications,
+      }),
+    )
+  })
+
+  app.delete('/v1/channel-quotas/:id', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const existing = await client.from('channel_quotas').select('organization_id, scope, department_id, team_id').eq('id', params.id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const scope = toPermissionScope(existing.data.organization_id as string, existing.data.department_id as string | null, existing.data.team_id as string | null)
+    if (!(await requirePermission(request, reply, POLICY_MANAGE_PERMISSION[existing.data.scope as ScopeLevel], scope))) return
+    const del = await client.from('channel_quotas').delete().eq('id', params.id).select('id')
+    if (del.error) throw del.error
+    if (del.data.length === 0) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
     return reply.code(204).send()
   })
 

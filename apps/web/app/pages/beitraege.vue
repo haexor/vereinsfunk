@@ -1,5 +1,11 @@
 <script setup lang="ts">
 import { Plus } from '@lucide/vue'
+
+// Paket 011 wollte hier eine echte Liste mit Status, aktueller Stufe und Ablehnungsbegruendung
+// zeigen (siehe plans/011, "4. Oberflaeche"). Dafuer fehlt weiterhin ein Weg, wie ueberhaupt ein
+// echter Beitrag entsteht -- die Inhalts-Pipeline (Submission -> Post -> Post-Version, Paket
+// 001-007) ist noch nicht gebaut, siehe dieselbe bewusste Scope-Entscheidung wie bei
+// freigaben.vue. Der ehrliche Leerzustand aus Paket 008 bleibt deshalb unveraendert bestehen.
 </script>
 
 <template>
