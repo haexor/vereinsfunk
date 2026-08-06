@@ -246,6 +246,171 @@ export const UpdatePolicySettingRequestSchema = z.object({
   value: z.boolean().nullable(),
 })
 
+// Paket 011: Freigaberouten, Vertrauen je Mitglied, Kontingente ---------------------------------
+
+export const ReviewModeSchema = z.enum(['any_with_permission', 'named'])
+export const ReviewRequirementSchema = z.enum(['inherit', 'always', 'waived'])
+export const QuotaPeriodSchema = z.enum(['day', 'week', 'month'])
+export const ApprovalDecisionTypeSchema = z.enum(['approved', 'changes_requested', 'rejected'])
+export const ApprovalStageStatusSchema = z.enum(['pending', 'open', 'satisfied', 'rejected', 'skipped', 'stalled'])
+
+// Mehr als eine Einzelperson, weil "das Marketing muss freigeben" keine Namensliste sein soll --
+// wer die Rolle verlaesst, verliert die Pruefrolle automatisch (Plan 011, "Fachliches Modell").
+export const ReviewerRefSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('user'), userId: UuidSchema }),
+  z.object({ kind: z.literal('organization_role'), role: AssignableRoleSchema }),
+  z.object({ kind: z.literal('department_role'), departmentId: UuidSchema, role: AssignableRoleSchema }),
+  z.object({ kind: z.literal('team_role'), departmentId: UuidSchema, teamId: UuidSchema, role: AssignableRoleSchema }),
+])
+
+export const PolicyReviewerSchema = z.object({
+  id: UuidSchema,
+  scope: ScopeLevelSchema,
+  scopeId: UuidSchema,
+  kind: z.enum(['user', 'organization_role', 'department_role', 'team_role']),
+  userId: UuidSchema.nullable(),
+  role: z.string().nullable(),
+  targetDepartmentId: UuidSchema.nullable(),
+  targetTeamId: UuidSchema.nullable(),
+  createdAt: z.iso.datetime({ offset: true }),
+})
+export const CreatePolicyReviewerRequestSchema = z.object({
+  scope: ScopeLevelSchema,
+  scopeId: UuidSchema,
+  ref: ReviewerRefSchema,
+})
+
+// Heterogen typisiert (anders als die zwei booleschen Flags aus 023) -- own ist der ungeerbte
+// Wert dieser Ebene (null = erben), effective das Ergebnis von mergeEffectiveConfig ueber
+// Verein/Abteilung/Team (packages/domain).
+export const PolicyRuleValuesSchema = z.object({
+  reviewRequired: z.boolean().nullable(),
+  reviewMode: ReviewModeSchema.nullable(),
+  reviewStageLabel: z.string().max(80).nullable(),
+  reviewMinimumApprovals: z.int().min(1).max(5).nullable(),
+  reviewDeadlineHours: z.int().min(1).max(720).nullable(),
+  minorApprovalRequired: z.boolean().nullable(),
+  selfApprovalAllowed: z.boolean().nullable(),
+  allowSameReviewerAcrossStages: z.boolean().nullable(),
+  allowReviewExemptions: z.boolean().nullable(),
+  mediaRequiresConsentCheck: z.boolean().nullable(),
+  allowedPresets: z.array(ContentPresetSlugSchema).nullable(),
+  allowedFormats: z.array(OutputFormatSchema).nullable(),
+  allowedChannelIds: z.array(UuidSchema).nullable(),
+  forbiddenTopics: z.array(z.string().trim().min(1).max(200)),
+  requiredHashtags: z.array(z.string().regex(/^#[\p{L}\p{N}_]+$/u)),
+  tone: z.string().trim().min(1).max(60).nullable(),
+})
+export const PolicyRuleSettingSchema = z.object({
+  scope: ScopeLevelSchema,
+  scopeId: UuidSchema,
+  name: z.string().min(1),
+  own: PolicyRuleValuesSchema,
+  effective: PolicyRuleValuesSchema,
+  canEdit: z.boolean(),
+})
+export const UpdatePolicyRulesRequestSchema = z.object({
+  scope: ScopeLevelSchema,
+  scopeId: UuidSchema,
+  patch: PolicyRuleValuesSchema.partial().refine((value) => Object.keys(value).length > 0, { message: 'at least one field must be provided' }),
+})
+
+export const MemberReviewTrustSchema = z.object({
+  id: UuidSchema,
+  scope: ScopeLevelSchema,
+  scopeId: UuidSchema,
+  userId: UuidSchema,
+  submitAllowed: z.boolean(),
+  reviewRequirement: ReviewRequirementSchema,
+  reason: z.string().max(500).nullable(),
+  expiresAt: z.iso.datetime({ offset: true }).nullable(),
+})
+export const SetMemberReviewTrustRequestSchema = z.object({
+  scope: ScopeLevelSchema,
+  scopeId: UuidSchema,
+  userId: UuidSchema,
+  submitAllowed: z.boolean(),
+  reviewRequirement: ReviewRequirementSchema,
+  reason: z.string().trim().max(500).nullable(),
+  expiresAt: z.iso.datetime({ offset: true }).nullable(),
+})
+
+// reviewerUserIds ist null, solange die Stufe fuer den Anfragenden nicht sichtbar sein soll (der
+// Autor sieht die Zusammensetzung noch nicht geoeffneter aeusserer Stufen nicht, Plan 011).
+export const ApprovalStageSchema = z.object({
+  id: UuidSchema,
+  position: z.int().positive(),
+  scope: ScopeLevelSchema,
+  label: z.string().min(1),
+  mode: ReviewModeSchema,
+  minimumApprovals: z.int().min(1).max(5),
+  isMinorStage: z.boolean(),
+  status: ApprovalStageStatusSchema,
+  reviewerUserIds: z.array(UuidSchema).nullable(),
+  deadlineAt: z.iso.datetime({ offset: true }).nullable(),
+  isOverdue: z.boolean(),
+})
+export const ApprovalDecisionSchema = z.object({
+  id: UuidSchema,
+  approvalStageId: UuidSchema,
+  decidedBy: UuidSchema,
+  decision: ApprovalDecisionTypeSchema,
+  reason: z.string().nullable(),
+  createdAt: z.iso.datetime({ offset: true }),
+})
+export const ApprovalRequestSchema = z.object({
+  id: UuidSchema,
+  postId: UuidSchema,
+  postVersionId: UuidSchema,
+  stages: z.array(ApprovalStageSchema),
+  decisions: z.array(ApprovalDecisionSchema),
+})
+export const RequestApprovalResponseSchema = z.object({
+  postId: UuidSchema,
+  status: z.string(),
+  approvalRequestId: UuidSchema.nullable(),
+})
+export const DecideApprovalStageRequestSchema = z.object({
+  decision: ApprovalDecisionTypeSchema,
+  reason: z.string().trim().min(1).max(2000).nullable().optional(),
+})
+export const DecideApprovalStageResponseSchema = z.object({
+  stageId: UuidSchema,
+  stageStatus: ApprovalStageStatusSchema,
+  postStatus: z.string(),
+  nextStageId: UuidSchema.optional(),
+})
+
+export const ChannelQuotaSchema = z.object({
+  id: UuidSchema,
+  scope: ScopeLevelSchema,
+  scopeId: UuidSchema.nullable(),
+  socialConnectionId: UuidSchema.nullable(),
+  period: QuotaPeriodSchema,
+  maxPublications: z.int().min(1).max(1000),
+})
+export const CreateChannelQuotaRequestSchema = z.object({
+  scope: ScopeLevelSchema,
+  scopeId: UuidSchema,
+  socialConnectionId: UuidSchema.nullable().optional(),
+  period: QuotaPeriodSchema,
+  maxPublications: z.int().min(1).max(1000),
+})
+export const UpdateChannelQuotaRequestSchema = z.object({ maxPublications: z.int().min(1).max(1000) })
+
+export const SchedulePublicationRequestSchema = z.object({
+  socialConnectionId: UuidSchema,
+  scheduledFor: z.iso.datetime({ offset: true }).nullable(),
+})
+export const PublicationSchema = z.object({
+  id: UuidSchema,
+  postVersionId: UuidSchema,
+  socialConnectionId: UuidSchema,
+  platform: z.enum(['instagram', 'facebook']),
+  status: z.string(),
+  scheduledFor: z.iso.datetime({ offset: true }).nullable(),
+})
+
 export const CreateMembershipRequestSchema = z.object({
   scope: ScopeLevelSchema,
   scopeId: UuidSchema,
@@ -461,6 +626,30 @@ export type PolicyFlag = z.infer<typeof PolicyFlagSchema>
 export type PolicyFlagState = z.infer<typeof PolicyFlagStateSchema>
 export type PolicySetting = z.infer<typeof PolicySettingSchema>
 export type UpdatePolicySettingRequest = z.infer<typeof UpdatePolicySettingRequestSchema>
+export type ReviewMode = z.infer<typeof ReviewModeSchema>
+export type ReviewRequirement = z.infer<typeof ReviewRequirementSchema>
+export type QuotaPeriod = z.infer<typeof QuotaPeriodSchema>
+export type ApprovalDecisionTypeValue = z.infer<typeof ApprovalDecisionTypeSchema>
+export type ApprovalStageStatus = z.infer<typeof ApprovalStageStatusSchema>
+export type ReviewerRef = z.infer<typeof ReviewerRefSchema>
+export type PolicyReviewer = z.infer<typeof PolicyReviewerSchema>
+export type CreatePolicyReviewerRequest = z.infer<typeof CreatePolicyReviewerRequestSchema>
+export type PolicyRuleValues = z.infer<typeof PolicyRuleValuesSchema>
+export type PolicyRuleSetting = z.infer<typeof PolicyRuleSettingSchema>
+export type UpdatePolicyRulesRequest = z.infer<typeof UpdatePolicyRulesRequestSchema>
+export type MemberReviewTrust = z.infer<typeof MemberReviewTrustSchema>
+export type SetMemberReviewTrustRequest = z.infer<typeof SetMemberReviewTrustRequestSchema>
+export type ApprovalStage = z.infer<typeof ApprovalStageSchema>
+export type ApprovalDecision = z.infer<typeof ApprovalDecisionSchema>
+export type ApprovalRequest = z.infer<typeof ApprovalRequestSchema>
+export type RequestApprovalResponse = z.infer<typeof RequestApprovalResponseSchema>
+export type DecideApprovalStageRequest = z.infer<typeof DecideApprovalStageRequestSchema>
+export type DecideApprovalStageResponse = z.infer<typeof DecideApprovalStageResponseSchema>
+export type ChannelQuota = z.infer<typeof ChannelQuotaSchema>
+export type CreateChannelQuotaRequest = z.infer<typeof CreateChannelQuotaRequestSchema>
+export type UpdateChannelQuotaRequest = z.infer<typeof UpdateChannelQuotaRequestSchema>
+export type SchedulePublicationRequest = z.infer<typeof SchedulePublicationRequestSchema>
+export type Publication = z.infer<typeof PublicationSchema>
 export type CreateMembershipRequest = z.infer<typeof CreateMembershipRequestSchema>
 export type UpdateMembershipRequest = z.infer<typeof UpdateMembershipRequestSchema>
 export type UpdateMembershipExpiryRequest = z.infer<typeof UpdateMembershipExpiryRequestSchema>
