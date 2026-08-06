@@ -239,8 +239,12 @@ language sql stable security definer set search_path = public, pg_temp as $$
       or (quota_period = 'month' and date_trunc('month', publication.created_at at time zone org.timezone) = date_trunc('month', reference at time zone org.timezone))
     );
 $$;
+-- Kein legitimer Aufrufer ausserhalb von schedule_publication() (SECURITY DEFINER, prueft die
+-- Berechtigung vorher selbst) -- ein Grant an authenticated wuerde jedem erlauben, die
+-- Veroeffentlichungszahl eines FREMDEN Vereins per direktem RPC-Aufruf abzufragen (beim
+-- Mandantentrennung-Review gefunden: die Funktion selbst hat keine eigene Mitgliedschaftspruefung).
 revoke all on function public.count_publications_in_period(uuid, uuid, uuid, uuid, text, timestamptz) from public;
-grant execute on function public.count_publications_in_period(uuid, uuid, uuid, uuid, text, timestamptz) to authenticated, service_role;
+grant execute on function public.count_publications_in_period(uuid, uuid, uuid, uuid, text, timestamptz) to service_role;
 
 -- Prueferzugang: ein Marketing-Pruefer ist kein Mitglied der Abteilung Fussball. reviewer_snapshot
 -- friert die zum Zeitpunkt der Routenauflösung aufgeloesten Prueferinnen als {"userId": "<uuid>", ...}
@@ -257,6 +261,20 @@ language sql stable security definer set search_path = public, pg_temp as $$
       and exists (select 1 from jsonb_array_elements(stage.reviewer_snapshot) elem where (elem->>'userId')::uuid = auth.uid())
   );
 $$;
+
+-- Generalisiert authz.is_any_member_of_organization auf eine BELIEBIGE Person statt auth.uid() --
+-- request_approval() braucht das, um die vom Aufrufer mitgelieferten reviewer_snapshot-Eintraege
+-- gegen echte Mitgliedschaft zu pruefen (siehe dort: "Verteidigung in der Tiefe" reichte ohne
+-- diese Pruefung nicht, weil reviewer_snapshot als jsonb keinen Fremdschluessel tragen kann).
+create or replace function authz.is_user_member_of_organization(target_user_id uuid, target_organization_id uuid)
+returns boolean
+language sql stable security definer set search_path = public, pg_temp as $$
+  select exists (select 1 from public.organization_memberships m where m.organization_id = target_organization_id and m.user_id = target_user_id and (m.expires_at is null or m.expires_at > now()))
+    or exists (select 1 from public.department_memberships m where m.organization_id = target_organization_id and m.user_id = target_user_id and (m.expires_at is null or m.expires_at > now()))
+    or exists (select 1 from public.team_memberships m where m.organization_id = target_organization_id and m.user_id = target_user_id and (m.expires_at is null or m.expires_at > now()));
+$$;
+revoke all on function authz.is_user_member_of_organization(uuid, uuid) from public;
+grant execute on function authz.is_user_member_of_organization(uuid, uuid) to authenticated, service_role;
 
 create or replace function authz.is_assigned_reviewer_of_post(target_post_id uuid)
 returns boolean
@@ -459,7 +477,18 @@ create policy policy_reviewers_delete on public.policy_reviewers for delete to a
         )
     )
   );
-grant select, insert, delete on public.policy_reviewers to authenticated;
+-- Spaltenweise wie policy_settings.updated_by (023) und member_review_trust.granted_by oben: wer
+-- eine Pruefer-Zuweisung angelegt hat, ist eine administrative Handlung einer konkreten Person und
+-- soll nicht vereinsweit sichtbar sein (authz.is_any_member_of_organization in der Select-Policy
+-- oben ist bewusst weit gefasst, damit jede Ebene die volle Freigaberoute sehen kann -- created_by
+-- gehoert nicht zu dem, was dafuer noetig ist). Der Insert-Grant bleibt vollstaendig, weil
+-- policy_reviewers_insert oben created_by = auth.uid() prueft und die Spalte deshalb schreibbar
+-- sein muss.
+grant select (id, organization_id, policy_settings_id, kind, user_id, role, target_department_id, target_team_id, created_at)
+  on public.policy_reviewers to authenticated;
+grant insert (organization_id, policy_settings_id, kind, user_id, role, target_department_id, target_team_id, created_by)
+  on public.policy_reviewers to authenticated;
+grant delete on public.policy_reviewers to authenticated;
 grant all privileges on public.policy_reviewers to service_role;
 
 -- Vertrauen je Mitglied bleibt lesbar fuer die Person selbst und fuer wer diese Ebene verwaltet --
@@ -674,12 +703,19 @@ $$;
 revoke all on function public.set_member_review_trust(uuid, text, uuid, uuid, uuid, boolean, text, text, timestamptz) from public;
 grant execute on function public.set_member_review_trust(uuid, text, uuid, uuid, uuid, boolean, text, text, timestamptz) to authenticated;
 
--- Freigabe anfordern: die Route ist bereits in TypeScript aufgeloest (resolveReviewRoute,
--- packages/domain) -- diese Funktion persistiert sie atomar und wiederholt die Kernpruefungen
--- serverseitig (Verteidigung in der Tiefe, dasselbe Muster wie ueberall sonst in diesem Projekt).
--- Leere stages bedeuten "keine Pruefstufe auf keiner Ebene": der Beitrag geht direkt auf approved.
+-- Freigabe anfordern: die Route ist bereits in TypeScript vorgeschlagen (resolveReviewRoute,
+-- packages/domain) -- diese Funktion ist aber per RPC direkt erreichbar (grant execute an
+-- authenticated) und darf dem Vorschlag deshalb nicht blind vertrauen. Beim Rechte- und
+-- Mandantentrennung-Review gefunden: ein Aufrufer mit blossem post.submit koennte sonst
+-- (a) eine fremde userId als Pruefer eintragen, (b) mit stages='[]' jede Pruefung -- inklusive
+-- der unbefreibaren Minderjaehrigenstufe -- vollstaendig umgehen, und (c) sich per
+-- selbstgewaehltem target_self_approval_allowed=true selbst freigeben, unabhaengig von der
+-- tatsaechlichen Richtlinie. Deshalb: self_approval_allowed/allow_same_reviewer_across_stages
+-- werden HIER aus policy_settings neu berechnet, nicht vom Aufrufer uebernommen; eine leere oder
+-- die Minderjaehrigenstufe auslassende stages-Liste wird abgelehnt, wenn die Richtlinie das nicht
+-- zulaesst; und jede reviewer_snapshot-userId wird gegen echte Vereinsmitgliedschaft geprueft.
 create or replace function public.request_approval(
-  target_post_version_id uuid, stages jsonb, target_self_approval_allowed boolean, target_allow_same_reviewer_across_stages boolean
+  target_post_version_id uuid, stages jsonb
 ) returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare
@@ -687,10 +723,17 @@ declare
   post record;
   new_request_id uuid;
   stage_row jsonb;
+  reviewer_elem jsonb;
   new_stage_id uuid;
   first_stage_id uuid;
   total_minimum_approvals integer := 0;
   any_minor_stage boolean := false;
+  effective_self_approval_allowed boolean;
+  effective_allow_same_reviewer boolean;
+  any_review_required boolean;
+  contains_minors boolean;
+  minor_stage_present boolean;
+  only_author_reviewer boolean;
 begin
   select * into version from public.post_versions where id = target_post_version_id for update;
   if not found then raise exception 'not_found'; end if;
@@ -703,6 +746,54 @@ begin
     raise exception 'insufficient_permission';
   end if;
 
+  -- Dieselbe AND-Reduktion wie mergeEffectiveConfig (packages/domain), aber nur fuer die zwei
+  -- Felder, die diese Funktion selbst durchsetzen muss -- null (nicht gesetzt) = neutral/true.
+  select
+    coalesce(bool_and(coalesce(self_approval_allowed, true)), true),
+    coalesce(bool_and(coalesce(allow_same_reviewer_across_stages, true)), true),
+    coalesce(bool_or(coalesce(review_required, false)), false)
+  into effective_self_approval_allowed, effective_allow_same_reviewer, any_review_required
+  from public.policy_settings
+  where organization_id = post.organization_id
+    and (
+      scope = 'organization'
+      or (scope = 'department' and department_id = post.department_id)
+      or (scope = 'team' and post.team_id is not null and team_id = post.team_id)
+    );
+
+  contains_minors := 'minor' = any(coalesce(version.safety_flags, '{}'));
+  minor_stage_present := exists (select 1 from jsonb_array_elements(stages) s where (s->>'isMinorStage')::boolean);
+  if contains_minors and not minor_stage_present then
+    raise exception 'minor_stage_required';
+  end if;
+  if jsonb_array_length(stages) = 0 and (any_review_required or contains_minors) then
+    raise exception 'review_required';
+  end if;
+
+  -- Verteidigung in der Tiefe: ein jsonb-Feld kann keinen Fremdschluessel tragen, deshalb hier
+  -- eine explizite Mitgliedschaftspruefung -- sonst waere jede beliebige userId als Pruefer
+  -- eintragbar, auch aus einem fremden Verein.
+  for stage_row in select * from jsonb_array_elements(stages) loop
+    for reviewer_elem in select * from jsonb_array_elements(coalesce(stage_row->'reviewerSnapshot', '[]'::jsonb)) loop
+      if not authz.is_user_member_of_organization((reviewer_elem->>'userId')::uuid, post.organization_id) then
+        raise exception 'invalid_reviewer_snapshot';
+      end if;
+    end loop;
+  end loop;
+
+  if not effective_self_approval_allowed then
+    select exists (
+      select 1 from jsonb_array_elements(stages) s
+      where not exists (
+        select 1 from jsonb_array_elements(coalesce(s->'reviewerSnapshot', '[]'::jsonb)) e
+        where (e->>'userId')::uuid is distinct from version.created_by_user_id
+      )
+    ) into only_author_reviewer;
+    if only_author_reviewer then
+      raise exception 'only_author_as_reviewer';
+    end if;
+  end if;
+
   if jsonb_array_length(stages) = 0 then
     update public.posts set status = 'approved', updated_at = now() where id = post.id;
     return jsonb_build_object('postId', post.id, 'status', 'approved', 'stages', '[]'::jsonb);
@@ -713,7 +804,7 @@ begin
     self_approval_allowed, allow_same_reviewer_across_stages
   ) values (
     post.organization_id, post.id, version.id, 1, false,
-    target_self_approval_allowed, target_allow_same_reviewer_across_stages
+    effective_self_approval_allowed, effective_allow_same_reviewer
   ) returning id into new_request_id;
 
   for stage_row in select * from jsonb_array_elements(stages) order by (value->>'position')::integer loop
@@ -743,8 +834,8 @@ begin
   return jsonb_build_object('postId', post.id, 'approvalRequestId', new_request_id, 'status', 'awaiting_approval', 'firstStageId', first_stage_id);
 end;
 $$;
-revoke all on function public.request_approval(uuid, jsonb, boolean, boolean) from public;
-grant execute on function public.request_approval(uuid, jsonb, boolean, boolean) to authenticated;
+revoke all on function public.request_approval(uuid, jsonb) from public;
+grant execute on function public.request_approval(uuid, jsonb) to authenticated;
 
 -- Entscheiden: authz.can_decide_stage ist die primaere Durchsetzung (kein direkter Tabellen-Grant
 -- auf approval_stages fuer authenticated) -- die RLS-Policy oben ist Verteidigung in der Tiefe, kein

@@ -2255,6 +2255,10 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       return reply.code(422).send({ error: 'unfulfillable_stage', blockers: route.blockers, correlationId: request.id })
     }
 
+    // self_approval_allowed/allow_same_reviewer_across_stages werden von request_approval selbst
+    // aus policy_settings neu berechnet, nicht von hier uebernommen -- die RPC ist per Grant direkt
+    // erreichbar und darf diese sicherheitsrelevanten Werte nicht vom Aufrufer entgegennehmen
+    // (beim Rechte-/Mandantentrennung-Review gefunden).
     const rpc = await client.rpc('request_approval', {
       target_post_version_id: params.id,
       stages: route.stages.map((stage) => ({
@@ -2262,12 +2266,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         label: stage.label, mode: stage.mode, minimumApprovals: stage.minimumApprovals, isMinorStage: stage.isMinorStage,
         reviewerSnapshot: stage.reviewerUserIds.map((userId) => ({ userId })), deadlineHours: stage.deadlineHours ?? null,
       })),
-      target_self_approval_allowed: config.policies.selfApprovalAllowed,
-      target_allow_same_reviewer_across_stages: config.policies.allowSameReviewerAcrossStages,
     })
     if (rpc.error) {
       if (rpc.error.message.includes('insufficient_permission')) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
       if (rpc.error.message.includes('invalid_status')) return reply.code(409).send({ error: 'invalid_status', correlationId: request.id })
+      if (rpc.error.message.includes('minor_stage_required')) return reply.code(422).send({ error: 'minor_stage_required', correlationId: request.id })
+      if (rpc.error.message.includes('review_required')) return reply.code(422).send({ error: 'review_required', correlationId: request.id })
+      if (rpc.error.message.includes('invalid_reviewer_snapshot')) return reply.code(422).send({ error: 'invalid_reviewer_snapshot', correlationId: request.id })
+      if (rpc.error.message.includes('only_author_as_reviewer')) return reply.code(403).send({ error: 'only_author_as_reviewer', correlationId: request.id })
       throw rpc.error
     }
     return reply.code(202).send(
@@ -2306,7 +2312,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (!approvalRequest.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     const isAuthor = version.data.created_by_user_id === request.auth!.userId
     const [stagesResult, decisionsResult] = await Promise.all([
-      client.from('approval_stages').select('id, position, scope, label, mode, minimum_approvals, is_minor_stage, status, reviewer_snapshot, deadline_at').eq('approval_request_id', approvalRequest.data.id).order('position'),
+      client.from('approval_stages').select('id, position, scope, label, mode, minimum_approvals, is_minor_stage, status, reviewer_snapshot, deadline_at, opened_at').eq('approval_request_id', approvalRequest.data.id).order('position'),
       client.from('approval_decisions').select('id, approval_stage_id, decided_by, decision, reason, created_at').eq('approval_request_id', approvalRequest.data.id),
     ])
     if (stagesResult.error) throw stagesResult.error
@@ -2319,7 +2325,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
           id: stage.id, position: stage.position, scope: stage.scope, label: stage.label, mode: stage.mode,
           minimumApprovals: stage.minimum_approvals, isMinorStage: stage.is_minor_stage, status: stage.status,
           // Der Autor sieht die Zusammensetzung einer noch nicht geoeffneten Stufe nicht (Plan 011).
-          reviewerUserIds: isAuthor && stage.status === 'pending' ? null : (stage.reviewer_snapshot as { userId: string }[]).map((entry) => entry.userId),
+          // Ueber opened_at statt einzelner Statuswerte: eine abgelehnte innere Stufe skipped alle
+          // FOLGENDEN Stufen direkt aus 'pending', ohne dass sie je 'open' waren -- ein Check nur
+          // auf status === 'pending' haette das nach der Ablehnung wieder offengelegt (beim
+          // Geheimnisse-Review gefunden).
+          reviewerUserIds: isAuthor && stage.opened_at === null ? null : (stage.reviewer_snapshot as { userId: string }[]).map((entry) => entry.userId),
           deadlineAt: stage.deadline_at,
           isOverdue: stage.status === 'open' && stage.deadline_at !== null && new Date(stage.deadline_at as string).getTime() < now,
         })),

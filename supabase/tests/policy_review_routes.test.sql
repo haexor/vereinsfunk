@@ -1,8 +1,14 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(24);
+select plan(29);
 
 set local role postgres;
+
+-- Ein voellig fremder Nutzer, Mitglied in KEINEM Verein dieser Testdatei -- fuer den
+-- Mandantentrennung-Fund unten (request_approval durfte reviewer_snapshot nicht ungeprueft
+-- uebernehmen).
+insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
+values ('00000000-0000-0000-0000-000000000000', '64000000-0000-4000-8000-000000000099', 'authenticated', 'authenticated', 'fremd@pgtap-route.local', '', '{}', '{}', now(), now());
 
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
 values
@@ -24,9 +30,11 @@ insert into public.department_memberships (organization_id, department_id, user_
   ('64000000-1000-4000-8000-000000000001', '64000000-1100-4000-8000-000000000002', '64000000-0000-4000-8000-000000000004', 'viewer');
 
 insert into public.posts (id, organization_id, department_id, status, created_by) values
-  ('64000000-2000-4000-8000-000000000001', '64000000-1000-4000-8000-000000000001', '64000000-1100-4000-8000-000000000001', 'awaiting_approval', '64000000-0000-4000-8000-000000000001');
+  ('64000000-2000-4000-8000-000000000001', '64000000-1000-4000-8000-000000000001', '64000000-1100-4000-8000-000000000001', 'awaiting_approval', '64000000-0000-4000-8000-000000000001'),
+  ('64000000-2000-4000-8000-000000000002', '64000000-1000-4000-8000-000000000001', '64000000-1100-4000-8000-000000000001', 'draft_ready', '64000000-0000-4000-8000-000000000001');
 insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type, created_by_user_id) values
-  ('64000000-3000-4000-8000-000000000001', '64000000-1000-4000-8000-000000000001', '64000000-2000-4000-8000-000000000001', 1, '{}', '{}', 'user', '64000000-0000-4000-8000-000000000001');
+  ('64000000-3000-4000-8000-000000000001', '64000000-1000-4000-8000-000000000001', '64000000-2000-4000-8000-000000000001', 1, '{}', '{}', 'user', '64000000-0000-4000-8000-000000000001'),
+  ('64000000-3000-4000-8000-000000000005', '64000000-1000-4000-8000-000000000001', '64000000-2000-4000-8000-000000000002', 1, '{}', '{}', 'user', '64000000-0000-4000-8000-000000000001');
 
 insert into public.submissions (id, organization_id, department_id, content_type, preset_slug, communication_goal, requested_formats, source_material, created_by) values
   ('64000000-2500-4000-8000-000000000001', '64000000-1000-4000-8000-000000000001', '64000000-1100-4000-8000-000000000001', 'training_insight', 'training_insight', 'inform',
@@ -208,6 +216,53 @@ select is(
 select is(
   public.count_publications_in_period('64000000-1000-4000-8000-000000000001', null, null, '64000000-8000-4000-8000-000000000001', 'month', now() - interval '40 days'),
   0, 'count_publications_in_period respects the reference period and does not count last month''s activity'
+);
+
+-- 26: count_publications_in_period hat keinen legitimen Aufrufer ausser schedule_publication()
+-- (SECURITY DEFINER) -- ein direkter RPC-Aufruf durch authenticated wuerde die
+-- Veroeffentlichungszahl eines FREMDEN Vereins offenlegen und ist deshalb nicht mehr vergeben.
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '64000000-0000-4000-8000-000000000004', true);
+select throws_ok(
+  $$select public.count_publications_in_period('64000000-1000-4000-8000-000000000001', null, null, '64000000-8000-4000-8000-000000000001', 'day', now())$$,
+  '42501', null, 'authenticated cannot call count_publications_in_period directly anymore'
+);
+
+-- 27: request_approval() muss reviewer_snapshot-Eintraege gegen echte Mitgliedschaft DIESES
+-- Vereins pruefen -- sonst koennte jede aufrufberechtigte Person eine voellig fremde userId als
+-- Pruefer eintragen (Mandantentrennung-Fund).
+select set_config('request.jwt.claim.sub', '64000000-0000-4000-8000-000000000001', true);
+select throws_ok(
+  $$select public.request_approval(
+    '64000000-3000-4000-8000-000000000005'::uuid,
+    jsonb_build_array(jsonb_build_object(
+      'position', 1, 'scope', 'organization', 'scopeDepartmentId', null, 'scopeTeamId', null,
+      'label', 'Eingeschleust', 'mode', 'named', 'minimumApprovals', 1, 'isMinorStage', false,
+      'reviewerSnapshot', jsonb_build_array(jsonb_build_object('userId', '64000000-0000-4000-8000-000000000099')),
+      'deadlineHours', null
+    ))
+  )$$,
+  'P0001', 'invalid_reviewer_snapshot', 'request_approval rejects a reviewer_snapshot naming someone who is not even a member of this organization'
+);
+
+-- 29: eine leere Stufenliste darf keine tatsaechlich konfigurierte Pruefpflicht umgehen -- sonst
+-- koennte jede Person mit post.submit ihren eigenen Beitrag per direktem RPC-Aufruf sofort
+-- genehmigen, unabhaengig von der Richtlinie (Rechte-Review-Fund). Abteilung Fussball hat
+-- review_required = true aus dem Policy-Reviewers-Check-Constraint-Test oben.
+select throws_ok(
+  $$select public.request_approval('64000000-3000-4000-8000-000000000005'::uuid, '[]'::jsonb)$$,
+  'P0001', 'review_required', 'request_approval rejects an empty stage list when the department actually requires review'
+);
+
+-- 28: policy_reviewers.created_by ist wie policy_settings.updated_by und member_review_trust.
+-- granted_by nicht vereinsweit lesbar -- eine administrative Handlung einer konkreten Person.
+select is(
+  has_column_privilege('authenticated', 'public.policy_reviewers', 'created_by', 'SELECT'),
+  false, 'authenticated cannot see who created a policy_reviewers row'
+);
+select ok(
+  has_column_privilege('authenticated', 'public.policy_reviewers', 'user_id', 'SELECT'),
+  'authenticated can still read who the reviewer is'
 );
 
 select * from finish();
