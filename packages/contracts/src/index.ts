@@ -308,6 +308,7 @@ export const PolicyRuleSettingSchema = z.object({
   own: PolicyRuleValuesSchema,
   effective: PolicyRuleValuesSchema,
   canEdit: z.boolean(),
+  reviewers: z.array(PolicyReviewerSchema),
 })
 export const UpdatePolicyRulesRequestSchema = z.object({
   scope: ScopeLevelSchema,
