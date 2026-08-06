@@ -16,13 +16,13 @@ Geplant auf `b5c2eda6` am 2026-08-04.
 - Es existiert **keine Tabelle für Richtlinien.** Der einzige konfigurierbare Ort ist `organization_brand_profiles.settings` als freies `jsonb` (`202608020001:127`) ohne Schema und ohne Abteilungsebene.
 - `approval_requests` (`:200-216`) kennt `required_approvals integer` und `requires_minor_approval boolean`. **Eine Zahl kann keine Kette ausdrücken.** „Eine Freigabe vom Trainer und eine vom Marketing“ ist nicht dasselbe wie „zwei Freigaben“ — bei zwei kann derselbe Personenkreis zweimal zustimmen.
 - `approval_decisions` hat `unique (approval_request_id, decided_by)` (`:227`) — eine Person entscheidet pro Anfrage einmal. Für eine mehrstufige Route muss das zu „einmal pro Stufe“ werden, mit einer zusätzlichen Regel gegen dieselbe Person auf mehreren Stufen.
-- `authz.can_approve_post_version` (`:351-365`) prüft `post.approve` **in der Abteilung des Beitrags**. Das ist die zentrale Blockade für das Marketing-Szenario: eine Person aus der Abteilung Marketing hat keine Mitgliedschaft in der Abteilung Fußball und kann deren Beiträge damit weder freigeben noch überhaupt sehen. Alle Inhaltspolicies bauen darauf auf — `posts_select` (`:417`) verlangt `is_department_member`.
+- `authz.can_approve_post_version` (`:351-365`) prüft `post.approve` **in der Abteilung des Beitrags**. Das ist die zentrale Blockade für das Marketing-Szenario: eine Person aus der Abteilung Marketing hat keine Mitgliedschaft in der Abteilung Fußball und kann deren Beiträge damit weder freigeben noch überhaupt sehen. Alle Inhaltspolicies bauen darauf auf — `posts_select` (`:417`) verlangt `is_department_member`. **Korrektur nach Paket 023**: `posts_select` verlangt das nur noch für Entwürfe und laufende Freigaben. Für `published`/`scheduled` gilt zusätzlich `authz.is_any_member_of_organization` (vereinsweite Sichtbarkeit), für Teamitglieder zusätzlich die eigene Teammitgliedschaft (`2026080603_post_visibility.sql`, `2026080604_policy_settings_and_invite_rights.sql:277-304`). Das Marketing-Szenario bleibt für den Prüferzugang unverändert bestehen — ein noch nicht veröffentlichter Beitrag ist über keinen der neuen Zweige sichtbar —, aber die pauschale Aussage „`posts_select` verlangt `is_department_member`“ gilt nicht mehr uneingeschränkt.
 - Die Funktion prüft außerdem **nicht**, ob der Freigebende der Autor ist. Selbstfreigabe ist heute möglich.
 - `post_versions.effective_config_snapshot` (`:178`) ist `not null` mit Objekt-CHECK — das Einfrieren ist vorgesehen und wird von nichts gefüllt.
-- `packages/authorization/src/index.ts:41,53,57` verteilt `post.approve` an `social_manager`, `department_admin` und `approver`. Eine benannte Einzelperson als Prüferin ist im Modell nicht vorgesehen.
+- `packages/authorization/src/index.ts:40,55,60` verteilt `post.approve` an `social_manager`, `department_admin` und `approver`. Eine benannte Einzelperson als Prüferin ist im Modell nicht vorgesehen.
 - `apps/web/app/pages/einstellungen.vue:1` zeigt fünf hartkodierte Zeilen, darunter „Jeder Beitrag benötigt eine menschliche Freigabe“ und „Minderjährigenschutz · Sonderfreigabe ist aktiv“. Jeder „Bearbeiten“-Button ist ohne Handler. **Vier der fünf Aussagen sind im System nirgends abgebildet.**
 - Es gibt **keine Kontingente**: keine Tabelle, kein Zähler, keine Prüfung.
-- `apps/api/src/app.ts:74-103` nimmt eine Submission an, ohne irgendeine Richtlinie zu konsultieren.
+- `apps/api/src/app.ts:343-373` nimmt eine Submission an, ohne irgendeine Richtlinie zu konsultieren.
 
 ## Abhängigkeit: Paket 023 ist erledigt
 
@@ -33,7 +33,7 @@ Was 023 mitbringt und dieses Paket voraussetzt:
 - `public.policy_scope` und `public.policy_settings` **existieren bereits** (Migration `2026080604_policy_settings_and_invite_rights.sql`) — dieses Paket erweitert die Tabelle um die Freigabe- und Kontingentfelder, legt sie nicht neu an. Der Ausschnitt unter „Datenmodell“ zeigt sie deshalb vollständig, umzusetzen ist die Differenz.
 - `authz.resolve_policy_flag(...)` und die Vererbungsregel („`null` = erben, untere Ebenen dürfen nur verschärfen“) sind an zwei booleschen Feldern gebaut und getestet (AND-Reduktion über Verein/Abteilung/Team).
 - Die Mitglieder-Detailebene auf `/mitglieder` existiert mit Rolle und Befristung. Dieses Paket **füllt sie** mit Freigabe-Zuständigkeit (`policy_reviewers`) und Vertrauen (`member_review_trust`), statt eine zweite zu bauen. **Abweichung vom ursprünglichen Plan**: `invite_allowed` sitzt NICHT in dieser Detailebene, sondern als Scope-Feld auf `/struktur` (Komponente `PolicyFlagToggles.vue`, je Verein/Abteilung/Team) — es ist eine Eigenschaft der Ebene, nicht der einzelnen Mitgliedschaft. Freigabe-Zuständigkeit und Vertrauen gehören dagegen wirklich zur Person und damit in die Mitglieder-Detailebene.
-- Die drei Vererbungszustände der Oberfläche (**geerbt**, **verschärft**, **gesperrt**) sind dort entstanden (`PolicyFlagToggles.vue`) und werden hier nicht neu erfunden.
+- Die drei Vererbungszustände der Oberfläche (**geerbt**, **verschärft**, **gesperrt**) sind dort entstanden (`PolicyFlagToggles.vue`) und werden hier nicht neu erfunden. **Einschränkung**: die Komponente ist mit einem hartkodierten `fields`-Array und einem binären `stateFor()`-Ternary eng an genau die zwei bestehenden Flags gekoppelt, nicht generisch über beliebige Flags. Dieses Paket muss die Komponente selbst erweitern (weitere Flags, ggf. Freigabestufen als eigener Block), nicht nur ein neues Setting-Objekt durchreichen.
 - **Verbindlich übernommen**: die erlaubten Aktionen kommen aus der API-Antwort (`canChangeRole`/`canRemove`/`canSetExpiry` auf `MemberRoleEntrySchema`), das Frontend leitet Berechtigungen nicht selbst her (Begründung in 023).
 - **Neu, nicht im ursprünglichen 023-Plan vorgesehen**: `authz.is_any_member_of_organization` (statt des bestehenden `authz.is_organization_member`) für „vereinsweit“ — die bestehende Funktion prüft nur Organisationsrollen, nicht Abteilungs-/Teammitgliedschaft. Falls 011 an anderer Stelle „jedes Vereinsmitglied“ meint (nicht nur Organisationsrollen), diese Funktion wiederverwenden, nicht `is_organization_member`.
 
@@ -128,7 +128,7 @@ Ist `selfApprovalAllowed = false`, wird der Autor auf jeder Stufe aus dem Prüfe
 
 ## Datenmodell
 
-Migration `2026080404_policies_and_review_routes.sql`:
+Migration `2026080606_policies_and_review_routes.sql` (der ursprünglich geplante Zeitstempel `2026080404` liegt vor den vier 023-Migrationen `2026080501`–`2026080605` und damit vor `2026080604_policy_settings_and_invite_rights.sql`, die `policy_settings` erst anlegt — mit dem alten Zeitstempel würde diese Migration vor ihrer eigenen Voraussetzung laufen):
 
 ```sql
 create type public.policy_scope as enum ('organization','department','team');
