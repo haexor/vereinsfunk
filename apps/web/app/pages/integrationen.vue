@@ -1,0 +1,586 @@
+<script setup lang="ts">
+import {
+  IntegrationSourceSchema,
+  IntegrationSyncConflictSchema,
+  IntegrationSyncRunSchema,
+  SyncSourceResponseSchema,
+  type IntegrationSource,
+  type IntegrationSyncConflict,
+  type IntegrationSyncRun,
+} from '@vereinsfunk/contracts'
+
+const config = useRuntimeConfig()
+const session = await useSession()
+const scope = await useScope()
+
+const organizationId = computed(() => scope.value?.organizationId ?? null)
+const organization = computed(() => session.value?.scopes.find((item) => item.organizationId === organizationId.value) ?? null)
+
+const loading = ref(true)
+const errorMessage = ref('')
+const actionError = ref('')
+const sources = ref<IntegrationSource[]>([])
+
+// Wer darf hier ueberhaupt etwas verwalten? Vereinsweit ODER in mindestens einer Abteilung --
+// unterscheidet sich von "keine Quelle vorhanden" (leere Liste trotz Berechtigung).
+const canManageOrgWide = computed(() => useCan('integration.manage', { organizationId: organizationId.value ?? '' }))
+const manageableDepartments = computed(() =>
+  (organization.value?.departments ?? []).filter((department) => useCan('integration.manage', { organizationId: organizationId.value ?? '', departmentId: department.id })),
+)
+const canManageAnything = computed(() => canManageOrgWide.value || manageableDepartments.value.length > 0)
+const departmentOptionsForCreate = computed(() => (canManageOrgWide.value ? (organization.value?.departments ?? []) : manageableDepartments.value))
+
+function canManageDepartment(departmentId: string | null): boolean {
+  return useCan('integration.manage', { organizationId: organizationId.value ?? '', ...(departmentId ? { departmentId } : {}) })
+}
+
+async function load() {
+  if (!organizationId.value) { loading.value = false; return }
+  loading.value = true
+  errorMessage.value = ''
+  try {
+    const headers = await useAuthHeader()
+    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/integration-sources`, { headers })
+    sources.value = IntegrationSourceSchema.array().parse(response)
+  } catch {
+    errorMessage.value = 'Die Quellen konnten nicht geladen werden.'
+  } finally {
+    loading.value = false
+  }
+}
+await load()
+watch(organizationId, () => { void load() })
+
+const TRANSPORT_LABELS: Record<string, string> = { file: 'Datei (CSV/XLSX)', http: 'HTTP-API', ical: 'Kalender-Feed (iCal)', webhook: 'Webhook' }
+const DOMAIN_LABELS: Record<string, string> = { people: 'Personen', teams: 'Mannschaften', fixtures: 'Spielpläne', events: 'Veranstaltungen' }
+const RUN_STATUS_LABELS: Record<string, string> = {
+  running: 'Läuft', succeeded: 'Erfolgreich', failed: 'Fehlgeschlagen', cancelled: 'Abgebrochen', aborted_loss_threshold: 'Abgebrochen (Verlustschwelle)',
+}
+const CONFLICT_KIND_LABELS: Record<string, string> = {
+  ambiguous_match: 'Mehrdeutiger Treffer', unknown_structure: 'Unbekannte Struktur', value_conflict: 'Wertkonflikt', invalid_record: 'Ungültiger Datensatz',
+}
+const RESOLUTION_LABELS: Record<string, string> = { pending: 'Offen', keep_current: 'Behalten', take_incoming: 'Übernommen', ignore_permanently: 'Dauerhaft ignoriert' }
+
+function scopeLabel(departmentId: string | null): string {
+  if (!departmentId) return 'Vereinsweit'
+  return organization.value?.departments.find((department) => department.id === departmentId)?.name ?? departmentId
+}
+
+// --- Quelle einrichten -------------------------------------------------------------------
+
+const createForm = reactive({
+  transport: 'file' as 'file' | 'ical',
+  providerKey: '',
+  displayName: '',
+  departmentId: '',
+  endpointUrl: '',
+  lossThresholdPercent: '',
+})
+const mappingRows = reactive<{ column: string; field: string }[]>([{ column: '', field: '' }])
+const createSubmitting = ref(false)
+const createError = ref('')
+
+// Ohne vereinsweites integration.manage ist "Vereinsweit" keine gueltige Voreinstellung --
+// sonst zeigt das Formular eine Option, die die API mit 403 ablehnen wuerde.
+watch(
+  departmentOptionsForCreate,
+  (list) => {
+    if (canManageOrgWide.value) return
+    if (!list.some((department) => department.id === createForm.departmentId)) createForm.departmentId = list[0]?.id ?? ''
+  },
+  { immediate: true },
+)
+
+const FIELD_MAPPING_BASE_TARGETS = [
+  { value: 'firstName', label: 'Vorname' },
+  { value: 'lastName', label: 'Nachname' },
+  { value: 'birthYear', label: 'Geburtsjahr' },
+  { value: 'departmentName', label: 'Abteilung (Name)' },
+  { value: 'teamName', label: 'Mannschaft (Name)' },
+  { value: 'status', label: 'Status' },
+  { value: 'joinedAt', label: 'Beitrittsdatum' },
+  { value: 'leftAt', label: 'Austrittsdatum' },
+]
+const GUARDIAN_MAPPING_TARGETS = [
+  { value: 'guardianName', label: 'Name Erziehungsberechtigte:r' },
+  { value: 'guardianEmail', label: 'E-Mail Erziehungsberechtigte:r' },
+]
+function mappingTargetsFor(departmentId: string | null): typeof FIELD_MAPPING_BASE_TARGETS {
+  return canManageDepartment(departmentId) ? [...FIELD_MAPPING_BASE_TARGETS, ...GUARDIAN_MAPPING_TARGETS] : FIELD_MAPPING_BASE_TARGETS
+}
+
+function addMappingRow() { mappingRows.push({ column: '', field: '' }) }
+function removeMappingRow(index: number) { mappingRows.splice(index, 1) }
+
+function buildFieldMapping(rows: { column: string; field: string }[]): Record<string, string> {
+  return Object.fromEntries(rows.filter((row) => row.column.trim() && row.field).map((row) => [row.column.trim(), row.field]))
+}
+
+async function createSource() {
+  if (!organizationId.value) return
+  if (createForm.transport === 'ical' && !createForm.endpointUrl.trim()) {
+    createError.value = 'Für einen Kalender-Feed ist eine Adresse erforderlich.'
+    return
+  }
+  createSubmitting.value = true
+  createError.value = ''
+  try {
+    const headers = await useAuthHeader()
+    const body: Record<string, unknown> = {
+      transport: createForm.transport,
+      providerKey: createForm.providerKey.trim(),
+      displayName: createForm.displayName.trim(),
+      enabledDomains: ['people'],
+      fieldMapping: buildFieldMapping(mappingRows),
+    }
+    if (createForm.departmentId) body.departmentId = createForm.departmentId
+    if (createForm.transport === 'ical') body.endpointUrl = createForm.endpointUrl.trim()
+    if (createForm.lossThresholdPercent) body.lossThresholdPercent = Number(createForm.lossThresholdPercent)
+    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/integration-sources`, { method: 'POST', headers, body })
+    sources.value = [...sources.value, IntegrationSourceSchema.parse(response)]
+    createForm.providerKey = ''
+    createForm.displayName = ''
+    createForm.endpointUrl = ''
+    createForm.lossThresholdPercent = ''
+    mappingRows.splice(0, mappingRows.length, { column: '', field: '' })
+  } catch {
+    createError.value = 'Die Quelle konnte nicht angelegt werden.'
+  } finally {
+    createSubmitting.value = false
+  }
+}
+
+// --- Aktivieren/Deaktivieren -------------------------------------------------------------
+
+const busySourceId = ref<string | null>(null)
+async function toggleEnabled(source: IntegrationSource) {
+  busySourceId.value = source.id
+  actionError.value = ''
+  try {
+    const headers = await useAuthHeader()
+    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/integration-sources/${source.id}`, { method: 'PATCH', headers, body: { enabled: !source.enabled } })
+    const updated = IntegrationSourceSchema.parse(response)
+    sources.value = sources.value.map((item) => (item.id === updated.id ? updated : item))
+  } catch {
+    actionError.value = 'Der Status konnte nicht geändert werden.'
+  } finally {
+    busySourceId.value = null
+  }
+}
+
+// --- Bearbeiten (Anzeigename, Endpunkt, Feldzuordnung, Verlustschwelle) ------------------
+
+const editingSourceId = ref<string | null>(null)
+const editForm = reactive({ displayName: '', endpointUrl: '', lossThresholdPercent: '30' })
+const editMappingRows = reactive<{ column: string; field: string }[]>([])
+const editSubmitting = ref(false)
+const editError = ref('')
+
+function startEdit(source: IntegrationSource) {
+  editingSourceId.value = source.id
+  editForm.displayName = source.displayName
+  editForm.endpointUrl = source.endpointUrl ?? ''
+  editForm.lossThresholdPercent = String(source.lossThresholdPercent)
+  const entries = Object.entries(source.fieldMapping).map(([column, field]) => ({ column, field }))
+  editMappingRows.splice(0, editMappingRows.length, ...(entries.length > 0 ? entries : [{ column: '', field: '' }]))
+  editError.value = ''
+}
+
+async function saveEdit(source: IntegrationSource) {
+  editSubmitting.value = true
+  editError.value = ''
+  try {
+    const headers = await useAuthHeader()
+    const body: Record<string, unknown> = {
+      displayName: editForm.displayName.trim(),
+      fieldMapping: buildFieldMapping(editMappingRows),
+      lossThresholdPercent: Number(editForm.lossThresholdPercent) || 30,
+    }
+    if (source.transport === 'ical') body.endpointUrl = editForm.endpointUrl.trim()
+    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/integration-sources/${source.id}`, { method: 'PATCH', headers, body })
+    const updated = IntegrationSourceSchema.parse(response)
+    sources.value = sources.value.map((item) => (item.id === updated.id ? updated : item))
+    editingSourceId.value = null
+  } catch {
+    editError.value = 'Die Änderungen konnten nicht gespeichert werden.'
+  } finally {
+    editSubmitting.value = false
+  }
+}
+
+// --- Trockenlauf / Uebernahme ------------------------------------------------------------
+
+const SYNC_ERROR_MESSAGES: Record<string, string> = {
+  source_disabled: 'Diese Quelle ist deaktiviert.',
+  source_missing_endpoint: 'Für diese Quelle ist keine Adresse hinterlegt.',
+  source_fetch_failed: 'Der Kalender-Feed konnte nicht abgerufen werden.',
+  transport_not_implemented: 'Dieser Transport wird noch nicht unterstützt.',
+  domain_not_implemented: 'Dieser Bereich wird noch nicht unterstützt.',
+  domain_not_enabled: 'Dieser Bereich ist für diese Quelle nicht aktiviert.',
+  file_too_large: 'Die Datei ist zu groß (max. 8 MB).',
+  invalid_request: 'Die Anfrage ist ungültig.',
+}
+
+const syncingSourceId = ref<string | null>(null)
+const syncMode = ref<'dry_run' | 'apply'>('dry_run')
+const syncFile = ref<File | null>(null)
+const syncFileInputKey = ref(0)
+const syncSubmitting = ref(false)
+const syncError = ref('')
+const syncResults = reactive<Record<string, { run: IntegrationSyncRun; conflicts: IntegrationSyncConflict[] }>>({})
+
+function openSync(source: IntegrationSource) {
+  syncingSourceId.value = syncingSourceId.value === source.id ? null : source.id
+  syncMode.value = 'dry_run'
+  syncFile.value = null
+  syncFileInputKey.value += 1
+  syncError.value = ''
+}
+function onFileChange(event: Event) {
+  syncFile.value = (event.target as HTMLInputElement).files?.[0] ?? null
+}
+
+async function runSync(source: IntegrationSource) {
+  if (source.transport === 'file' && !syncFile.value) {
+    syncError.value = 'Bitte eine Datei auswählen.'
+    return
+  }
+  syncSubmitting.value = true
+  syncError.value = ''
+  try {
+    const headers = await useAuthHeader()
+    let response: unknown
+    if (source.transport === 'file') {
+      const formData = new FormData()
+      formData.append('mode', syncMode.value)
+      formData.append('domain', 'people')
+      formData.append('file', syncFile.value as File)
+      response = await $fetch(`${config.public.apiBase}/v1/integration-sources/${source.id}/sync`, { method: 'POST', headers, body: formData })
+    } else {
+      response = await $fetch(`${config.public.apiBase}/v1/integration-sources/${source.id}/sync`, { method: 'POST', headers, body: { mode: syncMode.value, domain: 'people' } })
+    }
+    syncResults[source.id] = SyncSourceResponseSchema.parse(response)
+    if (historySourceId.value === source.id) await loadHistory(source.id)
+    if (conflictsSourceId.value === source.id) await loadConflicts(source.id)
+    await load()
+  } catch (error) {
+    const code = (error as { data?: { error?: string } })?.data?.error
+    syncError.value = (code && SYNC_ERROR_MESSAGES[code]) ?? 'Der Sync-Lauf ist fehlgeschlagen.'
+  } finally {
+    syncSubmitting.value = false
+  }
+}
+
+// --- Verlauf der Laeufe --------------------------------------------------------------------
+
+const historySourceId = ref<string | null>(null)
+const historyRuns = ref<IntegrationSyncRun[]>([])
+const historyLoading = ref(false)
+
+async function loadHistory(sourceId: string) {
+  historyLoading.value = true
+  try {
+    const headers = await useAuthHeader()
+    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/integration-sources/${sourceId}/sync-runs`, { headers })
+    historyRuns.value = IntegrationSyncRunSchema.array().parse(response)
+  } catch {
+    historyRuns.value = []
+  } finally {
+    historyLoading.value = false
+  }
+}
+async function toggleHistory(source: IntegrationSource) {
+  if (historySourceId.value === source.id) { historySourceId.value = null; return }
+  historySourceId.value = source.id
+  await loadHistory(source.id)
+}
+
+// --- Konfliktliste -------------------------------------------------------------------------
+
+const conflictsSourceId = ref<string | null>(null)
+const conflictItems = ref<IntegrationSyncConflict[]>([])
+const conflictsLoading = ref(false)
+const showResolvedConflicts = ref(false)
+const conflictActionError = ref('')
+const conflictBusyId = ref<string | null>(null)
+
+async function loadConflicts(sourceId: string) {
+  conflictsLoading.value = true
+  try {
+    const headers = await useAuthHeader()
+    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/integration-sources/${sourceId}/conflicts`, {
+      headers,
+      query: showResolvedConflicts.value ? {} : { resolution: 'pending' },
+    })
+    conflictItems.value = IntegrationSyncConflictSchema.array().parse(response)
+  } catch {
+    conflictItems.value = []
+  } finally {
+    conflictsLoading.value = false
+  }
+}
+async function toggleConflicts(source: IntegrationSource) {
+  if (conflictsSourceId.value === source.id) { conflictsSourceId.value = null; return }
+  conflictsSourceId.value = source.id
+  showResolvedConflicts.value = false
+  await loadConflicts(source.id)
+}
+watch(showResolvedConflicts, () => { if (conflictsSourceId.value) void loadConflicts(conflictsSourceId.value) })
+
+async function resolveConflict(conflict: IntegrationSyncConflict, resolution: 'keep_current' | 'take_incoming' | 'ignore_permanently') {
+  conflictBusyId.value = conflict.id
+  conflictActionError.value = ''
+  try {
+    const headers = await useAuthHeader()
+    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/integration-sync-conflicts/${conflict.id}`, { method: 'PATCH', headers, body: { resolution } })
+    const updated = IntegrationSyncConflictSchema.parse(response)
+    for (const key of Object.keys(syncResults)) {
+      const entry = syncResults[key]
+      if (entry) entry.conflicts = entry.conflicts.map((item) => (item.id === updated.id ? updated : item))
+    }
+    if (conflictsSourceId.value === conflict.sourceId) await loadConflicts(conflict.sourceId)
+  } catch {
+    conflictActionError.value = 'Die Entscheidung konnte nicht gespeichert werden.'
+  } finally {
+    conflictBusyId.value = null
+  }
+}
+</script>
+
+<template>
+  <div class="mx-auto max-w-[980px] px-5 py-8 sm:px-10">
+    <header class="mb-8">
+      <div class="eyebrow mb-3">Verein</div>
+      <h1 class="font-display text-3xl font-extrabold tracking-[-.04em]">Integrationen</h1>
+      <p class="mt-2 text-sm text-[#727a75]">Was im Vereinsverwaltungssystem oder Mannschaftskalender schon steht, hier einlesen statt doppelt pflegen.</p>
+    </header>
+
+    <div v-if="loading" class="p-8 text-center text-xs text-[#7b827d]">Wird geladen …</div>
+    <p v-else-if="errorMessage" class="text-sm text-amber-800">{{ errorMessage }}</p>
+    <div v-else-if="!canManageAnything" class="card p-8 text-center text-sm text-[#7b827d]">
+      Du kannst hier keine Integrationsquellen verwalten. Das übernimmt der Vereins- oder Abteilungsadmin.
+    </div>
+    <template v-else>
+      <p v-if="actionError" class="mb-4 text-sm text-amber-800">{{ actionError }}</p>
+
+      <section class="card mb-6 p-6">
+        <h2 class="mb-4 font-display text-base font-bold">Quelle einrichten</h2>
+        <form class="grid gap-3 sm:grid-cols-2" @submit.prevent="createSource">
+          <label><span class="mb-1 block text-xs font-semibold">Transport</span>
+            <select v-model="createForm.transport" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm">
+              <option value="file">Datei (CSV/XLSX)</option>
+              <option value="ical">Kalender-Feed (iCal)</option>
+            </select>
+          </label>
+          <label><span class="mb-1 block text-xs font-semibold">Anbieterkennung</span>
+            <input v-model="createForm.providerKey" required maxlength="80" placeholder="z. B. csv" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm" />
+          </label>
+          <label class="sm:col-span-2"><span class="mb-1 block text-xs font-semibold">Anzeigename</span>
+            <input v-model="createForm.displayName" required maxlength="160" placeholder="z. B. Mitgliederexport Verbandssoftware" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm" />
+          </label>
+          <label><span class="mb-1 block text-xs font-semibold">Bereich</span>
+            <select v-model="createForm.departmentId" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm">
+              <option v-if="canManageOrgWide" value="">Vereinsweit</option>
+              <option v-for="department in departmentOptionsForCreate" :key="department.id" :value="department.id">{{ department.name }}</option>
+            </select>
+          </label>
+          <label v-if="createForm.transport === 'ical'"><span class="mb-1 block text-xs font-semibold">Kalender-Adresse</span>
+            <input v-model="createForm.endpointUrl" type="url" required placeholder="https://…" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm" />
+          </label>
+          <label><span class="mb-1 block text-xs font-semibold">Verlustschwelle (%)</span>
+            <input v-model="createForm.lossThresholdPercent" type="number" min="1" max="100" placeholder="30" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm" />
+          </label>
+
+          <div class="sm:col-span-2">
+            <p class="mb-2 text-xs font-semibold">Feldzuordnung</p>
+            <p class="mb-2 text-[11px] text-[#7b827d]">Welche Spalte der Datei entspricht welchem internen Feld? Wird gespeichert, damit der nächste Import ohne erneutes Zuordnen läuft.</p>
+            <div v-for="(row, index) in mappingRows" :key="index" class="mb-2 flex flex-wrap items-center gap-2">
+              <input v-model="row.column" placeholder="Spalte in der Datei" class="focus-ring w-44 rounded-lg border border-[#dfe0d9] p-2 text-xs" />
+              <span class="text-xs text-[#9aa096]">→</span>
+              <select v-model="row.field" class="focus-ring rounded-lg border border-[#dfe0d9] p-2 text-xs">
+                <option value="">Internes Feld wählen …</option>
+                <option v-for="target in mappingTargetsFor(createForm.departmentId || null)" :key="target.value" :value="target.value">{{ target.label }}</option>
+              </select>
+              <button type="button" class="focus-ring text-xs text-[#8a9186] hover:text-amber-800" @click="removeMappingRow(index)">Entfernen</button>
+            </div>
+            <button type="button" class="focus-ring text-xs font-semibold text-forest" @click="addMappingRow">+ Zeile hinzufügen</button>
+          </div>
+
+          <div class="sm:col-span-2">
+            <p v-if="createError" class="mb-2 text-xs text-amber-800">{{ createError }}</p>
+            <button type="submit" :disabled="createSubmitting" class="focus-ring rounded-xl bg-forest px-4 py-2.5 text-xs font-bold text-white disabled:opacity-60">
+              {{ createSubmitting ? 'Wird angelegt …' : 'Quelle anlegen' }}
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section v-for="source in sources" :key="source.id" class="card mb-4 p-6" :class="{ 'opacity-60': !source.enabled }">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p class="font-display text-base font-bold">{{ source.displayName }}</p>
+            <p class="mt-1 text-[11px] text-[#9aa096]">
+              {{ TRANSPORT_LABELS[source.transport] ?? source.transport }} · {{ scopeLabel(source.departmentId) }} ·
+              {{ source.enabledDomains.map((domain) => DOMAIN_LABELS[domain] ?? domain).join(', ') }}
+            </p>
+            <p class="mt-1 text-[11px] text-[#9aa096]">
+              <span v-if="source.lastSyncAt">Letzter Lauf: {{ new Date(source.lastSyncAt).toLocaleString('de-DE') }} · {{ RUN_STATUS_LABELS[source.lastSyncStatus ?? ''] ?? source.lastSyncStatus }}</span>
+              <span v-else>Noch nicht synchronisiert.</span>
+            </p>
+          </div>
+          <label class="flex shrink-0 items-center gap-2 text-xs font-semibold">
+            <input type="checkbox" :checked="source.enabled" :disabled="busySourceId === source.id" @change="toggleEnabled(source)" />
+            Aktiv
+          </label>
+        </div>
+
+        <div class="mt-4 flex flex-wrap gap-2">
+          <button type="button" class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-2 text-[11px] font-semibold" @click="openSync(source)">Sync ausführen</button>
+          <button type="button" class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-2 text-[11px] font-semibold" @click="startEdit(source)">Bearbeiten</button>
+          <button type="button" class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-2 text-[11px] font-semibold" @click="toggleHistory(source)">
+            {{ historySourceId === source.id ? 'Verlauf ausblenden' : 'Verlauf anzeigen' }}
+          </button>
+          <button type="button" class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-2 text-[11px] font-semibold" @click="toggleConflicts(source)">
+            {{ conflictsSourceId === source.id ? 'Konflikte ausblenden' : 'Konflikte anzeigen' }}
+          </button>
+        </div>
+
+        <div v-if="editingSourceId === source.id" class="mt-4 rounded-xl border border-[#e8e9e2] bg-[#f7f8f4] p-4">
+          <p class="mb-3 text-xs font-semibold">Quelle bearbeiten</p>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label><span class="mb-1 block text-xs font-semibold">Anzeigename</span>
+              <input v-model="editForm.displayName" maxlength="160" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" />
+            </label>
+            <label v-if="source.transport === 'ical'"><span class="mb-1 block text-xs font-semibold">Kalender-Adresse</span>
+              <input v-model="editForm.endpointUrl" type="url" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" />
+            </label>
+            <label><span class="mb-1 block text-xs font-semibold">Verlustschwelle (%)</span>
+              <input v-model="editForm.lossThresholdPercent" type="number" min="1" max="100" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" />
+            </label>
+          </div>
+          <div class="mt-3">
+            <p class="mb-2 text-xs font-semibold">Feldzuordnung</p>
+            <div v-for="(row, index) in editMappingRows" :key="index" class="mb-2 flex flex-wrap items-center gap-2">
+              <input v-model="row.column" placeholder="Spalte in der Datei" class="focus-ring w-44 rounded-lg border border-[#dfe0d9] p-2 text-xs" />
+              <span class="text-xs text-[#9aa096]">→</span>
+              <select v-model="row.field" class="focus-ring rounded-lg border border-[#dfe0d9] p-2 text-xs">
+                <option value="">Internes Feld wählen …</option>
+                <option v-for="target in mappingTargetsFor(source.departmentId)" :key="target.value" :value="target.value">{{ target.label }}</option>
+              </select>
+              <button type="button" class="focus-ring text-xs text-[#8a9186] hover:text-amber-800" @click="editMappingRows.splice(index, 1)">Entfernen</button>
+            </div>
+            <button type="button" class="focus-ring text-xs font-semibold text-forest" @click="editMappingRows.push({ column: '', field: '' })">+ Zeile hinzufügen</button>
+          </div>
+          <p v-if="editError" class="mt-2 text-xs text-amber-800">{{ editError }}</p>
+          <div class="mt-3 flex gap-2">
+            <button type="button" :disabled="editSubmitting" class="focus-ring rounded-lg bg-forest px-3 py-2 text-[11px] font-bold text-white disabled:opacity-60" @click="saveEdit(source)">
+              {{ editSubmitting ? 'Wird gespeichert …' : 'Speichern' }}
+            </button>
+            <button type="button" class="focus-ring text-xs text-[#8a9186]" @click="editingSourceId = null">Abbrechen</button>
+          </div>
+        </div>
+
+        <div v-if="syncingSourceId === source.id" class="mt-4 rounded-xl border border-[#e8e9e2] bg-[#f7f8f4] p-4">
+          <p class="mb-3 text-xs font-semibold">Sync ausführen</p>
+          <div class="flex flex-wrap items-center gap-4">
+            <label class="flex items-center gap-1.5 text-xs"><input v-model="syncMode" type="radio" value="dry_run" /> Trockenlauf</label>
+            <label class="flex items-center gap-1.5 text-xs"><input v-model="syncMode" type="radio" value="apply" /> Übernehmen</label>
+          </div>
+          <div v-if="source.transport === 'file'" class="mt-3">
+            <input :key="syncFileInputKey" type="file" accept=".csv,.xlsx,.xls" class="text-xs" @change="onFileChange" />
+          </div>
+          <p v-if="syncError" class="mt-2 text-xs text-amber-800">{{ syncError }}</p>
+          <div class="mt-3 flex items-center gap-2">
+            <button type="button" :disabled="syncSubmitting" class="focus-ring rounded-lg bg-forest px-3 py-2 text-[11px] font-bold text-white disabled:opacity-60" @click="runSync(source)">
+              {{ syncSubmitting ? 'Läuft …' : 'Ausführen' }}
+            </button>
+            <button type="button" class="focus-ring text-xs text-[#8a9186]" @click="syncingSourceId = null">Schließen</button>
+          </div>
+
+          <div v-if="syncResults[source.id]" class="mt-4 border-t border-[#e8e9e2] pt-3 text-xs">
+            <p class="font-semibold">
+              {{ syncResults[source.id]!.run.mode === 'dry_run' ? 'Trockenlauf-Ergebnis' : 'Übernommen' }}:
+              {{ syncResults[source.id]!.run.createdCount }} neu, {{ syncResults[source.id]!.run.updatedCount }} geändert,
+              {{ syncResults[source.id]!.run.retiredCount }} stillgelegt, {{ syncResults[source.id]!.run.conflictCount }} Konflikte
+            </p>
+            <p v-if="syncResults[source.id]!.run.status !== 'succeeded'" class="mt-1 text-amber-800">
+              Status: {{ RUN_STATUS_LABELS[syncResults[source.id]!.run.status] ?? syncResults[source.id]!.run.status }}
+            </p>
+            <div v-if="syncResults[source.id]!.conflicts.length" class="mt-3 space-y-2">
+              <p class="text-[11px] text-[#7b827d]">
+                Entscheidung wird vermerkt. Um die Daten tatsächlich zu ändern: Quelle/Zuordnung korrigieren und erneut synchronisieren, oder die Person manuell bearbeiten.
+              </p>
+              <p v-if="conflictActionError" class="text-amber-800">{{ conflictActionError }}</p>
+              <div v-for="conflict in syncResults[source.id]!.conflicts" :key="conflict.id" class="rounded-lg border border-[#e8e9e2] p-2.5">
+                <p class="font-semibold">{{ conflict.label }} · {{ CONFLICT_KIND_LABELS[conflict.kind] ?? conflict.kind }}</p>
+                <p class="mt-1 text-[#7b827d]">Feld: {{ conflict.field }}</p>
+                <div class="mt-1 grid gap-1 sm:grid-cols-2">
+                  <p>Aktuell: {{ conflict.currentValue ?? '–' }}</p>
+                  <p>Eingehend: {{ conflict.incomingValue ?? '–' }}</p>
+                </div>
+                <div v-if="conflict.resolution === 'pending'" class="mt-2 flex flex-wrap gap-2">
+                  <button type="button" :disabled="conflictBusyId === conflict.id" class="focus-ring rounded-lg border border-[#dfe0d9] px-2.5 py-1.5 text-[10px] font-semibold" @click="resolveConflict(conflict, 'take_incoming')">Übernehmen</button>
+                  <button type="button" :disabled="conflictBusyId === conflict.id" class="focus-ring rounded-lg border border-[#dfe0d9] px-2.5 py-1.5 text-[10px] font-semibold" @click="resolveConflict(conflict, 'keep_current')">Behalten</button>
+                  <button type="button" :disabled="conflictBusyId === conflict.id" class="focus-ring rounded-lg border border-[#dfe0d9] px-2.5 py-1.5 text-[10px] font-semibold text-amber-800" @click="resolveConflict(conflict, 'ignore_permanently')">Dauerhaft ignorieren</button>
+                </div>
+                <p v-else class="mt-2 text-[10px] text-[#9aa096]">Entschieden: {{ RESOLUTION_LABELS[conflict.resolution] }}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="historySourceId === source.id" class="mt-4 rounded-xl border border-[#e8e9e2] bg-[#f7f8f4] p-4 text-xs">
+          <p class="mb-2 font-semibold">Verlauf der Läufe</p>
+          <p v-if="historyLoading" class="text-[#7b827d]">Wird geladen …</p>
+          <div v-else-if="!historyRuns.length" class="text-[#9aa096]">Noch kein Lauf vorhanden.</div>
+          <div v-else class="space-y-2">
+            <div v-for="run in historyRuns" :key="run.id" class="rounded-lg border border-[#e8e9e2] p-2.5">
+              <p class="font-semibold">
+                {{ run.mode === 'dry_run' ? 'Trockenlauf' : 'Übernahme' }} · {{ RUN_STATUS_LABELS[run.status] ?? run.status }}
+              </p>
+              <p class="mt-1 text-[#7b827d]">
+                {{ run.createdCount }} neu, {{ run.updatedCount }} geändert, {{ run.retiredCount }} stillgelegt, {{ run.skippedCount }} übersprungen, {{ run.conflictCount }} Konflikte
+              </p>
+              <p v-if="run.errorClass" class="mt-1 text-amber-800">Fehlerklasse: {{ run.errorClass }}</p>
+              <p class="mt-1 text-[#9aa096]">
+                Gestartet: {{ new Date(run.startedAt).toLocaleString('de-DE') }} ·
+                {{ run.finishedAt ? `beendet: ${new Date(run.finishedAt).toLocaleString('de-DE')}` : 'läuft noch' }}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="conflictsSourceId === source.id" class="mt-4 rounded-xl border border-[#e8e9e2] bg-[#f7f8f4] p-4 text-xs">
+          <div class="mb-2 flex items-center justify-between">
+            <p class="font-semibold">Konfliktliste</p>
+            <label class="flex items-center gap-1.5 text-[11px]"><input v-model="showResolvedConflicts" type="checkbox" /> auch entschiedene anzeigen</label>
+          </div>
+          <p class="mb-2 text-[11px] text-[#7b827d]">
+            Entscheidung wird vermerkt. Um die Daten tatsächlich zu ändern: Quelle/Zuordnung korrigieren und erneut synchronisieren, oder die Person manuell bearbeiten.
+          </p>
+          <p v-if="conflictActionError" class="mb-2 text-amber-800">{{ conflictActionError }}</p>
+          <p v-if="conflictsLoading" class="text-[#7b827d]">Wird geladen …</p>
+          <div v-else-if="!conflictItems.length" class="text-[#9aa096]">Keine offenen Konflikte.</div>
+          <div v-else class="space-y-2">
+            <div v-for="conflict in conflictItems" :key="conflict.id" class="rounded-lg border border-[#e8e9e2] p-2.5">
+              <p class="font-semibold">{{ conflict.label }} · {{ CONFLICT_KIND_LABELS[conflict.kind] ?? conflict.kind }}</p>
+              <p class="mt-1 text-[#7b827d]">Feld: {{ conflict.field }}</p>
+              <div class="mt-1 grid gap-1 sm:grid-cols-2">
+                <p>Aktuell: {{ conflict.currentValue ?? '–' }}</p>
+                <p>Eingehend: {{ conflict.incomingValue ?? '–' }}</p>
+              </div>
+              <div v-if="conflict.resolution === 'pending'" class="mt-2 flex flex-wrap gap-2">
+                <button type="button" :disabled="conflictBusyId === conflict.id" class="focus-ring rounded-lg border border-[#dfe0d9] px-2.5 py-1.5 text-[10px] font-semibold" @click="resolveConflict(conflict, 'take_incoming')">Übernehmen</button>
+                <button type="button" :disabled="conflictBusyId === conflict.id" class="focus-ring rounded-lg border border-[#dfe0d9] px-2.5 py-1.5 text-[10px] font-semibold" @click="resolveConflict(conflict, 'keep_current')">Behalten</button>
+                <button type="button" :disabled="conflictBusyId === conflict.id" class="focus-ring rounded-lg border border-[#dfe0d9] px-2.5 py-1.5 text-[10px] font-semibold text-amber-800" @click="resolveConflict(conflict, 'ignore_permanently')">Dauerhaft ignorieren</button>
+              </div>
+              <p v-else class="mt-2 text-[10px] text-[#9aa096]">Entschieden: {{ RESOLUTION_LABELS[conflict.resolution] }}</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <p v-if="!sources.length" class="p-8 text-center text-xs text-[#9aa096]">Noch ist keine Quelle eingerichtet.</p>
+    </template>
+  </div>
+</template>

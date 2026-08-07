@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { BarChart3, Building2, CalendarDays, CheckCircle2, ChevronDown, FileText, LayoutDashboard, LogOut, Menu, Palette, Plus, Settings, Share2, Users, X } from '@lucide/vue'
+import { BarChart3, BookUser, Building2, CalendarDays, CheckCircle2, ChevronDown, FileText, LayoutDashboard, LogOut, Menu, Palette, Plug, Plus, Settings, Share2, Users, UserRound, X } from '@lucide/vue'
 
 const mobileOpen = ref(false)
 const route = useRoute()
@@ -67,7 +67,9 @@ const organizationNav = [
   { label: 'Marke & Tonalität', to: '/marke', icon: Palette },
   { label: 'Struktur', to: '/struktur', icon: Building2 },
   { label: 'Mitglieder', to: '/mitglieder', icon: Users },
+  { label: 'Verzeichnis', to: '/verzeichnis', icon: BookUser },
   { label: 'Kanäle', to: '/kanaele', icon: Share2 },
+  { label: 'Integrationen', to: '/integrationen', icon: Plug },
   { label: 'Einstellungen', to: '/einstellungen', icon: Settings },
 ]
 </script>
@@ -140,6 +142,7 @@ const organizationNav = [
       <div class="mt-auto flex items-center gap-3 border-t border-white/10 px-2 pt-4">
         <span class="grid h-9 w-9 place-items-center rounded-full bg-[#d2c7ff] text-xs font-bold text-[#3c3260]">{{ userInitials }}</span>
         <span class="min-w-0 flex-1"><span class="block truncate text-xs font-semibold">{{ session?.displayName }}</span><span class="block text-[10px] text-white/45">{{ topRoleLabel }}</span></span>
+        <NuxtLink to="/profil" class="focus-ring rounded-lg p-1.5 text-white/45 hover:text-white" aria-label="Profil"><UserRound :size="15" /></NuxtLink>
         <button class="focus-ring rounded-lg p-1.5 text-white/45 hover:text-white" aria-label="Abmelden" @click="logout"><LogOut :size="15" /></button>
       </div>
     </aside>

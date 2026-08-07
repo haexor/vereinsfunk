@@ -19,6 +19,8 @@
     "@vereinsfunk/content-engine": "workspace:*",
     "@vereinsfunk/contracts": "workspace:*",
     "@vereinsfunk/domain": "workspace:*",
+    "@vereinsfunk/integrations": "workspace:*",
+    "@vereinsfunk/member-directory": "workspace:*",
     "@vereinsfunk/observability": "workspace:*",
     "@vereinsfunk/orchestration": "workspace:*",
     "@vereinsfunk/publishing": "workspace:*",

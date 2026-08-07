@@ -35,10 +35,15 @@ Geplant auf `b5c2eda6` am 2026-08-04.
 - `supabase/migrations/202608030001:33-38` `consent_records`: `pseudonymous_subject_ref text` (8–160 Zeichen), `scope text`, `guardian_confirmed boolean`, `valid_from`, `valid_until`, `revoked_at`, `evidence_bucket`, `evidence_path`. Brauchbar, kennt aber **keine Person** — nur eine Kennung, die außerhalb des Systems aufgelöst werden muss.
 - Es gibt **nur `consent_records_select`** (`:117`) und `grant select` (`:131`). Kein Schreibpfad für `authenticated`, kein Endpunkt.
 - `face_regions.subject_kind` (`:41`) unterscheidet `adult`/`minor`/`unknown` **als manuelle Angabe pro Bildregion**. Wer dieselbe Person auf zwanzig Fotos markiert, entscheidet zwanzig Mal neu, ob sie minderjährig ist. Das ist die Fehlerquelle, die ein Verzeichnis beseitigt.
-- `packages/domain/src/index.ts:99-117` `evaluateMediaGate` prüft `consentValid` als von außen gelieferten Wert. Wer ihn bestimmt, ist bisher offen.
+- `packages/domain/src/index.ts:423-432` (verschoben seit Planung, Datei ist durch Paket 013 gewachsen) `evaluateMediaGate` prüft `consentValid` als von außen gelieferten Wert. Wer ihn bestimmt, ist bisher offen.
 - `public.teams` (`202608020001:52-62`) trägt keine Herkunftsinformation. Eine Mannschaft ist heute ausschließlich manuell anlegbar.
 - Es gibt **keine Tabelle für Personen**, keinen Import, keine Quellenverwaltung, keinen Provider und keine Synchronisation im Code.
 - `packages/contracts/src/index.ts:82` `WorkflowNameSchema` kennt keinen Sync-Workflow.
+
+## Entscheidungen vor der Umsetzung (2026-08-07)
+
+- **HTTP-API-Adapter verschoben.** Kein Zielsystem mit dokumentiertem Testzugang bekannt. Dieses Paket baut nur Datei-Import (CSV/XLSX) und iCal; der HTTP-Transport bleibt im Rahmen vorgesehen (Interface, Enum-Wert), aber ohne Implementierung — analog zum Meta-App-Review-Gate aus Paket 012. Ein HTTP-Adapter für ein konkretes System (easyVerein, SpielerPlus, ClubDesk, …) ist ein eigener, späterer Spike mit `docs/evidence/integration-spike.md`.
+- **Jahr des 18. Geburtstags**: das ganze Kalenderjahr, in dem die Person volljährig wird, gilt als minderjährig. `is_minor` wird aus `birth_year` so abgeleitet, dass eine Person erst ab dem 1. Januar des Jahres nach ihrem 18. Geburtstag als volljährig gilt — im Zweifel die strengere Freigaberoute.
 
 ## Scope
 
@@ -110,7 +115,7 @@ Die naheliegende Alternative — eine zentrale `integration_links`-Tabelle mit `
 
 ## Datenmodell
 
-Migration `2026080407_integration_framework.sql`:
+Migration `2026080703_integration_framework.sql` (Dateiname im ursprünglichen Plan trug das Planungsdatum 2026-08-04; inzwischen sind Migrationen bis `2026080702` gemergt, daher das aktuelle Datum):
 
 ```sql
 create type public.integration_domain as enum ('people','teams','fixtures','events');
@@ -341,7 +346,66 @@ Zu bauen:
 ## Risiken und offene Entscheidungen
 
 - **Auftragsverarbeitung**: Der Verein bleibt Verantwortlicher, wir werden Auftragsverarbeiter. Ein AVV mit dem Verein ist Betriebsvoraussetzung, und der Verein braucht eine Rechtsgrundlage für die Übermittlung aus dem Quellsystem. Paket 020 verwaltet diese Dokumente; produktiv gehen kann dieses Paket erst danach. Für Entwicklung mit synthetischen Daten gilt das nicht.
-- **Geburtsjahr statt Geburtsdatum** lässt offen, wie das Jahr des 18. Geburtstags behandelt wird. Empfehlung: das ganze Jahr als minderjährig behandeln und im Zweifel die strengere Freigaberoute nehmen. Diese Entscheidung sollte ausdrücklich getroffen werden.
+- ~~**Geburtsjahr statt Geburtsdatum** lässt offen, wie das Jahr des 18. Geburtstags behandelt wird.~~ **Entschieden 2026-08-07**: das ganze Jahr als minderjährig behandeln, siehe „Entscheidungen vor der Umsetzung“ oben.
 - **Klarnamen neben Gesichtsregionen** bleiben ein Risikoprofil, das das System vorher nicht hatte. Das ADR muss benennen, was ausdrücklich nicht getan wird, und die Löschfristen müssen kurz sein.
 - **Adapterpflege**: jede API-Integration ist dauerhafte Wartungslast an einem fremden System ohne Stabilitätszusage. Der Rahmen senkt die Kosten pro Adapter erheblich, macht sie aber nicht null. Vorschlag: höchstens zwei HTTP-Adapter gleichzeitig aktiv pflegen, alles Weitere über Datei und iCal — und diese Grenze als Produktentscheidung festhalten.
 - **Automatische Übernahme** ist bewusst eingeschränkt. Ein Verein, der täglich synchronisiert und nie Konflikte anschaut, wird sich über stillgelegte Personen wundern. Die Benachrichtigung bei offenen Konflikten ist deshalb Teil des Pakets, nicht Zierde.
+
+## Umsetzung: Ergebnis und Abweichungen vom Plan
+
+### Neue Rechte statt neuer RLS-Sonderwege
+
+Der Plan beschreibt das Rechtekonzept textlich, legt aber keinen Permission-Namen fest. Umgesetzt wurden zwei neue Einträge im etablierten Permission-Muster (TS `packages/authorization` und SQL `authz.has_department_permission`/`has_team_permission`, wie bei jeder vorherigen Erweiterung dieser Art dupliziert):
+
+- `directory.read` — `department_admin` und `team_manager` in ihrer eigenen Einheit, `organization_admin`/`organization_owner` automatisch (bestehende Fallback-Logik).
+- `integration.manage` — nur `department_admin` (und automatisch `organization_admin`/`organization_owner`), **nicht** `team_manager`: `integration_sources` kennt keine Team-Ebene.
+
+### Elternkontakt: Lesen über die API mit Service Role, kein eigenes RPC
+
+Der Plan nennt `authz.can_read_directory_person(person_id)` als Rechtekonzept-Baustein. Umgesetzt wurde stattdessen: die Basisspalten von `directory_people` sind per Spaltenrechten für `authenticated` lesbar (ohne `guardian_name`/`guardian_email`), und `GET /v1/directory-people/:id/guardian-contact` prüft `department.manage` in der API (dieselbe `rolesForScope`/`hasPermission`-Logik wie überall sonst) und liest die beiden Spalten danach über die Service Role — analog zum Auslesen von `social_connection_secrets` in Paket 012. Kein zusätzliches security-definer-RPC: das wäre eine weitere Fläche, auf der ein Aufrufer sicherheitsrelevante Parameter unterschieben könnte (wiederkehrender Fund aus 011/012), ohne dass die Prüfung selbst SQL-spezifische Logik bräuchte.
+
+### `became_adult_at` als Ergänzung gegenüber dem Plan-Entwurf
+
+Für die Liste „Volljährig geworden — Einwilligung prüfen“ (Abschnitt „Minderjährigkeit und der Übergang“) fehlte im Plan-Entwurf ein Datenfeld. Ergänzt: `directory_people.became_adult_at timestamptz`, gesetzt von `public.recompute_directory_minor_status()` beim Wechsel `is_minor: true → false`. Die Funktion schreibt **nur** in dieser Richtung — ein nachträglich eingetragenes Geburtsjahr, das eine bereits ohne Elternkontakt geführte Person minderjährig machen würde, liefe am CHECK-Constraint vorbei und bleibt eine Entscheidung für einen Menschen, kein automatischer Schreibvorgang. Es gibt noch keinen „erledigt“-Schalter für diese Liste; das ist eine bewusste Lücke, die Paket 015 mit dem echten Einwilligungs-Review-Schritt schließen sollte.
+
+### Sync-Lauf synchron in der API, nicht über Hatchet
+
+`sync-integration-source` ist wie geplant in `WorkflowNameSchema` reserviert, wird aber nicht tatsächlich als Hatchet-Workflow ausgeführt — Paket 004 (Hatchet-Produktionsintegration) ist laut `plans/README.md` weiterhin „in Arbeit“. `POST /v1/integration-sources/:id/sync` führt Lesen, Abgleich (`planSync`) und — bei `apply` — das Schreiben synchron in einer API-Anfrage aus. Für Datei-Uploads bedeutet das: die Datei wird bei **jedem** Aufruf (`dry_run` **und** `apply`) erneut mitgeschickt, es gibt keine serverseitige Zwischenspeicherung zwischen den beiden Schritten — der Browser hat die Datei nach der Auswahl ohnehin im Speicher, ein erneutes Hochladen ist kein zusätzlicher Schritt für die Nutzerin. Der reservierte Workflow-Name bleibt für die künftige geplante/automatische Ausführung über `sync_cron` vorgesehen.
+
+### Konfliktauflösung: Entscheidung wird vermerkt, nicht automatisch angewendet
+
+`PATCH /v1/integration-sync-conflicts/:id` setzt `resolution`/`resolved_by`/`resolved_at`. Für `ignore_permanently` ist das die vollständige, geplante Wirkung (Unterdrückung über den Fingerabdruck ab dem nächsten Lauf). Für `keep_current`/`take_incoming` fehlt im Plan die Angabe, wie eine einzelne Konfliktzeile (die nur `field`/`current_value`/`incoming_value` als Text trägt) in eine tatsächliche Schreiboperation auf `directory_people` übersetzt werden soll — insbesondere bei `ambiguous_match` (welcher von mehreren Kandidaten?) und `unknown_structure` (keine neue Abteilung anlegen, aber wohin dann?). Diese beiden Auflösungen bleiben deshalb reine Status-Vermerke; der tatsächliche Weg zu einer geänderten Person ist heute: Quelle/Zuordnung korrigieren und erneut synchronisieren, oder die Person manuell bearbeiten. Die Oberfläche sagt das ausdrücklich, um keine Wirkung zu behaupten, die es nicht gibt.
+
+### `xlsx`/SheetJS ersetzt durch `exceljs`
+
+Der zuerst gewählte XLSX-Parser (`xlsx`, npm-Version 0.18.5) hat zwei unbehobene High-Severity-CVEs (Prototype Pollution, ReDoS) — SheetJS verteilt gepatchte Versionen nur noch über die eigene CDN, nicht mehr über npm. Da dieser Parser direkt auf von einem Verein hochgeladene, also nicht vertrauenswürdige Dateien angewendet wird, wurde er vor dem Abschluss des Pakets durch `exceljs` (aktiv gepflegt, keine vergleichbaren offenen CVEs) ersetzt. `packages/integrations/src/fileTransport.ts` und der zugehörige Test wurden entsprechend angepasst.
+
+### Nicht umgesetzt: automatische Prüfmarkierung veröffentlichter Beiträge bei nachträglich erkannter Minderjährigkeit
+
+Plan-Abschnitt „Minderjährigkeit und der Übergang“ verlangt auch die umgekehrte Richtung: wird eine Person nachträglich als minderjährig erkannt, sollen bereits veröffentlichte Beiträge mit ihr zur Prüfung markiert werden. Das braucht eine Verknüpfung zwischen `directory_people` und veröffentlichten Beiträgen/Medien — die gibt es nicht, weil die Inhalts-Pipeline (Submission → Post → Post-Version, Pakete 001–007) weiterhin fehlt (derselbe, wiederholt dokumentierte Befund wie bei 011/012/016). Bleibt offen, bis diese Pipeline und eine Personen-Medien-Verknüpfung existieren.
+
+### Eigenes Profil: API-Endpunkt statt direktem Supabase-Aufruf aus der Oberfläche
+
+`profiles_update_self` erlaubt Selbstbearbeitung bereits direkt per RLS, und `useSession.ts` liest `profiles` schon heute direkt über den Browser-Supabase-Client. Für das Schreiben (`PATCH /v1/me/profile`) wurde trotzdem ein dünner API-Endpunkt ergänzt, keine direkte Schreiboperation aus Nuxt: AGENTS.md verlangt Zod an jeder Systemgrenze, und ein eigener Endpunkt hält diese Grenze konsistent mit jedem anderen Schreibpfad dieser Anwendung, ohne echten Zusatzaufwand (kein Service-Role-Client nötig, RLS erzwingt `id = auth.uid()` weiterhin). Keine Audit-Protokollierung für diesen Endpunkt — eine Person, die ihren eigenen Anzeigenamen ändert, ist kein prüfrelevantes Ereignis.
+
+### Keine Foto-Upload-Pipeline für Profile
+
+Abschnitt 5 nennt „Foto über das vorhandene `avatar_path`“ als Teil der Profilseite. Der Plan legt dafür weder einen Bucket noch eine Verarbeitungspipeline fest (anders als bei Logos in Paket 013). Umgesetzt: die Profilseite zeigt das Avatar an, falls `avatar_path` gesetzt ist (Initialen-Kreis als Fallback), bietet aber keinen Upload an — das wäre eine unspezifizierte Neuerfindung einer Medien-Pipeline gewesen, kein chirurgischer Teil dieses Pakets. Bleibt offen für ein späteres, eigenes Vorhaben.
+
+### `missingGuardian`-Filter über eine zweistufige ID-Auflösung
+
+`guardian_email` ist für `authenticated` nicht selektierbar (Spaltenrechte) — ein direktes `WHERE guardian_email IS NULL` scheitert deshalb an der Grenze, nicht erst an der Berechtigungslogik. `GET /v1/organizations/:id/directory-people?missingGuardian=true` löst das, indem die API bei gesetztem Filter zunächst über die Service Role die Liste der IDs ohne Elternkontakt ermittelt und diese Liste dann als zusätzliche `.in()`-Bedingung an die weiterhin RLS-beschränkte Abfrage über den Nutzer-Client anhängt — die Sichtbarkeitsgrenze bleibt dieselbe, nur die Filterbedingung selbst braucht einen privilegierten Zwischenschritt.
+
+## Adversariale Prüfung: Funde und Korrekturen
+
+Vier unabhängige Prüfungen (Mandantentrennung, Rechte, Geheimnisse/Datenminimierung, Verträge und Fehlerpfade) plus ein manueller Browser-Test deckten sechs reale, reproduzierbare Probleme auf. Alle wurden vor Abschluss des Pakets behoben.
+
+- **Kritisch — Abteilungsgrenze eines Sync-Laufs umgehbar**: Für eine abteilungsgebundene Quelle wurden bei der Auflösung von `departmentName`/`teamName` **alle** Abteilungen/Mannschaften des Vereins geladen, nicht nur die eigene. Eine Datei-Spalte mit dem Namen einer fremden Abteilung hätte eine Person — samt Elternkontakt bei einer Minderjährigen — in eine Einheit schreiben können, die der verwaltende `department_admin` weder lesen noch verwalten darf. Behoben: die Abteilungs-/Mannschaftsabfrage in `POST /v1/integration-sources/:id/sync` filtert bei einer abteilungsgebundenen Quelle jetzt auf genau diese eine Abteilung; ein abweichender Name in der Datei wird ein `unknown_structure`-Konflikt, nie eine Zuordnung in eine fremde Einheit. Regressionstest in `apps/api/src/app.test.ts`.
+- **Hoch — Rohwert einer falsch zugeordneten Spalte im Konflikt sichtbar**: Ein nicht auflösbarer `departmentName`/`teamName` (z. B. eine versehentlich dorthin gemappte IBAN-Spalte) landete unverändert in `integration_sync_conflicts.incoming_value` — lesbar für jeden mit `integration.manage` (nicht `department.manage`), ohne Audit-Eintrag. Behoben: `incoming_value` bleibt für `kind = 'unknown_structure'` leer; `field`/`label` reichen, um die eigene Feldzuordnung zu korrigieren, ohne den möglicherweise sensiblen Rohwert zu spiegeln.
+- **Mittel — Mehrdeutige Kandidaten fälschlich als „ausgetreten“**: `planSync` markierte Kandidaten eines `ambiguous_match`-Konflikts nie als zugeordnet, wodurch sie zusätzlich in `retired` (und damit als „left“) landeten — eine Person wäre gleichzeitig offener Konflikt und als ausgetreten geführt worden. Behoben in `packages/integrations/src/sync.ts`.
+- **Mittel — manuell gepflegte Personen durch fremden Import gefährdet** (beim manuellen Browser-Test gefunden, nicht Teil der vier automatisierten Prüfungen): Eine von Hand angelegte Person (`source_id = null`) galt für **jeden** Sync-Lauf als Abgleichskandidat — richtig für die Duplikatvermeidung — aber auch als Kandidat für die Verlustschwelle und für `retired`. Ein völlig unabhängiger Import, der diese Person nicht enthält, hätte sie als „left“ markiert bzw. den Lauf über die Verlustschwelle abgebrochen, nur weil sie zufällig in der falschen Quelle „ohne Zuordnung“ mitgezählt wurde. Behoben durch einen neuen, optionalen `MatchStrategy.isRetirable(local)`-Hook in `packages/integrations`: nur Personen mit echter Quellenbindung (`sourceId !== null`) sind Kandidaten für `retired` und für den Nenner der Verlustschwellenberechnung; alle bleiben weiterhin Abgleichskandidaten. Dieser Fund entstand ausschließlich durch das tatsächliche Ausführen im Browser — kein Unit- oder API-Test mit gemocktem Client hätte ihn gefunden, weil dafür eine echte, bereits gefüllte Datenbank nötig war.
+- **Niedrig — kaputte Datei/kaputter iCal-Feed führte zu 500 statt 4xx**: `request.file()`/`csv-parse`/`exceljs` können bei defekten Uploads werfen; ein 200-Antwort-Feed kann trotzdem kein iCal sein (z. B. eine HTML-Login-Weiterleitung). Beide Fälle sind jetzt abgefangen (`400 invalid_file`, `502 source_fetch_failed` bei fehlendem `BEGIN:VCALENDAR`).
+- **Niedrig — `enabledDomains` erlaubte Duplikate**: `cardinality()` zählt Duplikate mit; `CreateIntegrationSourceRequestSchema`/`UpdateIntegrationSourceRequestSchema` verlangen jetzt zusätzlich eindeutige Einträge.
+- **Defensiv — Elternkontakt über einen Sync-Lauf ohne eigene Prüfung**: `integration.manage` und `department.manage` sind heute deckungsgleich (beide nur bei `department_admin`/Organisationsrollen), aber nur zufällig. `POST /v1/integration-sources/:id/sync` prüft jetzt zusätzlich explizit `department.manage`, bevor `guardianName`/`guardianEmail` aus einer Datei übernommen werden, und entfernt diese Felder sonst aus den eingehenden Datensätzen, statt sich auf die zufällige Deckungsgleichheit zu verlassen.
+
+Ebenfalls beim Review gefunden und behoben, ohne eigenen Bug zu sein: eine der API-Konflikt-Update-Pfade (Aktualisierung einer Person, die durch die Änderung zu einer aktiven Minderjährigen ohne Elternkontakt würde) schlug am CHECK-Constraint fehl und wurde bisher still übersprungen, ohne dass `updated_count` das widerspiegelte oder ein Konflikt entstand. Jetzt entsteht dafür ein echter `invalid_record`-Konflikt, und `updated_count` zählt nur tatsächlich erfolgreiche Schreibvorgänge.
