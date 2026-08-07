@@ -196,8 +196,10 @@ select throws_ok(
 );
 
 -- 23-24: count_publications_in_period zaehlt queued/published, nicht failed/cancelled.
-insert into public.social_connections (id, organization_id, platform, external_account_id, display_name, token_ciphertext, token_key_version) values
-  ('64000000-8000-4000-8000-000000000001', '64000000-1000-4000-8000-000000000001', 'instagram', 'ext-1', 'SV Route', '\x00', 'v1');
+-- token_ciphertext/token_key_version leben seit Paket 012 in social_connection_secrets, nicht mehr
+-- hier -- diese Zeile braucht kein Geheimnis, nur eine gueltige social_connections-Zeile als FK-Ziel.
+insert into public.social_connections (id, organization_id, platform, external_account_id, display_name) values
+  ('64000000-8000-4000-8000-000000000001', '64000000-1000-4000-8000-000000000001', 'instagram', 'ext-1', 'SV Route');
 -- publications hat unique(organization_id, platform, post_version_id, social_connection_id) -- vier
 -- Zeilen fuer denselben Kanal brauchen deshalb vier verschiedene Versionen, nicht denselben Post.
 insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type, created_by_user_id) values

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { BarChart3, Building2, CalendarDays, CheckCircle2, ChevronDown, FileText, LayoutDashboard, LogOut, Menu, Palette, Plus, Settings, Users, X } from '@lucide/vue'
+import { BarChart3, Building2, CalendarDays, CheckCircle2, ChevronDown, FileText, LayoutDashboard, LogOut, Menu, Palette, Plus, Settings, Share2, Users, X } from '@lucide/vue'
 
 const mobileOpen = ref(false)
 const route = useRoute()
@@ -42,6 +42,7 @@ const organizationNav = [
   { label: 'Marke & Tonalität', to: '/marke', icon: Palette },
   { label: 'Struktur', to: '/struktur', icon: Building2 },
   { label: 'Mitglieder', to: '/mitglieder', icon: Users },
+  { label: 'Kanäle', to: '/kanaele', icon: Share2 },
   { label: 'Einstellungen', to: '/einstellungen', icon: Settings },
 ]
 </script>

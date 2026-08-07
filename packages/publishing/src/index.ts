@@ -53,3 +53,141 @@ export class MetaPublisher implements SocialPublisher {
     return permalink ? { externalId: input.externalId, status: 'published', permalink } : { externalId: input.externalId, status: 'published' }
   }
 }
+
+// Paket 012: OAuth-Anbindung. Eigenes Interface statt Teil von SocialPublisher -- Token-Beschaffung
+// ist eine andere Zustaendigkeit als Veroeffentlichen, teilt sich aber dieselbe Provider-Grenze
+// (Plan README: "SocialPublisher bleibt die Provider-Grenze"), deshalb im selben Paket.
+export interface MetaExchangedToken { accessToken: string; expiresInSeconds?: number }
+export interface MetaAvailableAccount { externalAccountId: string; displayName: string; pageAccessToken: string }
+
+export interface MetaOAuthClient {
+  authorizationUrl(options: { state: string; redirectUri: string; platform: Platform }): string
+  exchangeCode(code: string, redirectUri: string): Promise<MetaExchangedToken>
+  exchangeForLongLivedToken(shortLivedToken: string): Promise<MetaExchangedToken>
+  listAvailableAccounts(userToken: string, platform: Platform): Promise<readonly MetaAvailableAccount[]>
+  verifyToken(accessToken: string): Promise<{ valid: boolean }>
+}
+
+export interface MetaOAuthClientOptions { appId: string; appSecret: string; graphVersion: string; timeoutMs?: number; fetch?: typeof fetch }
+
+// Meta antwortet auf diese vier Aufrufe normalerweise in unter einer Sekunde. Ohne Abbruch haengt
+// der Fastify-Request bis zum Socket-Timeout -- der OAuth-Callback laeuft im Anfrage-Thread eines
+// Browser-Redirects, ein haengender Aufruf dort ist eine sichtbare, leere Seite.
+const META_REQUEST_TIMEOUT_MS = 10_000
+
+export class RealMetaOAuthClient implements MetaOAuthClient {
+  private readonly request: typeof fetch
+  private readonly timeoutMs: number
+  constructor(private readonly options: MetaOAuthClientOptions) {
+    this.request = options.fetch ?? fetch
+    this.timeoutMs = options.timeoutMs ?? META_REQUEST_TIMEOUT_MS
+  }
+
+  // Token und appSecret gehoeren nie in die URL: URLs landen in Proxy-, Server- und Fehlerlogs
+  // (Projektregel "Secrets duerfen nicht geloggt werden"). Geheimnisse reisen deshalb im
+  // POST-Body, Zugriffstoken im Authorization-Header.
+  private async post(path: string, body: Record<string, string>, label: string): Promise<Record<string, unknown>> {
+    const response = await this.request(`https://graph.facebook.com/${this.options.graphVersion}/${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(body),
+      signal: AbortSignal.timeout(this.timeoutMs),
+    })
+    if (!response.ok) throw new Error(`Meta ${label} failed (${response.status})`)
+    return (await response.json()) as Record<string, unknown>
+  }
+
+  private async getWithToken(path: string, accessToken: string): Promise<Response> {
+    return this.request(`https://graph.facebook.com/${this.options.graphVersion}/${path}`, {
+      headers: { authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(this.timeoutMs),
+    })
+  }
+
+  authorizationUrl(options: { state: string; redirectUri: string; platform: Platform }): string {
+    // instagram_content_publish/pages_manage_posts/pages_read_engagement erfordern den Meta App
+    // Review (Plan 012, "Risiken") -- die Autorisierungs-URL laesst sich unabhaengig davon gegen
+    // ein Testkonto bauen und pruefen.
+    const scopes = options.platform === 'instagram'
+      ? ['instagram_basic', 'instagram_content_publish', 'pages_show_list', 'pages_read_engagement']
+      : ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts']
+    const url = new URL(`https://www.facebook.com/${this.options.graphVersion}/dialog/oauth`)
+    url.searchParams.set('client_id', this.options.appId)
+    url.searchParams.set('redirect_uri', options.redirectUri)
+    url.searchParams.set('state', options.state)
+    url.searchParams.set('scope', scopes.join(','))
+    url.searchParams.set('response_type', 'code')
+    return url.toString()
+  }
+
+  async exchangeCode(code: string, redirectUri: string): Promise<MetaExchangedToken> {
+    const data = await this.post(
+      'oauth/access_token',
+      { client_id: this.options.appId, client_secret: this.options.appSecret, redirect_uri: redirectUri, code },
+      'code exchange',
+    )
+    if (typeof data.access_token !== 'string') throw new Error('Meta code exchange response did not contain an access token')
+    return { accessToken: data.access_token, ...(typeof data.expires_in === 'number' ? { expiresInSeconds: data.expires_in } : {}) }
+  }
+
+  // Meta-Nutzertoken werden gegen ein langlebiges Token getauscht (Plan 012, "Token"), bevor daraus
+  // Seiten-/Instagram-Business-Tokens abgeleitet werden -- Seiten-Tokens aus einem langlebigen
+  // Nutzertoken laufen selbst nicht mehr ab, aus einem kurzlebigen schon nach Stunden.
+  async exchangeForLongLivedToken(shortLivedToken: string): Promise<MetaExchangedToken> {
+    const data = await this.post(
+      'oauth/access_token',
+      { grant_type: 'fb_exchange_token', client_id: this.options.appId, client_secret: this.options.appSecret, fb_exchange_token: shortLivedToken },
+      'long-lived token exchange',
+    )
+    if (typeof data.access_token !== 'string') throw new Error('Meta long-lived token exchange response did not contain an access token')
+    return { accessToken: data.access_token, ...(typeof data.expires_in === 'number' ? { expiresInSeconds: data.expires_in } : {}) }
+  }
+
+  async listAvailableAccounts(userToken: string, platform: Platform): Promise<readonly MetaAvailableAccount[]> {
+    const fields = platform === 'instagram' ? 'id,name,access_token,instagram_business_account{id,username}' : 'id,name,access_token'
+    const response = await this.getWithToken(`me/accounts?fields=${encodeURIComponent(fields)}`, userToken)
+    if (!response.ok) throw new Error(`Meta account listing failed (${response.status})`)
+    const data = (await response.json()) as { data?: unknown[] }
+    const pages = Array.isArray(data.data) ? data.data : []
+    const accounts: MetaAvailableAccount[] = []
+    for (const page of pages) {
+      if (typeof page !== 'object' || page === null) continue
+      const record = page as Record<string, unknown>
+      const pageAccessToken = typeof record.access_token === 'string' ? record.access_token : undefined
+      if (!pageAccessToken) continue
+      if (platform === 'facebook' && typeof record.id === 'string' && typeof record.name === 'string') {
+        accounts.push({ externalAccountId: record.id, displayName: record.name, pageAccessToken })
+      }
+      if (platform === 'instagram' && typeof record.instagram_business_account === 'object' && record.instagram_business_account !== null) {
+        const instagramAccount = record.instagram_business_account as Record<string, unknown>
+        if (typeof instagramAccount.id === 'string') {
+          accounts.push({
+            externalAccountId: instagramAccount.id,
+            displayName: typeof instagramAccount.username === 'string' ? instagramAccount.username : (typeof record.name === 'string' ? record.name : instagramAccount.id),
+            pageAccessToken,
+          })
+        }
+      }
+    }
+    return accounts
+  }
+
+  async verifyToken(accessToken: string): Promise<{ valid: boolean }> {
+    // Ein Netzwerk-/Timeout-Fehler wird bewusst durchgereicht statt zu valid: false zu werden: er
+    // ist keine Aussage ueber das Token, und der Verify-Endpunkt wuerde den Kanal sonst wegen einer
+    // Stoerung bei Meta auf action_required setzen.
+    const response = await this.getWithToken('me', accessToken)
+    return { valid: response.ok }
+  }
+}
+
+export class FakeMetaOAuthClient implements MetaOAuthClient {
+  constructor(private readonly accounts: Readonly<Record<Platform, readonly MetaAvailableAccount[]>> = { instagram: [], facebook: [] }) {}
+  authorizationUrl(options: { state: string; redirectUri: string; platform: Platform }): string {
+    return `https://example.invalid/oauth/dialog?state=${encodeURIComponent(options.state)}&redirect_uri=${encodeURIComponent(options.redirectUri)}&platform=${options.platform}`
+  }
+  async exchangeCode(code: string): Promise<MetaExchangedToken> { return { accessToken: `short_${code}` } }
+  async exchangeForLongLivedToken(shortLivedToken: string): Promise<MetaExchangedToken> { return { accessToken: `long_${shortLivedToken}` } }
+  async listAvailableAccounts(_userToken: string, platform: Platform): Promise<readonly MetaAvailableAccount[]> { return this.accounts[platform] }
+  async verifyToken(): Promise<{ valid: boolean }> { return { valid: true } }
+}

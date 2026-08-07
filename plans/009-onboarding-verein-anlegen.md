@@ -52,8 +52,11 @@ create table public.organization_profiles (
   contact_email text check (contact_email = lower(contact_email)),
   contact_phone text, website_url text,
   founded_year integer check (founded_year between 1800 and 2100),
-  -- Verantwortliche Person für veröffentlichte Inhalte. Pflicht, bevor
-  -- ein Kanal verbunden werden darf (Paket 012, Begründung in 020).
+  -- Verantwortliche Person fuer veroeffentlichte Inhalte, vereinsweit (Begruendung in 020).
+  -- Paket 012 hat daraus KEIN hartes Verbindungs-Gate gemacht, sondern ein optionales
+  -- Organisations-Flag `policy_settings.require_channel_responsible`, das zusaetzlich eine
+  -- verantwortliche Person JE KANAL verlangt (`social_connections.responsible_profile_id`) --
+  -- diese Spalte hier bleibt die vereinsweite Grundangabe, unabhaengig davon.
   -- Muss Mitglied *dieses* Vereins sein -- durchgesetzt per Trigger, siehe unten.
   responsible_person_profile_id uuid references public.profiles(id),
   created_at timestamptz not null default now(),

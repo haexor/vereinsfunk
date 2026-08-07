@@ -21,6 +21,7 @@
     "@vereinsfunk/domain": "workspace:*",
     "@vereinsfunk/observability": "workspace:*",
     "@vereinsfunk/orchestration": "workspace:*",
+    "@vereinsfunk/publishing": "workspace:*",
     "@vereinsfunk/secrets": "workspace:*",
     "@vereinsfunk/svg-safe": "workspace:*",
     "fastify": "^5.11.0",

@@ -15,9 +15,13 @@ const ApiEnvironmentBaseSchema = z.object({
   SUPABASE_JWT_SECRET: optionalSecret,
   HATCHET_CLIENT_TOKEN: optionalSecret,
   OPENAI_API_KEY: optionalSecret,
-  PUBLISHING_PROVIDER: z.enum(['fake', 'mixpost']).default('fake'),
-  MIXPOST_BASE_URL: optionalUrl,
-  MIXPOST_TOKEN: optionalSecret,
+  // 'mixpost' widersprach der getroffenen Architekturentscheidung (plans/README.md: Mixpost wird im
+  // MVP nicht betrieben, Meta wird direkt angebunden) und wurde in Paket 012 durch 'meta' ersetzt.
+  PUBLISHING_PROVIDER: z.enum(['fake', 'meta']).default('fake'),
+  META_APP_ID: optionalSecret,
+  META_APP_SECRET: optionalSecret,
+  META_GRAPH_VERSION: z.string().default('v21.0'),
+  META_OAUTH_REDIRECT_URL: optionalUrl,
   // Paket 022: bootstrappt genau einen Default-Plattform-Admin beim Serverstart, wenn
   // gesetzt. Unset ist ein gueltiger Zustand (noch kein Bootstrap gewuenscht).
   PLATFORM_ADMIN_DEFAULT_EMAIL: optionalSecret,
@@ -46,6 +50,16 @@ export const ApiEnvironmentSchema = ApiEnvironmentBaseSchema.superRefine((enviro
     const requiredSmtpFields = ['SMTP_HOST', 'SMTP_USER', 'SMTP_PASSWORD', 'SMTP_FROM'] as const
     for (const key of requiredSmtpFields) {
       if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required when EMAIL_PROVIDER=smtp` })
+    }
+  }
+
+  // Dieselbe field-scoped-statt-generic-crash-Begruendung wie bei EMAIL_PROVIDER=smtp: der
+  // OAuth-Callback wuerde sonst erst beim ersten Verbindungsversuch mit einer unklaren Exception
+  // scheitern, statt beim Start klar zu benennen, welche Meta-Variable fehlt.
+  if (environment.PUBLISHING_PROVIDER === 'meta') {
+    const requiredMetaFields = ['META_APP_ID', 'META_APP_SECRET', 'META_OAUTH_REDIRECT_URL'] as const
+    for (const key of requiredMetaFields) {
+      if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required when PUBLISHING_PROVIDER=meta` })
     }
   }
 
