@@ -64,11 +64,7 @@ STOP: App Review/benötigte Berechtigungen sind für den Pilot nicht realistisch
 
 ### 1. Verbindungen und Token-Sicherheit
 
-- Migration für `social_connections`: Tenant, Plattform, externe Konto-/Seiten-ID, Anzeigename, Scopes, Tokenablauf, Status, letzte Prüfung, Provider-Metadaten ohne Secrets.
-- Tokens ausschließlich serverseitig envelope-verschlüsselt speichern; Schlüssel außerhalb der DB, rotierbar und versioniert. Niemals Token in Browser-Storage, Logs, Audit-Metadaten oder Hatchet-Payload.
-- Fastify implementiert OAuth Start/Callback mit signiertem, kurzlebigem State, PKCE sofern der Flow es unterstützt, Replay-Schutz und erneuter Tenant-/Rollenprüfung im Callback.
-- Nutzer wählt explizit Seite/Instagram-Konto; Organisation A kann nie Verbindung B referenzieren.
-- Reconnect/Disconnect widerruft lokale Grants, storniert geplante Veröffentlichungen oder markiert sie `action_required`.
+**Bereits vollständig umgesetzt in Paket 012** (`plans/012-kanaele-und-social-accounts.md`, erledigt) — dieser Abschnitt beschreibt keine offene Arbeit mehr, sondern was 006 vorfindet: `social_connections` (Tenant, Plattform, externe Konto-/Seiten-ID, Anzeigename, Scopes, Tokenablauf, Status, letzte Prüfung, Kanalbesitz, Vertraulichkeit, verantwortliche Person), Tokens envelope-verschlüsselt in einer eigenen `social_connection_secrets`-Tabelle ohne jede Policy für `authenticated` (`packages/secrets`, versioniert, rotierbar), OAuth Start/Callback mit signiertem, kurzlebigem `state` in Fastify, explizite Kontenauswahl vor dem Anlegen einer Verbindung, Reconnect/Disconnect. Nicht gebaut: PKCE (Meta unterstützt es serverseitig nicht zwingend) und automatisches Stornieren geplanter Veröffentlichungen bei Disconnect (der Kanal wird `disconnected`/`archived`, eine bereits eingeplante `publication` bleibt bestehen und scheitert beim tatsächlichen Veröffentlichen — 006 sollte das beim Bau des Publish-Workflows berücksichtigen). Für 006 bleibt: der eigentliche Veröffentlichungsaufruf (`SocialPublisher`/`MetaPublisher` existiert bereits in `packages/publishing`, aber ohne Workflow-Anbindung), Retry-/Reconciliation-Verhalten, Provider-Fehlerklassifikation.
 
 ### 2. Publication-Modell und Adaptervertrag
 

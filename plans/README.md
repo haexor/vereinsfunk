@@ -40,7 +40,7 @@ Stand: 2026-08-04, geplant auf `b5c2eda6`. Die Pakete 001–007 bauen die Inhalt
 | 010 | [Abteilungen, Teams, Mitglieder und Einladungen](010-abteilungen-teams-mitglieder-einladungen.md) | 008, 009 | erledigt |
 | 023 | [Sichtbarkeit, Mitgliederverwaltung und Richtliniengrundlage](023-sichtbarkeit-mitgliederverwaltung-und-richtliniengrundlage.md) | 010 | erledigt |
 | 011 | [Regelwerk: Freigaberouten, Vertrauen je Mitglied und Kontingente](011-regelwerk-richtlinien-und-kontingente.md) | 010, 023 | erledigt; Freigabe-/Einplanungsendpunkte sind echt, aber ohne die Inhalts-Pipeline (001–007) fehlt weiterhin der Weg, wie ein `post_version`-Datensatz entsteht — end-to-end erst nach 005/006 vorführbar |
-| 012 | [Kanäle und Social-Accounts](012-kanaele-und-social-accounts.md) | 011 | bereit; Meta App Review als externes Gate |
+| 012 | [Kanäle und Social-Accounts](012-kanaele-und-social-accounts.md) | 011 | erledigt; gegen Meta-Testkonten ungetestet (externes Gate, App Review vor Pilotbetrieb nötig) |
 | 013 | [Marke, Branding-Assets und Schriften](013-marke-branding-assets-und-schriften.md) | 009 | bereit |
 | 014 | [Integrationsrahmen und Mitgliederverzeichnis](014-integrationsrahmen-und-mitgliederverzeichnis.md) | 010 | bereit; Produktivbetrieb erst nach 020 |
 | 015 | [Einwilligungsverwaltung](015-einwilligungsverwaltung.md) | 002, 014 | bereit; Produktivbetrieb erst nach 020 |
@@ -72,7 +72,7 @@ Hinweis zu 021: dessen `platform.manage`-Endpunkt (operative Speicher-/Kontingen
 
 `apps/api/src/app.ts:66-72` ist die gesamte Autorisierung der API. `requireAuth` prüft nur, **ob** ein `authorization`-Header vorhanden ist, und das ausschließlich bei `NODE_ENV === 'production'`. Der Inhalt wird nie gelesen, keine Signatur geprüft, keine Permission ausgewertet. In Entwicklung und Test ist jeder Endpunkt offen. Das behebt Paket 008 und ist der Grund, warum es zuerst kommt. **✓ Behoben in Paket 008**: echte JWT-Verifikation und `requirePermission` an allen Endpunkten, die Scope-Daten in der Anfrage tragen.
 
-Zweitwichtigster Befund: `social_connections` gewährt `authenticated` `select` auf die ganze Tabelle einschließlich `token_ciphertext` (`202608030001:125,131`). Behoben in Paket 012.
+Zweitwichtigster Befund: `social_connections` gewährt `authenticated` `select` auf die ganze Tabelle einschließlich `token_ciphertext` (`202608030001:125,131`). **✓ Behoben in Paket 012**: Token wandern in `social_connection_secrets` (kein Grant/keine Policy für `authenticated`), `social_connections` erhält einen spaltenweisen Grant ohne die Token-Spalten. Details in `plans/012-kanaele-und-social-accounts.md`, Abschnitt „Umsetzung: Ergebnis und Abweichungen vom Plan“.
 
 Dritter Befund, adversarial in Paket 011 gefunden: `public.request_approval` (per RPC direkt für `authenticated` erreichbar, wie jede privilegierte Funktion in diesem Projekt) übernahm `stages` inklusive `reviewerSnapshot` sowie `self_approval_allowed`/`allow_same_reviewer_across_stages` ungeprüft vom Aufrufer — jede Person mit `post.submit` hätte eine fremde `userId` als Prüfer eintragen, mit leerer Stufenliste jede Prüfung inklusive der Minderjährigenstufe umgehen und sich selbst freigeben können. **✓ Behoben in Paket 011**: die Funktion berechnet die sicherheitsrelevanten Werte selbst aus `policy_settings` und prüft jede genannte Person gegen echte Vereinsmitgliedschaft. Details in `plans/011-regelwerk-richtlinien-und-kontingente.md`, Abschnitt „Umsetzung: Ergebnis und Abweichungen vom Plan“.
 
@@ -102,9 +102,9 @@ Vollständige Liste der erfundenen Daten im Anwendungscode, mit dem Paket, das s
 | `pages/auswertung.vue:1` | vier erfundene Plattformkennzahlen, `bars`-Array ohne Skala und Quelle | 016, 017 |
 | `pages/marke.vue:1` | Farben und Tonalität im lokalen State, „Speichern“ setzt nur ein Flag | ✓ 009 (`PUT /v1/organizations/:id/brand`, echter Ladezustand, echte Fehler), 013 (Schrift-Upload, Abteilungsbranding) |
 | `pages/mitglieder.vue:1` | vier hartkodierte Namen, „Einladen“ ohne Handler | ✓ 010 (echte Mitglieder/Rollen/Einladungen aus der Datenbank) |
-| `pages/einstellungen.vue:1` | fünf behauptete Einstellungen, jeder Button ohne Handler | ✓ 011 (Freigabe, Minderjährigenschutz, Kontingente — echte scopeabhängige Richtlinienseite), 012 (Kanäle noch offen), 020 (Löschfrist noch offen) |
+| `pages/einstellungen.vue:1` | fünf behauptete Einstellungen, jeder Button ohne Handler | ✓ 011 (Freigabe, Minderjährigenschutz, Kontingente — echte scopeabhängige Richtlinienseite), ✓ 012 (Kanäle: eigene Seite `pages/kanaele.vue`, die hartkodierten Zeilen waren bereits mit 011 verschwunden), 020 (Löschfrist noch offen) |
 | `apps/web/nuxt.config.ts:14-21` | Schriften von `fonts.googleapis.com` bei jedem Aufruf | 013, geprüft in 020 |
-| `packages/config/src/index.ts:17-20` | `PUBLISHING_PROVIDER: 'mixpost'`, Mixpost-URL und -Token — widerspricht der Meta-Entscheidung | 012 |
+| `packages/config/src/index.ts:17-20` | `PUBLISHING_PROVIDER: 'mixpost'`, Mixpost-URL und -Token — widerspricht der Meta-Entscheidung | ✓ 012 (`'fake' \| 'meta'`, `META_APP_ID`/`META_APP_SECRET`/`META_GRAPH_VERSION`/`META_OAUTH_REDIRECT_URL`) |
 | `packages/domain/src/index.ts:47-87` | `mergeEffectiveConfig` existiert korrekt, wird aber nur von Tests aufgerufen | ✓ 011 (aus `apps/api/src/app.ts` über `resolveEffectiveConfig`/`computeRuleEntry` aufgerufen, kein Testpfad mehr) |
 | `post_versions.effective_config_snapshot` | Spalte ist `not null` und wird von nichts gefüllt | **bewusst weiterhin offen nach 011**: es gibt keinen Code, der überhaupt eine `post_versions`-Zeile anlegt (Inhalts-Pipeline 001–007 fehlt) — 011 kann die Spalte deshalb strukturell nicht befüllen, siehe Plan 011 „Umsetzung: Ergebnis und Abweichungen“. Bleibt bei 013 bzw. bei wer auch immer den Anlegepfad baut. |
 | `evaluateMediaGate` `consentValid` | Blocker existiert, Wert wird nie bestimmt | 015 |

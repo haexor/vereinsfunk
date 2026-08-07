@@ -262,7 +262,7 @@ Elternkontakte und Geburtsjahre sind nicht für jedes Vereinsmitglied bestimmt. 
 - **Schreiben** ausschließlich über die API mit Service Role und Audit-Eintrag. Keine INSERT/UPDATE-Policy für `authenticated`, analog zu `invitations` und `consent_records`.
 - `authz.can_read_directory_person(person_id)` als einzige Stelle dieser Regel.
 - Jeder Lesezugriff auf einen Elternkontakt erzeugt einen `audit_events`-Eintrag.
-- `integration_sources.credentials_secret_id` ist für `authenticated` nie lesbar; Zugangsdaten liegen verschlüsselt über `packages/secrets` (Paket 012).
+- `integration_sources.credentials_secret_id` ist für `authenticated` nie lesbar; Zugangsdaten liegen verschlüsselt über `packages/secrets` (existiert bereits aus Paket 022, dort für LLM-Provider-Schlüssel angelegt und in Paket 012 für Social-Connection-Tokens wiederverwendet).
 
 ## Umsetzung
 
