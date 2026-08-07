@@ -10,6 +10,7 @@ export const permissions = [
   'post.approve',
   'post.publish',
   'social_account.manage',
+  'brand.manage',
   'analytics.view',
   'billing.manage',
 ] as const
@@ -58,13 +59,24 @@ export const rolePermissions: Readonly<Record<Role, ReadonlySet<Permission>>> = 
     // verwaltet, aber deren Kanaele bespielen darf -- social_manager ist eine Vereinsrolle,
     // department_admin die einzige abteilungsscoped Verwaltungsrolle.
     'social_account.manage',
+    // Paket 013: eigenes Abteilungsbranding verwalten (Logo, Farben, Schriften).
+    'brand.manage',
     'analytics.view',
   ]),
   editor: new Set(['post.create', 'post.edit', 'post.submit', 'analytics.view']),
   approver: new Set(['post.approve', 'analytics.view']),
   contributor: new Set(['post.create', 'post.submit']),
   viewer: new Set(['analytics.view']),
-  team_manager: new Set(['post.create', 'post.edit', 'post.submit', 'analytics.view', 'member.invite', 'member.remove']),
+  team_manager: new Set([
+    'post.create',
+    'post.edit',
+    'post.submit',
+    'analytics.view',
+    'member.invite',
+    'member.remove',
+    // Paket 013: eigenes Mannschaftsbranding verwalten.
+    'brand.manage',
+  ]),
 }
 
 export function hasPermission(roles: readonly Role[], permission: Permission): boolean {

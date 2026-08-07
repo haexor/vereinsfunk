@@ -431,18 +431,15 @@ export function evaluateMediaGate(input: MediaGateInput): { publishable: boolean
   return { publishable: blockers.length === 0, blockers }
 }
 
-export interface CuratedFontPairing {
-  key: string
-  displayFontKey: string
-  bodyFontKey: string
-  label: string
-}
-
-// Mirrors the fonts nuxt.config.ts actually loads today. Offering a pairing the app cannot
-// yet render would be a fabricated choice; Paket 013 adds self-hosted uploads and more pairs.
-export const curatedFontPairings: readonly CuratedFontPairing[] = [
-  { key: 'manrope_dm_sans', displayFontKey: 'manrope', bodyFontKey: 'dm_sans', label: 'Manrope / DM Sans' },
-]
+export { curatedFonts, curatedFontPairings, findCuratedFont, type CuratedFont, type CuratedFontPairing } from './fonts.js'
+export { contrastRatio, meetsMinimumContrast, type ContrastCheck } from './contrast.js'
+export {
+  resolveBrand,
+  isBrandAssetSelectable,
+  type BrandAssetRef,
+  type BrandLevelProfile,
+  type ResolvedBrand,
+} from './brand.js'
 
 export function assertApprovalSnapshot(input: MediaGateInput, derivativeHashes: readonly string[]): void {
   const gate = evaluateMediaGate(input)

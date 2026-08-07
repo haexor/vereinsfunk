@@ -11,6 +11,13 @@ describe('authorization', () => {
     expect(hasPermission(['billing_admin', 'approver'], 'post.approve')).toBe(true)
     expect(hasPermission(['billing_admin', 'approver'], 'billing.manage')).toBe(true)
   })
+
+  it('lets department_admin and team_manager manage their own branding, but not editor/contributor', () => {
+    expect(hasPermission(['department_admin'], 'brand.manage')).toBe(true)
+    expect(hasPermission(['team_manager'], 'brand.manage')).toBe(true)
+    expect(hasPermission(['editor'], 'brand.manage')).toBe(false)
+    expect(hasPermission(['contributor'], 'brand.manage')).toBe(false)
+  })
 })
 
 describe('canAssignRole', () => {
