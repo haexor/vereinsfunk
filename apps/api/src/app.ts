@@ -154,6 +154,7 @@ import { hashLogoBuffer, LogoDimensionsError, processBrandLogoUpload, Unsupporte
 import { createEmailSender, type EmailSender } from './email.js'
 import { buildInvitationEmail, generateInvitationToken } from './invitations.js'
 import { mapLlmProviderConfigurationRow } from './llmProviders.js'
+import { fetchPublicUrl, isAllowedOutboundUrl, OutboundFetchError } from './outboundFetch.js'
 import { byteaToBuffer, ciphertextToBytea, createSecretBoxFromEnvironment } from './secretBox.js'
 import { createServiceClient, createUserClient } from './supabase.js'
 
@@ -573,6 +574,19 @@ async function resolveDirectoryScope(
     return { organizationId, departmentId }
   }
   return { organizationId }
+}
+
+/**
+ * `isMinor` aus der Anfrage darf den Schutz nur anheben, nie senken. Ohne diese Klammer koennte
+ * ein Aufrufer eine Person mit Geburtsjahr 2015 als `isMinor: false` anlegen und damit sowohl den
+ * CHECK auf einen Elternkontakt als auch die strengere Freigaberoute umgehen -- derselbe
+ * wiederkehrende Fund wie bei den security-definer-RPCs aus 011/012: sicherheitsrelevante Werte
+ * leitet der Server selbst her, statt sie vom Aufrufer zu uebernehmen. Ohne bekanntes Geburtsjahr
+ * gibt es nichts herzuleiten, dann zaehlt die Angabe.
+ */
+function resolveIsMinor(requested: boolean | undefined, birthYear: number | null, referenceYear: number): boolean {
+  const derived = birthYear != null ? deriveIsMinor(birthYear, referenceYear) : false
+  return derived || (requested ?? false)
 }
 
 function normalizeStructureName(name: string): string {
@@ -3947,6 +3961,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const scope = await resolveDirectoryScope(client, params.id, input.departmentId ?? null, null)
     if (scope === null) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     if (!(await requirePermission(request, reply, 'integration.manage', scope))) return
+    // Zieladresse schon hier pruefen, damit ein unzulaessiger Wert gar nicht erst gespeichert wird
+    // (siehe outboundFetch.ts); der Sync-Lauf prueft zur Laufzeit erneut, weil ein Name spaeter
+    // auf eine andere Adresse zeigen kann.
+    if (input.endpointUrl !== undefined && !isAllowedOutboundUrl(input.endpointUrl)) {
+      return reply.code(400).send({ error: 'endpoint_not_allowed', correlationId: request.id })
+    }
     const insert = await supabaseClients
       .forService()
       .from('integration_sources')
@@ -3987,6 +4007,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     const scope = toPermissionScope(existing.data.organization_id as string, existing.data.department_id as string | null)
     if (!(await requirePermission(request, reply, 'integration.manage', scope))) return
+    if (input.endpointUrl !== undefined && !isAllowedOutboundUrl(input.endpointUrl)) {
+      return reply.code(400).send({ error: 'endpoint_not_allowed', correlationId: request.id })
+    }
     const update: Record<string, unknown> = {}
     if (input.displayName !== undefined) update.display_name = input.displayName
     if (input.enabledDomains !== undefined) update.enabled_domains = input.enabledDomains
@@ -4066,7 +4089,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       .eq('id', params.id)
       .select('id, organization_id, sync_run_id, source_id, domain, external_id, local_id, label, field, current_value, incoming_value, kind, resolution, resolved_at, created_at')
       .single()
-    if (update.error) throw update.error
+    if (update.error) {
+      // 23505: derselbe Fingerabdruck dieser Quelle ist bereits dauerhaft ignoriert
+      // (integration_sync_conflicts_ignored_unique). Der Teilindex greift nur fuer bereits
+      // ignorierte Zeilen, zwei Laeufe koennen denselben Fingerabdruck also je einmal als
+      // 'pending' anlegen -- die zweite Aufloesung laeuft dann in den Unique-Verstoss. Fachlich
+      // ist das Ziel bereits erreicht, deshalb 409 statt 500.
+      if (update.error.code === '23505') return reply.code(409).send({ error: 'fingerprint_already_ignored', correlationId: request.id })
+      throw update.error
+    }
     await recordAuditEvent(request, {
       organizationId: scope.organizationId, action: 'integration_sync_conflict.resolved', entityType: 'integration_sync_conflicts', entityId: params.id, metadata: { resolution: input.resolution },
     })
@@ -4145,16 +4176,21 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       if (!sourceEndpointUrl) return reply.code(409).send({ error: 'source_missing_endpoint', correlationId: request.id })
       let text: string
       try {
-        const response = await fetch(sourceEndpointUrl)
-        if (!response.ok) throw new Error(`unexpected status ${response.status}`)
-        text = await response.text()
-        // response.ok allein sagt nichts darueber aus, ob der Inhalt tatsaechlich ein iCal-Feed
-        // ist -- z. B. eine Login-Weiterleitung antwortet oft mit 200 und HTML. Ohne diese Pruefung
-        // waere ein erster Sync (existing=[] greift die Verlustschwelle nicht) still "erfolgreich"
-        // mit null Personen (beim adversarialen Review als Randfall benannt).
+        // fetchPublicUrl statt fetch: die Adresse stammt aus der Datenbank und wird aus dem Netz
+        // der API abgerufen -- ohne Zieladressenpruefung waere das ein Server-zu-Server-Proxy in
+        // Loopback, privates Netz und Cloud-Metadatendienst (siehe outboundFetch.ts). Zeit- und
+        // Groessengrenze haengen an derselben Stelle.
+        text = await fetchPublicUrl(sourceEndpointUrl)
+        // Ein erfolgreicher Abruf sagt nichts darueber aus, ob der Inhalt tatsaechlich ein
+        // iCal-Feed ist -- z. B. eine Login-Weiterleitung antwortet oft mit 200 und HTML. Ohne
+        // diese Pruefung waere ein erster Sync (existing=[] greift die Verlustschwelle nicht)
+        // still "erfolgreich" mit null Personen (beim adversarialen Review als Randfall benannt).
         if (!text.includes('BEGIN:VCALENDAR')) throw new Error('response is not an iCal feed')
       } catch (error) {
         request.log.warn({ err: error, correlationId: request.id }, 'ical fetch failed')
+        if (error instanceof OutboundFetchError && error.reason === 'blocked_url') {
+          return reply.code(400).send({ error: 'endpoint_not_allowed', correlationId: request.id })
+        }
         return reply.code(502).send({ error: 'source_fetch_failed', correlationId: request.id })
       }
       rawRows = await collectRows(new IcalSourceTransport({ key: params.id, text }))
@@ -4180,13 +4216,17 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     // gegen von Hand gepflegte Eintraege) plus Personen, die bereits DIESER Quelle zugeordnet sind.
     // Personen einer anderen Quelle bleiben aussen vor, damit ein Lauf nicht die Zustaendigkeit
     // einer fremden Quelle stilllegt.
-    let existingQuery = service
+    // Die Abteilungsgrenze einer abteilungsgebundenen Quelle gilt nur fuer FREMDE Datensaetze
+    // (source_id null, reiner Abgleichskandidat). Eigene Datensaetze gehoeren immer dazu, egal wo
+    // sie inzwischen liegen: eine geloeschte Abteilung setzt department_id auf null, und eine
+    // manuelle Umhaengung verschiebt die Person -- in beiden Faellen faende der naechste Lauf sie
+    // sonst nicht mehr, legte sie erneut an und liefe in den Unique-Index auf
+    // (organization_id, source_id, external_id).
+    const existingRows = await service
       .from('directory_people')
       .select('id, first_name, last_name, birth_year, department_id, team_id, status, source_id, external_id, source_updated_at, updated_at')
       .eq('organization_id', organizationId)
-      .or(`source_id.is.null,source_id.eq.${params.id}`)
-    if (sourceDepartmentId) existingQuery = existingQuery.eq('department_id', sourceDepartmentId)
-    const existingRows = await existingQuery
+      .or(sourceDepartmentId ? `and(source_id.is.null,department_id.eq.${sourceDepartmentId}),source_id.eq.${params.id}` : `source_id.is.null,source_id.eq.${params.id}`)
     if (existingRows.error) throw existingRows.error
     const existingLocals: DirectoryPersonLocal[] = existingRows.data.map((row) => ({
       id: row.id as string,
@@ -4269,6 +4309,22 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       return reply.code(200).send(SyncSourceResponseSchema.parse({ run: mapSyncRunRow(run.data), conflicts: [] }))
     }
 
+    // Der Lauf wird VOR dem ersten Schreibvorgang angelegt (status 'running', der Vorgabewert der
+    // Tabelle). Es gibt keine Transaktion ueber Anlage, Aenderung und Austritt -- bricht einer
+    // dieser Schritte ab, bleiben die bereits geschriebenen Personen bestehen. Wuerde der Lauf
+    // erst am Ende entstehen, saehe der Verein die Aenderung, aber nirgends ihre Herkunft; so
+    // bleibt in jedem Fall eine Zeile mit 'failed' und error_class zurueck.
+    const startedRun = await service
+      .from('integration_sync_runs')
+      .insert({
+        organization_id: organizationId, source_id: params.id, domain, mode,
+        correlation_id: correlationId, triggered_by: request.auth!.userId,
+      })
+      .select('id')
+      .single()
+    if (startedRun.error) throw startedRun.error
+    const runId = startedRun.data.id as string
+
     // Dauerhaft ignorierte Fingerabdruecke dieser Quelle: ein Konflikt mit demselben Fingerabdruck
     // wird nicht neu angelegt (plans/014: "wird beim naechsten Lauf nicht neu angelegt").
     const ignored = await service.from('integration_sync_conflicts').select('fingerprint').eq('source_id', params.id).eq('resolution', 'ignore_permanently')
@@ -4333,7 +4389,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     // wird und ein CHECK-Fehlschlag deshalb nicht auftreten kann. Fuer apply wird jeder tatsaechlich
     // fehlgeschlagene Schreibvorgang unten abgezogen -- siehe Fund aus dem adversarialen Review.
     let appliedUpdatedCount = plan.updated.length
-    if (mode === 'apply') {
+    const applyPlan = async (): Promise<void> => {
       if (applicableCreated.length > 0) {
         const insertRows = applicableCreated.map((entity) => {
           const resolved = resolvePersonScope(entity, resolver)
@@ -4353,8 +4409,13 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       }
       for (const update of plan.updated) {
         const resolved = resolvePersonScope(update.external, resolver)
+        // Durchgaengig `?? lokal`: ein Feld, das die Quelle nicht liefert, bleibt stehen. Fuer
+        // birth_year stand hier `?? null` -- eine Importdatei ohne Geburtsjahrspalte leerte damit
+        // jedes bereits gepflegte Geburtsjahr und entzog der Minderjaehrigkeitspruefung ihre
+        // Grundlage (dieselbe Regel setzt MatchStrategy.fieldsOf fuer die Aenderungserkennung um).
         const patch: Record<string, unknown> = {
-          first_name: update.external.firstName, last_name: update.external.lastName, birth_year: update.external.birthYear ?? null,
+          first_name: update.external.firstName, last_name: update.external.lastName,
+          birth_year: update.external.birthYear ?? update.local.birthYear,
           department_id: resolved.departmentId ?? update.local.departmentId, team_id: resolved.teamId ?? update.local.teamId,
           status: update.external.status ?? update.local.status,
           source_updated_at: update.external.sourceUpdatedAt ?? update.local.sourceUpdatedAt?.toISOString() ?? null,
@@ -4389,14 +4450,28 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       }
     }
 
+    if (mode === 'apply') {
+      try {
+        await applyPlan()
+      } catch (error) {
+        // Der Lauf bleibt als 'failed' stehen, statt mit dem Request zu verschwinden: die bereits
+        // geschriebenen Personen sind sonst ohne jeden Nachweis im Verzeichnis.
+        const errorClass = error instanceof Error ? error.name : 'unknown'
+        await service.from('integration_sync_runs').update({ status: 'failed', error_class: errorClass, finished_at: new Date().toISOString() }).eq('id', runId)
+        await service.from('integration_sources').update({ last_sync_at: new Date().toISOString(), last_sync_status: 'failed' }).eq('id', params.id)
+        throw error
+      }
+    }
+
     const run = await service
       .from('integration_sync_runs')
-      .insert({
-        organization_id: organizationId, source_id: params.id, domain, mode, status: 'succeeded',
+      .update({
+        status: 'succeeded',
         created_count: applicableCreated.length, updated_count: appliedUpdatedCount, retired_count: plan.retired.length,
         skipped_count: plan.skipped.length, conflict_count: pendingConflicts.length,
-        correlation_id: correlationId, finished_at: new Date().toISOString(), triggered_by: request.auth!.userId,
+        finished_at: new Date().toISOString(),
       })
+      .eq('id', runId)
       .select('id, organization_id, source_id, domain, mode, status, created_count, updated_count, retired_count, skipped_count, conflict_count, error_class, started_at, finished_at')
       .single()
     if (run.error) throw run.error
@@ -4407,7 +4482,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         .from('integration_sync_conflicts')
         .insert(
           pendingConflicts.map((conflict) => ({
-            organization_id: organizationId, sync_run_id: run.data.id, source_id: params.id, domain,
+            organization_id: organizationId, sync_run_id: runId, source_id: params.id, domain,
             external_id: conflict.externalId, local_id: conflict.localId, label: conflict.label, field: conflict.field,
             current_value: conflict.currentValue, incoming_value: conflict.incomingValue, kind: conflict.kind, fingerprint: conflict.fingerprint,
           })),
@@ -4419,8 +4494,10 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
     await service.from('integration_sources').update({ last_sync_at: new Date().toISOString(), last_sync_status: 'succeeded' }).eq('id', params.id)
     await recordAuditEvent(request, {
-      organizationId, action: `integration_source.sync_${mode}`, entityType: 'integration_sync_runs', entityId: run.data.id as string,
-      metadata: { created: applicableCreated.length, updated: plan.updated.length, retired: plan.retired.length, conflicts: pendingConflicts.length },
+      organizationId, action: `integration_source.sync_${mode}`, entityType: 'integration_sync_runs', entityId: runId,
+      // appliedUpdatedCount, nicht plan.updated.length: der Audit-Eintrag darf nicht mehr
+      // Aenderungen behaupten, als tatsaechlich geschrieben wurden.
+      metadata: { created: applicableCreated.length, updated: appliedUpdatedCount, retired: plan.retired.length, conflicts: pendingConflicts.length },
     })
 
     return reply.code(200).send(SyncSourceResponseSchema.parse({ run: mapSyncRunRow(run.data), conflicts: conflictRows.map(mapSyncConflictRow) }))
@@ -4434,7 +4511,10 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const query = z
       .object({
         departmentId: UuidSchema.optional(), teamId: UuidSchema.optional(), status: DirectoryPersonStatusSchema.optional(),
-        isMinor: z.coerce.boolean().optional(), missingGuardian: z.coerce.boolean().optional(),
+        // z.stringbool() statt z.coerce.boolean(): letzteres ist Boolean(value), und damit ist
+        // jeder nicht-leere String wahr -- '?isMinor=false' haette genau die Minderjaehrigen
+        // geliefert, die es ausschliessen sollte.
+        isMinor: z.stringbool().optional(), missingGuardian: z.stringbool().optional(),
       })
       .parse(request.query)
     const client = supabaseClients.forUser(request.auth!.accessToken)
@@ -4446,19 +4526,23 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (query.teamId) builder = builder.eq('team_id', query.teamId)
     if (query.status) builder = builder.eq('status', query.status)
     if (query.isMinor !== undefined) builder = builder.eq('is_minor', query.isMinor)
-    if (query.missingGuardian) {
-      // guardian_email ist fuer authenticated nicht selektierbar (Spaltenrechte, Migration
-      // 2026080703) -- der Filter laeuft deshalb ueber die Service Role auf eine ID-Liste, die
-      // Ergebnismenge selbst bleibt durch die RLS-Abfrage oben trotzdem sichtbarkeitsbeschraenkt.
-      const missing = await supabaseClients.forService().from('directory_people').select('id').eq('organization_id', params.id).is('guardian_email', null)
-      if (missing.error) throw missing.error
-      const missingIds = missing.data.map((row) => row.id as string)
-      if (missingIds.length === 0) return reply.code(200).send([])
-      builder = builder.in('id', missingIds)
-    }
     const rows = await builder.order('last_name').order('first_name')
     if (rows.error) throw rows.error
-    return reply.code(200).send(rows.data.map(mapDirectoryPersonRow))
+    let visible = rows.data
+    if (query.missingGuardian) {
+      // guardian_email ist fuer authenticated nicht selektierbar (Spaltenrechte, Migration
+      // 2026080703) -- der Filter braucht deshalb die Service Role. Gefiltert wird aber erst
+      // NACH der sichtbarkeitsbeschraenkten Abfrage, auf deren Ergebnis: die IDs gehen nie als
+      // Query-String in eine zweite Abfrage (`.in('id', …)` mit einer unbegrenzten Liste
+      // scheiterte ab einigen hundert Personen an der URL-Laenge und wurde zusaetzlich von
+      // PostgREST' max_rows stillschweigend gekappt).
+      const missing = await fetchAllRows<{ id: string }>((from, to) =>
+        supabaseClients.forService().from('directory_people').select('id').eq('organization_id', params.id).is('guardian_email', null).range(from, to),
+      )
+      const missingIds = new Set(missing.map((row) => row.id))
+      visible = visible.filter((row) => missingIds.has(row.id as string))
+    }
+    return reply.code(200).send(visible.map(mapDirectoryPersonRow))
   })
 
   app.post('/v1/organizations/:id/directory-people', async (request, reply) => {
@@ -4475,7 +4559,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       return reply.code(400).send({ error: 'profile_not_a_member', correlationId: request.id })
     }
     const referenceYear = new Date().getFullYear()
-    const isMinor = input.isMinor ?? (input.birthYear != null ? deriveIsMinor(input.birthYear, referenceYear) : false)
+    const isMinor = resolveIsMinor(input.isMinor, input.birthYear ?? null, referenceYear)
     const status = input.status ?? 'active'
     const insert = await supabaseClients
       .forService()
@@ -4504,7 +4588,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const params = z.object({ id: UuidSchema }).parse(request.params)
     const input = UpdateDirectoryPersonRequestSchema.parse(request.body)
     const client = supabaseClients.forUser(request.auth!.accessToken)
-    const existing = await client.from('directory_people').select('organization_id, department_id, team_id').eq('id', params.id).maybeSingle()
+    const existing = await client.from('directory_people').select('organization_id, department_id, team_id, birth_year').eq('id', params.id).maybeSingle()
     if (existing.error) throw existing.error
     if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     const currentScope = toPermissionScope(existing.data.organization_id as string, existing.data.department_id as string | null, existing.data.team_id as string | null)
@@ -4541,8 +4625,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (input.guardianName !== undefined) update.guardian_name = input.guardianName
     if (input.guardianEmail !== undefined) update.guardian_email = input.guardianEmail
     if (input.profileId !== undefined) update.profile_id = input.profileId
-    if (input.isMinor !== undefined) update.is_minor = input.isMinor
-    else if (input.birthYear != null) update.is_minor = deriveIsMinor(input.birthYear, referenceYear)
+    // Massgeblich ist das Geburtsjahr nach dieser Aenderung, nicht die Angabe des Aufrufers --
+    // siehe resolveIsMinor. Bleibt das Geburtsjahr unberuehrt, zaehlt das gespeicherte.
+    const effectiveBirthYear = input.birthYear !== undefined ? input.birthYear : (existing.data.birth_year as number | null)
+    if (input.isMinor !== undefined || input.birthYear !== undefined) {
+      update.is_minor = resolveIsMinor(input.isMinor, effectiveBirthYear, referenceYear)
+    }
 
     // createPeopleMatchStrategy.localUpdatedAtOf (packages/member-directory) vergleicht
     // source_updated_at, nicht updated_at -- sonst wuerde ein frischer Sync-Lauf (der

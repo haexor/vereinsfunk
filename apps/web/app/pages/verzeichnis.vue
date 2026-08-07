@@ -316,8 +316,12 @@ async function saveEdit(person: DirectoryPerson) {
               <input v-model="editForm.lastName" required maxlength="80" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" />
             </label>
             <label><span class="mb-1 block text-xs font-semibold">Abteilung</span>
+              <!-- "Keine" nur vereinsweit, wie im Anlegen-Formular: eine Abteilungsverwalterin
+                   darf keine Person auf departmentId null setzen (die API antwortet darauf mit
+                   403, weil directory.read auf Vereinsebene fehlt) -- die Auswahl anzubieten
+                   erzeugt nur eine Fehlermeldung. -->
               <select v-model="editForm.departmentId" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs">
-                <option value="">Keine</option>
+                <option v-if="canReadOrgWide" value="">Keine</option>
                 <option v-for="department in readableDepartments" :key="department.id" :value="department.id">{{ department.name }}</option>
               </select>
             </label>

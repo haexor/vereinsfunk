@@ -67,14 +67,19 @@ export function createPeopleMatchStrategy(resolver: DepartmentResolver): MatchSt
           status: entity.status,
         }
       }
+      // Fehlende Felder bleiben undefined, nicht null/'active': eine Importdatei ohne
+      // Geburtsjahr-, Abteilungs- oder Statusspalte sagt zu diesen Feldern nichts und darf den
+      // lokal gepflegten Wert weder als Aenderung melden noch ueberschreiben (siehe
+      // MatchStrategy.fieldsOf). Sonst leert der erste Import ohne Geburtsjahrspalte jedes
+      // Geburtsjahr im Verzeichnis -- und mit ihm die Grundlage der Minderjaehrigkeitspruefung.
       const { departmentId, teamId } = resolveIds(entity)
       return {
         firstName: entity.firstName,
         lastName: entity.lastName,
-        birthYear: entity.birthYear ?? null,
-        departmentId: departmentId ?? null,
-        teamId: teamId ?? null,
-        status: entity.status ?? 'active',
+        birthYear: entity.birthYear,
+        departmentId,
+        teamId,
+        status: entity.status,
       }
     },
     labelOf(entity) {

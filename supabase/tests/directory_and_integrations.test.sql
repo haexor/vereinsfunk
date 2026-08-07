@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(40);
+select plan(44);
 
 set local role postgres;
 
@@ -237,6 +237,24 @@ select is((select is_minor from public.directory_people where id = '68000000-300
 -- 37: der Uebergang wird auditiert.
 select is((select count(*)::integer from public.audit_events where action = 'directory_person.became_adult' and entity_id = '68000000-3000-4000-8000-000000000005'), 1,
   'the transition to adulthood is recorded as an audit event');
+
+-- 38-41: Mandantentrennung fuer Laeufe und Konflikte. Bisher pruefte die Datei fuer diese beiden
+-- Tabellen nur relforcerowsecurity -- dass die Policy tatsaechlich trennt, war ungetestet. Beide
+-- haengen ueber authz.can_manage_integration_source an der Quelle: wer die Quelle verwalten darf,
+-- sieht ihre Laeufe und Konflikte, sonst niemand. Die Zeilen oben gehoeren zur Quelle
+-- 68000000-2000-4000-8000-000000000002 (vereinsweit, ohne Abteilungsbindung).
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '68000000-0000-4000-8000-000000000001', true);
+select is((select count(*)::integer from public.integration_sync_runs where id = '68000000-4000-4000-8000-000000000001'), 1,
+  'the own organization_admin sees a sync run of a source they may manage');
+select is((select count(*)::integer from public.integration_sync_conflicts where sync_run_id = '68000000-4000-4000-8000-000000000001'), 1,
+  'the own organization_admin sees the conflicts of that run');
+
+select set_config('request.jwt.claim.sub', '68000000-0000-4000-8000-000000000007', true);
+select is((select count(*)::integer from public.integration_sync_runs where id = '68000000-4000-4000-8000-000000000001'), 0,
+  'an admin of a different organization sees no sync run of this one');
+select is((select count(*)::integer from public.integration_sync_conflicts where sync_run_id = '68000000-4000-4000-8000-000000000001'), 0,
+  'an admin of a different organization sees none of its conflicts');
 
 select * from finish();
 rollback;

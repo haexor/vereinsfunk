@@ -2570,6 +2570,26 @@ describe('Paket 014: Integrationsrahmen und Mitgliederverzeichnis', () => {
     expect(audit[0]?.action).toBe('integration_source.created')
   })
 
+  it('refuses to store an ical endpoint that points into the internal network', async () => {
+    // Ohne diese Pruefung waere die API ein Server-zu-Server-Proxy: die Adresse kommt vom Verein,
+    // abgerufen wird sie aus dem Netz der API (siehe outboundFetch.ts). Der Wert darf gar nicht
+    // erst gespeichert werden, damit auch ein spaeterer Lauf ihn nicht mehr vorfindet.
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ from: () => { throw new Error('no lookup expected for an organization-scoped source') } }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('nothing may be written for a blocked endpoint') } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${ORGANIZATION_ID}/integration-sources`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { transport: 'ical', providerKey: 'ical', displayName: 'Spielplan', enabledDomains: ['fixtures'], endpointUrl: 'https://169.254.169.254/latest/meta-data/' },
+    })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ error: 'endpoint_not_allowed' })
+  })
+
   it('refuses a sync run on a disabled source', async () => {
     const clients: SupabaseClientFactory = {
       forUser: () =>
@@ -2667,13 +2687,16 @@ describe('Paket 014: Integrationsrahmen und Mitgliederverzeichnis', () => {
               }
             }
             if (table === 'integration_sync_runs') {
+              // Der Lauf wird vor dem ersten Schreibvorgang angelegt ('running') und danach mit
+              // Status und Zaehlern aktualisiert -- der Fake bildet beide Schritte ab.
               return {
-                insert: () =>
+                insert: () => chain({ data: { id: RUN_ID }, error: null }),
+                update: (row: Record<string, unknown>) =>
                   chain({
                     data: {
-                      id: RUN_ID, organization_id: ORGANIZATION_ID, source_id: SOURCE_ID, domain: 'people', mode: 'dry_run', status: 'succeeded',
-                      created_count: 1, updated_count: 0, retired_count: 0, skipped_count: 0, conflict_count: 0, error_class: null,
-                      started_at: new Date().toISOString(), finished_at: new Date().toISOString(),
+                      id: RUN_ID, organization_id: ORGANIZATION_ID, source_id: SOURCE_ID, domain: 'people', mode: 'dry_run',
+                      created_count: 0, updated_count: 0, retired_count: 0, skipped_count: 0, conflict_count: 0, error_class: null,
+                      started_at: new Date().toISOString(), ...row,
                     },
                     error: null,
                   }),
@@ -2762,12 +2785,13 @@ describe('Paket 014: Integrationsrahmen und Mitgliederverzeichnis', () => {
             }
             if (table === 'integration_sync_runs') {
               return {
-                insert: () =>
+                insert: () => chain({ data: { id: RUN_ID }, error: null }),
+                update: (row: Record<string, unknown>) =>
                   chain({
                     data: {
-                      id: RUN_ID, organization_id: ORGANIZATION_ID, source_id: SOURCE_ID, domain: 'people', mode: 'dry_run', status: 'succeeded',
-                      created_count: 0, updated_count: 0, retired_count: 0, skipped_count: 0, conflict_count: 1, error_class: null,
-                      started_at: new Date().toISOString(), finished_at: new Date().toISOString(),
+                      id: RUN_ID, organization_id: ORGANIZATION_ID, source_id: SOURCE_ID, domain: 'people', mode: 'dry_run',
+                      created_count: 0, updated_count: 0, retired_count: 0, skipped_count: 0, conflict_count: 0, error_class: null,
+                      started_at: new Date().toISOString(), ...row,
                     },
                     error: null,
                   }),
@@ -2856,6 +2880,48 @@ describe('Paket 014: Integrationsrahmen und Mitgliederverzeichnis', () => {
     expect(response.statusCode).toBe(201)
     expect(response.json()).toMatchObject({ firstName: 'Mia', lastName: 'Muster', isMinor: false })
     expect(audit).toHaveLength(1)
+  })
+
+  it('does not let the caller declare a person with a minor birth year an adult', async () => {
+    // isMinor darf den Schutz nur anheben: sonst umginge ein Aufrufer mit `isMinor: false` sowohl
+    // den CHECK auf einen Elternkontakt als auch die strengere Freigaberoute (derselbe
+    // wiederkehrende Fund wie bei den security-definer-RPCs aus 011/012).
+    let capturedInsert: Record<string, unknown> | null = null
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ from: () => { throw new Error('no lookup expected for an organization-scoped person') } }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'directory_people') {
+              return {
+                insert: (row: Record<string, unknown>) => {
+                  capturedInsert = row
+                  return chain({
+                    data: {
+                      id: PERSON_ID, organization_id: ORGANIZATION_ID, department_id: null, team_id: null, first_name: 'Mia', last_name: 'Muster',
+                      birth_year: 2015, is_minor: true, status: 'active', left_at: null, joined_at: null, profile_id: null, became_adult_at: null,
+                      source_id: null, created_at: new Date().toISOString(),
+                    },
+                    error: null,
+                  })
+                },
+              }
+            }
+            if (table === 'audit_events') return { insert: async () => ({ error: null }) }
+            throw new Error(`unexpected table in service test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${ORGANIZATION_ID}/directory-people`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { firstName: 'Mia', lastName: 'Muster', birthYear: 2015, isMinor: false, guardianEmail: 'eltern@example.com' },
+    })
+    expect(response.statusCode).toBe(201)
+    expect(capturedInsert).toMatchObject({ is_minor: true })
   })
 
   it('bumps source_updated_at on a manual edit to a synced field, so a stale re-sync cannot silently overwrite it', async () => {

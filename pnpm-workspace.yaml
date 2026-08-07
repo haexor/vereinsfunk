@@ -2,6 +2,14 @@ packages:
   - apps/*
   - packages/*
 
+# exceljs (Paket 014, XLSX-Import) haengt an uuid ^8; <11.1.1 hat GHSA-w5hq-g745-h8pq
+# (fehlende Puffergrenzenpruefung in v3/v5/v6 mit uebergebenem buf). exceljs ruft nur v4() ohne
+# buf auf, und wir schreiben nie Arbeitsmappen -- erreichbar ist die Stelle also nicht. Der
+# Override haelt trotzdem `pnpm audit` sauber, damit ein echter Fund kuenftig nicht im Rauschen
+# untergeht.
+overrides:
+  uuid@<11.1.1: ^11.1.1
+
 allowBuilds:
   '@hatchet-dev/typescript-sdk': true
   esbuild: true

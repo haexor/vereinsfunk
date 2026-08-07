@@ -16,7 +16,8 @@ interface ExternalPerson {
   externalId?: string
   firstName: string
   lastName: string
-  birthYear: number | null
+  // undefined = die Quelle liefert dieses Feld nicht (kein Unterschied), null = sie liefert es leer.
+  birthYear: number | null | undefined
   sourceUpdatedAt?: Date
   department?: string
 }
@@ -218,6 +219,38 @@ describe('planSync', () => {
     expect(plan.conflicts).toHaveLength(1)
     expect(plan.conflicts[0]?.kind).toBe('unknown_structure')
     expect(plan.conflicts[0]?.reason).toBe('Schach')
+  })
+
+  it('reports a repeated externalId as a conflict instead of proposing it twice', () => {
+    // Zwei Anlagen mit derselben externen ID liefen in den Unique-Index auf
+    // (organization_id, source_id, external_id) und liessen den halb geschriebenen Lauf abbrechen.
+    const plan = ok(
+      planSync<LocalPerson, ExternalPerson>({
+        existing: [],
+        incoming: [
+          { externalId: 'ext-1', firstName: 'Anna', lastName: 'Beck', birthYear: 2010 },
+          { externalId: 'ext-1', firstName: 'Anna', lastName: 'Beck-Meyer', birthYear: 2010 },
+        ],
+        match,
+        policy: { lossThresholdPercent: 30 },
+      }),
+    )
+    expect(plan.created).toHaveLength(1)
+    expect(plan.conflicts).toHaveLength(1)
+    expect(plan.conflicts[0]).toMatchObject({ kind: 'invalid_record', reason: 'duplicate_external_id', externalId: 'ext-1' })
+  })
+
+  it('treats a field the source does not carry as "no statement", not as a change', () => {
+    const plan = ok(
+      planSync<LocalPerson, ExternalPerson>({
+        existing: [{ id: 'local-1', externalId: 'ext-1', firstName: 'Anna', lastName: 'Beck', birthYear: 2010 }],
+        incoming: [{ externalId: 'ext-1', firstName: 'Anna', lastName: 'Beck', birthYear: undefined }],
+        match,
+        policy: { lossThresholdPercent: 30 },
+      }),
+    )
+    expect(plan.updated).toHaveLength(0)
+    expect(plan.skipped[0]?.reason).toBe('unchanged')
   })
 
   it('does not mutate the existing or incoming arrays', () => {

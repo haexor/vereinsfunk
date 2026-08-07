@@ -57,17 +57,22 @@ export class FileSourceTransport implements SourceTransport {
     const worksheet = workbook.worksheets[0]
     if (!worksheet) return []
 
-    let headers: string[] = []
+    let headers: string[] | null = null
     const rows: Record<string, string>[] = []
-    worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+    // Die Kopfzeile ist die erste GELIEFERTE Zeile, nicht Zeile 1: eachRow({ includeEmpty: false })
+    // ueberspringt leere Zeilen, und eine Datei mit Leerzeile oder Titelzeile oben (in Vereinen
+    // eher Regel als Ausnahme) haette den Callback nie mit rowNumber === 1 aufgerufen -- headers
+    // waere leer geblieben und jeder Datensatz ein leeres Objekt, ohne jede Fehlermeldung.
+    worksheet.eachRow({ includeEmpty: false }, (row) => {
       // ExcelJS.Row.values ist 1-indiziert; values[0] ist immer undefined.
       const values = (row.values as unknown[]).slice(1)
-      if (rowNumber === 1) {
+      const knownHeaders = headers
+      if (knownHeaders === null) {
         headers = values.map((value) => cellToString(value))
         return
       }
       const record: Record<string, string> = {}
-      headers.forEach((header, index) => {
+      knownHeaders.forEach((header, index) => {
         record[header] = cellToString(values[index])
       })
       rows.push(record)

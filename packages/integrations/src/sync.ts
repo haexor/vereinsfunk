@@ -5,17 +5,18 @@ function sameFuzzyKey(a: readonly string[], b: readonly string[]): boolean {
 }
 
 function diffFields(
-  local: Readonly<Record<string, string | number | boolean | null>>,
-  incoming: Readonly<Record<string, string | number | boolean | null>>,
+  local: Readonly<Record<string, string | number | boolean | null | undefined>>,
+  incoming: Readonly<Record<string, string | number | boolean | null | undefined>>,
 ): string[] {
-  const fields = new Set([...Object.keys(local), ...Object.keys(incoming)])
   const changed: string[] = []
-  for (const field of fields) {
-    // undefined und null als "kein Wert" gleichsetzen -- sonst erzeugt ein fehlendes
-    // Feld in einer der beiden Quellen einen Schein-Unterschied.
-    const currentValue = local[field] ?? null
-    const incomingValue = incoming[field] ?? null
-    if (currentValue !== incomingValue) changed.push(field)
+  for (const field of Object.keys(incoming)) {
+    // undefined heisst "die Quelle sagt zu diesem Feld nichts" (MatchStrategy.fieldsOf) und ist
+    // kein Unterschied: eine Datei ohne Geburtsjahr-Spalte darf ein lokal gepflegtes Geburtsjahr
+    // weder als Aenderung melden noch leeren. Nur ausdrueckliches null loescht. Felder, die es
+    // nur lokal gibt, stehen deshalb gar nicht erst zur Debatte.
+    const incomingValue = incoming[field]
+    if (incomingValue === undefined) continue
+    if ((local[field] ?? null) !== incomingValue) changed.push(field)
   }
   return changed
 }
@@ -38,6 +39,12 @@ export function planSync<TLocal, TExternal>(input: {
   const skipped: SyncSkip<TLocal, TExternal>[] = []
   const conflicts: SyncConflict<TLocal, TExternal>[] = []
   const matchedLocals = new Set<TLocal>()
+  // Eine Quelle kann dieselbe externe ID zweimal liefern (doppelte Zeile im Export). Ohne diese
+  // Erfassung liefe jede Wiederholung erneut durch den Abgleich: zweimal 'created' fuer dieselbe
+  // Identitaet (der Unique-Index auf (organization_id, source_id, external_id) laesst das nicht zu
+  // und liesse den halb geschriebenen Lauf abbrechen) oder zwei 'updated' auf denselben lokalen
+  // Datensatz, von denen stillschweigend der letzte gewinnt.
+  const seenExternalIds = new Set<string>()
 
   const applyMatch = (local: TLocal, external: TExternal): void => {
     matchedLocals.add(local)
@@ -71,6 +78,17 @@ export function planSync<TLocal, TExternal>(input: {
 
     const identity = match.identityOf(external)
     if ('externalId' in identity) {
+      if (seenExternalIds.has(identity.externalId)) {
+        conflicts.push({
+          kind: 'invalid_record',
+          label: match.labelOf(external),
+          externalId: identity.externalId,
+          incoming: external,
+          reason: 'duplicate_external_id',
+        })
+        continue
+      }
+      seenExternalIds.add(identity.externalId)
       const localMatch = existing.find((local) => match.externalIdOf(local) === identity.externalId)
       if (localMatch) {
         applyMatch(localMatch, external)

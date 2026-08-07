@@ -109,6 +109,22 @@ describe('createPeopleMatchStrategy with planSync', () => {
     expect(plan.retired).toHaveLength(0)
   })
 
+  it('a source that carries no birth year column leaves the local birth year alone', () => {
+    // Sonst leert der erste Import ohne Geburtsjahrspalte jedes gepflegte Geburtsjahr -- und mit
+    // ihm die Grundlage der Minderjaehrigkeitspruefung. Ein fehlendes Feld ist kein Unterschied.
+    const external = PersonExternalSchema.parse({ externalId: 'ext-1', firstName: 'Anna', lastName: 'Beck' })
+    const plan = planSync({
+      existing: [localPerson({ birthYear: 2010, departmentId: DEPARTMENT_FUSSBALL, status: 'inactive' })],
+      incoming: [external],
+      match: createPeopleMatchStrategy(resolver()),
+      policy: { lossThresholdPercent: 30 },
+    })
+    expect(plan.aborted).toBe(false)
+    if (plan.aborted) return
+    expect(plan.updated).toHaveLength(0)
+    expect(plan.skipped[0]?.reason).toBe('unchanged')
+  })
+
   it('a local correction newer than the source wins -- the incoming change is skipped', () => {
     const external = PersonExternalSchema.parse({
       externalId: 'ext-1', firstName: 'Anna', lastName: 'Falschgeschrieben', sourceUpdatedAt: '2020-01-01T00:00:00Z',

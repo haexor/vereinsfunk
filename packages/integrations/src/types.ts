@@ -40,8 +40,13 @@ export interface MatchStrategy<TLocal, TExternal> {
   externalIdOf(local: TLocal): string | undefined
   /** Dieselbe Art Merkmale wie identityOf(...).fuzzy, aber für den lokalen Datensatz. */
   fuzzyKeyOf(local: TLocal): readonly string[]
-  /** Vergleichbare Feldwerte für Änderungserkennung (Feldname -> Wert), gleiche Feldnamen auf beiden Seiten. */
-  fieldsOf(entity: TLocal | TExternal): Readonly<Record<string, string | number | boolean | null>>
+  /**
+   * Vergleichbare Feldwerte für Änderungserkennung (Feldname -> Wert), gleiche Feldnamen auf
+   * beiden Seiten. `undefined` auf der externen Seite heißt "die Quelle sagt zu diesem Feld
+   * nichts" und zählt nie als Unterschied -- eine Datei ohne Geburtsjahr-Spalte darf ein lokal
+   * gepflegtes Geburtsjahr nicht leeren. `null` heißt dagegen ausdrücklich "leer".
+   */
+  fieldsOf(entity: TLocal | TExternal): Readonly<Record<string, string | number | boolean | null | undefined>>
   /** Anzeigename für Konfliktzeilen (Personenname, Termintitel, ...). */
   labelOf(entity: TLocal | TExternal): string
   sourceUpdatedAtOf(entity: TExternal): Date | undefined

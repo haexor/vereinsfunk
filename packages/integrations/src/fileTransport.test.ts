@@ -40,6 +40,21 @@ describe('FileSourceTransport', () => {
     expect(typeof rows[0]?.['Geburtsjahr']).toBe('string')
   })
 
+  it('takes the header from the first delivered row, not from sheet row 1', async () => {
+    // eachRow({ includeEmpty: false }) ueberspringt leere Zeilen: bei einer Datei mit Leerzeile
+    // oben waere der Callback nie mit rowNumber === 1 aufgerufen worden, headers waere leer
+    // geblieben und jeder Datensatz ein leeres Objekt -- ohne jede Fehlermeldung.
+    const workbook = new ExcelJS.Workbook()
+    const worksheet = workbook.addWorksheet('Mitglieder')
+    worksheet.addRow([])
+    worksheet.addRow(['Vorname', 'Nachname'])
+    worksheet.addRow(['Anna', 'Beck'])
+    const buffer = Buffer.from(await workbook.xlsx.writeBuffer())
+
+    const transport = new FileSourceTransport({ key: 'members.xlsx', format: 'xlsx', buffer })
+    expect(await collect(transport)).toEqual([{ Vorname: 'Anna', Nachname: 'Beck' }])
+  })
+
   it('ignores options.since for file transports and returns every row', async () => {
     const csv = 'Vorname\nAnna\nTom\n'
     const transport = new FileSourceTransport({ key: 'members.csv', format: 'csv', buffer: Buffer.from(csv, 'utf-8') })

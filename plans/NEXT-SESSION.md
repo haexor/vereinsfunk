@@ -78,7 +78,7 @@ Ein Fund gilt erst als echt, wenn reproduzierbar. Unklare Funde von einem zweite
 
 ### Phase 4 — Manueller Browser-Test bei UI-Änderungen
 
-`run-web`-Skill nutzen. Nicht nur auf grüne Tests verlassen — Paket 014 fand einen echten Fund (siehe oben) ausschließlich dadurch, dass eine bereits gefüllte Datenbank mit einer von Hand angelegten Person gegen einen echten Sync-Lauf lief; kein gemockter API-Test mit leerem `existing`-Array hätte das gezeigt. `apps/api` braucht dafür ein eigenes `.env` im Worktree (aus dem Haupt-Checkout kopieren, `SECRET_BOX_KEYS`/`SECRET_BOX_CURRENT_KEY_VERSION` ergänzen, falls noch nicht vorhanden) — nach dem Test wieder löschen, ebenso `apps/web/.env`.
+`run-web`-Skill nutzen. Nicht nur auf grüne Tests verlassen — Paket 014 fand einen echten Fund (siehe oben) ausschließlich dadurch, dass eine bereits gefüllte Datenbank mit einer von Hand angelegten Person gegen einen echten Sync-Lauf lief; kein gemockter API-Test mit leerem `existing`-Array hätte das gezeigt. `apps/api` braucht dafür ein eigenes `.env` im Worktree. **Nicht** das `.env` aus dem Haupt-Checkout kopieren: es enthält echte `SECRET_BOX_KEYS` und Provider-Zugangsdaten, die dann in jedem zusätzlichen Worktree liegen. Stattdessen die nötigen Werte neu schreiben — die lokalen Supabase-Adressen und -Schlüssel aus `supabase status`, für `SECRET_BOX_KEYS`/`SECRET_BOX_CURRENT_KEY_VERSION` einen frisch erzeugten Wegwerfschlüssel. Nach dem Test löschen, ebenso `apps/web/.env`.
 
 ## Definition of Done je Paket
 
