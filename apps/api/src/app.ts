@@ -864,6 +864,39 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       if (!department.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     }
 
+    // Validierung des Dateiinhalts laeuft vor jedem Service-Role-Aufruf (wie beim bestehenden
+    // Logo-Upload): eine abgelehnte Datei braucht nie einen echten Supabase-Client.
+    let processedFont: Awaited<ReturnType<typeof processBrandFontUpload>> | undefined
+    let processedImage: Awaited<ReturnType<typeof processBrandLogoUpload>> | undefined
+    if (fields.kind === 'font') {
+      try {
+        processedFont = await processBrandFontUpload(buffer)
+      } catch (error) {
+        if (error instanceof UnsupportedFontFormatError) {
+          return reply.code(400).send({ error: 'invalid_font', message: error.message, correlationId: request.id })
+        }
+        if (error instanceof FontEmbeddingRestrictedError) {
+          return reply.code(400).send({ error: 'font_embedding_restricted', message: error.message, correlationId: request.id })
+        }
+        if (error instanceof Error && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE') {
+          return reply.code(413).send({ error: 'file_too_large', correlationId: request.id })
+        }
+        throw error
+      }
+    } else {
+      try {
+        processedImage = await processBrandLogoUpload(buffer)
+      } catch (error) {
+        if (error instanceof UnsupportedLogoFormatError || error instanceof LogoDimensionsError) {
+          return reply.code(400).send({ error: 'invalid_logo', message: error.message, correlationId: request.id })
+        }
+        if (error instanceof Error && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE') {
+          return reply.code(413).send({ error: 'file_too_large', correlationId: request.id })
+        }
+        throw error
+      }
+    }
+
     const service = supabaseClients.forService()
     const scopeSegment = fields.teamId
       ? `departments/${fields.departmentId}/teams/${fields.teamId}`
@@ -879,22 +912,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       created_by: request.auth!.userId,
     }
 
-    if (fields.kind === 'font') {
-      let processedFont
-      try {
-        processedFont = await processBrandFontUpload(buffer)
-      } catch (error) {
-        if (error instanceof UnsupportedFontFormatError) {
-          return reply.code(400).send({ error: 'invalid_font', message: error.message, correlationId: request.id })
-        }
-        if (error instanceof FontEmbeddingRestrictedError) {
-          return reply.code(400).send({ error: 'font_embedding_restricted', message: error.message, correlationId: request.id })
-        }
-        if (error instanceof Error && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE') {
-          return reply.code(413).send({ error: 'file_too_large', correlationId: request.id })
-        }
-        throw error
-      }
+    if (processedFont) {
       const hash = hashLogoBuffer(processedFont.woff2Buffer)
       const rawObjectPath = `organizations/${fields.organizationId}/brand/${scopeSegment}/font-${hash}-original.${processedFont.originalExtension}`
       const woff2ObjectPath = `organizations/${fields.organizationId}/brand/${scopeSegment}/font-${hash}.woff2`
@@ -916,19 +934,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         font_style: processedFont.fontStyle,
         status: 'processing',
       })
-    } else {
-      let processedImage
-      try {
-        processedImage = await processBrandLogoUpload(buffer)
-      } catch (error) {
-        if (error instanceof UnsupportedLogoFormatError || error instanceof LogoDimensionsError) {
-          return reply.code(400).send({ error: 'invalid_logo', message: error.message, correlationId: request.id })
-        }
-        if (error instanceof Error && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE') {
-          return reply.code(413).send({ error: 'file_too_large', correlationId: request.id })
-        }
-        throw error
-      }
+    } else if (processedImage) {
       const hash = hashLogoBuffer(processedImage.buffer)
       const objectPath = `organizations/${fields.organizationId}/brand/${scopeSegment}/${fields.kind}-${hash}.${processedImage.extension}`
       const upload = await service.storage
