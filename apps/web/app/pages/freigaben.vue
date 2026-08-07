@@ -1,6 +1,17 @@
 <script setup lang="ts">
-import { Check, MessageSquareText, ShieldCheck, X } from '@lucide/vue'
-import { ApprovalStageSchema, type ApprovalStage } from '@vereinsfunk/contracts'
+import { AlertTriangle, Check, MessageSquareText, ShieldCheck, X } from '@lucide/vue'
+import { ApprovalStageSchema, type ApprovalStage, type MediaGateBlocker } from '@vereinsfunk/contracts'
+
+// Paket 015: Medien-Gate-Blocker (evaluateMediaGate) je Stufe -- eine fehlende oder nicht
+// passende Einwilligung ist jetzt sichtbar, statt nur beim Freigeben selbst zu scheitern.
+const BLOCKER_LABELS: Record<MediaGateBlocker, string> = {
+  scan_pending: 'Medien-Scan läuft noch', face_pending: 'Gesichter noch nicht entschieden',
+  consent_invalid: 'Einwilligung ungültig (widerrufen, abgelaufen oder abgelöst)',
+  consent_scope_mismatch: 'Einwilligung deckt diese Verwendung nicht ab',
+  derivative_stale: 'Medien-Derivat nicht aktuell', minor_review_required: 'Minderjährigenprüfung fehlt noch',
+  original_selected: 'Unbearbeitetes Originalbild ausgewählt', naming_not_allowed: 'Namentliche Nennung nicht erlaubt',
+  sensitive_text_data: 'Möglicherweise sensible Angabe im Text',
+}
 
 // Paket 011: ersetzt die zwei erfundenen Beiträge durch die echten Stufen, die auf die
 // anfragende Person warten (GET /v1/approval-stages/mine). Ohne Paket 005/006 (Inhalts-Pipeline)
@@ -79,6 +90,11 @@ async function decide(stage: ApprovalStage, decision: 'approved' | 'changes_requ
           <div v-if="stageItem.isMinorStage" class="my-4 flex items-center gap-2 rounded-xl bg-[#f1f4ed] p-3 text-[10px] font-medium text-[#58635b]">
             <ShieldCheck :size="15" class="text-emerald-700" /> Minderjährigenschutz — diese Stufe ist unbefreibar.
           </div>
+          <ul v-if="stageItem.mediaGateBlockers.length" class="my-4 space-y-1.5">
+            <li v-for="blocker in stageItem.mediaGateBlockers" :key="blocker" class="flex items-center gap-2 rounded-xl bg-amber-50 p-3 text-[10px] font-medium text-amber-800">
+              <AlertTriangle :size="14" class="shrink-0" /> {{ BLOCKER_LABELS[blocker] }}
+            </li>
+          </ul>
           <label class="mb-3 block"><span class="mb-1 block text-xs font-semibold">Begründung (bei Änderung/Ablehnung sichtbar für den Autor)</span>
             <input v-model="reasonDraft[stageItem.id]" maxlength="2000" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" />
           </label>

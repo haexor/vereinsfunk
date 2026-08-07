@@ -61,7 +61,8 @@ const selectedEntry = computed(() => entries.value.find((entry) => entryKey(entr
 const draft = reactive<PolicyRuleValues>({
   reviewRequired: null, reviewMode: null, reviewStageLabel: null, reviewMinimumApprovals: null, reviewDeadlineHours: null,
   minorApprovalRequired: null, selfApprovalAllowed: null, allowSameReviewerAcrossStages: null, allowReviewExemptions: null,
-  mediaRequiresConsentCheck: null, allowedPresets: null, allowedFormats: null, allowedChannelIds: null,
+  mediaRequiresConsentCheck: null, consentExpiresOnLeave: null, consentValidityMonths: null,
+  allowedPresets: null, allowedFormats: null, allowedChannelIds: null,
   forbiddenTopics: [], requiredHashtags: [], tone: null,
 })
 const forbiddenTopicsText = ref('')
@@ -108,6 +109,7 @@ async function save() {
           reviewStageLabel: blankToNull(draft.reviewStageLabel),
           reviewMinimumApprovals: blankToNull(draft.reviewMinimumApprovals),
           reviewDeadlineHours: blankToNull(draft.reviewDeadlineHours),
+          consentValidityMonths: blankToNull(draft.consentValidityMonths),
           tone: blankToNull(draft.tone),
           forbiddenTopics: splitList(forbiddenTopicsText.value),
           requiredHashtags: splitList(requiredHashtagsText.value),
@@ -272,6 +274,10 @@ function reviewerLabel(reviewer: { kind: string; userId: string | null; role: st
             </label>
             <label class="flex items-center gap-2"><input v-model="draft.minorApprovalRequired" type="checkbox" :disabled="!selectedEntry.canEdit" /> <span class="text-sm">Minderjährigenschutz erzwingen</span></label>
             <label class="flex items-center gap-2"><input v-model="draft.mediaRequiresConsentCheck" type="checkbox" :disabled="!selectedEntry.canEdit" /> <span class="text-sm">Einwilligungsprüfung bei Medien</span></label>
+            <label class="flex items-center gap-2"><input v-model="draft.consentExpiresOnLeave" type="checkbox" :disabled="!selectedEntry.canEdit" /> <span class="text-sm">Einwilligung endet, wenn die Person den Verein verlässt</span></label>
+            <label><span class="mb-1 block text-xs font-semibold">Gültigkeitsdauer neuer Einwilligungen (Monate)</span>
+              <input v-model.number="draft.consentValidityMonths" type="number" min="1" max="120" placeholder="unbegrenzt" :disabled="!selectedEntry.canEdit" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-sm" />
+            </label>
             <label class="flex items-center gap-2">
               <input :checked="draft.selfApprovalAllowed === false" type="checkbox" :disabled="!selectedEntry.canEdit" @change="draft.selfApprovalAllowed = ($event.target as HTMLInputElement).checked ? false : null" />
               <span class="text-sm">Selbstfreigabe verbieten</span>

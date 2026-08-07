@@ -58,6 +58,9 @@ export interface EffectiveConfig {
     selfApprovalAllowed: boolean
     allowSameReviewerAcrossStages: boolean
     mediaRequiresConsentCheck: boolean
+    // Paket 015: dieselbe OR-Verschaerfung wie mediaRequiresConsentCheck -- sobald irgendeine
+    // Ebene "eine Einwilligung endet, wenn die Person den Verein verlaesst" verlangt, gilt das.
+    consentExpiresOnLeave: boolean
     // null = keine Einschraenkung auf dieser Ebene, [] = nichts erlaubt. Die haeufigste
     // Fehlerquelle dieser Bauform (Plan 011, "Vererbung: eine Richtung").
     allowedPresets: readonly string[] | null
@@ -114,6 +117,9 @@ export function mergeEffectiveConfig(
         mediaRequiresConsentCheck:
           current.policies.mediaRequiresConsentCheck ||
           policies?.mediaRequiresConsentCheck === true,
+        consentExpiresOnLeave:
+          current.policies.consentExpiresOnLeave ||
+          policies?.consentExpiresOnLeave === true,
         allowedPresets: mergeAllowedList(current.policies.allowedPresets, policies?.allowedPresets),
         allowedFormats: mergeAllowedList(current.policies.allowedFormats, policies?.allowedFormats),
         allowedChannelIds: mergeAllowedList(
@@ -139,6 +145,7 @@ export const DEFAULT_EFFECTIVE_CONFIG: EffectiveConfig = {
     selfApprovalAllowed: true,
     allowSameReviewerAcrossStages: true,
     mediaRequiresConsentCheck: false,
+    consentExpiresOnLeave: false,
     allowedPresets: null,
     allowedFormats: null,
     allowedChannelIds: null,
@@ -416,18 +423,44 @@ export type MediaGateInput = {
   facesConfirmedComplete: boolean
   hasOriginalSelected: boolean
   derivativeCurrent: boolean
-  faces: readonly { subjectKind: 'adult' | 'minor' | 'unknown'; decision: 'pending' | 'consented' | 'obscure' | 'exclude'; consentValid?: boolean | undefined }[]
+  faces: readonly {
+    subjectKind: 'adult' | 'minor' | 'unknown'
+    decision: 'pending' | 'consented' | 'obscure' | 'exclude'
+    consentValid?: boolean | undefined
+    // Paket 015: die Zeile selbst ist gueltig, deckt aber nicht den angefragten Umfang
+    // (Plattform/Medienart/Kontext/Abteilung) ab -- siehe isConsentScopeMismatch in consent.ts.
+    consentScopeMismatch?: boolean | undefined
+  }[]
   minorReviewConfirmed: boolean
+  // Paket 015: Textpruefung (scanTextForSensitiveData in consent.ts) laeuft unabhaengig von
+  // Gesichtern -- ein Beitrag ohne jedes Foto kann trotzdem blockiert sein (Plan, "Sensible
+  // Angaben im Text, nicht nur im Bild").
+  namingNotAllowed?: boolean | undefined
+  sensitiveTextData?: boolean | undefined
 }
 
-export function evaluateMediaGate(input: MediaGateInput): { publishable: boolean; blockers: Array<'scan_pending' | 'face_pending' | 'consent_invalid' | 'derivative_stale' | 'minor_review_required' | 'original_selected'> } {
-  const blockers: Array<'scan_pending' | 'face_pending' | 'consent_invalid' | 'derivative_stale' | 'minor_review_required' | 'original_selected'> = []
+export type MediaGateBlocker =
+  | 'scan_pending'
+  | 'face_pending'
+  | 'consent_invalid'
+  | 'derivative_stale'
+  | 'minor_review_required'
+  | 'original_selected'
+  | 'consent_scope_mismatch'
+  | 'naming_not_allowed'
+  | 'sensitive_text_data'
+
+export function evaluateMediaGate(input: MediaGateInput): { publishable: boolean; blockers: MediaGateBlocker[] } {
+  const blockers: MediaGateBlocker[] = []
   if (input.scanStatus !== 'clean') blockers.push('scan_pending')
   if (!input.facesConfirmedComplete || input.faces.some((face) => face.decision === 'pending')) blockers.push('face_pending')
   if (input.faces.some((face) => face.decision === 'consented' && !face.consentValid)) blockers.push('consent_invalid')
+  if (input.faces.some((face) => face.decision === 'consented' && face.consentScopeMismatch === true)) blockers.push('consent_scope_mismatch')
   if (!input.derivativeCurrent) blockers.push('derivative_stale')
   if (input.hasOriginalSelected) blockers.push('original_selected')
   if (input.faces.some((face) => face.subjectKind === 'minor') && !input.minorReviewConfirmed) blockers.push('minor_review_required')
+  if (input.namingNotAllowed) blockers.push('naming_not_allowed')
+  if (input.sensitiveTextData) blockers.push('sensitive_text_data')
   return { publishable: blockers.length === 0, blockers }
 }
 
@@ -443,6 +476,30 @@ export {
   type BrandOverrideProfile,
   type ResolvedBrand,
 } from './brand.js'
+export {
+  consentPurposes,
+  consentPlatforms,
+  consentMediaKinds,
+  consentContexts,
+  consentBlockers,
+  evaluateConsent,
+  isConsentRecordInvalid,
+  isConsentScopeMismatch,
+  scanTextForSensitiveData,
+  textScanFindingKinds,
+  type ConsentPurpose,
+  type ConsentPlatform,
+  type ConsentMediaKind,
+  type ConsentContext,
+  type ConsentScope,
+  type ConsentBlocker,
+  type ConsentRecordForEvaluation,
+  type RequiredConsent,
+  type LinkedPersonForTextScan,
+  type TextScanFindingKind,
+  type TextScanFinding,
+  type TextScanResult,
+} from './consent.js'
 
 export function assertApprovalSnapshot(input: MediaGateInput, derivativeHashes: readonly string[]): void {
   const gate = evaluateMediaGate(input)
