@@ -67,8 +67,16 @@ export async function processBrandLogoUpload(buffer: Buffer): Promise<ProcessedL
 
   // .rotate() bakes in the EXIF orientation; omitting .withMetadata() during re-encode
   // drops the rest of it (GPS, camera/software identifiers, ...).
-  const reencoded =
-    rasterFormat === 'png' ? await sharp(buffer).rotate().png().toBuffer() : await sharp(buffer).rotate().jpeg().toBuffer()
+  // libvips can read basic IHDR metadata (width/height) from a file whose pixel data is
+  // corrupt, so metadata() above can succeed while the actual decode during re-encoding
+  // still fails -- found via manual browser testing of Paket 013 (an unrelated, pre-existing
+  // gap surfaced through the new general asset upload path, which shares this function).
+  let reencoded
+  try {
+    reencoded = rasterFormat === 'png' ? await sharp(buffer).rotate().png().toBuffer() : await sharp(buffer).rotate().jpeg().toBuffer()
+  } catch {
+    throw new UnsupportedLogoFormatError('logo file could not be decoded')
+  }
 
   return {
     buffer: reencoded,

@@ -179,9 +179,11 @@ const ownFontAssets = computed(() =>
   }),
 )
 const pendingLicenseAssets = computed(() => ownFontAssets.value.filter((asset) => asset.status === 'processing'))
+// logo_primary/logo_dark haben oben im Abschnitt "Logo" ihre eigene Vorschau (hell/dunkel) --
+// hier nur die weiteren Varianten, sonst erscheint das Vereinslogo doppelt auf der Seite.
 const ownLogoAssets = computed(() =>
   assets.value.filter((asset) => {
-    if (asset.kind === 'font' || asset.status === 'replaced') return false
+    if (asset.kind === 'font' || asset.kind === 'logo_primary' || asset.kind === 'logo_dark' || asset.status === 'replaced') return false
     if (activeLevel.value === 'organization') return asset.departmentId === null && asset.teamId === null
     if (activeLevel.value === 'department') return asset.departmentId === activeDepartmentId.value && asset.teamId === null
     return asset.teamId === activeTeamId.value
@@ -574,13 +576,18 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
           <!-- Schriften -->
           <section class="card p-6">
             <h2 class="font-display text-base font-bold">Schriften</h2>
-            <p class="mt-2 text-xs text-[#7a817c]">Kuratiertes Paar wählen oder eine eigene Schrift hochladen.</p>
-            <div class="mt-4 grid gap-2 sm:grid-cols-2">
-              <label v-for="pairing in curatedFontPairings" :key="pairing.key" class="focus-ring cursor-pointer rounded-xl border p-3" :class="(activeLevel === 'organization' ? org.displayFontKey === pairing.displayFontKey : true) ? 'border-forest bg-[#f2f6e9]' : 'border-[#e1e2db]'">
-                <input v-if="activeLevel === 'organization'" v-model="org.displayFontKey" type="radio" :value="pairing.displayFontKey" class="sr-only" @change="org.bodyFontKey = pairing.bodyFontKey" />
-                <strong class="block text-xs">{{ pairing.label }}</strong>
-              </label>
-            </div>
+            <template v-if="activeLevel === 'organization'">
+              <p class="mt-2 text-xs text-[#7a817c]">Kuratiertes Paar wählen oder eine eigene Schrift hochladen.</p>
+              <div class="mt-4 grid gap-2 sm:grid-cols-2">
+                <label v-for="pairing in curatedFontPairings" :key="pairing.key" class="focus-ring cursor-pointer rounded-xl border p-3" :class="org.displayFontKey === pairing.displayFontKey ? 'border-forest bg-[#f2f6e9]' : 'border-[#e1e2db]'">
+                  <input v-model="org.displayFontKey" type="radio" :value="pairing.displayFontKey" class="sr-only" @change="org.bodyFontKey = pairing.bodyFontKey" />
+                  <strong class="block text-xs">{{ pairing.label }}</strong>
+                </label>
+              </div>
+            </template>
+            <!-- Abteilungen/Mannschaften waehlen kein eigenes kuratiertes Paar (dafuer fehlt die
+                 Spalte bewusst, siehe Migration) -- nur eine eigene Schriftdatei oder Erben. -->
+            <p v-else class="mt-2 text-xs text-[#7a817c]">Erbt das kuratierte Paar des Vereins, sofern hier keine eigene Schrift ausgewählt ist.</p>
 
             <div class="mt-6 border-t border-[#eceee7] pt-4">
               <p class="text-xs font-semibold">Eigene Schrift</p>
