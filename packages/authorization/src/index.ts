@@ -13,6 +13,8 @@ export const permissions = [
   'brand.manage',
   'analytics.view',
   'billing.manage',
+  'directory.read',
+  'integration.manage',
 ] as const
 
 export type Permission = (typeof permissions)[number]
@@ -62,6 +64,10 @@ export const rolePermissions: Readonly<Record<Role, ReadonlySet<Permission>>> = 
     // Paket 013: eigenes Abteilungsbranding verwalten (Logo, Farben, Schriften).
     'brand.manage',
     'analytics.view',
+    // Paket 014: Mitgliederverzeichnis der eigenen Abteilung lesen, eigene Integrationsquellen
+    // verwalten (integration_sources kennt keine Team-Ebene, deshalb nur hier, nicht bei team_manager).
+    'directory.read',
+    'integration.manage',
   ]),
   editor: new Set(['post.create', 'post.edit', 'post.submit', 'analytics.view']),
   approver: new Set(['post.approve', 'analytics.view']),
@@ -76,6 +82,8 @@ export const rolePermissions: Readonly<Record<Role, ReadonlySet<Permission>>> = 
     'member.remove',
     // Paket 013: eigenes Mannschaftsbranding verwalten.
     'brand.manage',
+    // Paket 014: Mitgliederverzeichnis der eigenen Mannschaft lesen.
+    'directory.read',
   ]),
 }
 

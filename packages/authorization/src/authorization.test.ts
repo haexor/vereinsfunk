@@ -18,6 +18,18 @@ describe('authorization', () => {
     expect(hasPermission(['editor'], 'brand.manage')).toBe(false)
     expect(hasPermission(['contributor'], 'brand.manage')).toBe(false)
   })
+
+  it('lets department_admin and team_manager read their directory, but not editor/contributor', () => {
+    expect(hasPermission(['department_admin'], 'directory.read')).toBe(true)
+    expect(hasPermission(['team_manager'], 'directory.read')).toBe(true)
+    expect(hasPermission(['editor'], 'directory.read')).toBe(false)
+    expect(hasPermission(['contributor'], 'directory.read')).toBe(false)
+  })
+
+  it('lets department_admin manage integration sources, but not team_manager (no team scope on sources)', () => {
+    expect(hasPermission(['department_admin'], 'integration.manage')).toBe(true)
+    expect(hasPermission(['team_manager'], 'integration.manage')).toBe(false)
+  })
 })
 
 describe('canAssignRole', () => {

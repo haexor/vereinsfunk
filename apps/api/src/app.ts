@@ -22,6 +22,8 @@ import {
   CreateChannelQuotaRequestSchema,
   CreateChannelScopeRequestSchema,
   CreateDepartmentRequestSchema,
+  CreateDirectoryPersonRequestSchema,
+  CreateIntegrationSourceRequestSchema,
   CreateInvitationRequestSchema,
   CreateLlmProviderConfigurationRequestSchema,
   CreateMembershipRequestSchema,
@@ -34,7 +36,14 @@ import {
   DecideApprovalStageResponseSchema,
   DepartmentBrandSchema,
   DepartmentSchema,
+  DirectoryPersonGuardianContactSchema,
+  DirectoryPersonSchema,
+  DirectoryPersonStatusSchema,
   HealthSchema,
+  IntegrationDomainSchema,
+  IntegrationSourceSchema,
+  IntegrationSyncConflictSchema,
+  IntegrationSyncRunSchema,
   InvitationSchema,
   LlmProviderConfigurationSchema,
   MemberReviewTrustSchema,
@@ -57,8 +66,10 @@ import {
   PolicyReviewerSchema,
   PolicyRuleSettingSchema,
   PolicySettingSchema,
+  ProfileSchema,
   PublicationSchema,
   RequestApprovalResponseSchema,
+  ResolveSyncConflictRequestSchema,
   ScopeLevelSchema,
   SchedulePublicationRequestSchema,
   SelectOAuthAccountRequestSchema,
@@ -66,30 +77,49 @@ import {
   SocialConnectionSchema,
   SocialPlatformSchema,
   SubmissionAcceptedSchema,
+  SyncModeSchema,
+  SyncSourceResponseSchema,
   TeamBrandSchema,
   TeamSchema,
   UpdateChannelQuotaRequestSchema,
   UpdateDepartmentBrandRequestSchema,
   UpdateDepartmentRequestSchema,
+  UpdateDirectoryPersonRequestSchema,
+  UpdateIntegrationSourceRequestSchema,
   UpdateLlmProviderConfigurationRequestSchema,
   UpdateMembershipExpiryRequestSchema,
   UpdateMembershipRequestSchema,
   UpdatePlatformSettingRequestSchema,
   UpdatePolicyRulesRequestSchema,
   UpdatePolicySettingRequestSchema,
+  UpdateProfileRequestSchema,
   UpdateSocialConnectionRequestSchema,
   UpdateTeamBrandRequestSchema,
   UpdateTeamRequestSchema,
   UsageMetricsQuerySchema,
   UsageMetricsResponseSchema,
   UuidSchema,
+  type FieldMapping,
+  type IntegrationDomain,
   type OutputFormat,
   type PolicyFlagState,
   type PolicyRuleValues,
   type ReviewerRef,
   type ScopeLevel,
+  type SyncConflictKind,
+  type SyncMode,
 } from '@vereinsfunk/contracts'
 import { canAssignRole, canRemoveRole, hasPermission, type Permission, type Role } from '@vereinsfunk/authorization'
+import { FileSourceTransport, IcalSourceTransport, planSync, type SourceTransport } from '@vereinsfunk/integrations'
+import {
+  createPeopleMatchStrategy,
+  deriveIsMinor,
+  peopleDomainAdapter,
+  PersonExternalSchema,
+  type DepartmentResolver,
+  type DirectoryPersonLocal,
+  type PersonExternal,
+} from '@vereinsfunk/member-directory'
 import {
   BRAND_LOCKABLE_FIELDS,
   createIdempotencyKey,
@@ -114,7 +144,7 @@ import {
 import { FakeOrchestrator, priorityToHatchet, type Orchestrator } from '@vereinsfunk/orchestration'
 import { RealMetaOAuthClient, type MetaOAuthClient } from '@vereinsfunk/publishing'
 import Fastify, { LogController, type FastifyInstance, type FastifyRequest, type FastifyServerOptions } from 'fastify'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAuthGuards, SupabasePlatformAdminProvider, SupabaseRoleProvider, type PermissionScope, type PlatformAdminProvider, type RoleProvider } from './auth.js'
@@ -124,6 +154,7 @@ import { hashLogoBuffer, LogoDimensionsError, processBrandLogoUpload, Unsupporte
 import { createEmailSender, type EmailSender } from './email.js'
 import { buildInvitationEmail, generateInvitationToken } from './invitations.js'
 import { mapLlmProviderConfigurationRow } from './llmProviders.js'
+import { fetchPublicUrl, isAllowedOutboundUrl, OutboundFetchError } from './outboundFetch.js'
 import { byteaToBuffer, ciphertextToBytea, createSecretBoxFromEnvironment } from './secretBox.js'
 import { createServiceClient, createUserClient } from './supabase.js'
 
@@ -481,6 +512,108 @@ async function resolveScopeName(client: SupabaseClient, scope: PermissionScope, 
     return department.data.name as string
   }
   return organizationName
+}
+
+// --- Paket 014: Integrationsrahmen und Mitgliederverzeichnis -------------------------------------
+
+function mapIntegrationSourceRow(row: Record<string, unknown>) {
+  return IntegrationSourceSchema.parse({
+    id: row.id, organizationId: row.organization_id, transport: row.transport, providerKey: row.provider_key,
+    displayName: row.display_name, enabledDomains: row.enabled_domains, departmentId: row.department_id,
+    endpointUrl: row.endpoint_url, fieldMapping: row.field_mapping, syncCron: row.sync_cron,
+    lossThresholdPercent: row.loss_threshold_percent, enabled: row.enabled, lastSyncAt: row.last_sync_at,
+    lastSyncStatus: row.last_sync_status, createdAt: row.created_at,
+  })
+}
+
+function mapSyncRunRow(row: Record<string, unknown>) {
+  return IntegrationSyncRunSchema.parse({
+    id: row.id, organizationId: row.organization_id, sourceId: row.source_id, domain: row.domain, mode: row.mode,
+    status: row.status, createdCount: row.created_count, updatedCount: row.updated_count, retiredCount: row.retired_count,
+    skippedCount: row.skipped_count, conflictCount: row.conflict_count, errorClass: row.error_class,
+    startedAt: row.started_at, finishedAt: row.finished_at,
+  })
+}
+
+function mapSyncConflictRow(row: Record<string, unknown>) {
+  return IntegrationSyncConflictSchema.parse({
+    id: row.id, organizationId: row.organization_id, syncRunId: row.sync_run_id, sourceId: row.source_id, domain: row.domain,
+    externalId: row.external_id, localId: row.local_id, label: row.label, field: row.field, currentValue: row.current_value,
+    incomingValue: row.incoming_value, kind: row.kind, resolution: row.resolution, resolvedAt: row.resolved_at, createdAt: row.created_at,
+  })
+}
+
+function mapDirectoryPersonRow(row: Record<string, unknown>) {
+  return DirectoryPersonSchema.parse({
+    id: row.id, organizationId: row.organization_id, departmentId: row.department_id, teamId: row.team_id,
+    firstName: row.first_name, lastName: row.last_name, birthYear: row.birth_year, isMinor: row.is_minor,
+    status: row.status, leftAt: row.left_at, joinedAt: row.joined_at, profileId: row.profile_id,
+    becameAdultAt: row.became_adult_at, sourceId: row.source_id, createdAt: row.created_at,
+  })
+}
+
+// Wie resolveInvitationScope: departmentId/teamId serverseitig gegen ihre echte organization_id/
+// department_id verifizieren, bevor irgendeine Berechtigung geprueft wird -- sonst waeren sie
+// client-seitig frei kombinierbar (z. B. eine fremde departmentId zu dieser Organisation).
+async function resolveDirectoryScope(
+  client: SupabaseClient,
+  organizationId: string,
+  departmentId: string | null,
+  teamId: string | null,
+): Promise<PermissionScope | null> {
+  if (teamId) {
+    const team = await client.from('teams').select('organization_id, department_id').eq('id', teamId).maybeSingle()
+    if (team.error) throw team.error
+    if (!team.data || team.data.organization_id !== organizationId || team.data.department_id !== departmentId) return null
+    return { organizationId, departmentId: team.data.department_id as string, teamId }
+  }
+  if (departmentId) {
+    const department = await client.from('departments').select('organization_id').eq('id', departmentId).maybeSingle()
+    if (department.error) throw department.error
+    if (!department.data || department.data.organization_id !== organizationId) return null
+    return { organizationId, departmentId }
+  }
+  return { organizationId }
+}
+
+/**
+ * `isMinor` aus der Anfrage darf den Schutz nur anheben, nie senken. Ohne diese Klammer koennte
+ * ein Aufrufer eine Person mit Geburtsjahr 2015 als `isMinor: false` anlegen und damit sowohl den
+ * CHECK auf einen Elternkontakt als auch die strengere Freigaberoute umgehen -- derselbe
+ * wiederkehrende Fund wie bei den security-definer-RPCs aus 011/012: sicherheitsrelevante Werte
+ * leitet der Server selbst her, statt sie vom Aufrufer zu uebernehmen. Ohne bekanntes Geburtsjahr
+ * gibt es nichts herzuleiten, dann zaehlt die Angabe.
+ */
+function resolveIsMinor(requested: boolean | undefined, birthYear: number | null, referenceYear: number): boolean {
+  const derived = birthYear != null ? deriveIsMinor(birthYear, referenceYear) : false
+  return derived || (requested ?? false)
+}
+
+function normalizeStructureName(name: string): string {
+  return name.trim().toLowerCase()
+}
+
+// Dieselbe Aufloesung wie im geschlossenen resolveIds() aus packages/member-directory/src/match.ts
+// -- dort fuer den Feldvergleich waehrend planSync, hier fuer das tatsaechliche Schreiben nach
+// einer Uebernahme. Keine gemeinsame Exportstelle: zwei Zeilen Lookup rechtfertigen keine eigene
+// Paketschnittstelle.
+function resolvePersonScope(entity: PersonExternal, resolver: DepartmentResolver) {
+  const departmentId = entity.departmentName ? resolver.resolveDepartmentId(entity.departmentName) : undefined
+  const teamId = entity.teamName && departmentId ? resolver.resolveTeamId(departmentId, entity.teamName) : undefined
+  return { departmentId, teamId }
+}
+
+// Deterministisch aus Quelle, Bereich, Konfliktart, Feld und Identitaet (plans/014: "fingerprint
+// ist der Grund, warum ignore_permanently funktioniert"). sha256 statt einer Verkettung roh: Labels
+// koennen das Trennzeichen selbst enthalten.
+function conflictFingerprint(parts: readonly string[]): string {
+  return createHash('sha256').update(parts.join('\u0000')).digest('hex')
+}
+
+async function collectRows(transport: SourceTransport): Promise<Readonly<Record<string, unknown>>[]> {
+  const rows: Readonly<Record<string, unknown>>[] = []
+  for await (const row of transport.read({})) rows.push(row)
+  return rows
 }
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
@@ -3801,6 +3934,766 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       requireChannelResponsible: policyRow.data?.require_channel_responsible ?? false,
     })
     return reply.code(200).send(AvailableChannelsResponseSchema.parse({ socialConnectionIds: available }))
+  })
+
+  // --- Paket 014: Integrationsquellen -------------------------------------------------------
+
+  app.get('/v1/organizations/:id/integration-sources', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const rows = await client
+      .from('integration_sources')
+      .select(
+        'id, organization_id, transport, provider_key, display_name, enabled_domains, department_id, endpoint_url, field_mapping, sync_cron, loss_threshold_percent, enabled, last_sync_at, last_sync_status, created_at',
+      )
+      .eq('organization_id', params.id)
+      .order('created_at')
+    if (rows.error) throw rows.error
+    return reply.code(200).send(rows.data.map(mapIntegrationSourceRow))
+  })
+
+  app.post('/v1/organizations/:id/integration-sources', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const input = CreateIntegrationSourceRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const scope = await resolveDirectoryScope(client, params.id, input.departmentId ?? null, null)
+    if (scope === null) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'integration.manage', scope))) return
+    // Zieladresse schon hier pruefen, damit ein unzulaessiger Wert gar nicht erst gespeichert wird
+    // (siehe outboundFetch.ts); der Sync-Lauf prueft zur Laufzeit erneut, weil ein Name spaeter
+    // auf eine andere Adresse zeigen kann.
+    if (input.endpointUrl !== undefined && !isAllowedOutboundUrl(input.endpointUrl)) {
+      return reply.code(400).send({ error: 'endpoint_not_allowed', correlationId: request.id })
+    }
+    const insert = await supabaseClients
+      .forService()
+      .from('integration_sources')
+      .insert({
+        organization_id: params.id,
+        transport: input.transport,
+        provider_key: input.providerKey,
+        display_name: input.displayName,
+        enabled_domains: input.enabledDomains,
+        department_id: input.departmentId ?? null,
+        endpoint_url: input.endpointUrl ?? null,
+        field_mapping: input.fieldMapping ?? {},
+        loss_threshold_percent: input.lossThresholdPercent ?? 30,
+        created_by: request.auth!.userId,
+      })
+      .select(
+        'id, organization_id, transport, provider_key, display_name, enabled_domains, department_id, endpoint_url, field_mapping, sync_cron, loss_threshold_percent, enabled, last_sync_at, last_sync_status, created_at',
+      )
+      .single()
+    if (insert.error) {
+      if (insert.error.code === '23514') return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+      throw insert.error
+    }
+    await recordAuditEvent(request, {
+      organizationId: params.id, action: 'integration_source.created', entityType: 'integration_sources', entityId: insert.data.id as string,
+      metadata: { transport: input.transport, providerKey: input.providerKey, departmentId: input.departmentId ?? null },
+    })
+    return reply.code(201).send(mapIntegrationSourceRow(insert.data))
+  })
+
+  app.patch('/v1/integration-sources/:id', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const input = UpdateIntegrationSourceRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const existing = await client.from('integration_sources').select('organization_id, department_id').eq('id', params.id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const scope = toPermissionScope(existing.data.organization_id as string, existing.data.department_id as string | null)
+    if (!(await requirePermission(request, reply, 'integration.manage', scope))) return
+    if (input.endpointUrl !== undefined && !isAllowedOutboundUrl(input.endpointUrl)) {
+      return reply.code(400).send({ error: 'endpoint_not_allowed', correlationId: request.id })
+    }
+    const update: Record<string, unknown> = {}
+    if (input.displayName !== undefined) update.display_name = input.displayName
+    if (input.enabledDomains !== undefined) update.enabled_domains = input.enabledDomains
+    if (input.endpointUrl !== undefined) update.endpoint_url = input.endpointUrl
+    if (input.fieldMapping !== undefined) update.field_mapping = input.fieldMapping
+    if (input.lossThresholdPercent !== undefined) update.loss_threshold_percent = input.lossThresholdPercent
+    if (input.enabled !== undefined) update.enabled = input.enabled
+    const result = await supabaseClients
+      .forService()
+      .from('integration_sources')
+      .update(update)
+      .eq('id', params.id)
+      .select(
+        'id, organization_id, transport, provider_key, display_name, enabled_domains, department_id, endpoint_url, field_mapping, sync_cron, loss_threshold_percent, enabled, last_sync_at, last_sync_status, created_at',
+      )
+      .single()
+    if (result.error) {
+      if (result.error.code === '23514') return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+      throw result.error
+    }
+    await recordAuditEvent(request, { organizationId: scope.organizationId, action: 'integration_source.updated', entityType: 'integration_sources', entityId: params.id, metadata: update })
+    return reply.code(200).send(mapIntegrationSourceRow(result.data))
+  })
+
+  app.get('/v1/integration-sources/:id/sync-runs', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const rows = await client
+      .from('integration_sync_runs')
+      .select('id, organization_id, source_id, domain, mode, status, created_count, updated_count, retired_count, skipped_count, conflict_count, error_class, started_at, finished_at')
+      .eq('source_id', params.id)
+      .order('started_at', { ascending: false })
+      .limit(50)
+    if (rows.error) throw rows.error
+    return reply.code(200).send(rows.data.map(mapSyncRunRow))
+  })
+
+  app.get('/v1/integration-sources/:id/conflicts', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const query = z.object({ resolution: z.enum(['pending', 'keep_current', 'take_incoming', 'ignore_permanently']).optional() }).parse(request.query)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    let builder = client
+      .from('integration_sync_conflicts')
+      .select('id, organization_id, sync_run_id, source_id, domain, external_id, local_id, label, field, current_value, incoming_value, kind, resolution, resolved_at, created_at')
+      .eq('source_id', params.id)
+    if (query.resolution) builder = builder.eq('resolution', query.resolution)
+    const rows = await builder.order('created_at', { ascending: false }).limit(200)
+    if (rows.error) throw rows.error
+    return reply.code(200).send(rows.data.map(mapSyncConflictRow))
+  })
+
+  app.patch('/v1/integration-sync-conflicts/:id', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const input = ResolveSyncConflictRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const existing = await client.from('integration_sync_conflicts').select('organization_id, source_id').eq('id', params.id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const source = await client.from('integration_sources').select('department_id').eq('id', existing.data.source_id).maybeSingle()
+    if (source.error) throw source.error
+    if (!source.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const scope = toPermissionScope(existing.data.organization_id as string, source.data.department_id as string | null)
+    if (!(await requirePermission(request, reply, 'integration.manage', scope))) return
+    // Setzt nur die Entscheidung -- ignore_permanently unterdrueckt denselben Fingerabdruck ab dem
+    // naechsten Lauf (der eigentliche Zweck), keep_current/take_incoming veraendern hier noch keine
+    // directory_people-Zeile. Eine tatsaechliche Uebernahme von take_incoming braucht mehr Kontext,
+    // als eine einzelne Konfliktzeile traegt (siehe plans/014, "Risiken und offene Entscheidungen");
+    // der Weg heute ist: Quelle/Zuordnung korrigieren und erneut synchronisieren, oder die Person
+    // manuell bearbeiten.
+    const update = await supabaseClients
+      .forService()
+      .from('integration_sync_conflicts')
+      .update({ resolution: input.resolution, resolved_by: request.auth!.userId, resolved_at: new Date().toISOString() })
+      .eq('id', params.id)
+      .select('id, organization_id, sync_run_id, source_id, domain, external_id, local_id, label, field, current_value, incoming_value, kind, resolution, resolved_at, created_at')
+      .single()
+    if (update.error) {
+      // 23505: derselbe Fingerabdruck dieser Quelle ist bereits dauerhaft ignoriert
+      // (integration_sync_conflicts_ignored_unique). Der Teilindex greift nur fuer bereits
+      // ignorierte Zeilen, zwei Laeufe koennen denselben Fingerabdruck also je einmal als
+      // 'pending' anlegen -- die zweite Aufloesung laeuft dann in den Unique-Verstoss. Fachlich
+      // ist das Ziel bereits erreicht, deshalb 409 statt 500.
+      if (update.error.code === '23505') return reply.code(409).send({ error: 'fingerprint_already_ignored', correlationId: request.id })
+      throw update.error
+    }
+    await recordAuditEvent(request, {
+      organizationId: scope.organizationId, action: 'integration_sync_conflict.resolved', entityType: 'integration_sync_conflicts', entityId: params.id, metadata: { resolution: input.resolution },
+    })
+    return reply.code(200).send(mapSyncConflictRow(update.data))
+  })
+
+  app.post('/v1/integration-sources/:id/sync', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const source = await client
+      .from('integration_sources')
+      .select('organization_id, department_id, transport, endpoint_url, enabled_domains, field_mapping, loss_threshold_percent, enabled')
+      .eq('id', params.id)
+      .maybeSingle()
+    if (source.error) throw source.error
+    if (!source.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const organizationId = source.data.organization_id as string
+    const sourceDepartmentId = source.data.department_id as string | null
+    const sourceTransport = source.data.transport as string
+    const sourceEndpointUrl = source.data.endpoint_url as string | null
+    const sourceEnabledDomains = source.data.enabled_domains as string[]
+    const sourceFieldMapping = source.data.field_mapping as FieldMapping
+    const sourceLossThresholdPercent = source.data.loss_threshold_percent as number
+    const scope = toPermissionScope(organizationId, sourceDepartmentId)
+    if (!(await requirePermission(request, reply, 'integration.manage', scope))) return
+    if (!source.data!.enabled) return reply.code(409).send({ error: 'source_disabled', correlationId: request.id })
+    // integration.manage und department.manage sind heute deckungsgleich (department_admin und
+    // Organisationsrollen haben beide), aber nur zufaellig -- ohne diese eigene Pruefung koennte
+    // eine kuenftige, engere Rolle mit nur integration.manage ueber einen Sync-Lauf Elternkontakte
+    // schreiben, obwohl das Rechtekonzept dafuer ausdruecklich department.manage verlangt (beim
+    // adversarialen Review als Haertungsluecke benannt). Import-Zeilen ohne Elternkontaktfelder
+    // sind davon nicht betroffen.
+    const canWriteGuardianContact = hasPermission(await roleProvider.rolesForScope(request.auth!, scope), 'department.manage')
+
+    let mode: SyncMode
+    let domain: IntegrationDomain
+    let rawRows: Readonly<Record<string, unknown>>[]
+
+    if (sourceTransport === 'file') {
+      if (!request.isMultipart()) return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+      let filePart: Awaited<ReturnType<typeof request.file>>
+      let buffer: Buffer
+      try {
+        filePart = await request.file()
+        if (!filePart) return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+        buffer = await filePart.toBuffer()
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE') {
+          return reply.code(413).send({ error: 'file_too_large', correlationId: request.id })
+        }
+        return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+      }
+      const modeField = filePart.fields.mode
+      const domainField = filePart.fields.domain
+      const modeParsed = SyncModeSchema.safeParse(modeField && 'value' in modeField ? modeField.value : undefined)
+      const domainParsed = IntegrationDomainSchema.safeParse(domainField && 'value' in domainField ? domainField.value : undefined)
+      if (!modeParsed.success || !domainParsed.success) return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+      mode = modeParsed.data
+      domain = domainParsed.data
+      const isXlsx = /\.xlsx?$/i.test(filePart.filename ?? '')
+      try {
+        rawRows = await collectRows(new FileSourceTransport({ key: params.id, format: isXlsx ? 'xlsx' : 'csv', buffer }))
+      } catch (error) {
+        // csv-parse/exceljs werfen bei kaputten oder falsch formatierten Dateien synchron --
+        // ohne diesen Fang landete ein einzelner unlesbarer Upload im generischen 500-Handler statt
+        // einer verstaendlichen Fehlermeldung (beim adversarialen Review gefunden).
+        request.log.warn({ err: error, correlationId: request.id }, 'file transport parse failed')
+        return reply.code(400).send({ error: 'invalid_file', correlationId: request.id })
+      }
+    } else if (sourceTransport === 'ical') {
+      const body = z.object({ mode: SyncModeSchema, domain: IntegrationDomainSchema }).safeParse(request.body)
+      if (!body.success) return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+      mode = body.data.mode
+      domain = body.data.domain
+      if (!sourceEndpointUrl) return reply.code(409).send({ error: 'source_missing_endpoint', correlationId: request.id })
+      let text: string
+      try {
+        // fetchPublicUrl statt fetch: die Adresse stammt aus der Datenbank und wird aus dem Netz
+        // der API abgerufen -- ohne Zieladressenpruefung waere das ein Server-zu-Server-Proxy in
+        // Loopback, privates Netz und Cloud-Metadatendienst (siehe outboundFetch.ts). Zeit- und
+        // Groessengrenze haengen an derselben Stelle.
+        text = await fetchPublicUrl(sourceEndpointUrl)
+        // Ein erfolgreicher Abruf sagt nichts darueber aus, ob der Inhalt tatsaechlich ein
+        // iCal-Feed ist -- z. B. eine Login-Weiterleitung antwortet oft mit 200 und HTML. Ohne
+        // diese Pruefung waere ein erster Sync (existing=[] greift die Verlustschwelle nicht)
+        // still "erfolgreich" mit null Personen (beim adversarialen Review als Randfall benannt).
+        if (!text.includes('BEGIN:VCALENDAR')) throw new Error('response is not an iCal feed')
+      } catch (error) {
+        request.log.warn({ err: error, correlationId: request.id }, 'ical fetch failed')
+        if (error instanceof OutboundFetchError && error.reason === 'blocked_url') {
+          return reply.code(400).send({ error: 'endpoint_not_allowed', correlationId: request.id })
+        }
+        return reply.code(502).send({ error: 'source_fetch_failed', correlationId: request.id })
+      }
+      rawRows = await collectRows(new IcalSourceTransport({ key: params.id, text }))
+    } else {
+      // http/webhook: kein Adapter in diesem Paket (plans/014, "Entscheidungen vor der Umsetzung").
+      return reply.code(400).send({ error: 'transport_not_implemented', correlationId: request.id })
+    }
+
+    if (!sourceEnabledDomains.includes(domain)) {
+      return reply.code(400).send({ error: 'domain_not_enabled', correlationId: request.id })
+    }
+    if (domain !== 'people') {
+      // Nur "Personen" hat in diesem Paket einen DomainAdapter (packages/member-directory).
+      // Mannschaften/Spielplaene/Veranstaltungen folgen in Paket 019 auf demselben Rahmen.
+      return reply.code(400).send({ error: 'domain_not_implemented', correlationId: request.id })
+    }
+
+    const service = supabaseClients.forService()
+    const correlationId = randomUUID()
+    const referenceYear = new Date().getFullYear()
+
+    // Zustaendigkeitsbereich dieser Quelle: Personen ohne Quelle (fuer den unscharfen Abgleich
+    // gegen von Hand gepflegte Eintraege) plus Personen, die bereits DIESER Quelle zugeordnet sind.
+    // Personen einer anderen Quelle bleiben aussen vor, damit ein Lauf nicht die Zustaendigkeit
+    // einer fremden Quelle stilllegt.
+    // Die Abteilungsgrenze einer abteilungsgebundenen Quelle gilt nur fuer FREMDE Datensaetze
+    // (source_id null, reiner Abgleichskandidat). Eigene Datensaetze gehoeren immer dazu, egal wo
+    // sie inzwischen liegen: eine geloeschte Abteilung setzt department_id auf null, und eine
+    // manuelle Umhaengung verschiebt die Person -- in beiden Faellen faende der naechste Lauf sie
+    // sonst nicht mehr, legte sie erneut an und liefe in den Unique-Index auf
+    // (organization_id, source_id, external_id).
+    const existingRows = await service
+      .from('directory_people')
+      .select('id, first_name, last_name, birth_year, department_id, team_id, status, source_id, external_id, source_updated_at, updated_at')
+      .eq('organization_id', organizationId)
+      .or(sourceDepartmentId ? `and(source_id.is.null,department_id.eq.${sourceDepartmentId}),source_id.eq.${params.id}` : `source_id.is.null,source_id.eq.${params.id}`)
+    if (existingRows.error) throw existingRows.error
+    const existingLocals: DirectoryPersonLocal[] = existingRows.data.map((row) => ({
+      id: row.id as string,
+      externalId: row.external_id as string | null,
+      sourceId: row.source_id as string | null,
+      firstName: row.first_name as string,
+      lastName: row.last_name as string,
+      birthYear: row.birth_year as number | null,
+      departmentId: row.department_id as string | null,
+      teamId: row.team_id as string | null,
+      status: row.status as DirectoryPersonLocal['status'],
+      sourceUpdatedAt: row.source_updated_at ? new Date(row.source_updated_at as string) : null,
+      updatedAt: new Date(row.updated_at as string),
+    }))
+
+    // Eine abteilungsgebundene Quelle darf ausschliesslich in ihre eigene Abteilung schreiben --
+    // sonst koennte eine Spalte der Importdatei (z. B. "Handball" in einer Fussball-Quelle) eine
+    // Person in eine Abteilung verschieben, in der der verwaltende department_admin gar kein
+    // integration.manage/directory.read hat (beim adversarialen Review gefunden). Der
+    // Abteilungsname aus der Datei zaehlt bei einer abteilungsgebundenen Quelle deshalb nur noch
+    // als Bestaetigung/Mannschaftshinweis, nie als Ziel fuer eine ANDERE Abteilung; jeder
+    // abweichende Name wird zur unknown_structure-Konfliktzeile statt stillschweigend übernommen
+    // zu werden.
+    const [departmentRows, teamRows] = await Promise.all([
+      sourceDepartmentId
+        ? service.from('departments').select('id, name').eq('id', sourceDepartmentId)
+        : service.from('departments').select('id, name').eq('organization_id', organizationId),
+      sourceDepartmentId
+        ? service.from('teams').select('id, name, department_id').eq('department_id', sourceDepartmentId)
+        : service.from('teams').select('id, name, department_id').eq('organization_id', organizationId),
+    ])
+    if (departmentRows.error) throw departmentRows.error
+    if (teamRows.error) throw teamRows.error
+    const departmentIdByName = new Map(departmentRows.data.map((row) => [normalizeStructureName(row.name as string), row.id as string]))
+    const teamIdByName = new Map(teamRows.data.map((row) => [`${row.department_id}:${normalizeStructureName(row.name as string)}`, row.id as string]))
+    const resolver: DepartmentResolver = {
+      resolveDepartmentId: (name) => departmentIdByName.get(normalizeStructureName(name)),
+      resolveTeamId: (departmentId, name) => teamIdByName.get(`${departmentId}:${normalizeStructureName(name)}`),
+    }
+
+    // Rohzeilen normalisieren/validieren. Eine Zeile, die PersonExternalSchema nicht erfuellt (z. B.
+    // fehlender Nachname), wird ein invalid_record-Konflikt statt eines geworfenen Fehlers -- ein
+    // einzelner kaputter Datensatz darf den ganzen Import nicht abbrechen.
+    const incoming: PersonExternal[] = []
+    const invalidRecords: { label: string; reason: string }[] = []
+    let rowIndex = 0
+    for (const raw of rawRows) {
+      rowIndex += 1
+      const normalized = peopleDomainAdapter.normalize(raw, sourceFieldMapping) as Record<string, unknown>
+      const parsed = PersonExternalSchema.safeParse(normalized)
+      if (!parsed.success) {
+        const guessedName = [normalized.firstName, normalized.lastName].filter((value) => typeof value === 'string').join(' ').trim()
+        invalidRecords.push({ label: guessedName || `Zeile ${rowIndex}`, reason: parsed.error.issues.map((issue) => issue.message).join('; ') })
+        continue
+      }
+      // Elternkontaktfelder duerfen nur ins Verzeichnis, wenn der Aufrufer department.manage hat --
+      // siehe Kommentar bei canWriteGuardianContact oben. match.ts vergleicht diese Felder nicht,
+      // das Entfernen hier beeinflusst den Abgleich selbst also nicht.
+      incoming.push(canWriteGuardianContact ? parsed.data : { ...parsed.data, guardianName: undefined, guardianEmail: undefined })
+    }
+
+    const plan = planSync({
+      existing: existingLocals,
+      incoming,
+      match: createPeopleMatchStrategy(resolver),
+      policy: { lossThresholdPercent: sourceLossThresholdPercent },
+    })
+
+    if (plan.aborted) {
+      const run = await service
+        .from('integration_sync_runs')
+        .insert({
+          organization_id: organizationId, source_id: params.id, domain, mode, status: 'aborted_loss_threshold',
+          correlation_id: correlationId, finished_at: new Date().toISOString(), triggered_by: request.auth!.userId,
+        })
+        .select('id, organization_id, source_id, domain, mode, status, created_count, updated_count, retired_count, skipped_count, conflict_count, error_class, started_at, finished_at')
+        .single()
+      if (run.error) throw run.error
+      await service.from('integration_sources').update({ last_sync_at: new Date().toISOString(), last_sync_status: 'aborted_loss_threshold' }).eq('id', params.id)
+      return reply.code(200).send(SyncSourceResponseSchema.parse({ run: mapSyncRunRow(run.data), conflicts: [] }))
+    }
+
+    // Der Lauf wird VOR dem ersten Schreibvorgang angelegt (status 'running', der Vorgabewert der
+    // Tabelle). Es gibt keine Transaktion ueber Anlage, Aenderung und Austritt -- bricht einer
+    // dieser Schritte ab, bleiben die bereits geschriebenen Personen bestehen. Wuerde der Lauf
+    // erst am Ende entstehen, saehe der Verein die Aenderung, aber nirgends ihre Herkunft; so
+    // bleibt in jedem Fall eine Zeile mit 'failed' und error_class zurueck.
+    const startedRun = await service
+      .from('integration_sync_runs')
+      .insert({
+        organization_id: organizationId, source_id: params.id, domain, mode,
+        correlation_id: correlationId, triggered_by: request.auth!.userId,
+      })
+      .select('id')
+      .single()
+    if (startedRun.error) throw startedRun.error
+    const runId = startedRun.data.id as string
+
+    // Dauerhaft ignorierte Fingerabdruecke dieser Quelle: ein Konflikt mit demselben Fingerabdruck
+    // wird nicht neu angelegt (plans/014: "wird beim naechsten Lauf nicht neu angelegt").
+    const ignored = await service.from('integration_sync_conflicts').select('fingerprint').eq('source_id', params.id).eq('resolution', 'ignore_permanently')
+    if (ignored.error) throw ignored.error
+    const ignoredFingerprints = new Set(ignored.data.map((row) => row.fingerprint as string))
+
+    interface PendingConflict {
+      kind: SyncConflictKind
+      label: string
+      field: string
+      externalId: string | null
+      localId: string | null
+      currentValue: string | null
+      incomingValue: string | null
+      fingerprint: string
+    }
+    const pendingConflicts: PendingConflict[] = []
+    for (const conflict of plan.conflicts) {
+      const identity = conflict.incoming ? peopleDomainAdapter.identityOf(conflict.incoming) : null
+      const externalId = identity && 'externalId' in identity ? identity.externalId : null
+      const localId = conflict.candidates?.[0]?.id ?? null
+      const field = conflict.kind === 'unknown_structure' ? 'structure' : 'identity'
+      const fingerprint = conflictFingerprint([params.id, domain, conflict.kind, field, externalId ?? localId ?? conflict.label])
+      if (ignoredFingerprints.has(fingerprint)) continue
+      // unknown_structure traegt in conflict.reason den unaufgeloesten Rohwert aus der Datei (z. B.
+      // ein Abteilungsname) -- eine falsch zugeordnete Spalte (IBAN, Adresse, ...) wuerde diesen
+      // Wert sonst ungeprueft in eine nur ueber integration.manage (nicht department.manage)
+      // geschuetzte und unauditierte Tabelle schreiben (beim adversarialen Review gefunden). Die
+      // Zeile bleibt trotzdem loesbar: field/label zeigen genug Kontext, um die eigene
+      // Feldzuordnung oder Quelldatei zu pruefen, ohne den moeglicherweise sensiblen Rohwert hier
+      // zu spiegeln.
+      const incomingValue = conflict.kind === 'unknown_structure' ? null : (conflict.reason ?? null)
+      pendingConflicts.push({ kind: conflict.kind, label: conflict.label, field, externalId, localId, currentValue: null, incomingValue, fingerprint })
+    }
+    for (const invalid of invalidRecords) {
+      const fingerprint = conflictFingerprint([params.id, domain, 'invalid_record', 'record', invalid.label])
+      if (ignoredFingerprints.has(fingerprint)) continue
+      pendingConflicts.push({ kind: 'invalid_record', label: invalid.label, field: 'record', externalId: null, localId: null, currentValue: null, incomingValue: invalid.reason, fingerprint })
+    }
+
+    // Eine neu anzulegende minderjaehrige Person ohne Elternkontakt wuerde am CHECK auf
+    // directory_people scheitern (Migration 2026080703) -- hier vorab als Konflikt behandeln statt
+    // den ganzen Lauf an einer einzelnen Zeile scheitern zu lassen.
+    const applicableCreated: PersonExternal[] = []
+    for (const entity of plan.created) {
+      const isMinor = entity.birthYear !== undefined && deriveIsMinor(entity.birthYear, referenceYear)
+      if (isMinor && (entity.status ?? 'active') === 'active' && !entity.guardianEmail) {
+        const identityKey = entity.externalId ?? `${entity.firstName} ${entity.lastName}`
+        const fingerprint = conflictFingerprint([params.id, domain, 'invalid_record', 'guardianEmail', identityKey])
+        if (!ignoredFingerprints.has(fingerprint)) {
+          pendingConflicts.push({
+            kind: 'invalid_record', label: `${entity.firstName} ${entity.lastName}`, field: 'guardianEmail',
+            externalId: entity.externalId ?? null, localId: null, currentValue: null, incomingValue: 'minderjaehrig ohne Elternkontakt', fingerprint,
+          })
+        }
+        continue
+      }
+      applicableCreated.push(entity)
+    }
+
+    // Fuer dry_run bleibt dies der reine Vorschauwert (plan.updated.length), da nichts geschrieben
+    // wird und ein CHECK-Fehlschlag deshalb nicht auftreten kann. Fuer apply wird jeder tatsaechlich
+    // fehlgeschlagene Schreibvorgang unten abgezogen -- siehe Fund aus dem adversarialen Review.
+    let appliedUpdatedCount = plan.updated.length
+    const applyPlan = async (): Promise<void> => {
+      if (applicableCreated.length > 0) {
+        const insertRows = applicableCreated.map((entity) => {
+          const resolved = resolvePersonScope(entity, resolver)
+          const isMinor = entity.birthYear !== undefined ? deriveIsMinor(entity.birthYear, referenceYear) : false
+          return {
+            organization_id: organizationId,
+            department_id: resolved.departmentId ?? sourceDepartmentId,
+            team_id: resolved.teamId ?? null,
+            first_name: entity.firstName, last_name: entity.lastName, birth_year: entity.birthYear ?? null,
+            is_minor: isMinor, status: entity.status ?? 'active', joined_at: entity.joinedAt ?? null,
+            guardian_name: entity.guardianName ?? null, guardian_email: entity.guardianEmail ?? null,
+            source_id: params.id, external_id: entity.externalId ?? null, source_updated_at: entity.sourceUpdatedAt ?? null,
+          }
+        })
+        const insert = await service.from('directory_people').insert(insertRows)
+        if (insert.error) throw insert.error
+      }
+      for (const update of plan.updated) {
+        const resolved = resolvePersonScope(update.external, resolver)
+        // Durchgaengig `?? lokal`: ein Feld, das die Quelle nicht liefert, bleibt stehen. Fuer
+        // birth_year stand hier `?? null` -- eine Importdatei ohne Geburtsjahrspalte leerte damit
+        // jedes bereits gepflegte Geburtsjahr und entzog der Minderjaehrigkeitspruefung ihre
+        // Grundlage (dieselbe Regel setzt MatchStrategy.fieldsOf fuer die Aenderungserkennung um).
+        const patch: Record<string, unknown> = {
+          first_name: update.external.firstName, last_name: update.external.lastName,
+          birth_year: update.external.birthYear ?? update.local.birthYear,
+          department_id: resolved.departmentId ?? update.local.departmentId, team_id: resolved.teamId ?? update.local.teamId,
+          status: update.external.status ?? update.local.status,
+          source_updated_at: update.external.sourceUpdatedAt ?? update.local.sourceUpdatedAt?.toISOString() ?? null,
+        }
+        if (update.external.birthYear !== undefined) patch.is_minor = deriveIsMinor(update.external.birthYear, referenceYear)
+        const result = await service.from('directory_people').update(patch).eq('id', update.local.id)
+        if (result.error) {
+          // 23514: eine aktive Minderjaehrige ohne Elternkontakt -- fuer neu angelegte Personen
+          // oben bereits vorab abgefangen; bei einer Aenderung (z. B. Geburtsjahr korrigiert sich
+          // rueckwirkend) kann das erst hier auffallen. Die Zeile bleibt unveraendert stehen, aber
+          // -- anders als zuvor -- nicht mehr stillschweigend: sie zaehlt nicht als "geaendert" und
+          // erzeugt einen echten Konflikt, damit ein fehlgeschlagenes Update sichtbar bleibt statt
+          // im Zaehlwert zu verschwinden (beim adversarialen Review gefunden).
+          if (result.error.code !== '23514') throw result.error
+          appliedUpdatedCount -= 1
+          const identityKey = update.local.externalId ?? update.local.id
+          const fingerprint = conflictFingerprint([params.id, domain, 'invalid_record', 'guardianEmail', identityKey])
+          if (!ignoredFingerprints.has(fingerprint)) {
+            pendingConflicts.push({
+              kind: 'invalid_record', label: `${update.external.firstName} ${update.external.lastName}`, field: 'guardianEmail',
+              externalId: update.local.externalId, localId: update.local.id, currentValue: null,
+              incomingValue: 'minderjaehrig ohne Elternkontakt', fingerprint,
+            })
+          }
+        }
+      }
+      for (const retired of plan.retired) {
+        const result = await service.from('directory_people').update({ status: 'left' }).eq('id', retired.id)
+        if (result.error) throw result.error
+        const backfillLeftAt = await service.from('directory_people').update({ left_at: new Date().toISOString().slice(0, 10) }).eq('id', retired.id).is('left_at', null)
+        if (backfillLeftAt.error) throw backfillLeftAt.error
+      }
+    }
+
+    if (mode === 'apply') {
+      try {
+        await applyPlan()
+      } catch (error) {
+        // Der Lauf bleibt als 'failed' stehen, statt mit dem Request zu verschwinden: die bereits
+        // geschriebenen Personen sind sonst ohne jeden Nachweis im Verzeichnis.
+        const errorClass = error instanceof Error ? error.name : 'unknown'
+        await service.from('integration_sync_runs').update({ status: 'failed', error_class: errorClass, finished_at: new Date().toISOString() }).eq('id', runId)
+        await service.from('integration_sources').update({ last_sync_at: new Date().toISOString(), last_sync_status: 'failed' }).eq('id', params.id)
+        throw error
+      }
+    }
+
+    const run = await service
+      .from('integration_sync_runs')
+      .update({
+        status: 'succeeded',
+        created_count: applicableCreated.length, updated_count: appliedUpdatedCount, retired_count: plan.retired.length,
+        skipped_count: plan.skipped.length, conflict_count: pendingConflicts.length,
+        finished_at: new Date().toISOString(),
+      })
+      .eq('id', runId)
+      .select('id, organization_id, source_id, domain, mode, status, created_count, updated_count, retired_count, skipped_count, conflict_count, error_class, started_at, finished_at')
+      .single()
+    if (run.error) throw run.error
+
+    let conflictRows: Record<string, unknown>[] = []
+    if (pendingConflicts.length > 0) {
+      const conflictInsert = await service
+        .from('integration_sync_conflicts')
+        .insert(
+          pendingConflicts.map((conflict) => ({
+            organization_id: organizationId, sync_run_id: runId, source_id: params.id, domain,
+            external_id: conflict.externalId, local_id: conflict.localId, label: conflict.label, field: conflict.field,
+            current_value: conflict.currentValue, incoming_value: conflict.incomingValue, kind: conflict.kind, fingerprint: conflict.fingerprint,
+          })),
+        )
+        .select('id, organization_id, sync_run_id, source_id, domain, external_id, local_id, label, field, current_value, incoming_value, kind, resolution, resolved_at, created_at')
+      if (conflictInsert.error) throw conflictInsert.error
+      conflictRows = conflictInsert.data
+    }
+
+    await service.from('integration_sources').update({ last_sync_at: new Date().toISOString(), last_sync_status: 'succeeded' }).eq('id', params.id)
+    await recordAuditEvent(request, {
+      organizationId, action: `integration_source.sync_${mode}`, entityType: 'integration_sync_runs', entityId: runId,
+      // appliedUpdatedCount, nicht plan.updated.length: der Audit-Eintrag darf nicht mehr
+      // Aenderungen behaupten, als tatsaechlich geschrieben wurden.
+      metadata: { created: applicableCreated.length, updated: appliedUpdatedCount, retired: plan.retired.length, conflicts: pendingConflicts.length },
+    })
+
+    return reply.code(200).send(SyncSourceResponseSchema.parse({ run: mapSyncRunRow(run.data), conflicts: conflictRows.map(mapSyncConflictRow) }))
+  })
+
+  // --- Paket 014: Mitgliederverzeichnis ------------------------------------------------------
+
+  app.get('/v1/organizations/:id/directory-people', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const query = z
+      .object({
+        departmentId: UuidSchema.optional(), teamId: UuidSchema.optional(), status: DirectoryPersonStatusSchema.optional(),
+        // z.stringbool() statt z.coerce.boolean(): letzteres ist Boolean(value), und damit ist
+        // jeder nicht-leere String wahr -- '?isMinor=false' haette genau die Minderjaehrigen
+        // geliefert, die es ausschliessen sollte.
+        isMinor: z.stringbool().optional(), missingGuardian: z.stringbool().optional(),
+      })
+      .parse(request.query)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    let builder = client
+      .from('directory_people')
+      .select('id, organization_id, department_id, team_id, first_name, last_name, birth_year, is_minor, status, left_at, joined_at, profile_id, became_adult_at, source_id, created_at')
+      .eq('organization_id', params.id)
+    if (query.departmentId) builder = builder.eq('department_id', query.departmentId)
+    if (query.teamId) builder = builder.eq('team_id', query.teamId)
+    if (query.status) builder = builder.eq('status', query.status)
+    if (query.isMinor !== undefined) builder = builder.eq('is_minor', query.isMinor)
+    const rows = await builder.order('last_name').order('first_name')
+    if (rows.error) throw rows.error
+    let visible = rows.data
+    if (query.missingGuardian) {
+      // guardian_email ist fuer authenticated nicht selektierbar (Spaltenrechte, Migration
+      // 2026080703) -- der Filter braucht deshalb die Service Role. Gefiltert wird aber erst
+      // NACH der sichtbarkeitsbeschraenkten Abfrage, auf deren Ergebnis: die IDs gehen nie als
+      // Query-String in eine zweite Abfrage (`.in('id', …)` mit einer unbegrenzten Liste
+      // scheiterte ab einigen hundert Personen an der URL-Laenge und wurde zusaetzlich von
+      // PostgREST' max_rows stillschweigend gekappt).
+      const missing = await fetchAllRows<{ id: string }>((from, to) =>
+        supabaseClients.forService().from('directory_people').select('id').eq('organization_id', params.id).is('guardian_email', null).range(from, to),
+      )
+      const missingIds = new Set(missing.map((row) => row.id))
+      visible = visible.filter((row) => missingIds.has(row.id as string))
+    }
+    return reply.code(200).send(visible.map(mapDirectoryPersonRow))
+  })
+
+  app.post('/v1/organizations/:id/directory-people', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const input = CreateDirectoryPersonRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const scope = await resolveDirectoryScope(client, params.id, input.departmentId ?? null, input.teamId ?? null)
+    if (scope === null) return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'directory.read', scope))) return
+    const touchesGuardianContact = input.guardianName !== undefined || input.guardianEmail !== undefined
+    if (touchesGuardianContact && !(await requirePermission(request, reply, 'department.manage', scope))) return
+    if (input.profileId && !(await isAnyMemberOfOrganization(client, input.profileId, params.id))) {
+      return reply.code(400).send({ error: 'profile_not_a_member', correlationId: request.id })
+    }
+    const referenceYear = new Date().getFullYear()
+    const isMinor = resolveIsMinor(input.isMinor, input.birthYear ?? null, referenceYear)
+    const status = input.status ?? 'active'
+    const insert = await supabaseClients
+      .forService()
+      .from('directory_people')
+      .insert({
+        organization_id: params.id, department_id: input.departmentId ?? null, team_id: input.teamId ?? null,
+        first_name: input.firstName, last_name: input.lastName, birth_year: input.birthYear ?? null,
+        is_minor: isMinor, status, joined_at: input.joinedAt ?? null,
+        guardian_name: input.guardianName ?? null, guardian_email: input.guardianEmail ?? null, profile_id: input.profileId ?? null,
+      })
+      .select('id, organization_id, department_id, team_id, first_name, last_name, birth_year, is_minor, status, left_at, joined_at, profile_id, became_adult_at, source_id, created_at')
+      .single()
+    if (insert.error) {
+      if (insert.error.code === '23514') return reply.code(400).send({ error: 'guardian_contact_required', correlationId: request.id })
+      throw insert.error
+    }
+    await recordAuditEvent(request, {
+      organizationId: params.id, action: 'directory_person.created', entityType: 'directory_people', entityId: insert.data.id as string,
+      metadata: { departmentId: input.departmentId ?? null, teamId: input.teamId ?? null },
+    })
+    return reply.code(201).send(mapDirectoryPersonRow(insert.data))
+  })
+
+  app.patch('/v1/directory-people/:id', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const input = UpdateDirectoryPersonRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const existing = await client.from('directory_people').select('organization_id, department_id, team_id, birth_year').eq('id', params.id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const currentScope = toPermissionScope(existing.data.organization_id as string, existing.data.department_id as string | null, existing.data.team_id as string | null)
+    if (!(await requirePermission(request, reply, 'directory.read', currentScope))) return
+
+    let targetScope = currentScope
+    if (input.departmentId !== undefined || input.teamId !== undefined) {
+      const targetDepartmentId = input.departmentId !== undefined ? input.departmentId : (existing.data.department_id as string | null)
+      const targetTeamId = input.teamId !== undefined ? input.teamId : (existing.data.team_id as string | null)
+      const resolved = await resolveDirectoryScope(client, existing.data.organization_id as string, targetDepartmentId, targetTeamId)
+      if (resolved === null) return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+      if (!(await requirePermission(request, reply, 'directory.read', resolved))) return
+      targetScope = resolved
+    }
+    const touchesGuardianContact = input.guardianName !== undefined || input.guardianEmail !== undefined
+    if (touchesGuardianContact) {
+      if (!(await requirePermission(request, reply, 'department.manage', currentScope))) return
+      if (targetScope !== currentScope && !(await requirePermission(request, reply, 'department.manage', targetScope))) return
+    }
+    if (input.profileId && !(await isAnyMemberOfOrganization(client, input.profileId, existing.data.organization_id as string))) {
+      return reply.code(400).send({ error: 'profile_not_a_member', correlationId: request.id })
+    }
+
+    const referenceYear = new Date().getFullYear()
+    const update: Record<string, unknown> = {}
+    if (input.firstName !== undefined) update.first_name = input.firstName
+    if (input.lastName !== undefined) update.last_name = input.lastName
+    if (input.departmentId !== undefined) update.department_id = input.departmentId
+    if (input.teamId !== undefined) update.team_id = input.teamId
+    if (input.birthYear !== undefined) update.birth_year = input.birthYear
+    if (input.status !== undefined) update.status = input.status
+    if (input.leftAt !== undefined) update.left_at = input.leftAt
+    if (input.joinedAt !== undefined) update.joined_at = input.joinedAt
+    if (input.guardianName !== undefined) update.guardian_name = input.guardianName
+    if (input.guardianEmail !== undefined) update.guardian_email = input.guardianEmail
+    if (input.profileId !== undefined) update.profile_id = input.profileId
+    // Massgeblich ist das Geburtsjahr nach dieser Aenderung, nicht die Angabe des Aufrufers --
+    // siehe resolveIsMinor. Bleibt das Geburtsjahr unberuehrt, zaehlt das gespeicherte.
+    const effectiveBirthYear = input.birthYear !== undefined ? input.birthYear : (existing.data.birth_year as number | null)
+    if (input.isMinor !== undefined || input.birthYear !== undefined) {
+      update.is_minor = resolveIsMinor(input.isMinor, effectiveBirthYear, referenceYear)
+    }
+
+    // createPeopleMatchStrategy.localUpdatedAtOf (packages/member-directory) vergleicht
+    // source_updated_at, nicht updated_at -- sonst wuerde ein frischer Sync-Lauf (der
+    // updated_at ueber den generischen Trigger ebenfalls anhebt) faelschlich als "lokal neuer"
+    // gelten, obwohl nur die Quelle selbst geschrieben hat. Eine manuelle Aenderung an einem der
+    // von planSync verglichenen Felder muss deshalb selbst source_updated_at auf jetzt setzen,
+    // sonst gewinnt beim naechsten Sync-Lauf stillschweigend wieder die (aeltere) Quelle gegen die
+    // gerade erst korrigierten Daten (beim adversarialen Review gefunden).
+    const touchesSyncedField = ['first_name', 'last_name', 'birth_year', 'department_id', 'team_id', 'status'].some((field) => field in update)
+    if (touchesSyncedField) update.source_updated_at = new Date().toISOString()
+
+    const result = await supabaseClients
+      .forService()
+      .from('directory_people')
+      .update(update)
+      .eq('id', params.id)
+      .select('id, organization_id, department_id, team_id, first_name, last_name, birth_year, is_minor, status, left_at, joined_at, profile_id, became_adult_at, source_id, created_at')
+      .maybeSingle()
+    if (result.error) {
+      if (result.error.code === '23514') return reply.code(400).send({ error: 'guardian_contact_required', correlationId: request.id })
+      throw result.error
+    }
+    if (!result.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    await recordAuditEvent(request, {
+      organizationId: existing.data.organization_id as string, action: 'directory_person.updated', entityType: 'directory_people', entityId: params.id, metadata: { fields: Object.keys(update) },
+    })
+    return reply.code(200).send(mapDirectoryPersonRow(result.data))
+  })
+
+  app.get('/v1/directory-people/:id/guardian-contact', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const existing = await client.from('directory_people').select('organization_id, department_id, team_id').eq('id', params.id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const scope = toPermissionScope(existing.data.organization_id as string, existing.data.department_id as string | null, existing.data.team_id as string | null)
+    if (!(await requirePermission(request, reply, 'department.manage', scope))) return
+    const guardian = await supabaseClients.forService().from('directory_people').select('guardian_name, guardian_email').eq('id', params.id).single()
+    if (guardian.error) throw guardian.error
+    await recordAuditEvent(request, { organizationId: scope.organizationId, action: 'directory_person.guardian_read', entityType: 'directory_people', entityId: params.id })
+    return reply.code(200).send(DirectoryPersonGuardianContactSchema.parse({ guardianName: guardian.data.guardian_name, guardianEmail: guardian.data.guardian_email }))
+  })
+
+  // --- Paket 014: eigenes Profil (Selbstbedienung, keine Vereinsdaten) -----------------------
+
+  app.get('/v1/me/profile', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const profile = await client.from('profiles').select('id, display_name, avatar_path').eq('id', request.auth!.userId).single()
+    if (profile.error) throw profile.error
+    return reply.code(200).send(ProfileSchema.parse({ id: profile.data.id, displayName: profile.data.display_name, avatarPath: profile.data.avatar_path }))
+  })
+
+  app.patch('/v1/me/profile', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const input = UpdateProfileRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const update: Record<string, unknown> = {}
+    if (input.displayName !== undefined) update.display_name = input.displayName
+    const result = await client.from('profiles').update(update).eq('id', request.auth!.userId).select('id, display_name, avatar_path').single()
+    if (result.error) throw result.error
+    return reply.code(200).send(ProfileSchema.parse({ id: result.data.id, displayName: result.data.display_name, avatarPath: result.data.avatar_path }))
   })
 
   app.setErrorHandler((error, request, reply) => {
