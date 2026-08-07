@@ -225,7 +225,12 @@ export function rolesForScopeLevel(scope: ScopeLevel): readonly AssignableRole[]
 // erben". Die Antwort traegt den effektiven Wert, den eigenen (ungeerbten) Wert, ob eine hoehere
 // Ebene bereits verschaerft hat (lockedByAncestor -- ein Lockern an dieser Ebene waere wirkungslos)
 // und ob der Anfragende diese Ebene ueberhaupt bearbeiten darf.
-export const PolicyFlagSchema = z.enum(['invite_allowed', 'posts_visible_org_wide'])
+// Paket 012 ergaenzt zwei kanalbezogene Flags -- beide nur auf Vereinsebene sinnvoll (Plan 012:
+// "eine Abteilung darf sich diese Erlaubnis nicht selbst geben"), durchgesetzt in set_policy_setting()
+// selbst (organization_only_flag), nicht nur hier im Schema.
+export const PolicyFlagSchema = z.enum([
+  'invite_allowed', 'posts_visible_org_wide', 'allow_department_owned_channels', 'require_channel_responsible',
+])
 export const PolicyFlagStateSchema = z.object({
   effective: z.boolean(),
   ownValue: z.boolean().nullable(),
@@ -413,6 +418,78 @@ export const PublicationSchema = z.object({
   status: z.string(),
   scheduledFor: z.iso.datetime({ offset: true }).nullable(),
 })
+
+// Paket 012: Kanaele und Social-Accounts --------------------------------------------------------
+
+export const SocialPlatformSchema = z.enum(['instagram', 'facebook'])
+export const SocialConnectionStatusSchema = z.enum(['active', 'action_required', 'disconnected'])
+// team ist kein gueltiger Kanalbesitz (siehe social_connections_owner_check) -- eigenes Schema
+// statt des geteilten ScopeLevelSchema, damit ein Team hier gar nicht erst waehlbar ist.
+export const ChannelOwnerScopeSchema = z.enum(['organization', 'department'])
+
+export const ChannelScopeAssignmentSchema = z.object({
+  id: UuidSchema,
+  scope: ScopeLevelSchema,
+  scopeId: UuidSchema.nullable(),
+  canSchedule: z.boolean(),
+})
+export const CreateChannelScopeRequestSchema = z.object({
+  scope: ScopeLevelSchema,
+  scopeId: UuidSchema,
+  canSchedule: z.boolean().default(true),
+})
+
+export const SocialConnectionSchema = z.object({
+  id: UuidSchema,
+  platform: SocialPlatformSchema,
+  externalAccountId: z.string(),
+  displayName: z.string(),
+  status: SocialConnectionStatusSchema,
+  tokenExpiresAt: z.iso.datetime({ offset: true }).nullable(),
+  lastVerifiedAt: z.iso.datetime({ offset: true }).nullable(),
+  ownerScope: ChannelOwnerScopeSchema,
+  ownerDepartmentId: UuidSchema.nullable(),
+  responsibleProfileId: UuidSchema.nullable(),
+  purpose: z.string().nullable(),
+  confidential: z.boolean(),
+  archivedAt: z.iso.datetime({ offset: true }).nullable(),
+  createdAt: z.iso.datetime({ offset: true }),
+  scopes: z.array(ChannelScopeAssignmentSchema),
+})
+export const UpdateSocialConnectionRequestSchema = z.object({
+  displayName: z.string().trim().min(1).max(120).optional(),
+  purpose: z.string().trim().max(200).nullable().optional(),
+  responsibleProfileId: UuidSchema.nullable().optional(),
+  confidential: z.boolean().optional(),
+}).refine((value) => Object.keys(value).length > 0, { message: 'at least one field must be provided' })
+
+// Nur Lesen: geschrieben wird ueber das bestehende PUT /v1/policy-settings mit scope='organization'
+// (PolicyFlagSchema oben traegt die zwei neuen Flags bereits) -- ein eigener Schreibpfad waere eine
+// zweite, parallele Implementierung derselben set_policy_setting()-RPC gewesen.
+export const ChannelPolicySchema = z.object({
+  allowDepartmentOwnedChannels: z.boolean(),
+  requireChannelResponsible: z.boolean(),
+})
+
+export const ChannelConnectStartRequestSchema = z.object({
+  ownerScope: ChannelOwnerScopeSchema,
+  ownerDepartmentId: UuidSchema.nullable(),
+}).refine((value) => (value.ownerScope === 'organization') === (value.ownerDepartmentId === null), {
+  message: 'ownerDepartmentId is required exactly when ownerScope is department',
+})
+
+export const OAuthAvailableAccountSchema = z.object({
+  externalAccountId: z.string(),
+  displayName: z.string(),
+})
+export const OAuthPendingConnectionSchema = z.object({
+  id: UuidSchema,
+  platform: SocialPlatformSchema,
+  availableAccounts: z.array(OAuthAvailableAccountSchema),
+})
+export const SelectOAuthAccountRequestSchema = z.object({ externalAccountId: z.string() })
+
+export const AvailableChannelsResponseSchema = z.object({ socialConnectionIds: z.array(UuidSchema) })
 
 export const CreateMembershipRequestSchema = z.object({
   scope: ScopeLevelSchema,
@@ -653,6 +730,19 @@ export type CreateChannelQuotaRequest = z.infer<typeof CreateChannelQuotaRequest
 export type UpdateChannelQuotaRequest = z.infer<typeof UpdateChannelQuotaRequestSchema>
 export type SchedulePublicationRequest = z.infer<typeof SchedulePublicationRequestSchema>
 export type Publication = z.infer<typeof PublicationSchema>
+export type SocialPlatform = z.infer<typeof SocialPlatformSchema>
+export type SocialConnectionStatus = z.infer<typeof SocialConnectionStatusSchema>
+export type ChannelOwnerScope = z.infer<typeof ChannelOwnerScopeSchema>
+export type ChannelScopeAssignment = z.infer<typeof ChannelScopeAssignmentSchema>
+export type CreateChannelScopeRequest = z.infer<typeof CreateChannelScopeRequestSchema>
+export type SocialConnection = z.infer<typeof SocialConnectionSchema>
+export type UpdateSocialConnectionRequest = z.infer<typeof UpdateSocialConnectionRequestSchema>
+export type ChannelPolicy = z.infer<typeof ChannelPolicySchema>
+export type ChannelConnectStartRequest = z.infer<typeof ChannelConnectStartRequestSchema>
+export type OAuthAvailableAccount = z.infer<typeof OAuthAvailableAccountSchema>
+export type OAuthPendingConnection = z.infer<typeof OAuthPendingConnectionSchema>
+export type SelectOAuthAccountRequest = z.infer<typeof SelectOAuthAccountRequestSchema>
+export type AvailableChannelsResponse = z.infer<typeof AvailableChannelsResponseSchema>
 export type CreateMembershipRequest = z.infer<typeof CreateMembershipRequestSchema>
 export type UpdateMembershipRequest = z.infer<typeof UpdateMembershipRequestSchema>
 export type UpdateMembershipExpiryRequest = z.infer<typeof UpdateMembershipExpiryRequestSchema>

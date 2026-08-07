@@ -54,6 +54,10 @@ export const rolePermissions: Readonly<Record<Role, ReadonlySet<Permission>>> = 
     'post.submit',
     'post.approve',
     'post.publish',
+    // Paket 012: ohne dies gaebe es keine Rolle, die ausschliesslich die eigene Abteilung
+    // verwaltet, aber deren Kanaele bespielen darf -- social_manager ist eine Vereinsrolle,
+    // department_admin die einzige abteilungsscoped Verwaltungsrolle.
+    'social_account.manage',
     'analytics.view',
   ]),
   editor: new Set(['post.create', 'post.edit', 'post.submit', 'analytics.view']),
