@@ -41,7 +41,7 @@ Stand: 2026-08-04, geplant auf `b5c2eda6`. Die Pakete 001–007 bauen die Inhalt
 | 023 | [Sichtbarkeit, Mitgliederverwaltung und Richtliniengrundlage](023-sichtbarkeit-mitgliederverwaltung-und-richtliniengrundlage.md) | 010 | erledigt |
 | 011 | [Regelwerk: Freigaberouten, Vertrauen je Mitglied und Kontingente](011-regelwerk-richtlinien-und-kontingente.md) | 010, 023 | erledigt; Freigabe-/Einplanungsendpunkte sind echt, aber ohne die Inhalts-Pipeline (001–007) fehlt weiterhin der Weg, wie ein `post_version`-Datensatz entsteht — end-to-end erst nach 005/006 vorführbar |
 | 012 | [Kanäle und Social-Accounts](012-kanaele-und-social-accounts.md) | 011 | erledigt; gegen Meta-Testkonten ungetestet (externes Gate, App Review vor Pilotbetrieb nötig) |
-| 013 | [Marke, Branding-Assets und Schriften](013-marke-branding-assets-und-schriften.md) | 009 | bereit |
+| 013 | [Marke, Branding-Assets und Schriften](013-marke-branding-assets-und-schriften.md) | 009 | erledigt; kuratierte Font-Registry bewusst kleiner als empfohlen (zwei statt sechs bis acht Familien, siehe Plan); Remotion-Pixelvergleich und Erfolgspfad-Storage-Test bleiben manuell statt automatisiert |
 | 014 | [Integrationsrahmen und Mitgliederverzeichnis](014-integrationsrahmen-und-mitgliederverzeichnis.md) | 010 | bereit; Produktivbetrieb erst nach 020 |
 | 015 | [Einwilligungsverwaltung](015-einwilligungsverwaltung.md) | 002, 014 | bereit; Produktivbetrieb erst nach 020 |
 | 016 | [Auswertung: interne Kennzahlen](016-auswertung-interne-kennzahlen.md) | 011 | bereit |
@@ -100,10 +100,10 @@ Vollständige Liste der erfundenen Daten im Anwendungscode, mit dem Paket, das s
 | `pages/freigaben.vue:7,12` | Freigabe nur im lokalen State, kein Serveraufruf | ✓ 011 (`POST /v1/approval-stages/:id/decide`) |
 | `pages/kalender.vue:1` | fest „August 2026“, fünf Fantasietermine, hartkodierte Vorlauftage | ✓ 009 (echte `posts.scheduled_for`, navigierbarer Monat, Empty State — der Plan zu 009 listete diese Zeile bereits in seinem eigenen Rückbau-Abschnitt, diese Tabelle hier nicht; beim Abgleich in der Adversarial-Phase von 009 nachgezogen), 019 (echte Anlässe/Spielpläne als Inhalt der Termine) |
 | `pages/auswertung.vue:1` | vier erfundene Plattformkennzahlen, `bars`-Array ohne Skala und Quelle | 016, 017 |
-| `pages/marke.vue:1` | Farben und Tonalität im lokalen State, „Speichern“ setzt nur ein Flag | ✓ 009 (`PUT /v1/organizations/:id/brand`, echter Ladezustand, echte Fehler), 013 (Schrift-Upload, Abteilungsbranding) |
+| `pages/marke.vue:1` | Farben und Tonalität im lokalen State, „Speichern“ setzt nur ein Flag | ✓ 009 (`PUT /v1/organizations/:id/brand`, echter Ladezustand, echte Fehler), ✓ 013 (Scope-Umschalter, Asset-Verwaltung, Schrift-Upload mit Lizenzbestätigung, Live-Vorschau, Abteilungs-/Mannschaftsbranding) |
 | `pages/mitglieder.vue:1` | vier hartkodierte Namen, „Einladen“ ohne Handler | ✓ 010 (echte Mitglieder/Rollen/Einladungen aus der Datenbank) |
 | `pages/einstellungen.vue:1` | fünf behauptete Einstellungen, jeder Button ohne Handler | ✓ 011 (Freigabe, Minderjährigenschutz, Kontingente — echte scopeabhängige Richtlinienseite), ✓ 012 (Kanäle: eigene Seite `pages/kanaele.vue`, die hartkodierten Zeilen waren bereits mit 011 verschwunden), 020 (Löschfrist noch offen) |
-| `apps/web/nuxt.config.ts:14-21` | Schriften von `fonts.googleapis.com` bei jedem Aufruf | 013, geprüft in 020 |
+| `apps/web/nuxt.config.ts:14-21` | Schriften von `fonts.googleapis.com` bei jedem Aufruf | ✓ 013 (selbst gehostete kuratierte Schriften, kein Drittanbieter-Aufruf mehr), geprüft in 020 |
 | `packages/config/src/index.ts:17-20` | `PUBLISHING_PROVIDER: 'mixpost'`, Mixpost-URL und -Token — widerspricht der Meta-Entscheidung | ✓ 012 (`'fake' \| 'meta'`, `META_APP_ID`/`META_APP_SECRET`/`META_GRAPH_VERSION`/`META_OAUTH_REDIRECT_URL`) |
 | `packages/domain/src/index.ts:47-87` | `mergeEffectiveConfig` existiert korrekt, wird aber nur von Tests aufgerufen | ✓ 011 (aus `apps/api/src/app.ts` über `resolveEffectiveConfig`/`computeRuleEntry` aufgerufen, kein Testpfad mehr) |
 | `post_versions.effective_config_snapshot` | Spalte ist `not null` und wird von nichts gefüllt | **bewusst weiterhin offen nach 011**: es gibt keinen Code, der überhaupt eine `post_versions`-Zeile anlegt (Inhalts-Pipeline 001–007 fehlt) — 011 kann die Spalte deshalb strukturell nicht befüllen, siehe Plan 011 „Umsetzung: Ergebnis und Abweichungen“. Bleibt bei 013 bzw. bei wer auch immer den Anlegepfad baut. |
@@ -152,7 +152,7 @@ Ergänzend zu den Regeln der ersten Serie:
 | Sentimentanalyse | eigenes späteres Paket mit eigenem Rechts-Gate | 018 |
 | Freigabe | jeder Knoten bestimmt für alles unter sich, wer einreichen darf und ob geprüft wird — bis auf die einzelne Person. Mehrstufige Route: Trainer → Medienverantwortliche → Marketing. Prüfer dürfen abteilungsfremd sein. Minderjährigenstufe ist unbefreibar. | 011 |
 | SVG-Logos | unterstützt, aber nur nach Allowlist-Sanitisierung mit eigenem Modul `packages/svg-safe` und Testkorpus bekannter Payloads | 009, 013 |
-| Schriftformate | WOFF2, WOFF, TTF und OTF werden angenommen; Original nach `raw-media`, ausgeliefert wird nur das serverseitig konvertierte WOFF2 | 013 |
+| Schriftformate | TTF, OTF und WOFF2 werden angenommen (legacy WOFF/Version 1 bewusst nicht, siehe Plan); Original nach `raw-media`, ausgeliefert wird nur das serverseitig konvertierte WOFF2 | 013 |
 | Abteilungs- und Mannschaftsbranding | jede Ebene darf eigene Logos und Schriften führen, Default `true`; was eine Abteilung oder Mannschaft hochlädt, ist für andere nicht nutzbar | 013 |
 | Speicher und Tarife | drei Tarife als Daten (kostenlos 3 GB / Einstieg / Premium), Preise und Grenzen ohne Deployment änderbar, operative Übersteuerung im Einzelfall; Verein teilt seinen Speicher auf Abteilungen und Mannschaften auf | 021 |
 | Volle Speichergrenze | neue Uploads blockiert, geplante Veröffentlichungen laufen weiter, **nichts wird automatisch gelöscht** | 021 |
