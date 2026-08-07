@@ -16,7 +16,7 @@ Geplant auf `b5c2eda6` am 2026-08-04.
 
 - `apps/web/app/pages/einstellungen.vue:1` behauptet „Rohmedien · Automatische Löschung nach 90 Tagen“. Es existiert **kein Job, keine Frist im Datenmodell und kein Löschpfad.** Das ist die gefährlichste der fünf Dummy-Zeilen, weil sie eine Datenschutzzusage macht, die nichts einhält.
 - Es gibt **keine Impressums- oder Datenschutzseite** in `apps/web/app/pages/`, weder für die Anwendung noch für die Vereinskanäle.
-- `nuxt.config.ts:14-21` lädt Schriften von `fonts.googleapis.com` bei jedem Seitenaufruf. Paket 013 behebt das durch Selbst-Hosting; hier wird geprüft, dass keine weitere Verbindung zu Dritten übrig ist.
+- `nuxt.config.ts:14-21` lud Schriften von `fonts.googleapis.com` bei jedem Seitenaufruf. Paket 013 hat das durch selbst gehostete kuratierte Schriften behoben; hier wird geprüft, dass keine weitere Verbindung zu Dritten übrig ist.
 - `media_assets` (`202608030001:21-32`) hat `upload_status` mit dem Wert `'deleted'` und `exif_stripped_at`. Ein Löschzustand ist vorgesehen, wird aber von nichts gesetzt.
 - `media_derivatives` hat `status = 'invalidated'` und einen Immutabilitätstrigger (`:108-109`), der Updates auf `ready`-Zeilen verhindert. **Das erschwert das Löschen**: eine Aufbewahrungsroutine muss Zeilen entfernen oder den Trigger gezielt umgehen dürfen. Das ist beim Entwurf zu berücksichtigen und nicht durch Abschalten des Triggers zu lösen.
 - `audit_events` (`202608020001:246-256`) ist als Append-only-Protokoll kommentiert (`:451`) und hat keine Löschpolicy. Ein Audit-Log, das personenbezogene Daten enthält und nie gelöscht wird, ist selbst ein Datenschutzthema.
