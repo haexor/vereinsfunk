@@ -252,7 +252,10 @@ describe('structure and invitation contracts', () => {
         .success,
     ).toBe(true)
     expect(
-      TeamSchema.safeParse({ id: org, organizationId: org, departmentId: department, name: 'Team A', archivedAt: null, createdAt: offsetTimestamp }).success,
+      TeamSchema.safeParse({
+        id: org, organizationId: org, departmentId: department, name: 'Team A',
+        ageGroup: null, competition: null, sourceId: null, archivedAt: null, createdAt: offsetTimestamp,
+      }).success,
     ).toBe(true)
   })
 

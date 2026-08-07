@@ -17,7 +17,14 @@ export type FieldMapping = Record<string, string>
 export interface DomainAdapter<TExternal> {
   readonly domain: IntegrationDomain
   readonly schema: ZodType<TExternal> // erzwingt Datenminimierung
-  normalize(raw: Readonly<Record<string, unknown>>, mapping: FieldMapping): unknown
+  /**
+   * undefined heisst "gehoert nicht zu diesem Bereich, ueberspringen" -- kein invalid_record-
+   * Konflikt, einfach kein Ergebnis. Wird ab Paket 019 gebraucht: ein einzelner iCal-Feed kann
+   * sowohl Spiele als auch reine Vereinstermine enthalten, und derselbe Rohdatensatz darf nicht in
+   * beiden Bereichen (fixtures/events) landen. Der people-Adapter aus Paket 014 nutzt das nicht
+   * und gibt weiterhin immer ein Objekt zurueck.
+   */
+  normalize(raw: Readonly<Record<string, unknown>>, mapping: FieldMapping): unknown | undefined
   identityOf(entity: TExternal): { externalId: string } | { fuzzy: string[] }
 }
 
