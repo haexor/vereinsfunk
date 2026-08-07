@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ArrowRight, CalendarDays, CheckCircle2, Clock3, FileText, Palette, Plus, ShieldCheck } from '@lucide/vue'
+import { ArrowRight, CalendarDays, CheckCircle2, Clock3, FileText, Palette, Plus, ShieldCheck, X } from '@lucide/vue'
+import { ContentSuggestionsResponseSchema, type ContentSuggestion } from '@vereinsfunk/contracts'
 
 const config = useRuntimeConfig()
 const session = await useSession()
@@ -19,6 +20,8 @@ const dashboardError = ref(false)
 const stats = ref<{ published: number; openApprovals: number; scheduledNext7Days: number } | null>(null)
 const weekDays = ref<WeekDay[]>([])
 const nextSteps = ref<{ key: string; label: string; href: string }[]>([])
+const suggestions = ref<ContentSuggestion[]>([])
+const suggestionsLoaded = ref(false)
 
 function localDateKey(date: Date, timeZone: string) {
   return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date)
@@ -98,7 +101,47 @@ async function loadDashboard() {
   loadingDashboard.value = false
 }
 
-await loadDashboard()
+function suggestionHref(item: ContentSuggestion) {
+  if (item.fixtureId) return `/erstellen?fixtureId=${item.fixtureId}`
+  if (item.clubEventId) return `/erstellen?clubEventId=${item.clubEventId}`
+  return '/erstellen'
+}
+
+function occursLabel(iso: string | undefined) {
+  if (!iso) return ''
+  return new Intl.DateTimeFormat('de-DE', { day: 'numeric', month: 'short', timeZone: timezone.value }).format(new Date(iso))
+}
+
+async function dismissSuggestion(item: ContentSuggestion) {
+  const endpoint = item.kind === 'fixture_announcement' ? `/v1/fixtures/${item.fixtureId}/dismiss-announcement`
+    : item.kind === 'fixture_result' ? `/v1/fixtures/${item.fixtureId}/dismiss-result`
+    : item.kind === 'event_invitation' ? `/v1/club-events/${item.clubEventId}/dismiss-invitation`
+    : null
+  if (!endpoint) return
+  try {
+    await $fetch(`${config.public.apiBase}${endpoint}`, { method: 'POST', headers: await useAuthHeader() })
+    suggestions.value = suggestions.value.filter((suggestion) => suggestion !== item)
+  } catch (error) {
+    console.error(error)
+  }
+}
+
+async function loadSuggestions() {
+  if (import.meta.server) return
+  const organizationId = scope.value?.organizationId
+  const departmentId = scope.value?.departmentId
+  if (!organizationId || !departmentId || !useCan('post.create', { organizationId, departmentId })) return
+  try {
+    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/departments/${departmentId}/content-suggestions`, { headers: await useAuthHeader() })
+    suggestions.value = ContentSuggestionsResponseSchema.parse(response).suggestions
+    suggestionsLoaded.value = true
+  } catch {
+    // Anlassvorschlaege sind ein Zusatz, kein Kern-Dashboard-Datum -- ein Ausfall bleibt hier
+    // unsichtbar statt das Dashboard mit einer Fehlermeldung zu stoeren.
+  }
+}
+
+await Promise.all([loadDashboard(), loadSuggestions()])
 </script>
 
 <template>
@@ -179,6 +222,19 @@ await loadDashboard()
           <CheckCircle2 :size="22" class="mx-auto mb-2 text-forest" />
           <p class="text-xs font-semibold">Startklar. Alle Einrichtungsschritte sind erledigt.</p>
         </article>
+        <article v-if="suggestionsLoaded && suggestions.length > 0" class="card p-5">
+          <div class="mb-4 flex items-center justify-between"><h2 class="font-display text-sm font-bold">Anlassvorschläge</h2><span class="grid h-8 w-8 place-items-center rounded-xl bg-sky-100 text-sky-700"><CalendarDays :size="15" /></span></div>
+          <ul class="space-y-2">
+            <li v-for="item in suggestions" :key="`${item.kind}-${item.fixtureId ?? item.clubEventId ?? item.label}`" class="flex items-center gap-2 rounded-xl border border-[#e6e7e0] p-3">
+              <NuxtLink :to="suggestionHref(item)" class="focus-ring min-w-0 flex-1">
+                <span class="block truncate text-xs font-semibold text-ink">{{ item.label }}</span>
+                <span v-if="item.occursAt" class="block text-[10px] text-[#9aa196]">{{ occursLabel(item.occursAt) }}</span>
+              </NuxtLink>
+              <button v-if="item.fixtureId || item.clubEventId" class="focus-ring rounded-lg p-1.5 text-[#9aa196] hover:text-red-600" aria-label="Vorschlag verwerfen" @click="dismissSuggestion(item)"><X :size="14" /></button>
+            </li>
+          </ul>
+        </article>
+        <article v-else-if="suggestionsLoaded" class="card p-5 text-center text-xs text-[#7b827d]">Keine offenen Anlässe.</article>
       </aside>
     </section>
   </div>

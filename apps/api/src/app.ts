@@ -1,7 +1,7 @@
 import multipart from '@fastify/multipart'
 import cors from '@fastify/cors'
 import { parseApiEnvironment } from '@vereinsfunk/config'
-import { FakeContentGenerator } from '@vereinsfunk/content-engine'
+import { FakeContentGenerator, factsFromClubEvent, factsFromFixture } from '@vereinsfunk/content-engine'
 import {
   AcceptInvitationRequestSchema,
   AcceptInvitationResponseSchema,
@@ -37,8 +37,11 @@ import {
   DepartmentBrandSchema,
   DepartmentSchema,
   DirectoryPersonGuardianContactSchema,
+  ClubEventSchema,
+  ContentSuggestionsResponseSchema,
   DirectoryPersonSchema,
   DirectoryPersonStatusSchema,
+  FixtureSchema,
   HealthSchema,
   IntegrationDomainSchema,
   IntegrationSourceSchema,
@@ -99,6 +102,7 @@ import {
   UsageMetricsQuerySchema,
   UsageMetricsResponseSchema,
   UuidSchema,
+  type ContentSuggestion,
   type FieldMapping,
   type IntegrationDomain,
   type OutputFormat,
@@ -107,10 +111,31 @@ import {
   type ReviewerRef,
   type ScopeLevel,
   type SyncConflictKind,
+  type Team,
   type SyncMode,
 } from '@vereinsfunk/contracts'
 import { canAssignRole, canRemoveRole, hasPermission, type Permission, type Role } from '@vereinsfunk/authorization'
-import { FileSourceTransport, IcalSourceTransport, planSync, type SourceTransport } from '@vereinsfunk/integrations'
+import { FileSourceTransport, IcalSourceTransport, planSync, resolveIcalDateTime, type SourceTransport, type SyncPlanResult } from '@vereinsfunk/integrations'
+import {
+  clubEventDomainAdapter,
+  createClubEventMatchStrategy,
+  createFixtureMatchStrategy,
+  createTeamMatchStrategy,
+  ExternalClubEventSchema,
+  ExternalFixtureSchema,
+  ExternalTeamSchema,
+  fixtureDomainAdapter,
+  teamDomainAdapter,
+  type ClubEventLocal,
+  type ExternalClubEvent,
+  type ExternalFixture,
+  type ExternalTeam,
+  type FixtureLocal,
+  type FixtureStatus,
+  type TeamDepartmentResolver,
+  type TeamLocal,
+  type TeamNameResolver,
+} from '@vereinsfunk/club-schedule'
 import {
   createPeopleMatchStrategy,
   deriveIsMinor,
@@ -143,7 +168,7 @@ import {
 } from '@vereinsfunk/domain'
 import { FakeOrchestrator, priorityToHatchet, type Orchestrator } from '@vereinsfunk/orchestration'
 import { RealMetaOAuthClient, type MetaOAuthClient } from '@vereinsfunk/publishing'
-import Fastify, { LogController, type FastifyInstance, type FastifyRequest, type FastifyServerOptions } from 'fastify'
+import Fastify, { LogController, type FastifyInstance, type FastifyReply, type FastifyRequest, type FastifyServerOptions } from 'fastify'
 import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -347,7 +372,13 @@ function mapDepartmentRow(row: Record<string, unknown>) {
 }
 
 function mapTeamRow(row: Record<string, unknown>) {
-  return { id: row.id, organizationId: row.organization_id, departmentId: row.department_id, name: row.name, archivedAt: row.archived_at, createdAt: row.created_at }
+  return {
+    id: row.id, organizationId: row.organization_id, departmentId: row.department_id, name: row.name,
+    // Paket 019: nur vom Sync-Codepfad (Service Role) gesetzt, siehe Migration
+    // 2026080704_fixtures_and_events.sql -- hier trotzdem mitgegeben, weil TeamSchema sie verlangt.
+    ageGroup: row.age_group ?? null, competition: row.competition ?? null, sourceId: row.source_id ?? null,
+    archivedAt: row.archived_at, createdAt: row.created_at,
+  }
 }
 
 // scopeId spiegelt resolveMembershipScope-Konvention: teamId, sonst departmentId, sonst die
@@ -543,6 +574,29 @@ function mapSyncConflictRow(row: Record<string, unknown>) {
   })
 }
 
+function mapFixtureRow(row: Record<string, unknown>) {
+  return FixtureSchema.parse({
+    id: row.id, organizationId: row.organization_id, departmentId: row.department_id, teamId: row.team_id,
+    kind: row.kind, competition: row.competition, isHome: row.is_home, ownTeamLabel: row.own_team_label,
+    opponentName: row.opponent_name, kickoffAt: row.kickoff_at, kickoffTimeConfirmed: row.kickoff_time_confirmed,
+    venueName: row.venue_name, venueAddress: row.venue_address, status: row.status,
+    homeScore: row.home_score, awayScore: row.away_score, note: row.note,
+    announcementDismissedAt: row.announcement_dismissed_at, resultDismissedAt: row.result_dismissed_at,
+    sourceId: row.source_id, sourceUpdatedAt: row.source_updated_at, createdAt: row.created_at, updatedAt: row.updated_at,
+  })
+}
+
+function mapClubEventRow(row: Record<string, unknown>) {
+  return ClubEventSchema.parse({
+    id: row.id, organizationId: row.organization_id, departmentId: row.department_id, teamId: row.team_id,
+    title: row.title, description: row.description, category: row.category,
+    startsAt: row.starts_at, endsAt: row.ends_at, allDay: row.all_day,
+    locationName: row.location_name, locationAddress: row.location_address, registrationUrl: row.registration_url,
+    status: row.status, invitationDismissedAt: row.invitation_dismissed_at,
+    sourceId: row.source_id, sourceUpdatedAt: row.source_updated_at, createdAt: row.created_at, updatedAt: row.updated_at,
+  })
+}
+
 function mapDirectoryPersonRow(row: Record<string, unknown>) {
   return DirectoryPersonSchema.parse({
     id: row.id, organizationId: row.organization_id, departmentId: row.department_id, teamId: row.team_id,
@@ -614,6 +668,535 @@ async function collectRows(transport: SourceTransport): Promise<Readonly<Record<
   const rows: Readonly<Record<string, unknown>>[] = []
   for await (const row of transport.read({})) rows.push(row)
   return rows
+}
+
+interface PendingConflict {
+  kind: SyncConflictKind
+  label: string
+  field: string
+  externalId: string | null
+  localId: string | null
+  currentValue: string | null
+  incomingValue: string | null
+  fingerprint: string
+}
+
+// Baut die Konfliktzeilen aus einem SyncPlan -- gemeinsam fuer alle vier Bereiche (Personen,
+// Mannschaften, Spiele, Veranstaltungen; Paket 019 verallgemeinert, was Paket 014 nur fuer
+// Personen brauchte). identityOf ist die des jeweiligen DomainAdapter.
+function buildPendingConflicts<TLocal extends { id: string }, TExternal>(input: {
+  plan: SyncPlanResult<TLocal, TExternal>
+  sourceId: string
+  domain: IntegrationDomain
+  identityOf: (entity: TExternal) => { externalId: string } | { fuzzy: readonly string[] }
+  invalidRecords: readonly { label: string; reason: string }[]
+  ignoredFingerprints: ReadonlySet<string>
+}): PendingConflict[] {
+  const { plan, sourceId, domain, identityOf, invalidRecords, ignoredFingerprints } = input
+  const pendingConflicts: PendingConflict[] = []
+  for (const conflict of plan.conflicts) {
+    const identity = conflict.incoming ? identityOf(conflict.incoming) : null
+    const externalId = identity && 'externalId' in identity ? identity.externalId : null
+    const localId = conflict.candidates?.[0]?.id ?? null
+    const field = conflict.kind === 'unknown_structure' ? 'structure' : 'identity'
+    const fingerprint = conflictFingerprint([sourceId, domain, conflict.kind, field, externalId ?? localId ?? conflict.label])
+    if (ignoredFingerprints.has(fingerprint)) continue
+    // unknown_structure traegt in conflict.reason den unaufgeloesten Rohwert -- nicht spiegeln
+    // (derselbe Fund wie in Paket 014 bei directory_people).
+    const incomingValue = conflict.kind === 'unknown_structure' ? null : (conflict.reason ?? null)
+    pendingConflicts.push({ kind: conflict.kind, label: conflict.label, field, externalId, localId, currentValue: null, incomingValue, fingerprint })
+  }
+  for (const invalid of invalidRecords) {
+    const fingerprint = conflictFingerprint([sourceId, domain, 'invalid_record', 'record', invalid.label])
+    if (ignoredFingerprints.has(fingerprint)) continue
+    pendingConflicts.push({ kind: 'invalid_record', label: invalid.label, field: 'record', externalId: null, localId: null, currentValue: null, incomingValue: invalid.reason, fingerprint })
+  }
+  return pendingConflicts
+}
+
+async function loadIgnoredFingerprints(service: SupabaseClient, sourceId: string): Promise<ReadonlySet<string>> {
+  const ignored = await service.from('integration_sync_conflicts').select('fingerprint').eq('source_id', sourceId).eq('resolution', 'ignore_permanently')
+  if (ignored.error) throw ignored.error
+  return new Set(ignored.data.map((row) => row.fingerprint as string))
+}
+
+async function handleAbortedSync(input: {
+  service: SupabaseClient
+  organizationId: string
+  sourceId: string
+  domain: IntegrationDomain
+  mode: SyncMode
+  correlationId: string
+  triggeredBy: string
+}) {
+  const run = await input.service
+    .from('integration_sync_runs')
+    .insert({
+      organization_id: input.organizationId, source_id: input.sourceId, domain: input.domain, mode: input.mode,
+      status: 'aborted_loss_threshold', correlation_id: input.correlationId, finished_at: new Date().toISOString(), triggered_by: input.triggeredBy,
+    })
+    .select('id, organization_id, source_id, domain, mode, status, created_count, updated_count, retired_count, skipped_count, conflict_count, error_class, started_at, finished_at')
+    .single()
+  if (run.error) throw run.error
+  await input.service.from('integration_sources').update({ last_sync_at: new Date().toISOString(), last_sync_status: 'aborted_loss_threshold' }).eq('id', input.sourceId)
+  return SyncSourceResponseSchema.parse({ run: mapSyncRunRow(run.data), conflicts: [] })
+}
+
+async function finishSyncRun(input: {
+  service: SupabaseClient
+  request: FastifyRequest
+  organizationId: string
+  sourceId: string
+  domain: IntegrationDomain
+  mode: SyncMode
+  correlationId: string
+  createdCount: number
+  updatedCount: number
+  retiredCount: number
+  skippedCount: number
+  pendingConflicts: readonly PendingConflict[]
+}) {
+  const run = await input.service
+    .from('integration_sync_runs')
+    .insert({
+      organization_id: input.organizationId, source_id: input.sourceId, domain: input.domain, mode: input.mode, status: 'succeeded',
+      created_count: input.createdCount, updated_count: input.updatedCount, retired_count: input.retiredCount,
+      skipped_count: input.skippedCount, conflict_count: input.pendingConflicts.length,
+      correlation_id: input.correlationId, finished_at: new Date().toISOString(), triggered_by: input.request.auth!.userId,
+    })
+    .select('id, organization_id, source_id, domain, mode, status, created_count, updated_count, retired_count, skipped_count, conflict_count, error_class, started_at, finished_at')
+    .single()
+  if (run.error) throw run.error
+
+  let conflictRows: Record<string, unknown>[] = []
+  if (input.pendingConflicts.length > 0) {
+    const conflictInsert = await input.service
+      .from('integration_sync_conflicts')
+      .insert(
+        input.pendingConflicts.map((conflict) => ({
+          organization_id: input.organizationId, sync_run_id: run.data.id, source_id: input.sourceId, domain: input.domain,
+          external_id: conflict.externalId, local_id: conflict.localId, label: conflict.label, field: conflict.field,
+          current_value: conflict.currentValue, incoming_value: conflict.incomingValue, kind: conflict.kind, fingerprint: conflict.fingerprint,
+        })),
+      )
+      .select('id, organization_id, sync_run_id, source_id, domain, external_id, local_id, label, field, current_value, incoming_value, kind, resolution, resolved_at, created_at')
+    if (conflictInsert.error) throw conflictInsert.error
+    conflictRows = conflictInsert.data
+  }
+
+  await input.service.from('integration_sources').update({ last_sync_at: new Date().toISOString(), last_sync_status: 'succeeded' }).eq('id', input.sourceId)
+  // Inline statt des recordAuditEvent-Helfers weiter unten in dieser Datei: der ist eine Closure
+  // innerhalb von buildApp (braucht supabaseClients aus dessen Scope), diese Funktion hier ist
+  // bewusst top-level wie collectRows/conflictFingerprint -- service ist bereits alles, was der
+  // Audit-Eintrag braucht.
+  const audit = await input.service.from('audit_events').insert({
+    organization_id: input.organizationId, actor_user_id: input.request.auth!.userId, action: `integration_source.sync_${input.mode}`,
+    entity_type: 'integration_sync_runs', entity_id: run.data.id as string, correlation_id: input.request.id,
+    metadata: { created: input.createdCount, updated: input.updatedCount, retired: input.retiredCount, conflicts: input.pendingConflicts.length },
+  })
+  if (audit.error) input.request.log.error({ err: audit.error, correlationId: input.request.id }, 'audit_events insert failed')
+
+  return SyncSourceResponseSchema.parse({ run: mapSyncRunRow(run.data), conflicts: conflictRows.map(mapSyncConflictRow) })
+}
+
+// Loest einen rohen Datumswert (iCal-Kompaktform ODER eine bereits vollstaendige ISO-Zeichenkette
+// aus einer Datei-Spalte) in eine UTC-Instanz auf. Ein Datei-Export mit einer eigenen
+// kickoffAt/startsAt-Spalte liefert ueblicherweise bereits ein eindeutiges Format -- dafuer gilt
+// die Angabe als bestaetigt (kein TZID-Fall). resolveIcalDateTime deckt nur die iCal-Kompaktform ab.
+function resolveScheduleDateTime(
+  rawValue: string,
+  tzid: string | undefined,
+  fallbackTimezone: string,
+): { iso: string; confirmed: boolean } | undefined {
+  const icalResolved = resolveIcalDateTime(rawValue, tzid, fallbackTimezone)
+  if (icalResolved) return icalResolved
+  const parsed = new Date(rawValue)
+  if (!Number.isNaN(parsed.getTime())) return { iso: parsed.toISOString(), confirmed: true }
+  return undefined
+}
+
+interface SyncDomainContext {
+  request: FastifyRequest
+  reply: FastifyReply
+  service: SupabaseClient
+  organizationId: string
+  sourceDepartmentId: string | null
+  sourceId: string
+  sourceFieldMapping: FieldMapping
+  sourceLossThresholdPercent: number
+  mode: SyncMode
+  domain: IntegrationDomain
+  correlationId: string
+  rawRows: readonly Readonly<Record<string, unknown>>[]
+  organizationTimezone: string
+}
+
+async function handleTeamsSync(ctx: SyncDomainContext): Promise<FastifyReply> {
+  const { request, reply, service, organizationId, sourceDepartmentId, sourceId, sourceFieldMapping, sourceLossThresholdPercent, mode, domain, correlationId, rawRows } = ctx
+
+  // Wie bei Personen (Paket 014): Mannschaften ohne Quelle (Duplikatvermeidung gegen von Hand
+  // gepflegte Eintraege) plus bereits dieser Quelle zugeordnete Mannschaften. Anders als
+  // directory_people (department_id dort "on delete set null", plus eine Umhaenge-Moeglichkeit
+  // per PATCH) hat teams.department_id "on delete cascade" (Loeschen der Abteilung loescht das
+  // Team mit, es entsteht keine Waise) und keinen Schreibpfad, der department_id nachtraeglich
+  // aendert -- der 014-Review-Fund "eigene Quellzeile verschwindet aus dem naechsten existing"
+  // wurde deshalb bewusst NICHT auf teams uebertragen; die Ausgangslage, die ihn ausloeste, gibt
+  // es hier nicht.
+  let existingQuery = service
+    .from('teams')
+    .select('id, name, department_id, age_group, competition, source_id, external_id, source_updated_at, updated_at')
+    .eq('organization_id', organizationId)
+    .or(`source_id.is.null,source_id.eq.${sourceId}`)
+  if (sourceDepartmentId) existingQuery = existingQuery.eq('department_id', sourceDepartmentId)
+  const existingRows = await existingQuery
+  if (existingRows.error) throw existingRows.error
+  const existingLocals: TeamLocal[] = existingRows.data.map((row) => ({
+    id: row.id as string, externalId: row.external_id as string | null, sourceId: row.source_id as string | null,
+    name: row.name as string, departmentId: row.department_id as string, ageGroup: row.age_group as string | null,
+    competition: row.competition as string | null,
+    sourceUpdatedAt: row.source_updated_at ? new Date(row.source_updated_at as string) : null,
+    updatedAt: new Date(row.updated_at as string),
+  }))
+
+  // Dieselbe Abteilungs-Scope-Einschraenkung wie bei Personen (Fund aus 014): eine
+  // abteilungsgebundene Quelle loest Abteilungsnamen nur innerhalb der eigenen Abteilung auf.
+  const departmentRows = sourceDepartmentId
+    ? await service.from('departments').select('id, name').eq('id', sourceDepartmentId)
+    : await service.from('departments').select('id, name').eq('organization_id', organizationId)
+  if (departmentRows.error) throw departmentRows.error
+  const departmentIdByName = new Map(departmentRows.data.map((row) => [normalizeStructureName(row.name as string), row.id as string]))
+  const resolver: TeamDepartmentResolver = { resolveDepartmentId: (name) => departmentIdByName.get(normalizeStructureName(name)) }
+
+  const incoming: ExternalTeam[] = []
+  const invalidRecords: { label: string; reason: string }[] = []
+  let rowIndex = 0
+  for (const raw of rawRows) {
+    rowIndex += 1
+    const normalized = teamDomainAdapter.normalize(raw, sourceFieldMapping)
+    if (normalized === undefined) continue
+    const parsed = ExternalTeamSchema.safeParse(normalized)
+    if (!parsed.success) {
+      const guessedName = typeof (normalized as Record<string, unknown>).name === 'string' ? ((normalized as Record<string, unknown>).name as string) : `Zeile ${rowIndex}`
+      invalidRecords.push({ label: guessedName, reason: parsed.error.issues.map((issue) => issue.message).join('; ') })
+      continue
+    }
+    incoming.push(parsed.data)
+  }
+
+  const match = createTeamMatchStrategy(resolver)
+  const plan = planSync({ existing: existingLocals, incoming, match, policy: { lossThresholdPercent: sourceLossThresholdPercent } })
+  if (plan.aborted) {
+    return reply.code(200).send(await handleAbortedSync({ service, organizationId, sourceId, domain, mode, correlationId, triggeredBy: request.auth!.userId }))
+  }
+
+  const ignoredFingerprints = await loadIgnoredFingerprints(service, sourceId)
+  const pendingConflicts = buildPendingConflicts({ plan, sourceId, domain, identityOf: teamDomainAdapter.identityOf, invalidRecords, ignoredFingerprints })
+
+  // Ein neu anzulegendes/zu aktualisierendes Team ohne aufloesbare Abteilung UND ohne
+  // abteilungsgebundene Quelle haette keinen department_id-Wert -- die Spalte ist not null. Statt
+  // eines ungefangenen DB-Fehlers wird das ein Konflikt (dieselbe Vorsicht wie bei Personen ohne
+  // Elternkontakt in Paket 014).
+  const applicableCreated: ExternalTeam[] = []
+  for (const entity of plan.created) {
+    const resolvedDepartmentId = (match.fieldsOf(entity) as { departmentId: string | null }).departmentId ?? sourceDepartmentId
+    if (!resolvedDepartmentId) {
+      const fingerprint = conflictFingerprint([sourceId, domain, 'invalid_record', 'departmentId', entity.externalId ?? entity.name])
+      if (!pendingConflicts.some((conflict) => conflict.fingerprint === fingerprint)) {
+        pendingConflicts.push({ kind: 'invalid_record', label: entity.name, field: 'departmentId', externalId: entity.externalId ?? null, localId: null, currentValue: null, incomingValue: 'keine Abteilung zuordenbar', fingerprint })
+      }
+      continue
+    }
+    applicableCreated.push(entity)
+  }
+
+  const appliedUpdatedCount = plan.updated.length
+  if (mode === 'apply') {
+    if (applicableCreated.length > 0) {
+      const insertRows = applicableCreated.map((entity) => {
+        const resolved = match.fieldsOf(entity) as { departmentId: string | null }
+        return {
+          organization_id: organizationId, department_id: resolved.departmentId ?? sourceDepartmentId, name: entity.name,
+          age_group: entity.ageGroup ?? null, competition: entity.competition ?? null,
+          source_id: sourceId, external_id: entity.externalId ?? null, source_updated_at: entity.sourceUpdatedAt ?? null,
+        }
+      })
+      const insert = await service.from('teams').insert(insertRows)
+      if (insert.error) throw insert.error
+    }
+    for (const update of plan.updated) {
+      const resolved = match.fieldsOf(update.external) as { departmentId: string | null }
+      const result = await service
+        .from('teams')
+        .update({
+          name: update.external.name, department_id: resolved.departmentId ?? update.local.departmentId,
+          age_group: update.external.ageGroup ?? update.local.ageGroup, competition: update.external.competition ?? update.local.competition,
+          source_updated_at: update.external.sourceUpdatedAt ?? update.local.sourceUpdatedAt?.toISOString() ?? null,
+        })
+        .eq('id', update.local.id)
+      if (result.error) throw result.error
+    }
+    for (const retired of plan.retired) {
+      const result = await service.from('teams').update({ archived_at: new Date().toISOString() }).eq('id', retired.id).is('archived_at', null)
+      if (result.error) throw result.error
+    }
+  }
+
+  return reply.code(200).send(await finishSyncRun({
+    service, request, organizationId, sourceId, domain, mode, correlationId,
+    createdCount: applicableCreated.length, updatedCount: appliedUpdatedCount, retiredCount: plan.retired.length,
+    skippedCount: plan.skipped.length, pendingConflicts,
+  }))
+}
+
+async function handleFixturesSync(ctx: SyncDomainContext): Promise<FastifyReply> {
+  const { request, reply, service, organizationId, sourceDepartmentId, sourceId, sourceFieldMapping, sourceLossThresholdPercent, mode, domain, correlationId, rawRows, organizationTimezone } = ctx
+
+  // Ein Spiel braucht eine Abteilung (fixtures.department_id ist not null) und die Quelle liefert
+  // keinen eigenen Abteilungsnamen (anders als teams/people) -- ohne abteilungsgebundene Quelle
+  // ist nicht entscheidbar, wohin ein synchronisiertes Spiel gehoert.
+  if (!sourceDepartmentId) return reply.code(409).send({ error: 'source_missing_department', correlationId: request.id })
+
+  const existingRows = await service
+    .from('fixtures')
+    .select('id, external_id, source_id, team_id, is_home, own_team_label, opponent_name, competition, kickoff_at, kickoff_time_confirmed, venue_name, venue_address, status, home_score, away_score, note, source_updated_at, updated_at')
+    .eq('organization_id', organizationId)
+    .eq('department_id', sourceDepartmentId)
+    .or(`source_id.is.null,source_id.eq.${sourceId}`)
+  if (existingRows.error) throw existingRows.error
+  const existingLocals: FixtureLocal[] = existingRows.data.map((row) => ({
+    id: row.id as string, externalId: row.external_id as string | null, sourceId: row.source_id as string | null,
+    teamId: row.team_id as string | null, isHome: row.is_home as boolean | null, ownTeamLabel: row.own_team_label as string | null,
+    opponentName: row.opponent_name as string | null, competition: row.competition as string | null,
+    kickoffAt: row.kickoff_at ? new Date(row.kickoff_at as string) : null, kickoffTimeConfirmed: row.kickoff_time_confirmed as boolean,
+    venueName: row.venue_name as string | null, venueAddress: row.venue_address as string | null,
+    status: row.status as FixtureStatus, homeScore: row.home_score as number | null, awayScore: row.away_score as number | null,
+    note: row.note as string | null, sourceUpdatedAt: row.source_updated_at ? new Date(row.source_updated_at as string) : null,
+    updatedAt: new Date(row.updated_at as string),
+  }))
+
+  // Mannschaftszuordnung ("wer sind wir") nur innerhalb der eigenen Abteilung -- dieselbe
+  // Scope-Einschraenkung wie bei Personen/Mannschaften.
+  const teamRows = await service.from('teams').select('id, name').eq('department_id', sourceDepartmentId)
+  if (teamRows.error) throw teamRows.error
+  const teamIdByName = new Map(teamRows.data.map((row) => [normalizeStructureName(row.name as string), row.id as string]))
+  const resolver: TeamNameResolver = { resolveTeamId: (name) => teamIdByName.get(normalizeStructureName(name)) }
+
+  const incoming: ExternalFixture[] = []
+  const invalidRecords: { label: string; reason: string }[] = []
+  let rowIndex = 0
+  for (const raw of rawRows) {
+    rowIndex += 1
+    const normalized = fixtureDomainAdapter.normalize(raw, sourceFieldMapping)
+    if (normalized === undefined) continue
+    const parsed = ExternalFixtureSchema.safeParse(normalized)
+    if (!parsed.success) {
+      const guessed = normalized as Record<string, unknown>
+      const label = typeof guessed.opponentName === 'string' ? guessed.opponentName : typeof guessed.awayNameRaw === 'string' ? guessed.awayNameRaw : `Zeile ${rowIndex}`
+      invalidRecords.push({ label, reason: parsed.error.issues.map((issue) => issue.message).join('; ') })
+      continue
+    }
+    incoming.push(parsed.data)
+  }
+
+  const match = createFixtureMatchStrategy(resolver)
+  const plan = planSync({ existing: existingLocals, incoming, match, policy: { lossThresholdPercent: sourceLossThresholdPercent } })
+  if (plan.aborted) {
+    return reply.code(200).send(await handleAbortedSync({ service, organizationId, sourceId, domain, mode, correlationId, triggeredBy: request.auth!.userId }))
+  }
+
+  const ignoredFingerprints = await loadIgnoredFingerprints(service, sourceId)
+  const pendingConflicts = buildPendingConflicts({ plan, sourceId, domain, identityOf: fixtureDomainAdapter.identityOf, invalidRecords, ignoredFingerprints })
+
+  let appliedUpdatedCount = plan.updated.length
+  if (mode === 'apply') {
+    if (plan.created.length > 0) {
+      const insertRows = plan.created.map((entity) => {
+        const resolved = match.fieldsOf(entity) as { teamId: string | null; opponentName: string | null; isHome: boolean | null; competition: string | null; kickoffAt: string | null }
+        const kickoff = resolved.kickoffAt ? resolveScheduleDateTime(resolved.kickoffAt, entity.kickoffAtTzid, organizationTimezone) : undefined
+        const ownTeamLabel = resolved.isHome === true ? entity.homeNameRaw ?? null : resolved.isHome === false ? entity.awayNameRaw ?? null : null
+        return {
+          organization_id: organizationId, department_id: sourceDepartmentId, team_id: resolved.teamId,
+          is_home: resolved.isHome, own_team_label: ownTeamLabel, opponent_name: resolved.opponentName, competition: resolved.competition,
+          kickoff_at: kickoff?.iso ?? null, kickoff_time_confirmed: kickoff ? (entity.kickoffTimeConfirmed ?? kickoff.confirmed) : true,
+          venue_name: entity.venueName ?? null, venue_address: entity.venueAddress ?? null,
+          status: entity.status ?? 'scheduled', home_score: entity.homeScore ?? null, away_score: entity.awayScore ?? null,
+          note: entity.note ?? null, source_id: sourceId, external_id: entity.externalId ?? null, source_updated_at: entity.sourceUpdatedAt ?? null,
+        }
+      })
+      const insert = await service.from('fixtures').insert(insertRows)
+      if (insert.error) throw insert.error
+    }
+    for (const update of plan.updated) {
+      const resolved = match.fieldsOf(update.external) as { teamId: string | null; opponentName: string | null; isHome: boolean | null; competition: string | null; kickoffAt: string | null }
+      const patch: Record<string, unknown> = {
+        team_id: resolved.teamId ?? update.local.teamId, opponent_name: resolved.opponentName ?? update.local.opponentName,
+        is_home: resolved.isHome ?? update.local.isHome, competition: resolved.competition ?? update.local.competition,
+        source_updated_at: update.external.sourceUpdatedAt ?? update.local.sourceUpdatedAt?.toISOString() ?? null,
+      }
+      if (update.external.kickoffAt !== undefined) {
+        const kickoff = resolveScheduleDateTime(update.external.kickoffAt, update.external.kickoffAtTzid, organizationTimezone)
+        if (kickoff) { patch.kickoff_at = kickoff.iso; patch.kickoff_time_confirmed = update.external.kickoffTimeConfirmed ?? kickoff.confirmed }
+      }
+      if (update.external.venueName !== undefined) patch.venue_name = update.external.venueName
+      if (update.external.venueAddress !== undefined) patch.venue_address = update.external.venueAddress
+      if (update.external.status !== undefined) patch.status = update.external.status
+      if (update.external.homeScore !== undefined) patch.home_score = update.external.homeScore
+      if (update.external.awayScore !== undefined) patch.away_score = update.external.awayScore
+      if (update.external.note !== undefined) patch.note = update.external.note
+      const result = await service.from('fixtures').update(patch).eq('id', update.local.id)
+      if (result.error) {
+        // 23514: status='played' ohne beide Torzahlen -- eine unvollstaendige Ergebniskorrektur
+        // bleibt unveraendert stehen statt den ganzen Lauf abzubrechen (dasselbe Muster wie bei
+        // Personen/Elternkontakt in Paket 014).
+        if (result.error.code !== '23514') throw result.error
+        appliedUpdatedCount -= 1
+      }
+    }
+    for (const retired of plan.retired) {
+      // Ein aus der Quelle verschwundenes Spiel gilt als abgesagt, nie als geloescht -- ein
+      // bereits gespieltes ('played') Ergebnis bleibt davon unberuehrt.
+      const result = await service.from('fixtures').update({ status: 'cancelled' }).eq('id', retired.id).neq('status', 'played')
+      if (result.error) throw result.error
+    }
+  }
+
+  return reply.code(200).send(await finishSyncRun({
+    service, request, organizationId, sourceId, domain, mode, correlationId,
+    createdCount: plan.created.length, updatedCount: appliedUpdatedCount, retiredCount: plan.retired.length,
+    skippedCount: plan.skipped.length, pendingConflicts,
+  }))
+}
+
+async function handleEventsSync(ctx: SyncDomainContext): Promise<FastifyReply> {
+  const { request, reply, service, organizationId, sourceDepartmentId, sourceId, sourceFieldMapping, sourceLossThresholdPercent, mode, domain, correlationId, rawRows, organizationTimezone } = ctx
+
+  let existingQuery = service
+    .from('club_events')
+    .select('id, external_id, recurrence_key, source_id, title, description, category, starts_at, ends_at, all_day, location_name, location_address, registration_url, status, source_updated_at, updated_at')
+    .eq('organization_id', organizationId)
+    .or(`source_id.is.null,source_id.eq.${sourceId}`)
+  if (sourceDepartmentId) existingQuery = existingQuery.eq('department_id', sourceDepartmentId)
+  else existingQuery = existingQuery.is('department_id', null)
+  const existingRows = await existingQuery
+  if (existingRows.error) throw existingRows.error
+  const existingLocals: ClubEventLocal[] = existingRows.data.map((row) => ({
+    id: row.id as string, externalId: row.external_id as string | null, recurrenceKey: row.recurrence_key as string | null,
+    sourceId: row.source_id as string | null,
+    title: row.title as string, description: row.description as string | null, category: row.category as string,
+    startsAt: new Date(row.starts_at as string), endsAt: row.ends_at ? new Date(row.ends_at as string) : null,
+    allDay: row.all_day as boolean, locationName: row.location_name as string | null, locationAddress: row.location_address as string | null,
+    registrationUrl: row.registration_url as string | null, status: row.status as string,
+    sourceUpdatedAt: row.source_updated_at ? new Date(row.source_updated_at as string) : null,
+    updatedAt: new Date(row.updated_at as string),
+  }))
+
+  const incoming: ExternalClubEvent[] = []
+  const invalidRecords: { label: string; reason: string }[] = []
+  let rowIndex = 0
+  for (const raw of rawRows) {
+    rowIndex += 1
+    const normalized = clubEventDomainAdapter.normalize(raw, sourceFieldMapping)
+    if (normalized === undefined) continue
+    const parsed = ExternalClubEventSchema.safeParse(normalized)
+    if (!parsed.success) {
+      const guessed = normalized as Record<string, unknown>
+      const label = typeof guessed.title === 'string' ? guessed.title : `Zeile ${rowIndex}`
+      invalidRecords.push({ label, reason: parsed.error.issues.map((issue) => issue.message).join('; ') })
+      continue
+    }
+    incoming.push(parsed.data)
+  }
+
+  const plan = planSync({ existing: existingLocals, incoming, match: createClubEventMatchStrategy(), policy: { lossThresholdPercent: sourceLossThresholdPercent } })
+  if (plan.aborted) {
+    return reply.code(200).send(await handleAbortedSync({ service, organizationId, sourceId, domain, mode, correlationId, triggeredBy: request.auth!.userId }))
+  }
+
+  const ignoredFingerprints = await loadIgnoredFingerprints(service, sourceId)
+  const pendingConflicts = buildPendingConflicts({ plan, sourceId, domain, identityOf: clubEventDomainAdapter.identityOf, invalidRecords, ignoredFingerprints })
+
+  // Eine Veranstaltung ohne aufloesbaren Start-Zeitpunkt (kaputtes Datumsformat) wuerde an der
+  // not-null-Spalte starts_at scheitern -- als Konflikt behandeln statt ungefangen zu werfen.
+  const applicableCreated: { entity: ExternalClubEvent; startsAt: string; startsAtConfirmed: boolean }[] = []
+  for (const entity of plan.created) {
+    const resolved = resolveScheduleDateTime(entity.startsAt, entity.startsAtTzid, organizationTimezone)
+    if (!resolved) {
+      const fingerprint = conflictFingerprint([sourceId, domain, 'invalid_record', 'startsAt', entity.externalId ?? entity.title])
+      if (!pendingConflicts.some((conflict) => conflict.fingerprint === fingerprint)) {
+        pendingConflicts.push({ kind: 'invalid_record', label: entity.title, field: 'startsAt', externalId: entity.externalId ?? null, localId: null, currentValue: null, incomingValue: entity.startsAt, fingerprint })
+      }
+      continue
+    }
+    applicableCreated.push({ entity, startsAt: resolved.iso, startsAtConfirmed: resolved.confirmed })
+  }
+
+  let appliedUpdatedCount = plan.updated.length
+  if (mode === 'apply') {
+    if (applicableCreated.length > 0) {
+      const insertRows = applicableCreated.map(({ entity, startsAt }) => {
+        const end = entity.endsAt ? resolveScheduleDateTime(entity.endsAt, entity.endsAtTzid, organizationTimezone) : undefined
+        return {
+          organization_id: organizationId, department_id: sourceDepartmentId,
+          title: entity.title, description: entity.description ?? null, category: entity.category ?? 'other',
+          starts_at: startsAt, ends_at: end?.iso ?? null, all_day: entity.allDay ?? false,
+          location_name: entity.locationName ?? null, location_address: entity.locationAddress ?? null,
+          registration_url: entity.registrationUrl ?? null, status: entity.status ?? 'scheduled',
+          source_id: sourceId, external_id: entity.externalId ?? null, recurrence_key: entity.recurrenceKey ?? null,
+          source_updated_at: entity.sourceUpdatedAt ?? null,
+        }
+      })
+      const insert = await service.from('club_events').insert(insertRows)
+      if (insert.error) throw insert.error
+    }
+    for (const update of plan.updated) {
+      const patch: Record<string, unknown> = {
+        source_updated_at: update.external.sourceUpdatedAt ?? update.local.sourceUpdatedAt?.toISOString() ?? null,
+      }
+      if (update.external.title !== undefined) patch.title = update.external.title
+      if (update.external.description !== undefined) patch.description = update.external.description
+      if (update.external.category !== undefined) patch.category = update.external.category
+      // Wie beim Anlegen (oben): ein nicht aufloesbares Datum wird ein Konflikt statt eines
+      // Updates, das das betroffene Feld klammheimlich ausspart und die Zeile trotzdem als
+      // erfolgreich aktualisiert zaehlt.
+      let unresolvedDateField: 'startsAt' | 'endsAt' | undefined
+      if (update.external.startsAt !== undefined) {
+        const resolved = resolveScheduleDateTime(update.external.startsAt, update.external.startsAtTzid, organizationTimezone)
+        if (resolved) patch.starts_at = resolved.iso
+        else unresolvedDateField = 'startsAt'
+      }
+      if (!unresolvedDateField && update.external.endsAt !== undefined) {
+        const resolved = resolveScheduleDateTime(update.external.endsAt, update.external.endsAtTzid, organizationTimezone)
+        if (resolved) patch.ends_at = resolved.iso
+        else unresolvedDateField = 'endsAt'
+      }
+      if (unresolvedDateField) {
+        const incomingValue = unresolvedDateField === 'startsAt' ? update.external.startsAt : update.external.endsAt
+        const fingerprint = conflictFingerprint([sourceId, domain, 'invalid_record', unresolvedDateField, update.external.externalId ?? update.local.id])
+        if (!pendingConflicts.some((conflict) => conflict.fingerprint === fingerprint)) {
+          pendingConflicts.push({ kind: 'invalid_record', label: update.local.title, field: unresolvedDateField, externalId: update.external.externalId ?? null, localId: update.local.id, currentValue: null, incomingValue: incomingValue ?? null, fingerprint })
+        }
+        appliedUpdatedCount -= 1
+        continue
+      }
+      if (update.external.allDay !== undefined) patch.all_day = update.external.allDay
+      if (update.external.locationName !== undefined) patch.location_name = update.external.locationName
+      if (update.external.locationAddress !== undefined) patch.location_address = update.external.locationAddress
+      if (update.external.registrationUrl !== undefined) patch.registration_url = update.external.registrationUrl
+      if (update.external.status !== undefined) patch.status = update.external.status
+      const result = await service.from('club_events').update(patch).eq('id', update.local.id)
+      if (result.error) throw result.error
+    }
+    for (const retired of plan.retired) {
+      const result = await service.from('club_events').update({ status: 'cancelled' }).eq('id', retired.id)
+      if (result.error) throw result.error
+    }
+  }
+
+  return reply.code(200).send(await finishSyncRun({
+    service, request, organizationId, sourceId, domain, mode, correlationId,
+    createdCount: applicableCreated.length, updatedCount: appliedUpdatedCount, retiredCount: plan.retired.length,
+    skippedCount: plan.skipped.length, pendingConflicts,
+  }))
 }
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
@@ -718,6 +1301,70 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       return reply.code(status).send({ error: submitCheck.reason, correlationId: request.id })
     }
 
+    // Herkunft eines Spiel-/Veranstaltungsbezugs leitet die API selbst aus der referenzierten
+    // Zeile her, nie aus Client-Angaben (plans/README.md, "RPC traut Client nicht") -- der Client
+    // nennt nur fixtureId/clubEventId, die tatsaechlichen Fakten/den Quellenstand bestimmt diese
+    // Anfrage selbst per factsFromFixture/factsFromClubEvent. sourceMaterial.facts bleibt
+    // trotzdem das vom Menschen bestaetigte Ergebnis (plans/019, Abschnitt 3: "er bestaetigt
+    // schneller als er tippt, aber er bestaetigt") -- provenance/snapshot sind nur die
+    // Herkunftsangabe dazu, keine Ueberschreibung der Fakten.
+    let sourceProvenance: Record<string, unknown> = {}
+    let sourceRevisionAt: string | null = null
+    let sourcePrefillSnapshot: Record<string, unknown> | null = null
+    if (input.fixtureId || input.clubEventId) {
+      const organizationRow = await client.from('organizations').select('timezone').eq('id', input.organizationId).single()
+      if (organizationRow.error) throw organizationRow.error
+      const timezone = organizationRow.data.timezone as string
+
+      if (input.fixtureId) {
+        const fixtureRow = await client
+          .from('fixtures')
+          .select('id, organization_id, department_id, team_id, kind, competition, is_home, own_team_label, opponent_name, kickoff_at, kickoff_time_confirmed, venue_name, venue_address, status, home_score, away_score, note, announcement_dismissed_at, result_dismissed_at, source_id, source_updated_at, created_at, updated_at')
+          .eq('organization_id', input.organizationId)
+          .eq('id', input.fixtureId)
+          .maybeSingle()
+        if (fixtureRow.error) throw fixtureRow.error
+        if (!fixtureRow.data || fixtureRow.data.department_id !== input.departmentId) {
+          return reply.code(400).send({ error: 'fixture_not_found_in_department', correlationId: request.id })
+        }
+        const fixture = mapFixtureRow(fixtureRow.data)
+        let team: Team | null = null
+        if (fixture.teamId) {
+          const teamRow = await client
+            .from('teams')
+            .select('id, organization_id, department_id, name, age_group, competition, source_id, archived_at, created_at')
+            .eq('id', fixture.teamId)
+            .maybeSingle()
+          if (teamRow.error) throw teamRow.error
+          team = teamRow.data ? TeamSchema.parse(mapTeamRow(teamRow.data)) : null
+        }
+        const facts = factsFromFixture(fixture, team, timezone)
+        if (facts.ok) {
+          sourceProvenance = facts.provenance
+          sourcePrefillSnapshot = facts.facts
+        }
+        sourceRevisionAt = fixture.sourceUpdatedAt ?? fixtureRow.data.updated_at as string
+      } else if (input.clubEventId) {
+        const eventRow = await client
+          .from('club_events')
+          .select('id, organization_id, department_id, team_id, title, description, category, starts_at, ends_at, all_day, location_name, location_address, registration_url, status, invitation_dismissed_at, source_id, source_updated_at, created_at, updated_at')
+          .eq('organization_id', input.organizationId)
+          .eq('id', input.clubEventId)
+          .maybeSingle()
+        if (eventRow.error) throw eventRow.error
+        if (!eventRow.data || (eventRow.data.department_id !== null && eventRow.data.department_id !== input.departmentId)) {
+          return reply.code(400).send({ error: 'event_not_found_in_department', correlationId: request.id })
+        }
+        const clubEvent = mapClubEventRow(eventRow.data)
+        const facts = factsFromClubEvent(clubEvent, timezone)
+        if (facts.ok) {
+          sourceProvenance = facts.provenance
+          sourcePrefillSnapshot = facts.facts
+        }
+        sourceRevisionAt = clubEvent.sourceUpdatedAt ?? eventRow.data.updated_at as string
+      }
+    }
+
     // forbiddenTopics wird additiv zu doNotMention ergaenzt (Plan 011, "Durchsetzung an vier
     // Stellen") -- die Content-Engine kennt beide nicht getrennt, nur eine gemeinsame Verbotsliste.
     const insert = await client
@@ -736,6 +1383,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
           doNotMention: Array.from(new Set([...input.sourceMaterial.doNotMention, ...config.policies.forbiddenTopics])),
         },
         source_revision: input.sourceRevision,
+        fixture_id: input.fixtureId ?? null,
+        club_event_id: input.clubEventId ?? null,
+        source_provenance: sourceProvenance,
+        source_revision_at: sourceRevisionAt,
+        source_prefill_snapshot: sourcePrefillSnapshot,
         created_by: request.auth!.userId,
       })
       .select('id, status')
@@ -1510,7 +2162,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const insert = await client
       .from('teams')
       .insert({ organization_id: department.data.organization_id, department_id: params.id, name: input.name })
-      .select('id, organization_id, department_id, name, archived_at, created_at')
+      .select('id, organization_id, department_id, name, age_group, competition, source_id, archived_at, created_at')
       .single()
     if (insert.error) throw insert.error
     const audit = await supabaseClients.forService().from('audit_events').insert({
@@ -1538,7 +2190,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const payload: Record<string, unknown> = {}
     if (input.name !== undefined) payload.name = input.name
     if (input.archived !== undefined) payload.archived_at = input.archived ? new Date().toISOString() : null
-    const update = await client.from('teams').update(payload).eq('id', params.id).select('id, organization_id, department_id, name, archived_at, created_at').single()
+    const update = await client.from('teams').update(payload).eq('id', params.id).select('id, organization_id, department_id, name, age_group, competition, source_id, archived_at, created_at').single()
     if (update.error) throw update.error
     const audit = await supabaseClients.forService().from('audit_events').insert({
       organization_id: existing.data.organization_id,
@@ -4202,15 +4854,36 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (!sourceEnabledDomains.includes(domain)) {
       return reply.code(400).send({ error: 'domain_not_enabled', correlationId: request.id })
     }
-    if (domain !== 'people') {
-      // Nur "Personen" hat in diesem Paket einen DomainAdapter (packages/member-directory).
-      // Mannschaften/Spielplaene/Veranstaltungen folgen in Paket 019 auf demselben Rahmen.
-      return reply.code(400).send({ error: 'domain_not_implemented', correlationId: request.id })
-    }
 
     const service = supabaseClients.forService()
     const correlationId = randomUUID()
     const referenceYear = new Date().getFullYear()
+
+    // teams/fixtures/events (Paket 019) sind eigene, top-level Funktionen statt weiterer
+    // Verzweigungen in diesem ohnehin schon langen Handler -- die Personen-Logik direkt darunter
+    // bleibt dadurch unangetastet (chirurgische Aenderung statt eines Neu-Einrueckens von 250
+    // Zeilen fuer ein neues if-Level).
+    if (domain === 'teams' || domain === 'fixtures' || domain === 'events') {
+      // integration.manage (oben bereits geprueft) und team.manage/fixture.manage/event.manage
+      // sind heute deckungsgleich (department_admin hat alle vier), aber nur zufaellig -- dieselbe
+      // Haertung wie canWriteGuardianContact bei der Personen-Domaene: eine kuenftige, engere
+      // Rolle mit ausschliesslich integration.manage duerfte sonst Spielplaene/Veranstaltungen
+      // schreiben, obwohl das Rechtekonzept dafuer die jeweils eigene Permission vorsieht.
+      const domainPermission = domain === 'teams' ? 'team.manage' : domain === 'fixtures' ? 'fixture.manage' : 'event.manage'
+      if (!(await requirePermission(request, reply, domainPermission, scope))) return
+      const organizationRow = await service.from('organizations').select('timezone').eq('id', organizationId).single()
+      if (organizationRow.error) throw organizationRow.error
+      const syncContext: SyncDomainContext = {
+        request, reply, service, organizationId, sourceDepartmentId, sourceId: params.id,
+        sourceFieldMapping, sourceLossThresholdPercent, mode, domain, correlationId, rawRows,
+        organizationTimezone: organizationRow.data.timezone as string,
+      }
+      if (domain === 'teams') return handleTeamsSync(syncContext)
+      if (domain === 'fixtures') return handleFixturesSync(syncContext)
+      return handleEventsSync(syncContext)
+    }
+
+    // ab hier: domain === 'people' -- IntegrationDomainSchema laesst keinen anderen Wert mehr zu.
 
     // Zustaendigkeitsbereich dieser Quelle: Personen ohne Quelle (fuer den unscharfen Abgleich
     // gegen von Hand gepflegte Eintraege) plus Personen, die bereits DIESER Quelle zugeordnet sind.
@@ -4501,6 +5174,176 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     })
 
     return reply.code(200).send(SyncSourceResponseSchema.parse({ run: mapSyncRunRow(run.data), conflicts: conflictRows.map(mapSyncConflictRow) }))
+  })
+
+  // --- Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen ------------------
+  //
+  // Lesezugriff laeuft ueber den Nutzer-Client -- fixtures_select/club_events_select sind
+  // vereinsweit (authz.is_any_member_of_organization), kein eigener requirePermission-Aufruf
+  // noetig, genau wie bei GET .../directory-people unten. Schreibzugriff (dismiss) verlangt
+  // post.create im betroffenen Scope, weil eine weggeklickte Vorschlagszeile nur relevant ist,
+  // wenn man selbst Beitraege erstellen kann.
+
+  app.get('/v1/organizations/:id/fixtures', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const query = z
+      .object({ departmentId: UuidSchema.optional(), teamId: UuidSchema.optional(), from: z.iso.datetime({ offset: true }).optional(), to: z.iso.datetime({ offset: true }).optional() })
+      .parse(request.query)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    let builder = client
+      .from('fixtures')
+      .select('id, organization_id, department_id, team_id, kind, competition, is_home, own_team_label, opponent_name, kickoff_at, kickoff_time_confirmed, venue_name, venue_address, status, home_score, away_score, note, announcement_dismissed_at, result_dismissed_at, source_id, source_updated_at, created_at, updated_at')
+      .eq('organization_id', params.id)
+    if (query.departmentId) builder = builder.eq('department_id', query.departmentId)
+    if (query.teamId) builder = builder.eq('team_id', query.teamId)
+    if (query.from) builder = builder.gte('kickoff_at', query.from)
+    if (query.to) builder = builder.lte('kickoff_at', query.to)
+    const rows = await builder.order('kickoff_at')
+    if (rows.error) throw rows.error
+    return reply.code(200).send(rows.data.map(mapFixtureRow))
+  })
+
+  app.get('/v1/organizations/:id/club-events', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const query = z
+      .object({ departmentId: UuidSchema.optional(), teamId: UuidSchema.optional(), from: z.iso.datetime({ offset: true }).optional(), to: z.iso.datetime({ offset: true }).optional() })
+      .parse(request.query)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    let builder = client
+      .from('club_events')
+      .select('id, organization_id, department_id, team_id, title, description, category, starts_at, ends_at, all_day, location_name, location_address, registration_url, status, invitation_dismissed_at, source_id, source_updated_at, created_at, updated_at')
+      .eq('organization_id', params.id)
+    if (query.departmentId) builder = builder.eq('department_id', query.departmentId)
+    if (query.teamId) builder = builder.eq('team_id', query.teamId)
+    if (query.from) builder = builder.gte('starts_at', query.from)
+    if (query.to) builder = builder.lte('starts_at', query.to)
+    const rows = await builder.order('starts_at')
+    if (rows.error) throw rows.error
+    return reply.code(200).send(rows.data.map(mapClubEventRow))
+  })
+
+  app.post('/v1/fixtures/:id/dismiss-announcement', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const existing = await client.from('fixtures').select('organization_id, department_id').eq('id', params.id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(existing.data.organization_id as string, existing.data.department_id as string)))) return
+    const update = await supabaseClients.forService().from('fixtures').update({ announcement_dismissed_at: new Date().toISOString() }).eq('id', params.id).select('id, organization_id, department_id, team_id, kind, competition, is_home, own_team_label, opponent_name, kickoff_at, kickoff_time_confirmed, venue_name, venue_address, status, home_score, away_score, note, announcement_dismissed_at, result_dismissed_at, source_id, source_updated_at, created_at, updated_at').single()
+    if (update.error) throw update.error
+    return reply.code(200).send(mapFixtureRow(update.data))
+  })
+
+  app.post('/v1/fixtures/:id/dismiss-result', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const existing = await client.from('fixtures').select('organization_id, department_id').eq('id', params.id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(existing.data.organization_id as string, existing.data.department_id as string)))) return
+    const update = await supabaseClients.forService().from('fixtures').update({ result_dismissed_at: new Date().toISOString() }).eq('id', params.id).select('id, organization_id, department_id, team_id, kind, competition, is_home, own_team_label, opponent_name, kickoff_at, kickoff_time_confirmed, venue_name, venue_address, status, home_score, away_score, note, announcement_dismissed_at, result_dismissed_at, source_id, source_updated_at, created_at, updated_at').single()
+    if (update.error) throw update.error
+    return reply.code(200).send(mapFixtureRow(update.data))
+  })
+
+  app.post('/v1/club-events/:id/dismiss-invitation', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const existing = await client.from('club_events').select('organization_id, department_id').eq('id', params.id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(existing.data.organization_id as string, existing.data.department_id as string | null)))) return
+    const update = await supabaseClients.forService().from('club_events').update({ invitation_dismissed_at: new Date().toISOString() }).eq('id', params.id).select('id, organization_id, department_id, team_id, title, description, category, starts_at, ends_at, all_day, location_name, location_address, registration_url, status, invitation_dismissed_at, source_id, source_updated_at, created_at, updated_at').single()
+    if (update.error) throw update.error
+    return reply.code(200).send(mapClubEventRow(update.data))
+  })
+
+  // Anlassvorschlaege: zustandslos aus reinen Lesevergleichen berechnet (plans/019,
+  // "Entscheidungen vor der Umsetzung" -- kein taeglicher Job, keine Cron-Infrastruktur vorhanden,
+  // Paket 004 weiterhin "in Arbeit"). Nur die drei ereignisgebundenen Regeln (Ankuendigung,
+  // Ergebnis, Einladung) -- der vierte, allgemeine Kontingent-Anstoss aus dem Plan bleibt
+  // bewusst offen (siehe Plan, "Umsetzung: Ergebnis und Abweichungen"): er braucht dieselbe
+  // periodengenaue Kontingentberechnung wie public.schedule_publication, deren Duplizierung hier
+  // ohne eigene Tests mehr Risiko als Nutzen waere.
+  app.get('/v1/departments/:id/content-suggestions', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const department = await client.from('departments').select('organization_id').eq('id', params.id).maybeSingle()
+    if (department.error) throw department.error
+    if (!department.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const scope = toPermissionScope(department.data.organization_id as string, params.id)
+    if (!(await requirePermission(request, reply, 'post.create', scope))) return
+
+    const now = new Date()
+    const in3Days = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000).toISOString()
+    const past48Hours = new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString()
+    const in14Days = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000).toISOString()
+    const nowIso = now.toISOString()
+
+    const [upcomingFixtures, playedFixtures, upcomingEvents, submissionsWithFixture, submissionsWithEvent] = await Promise.all([
+      client.from('fixtures').select('id, opponent_name, kickoff_at, source_updated_at, announcement_dismissed_at')
+        .eq('department_id', params.id).neq('status', 'cancelled').gte('kickoff_at', nowIso).lte('kickoff_at', in3Days),
+      client.from('fixtures').select('id, opponent_name, kickoff_at, home_score, away_score, source_updated_at, result_dismissed_at')
+        .eq('department_id', params.id).eq('status', 'played').gte('kickoff_at', past48Hours).lte('kickoff_at', nowIso),
+      client.from('club_events').select('id, title, starts_at, source_updated_at, invitation_dismissed_at')
+        .eq('department_id', params.id).neq('status', 'cancelled').gte('starts_at', nowIso).lte('starts_at', in14Days),
+      // fetchAllRows aus demselben Grund wie bei membersWithApprovePermission: max_rows=1000
+      // wuerde bei vielen bereits verknuepften Einreichungen einige stillschweigend abschneiden.
+      fetchAllRows<{ fixture_id: string }>((from, to) =>
+        client.from('submissions').select('fixture_id').eq('department_id', params.id).not('fixture_id', 'is', null).range(from, to),
+      ),
+      fetchAllRows<{ club_event_id: string }>((from, to) =>
+        client.from('submissions').select('club_event_id').eq('department_id', params.id).not('club_event_id', 'is', null).range(from, to),
+      ),
+    ])
+    if (upcomingFixtures.error) throw upcomingFixtures.error
+    if (playedFixtures.error) throw playedFixtures.error
+    if (upcomingEvents.error) throw upcomingEvents.error
+
+    const fixtureIdsWithSubmission = new Set(submissionsWithFixture.map((row) => row.fixture_id))
+    const eventIdsWithSubmission = new Set(submissionsWithEvent.map((row) => row.club_event_id))
+    // Wiederkehr nach einer Korrektur in der Quelle: erscheint wieder, sobald source_updated_at
+    // neuer ist als der Zeitstempel des Wegklickens -- ein verlegtes Spiel ist eine neue
+    // Ankuendigung (plans/019, Abschnitt 4).
+    const isDismissed = (dismissedAt: string | null, sourceUpdatedAt: string | null): boolean => {
+      if (!dismissedAt) return false
+      if (!sourceUpdatedAt) return true
+      return new Date(sourceUpdatedAt) <= new Date(dismissedAt)
+    }
+
+    const suggestions: ContentSuggestion[] = []
+    for (const fixture of upcomingFixtures.data) {
+      if (fixtureIdsWithSubmission.has(fixture.id as string)) continue
+      if (isDismissed(fixture.announcement_dismissed_at as string | null, fixture.source_updated_at as string | null)) continue
+      suggestions.push({
+        kind: 'fixture_announcement', departmentId: params.id, fixtureId: fixture.id as string,
+        occursAt: fixture.kickoff_at as string,
+        label: fixture.opponent_name ? `Spielankündigung gegen ${fixture.opponent_name as string} fehlt noch` : 'Spielankündigung fehlt noch',
+      })
+    }
+    for (const fixture of playedFixtures.data) {
+      if (fixtureIdsWithSubmission.has(fixture.id as string)) continue
+      if (isDismissed(fixture.result_dismissed_at as string | null, fixture.source_updated_at as string | null)) continue
+      suggestions.push({
+        kind: 'fixture_result', departmentId: params.id, fixtureId: fixture.id as string,
+        occursAt: fixture.kickoff_at as string,
+        label: fixture.opponent_name ? `Ergebnis gegen ${fixture.opponent_name as string} noch nicht erzählt` : 'Ergebnis noch nicht erzählt',
+      })
+    }
+    for (const event of upcomingEvents.data) {
+      if (eventIdsWithSubmission.has(event.id as string)) continue
+      if (isDismissed(event.invitation_dismissed_at as string | null, event.source_updated_at as string | null)) continue
+      suggestions.push({ kind: 'event_invitation', departmentId: params.id, clubEventId: event.id as string, occursAt: event.starts_at as string, label: `Einladung zu „${event.title as string}“ fehlt noch` })
+    }
+    suggestions.sort((a, b) => (a.occursAt ?? '').localeCompare(b.occursAt ?? ''))
+
+    return reply.code(200).send(ContentSuggestionsResponseSchema.parse({ suggestions }))
   })
 
   // --- Paket 014: Mitgliederverzeichnis ------------------------------------------------------

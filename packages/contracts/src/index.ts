@@ -51,6 +51,13 @@ export const CreateSubmissionSchema = z.object({
   sourceMaterial: SourceMaterialSchema,
   sourceRevision: z.int().positive().default(1),
   priority: z.int().min(10).max(100).default(40),
+  // Paket 019: aus welchem Spiel/welcher Veranstaltung entstand dieser Beitrag. Herkunft
+  // (source_provenance/source_revision_at/source_prefill_snapshot) leitet die API selbst aus der
+  // referenzierten Zeile ab, nie aus Client-Angaben -- vgl. plans/README.md "RPC traut Client nicht".
+  fixtureId: UuidSchema.optional(),
+  clubEventId: UuidSchema.optional(),
+}).refine((value) => !value.fixtureId || !value.clubEventId, {
+  message: 'fixtureId and clubEventId are mutually exclusive',
 })
 
 export const ClaimSchema = z.object({ sourceId: z.string().min(1).max(100), text: z.string().trim().min(1).max(500) })
@@ -306,6 +313,12 @@ export const TeamSchema = z.object({
   organizationId: UuidSchema,
   departmentId: UuidSchema,
   name: z.string().min(1),
+  // Paket 019: Herkunft und Merkmale, die fuer Inhalte zaehlen. Nur der Sync-Codepfad (Service
+  // Role) schreibt sie -- keine Oberflaeche in diesem Paket setzt sie manuell, siehe Migration
+  // 2026080704_fixtures_and_events.sql.
+  ageGroup: z.string().nullable().optional(),
+  competition: z.string().nullable().optional(),
+  sourceId: UuidSchema.nullable().optional(),
   archivedAt: z.iso.datetime({ offset: true }).nullable(),
   createdAt: z.iso.datetime({ offset: true }),
 })
@@ -948,6 +961,86 @@ export const UpdateProfileRequestSchema = z
   .object({ displayName: z.string().trim().min(1).max(120).optional() })
   .refine((value) => Object.keys(value).length > 0, { message: 'at least one field must be provided' })
 
+// Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen.
+export const FixtureKindSchema = z.enum(['match', 'friendly', 'tournament', 'cup'])
+export const FixtureStatusSchema = z.enum(['scheduled', 'postponed', 'cancelled', 'played', 'unknown'])
+export const FixtureSchema = z.object({
+  id: UuidSchema,
+  organizationId: UuidSchema,
+  departmentId: UuidSchema,
+  teamId: UuidSchema.nullable(),
+  kind: FixtureKindSchema,
+  competition: z.string().nullable(),
+  isHome: z.boolean().nullable(),
+  ownTeamLabel: z.string().nullable(),
+  opponentName: z.string().nullable(),
+  kickoffAt: z.iso.datetime({ offset: true }).nullable(),
+  kickoffTimeConfirmed: z.boolean(),
+  venueName: z.string().nullable(),
+  venueAddress: z.string().nullable(),
+  status: FixtureStatusSchema,
+  homeScore: z.int().min(0).nullable(),
+  awayScore: z.int().min(0).nullable(),
+  note: z.string().nullable(),
+  announcementDismissedAt: z.iso.datetime({ offset: true }).nullable(),
+  resultDismissedAt: z.iso.datetime({ offset: true }).nullable(),
+  sourceId: UuidSchema.nullable(),
+  sourceUpdatedAt: z.iso.datetime({ offset: true }).nullable(),
+  createdAt: z.iso.datetime({ offset: true }),
+  updatedAt: z.iso.datetime({ offset: true }),
+})
+
+export const ClubEventCategorySchema = z.enum([
+  'general_meeting', 'festival', 'tournament', 'training_camp', 'course', 'social', 'fundraiser', 'ceremony', 'other',
+])
+export const ClubEventStatusSchema = z.enum(['scheduled', 'postponed', 'cancelled'])
+export const ClubEventSchema = z.object({
+  id: UuidSchema,
+  organizationId: UuidSchema,
+  departmentId: UuidSchema.nullable(),
+  teamId: UuidSchema.nullable(),
+  title: z.string().min(1),
+  description: z.string().nullable(),
+  category: ClubEventCategorySchema,
+  startsAt: z.iso.datetime({ offset: true }),
+  endsAt: z.iso.datetime({ offset: true }).nullable(),
+  allDay: z.boolean(),
+  locationName: z.string().nullable(),
+  locationAddress: z.string().nullable(),
+  registrationUrl: z.string().nullable(),
+  status: ClubEventStatusSchema,
+  invitationDismissedAt: z.iso.datetime({ offset: true }).nullable(),
+  sourceId: UuidSchema.nullable(),
+  sourceUpdatedAt: z.iso.datetime({ offset: true }).nullable(),
+  createdAt: z.iso.datetime({ offset: true }),
+  updatedAt: z.iso.datetime({ offset: true }),
+})
+
+// Herkunftsnachweis einer vorbelegten Tatsache (plans/019, Abschnitt 3): je Fakt, aus welcher
+// Quellenzeile und von welchem Stand er kommt. Von der API selbst aus der referenzierten
+// fixture/club_event-Zeile berechnet, nie vom Client uebernommen.
+export const FactProvenanceSchema = z.object({
+  source: z.enum(['fixture', 'club_event']),
+  sourceId: UuidSchema,
+  capturedAt: z.iso.datetime({ offset: true }),
+})
+export const SourceProvenanceMapSchema = z.record(z.string(), FactProvenanceSchema)
+
+export const ContentSuggestionKindSchema = z.enum(['fixture_announcement', 'fixture_result', 'event_invitation', 'quota_reminder'])
+export const ContentSuggestionSchema = z.object({
+  kind: ContentSuggestionKindSchema,
+  label: z.string().min(1),
+  departmentId: UuidSchema.nullable(),
+  fixtureId: UuidSchema.optional(),
+  clubEventId: UuidSchema.optional(),
+  occursAt: z.iso.datetime({ offset: true }).optional(),
+}).refine((value) => {
+  if (value.kind === 'fixture_announcement' || value.kind === 'fixture_result') return value.fixtureId !== undefined && value.clubEventId === undefined
+  if (value.kind === 'event_invitation') return value.clubEventId !== undefined && value.fixtureId === undefined
+  return value.fixtureId === undefined && value.clubEventId === undefined
+}, { message: 'reference id must match the suggestion kind' })
+export const ContentSuggestionsResponseSchema = z.object({ suggestions: z.array(ContentSuggestionSchema) })
+
 export type Health = z.infer<typeof HealthSchema>
 export type ContentPresetSlug = z.infer<typeof ContentPresetSlugSchema>
 export type CommunicationGoal = z.infer<typeof CommunicationGoalSchema>
@@ -1071,3 +1164,14 @@ export type CreateDirectoryPersonRequest = z.infer<typeof CreateDirectoryPersonR
 export type UpdateDirectoryPersonRequest = z.infer<typeof UpdateDirectoryPersonRequestSchema>
 export type Profile = z.infer<typeof ProfileSchema>
 export type UpdateProfileRequest = z.infer<typeof UpdateProfileRequestSchema>
+export type FixtureKind = z.infer<typeof FixtureKindSchema>
+export type FixtureStatus = z.infer<typeof FixtureStatusSchema>
+export type Fixture = z.infer<typeof FixtureSchema>
+export type ClubEventCategory = z.infer<typeof ClubEventCategorySchema>
+export type ClubEventStatus = z.infer<typeof ClubEventStatusSchema>
+export type ClubEvent = z.infer<typeof ClubEventSchema>
+export type FactProvenance = z.infer<typeof FactProvenanceSchema>
+export type SourceProvenanceMap = z.infer<typeof SourceProvenanceMapSchema>
+export type ContentSuggestionKind = z.infer<typeof ContentSuggestionKindSchema>
+export type ContentSuggestion = z.infer<typeof ContentSuggestionSchema>
+export type ContentSuggestionsResponse = z.infer<typeof ContentSuggestionsResponseSchema>

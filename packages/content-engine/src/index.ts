@@ -1,6 +1,9 @@
 import { GeneratedPostSchema, type CreateSubmission, type GeneratedPost, type PlatformVariant } from '@vereinsfunk/contracts'
 import { getPreset, validateSourceMaterial } from './presets.js'
 
+export { factsFromFixture, factsFromClubEvent } from './schedule.js'
+export type { FactsFromScheduleResult } from './schedule.js'
+
 export interface GroundedContentBrief { allowedClaims: readonly { sourceId: string; text: string }[]; approvedQuotes: readonly { sourceId: string; text: string; attribution?: string }[]; missingFacts: readonly string[]; prohibitedClaims: readonly string[]; goal: CreateSubmission['communicationGoal']; requestedFormats: CreateSubmission['requestedFormats']; presetSlug: string }
 export interface ContentGenerator { generate(input: CreateSubmission): Promise<GeneratedPost> }
 

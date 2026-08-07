@@ -15,6 +15,8 @@ export const permissions = [
   'billing.manage',
   'directory.read',
   'integration.manage',
+  'fixture.manage',
+  'event.manage',
 ] as const
 
 export type Permission = (typeof permissions)[number]
@@ -68,6 +70,10 @@ export const rolePermissions: Readonly<Record<Role, ReadonlySet<Permission>>> = 
     // verwalten (integration_sources kennt keine Team-Ebene, deshalb nur hier, nicht bei team_manager).
     'directory.read',
     'integration.manage',
+    // Paket 019: Spielplaene/Veranstaltungen der eigenen Abteilung verwalten -- ebenfalls nicht
+    // bei team_manager, aus demselben Grund wie team.manage/integration.manage.
+    'fixture.manage',
+    'event.manage',
   ]),
   editor: new Set(['post.create', 'post.edit', 'post.submit', 'analytics.view']),
   approver: new Set(['post.approve', 'analytics.view']),

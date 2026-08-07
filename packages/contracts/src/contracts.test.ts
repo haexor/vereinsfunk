@@ -3,6 +3,7 @@ import {
   AddPlatformAdminRequestSchema,
   BrandAssetSchema,
   ConfirmBrandAssetLicenseRequestSchema,
+  ContentSuggestionSchema,
   CreateBrandAssetRequestSchema,
   CreateDirectoryPersonRequestSchema,
   CreateIntegrationSourceRequestSchema,
@@ -252,8 +253,34 @@ describe('structure and invitation contracts', () => {
         .success,
     ).toBe(true)
     expect(
-      TeamSchema.safeParse({ id: org, organizationId: org, departmentId: department, name: 'Team A', archivedAt: null, createdAt: offsetTimestamp }).success,
+      TeamSchema.safeParse({
+        id: org, organizationId: org, departmentId: department, name: 'Team A',
+        ageGroup: null, competition: null, sourceId: null, archivedAt: null, createdAt: offsetTimestamp,
+      }).success,
     ).toBe(true)
+  })
+
+  // Paket 019 fuegte ageGroup/competition/sourceId hinzu -- ein Payload aus der Zeit davor
+  // (bzw. ein anderer Aufrufer, der diese Schluessel nicht mitgibt) muss weiterhin parsen.
+  it('accepts a TeamSchema payload without the Paket-019 ageGroup/competition/sourceId keys', () => {
+    expect(
+      TeamSchema.safeParse({
+        id: org, organizationId: org, departmentId: department, name: 'Team A', archivedAt: null, createdAt: '2026-08-05T12:34:56Z',
+      }).success,
+    ).toBe(true)
+  })
+
+  it('requires a fixtureId on a fixture-kind content suggestion and rejects a mismatched clubEventId', () => {
+    expect(ContentSuggestionSchema.safeParse({ kind: 'fixture_announcement', label: 'x', departmentId: department, fixtureId: team }).success).toBe(true)
+    expect(ContentSuggestionSchema.safeParse({ kind: 'fixture_result', label: 'x', departmentId: department }).success).toBe(false)
+    expect(ContentSuggestionSchema.safeParse({ kind: 'fixture_announcement', label: 'x', departmentId: department, clubEventId: team }).success).toBe(false)
+  })
+
+  it('requires a clubEventId on an event_invitation suggestion and permits neither on a quota_reminder', () => {
+    expect(ContentSuggestionSchema.safeParse({ kind: 'event_invitation', label: 'x', departmentId: department, clubEventId: team }).success).toBe(true)
+    expect(ContentSuggestionSchema.safeParse({ kind: 'event_invitation', label: 'x', departmentId: department }).success).toBe(false)
+    expect(ContentSuggestionSchema.safeParse({ kind: 'quota_reminder', label: 'x', departmentId: department }).success).toBe(true)
+    expect(ContentSuggestionSchema.safeParse({ kind: 'quota_reminder', label: 'x', departmentId: department, fixtureId: team }).success).toBe(false)
   })
 
   it('accepts a PostgREST-shaped expiresAt on MemberRoleEntrySchema', () => {
