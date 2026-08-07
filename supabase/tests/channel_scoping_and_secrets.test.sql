@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(30);
+select plan(31);
 
 set local role postgres;
 
@@ -9,7 +9,7 @@ set local role postgres;
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
 values
   ('00000000-0000-0000-0000-000000000000', '65000000-0000-4000-8000-000000000001', 'authenticated', 'authenticated', 'vereinsleitung@pgtap-channels.local', '', '{}', '{}', now(), now()),
-  ('00000000-0000-4000-8000-000000000000', '65000000-0000-4000-8000-000000000002', 'authenticated', 'authenticated', 'fussball-admin@pgtap-channels.local', '', '{}', '{}', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '65000000-0000-4000-8000-000000000002', 'authenticated', 'authenticated', 'fussball-admin@pgtap-channels.local', '', '{}', '{}', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '65000000-0000-4000-8000-000000000003', 'authenticated', 'authenticated', 'marketing-admin@pgtap-channels.local', '', '{}', '{}', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '65000000-0000-4000-8000-000000000004', 'authenticated', 'authenticated', 'mitglied@pgtap-channels.local', '', '{}', '{}', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '65000000-0000-4000-8000-000000000098', 'authenticated', 'authenticated', 'fremdverein@pgtap-channels.local', '', '{}', '{}', now(), now());
@@ -184,9 +184,8 @@ select is(authz.post_is_not_confidential_only('65000000-1000-4000-8000-000000000
 -- posts_visible_org_wide.
 set local role postgres;
 update public.posts set status = 'published' where id in ('65000000-2000-4000-8000-000000000001', '65000000-2000-4000-8000-000000000004');
-insert into public.policy_settings (organization_id, scope, posts_visible_org_wide, updated_by) values
-  ('65000000-1000-4000-8000-000000000001', 'organization', true, '65000000-0000-4000-8000-000000000001')
-  on conflict do nothing;
+-- Die Vereinszeile existiert bereits aus Test 14-15; policy_settings_org_unique laesst je Verein
+-- ohnehin nur eine zu, deshalb hier nur ein update statt eines zweiten insert.
 update public.policy_settings set posts_visible_org_wide = true where organization_id = '65000000-1000-4000-8000-000000000001' and scope = 'organization';
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '65000000-0000-4000-8000-000000000003', true);
@@ -231,6 +230,21 @@ select public.cleanup_expired_oauth_state();
 select is((select count(*)::integer from public.oauth_states where id = '65000000-9000-4000-8000-000000000001'), 0, 'cleanup_expired_oauth_state removes an expired oauth_states row');
 select is((select count(*)::integer from public.oauth_states where id = '65000000-9000-4000-8000-000000000002'), 1, 'cleanup_expired_oauth_state leaves a not-yet-expired oauth_states row');
 select is((select count(*)::integer from public.oauth_pending_connections where id = '65000000-9100-4000-8000-000000000001'), 0, 'cleanup_expired_oauth_state removes an expired oauth_pending_connections row');
+
+-- 28: leere allowedChannelIds-Liste heisst "nichts erlaubt", nicht "keine Einschraenkung" (Plan 011,
+-- "Zusammenfuehrung der Ebenen"). C4 ist vereinsweit freigegeben, aktiv und hat eine verantwortliche
+-- Person -- alle Pruefungen vor der Kanalliste sind also erfuellt, es kann nur an ihr scheitern.
+set local role postgres;
+insert into public.posts (id, organization_id, department_id, status, created_by, current_version_id) values
+  ('65000000-2000-4000-8000-000000000005', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'approved', '65000000-0000-4000-8000-000000000001', '65000000-3000-4000-8000-000000000005');
+insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type, created_by_user_id) values
+  ('65000000-3000-4000-8000-000000000005', '65000000-1000-4000-8000-000000000001', '65000000-2000-4000-8000-000000000005', 1, '{}', '{"config": {"allowedChannelIds": []}}', 'user', '65000000-0000-4000-8000-000000000001');
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '65000000-0000-4000-8000-000000000002', true);
+select throws_ok(
+  $$select public.schedule_publication('65000000-3000-4000-8000-000000000005'::uuid, '65000000-8000-4000-8000-000000000004'::uuid, null)$$,
+  'P0001', 'channel_not_allowed', 'schedule_publication rejects every channel when allowedChannelIds is an empty list'
+);
 
 select * from finish();
 rollback;

@@ -308,9 +308,11 @@ begin
 
   select * into connection from public.social_connections where id = target_social_connection_id and organization_id = post.organization_id;
   if not found then raise exception 'not_found'; end if;
-  -- Ein Token, das in weniger als sieben Tagen abgelaufen ist oder dessen Pruefung fehlgeschlagen
-  -- ist, setzt status = 'action_required' (taeglicher Check, siehe Cron unten) -- Einplanen auf
-  -- einem solchen Kanal ist kein Retry-faehiger Fehler, sondern ein fachlicher Zustand.
+  -- Ein Token, das in weniger als sieben Tagen ablaeuft oder dessen Pruefung fehlgeschlagen ist,
+  -- setzt status = 'action_required' (public.flag_channels_needing_reconnect weiter unten bzw. der
+  -- Verify-Endpunkt; ein Scheduler, der die Funktion taeglich aufruft, fehlt dem Stack noch --
+  -- siehe Plan 012, "Risiken und offene Entscheidungen"). Einplanen auf einem solchen Kanal ist
+  -- kein Retry-faehiger Fehler, sondern ein fachlicher Zustand.
   if connection.status <> 'active' or connection.archived_at is not null then
     raise exception 'channel_not_allowed';
   end if;
@@ -337,8 +339,12 @@ begin
     raise exception 'channel_not_allowed';
   end if;
 
+  -- null heisst "keine Einschraenkung", die leere Liste heisst "nichts erlaubt" (Plan 011,
+  -- "Zusammenfuehrung der Ebenen"; resolveAvailableChannels in packages/domain setzt genau das um).
+  -- Deshalb KEIN jsonb_array_length(...) > 0 hier: das haette eine leere Liste stillschweigend zu
+  -- "alles erlaubt" gemacht und die Richtlinie ueber den direkten RPC-Aufruf umgehbar.
   allowed_channels := version.effective_config_snapshot->'config'->'allowedChannelIds';
-  if allowed_channels is not null and jsonb_typeof(allowed_channels) = 'array' and jsonb_array_length(allowed_channels) > 0
+  if allowed_channels is not null and jsonb_typeof(allowed_channels) = 'array'
      and not exists (select 1 from jsonb_array_elements_text(allowed_channels) value where value = target_social_connection_id::text) then
     raise exception 'channel_not_allowed';
   end if;

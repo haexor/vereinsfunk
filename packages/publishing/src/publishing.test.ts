@@ -41,6 +41,37 @@ describe('RealMetaOAuthClient', () => {
     expect(result).toEqual({ accessToken: 'short-token', expiresInSeconds: 3600 })
   })
 
+  // URLs landen in Proxy-, Server- und Fehlerlogs -- appSecret und Zugriffstoken duerfen deshalb
+  // nur im POST-Body bzw. im Authorization-Header stehen, nie als Query-Parameter.
+  it('sends the app secret in the request body and never in the URL', async () => {
+    const fetchImpl = vi.fn(async () => Response.json({ access_token: 'short-token' })) as unknown as typeof fetch
+    await client(fetchImpl).exchangeCode('code', 'https://api.example.org/callback')
+    const [url, init] = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit]
+    expect(url).not.toContain('app-secret')
+    expect(init.method).toBe('POST')
+    expect(String(init.body)).toContain('client_secret=app-secret')
+    expect(init.signal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('sends the access token as a bearer header and never in the URL', async () => {
+    const fetchImpl = vi.fn(async () => Response.json({ data: [] })) as unknown as typeof fetch
+    await client(fetchImpl).listAvailableAccounts('user-token', 'facebook')
+    await client(fetchImpl).verifyToken('user-token')
+    for (const [url, init] of (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls as [string, RequestInit][]) {
+      expect(url).not.toContain('user-token')
+      expect((init.headers as Record<string, string>).authorization).toBe('Bearer user-token')
+      expect(init.signal).toBeInstanceOf(AbortSignal)
+    }
+  })
+
+  it('aborts a Meta call that exceeds the configured timeout', async () => {
+    const hangingFetch = vi.fn((_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(new Error('aborted')))),
+    ) as unknown as typeof fetch
+    const timingOutClient = new RealMetaOAuthClient({ appId: 'app-id', appSecret: 'app-secret', graphVersion: 'v21.0', timeoutMs: 10, fetch: hangingFetch })
+    await expect(timingOutClient.exchangeCode('code', 'https://api.example.org/callback')).rejects.toThrow()
+  })
+
   it('maps facebook pages and instagram business accounts from /me/accounts', async () => {
     const fetchImpl = vi.fn(async () =>
       Response.json({

@@ -68,11 +68,41 @@ export interface MetaOAuthClient {
   verifyToken(accessToken: string): Promise<{ valid: boolean }>
 }
 
-export interface MetaOAuthClientOptions { appId: string; appSecret: string; graphVersion: string; fetch?: typeof fetch }
+export interface MetaOAuthClientOptions { appId: string; appSecret: string; graphVersion: string; timeoutMs?: number; fetch?: typeof fetch }
+
+// Meta antwortet auf diese vier Aufrufe normalerweise in unter einer Sekunde. Ohne Abbruch haengt
+// der Fastify-Request bis zum Socket-Timeout -- der OAuth-Callback laeuft im Anfrage-Thread eines
+// Browser-Redirects, ein haengender Aufruf dort ist eine sichtbare, leere Seite.
+const META_REQUEST_TIMEOUT_MS = 10_000
 
 export class RealMetaOAuthClient implements MetaOAuthClient {
   private readonly request: typeof fetch
-  constructor(private readonly options: MetaOAuthClientOptions) { this.request = options.fetch ?? fetch }
+  private readonly timeoutMs: number
+  constructor(private readonly options: MetaOAuthClientOptions) {
+    this.request = options.fetch ?? fetch
+    this.timeoutMs = options.timeoutMs ?? META_REQUEST_TIMEOUT_MS
+  }
+
+  // Token und appSecret gehoeren nie in die URL: URLs landen in Proxy-, Server- und Fehlerlogs
+  // (Projektregel "Secrets duerfen nicht geloggt werden"). Geheimnisse reisen deshalb im
+  // POST-Body, Zugriffstoken im Authorization-Header.
+  private async post(path: string, body: Record<string, string>, label: string): Promise<Record<string, unknown>> {
+    const response = await this.request(`https://graph.facebook.com/${this.options.graphVersion}/${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(body),
+      signal: AbortSignal.timeout(this.timeoutMs),
+    })
+    if (!response.ok) throw new Error(`Meta ${label} failed (${response.status})`)
+    return (await response.json()) as Record<string, unknown>
+  }
+
+  private async getWithToken(path: string, accessToken: string): Promise<Response> {
+    return this.request(`https://graph.facebook.com/${this.options.graphVersion}/${path}`, {
+      headers: { authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(this.timeoutMs),
+    })
+  }
 
   authorizationUrl(options: { state: string; redirectUri: string; platform: Platform }): string {
     // instagram_content_publish/pages_manage_posts/pages_read_engagement erfordern den Meta App
@@ -91,14 +121,11 @@ export class RealMetaOAuthClient implements MetaOAuthClient {
   }
 
   async exchangeCode(code: string, redirectUri: string): Promise<MetaExchangedToken> {
-    const url = new URL(`https://graph.facebook.com/${this.options.graphVersion}/oauth/access_token`)
-    url.searchParams.set('client_id', this.options.appId)
-    url.searchParams.set('client_secret', this.options.appSecret)
-    url.searchParams.set('redirect_uri', redirectUri)
-    url.searchParams.set('code', code)
-    const response = await this.request(url.toString())
-    if (!response.ok) throw new Error(`Meta code exchange failed (${response.status})`)
-    const data = (await response.json()) as Record<string, unknown>
+    const data = await this.post(
+      'oauth/access_token',
+      { client_id: this.options.appId, client_secret: this.options.appSecret, redirect_uri: redirectUri, code },
+      'code exchange',
+    )
     if (typeof data.access_token !== 'string') throw new Error('Meta code exchange response did not contain an access token')
     return { accessToken: data.access_token, ...(typeof data.expires_in === 'number' ? { expiresInSeconds: data.expires_in } : {}) }
   }
@@ -107,24 +134,18 @@ export class RealMetaOAuthClient implements MetaOAuthClient {
   // Seiten-/Instagram-Business-Tokens abgeleitet werden -- Seiten-Tokens aus einem langlebigen
   // Nutzertoken laufen selbst nicht mehr ab, aus einem kurzlebigen schon nach Stunden.
   async exchangeForLongLivedToken(shortLivedToken: string): Promise<MetaExchangedToken> {
-    const url = new URL(`https://graph.facebook.com/${this.options.graphVersion}/oauth/access_token`)
-    url.searchParams.set('grant_type', 'fb_exchange_token')
-    url.searchParams.set('client_id', this.options.appId)
-    url.searchParams.set('client_secret', this.options.appSecret)
-    url.searchParams.set('fb_exchange_token', shortLivedToken)
-    const response = await this.request(url.toString())
-    if (!response.ok) throw new Error(`Meta long-lived token exchange failed (${response.status})`)
-    const data = (await response.json()) as Record<string, unknown>
+    const data = await this.post(
+      'oauth/access_token',
+      { grant_type: 'fb_exchange_token', client_id: this.options.appId, client_secret: this.options.appSecret, fb_exchange_token: shortLivedToken },
+      'long-lived token exchange',
+    )
     if (typeof data.access_token !== 'string') throw new Error('Meta long-lived token exchange response did not contain an access token')
     return { accessToken: data.access_token, ...(typeof data.expires_in === 'number' ? { expiresInSeconds: data.expires_in } : {}) }
   }
 
   async listAvailableAccounts(userToken: string, platform: Platform): Promise<readonly MetaAvailableAccount[]> {
     const fields = platform === 'instagram' ? 'id,name,access_token,instagram_business_account{id,username}' : 'id,name,access_token'
-    const url = new URL(`https://graph.facebook.com/${this.options.graphVersion}/me/accounts`)
-    url.searchParams.set('fields', fields)
-    url.searchParams.set('access_token', userToken)
-    const response = await this.request(url.toString())
+    const response = await this.getWithToken(`me/accounts?fields=${encodeURIComponent(fields)}`, userToken)
     if (!response.ok) throw new Error(`Meta account listing failed (${response.status})`)
     const data = (await response.json()) as { data?: unknown[] }
     const pages = Array.isArray(data.data) ? data.data : []
@@ -152,7 +173,10 @@ export class RealMetaOAuthClient implements MetaOAuthClient {
   }
 
   async verifyToken(accessToken: string): Promise<{ valid: boolean }> {
-    const response = await this.request(`https://graph.facebook.com/${this.options.graphVersion}/me?access_token=${encodeURIComponent(accessToken)}`)
+    // Ein Netzwerk-/Timeout-Fehler wird bewusst durchgereicht statt zu valid: false zu werden: er
+    // ist keine Aussage ueber das Token, und der Verify-Endpunkt wuerde den Kanal sonst wegen einer
+    // Stoerung bei Meta auf action_required setzen.
+    const response = await this.getWithToken('me', accessToken)
     return { valid: response.ok }
   }
 }

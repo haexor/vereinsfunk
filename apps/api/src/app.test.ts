@@ -1870,6 +1870,83 @@ describe('Paket 012: Kanaele und Social-Accounts', () => {
     }
   })
 
+  // Die Oberflaeche uebergibt ownerDepartmentId auch beim Vereinskanal (als null). $fetch haengt
+  // einen null-Wert als schluessellosen Query-Parameter an, Fastify liest ihn als leeren String --
+  // vor der Normalisierung scheiterte damit jeder vereinseigene Verbindungsstart an der UUID-Pruefung.
+  it('accepts an empty ownerDepartmentId query parameter for an organization-owned channel', async () => {
+    process.env.META_OAUTH_REDIRECT_URL = 'https://api.example.test'
+    const socialManagerRoleProvider: RoleProvider = { async rolesForScope() { return ['social_manager'] } }
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ from: () => { throw new Error('forUser should not be used by connect/start') } }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'oauth_states') return { insert: async () => ({ error: null }) }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    try {
+      const app = await startApp({ roleProvider: socialManagerRoleProvider, supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({
+        method: 'GET',
+        url: `/v1/channels/connect/instagram/start?organizationId=${ORGANIZATION_ID}&ownerScope=organization&ownerDepartmentId`,
+        headers: { authorization: `Bearer ${token}` },
+      })
+      expect(response.statusCode).toBe(200)
+    } finally {
+      delete process.env.META_OAUTH_REDIRECT_URL
+    }
+  })
+
+  it('rejects a connect/start call whose ownerScope and ownerDepartmentId contradict each other', async () => {
+    const socialManagerRoleProvider: RoleProvider = { async rolesForScope() { return ['social_manager'] } }
+    const app = await startApp({ roleProvider: socialManagerRoleProvider })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/channels/connect/instagram/start?organizationId=${ORGANIZATION_ID}&ownerScope=organization&ownerDepartmentId=${DEPARTMENT_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ error: 'invalid_request' })
+  })
+
+  // responsible_profile_id hat nur einen Fremdschluessel auf profiles: ohne diese Pruefung liesse
+  // sich ein Mitglied eines fremden Vereins als verantwortliche Person eintragen.
+  it('rejects a responsible person who is not a member of the channel organization', async () => {
+    const socialManagerRoleProvider: RoleProvider = { async rolesForScope() { return ['social_manager'] } }
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'social_connections') {
+              return chain({ data: { organization_id: ORGANIZATION_ID, owner_scope: 'organization', owner_department_id: null }, error: null })
+            }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table.endsWith('_memberships')) return chain({ data: [], error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: socialManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PATCH',
+      url: `/v1/channels/${CONNECTION_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { responsibleProfileId: '10000000-8000-4000-8000-000000000098' },
+    })
+    expect(response.statusCode).toBe(422)
+    expect(response.json()).toMatchObject({ error: 'responsible_not_a_member' })
+  })
+
   it('maps the organization_only_flag rejection to 422 when a department tries to set a channel-only policy flag', async () => {
     const clients: SupabaseClientFactory = {
       forUser: () =>

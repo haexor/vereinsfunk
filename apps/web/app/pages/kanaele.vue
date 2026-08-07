@@ -81,9 +81,6 @@ function canManageChannel(channel: SocialConnection): boolean {
     ...(channel.ownerScope === 'department' && channel.ownerDepartmentId ? { departmentId: channel.ownerDepartmentId } : {}),
   })
 }
-function canManageDepartmentChannels(departmentId: string): boolean {
-  return useCan('social_account.manage', { organizationId: organizationId.value ?? '', departmentId })
-}
 
 const STATUS_LABELS: Record<SocialConnection['status'], string> = {
   active: 'Aktiv',
@@ -207,11 +204,23 @@ async function updateChannel(channel: SocialConnection, patch: Record<string, un
   }
 }
 
+// Der Entwurf muss aus channel.purpose vorbelegt sein: sonst stuende der gespeicherte Zweck nur im
+// Platzhalter, das Feld waere leer, und ein blosses Hineinklicken und Verlassen haette ihn beim
+// Vergleich unten als geloescht interpretiert und mit purpose: null ueberschrieben.
 const purposeDraft = reactive<Record<string, string>>({})
+watch(
+  channels,
+  (list) => {
+    for (const channel of list) {
+      if (purposeDraft[channel.id] === undefined) purposeDraft[channel.id] = channel.purpose ?? ''
+    }
+  },
+  { immediate: true },
+)
 function savePurpose(channel: SocialConnection) {
-  const value = purposeDraft[channel.id] ?? ''
+  const value = (purposeDraft[channel.id] ?? '').trim()
   if (value === (channel.purpose ?? '')) return
-  void updateChannel(channel, { purpose: value.trim().length > 0 ? value.trim() : null })
+  void updateChannel(channel, { purpose: value.length > 0 ? value : null })
 }
 
 // Zuordnungsmatrix: Abteilungen als Zeilen, Kanaele als Spalten (Plan 012, "Oberflaeche").
@@ -408,7 +417,7 @@ const assignmentChannels = computed(() => channels.value.filter((channel) => cha
           <div class="mt-4 flex flex-wrap items-center gap-2">
             <input
               v-model="purposeDraft[channel.id]"
-              :placeholder="channel.purpose ?? 'Zweck, z. B. Hauptkanal'"
+              placeholder="Zweck, z. B. Hauptkanal"
               class="focus-ring flex-1 rounded-lg border border-[#dfe0d9] p-2 text-xs"
               @blur="savePurpose(channel)"
               @keyup.enter="savePurpose(channel)"
@@ -465,7 +474,7 @@ const assignmentChannels = computed(() => channels.value.filter((channel) => cha
                 <input
                   type="checkbox"
                   :checked="!!organizationScopeAssignment(channel) || !!scopeAssignment(channel, department.id)"
-                  :disabled="!!organizationScopeAssignment(channel) || !canManageChannel(channel) && !canManageDepartmentChannels(department.id) || scopeBusyKey === `${channel.id}:${department.id}`"
+                  :disabled="!!organizationScopeAssignment(channel) || !canManageChannel(channel) || scopeBusyKey === `${channel.id}:${department.id}`"
                   @change="toggleDepartmentScope(channel, department.id)"
                 />
               </td>

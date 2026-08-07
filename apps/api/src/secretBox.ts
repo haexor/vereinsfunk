@@ -30,8 +30,8 @@ export function ciphertextToBytea(ciphertext: Buffer): string {
   return `\\x${ciphertext.toString('hex')}`
 }
 
-// Kehrseite von ciphertextToBytea -- noch von keinem Aufrufer gebraucht, bis Paket 012 ein
-// gespeichertes Geheimnis zum ersten Mal wieder entschluesselt (Verify-Endpunkt).
+// Kehrseite von ciphertextToBytea -- gebraucht, wo ein gespeichertes Geheimnis wieder entschluesselt
+// wird, bisher nur in POST /v1/channels/:id/verify (Paket 012).
 export function byteaToBuffer(value: string): Buffer {
   if (!value.startsWith('\\x')) throw new Error('Unexpected bytea encoding')
   return Buffer.from(value.slice(2), 'hex')

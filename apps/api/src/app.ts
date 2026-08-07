@@ -11,6 +11,7 @@ import {
   AvailableChannelsResponseSchema,
   BrandLogoUploadResponseSchema,
   BrandLogoVariantSchema,
+  ChannelConnectStartRequestSchema,
   ChannelOwnerScopeSchema,
   ChannelPolicySchema,
   ChannelQuotaSchema,
@@ -101,7 +102,7 @@ import {
 } from '@vereinsfunk/domain'
 import { FakeOrchestrator, priorityToHatchet, type Orchestrator } from '@vereinsfunk/orchestration'
 import { RealMetaOAuthClient, type MetaOAuthClient } from '@vereinsfunk/publishing'
-import Fastify, { LogController, type FastifyInstance, type FastifyServerOptions } from 'fastify'
+import Fastify, { LogController, type FastifyInstance, type FastifyRequest, type FastifyServerOptions } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -940,6 +941,27 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     return org.data.length > 0 || department.data.length > 0 || team.data.length > 0
   }
 
+  // Dieselbe Form wie die inline geschriebenen audit_events-Inserts weiter oben in dieser Datei
+  // (Service-Client, weil audit_events fuer authenticated keine INSERT-Policy hat; Fehler werden
+  // geloggt, nicht geworfen -- ein fehlgeschlagener Audit-Eintrag darf die bereits durchgefuehrte
+  // Aenderung nicht nachtraeglich als Fehler ausgeben). Als Helfer, weil die Kanal- und
+  // Prueferrouten unten acht gleichartige Aufrufer haetten.
+  async function recordAuditEvent(
+    request: FastifyRequest,
+    event: { organizationId: string; action: string; entityType: string; entityId: string | null; metadata?: Record<string, unknown> },
+  ): Promise<void> {
+    const audit = await supabaseClients.forService().from('audit_events').insert({
+      organization_id: event.organizationId,
+      actor_user_id: request.auth!.userId,
+      action: event.action,
+      entity_type: event.entityType,
+      entity_id: event.entityId,
+      correlation_id: request.id,
+      metadata: event.metadata ?? {},
+    })
+    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+  }
+
   app.get('/v1/organizations/:id/policy-settings', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
@@ -1414,6 +1436,13 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       if (insert.error.code === '23503') return reply.code(404).send({ error: 'not_found', correlationId: request.id })
       throw insert.error
     }
+    await recordAuditEvent(request, {
+      organizationId: scope.organizationId,
+      action: 'policy_reviewer.added',
+      entityType: 'policy_reviewers',
+      entityId: insert.data.id as string,
+      metadata: { scope: input.scope, scopeId: input.scopeId, kind: ref.kind },
+    })
     return reply.code(201).send(
       PolicyReviewerSchema.parse({
         id: insert.data.id, scope: input.scope, scopeId: input.scopeId, kind: insert.data.kind, userId: insert.data.user_id,
@@ -1436,6 +1465,13 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const del = await client.from('policy_reviewers').delete().eq('id', params.id).select('id')
     if (del.error) throw del.error
     if (del.data.length === 0) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+    await recordAuditEvent(request, {
+      organizationId: setting.data.organization_id as string,
+      action: 'policy_reviewer.removed',
+      entityType: 'policy_reviewers',
+      entityId: params.id,
+      metadata: { scope: setting.data.scope, policySettingsId: existing.data.policy_settings_id },
+    })
     return reply.code(204).send()
   })
 
@@ -2710,6 +2746,16 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const organizationId = existing.data.organization_id as string
     const scope = toPermissionScope(organizationId, existing.data.owner_scope === 'department' ? (existing.data.owner_department_id as string) : null)
     if (!(await requirePermission(request, reply, 'social_account.manage', scope))) return
+    // responsible_profile_id hat nur einen Fremdschluessel auf profiles, keinen auf die
+    // Mitgliedschaft -- ohne diese Pruefung liesse sich ein Mitglied eines FREMDEN Vereins als
+    // verantwortliche Person eintragen und damit require_channel_responsible mit einer Person
+    // erfuellen, die im Verein gar nicht existiert. Service-Client, weil die Antwort hier eine
+    // Eingabevalidierung ist: eine per RLS unsichtbare Mitgliedschaftszeile duerfte nicht als
+    // "kein Mitglied" durchgehen.
+    if (input.responsibleProfileId) {
+      const isMember = await isAnyMemberOfOrganization(supabaseClients.forService(), input.responsibleProfileId, organizationId)
+      if (!isMember) return reply.code(422).send({ error: 'responsible_not_a_member', correlationId: request.id })
+    }
     const payload: Record<string, unknown> = {}
     if (input.displayName !== undefined) payload.display_name = input.displayName
     if (input.purpose !== undefined) payload.purpose = input.purpose
@@ -2721,6 +2767,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const service = supabaseClients.forService()
     const update = await service.from('social_connections').update(payload).eq('id', params.id).select(SOCIAL_CONNECTION_COLUMNS).single()
     if (update.error) throw update.error
+    await recordAuditEvent(request, {
+      organizationId,
+      action: 'channel.updated',
+      entityType: 'social_connections',
+      entityId: params.id,
+      // Nur die geaenderten Feldnamen, keine Werte -- purpose und displayName sind Freitext.
+      metadata: { fields: Object.keys(input) },
+    })
     const scopesResult = await service.from('channel_scopes').select('id, scope, department_id, team_id, can_schedule').eq('social_connection_id', params.id)
     if (scopesResult.error) throw scopesResult.error
     return reply.code(200).send(
@@ -2738,7 +2792,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const existing = await client.from('social_connections').select('organization_id, owner_scope, owner_department_id').eq('id', params.id).maybeSingle()
     if (existing.error) throw existing.error
     if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
-    const scope = toPermissionScope(existing.data.organization_id as string, existing.data.owner_scope === 'department' ? (existing.data.owner_department_id as string) : null)
+    const organizationId = existing.data.organization_id as string
+    const scope = toPermissionScope(organizationId, existing.data.owner_scope === 'department' ? (existing.data.owner_department_id as string) : null)
     if (!(await requirePermission(request, reply, 'social_account.manage', scope))) return
     const service = supabaseClients.forService()
     // Die Zeile bleibt (publications verweist per FK darauf), nur Status/archived_at aendern sich --
@@ -2747,6 +2802,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (update.error) throw update.error
     const secretDelete = await service.from('social_connection_secrets').delete().eq('social_connection_id', params.id)
     if (secretDelete.error) throw secretDelete.error
+    await recordAuditEvent(request, { organizationId, action: 'channel.disconnected', entityType: 'social_connections', entityId: params.id })
     return reply.code(204).send()
   })
 
@@ -2773,6 +2829,13 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       .select(SOCIAL_CONNECTION_COLUMNS)
       .single()
     if (update.error) throw update.error
+    await recordAuditEvent(request, {
+      organizationId,
+      action: 'channel.verified',
+      entityType: 'social_connections',
+      entityId: params.id,
+      metadata: { valid: verification.valid },
+    })
     const scopesResult = await service.from('channel_scopes').select('id, scope, department_id, team_id, can_schedule').eq('social_connection_id', params.id)
     if (scopesResult.error) throw scopesResult.error
     return reply.code(200).send(
@@ -2817,6 +2880,13 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       if (insert.error.code === '23505') return reply.code(409).send({ error: 'scope_already_exists', correlationId: request.id })
       throw insert.error
     }
+    await recordAuditEvent(request, {
+      organizationId: connection.data.organization_id as string,
+      action: 'channel_scope.granted',
+      entityType: 'channel_scopes',
+      entityId: insert.data.id as string,
+      metadata: { socialConnectionId: params.id, scope: input.scope, scopeId: input.scopeId, canSchedule: input.canSchedule },
+    })
     return reply.code(201).send(ChannelScopeAssignmentSchema.parse(mapChannelScopeRow(insert.data, connection.data.organization_id as string)))
   })
 
@@ -2835,6 +2905,13 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const del = await client.from('channel_scopes').delete().eq('id', params.id).select('id')
     if (del.error) throw del.error
     if (del.data.length === 0) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+    await recordAuditEvent(request, {
+      organizationId: existing.data.organization_id as string,
+      action: 'channel_scope.revoked',
+      entityType: 'channel_scopes',
+      entityId: params.id,
+      metadata: { socialConnectionId: existing.data.social_connection_id },
+    })
     return reply.code(204).send()
   })
 
@@ -2866,16 +2943,24 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   app.get('/v1/channels/connect/:platform/start', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ platform: SocialPlatformSchema }).parse(request.params)
+    // ownerDepartmentId kommt hier als Query-Parameter statt im Body (GET) -- der leere String ist
+    // deshalb ein gueltiger Eingangswert und bedeutet "nicht gesetzt": ein null-Wert wird von der
+    // Query-Serialisierung des Browsers (ufo/withQuery hinter $fetch) als schluessellosen Parameter
+    // angehaengt, und Fastify liest den als ''. Ohne diese Normalisierung scheiterte jeder
+    // vereinseigene Verbindungsstart aus der Oberflaeche an der UUID-Pruefung (400).
     const query = z
-      .object({ organizationId: UuidSchema, ownerScope: ChannelOwnerScopeSchema, ownerDepartmentId: UuidSchema.nullish() })
+      .object({ organizationId: UuidSchema, ownerScope: ChannelOwnerScopeSchema, ownerDepartmentId: UuidSchema.or(z.literal('')).nullish() })
       .parse(request.query)
-    const ownerDepartmentId = query.ownerDepartmentId ?? null
-    if ((query.ownerScope === 'organization') !== (ownerDepartmentId === null)) {
-      return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
-    }
+    // Die Bedingung zwischen ownerScope und ownerDepartmentId steht im Vertrag, nicht hier -- damit
+    // gilt fuer diese Route dieselbe Regel wie fuer jeden anderen Aufrufer des Schemas.
+    const start = ChannelConnectStartRequestSchema.parse({
+      ownerScope: query.ownerScope,
+      ownerDepartmentId: query.ownerDepartmentId ? query.ownerDepartmentId : null,
+    })
+    const ownerDepartmentId = start.ownerDepartmentId
     const scope = toPermissionScope(query.organizationId, ownerDepartmentId)
     if (!(await requirePermission(request, reply, 'social_account.manage', scope))) return
-    if (query.ownerScope === 'department') {
+    if (start.ownerScope === 'department') {
       const policyRow = await supabaseClients
         .forUser(request.auth!.accessToken)
         .from('policy_settings')
@@ -2893,7 +2978,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const insert = await supabaseClients.forService().from('oauth_states').insert({
       organization_id: query.organizationId,
       platform: params.platform,
-      owner_scope: query.ownerScope,
+      owner_scope: start.ownerScope,
       owner_department_id: ownerDepartmentId,
       nonce,
       created_by: request.auth!.userId,
@@ -3081,7 +3166,19 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     })
     if (defaultScope.error) throw defaultScope.error
 
-    await service.from('oauth_pending_connections').delete().eq('id', params.id)
+    await recordAuditEvent(request, {
+      organizationId,
+      action: 'channel.connected',
+      entityType: 'social_connections',
+      entityId: insert.data.id as string,
+      metadata: { platform, ownerScope, externalAccountId: chosen.externalAccountId },
+    })
+
+    // Bleibt die Zeile stehen, liegen die versiegelten Seiten-Tokens der ABGELEHNTEN Konten bis
+    // expires_at weiter in der Datenbank -- der Aufruf darf nicht stillschweigend scheitern.
+    // Geloggt statt geworfen: der Kanal ist zu diesem Zeitpunkt bereits angelegt.
+    const pendingDelete = await service.from('oauth_pending_connections').delete().eq('id', params.id)
+    if (pendingDelete.error) request.log.error({ err: pendingDelete.error, correlationId: request.id }, 'oauth_pending_connections delete failed')
 
     const scopesResult = await service.from('channel_scopes').select('id, scope, department_id, team_id, can_schedule').eq('social_connection_id', insert.data.id)
     if (scopesResult.error) throw scopesResult.error
