@@ -89,7 +89,6 @@ export function ClubPost(props: ClubPostProps) {
       cancelled = true
     }
     // Schriften haengen nur von den Font-Props ab, nicht von Frame/Zeit -- einmal pro Prop-Wechsel laden.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(safeProps.displayFont), JSON.stringify(safeProps.bodyFont)])
 
   const displayFontFamily = fonts?.display ?? FALLBACK_FONT_FAMILY

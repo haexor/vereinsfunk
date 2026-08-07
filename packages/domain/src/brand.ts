@@ -42,7 +42,16 @@ export interface DepartmentBrandLevel extends BrandLevelProfile {
   lockedFields: readonly string[]
 }
 
-export type ResolvedBrand = Required<Omit<BrandLevelProfile, 'displayFontKey' | 'displayFontAssetId' | 'bodyFontKey' | 'bodyFontAssetId' | 'logoAssetId'>> & {
+// Farben und Tonalitaet sind nach der Aufloesung immer gefuellt (DEFAULT_RESOLVED_BRAND traegt
+// einen Wert fuer jedes Feld); nur die Schrift-/Logo-Referenzen bleiben optional, weil "kein
+// Asset gesetzt" ein gueltiger Endzustand ist (kuratierter Schluessel bzw. kein eigenes Logo).
+export interface ResolvedBrand {
+  primaryColor: string
+  accentColor: string
+  backgroundColor: string
+  textColor: string
+  onPrimaryColor: string
+  tone: string
   displayFontKey: string | null
   displayFontAssetId: string | null
   bodyFontKey: string | null

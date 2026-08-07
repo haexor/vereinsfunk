@@ -15,6 +15,7 @@
     "@tailwindcss/vite": "^4.3.3",
     "@vereinsfunk/authorization": "workspace:*",
     "@vereinsfunk/contracts": "workspace:*",
+    "@vereinsfunk/domain": "workspace:*",
     "@lucide/vue": "^1.28.0",
     "nuxt": "^4.5.1",
     "tailwindcss": "^4.3.3",
