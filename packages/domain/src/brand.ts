@@ -4,7 +4,7 @@ import type { ScopeLevelName } from './index.js'
 // Paket 011 ist eine Abteilungsfarbe nicht "strenger" als die Vereinsfarbe. Die Erlaubnis, ueberhaupt
 // abzuweichen, vererbt sich trotzdem nur nach unten -- was der Verein sperrt, kann die Abteilung
 // nicht fuer ihre Mannschaften oeffnen.
-const OVERRIDABLE_FIELDS = [
+const ORGANIZATION_FIELDS = [
   'primaryColor',
   'accentColor',
   'backgroundColor',
@@ -17,6 +17,22 @@ const OVERRIDABLE_FIELDS = [
   'bodyFontAssetId',
   'logoAssetId',
 ] as const
+
+// Genau die Spalten, die department_brand_profiles/team_brand_profiles fuehren -- und damit die
+// einzigen Felder, bei denen "sperren" und "abweichen" ueberhaupt eine Wirkung haben. Hintergrund-,
+// Text- und Auf-Primaer-Farbe sowie die kuratierten Schriftschluessel bleiben bewusst Vereinssache
+// (siehe Migration): sie hier zuzulassen hiesse, in der Oberflaeche eine Sperre anzubieten, die
+// nichts sperrt, weil die untere Ebene den Wert ohnehin nie setzen kann.
+export const BRAND_LOCKABLE_FIELDS = [
+  'primaryColor',
+  'accentColor',
+  'tone',
+  'logoAssetId',
+  'displayFontAssetId',
+  'bodyFontAssetId',
+] as const
+
+export type BrandLockableField = (typeof BRAND_LOCKABLE_FIELDS)[number]
 
 export interface BrandLevelProfile {
   primaryColor?: string | null
@@ -32,12 +48,16 @@ export interface BrandLevelProfile {
   logoAssetId?: string | null
 }
 
+// Was eine Abteilung oder Mannschaft selbst fuehren kann -- eine echte Teilmenge von
+// BrandLevelProfile, siehe BRAND_LOCKABLE_FIELDS.
+export type BrandOverrideProfile = Pick<BrandLevelProfile, BrandLockableField>
+
 export interface OrganizationBrandLevel extends BrandLevelProfile {
   allowDepartmentOverrides: boolean
   lockedFields: readonly string[]
 }
 
-export interface DepartmentBrandLevel extends BrandLevelProfile {
+export interface DepartmentBrandLevel extends BrandOverrideProfile {
   allowTeamOverrides: boolean
   lockedFields: readonly string[]
 }
@@ -59,9 +79,14 @@ export interface ResolvedBrand {
   logoAssetId: string | null
 }
 
-function applyOverride(base: ResolvedBrand, lockedFields: ReadonlySet<string>, override: BrandLevelProfile): ResolvedBrand {
+function applyOverride(
+  base: ResolvedBrand,
+  fields: readonly (keyof BrandLevelProfile)[],
+  lockedFields: ReadonlySet<string>,
+  override: BrandLevelProfile,
+): ResolvedBrand {
   const next = { ...base }
-  for (const field of OVERRIDABLE_FIELDS) {
+  for (const field of fields) {
     if (lockedFields.has(field)) continue
     const value = override[field]
     if (value !== undefined && value !== null) next[field] = value
@@ -88,9 +113,9 @@ export const DEFAULT_RESOLVED_BRAND: ResolvedBrand = {
 export function resolveBrand(
   organization: OrganizationBrandLevel,
   department?: DepartmentBrandLevel | null,
-  team?: BrandLevelProfile | null,
+  team?: BrandOverrideProfile | null,
 ): ResolvedBrand {
-  let result = applyOverride(DEFAULT_RESOLVED_BRAND, new Set(), organization)
+  let result = applyOverride(DEFAULT_RESOLVED_BRAND, ORGANIZATION_FIELDS, new Set(), organization)
 
   // Laeuft nur nach unten fort: eine Sperre des Vereins gilt fuer die Mannschaft auch dann, wenn
   // die Abteilung selbst dasselbe Feld nicht sperrt (sie hat ohnehin nie die Erlaubnis erhalten,
@@ -98,13 +123,16 @@ export function resolveBrand(
   const cumulativeLockedFields = new Set(organization.lockedFields)
 
   if (department && organization.allowDepartmentOverrides) {
-    result = applyOverride(result, cumulativeLockedFields, department)
+    result = applyOverride(result, BRAND_LOCKABLE_FIELDS, cumulativeLockedFields, department)
   }
   if (department) {
     for (const field of department.lockedFields) cumulativeLockedFields.add(field)
   }
-  if (team && department?.allowTeamOverrides) {
-    result = applyOverride(result, cumulativeLockedFields, team)
+  // allowDepartmentOverrides ist die Blankosperre des Vereins fuer ALLES unterhalb: eine
+  // Abteilung, die selbst nicht abweichen darf, kann das Recht auch nicht an ihre Mannschaften
+  // weiterreichen (sonst umginge ein gespeichertes allow_team_overrides = true die Vereinssperre).
+  if (team && organization.allowDepartmentOverrides && department?.allowTeamOverrides) {
+    result = applyOverride(result, BRAND_LOCKABLE_FIELDS, cumulativeLockedFields, team)
   }
 
   return result

@@ -413,4 +413,19 @@ describe('brand contracts (Paket 013)', () => {
   it('caps lockedFields at the number of overridable brand fields', () => {
     expect(UpdateDepartmentBrandRequestSchema.safeParse({ lockedFields: Array.from({ length: 12 }, (_, i) => `field-${i}`) }).success).toBe(false)
   })
+
+  it('rejects a lockedFields entry that is not an overridable brand field', () => {
+    // Ein Tippfehler waere sonst gespeichert worden und haette lautlos nichts gesperrt.
+    expect(UpdateDepartmentBrandRequestSchema.safeParse({ lockedFields: ['primary_colour'] }).success).toBe(false)
+    // displayFontKey/bodyFontKey fuehrt keine untere Ebene -- eine Sperre darauf waere wirkungslos.
+    expect(UpdateDepartmentBrandRequestSchema.safeParse({ lockedFields: ['displayFontKey'] }).success).toBe(false)
+  })
+
+  it('accepts the overridable brand fields as lockedFields', () => {
+    expect(
+      UpdateDepartmentBrandRequestSchema.safeParse({
+        lockedFields: ['primaryColor', 'accentColor', 'tone', 'logoAssetId', 'displayFontAssetId', 'bodyFontAssetId'],
+      }).success,
+    ).toBe(true)
+  })
 })

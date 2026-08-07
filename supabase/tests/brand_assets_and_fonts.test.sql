@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(36);
+select plan(41);
 
 set local role postgres;
 
@@ -76,9 +76,10 @@ insert into public.brand_assets (id, organization_id, department_id, team_id, ki
   ('67000000-8000-4000-8000-000000000003', '67000000-1000-4000-8000-000000000001', '67000000-1100-4000-8000-000000000001', '67000000-1200-4000-8000-000000000001', 'wordmark', 'organizations/a/brand/team-a-wordmark.png', 'image/png', 100, repeat('e', 64), 'ready', '67000000-0000-4000-8000-000000000005'),
   ('67000000-8000-4000-8000-000000000009', '67000000-1000-4000-8000-000000000002', null, null, 'logo_primary', 'organizations/b/brand/org-logo.png', 'image/png', 100, repeat('f', 64), 'ready', '67000000-0000-4000-8000-000000000008');
 
+-- 6: RLS ist auf brand_assets erzwungen, auch fuer den Tabelleneigentuemer.
 select is((select relforcerowsecurity from pg_class where oid = 'public.brand_assets'::regclass), true, 'brand_assets has FORCE ROW LEVEL SECURITY enabled');
 
--- 6-7: keine Schreibrechte fuer authenticated auf brand_assets -- nur die API mit Service Role.
+-- 7-8: keine Schreibrechte fuer authenticated auf brand_assets -- nur die API mit Service Role.
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '67000000-0000-4000-8000-000000000001', true);
 select throws_ok(
@@ -91,12 +92,12 @@ select throws_ok(
   '42501', null, 'authenticated cannot update brand_assets even with organization.manage'
 );
 
--- 8: vereinsweites Asset ist fuer jedes Vereinsmitglied sichtbar, auch ohne Abteilungsrolle.
+-- 9: vereinsweites Asset ist fuer jedes Vereinsmitglied sichtbar, auch ohne Abteilungsrolle.
 select set_config('request.jwt.claim.sub', '67000000-0000-4000-8000-000000000009', true);
 select is((select count(*)::integer from public.brand_assets where id = '67000000-8000-4000-8000-000000000001'), 1,
   'the organization-wide logo is visible to a plain organization member');
 
--- 9-10: die eigentliche Anforderung -- ein Abteilungs-Asset ist nur innerhalb der eigenen
+-- 10-11: die eigentliche Anforderung -- ein Abteilungs-Asset ist nur innerhalb der eigenen
 -- Abteilung sichtbar, nicht fuer eine Schwesterabteilung desselben Vereins.
 select set_config('request.jwt.claim.sub', '67000000-0000-4000-8000-000000000002', true);
 select is((select count(*)::integer from public.brand_assets where id = '67000000-8000-4000-8000-000000000002'), 1,
@@ -105,12 +106,12 @@ select set_config('request.jwt.claim.sub', '67000000-0000-4000-8000-000000000003
 select is((select count(*)::integer from public.brand_assets where id = '67000000-8000-4000-8000-000000000002'), 0,
   'the Fussball department logo is invisible to the Handball department admin of the same club');
 
--- 11: Aufsicht von oben -- der Vereinsadmin sieht jedes Abteilungs-Asset.
+-- 12: Aufsicht von oben -- der Vereinsadmin sieht jedes Abteilungs-Asset.
 select set_config('request.jwt.claim.sub', '67000000-0000-4000-8000-000000000001', true);
 select is((select count(*)::integer from public.brand_assets where id = '67000000-8000-4000-8000-000000000002'), 1,
   'the organization admin sees a department asset through management oversight');
 
--- 12-13: ein reines Mannschaftsmitglied ohne eigene Abteilungsmitgliedschaft sieht trotzdem die
+-- 13-14: ein reines Mannschaftsmitglied ohne eigene Abteilungsmitgliedschaft sieht trotzdem die
 -- Assets seiner Abteilung (Team A haengt an Fussball) -- ein Vereinsmitglied ohne jede Rolle in
 -- Abteilung oder Mannschaft dagegen nicht.
 select set_config('request.jwt.claim.sub', '67000000-0000-4000-8000-000000000007', true);
@@ -120,7 +121,7 @@ select set_config('request.jwt.claim.sub', '67000000-0000-4000-8000-000000000009
 select is((select count(*)::integer from public.brand_assets where id = '67000000-8000-4000-8000-000000000002'), 0,
   'a plain organization member with no department or team role does not see a department-owned asset');
 
--- 14-15: dieselbe Abschottung zwischen Geschwistermannschaften.
+-- 15-16: dieselbe Abschottung zwischen Geschwistermannschaften.
 select set_config('request.jwt.claim.sub', '67000000-0000-4000-8000-000000000005', true);
 select is((select count(*)::integer from public.brand_assets where id = '67000000-8000-4000-8000-000000000003'), 1,
   'the Team A wordmark is visible to the Team A manager');
@@ -128,17 +129,17 @@ select set_config('request.jwt.claim.sub', '67000000-0000-4000-8000-000000000006
 select is((select count(*)::integer from public.brand_assets where id = '67000000-8000-4000-8000-000000000003'), 0,
   'the Team A wordmark is invisible to the Team B manager, its sister team');
 
--- 16: der Abteilungsadmin sieht die Mannschafts-Assets seiner Abteilung.
+-- 17: der Abteilungsadmin sieht die Mannschafts-Assets seiner Abteilung.
 select set_config('request.jwt.claim.sub', '67000000-0000-4000-8000-000000000002', true);
 select is((select count(*)::integer from public.brand_assets where id = '67000000-8000-4000-8000-000000000003'), 1,
   'the Fussball department admin sees an asset owned by one of its teams');
 
--- 17: Mandantentrennung -- kein Mitglied des Fremdvereins sieht ein Asset dieses Vereins.
+-- 18: Mandantentrennung -- kein Mitglied des Fremdvereins sieht ein Asset dieses Vereins.
 select set_config('request.jwt.claim.sub', '67000000-0000-4000-8000-000000000008', true);
 select is((select count(*)::integer from public.brand_assets where organization_id = '67000000-1000-4000-8000-000000000001'), 0,
   'a member of another club reads no brand_assets row of this club');
 
--- 18-20: authz.participates_in_department -- die strikte Pruefung ohne Org-weiten Fallback.
+-- 19-21: authz.participates_in_department -- die strikte Pruefung ohne Org-weiten Fallback.
 select is(authz.participates_in_department('67000000-1100-4000-8000-000000000001'), true,
   'participates_in_department is true for a real department membership row') from (select set_config('request.jwt.claim.sub', '67000000-0000-4000-8000-000000000004', true)) _;
 select is(authz.participates_in_department('67000000-1100-4000-8000-000000000001'), true,
@@ -146,7 +147,7 @@ select is(authz.participates_in_department('67000000-1100-4000-8000-000000000001
 select is(authz.participates_in_department('67000000-1100-4000-8000-000000000001'), false,
   'participates_in_department is false for a plain organization member with no department or team role') from (select set_config('request.jwt.claim.sub', '67000000-0000-4000-8000-000000000009', true)) _;
 
--- 21-23: brand.manage in has_department_permission/has_team_permission.
+-- 22-24: brand.manage in has_department_permission/has_team_permission.
 select is(authz.has_department_permission('67000000-1100-4000-8000-000000000001', 'brand.manage'), true,
   'the department admin has brand.manage in their own department') from (select set_config('request.jwt.claim.sub', '67000000-0000-4000-8000-000000000002', true)) _;
 select is(authz.has_department_permission('67000000-1100-4000-8000-000000000001', 'brand.manage'), false,
@@ -154,7 +155,7 @@ select is(authz.has_department_permission('67000000-1100-4000-8000-000000000001'
 select is(authz.has_team_permission('67000000-1200-4000-8000-000000000001', 'brand.manage'), true,
   'the team manager has brand.manage in their own team') from (select set_config('request.jwt.claim.sub', '67000000-0000-4000-8000-000000000005', true)) _;
 
--- 24-27: Schreibrechte auf department_brand_profiles.
+-- 25-28: Schreibrechte auf department_brand_profiles.
 select set_config('request.jwt.claim.sub', '67000000-0000-4000-8000-000000000002', true);
 insert into public.department_brand_profiles (organization_id, department_id, primary_color, updated_by) values
   ('67000000-1000-4000-8000-000000000001', '67000000-1100-4000-8000-000000000001', '#112233', '67000000-0000-4000-8000-000000000002');
@@ -202,7 +203,7 @@ select throws_ok(
   '23503', null, 'department_brand_profiles cannot reference a brand asset belonging to another organization'
 );
 
--- 33-36: Fund aus der adversarialen Pruefung -- authz.brand_asset_is_selectable() als zweite
+-- 33-35: Fund aus der adversarialen Pruefung -- authz.brand_asset_is_selectable() als zweite
 -- Grenze in RLS selbst, nicht nur im API-Endpunkt (siehe Migrationskommentar). Ohne sie liesse
 -- sich eine Schwesterabteilungs-Referenz per direktem PostgREST-Zugriff setzen, obwohl die
 -- Berechtigungspruefung (brand.manage in der EIGENEN Abteilung) das nicht verhindert.
@@ -232,6 +233,51 @@ insert into public.organization_brand_profiles (organization_id) values ('670000
   on conflict (organization_id) do nothing;
 select is((select background_color from public.organization_brand_profiles where organization_id = '67000000-1000-4000-8000-000000000001'), '#f6f4ec',
   'organization_brand_profiles.background_color defaults to the documented value');
+
+-- 37-38: locked_fields nimmt nur Feldnamen an, die eine Abteilung/Mannschaft ueberhaupt fuehren
+-- kann. Ohne den CHECK laege ein Tippfehler unbemerkt in der Spalte und sperrte nichts, weil
+-- resolveBrand ausschliesslich die bekannten camelCase-Namen kennt.
+select throws_ok(
+  $$update public.organization_brand_profiles set locked_fields = array['primary_colour']
+    where organization_id = '67000000-1000-4000-8000-000000000001'$$,
+  '23514', null, 'organization_brand_profiles rejects a locked_fields entry that is not an overridable brand field'
+);
+select throws_ok(
+  $$update public.department_brand_profiles set locked_fields = array['displayFontKey']
+    where department_id = '67000000-1100-4000-8000-000000000001'$$,
+  '23514', null, 'department_brand_profiles rejects a locked_fields entry no lower level can carry'
+);
+
+-- 39-40: dieselbe Herkunftsgrenze wie bei den unteren Ebenen, jetzt auch auf Vereinsebene. Ohne
+-- die Erweiterung von brand_profiles_update koennte jemand mit organization.manage die Schrift
+-- EINER Abteilung als vereinsweite Schrift eintragen und sie damit allen Schwesterabteilungen
+-- zugaenglich machen -- per direktem PostgREST-Zugriff, an der API vorbei.
+insert into public.brand_assets (id, organization_id, department_id, kind, object_path, mime_type, byte_size, sha256,
+  font_family, font_weight, font_style, license_holder, license_confirmed_at, license_confirmed_by, status, created_by) values
+  ('67000000-8000-4000-8000-000000000006', '67000000-1000-4000-8000-000000000001', '67000000-1100-4000-8000-000000000001',
+   'font', 'organizations/a/brand/departments/fussball/font-x.woff2', 'font/woff2', 1000, repeat('7', 64),
+   'Fussball Sans', 400, 'normal', 'Verein', now(), '67000000-0000-4000-8000-000000000001', 'ready', '67000000-0000-4000-8000-000000000002');
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '67000000-0000-4000-8000-000000000001', true);
+select throws_ok(
+  format($$update public.organization_brand_profiles set display_font_asset_id = %L
+    where organization_id = '67000000-1000-4000-8000-000000000001'$$, '67000000-8000-4000-8000-000000000006'),
+  '42501', null, 'the organization admin cannot make a department-owned font the club-wide font'
+);
+update public.organization_brand_profiles set display_font_asset_id = '67000000-8000-4000-8000-000000000004'
+  where organization_id = '67000000-1000-4000-8000-000000000001';
+select is(
+  (select display_font_asset_id::text from public.organization_brand_profiles where organization_id = '67000000-1000-4000-8000-000000000001'),
+  '67000000-8000-4000-8000-000000000004',
+  'the organization admin can still set an organization-wide font asset as the club-wide font'
+);
+
+-- 41: von diesem Profil erben Abteilung und Mannschaft. Ein Abteilungsadmin hat in aller Regel
+-- keine organization_memberships-Zeile -- mit der engeren is_organization_member saehe er auf
+-- /marke statt der Vereinsfarben die eingebauten Defaults.
+select set_config('request.jwt.claim.sub', '67000000-0000-4000-8000-000000000002', true);
+select is((select count(*)::integer from public.organization_brand_profiles where organization_id = '67000000-1000-4000-8000-000000000001'), 1,
+  'a department admin without an organization membership row can read the club brand profile they inherit from');
 
 select * from finish();
 rollback;

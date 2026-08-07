@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { AlertTriangle, Check, LoaderCircle, Upload } from '@lucide/vue'
-import { curatedFontPairings, findCuratedFont, isBrandAssetSelectable, meetsMinimumContrast, resolveBrand } from '@vereinsfunk/domain'
+import { BRAND_LOCKABLE_FIELDS, curatedFontPairings, findCuratedFont, isBrandAssetSelectable, meetsMinimumContrast, resolveBrand } from '@vereinsfunk/domain'
 
 type BrandTone = 'nahbar' | 'dynamisch' | 'sachlich'
 type ScopeLevelName = 'organization' | 'department' | 'team'
@@ -37,14 +37,17 @@ interface LevelOverride {
   lockedFields?: string[]
 }
 
-const LOCKABLE_FIELDS: readonly { key: string, label: string }[] = [
-  { key: 'primaryColor', label: 'Primärfarbe' },
-  { key: 'accentColor', label: 'Akzentfarbe' },
-  { key: 'tone', label: 'Tonalität' },
-  { key: 'displayFontKey', label: 'Überschriften-Schrift' },
-  { key: 'bodyFontKey', label: 'Fließtext-Schrift' },
-  { key: 'logoAssetId', label: 'Logo' },
-]
+// Genau BRAND_LOCKABLE_FIELDS aus packages/domain, nur mit deutschem Etikett: eine Sperre wirkt
+// ausschliesslich auf Felder, die eine Abteilung/Mannschaft ueberhaupt selbst fuehren kann.
+const LOCKABLE_FIELD_LABELS: Readonly<Record<string, string>> = {
+  primaryColor: 'Primärfarbe',
+  accentColor: 'Akzentfarbe',
+  tone: 'Tonalität',
+  logoAssetId: 'Logo',
+  displayFontAssetId: 'Eigene Überschriften-Schrift',
+  bodyFontAssetId: 'Eigene Fließtext-Schrift',
+}
+const LOCKABLE_FIELDS = BRAND_LOCKABLE_FIELDS.map((key) => ({ key, label: LOCKABLE_FIELD_LABELS[key]! }))
 
 const config = useRuntimeConfig()
 const scope = await useScope()
@@ -94,8 +97,24 @@ function emptyOverride(): LevelOverride {
 const departmentOverrides = ref<Record<string, LevelOverride>>({})
 const teamOverrides = ref<Record<string, LevelOverride>>({})
 
+function newDepartmentOverride(): LevelOverride {
+  return { ...emptyOverride(), allowTeamOverrides: true, lockedFields: [] }
+}
+
+// Lesen legt nichts an. Ein computed darf seine eigenen Abhaengigkeiten nicht veraendern -- der
+// fruehere Schreibzugriff aus activeDepartmentOverride/resolved heraus invalidierte die
+// Berechnung, die ihn ausgeloest hatte, und lieferte auf Server und Client unterschiedliche
+// Zustaende (die im Paket dokumentierte Hydration-Abweichung auf /marke).
+function readOverride(departmentId: string): LevelOverride {
+  return departmentOverrides.value[departmentId] ?? newDepartmentOverride()
+}
+function readTeamOverride(teamId: string): LevelOverride {
+  return teamOverrides.value[teamId] ?? emptyOverride()
+}
+
+// Angelegt wird ausschliesslich aus Event-Handlern (selectScope, save).
 function overrideFor(departmentId: string): LevelOverride {
-  if (!departmentOverrides.value[departmentId]) departmentOverrides.value[departmentId] = { ...emptyOverride(), allowTeamOverrides: true, lockedFields: [] }
+  if (!departmentOverrides.value[departmentId]) departmentOverrides.value[departmentId] = newDepartmentOverride()
   return departmentOverrides.value[departmentId]!
 }
 function teamOverrideFor(teamId: string): LevelOverride {
@@ -103,8 +122,8 @@ function teamOverrideFor(teamId: string): LevelOverride {
   return teamOverrides.value[teamId]!
 }
 
-const activeDepartmentOverride = computed(() => (activeDepartmentId.value ? overrideFor(activeDepartmentId.value) : null))
-const activeTeamOverride = computed(() => (activeTeamId.value ? teamOverrideFor(activeTeamId.value) : null))
+const activeDepartmentOverride = computed(() => (activeDepartmentId.value ? readOverride(activeDepartmentId.value) : null))
+const activeTeamOverride = computed(() => (activeTeamId.value ? readTeamOverride(activeTeamId.value) : null))
 
 // Sperren wirken nur nach unten: eine Vereinssperre gilt auch fuer die Mannschaft, selbst wenn
 // die Abteilung sie nicht wiederholt (siehe packages/domain/src/brand.ts, resolveBrand).
@@ -113,13 +132,13 @@ const lockedForActiveLevel = computed<Set<string>>(() => {
   if (activeLevel.value === 'organization') return locked
   for (const field of org.lockedFields) locked.add(field)
   if (activeLevel.value === 'team' && activeDepartmentId.value) {
-    for (const field of overrideFor(activeDepartmentId.value).lockedFields ?? []) locked.add(field)
+    for (const field of readOverride(activeDepartmentId.value).lockedFields ?? []) locked.add(field)
   }
   return locked
 })
 
 const resolved = computed(() => {
-  const departmentLevel = activeDepartmentId.value ? overrideFor(activeDepartmentId.value) : null
+  const departmentLevel = activeDepartmentId.value ? readOverride(activeDepartmentId.value) : null
   const teamLevel = activeLevel.value === 'team' ? activeTeamOverride.value : null
   return resolveBrand(
     { ...org },
@@ -204,12 +223,19 @@ const PREVIEW_DISPLAY_FAMILY = 'vf-preview-display'
 const PREVIEW_BODY_FAMILY = 'vf-preview-body'
 const previewFontFaceCss = ref('')
 
+// Die Regel landet per useHead als innerHTML in einem <style>-Element. Ein Apostroph oder eine
+// </style>-Folge in der URL wuerde den Block verlassen -- unwahrscheinlich bei einer signierten
+// Supabase-URL, aber sie ist nichts, was diese Seite selbst gebildet hat.
+function cssUrlLiteral(url: string): string {
+  return `'${url.replace(/[\\'"<>]/g, (character) => `\\${character.charCodeAt(0).toString(16)} `)}'`
+}
+
 async function fontFamilyForPreview(assetId: string | null, fontKey: string | null, cssFamilyName: string): Promise<{ family: string, faceRule: string | null }> {
   if (assetId) {
     const asset = assets.value.find((row) => row.id === assetId && row.kind === 'font' && row.status === 'ready')
     if (asset) {
       const signed = await supabase.storage.from('brand-assets').createSignedUrl(asset.objectPath, 600)
-      if (signed.data) return { family: cssFamilyName, faceRule: `@font-face { font-family: '${cssFamilyName}'; src: url('${signed.data.signedUrl}') format('woff2'); font-weight: ${asset.fontWeight ?? 400}; font-style: ${asset.fontStyle ?? 'normal'}; }` }
+      if (signed.data) return { family: cssFamilyName, faceRule: `@font-face { font-family: '${cssFamilyName}'; src: url(${cssUrlLiteral(signed.data.signedUrl)}) format('woff2'); font-weight: ${asset.fontWeight ?? 400}; font-style: ${asset.fontStyle ?? 'normal'}; }` }
     }
   }
   const curated = findCuratedFont(fontKey ?? 'manrope')
@@ -219,9 +245,15 @@ async function fontFamilyForPreview(assetId: string | null, fontKey: string | nu
 const previewDisplayFamily = ref('Manrope')
 const previewBodyFamily = ref('DM Sans')
 
-watchEffect(async () => {
+// Beide Aufrufe signieren ueber das Netz. Ohne onCleanup koennte ein frueher gestarteter
+// Durchlauf nach einem spaeteren zurueckkehren und die Vorschau auf die Schrift der zuvor
+// gewaehlten Ebene zuruecksetzen.
+watchEffect(async (onCleanup) => {
+  let cancelled = false
+  onCleanup(() => { cancelled = true })
   const display = await fontFamilyForPreview(resolved.value.displayFontAssetId, resolved.value.displayFontKey, PREVIEW_DISPLAY_FAMILY)
   const body = await fontFamilyForPreview(resolved.value.bodyFontAssetId, resolved.value.bodyFontKey, PREVIEW_BODY_FAMILY)
+  if (cancelled) return
   previewDisplayFamily.value = display.family
   previewBodyFamily.value = body.family
   previewFontFaceCss.value = [display.faceRule, body.faceRule].filter(Boolean).join('\n')
@@ -294,6 +326,11 @@ async function loadAll() {
       id: row.id, departmentId: row.department_id, teamId: row.team_id, kind: row.kind, objectPath: row.object_path, status: row.status,
       fontFamily: row.font_family, fontWeight: row.font_weight, fontStyle: row.font_style, licenseHolder: row.license_holder, createdAt: row.created_at,
     }))
+    // Hat die aktive Ebene serverseitig noch kein Profil, muss der leere Eintrag hier neu
+    // entstehen -- die Formularfelder schreiben direkt hinein, und ein computed darf ihn nicht
+    // mehr nachtraeglich anlegen.
+    if (activeLevel.value === 'department' && activeDepartmentId.value) overrideFor(activeDepartmentId.value)
+    if (activeLevel.value === 'team' && activeTeamId.value) teamOverrideFor(activeTeamId.value)
   } finally {
     loading.value = false
   }
@@ -382,6 +419,28 @@ async function save() {
   }
 }
 
+// Ueberschrift UND Fliesstext koennen eine eigene Schrift bekommen, und beides laesst sich wieder
+// zuruecknehmen -- ohne den Ruecksetzweg bliebe eine einmal gewaehlte eigene Schrift dauerhaft
+// aktiv, weil das kuratierte Paar nur greift, solange keine Asset-ID gesetzt ist.
+function assignFontAsset(role: 'display' | 'body', assetId: string | null) {
+  const key = role === 'display' ? 'displayFontAssetId' : 'bodyFontAssetId'
+  if (activeLevel.value === 'organization') { org[key] = assetId; return }
+  const target = activeLevel.value === 'department' ? activeDepartmentOverride.value : activeTeamOverride.value
+  if (target) target[key] = assetId
+}
+
+function activeFontAssetId(role: 'display' | 'body'): string | null {
+  const key = role === 'display' ? 'displayFontAssetId' : 'bodyFontAssetId'
+  if (activeLevel.value === 'organization') return org[key]
+  return (activeLevel.value === 'department' ? activeDepartmentOverride.value : activeTeamOverride.value)?.[key] ?? null
+}
+
+// Erneuter Klick auf die aktive Rolle nimmt die Auswahl zurueck -- das kuratierte Paar greift
+// wieder, sobald keine Asset-ID mehr gesetzt ist.
+function toggleFontAsset(role: 'display' | 'body', assetId: string) {
+  assignFontAsset(role, activeFontAssetId(role) === assetId ? null : assetId)
+}
+
 const uploadingAsset = ref(false)
 const uploadError = ref('')
 
@@ -435,6 +494,10 @@ async function confirmLicense(assetId: string) {
 }
 
 function selectScope(level: ScopeLevelName, departmentId: string | null, teamId: string | null) {
+  // Hier -- im Event-Handler, nicht in einem computed -- entsteht der Eintrag, in den die
+  // Formularfelder der gewaehlten Ebene anschliessend schreiben.
+  if (level === 'department' && departmentId) overrideFor(departmentId)
+  if (level === 'team' && teamId) teamOverrideFor(teamId)
   activeLevel.value = level
   activeDepartmentId.value = departmentId
   activeTeamId.value = teamId
@@ -453,11 +516,13 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
     <div v-else-if="loadError" class="card p-8 text-center text-sm font-semibold text-red-700">Die Markendaten konnten nicht geladen werden. Bitte lade die Seite neu.</div>
     <template v-else>
       <!-- Scope-Umschalter -->
-      <div class="card mb-6 flex flex-wrap items-center gap-2 p-4">
-        <button class="focus-ring rounded-lg px-3 py-1.5 text-xs font-semibold" :class="activeLevel === 'organization' ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'" @click="selectScope('organization', null, null)">Verein</button>
+      <!-- Der aktive Bereich darf nicht allein an der Farbe haengen, sonst meldet ein Screenreader
+           ihn gar nicht -- daher aria-pressed je Schaltflaeche und eine Gruppenbeschriftung. -->
+      <div class="card mb-6 flex flex-wrap items-center gap-2 p-4" role="group" aria-label="Markenebene wählen">
+        <button type="button" :aria-pressed="activeLevel === 'organization'" class="focus-ring rounded-lg px-3 py-1.5 text-xs font-semibold" :class="activeLevel === 'organization' ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'" @click="selectScope('organization', null, null)">Verein</button>
         <span v-for="department in departments" :key="department.id" class="flex items-center gap-1">
-          <button class="focus-ring rounded-lg px-3 py-1.5 text-xs font-semibold" :class="activeLevel === 'department' && activeDepartmentId === department.id ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'" @click="selectScope('department', department.id, null)">{{ department.name }}</button>
-          <button v-for="team in teams.filter((t) => t.departmentId === department.id)" :key="team.id" class="focus-ring rounded-lg px-3 py-1.5 text-[11px] font-semibold" :class="activeLevel === 'team' && activeTeamId === team.id ? 'bg-forest text-white' : 'bg-[#f4f6f1] text-[#7b827d]'" @click="selectScope('team', department.id, team.id)">{{ team.name }}</button>
+          <button type="button" :aria-pressed="activeLevel === 'department' && activeDepartmentId === department.id" class="focus-ring rounded-lg px-3 py-1.5 text-xs font-semibold" :class="activeLevel === 'department' && activeDepartmentId === department.id ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'" @click="selectScope('department', department.id, null)">{{ department.name }}</button>
+          <button v-for="team in teams.filter((t) => t.departmentId === department.id)" :key="team.id" type="button" :aria-pressed="activeLevel === 'team' && activeTeamId === team.id" class="focus-ring rounded-lg px-3 py-1.5 text-[11px] font-semibold" :class="activeLevel === 'team' && activeTeamId === team.id ? 'bg-forest text-white' : 'bg-[#f4f6f1] text-[#7b827d]'" @click="selectScope('team', department.id, team.id)">{{ team.name }}</button>
         </span>
       </div>
 
@@ -612,10 +677,12 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
 
               <div v-if="selectableFontAssets.length" class="mt-4 space-y-1.5">
                 <p class="text-[11px] font-semibold text-[#7b827d]">Verfügbare eigene Schriften</p>
-                <div v-for="asset in selectableFontAssets" :key="asset.id" class="flex items-center justify-between rounded-lg bg-[#f4f6f1] px-3 py-1.5 text-[11px]">
+                <div v-for="asset in selectableFontAssets" :key="asset.id" class="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[#f4f6f1] px-3 py-1.5 text-[11px]">
                   <span>{{ asset.fontFamily }} — {{ assetOrigin(asset) }}</span>
-                  <button v-if="activeLevel !== 'organization'" class="focus-ring underline" @click="(activeLevel === 'department' ? activeDepartmentOverride! : activeTeamOverride!).displayFontAssetId = asset.id">als Überschriften-Schrift</button>
-                  <button v-if="activeLevel === 'organization'" class="focus-ring underline" @click="org.displayFontAssetId = asset.id">als Überschriften-Schrift</button>
+                  <span class="flex items-center gap-2">
+                    <button type="button" class="focus-ring underline" :aria-pressed="activeFontAssetId('display') === asset.id" :class="activeFontAssetId('display') === asset.id && 'font-bold'" @click="toggleFontAsset('display', asset.id)">als Überschriften-Schrift</button>
+                    <button type="button" class="focus-ring underline" :aria-pressed="activeFontAssetId('body') === asset.id" :class="activeFontAssetId('body') === asset.id && 'font-bold'" @click="toggleFontAsset('body', asset.id)">als Fließtext-Schrift</button>
+                  </span>
                 </div>
               </div>
             </div>

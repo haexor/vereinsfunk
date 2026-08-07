@@ -112,6 +112,11 @@ create table public.brand_assets (
   kind public.brand_asset_kind not null,
   bucket_id text not null default 'brand-assets' check (bucket_id = 'brand-assets'),
   object_path text not null,
+  -- Nur fuer kind = 'font': der Pfad der hochgeladenen Originaldatei im Bucket raw-media.
+  -- object_path fuehrt auf das ausgelieferte WOFF2; ohne diesen Zeiger waere das Original --
+  -- der eigentliche Lizenznachweis (siehe plans/013, "Schriften") -- nach einer Ersetzung in
+  -- der Datenbank nicht mehr auffindbar, weil die Dateiendung nicht aus dem WOFF2-Pfad hervorgeht.
+  source_object_path text,
   mime_type text not null,
   byte_size bigint not null check (byte_size > 0),
   sha256 text not null check (sha256 ~ '^[a-f0-9]{64}$'),
@@ -162,7 +167,13 @@ alter table public.organization_brand_profiles
   add column display_font_asset_id uuid,
   add column body_font_asset_id uuid,
   add column allow_department_overrides boolean not null default true,
-  add column locked_fields text[] not null default '{}';
+  -- Der CHECK begrenzt die Sperrliste auf genau die Felder, die eine Abteilung/Mannschaft
+  -- ueberhaupt selbst fuehrt (Spalten von department_brand_profiles/team_brand_profiles) --
+  -- TS-Gegenstueck: BRAND_LOCKABLE_FIELDS in packages/domain, BrandLockableFieldSchema in
+  -- packages/contracts. Ohne ihn nimmt die Spalte einen Tippfehler ('primary_colour') an, der
+  -- dann lautlos nichts sperrt, weil resolveBrand nur die bekannten camelCase-Namen kennt.
+  add column locked_fields text[] not null default '{}'
+    check (locked_fields <@ array['primaryColor','accentColor','tone','logoAssetId','displayFontAssetId','bodyFontAssetId']);
 
 -- Ergaenzt gegenueber dem Plan-Entwurf: zusammengesetzte Fremdschluessel fuer die neuen
 -- Asset-Referenzen fehlten im Entwurf (AGENTS.md verlangt sie fuer jede Tenant-Referenz, damit
@@ -188,7 +199,9 @@ create table public.department_brand_profiles (
   tone text check (tone is null or tone in ('nahbar','dynamisch','sachlich')),
   display_font_asset_id uuid, body_font_asset_id uuid,
   allow_team_overrides boolean not null default true,
-  locked_fields text[] not null default '{}',
+  -- Gleiche Begrenzung wie organization_brand_profiles.locked_fields, siehe dort.
+  locked_fields text[] not null default '{}'
+    check (locked_fields <@ array['primaryColor','accentColor','tone','logoAssetId','displayFontAssetId','bodyFontAssetId']),
   updated_by uuid not null references public.profiles(id),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -290,6 +303,34 @@ as $$
 $$;
 revoke all on function authz.brand_asset_is_selectable(uuid, uuid, uuid, uuid) from public;
 grant execute on function authz.brand_asset_is_selectable(uuid, uuid, uuid, uuid) to authenticated, service_role;
+
+-- Dieselbe Grenze fuer die Vereinsebene: brand_profiles_update aus
+-- 202608020001_initial_tenant_foundation.sql kannte die beiden neuen Schrift-Referenzen noch
+-- nicht. Ohne diese Erweiterung koennte jemand mit organization.manage per direktem
+-- PostgREST-Zugriff das Schrift-Asset EINER Abteilung als vereinsweite Schrift eintragen und es
+-- damit allen Schwesterabteilungen zugaenglich machen -- genau die Abschottung, die
+-- brand_asset_is_selectable auf den unteren Ebenen bereits durchsetzt. null bleibt erlaubt
+-- (keine eigene Schrift gesetzt), und mit beiden Zielspalten null trifft die Funktion genau die
+-- vereinsweiten Assets.
+-- Und dieselbe Lesbarkeit wie bei den beiden neuen Profiltabellen: das Vereins-Markenprofil ist
+-- die Grundlage, von der Abteilung und Mannschaft erben -- wer sie nicht lesen kann, sieht auf
+-- /marke statt der Vereinsfarben die eingebauten Defaults. is_organization_member verlangt eine
+-- organization_memberships-Zeile; die meisten Vereinsmitglieder (auch ein Abteilungsadmin) haben
+-- ausschliesslich eine Abteilungs- oder Teamrolle. Gleiche Begruendung wie bei channel_scopes und
+-- policy_settings (2026080701/2026080606). Vertraulich ist hier nichts: es sind Farben, Tonalitaet
+-- und Schriftwahl des Vereins, die jedes Mitglied ohnehin in jedem Beitrag sieht.
+drop policy brand_profiles_select on public.organization_brand_profiles;
+create policy brand_profiles_select on public.organization_brand_profiles for select to authenticated
+  using (authz.is_any_member_of_organization(organization_id));
+
+drop policy brand_profiles_update on public.organization_brand_profiles;
+create policy brand_profiles_update on public.organization_brand_profiles for update to authenticated
+  using (authz.has_organization_permission(organization_id, 'organization.manage'))
+  with check (
+    authz.has_organization_permission(organization_id, 'organization.manage')
+    and (display_font_asset_id is null or authz.brand_asset_is_selectable(display_font_asset_id, organization_id, null, null))
+    and (body_font_asset_id is null or authz.brand_asset_is_selectable(body_font_asset_id, organization_id, null, null))
+  );
 
 create policy department_brand_profiles_insert on public.department_brand_profiles for insert to authenticated
   with check (

@@ -434,10 +434,13 @@ export function evaluateMediaGate(input: MediaGateInput): { publishable: boolean
 export { curatedFonts, curatedFontPairings, findCuratedFont, type CuratedFont, type CuratedFontPairing } from './fonts.js'
 export { contrastRatio, meetsMinimumContrast, type ContrastCheck } from './contrast.js'
 export {
+  BRAND_LOCKABLE_FIELDS,
   resolveBrand,
   isBrandAssetSelectable,
   type BrandAssetRef,
   type BrandLevelProfile,
+  type BrandLockableField,
+  type BrandOverrideProfile,
   type ResolvedBrand,
 } from './brand.js'
 

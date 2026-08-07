@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  BRAND_LOCKABLE_FIELDS,
   canTransition,
   contrastRatio,
   createIdempotencyKey,
@@ -338,6 +339,34 @@ describe('resolveBrand', () => {
     const department = { allowTeamOverrides: true, lockedFields: [] }
     const team = { primaryColor: '#000000' }
     expect(resolveBrand(locked, department, team).primaryColor).toBe('#163a2c')
+  })
+
+  it('a department that may not deviate cannot open the door for its teams either', () => {
+    const noOverrides = { ...organization, allowDepartmentOverrides: false }
+    const department = { allowTeamOverrides: true, lockedFields: [] }
+    const team = { primaryColor: '#000000' }
+    expect(resolveBrand(noOverrides, department, team).primaryColor).toBe('#163a2c')
+  })
+
+  it('a department cannot override a color role the organization alone controls', () => {
+    // backgroundColor/textColor/onPrimaryColor und die kuratierten Schriftschluessel haben auf
+    // den unteren Ebenen keine Spalte -- BRAND_LOCKABLE_FIELDS bildet genau das ab.
+    const department = { backgroundColor: '#000000', allowTeamOverrides: true, lockedFields: [] } as never
+    expect(resolveBrand(organization, department).backgroundColor).toBe('#f6f4ec')
+  })
+
+  it('exposes exactly the fields a department or team can actually carry', () => {
+    expect([...BRAND_LOCKABLE_FIELDS]).toEqual(['primaryColor', 'accentColor', 'tone', 'logoAssetId', 'displayFontAssetId', 'bodyFontAssetId'])
+  })
+})
+
+describe('relativeLuminance input validation', () => {
+  it('rejects a short hex form instead of returning NaN', () => {
+    expect(() => contrastRatio('#abc', '#ffffff')).toThrow(/invalid hex color/)
+  })
+
+  it('rejects a half-typed color instead of returning NaN', () => {
+    expect(() => meetsMinimumContrast('#12', '#ffffff')).toThrow(/invalid hex color/)
   })
 })
 

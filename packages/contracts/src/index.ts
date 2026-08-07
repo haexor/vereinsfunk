@@ -141,6 +141,16 @@ export const OrganizationProfileSchema = OrganizationProfileFieldsSchema.extend(
   countryCode: CountryCodeSchema,
 })
 
+// Nur Felder, die eine Abteilung/Mannschaft ueberhaupt selbst setzen kann (siehe
+// BrandOverrideFieldsSchema unten, die Spalten von department_brand_profiles/team_brand_profiles
+// und BRAND_LOCKABLE_FIELDS in packages/domain als TS-Gegenstueck). Ohne diese Begrenzung liess
+// sich ein Tippfehler ('primary_colour') speichern, der dann nichts sperrt -- und die Oberflaeche
+// bot Sperren fuer Felder an, die unterhalb des Vereins ohnehin niemand setzen kann.
+export const BrandLockableFieldSchema = z.enum([
+  'primaryColor', 'accentColor', 'tone', 'logoAssetId', 'displayFontAssetId', 'bodyFontAssetId',
+])
+const LockedFieldsSchema = z.array(BrandLockableFieldSchema).max(6)
+
 export const OrganizationBrandUpdateSchema = z.object({
   primaryColor: HexColorSchema,
   accentColor: HexColorSchema,
@@ -153,7 +163,7 @@ export const OrganizationBrandUpdateSchema = z.object({
   displayFontAssetId: UuidSchema.nullable().optional(),
   bodyFontAssetId: UuidSchema.nullable().optional(),
   allowDepartmentOverrides: z.boolean().optional(),
-  lockedFields: z.array(z.string().min(1).max(60)).max(11).optional(),
+  lockedFields: LockedFieldsSchema.optional(),
 })
 export const OrganizationBrandSchema = z.object({
   organizationId: UuidSchema,
@@ -168,7 +178,7 @@ export const OrganizationBrandSchema = z.object({
   displayFontAssetId: UuidSchema.nullable(),
   bodyFontAssetId: UuidSchema.nullable(),
   allowDepartmentOverrides: z.boolean(),
-  lockedFields: z.array(z.string()),
+  lockedFields: z.array(BrandLockableFieldSchema),
   logoPath: z.string().nullable(),
   logoDarkPath: z.string().nullable(),
 })
@@ -237,7 +247,7 @@ const BrandOverrideFieldsSchema = z.object({
 
 export const UpdateDepartmentBrandRequestSchema = BrandOverrideFieldsSchema.extend({
   allowTeamOverrides: z.boolean().optional(),
-  lockedFields: z.array(z.string().min(1).max(60)).max(11).optional(),
+  lockedFields: LockedFieldsSchema.optional(),
 })
 export const DepartmentBrandSchema = UpdateDepartmentBrandRequestSchema.extend({
   organizationId: UuidSchema,

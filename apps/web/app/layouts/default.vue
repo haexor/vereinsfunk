@@ -24,8 +24,13 @@ watch(
     if (!organizationId) return
     const supabase = useSupabaseClient()
     const result = await supabase.from('organization_brand_profiles').select('logo_path').eq('organization_id', organizationId).maybeSingle()
+    // Nach jedem await pruefen, ob der Verein inzwischen gewechselt hat: sonst kann ein frueher
+    // gestarteter Durchlauf nach einem spaeteren zurueckkehren und das Logo des vorigen Vereins
+    // in den Umschalter schreiben.
+    if (scope.value?.organizationId !== organizationId) return
     if (!result.data?.logo_path) return
     const signed = await supabase.storage.from('brand-assets').createSignedUrl(result.data.logo_path, 600)
+    if (scope.value?.organizationId !== organizationId) return
     organizationLogoUrl.value = signed.data?.signedUrl ?? ''
   },
   { immediate: true },

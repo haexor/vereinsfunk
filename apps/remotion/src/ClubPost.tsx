@@ -1,6 +1,6 @@
 import { loadFont as loadCustomFont } from '@remotion/fonts'
 import { useEffect, useState } from 'react'
-import { AbsoluteFill, continueRender, delayRender, Img, interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion'
+import { AbsoluteFill, Img, interpolate, spring, useCurrentFrame, useDelayRender, useVideoConfig } from 'remotion'
 import { z } from 'zod'
 
 const CuratedFontKeySchema = z.enum(['manrope', 'dm_sans', 'space_grotesk', 'karla'])
@@ -77,12 +77,26 @@ export function ClubPost(props: ClubPostProps) {
 
   const [fonts, setFonts] = useState<{ display: string; body: string } | null>(null)
 
+  // Der Handle entsteht WAEHREND des Renderns, nicht erst im useEffect danach: sonst liegt
+  // zwischen dem ersten Commit und dem delayRender ein Fenster, in dem der Renderer das Bild
+  // bereits mit der Ersatzschrift aufnehmen kann -- genau der stumme Fallback, den Plan 013
+  // ausschliessen will.
+  const { delayRender, continueRender } = useDelayRender()
+  const [handle] = useState(() => delayRender('ClubPost: Marken-Schriften laden'))
+
   useEffect(() => {
-    const [handle] = [delayRender('ClubPost: Marken-Schriften laden')]
     let cancelled = false
-    Promise.all([registerFont(safeProps.displayFont), registerFont(safeProps.bodyFont)])
+    // allSettled statt all: schlaegt eine der beiden Schriften fehl (Netzwerk, abgelaufene
+    // signierte URL), soll die andere trotzdem greifen. Mit Promise.all blieben beide auf der
+    // Ersatzschrift stehen, und die Ablehnung liefe als unbehandelte Promise-Rejection weiter,
+    // weil hier nur .finally() haengt.
+    Promise.allSettled([registerFont(safeProps.displayFont), registerFont(safeProps.bodyFont)])
       .then(([display, body]) => {
-        if (!cancelled) setFonts({ display, body })
+        if (cancelled) return
+        setFonts({
+          display: display.status === 'fulfilled' ? display.value : FALLBACK_FONT_FAMILY,
+          body: body.status === 'fulfilled' ? body.value : FALLBACK_FONT_FAMILY,
+        })
       })
       .finally(() => continueRender(handle))
     return () => {

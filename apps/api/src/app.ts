@@ -91,6 +91,7 @@ import {
 } from '@vereinsfunk/contracts'
 import { canAssignRole, canRemoveRole, hasPermission, type Permission, type Role } from '@vereinsfunk/authorization'
 import {
+  BRAND_LOCKABLE_FIELDS,
   createIdempotencyKey,
   evaluateMediaGate,
   evaluateSubmitPermission,
@@ -101,6 +102,7 @@ import {
   resolveReviewers,
   resolveReviewRoute,
   type BrandAssetRef,
+  type BrandLockableField,
   type ChannelCandidate,
   type ConfigOverride,
   type MembershipRecord,
@@ -116,7 +118,7 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAuthGuards, SupabasePlatformAdminProvider, SupabaseRoleProvider, type PermissionScope, type PlatformAdminProvider, type RoleProvider } from './auth.js'
-import { generateSvgRasterDerivatives } from './brandAssetDerivatives.js'
+import { generateSvgRasterDerivatives, SvgRasterizationError } from './brandAssetDerivatives.js'
 import { FontEmbeddingRestrictedError, processBrandFontUpload, UnsupportedFontFormatError } from './brandFont.js'
 import { hashLogoBuffer, LogoDimensionsError, processBrandLogoUpload, UnsupportedLogoFormatError } from './brandLogo.js'
 import { createEmailSender, type EmailSender } from './email.js'
@@ -289,6 +291,25 @@ async function loadSelectableBrandAsset(
 }
 
 const LOGO_ASSET_KINDS = new Set(['logo_primary', 'logo_light', 'logo_dark', 'logo_mark', 'wordmark', 'watermark'])
+
+// Der Rahmen, den eine hoehere Ebene setzt, gilt beim SCHREIBEN und nicht erst beim Aufloesen.
+// resolveBrand ignoriert einen unerlaubten Wert zwar zuverlaessig, aber die API haette ihn vorher
+// klaglos gespeichert -- die Abteilung sieht ihre Farbe im Formular stehen und nirgends wirken.
+// Geerbte Felder (null) bleiben immer erlaubt: so raeumt man einen frueher gesetzten Wert weg.
+type BrandOverrideInput = Partial<Record<BrandLockableField, string | null | undefined>>
+
+function firstBlockedBrandField(input: BrandOverrideInput, lockedFields: readonly string[]): BrandLockableField | null {
+  const locked = new Set(lockedFields)
+  for (const field of BRAND_LOCKABLE_FIELDS) {
+    const value = input[field]
+    if (value !== undefined && value !== null && locked.has(field)) return field
+  }
+  return null
+}
+
+function setsAnyBrandField(input: BrandOverrideInput): boolean {
+  return BRAND_LOCKABLE_FIELDS.some((field) => input[field] !== undefined && input[field] !== null)
+}
 
 function mapDepartmentRow(row: Record<string, unknown>) {
   return { id: row.id, organizationId: row.organization_id, name: row.name, slug: row.slug, archivedAt: row.archived_at, createdAt: row.created_at }
@@ -788,22 +809,30 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       .eq('kind', assetKind)
       .eq('status', 'ready')
     if (supersede.error) throw supersede.error
+    // upsert statt insert: object_path traegt den Inhalts-Hash und ist per unique(bucket_id,
+    // object_path) eindeutig. Wird dieselbe Datei ein zweites Mal hochgeladen, entsteht derselbe
+    // Pfad -- ein reines insert scheiterte dann an der Eindeutigkeit, nachdem der Supersede-Schritt
+    // die vorhandene Zeile bereits auf 'replaced' gesetzt hatte. Der Verein stuende danach ohne
+    // aktives Logo-Asset da, und der Aufruf endete in einer 500.
     const assetInsert = await service
       .from('brand_assets')
-      .insert({
-        organization_id: params.id,
-        department_id: null,
-        team_id: null,
-        kind: assetKind,
-        object_path: objectPath,
-        mime_type: processed.contentType,
-        byte_size: processed.buffer.length,
-        sha256: hashLogoBuffer(processed.buffer),
-        width: processed.width ?? null,
-        height: processed.height ?? null,
-        status: 'ready',
-        created_by: request.auth!.userId,
-      })
+      .upsert(
+        {
+          organization_id: params.id,
+          department_id: null,
+          team_id: null,
+          kind: assetKind,
+          object_path: objectPath,
+          mime_type: processed.contentType,
+          byte_size: processed.buffer.length,
+          sha256: hashLogoBuffer(processed.buffer),
+          width: processed.width ?? null,
+          height: processed.height ?? null,
+          status: 'ready',
+          created_by: request.auth!.userId,
+        },
+        { onConflict: 'bucket_id,object_path' },
+      )
       .select()
       .single()
     if (assetInsert.error) throw assetInsert.error
@@ -851,6 +880,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
     const scope = toPermissionScope(fields.organizationId, fields.departmentId, fields.teamId)
     if (!(await requirePermission(request, reply, 'brand.manage', scope))) return
+
+    // Auf Vereinsebene fuehren logo_path/logo_dark_path den denormalisierten Zeiger auf das
+    // jeweils aktuelle 'ready'-Asset. Nur der dedizierte Endpunkt pflegt sie mit; kaeme ein
+    // logo_primary/logo_dark hier durch, wuerde das bisherige Asset auf 'replaced' gesetzt,
+    // waehrend der Zeiger unveraendert darauf zeigt -- das neue Logo tauchte nirgends auf.
+    // Abteilungen und Mannschaften haben keinen solchen Zeiger (sie waehlen ueber logo_asset_id).
+    if (!fields.departmentId && (fields.kind === 'logo_primary' || fields.kind === 'logo_dark')) {
+      return reply.code(400).send({ error: 'use_organization_logo_endpoint', correlationId: request.id })
+    }
 
     if (fields.teamId) {
       const client = supabaseClients.forUser(request.auth!.accessToken)
@@ -929,6 +967,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       if (woff2Upload.error) throw woff2Upload.error
       Object.assign(insertPayload, {
         object_path: woff2ObjectPath,
+        source_object_path: rawObjectPath,
         mime_type: 'font/woff2',
         byte_size: processedFont.woff2Buffer.length,
         sha256: hash,
@@ -947,7 +986,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
       let rasterDerivativePaths: Record<string, string> = {}
       if (processedImage.extension === 'svg') {
-        const derivatives = await generateSvgRasterDerivatives(processedImage.buffer)
+        let derivatives
+        try {
+          derivatives = await generateSvgRasterDerivatives(processedImage.buffer)
+        } catch (error) {
+          if (error instanceof SvgRasterizationError) {
+            return reply.code(400).send({ error: 'invalid_logo', message: error.message, correlationId: request.id })
+          }
+          throw error
+        }
         const derivativeUploads = await Promise.all(
           (Object.entries(derivatives) as [string, Buffer][]).map(async ([size, png]) => {
             const path = `organizations/${fields.organizationId}/brand/${scopeSegment}/${fields.kind}-${hash}-${size}.png`
@@ -983,7 +1030,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       if (supersede.error) throw supersede.error
     }
 
-    const insert = await service.from('brand_assets').insert(insertPayload).select().single()
+    // Wie beim Logo-Endpunkt: derselbe Dateiinhalt ergibt denselben object_path, und
+    // unique(bucket_id, object_path) liesse ein reines insert beim zweiten Hochladen scheitern.
+    const insert = await service.from('brand_assets').upsert(insertPayload, { onConflict: 'bucket_id,object_path' }).select().single()
     if (insert.error) throw insert.error
 
     const audit = await service.from('audit_events').insert({
@@ -1019,12 +1068,20 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (!(await requirePermission(request, reply, 'brand.manage', scope))) return
 
     const service = supabaseClients.forService()
+    // Abgeloest wird nur DIESELBE Schrift (Familie, Schnitt, Lage) -- anders als ein Logo ist eine
+    // Schrift kein Platz, den es je Ebene nur einmal gibt: das Markenprofil kennt eine Ueberschriften-
+    // und eine Fliesstextschrift, und der Plan sieht mehrere eigene Schriftdateien je Verein vor.
+    // Ein Supersede ueber kind = 'font' allein haette beim Bestaetigen der zweiten Schrift die
+    // erste entwertet und damit unreferenzierbar gemacht.
     const supersede = await service
       .from('brand_assets')
       .update({ status: 'replaced' })
       .eq('organization_id', existing.data.organization_id)
       .eq('kind', 'font')
       .eq('status', 'ready')
+      .eq('font_family', existing.data.font_family)
+      .eq('font_weight', existing.data.font_weight)
+      .eq('font_style', existing.data.font_style)
       .filter('department_id', existing.data.department_id ? 'eq' : 'is', existing.data.department_id ?? null)
       .filter('team_id', existing.data.team_id ? 'eq' : 'is', existing.data.team_id ?? null)
     if (supersede.error) throw supersede.error
@@ -1068,6 +1125,23 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const organizationId = department.data.organization_id as string
     if (!(await requirePermission(request, reply, 'brand.manage', { organizationId, departmentId: params.id }))) return
 
+    // Ueber die Service Role, nicht ueber den Nutzer-Client: ob die Sperre greift, darf nicht davon
+    // abhaengen, ob die Aufruferin das Vereinsprofil selbst lesen darf -- sonst liefe die Pruefung
+    // fuer genau die Rollen ins Leere, fuer die sie gedacht ist. Die Berechtigung im Ziel-Scope ist
+    // an dieser Stelle bereits geprueft.
+    const organizationBrand = await supabaseClients
+      .forService()
+      .from('organization_brand_profiles')
+      .select('allow_department_overrides, locked_fields')
+      .eq('organization_id', organizationId)
+      .maybeSingle()
+    if (organizationBrand.error) throw organizationBrand.error
+    if (organizationBrand.data && setsAnyBrandField(input) && !organizationBrand.data.allow_department_overrides) {
+      return reply.code(400).send({ error: 'overrides_not_allowed', correlationId: request.id })
+    }
+    const blockedField = firstBlockedBrandField(input, (organizationBrand.data?.locked_fields as string[] | null) ?? [])
+    if (blockedField) return reply.code(400).send({ error: 'field_locked', field: blockedField, correlationId: request.id })
+
     for (const [assetId, expectedKinds] of [
       [input.logoAssetId, LOGO_ASSET_KINDS],
       [input.displayFontAssetId, new Set(['font'])],
@@ -1106,6 +1180,29 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const organizationId = team.data.organization_id as string
     const departmentId = team.data.department_id as string
     if (!(await requirePermission(request, reply, 'brand.manage', { organizationId, departmentId, teamId: params.id }))) return
+
+    // Beide Ebenen daruber zaehlen: die Vereinssperre gilt fuer die Mannschaft auch dann, wenn die
+    // Abteilung sie nicht wiederholt, und eine Abteilung, die selbst nicht abweichen darf, kann das
+    // Recht nicht an ihre Mannschaften weiterreichen (siehe resolveBrand in packages/domain).
+    // Wie beim Abteilungsendpunkt ueber die Service Role -- siehe dort.
+    const service = supabaseClients.forService()
+    const [organizationBrand, departmentBrand] = await Promise.all([
+      service.from('organization_brand_profiles').select('allow_department_overrides, locked_fields').eq('organization_id', organizationId).maybeSingle(),
+      service.from('department_brand_profiles').select('allow_team_overrides, locked_fields').eq('organization_id', organizationId).eq('department_id', departmentId).maybeSingle(),
+    ])
+    if (organizationBrand.error) throw organizationBrand.error
+    if (departmentBrand.error) throw departmentBrand.error
+    const teamOverridesAllowed =
+      (organizationBrand.data?.allow_department_overrides ?? true) && (departmentBrand.data?.allow_team_overrides ?? true)
+    if (setsAnyBrandField(input) && !teamOverridesAllowed) {
+      return reply.code(400).send({ error: 'overrides_not_allowed', correlationId: request.id })
+    }
+    const lockedFields = [
+      ...((organizationBrand.data?.locked_fields as string[] | null) ?? []),
+      ...((departmentBrand.data?.locked_fields as string[] | null) ?? []),
+    ]
+    const blockedField = firstBlockedBrandField(input, lockedFields)
+    if (blockedField) return reply.code(400).send({ error: 'field_locked', field: blockedField, correlationId: request.id })
 
     for (const [assetId, expectedKinds] of [
       [input.logoAssetId, LOGO_ASSET_KINDS],

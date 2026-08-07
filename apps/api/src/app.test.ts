@@ -88,6 +88,22 @@ function chain(result: { data: unknown; error: unknown }): PromiseLike<{ data: u
   return builder as PromiseLike<{ data: unknown; error: unknown }> & Record<string, unknown>
 }
 
+// Die Grenzen, die eine hoehere Ebene setzt, liest die API bewusst ueber die Service Role: ob eine
+// Sperre greift, darf nicht davon abhaengen, ob die Aufruferin das Vereinsprofil selbst lesen darf.
+function brandLimitsService(
+  organization: { allow_department_overrides: boolean; locked_fields: string[] } | null,
+  department: { allow_team_overrides: boolean; locked_fields: string[] } | null = null,
+) {
+  return () =>
+    ({
+      from: (table: string) => {
+        if (table === 'organization_brand_profiles') return chain({ data: organization, error: null })
+        if (table === 'department_brand_profiles') return chain({ data: department, error: null })
+        throw new Error(`unexpected table in service fake: ${table}`)
+      },
+    }) as unknown as SupabaseClient
+}
+
 const apps: Awaited<ReturnType<typeof buildApp>>[] = []
 afterEach(async () => Promise.all(apps.splice(0).map((app) => app.close())))
 
@@ -2294,7 +2310,7 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
-      forService: () => ({}) as unknown as SupabaseClient,
+      forService: brandLimitsService({ allow_department_overrides: true, locked_fields: [] }),
     }
     const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
     const token = await signAccessToken(USER_ID)
@@ -2320,7 +2336,7 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
-      forService: () => ({}) as unknown as SupabaseClient,
+      forService: brandLimitsService({ allow_department_overrides: true, locked_fields: [] }, { allow_team_overrides: true, locked_fields: [] }),
     }
     const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
     const token = await signAccessToken(USER_ID)
@@ -2332,5 +2348,148 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
     })
     expect(response.statusCode).toBe(200)
     expect(response.json()).toMatchObject({ primaryColor: '#445566', teamId: TEAM_ID })
+  })
+
+  // Der vom Verein gesetzte Rahmen muss beim SCHREIBEN greifen: resolveBrand wuerde einen
+  // unerlaubten Wert zwar ignorieren, aber die Abteilung saehe ihn gespeichert im Formular stehen
+  // und nirgends wirken.
+  it('rejects a department brand override when the organization forbids department branding', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: brandLimitsService({ allow_department_overrides: false, locked_fields: [] }),
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/v1/departments/${DEPARTMENT_ID}/brand`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { primaryColor: '#112233' },
+    })
+    expect(response.statusCode).toBe(400)
+    expect(response.json().error).toBe('overrides_not_allowed')
+  })
+
+  it('rejects a department brand override on a field the organization locked', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: brandLimitsService({ allow_department_overrides: true, locked_fields: ['primaryColor'] }),
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/v1/departments/${DEPARTMENT_ID}/brand`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { primaryColor: '#112233' },
+    })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ error: 'field_locked', field: 'primaryColor' })
+  })
+
+  it('lets a department clear a locked field back to inherited', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
+            if (table === 'department_brand_profiles') {
+              return { upsert: () => chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, primary_color: null, accent_color: null, tone: null, logo_asset_id: null, display_font_asset_id: null, body_font_asset_id: null, allow_team_overrides: true, locked_fields: [] }, error: null }) }
+            }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: brandLimitsService({ allow_department_overrides: true, locked_fields: ['primaryColor'] }),
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/v1/departments/${DEPARTMENT_ID}/brand`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { primaryColor: null },
+    })
+    expect(response.statusCode).toBe(200)
+  })
+
+  it('rejects a team brand override when its department forbids team branding', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'teams') return chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID }, error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: brandLimitsService({ allow_department_overrides: true, locked_fields: [] }, { allow_team_overrides: false, locked_fields: [] }),
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/v1/teams/${TEAM_ID}/brand`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { primaryColor: '#445566' },
+    })
+    expect(response.statusCode).toBe(400)
+    expect(response.json().error).toBe('overrides_not_allowed')
+  })
+
+  it('rejects a team brand override on a field the organization locked, even when the department does not repeat it', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'teams') return chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID }, error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: brandLimitsService({ allow_department_overrides: true, locked_fields: ['accentColor'] }, { allow_team_overrides: true, locked_fields: [] }),
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/v1/teams/${TEAM_ID}/brand`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { accentColor: '#445566' },
+    })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ error: 'field_locked', field: 'accentColor' })
+  })
+
+  it('refuses an organization-wide logo through the generic asset endpoint', async () => {
+    // logo_path/logo_dark_path pflegt nur der dedizierte Endpunkt -- sonst zeigte der
+    // denormalisierte Zeiger nach dem Upload auf ein Asset mit Status 'replaced'.
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider })
+    const token = await signAccessToken(USER_ID)
+    const boundary = '----vereinsfunkOrgLogoBoundary'
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="organizationId"\r\n\r\n${ORGANIZATION_ID}\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="kind"\r\n\r\nlogo_primary\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="logo.png"\r\nContent-Type: image/png\r\n\r\n`),
+      Buffer.from('irrelevant -- the scope check runs before the file is read'),
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ])
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/brand/assets',
+      headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` },
+      payload: body,
+    })
+    expect(response.statusCode).toBe(400)
+    expect(response.json().error).toBe('use_organization_logo_endpoint')
   })
 })

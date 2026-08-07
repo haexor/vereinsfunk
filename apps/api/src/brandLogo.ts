@@ -72,8 +72,14 @@ export async function processBrandLogoUpload(buffer: Buffer): Promise<ProcessedL
   // still fails -- found via manual browser testing of Paket 013 (an unrelated, pre-existing
   // gap surfaced through the new general asset upload path, which shares this function).
   let reencoded
+  let encodedMetadata
   try {
     reencoded = rasterFormat === 'png' ? await sharp(buffer).rotate().png().toBuffer() : await sharp(buffer).rotate().jpeg().toBuffer()
+    // Die Masse muessen den AUSGELIEFERTEN Puffer beschreiben: bei EXIF-Orientierung 5 bis 8
+    // dreht .rotate() das Bild um 90 Grad, wodurch Breite und Hoehe gegenueber metadata() der
+    // Originaldatei vertauscht sind. Sie landen in brand_assets.width/height und bestimmen dort
+    // das Seitenverhaeltnis fuer Vorschauen und Remotion-Layouts.
+    encodedMetadata = await sharp(reencoded).metadata()
   } catch {
     throw new UnsupportedLogoFormatError('logo file could not be decoded')
   }
@@ -83,8 +89,8 @@ export async function processBrandLogoUpload(buffer: Buffer): Promise<ProcessedL
     extension: rasterFormat,
     contentType: rasterFormat === 'png' ? 'image/png' : 'image/jpeg',
     sanitized: false,
-    width,
-    height,
+    width: encodedMetadata.width ?? width,
+    height: encodedMetadata.height ?? height,
   }
 }
 

@@ -5,7 +5,12 @@ function srgbChannelToLinear(channel: number): number {
   return normalized <= 0.03928 ? normalized / 12.92 : Math.pow((normalized + 0.055) / 1.055, 2.4)
 }
 
+// Ohne diese Pruefung liefert Number.parseInt bei einer Kurzform (#abc) oder einer halb
+// getippten Eingabe NaN, und die Kontrastanzeige auf /marke zeigt "NaN:1" statt eines Fehlers.
+const SIX_DIGIT_HEX = /^#?[0-9a-fA-F]{6}$/
+
 function relativeLuminance(hex: string): number {
+  if (!SIX_DIGIT_HEX.test(hex)) throw new Error(`invalid hex color: ${hex}`)
   const value = hex.replace('#', '')
   const r = Number.parseInt(value.slice(0, 2), 16)
   const g = Number.parseInt(value.slice(2, 4), 16)
