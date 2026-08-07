@@ -1,0 +1,9 @@
+/* Selbst gehostet (Paket 013) statt fonts.googleapis.com -- kein Drittanbieter-Aufruf bei
+   jedem Seitenaufruf. Quelle: DM Sans, SIL Open Font License 1.1. */
+@font-face {
+  font-family: 'DM Sans';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/dm-sans/dm-sans.woff2') format('woff2');
+}
