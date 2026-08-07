@@ -14,13 +14,15 @@ export default defineNuxtConfig({
         { name: 'description', content: 'Social-Media-Planung für Sportvereine' },
         { name: 'theme-color', content: '#122820' },
       ],
+      // Selbst gehostet statt fonts.googleapis.com (Paket 013): kein Drittanbieter-Aufruf mehr
+      // bei jedem Seitenaufruf. Alle vier kuratierten Familien werden global geladen, damit die
+      // Live-Vorschau auf /marke jede Kombination sofort korrekt darstellen kann -- siehe
+      // packages/domain/src/fonts.ts fuer die Registry, die diese Liste widerspiegelt.
       link: [
-        { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
-        { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: '' },
-        {
-          rel: 'stylesheet',
-          href: 'https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap',
-        },
+        { rel: 'stylesheet', href: '/fonts/manrope/manrope.css' },
+        { rel: 'stylesheet', href: '/fonts/dm-sans/dm-sans.css' },
+        { rel: 'stylesheet', href: '/fonts/space-grotesk/space-grotesk.css' },
+        { rel: 'stylesheet', href: '/fonts/karla/karla.css' },
       ],
     },
   },

@@ -10,6 +10,31 @@ watch(() => route.path, () => { mobileOpen.value = false })
 
 const activeOrganization = computed(() => session.value?.scopes.find((item) => item.organizationId === scope.value?.organizationId) ?? null)
 const organizationInitials = computed(() => (activeOrganization.value?.organizationName ?? '').split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join('').toUpperCase())
+
+// Paket 013, Rueckbau: das Vereinslogo ersetzt die Initialen dort, wo der Verein tatsaechlich
+// als Marke auftritt -- diese kleine Kachel im Umschalter, nicht die geteilte AppLogo-Komponente.
+// AppLogo bleibt bewusst unveraendert: sie steht auch in layouts/admin.vue und layouts/auth.vue,
+// wo es keinen (oder noch keinen einzelnen) aktiven Verein gibt -- dort waere ein Vereinslogo
+// fachlich falsch, es ist die Produktmarke "vereinsfunk", nicht die des Vereins.
+const organizationLogoUrl = ref('')
+watch(
+  () => scope.value?.organizationId,
+  async (organizationId) => {
+    organizationLogoUrl.value = ''
+    if (!organizationId) return
+    const supabase = useSupabaseClient()
+    const result = await supabase.from('organization_brand_profiles').select('logo_path').eq('organization_id', organizationId).maybeSingle()
+    // Nach jedem await pruefen, ob der Verein inzwischen gewechselt hat: sonst kann ein frueher
+    // gestarteter Durchlauf nach einem spaeteren zurueckkehren und das Logo des vorigen Vereins
+    // in den Umschalter schreiben.
+    if (scope.value?.organizationId !== organizationId) return
+    if (!result.data?.logo_path) return
+    const signed = await supabase.storage.from('brand-assets').createSignedUrl(result.data.logo_path, 600)
+    if (scope.value?.organizationId !== organizationId) return
+    organizationLogoUrl.value = signed.data?.signedUrl ?? ''
+  },
+  { immediate: true },
+)
 const activeDepartmentRoles = computed(() => activeOrganization.value?.departments.find((item) => item.id === scope.value?.departmentId)?.roles ?? [])
 const topRoleLabel = computed(() => {
   const role = activeOrganization.value?.organizationRoles[0] ?? activeDepartmentRoles.value[0]
@@ -66,7 +91,8 @@ const organizationNav = [
 
       <div v-if="activeOrganization" class="mb-5 rounded-2xl border border-white/10 bg-white/[.06] p-2">
         <div class="flex w-full items-center gap-3 p-2 text-left">
-          <span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-lime font-display text-sm font-extrabold text-forest">{{ organizationInitials }}</span>
+          <img v-if="organizationLogoUrl" :src="organizationLogoUrl" alt="" class="h-9 w-9 shrink-0 rounded-xl bg-lime object-contain p-1" />
+          <span v-else class="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-lime font-display text-sm font-extrabold text-forest">{{ organizationInitials }}</span>
           <span v-if="(session?.scopes.length ?? 0) <= 1" class="min-w-0 flex-1">
             <span class="block truncate text-sm font-semibold">{{ activeOrganization.organizationName }}</span>
             <span class="block text-[11px] text-white/55">Vereinskonto</span>

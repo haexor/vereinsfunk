@@ -1,0 +1,9 @@
+/* Selbst gehostet (Paket 013) statt fonts.googleapis.com -- kein Drittanbieter-Aufruf bei
+   jedem Seitenaufruf. Quelle: Manrope, SIL Open Font License 1.1. */
+@font-face {
+  font-family: 'Manrope';
+  font-style: normal;
+  font-weight: 600 800;
+  font-display: swap;
+  src: url('/fonts/manrope/manrope.woff2') format('woff2');
+}

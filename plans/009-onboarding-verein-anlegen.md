@@ -216,7 +216,7 @@ Schritt 1 und 2 werden gemeinsam abgesendet und erzeugen den Verein. Schritte 3 
 | `pages/index.vue:4-7` | ✓ 008: `useDemoData()` gelöscht, Scope aus `useSession()`/`useScope()` | echte Abfragen für Kennzahlen und Redaktionsplan |
 | `pages/marke.vue:1` | lokaler State, Scheinspeichern | `PUT /v1/organizations/:id/brand`, echter Ladezustand, echte Fehler |
 | `pages/kalender.vue:1` | 5 Fantasietermine, fest „August 2026“ | echte Beiträge, navigierbarer Monat, Empty State |
-| `nuxt.config.ts:14-21` | Fonts fest von Google Fonts | bleibt zunächst, wird in 013 durch die Font-Registry ersetzt |
+| `nuxt.config.ts:14-21` | Fonts fest von Google Fonts | ✓ 013: selbst gehostete kuratierte Schriften, kein Drittanbieter-Aufruf mehr |
 
 ## Verifikation
 
