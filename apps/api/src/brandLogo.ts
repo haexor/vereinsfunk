@@ -10,6 +10,9 @@ export interface ProcessedLogo {
   extension: 'svg' | 'png' | 'jpg'
   contentType: string
   sanitized: boolean
+  // Nur fuer Rasterbilder gefuellt -- ein SVG ist ein Vektor ohne feste Pixelmasse.
+  width?: number
+  height?: number
 }
 
 const MIN_DIMENSION_PX = 32
@@ -72,6 +75,8 @@ export async function processBrandLogoUpload(buffer: Buffer): Promise<ProcessedL
     extension: rasterFormat,
     contentType: rasterFormat === 'png' ? 'image/png' : 'image/jpeg',
     sanitized: false,
+    width,
+    height,
   }
 }
 
