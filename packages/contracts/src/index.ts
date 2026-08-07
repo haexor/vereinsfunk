@@ -92,7 +92,10 @@ export const SubmissionAcceptedSchema = z.object({ submissionId: UuidSchema, cor
 const HexColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/)
 const CountryCodeSchema = z.string().regex(/^[A-Z]{2}$/)
 export const LegalFormSchema = z.enum(['e_v', 'gmbh', 'gugmbh', 'ggmbh', 'nicht_eingetragen', 'sonstige'])
-export const CuratedFontKeySchema = z.enum(['manrope', 'dm_sans'])
+// Muss mit packages/domain/src/fonts.ts (curatedFonts) Schritt halten -- Contracts bleibt
+// absichtlich ohne Laufzeitabhaengigkeit auf Domain (siehe packages/contracts/package.json),
+// deshalb dieselbe Duplizierung wie bei den Permission-Listen (TS/SQL).
+export const CuratedFontKeySchema = z.enum(['manrope', 'dm_sans', 'space_grotesk', 'karla'])
 export const BrandToneSchema = z.enum(['nahbar', 'dynamisch', 'sachlich'])
 // Rejects garbage before it ever reaches organizations.timezone -- an invalid IANA zone
 // would otherwise only fail later, as a RangeError inside Intl.DateTimeFormat calls that
@@ -141,12 +144,31 @@ export const OrganizationProfileSchema = OrganizationProfileFieldsSchema.extend(
 export const OrganizationBrandUpdateSchema = z.object({
   primaryColor: HexColorSchema,
   accentColor: HexColorSchema,
+  backgroundColor: HexColorSchema,
+  textColor: HexColorSchema,
+  onPrimaryColor: HexColorSchema,
   tone: BrandToneSchema,
   displayFontKey: CuratedFontKeySchema,
   bodyFontKey: CuratedFontKeySchema,
+  displayFontAssetId: UuidSchema.nullable().optional(),
+  bodyFontAssetId: UuidSchema.nullable().optional(),
+  allowDepartmentOverrides: z.boolean().optional(),
+  lockedFields: z.array(z.string().min(1).max(60)).max(11).optional(),
 })
-export const OrganizationBrandSchema = OrganizationBrandUpdateSchema.extend({
+export const OrganizationBrandSchema = z.object({
   organizationId: UuidSchema,
+  primaryColor: HexColorSchema,
+  accentColor: HexColorSchema,
+  backgroundColor: HexColorSchema,
+  textColor: HexColorSchema,
+  onPrimaryColor: HexColorSchema,
+  tone: BrandToneSchema,
+  displayFontKey: CuratedFontKeySchema,
+  bodyFontKey: CuratedFontKeySchema,
+  displayFontAssetId: UuidSchema.nullable(),
+  bodyFontAssetId: UuidSchema.nullable(),
+  allowDepartmentOverrides: z.boolean(),
+  lockedFields: z.array(z.string()),
   logoPath: z.string().nullable(),
   logoDarkPath: z.string().nullable(),
 })
@@ -157,6 +179,76 @@ export const BrandLogoUploadResponseSchema = z.object({
   path: z.string().min(1),
   signedUrl: z.url(),
   sanitized: z.boolean(),
+})
+
+// Paket 013: Branding-Assets (Logovarianten, Wasserzeichen, eigene Schriften) auf Vereins-,
+// Abteilungs- und Mannschaftsebene.
+export const BrandAssetKindSchema = z.enum(['logo_primary', 'logo_light', 'logo_dark', 'logo_mark', 'wordmark', 'watermark', 'font'])
+export const BrandAssetStatusSchema = z.enum(['processing', 'ready', 'rejected', 'replaced'])
+export const FontStyleSchema = z.enum(['normal', 'italic'])
+
+export const BrandAssetSchema = z.object({
+  id: UuidSchema,
+  organizationId: UuidSchema,
+  departmentId: UuidSchema.nullable(),
+  teamId: UuidSchema.nullable(),
+  kind: BrandAssetKindSchema,
+  objectPath: z.string().min(1),
+  mimeType: z.string().min(1),
+  byteSize: z.int().positive(),
+  width: z.int().positive().nullable(),
+  height: z.int().positive().nullable(),
+  fontFamily: z.string().nullable(),
+  fontWeight: z.int().min(100).max(900).nullable(),
+  fontStyle: FontStyleSchema.nullable(),
+  licenseHolder: z.string().nullable(),
+  licenseNote: z.string().nullable(),
+  licenseConfirmedAt: z.iso.datetime({ offset: true }).nullable(),
+  status: BrandAssetStatusSchema,
+  rejectionReason: z.string().nullable(),
+  createdAt: z.iso.datetime({ offset: true }),
+})
+
+// Aus den multipart-Feldern eines POST /v1/brand/assets gelesen -- die Datei selbst kommt als
+// eigener Teil des multipart-Streams, nicht durch dieses Schema.
+export const CreateBrandAssetRequestSchema = z.object({
+  organizationId: UuidSchema,
+  departmentId: UuidSchema.optional(),
+  teamId: UuidSchema.optional(),
+  kind: BrandAssetKindSchema,
+}).refine((value) => value.teamId === undefined || value.departmentId !== undefined, {
+  message: 'teamId requires departmentId',
+})
+
+export const ConfirmBrandAssetLicenseRequestSchema = z.object({
+  licenseHolder: z.string().trim().min(1).max(200),
+  licenseNote: z.string().trim().max(1000).optional(),
+  confirmed: z.literal(true),
+})
+
+const BrandOverrideFieldsSchema = z.object({
+  primaryColor: HexColorSchema.nullable().optional(),
+  accentColor: HexColorSchema.nullable().optional(),
+  tone: BrandToneSchema.nullable().optional(),
+  logoAssetId: UuidSchema.nullable().optional(),
+  displayFontAssetId: UuidSchema.nullable().optional(),
+  bodyFontAssetId: UuidSchema.nullable().optional(),
+})
+
+export const UpdateDepartmentBrandRequestSchema = BrandOverrideFieldsSchema.extend({
+  allowTeamOverrides: z.boolean().optional(),
+  lockedFields: z.array(z.string().min(1).max(60)).max(11).optional(),
+})
+export const DepartmentBrandSchema = UpdateDepartmentBrandRequestSchema.extend({
+  organizationId: UuidSchema,
+  departmentId: UuidSchema,
+})
+
+export const UpdateTeamBrandRequestSchema = BrandOverrideFieldsSchema
+export const TeamBrandSchema = UpdateTeamBrandRequestSchema.extend({
+  organizationId: UuidSchema,
+  departmentId: UuidSchema,
+  teamId: UuidSchema,
 })
 
 export const OnboardingStepSchema = z.enum(['branding', 'responsible_person'])
@@ -692,6 +784,16 @@ export type OrganizationProfile = z.infer<typeof OrganizationProfileSchema>
 export type OrganizationBrandUpdate = z.infer<typeof OrganizationBrandUpdateSchema>
 export type OrganizationBrand = z.infer<typeof OrganizationBrandSchema>
 export type BrandLogoVariant = z.infer<typeof BrandLogoVariantSchema>
+export type BrandAssetKind = z.infer<typeof BrandAssetKindSchema>
+export type BrandAssetStatus = z.infer<typeof BrandAssetStatusSchema>
+export type BrandAsset = z.infer<typeof BrandAssetSchema>
+export type CreateBrandAssetRequest = z.infer<typeof CreateBrandAssetRequestSchema>
+export type ConfirmBrandAssetLicenseRequest = z.infer<typeof ConfirmBrandAssetLicenseRequestSchema>
+export type UpdateDepartmentBrandRequest = z.infer<typeof UpdateDepartmentBrandRequestSchema>
+export type DepartmentBrand = z.infer<typeof DepartmentBrandSchema>
+export type UpdateTeamBrandRequest = z.infer<typeof UpdateTeamBrandRequestSchema>
+export type TeamBrand = z.infer<typeof TeamBrandSchema>
+export type CuratedFontKey = z.infer<typeof CuratedFontKeySchema>
 export type OnboardingStep = z.infer<typeof OnboardingStepSchema>
 export type OnboardingState = z.infer<typeof OnboardingStateSchema>
 export type ScopeLevel = z.infer<typeof ScopeLevelSchema>
