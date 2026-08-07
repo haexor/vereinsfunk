@@ -57,7 +57,14 @@ export async function processBrandFontUpload(buffer: Buffer): Promise<ProcessedF
     throw new UnsupportedFontFormatError('font file could not be parsed')
   }
 
-  if (font['OS/2'].fsType.noEmbedding) {
+  // Ohne OS/2-Tabelle laesst sich weder Gewicht noch Einbettungsrecht zuverlaessig bestimmen.
+  // fontkit behandelt sie selbst als optional (sie fehlt bei manchen validen, aber nicht
+  // web-optimierten TTF/OTF-Dateien) -- ein Zugriff ohne diesen Schutz haette hier eine
+  // ungefangene Ausnahme statt einer 400-Antwort geworfen (adversariale Pruefung dieses Pakets).
+  const os2 = font['OS/2']
+  if (!os2) throw new UnsupportedFontFormatError('font file has no OS/2 table, cannot determine embedding rights')
+
+  if (os2.fsType.noEmbedding) {
     throw new FontEmbeddingRestrictedError("this font's license forbids embedding it -- use a font licensed for web/app embedding")
   }
 
@@ -69,7 +76,7 @@ export async function processBrandFontUpload(buffer: Buffer): Promise<ProcessedF
     originalContentType: format === 'woff2' ? 'font/woff2' : format === 'otf' ? 'font/otf' : 'font/ttf',
     woff2Buffer,
     fontFamily: font.familyName,
-    fontWeight: font['OS/2'].usWeightClass,
-    fontStyle: font['OS/2'].fsSelection.italic ? 'italic' : 'normal',
+    fontWeight: os2.usWeightClass,
+    fontStyle: os2.fsSelection.italic ? 'italic' : 'normal',
   }
 }

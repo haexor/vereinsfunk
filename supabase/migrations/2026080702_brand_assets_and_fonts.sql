@@ -258,25 +258,72 @@ create policy brand_assets_select on public.brand_assets for select to authentic
 -- vertraulich, deshalb vereinsweit lesbar (jedes Mitglied sieht, wie jede Abteilung markiert ist).
 create policy department_brand_profiles_select on public.department_brand_profiles for select to authenticated
   using (authz.is_any_member_of_organization(organization_id));
--- Schreibrecht ueber brand.manage im jeweiligen Scope. Die Auswahl eines konkreten Assets (liegt
--- es auf dieser Ebene oder einer uebergeordneten?) wird zusaetzlich im API-Endpunkt geprueft --
--- dieselbe Funktion, die auch die Auswahlliste in der Oberflaeche filtert, siehe
--- packages/domain resolveBrand/isBrandAssetSelectable. RLS ist hier die zweite Grenze, nicht die
--- einzige, weil sie eine dynamische "liegt der Asset-Verweis auf einer erlaubten Ebene"-Pruefung
--- nicht sinnvoll ausdruecken kann.
+
+-- Spiegelt isBrandAssetSelectable (packages/domain/src/brand.ts) als SQL-Funktion: ein Asset ist
+-- waehlbar, wenn es vereinsweit ist, oder auf genau der Zielebene (Abteilung/Mannschaft) liegt,
+-- oder -- fuer eine Mannschaft -- auf deren Abteilung. Ergaenzt gegenueber dem urspruenglichen
+-- Migrationsentwurf: der dortige Kommentar behauptete, diese Pruefung liefe "zusaetzlich im
+-- API-Endpunkt" und RLS pruefe nur die Berechtigung -- das liess sich per direktem PostgREST-
+-- Zugriff umgehen (adversariale Pruefung dieses Pakets), weil die Berechtigungspruefung allein
+-- keine Aussage ueber die HERKUNFT des referenzierten Assets trifft. Ohne diese Funktion haette
+-- eine Abteilung mit eigenem brand.manage ein Asset einer Schwesterabteilung referenzieren
+-- koennen, ohne die API zu benutzen.
+create or replace function authz.brand_asset_is_selectable(
+  target_asset_id uuid, target_organization_id uuid, target_department_id uuid, target_team_id uuid
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select exists (
+    select 1 from public.brand_assets asset
+    where asset.id = target_asset_id
+      and asset.organization_id = target_organization_id
+      and asset.status = 'ready'
+      and (
+        asset.department_id is null
+        or (asset.department_id = target_department_id and (asset.team_id is null or asset.team_id = target_team_id))
+      )
+  );
+$$;
+revoke all on function authz.brand_asset_is_selectable(uuid, uuid, uuid, uuid) from public;
+grant execute on function authz.brand_asset_is_selectable(uuid, uuid, uuid, uuid) to authenticated, service_role;
+
 create policy department_brand_profiles_insert on public.department_brand_profiles for insert to authenticated
-  with check (updated_by = auth.uid() and authz.has_department_permission(department_id, 'brand.manage'));
+  with check (
+    updated_by = auth.uid() and authz.has_department_permission(department_id, 'brand.manage')
+    and (logo_asset_id is null or authz.brand_asset_is_selectable(logo_asset_id, organization_id, department_id, null))
+    and (display_font_asset_id is null or authz.brand_asset_is_selectable(display_font_asset_id, organization_id, department_id, null))
+    and (body_font_asset_id is null or authz.brand_asset_is_selectable(body_font_asset_id, organization_id, department_id, null))
+  );
 create policy department_brand_profiles_update on public.department_brand_profiles for update to authenticated
   using (authz.has_department_permission(department_id, 'brand.manage'))
-  with check (updated_by = auth.uid() and authz.has_department_permission(department_id, 'brand.manage'));
+  with check (
+    updated_by = auth.uid() and authz.has_department_permission(department_id, 'brand.manage')
+    and (logo_asset_id is null or authz.brand_asset_is_selectable(logo_asset_id, organization_id, department_id, null))
+    and (display_font_asset_id is null or authz.brand_asset_is_selectable(display_font_asset_id, organization_id, department_id, null))
+    and (body_font_asset_id is null or authz.brand_asset_is_selectable(body_font_asset_id, organization_id, department_id, null))
+  );
 
 create policy team_brand_profiles_select on public.team_brand_profiles for select to authenticated
   using (authz.is_any_member_of_organization(organization_id));
 create policy team_brand_profiles_insert on public.team_brand_profiles for insert to authenticated
-  with check (updated_by = auth.uid() and authz.has_team_permission(team_id, 'brand.manage'));
+  with check (
+    updated_by = auth.uid() and authz.has_team_permission(team_id, 'brand.manage')
+    and (logo_asset_id is null or authz.brand_asset_is_selectable(logo_asset_id, organization_id, department_id, team_id))
+    and (display_font_asset_id is null or authz.brand_asset_is_selectable(display_font_asset_id, organization_id, department_id, team_id))
+    and (body_font_asset_id is null or authz.brand_asset_is_selectable(body_font_asset_id, organization_id, department_id, team_id))
+  );
 create policy team_brand_profiles_update on public.team_brand_profiles for update to authenticated
   using (authz.has_team_permission(team_id, 'brand.manage'))
-  with check (updated_by = auth.uid() and authz.has_team_permission(team_id, 'brand.manage'));
+  with check (
+    updated_by = auth.uid() and authz.has_team_permission(team_id, 'brand.manage')
+    and (logo_asset_id is null or authz.brand_asset_is_selectable(logo_asset_id, organization_id, department_id, team_id))
+    and (display_font_asset_id is null or authz.brand_asset_is_selectable(display_font_asset_id, organization_id, department_id, team_id))
+    and (body_font_asset_id is null or authz.brand_asset_is_selectable(body_font_asset_id, organization_id, department_id, team_id))
+  );
 
 -- RLS allein reicht nicht: ohne diese table-level GRANTs verweigert Postgres den Zugriff, bevor
 -- eine Policy ueberhaupt ausgewertet wird (siehe die Grants fuer channel_scopes/approval_stages

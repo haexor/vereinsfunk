@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(33);
+select plan(36);
 
 set local role postgres;
 
@@ -202,7 +202,32 @@ select throws_ok(
   '23503', null, 'department_brand_profiles cannot reference a brand asset belonging to another organization'
 );
 
--- 33: organization_brand_profiles traegt die neuen Farbrollen mit den dokumentierten Defaults.
+-- 33-36: Fund aus der adversarialen Pruefung -- authz.brand_asset_is_selectable() als zweite
+-- Grenze in RLS selbst, nicht nur im API-Endpunkt (siehe Migrationskommentar). Ohne sie liesse
+-- sich eine Schwesterabteilungs-Referenz per direktem PostgREST-Zugriff setzen, obwohl die
+-- Berechtigungspruefung (brand.manage in der EIGENEN Abteilung) das nicht verhindert.
+insert into public.brand_assets (id, organization_id, department_id, team_id, kind, object_path, mime_type, byte_size, sha256, status, created_by) values
+  ('67000000-8000-4000-8000-000000000005', '67000000-1000-4000-8000-000000000001', '67000000-1100-4000-8000-000000000002', null, 'logo_mark', 'organizations/a/brand/handball-mark.png', 'image/png', 100, repeat('9', 64), 'ready', '67000000-0000-4000-8000-000000000003');
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '67000000-0000-4000-8000-000000000002', true);
+select throws_ok(
+  format($$update public.department_brand_profiles set logo_asset_id = %L where department_id = '67000000-1100-4000-8000-000000000001'$$, '67000000-8000-4000-8000-000000000005'),
+  '42501', null, 'the Fussball department admin cannot set a Handball-owned asset as their own department logo, even with brand.manage in their own department'
+);
+update public.department_brand_profiles set logo_asset_id = '67000000-8000-4000-8000-000000000001' where department_id = '67000000-1100-4000-8000-000000000001';
+select is(
+  (select logo_asset_id::text from public.department_brand_profiles where department_id = '67000000-1100-4000-8000-000000000001'),
+  '67000000-8000-4000-8000-000000000001',
+  'the Fussball department admin can still set the organization-wide logo as their own department logo'
+);
+select set_config('request.jwt.claim.sub', '67000000-0000-4000-8000-000000000005', true);
+select throws_ok(
+  format($$update public.team_brand_profiles set logo_asset_id = %L where team_id = '67000000-1200-4000-8000-000000000001'$$, '67000000-8000-4000-8000-000000000005'),
+  '42501', null, 'the Team A manager cannot set the Handball department''s asset as their own team logo (wrong department)'
+);
+
+-- 36: organization_brand_profiles traegt die neuen Farbrollen mit den dokumentierten Defaults.
+set local role postgres;
 insert into public.organization_brand_profiles (organization_id) values ('67000000-1000-4000-8000-000000000001')
   on conflict (organization_id) do nothing;
 select is((select background_color from public.organization_brand_profiles where organization_id = '67000000-1000-4000-8000-000000000001'), '#f6f4ec',

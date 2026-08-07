@@ -2130,14 +2130,14 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
 
   it('returns 404 when confirming the license of a brand asset that does not exist', async () => {
     const clients: SupabaseClientFactory = {
-      forUser: () => ({}) as unknown as SupabaseClient,
-      forService: () =>
+      forUser: () =>
         ({
           from: (table: string) => {
             if (table === 'brand_assets') return chain({ data: null, error: null })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used before the existence check') } }) as unknown as SupabaseClient,
     }
     const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
     const token = await signAccessToken(USER_ID)
@@ -2152,8 +2152,7 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
 
   it('rejects confirming a license on an asset that is not a font', async () => {
     const clients: SupabaseClientFactory = {
-      forUser: () => ({}) as unknown as SupabaseClient,
-      forService: () =>
+      forUser: () =>
         ({
           from: (table: string) => {
             if (table === 'brand_assets') {
@@ -2162,6 +2161,7 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used before the kind check') } }) as unknown as SupabaseClient,
     }
     const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
     const token = await signAccessToken(USER_ID)
@@ -2178,13 +2178,20 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
   it('confirms a font license and moves the asset to ready', async () => {
     const captured: Record<string, unknown>[] = []
     const clients: SupabaseClientFactory = {
-      forUser: () => ({}) as unknown as SupabaseClient,
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'brand_assets') {
+              return chain({ data: { id: '10000000-9000-4000-8000-000000000001', organization_id: ORGANIZATION_ID, department_id: null, team_id: null, kind: 'font' }, error: null })
+            }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
       forService: () =>
         ({
           from: (table: string) => {
             if (table === 'brand_assets') {
               return {
-                select: () => chain({ data: { id: '10000000-9000-4000-8000-000000000001', organization_id: ORGANIZATION_ID, department_id: null, team_id: null, kind: 'font' }, error: null }),
                 update: (values: Record<string, unknown>) => {
                   captured.push(values)
                   return chain({

@@ -854,7 +854,10 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
     if (fields.teamId) {
       const client = supabaseClients.forUser(request.auth!.accessToken)
-      const team = await client.from('teams').select('id').eq('id', fields.teamId).eq('department_id', fields.departmentId!).maybeSingle()
+      // organization_id mitpruefen, nicht nur department_id: sonst koennte eine echte
+      // Team-Mitgliedschaft mit einer davon abweichenden organizationId kombiniert werden, bevor
+      // der zusammengesetzte Fremdschluessel beim Insert erst spaeter (als harter 500) eingreift.
+      const team = await client.from('teams').select('id').eq('id', fields.teamId).eq('department_id', fields.departmentId!).eq('organization_id', fields.organizationId).maybeSingle()
       if (team.error) throw team.error
       if (!team.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     } else if (fields.departmentId) {
@@ -1002,8 +1005,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const params = z.object({ id: UuidSchema }).parse(request.params)
     const input = ConfirmBrandAssetLicenseRequestSchema.parse(request.body)
 
-    const service = supabaseClients.forService()
-    const existing = await service.from('brand_assets').select().eq('id', params.id).maybeSingle()
+    // Ueber den Nutzer-eigenen Client lesen, nicht per Service Role: brand_assets_select traegt
+    // bereits die Abschottung zwischen Abteilungen/Mannschaften (siehe Migration) durch -- ein
+    // Asset ausserhalb des eigenen Vereins/Scopes liefert so schon "nicht gefunden", statt vor
+    // der Berechtigungspruefung per Service Role Existenz und Art eines fremden Assets zu verraten.
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const existing = await client.from('brand_assets').select().eq('id', params.id).maybeSingle()
     if (existing.error) throw existing.error
     if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     if (existing.data.kind !== 'font') return reply.code(400).send({ error: 'not_a_font_asset', correlationId: request.id })
@@ -1011,6 +1018,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const scope = toPermissionScope(existing.data.organization_id as string, existing.data.department_id as string | null, existing.data.team_id as string | null)
     if (!(await requirePermission(request, reply, 'brand.manage', scope))) return
 
+    const service = supabaseClients.forService()
     const supersede = await service
       .from('brand_assets')
       .update({ status: 'replaced' })
