@@ -29,11 +29,13 @@ export const ExternalClubEventSchema = z.object({
 export type ExternalClubEvent = z.infer<typeof ExternalClubEventSchema>
 
 /**
- * Wendet das FieldMapping wie bei person.ts an. Fehlen danach sowohl title als auch startsAt und
- * liegt ein iCal-`summary` vor, wird zuerst geprueft, ob die Titelheuristik ein Spielmuster
- * erkennt -- wenn ja, gehoert die Zeile zur fixtures-Domaene, nicht hierher (undefined, damit
- * derselbe Kalendereintrag nicht doppelt als Spiel UND Veranstaltung landet). Erkennt sie keines,
- * wird der Titel als Veranstaltungstitel uebernommen.
+ * Wendet das FieldMapping wie bei person.ts an. title und startsAt werden danach unabhaengig
+ * voneinander aus einem iCal-`summary`/`dtstart` ergaenzt, falls das FieldMapping das jeweilige
+ * Feld nicht schon geliefert hat. Fehlt title noch und liegt ein `summary` vor, wird zuerst
+ * geprueft, ob die Titelheuristik ein Spielmuster erkennt -- wenn ja, gehoert die Zeile zur
+ * fixtures-Domaene, nicht hierher (undefined, damit derselbe Kalendereintrag nicht doppelt als
+ * Spiel UND Veranstaltung landet). Erkennt sie keines, wird der Titel als Veranstaltungstitel
+ * uebernommen.
  */
 function normalize(raw: Readonly<Record<string, unknown>>, mapping: FieldMapping): Record<string, unknown> | undefined {
   const result: Record<string, unknown> = {}
@@ -42,20 +44,36 @@ function normalize(raw: Readonly<Record<string, unknown>>, mapping: FieldMapping
     if (value !== undefined && value !== null && value !== '') result[internalField] = value
   }
 
-  if (result.title === undefined && result.startsAt === undefined) {
-    const summary = raw['summary']
-    if (typeof summary === 'string' && summary.trim().length > 0) {
-      if (detectFixtureTitle(summary) !== undefined) return undefined
+  // title und startsAt unabhaengig voneinander aus der Quelle ergaenzen: eine Zuordnung, die
+  // bereits per FieldMapping nur eines der beiden liefert (z. B. ein explizites Titel-Feld ohne
+  // eigene Beginn-Spalte), soll den jeweils fehlenden Teil trotzdem aus summary/dtstart erhalten,
+  // statt beide Ergaenzungen an dieselbe "beide fehlen"-Bedingung zu koppeln.
+  const summary = raw['summary']
+  const hasUsableSummary = typeof summary === 'string' && summary.trim().length > 0
 
-      result.title = summary
-      const dtstart = raw['dtstart']
-      if (typeof dtstart === 'string' && dtstart.length > 0) {
-        result.startsAt = dtstart
-        const dtstartTzid = raw['dtstart_tzid']
-        if (typeof dtstartTzid === 'string' && dtstartTzid.length > 0) result.startsAtTzid = dtstartTzid
-        // VALUE=DATE (kein DATE-TIME) heisst in RFC 5545: ganztaegig, keine Uhrzeit im Feed.
-        if (result.allDay === undefined && raw['dtstart_value'] === 'DATE') result.allDay = true
-      }
+  if (result.title === undefined && hasUsableSummary) {
+    if (detectFixtureTitle(summary) !== undefined) return undefined
+
+    result.title = summary
+
+    const location = raw['location']
+    if (result.locationName === undefined && typeof location === 'string' && location.length > 0) result.locationName = location
+
+    const description = raw['description']
+    if (result.description === undefined && typeof description === 'string' && description.length > 0) result.description = description
+
+    const uid = raw['uid']
+    if (result.externalId === undefined && typeof uid === 'string' && uid.length > 0) result.externalId = uid
+  }
+
+  if (result.startsAt === undefined) {
+    const dtstart = raw['dtstart']
+    if (typeof dtstart === 'string' && dtstart.length > 0) {
+      result.startsAt = dtstart
+      const dtstartTzid = raw['dtstart_tzid']
+      if (typeof dtstartTzid === 'string' && dtstartTzid.length > 0) result.startsAtTzid = dtstartTzid
+      // VALUE=DATE (kein DATE-TIME) heisst in RFC 5545: ganztaegig, keine Uhrzeit im Feed.
+      if (result.allDay === undefined && raw['dtstart_value'] === 'DATE') result.allDay = true
 
       const dtend = raw['dtend']
       if (result.endsAt === undefined && typeof dtend === 'string' && dtend.length > 0) {
@@ -63,15 +81,6 @@ function normalize(raw: Readonly<Record<string, unknown>>, mapping: FieldMapping
         const dtendTzid = raw['dtend_tzid']
         if (typeof dtendTzid === 'string' && dtendTzid.length > 0) result.endsAtTzid = dtendTzid
       }
-
-      const location = raw['location']
-      if (result.locationName === undefined && typeof location === 'string' && location.length > 0) result.locationName = location
-
-      const description = raw['description']
-      if (result.description === undefined && typeof description === 'string' && description.length > 0) result.description = description
-
-      const uid = raw['uid']
-      if (result.externalId === undefined && typeof uid === 'string' && uid.length > 0) result.externalId = uid
     }
   }
 

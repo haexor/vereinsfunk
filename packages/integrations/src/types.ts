@@ -24,7 +24,7 @@ export interface DomainAdapter<TExternal> {
    * beiden Bereichen (fixtures/events) landen. Der people-Adapter aus Paket 014 nutzt das nicht
    * und gibt weiterhin immer ein Objekt zurueck.
    */
-  normalize(raw: Readonly<Record<string, unknown>>, mapping: FieldMapping): unknown | undefined
+  normalize(raw: Readonly<Record<string, unknown>>, mapping: FieldMapping): Record<string, unknown> | undefined
   identityOf(entity: TExternal): { externalId: string } | { fuzzy: string[] }
 }
 

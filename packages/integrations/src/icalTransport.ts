@@ -58,7 +58,15 @@ function parseVEvents(text: string): Record<string, unknown>[] {
       if (equalsIndex === -1) continue
       const paramName = paramPair.slice(0, equalsIndex).trim().toLowerCase()
       if (!paramName) continue
-      current[`${propertyName}_${paramName}`] = paramPair.slice(equalsIndex + 1)
+      const rawParamValue = paramPair.slice(equalsIndex + 1)
+      // RFC 5545 erlaubt ein quoted-string fuer Parameterwerte (z. B. TZID="Europe/Berlin") --
+      // ohne das Entfernen der Anfuehrungszeichen wuerde resolveIcalDateTime eine Zeitzonen-ID
+      // erhalten, die Intl.DateTimeFormat nicht erkennt, und stillschweigend auf die Fallback-
+      // Zeitzone ausweichen.
+      const paramValue = rawParamValue.length >= 2 && rawParamValue.startsWith('"') && rawParamValue.endsWith('"')
+        ? rawParamValue.slice(1, -1)
+        : rawParamValue
+      current[propertyName + '_' + paramName] = paramValue
     }
   }
   return events
@@ -88,16 +96,10 @@ function parseIcalDate(value: unknown): Date | undefined {
 // (asIfUtcMs), einmal die tatsächlich gemeinte UTC-Instanz geschätzt (utcGuessMs). Die Differenz
 // beider ist der Zonenversatz zum Schätzzeitpunkt (inkl. Sommerzeit); zieht man sie vom Schätzwert
 // ab, landet man exakt auf der gesuchten UTC-Instanz -- ohne eine eigene Offset-Tabelle zu pflegen.
-function zonedWallTimeToUtcMs(
-  year: number,
-  month: number,
-  day: number,
-  hour: number,
-  minute: number,
-  second: number,
-  timeZone: string,
-): number {
-  const utcGuessMs = Date.UTC(year, month - 1, day, hour, minute, second)
+// Ein zweiter Durchlauf mit dem Ergebnis des ersten wiederholt das: liegt die gesuchte Instanz
+// jenseits einer Zeitumstellung, gilt dort ein anderer Versatz als am Schätzzeitpunkt, und nur der
+// am Ergebnis erneut berechnete Versatz trifft die tatsächliche Instanz.
+function offsetAtInstant(instantMs: number, timeZone: string): number {
   const formatter = new Intl.DateTimeFormat('en-US', {
     timeZone,
     hourCycle: 'h23',
@@ -108,10 +110,24 @@ function zonedWallTimeToUtcMs(
     minute: '2-digit',
     second: '2-digit',
   })
-  const parts = formatter.formatToParts(new Date(utcGuessMs))
+  const parts = formatter.formatToParts(new Date(instantMs))
   const get = (type: string) => Number(parts.find((p) => p.type === type)?.value)
   const asIfUtcMs = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'), get('second'))
-  return 2 * utcGuessMs - asIfUtcMs
+  return asIfUtcMs - instantMs
+}
+
+function zonedWallTimeToUtcMs(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  second: number,
+  timeZone: string,
+): number {
+  const utcGuessMs = Date.UTC(year, month - 1, day, hour, minute, second)
+  const firstPassMs = utcGuessMs - offsetAtInstant(utcGuessMs, timeZone)
+  return utcGuessMs - offsetAtInstant(firstPassMs, timeZone)
 }
 
 export interface ResolvedIcalDateTime {

@@ -8,6 +8,10 @@ import type { ExternalClubEvent } from './event.js'
 export interface ClubEventLocal {
   readonly id: string
   readonly externalId: string | null
+  // Bei Serien identifiziert externalId (die iCal-UID) nur die Serie -- die Instanz braucht
+  // recurrenceKey zusaetzlich, sonst kollabieren alle Einzeltermine einer Wiederholung auf
+  // dieselbe Identitaet (siehe club_events_external_unique, Migration 2026080704).
+  readonly recurrenceKey: string | null
   readonly sourceId: string | null
   readonly title: string
   readonly description: string | null
@@ -35,13 +39,19 @@ function isLocal(entity: ClubEventLocal | ExternalClubEvent): entity is ClubEven
  * nicht hier (genau wie bei directory_people).
  */
 export function createClubEventMatchStrategy(): MatchStrategy<ClubEventLocal, ExternalClubEvent> {
+  // externalId allein identifiziert bei einer Serie nur die Serie (RFC 5545: UID ist seriengleich,
+  // RECURRENCE-ID/recurrenceKey erst die Instanz) -- ohne recurrenceKey in der Identitaet wuerden
+  // zwei verschiedene Termine derselben Serie faelschlich als derselbe Datensatz abgeglichen,
+  // waehrend club_events_external_unique sie als eigene Zeilen erwartet.
+  const compositeExternalId = (externalId: string, recurrenceKey: string | null | undefined) => [externalId, recurrenceKey ?? ''].join('\u0000')
+
   return {
     identityOf(entity) {
-      if (entity.externalId) return { externalId: entity.externalId }
+      if (entity.externalId) return { externalId: compositeExternalId(entity.externalId, entity.recurrenceKey) }
       return { fuzzy: [entity.title.trim().toLowerCase(), entity.startsAt] }
     },
     externalIdOf(local) {
-      return local.externalId ?? undefined
+      return local.externalId ? compositeExternalId(local.externalId, local.recurrenceKey) : undefined
     },
     fuzzyKeyOf(local) {
       return [local.title.trim().toLowerCase(), local.startsAt.toISOString()]
@@ -59,15 +69,19 @@ export function createClubEventMatchStrategy(): MatchStrategy<ClubEventLocal, Ex
           status: entity.status,
         }
       }
+      // Keine Vergleichsfallbacks hier: undefined heisst "die Quelle sagt zu diesem Feld nichts"
+      // (MatchStrategy.fieldsOf-Vertrag) und darf in diffFields nie als Aenderung gegen einen
+      // lokal gepflegten Wert erscheinen. 'other'/false/'scheduled'/null gelten nur beim Anlegen
+      // (siehe handleEventsSync, insertRows), nicht beim Abgleich.
       return {
         title: entity.title,
-        description: entity.description ?? null,
-        category: entity.category ?? 'other',
+        description: entity.description,
+        category: entity.category,
         startsAt: entity.startsAt,
-        endsAt: entity.endsAt ?? null,
-        allDay: entity.allDay ?? false,
-        locationName: entity.locationName ?? null,
-        status: entity.status ?? 'scheduled',
+        endsAt: entity.endsAt,
+        allDay: entity.allDay,
+        locationName: entity.locationName,
+        status: entity.status,
       }
     },
     labelOf(entity) {

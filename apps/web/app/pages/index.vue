@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ArrowRight, CalendarDays, CheckCircle2, Clock3, FileText, Palette, Plus, ShieldCheck, X } from '@lucide/vue'
-import type { ContentSuggestion } from '@vereinsfunk/contracts'
+import { ContentSuggestionsResponseSchema, type ContentSuggestion } from '@vereinsfunk/contracts'
 
 const config = useRuntimeConfig()
 const session = await useSession()
@@ -132,8 +132,8 @@ async function loadSuggestions() {
   const departmentId = scope.value?.departmentId
   if (!organizationId || !departmentId || !useCan('post.create', { organizationId, departmentId })) return
   try {
-    const response = await $fetch<{ suggestions: ContentSuggestion[] }>(`${config.public.apiBase}/v1/departments/${departmentId}/content-suggestions`, { headers: await useAuthHeader() })
-    suggestions.value = response.suggestions
+    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/departments/${departmentId}/content-suggestions`, { headers: await useAuthHeader() })
+    suggestions.value = ContentSuggestionsResponseSchema.parse(response).suggestions
     suggestionsLoaded.value = true
   } catch {
     // Anlassvorschlaege sind ein Zusatz, kein Kern-Dashboard-Datum -- ein Ausfall bleibt hier

@@ -1,3 +1,4 @@
+import { resolveIcalDateTime } from '@vereinsfunk/integrations'
 import type { MatchStrategy } from '@vereinsfunk/integrations'
 import type { ExternalFixture } from './fixture.js'
 
@@ -44,6 +45,16 @@ function isLocal(entity: FixtureLocal | ExternalFixture): entity is FixtureLocal
   return 'id' in entity
 }
 
+// Eine externe kickoffAt-Zeile kann die iCal-Kompaktform sein ("20260815T150000Z", noch nicht
+// aufgeloest) oder bereits eine vollstaendige ISO-Zeichenkette (Datei-Spalte). Ohne Normalisierung
+// vergleichen identityOf/fuzzyKeyOf/fieldsOf die Kompaktform textuell gegen local.kickoffAt.
+// toISOString() und halten jeden iCal-synchronisierten Termin faelschlich fuer geaendert.
+// resolveIcalDateTime erkennt nur die Kompaktform; fuer eine bereits vollstaendige ISO-
+// Zeichenkette liefert es undefined, der Rohwert bleibt dann unveraendert.
+function comparableKickoffAt(rawValue: string, tzid: string | undefined): string {
+  return resolveIcalDateTime(rawValue, tzid, 'UTC')?.iso ?? rawValue
+}
+
 /**
  * Loest auf, welche Seite eines Spiels die eigene Mannschaft ist. Kein Raten (plans/019,
  * "Mannschaftszuordnung"): wenn weder teamReference noch einer der beiden iCal-Rohnamen einer
@@ -86,7 +97,7 @@ export function createFixtureMatchStrategy(resolver: TeamNameResolver): MatchStr
   return {
     identityOf(entity) {
       if (entity.externalId) return { externalId: entity.externalId }
-      return { fuzzy: [(entity.opponentName ?? entity.awayNameRaw ?? '').trim().toLowerCase(), entity.kickoffAt ?? ''] }
+      return { fuzzy: [(entity.opponentName ?? entity.awayNameRaw ?? '').trim().toLowerCase(), entity.kickoffAt ? comparableKickoffAt(entity.kickoffAt, entity.kickoffAtTzid) : ''] }
     },
     externalIdOf(local) {
       return local.externalId ?? undefined
@@ -110,7 +121,7 @@ export function createFixtureMatchStrategy(resolver: TeamNameResolver): MatchStr
         opponentName: resolved.opponentName,
         isHome: resolved.isHome,
         competition: entity.competition ?? null,
-        kickoffAt: entity.kickoffAt ?? null,
+        kickoffAt: entity.kickoffAt ? comparableKickoffAt(entity.kickoffAt, entity.kickoffAtTzid) : null,
       }
     },
     labelOf(entity) {

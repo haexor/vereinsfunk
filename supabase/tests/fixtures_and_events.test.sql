@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(53);
+select plan(55);
 
 set local role postgres;
 
@@ -75,6 +75,19 @@ select throws_ok(
   $$insert into public.club_events (organization_id, department_id, team_id, title, starts_at)
     values ('69000000-1000-4000-8000-000000000001', '69000000-1100-4000-8000-000000000002', '69000000-1200-4000-8000-000000000001', 'Falsche Abteilung', now())$$,
   '23503', null, 'a team_id belonging to a different department than department_id violates the composite foreign key'
+);
+-- Cross-Tenant statt nur falsche Abteilung im selben Verein: organization_id aus Verein A mit
+-- einer department_id aus Verein B verletzt den zusammengesetzten Fremdschluessel auf
+-- departments(organization_id, id), nicht nur eine Abteilungszuordnung innerhalb desselben Vereins.
+select throws_ok(
+  $$insert into public.fixtures (organization_id, department_id, status)
+    values ('69000000-1000-4000-8000-000000000001', '69000000-1100-4000-8000-000000000003', 'scheduled')$$,
+  '23503', null, 'a department_id from another organization violates the composite tenant foreign key for fixtures'
+);
+select throws_ok(
+  $$insert into public.club_events (organization_id, department_id, title, starts_at)
+    values ('69000000-1000-4000-8000-000000000001', '69000000-1100-4000-8000-000000000003', 'Cross-Tenant Abteilung', now())$$,
+  '23503', null, 'a department_id from another organization violates the composite tenant foreign key for club_events'
 );
 insert into public.club_events (id, organization_id, department_id, team_id, title, category, starts_at) values
   ('69000000-3100-4000-8000-000000000003', '69000000-1000-4000-8000-000000000001', '69000000-1100-4000-8000-000000000001', '69000000-1200-4000-8000-000000000001', 'Team A Trainingslager', 'training_camp', now() + interval '60 days');

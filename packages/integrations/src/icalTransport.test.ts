@@ -91,6 +91,13 @@ describe('IcalSourceTransport', () => {
     expect(rows[0]?.['dtstart_tzid']).toBe('Europe/Berlin')
   })
 
+  it('strips surrounding double quotes from a quoted-string TZID parameter value', async () => {
+    const text = ['BEGIN:VEVENT', 'UID:e1', 'DTSTART;TZID="Europe/Berlin":20260107T190000', 'END:VEVENT'].join('\n')
+    const transport = new IcalSourceTransport({ key: 'club.ics', text })
+    const rows = await collect(transport)
+    expect(rows[0]?.['dtstart_tzid']).toBe('Europe/Berlin')
+  })
+
   it('exposes a VALUE parameter as a sibling key', async () => {
     const text = ['BEGIN:VEVENT', 'UID:e1', 'DTSTART;VALUE=DATE:20260315', 'END:VEVENT'].join('\n')
     const transport = new IcalSourceTransport({ key: 'club.ics', text })

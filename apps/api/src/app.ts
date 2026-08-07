@@ -1072,7 +1072,7 @@ async function handleEventsSync(ctx: SyncDomainContext): Promise<FastifyReply> {
 
   let existingQuery = service
     .from('club_events')
-    .select('id, external_id, source_id, title, description, category, starts_at, ends_at, all_day, location_name, location_address, registration_url, status, source_updated_at, updated_at')
+    .select('id, external_id, recurrence_key, source_id, title, description, category, starts_at, ends_at, all_day, location_name, location_address, registration_url, status, source_updated_at, updated_at')
     .eq('organization_id', organizationId)
     .or(`source_id.is.null,source_id.eq.${sourceId}`)
   if (sourceDepartmentId) existingQuery = existingQuery.eq('department_id', sourceDepartmentId)
@@ -1080,7 +1080,8 @@ async function handleEventsSync(ctx: SyncDomainContext): Promise<FastifyReply> {
   const existingRows = await existingQuery
   if (existingRows.error) throw existingRows.error
   const existingLocals: ClubEventLocal[] = existingRows.data.map((row) => ({
-    id: row.id as string, externalId: row.external_id as string | null, sourceId: row.source_id as string | null,
+    id: row.id as string, externalId: row.external_id as string | null, recurrenceKey: row.recurrence_key as string | null,
+    sourceId: row.source_id as string | null,
     title: row.title as string, description: row.description as string | null, category: row.category as string,
     startsAt: new Date(row.starts_at as string), endsAt: row.ends_at ? new Date(row.ends_at as string) : null,
     allDay: row.all_day as boolean, locationName: row.location_name as string | null, locationAddress: row.location_address as string | null,
@@ -1129,7 +1130,7 @@ async function handleEventsSync(ctx: SyncDomainContext): Promise<FastifyReply> {
     applicableCreated.push({ entity, startsAt: resolved.iso, startsAtConfirmed: resolved.confirmed })
   }
 
-  const appliedUpdatedCount = plan.updated.length
+  let appliedUpdatedCount = plan.updated.length
   if (mode === 'apply') {
     if (applicableCreated.length > 0) {
       const insertRows = applicableCreated.map(({ entity, startsAt }) => {
@@ -1154,13 +1155,28 @@ async function handleEventsSync(ctx: SyncDomainContext): Promise<FastifyReply> {
       if (update.external.title !== undefined) patch.title = update.external.title
       if (update.external.description !== undefined) patch.description = update.external.description
       if (update.external.category !== undefined) patch.category = update.external.category
+      // Wie beim Anlegen (oben): ein nicht aufloesbares Datum wird ein Konflikt statt eines
+      // Updates, das das betroffene Feld klammheimlich ausspart und die Zeile trotzdem als
+      // erfolgreich aktualisiert zaehlt.
+      let unresolvedDateField: 'startsAt' | 'endsAt' | undefined
       if (update.external.startsAt !== undefined) {
         const resolved = resolveScheduleDateTime(update.external.startsAt, update.external.startsAtTzid, organizationTimezone)
         if (resolved) patch.starts_at = resolved.iso
+        else unresolvedDateField = 'startsAt'
       }
-      if (update.external.endsAt !== undefined) {
+      if (!unresolvedDateField && update.external.endsAt !== undefined) {
         const resolved = resolveScheduleDateTime(update.external.endsAt, update.external.endsAtTzid, organizationTimezone)
         if (resolved) patch.ends_at = resolved.iso
+        else unresolvedDateField = 'endsAt'
+      }
+      if (unresolvedDateField) {
+        const incomingValue = unresolvedDateField === 'startsAt' ? update.external.startsAt : update.external.endsAt
+        const fingerprint = conflictFingerprint([sourceId, domain, 'invalid_record', unresolvedDateField, update.external.externalId ?? update.local.id])
+        if (!pendingConflicts.some((conflict) => conflict.fingerprint === fingerprint)) {
+          pendingConflicts.push({ kind: 'invalid_record', label: update.local.title, field: unresolvedDateField, externalId: update.external.externalId ?? null, localId: update.local.id, currentValue: null, incomingValue: incomingValue ?? null, fingerprint })
+        }
+        appliedUpdatedCount -= 1
+        continue
       }
       if (update.external.allDay !== undefined) patch.all_day = update.external.allDay
       if (update.external.locationName !== undefined) patch.location_name = update.external.locationName
@@ -5277,17 +5293,21 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         .eq('department_id', params.id).eq('status', 'played').gte('kickoff_at', past48Hours).lte('kickoff_at', nowIso),
       client.from('club_events').select('id, title, starts_at, source_updated_at, invitation_dismissed_at')
         .eq('department_id', params.id).neq('status', 'cancelled').gte('starts_at', nowIso).lte('starts_at', in14Days),
-      client.from('submissions').select('fixture_id').eq('department_id', params.id).not('fixture_id', 'is', null),
-      client.from('submissions').select('club_event_id').eq('department_id', params.id).not('club_event_id', 'is', null),
+      // fetchAllRows aus demselben Grund wie bei membersWithApprovePermission: max_rows=1000
+      // wuerde bei vielen bereits verknuepften Einreichungen einige stillschweigend abschneiden.
+      fetchAllRows<{ fixture_id: string }>((from, to) =>
+        client.from('submissions').select('fixture_id').eq('department_id', params.id).not('fixture_id', 'is', null).range(from, to),
+      ),
+      fetchAllRows<{ club_event_id: string }>((from, to) =>
+        client.from('submissions').select('club_event_id').eq('department_id', params.id).not('club_event_id', 'is', null).range(from, to),
+      ),
     ])
     if (upcomingFixtures.error) throw upcomingFixtures.error
     if (playedFixtures.error) throw playedFixtures.error
     if (upcomingEvents.error) throw upcomingEvents.error
-    if (submissionsWithFixture.error) throw submissionsWithFixture.error
-    if (submissionsWithEvent.error) throw submissionsWithEvent.error
 
-    const fixtureIdsWithSubmission = new Set(submissionsWithFixture.data.map((row) => row.fixture_id as string))
-    const eventIdsWithSubmission = new Set(submissionsWithEvent.data.map((row) => row.club_event_id as string))
+    const fixtureIdsWithSubmission = new Set(submissionsWithFixture.map((row) => row.fixture_id))
+    const eventIdsWithSubmission = new Set(submissionsWithEvent.map((row) => row.club_event_id))
     // Wiederkehr nach einer Korrektur in der Quelle: erscheint wieder, sobald source_updated_at
     // neuer ist als der Zeitstempel des Wegklickens -- ein verlegtes Spiel ist eine neue
     // Ankuendigung (plans/019, Abschnitt 4).

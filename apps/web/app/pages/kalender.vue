@@ -43,8 +43,14 @@ function fixtureTitle(fixture: CalendarFixtureDay) {
   return parts.join(' · ') || undefined
 }
 
+// Monoton steigender Ladezaehler: klickt die Nutzerin schnell mehrfach auf einen Monatswechsel,
+// koennen die Antworten in anderer Reihenfolge eintreffen -- nur der jeweils zuletzt gestartete
+// Lauf darf noch in postsByDay/fixturesByDay/eventsByDay oder loadError schreiben.
+let loadToken = 0
+
 async function loadMonth() {
   if (import.meta.server) return
+  const token = ++loadToken
   loading.value = true
   loadError.value = false
   const organizationId = scope.value?.organizationId
@@ -67,12 +73,14 @@ async function loadMonth() {
   if (departmentId) eventsQuery = eventsQuery.or(`department_id.eq.${departmentId},department_id.is.null`)
 
   const [postsResult, fixturesResult, eventsResult] = await Promise.all([postsQuery, fixturesQuery, eventsQuery])
+  if (token !== loadToken) return
   if (postsResult.error || fixturesResult.error || eventsResult.error) { resetCalendar(); loadError.value = true; loading.value = false; return }
 
   const fixtures = (fixturesResult.data ?? []) as CalendarFixture[]
   let fixtureIdsWithSubmission = new Set<string>()
   if (fixtures.length) {
     const submissionsResult = await supabase.from('submissions').select('fixture_id').eq('organization_id', organizationId).not('fixture_id', 'is', null).in('fixture_id', fixtures.map((fixture) => fixture.id))
+    if (token !== loadToken) return
     if (submissionsResult.error) { resetCalendar(); loadError.value = true; loading.value = false; return }
     fixtureIdsWithSubmission = new Set((submissionsResult.data ?? []).map((row: { fixture_id: string }) => row.fixture_id))
   }
@@ -107,7 +115,7 @@ async function loadMonth() {
   loading.value = false
 }
 
-watch(monthOffset, loadMonth)
+watch([monthOffset, () => scope.value?.organizationId, () => scope.value?.departmentId], loadMonth)
 await loadMonth()
 
 const hasAnyItem = computed(() => Object.keys(postsByDay.value).length > 0 || Object.keys(fixturesByDay.value).length > 0 || Object.keys(eventsByDay.value).length > 0)

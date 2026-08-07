@@ -316,9 +316,9 @@ export const TeamSchema = z.object({
   // Paket 019: Herkunft und Merkmale, die fuer Inhalte zaehlen. Nur der Sync-Codepfad (Service
   // Role) schreibt sie -- keine Oberflaeche in diesem Paket setzt sie manuell, siehe Migration
   // 2026080704_fixtures_and_events.sql.
-  ageGroup: z.string().nullable(),
-  competition: z.string().nullable(),
-  sourceId: UuidSchema.nullable(),
+  ageGroup: z.string().nullable().optional(),
+  competition: z.string().nullable().optional(),
+  sourceId: UuidSchema.nullable().optional(),
   archivedAt: z.iso.datetime({ offset: true }).nullable(),
   createdAt: z.iso.datetime({ offset: true }),
 })
@@ -1034,7 +1034,11 @@ export const ContentSuggestionSchema = z.object({
   fixtureId: UuidSchema.optional(),
   clubEventId: UuidSchema.optional(),
   occursAt: z.iso.datetime({ offset: true }).optional(),
-})
+}).refine((value) => {
+  if (value.kind === 'fixture_announcement' || value.kind === 'fixture_result') return value.fixtureId !== undefined && value.clubEventId === undefined
+  if (value.kind === 'event_invitation') return value.clubEventId !== undefined && value.fixtureId === undefined
+  return value.fixtureId === undefined && value.clubEventId === undefined
+}, { message: 'reference id must match the suggestion kind' })
 export const ContentSuggestionsResponseSchema = z.object({ suggestions: z.array(ContentSuggestionSchema) })
 
 export type Health = z.infer<typeof HealthSchema>

@@ -153,6 +153,11 @@ create table public.club_events (
   -- unter MATCH SIMPLE trivial bestehen (NULL in einer FK-Spalte macht die Prüfung wirkungslos) --
   -- diese Check-Klausel schliesst genau diese Luecke.
   check (team_id is null or department_id is not null),
+  -- Eigene organization_id-Referenz noetig: bei vereinsweiten Veranstaltungen (department_id
+  -- null) greift die zusammengesetzte Fremdschluessel-Pruefung auf departments unten unter
+  -- MATCH SIMPLE gar nicht (NULL in einer FK-Spalte macht die gesamte Klausel wirkungslos) --
+  -- ohne diese Zeile waere organization_id fuer genau den vorgesehenen Hauptfall ungeprueft.
+  foreign key (organization_id) references public.organizations(id) on delete cascade,
   foreign key (organization_id, department_id)
     references public.departments(organization_id, id) on delete cascade,
   foreign key (organization_id, department_id, team_id)
@@ -217,8 +222,12 @@ alter table public.submissions
 
 grant select (fixture_id, club_event_id, source_provenance, source_revision_at, source_prefill_snapshot)
   on public.submissions to authenticated;
-grant update (fixture_id, club_event_id, source_provenance, source_revision_at, source_prefill_snapshot)
-  on public.submissions to authenticated;
+-- source_provenance/source_revision_at/source_prefill_snapshot bleiben ausschliesslich lesbar:
+-- der Herkunftsnachweis (Abschnitt 3 des Plans) wird beim Anlegen ueber die bestehende,
+-- tabellenweite INSERT-Berechtigung (202608020003_api_grants.sql) gesetzt, serverseitig
+-- hergeleitet (siehe POST /v1/submissions), nie vom Client uebernommen. Ein UPDATE-Zugriff fuer
+-- authenticated wuerde diesen Nachweis nachtraeglich faelschbar machen.
+grant update (fixture_id, club_event_id) on public.submissions to authenticated;
 
 -- 6. Invalidierung offener Freigaben bei einer nachtraeglichen Quelleaenderung -------------------
 -- Spiegelt invalidate_approvals_for_media_change (2026080030001_content_media_workflows_publishing.sql):

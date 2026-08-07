@@ -10,7 +10,7 @@ export const ExternalTeamSchema = z.object({
   ageGroup: z.string().trim().min(1).max(60).optional(),
   competition: z.string().trim().min(1).max(120).optional(),
   departmentName: z.string().trim().min(1).max(120).optional(),
-  sourceUpdatedAt: z.string().trim().min(1).optional(),
+  sourceUpdatedAt: z.iso.datetime({ offset: true }).optional(),
 })
 export type ExternalTeam = z.infer<typeof ExternalTeamSchema>
 

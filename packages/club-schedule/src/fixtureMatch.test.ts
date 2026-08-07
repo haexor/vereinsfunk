@@ -84,7 +84,7 @@ describe('createFixtureMatchStrategy team resolution', () => {
     const strategy = createFixtureMatchStrategy(resolver({ '2. Herren': TEAM_HOME }))
     const external = ExternalFixtureSchema.parse({
       externalId: 'ext-1', teamReference: '2. Herren', opponentName: 'TSV Nord', isHome: true,
-      sourceUpdatedAt: '2026-08-05T00:00:00Z',
+      competition: 'Kreisliga A', kickoffAt: '20260815T150000Z', sourceUpdatedAt: '2026-08-05T00:00:00Z',
     })
     const plan = planSync({
       existing: [localFixture()],
@@ -95,6 +95,8 @@ describe('createFixtureMatchStrategy team resolution', () => {
     expect(plan.aborted).toBe(false)
     if (plan.aborted) return
     expect(plan.updated).toHaveLength(1)
-    expect(plan.updated[0]?.changedFields).toContain('opponentName')
+    // kickoffAt bleibt trotz Formatwechsel unveraendert (iCal-Kompaktform hier, ISO bei
+    // localFixture()) -- nur der tatsaechliche Unterschied (opponentName) darf erscheinen.
+    expect(plan.updated[0]?.changedFields).toEqual(['opponentName'])
   })
 })

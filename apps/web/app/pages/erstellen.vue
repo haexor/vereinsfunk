@@ -28,7 +28,18 @@ const presets: { id: ContentPresetSlug; label: string; description: string }[] =
 ]
 const goals: { id: CommunicationGoal; label: string }[] = [{ id: 'inform', label: 'Informieren' }, { id: 'inspire', label: 'Inspirieren' }, { id: 'thank', label: 'Danken' }, { id: 'invite', label: 'Einladen' }, { id: 'recruit', label: 'Gewinnen' }, { id: 'educate', label: 'Wissen teilen' }, { id: 'strengthen_community', label: 'Gemeinschaft stärken' }]
 const availableFormats: { id: OutputFormat; label: string }[] = [{ id: 'feed_image', label: 'Feed-Bild' }, { id: 'carousel', label: 'Carousel' }, { id: 'story', label: 'Story' }, { id: 'reel', label: 'Reel-Entwurf' }]
-const facts = computed<Record<string, string | number | boolean>>(() => ({ ...prefilledFacts.value, ...Object.fromEntries(Object.entries({ title: form.title, date: form.date, location: form.location, audience: form.audience }).filter(([, value]) => value.trim())) }))
+// match_announcement/match_result kommen mit belegten, vertrauenswuerdigen Fakten aus dem
+// Spielplan (Gegner/Datum/Ort bzw. Teams/Ergebnis) -- die generischen Formularfelder duerfen sie
+// nicht ueberschreiben. "event" haelt title/location dagegen bewusst ueber das Formular editierbar
+// (siehe loadOccasion oben, das form.title/form.location dafuer vorbelegt).
+const LOCKED_FACT_PRESETS: ContentPresetSlug[] = ['match_announcement', 'match_result']
+const facts = computed<Record<string, string | number | boolean>>(() => {
+  const manualFields = LOCKED_FACT_PRESETS.includes(selectedPreset.value)
+    ? { audience: form.audience }
+    : { title: form.title, date: form.date, location: form.location, audience: form.audience }
+  const manual = Object.fromEntries(Object.entries(manualFields).filter(([, value]) => value.trim()))
+  return { ...prefilledFacts.value, ...manual }
+})
 function toggleFormat(format: OutputFormat) { formats.value = formats.value.includes(format) ? formats.value.filter((item) => item !== format) : [...formats.value, format] }
 // Trustworthy structured Fakten (Spielplan/Kalender) bleiben schreibgeschuetzt -- match_announcement/
 // match_result haben dafuer keine passenden Formularfelder, "event" prefillt title/location direkt.
@@ -92,9 +103,11 @@ async function loadOccasion() {
   if (queryFixtureId) {
     const result = await supabase.from('fixtures').select('id, organization_id, department_id, team_id, kind, competition, is_home, own_team_label, opponent_name, kickoff_at, kickoff_time_confirmed, venue_name, venue_address, status, home_score, away_score, note, announcement_dismissed_at, result_dismissed_at, source_id, source_updated_at, created_at, updated_at').eq('id', queryFixtureId).maybeSingle()
     if (result.error || !result.data) { apiNotice.value = 'Der verknüpfte Spieltermin konnte nicht geladen werden.'; return }
+    // Verknuepfung bleibt bestehen, auch wenn Pflichtfakten fehlen -- sonst ginge der Bezug zum
+    // Spiel verloren, sobald die Nutzerin die fehlenden Angaben von Hand ergaenzt.
+    fixtureId.value = queryFixtureId
     const outcome = factsFromFixture(mapFixtureRow(result.data), null, timezone.value)
     if (outcome.ok) {
-      fixtureId.value = queryFixtureId
       selectedPreset.value = outcome.presetSlug
       prefilledFacts.value = outcome.facts
       step.value = 2
@@ -106,9 +119,9 @@ async function loadOccasion() {
 
   const result = await supabase.from('club_events').select('id, organization_id, department_id, team_id, title, description, category, starts_at, ends_at, all_day, location_name, location_address, registration_url, status, invitation_dismissed_at, source_id, source_updated_at, created_at, updated_at').eq('id', queryClubEventId).maybeSingle()
   if (result.error || !result.data) { apiNotice.value = 'Die verknüpfte Veranstaltung konnte nicht geladen werden.'; return }
+  clubEventId.value = queryClubEventId
   const outcome = factsFromClubEvent(mapClubEventRow(result.data), timezone.value)
   if (outcome.ok) {
-    clubEventId.value = queryClubEventId
     selectedPreset.value = outcome.presetSlug
     prefilledFacts.value = outcome.facts
     if (typeof outcome.facts.title === 'string') form.title = outcome.facts.title

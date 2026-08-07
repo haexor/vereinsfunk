@@ -79,6 +79,11 @@ function normalize(raw: Readonly<Record<string, unknown>>, mapping: FieldMapping
     }
   }
 
+  // ExternalFixtureSchema hat kein Pflichtfeld (anders als event.ts' title/startsAt) -- ohne diese
+  // Mindestpruefung wuerde eine Zeile ohne jede Gegner-/Mannschaftsangabe (z. B. nur eine
+  // zugeordnete kickoffAt-Spalte) klaglos durch das Schema und landete als inhaltsleeres Spiel.
+  if (result.opponentName === undefined && result.teamReference === undefined && result.homeNameRaw === undefined && result.awayNameRaw === undefined) return undefined
+
   return result
 }
 

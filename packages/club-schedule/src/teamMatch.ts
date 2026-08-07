@@ -54,11 +54,15 @@ export function createTeamMatchStrategy(resolver: TeamDepartmentResolver): Match
           departmentId: entity.departmentId,
         }
       }
+      // Keine Vergleichsfallbacks hier: undefined heisst "die Quelle sagt zu diesem Feld nichts"
+      // (MatchStrategy.fieldsOf-Vertrag) und darf in diffFields nie als Aenderung gegen einen
+      // lokal gepflegten Wert erscheinen. Der Schreibpfad (handleTeamsSync) leitet seine
+      // null-Fallbacks unabhaengig von fieldsOf her.
       return {
         name: entity.name,
-        ageGroup: entity.ageGroup ?? null,
-        competition: entity.competition ?? null,
-        departmentId: resolveDepartmentId(entity) ?? null,
+        ageGroup: entity.ageGroup,
+        competition: entity.competition,
+        departmentId: resolveDepartmentId(entity),
       }
     },
     labelOf(entity) {
