@@ -12,6 +12,10 @@ const ApiEnvironmentBaseSchema = z.object({
   SUPABASE_URL: optionalUrl,
   SUPABASE_ANON_KEY: optionalSecret,
   SUPABASE_SERVICE_ROLE_KEY: optionalSecret,
+  // Optionaler HS256-Override (apps/api/src/auth.ts): ohne diesen Wert verifiziert die API per
+  // JWKS gegen SUPABASE_URL, was seit Supabases Umstellung auf asymmetrische Signing Keys
+  // (1. Mai 2025) der richtige Standardfall ist -- nicht als production-required listen, sonst
+  // wird der falsche, algorithmus-inkompatible Pfad erzwungen.
   SUPABASE_JWT_SECRET: optionalSecret,
   HATCHET_CLIENT_TOKEN: optionalSecret,
   OPENAI_API_KEY: optionalSecret,
@@ -73,7 +77,7 @@ export const ApiEnvironmentSchema = ApiEnvironmentBaseSchema.superRefine((enviro
   }
 
   if (environment.NODE_ENV !== 'production') return
-  const required = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_JWT_SECRET', 'WEB_BASE_URL', 'CONSENT_RESPONSE_HASH_PEPPER'] as const
+  const required = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'WEB_BASE_URL', 'CONSENT_RESPONSE_HASH_PEPPER'] as const
   for (const key of required) {
     if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required in production` })
   }

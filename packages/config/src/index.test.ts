@@ -32,6 +32,15 @@ describe('ApiEnvironmentSchema', () => {
     expect(ApiEnvironmentSchema.safeParse({ ...requiredProductionEnv, EMAIL_PROVIDER: 'fake' }).success).toBe(false)
   })
 
+  // Regression: SUPABASE_JWT_SECRET verifiziert nur HS256 (apps/api/src/auth.ts). Neue
+  // Supabase-Projekte signieren seit 1. Mai 2025 standardmaessig asymmetrisch -- ein erzwungener
+  // HS256-Pfad wuerde dort jeden echten Token ablehnen. Produktion muss ohne diesen Wert booten
+  // koennen, damit die JWKS-Verifikation greift.
+  it('accepts a production environment without SUPABASE_JWT_SECRET', () => {
+    const withoutJwtSecret = { ...requiredProductionEnv, SUPABASE_JWT_SECRET: undefined, EMAIL_PROVIDER: 'smtp', ...requiredSmtpEnv }
+    expect(ApiEnvironmentSchema.safeParse(withoutJwtSecret).success).toBe(true)
+  })
+
   it('rejects a production environment missing WEB_BASE_URL', () => {
     expect(
       ApiEnvironmentSchema.safeParse({
