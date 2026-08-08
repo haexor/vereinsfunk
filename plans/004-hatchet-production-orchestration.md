@@ -1,5 +1,7 @@
 # 004 – Hatchet produktionsreif integrieren
 
+> **Status-Nachtrag (2026-08-08, vor Paket 025 verifiziert)**: `@hatchet-dev/typescript-sdk` ist real als Abhängigkeit eingebunden, `apps/worker/src/workflows.ts` importierte echte SDK-Symbole und registrierte Fairness/Concurrency für einen einzigen Workflow (`process-submission`) — `apps/worker/src/index.ts` rief den Worker aber nie tatsächlich auf, der Prozess war nur ein Logger-Scaffold. `packages/orchestration` hatte nur `FakeOrchestrator` (In-Memory-Map), kein `createHatchetClient`/keine echte `HatchetOrchestrator`-Implementierung. **Mit Paket 025 wurde selbst dieser eine Trigger entfernt**: die Entwurfserzeugung läuft jetzt synchron in `POST /v1/submissions`, ein Aufruf ohne laufenden Worker dahinter wäre irreführend gewesen. `workflow_outbox`/`workflow_runs` existieren als Tabellen, werden aber von keinem Code referenziert. Dieser Plan bleibt vollständig offen — Hatchet ist im Projekt aktuell nirgends produktiv im Einsatz.
+
 ## Ergebnis
 
 Der bisherige Workflow-Stub wird durch den echten Hatchet-TypeScript-SDK ersetzt. Hatchet übernimmt Ausführung, Retries, Zeitplanung, Abbruch und faire Verteilung; Supabase bleibt alleinige fachliche Source of Truth. Ein Prozessneustart oder doppelter Trigger erzeugt weder doppelte Versionen noch doppelte Veröffentlichungen.

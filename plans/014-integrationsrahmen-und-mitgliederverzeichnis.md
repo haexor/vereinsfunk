@@ -383,7 +383,7 @@ Der zuerst gewählte XLSX-Parser (`xlsx`, npm-Version 0.18.5) hat zwei unbehoben
 
 ### Nicht umgesetzt: automatische Prüfmarkierung veröffentlichter Beiträge bei nachträglich erkannter Minderjährigkeit
 
-Plan-Abschnitt „Minderjährigkeit und der Übergang“ verlangt auch die umgekehrte Richtung: wird eine Person nachträglich als minderjährig erkannt, sollen bereits veröffentlichte Beiträge mit ihr zur Prüfung markiert werden. Das braucht eine Verknüpfung zwischen `directory_people` und veröffentlichten Beiträgen/Medien — die gibt es nicht, weil die Inhalts-Pipeline (Submission → Post → Post-Version, Pakete 001–007) weiterhin fehlt (derselbe, wiederholt dokumentierte Befund wie bei 011/012/016). Bleibt offen, bis diese Pipeline und eine Personen-Medien-Verknüpfung existieren.
+Plan-Abschnitt „Minderjährigkeit und der Übergang“ verlangt auch die umgekehrte Richtung: wird eine Person nachträglich als minderjährig erkannt, sollen bereits veröffentlichte Beiträge mit ihr zur Prüfung markiert werden. Das braucht eine Verknüpfung zwischen `directory_people` und veröffentlichten Beiträgen/Medien — die gibt es nicht, weil die Inhalts-Pipeline (Submission → Post → Post-Version, Pakete 001–007) weiterhin fehlte (derselbe, wiederholt dokumentierte Befund wie bei 011/012/016). **Teilweise geschlossen in Paket 025**: `post`/`post_version` entstehen jetzt real aus einer `submission`. Die Verknüpfung zu Medien/Personen bleibt aber weiterhin offen, weil `post_media`/`media_assets` ohne die Upload-Pipeline (002/003) leer bleiben — bleibt offen, bis diese und eine Personen-Medien-Verknüpfung existieren.
 
 ### Eigenes Profil: API-Endpunkt statt direktem Supabase-Aufruf aus der Oberfläche
 

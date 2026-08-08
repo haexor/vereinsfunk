@@ -245,7 +245,12 @@ export const WorkflowPayloadSchema = z.object({
   if (payload.submissionId && payload.submissionId !== payload.entityId) context.addIssue({ code: 'custom', message: 'submissionId must match entityId' })
 })
 
-export const SubmissionAcceptedSchema = z.object({ submissionId: UuidSchema, correlationId: UuidSchema, status: z.enum(['queued', 'facts_required']), idempotencyKey: z.string().min(1) })
+// Paket 025: postId/postVersionId sind nur bei status='queued' gesetzt -- ein Entwurf entsteht
+// erst, wenn keine Pflichtangabe fehlt (siehe evaluateSubmitPermission/FakeContentGenerator).
+export const SubmissionAcceptedSchema = z.object({
+  submissionId: UuidSchema, correlationId: UuidSchema, status: z.enum(['queued', 'facts_required']),
+  idempotencyKey: z.string().min(1), postId: UuidSchema.optional(), postVersionId: UuidSchema.optional(),
+})
 
 const HexColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/)
 const CountryCodeSchema = z.string().regex(/^[A-Z]{2}$/)
@@ -694,6 +699,15 @@ export const PublicationSchema = z.object({
   platform: z.enum(['instagram', 'facebook']),
   status: z.string(),
   scheduledFor: z.iso.datetime({ offset: true }).nullable(),
+})
+
+// Paket 025: Ergebnis von POST /v1/publications/:id/execute -- externalId/permalink fehlen bei
+// einem Fehlschlag (status='failed'/'action_required').
+export const PublicationExecuteResultSchema = z.object({
+  id: UuidSchema,
+  status: z.enum(['published', 'processing', 'unknown', 'failed', 'action_required']),
+  externalId: z.string().optional(),
+  permalink: z.string().optional(),
 })
 
 // Paket 012: Kanaele und Social-Accounts --------------------------------------------------------

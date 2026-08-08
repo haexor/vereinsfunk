@@ -39,6 +39,10 @@ const ApiEnvironmentBaseSchema = z.object({
   SMTP_FROM: optionalSecret,
   // Basis-URL des Nuxt-Frontends fuer Links in versendeten E-Mails (Einladungen).
   WEB_BASE_URL: optionalUrl,
+  // Paket 025: von aussen (Meta) erreichbare Basis-URL der Fastify-API selbst, fuer die
+  // kurzlebige Medien-Grant-URL (GET /v1/media-grants/:token). WEB_BASE_URL zeigt auf das
+  // Nuxt-Frontend und ist dafuer die falsche Adresse.
+  API_PUBLIC_BASE_URL: optionalUrl,
   // Paket 015: Pfeffer fuer den Hash von IP-Adresse/User-Agent bei einer digitalen
   // Einwilligungsantwort -- ohne Pfeffer ist eine IPv4-Adresse trivial rueckrechenbar (2^32
   // moegliche Werte). Eigenes Feld statt SECRET_BOX_KEYS zweckzuentfremden: das ist eine
@@ -62,7 +66,7 @@ export const ApiEnvironmentSchema = ApiEnvironmentBaseSchema.superRefine((enviro
   // OAuth-Callback wuerde sonst erst beim ersten Verbindungsversuch mit einer unklaren Exception
   // scheitern, statt beim Start klar zu benennen, welche Meta-Variable fehlt.
   if (environment.PUBLISHING_PROVIDER === 'meta') {
-    const requiredMetaFields = ['META_APP_ID', 'META_APP_SECRET', 'META_OAUTH_REDIRECT_URL'] as const
+    const requiredMetaFields = ['META_APP_ID', 'META_APP_SECRET', 'META_OAUTH_REDIRECT_URL', 'API_PUBLIC_BASE_URL'] as const
     for (const key of requiredMetaFields) {
       if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required when PUBLISHING_PROVIDER=meta` })
     }

@@ -1,5 +1,7 @@
 # 005 – Kreative Plattformvarianten und Rendering
 
+> **Status-Nachtrag (2026-08-08, vor Paket 025 verifiziert)**: `PlatformVariantSchema` und die `post_variants`-Tabelle existieren bereits vollständig und werden **seit Paket 025** bei jeder Entwurfserzeugung befüllt (`plans/025-inhalts-pipeline-entwurf-und-veroeffentlichung.md`) — allerdings nur mit den Werten des vorhandenen `FakeContentGenerator` (`ContentGenerator` hat weiterhin genau eine, nicht-LLM-basierte Implementierung; `callToAction`/`hashtags`/`altText` sind für alle Varianten identisch). `apps/remotion` hat fünf `Composition`s, die aber alle dieselbe eine Komponente (`ClubPost.tsx`) mit kaum verzweigender `layoutFamily`-Logik teilen — faktisch ein Template, nicht mehrere Layoutfamilien. Dieser Plan (echtes LLM, echte Kreativvarianten, echtes Multi-Template-Rendering) bleibt vollständig offen.
+
 ## Ergebnis
 
 Aus echtem Quellmaterial entstehen pro Plattform eigenständige, authentische Texte und visuelle Formate: Feed-Bild, Carousel, Story und kurzer Reel-Entwurf. Training, Ballschule, Ehrenamt und Vereinsalltag erhalten ebenso gute Vorlagen wie Spiele. Bilder sind das Primärformat; Video ist optional, nicht der Produktkern.
