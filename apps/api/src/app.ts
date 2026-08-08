@@ -1,7 +1,7 @@
 import multipart from '@fastify/multipart'
 import cors from '@fastify/cors'
 import { parseApiEnvironment } from '@vereinsfunk/config'
-import { FakeContentGenerator, factsFromClubEvent, factsFromFixture } from '@vereinsfunk/content-engine'
+import { assertGroundedPost, createGroundedContentBrief, FakeContentGenerator, factsFromClubEvent, factsFromFixture } from '@vereinsfunk/content-engine'
 import {
   AcceptInvitationRequestSchema,
   AcceptInvitationResponseSchema,
@@ -75,6 +75,7 @@ import {
   PolicyRuleSettingSchema,
   PolicySettingSchema,
   ProfileSchema,
+  PublicationExecuteResultSchema,
   PublicationSchema,
   PublicConsentRequestViewSchema,
   PublicConsentRevocationViewSchema,
@@ -184,8 +185,7 @@ import {
   type StageDefinition,
   type TrustRecord,
 } from '@vereinsfunk/domain'
-import { FakeOrchestrator, priorityToHatchet, type Orchestrator } from '@vereinsfunk/orchestration'
-import { RealMetaOAuthClient, type MetaOAuthClient } from '@vereinsfunk/publishing'
+import { FakePublisher, MetaPublisher, RealMetaOAuthClient, type MetaOAuthClient, type PublicationMedia, type SocialPublisher } from '@vereinsfunk/publishing'
 import Fastify, { LogController, type FastifyInstance, type FastifyReply, type FastifyRequest, type FastifyServerOptions } from 'fastify'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { z } from 'zod'
@@ -212,13 +212,17 @@ export interface SupabaseClientFactory {
 
 export interface BuildAppOptions {
   logger?: boolean
-  orchestrator?: Orchestrator
   uploads?: MediaUploadService
   roleProvider?: RoleProvider
   supabaseClients?: SupabaseClientFactory
   platformAdminProvider?: PlatformAdminProvider
   emailSender?: EmailSender
   metaOAuthClient?: MetaOAuthClient
+  // Paket 025: Ueberschreibung fuer Tests. Ausserhalb von Tests entscheidet PUBLISHING_PROVIDER,
+  // welcher echte Adapter je Social-Connection gebaut wird (siehe createPublisherForConnection) --
+  // ein MetaPublisher braucht das entschluesselte Connection-Token, kann also nicht einmalig beim
+  // Start konstruiert werden wie die anderen Injectables hier.
+  publisher?: SocialPublisher
 }
 
 export interface MediaUploadService {
@@ -1384,7 +1388,6 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
           },
   }
   const app = Fastify(fastifyOptions)
-  const orchestrator = options.orchestrator ?? new FakeOrchestrator()
   const uploads = options.uploads ?? new LocalUploadService()
   const roleProvider = options.roleProvider ?? new SupabaseRoleProvider(environment)
   const supabaseClients: SupabaseClientFactory = options.supabaseClients ?? {
@@ -1406,6 +1409,19 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     // einloesbar, obwohl sie serverseitig korrekt erzeugt wurde.
     createEmailSender(environment, (message) => app.log.info({ to: message.to, subject: message.subject, text: message.text }, 'invitation email (fake provider)'))
   const { requireAuth, requirePermission, requirePlatformAdmin } = createAuthGuards(environment, roleProvider, platformAdminProvider)
+
+  // Paket 025: ein MetaPublisher braucht das entschluesselte Token GENAU dieser Social-Connection
+  // (anders als metaOAuthClient oben, das appId/appSecret-Ebene bleibt) -- deshalb keine einmalige
+  // Instanz, sondern eine Fabrik je Aufruf. options.publisher ueberschreibt vollstaendig (Tests).
+  function createPublisherForConnection(platform: 'instagram' | 'facebook', accessToken: string, externalAccountId: string): SocialPublisher {
+    if (options.publisher) return options.publisher
+    if (environment.PUBLISHING_PROVIDER !== 'meta') return new FakePublisher()
+    return new MetaPublisher({
+      graphVersion: environment.META_GRAPH_VERSION,
+      accessToken,
+      ...(platform === 'instagram' ? { instagramAccountId: externalAccountId } : { facebookPageId: externalAccountId }),
+    })
+  }
 
   // Genau der eine Ursprung, unter dem das Frontend laeuft -- dieselbe Quelle wie fuer die
   // Einladungslinks weiter unten. Vorher stand hier in Entwicklung Port 4200 fest verdrahtet
@@ -1563,16 +1579,81 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const submissionId = insert.data.id as string
     const correlationId = request.id
     const generated = await new FakeContentGenerator().generate(input)
+    let draft: { postId: string; postVersionId: string } | null = null
+    if (generated.missingFacts.length === 0) {
+      // Schliesst die seit den Paketen 011/012/014/015/019 dokumentierte Luecke: bis hierhin
+      // entstand nie ein post/post_version aus einer submission (plans/025). assertGroundedPost
+      // setzt die in Plan 001 nur definierte, nie durchgesetzte Invariante erstmals durch --
+      // mit FakeContentGenerator deterministisch nie verletzt, aber kein stilles Sicherheitsnetz.
+      assertGroundedPost(generated, createGroundedContentBrief(input))
+
+      // Geflacht, NICHT die unveraenderte EffectiveConfig-Verschachtelung: schedule_publication
+      // und GET /v1/post-versions/:id/available-channels lesen bereits heute
+      // effective_config_snapshot->'config'->'allowedChannelIds' direkt, nicht
+      // ->'config'->'policies'->'allowedChannelIds'. Da bisher nichts diese Spalte beschrieb, blieb
+      // der Mismatch folgenlos -- als erster Schreibzugriff muss dieser Code die gelesene Form
+      // treffen, sonst waere die Kanal-Beschraenkung aus 011/012 ab hier stillschweigend wirkungslos.
+      const effectiveConfigSnapshot = { config: { tone: config.tone, goals: config.goals, hashtags: config.hashtags, ...config.policies } }
+
+      // posts/post_versions/post_variants haben keine Insert-Policy fuer authenticated (RLS ohne
+      // passende Policy verweigert das grundsaetzlich) -- Schreibzugriff laeuft wie bei
+      // directory_people/fixtures/consent_records ausschliesslich ueber die API mit Service Role,
+      // nach dem bereits oben erfolgten requirePermission('post.create', ...).
+      const service = supabaseClients.forService()
+      const postInsert = await service
+        .from('posts')
+        .insert({
+          organization_id: input.organizationId, department_id: input.departmentId, team_id: input.teamId ?? null,
+          submission_id: submissionId, status: 'draft_ready', created_by: request.auth!.userId,
+        })
+        .select('id')
+        .single()
+      if (postInsert.error) throw postInsert.error
+      const postId = postInsert.data.id as string
+
+      const versionInsert = await service
+        .from('post_versions')
+        .insert({
+          organization_id: input.organizationId, post_id: postId, version_number: 1,
+          source_facts_snapshot: input.sourceMaterial, effective_config_snapshot: effectiveConfigSnapshot,
+          title: generated.headline, caption: generated.caption, call_to_action: generated.callToAction,
+          hashtags: generated.hashtags, alt_text: generated.altText, safety_flags: generated.safetyFlags,
+          created_by_type: 'llm',
+        })
+        .select('id')
+        .single()
+      if (versionInsert.error) throw versionInsert.error
+      const postVersionId = versionInsert.data.id as string
+
+      const postUpdate = await service.from('posts').update({ current_version_id: postVersionId }).eq('id', postId)
+      if (postUpdate.error) throw postUpdate.error
+
+      // Welche Variante/welches Format zu einer konkreten Veroeffentlichung gehoert, ist Teil des
+      // noch fehlenden Kreativsystems (Plan 005) -- hier nur befuellt, weil das Datenmodell es
+      // erwartet und generated.variants es bereits vollstaendig liefert.
+      if (generated.variants.length > 0) {
+        const variantsInsert = await service.from('post_variants').insert(
+          generated.variants.map((variant) => ({
+            organization_id: input.organizationId, post_version_id: postVersionId, platform: variant.platform,
+            format: variant.format, schema_version: '1', prompt_version: generated.templateId, variant,
+          })),
+        )
+        if (variantsInsert.error) throw variantsInsert.error
+      }
+
+      await recordAuditEvent(request, {
+        organizationId: input.organizationId, action: 'post.drafted', entityType: 'post_versions', entityId: postVersionId,
+        metadata: { postId, submissionId, presetSlug: input.presetSlug },
+      })
+      draft = { postId, postVersionId }
+    }
     const accepted = SubmissionAcceptedSchema.parse({
       submissionId,
       correlationId,
       status: generated.missingFacts.length > 0 ? 'facts_required' : 'queued',
       idempotencyKey: createIdempotencyKey('submission', submissionId, input.sourceRevision),
+      ...(draft ?? {}),
     })
-    if (accepted.status === 'queued') await orchestrator.trigger('process-submission', {
-      submissionId, entityId: submissionId, organizationId: input.organizationId, departmentId: input.departmentId,
-      correlationId, sourceRevision: input.sourceRevision, idempotencyKey: accepted.idempotencyKey,
-    }, { priority: priorityToHatchet(input.priority) })
 
     request.log.info(
       {
@@ -1581,8 +1662,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         submissionId,
         correlationId,
         missingFactsCount: generated.missingFacts.length,
+        postVersionId: draft?.postVersionId ?? null,
       },
-      'submission accepted by local fake adapter',
+      'submission accepted',
     )
 
     return reply.code(202).send({ ...accepted, preview: generated })
@@ -4321,6 +4403,142 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         platform: rpc.data.platform, status: rpc.data.status, scheduledFor: rpc.data.scheduled_for,
       }),
     )
+  })
+
+  // Paket 025: schedule_publication (oben) legt nur die Zeile an -- kein Code rief bisher
+  // SocialPublisher.publish() ueberhaupt auf (plans/025, Ausgangslage). Kein Hatchet-Cron
+  // verfuegbar (Paket 004 weiterhin "in Arbeit") -- dieser Endpunkt fuehrt eine FAELLIGE
+  // Veroeffentlichung explizit und synchron aus, plant nichts automatisch zu einem kuenftigen
+  // Zeitpunkt (dasselbe Muster wie POST /v1/integration-sources/:id/sync).
+  app.post('/v1/publications/:id/execute', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const publication = await client
+      .from('publications')
+      .select('id, organization_id, post_version_id, social_connection_id, platform, status, scheduled_for, idempotency_key')
+      .eq('id', params.id)
+      .maybeSingle()
+    if (publication.error) throw publication.error
+    if (!publication.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const version = await client.from('post_versions').select('id, post_id, caption').eq('id', publication.data.post_version_id as string).maybeSingle()
+    if (version.error) throw version.error
+    if (!version.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const post = await client.from('posts').select('id, department_id').eq('id', version.data.post_id as string).maybeSingle()
+    if (post.error) throw post.error
+    if (!post.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'post.publish', { organizationId: publication.data.organization_id as string, departmentId: post.data.department_id as string }))) return
+
+    const scheduledFor = publication.data.scheduled_for as string | null
+    if (scheduledFor !== null && new Date(scheduledFor).getTime() > Date.now()) {
+      return reply.code(409).send({ error: 'not_due_yet', correlationId: request.id })
+    }
+
+    const service = supabaseClients.forService()
+    // Dieselbe Compare-and-Set-Lehre wie bei consent_records' superseded_by (Paket 015): trifft das
+    // update keine Zeile, hat ein gleichzeitiger Aufruf bereits gewonnen -- kein automatischer
+    // Retry hier, ein fehlgeschlagener/bereits laufender Versuch braucht eine bewusste
+    // Neuveroeffentlichung (aus Scope, siehe plans/025).
+    const claim = await service.from('publications').update({ status: 'uploading' }).eq('id', params.id).eq('status', 'queued').select('id').maybeSingle()
+    if (claim.error) throw claim.error
+    if (!claim.data) return reply.code(409).send({ error: 'invalid_status', correlationId: request.id })
+
+    const connection = await service.from('social_connections').select('external_account_id').eq('id', publication.data.social_connection_id as string).maybeSingle()
+    if (connection.error) throw connection.error
+    if (!connection.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const secretRow = await service.from('social_connection_secrets').select('token_ciphertext, token_key_version').eq('social_connection_id', publication.data.social_connection_id as string).maybeSingle()
+    if (secretRow.error) throw secretRow.error
+    if (!secretRow.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const accessToken = createSecretBoxFromEnvironment(environment).open(
+      byteaToBuffer(secretRow.data.token_ciphertext as string), secretRow.data.token_key_version as string, publication.data.social_connection_id as string,
+    )
+
+    // Ohne die Upload-/Freigabepipeline (Plaene 002/003) hat jede aus Plan 025 entstehende
+    // post_version keine post_media-Zeilen -- media bleibt dann [], und validate() unten lehnt das
+    // unconditional ab (FakePublisher/MetaPublisher, packages/publishing). Das ist korrektes,
+    // erwartetes Verhalten, kein Fehler dieses Endpunkts (siehe plans/025, Ausgangslage).
+    const mediaRows = await service.from('post_media').select('position, media_derivative_id').eq('post_version_id', version.data.id as string).order('position')
+    if (mediaRows.error) throw mediaRows.error
+    const media: PublicationMedia[] = []
+    for (const row of mediaRows.data) {
+      const derivative = await service.from('media_derivatives').select('id, sha256, mime_type, status').eq('id', row.media_derivative_id as string).maybeSingle()
+      if (derivative.error) throw derivative.error
+      if (!derivative.data || derivative.data.status !== 'ready') continue
+      const token = randomBytes(32).toString('base64url')
+      const grantInsert = await service.from('publication_media_grants').insert({
+        organization_id: publication.data.organization_id, media_derivative_id: derivative.data.id, publication_id: params.id,
+        token_hash: createHash('sha256').update(token).digest('hex'), expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
+      })
+      if (grantInsert.error) throw grantInsert.error
+      media.push({
+        derivativeId: derivative.data.id as string, sha256: derivative.data.sha256 as string, mimeType: derivative.data.mime_type as string,
+        grantUrl: `${environment.API_PUBLIC_BASE_URL}/v1/media-grants/${token}`, role: row.position === 0 ? 'primary' : 'slide',
+      })
+    }
+
+    const publicationInput = {
+      publicationId: params.id, postVersionId: version.data.id as string, socialConnectionId: publication.data.social_connection_id as string,
+      platform: publication.data.platform as 'instagram' | 'facebook', caption: version.data.caption as string, media,
+      idempotencyKey: publication.data.idempotency_key as string,
+    }
+    const publisher = createPublisherForConnection(publicationInput.platform, accessToken, connection.data.external_account_id as string)
+    const validation = await publisher.validate(publicationInput)
+    if (!validation.valid) {
+      await service.from('publication_attempts').insert({
+        organization_id: publication.data.organization_id, publication_id: params.id, attempt_number: 1,
+        status: 'failed', error_class: 'validation', response_summary: { errors: validation.errors },
+      })
+      await service.from('publications').update({ status: 'failed' }).eq('id', params.id)
+      return reply.code(422).send({ error: 'validation_failed', detail: validation.errors, correlationId: request.id })
+    }
+
+    try {
+      const result = await publisher.publish(publicationInput)
+      await service.from('publications').update({ status: result.status, provider_publication_id: result.externalId }).eq('id', params.id)
+      await service.from('publication_attempts').insert({
+        organization_id: publication.data.organization_id, publication_id: params.id, attempt_number: 1,
+        status: result.status, provider_container_id: result.externalId, response_summary: result.permalink ? { permalink: result.permalink } : {},
+      })
+      await recordAuditEvent(request, {
+        organizationId: publication.data.organization_id as string, action: 'post.published', entityType: 'publications', entityId: params.id,
+        metadata: { platform: publicationInput.platform, status: result.status },
+      })
+      return reply.code(200).send(PublicationExecuteResultSchema.parse({ id: params.id, status: result.status, externalId: result.externalId, permalink: result.permalink }))
+    } catch (err) {
+      // Unklares Providerergebnis: kein automatischer Retry (Plan 004, "unknown external result =
+      // reconcile statt publish-retry") -- action_required macht den Zustand fuer eine Reviewerin
+      // sichtbar, statt ihn als stilles failed zu verstecken.
+      await service.from('publications').update({ status: 'action_required' }).eq('id', params.id)
+      await service.from('publication_attempts').insert({
+        organization_id: publication.data.organization_id, publication_id: params.id, attempt_number: 1,
+        status: 'failed', error_class: 'provider_error', response_summary: { message: err instanceof Error ? err.message : 'unknown_error' },
+      })
+      return reply.code(502).send({ error: 'publish_failed', correlationId: request.id })
+    }
+  })
+
+  // Kein requireAuth: Meta ruft diese URL serverseitig ab (Plan 006, Abschnitt "Sichere
+  // Medienuebergabe"). Nach demselben Muster wie die oeffentlichen Einwilligungs-Token-Seiten aus
+  // Paket 015 -- Service Role fuer den Lookup, Hash- statt Rohtoken-Vergleich, keine Unterscheidung
+  // zwischen ungueltig/abgelaufen/bereits widerrufen.
+  app.get('/v1/media-grants/:token', async (request, reply) => {
+    const params = z.object({ token: z.string().min(1) }).parse(request.params)
+    const service = supabaseClients.forService()
+    const tokenHash = createHash('sha256').update(params.token).digest('hex')
+    const grant = await service.from('publication_media_grants').select('media_derivative_id, expires_at, revoked_at').eq('token_hash', tokenHash).maybeSingle()
+    if (grant.error) throw grant.error
+    if (!grant.data || grant.data.revoked_at !== null || new Date(grant.data.expires_at as string).getTime() < Date.now()) {
+      return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    }
+    const derivative = await service.from('media_derivatives').select('bucket_id, object_path, mime_type, status').eq('id', grant.data.media_derivative_id as string).maybeSingle()
+    if (derivative.error) throw derivative.error
+    if (!derivative.data || derivative.data.status !== 'ready') return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const download = await service.storage.from(derivative.data.bucket_id as string).download(derivative.data.object_path as string)
+    if (download.error || !download.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const markAccessed = await service.from('publication_media_grants').update({ accessed_at: new Date().toISOString() }).eq('token_hash', tokenHash)
+    if (markAccessed.error) request.log.error({ err: markAccessed.error, correlationId: request.id }, 'publication_media_grants accessed_at update failed')
+    const bytes = Buffer.from(await download.data.arrayBuffer())
+    return reply.header('content-type', derivative.data.mime_type as string).header('content-length', bytes.byteLength).send(bytes)
   })
 
   app.get('/v1/organizations/:id/channel-quotas', async (request, reply) => {

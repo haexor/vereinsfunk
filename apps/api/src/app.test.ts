@@ -1,8 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { SocialPublisher } from '@vereinsfunk/publishing'
+import { createSecretBox } from '@vereinsfunk/secrets'
 import { SignJWT } from 'jose'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { buildApp, type BuildAppOptions, type SupabaseClientFactory } from './app.js'
 import type { PlatformAdminProvider, RoleProvider } from './auth.js'
+import { ciphertextToBytea } from './secretBox.js'
 
 const TEST_JWT_SECRET = 'test-only-secret-at-least-32-characters-long'
 const USER_ID = '10000000-0000-4000-8000-000000000001'
@@ -49,6 +52,28 @@ function serviceClientCapturingAudit(captured: Record<string, unknown>[]): Supab
       if (table === 'audit_events') {
         return { insert: async (row: Record<string, unknown>) => { captured.push(row); return { error: null } } }
       }
+      throw new Error(`unexpected table in service test fake: ${table}`)
+    },
+  } as unknown as SupabaseClient
+}
+
+// Paket 025: POST /v1/submissions legt bei vollstaendigem Quellmaterial jetzt echt einen
+// post/post_version an (Service Role, keine Insert-Policy fuer authenticated) -- dieser Fake
+// deckt genau die Schreibfolge ab, die der Handler dafuer auslöst.
+function draftCreationServiceClient(ids: { postId?: string; postVersionId?: string } = {}): SupabaseClient {
+  const postId = ids.postId ?? '20000000-0000-4000-8000-000000000001'
+  const postVersionId = ids.postVersionId ?? '20000000-1000-4000-8000-000000000001'
+  return {
+    from: (table: string) => {
+      if (table === 'posts') {
+        return {
+          insert: () => ({ select: () => ({ single: async () => ({ data: { id: postId }, error: null }) }) }),
+          update: () => ({ eq: async () => ({ error: null }) }),
+        }
+      }
+      if (table === 'post_versions') return { insert: () => ({ select: () => ({ single: async () => ({ data: { id: postVersionId }, error: null }) }) }) }
+      if (table === 'post_variants') return { insert: async () => ({ error: null }) }
+      if (table === 'audit_events') return { insert: async () => ({ error: null }) }
       throw new Error(`unexpected table in service test fake: ${table}`)
     },
   } as unknown as SupabaseClient
@@ -243,7 +268,7 @@ describe('api', () => {
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
-      forService: () => ({ from: () => { throw new Error('forService should not be used by this test') } }) as unknown as SupabaseClient,
+      forService: () => draftCreationServiceClient(),
     }
     const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: submissionClients })
     const token = await signAccessToken(USER_ID)
@@ -261,6 +286,45 @@ describe('api', () => {
       },
     })
     expect(response.statusCode).toBe(202)
+    // Paket 025: vollstaendiges Quellmaterial (keine missingFacts) erzeugt jetzt einen echten
+    // post/post_version statt nur einer Vorschau.
+    expect(response.json()).toMatchObject({ status: 'queued', postId: '20000000-0000-4000-8000-000000000001', postVersionId: '20000000-1000-4000-8000-000000000001' })
+  })
+
+  // Paket 025: nur der vollstaendige Fall (keine missingFacts) legt einen Entwurf an --
+  // forService wirft hier absichtlich, um zu beweisen, dass der facts_required-Zweig keinen
+  // Schreibzugriff ausloest.
+  it('does not create a draft when required facts are missing', async () => {
+    const submissionClients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'policy_settings') return chain({ data: [], error: null })
+            if (table === 'member_review_trust') return chain({ data: [], error: null })
+            if (table === 'submissions') return { insert: () => chain({ data: { id: '10000000-4000-4000-8000-000000000002', status: 'draft' }, error: null }) }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used by this test') } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: submissionClients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/submissions',
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        organizationId: ORGANIZATION_ID,
+        departmentId: DEPARTMENT_ID,
+        presetSlug: 'training_insight',
+        communicationGoal: 'inform',
+        requestedFormats: ['feed_image'],
+        sourceMaterial: { facts: {}, observations: [], quotes: [{ text: 'Toller Tag!', approved: true }], doNotMention: [] },
+      },
+    })
+    expect(response.statusCode).toBe(202)
+    expect(response.json()).toMatchObject({ status: 'facts_required' })
+    expect(response.json().postId).toBeUndefined()
   })
 })
 
@@ -1995,6 +2059,216 @@ describe('Paket 012: Kanaele und Social-Accounts', () => {
     })
     expect(response.statusCode).toBe(422)
     expect(response.json()).toMatchObject({ error: 'organization_only_flag' })
+  })
+})
+
+describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffentlichung)', () => {
+  const PUBLICATION_ID = '25000000-1000-4000-8000-000000000001'
+  const PUB_POST_VERSION_ID = '25000000-2000-4000-8000-000000000001'
+  const PUB_POST_ID = '25000000-3000-4000-8000-000000000001'
+  const PUB_SOCIAL_CONNECTION_ID = '25000000-4000-4000-8000-000000000001'
+
+  function publicationRow(overrides: Record<string, unknown> = {}) {
+    return {
+      id: PUBLICATION_ID, organization_id: ORGANIZATION_ID, post_version_id: PUB_POST_VERSION_ID,
+      social_connection_id: PUB_SOCIAL_CONNECTION_ID, platform: 'facebook', status: 'queued',
+      scheduled_for: null, idempotency_key: 'publish:test:facebook:conn',
+      ...overrides,
+    }
+  }
+
+  function readOnlyClients(overrides: Record<string, unknown> = {}): SupabaseClientFactory {
+    return {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'publications') return chain({ data: publicationRow(overrides), error: null })
+            if (table === 'post_versions') return chain({ data: { id: PUB_POST_VERSION_ID, post_id: PUB_POST_ID, caption: 'Hallo Welt' }, error: null })
+            if (table === 'posts') return chain({ data: { id: PUB_POST_ID, department_id: DEPARTMENT_ID }, error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used by this test') } }) as unknown as SupabaseClient,
+    }
+  }
+
+  describe('POST /v1/publications/:id/execute', () => {
+    it('reports a non-existent publication as not_found', async () => {
+      const clients: SupabaseClientFactory = {
+        forUser: () => ({ from: (table: string) => { if (table === 'publications') return chain({ data: null, error: null }); throw new Error(`unexpected table: ${table}`) } }) as unknown as SupabaseClient,
+        forService: () => ({ from: () => { throw new Error('forService should not be used') } }) as unknown as SupabaseClient,
+      }
+      const app = await startApp({ supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
+      expect(response.statusCode).toBe(404)
+    })
+
+    it('rejects a caller without post.publish in the department', async () => {
+      const app = await startApp({ roleProvider: denyingRoleProvider, supabaseClients: readOnlyClients() })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
+      expect(response.statusCode).toBe(403)
+    })
+
+    it('rejects a publication scheduled for the future with 409 not_due_yet, no Hatchet cron auto-executes it', async () => {
+      const app = await startApp({
+        roleProvider: organizationManagerRoleProvider,
+        supabaseClients: readOnlyClients({ scheduled_for: new Date(Date.now() + 60_000).toISOString() }),
+      })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
+      expect(response.statusCode).toBe(409)
+      expect(response.json()).toMatchObject({ error: 'not_due_yet' })
+    })
+
+    it('rejects with 409 invalid_status when the compare-and-set loses the race', async () => {
+      // status ist bereits nicht mehr 'queued' (paralleler Aufruf/frueherer Versuch) -- die
+      // Update-Eq-Kette (status='queued') trifft dann keine Zeile.
+      const clients: SupabaseClientFactory = {
+        ...readOnlyClients(),
+        forService: () => ({ from: (table: string) => { if (table === 'publications') return { update: () => chain({ data: null, error: null }) }; throw new Error(`unexpected table in service fake: ${table}`) } }) as unknown as SupabaseClient,
+      }
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
+      expect(response.statusCode).toBe(409)
+      expect(response.json()).toMatchObject({ error: 'invalid_status' })
+    })
+
+    it('rejects with 422 when the post version has no approved media derivative yet', async () => {
+      // Ausgangslage (plans/025): ohne die Upload-/Freigabepipeline (002/003) hat jede aus Paket
+      // 025 entstehende post_version keine post_media-Zeilen. FakePublisher/MetaPublisher lehnen
+      // eine Veroeffentlichung ohne Medium unconditional ab -- erwartetes Verhalten, kein Bug.
+      const clients: SupabaseClientFactory = {
+        ...readOnlyClients(),
+        forService: () =>
+          ({
+            from: (table: string) => {
+              if (table === 'publications') return { update: () => chain({ data: { id: PUBLICATION_ID }, error: null }) }
+              if (table === 'social_connections') return chain({ data: { external_account_id: 'page-123' }, error: null })
+              if (table === 'social_connection_secrets') {
+                const sealed = createSecretBox({ v1: Buffer.alloc(32, 7).toString('base64') }, 'v1').seal('fake-access-token', PUB_SOCIAL_CONNECTION_ID)
+                return chain({ data: { token_ciphertext: ciphertextToBytea(sealed.ciphertext), token_key_version: 'v1' }, error: null })
+              }
+              if (table === 'post_media') return chain({ data: [], error: null })
+              if (table === 'publication_attempts') return { insert: async () => ({ error: null }) }
+              throw new Error(`unexpected table in service fake: ${table}`)
+            },
+          }) as unknown as SupabaseClient,
+      }
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
+      expect(response.statusCode).toBe(422)
+      expect(response.json()).toMatchObject({ error: 'validation_failed' })
+    })
+
+    it('publishes successfully once an approved media derivative exists, records the attempt and audits it', async () => {
+      const auditCaptured: Record<string, unknown>[] = []
+      const clients: SupabaseClientFactory = {
+        ...readOnlyClients(),
+        forService: () =>
+          ({
+            from: (table: string) => {
+              if (table === 'publications') return { update: () => chain({ data: { id: PUBLICATION_ID }, error: null }) }
+              if (table === 'social_connections') return chain({ data: { external_account_id: 'page-123' }, error: null })
+              if (table === 'social_connection_secrets') {
+                const sealed = createSecretBox({ v1: Buffer.alloc(32, 7).toString('base64') }, 'v1').seal('fake-access-token', PUB_SOCIAL_CONNECTION_ID)
+                return chain({ data: { token_ciphertext: ciphertextToBytea(sealed.ciphertext), token_key_version: 'v1' }, error: null })
+              }
+              if (table === 'post_media') return chain({ data: [{ position: 0, media_derivative_id: '25000000-5000-4000-8000-000000000001' }], error: null })
+              if (table === 'media_derivatives') return chain({ data: { id: '25000000-5000-4000-8000-000000000001', sha256: 'a'.repeat(64), mime_type: 'image/png', status: 'ready' }, error: null })
+              if (table === 'publication_media_grants') return { insert: async () => ({ error: null }) }
+              if (table === 'publication_attempts') return { insert: async () => ({ error: null }) }
+              if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { auditCaptured.push(row); return { error: null } } }
+              throw new Error(`unexpected table in service fake: ${table}`)
+            },
+          }) as unknown as SupabaseClient,
+      }
+      const publisher: SocialPublisher = {
+        async validate() { return { valid: true, errors: [] } },
+        async publish() { return { externalId: 'fb_post_1', status: 'published', permalink: 'https://facebook.com/fb_post_1' } },
+        async reconcile() { return { externalId: 'fb_post_1', status: 'published' } },
+      }
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients, publisher })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toMatchObject({ id: PUBLICATION_ID, status: 'published', externalId: 'fb_post_1', permalink: 'https://facebook.com/fb_post_1' })
+      expect(auditCaptured).toMatchObject([{ action: 'post.published', entity_id: PUBLICATION_ID }])
+    })
+  })
+
+  describe('GET /v1/media-grants/:token', () => {
+    it('rejects an unknown token with 404, without requiring authentication', async () => {
+      const clients: SupabaseClientFactory = {
+        forUser: () => ({}) as unknown as SupabaseClient,
+        forService: () => ({ from: (table: string) => { if (table === 'publication_media_grants') return chain({ data: null, error: null }); throw new Error(`unexpected table: ${table}`) } }) as unknown as SupabaseClient,
+      }
+      const app = await startApp({ supabaseClients: clients })
+      const response = await app.inject({ method: 'GET', url: '/v1/media-grants/does-not-exist' })
+      expect(response.statusCode).toBe(404)
+    })
+
+    it('rejects an expired grant with 404, same as an unknown token', async () => {
+      const clients: SupabaseClientFactory = {
+        forUser: () => ({}) as unknown as SupabaseClient,
+        forService: () =>
+          ({
+            from: (table: string) => {
+              if (table === 'publication_media_grants') return chain({ data: { media_derivative_id: 'deriv-1', expires_at: new Date(Date.now() - 1000).toISOString(), revoked_at: null }, error: null })
+              throw new Error(`unexpected table: ${table}`)
+            },
+          }) as unknown as SupabaseClient,
+      }
+      const app = await startApp({ supabaseClients: clients })
+      const response = await app.inject({ method: 'GET', url: '/v1/media-grants/expired-token' })
+      expect(response.statusCode).toBe(404)
+    })
+
+    it('rejects a revoked grant with 404, same as an unknown token', async () => {
+      const clients: SupabaseClientFactory = {
+        forUser: () => ({}) as unknown as SupabaseClient,
+        forService: () =>
+          ({
+            from: (table: string) => {
+              if (table === 'publication_media_grants') return chain({ data: { media_derivative_id: 'deriv-1', expires_at: new Date(Date.now() + 60_000).toISOString(), revoked_at: new Date().toISOString() }, error: null })
+              throw new Error(`unexpected table: ${table}`)
+            },
+          }) as unknown as SupabaseClient,
+      }
+      const app = await startApp({ supabaseClients: clients })
+      const response = await app.inject({ method: 'GET', url: '/v1/media-grants/revoked-token' })
+      expect(response.statusCode).toBe(404)
+    })
+
+    it('serves the referenced derivative bytes with the correct content-type and marks the grant accessed', async () => {
+      let accessedAtSet = false
+      const clients: SupabaseClientFactory = {
+        forUser: () => ({}) as unknown as SupabaseClient,
+        forService: () =>
+          ({
+            from: (table: string) => {
+              if (table === 'publication_media_grants') {
+                return {
+                  ...chain({ data: { media_derivative_id: 'deriv-1', expires_at: new Date(Date.now() + 60_000).toISOString(), revoked_at: null }, error: null }),
+                  update: () => ({ eq: async () => { accessedAtSet = true; return { error: null } } }),
+                }
+              }
+              if (table === 'media_derivatives') return chain({ data: { bucket_id: 'rendered-media', object_path: 'org/dep/asset/deriv-1.png', mime_type: 'image/png', status: 'ready' }, error: null })
+              throw new Error(`unexpected table: ${table}`)
+            },
+            storage: { from: () => ({ download: async () => ({ data: new Blob([Buffer.from('fake-image-bytes')]), error: null }) }) },
+          }) as unknown as SupabaseClient,
+      }
+      const app = await startApp({ supabaseClients: clients })
+      const response = await app.inject({ method: 'GET', url: '/v1/media-grants/valid-token' })
+      expect(response.statusCode).toBe(200)
+      expect(response.headers['content-type']).toBe('image/png')
+      expect(response.rawPayload.toString()).toBe('fake-image-bytes')
+      expect(accessedAtSet).toBe(true)
+    })
   })
 })
 
@@ -3874,7 +4148,7 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
               throw new Error(`unexpected table in test fake: ${table}`)
             },
           }) as unknown as SupabaseClient,
-        forService: () => ({ from: () => { throw new Error('forService should not be used by this test') } }) as unknown as SupabaseClient,
+        forService: () => draftCreationServiceClient(),
       }
       const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
       const token = await signAccessToken(USER_ID)
@@ -3961,7 +4235,7 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
               throw new Error(`unexpected table in test fake: ${table}`)
             },
           }) as unknown as SupabaseClient,
-        forService: () => ({ from: () => { throw new Error('forService should not be used by this test') } }) as unknown as SupabaseClient,
+        forService: () => draftCreationServiceClient(),
       }
       const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
       const token = await signAccessToken(USER_ID)

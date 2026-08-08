@@ -95,6 +95,33 @@ describe('ApiEnvironmentSchema', () => {
     ).toBe(false)
   })
 
+  // Paket 025: ohne diese URL kann Meta nie auf GET /v1/media-grants/:token zugreifen -- derselbe
+  // field-scoped-statt-generic-crash-Grundsatz wie bei den anderen META_*-Pflichtfeldern.
+  it('rejects PUBLISHING_PROVIDER=meta missing API_PUBLIC_BASE_URL', () => {
+    expect(
+      ApiEnvironmentSchema.safeParse({
+        NODE_ENV: 'development',
+        PUBLISHING_PROVIDER: 'meta',
+        META_APP_ID: 'app-id',
+        META_APP_SECRET: 'app-secret',
+        META_OAUTH_REDIRECT_URL: 'https://example.org/oauth/callback',
+      }).success,
+    ).toBe(false)
+  })
+
+  it('accepts PUBLISHING_PROVIDER=meta with all required fields', () => {
+    expect(
+      ApiEnvironmentSchema.safeParse({
+        NODE_ENV: 'development',
+        PUBLISHING_PROVIDER: 'meta',
+        META_APP_ID: 'app-id',
+        META_APP_SECRET: 'app-secret',
+        META_OAUTH_REDIRECT_URL: 'https://example.org/oauth/callback',
+        API_PUBLIC_BASE_URL: 'https://api.example.org',
+      }).success,
+    ).toBe(true)
+  })
+
   it('rejects EMAIL_PROVIDER=smtp missing SMTP_FROM', () => {
     expect(
       ApiEnvironmentSchema.safeParse({
