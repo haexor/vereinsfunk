@@ -67,8 +67,9 @@ select throws_ok(
   '23505', null, 'a second, different row claiming to be superseded by the same successor violates the unique index'
 );
 
--- 6: origin='imported' erzwingt einen source_id-Bezug (bzw. umgekehrt): eine importierte
--- Herkunft ohne source_id oder ein source_id bei origin != 'imported' verstoesst gegen den CHECK.
+-- 6: ein gesetztes source_id erzwingt origin='imported'. Nur diese Richtung -- origin='imported'
+-- ohne source_id bleibt zulaessig, damit eine importierte Zeile ihre Herkunft behaelt, wenn die
+-- Quelle spaeter geloescht wird und source_id per SET NULL entfaellt.
 select throws_ok(
   format($$insert into public.consent_records (organization_id, directory_person_id, pseudonymous_subject_ref, scope, signer_role, guardian_confirmed, signed_at, evidence_path, origin, source_id, created_by)
     values (%L, %L, %L, 'x', 'guardian', true, current_date, 'x', 'paper', gen_random_uuid(), '70000000-0000-4000-8000-000000000002')$$, '70000000-1000-4000-8000-000000000001', '70000000-1300-4000-8000-000000000001', '70000000-1300-4000-8000-000000000001'),
@@ -281,4 +282,5 @@ select throws_ok(
   '23505', null, 'revocation_token_hash must be unique across the whole table'
 );
 
+select * from finish();
 commit;

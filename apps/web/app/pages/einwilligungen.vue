@@ -45,28 +45,36 @@ function personLabel(personId: string | null): string {
   return person ? `${person.firstName} ${person.lastName}` : 'Unbekannte Person'
 }
 
-async function loadPeople() {
-  if (!organizationId.value) return
+async function loadPeople(currentOrganizationId: string, currentDepartmentId: string) {
   const headers = await useAuthHeader()
   const query: Record<string, string> = {}
-  if (filterDepartmentId.value) query.departmentId = filterDepartmentId.value
-  const response = await $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/directory-people`, { headers, query })
+  if (currentDepartmentId) query.departmentId = currentDepartmentId
+  const response = await $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${currentOrganizationId}/directory-people`, { headers, query })
+  // Verein/Abteilung koennte sich waehrend des Requests geaendert haben -- ein frueher gestarteter
+  // Durchlauf darf eine spaeter gewaehlte Auswahl nicht ueberschreiben (siehe loadAll).
+  if (organizationId.value !== currentOrganizationId || filterDepartmentId.value !== currentDepartmentId) return
   people.value = DirectoryPersonSchema.array().parse(response)
 }
 
 async function loadAll() {
   if (!organizationId.value) { loading.value = false; return }
+  const currentOrganizationId = organizationId.value
+  const currentDepartmentId = filterDepartmentId.value
   loading.value = true
   errorMessage.value = ''
   try {
     const headers = await useAuthHeader()
     const query: Record<string, string> = {}
-    if (filterDepartmentId.value) query.departmentId = filterDepartmentId.value
+    if (currentDepartmentId) query.departmentId = currentDepartmentId
     const [consentsResponse, requestsResponse] = await Promise.all([
-      $fetch<unknown>(`${config.public.apiBase}/v1/consents`, { headers, query: { organizationId: organizationId.value, ...query } }),
-      $fetch<unknown>(`${config.public.apiBase}/v1/consent-requests`, { headers, query: { organizationId: organizationId.value, ...query } }),
-      loadPeople(),
+      $fetch<unknown>(`${config.public.apiBase}/v1/consents`, { headers, query: { organizationId: currentOrganizationId, ...query } }),
+      $fetch<unknown>(`${config.public.apiBase}/v1/consent-requests`, { headers, query: { organizationId: currentOrganizationId, ...query } }),
+      loadPeople(currentOrganizationId, currentDepartmentId),
     ])
+    // Ein frueher gestarteter Durchlauf kann nach einem spaeter gestarteten zurueckkehren, wenn
+    // sich Verein/Abteilung zwischendurch aendern -- er wuerde sonst deren Ergebnisse mit denen der
+    // vorigen Auswahl ueberschreiben (gefunden im Code-Review, gleiches Muster wie layouts/default.vue).
+    if (organizationId.value !== currentOrganizationId || filterDepartmentId.value !== currentDepartmentId) return
     consents.value = ConsentRecordSchema.array().parse(consentsResponse)
     requests.value = ConsentRequestSchema.array().parse(requestsResponse)
   } catch {
@@ -101,11 +109,14 @@ const revokingId = ref<string | null>(null)
 const revokeError = ref('')
 async function revoke(consent: ConsentRecord) {
   if (!confirm('Diese Einwilligung wirklich widerrufen? Offene Freigaben und geplante Veröffentlichungen werden sofort betroffen.')) return
+  // prompt() statt confirm(), weil der Widerrufsgrund (consent_records.revocation_reason) sonst an
+  // dieser Oberflaeche nie erfasst wuerde (gefunden im Code-Review). null bei Abbruch.
+  const reason = prompt('Grund für den Widerruf (optional):')
   revokingId.value = consent.id
   revokeError.value = ''
   try {
     const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/consents/${consent.id}/revoke`, { method: 'POST', headers, body: { revokedBy: 'organization' } })
+    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/consents/${consent.id}/revoke`, { method: 'POST', headers, body: { revokedBy: 'organization', reason: reason || undefined } })
     const updated = ConsentRecordSchema.parse(response)
     consents.value = consents.value.map((item) => (item.id === updated.id ? updated : item))
   } catch {
@@ -125,6 +136,11 @@ const registerForm = reactive({
 const registerSubmitting = ref(false)
 const registerError = ref('')
 
+const GUARDIAN_REQUIRED_MESSAGE = 'Diese Person ist minderjährig. Eine Einwilligung muss von einer erziehungsberechtigten Person erteilt werden.'
+function errorCodeOf(error: unknown): string | undefined {
+  return (error as { data?: { error?: string } })?.data?.error
+}
+
 async function registerConsent() {
   if (!organizationId.value || !registerForm.file) return
   registerSubmitting.value = true
@@ -143,14 +159,17 @@ async function registerConsent() {
     body.set('signedAt', registerForm.signedAt)
     body.set('signerName', registerForm.signerName)
     body.set('signerRole', registerForm.signerRole)
-    body.set('guardianConfirmed', String(registerForm.guardianConfirmed))
+    // Eine Erziehungsberechtigung kann nur bestaetigt sein, wenn die Rolle 'guardian' ist -- sonst
+    // bliebe ein zuvor gesetzter Haken auch nach dem Wechsel auf 'self' bestehen (gefunden im
+    // Code-Review), weil das Feld dann ausgeblendet wird, aber registerForm.guardianConfirmed nicht.
+    body.set('guardianConfirmed', String(registerForm.signerRole === 'guardian' && registerForm.guardianConfirmed))
     body.set('file', registerForm.file)
     const response = await $fetch<unknown>(`${config.public.apiBase}/v1/consents`, { method: 'POST', headers, body })
     consents.value = [ConsentRecordSchema.parse(response), ...consents.value]
     registerForm.directoryPersonId = ''; registerForm.scope = ''; registerForm.signedAt = ''; registerForm.signerName = ''
     registerForm.guardianConfirmed = false; registerForm.file = null
-  } catch {
-    registerError.value = 'Die Erklärung konnte nicht hinterlegt werden.'
+  } catch (error) {
+    registerError.value = errorCodeOf(error) === 'guardian_required_for_minor' ? GUARDIAN_REQUIRED_MESSAGE : 'Die Erklärung konnte nicht hinterlegt werden.'
   } finally {
     registerSubmitting.value = false
   }
@@ -182,8 +201,12 @@ async function sendConsentRequest() {
     requests.value = [ConsentRequestSchema.parse(response), ...requests.value]
     requestForm.directoryPersonId = ''; requestForm.recipientEmail = ''
   } catch (error) {
-    const code = (error as { data?: { error?: string } })?.data?.error
-    requestError.value = code === 'request_already_open' ? 'Für diese Person und Adresse liegt bereits eine offene Anfrage vor.' : 'Die Anfrage konnte nicht versendet werden.'
+    const code = errorCodeOf(error)
+    requestError.value = code === 'request_already_open'
+      ? 'Für diese Person und Adresse liegt bereits eine offene Anfrage vor.'
+      : code === 'guardian_required_for_minor'
+        ? GUARDIAN_REQUIRED_MESSAGE
+        : 'Die Anfrage konnte nicht versendet werden.'
   } finally {
     requestSubmitting.value = false
   }
@@ -210,10 +233,10 @@ async function resendRequest(request: ConsentRequest) {
     </header>
 
     <div v-if="loading" class="p-8 text-center text-xs text-[#7b827d]">Wird geladen …</div>
-    <p v-else-if="errorMessage" class="text-sm text-amber-800">{{ errorMessage }}</p>
     <div v-else-if="!canAccessPage" class="card p-8 text-center text-sm text-[#7b827d]">
       Du hast hier keine Berechtigung, Einwilligungen zu verwalten. Das übernimmt der Vereins- oder Abteilungsadmin.
     </div>
+    <p v-else-if="errorMessage" class="text-sm text-amber-800">{{ errorMessage }}</p>
     <template v-else>
       <section class="card mb-6 p-6">
         <select v-model="filterDepartmentId" class="focus-ring rounded-lg border border-[#dfe0d9] p-2 text-xs">
@@ -303,8 +326,8 @@ async function resendRequest(request: ConsentRequest) {
               <input v-model="registerForm.signerName" required maxlength="160" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm" />
             </label>
             <div class="flex items-center gap-3 text-xs">
-              <label class="flex items-center gap-1.5"><input v-model="registerForm.signerRole" type="radio" value="self" /> Person selbst</label>
-              <label class="flex items-center gap-1.5"><input v-model="registerForm.signerRole" type="radio" value="guardian" /> Erziehungsberechtigte:r</label>
+              <label class="flex items-center gap-1.5"><input v-model="registerForm.signerRole" type="radio" name="signerRole" value="self" /> Person selbst</label>
+              <label class="flex items-center gap-1.5"><input v-model="registerForm.signerRole" type="radio" name="signerRole" value="guardian" /> Erziehungsberechtigte:r</label>
             </div>
             <label v-if="registerForm.signerRole === 'guardian'" class="flex items-center gap-1.5 text-xs">
               <input v-model="registerForm.guardianConfirmed" type="checkbox" required /> Erziehungsberechtigung bestätigt
@@ -332,8 +355,8 @@ async function resendRequest(request: ConsentRequest) {
               <input v-model="requestForm.recipientEmail" type="email" required class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm" />
             </label>
             <div class="flex items-center gap-3 text-xs">
-              <label class="flex items-center gap-1.5"><input v-model="requestForm.recipientRole" type="radio" value="self" /> An die Person selbst</label>
-              <label class="flex items-center gap-1.5"><input v-model="requestForm.recipientRole" type="radio" value="guardian" /> An Erziehungsberechtigte:n</label>
+              <label class="flex items-center gap-1.5"><input v-model="requestForm.recipientRole" type="radio" name="recipientRole" value="self" /> An die Person selbst</label>
+              <label class="flex items-center gap-1.5"><input v-model="requestForm.recipientRole" type="radio" name="recipientRole" value="guardian" /> An Erziehungsberechtigte:n</label>
             </div>
             <div class="flex flex-wrap gap-3 text-xs">
               <label class="flex items-center gap-1.5"><input v-model="requestForm.mediaKinds" type="checkbox" value="photo" /> Foto</label>

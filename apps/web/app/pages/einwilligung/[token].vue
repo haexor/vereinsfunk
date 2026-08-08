@@ -4,9 +4,14 @@ import { PublicConsentRequestViewSchema } from '@vereinsfunk/contracts'
 
 definePageMeta({ layout: 'auth' })
 
+// Oeffentliche Token-Seite: kein Suchmaschinen-Index (Plan 015, Abschnitt 3). Der X-Robots-Tag
+// der API gilt nur fuer die JSON-Antwort, nicht fuer diese Seite (gefunden im Code-Review).
+useHead({ meta: [{ name: 'robots', content: 'noindex, nofollow' }] })
+
 const route = useRoute()
 const config = useRuntimeConfig()
 const token = typeof route.params.token === 'string' ? route.params.token : ''
+const encodedToken = encodeURIComponent(token)
 
 const status = ref<'loading' | 'ready' | 'not-found' | 'submitting' | 'granted' | 'declined' | 'error'>('loading')
 const view = ref<ReturnType<typeof PublicConsentRequestViewSchema.parse> | null>(null)
@@ -28,11 +33,13 @@ const scopeDescription = computed(() => {
 async function load() {
   if (!token) { status.value = 'not-found'; return }
   try {
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/consent-requests/by-token/${token}`)
+    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/consent-requests/by-token/${encodedToken}`)
     view.value = PublicConsentRequestViewSchema.parse(response)
     status.value = 'ready'
-  } catch {
-    status.value = 'not-found'
+  } catch (error) {
+    // Nur ein 404 bedeutet "Token unbekannt/abgelaufen/bereits verwendet". Ein Transportfehler
+    // oder ein 429 darf einen gueltigen Link nicht als ungueltig darstellen (gefunden im Code-Review).
+    status.value = (error as { statusCode?: number })?.statusCode === 404 ? 'not-found' : 'error'
   }
 }
 
@@ -40,7 +47,7 @@ async function respond(decision: 'granted' | 'declined') {
   status.value = 'submitting'
   try {
     const response = await $fetch<{ status: string; revocationUrl?: string }>(
-      `${config.public.apiBase}/v1/consent-requests/by-token/${token}/respond`,
+      `${config.public.apiBase}/v1/consent-requests/by-token/${encodedToken}/respond`,
       { method: 'POST', body: { decision } },
     )
     if (response.status === 'granted') {

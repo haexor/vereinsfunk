@@ -69,7 +69,7 @@ export const ApiEnvironmentSchema = ApiEnvironmentBaseSchema.superRefine((enviro
   }
 
   if (environment.NODE_ENV !== 'production') return
-  const required = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_JWT_SECRET', 'WEB_BASE_URL'] as const
+  const required = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_JWT_SECRET', 'WEB_BASE_URL', 'CONSENT_RESPONSE_HASH_PEPPER'] as const
   for (const key of required) {
     if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required in production` })
   }

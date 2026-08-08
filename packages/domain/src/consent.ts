@@ -58,6 +58,11 @@ export function isConsentScopeMismatch(reasons: readonly ConsentBlocker[]): bool
 export interface ConsentRecordForEvaluation {
   guardianConfirmed: boolean
   signerRole: 'self' | 'guardian' | null
+  // Heute per API-Guard durchgesetzt (POST /v1/consents, /v1/consent-requests,
+  // /v1/consents/:id/supersede lehnen signerRole/recipientRole: 'self' fuer eine minderjaehrige
+  // Person ab) -- hier zusaetzlich geprueft, damit ein weiterer Schreibpfad (z. B.
+  // origin='imported') sich nicht allein auf den API-Guard verlassen muss (gefunden im Code-Review).
+  subjectIsMinor: boolean
   supersededBy: string | null
   revokedAt: string | null
   validFrom: string | null
@@ -89,7 +94,8 @@ export function evaluateConsent(
   if (record.revokedAt !== null) reasons.push('revoked')
   if (record.validFrom !== null && at < new Date(record.validFrom)) reasons.push('not_yet_valid')
   if (record.validUntil !== null && at > new Date(record.validUntil)) reasons.push('expired')
-  if (record.signerRole === 'guardian' && !record.guardianConfirmed) reasons.push('guardian_missing')
+  if (record.subjectIsMinor && record.signerRole !== 'guardian') reasons.push('guardian_missing')
+  else if (record.signerRole === 'guardian' && !record.guardianConfirmed) reasons.push('guardian_missing')
   if (record.personLeft && policy.consentExpiresOnLeave) reasons.push('person_left')
 
   const scope = record.scopeStructured
@@ -162,11 +168,14 @@ export function scanTextForSensitiveData(
     for (const match of text.matchAll(pattern)) findings.push({ kind, excerpt: match[0] })
   }
 
+  // \b kennt nur ASCII-Wortzeichen -- bei einem Namen wie "Öztürk" oder "Weiß" versagt die Grenze
+  // am Wortrand, der Treffer bliebe unentdeckt (gefunden im Code-Review). Lookarounds gegen
+  // Unicode-Buchstaben/-Ziffern erfassen auch Umlaute und ß als Wortrand.
   let namingNotAllowed = false
   for (const person of linkedPersons) {
     if (person.namingAllowed) continue
-    const matchesFirstName = person.firstName.length > 0 && new RegExp(`\\b${escapeRegExp(person.firstName)}\\b`, 'i').test(text)
-    const matchesLastName = person.lastName.length > 0 && new RegExp(`\\b${escapeRegExp(person.lastName)}\\b`, 'i').test(text)
+    const matchesFirstName = person.firstName.length > 0 && new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(person.firstName)}(?![\\p{L}\\p{N}])`, 'iu').test(text)
+    const matchesLastName = person.lastName.length > 0 && new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(person.lastName)}(?![\\p{L}\\p{N}])`, 'iu').test(text)
     if (matchesFirstName || matchesLastName) {
       namingNotAllowed = true
       findings.push({ kind: 'name', excerpt: `${person.firstName} ${person.lastName}`.trim() })

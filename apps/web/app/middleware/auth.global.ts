@@ -3,7 +3,9 @@
 const publicPaths = new Set(['/anmelden', '/registrieren', '/passwort-vergessen', '/passwort-neu', '/auth/callback', '/einladung'])
 // Paket 015: /einwilligung/[token] und /einwilligung/widerruf/[token] haben kein Vereinskonto als
 // Zielgruppe (Erziehungsberechtigte) -- Praefix statt exaktem Pfad, weil das Token Teil der Route ist.
-const publicPathPrefixes = ['/einwilligung']
+// Mit Schraegstrich, sonst trifft das Praefix auch /einwilligungen (die authentifizierte
+// Verwaltungsseite, gefunden im Code-Review).
+const publicPathPrefixes = ['/einwilligung/']
 
 export default defineNuxtRouteMiddleware(async (to) => {
   if (publicPaths.has(to.path) || publicPathPrefixes.some((prefix) => to.path.startsWith(prefix))) return

@@ -134,6 +134,7 @@ describe('evaluateConsent (Paket 015)', () => {
   const record: ConsentRecordForEvaluation = {
     guardianConfirmed: true,
     signerRole: 'guardian',
+    subjectIsMinor: false,
     supersededBy: null,
     revokedAt: null,
     validFrom: '2026-01-01T00:00:00Z',
@@ -183,6 +184,13 @@ describe('evaluateConsent (Paket 015)', () => {
   it('does not flag guardian_missing for a self-signed record', () => {
     const selfSigned = { ...record, signerRole: 'self' as const, guardianConfirmed: false }
     expect(evaluateConsent(selfSigned, new Date('2026-06-01'), required, noExpiry).reasons).toEqual([])
+  })
+
+  // Regression: der API-Guard gegen signerRole='self' fuer eine minderjaehrige Person ist keine
+  // Garantie fuer jeden kuenftigen Schreibpfad -- die Domain-Schicht selbst muss das durchsetzen.
+  it('flags guardian_missing for a self-signed record when the subject is a minor', () => {
+    const selfSignedMinor = { ...record, signerRole: 'self' as const, guardianConfirmed: false, subjectIsMinor: true }
+    expect(evaluateConsent(selfSignedMinor, new Date('2026-06-01'), required, noExpiry).reasons).toEqual(['guardian_missing'])
   })
 
   it('flags person_left only when the policy requires it', () => {
@@ -267,6 +275,12 @@ describe('scanTextForSensitiveData (Paket 015)', () => {
   it('does not flag a name when namingAllowed is true', () => {
     const result = scanTextForSensitiveData('Lisa erzielte das Siegtor.', [{ ...lisa, namingAllowed: true }])
     expect(result.namingNotAllowed).toBe(false)
+  })
+
+  it('flags a name with umlauts at the word boundary', () => {
+    const person: LinkedPersonForTextScan = { firstName: 'Ayla', lastName: 'Öztürk', namingAllowed: false }
+    const result = scanTextForSensitiveData('Das Tor erzielte Öztürk kurz vor Schluss.', [person])
+    expect(result.namingNotAllowed).toBe(true)
   })
 
   it('detects a phone number', () => {

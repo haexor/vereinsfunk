@@ -4,9 +4,14 @@ import { PublicConsentRevocationViewSchema } from '@vereinsfunk/contracts'
 
 definePageMeta({ layout: 'auth' })
 
+// Oeffentliche Token-Seite: kein Suchmaschinen-Index (Plan 015, Abschnitt 3). Der X-Robots-Tag
+// der API gilt nur fuer die JSON-Antwort, nicht fuer diese Seite (gefunden im Code-Review).
+useHead({ meta: [{ name: 'robots', content: 'noindex, nofollow' }] })
+
 const route = useRoute()
 const config = useRuntimeConfig()
 const token = typeof route.params.token === 'string' ? route.params.token : ''
+const encodedToken = encodeURIComponent(token)
 
 const status = ref<'loading' | 'ready' | 'already-revoked' | 'not-found' | 'confirming' | 'revoked' | 'error'>('loading')
 const view = ref<ReturnType<typeof PublicConsentRevocationViewSchema.parse> | null>(null)
@@ -14,18 +19,21 @@ const view = ref<ReturnType<typeof PublicConsentRevocationViewSchema.parse> | nu
 async function load() {
   if (!token) { status.value = 'not-found'; return }
   try {
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/consents/by-revocation-token/${token}`)
+    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/consents/by-revocation-token/${encodedToken}`)
     view.value = PublicConsentRevocationViewSchema.parse(response)
     status.value = view.value.status === 'already_revoked' ? 'already-revoked' : 'ready'
-  } catch {
-    status.value = 'not-found'
+  } catch (error) {
+    // Nur ein 404 bedeutet "Token unbekannt/abgelaufen/bereits verwendet". Ein Transportfehler
+    // oder ein 429 darf einen gueltigen Widerrufslink nicht als ungueltig darstellen (gefunden im
+    // Code-Review).
+    status.value = (error as { statusCode?: number })?.statusCode === 404 ? 'not-found' : 'error'
   }
 }
 
 async function confirmRevoke() {
   status.value = 'confirming'
   try {
-    await $fetch(`${config.public.apiBase}/v1/consents/by-revocation-token/${token}`, { method: 'POST' })
+    await $fetch(`${config.public.apiBase}/v1/consents/by-revocation-token/${encodedToken}`, { method: 'POST' })
     status.value = 'revoked'
   } catch {
     status.value = 'error'

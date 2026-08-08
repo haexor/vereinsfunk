@@ -70,9 +70,11 @@ alter table public.consent_records add constraint consent_records_revocation_tok
 -- directory_person_id existiert bereits seit Paket 014 (2026080703_integration_framework.sql).
 
 -- Der Bucket muss PDFs annehmen, sonst scheitert jeder Papier-Nachweis-Upload genau an dem Punkt,
--- an dem das Paket seinen Nutzen hat (Plan, Abschnitt 2).
+-- an dem das Paket seinen Nutzen hat (Plan, Abschnitt 2). Additiv statt eines kompletten Ersatzes
+-- der Liste, sonst wuerde diese Migration verlieren, was eine spaetere Aenderung des Vorzustands
+-- (2026080702_brand_assets_and_fonts.sql) ergaenzt (gefunden im Code-Review).
 update storage.buckets
-set allowed_mime_types = array['image/jpeg','image/png','image/webp','video/mp4','font/woff2','font/ttf','font/otf','application/pdf']
+set allowed_mime_types = array(select distinct unnest(allowed_mime_types || array['application/pdf']))
 where id = 'raw-media';
 
 -- 2. Digitale Einwilligungsanfragen ---------------------------------------------------------------
@@ -104,7 +106,10 @@ create table public.consent_requests (
   updated_at timestamptz not null default now(),
   unique (organization_id, id),
   check ((status = 'granted') = (consent_record_id is not null)),
-  check ((status = 'sent') = (responded_at is null)),
+  -- Nur 'granted'/'declined' entstehen durch eine Antwort der empfangenden Person -- 'expired' und
+  -- 'revoked_link' sind Systemuebergaenge ohne eigenen Antwortzeitpunkt (gefunden im Code-Review;
+  -- die urspruengliche Fassung haette dafuer einen erfundenen responded_at verlangt).
+  check ((status in ('granted', 'declined')) = (responded_at is not null)),
   foreign key (organization_id, department_id)
     references public.departments(organization_id, id) on delete cascade,
   foreign key (organization_id, directory_person_id)
@@ -141,6 +146,21 @@ create policy organization_consent_texts_select on public.organization_consent_t
   using (authz.is_any_member_of_organization(organization_id));
 grant select on public.organization_consent_texts to authenticated;
 grant all privileges on public.organization_consent_texts to service_role;
+
+-- Der Nachweis einer digitalen Einwilligung ist, WELCHEN Text jemand bestaetigt hat -- "nie ein
+-- UPDATE" war bislang nur durch den fehlenden Grant fuer authenticated erzwungen, service_role
+-- (grant all privileges oben) haette eine bestehende Textversion aendern oder loeschen koennen
+-- (gefunden im Code-Review). Gleiches Muster wie media_derivative_immutable: per Trigger statt
+-- per Grant, damit auch service_role den Schutz nicht umgehen kann.
+create or replace function public.organization_consent_text_immutable() returns trigger
+language plpgsql set search_path = public, pg_temp as $$
+begin
+  raise exception 'organization_consent_texts is append-only';
+end;
+$$;
+create trigger organization_consent_texts_immutable
+  before update or delete on public.organization_consent_texts
+  for each row execute function public.organization_consent_text_immutable();
 
 alter table public.consent_requests enable row level security;
 alter table public.consent_requests force row level security;
@@ -301,6 +321,11 @@ language plpgsql set search_path = public, pg_temp as $$
 declare
   affected_version_ids uuid[];
   affected_post_ids uuid[];
+  invalidated_request_ids uuid[];
+  changed_post_ids uuid[];
+  cancelled_publication_ids uuid[];
+  cascade_correlation_id uuid := gen_random_uuid();
+  affected_id uuid;
 begin
   select array_agg(distinct post_media.post_version_id), array_agg(distinct post_version.post_id)
   into affected_version_ids, affected_post_ids
@@ -317,14 +342,46 @@ begin
     return new;
   end if;
 
-  update public.approval_requests set invalidated_at = now()
+  select array_agg(id) into invalidated_request_ids from public.approval_requests
   where invalidated_at is null and organization_id = new.organization_id and post_id = any(affected_post_ids);
+  update public.approval_requests set invalidated_at = now()
+  where id = any(invalidated_request_ids);
 
-  update public.posts set status = 'changes_requested'
+  select array_agg(id) into changed_post_ids from public.posts
   where organization_id = new.organization_id and status = 'awaiting_approval' and id = any(affected_post_ids);
+  update public.posts set status = 'changes_requested'
+  where id = any(changed_post_ids);
 
-  update public.publications set status = 'cancelled'
+  select array_agg(id) into cancelled_publication_ids from public.publications
   where organization_id = new.organization_id and status = 'queued' and post_version_id = any(affected_version_ids);
+  update public.publications set status = 'cancelled'
+  where id = any(cancelled_publication_ids);
+
+  -- Jeder tatsaechlich ausgefuehrte Kaskadenschritt bekommt einen audit_events-Eintrag mit
+  -- gemeinsamer correlation_id und new.id als Ausloeserbezug (Plan 015, Abschnitt 5, Punkt 5) --
+  -- sonst sieht ein Verein spaeter zwar, dass eine Freigabe invalidiert oder eine Publikation
+  -- storniert wurde, aber nicht, dass ein Widerruf die Ursache war (gefunden im Code-Review). Der
+  -- Trigger deckt damit auch Widerrufe ab, die nicht ueber POST /v1/consents/:id/revoke laufen.
+  if invalidated_request_ids is not null then
+    foreach affected_id in array invalidated_request_ids loop
+      insert into public.audit_events (organization_id, action, entity_type, entity_id, correlation_id, metadata)
+      values (new.organization_id, 'approval_request.invalidated', 'approval_requests', affected_id, cascade_correlation_id, jsonb_build_object('reason', 'consent_revoked', 'consentRecordId', new.id));
+    end loop;
+  end if;
+
+  if changed_post_ids is not null then
+    foreach affected_id in array changed_post_ids loop
+      insert into public.audit_events (organization_id, action, entity_type, entity_id, correlation_id, metadata)
+      values (new.organization_id, 'post.changes_requested', 'posts', affected_id, cascade_correlation_id, jsonb_build_object('reason', 'consent_revoked', 'consentRecordId', new.id));
+    end loop;
+  end if;
+
+  if cancelled_publication_ids is not null then
+    foreach affected_id in array cancelled_publication_ids loop
+      insert into public.audit_events (organization_id, action, entity_type, entity_id, correlation_id, metadata)
+      values (new.organization_id, 'publication.cancelled', 'publications', affected_id, cascade_correlation_id, jsonb_build_object('reason', 'consent_revoked', 'consentRecordId', new.id));
+    end loop;
+  end if;
 
   return new;
 end;

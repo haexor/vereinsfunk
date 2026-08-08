@@ -219,12 +219,14 @@ export const PublicConsentRevocationViewSchema = z.object({
 })
 
 // Text pro Verein editierbar, nie global (Entscheidung 2026-08-08). id dient als text_version --
-// unveraenderlich, eine Aenderung legt eine neue Zeile an.
+// unveraenderlich, eine Aenderung legt eine neue Zeile an. id ist keine UUID: ohne eigenen Text
+// liefert die API die feste Kennung 'default-template', dieselbe, die POST /v1/consent-requests
+// dann in consent_requests.text_version speichert.
 export const OrganizationConsentTextSchema = z.object({
-  id: UuidSchema,
+  id: z.string(),
   organizationId: UuidSchema,
   body: z.string().min(1).max(20_000),
-  createdAt: z.iso.datetime({ offset: true }),
+  createdAt: z.iso.datetime({ offset: true }).nullable(),
   isDefaultTemplate: z.boolean(),
 })
 export const UpdateOrganizationConsentTextRequestSchema = z.object({
@@ -629,8 +631,9 @@ export const ApprovalStageSchema = z.object({
   isOverdue: z.boolean(),
   // Paket 015: Medien-Gate-Blocker des zugehoerigen Beitrags (evaluateMediaGate), damit eine
   // Pruefende Person eine fehlende/nicht passende Einwilligung sieht, statt nur die Stufe selbst.
-  // Leer, solange der Beitrag kein Medium mit Gesichtsregionen hat.
-  mediaGateBlockers: z.array(MediaGateBlockerSchema),
+  // Leer, solange der Beitrag kein Medium mit Gesichtsregionen hat. .default([]) haelt bestehende
+  // Konsumenten ohne diese Angabe kompatibel (gefunden im Code-Review).
+  mediaGateBlockers: z.array(MediaGateBlockerSchema).default([]),
 })
 export const ApprovalDecisionSchema = z.object({
   id: UuidSchema,
