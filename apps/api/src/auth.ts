@@ -2,7 +2,7 @@ import { hasPermission, type Permission, type Role } from '@vereinsfunk/authoriz
 import type { ApiEnvironment } from '@vereinsfunk/config'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyReply, FastifyRequest } from 'fastify'
-import { jwtVerify } from 'jose'
+import { createRemoteJWKSet, customFetch, jwtVerify, type FetchImplementation, type JWTVerifyGetKey } from 'jose'
 import { createUserClient } from './supabase.js'
 
 declare module 'fastify' {
@@ -22,20 +22,27 @@ export interface RoleProvider {
   rolesForScope(auth: { userId: string; accessToken: string }, scope: PermissionScope): Promise<readonly Role[]>
 }
 
-// Bevorzugt lokale HS256-Verifikation gegen SUPABASE_JWT_SECRET, sonst Fallback auf auth.getUser().
-// Beides hinter einer Funktion, damit ein Wechsel auf asymmetrische JWTs (JWKS) den Aufrufer nicht betrifft.
-async function verifyAccessToken(environment: ApiEnvironment, accessToken: string): Promise<{ userId: string }> {
-  if (environment.SUPABASE_JWT_SECRET) {
-    const { payload } = await jwtVerify(accessToken, new TextEncoder().encode(environment.SUPABASE_JWT_SECRET), {
-      algorithms: ['HS256'],
-    })
+// Supabase legt seit 1. Mai 2025 neue Projekte standardmaessig mit asymmetrischen JWT Signing Keys
+// an (RS256 im Dashboard-Default, der lokale CLI-Stack signiert mit ES256) und raet inzwischen
+// explizit vom alten Shared-Secret ab. SUPABASE_JWT_SECRET bleibt als expliziter Override fuer
+// Tests (deterministisch selbst signierte Tokens ohne Netzwerkzugriff) sowie fuer Projekte, die
+// bewusst beim Legacy-HS256-Secret geblieben sind; jeder andere Fall verifiziert per JWKS gegen
+// den Auth-Server, algorithmusunabhaengig. Ein frueherer reiner HS256-Pfad wies dort jeden echten
+// Token mit Algorithmus-Mismatch ab -- 401 auf jeden authentifizierten Endpunkt.
+function verifyAccessToken(environment: ApiEnvironment, jwks: JWTVerifyGetKey | undefined) {
+  return async (accessToken: string): Promise<{ userId: string }> => {
+    if (environment.SUPABASE_JWT_SECRET) {
+      const { payload } = await jwtVerify(accessToken, new TextEncoder().encode(environment.SUPABASE_JWT_SECRET), {
+        algorithms: ['HS256'],
+      })
+      if (typeof payload.sub !== 'string' || payload.sub.length === 0) throw new Error('token has no subject')
+      return { userId: payload.sub }
+    }
+    if (!jwks) throw new Error('neither SUPABASE_JWT_SECRET nor SUPABASE_URL is configured')
+    const { payload } = await jwtVerify(accessToken, jwks)
     if (typeof payload.sub !== 'string' || payload.sub.length === 0) throw new Error('token has no subject')
     return { userId: payload.sub }
   }
-  const client = createUserClient(environment, accessToken)
-  const { data, error } = await client.auth.getUser(accessToken)
-  if (error || !data.user) throw new Error(error?.message ?? 'token rejected by auth server')
-  return { userId: data.user.id }
 }
 
 export class SupabaseRoleProvider implements RoleProvider {
@@ -106,7 +113,20 @@ export function createAuthGuards(
   environment: ApiEnvironment,
   roleProvider: RoleProvider,
   platformAdminProvider: PlatformAdminProvider,
+  // jwksFetch: gleiches Injektionsmuster wie fetchImpl in outboundFetch.ts, hier fuers Ersetzen des
+  // JWKS-Abrufs in Tests -- keine echte Supabase-Instanz noetig, um die Verifikation zu pruefen.
+  options: { jwksFetch?: FetchImplementation } = {},
 ) {
+  // Einmal pro Server-/Test-App-Instanz gebaut, nicht pro Request: createRemoteJWKSet cached die
+  // abgerufenen Schluessel intern, was nur greift, wenn dieselbe Instanz wiederverwendet wird.
+  const jwks = environment.SUPABASE_URL
+    ? createRemoteJWKSet(
+        new URL('/auth/v1/.well-known/jwks.json', environment.SUPABASE_URL),
+        options.jwksFetch ? { [customFetch]: options.jwksFetch } : undefined,
+      )
+    : undefined
+  const verify = verifyAccessToken(environment, jwks)
+
   const requireAuth = async (request: FastifyRequest, reply: FastifyReply): Promise<boolean> => {
     const header = request.headers.authorization
     const accessToken = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : undefined
@@ -115,7 +135,7 @@ export function createAuthGuards(
       return false
     }
     try {
-      const { userId } = await verifyAccessToken(environment, accessToken)
+      const { userId } = await verify(accessToken)
       request.auth = { userId, accessToken }
       return true
     } catch {
