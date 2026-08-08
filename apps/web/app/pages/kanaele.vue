@@ -2,10 +2,12 @@
 import { z } from 'zod'
 import {
   ChannelPolicySchema,
+  MemberSchema,
   OAuthPendingConnectionSchema,
   SocialConnectionSchema,
   type ChannelPolicy,
   type ChannelOwnerScope,
+  type Member,
   type SocialConnection,
   type SocialPlatform,
 } from '@vereinsfunk/contracts'
@@ -24,6 +26,7 @@ const actionError = ref('')
 const channels = ref<SocialConnection[]>([])
 const departments = ref<DepartmentRow[]>([])
 const channelPolicy = ref<ChannelPolicy | null>(null)
+const members = ref<Member[]>([])
 const busyChannelId = ref<string | null>(null)
 
 const OAUTH_ERROR_MESSAGES: Record<string, string> = {
@@ -44,21 +47,24 @@ async function load() {
   errorMessage.value = ''
   try {
     const headers = await useAuthHeader()
-    const [channelsResponse, departmentsResult, policyResponse] = await Promise.all([
+    const [channelsResponse, departmentsResult, policyResponse, membersResponse] = await Promise.all([
       $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/channels`, { headers }),
       useSupabaseClient().from('departments').select('id, name').eq('organization_id', organizationId.value).is('archived_at', null).order('name'),
       $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/channel-policy`, { headers }),
+      $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/members`, { headers }),
     ])
     const parsedChannels = SocialConnectionSchema.array().safeParse(channelsResponse)
     const parsedDepartments = DepartmentRowSchema.array().safeParse(departmentsResult.data)
     const parsedPolicy = ChannelPolicySchema.safeParse(policyResponse)
-    if (!parsedChannels.success || departmentsResult.error || !parsedDepartments.success || !parsedPolicy.success) {
+    const parsedMembers = MemberSchema.array().safeParse(membersResponse)
+    if (!parsedChannels.success || departmentsResult.error || !parsedDepartments.success || !parsedPolicy.success || !parsedMembers.success) {
       errorMessage.value = 'Die Kanäle konnten nicht geladen werden.'
       return
     }
     channels.value = parsedChannels.data
     departments.value = parsedDepartments.data
     channelPolicy.value = parsedPolicy.data
+    members.value = parsedMembers.data
   } catch {
     errorMessage.value = 'Die Kanäle konnten nicht geladen werden.'
   } finally {
@@ -221,6 +227,61 @@ function savePurpose(channel: SocialConnection) {
   const value = (purposeDraft[channel.id] ?? '').trim()
   if (value === (channel.purpose ?? '')) return
   void updateChannel(channel, { purpose: value.length > 0 ? value : null })
+}
+
+// Presserechtliche Pflichtangaben je Kanal (Plan 020, "3. Pflichtangaben und Verantwortung"):
+// eigener Entwurf statt purposeDraft, weil hier mehrere Felder zusammen gespeichert werden und
+// der Fehler "Person ist kein Mitglied" spezifisch angezeigt werden soll -- die generische
+// updateChannel()-Fehlermeldung würde das verschlucken.
+function errorCodeOf(error: unknown): string | undefined {
+  return (error as { data?: { error?: string } })?.data?.error
+}
+
+// Vier flache Records statt einem verschachtelten Objekt je Kanal: mit
+// noUncheckedIndexedAccess waere jeder Feldzugriff nach dem Indexzugriff (z. B. `draft.imprintUrl`)
+// "possibly undefined" -- flache Records wie purposeDraft oben brauchen das nicht, weil der
+// Indexzugriff selbst schon der gebundene Wert ist.
+const editorialImprintUrlDraft = reactive<Record<string, string>>({})
+const editorialPrivacyUrlDraft = reactive<Record<string, string>>({})
+const editorialResponsibleProfileIdDraft = reactive<Record<string, string>>({})
+const editorialResponsibleNoteDraft = reactive<Record<string, string>>({})
+watch(
+  channels,
+  (list) => {
+    for (const channel of list) {
+      if (editorialImprintUrlDraft[channel.id] === undefined) editorialImprintUrlDraft[channel.id] = channel.imprintUrl ?? ''
+      if (editorialPrivacyUrlDraft[channel.id] === undefined) editorialPrivacyUrlDraft[channel.id] = channel.privacyUrl ?? ''
+      if (editorialResponsibleProfileIdDraft[channel.id] === undefined) editorialResponsibleProfileIdDraft[channel.id] = channel.editorialResponsibleProfileId ?? ''
+      if (editorialResponsibleNoteDraft[channel.id] === undefined) editorialResponsibleNoteDraft[channel.id] = channel.editorialResponsibleNote ?? ''
+    }
+  },
+  { immediate: true },
+)
+const editorialSavingId = ref<string | null>(null)
+const editorialErrorByChannel = reactive<Record<string, string>>({})
+async function saveEditorialFields(channel: SocialConnection) {
+  editorialSavingId.value = channel.id
+  editorialErrorByChannel[channel.id] = ''
+  try {
+    const headers = await useAuthHeader()
+    await $fetch(`${config.public.apiBase}/v1/channels/${channel.id}`, {
+      method: 'PATCH',
+      headers,
+      body: {
+        imprintUrl: (editorialImprintUrlDraft[channel.id] ?? '').trim() || null,
+        privacyUrl: (editorialPrivacyUrlDraft[channel.id] ?? '').trim() || null,
+        editorialResponsibleProfileId: editorialResponsibleProfileIdDraft[channel.id] || null,
+        editorialResponsibleNote: (editorialResponsibleNoteDraft[channel.id] ?? '').trim() || null,
+      },
+    })
+    await load()
+  } catch (error) {
+    editorialErrorByChannel[channel.id] = errorCodeOf(error) === 'editorial_responsible_not_a_member'
+      ? 'Diese Person ist kein Mitglied dieses Vereins.'
+      : 'Die presserechtlichen Angaben konnten nicht gespeichert werden.'
+  } finally {
+    editorialSavingId.value = null
+  }
 }
 
 // Zuordnungsmatrix: Abteilungen als Zeilen, Kanaele als Spalten (Plan 012, "Oberflaeche").
@@ -437,6 +498,36 @@ const assignmentChannels = computed(() => channels.value.filter((channel) => cha
               @click="disconnectChannel(channel)"
             >
               Trennen
+            </button>
+          </div>
+
+          <div class="mt-4 border-t border-[#e8e9e2] pt-4">
+            <p class="mb-2 text-[11px] font-semibold text-[#7b827d]">Presserechtliche Pflichtangaben</p>
+            <div class="grid gap-2 sm:grid-cols-2">
+              <label><span class="mb-1 block text-[11px] font-semibold">Impressum-URL</span>
+                <input v-model="editorialImprintUrlDraft[channel.id]" type="url" placeholder="https://…" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" />
+              </label>
+              <label><span class="mb-1 block text-[11px] font-semibold">Datenschutz-URL</span>
+                <input v-model="editorialPrivacyUrlDraft[channel.id]" type="url" placeholder="https://…" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" />
+              </label>
+              <label><span class="mb-1 block text-[11px] font-semibold">Redaktionell verantwortliche Person (§ 18 MStV)</span>
+                <select v-model="editorialResponsibleProfileIdDraft[channel.id]" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs">
+                  <option value="">Keine benannt</option>
+                  <option v-for="member in members" :key="member.userId" :value="member.userId">{{ member.displayName }}</option>
+                </select>
+              </label>
+              <label><span class="mb-1 block text-[11px] font-semibold">Notiz</span>
+                <input v-model="editorialResponsibleNoteDraft[channel.id]" maxlength="500" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" />
+              </label>
+            </div>
+            <p v-if="editorialErrorByChannel[channel.id]" class="mt-2 text-[11px] text-amber-800">{{ editorialErrorByChannel[channel.id] }}</p>
+            <button
+              type="button"
+              :disabled="editorialSavingId === channel.id"
+              class="focus-ring mt-2 rounded-lg border border-[#dfe0d9] px-3 py-2 text-[11px] font-semibold disabled:opacity-60"
+              @click="saveEditorialFields(channel)"
+            >
+              {{ editorialSavingId === channel.id ? 'Wird gespeichert …' : 'Pflichtangaben speichern' }}
             </button>
           </div>
         </template>

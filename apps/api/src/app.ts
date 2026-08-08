@@ -8,6 +8,7 @@ import {
   AddPlatformAdminRequestSchema,
   ApprovalRequestSchema,
   ApprovalStageSchema,
+  AuditChainVerificationSchema,
   AvailableChannelsResponseSchema,
   BrandAssetSchema,
   BrandLogoUploadResponseSchema,
@@ -18,6 +19,9 @@ import {
   CreateBrandAssetRequestSchema,
   CreateConsentRecordFieldsSchema,
   CreateConsentRequestRequestSchema,
+  CreateDataSubjectRequestRequestSchema,
+  CreateProcessingRecordRequestSchema,
+  CreateProcessorAgreementFieldsSchema,
   ChannelConnectStartRequestSchema,
   ChannelOwnerScopeSchema,
   ChannelPolicySchema,
@@ -36,6 +40,9 @@ import {
   CreatePolicyReviewerRequestSchema,
   CreateSubmissionSchema,
   CreateTeamRequestSchema,
+  DataSubjectEraseResponseSchema,
+  DataSubjectExportResponseSchema,
+  DataSubjectRequestSchema,
   DecideApprovalStageRequestSchema,
   DecideApprovalStageResponseSchema,
   DepartmentBrandSchema,
@@ -74,19 +81,27 @@ import {
   PolicyReviewerSchema,
   PolicyRuleSettingSchema,
   PolicySettingSchema,
+  ProcessingRecordSchema,
+  ProcessorAgreementSchema,
   ProfileSchema,
   PublicationExecuteResultSchema,
   PublicationSchema,
   PublicConsentRequestViewSchema,
   PublicConsentRevocationViewSchema,
+  PublicOrganizationImprintSchema,
   RequestApprovalResponseSchema,
   ResolveSyncConflictRequestSchema,
   RespondConsentRequestRequestSchema,
+  RetentionDeletionSchema,
+  RetentionSettingsSchema,
   RevokeConsentRequestSchema,
+  RunRetentionRequestSchema,
+  RunRetentionResponseSchema,
   ScopeLevelSchema,
   SchedulePublicationRequestSchema,
   SelectOAuthAccountRequestSchema,
   SetMemberReviewTrustRequestSchema,
+  SignAuditChainResponseSchema,
   SocialConnectionSchema,
   SocialPlatformSchema,
   SubmissionAcceptedSchema,
@@ -96,6 +111,7 @@ import {
   TeamBrandSchema,
   TeamSchema,
   UpdateChannelQuotaRequestSchema,
+  UpdateDataSubjectRequestRequestSchema,
   UpdateDepartmentBrandRequestSchema,
   UpdateDepartmentRequestSchema,
   UpdateDirectoryPersonRequestSchema,
@@ -107,7 +123,10 @@ import {
   UpdatePlatformSettingRequestSchema,
   UpdatePolicyRulesRequestSchema,
   UpdatePolicySettingRequestSchema,
+  UpdateProcessingRecordRequestSchema,
+  UpdateProcessorAgreementRequestSchema,
   UpdateProfileRequestSchema,
+  UpdateRetentionSettingsRequestSchema,
   UpdateSocialConnectionRequestSchema,
   UpdateTeamBrandRequestSchema,
   UpdateTeamRequestSchema,
@@ -198,7 +217,7 @@ import { createEmailSender, type EmailMessage, type EmailSender } from './email.
 import { buildInvitationEmail, generateInvitationToken } from './invitations.js'
 import { mapLlmProviderConfigurationRow } from './llmProviders.js'
 import { fetchPublicUrl, isAllowedOutboundUrl, OutboundFetchError } from './outboundFetch.js'
-import { byteaToBuffer, ciphertextToBytea, createSecretBoxFromEnvironment } from './secretBox.js'
+import { byteaToBuffer, ciphertextToBytea, createChainSignerFromEnvironment, createSecretBoxFromEnvironment } from './secretBox.js'
 import { createServiceClient, createUserClient } from './supabase.js'
 
 // Injectable the same way orchestrator/uploads/roleProvider already are: routes that create
@@ -425,11 +444,15 @@ function mapSocialConnectionRow(row: Record<string, unknown>) {
     confidential: row.confidential,
     archivedAt: row.archived_at,
     createdAt: row.created_at,
+    imprintUrl: row.imprint_url,
+    privacyUrl: row.privacy_url,
+    editorialResponsibleProfileId: row.editorial_responsible_profile_id,
+    editorialResponsibleNote: row.editorial_responsible_note,
   }
 }
 
 const SOCIAL_CONNECTION_COLUMNS =
-  'id, platform, external_account_id, display_name, status, token_expires_at, last_verified_at, owner_scope, owner_department_id, responsible_profile_id, purpose, confidential, archived_at, created_at'
+  'id, platform, external_account_id, display_name, status, token_expires_at, last_verified_at, owner_scope, owner_department_id, responsible_profile_id, purpose, confidential, archived_at, created_at, imprint_url, privacy_url, editorial_responsible_profile_id, editorial_responsible_note'
 
 // redirect_uri muss zwischen /start und /callback exakt uebereinstimmen (Meta lehnt sonst den
 // Code-Tausch ab) -- META_OAUTH_REDIRECT_URL ist die Basis-URL der API, nicht der volle Pfad,
@@ -1738,6 +1761,20 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const created = await client.from('organizations').select('slug').eq('id', organizationId).single()
     if (created.error) throw created.error
     return reply.code(201).send(CreateOrganizationResponseSchema.parse({ organizationId, slug: created.data.slug }))
+  })
+
+  // Bislang gab es nur die PATCH-Route (Paket 009) -- ohne einen Lesepfad kann keine Oberflaeche
+  // die aktuellen Impressumsangaben vorausgefuellt anzeigen, bevor sie geaendert werden (Paket 020,
+  // Plan Abschnitt "3. Pflichtangaben und Verantwortung": einstellungen/recht.vue muss die
+  // bestehenden Werte zuerst LESEN koennen). Dieselbe Berechtigung wie PATCH.
+  app.get('/v1/organizations/:id/profile', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    if (!(await requirePermission(request, reply, 'organization.manage', { organizationId: params.id }))) return
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const result = await client.from('organization_profiles').select().eq('organization_id', params.id).single()
+    if (result.error) throw result.error
+    return reply.code(200).send(OrganizationProfileSchema.parse(mapProfileRow(result.data)))
   })
 
   app.patch('/v1/organizations/:id/profile', async (request, reply) => {
@@ -3441,6 +3478,27 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         return reply.code(409).send({ error: 'responsible_person_cannot_be_removed', correlationId: request.id })
       }
     }
+    // Presserechtliche Verantwortung (Paket 020) ausserhalb des organization-Zweigs: anders als
+    // responsible_person_profile_id gibt es fuer editorial_responsible_profile_id keinen Trigger,
+    // der eine Vereinsmitgliedschaft erzwingt -- PATCH /v1/channels/:id akzeptiert jede Person mit
+    // IRGENDEINER Mitgliedschaft im Verein (isAnyMemberOfOrganization), auch eine rein
+    // abteilungs- oder mannschaftsgebundene. Ein Schutz, der nur beim Entfernen der
+    // Vereinsmitgliedschaft greift, liesse genau diese Person ungeschuetzt aus ihrer Abteilung
+    // oder Mannschaft entfernen, waehrend sie weiterhin als presserechtlich verantwortlich auf
+    // einem Kanal benannt bleibt (adversariale Pruefung) -- deshalb unabhaengig vom angefragten
+    // Scope. Service-Client: die RLS-Sichtbarkeit von social_connections darf hier keine Rolle
+    // spielen, sonst waere der Schutz per fehlender Kanal-Berechtigung umgehbar.
+    const editorialResponsible = await supabaseClients
+      .forService()
+      .from('social_connections')
+      .select('id')
+      .eq('organization_id', scope.organizationId)
+      .eq('editorial_responsible_profile_id', existing.data.user_id)
+      .limit(1)
+    if (editorialResponsible.error) throw editorialResponsible.error
+    if (editorialResponsible.data.length > 0) {
+      return reply.code(409).send({ error: 'editorial_responsible_cannot_be_removed', correlationId: request.id })
+    }
     const del = await client.from(table).delete().eq('id', params.id).select('id')
     if (del.error) {
       if (del.error.message.includes('cannot be removed')) return reply.code(409).send({ error: 'cannot_remove_last_owner', correlationId: request.id })
@@ -4752,11 +4810,21 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       const isMember = await isAnyMemberOfOrganization(supabaseClients.forService(), input.responsibleProfileId, organizationId)
       if (!isMember) return reply.code(422).send({ error: 'responsible_not_a_member', correlationId: request.id })
     }
+    // Gleicher Grund wie bei responsibleProfileId: presserechtliche Verantwortung (§ 18 MStV,
+    // Paket 020) darf nicht auf ein Mitglied eines fremden Vereins zeigen.
+    if (input.editorialResponsibleProfileId) {
+      const isMember = await isAnyMemberOfOrganization(supabaseClients.forService(), input.editorialResponsibleProfileId, organizationId)
+      if (!isMember) return reply.code(422).send({ error: 'editorial_responsible_not_a_member', correlationId: request.id })
+    }
     const payload: Record<string, unknown> = {}
     if (input.displayName !== undefined) payload.display_name = input.displayName
     if (input.purpose !== undefined) payload.purpose = input.purpose
     if (input.responsibleProfileId !== undefined) payload.responsible_profile_id = input.responsibleProfileId
     if (input.confidential !== undefined) payload.confidential = input.confidential
+    if (input.imprintUrl !== undefined) payload.imprint_url = input.imprintUrl
+    if (input.privacyUrl !== undefined) payload.privacy_url = input.privacyUrl
+    if (input.editorialResponsibleProfileId !== undefined) payload.editorial_responsible_profile_id = input.editorialResponsibleProfileId
+    if (input.editorialResponsibleNote !== undefined) payload.editorial_responsible_note = input.editorialResponsibleNote
     // Kein Grant fuer authenticated auf social_connections ausser select (Plan 012, "Sicherheitsbefund
     // zuerst") -- die Berechtigungspruefung sitzt hier in TS, der Schreibzugriff im Service-Client,
     // wie schon bei den LLM-Provider-Konfigurationen.
@@ -6860,6 +6928,800 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     })
     if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
     return reply.code(200).send({ status: 'revoked' })
+  })
+
+  // Paket 020: Rechtliche Pflichten und Datenschutzbetrieb ----------------------------------------
+
+  function mapRetentionSettingsRow(row: Record<string, unknown>) {
+    return {
+      organizationId: row.organization_id,
+      rawMediaDays: row.raw_media_days,
+      derivativeDays: row.derivative_days,
+      auditEventDays: row.audit_event_days,
+      consentEvidenceYears: row.consent_evidence_years,
+      updatedAt: row.updated_at,
+    }
+  }
+  const RETENTION_SETTINGS_COLUMNS = 'organization_id, raw_media_days, derivative_days, audit_event_days, consent_evidence_years, updated_at'
+
+  // Der Migrations-Nachtrag fuellt retention_settings nur fuer Bestandsvereine mit einer/einem
+  // organization_owner (adversariale Pruefung: ein frischer db:reset laesst die Seed-Vereine ohne
+  // Zeile, weil seed.sql sie per direktem INSERT statt ueber create_organization() anlegt, das
+  // NACH dem Migrations-Nachtrag laeuft -- GET/PUT/run scheiterten dann mit einem generischen 500
+  // statt einer nutzbaren Antwort). Statt auf eine perfekt synchronisierte Migrations-/Seed-
+  // Reihenfolge fuer alle Zukunft zu vertrauen, legt jeder Zugriff die Zeile bei Bedarf selbst an.
+  async function loadOrCreateRetentionSettings(service: SupabaseClient, organizationId: string, actorUserId: string): Promise<Record<string, unknown>> {
+    const existing = await service.from('retention_settings').select(RETENTION_SETTINGS_COLUMNS).eq('organization_id', organizationId).maybeSingle()
+    if (existing.error) throw existing.error
+    if (existing.data) return existing.data
+    const inserted = await service.from('retention_settings').insert({ organization_id: organizationId, updated_by: actorUserId }).select(RETENTION_SETTINGS_COLUMNS).single()
+    if (inserted.error) throw inserted.error
+    return inserted.data
+  }
+
+  app.get('/v1/organizations/:id/retention-settings', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    if (!(await requirePermission(request, reply, 'organization.manage', toPermissionScope(params.id)))) return
+    const row = await loadOrCreateRetentionSettings(supabaseClients.forService(), params.id, request.auth!.userId)
+    return reply.code(200).send(RetentionSettingsSchema.parse(mapRetentionSettingsRow(row)))
+  })
+
+  app.put('/v1/organizations/:id/retention-settings', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const input = UpdateRetentionSettingsRequestSchema.parse(request.body)
+    if (!(await requirePermission(request, reply, 'organization.manage', toPermissionScope(params.id)))) return
+    const service = supabaseClients.forService()
+    await loadOrCreateRetentionSettings(service, params.id, request.auth!.userId)
+    const payload: Record<string, unknown> = { updated_by: request.auth!.userId }
+    if (input.rawMediaDays !== undefined) payload.raw_media_days = input.rawMediaDays
+    if (input.derivativeDays !== undefined) payload.derivative_days = input.derivativeDays
+    if (input.auditEventDays !== undefined) payload.audit_event_days = input.auditEventDays
+    if (input.consentEvidenceYears !== undefined) payload.consent_evidence_years = input.consentEvidenceYears
+    const update = await service.from('retention_settings').update(payload).eq('organization_id', params.id).select(RETENTION_SETTINGS_COLUMNS).single()
+    if (update.error) throw update.error
+    await recordAuditEvent(request, { organizationId: params.id, action: 'retention_settings.updated', entityType: 'retention_settings', entityId: params.id, metadata: { fields: Object.keys(input) } })
+    return reply.code(200).send(RetentionSettingsSchema.parse(mapRetentionSettingsRow(update.data)))
+  })
+
+  app.get('/v1/organizations/:id/retention-deletions', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    if (!(await requirePermission(request, reply, 'organization.manage', toPermissionScope(params.id)))) return
+    const rows = await supabaseClients
+      .forService()
+      .from('retention_deletions')
+      .select('rule_key, entity_type, entity_count, cutoff_date, dry_run, executed_at')
+      .eq('organization_id', params.id)
+      .eq('dry_run', false)
+      .order('executed_at', { ascending: false })
+      .limit(200)
+    if (rows.error) throw rows.error
+    return reply.code(200).send(
+      rows.data.map((row) => RetentionDeletionSchema.parse({ ruleKey: row.rule_key, entityType: row.entity_type, entityCount: row.entity_count, cutoffDate: row.cutoff_date })),
+    )
+  })
+
+  // Kein Hatchet-Cron dafuer (Paket 004 "in Arbeit", gleiche Luecke wie bei jedem anderen
+  // wiederkehrenden Job in diesem Plan) -- der Lauf ist bis dahin manuell ausloesbar, mit
+  // Trockenlaufmodus. Storage-Loeschung und Datenbank-Aenderung laufen bewusst NICHT in einer
+  // gemeinsamen Transaktion: ein Fehlschlag nach dem Storage-Aufruf wuerde sonst einen bereits
+  // geloeschten Datenbestand mit einer zurueckgerollten Datenbankzeile hinterlassen. Storage zuerst,
+  // Datenbank danach ist die sicherere Reihenfolge -- ein Fehler zwischen beiden hinterlaesst
+  // bestenfalls eine Datenbankzeile, die auf ein bereits geloeschtes Objekt zeigt (beim naechsten
+  // Lauf erneut als Kandidat erkannt, kein Datenverlust), nie umgekehrt ein referenziertes Objekt,
+  // das schon fehlt.
+  // Ein Kalenderjahr statt einer festen Tageszahl (365*Jahre wuerde Schaltjahre systematisch
+  // verschieben) -- setUTCFullYear behandelt das korrekt, auch beim 29. Februar in einem
+  // Nicht-Schaltjahr-Ziel (JS normalisiert das dann auf den 1. Maerz, dieselbe Semantik wie
+  // Postgres' date + interval 'N years', die in diesem Paket bereits an anderer Stelle genutzt wird).
+  function cutoffYearsAgo(nowMs: number, years: number): Date {
+    const date = new Date(nowMs)
+    date.setUTCFullYear(date.getUTCFullYear() - years)
+    return date
+  }
+
+  app.post('/v1/organizations/:id/retention/run', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const input = RunRetentionRequestSchema.parse(request.body)
+    if (!(await requirePermission(request, reply, 'organization.manage', toPermissionScope(params.id)))) return
+
+    const service = supabaseClients.forService()
+    const settingsRow = await loadOrCreateRetentionSettings(service, params.id, request.auth!.userId)
+    const settings = settingsRow as { raw_media_days: number; derivative_days: number | null; audit_event_days: number; consent_evidence_years: number }
+    const now = Date.now()
+    // Eigene, lokal erzeugte correlationId statt request.id: Fastify ist mit requestIdHeader
+    // konfiguriert, ein Aufrufer kann request.id also per x-correlation-id-Header auf einen
+    // beliebigen String setzen (vorbestehende, projektweite Konfiguration) -- correlation_id ist
+    // hier eine uuid-Spalte, ein nicht-UUID-Header haette den Datenbank-Insert erst NACH den
+    // bereits ausgefuehrten Loeschungen scheitern lassen (adversariale Pruefung).
+    const correlationId = randomUUID()
+    const results: { ruleKey: string; entityType: string; entityCount: number; cutoffDate: string }[] = []
+
+    async function removeStorageObjects(rows: readonly { bucket_id: string; object_path: string }[]): Promise<void> {
+      const pathsByBucket = new Map<string, string[]>()
+      for (const row of rows) pathsByBucket.set(row.bucket_id, [...(pathsByBucket.get(row.bucket_id) ?? []), row.object_path])
+      for (const [bucketId, paths] of pathsByBucket) {
+        const removed = await service.storage.from(bucketId).remove(paths)
+        if (removed.error) throw removed.error
+      }
+    }
+
+    // Rohmedien: Storage-Objekt loeschen, Zeile bleibt mit upload_status='deleted' (Metadaten
+    // behalten -- Plan, Abschnitt "1. Aufbewahrung durchsetzen").
+    const rawMediaCutoff = new Date(now - settings.raw_media_days * 86_400_000)
+    const rawMediaCandidates = await service.rpc('select_expired_raw_media', { target_organization_id: params.id, cutoff: rawMediaCutoff.toISOString() })
+    if (rawMediaCandidates.error) throw rawMediaCandidates.error
+    const rawMediaRows = rawMediaCandidates.data as { media_asset_id: string; bucket_id: string; object_path: string }[]
+    if (!input.dryRun && rawMediaRows.length > 0) {
+      await removeStorageObjects(rawMediaRows)
+      const updated = await service.from('media_assets').update({ upload_status: 'deleted' }).in('id', rawMediaRows.map((row) => row.media_asset_id))
+      if (updated.error) throw updated.error
+    }
+    results.push({ ruleKey: 'raw_media', entityType: 'media_assets', entityCount: rawMediaRows.length, cutoffDate: rawMediaCutoff.toISOString().slice(0, 10) })
+
+    // Derivate: nur wenn eine Frist gesetzt ist (Default deaktiviert) -- geloescht statt aktualisiert,
+    // weil es fuer media_derivatives keinen 'deleted'-Status gibt und der Immutabilitaetstrigger jedes
+    // UPDATE auf eine 'ready'-Zeile ohnehin verweigert (Plan, Abschnitt "1. Aufbewahrung durchsetzen").
+    if (settings.derivative_days !== null) {
+      const derivativeCutoff = new Date(now - settings.derivative_days * 86_400_000)
+      const derivativeCandidates = await service.rpc('select_expired_media_derivatives', { target_organization_id: params.id, cutoff: derivativeCutoff.toISOString() })
+      if (derivativeCandidates.error) throw derivativeCandidates.error
+      const derivativeRows = derivativeCandidates.data as { media_derivative_id: string; bucket_id: string; object_path: string }[]
+      if (!input.dryRun && derivativeRows.length > 0) {
+        await removeStorageObjects(derivativeRows)
+        const deleted = await service.from('media_derivatives').delete().in('id', derivativeRows.map((row) => row.media_derivative_id))
+        if (deleted.error) throw deleted.error
+      }
+      results.push({ ruleKey: 'media_derivatives', entityType: 'media_derivatives', entityCount: derivativeRows.length, cutoffDate: derivativeCutoff.toISOString().slice(0, 10) })
+    }
+
+    // Audit-Events: Einwilligungs-/Elternkontakt-bezogene Ereignisse werden nicht dauerhaft
+    // ausgenommen, sondern erst nach der laengeren consent_evidence_years-Frist geloescht (Plan,
+    // Tabelle in Abschnitt "1." -- "werden ueber consent_evidence_years gehalten", nicht "nie").
+    // Filterung in JS statt per PostgREST-like-Operator, um keine Verwechslung zwischen SQL- und
+    // PostgREST-Wildcard-Syntax zu riskieren.
+    const auditCutoff = new Date(now - settings.audit_event_days * 86_400_000)
+    const auditConsentExceptionCutoff = cutoffYearsAgo(now, settings.consent_evidence_years)
+    const auditCandidates = await service.from('audit_events').select('id, action, created_at').eq('organization_id', params.id).lt('created_at', auditCutoff.toISOString())
+    if (auditCandidates.error) throw auditCandidates.error
+    const auditIds = (auditCandidates.data as { id: string; action: string; created_at: string }[])
+      .filter((row) => {
+        const isConsentOrGuardianRelated = row.action.startsWith('consent') || row.action.includes('guardian')
+        return !isConsentOrGuardianRelated || new Date(row.created_at).getTime() < auditConsentExceptionCutoff.getTime()
+      })
+      .map((row) => row.id)
+    if (!input.dryRun && auditIds.length > 0) {
+      const deleted = await service.from('audit_events').delete().in('id', auditIds)
+      if (deleted.error) throw deleted.error
+    }
+    results.push({ ruleKey: 'audit_events', entityType: 'audit_events', entityCount: auditIds.length, cutoffDate: auditCutoff.toISOString().slice(0, 10) })
+
+    // Einwilligungsnachweise: erst nach consent_evidence_years ab Ende der Gueltigkeit (adversariale
+    // Pruefung: bislang stand das nur im Formular, kein Code hat je eine Nachweisdatei geloescht --
+    // dieselbe Zusage-ohne-Job-Fehlerklasse wie die urspruengliche Dummy-Zeile, zu deren Beseitigung
+    // dieses Paket existiert). Die Zeile selbst bleibt bestehen (Umfang, Unterzeichnungsdatum,
+    // Widerruf), nur die Nachweisdatei mit Unterschrift/Kontaktdaten verschwindet.
+    const consentEvidenceCutoff = cutoffYearsAgo(now, settings.consent_evidence_years)
+    const consentEvidenceCandidates = await service.rpc('select_expired_consent_evidence', { target_organization_id: params.id, cutoff: consentEvidenceCutoff.toISOString() })
+    if (consentEvidenceCandidates.error) throw consentEvidenceCandidates.error
+    const consentEvidenceRows = consentEvidenceCandidates.data as { consent_record_id: string; bucket_id: string; object_path: string }[]
+    if (!input.dryRun && consentEvidenceRows.length > 0) {
+      await removeStorageObjects(consentEvidenceRows)
+      const updated = await service
+        .from('consent_records')
+        .update({ evidence_path: null, evidence_deleted_at: new Date(now).toISOString() })
+        .in('id', consentEvidenceRows.map((row) => row.consent_record_id))
+      if (updated.error) throw updated.error
+    }
+    results.push({ ruleKey: 'consent_evidence', entityType: 'consent_records', entityCount: consentEvidenceRows.length, cutoffDate: consentEvidenceCutoff.toISOString().slice(0, 10) })
+
+    // Abgelaufene Token: eine bereits angenommene Einladung und eine bereits beantwortete
+    // Einwilligungsanfrage bleiben trotz abgelaufenem expires_at bestehen -- expires_at ist bei
+    // beiden bei der Erstellung fixiert, nicht bei der Antwort, sonst wuerde diese Regel den
+    // Nachweis "wann wurde geantwortet" mit aufraeumen, den sie gar nicht betreffen sollte.
+    const nowIso = new Date(now).toISOString()
+    let expiredTokenCount = 0
+    const invitationCandidates = await service.from('invitations').select('id').eq('organization_id', params.id).lt('expires_at', nowIso).is('accepted_at', null)
+    if (invitationCandidates.error) throw invitationCandidates.error
+    const invitationIds = invitationCandidates.data.map((row) => row.id as string)
+    expiredTokenCount += invitationIds.length
+    if (!input.dryRun && invitationIds.length > 0) {
+      const deleted = await service.from('invitations').delete().in('id', invitationIds)
+      if (deleted.error) throw deleted.error
+    }
+    const consentRequestCandidates = await service.from('consent_requests').select('id').eq('organization_id', params.id).lt('expires_at', nowIso).in('status', ['sent', 'expired'])
+    if (consentRequestCandidates.error) throw consentRequestCandidates.error
+    const consentRequestIds = consentRequestCandidates.data.map((row) => row.id as string)
+    expiredTokenCount += consentRequestIds.length
+    if (!input.dryRun && consentRequestIds.length > 0) {
+      const deleted = await service.from('consent_requests').delete().in('id', consentRequestIds)
+      if (deleted.error) throw deleted.error
+    }
+    const mediaGrantCandidates = await service.from('publication_media_grants').select('id').eq('organization_id', params.id).lt('expires_at', nowIso)
+    if (mediaGrantCandidates.error) throw mediaGrantCandidates.error
+    const mediaGrantIds = mediaGrantCandidates.data.map((row) => row.id as string)
+    expiredTokenCount += mediaGrantIds.length
+    if (!input.dryRun && mediaGrantIds.length > 0) {
+      const deleted = await service.from('publication_media_grants').delete().in('id', mediaGrantIds)
+      if (deleted.error) throw deleted.error
+    }
+    const idempotencyKeyCandidates = await service.from('idempotency_keys').select('id').eq('organization_id', params.id).lt('expires_at', nowIso)
+    if (idempotencyKeyCandidates.error) throw idempotencyKeyCandidates.error
+    const idempotencyKeyIds = idempotencyKeyCandidates.data.map((row) => row.id as string)
+    expiredTokenCount += idempotencyKeyIds.length
+    if (!input.dryRun && idempotencyKeyIds.length > 0) {
+      const deleted = await service.from('idempotency_keys').delete().in('id', idempotencyKeyIds)
+      if (deleted.error) throw deleted.error
+    }
+    results.push({ ruleKey: 'expired_tokens', entityType: 'multiple', entityCount: expiredTokenCount, cutoffDate: nowIso.slice(0, 10) })
+
+    // Auskunftsbuendel (GET /v1/data-subjects/:personId/export) sind keiner Tabelle zugeordnet --
+    // ohne diese Regel blieben vollstaendige Personendatensaetze (Name, Elternkontakt,
+    // Einwilligungen) unbegrenzt im Storage liegen, auch nach einer Loeschung der Person selbst
+    // (adversariale Pruefung). Fester, nicht konfigurierbarer Vorlauf von 7 Tagen: der Link ist nur
+    // 300 Sekunden gueltig und soll sofort abgeholt werden, die Datei ist ein technisches
+    // Zwischenprodukt, keine Aufbewahrungsentscheidung des Vereins. Ueber storage.list() ermittelt,
+    // weil kein Tabelleneintrag je Export existiert.
+    const staleExportsCutoff = new Date(now - 7 * 86_400_000)
+    const exportsList = await service.storage.from('raw-media').list(`organizations/${params.id}/exports`, { limit: 1000 })
+    if (exportsList.error) throw exportsList.error
+    const staleExportPaths = (exportsList.data ?? [])
+      .filter((file) => file.created_at !== null && new Date(file.created_at).getTime() < staleExportsCutoff.getTime())
+      .map((file) => `organizations/${params.id}/exports/${file.name}`)
+    if (!input.dryRun && staleExportPaths.length > 0) {
+      const removed = await service.storage.from('raw-media').remove(staleExportPaths)
+      if (removed.error) throw removed.error
+    }
+    results.push({ ruleKey: 'stale_exports', entityType: 'exports', entityCount: staleExportPaths.length, cutoffDate: staleExportsCutoff.toISOString().slice(0, 10) })
+
+    // Auch ein Trockenlauf wird protokolliert (dry_run=true) -- vor dem ersten scharfen Lauf ist er
+    // laut Plan obligatorisch, und "wer hat wann geprueft" ist selbst ein pruefbarer Vorgang.
+    const logInsert = await service.from('retention_deletions').insert(
+      results.map((result) => ({
+        organization_id: params.id, entity_type: result.entityType, entity_count: result.entityCount,
+        rule_key: result.ruleKey, cutoff_date: result.cutoffDate, dry_run: input.dryRun, correlation_id: correlationId,
+      })),
+    )
+    if (logInsert.error) throw logInsert.error
+    if (!input.dryRun) {
+      await recordAuditEvent(request, { organizationId: params.id, action: 'retention.enforced', entityType: 'retention_settings', entityId: params.id, metadata: { results } })
+    }
+
+    return reply.code(200).send(
+      RunRetentionResponseSchema.parse({ organizationId: params.id, dryRun: input.dryRun, correlationId, results }),
+    )
+  })
+
+  // Betroffenenrechte: Auskunft, Loeschung, Berichtigung, Widerspruch, Datenuebertragbarkeit -------
+  function mapDataSubjectRequestRow(row: Record<string, unknown>) {
+    return {
+      id: row.id, organizationId: row.organization_id, kind: row.kind, subjectKind: row.subject_kind,
+      directoryPersonId: row.directory_person_id, subjectLabel: row.subject_label, receivedAt: row.received_at,
+      dueAt: row.due_at, extendedUntil: row.extended_until, extensionReason: row.extension_reason,
+      status: row.status, resolutionNote: row.resolution_note, handledBy: row.handled_by,
+      completedAt: row.completed_at, createdAt: row.created_at,
+    }
+  }
+  const DATA_SUBJECT_REQUEST_COLUMNS =
+    'id, organization_id, kind, subject_kind, directory_person_id, subject_label, received_at, due_at, extended_until, extension_reason, status, resolution_note, handled_by, completed_at, created_at'
+
+  app.get('/v1/organizations/:id/data-subject-requests', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    if (!(await requirePermission(request, reply, 'organization.manage', toPermissionScope(params.id)))) return
+    const rows = await supabaseClients.forService().from('data_subject_requests').select(DATA_SUBJECT_REQUEST_COLUMNS).eq('organization_id', params.id).order('due_at')
+    if (rows.error) throw rows.error
+    return reply.code(200).send(rows.data.map((row) => DataSubjectRequestSchema.parse(mapDataSubjectRequestRow(row))))
+  })
+
+  app.post('/v1/organizations/:id/data-subject-requests', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const input = CreateDataSubjectRequestRequestSchema.parse(request.body)
+    if (!(await requirePermission(request, reply, 'organization.manage', toPermissionScope(params.id)))) return
+    if (input.directoryPersonId) {
+      const person = await supabaseClients.forService().from('directory_people').select('id').eq('id', input.directoryPersonId).eq('organization_id', params.id).maybeSingle()
+      if (person.error) throw person.error
+      if (!person.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    }
+    const insert = await supabaseClients
+      .forService()
+      .from('data_subject_requests')
+      .insert({
+        organization_id: params.id, kind: input.kind, subject_kind: input.subjectKind,
+        directory_person_id: input.directoryPersonId ?? null, subject_label: input.subjectLabel,
+        received_at: input.receivedAt, created_by: request.auth!.userId, correlation_id: request.id,
+      })
+      .select(DATA_SUBJECT_REQUEST_COLUMNS)
+      .single()
+    if (insert.error) throw insert.error
+    await recordAuditEvent(request, { organizationId: params.id, action: 'data_subject_request.created', entityType: 'data_subject_requests', entityId: insert.data.id as string, metadata: { kind: input.kind } })
+    return reply.code(201).send(DataSubjectRequestSchema.parse(mapDataSubjectRequestRow(insert.data)))
+  })
+
+  async function loadDataSubjectRequest(client: SupabaseClient, id: string): Promise<{ organizationId: string; dueAt: string } | null> {
+    const existing = await client.from('data_subject_requests').select('organization_id, due_at').eq('id', id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return null
+    return { organizationId: existing.data.organization_id as string, dueAt: existing.data.due_at as string }
+  }
+
+  app.patch('/v1/data-subject-requests/:id', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const input = UpdateDataSubjectRequestRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const existing = await loadDataSubjectRequest(client, params.id)
+    if (existing === null) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const { organizationId } = existing
+    if (!(await requirePermission(request, reply, 'organization.manage', toPermissionScope(organizationId)))) return
+    // due_at ist nur aus der Datenbank bekannt, nicht aus dieser Teilanfrage -- ein Zod-Schema
+    // allein kann "extendedUntil nach due_at" deshalb nicht pruefen (adversariale Pruefung: ohne
+    // diese Pruefung liesse sich eine Verlaengerung VOR die eigentliche Frist legen und der
+    // CHECK-Verstoss der Datenbank kam bislang als unbehandelter 500 durch).
+    if (input.extendedUntil !== undefined && input.extendedUntil !== null && input.extendedUntil <= existing.dueAt) {
+      return reply.code(400).send({ error: 'extended_until_before_due_at', correlationId: request.id })
+    }
+    const payload: Record<string, unknown> = {}
+    if (input.status !== undefined) {
+      payload.status = input.status
+      payload.handled_by = request.auth!.userId
+      if (input.status === 'completed' || input.status === 'rejected' || input.status === 'partially_completed') payload.completed_at = new Date().toISOString()
+    }
+    if (input.resolutionNote !== undefined) payload.resolution_note = input.resolutionNote
+    if (input.extendedUntil !== undefined) {
+      payload.extended_until = input.extendedUntil
+      // Eine aufgehobene Verlaengerung (extendedUntil:null) nimmt ihre Begruendung mit -- sonst
+      // verstoesst die Datenbank gegen "eine Begruendung ohne Verlaengerungsdatum ist unzulaessig",
+      // auch wenn extensionReason gar nicht Teil dieser Anfrage war (adversariale Pruefung: ein
+      // Zod-Schema kennt den bestehenden Datenbankwert nicht und kann diesen Fall nicht abfangen).
+      if (input.extendedUntil === null) {
+        payload.extension_reason = null
+        payload.extension_notified_at = null
+      }
+    }
+    if (input.extensionReason !== undefined) {
+      payload.extension_reason = input.extensionReason
+      if (input.extensionReason !== null) payload.extension_notified_at = new Date().toISOString()
+    }
+    const update = await supabaseClients.forService().from('data_subject_requests').update(payload).eq('id', params.id).select(DATA_SUBJECT_REQUEST_COLUMNS).single()
+    if (update.error) {
+      if (update.error.code === '23514') return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+      throw update.error
+    }
+    await recordAuditEvent(request, { organizationId, action: 'data_subject_request.updated', entityType: 'data_subject_requests', entityId: params.id, metadata: { fields: Object.keys(input) } })
+    return reply.code(200).send(DataSubjectRequestSchema.parse(mapDataSubjectRequestRow(update.data)))
+  })
+
+  // Auskunft: als Job ausgefuehrt (hier synchron, da ohne Hatchet-Cron -- Paket 004), Ergebnis ueber
+  // einen kurzlebigen signierten Link statt im Response-Body (das Bündel kann Rechtstexte und
+  // mehrere Kategorien enthalten). Enthaelt Verweise und Metadaten, keine Medien Dritter (Plan,
+  // Abschnitt "2. Betroffenenrechte bedienbar machen" -- "ein Export, der ein Gruppenfoto mit fuenf
+  // Kindern enthaelt, ist ein Datenschutzvorfall im Namen der Auskunft").
+  app.get('/v1/data-subjects/:personId/export', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ personId: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const person = await client.from('directory_people').select('organization_id, department_id, team_id, first_name, last_name, birth_year, is_minor, status, joined_at, left_at, guardian_name, guardian_email').eq('id', params.personId).maybeSingle()
+    if (person.error) throw person.error
+    if (!person.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const organizationId = person.data.organization_id as string
+    if (!(await requirePermission(request, reply, 'organization.manage', toPermissionScope(organizationId)))) return
+
+    const service = supabaseClients.forService()
+    const [consents, accessLog] = await Promise.all([
+      service.from('consent_records').select('id, scope, origin, signed_at, valid_until, revoked_at, superseded_by').eq('directory_person_id', params.personId),
+      // organization_id-Filter zusaetzlich zu entity_id, obwohl heute jeder Schreiber mit
+      // entityType='directory_people' die Organisation bereits korrekt aus der Personenzeile
+      // ableitet (adversariale Pruefung: kein aktuell ausnutzbarer Pfad, aber diese Zeile soll ihre
+      // Mandantensicherheit nicht von der Korrektheit einer fremden Route abhaengig machen).
+      service.from('audit_events').select('action, created_at').eq('organization_id', organizationId).eq('entity_type', 'directory_people').eq('entity_id', params.personId).order('created_at', { ascending: false }).limit(500),
+    ])
+    if (consents.error) throw consents.error
+    if (accessLog.error) throw accessLog.error
+    const consentIds = consents.data.map((row) => row.id as string)
+    const mediaUsages = consentIds.length === 0
+      ? []
+      : await (async () => {
+          const result = await service.from('face_regions').select('media_asset_id, decision, obscuring_style, created_at').in('consent_record_id', consentIds)
+          if (result.error) throw result.error
+          return result.data
+        })()
+
+    const bundle = {
+      exportedAt: new Date().toISOString(),
+      person: {
+        firstName: person.data.first_name, lastName: person.data.last_name, birthYear: person.data.birth_year,
+        isMinor: person.data.is_minor, status: person.data.status, joinedAt: person.data.joined_at, leftAt: person.data.left_at,
+      },
+      guardianContact: { name: person.data.guardian_name, email: person.data.guardian_email },
+      consents: consents.data.map((row) => ({ id: row.id, scope: row.scope, origin: row.origin, signedAt: row.signed_at, validUntil: row.valid_until, revokedAt: row.revoked_at, supersededBy: row.superseded_by })),
+      mediaUsages: mediaUsages.map((row) => ({ mediaAssetId: row.media_asset_id, decision: row.decision, obscuringStyle: row.obscuring_style, createdAt: row.created_at })),
+      accessLog: accessLog.data.map((row) => ({ action: row.action, occurredAt: row.created_at })),
+    }
+    const objectPath = `organizations/${organizationId}/exports/${randomUUID()}.json`
+    const upload = await service.storage.from('raw-media').upload(objectPath, Buffer.from(JSON.stringify(bundle, null, 2), 'utf8'), { contentType: 'application/json' })
+    if (upload.error) throw upload.error
+    const signed = await service.storage.from('raw-media').createSignedUrl(objectPath, 300, { download: true })
+    if (signed.error) throw signed.error
+    await recordAuditEvent(request, { organizationId, action: 'data_subject.exported', entityType: 'directory_people', entityId: params.personId })
+    return reply.code(200).send(DataSubjectExportResponseSchema.parse({ signedUrl: signed.data.signedUrl, expiresAt: new Date(Date.now() + 300_000).toISOString() }))
+  })
+
+  // Loeschung: entfernt den Verzeichniseintrag samt Elternkontakt. consent_records_person_fk ist seit
+  // dieser Migration ON DELETE SET NULL -- der Einwilligungsnachweis bleibt bestehen, nur die
+  // identifizierende Verknuepfung verschwindet, was auch die Gesichtszuordnung (face_regions ->
+  // consent_record_id) von der Person entkoppelt, ohne die Mediendatei selbst anzufassen.
+  app.post('/v1/data-subjects/:personId/erase', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ personId: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const person = await client.from('directory_people').select('organization_id').eq('id', params.personId).maybeSingle()
+    if (person.error) throw person.error
+    if (!person.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const organizationId = person.data.organization_id as string
+    if (!(await requirePermission(request, reply, 'organization.manage', toPermissionScope(organizationId)))) return
+
+    const service = supabaseClients.forService()
+    const consentCount = await service.from('consent_records').select('id', { count: 'exact', head: true }).eq('directory_person_id', params.personId)
+    if (consentCount.error) throw consentCount.error
+    // Identitaet ueberlebte bislang in zwei weiteren Spalten derselben Zeile, obwohl die Antwort
+    // "Verknuepfung zur Person entfernt" das Gegenteil behauptete (adversariale Pruefung):
+    // pseudonymous_subject_ref ist beim Papierweg haeufig exakt die directory_person_id,
+    // signer_name der Klarname der unterschreibenden Person bzw. eines Elternteils. Vor dem Loeschen
+    // der Person, sonst hat die FK bereits directory_person_id genullt und dieser Filter trifft
+    // keine Zeile mehr.
+    if ((consentCount.count ?? 0) > 0) {
+      const anonymized = await service.from('consent_records').update({ pseudonymous_subject_ref: null, signer_name: null }).eq('directory_person_id', params.personId)
+      if (anonymized.error) throw anonymized.error
+    }
+
+    const deleted = await service.from('directory_people').delete().eq('id', params.personId)
+    if (deleted.error) throw deleted.error
+
+    await recordAuditEvent(request, { organizationId, action: 'data_subject.erased', entityType: 'directory_people', entityId: params.personId })
+    const retained: { category: string; reason: string }[] = []
+    if ((consentCount.count ?? 0) > 0) {
+      retained.push({
+        category: 'Einwilligungsnachweise',
+        reason: 'Nachweispflicht -- Aufbewahrung gemäss retention_settings.consent_evidence_years ab Ende der Gültigkeit; Verknüpfung zur Person, Pseudonym und Name der unterzeichnenden Person wurden entfernt',
+      })
+    }
+    retained.push({ category: 'Veröffentlichte Beiträge', reason: 'Löschung auf der Plattform ist eine Handlung des Vereins, nicht des Systems' })
+    return reply.code(200).send(
+      DataSubjectEraseResponseSchema.parse({
+        erased: ['Verzeichniseintrag', 'Elternkontakt', 'Gesichtszuordnung (Verknüpfung zur Person)', 'Pseudonym und Name der unterzeichnenden Person in verknüpften Einwilligungsnachweisen'],
+        retained,
+      }),
+    )
+  })
+
+  // Dokumentation der Verarbeitungen und Auftragsverarbeiter ---------------------------------------
+  function mapProcessingRecordRow(row: Record<string, unknown>) {
+    return {
+      id: row.id, organizationId: row.organization_id, purpose: row.purpose, legalBasis: row.legal_basis,
+      dataCategories: row.data_categories, subjectCategories: row.subject_categories, recipients: row.recipients,
+      thirdCountryTransfer: row.third_country_transfer, transferSafeguard: row.transfer_safeguard,
+      retentionNote: row.retention_note, reviewedAt: row.reviewed_at, reviewedBy: row.reviewed_by, createdAt: row.created_at,
+    }
+  }
+  const PROCESSING_RECORD_COLUMNS =
+    'id, organization_id, purpose, legal_basis, data_categories, subject_categories, recipients, third_country_transfer, transfer_safeguard, retention_note, reviewed_at, reviewed_by, created_at'
+
+  app.get('/v1/organizations/:id/processing-records', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    if (!(await requirePermission(request, reply, 'organization.manage', toPermissionScope(params.id)))) return
+    const rows = await supabaseClients.forService().from('processing_records').select(PROCESSING_RECORD_COLUMNS).eq('organization_id', params.id).order('created_at')
+    if (rows.error) throw rows.error
+    return reply.code(200).send(rows.data.map((row) => ProcessingRecordSchema.parse(mapProcessingRecordRow(row))))
+  })
+
+  app.post('/v1/organizations/:id/processing-records', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const input = CreateProcessingRecordRequestSchema.parse(request.body)
+    if (!(await requirePermission(request, reply, 'organization.manage', toPermissionScope(params.id)))) return
+    const insert = await supabaseClients
+      .forService()
+      .from('processing_records')
+      .insert({
+        organization_id: params.id, purpose: input.purpose, legal_basis: input.legalBasis,
+        data_categories: input.dataCategories, subject_categories: input.subjectCategories, recipients: input.recipients,
+        third_country_transfer: input.thirdCountryTransfer, transfer_safeguard: input.transferSafeguard ?? null, retention_note: input.retentionNote,
+      })
+      .select(PROCESSING_RECORD_COLUMNS)
+      .single()
+    if (insert.error) {
+      if (insert.error.code === '23514') return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+      throw insert.error
+    }
+    await recordAuditEvent(request, { organizationId: params.id, action: 'processing_record.created', entityType: 'processing_records', entityId: insert.data.id as string })
+    return reply.code(201).send(ProcessingRecordSchema.parse(mapProcessingRecordRow(insert.data)))
+  })
+
+  app.patch('/v1/processing-records/:id', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const input = UpdateProcessingRecordRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const existing = await client.from('processing_records').select('organization_id, third_country_transfer, transfer_safeguard').eq('id', params.id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const organizationId = existing.data.organization_id as string
+    if (!(await requirePermission(request, reply, 'organization.manage', toPermissionScope(organizationId)))) return
+    // Die Zod-Pruefung in UpdateProcessingRecordRequestSchema sieht nur diese Anfrage -- wenn
+    // third_country_transfer bereits true in der Datenbank steht und nur transferSafeguard
+    // genullt wird (ohne thirdCountryTransfer in derselben Anfrage zu erwaehnen), kann ein Schema
+    // ohne Datenbankzugriff das nicht erkennen (adversariale Pruefung).
+    const resultingThirdCountryTransfer = input.thirdCountryTransfer ?? (existing.data.third_country_transfer as boolean)
+    const resultingTransferSafeguard = input.transferSafeguard !== undefined ? input.transferSafeguard : (existing.data.transfer_safeguard as string | null)
+    if (resultingThirdCountryTransfer && !resultingTransferSafeguard) {
+      return reply.code(400).send({ error: 'transfer_safeguard_required', correlationId: request.id })
+    }
+    const payload: Record<string, unknown> = {}
+    if (input.purpose !== undefined) payload.purpose = input.purpose
+    if (input.legalBasis !== undefined) payload.legal_basis = input.legalBasis
+    if (input.dataCategories !== undefined) payload.data_categories = input.dataCategories
+    if (input.subjectCategories !== undefined) payload.subject_categories = input.subjectCategories
+    if (input.recipients !== undefined) payload.recipients = input.recipients
+    if (input.thirdCountryTransfer !== undefined) payload.third_country_transfer = input.thirdCountryTransfer
+    if (input.transferSafeguard !== undefined) payload.transfer_safeguard = input.transferSafeguard
+    if (input.retentionNote !== undefined) payload.retention_note = input.retentionNote
+    // Eine Bestaetigung ist eine bewusste Handlung, kein Nebeneffekt einer Textaenderung -- deshalb
+    // ein eigenes Flag statt reviewed_at bei jedem Feld-Update automatisch mitzusetzen.
+    if (input.confirmReviewed === true) {
+      payload.reviewed_at = new Date().toISOString().slice(0, 10)
+      payload.reviewed_by = request.auth!.userId
+    }
+    const update = await supabaseClients.forService().from('processing_records').update(payload).eq('id', params.id).select(PROCESSING_RECORD_COLUMNS).single()
+    if (update.error) {
+      if (update.error.code === '23514') return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+      throw update.error
+    }
+    await recordAuditEvent(request, { organizationId, action: 'processing_record.updated', entityType: 'processing_records', entityId: params.id, metadata: { fields: Object.keys(input) } })
+    return reply.code(200).send(ProcessingRecordSchema.parse(mapProcessingRecordRow(update.data)))
+  })
+
+  function mapProcessorAgreementRow(row: Record<string, unknown>) {
+    return {
+      id: row.id, organizationId: row.organization_id, processorName: row.processor_name, purpose: row.purpose,
+      signedAt: row.signed_at, validUntil: row.valid_until, hasDocument: row.document_path !== null, status: row.status, createdAt: row.created_at,
+    }
+  }
+  const PROCESSOR_AGREEMENT_COLUMNS = 'id, organization_id, processor_name, purpose, signed_at, valid_until, document_path, status, created_at'
+  const ALLOWED_AGREEMENT_MIME = new Set(['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'])
+
+  app.get('/v1/organizations/:id/processor-agreements', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    if (!(await requirePermission(request, reply, 'organization.manage', toPermissionScope(params.id)))) return
+    const rows = await supabaseClients.forService().from('processor_agreements').select(PROCESSOR_AGREEMENT_COLUMNS).eq('organization_id', params.id).order('created_at')
+    if (rows.error) throw rows.error
+    return reply.code(200).send(rows.data.map((row) => ProcessorAgreementSchema.parse(mapProcessorAgreementRow(row))))
+  })
+
+  // Multipart mit optionaler Vertragsdatei (PDF/DOCX) -- gleiches Muster wie POST /v1/consents:
+  // Datei zuerst vollstaendig lesen, danach die begleitenden Felder auswerten.
+  app.post('/v1/organizations/:id/processor-agreements', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    if (!(await requirePermission(request, reply, 'organization.manage', toPermissionScope(params.id)))) return
+
+    let fields: z.infer<typeof CreateProcessorAgreementFieldsSchema>
+    let buffer: Buffer | null = null
+    let mimetype: string | null = null
+    const filePart = request.isMultipart() ? await request.file() : undefined
+    if (filePart) {
+      try {
+        buffer = await filePart.toBuffer()
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE') {
+          return reply.code(413).send({ error: 'file_too_large', correlationId: request.id })
+        }
+        throw error
+      }
+      if (!ALLOWED_AGREEMENT_MIME.has(filePart.mimetype)) return reply.code(400).send({ error: 'invalid_file_type', correlationId: request.id })
+      mimetype = filePart.mimetype
+      // Ein leeres Formularfeld (z. B. ein Datumsfeld, das im Browser nicht ausgefuellt wurde)
+      // kommt als leerer String an, nicht als fehlendes Feld -- z.iso.date().optional() lehnt ''
+      // ab, waehrend ein tatsaechlich weggelassenes Feld durchginge (dasselbe Muster wie der
+      // Memory-Eintrag zu $fetch und null-Query-Parametern). Leere Strings werden deshalb vor dem
+      // Parsen wie ein weggelassenes Feld behandelt.
+      const rawFields = Object.fromEntries(
+        Object.entries(filePart.fields).map(([key, field]) => {
+          const value = field && 'value' in field ? field.value : undefined
+          return [key, value === '' ? undefined : value]
+        }),
+      )
+      fields = CreateProcessorAgreementFieldsSchema.parse(rawFields)
+    } else {
+      fields = CreateProcessorAgreementFieldsSchema.parse(request.body)
+    }
+
+    const service = supabaseClients.forService()
+    const agreementId = randomUUID()
+    let documentPath: string | null = null
+    if (buffer && mimetype) {
+      documentPath = `organizations/${params.id}/compliance/${agreementId}/vertrag`
+      const upload = await service.storage.from('raw-media').upload(documentPath, buffer, { contentType: mimetype })
+      if (upload.error) throw upload.error
+    }
+    const insert = await service
+      .from('processor_agreements')
+      .insert({
+        id: agreementId, organization_id: params.id, processor_name: fields.processorName, purpose: fields.purpose,
+        signed_at: fields.signedAt ?? null, valid_until: fields.validUntil ?? null, status: fields.status,
+        document_path: documentPath, created_by: request.auth!.userId,
+      })
+      .select(PROCESSOR_AGREEMENT_COLUMNS)
+      .single()
+    if (insert.error) {
+      if (insert.error.code === '23514') return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+      throw insert.error
+    }
+    await recordAuditEvent(request, { organizationId: params.id, action: 'processor_agreement.created', entityType: 'processor_agreements', entityId: agreementId })
+    return reply.code(201).send(ProcessorAgreementSchema.parse(mapProcessorAgreementRow(insert.data)))
+  })
+
+  app.patch('/v1/processor-agreements/:id', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const input = UpdateProcessorAgreementRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const existing = await client.from('processor_agreements').select('organization_id, signed_at').eq('id', params.id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const organizationId = existing.data.organization_id as string
+    if (!(await requirePermission(request, reply, 'organization.manage', toPermissionScope(organizationId)))) return
+    // signedAt ist in diesem Schema nicht setzbar, der bestehende Wert steht nur in der Datenbank
+    // -- ohne diese Pruefung kam ein zu frueh gesetztes validUntil bislang als unbehandelter 500
+    // durch (adversariale Pruefung).
+    const existingSignedAt = existing.data.signed_at as string | null
+    if (input.validUntil && existingSignedAt && input.validUntil <= existingSignedAt) {
+      return reply.code(400).send({ error: 'valid_until_before_signed_at', correlationId: request.id })
+    }
+    const payload: Record<string, unknown> = {}
+    if (input.status !== undefined) payload.status = input.status
+    if (input.validUntil !== undefined) payload.valid_until = input.validUntil
+    const update = await supabaseClients.forService().from('processor_agreements').update(payload).eq('id', params.id).select(PROCESSOR_AGREEMENT_COLUMNS).single()
+    if (update.error) {
+      if (update.error.code === '23514') return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+      throw update.error
+    }
+    await recordAuditEvent(request, { organizationId, action: 'processor_agreement.updated', entityType: 'processor_agreements', entityId: params.id, metadata: { fields: Object.keys(input) } })
+    return reply.code(200).send(ProcessorAgreementSchema.parse(mapProcessorAgreementRow(update.data)))
+  })
+
+  // Kurzlebige signierte URL statt eines dauerhaften Links -- gleiches Muster wie
+  // GET /v1/consents/:id/evidence-url (Paket 015): jeder Abruf eines Vertragsdokuments erzeugt einen
+  // audit_events-Eintrag (Plan, Abschnitt "Verifikation" -- "der Abruf erzeugt einen
+  // audit_events-Eintrag").
+  app.get('/v1/processor-agreements/:id/document-url', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const existing = await client.from('processor_agreements').select('organization_id, document_path').eq('id', params.id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const organizationId = existing.data.organization_id as string
+    if (!(await requirePermission(request, reply, 'organization.manage', toPermissionScope(organizationId)))) return
+    if (!existing.data.document_path) return reply.code(404).send({ error: 'no_document', correlationId: request.id })
+    const service = supabaseClients.forService()
+    const signed = await service.storage.from('raw-media').createSignedUrl(existing.data.document_path as string, 300, { download: true })
+    if (signed.error) throw signed.error
+    await recordAuditEvent(request, { organizationId, action: 'processor_agreement.document_viewed', entityType: 'processor_agreements', entityId: params.id })
+    return reply.code(200).send({ signedUrl: signed.data.signedUrl, expiresAt: new Date(Date.now() + 300_000).toISOString() })
+  })
+
+  // Manipulationssicherer Audit-Trail: signieren (periodischer Lauf, manuell bis Paket 004) und
+  // pruefen ------------------------------------------------------------------------------------------
+  app.post('/v1/organizations/:id/audit-chain/sign', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    if (!(await requirePermission(request, reply, 'organization.manage', toPermissionScope(params.id)))) return
+    const service = supabaseClients.forService()
+    const head = await service.from('audit_events').select('hash').eq('organization_id', params.id).order('chain_seq', { ascending: false }).limit(1).maybeSingle()
+    if (head.error) throw head.error
+    const countResult = await service.from('audit_events').select('id', { count: 'exact', head: true }).eq('organization_id', params.id)
+    if (countResult.error) throw countResult.error
+    const headHash = (head.data?.hash as string | undefined) ?? null
+    const signer = createChainSignerFromEnvironment(environment)
+    const signed = signer.sign(headHash ?? '')
+    const insert = await service
+      .from('audit_chain_signatures')
+      .insert({ organization_id: params.id, event_count: countResult.count ?? 0, head_hash: headHash, key_version: signed.keyVersion, signature: signed.signature })
+      .select('signed_at')
+      .single()
+    if (insert.error) throw insert.error
+    return reply.code(201).send(
+      SignAuditChainResponseSchema.parse({
+        organizationId: params.id, eventCount: countResult.count ?? 0, headHash, keyVersion: signed.keyVersion, signedAt: insert.data.signed_at,
+      }),
+    )
+  })
+
+  app.get('/v1/organizations/:id/audit-chain/verify', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    if (!(await requirePermission(request, reply, 'organization.manage', toPermissionScope(params.id)))) return
+    const service = supabaseClients.forService()
+    const result = await service.rpc('verify_audit_chain', { target_organization_id: params.id })
+    if (result.error) throw result.error
+    const row = (result.data as { checked_count: number; tampered_count: number; unlinked_count: number }[])[0]!
+    const lastSignature = await service
+      .from('audit_chain_signatures')
+      .select('signed_at, head_hash, signature, key_version')
+      .eq('organization_id', params.id)
+      .order('signed_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (lastSignature.error) throw lastSignature.error
+    // Der eigentliche Zweck der externen Signatur: ein Angreifer mit Datenbankzugriff kann
+    // audit_chain_signatures beliebig umschreiben (service_role hat volle Rechte), aber nicht den
+    // Schluessel faelschen, der nicht in der Datenbank liegt. Ohne diese Pruefung war die Signatur
+    // bislang reine Schreiblast -- verify_audit_chain rechnet nur lokal aus denselben, potenziell
+    // manipulierten Zeilen nach und haette einen so vertuschten Eingriff nie erkannt (adversariale
+    // Pruefung).
+    let signatureValid: boolean | null = null
+    if (lastSignature.data) {
+      const signer = createChainSignerFromEnvironment(environment)
+      signatureValid = signer.verify(lastSignature.data.head_hash ?? '', lastSignature.data.signature as string, lastSignature.data.key_version as string)
+    }
+    return reply.code(200).send(
+      AuditChainVerificationSchema.parse({
+        organizationId: params.id, checkedCount: row.checked_count, tamperedCount: row.tampered_count, unlinkedCount: row.unlinked_count,
+        lastSignedAt: lastSignature.data?.signed_at ?? null, signatureValid,
+      }),
+    )
+  })
+
+  // Oeffentlich, ohne Anmeldung -- ein Verein kann diese URL aus seiner Instagram-/Facebook-Bio
+  // verlinken (Plan, Abschnitt "3. Pflichtangaben und Verantwortung").
+  app.get('/v1/organizations/:id/imprint', async (request, reply) => {
+    if (!checkRateLimit(`imprint:${request.ip}`, 60, 60_000)) {
+      return reply.code(429).send({ error: 'rate_limited', correlationId: request.id })
+    }
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const service = supabaseClients.forService()
+    const [organization, profile] = await Promise.all([
+      service.from('organizations').select('name').eq('id', params.id).maybeSingle(),
+      service
+        .from('organization_profiles')
+        .select('legal_name, legal_form, register_court, register_number, street, house_number, postal_code, city, country_code, contact_email, contact_phone, website_url, responsible_person_profile_id')
+        .eq('organization_id', params.id)
+        .maybeSingle(),
+    ])
+    if (organization.error) throw organization.error
+    if (profile.error) throw profile.error
+    if (!organization.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    let responsiblePersonName: string | null = null
+    if (profile.data?.responsible_person_profile_id) {
+      const responsible = await service.from('profiles').select('display_name').eq('id', profile.data.responsible_person_profile_id).maybeSingle()
+      if (responsible.error) throw responsible.error
+      responsiblePersonName = (responsible.data?.display_name as string | undefined) ?? null
+    }
+    return reply.code(200).send(
+      PublicOrganizationImprintSchema.parse({
+        organizationName: organization.data.name,
+        legalName: profile.data?.legal_name ?? null,
+        legalForm: profile.data?.legal_form ?? null,
+        registerCourt: profile.data?.register_court ?? null,
+        registerNumber: profile.data?.register_number ?? null,
+        street: profile.data?.street ?? null,
+        houseNumber: profile.data?.house_number ?? null,
+        postalCode: profile.data?.postal_code ?? null,
+        city: profile.data?.city ?? null,
+        countryCode: profile.data?.country_code ?? 'DE',
+        contactEmail: profile.data?.contact_email ?? null,
+        contactPhone: profile.data?.contact_phone ?? null,
+        websiteUrl: profile.data?.website_url ?? null,
+        responsiblePersonName,
+      }),
+    )
   })
 
   app.setErrorHandler((error, request, reply) => {

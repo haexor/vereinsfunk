@@ -7,6 +7,10 @@
         </div>
       </div>
       <div class="card p-6 sm:p-8"><slot /></div>
+      <footer class="mt-6 flex justify-center gap-4 text-xs text-[#8a9089]">
+        <NuxtLink to="/impressum" class="focus-ring hover:text-forest">Impressum</NuxtLink>
+        <NuxtLink to="/datenschutz" class="focus-ring hover:text-forest">Datenschutz</NuxtLink>
+      </footer>
     </div>
   </div>
 </template>
