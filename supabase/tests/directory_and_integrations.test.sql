@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(44);
+select plan(45);
 
 set local role postgres;
 
@@ -202,14 +202,19 @@ select is(
   'deleting the source sets only source_id to null -- external_id survives as history'
 );
 
--- 31: consent_records mit Verweis auf eine Person verhindert deren Loeschung -- ein Sync-Lauf darf
--- eine Person mit Einwilligungshistorie nicht stillschweigend entfernen.
-insert into public.consent_records (organization_id, directory_person_id, pseudonymous_subject_ref, scope, evidence_path, created_by) values
-  ('68000000-1000-4000-8000-000000000001', '68000000-3000-4000-8000-000000000001', 'directory-linked-consent', 'Team-Foto', 'organizations/x/consent/mia.pdf', '68000000-0000-4000-8000-000000000001');
-select throws_ok(
-  $$delete from public.directory_people where id = '68000000-3000-4000-8000-000000000001'$$,
-  '23503', null, 'a directory person referenced by a consent record cannot be deleted'
-);
+-- 31: consent_records mit Verweis auf eine Person ueberlebt deren Loeschung als Nachweis -- Paket
+-- 020 (Betroffenenrecht auf Loeschung) braucht genau das: die Verzeichnisperson verschwindet, der
+-- Einwilligungsnachweis bleibt bestehen, nur die identifizierende Verknuepfung wird null (vormals
+-- "on delete restrict", was jede Loeschanfrage einer Person mit Einwilligungshistorie blockiert
+-- haette -- gerade der Hauptfall, Minderjaehrige mit Medien).
+insert into public.directory_people (id, organization_id, department_id, first_name, last_name, is_minor, status) values
+  ('68000000-3000-4000-8000-000000000007', '68000000-1000-4000-8000-000000000001', '68000000-1100-4000-8000-000000000001', 'Zu', 'Loeschen', false, 'active');
+insert into public.consent_records (id, organization_id, directory_person_id, pseudonymous_subject_ref, scope, evidence_path, created_by) values
+  ('68000000-5000-4000-8000-000000000001', '68000000-1000-4000-8000-000000000001', '68000000-3000-4000-8000-000000000007', 'directory-linked-consent', 'Team-Foto', 'organizations/x/consent/erasure.pdf', '68000000-0000-4000-8000-000000000001');
+delete from public.directory_people where id = '68000000-3000-4000-8000-000000000007';
+select ok(true, 'a directory person referenced by a consent record can now be deleted (erasure right)');
+select is((select directory_person_id from public.consent_records where id = '68000000-5000-4000-8000-000000000001'), null,
+  'deleting the directory person nulls the identifying link on the surviving consent evidence row');
 
 -- 32-33: Konfliktschluessel -- derselbe fingerprint fuer dieselbe Quelle mit
 -- ignore_permanently kann nicht zweimal angelegt werden.

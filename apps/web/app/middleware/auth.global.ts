@@ -1,11 +1,16 @@
 // /einladung ist bewusst oeffentlich: die Seite selbst entscheidet je nach Session, ob sie
 // sofort annimmt oder zu /registrieren bzw. /anmelden weiterleitet (siehe pages/einladung.vue).
-const publicPaths = new Set(['/anmelden', '/registrieren', '/passwort-vergessen', '/passwort-neu', '/auth/callback', '/einladung'])
+// Paket 020: /impressum und /datenschutz sind die Rechtstexte von Vereinsfunk als Produkt --
+// exakter Pfad, damit /datenschutz/anfragen (die authentifizierte Betroffenenanfragen-Seite)
+// weiterhin geschuetzt bleibt.
+const publicPaths = new Set(['/anmelden', '/registrieren', '/passwort-vergessen', '/passwort-neu', '/auth/callback', '/einladung', '/impressum', '/datenschutz'])
 // Paket 015: /einwilligung/[token] und /einwilligung/widerruf/[token] haben kein Vereinskonto als
 // Zielgruppe (Erziehungsberechtigte) -- Praefix statt exaktem Pfad, weil das Token Teil der Route ist.
 // Mit Schraegstrich, sonst trifft das Praefix auch /einwilligungen (die authentifizierte
-// Verwaltungsseite, gefunden im Code-Review).
-const publicPathPrefixes = ['/einwilligung/']
+// Verwaltungsseite, gefunden im Code-Review). Paket 020: /impressum/[organizationId] ist das
+// oeffentliche Impressum eines einzelnen Vereins, verlinkt aus dessen Instagram-/Facebook-Bio --
+// ebenfalls ohne Vereinskonto als Zielgruppe.
+const publicPathPrefixes = ['/einwilligung/', '/impressum/']
 
 export default defineNuxtRouteMiddleware(async (to) => {
   if (publicPaths.has(to.path) || publicPathPrefixes.some((prefix) => to.path.startsWith(prefix))) return

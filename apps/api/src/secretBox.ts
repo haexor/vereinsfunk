@@ -1,5 +1,5 @@
 import type { ApiEnvironment } from '@vereinsfunk/config'
-import { createSecretBox, type SecretBox } from '@vereinsfunk/secrets'
+import { createChainSigner, createSecretBox, type ChainSigner, type SecretBox } from '@vereinsfunk/secrets'
 
 // Gemeinsam fuer LLM-Provider-Schluessel (Paket 011) und Social-Connection-Tokens (Paket 012) --
 // beide Verwendungen teilen denselben Schluesselsatz, statt einen zweiten mit eigenen Env-Variablen
@@ -22,6 +22,26 @@ export function createSecretBoxFromEnvironment(environment: ApiEnvironment): Sec
     throw new Error('SECRET_BOX_KEYS must be a JSON object mapping key versions to base64-encoded keys')
   }
   return createSecretBox(parsed as Record<string, string>, environment.SECRET_BOX_CURRENT_KEY_VERSION)
+}
+
+// Paket 020: signiert den Kopf-Hash der Audit-Event-Kette je Verein mit demselben Schluesselsatz --
+// eine eigene Env-Variable wollte der Plan ausdrücklich nicht ("packages/secrets, SECRET_BOX_KEYS").
+// createChainSigner leitet daraus per HKDF einen eigenen HMAC-Schluessel ab, keine Wiederverwendung
+// des rohen AES-Schluessels ueber zwei Algorithmen hinweg.
+export function createChainSignerFromEnvironment(environment: ApiEnvironment): ChainSigner {
+  if (!environment.SECRET_BOX_KEYS || !environment.SECRET_BOX_CURRENT_KEY_VERSION) {
+    throw new Error('SECRET_BOX_KEYS and SECRET_BOX_CURRENT_KEY_VERSION are required to sign the audit chain')
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(environment.SECRET_BOX_KEYS)
+  } catch {
+    throw new Error('SECRET_BOX_KEYS must be valid JSON')
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('SECRET_BOX_KEYS must be a JSON object mapping key versions to base64-encoded keys')
+  }
+  return createChainSigner(parsed as Record<string, string>, environment.SECRET_BOX_CURRENT_KEY_VERSION)
 }
 
 // bytea-Spalten erwarten ueber PostgREST/supabase-js die Postgres-Hex-Escape-Form, kein
