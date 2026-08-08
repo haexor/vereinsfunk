@@ -1,5 +1,7 @@
 # 007 – Pilotbetrieb, Messung und Go/No-Go
 
+> **Status-Nachtrag (2026-08-08)**: Dieser Plan setzt 001–006 mit ihren MVP-Done-Kriterien voraus (u. a. echte Gesichtsverdeckung, echtes LLM, Meta-App-Review) — davon ist nach Paket 025 nur die Inhalts-Pipeline (001, Teile von 002/006) geschlossen. Kommerzielle Vorvalidierung (5–10 Kundengespräche), Produktions-Readiness und ein vierwöchiger Pilot sind zudem keine in einer Sitzung baubaren Coding-Aufgaben. Dieser Plan bleibt vollständig offen, weit vor seiner eigentlichen Abhängigkeitskette.
+
 ## Ergebnis
 
 Vereinsfunk läuft mit ein bis zwei Abteilungen sicher im echten Alltag. Das Team misst, ob die Content-Werkstatt regelmäßig genutzt wird, Zeit spart und genügend Zahlungsbereitschaft erzeugt. Erst diese Evidenz entscheidet über Ausbau, externe Publishingplattform oder Stopp.

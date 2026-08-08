@@ -1,5 +1,7 @@
 # 003 – Kreative Gesichtsverdeckung für Bilder
 
+> **Status-Nachtrag (2026-08-08, vor Paket 025 verifiziert)**: `packages/media-processing` existiert, aber `FaceDetector` hat nur eine bewusste No-op-Implementierung (`ManualOnlyFaceDetector` — kein biometrischer Abgleich, per Design) und **`ImageAnonymizer` hat null Implementierungen** irgendwo im Repository. Nur Box-Validierungshelfer (`assertNormalizedBox`, `assertSafeObscuringDecision`, `opaqueStyles`) existieren. Dieser Plan ist damit weiterhin vollständig offen — keines der Pakete seit 008 hat ihn berührt, und Paket 025 (Entwurfserzeugung/Veröffentlichung) auch nicht.
+
 ## Ergebnis
 
 Das System lokalisiert Gesichter automatisch, erlaubt manuelle Korrekturen und erzeugt kreative, vollständig deckende Bildvarianten. Fehlende Einwilligungen führen nicht automatisch zur Ablehnung eines guten Vereinsfotos, aber niemals zu einem unverdeckten Publishingpfad.

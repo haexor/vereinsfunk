@@ -1,5 +1,7 @@
 # 001 – Inhaltsmodell und authentische Erfassung
 
+> **Status-Nachtrag (2026-08-08, vor Paket 025 verifiziert)**: Dieser Plan wurde am 2026-08-02 auf einem leeren Repository geschrieben. Sein fachlicher Kern ist inzwischen über die Pakete 011/019 vollständig umgesetzt — `ContentPresetSlugSchema`/`CommunicationGoalSchema`/`OutputFormatSchema`/`SourceMaterialSchema` in `packages/contracts`, die Preset-Registry in `packages/content-engine/src/presets.ts` (alle 15 Slugs + `freeform`), die additive `submissions`-Migration ohne Vier-Typen-CHECK, und `erstellen.vue` mit allen Presets/Zielen/Formaten. Einzige verbliebene Lücke war `assertGroundedPost` (Zeile unten) — existierte, wurde aber nirgends aufgerufen; **seit Paket 025 in `POST /v1/submissions` verdrahtet** (`plans/025-inhalts-pipeline-entwurf-und-veroeffentlichung.md`). Die Baseline-Hashes unten sind veraltet und nicht mehr aussagekräftig.
+
 ## Ergebnis
 
 Die Erstellung ist nicht mehr auf vier Spiel-/Terminarten begrenzt. Nutzer wählen einen Anlass, ein Kommunikationsziel und gewünschte Ausgabeformate, erfassen anschließend ausschließlich belastbares Quellmaterial. Ein generischer Freitext-Anlass deckt Vereinsleben ohne passende Vorlage ab.

@@ -1,5 +1,7 @@
 # 002 – Private Medien, Einwilligungen und Freigabegate
 
+> **Status-Nachtrag (2026-08-08, vor Paket 025 verifiziert)**: Das Datenmodell dieses Plans (`media_assets`, `face_regions`, `consent_records`, `media_derivatives`, `post_media`, `approval_media_snapshots`) existiert bereits vollständig seit einer frühen, additiven Migration (`202608030001_content_media_workflows_publishing.sql`) mit allen geforderten Constraints/Immutable-Triggern. `evaluateMediaGate`/`MediaGateResult` (`packages/domain`) sind real und decken alle geforderten Blocker plus die aus Paket 015 hinzugekommenen ab — werden aber nur informativ angezeigt (`GET /v1/approval-stages/mine`), **nicht** als echter Blocker in `decide_approval_stage`/`schedule_publication` verdrahtet. Weiterhin offen und in dieser Form NICHT durch Paket 025 gebaut: der Upload-Pfad selbst (`LocalUploadService` bleibt ein Stub, `apps/web/app/pages/erstellen.vue`s Datei-Input lädt nichts hoch) und `assertApprovalSnapshot` (Funktion existiert, wird nirgends aufgerufen). Paket 025 hat nur den davor liegenden Schritt geschlossen: dass überhaupt ein `post`/eine `post_version` entsteht, aus der heraus dieser Plan seine Medienverknüpfung bauen könnte.
+
 ## Ergebnis
 
 Uploads werden wirklich privat gespeichert, geprüft und mit nachvollziehbaren Entscheidungen pro erkennbarer Person verknüpft. Eine Freigabe gilt nur für eine konkrete Post-Version und konkrete, unveränderliche Medien-Derivate. Offene Gesichter oder fehlende Pflichtentscheidungen blockieren Veröffentlichung.

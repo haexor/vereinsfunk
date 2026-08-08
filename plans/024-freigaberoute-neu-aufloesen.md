@@ -168,7 +168,7 @@ Verifizieren: pgTAP — Mediumderivat ändern, Trigger setzt `invalidated_at`, `
 
 - pgTAP: jede Zeile der Zustandstabelle; eine Stufe mit einer echten Entscheidung verliert diese Entscheidung nicht; die Minderjährigenstufe überlebt jede Neuauflösung; Positionen bleiben lückenlos; ein Nicht-Verwaltender wird abgewiesen; der Autor wird abgewiesen; `approval_route_changes` ist für den Autor lesbar und für ein unbeteiligtes Mitglied eines fremden Vereins nicht.
 - API-Tests: die vier Fehlerabbildungen plus Erfolgsfall.
-- Manuell: eine Route mit zwei Stufen anlegen, die innere Prüferin aus dem Verein entfernen, Frist überschreiten, als Abteilungsleitung neu auflösen, als neu benannte Prüferin entscheiden. **Einschränkung**: solange die Inhalts-Pipeline fehlt (Pakete 001–007, siehe `plans/NEXT-SESSION.md`), entsteht `post_version` nur per direktem DB-/RPC-Eingriff — der manuelle Durchlauf ist damit nur halb echt.
+- Manuell: eine Route mit zwei Stufen anlegen, die innere Prüferin aus dem Verein entfernen, Frist überschreiten, als Abteilungsleitung neu auflösen, als neu benannte Prüferin entscheiden. **Seit Paket 025 kein reiner DB-/RPC-Eingriff mehr nötig**: ein `post_version` kann jetzt über einen echten Beitrag (`erstellen.vue` → `POST /v1/submissions`) entstehen; für `request_approval` fehlt aber weiterhin ein UI-Trigger (siehe `plans/025-inhalts-pipeline-entwurf-und-veroeffentlichung.md`), der manuelle Durchlauf braucht also noch einen direkten `request_approval`-Aufruf statt eines Oberflächenklicks.
 
 ## Risiken und offene Entscheidungen
 
