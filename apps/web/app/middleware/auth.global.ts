@@ -1,9 +1,14 @@
 // /einladung ist bewusst oeffentlich: die Seite selbst entscheidet je nach Session, ob sie
 // sofort annimmt oder zu /registrieren bzw. /anmelden weiterleitet (siehe pages/einladung.vue).
 const publicPaths = new Set(['/anmelden', '/registrieren', '/passwort-vergessen', '/passwort-neu', '/auth/callback', '/einladung'])
+// Paket 015: /einwilligung/[token] und /einwilligung/widerruf/[token] haben kein Vereinskonto als
+// Zielgruppe (Erziehungsberechtigte) -- Praefix statt exaktem Pfad, weil das Token Teil der Route ist.
+// Mit Schraegstrich, sonst trifft das Praefix auch /einwilligungen (die authentifizierte
+// Verwaltungsseite, gefunden im Code-Review).
+const publicPathPrefixes = ['/einwilligung/']
 
 export default defineNuxtRouteMiddleware(async (to) => {
-  if (publicPaths.has(to.path)) return
+  if (publicPaths.has(to.path) || publicPathPrefixes.some((prefix) => to.path.startsWith(prefix))) return
 
   // Nur ein Hinweis, keine Sicherheitspruefung -- siehe supabase.client.ts. Echte
   // Durchsetzung liegt in RLS und in der Fastify-API.

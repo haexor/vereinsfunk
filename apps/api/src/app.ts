@@ -13,7 +13,11 @@ import {
   BrandLogoUploadResponseSchema,
   BrandLogoVariantSchema,
   ConfirmBrandAssetLicenseRequestSchema,
+  ConsentRecordSchema,
+  ConsentRequestSchema,
   CreateBrandAssetRequestSchema,
+  CreateConsentRecordFieldsSchema,
+  CreateConsentRequestRequestSchema,
   ChannelConnectStartRequestSchema,
   ChannelOwnerScopeSchema,
   ChannelPolicySchema,
@@ -58,6 +62,7 @@ import {
   OnboardingStepSchema,
   OrganizationBrandSchema,
   OrganizationBrandUpdateSchema,
+  OrganizationConsentTextSchema,
   OrganizationProfileSchema,
   OrganizationProfileUpdateSchema,
   PlatformAdminOrganizationSummarySchema,
@@ -71,8 +76,12 @@ import {
   PolicySettingSchema,
   ProfileSchema,
   PublicationSchema,
+  PublicConsentRequestViewSchema,
+  PublicConsentRevocationViewSchema,
   RequestApprovalResponseSchema,
   ResolveSyncConflictRequestSchema,
+  RespondConsentRequestRequestSchema,
+  RevokeConsentRequestSchema,
   ScopeLevelSchema,
   SchedulePublicationRequestSchema,
   SelectOAuthAccountRequestSchema,
@@ -80,6 +89,7 @@ import {
   SocialConnectionSchema,
   SocialPlatformSchema,
   SubmissionAcceptedSchema,
+  SupersedeConsentRequestSchema,
   SyncModeSchema,
   SyncSourceResponseSchema,
   TeamBrandSchema,
@@ -92,6 +102,7 @@ import {
   UpdateLlmProviderConfigurationRequestSchema,
   UpdateMembershipExpiryRequestSchema,
   UpdateMembershipRequestSchema,
+  UpdateOrganizationConsentTextRequestSchema,
   UpdatePlatformSettingRequestSchema,
   UpdatePolicyRulesRequestSchema,
   UpdatePolicySettingRequestSchema,
@@ -102,6 +113,8 @@ import {
   UsageMetricsQuerySchema,
   UsageMetricsResponseSchema,
   UuidSchema,
+  type ConsentScope,
+  type ConsentStatus,
   type ContentSuggestion,
   type FieldMapping,
   type IntegrationDomain,
@@ -148,18 +161,23 @@ import {
 import {
   BRAND_LOCKABLE_FIELDS,
   createIdempotencyKey,
+  evaluateConsent,
   evaluateMediaGate,
   evaluateSubmitPermission,
   isBrandAssetSelectable,
+  isConsentRecordInvalid,
+  isConsentScopeMismatch,
   mergeEffectiveConfig,
   resolveAvailableChannels,
   resolveEffectiveConfig,
   resolveReviewers,
   resolveReviewRoute,
+  scanTextForSensitiveData,
   type BrandAssetRef,
   type BrandLockableField,
   type ChannelCandidate,
   type ConfigOverride,
+  type MediaGateBlocker,
   type MembershipRecord,
   type ReviewerRef as DomainReviewerRef,
   type ScopeLevelName,
@@ -169,14 +187,14 @@ import {
 import { FakeOrchestrator, priorityToHatchet, type Orchestrator } from '@vereinsfunk/orchestration'
 import { RealMetaOAuthClient, type MetaOAuthClient } from '@vereinsfunk/publishing'
 import Fastify, { LogController, type FastifyInstance, type FastifyReply, type FastifyRequest, type FastifyServerOptions } from 'fastify'
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAuthGuards, SupabasePlatformAdminProvider, SupabaseRoleProvider, type PermissionScope, type PlatformAdminProvider, type RoleProvider } from './auth.js'
 import { generateSvgRasterDerivatives, SvgRasterizationError } from './brandAssetDerivatives.js'
 import { FontEmbeddingRestrictedError, processBrandFontUpload, UnsupportedFontFormatError } from './brandFont.js'
 import { hashLogoBuffer, LogoDimensionsError, processBrandLogoUpload, UnsupportedLogoFormatError } from './brandLogo.js'
-import { createEmailSender, type EmailSender } from './email.js'
+import { createEmailSender, type EmailMessage, type EmailSender } from './email.js'
 import { buildInvitationEmail, generateInvitationToken } from './invitations.js'
 import { mapLlmProviderConfigurationRow } from './llmProviders.js'
 import { fetchPublicUrl, isAllowedOutboundUrl, OutboundFetchError } from './outboundFetch.js'
@@ -479,6 +497,155 @@ async function resolveMembershipScope(
 // bei Abwesenheit ganz fehlen statt explizit auf undefined gesetzt zu sein.
 function toPermissionScope(organizationId: string, departmentId?: string | null, teamId?: string | null): PermissionScope {
   return { organizationId, ...(departmentId ? { departmentId } : {}), ...(teamId ? { teamId } : {}) }
+}
+
+// --- Paket 015: Einwilligungsverwaltung -----------------------------------------------------
+
+// Bereitgestellte Vorlage, bis ein Verein einen eigenen Text hinterlegt (Plan 015, "Einwilligungstext
+// pro Verein editierbar"). Anwaltliche Pruefung ist Voraussetzung fuer den Produktivbetrieb, siehe
+// plans/README.md "Entschiedene Produktfragen" -- diese Vorlage ist ein Platzhalter, kein Rechtstext.
+const DEFAULT_CONSENT_TEXT_TEMPLATE = `Einwilligung zur Veröffentlichung von Fotos und Videos in sozialen Medien
+
+Der Verein möchte über sein Vereinsleben berichten und dafür auch Fotos und Videos auf seinen Social-Media-Kanälen veröffentlichen. Mit dieser Einwilligung bestätigen Sie, dass Fotos und Videos im hier beschriebenen Umfang veröffentlicht werden dürfen.
+
+Diese Einwilligung ist freiwillig. Sie können sie jederzeit ohne Angabe von Gründen für die Zukunft widerrufen; das beeinträchtigt nicht die Rechtmäßigkeit der bis zum Widerruf erfolgten Veröffentlichungen.`
+
+// setUTCMonth() ueberlaeuft korrekt auf das naechste Jahr (z. B. Monat 13 -> Januar des
+// Folgejahres) -- kein eigener Divisions-/Modulo-Code fuer den Jahresuebertrag noetig. Der Tag
+// wird vorher auf 1 gesetzt und danach auf den letzten Tag des Zielmonats begrenzt, sonst wuerde
+// z. B. der 31. August + 6 Monate ueber den 28./29. Februar hinaus in den Maerz ueberlaufen
+// (gefunden im Code-Review) und die Einwilligung faelschlich laenger gueltig machen.
+function addMonthsToIsoDate(isoDate: string, months: number): string {
+  const date = new Date(`${isoDate}T00:00:00.000Z`)
+  const day = date.getUTCDate()
+  date.setUTCDate(1)
+  date.setUTCMonth(date.getUTCMonth() + months)
+  const lastDayOfTargetMonth = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate()
+  date.setUTCDate(Math.min(day, lastDayOfTargetMonth))
+  return date.toISOString()
+}
+
+function generatePublicToken(): { rawToken: string; tokenHash: string } {
+  const rawToken = randomBytes(32).toString('hex')
+  return { rawToken, tokenHash: createHash('sha256').update(rawToken).digest('hex') }
+}
+
+type ConsentRecordRow = {
+  id: string
+  organization_id: string
+  directory_person_id: string | null
+  pseudonymous_subject_ref: string
+  scope: string
+  scope_structured: ConsentScope
+  origin: 'paper' | 'digital' | 'imported'
+  source_id: string | null
+  signed_at: string | null
+  signer_name: string | null
+  signer_role: 'self' | 'guardian' | null
+  guardian_confirmed: boolean
+  valid_from: string
+  valid_until: string | null
+  revoked_at: string | null
+  revoked_by: 'self' | 'guardian' | 'organization' | null
+  revocation_reason: string | null
+  superseded_by: string | null
+  created_at: string
+}
+
+// Reine Aussage ueber die Zeile selbst (Ampel fuer die Uebersicht) -- unabhaengig von jedem
+// konkreten Verwendungszweck. evaluateConsent (packages/domain) prueft zusaetzlich die Deckung
+// eines KONKRETEN Beitrags und wird separat fuer die Gate-Auswertung verwendet, nicht hier.
+function computeConsentRecordStatus(row: ConsentRecordRow, now: Date): ConsentStatus {
+  if (row.superseded_by !== null) return 'superseded'
+  if (row.revoked_at !== null) return 'revoked'
+  if (row.signer_role === 'guardian' && !row.guardian_confirmed) return 'guardian_missing'
+  if (new Date(row.valid_from) > now) return 'not_yet_valid'
+  if (row.valid_until !== null) {
+    const validUntil = new Date(row.valid_until)
+    if (validUntil <= now) return 'expired'
+    if ((validUntil.getTime() - now.getTime()) / 86_400_000 <= 30) return 'expiring_soon'
+  }
+  return 'valid'
+}
+
+function mapConsentRecordRow(row: ConsentRecordRow, now: Date) {
+  return ConsentRecordSchema.parse({
+    id: row.id,
+    organizationId: row.organization_id,
+    directoryPersonId: row.directory_person_id,
+    pseudonymousSubjectRef: row.pseudonymous_subject_ref,
+    scope: row.scope,
+    scopeStructured: row.scope_structured,
+    origin: row.origin,
+    sourceId: row.source_id,
+    signedAt: row.signed_at,
+    signerName: row.signer_name,
+    signerRole: row.signer_role,
+    guardianConfirmed: row.guardian_confirmed,
+    validFrom: row.valid_from,
+    validUntil: row.valid_until,
+    revokedAt: row.revoked_at,
+    revokedBy: row.revoked_by,
+    revocationReason: row.revocation_reason,
+    supersededBy: row.superseded_by,
+    status: computeConsentRecordStatus(row, now),
+    createdAt: row.created_at,
+  })
+}
+
+type ConsentRequestRow = {
+  id: string
+  organization_id: string
+  department_id: string
+  directory_person_id: string
+  recipient_email: string
+  recipient_role: 'self' | 'guardian'
+  requested_scope: ConsentScope
+  text_version: string
+  status: 'sent' | 'granted' | 'declined' | 'expired' | 'revoked_link'
+  expires_at: string
+  responded_at: string | null
+  consent_record_id: string | null
+  send_count: number
+  last_sent_at: string
+  created_by: string
+  created_at: string
+}
+
+function mapConsentRequestRow(row: ConsentRequestRow) {
+  return ConsentRequestSchema.parse({
+    id: row.id,
+    organizationId: row.organization_id,
+    departmentId: row.department_id,
+    directoryPersonId: row.directory_person_id,
+    recipientEmail: row.recipient_email,
+    recipientRole: row.recipient_role,
+    requestedScope: row.requested_scope,
+    textVersion: row.text_version,
+    status: row.status,
+    expiresAt: row.expires_at,
+    respondedAt: row.responded_at,
+    consentRecordId: row.consent_record_id,
+    sendCount: row.send_count,
+    lastSentAt: row.last_sent_at,
+    createdAt: row.created_at,
+  })
+}
+
+function describeConsentScope(scope: ConsentScope): string[] {
+  const lines: string[] = []
+  const purposeLabels: Record<string, string> = {
+    social_media: 'Social Media', website: 'Vereinswebsite', print: 'Printmaterial', internal: 'interne Nutzung',
+  }
+  const contextLabels: Record<string, string> = {
+    team_photo: 'Mannschaftsfoto', match: 'Spiel', training: 'Training', event: 'Veranstaltung', portrait: 'Porträt',
+  }
+  lines.push(`Zweck: ${scope.purposes.map((purpose) => purposeLabels[purpose] ?? purpose).join(', ')}`)
+  lines.push(`Plattformen: ${scope.platforms === null ? 'alle vom Verein genutzten' : scope.platforms.join(', ')}`)
+  lines.push(`Medienart: ${scope.mediaKinds.map((kind) => (kind === 'photo' ? 'Foto' : 'Video')).join(', ')}`)
+  lines.push(`Anlässe: ${scope.contexts === null ? 'alle' : scope.contexts.map((context) => contextLabels[context] ?? context).join(', ')}`)
+  lines.push(scope.namingAllowed ? 'Namentliche Nennung ist erlaubt.' : 'Namentliche Nennung ist nicht erlaubt.')
+  return lines
 }
 
 // Spiegelt authz.resolve_policy_flag() als AND-Reduktion in TS -- dieselbe Duplizierung wie bei
@@ -1443,7 +1610,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (!(await requireAuth(request, reply))) return
     // Keine requirePermission-Pruefung: reine, zustandslose Regelauswertung ohne Scope-Bezug
     // und ohne Datenzugriff -- es gibt nichts scope-Gebundenes, gegen das zu pruefen waere.
-    const input = z.object({ scanStatus: z.enum(['pending', 'clean', 'failed']), facesConfirmedComplete: z.boolean(), hasOriginalSelected: z.boolean(), derivativeCurrent: z.boolean(), minorReviewConfirmed: z.boolean(), faces: z.array(z.object({ subjectKind: z.enum(['adult', 'minor', 'unknown']), decision: z.enum(['pending', 'consented', 'obscure', 'exclude']), consentValid: z.boolean().optional() })) }).parse(request.body)
+    const input = z.object({
+      scanStatus: z.enum(['pending', 'clean', 'failed']), facesConfirmedComplete: z.boolean(), hasOriginalSelected: z.boolean(),
+      derivativeCurrent: z.boolean(), minorReviewConfirmed: z.boolean(),
+      faces: z.array(z.object({
+        subjectKind: z.enum(['adult', 'minor', 'unknown']), decision: z.enum(['pending', 'consented', 'obscure', 'exclude']),
+        consentValid: z.boolean().optional(), consentScopeMismatch: z.boolean().optional(),
+      })),
+      namingNotAllowed: z.boolean().optional(), sensitiveTextData: z.boolean().optional(),
+    }).parse(request.body)
     return evaluateMediaGate(input)
   })
 
@@ -2451,7 +2626,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   // --- Paket 011: Freigaberouten, Vertrauen je Mitglied, Kontingente -------------------------
 
   const POLICY_RULE_COLUMNS =
-    'id, submit_requires_permission, review_required, review_mode, review_stage_label, review_minimum_approvals, review_deadline_hours, minor_approval_required, self_approval_allowed, allow_same_reviewer_across_stages, allow_review_exemptions, media_requires_consent_check, allowed_presets, allowed_formats, allowed_channel_ids, forbidden_topics, required_hashtags, tone'
+    'id, submit_requires_permission, review_required, review_mode, review_stage_label, review_minimum_approvals, review_deadline_hours, minor_approval_required, self_approval_allowed, allow_same_reviewer_across_stages, allow_review_exemptions, media_requires_consent_check, allowed_presets, allowed_formats, allowed_channel_ids, forbidden_topics, required_hashtags, tone, consent_expires_on_leave, consent_validity_months'
   interface PolicyRuleRow {
     id: string
     review_required: boolean | null
@@ -2470,6 +2645,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     forbidden_topics: string[]
     required_hashtags: string[]
     tone: string | null
+    // Paket 015: consent_expires_on_leave ist Vererbungssemantik (mergeEffectiveConfig), analog zu
+    // media_requires_consent_check; consent_validity_months ist knotenlokal wie
+    // review_minimum_approvals -- own/effective in mapConfigToRuleValues unten sind identisch.
+    consent_expires_on_leave: boolean | null
+    consent_validity_months: number | null
   }
 
   // Alle Regelzeilen einer Organisation in EINER Abfrage, indiziert je Ebene -- dasselbe Muster wie
@@ -2514,6 +2694,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         ...(row.self_approval_allowed !== null ? { selfApprovalAllowed: row.self_approval_allowed } : {}),
         ...(row.allow_same_reviewer_across_stages !== null ? { allowSameReviewerAcrossStages: row.allow_same_reviewer_across_stages } : {}),
         ...(row.media_requires_consent_check !== null ? { mediaRequiresConsentCheck: row.media_requires_consent_check } : {}),
+        ...(row.consent_expires_on_leave !== null ? { consentExpiresOnLeave: row.consent_expires_on_leave } : {}),
         allowedPresets: row.allowed_presets,
         allowedFormats: row.allowed_formats,
         allowedChannelIds: row.allowed_channel_ids,
@@ -2533,6 +2714,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       allowSameReviewerAcrossStages: row?.allow_same_reviewer_across_stages ?? null,
       allowReviewExemptions: row?.allow_review_exemptions ?? null,
       mediaRequiresConsentCheck: row?.media_requires_consent_check ?? null,
+      consentExpiresOnLeave: row?.consent_expires_on_leave ?? null,
+      consentValidityMonths: row?.consent_validity_months ?? null,
       allowedPresets: row?.allowed_presets ?? null,
       allowedFormats: row?.allowed_formats ?? null,
       allowedChannelIds: row?.allowed_channel_ids ?? null,
@@ -2554,6 +2737,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       allowSameReviewerAcrossStages: config.policies.allowSameReviewerAcrossStages,
       allowReviewExemptions: ownRow?.allow_review_exemptions ?? null,
       mediaRequiresConsentCheck: config.policies.mediaRequiresConsentCheck,
+      consentExpiresOnLeave: config.policies.consentExpiresOnLeave,
+      // Knotenlokal wie reviewMinimumApprovals (own-Zeile, keine Vererbung ueber Ebenen) --
+      // die echte Abteilungs-/Vereins-Rueckfallkette fuer die Registratur-Vorbelegung loest
+      // resolveConsentValidityMonths separat auf (POST /v1/consents), nicht hier.
+      consentValidityMonths: ownRow?.consent_validity_months ?? null,
       allowedPresets: config.policies.allowedPresets ? [...config.policies.allowedPresets] : null,
       allowedFormats: config.policies.allowedFormats ? ([...config.policies.allowedFormats] as OutputFormat[]) : null,
       allowedChannelIds: config.policies.allowedChannelIds ? [...config.policies.allowedChannelIds] : null,
@@ -3904,6 +4092,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
           // 'stalled' ist der markierte Fall derselben Sache -- sonst zeigte eine vom Job markierte
           // Stufe "nicht überfällig" an, obwohl sie es gerade deswegen ist.
           isOverdue: (stage.status === 'open' || stage.status === 'stalled') && stage.deadline_at !== null && new Date(stage.deadline_at as string).getTime() < now,
+          // Paket 015: dieser Detail-Endpunkt zeigt (anders als /v1/approval-stages/mine) bewusst
+          // keine Medien-Gate-Blocker -- Autor und Pruefende sehen hier den Freigabestatus, die
+          // Blocker-Berechnung ist an die Review-Liste gebunden. Dokumentierte Vereinfachung, kein
+          // Vergessen: eine spaetere Vereinheitlichung koennte computeMediaGateBlockersForPostVersion
+          // auch hier aufrufen.
+          mediaGateBlockers: [],
         })),
         decisions: decisionsResult.data.map((decision) => ({
           id: decision.id, approvalStageId: decision.approval_stage_id, decidedBy: decision.decided_by,
@@ -3918,6 +4112,116 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   // reviewer_snapshot-Eintrag engt das hier auf tatsaechlich zugewiesene Stufen ein.
   // organizationId ist pflichtig: eine Person mit Pruefrollen in mehreren Vereinen saehe sonst die
   // Freigaben ALLER ihrer Vereine in der Liste eines einzelnen (beim Review dieses Pakets gefunden).
+  // Paket 015: Medien-Gate-Blocker fuer den Beitrag hinter einer Stufe. Faltet
+  // post_media -> media_derivatives -> media_assets -> face_regions -> consent_records zusammen
+  // und ruft evaluateConsent je Gesicht auf. Bekannte, dokumentierte Grenze: verknuepfte Personen
+  // fuer die Namensprüfung kommen ausschliesslich aus einwilligungsgeprueften Gesichtern der
+  // Medien dieses Beitrags -- ein rein textlicher Beitrag ohne jedes Foto einer Person kann diese
+  // Person nicht als "verknuepft" kennen, weil keine andere Verknuepfung von Beitragstext zu einer
+  // konkreten Person existiert (siehe plans/015, "Umsetzung: Ergebnis und Abweichungen").
+  // minorReviewConfirmed ist bewusst konservativ immer false: ein eigenes, freigabestufenbasiertes
+  // Minderjaehrigenschutz existiert bereits seit Paket 011 (is_minor_stage) und bleibt die
+  // eigentliche Durchsetzung; dieser Blocker ist eine zusaetzliche, informative Erinnerung.
+  async function computeMediaGateBlockersForPostVersion(
+    client: SupabaseClient, postVersionId: string, departmentId: string, policy: { consentExpiresOnLeave: boolean },
+  ): Promise<MediaGateBlocker[]> {
+    const postVersion = await client.from('post_versions').select('title, caption').eq('id', postVersionId).maybeSingle()
+    if (postVersion.error) throw postVersion.error
+    if (!postVersion.data) return []
+
+    const postMedia = await client.from('post_media').select('media_derivative_id').eq('post_version_id', postVersionId)
+    if (postMedia.error) throw postMedia.error
+    const derivativeIds = postMedia.data.map((row) => row.media_derivative_id as string)
+
+    if (derivativeIds.length === 0) {
+      const scan = scanTextForSensitiveData(`${postVersion.data.title as string} ${postVersion.data.caption as string}`, [])
+      return evaluateMediaGate({
+        scanStatus: 'clean', facesConfirmedComplete: true, hasOriginalSelected: false, derivativeCurrent: true,
+        faces: [], minorReviewConfirmed: false, namingNotAllowed: scan.namingNotAllowed, sensitiveTextData: scan.sensitiveTextData,
+      }).blockers
+    }
+
+    const derivatives = await client.from('media_derivatives').select('id, media_asset_id, status').in('id', derivativeIds)
+    if (derivatives.error) throw derivatives.error
+    const assetIds = Array.from(new Set(derivatives.data.map((row) => row.media_asset_id as string)))
+    const [assets, faces] = await Promise.all([
+      client.from('media_assets').select('id, mime_type, scan_status').in('id', assetIds),
+      client.from('face_regions').select('media_asset_id, subject_kind, decision, consent_record_id').in('media_asset_id', assetIds),
+    ])
+    if (assets.error) throw assets.error
+    if (faces.error) throw faces.error
+
+    const consentRecordIds = Array.from(new Set(faces.data.map((face) => face.consent_record_id as string | null).filter((id): id is string => id !== null)))
+    const consents = consentRecordIds.length > 0
+      ? await client.from('consent_records').select(CONSENT_RECORD_SELECT).in('id', consentRecordIds)
+      : { data: [] as ConsentRecordRow[], error: null as null }
+    if (consents.error) throw consents.error
+    const consentById = new Map((consents.data as ConsentRecordRow[]).map((row) => [row.id, row]))
+
+    const directoryPersonIds = Array.from(
+      new Set((consents.data as ConsentRecordRow[]).map((row) => row.directory_person_id).filter((id): id is string => id !== null)),
+    )
+    const people = directoryPersonIds.length > 0
+      ? await client.from('directory_people').select('id, first_name, last_name, status, is_minor').in('id', directoryPersonIds)
+      : { data: [] as { id: string; first_name: string; last_name: string; status: string; is_minor: boolean }[], error: null as null }
+    if (people.error) throw people.error
+    const personById = new Map(people.data.map((row) => [row.id, row]))
+
+    const now = new Date()
+    const mediaKindByAssetId = new Map(
+      assets.data.map((row) => [row.id as string, (row.mime_type as string).startsWith('video/') ? ('video' as const) : ('photo' as const)]),
+    )
+
+    const faceInputs = faces.data.map((face) => {
+      const consent = face.consent_record_id ? consentById.get(face.consent_record_id as string) : undefined
+      let consentValid: boolean | undefined
+      let consentScopeMismatch: boolean | undefined
+      if (face.decision === 'consented' && consent) {
+        const person = consent.directory_person_id ? personById.get(consent.directory_person_id) : undefined
+        const evaluation = evaluateConsent(
+          {
+            guardianConfirmed: consent.guardian_confirmed, signerRole: consent.signer_role, supersededBy: consent.superseded_by,
+            revokedAt: consent.revoked_at, validFrom: consent.valid_from, validUntil: consent.valid_until,
+            scopeStructured: consent.scope_structured, personLeft: person?.status === 'left',
+            subjectIsMinor: person?.is_minor ?? false,
+          },
+          now,
+          {
+            purpose: 'social_media', platform: null,
+            mediaKind: mediaKindByAssetId.get(face.media_asset_id as string) ?? 'photo',
+            context: null, departmentId,
+          },
+          policy,
+        )
+        consentValid = !isConsentRecordInvalid(evaluation.reasons)
+        consentScopeMismatch = isConsentScopeMismatch(evaluation.reasons)
+      }
+      return {
+        subjectKind: face.subject_kind as 'adult' | 'minor' | 'unknown',
+        decision: face.decision as 'pending' | 'consented' | 'obscure' | 'exclude',
+        consentValid, consentScopeMismatch,
+      }
+    })
+
+    const linkedPersons = Array.from(personById.values()).map((person) => {
+      const consent = Array.from(consentById.values()).find((row) => row.directory_person_id === person.id)
+      return { firstName: person.first_name, lastName: person.last_name, namingAllowed: consent?.scope_structured.namingAllowed ?? false }
+    })
+    const scan = scanTextForSensitiveData(`${postVersion.data.title as string} ${postVersion.data.caption as string}`, linkedPersons)
+
+    const scanStatus: 'clean' | 'pending' | 'failed' = assets.data.some((row) => row.scan_status === 'failed')
+      ? 'failed'
+      : assets.data.every((row) => row.scan_status === 'clean')
+        ? 'clean'
+        : 'pending'
+    const derivativeCurrent = derivatives.data.every((row) => row.status === 'ready')
+
+    return evaluateMediaGate({
+      scanStatus, facesConfirmedComplete: true, hasOriginalSelected: false, derivativeCurrent,
+      faces: faceInputs, minorReviewConfirmed: false, namingNotAllowed: scan.namingNotAllowed, sensitiveTextData: scan.sensitiveTextData,
+    }).blockers
+  }
+
   app.get('/v1/approval-stages/mine', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const query = z.object({ organizationId: UuidSchema }).parse(request.query)
@@ -3927,20 +4231,69 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     // genau der Liste verschwinden lassen, in der die zustaendige Person sie noch entscheiden soll.
     const rows = await client
       .from('approval_stages')
-      .select('id, position, scope, label, mode, minimum_approvals, is_minor_stage, status, reviewer_snapshot, deadline_at')
+      .select('id, position, scope, label, mode, minimum_approvals, is_minor_stage, status, reviewer_snapshot, deadline_at, approval_request_id')
       .eq('organization_id', query.organizationId)
       .in('status', ['open', 'stalled'])
     if (rows.error) throw rows.error
     const userId = request.auth!.userId
     const now = Date.now()
     const mine = rows.data.filter((row) => (row.reviewer_snapshot as { userId: string }[]).some((entry) => entry.userId === userId))
+
+    const approvalRequestIds = Array.from(new Set(mine.map((row) => row.approval_request_id as string | undefined).filter((id): id is string => Boolean(id))))
+    const approvalRequests = approvalRequestIds.length > 0
+      ? await client.from('approval_requests').select('id, post_id, post_version_id').in('id', approvalRequestIds)
+      : { data: [] as { id: string; post_id: string; post_version_id: string }[], error: null as null }
+    if (approvalRequests.error) throw approvalRequests.error
+    const postVersionByRequestId = new Map(approvalRequests.data.map((row) => [row.id, row.post_version_id]))
+    const postIds = Array.from(new Set(approvalRequests.data.map((row) => row.post_id)))
+    const posts = postIds.length > 0
+      ? await client.from('posts').select('id, department_id').in('id', postIds)
+      : { data: [] as { id: string; department_id: string }[], error: null as null }
+    if (posts.error) throw posts.error
+    const departmentByPostId = new Map(posts.data.map((row) => [row.id, row.department_id]))
+    const postIdByRequestId = new Map(approvalRequests.data.map((row) => [row.id, row.post_id]))
+
+    // Kein unnoetiger Roundtrip auf policy_settings, wenn es (noch) keine einzige aufloesbare
+    // Stufe gibt -- betrifft insbesondere den erwarteten Normalfall ohne Inhalts-Pipeline (siehe
+    // plans/README.md), in dem approval_stages zwar existieren koennen, aber approval_request_id
+    // ins Leere zeigt, solange kein echter Beitrag dahinter steht.
+    const policyRows = postIds.length > 0 ? await fetchPolicyRuleRows(client, query.organizationId) : null
+    const effectiveConfigByDepartmentId = new Map<string, ReturnType<typeof resolveEffectiveConfig>>()
+    function effectivePolicyForDepartment(departmentId: string): { consentExpiresOnLeave: boolean } {
+      let config = effectiveConfigByDepartmentId.get(departmentId)
+      if (!config) {
+        config = computeRuleEntry(policyRows!, 'department', departmentId, null).config
+        effectiveConfigByDepartmentId.set(departmentId, config)
+      }
+      return { consentExpiresOnLeave: config.policies.consentExpiresOnLeave }
+    }
+
+    // Mehrere Stufen eines Freigabeantrags zeigen auf dieselbe post_version_id -- ohne Memoisierung
+    // wuerden bis zu sieben Abfragen je Stufe unnoetig wiederholt (gefunden im Code-Review).
+    const blockersByPostVersionId = new Map<string, Promise<MediaGateBlocker[]>>()
+    const blockersByStage = await Promise.all(
+      mine.map(async (row) => {
+        const postVersionId = postVersionByRequestId.get(row.approval_request_id as string)
+        const postId = postIdByRequestId.get(row.approval_request_id as string)
+        const departmentId = postId ? departmentByPostId.get(postId) : undefined
+        if (!postVersionId || !departmentId) return []
+        let pending = blockersByPostVersionId.get(postVersionId)
+        if (!pending) {
+          pending = computeMediaGateBlockersForPostVersion(client, postVersionId, departmentId, effectivePolicyForDepartment(departmentId))
+          blockersByPostVersionId.set(postVersionId, pending)
+        }
+        return pending
+      }),
+    )
+
     return reply.code(200).send(
-      mine.map((row) =>
+      mine.map((row, index) =>
         ApprovalStageSchema.parse({
           id: row.id, position: row.position, scope: row.scope, label: row.label, mode: row.mode,
           minimumApprovals: row.minimum_approvals, isMinorStage: row.is_minor_stage, status: row.status,
           reviewerUserIds: (row.reviewer_snapshot as { userId: string }[]).map((entry) => entry.userId),
           deadlineAt: row.deadline_at, isOverdue: row.deadline_at !== null && new Date(row.deadline_at as string).getTime() < now,
+          mediaGateBlockers: blockersByStage[index] ?? [],
         }),
       ),
     )
@@ -5537,6 +5890,681 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const result = await client.from('profiles').update(update).eq('id', request.auth!.userId).select('id, display_name, avatar_path').single()
     if (result.error) throw result.error
     return reply.code(200).send(ProfileSchema.parse({ id: result.data.id, displayName: result.data.display_name, avatarPath: result.data.avatar_path }))
+  })
+
+  // --- Paket 015: Einwilligungsverwaltung -----------------------------------------------------
+
+  const CONSENT_RECORD_SELECT = 'id, organization_id, directory_person_id, pseudonymous_subject_ref, scope, scope_structured, origin, source_id, signed_at, signer_name, signer_role, guardian_confirmed, valid_from, valid_until, revoked_at, revoked_by, revocation_reason, superseded_by, created_at'
+  const CONSENT_REQUEST_SELECT = 'id, organization_id, department_id, directory_person_id, recipient_email, recipient_role, requested_scope, text_version, status, expires_at, responded_at, consent_record_id, send_count, last_sent_at, created_by, created_at'
+  const ALLOWED_EVIDENCE_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf'])
+
+  async function currentOrganizationConsentText(client: SupabaseClient, organizationId: string): Promise<{ id: string | null; body: string; createdAt: string | null }> {
+    const latest = await client
+      .from('organization_consent_texts')
+      .select('id, body, created_at')
+      .eq('organization_id', organizationId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (latest.error) throw latest.error
+    if (!latest.data) return { id: null, body: DEFAULT_CONSENT_TEXT_TEMPLATE, createdAt: null }
+    return { id: latest.data.id as string, body: latest.data.body as string, createdAt: latest.data.created_at as string }
+  }
+
+  // Herkunft eines directoryPersonId fuer den Rechtescope pruefen: gehoert die Person ueberhaupt
+  // zum angegebenen organizationId, und in welcher Abteilung steht sie (fuer requirePermission).
+  async function departmentOfDirectoryPerson(
+    client: SupabaseClient, organizationId: string, directoryPersonId: string,
+  ): Promise<string | null | 'not_found'> {
+    const person = await client.from('directory_people').select('organization_id, department_id').eq('id', directoryPersonId).maybeSingle()
+    if (person.error) throw person.error
+    if (!person.data || person.data.organization_id !== organizationId) return 'not_found'
+    return person.data.department_id as string | null
+  }
+
+  // Abteilung faellt auf Verein zurueck, wenn sie selbst keine Frist gesetzt hat (Plan 015:
+  // "Aufbewahrungsfrist"-artiger Vorbelegungswert, anders als reviewMinimumApprovals oben, das
+  // bewusst knotenlokal bleibt) -- nur fuer die Vorbelegung neuer Einwilligungen gebraucht, nicht
+  // Teil der generischen Policy-Anzeige.
+  async function resolveConsentValidityMonths(client: SupabaseClient, organizationId: string, departmentId: string | null): Promise<number | null> {
+    const rows = await client.from('policy_settings').select('scope, department_id, consent_validity_months').eq('organization_id', organizationId)
+    if (rows.error) throw rows.error
+    const data = rows.data as { scope: ScopeLevel; department_id: string | null; consent_validity_months: number | null }[]
+    const orgValue = data.find((row) => row.scope === 'organization')?.consent_validity_months ?? null
+    const deptValue = departmentId ? data.find((row) => row.scope === 'department' && row.department_id === departmentId)?.consent_validity_months ?? null : null
+    return deptValue ?? orgValue
+  }
+
+  app.get('/v1/organizations/:id/consent-text', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    if (!(await isAnyMemberOfOrganization(client, request.auth!.userId, params.id))) {
+      return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+    }
+    const text = await currentOrganizationConsentText(client, params.id)
+    return reply.code(200).send(
+      OrganizationConsentTextSchema.parse({
+        id: text.id ?? 'default-template', organizationId: params.id, body: text.body,
+        createdAt: text.createdAt, isDefaultTemplate: text.id === null,
+      }),
+    )
+  })
+
+  app.put('/v1/organizations/:id/consent-text', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const input = UpdateOrganizationConsentTextRequestSchema.parse(request.body)
+    if (!(await requirePermission(request, reply, 'consent.manage', { organizationId: params.id }))) return
+    const service = supabaseClients.forService()
+    const insert = await service.from('organization_consent_texts').insert({
+      organization_id: params.id, body: input.body, created_by: request.auth!.userId,
+    }).select('id, body, created_at').single()
+    if (insert.error) throw insert.error
+    await recordAuditEvent(request, { organizationId: params.id, action: 'consent_text.updated', entityType: 'organization_consent_texts', entityId: insert.data.id as string })
+    return reply.code(201).send(
+      OrganizationConsentTextSchema.parse({
+        id: insert.data.id, organizationId: params.id, body: insert.data.body, createdAt: insert.data.created_at, isDefaultTemplate: false,
+      }),
+    )
+  })
+
+  // Registratur einer Papiererklaerung (Plan 015, Abschnitt 2). Multipart wie
+  // POST /v1/brand/assets: Datei zuerst vollstaendig lesen, danach die begleitenden Felder
+  // auswerten (busboy fuellt filePart.fields erst danach). Ohne Nachweisdatei kein Eintrag --
+  // digitale Einwilligungen (origin='digital') entstehen ausschliesslich ueber den oeffentlichen
+  // Anfrage-Antwort-Fluss unten, nicht hier.
+  app.post('/v1/consents', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+
+    const filePart = await request.file()
+    if (!filePart) return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+
+    let fields: z.infer<typeof CreateConsentRecordFieldsSchema>
+    let buffer: Buffer
+    try {
+      buffer = await filePart.toBuffer()
+      const rawFields = Object.fromEntries(
+        Object.entries(filePart.fields).map(([key, field]) => [key, field && 'value' in field ? field.value : undefined]),
+      )
+      const scopeStructuredRaw = rawFields.scopeStructured
+      if (typeof scopeStructuredRaw === 'string') rawFields.scopeStructured = JSON.parse(scopeStructuredRaw)
+      fields = CreateConsentRecordFieldsSchema.parse(rawFields)
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE') {
+        return reply.code(413).send({ error: 'file_too_large', correlationId: request.id })
+      }
+      if (error instanceof z.ZodError || error instanceof SyntaxError) return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+      throw error
+    }
+    if (!ALLOWED_EVIDENCE_MIME.has(filePart.mimetype)) return reply.code(400).send({ error: 'invalid_file_type', correlationId: request.id })
+
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    let departmentId: string | null = fields.departmentId ?? null
+    if (fields.directoryPersonId) {
+      const person = await client.from('directory_people').select('organization_id, department_id, is_minor').eq('id', fields.directoryPersonId).maybeSingle()
+      if (person.error) throw person.error
+      if (!person.data || person.data.organization_id !== fields.organizationId) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+      // Vertrauen gilt der Person, nicht dem Risiko fuer Dritte (plans/README.md) -- eine
+      // minderjaehrige Person kann sich nicht selbst rechtsverbindlich einwilligen, auch nicht
+      // auf Papier. Derselbe Fund/derselbe Guard wie bei POST /v1/consent-requests.
+      if (person.data.is_minor && fields.signerRole !== 'guardian') {
+        return reply.code(400).send({ error: 'guardian_required_for_minor', correlationId: request.id })
+      }
+      departmentId = person.data.department_id as string | null
+    } else if (departmentId) {
+      // Wie resolveInvitationScope/resolveDirectoryScope an anderer Stelle: departmentId kommt
+      // hier ungeprueft vom Aufrufer und darf nicht ohne Verifikation gegen organizationId in den
+      // Rechtescope einfliessen (gefunden im Code-Review).
+      const resolved = await resolveDirectoryScope(client, fields.organizationId, departmentId, null)
+      if (!resolved) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    }
+    const scope = toPermissionScope(fields.organizationId, departmentId)
+    if (!(await requirePermission(request, reply, 'consent.manage', scope))) return
+
+    const validityMonths = await resolveConsentValidityMonths(client, fields.organizationId, departmentId)
+    const validUntil = validityMonths === null ? null : addMonthsToIsoDate(fields.signedAt, validityMonths)
+
+    const service = supabaseClients.forService()
+    const consentId = randomUUID()
+    const objectPath = `organizations/${fields.organizationId}/consents/${consentId}/nachweis`
+    const upload = await service.storage.from('raw-media').upload(objectPath, buffer, { contentType: filePart.mimetype })
+    if (upload.error) throw upload.error
+
+    const insert = await service
+      .from('consent_records')
+      .insert({
+        id: consentId,
+        organization_id: fields.organizationId,
+        directory_person_id: fields.directoryPersonId ?? null,
+        // Pflichtfeld seit der urspruenglichen Content-Pipeline-Migration (not null, auch nach der
+        // Ergaenzung von directory_person_id in Paket 014) -- bei einer echten Personenzuordnung
+        // dient die stabile UUID selbst als Referenz, es wird kein zusaetzlicher Wert erfunden.
+        pseudonymous_subject_ref: fields.pseudonymousSubjectRef ?? fields.directoryPersonId,
+        scope: fields.scope,
+        scope_structured: fields.scopeStructured,
+        origin: 'paper',
+        evidence_bucket: 'raw-media',
+        evidence_path: objectPath,
+        signed_at: fields.signedAt,
+        signer_name: fields.signerName,
+        signer_role: fields.signerRole,
+        guardian_confirmed: fields.guardianConfirmed,
+        valid_until: validUntil,
+        created_by: request.auth!.userId,
+      })
+      .select(CONSENT_RECORD_SELECT)
+      .single()
+    if (insert.error) throw insert.error
+
+    await recordAuditEvent(request, { organizationId: fields.organizationId, action: 'consent.registered', entityType: 'consent_records', entityId: consentId })
+    return reply.code(201).send(mapConsentRecordRow(insert.data as ConsentRecordRow, new Date()))
+  })
+
+  app.get('/v1/consents', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const query = z.object({ organizationId: UuidSchema, departmentId: UuidSchema.optional(), directoryPersonId: UuidSchema.optional() }).parse(request.query)
+    const scope = toPermissionScope(query.organizationId, query.departmentId)
+    if (!(await requirePermission(request, reply, 'consent.manage', scope))) return
+
+    const service = supabaseClients.forService()
+    let directoryPersonIds: string[] | null = null
+    if (query.directoryPersonId) {
+      directoryPersonIds = [query.directoryPersonId]
+    } else if (query.departmentId) {
+      const people = await fetchAllRows<{ id: string }>((from, to) =>
+        service.from('directory_people').select('id').eq('organization_id', query.organizationId).eq('department_id', query.departmentId!).range(from, to),
+      )
+      directoryPersonIds = people.map((person) => person.id)
+      if (directoryPersonIds.length === 0) return reply.code(200).send([])
+    }
+    let select = service.from('consent_records').select(CONSENT_RECORD_SELECT).eq('organization_id', query.organizationId)
+    if (directoryPersonIds) select = select.in('directory_person_id', directoryPersonIds)
+    const rows = await select.order('created_at', { ascending: false })
+    if (rows.error) throw rows.error
+    const now = new Date()
+    return reply.code(200).send((rows.data as ConsentRecordRow[]).map((row) => mapConsentRecordRow(row, now)))
+  })
+
+  async function loadConsentRecordForScope(
+    client: SupabaseClient, params: { id: string },
+  ): Promise<{ row: ConsentRecordRow; scope: PermissionScope } | 'not_found'> {
+    const existing = await client.from('consent_records').select(CONSENT_RECORD_SELECT).eq('id', params.id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return 'not_found'
+    const row = existing.data as ConsentRecordRow
+    let departmentId: string | null = null
+    if (row.directory_person_id) {
+      const person = await client.from('directory_people').select('department_id').eq('id', row.directory_person_id).maybeSingle()
+      if (person.error) throw person.error
+      departmentId = (person.data?.department_id as string | null) ?? null
+    }
+    return { row, scope: toPermissionScope(row.organization_id, departmentId) }
+  }
+
+  app.get('/v1/consents/:id', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const loaded = await loadConsentRecordForScope(client, params)
+    if (loaded === 'not_found') return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'consent.manage', loaded.scope))) return
+    return reply.code(200).send(mapConsentRecordRow(loaded.row, new Date()))
+  })
+
+  // Kurzlebige signierte URL statt eines dauerhaften Links (Plan 015, Abschnitt 2): Nachweise sind
+  // private Dokumente mit Unterschriften. download:true erzwingt Content-Disposition: attachment
+  // fuer PDFs -- ein PDF wird nie inline angezeigt (dieselbe Ueberlegung wie bei SVG in Paket 009).
+  app.get('/v1/consents/:id/evidence-url', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const loaded = await loadConsentRecordForScope(client, params)
+    if (loaded === 'not_found') return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'consent.manage', loaded.scope))) return
+    const service = supabaseClients.forService()
+    const evidence = await service.from('consent_records').select('evidence_bucket, evidence_path').eq('id', params.id).single()
+    if (evidence.error) throw evidence.error
+    const signed = await service.storage.from(evidence.data.evidence_bucket as string).createSignedUrl(evidence.data.evidence_path as string, 300, { download: true })
+    if (signed.error) throw signed.error
+    await recordAuditEvent(request, { organizationId: loaded.row.organization_id, action: 'consent.evidence_viewed', entityType: 'consent_records', entityId: params.id })
+    return reply.code(200).send({ signedUrl: signed.data.signedUrl, expiresAt: new Date(Date.now() + 300_000).toISOString() })
+  })
+
+  app.post('/v1/consents/:id/revoke', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const input = RevokeConsentRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const loaded = await loadConsentRecordForScope(client, params)
+    if (loaded === 'not_found') return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'consent.manage', loaded.scope))) return
+    if (loaded.row.revoked_at !== null) return reply.code(409).send({ error: 'already_revoked', correlationId: request.id })
+
+    const service = supabaseClients.forService()
+    // .is('revoked_at', null) macht Pruefung und Schreibvorgang atomar -- der vorige Read-Check
+    // allein liesse zwei gleichzeitige Widerrufe den zweiten Grund/Widerrufenden ueberschreiben
+    // (gefunden im Code-Review, gleiches Muster wie die oeffentliche Widerrufsroute unten).
+    const update = await service
+      .from('consent_records')
+      .update({ revoked_at: new Date().toISOString(), revoked_by: input.revokedBy, revocation_reason: input.reason ?? null })
+      .eq('id', params.id)
+      .is('revoked_at', null)
+      .select(CONSENT_RECORD_SELECT)
+      .maybeSingle()
+    if (update.error) throw update.error
+    if (!update.data) return reply.code(409).send({ error: 'already_revoked', correlationId: request.id })
+    // Kaskade (offene Freigaben invalidieren, geplante Publikationen stornieren) laeuft im
+    // Trigger invalidate_approval_after_consent_revocation, nicht hier -- dasselbe Muster wie bei
+    // invalidate_approvals_for_media_change/invalidate_approvals_for_fixture_change.
+    await recordAuditEvent(request, { organizationId: loaded.row.organization_id, action: 'consent.revoked', entityType: 'consent_records', entityId: params.id, metadata: { revokedBy: input.revokedBy } })
+    return reply.code(200).send(mapConsentRecordRow(update.data as ConsentRecordRow, new Date()))
+  })
+
+  // Neue Version statt Bearbeitung (Plan 015: "eine Einwilligung wird nie bearbeitet"). Die alte
+  // Zeile bleibt bestehen und wird per superseded_by verkettet -- evaluateConsent haelt eine
+  // abgeloeste Zeile fuer nie gueltig, unabhaengig von jeder anderen Pruefung.
+  app.post('/v1/consents/:id/supersede', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const input = SupersedeConsentRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const loaded = await loadConsentRecordForScope(client, params)
+    if (loaded === 'not_found') return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'consent.manage', loaded.scope))) return
+    if (loaded.row.superseded_by !== null) return reply.code(409).send({ error: 'already_superseded', correlationId: request.id })
+
+    // Derselbe Fund/derselbe Guard wie bei POST /v1/consents und POST /v1/consent-requests: die
+    // Abloesung darf eine minderjaehrige Person nicht nachtraeglich auf signerRole='self' setzen.
+    if (loaded.row.directory_person_id) {
+      const person = await client.from('directory_people').select('is_minor').eq('id', loaded.row.directory_person_id).single()
+      if (person.error) throw person.error
+      if (person.data.is_minor && input.signerRole !== 'guardian') {
+        return reply.code(400).send({ error: 'guardian_required_for_minor', correlationId: request.id })
+      }
+    }
+
+    const service = supabaseClients.forService()
+    const evidenceOfOriginal = await service.from('consent_records').select('evidence_bucket, evidence_path').eq('id', params.id).single()
+    if (evidenceOfOriginal.error) throw evidenceOfOriginal.error
+
+    const newId = randomUUID()
+    // Eine Ablösung korrigiert den Umfang eines bereits dokumentierten Papier- oder digitalen
+    // Nachweises -- sie laedt kein neues Dokument hoch und uebernimmt deshalb evidence_bucket/-path
+    // unveraendert von der abgeloesten Zeile.
+    const insert = await service
+      .from('consent_records')
+      .insert({
+        id: newId,
+        organization_id: loaded.row.organization_id,
+        directory_person_id: loaded.row.directory_person_id,
+        pseudonymous_subject_ref: loaded.row.pseudonymous_subject_ref,
+        scope: input.scope,
+        scope_structured: input.scopeStructured,
+        origin: loaded.row.origin,
+        evidence_bucket: evidenceOfOriginal.data.evidence_bucket,
+        evidence_path: evidenceOfOriginal.data.evidence_path,
+        signed_at: input.signedAt,
+        signer_name: input.signerName,
+        signer_role: input.signerRole,
+        guardian_confirmed: input.guardianConfirmed,
+        created_by: request.auth!.userId,
+      })
+      .select(CONSENT_RECORD_SELECT)
+      .single()
+    if (insert.error) throw insert.error
+
+    // Wie bei POST /v1/consents/:id/revoke: .is('superseded_by', null) macht die Verkettung atomar.
+    // Trifft sie keine Zeile, hat eine parallele Anfrage bereits abgeloest -- die eben angelegte
+    // Zeile wird dann verworfen, statt zwei Nachfolgerinnen fuer dieselbe Einwilligung zu erzeugen.
+    const linkBack = await service.from('consent_records').update({ superseded_by: newId }).eq('id', params.id).is('superseded_by', null).select('id').maybeSingle()
+    if (linkBack.error) throw linkBack.error
+    if (!linkBack.data) {
+      await service.from('consent_records').delete().eq('id', newId)
+      return reply.code(409).send({ error: 'already_superseded', correlationId: request.id })
+    }
+    await recordAuditEvent(request, { organizationId: loaded.row.organization_id, action: 'consent.superseded', entityType: 'consent_records', entityId: newId, metadata: { supersedes: params.id } })
+    return reply.code(201).send(mapConsentRecordRow(insert.data as ConsentRecordRow, new Date()))
+  })
+
+  // Einfacher In-Prozess-Sliding-Window-Zaehler statt einer neuen Abhaengigkeit (@fastify/rate-limit):
+  // die oeffentlichen Einwilligungsseiten unten sind die exponierteste Flaeche des Systems (Plan
+  // 015, Abschnitt 3) und brauchen ein Rate-Limit pro IP und pro Token. Fuer einen einzelnen
+  // API-Prozess ausreichend; ein mehrknotiges Produktions-Deployment braucht einen gemeinsamen
+  // Speicher (Redis) statt dieser lokalen Map -- dokumentierte Grenze, kein stiller Kompromiss.
+  const rateLimitBuckets = new Map<string, { count: number; resetAt: number }>()
+  function checkRateLimit(key: string, limit: number, windowMs: number): boolean {
+    const now = Date.now()
+    // Diese Routen sind oeffentlich erreichbar; ohne Aufraeumen wuerde jede neue Quell-IP dauerhaft
+    // einen Eintrag belegen (gefunden im Code-Review). Nur bei Bedarf durchsuchen, statt bei jedem
+    // Aufruf ueber die ganze Map zu iterieren.
+    if (rateLimitBuckets.size > 10_000) {
+      for (const [bucketKey, entry] of rateLimitBuckets) {
+        if (entry.resetAt < now) rateLimitBuckets.delete(bucketKey)
+      }
+    }
+    const bucket = rateLimitBuckets.get(key)
+    if (!bucket || bucket.resetAt < now) {
+      rateLimitBuckets.set(key, { count: 1, resetAt: now + windowMs })
+      return true
+    }
+    if (bucket.count >= limit) return false
+    bucket.count += 1
+    return true
+  }
+
+  function buildConsentRequestEmail(options: { to: string; organizationName: string; personLabel: string; respondUrl: string }): EmailMessage {
+    return {
+      to: options.to,
+      subject: `Einwilligung zur Veröffentlichung von Fotos/Videos – ${options.organizationName}`,
+      text: `${options.organizationName} bittet um Ihre Einwilligung zur Veröffentlichung von Fotos/Videos von ${options.personLabel} in sozialen Medien.\n\nZur Anfrage: ${options.respondUrl}\n\nDer Link ist 14 Tage gültig. Eine Einwilligung ist freiwillig und jederzeit für die Zukunft widerrufbar.`,
+    }
+  }
+
+  app.post('/v1/consent-requests', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const input = CreateConsentRequestRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const departmentId = await departmentOfDirectoryPerson(client, input.organizationId, input.directoryPersonId)
+    if (departmentId === 'not_found') return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const scope = toPermissionScope(input.organizationId, departmentId)
+    if (!(await requirePermission(request, reply, 'consent.manage', scope))) return
+
+    const person = await client.from('directory_people').select('first_name, last_name, is_minor').eq('id', input.directoryPersonId).single()
+    if (person.error) throw person.error
+    // Vertrauen gilt der Person, nicht dem Risiko fuer Dritte (plans/README.md, "Keine Befreiung
+    // entfaellt die Minderjaehrigenstufe") -- eine Anfrage direkt an eine minderjaehrige Person
+    // selbst wuerde evaluateConsent NIE einen guardian_missing-Blocker auslösen lassen (der prueft
+    // nur signerRole === 'guardian'), weil consent_requests.recipient_role hier ungeprueft in
+    // consent_records.signer_role/guardian_confirmed uebernommen wird (Widerspruch, wenn hier
+    // 'self' erlaubt waere).
+    if (person.data.is_minor && input.recipientRole !== 'guardian') {
+      return reply.code(400).send({ error: 'guardian_required_for_minor', correlationId: request.id })
+    }
+
+    const service = supabaseClients.forService()
+    const text = await currentOrganizationConsentText(service, input.organizationId)
+    const { rawToken, tokenHash } = generatePublicToken()
+    const insert = await service
+      .from('consent_requests')
+      .insert({
+        organization_id: input.organizationId,
+        department_id: departmentId,
+        directory_person_id: input.directoryPersonId,
+        recipient_email: input.recipientEmail,
+        recipient_role: input.recipientRole,
+        requested_scope: input.requestedScope,
+        text_version: text.id ?? 'default-template',
+        token_hash: tokenHash,
+        expires_at: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+        created_by: request.auth!.userId,
+        correlation_id: request.id,
+      })
+      .select(CONSENT_REQUEST_SELECT)
+      .single()
+    if (insert.error) {
+      // consent_requests_open_unique: schon eine offene Anfrage fuer diese Person und Adresse.
+      if (insert.error.code === '23505') return reply.code(409).send({ error: 'request_already_open', correlationId: request.id })
+      throw insert.error
+    }
+
+    const organizationName = await service.from('organizations').select('name').eq('id', input.organizationId).single()
+    if (organizationName.error) throw organizationName.error
+    const respondUrl = `${environment.WEB_BASE_URL ?? 'http://localhost:4200'}/einwilligung/${rawToken}`
+    // Die Anfrage besteht bereits in der Datenbank -- ein SMTP-Fehler soll den Request nicht mit
+    // 500 scheitern lassen, sondern nur den Versandstatus sichtbar machen (dasselbe Muster wie bei
+    // POST /v1/invitations, gefunden im Code-Review dieses Pakets).
+    let emailDelivered = true
+    try {
+      await emailSender.send(
+        buildConsentRequestEmail({
+          to: input.recipientEmail, organizationName: organizationName.data.name as string,
+          personLabel: `${person.data.first_name as string} ${(person.data.last_name as string).charAt(0)}.`, respondUrl,
+        }),
+      )
+    } catch (error) {
+      emailDelivered = false
+      request.log.error({ err: error, correlationId: request.id }, 'consent request email delivery failed')
+    }
+
+    await recordAuditEvent(request, { organizationId: input.organizationId, action: 'consent_request.created', entityType: 'consent_requests', entityId: insert.data.id as string, metadata: { emailDelivered } })
+    return reply.code(201).send({ ...mapConsentRequestRow(insert.data as ConsentRequestRow), emailDelivered })
+  })
+
+  app.get('/v1/consent-requests', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const query = z.object({ organizationId: UuidSchema, departmentId: UuidSchema.optional() }).parse(request.query)
+    const scope = toPermissionScope(query.organizationId, query.departmentId)
+    if (!(await requirePermission(request, reply, 'consent.manage', scope))) return
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    let select = client.from('consent_requests').select(CONSENT_REQUEST_SELECT).eq('organization_id', query.organizationId)
+    if (query.departmentId) select = select.eq('department_id', query.departmentId)
+    const rows = await select.order('created_at', { ascending: false })
+    if (rows.error) throw rows.error
+    return reply.code(200).send((rows.data as ConsentRequestRow[]).map(mapConsentRequestRow))
+  })
+
+  app.post('/v1/consent-requests/:id/resend', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const existing = await client.from('consent_requests').select(CONSENT_REQUEST_SELECT).eq('id', params.id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const row = existing.data as ConsentRequestRow
+    const scope = toPermissionScope(row.organization_id, row.department_id)
+    if (!(await requirePermission(request, reply, 'consent.manage', scope))) return
+    if (row.status !== 'sent') return reply.code(409).send({ error: 'request_not_open', correlationId: request.id })
+
+    const service = supabaseClients.forService()
+    const { rawToken, tokenHash } = generatePublicToken()
+    const update = await service
+      .from('consent_requests')
+      .update({ token_hash: tokenHash, send_count: row.send_count + 1, last_sent_at: new Date().toISOString() })
+      .eq('id', params.id)
+      .select(CONSENT_REQUEST_SELECT)
+      .single()
+    if (update.error) {
+      if (update.error.code === '23514') return reply.code(409).send({ error: 'resend_limit_reached', correlationId: request.id })
+      throw update.error
+    }
+    const [person, organizationName] = await Promise.all([
+      service.from('directory_people').select('first_name, last_name').eq('id', row.directory_person_id).single(),
+      service.from('organizations').select('name').eq('id', row.organization_id).single(),
+    ])
+    if (person.error) throw person.error
+    if (organizationName.error) throw organizationName.error
+    const respondUrl = `${environment.WEB_BASE_URL ?? 'http://localhost:4200'}/einwilligung/${rawToken}`
+    // Der Token ist bereits rotiert, der alte Link damit ungueltig -- ein SMTP-Fehler darf den
+    // Request trotzdem nicht mit 500 scheitern lassen (gleiches Muster wie beim erstmaligen Versand).
+    let emailDelivered = true
+    try {
+      await emailSender.send(
+        buildConsentRequestEmail({
+          to: row.recipient_email, organizationName: organizationName.data.name as string,
+          personLabel: `${person.data.first_name as string} ${(person.data.last_name as string).charAt(0)}.`, respondUrl,
+        }),
+      )
+    } catch (error) {
+      emailDelivered = false
+      request.log.error({ err: error, correlationId: request.id }, 'consent request email delivery failed')
+    }
+    await recordAuditEvent(request, { organizationId: row.organization_id, action: 'consent_request.resent', entityType: 'consent_requests', entityId: params.id, metadata: { emailDelivered } })
+    return reply.code(200).send({ ...mapConsentRequestRow(update.data as ConsentRequestRow), emailDelivered })
+  })
+
+  // --- Oeffentliche, unauthentifizierte Seiten (Plan 015, Abschnitt 3) ------------------------
+  // Kein requireAuth: ein Erziehungsberechtigter hat kein Vereinskonto. Jede Antwort auf ein
+  // ungueltiges, abgelaufenes oder bereits beantwortetes Token ist absichtlich identisch, damit
+  // ein Token nicht durch unterschiedliche Fehlercodes erraten/bestaetigt werden kann.
+  const CONSENT_TOKEN_INVALID_RESPONSE = { error: 'invalid_or_expired', correlationId: undefined as string | undefined }
+
+  async function findOpenConsentRequestByToken(service: SupabaseClient, rawToken: string): Promise<ConsentRequestRow | null> {
+    const tokenHash = createHash('sha256').update(rawToken).digest('hex')
+    const found = await service.from('consent_requests').select(CONSENT_REQUEST_SELECT).eq('token_hash', tokenHash).maybeSingle()
+    if (found.error) throw found.error
+    if (!found.data) return null
+    const row = found.data as ConsentRequestRow
+    if (row.status !== 'sent') return null
+    if (new Date(row.expires_at) < new Date()) return null
+    return row
+  }
+
+  app.get('/v1/consent-requests/by-token/:token', async (request, reply) => {
+    reply.header('X-Robots-Tag', 'noindex, nofollow')
+    if (!checkRateLimit(`consent-request-view:${request.ip}`, 30, 60_000)) {
+      return reply.code(429).send({ error: 'rate_limited', correlationId: request.id })
+    }
+    const params = z.object({ token: z.string().min(1).max(200) }).parse(request.params)
+    const service = supabaseClients.forService()
+    const row = await findOpenConsentRequestByToken(service, params.token)
+    if (!row) return reply.code(404).send({ ...CONSENT_TOKEN_INVALID_RESPONSE, correlationId: request.id })
+
+    const [person, organizationName, text] = await Promise.all([
+      service.from('directory_people').select('first_name, last_name').eq('id', row.directory_person_id).single(),
+      service.from('organizations').select('name').eq('id', row.organization_id).single(),
+      currentOrganizationConsentText(service, row.organization_id),
+    ])
+    if (person.error) throw person.error
+    if (organizationName.error) throw organizationName.error
+    return reply.code(200).send(
+      PublicConsentRequestViewSchema.parse({
+        organizationName: organizationName.data.name,
+        personLabel: `${person.data.first_name as string} ${(person.data.last_name as string).charAt(0)}.`,
+        textVersion: row.text_version,
+        consentText: text.body,
+        requestedScope: row.requested_scope,
+        expiresAt: row.expires_at,
+        status: row.status,
+      }),
+    )
+  })
+
+  app.post('/v1/consent-requests/by-token/:token/respond', async (request, reply) => {
+    if (!checkRateLimit(`consent-request-respond:${request.ip}`, 10, 60_000)) {
+      return reply.code(429).send({ error: 'rate_limited', correlationId: request.id })
+    }
+    const params = z.object({ token: z.string().min(1).max(200) }).parse(request.params)
+    const input = RespondConsentRequestRequestSchema.parse(request.body)
+    const service = supabaseClients.forService()
+    const row = await findOpenConsentRequestByToken(service, params.token)
+    if (!row) return reply.code(404).send({ ...CONSENT_TOKEN_INVALID_RESPONSE, correlationId: request.id })
+
+    // Datenschutzarmer Abgabenachweis: gehasht mit einem serverseitigen Pfeffer, sonst ist eine
+    // IPv4-Adresse trivial rueckrechenbar (Plan 015, Abschnitt 3).
+    const pepper = environment.CONSENT_RESPONSE_HASH_PEPPER ?? 'local-dev-pepper'
+    const responseIpHash = createHash('sha256').update(`${pepper}:${request.ip}`).digest('hex')
+    const responseUserAgentHash = createHash('sha256').update(`${pepper}:${request.headers['user-agent'] ?? ''}`).digest('hex')
+
+    if (input.decision === 'declined') {
+      const declined = await service
+        .from('consent_requests')
+        .update({ status: 'declined', responded_at: new Date().toISOString(), response_ip_hash: responseIpHash, response_user_agent_hash: responseUserAgentHash })
+        .eq('id', row.id)
+        .eq('status', 'sent')
+      if (declined.error) throw declined.error
+      return reply.code(200).send({ status: 'declined' })
+    }
+
+    const person = await service.from('directory_people').select('is_minor').eq('id', row.directory_person_id).single()
+    if (person.error) throw person.error
+    const { rawToken: revocationRawToken, tokenHash: revocationTokenHash } = generatePublicToken()
+    const consentId = randomUUID()
+    const consentInsert = await service
+      .from('consent_records')
+      .insert({
+        id: consentId,
+        organization_id: row.organization_id,
+        directory_person_id: row.directory_person_id,
+        pseudonymous_subject_ref: row.directory_person_id,
+        scope: describeConsentScope(row.requested_scope).join(' '),
+        scope_structured: row.requested_scope,
+        origin: 'digital',
+        evidence_bucket: 'raw-media',
+        // Kein Dateiupload im digitalen Weg -- der Nachweis IST die Anfrage/Antwort-Zeile
+        // (consent_requests) selbst, referenziert ueber denselben Pfad als Marker statt eines
+        // erfundenen Dateiobjekts. Ehrliche Einordnung in der Oberfläche (Plan, Abschnitt 3):
+        // ein E-Mail-Link belegt nicht die Identitaet des Erziehungsberechtigten.
+        evidence_path: `digital-consent-requests/${row.id}`,
+        signed_at: new Date().toISOString().slice(0, 10),
+        signer_name: null,
+        signer_role: row.recipient_role,
+        guardian_confirmed: row.recipient_role === 'guardian',
+        source_id: null,
+        revocation_token_hash: revocationTokenHash,
+        created_by: row.created_by,
+      })
+      .select(CONSENT_RECORD_SELECT)
+      .single()
+    if (consentInsert.error) throw consentInsert.error
+
+    const granted = await service
+      .from('consent_requests')
+      .update({
+        status: 'granted', responded_at: new Date().toISOString(), consent_record_id: consentId,
+        response_ip_hash: responseIpHash, response_user_agent_hash: responseUserAgentHash,
+      })
+      .eq('id', row.id)
+      .eq('status', 'sent')
+    if (granted.error) throw granted.error
+
+    return reply.code(200).send({
+      status: 'granted',
+      revocationUrl: `${environment.WEB_BASE_URL ?? 'http://localhost:4200'}/einwilligung/widerruf/${revocationRawToken}`,
+    })
+  })
+
+  app.get('/v1/consents/by-revocation-token/:token', async (request, reply) => {
+    reply.header('X-Robots-Tag', 'noindex, nofollow')
+    if (!checkRateLimit(`consent-revocation-view:${request.ip}`, 30, 60_000)) {
+      return reply.code(429).send({ error: 'rate_limited', correlationId: request.id })
+    }
+    const params = z.object({ token: z.string().min(1).max(200) }).parse(request.params)
+    const tokenHash = createHash('sha256').update(params.token).digest('hex')
+    const service = supabaseClients.forService()
+    const found = await service.from('consent_records').select(CONSENT_RECORD_SELECT).eq('revocation_token_hash', tokenHash).maybeSingle()
+    if (found.error) throw found.error
+    if (!found.data) return reply.code(404).send({ ...CONSENT_TOKEN_INVALID_RESPONSE, correlationId: request.id })
+    const row = found.data as ConsentRecordRow
+    const [person, organizationName] = await Promise.all([
+      service.from('directory_people').select('first_name, last_name').eq('id', row.directory_person_id).single(),
+      service.from('organizations').select('name').eq('id', row.organization_id).single(),
+    ])
+    if (person.error) throw person.error
+    if (organizationName.error) throw organizationName.error
+    return reply.code(200).send(
+      PublicConsentRevocationViewSchema.parse({
+        organizationName: organizationName.data.name,
+        personLabel: `${person.data.first_name as string} ${(person.data.last_name as string).charAt(0)}.`,
+        status: row.revoked_at === null ? 'active' : 'already_revoked',
+      }),
+    )
+  })
+
+  app.post('/v1/consents/by-revocation-token/:token', async (request, reply) => {
+    if (!checkRateLimit(`consent-revocation-confirm:${request.ip}`, 10, 60_000)) {
+      return reply.code(429).send({ error: 'rate_limited', correlationId: request.id })
+    }
+    const params = z.object({ token: z.string().min(1).max(200) }).parse(request.params)
+    const tokenHash = createHash('sha256').update(params.token).digest('hex')
+    const service = supabaseClients.forService()
+    const found = await service.from('consent_records').select('id, organization_id, revoked_at').eq('revocation_token_hash', tokenHash).maybeSingle()
+    if (found.error) throw found.error
+    if (!found.data) return reply.code(404).send({ ...CONSENT_TOKEN_INVALID_RESPONSE, correlationId: request.id })
+    if (found.data.revoked_at !== null) return reply.code(200).send({ status: 'already_revoked' })
+
+    const update = await service
+      .from('consent_records')
+      .update({ revoked_at: new Date().toISOString(), revoked_by: 'guardian', revocation_reason: 'Öffentlicher Widerrufslink' })
+      .eq('id', found.data.id)
+      .is('revoked_at', null)
+    if (update.error) throw update.error
+    const audit = await service.from('audit_events').insert({
+      organization_id: found.data.organization_id, actor_user_id: null, action: 'consent.revoked_via_public_link',
+      entity_type: 'consent_records', entity_id: found.data.id, correlation_id: request.id,
+    })
+    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+    return reply.code(200).send({ status: 'revoked' })
   })
 
   app.setErrorHandler((error, request, reply) => {

@@ -39,6 +39,11 @@ const ApiEnvironmentBaseSchema = z.object({
   SMTP_FROM: optionalSecret,
   // Basis-URL des Nuxt-Frontends fuer Links in versendeten E-Mails (Einladungen).
   WEB_BASE_URL: optionalUrl,
+  // Paket 015: Pfeffer fuer den Hash von IP-Adresse/User-Agent bei einer digitalen
+  // Einwilligungsantwort -- ohne Pfeffer ist eine IPv4-Adresse trivial rueckrechenbar (2^32
+  // moegliche Werte). Eigenes Feld statt SECRET_BOX_KEYS zweckzuentfremden: das ist eine
+  // JSON-Map fuer verschluesselte Secrets, kein Klartext-Pfeffer.
+  CONSENT_RESPONSE_HASH_PEPPER: optionalSecret,
 })
 
 // In production the API cannot start without a real database and token-verification secret.
@@ -64,7 +69,7 @@ export const ApiEnvironmentSchema = ApiEnvironmentBaseSchema.superRefine((enviro
   }
 
   if (environment.NODE_ENV !== 'production') return
-  const required = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_JWT_SECRET', 'WEB_BASE_URL'] as const
+  const required = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_JWT_SECRET', 'WEB_BASE_URL', 'CONSENT_RESPONSE_HASH_PEPPER'] as const
   for (const key of required) {
     if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required in production` })
   }

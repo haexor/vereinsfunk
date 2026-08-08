@@ -8,6 +8,7 @@ const requiredProductionEnv = {
   SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
   SUPABASE_JWT_SECRET: 'jwt-secret-at-least-32-characters-long',
   WEB_BASE_URL: 'https://example.org',
+  CONSENT_RESPONSE_HASH_PEPPER: 'pepper-at-least-32-characters-long',
 }
 
 const requiredSmtpEnv = {
@@ -43,6 +44,14 @@ describe('ApiEnvironmentSchema', () => {
         ...requiredSmtpEnv,
       }).success,
     ).toBe(false)
+  })
+
+  // Regression: ohne Pfeffer haesht apps/api/src/app.ts die IP-Adresse mit dem im Quellcode
+  // stehenden Fallback 'local-dev-pepper' -- ein bekannter Pfeffer macht den Hash trivial
+  // rueckrechenbar (2^32 IPv4-Adressen). Gefunden im Code-Review zu Paket 015.
+  it('rejects a production environment missing CONSENT_RESPONSE_HASH_PEPPER', () => {
+    const withoutPepper = { ...requiredProductionEnv, CONSENT_RESPONSE_HASH_PEPPER: undefined }
+    expect(ApiEnvironmentSchema.safeParse(withoutPepper).success).toBe(false)
   })
 
   it('allows EMAIL_PROVIDER=fake outside production', () => {

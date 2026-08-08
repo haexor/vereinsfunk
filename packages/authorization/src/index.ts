@@ -17,6 +17,7 @@ export const permissions = [
   'integration.manage',
   'fixture.manage',
   'event.manage',
+  'consent.manage',
 ] as const
 
 export type Permission = (typeof permissions)[number]
@@ -74,6 +75,9 @@ export const rolePermissions: Readonly<Record<Role, ReadonlySet<Permission>>> = 
     // bei team_manager, aus demselben Grund wie team.manage/integration.manage.
     'fixture.manage',
     'event.manage',
+    // Paket 015: Einwilligungen betreffen Elternkontakt und Rechtsnachweise, dieselbe
+    // Sensitivitaet wie der Elternkontakt aus Paket 014 -- ebenfalls nicht bei team_manager.
+    'consent.manage',
   ]),
   editor: new Set(['post.create', 'post.edit', 'post.submit', 'analytics.view']),
   approver: new Set(['post.approve', 'analytics.view']),
