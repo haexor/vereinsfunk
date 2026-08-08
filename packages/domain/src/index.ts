@@ -501,6 +501,33 @@ export {
   type TextScanResult,
 } from './consent.js'
 
+export {
+  dayWindow,
+  rangeWindow,
+  addDays,
+  daysBetween,
+  isInWindow,
+  median,
+  computeTrend,
+  computeCountMetrics,
+  leadTimeSecondsSamples,
+  approvalDurationSecondsSamples,
+  computeFunnel,
+  funnelStages,
+  type MetricsWindow,
+  type PostCreatedInput,
+  type PublishedTransitionInput,
+  type ApprovalDecisionInput,
+  type PublicationStatusInput,
+  type WorkflowRunInput,
+  type PostVersionInput,
+  type CountMetrics,
+  type ComputeCountMetricsInput,
+  type StatusTransitionInput,
+  type FunnelStage,
+  type FunnelStageCount,
+} from './metrics.js'
+
 export function assertApprovalSnapshot(input: MediaGateInput, derivativeHashes: readonly string[]): void {
   const gate = evaluateMediaGate(input)
   if (!gate.publishable) throw new Error(`Media approval is blocked: ${gate.blockers.join(',')}`)

@@ -172,7 +172,7 @@ async function saveProfile() {
 
 // --- Aufbewahrungsfristen -----------------------------------------------------------------
 
-const retentionDraft = reactive({ rawMediaDays: 90, derivativeEnabled: false, derivativeDays: 90, auditEventDays: 1095, consentEvidenceYears: 5 })
+const retentionDraft = reactive({ rawMediaDays: 90, derivativeEnabled: false, derivativeDays: 90, auditEventDays: 1095, consentEvidenceYears: 5, statusEventDays: 730 })
 watch(retentionSettings, (value) => {
   if (!value) return
   retentionDraft.rawMediaDays = value.rawMediaDays
@@ -180,6 +180,8 @@ watch(retentionSettings, (value) => {
   retentionDraft.derivativeDays = value.derivativeDays ?? 90
   retentionDraft.auditEventDays = value.auditEventDays
   retentionDraft.consentEvidenceYears = value.consentEvidenceYears
+  // Paket 016: Statushistorie (post_status_events) fuer die Durchlaufzeit-Messung.
+  retentionDraft.statusEventDays = value.statusEventDays
 }, { immediate: true })
 
 const retentionSaving = ref(false)
@@ -198,6 +200,7 @@ async function saveRetentionSettings() {
         derivativeDays: retentionDraft.derivativeEnabled ? retentionDraft.derivativeDays : null,
         auditEventDays: retentionDraft.auditEventDays,
         consentEvidenceYears: retentionDraft.consentEvidenceYears,
+        statusEventDays: retentionDraft.statusEventDays,
       },
     })
     retentionSettings.value = RetentionSettingsSchema.parse(response)
@@ -215,6 +218,7 @@ const RULE_KEY_LABELS: Record<string, string> = {
   media_derivatives: 'Abgeleitete Medien (Zuschnitte, Re-Encodes)',
   audit_events: 'Audit-Ereignisse',
   expired_tokens: 'Abgelaufene Einladungen, Anfragen und Freigabelinks',
+  status_events: 'Statushistorie (Auswertung)',
 }
 
 const runResult = ref<RunRetentionResponse | null>(null)
@@ -588,6 +592,10 @@ async function signAuditChain() {
           <label><span class="mb-1 block text-xs font-semibold">Nachweisfrist für Einwilligungen (Jahre)</span>
             <input v-model.number="retentionDraft.consentEvidenceYears" type="number" min="1" max="30" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-sm" />
             <span class="mt-1 block text-[10px] text-[#9aa096]">1 bis 30 Jahre, gerechnet ab Ende der Gültigkeit einer Einwilligung.</span>
+          </label>
+          <label><span class="mb-1 block text-xs font-semibold">Statushistorie für die Auswertung (Tage)</span>
+            <input v-model.number="retentionDraft.statusEventDays" type="number" min="90" max="3650" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-sm" />
+            <span class="mt-1 block text-[10px] text-[#9aa096]">90 bis 3650 Tage. Erfasst, wann ein Beitrag welchen Status durchlaufen hat — Grundlage für Durchlaufzeiten in der Auswertung.</span>
           </label>
           <div>
             <label class="flex items-center gap-2"><input v-model="retentionDraft.derivativeEnabled" type="checkbox" /> <span class="text-xs font-semibold">Abgeleitete Medien automatisch löschen</span></label>
