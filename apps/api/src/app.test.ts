@@ -60,7 +60,10 @@ function serviceClientCapturingAudit(captured: Record<string, unknown>[]): Supab
 // Paket 025: POST /v1/submissions legt bei vollstaendigem Quellmaterial jetzt echt einen
 // post/post_version an (Service Role, keine Insert-Policy fuer authenticated) -- dieser Fake
 // deckt genau die Schreibfolge ab, die der Handler dafuer auslöst.
-function draftCreationServiceClient(ids: { postId?: string; postVersionId?: string } = {}): SupabaseClient {
+function draftCreationServiceClient(
+  ids: { postId?: string; postVersionId?: string } = {},
+  captured: { versionRow?: Record<string, unknown> } = {},
+): SupabaseClient {
   const postId = ids.postId ?? '20000000-0000-4000-8000-000000000001'
   const postVersionId = ids.postVersionId ?? '20000000-1000-4000-8000-000000000001'
   return {
@@ -71,7 +74,14 @@ function draftCreationServiceClient(ids: { postId?: string; postVersionId?: stri
           update: () => ({ eq: async () => ({ error: null }) }),
         }
       }
-      if (table === 'post_versions') return { insert: () => ({ select: () => ({ single: async () => ({ data: { id: postVersionId }, error: null }) }) }) }
+      if (table === 'post_versions') {
+        return {
+          insert: (row: Record<string, unknown>) => {
+            captured.versionRow = row
+            return { select: () => ({ single: async () => ({ data: { id: postVersionId }, error: null }) }) }
+          },
+        }
+      }
       if (table === 'post_variants') return { insert: async () => ({ error: null }) }
       if (table === 'audit_events') return { insert: async () => ({ error: null }) }
       throw new Error(`unexpected table in service test fake: ${table}`)
@@ -258,6 +268,7 @@ describe('api', () => {
   it('accepts a valid token with the required permission', async () => {
     // Paket 011: die Route persistiert jetzt echt und prueft evaluateSubmitPermission vorher --
     // ohne eigene policy_settings/member_review_trust-Zeilen bleiben beide Pruefungen permissiv.
+    const captured: { versionRow?: Record<string, unknown> } = {}
     const submissionClients: SupabaseClientFactory = {
       forUser: () =>
         ({
@@ -268,7 +279,7 @@ describe('api', () => {
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
-      forService: () => draftCreationServiceClient(),
+      forService: () => draftCreationServiceClient({}, captured),
     }
     const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: submissionClients })
     const token = await signAccessToken(USER_ID)
@@ -289,6 +300,13 @@ describe('api', () => {
     // Paket 025: vollstaendiges Quellmaterial (keine missingFacts) erzeugt jetzt einen echten
     // post/post_version statt nur einer Vorschau.
     expect(response.json()).toMatchObject({ status: 'queued', postId: '20000000-0000-4000-8000-000000000001', postVersionId: '20000000-1000-4000-8000-000000000001' })
+    // Plans/025, STOP-Bedingung: schedule_publication/available-channels lesen
+    // effective_config_snapshot->'config'->'allowedChannelIds' direkt -- eine Regression zur
+    // unveraenderten EffectiveConfig-Verschachtelung (config.policies.allowedChannelIds) waere ein
+    // stiller Policy-Bypass, den kein Testfehler anzeigen wuerde.
+    const snapshot = captured.versionRow!.effective_config_snapshot as { config: Record<string, unknown> }
+    expect(snapshot.config).toHaveProperty('allowedChannelIds')
+    expect(snapshot.config).not.toHaveProperty('policies')
   })
 
   // Paket 025: nur der vollstaendige Fall (keine missingFacts) legt einen Entwurf an --
@@ -2152,7 +2170,11 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
                 return chain({ data: { token_ciphertext: ciphertextToBytea(sealed.ciphertext), token_key_version: 'v1' }, error: null })
               }
               if (table === 'post_media') return chain({ data: [], error: null })
-              if (table === 'publication_attempts') return { insert: async () => ({ error: null }) }
+              // chain() liefert zusaetzlich zum insert() die select().eq().order().limit().maybeSingle()-Kette
+              // fuer die naechste attempt_number (Code-Review zu PR #25: attempt_number darf nicht mehr
+              // hartkodiert 1 sein, unique(publication_id,attempt_number) wuerde sonst einen Retry sprengen).
+              if (table === 'publication_attempts') return { ...chain({ data: null, error: null }), insert: async () => ({ error: null }) }
+              if (table === 'publication_media_grants') return { update: () => ({ eq: () => ({ is: async () => ({ error: null }) }) }) }
               throw new Error(`unexpected table in service fake: ${table}`)
             },
           }) as unknown as SupabaseClient,
@@ -2165,38 +2187,91 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
     })
 
     it('publishes successfully once an approved media derivative exists, records the attempt and audits it', async () => {
-      const auditCaptured: Record<string, unknown>[] = []
+      process.env.API_PUBLIC_BASE_URL = 'https://api.example.test'
+      try {
+        const auditCaptured: Record<string, unknown>[] = []
+        const grantsRevoked: Record<string, unknown>[] = []
+        const clients: SupabaseClientFactory = {
+          ...readOnlyClients(),
+          forService: () =>
+            ({
+              from: (table: string) => {
+                if (table === 'publications') return { update: () => chain({ data: { id: PUBLICATION_ID }, error: null }) }
+                if (table === 'social_connections') return chain({ data: { external_account_id: 'page-123' }, error: null })
+                if (table === 'social_connection_secrets') {
+                  const sealed = createSecretBox({ v1: Buffer.alloc(32, 7).toString('base64') }, 'v1').seal('fake-access-token', PUB_SOCIAL_CONNECTION_ID)
+                  return chain({ data: { token_ciphertext: ciphertextToBytea(sealed.ciphertext), token_key_version: 'v1' }, error: null })
+                }
+                if (table === 'post_media') return chain({ data: [{ position: 0, media_derivative_id: '25000000-5000-4000-8000-000000000001' }], error: null })
+                if (table === 'media_derivatives') return chain({ data: { id: '25000000-5000-4000-8000-000000000001', sha256: 'a'.repeat(64), mime_type: 'image/png', status: 'ready' }, error: null })
+                if (table === 'publication_media_grants') {
+                  return {
+                    insert: async () => ({ error: null }),
+                    update: (payload: Record<string, unknown>) => ({ eq: () => ({ is: async () => { grantsRevoked.push(payload); return { error: null } } }) }),
+                  }
+                }
+                if (table === 'publication_attempts') return { ...chain({ data: null, error: null }), insert: async () => ({ error: null }) }
+                if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { auditCaptured.push(row); return { error: null } } }
+                throw new Error(`unexpected table in service fake: ${table}`)
+              },
+            }) as unknown as SupabaseClient,
+        }
+        const publisher: SocialPublisher = {
+          async validate() { return { valid: true, errors: [] } },
+          async publish() { return { externalId: 'fb_post_1', status: 'published', permalink: 'https://facebook.com/fb_post_1' } },
+          async reconcile() { return { externalId: 'fb_post_1', status: 'published' } },
+        }
+        const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients, publisher })
+        const token = await signAccessToken(USER_ID)
+        const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
+        expect(response.statusCode).toBe(200)
+        expect(response.json()).toMatchObject({ id: PUBLICATION_ID, status: 'published', externalId: 'fb_post_1', permalink: 'https://facebook.com/fb_post_1' })
+        expect(auditCaptured).toMatchObject([{ action: 'post.published', entity_id: PUBLICATION_ID }])
+        // Code-Review zu PR #25: Grants muessen nach einem abgeschlossenen Versuch widerrufen werden,
+        // sonst bleibt das Medium die volle TTL unauthentifiziert abrufbar.
+        expect(grantsRevoked).toHaveLength(1)
+        expect(grantsRevoked[0]).toHaveProperty('revoked_at')
+      } finally {
+        delete process.env.API_PUBLIC_BASE_URL
+      }
+    })
+
+    it('classifies an unrecognizable publish() failure as unknown/action_required and returns 502', async () => {
+      // Code-Review zu PR #25: der catch-Zweig blieb bisher ungetestet. Ohne Status-Code im
+      // Fehlertext (anders als MetaPublishers "... (404)") kann keine 4xx/5xx-Unterscheidung
+      // getroffen werden -- das ist der dokumentierte 'unknown'-Fall aus der Klassifikation.
+      const publicationUpdates: Record<string, unknown>[] = []
+      const attemptsCaptured: Record<string, unknown>[] = []
       const clients: SupabaseClientFactory = {
         ...readOnlyClients(),
         forService: () =>
           ({
             from: (table: string) => {
-              if (table === 'publications') return { update: () => chain({ data: { id: PUBLICATION_ID }, error: null }) }
+              if (table === 'publications') return { update: (payload: Record<string, unknown>) => { publicationUpdates.push(payload); return chain({ data: { id: PUBLICATION_ID }, error: null }) } }
               if (table === 'social_connections') return chain({ data: { external_account_id: 'page-123' }, error: null })
               if (table === 'social_connection_secrets') {
                 const sealed = createSecretBox({ v1: Buffer.alloc(32, 7).toString('base64') }, 'v1').seal('fake-access-token', PUB_SOCIAL_CONNECTION_ID)
                 return chain({ data: { token_ciphertext: ciphertextToBytea(sealed.ciphertext), token_key_version: 'v1' }, error: null })
               }
-              if (table === 'post_media') return chain({ data: [{ position: 0, media_derivative_id: '25000000-5000-4000-8000-000000000001' }], error: null })
-              if (table === 'media_derivatives') return chain({ data: { id: '25000000-5000-4000-8000-000000000001', sha256: 'a'.repeat(64), mime_type: 'image/png', status: 'ready' }, error: null })
-              if (table === 'publication_media_grants') return { insert: async () => ({ error: null }) }
-              if (table === 'publication_attempts') return { insert: async () => ({ error: null }) }
-              if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { auditCaptured.push(row); return { error: null } } }
+              if (table === 'post_media') return chain({ data: [], error: null })
+              if (table === 'publication_attempts') return { ...chain({ data: null, error: null }), insert: async (row: Record<string, unknown>) => { attemptsCaptured.push(row); return { error: null } } }
+              if (table === 'publication_media_grants') return { update: () => ({ eq: () => ({ is: async () => ({ error: null }) }) }) }
               throw new Error(`unexpected table in service fake: ${table}`)
             },
           }) as unknown as SupabaseClient,
       }
       const publisher: SocialPublisher = {
         async validate() { return { valid: true, errors: [] } },
-        async publish() { return { externalId: 'fb_post_1', status: 'published', permalink: 'https://facebook.com/fb_post_1' } },
-        async reconcile() { return { externalId: 'fb_post_1', status: 'published' } },
+        async publish() { throw new Error('graph api unreachable') },
+        async reconcile() { return { externalId: 'x', status: 'unknown' } },
       }
       const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients, publisher })
       const token = await signAccessToken(USER_ID)
       const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
-      expect(response.statusCode).toBe(200)
-      expect(response.json()).toMatchObject({ id: PUBLICATION_ID, status: 'published', externalId: 'fb_post_1', permalink: 'https://facebook.com/fb_post_1' })
-      expect(auditCaptured).toMatchObject([{ action: 'post.published', entity_id: PUBLICATION_ID }])
+      expect(response.statusCode).toBe(502)
+      expect(response.json()).toMatchObject({ error: 'publish_failed' })
+      expect(publicationUpdates.at(-1)).toMatchObject({ status: 'action_required' })
+      expect(attemptsCaptured.at(-1)).toMatchObject({ status: 'failed', error_class: 'unknown' })
     })
   })
 

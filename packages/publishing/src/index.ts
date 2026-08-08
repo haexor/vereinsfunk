@@ -14,11 +14,15 @@ export class FakePublisher implements SocialPublisher {
   async reconcile(input: PublicationReference): Promise<PublicationResult> { return [...this.publications.values()].find((result) => result.externalId === input.externalId) ?? { externalId: input.externalId ?? `unknown_${input.publicationId}`, status: 'unknown' } }
 }
 
-export interface MetaPublisherOptions { graphVersion: string; accessToken: string; instagramAccountId?: string; facebookPageId?: string; fetch?: typeof fetch }
+export interface MetaPublisherOptions { graphVersion: string; accessToken: string; instagramAccountId?: string; facebookPageId?: string; timeoutMs?: number; fetch?: typeof fetch }
+// Meta antwortet auf einen Publish-Aufruf normalerweise deutlich schneller -- ohne Abbruch haengt
+// der aufrufende API-Request bis zum Socket-Timeout (dieselbe Lehre wie bei RealMetaOAuthClient).
+const META_PUBLISH_TIMEOUT_MS = 15_000
 /** Direct Graph API adapter. Tokens and media grants are created server-side and never accepted from a browser. */
 export class MetaPublisher implements SocialPublisher {
   private readonly request: typeof fetch
-  constructor(private readonly options: MetaPublisherOptions) { this.request = options.fetch ?? fetch }
+  private readonly timeoutMs: number
+  constructor(private readonly options: MetaPublisherOptions) { this.request = options.fetch ?? fetch; this.timeoutMs = options.timeoutMs ?? META_PUBLISH_TIMEOUT_MS }
   async validate(input: PublicationInput): Promise<ValidationResult> { const fake = new FakePublisher(); const base = await fake.validate(input); if (input.platform === 'instagram' && !this.options.instagramAccountId) return { valid: false, errors: [...base.errors, 'Instagram account is not configured'] }; if (input.platform === 'facebook' && !this.options.facebookPageId) return { valid: false, errors: [...base.errors, 'Facebook page is not configured'] }; return base }
   async publish(input: PublicationInput): Promise<PublicationResult> {
     const validation = await this.validate(input); if (!validation.valid) throw new Error(validation.errors.join(', '))
@@ -28,12 +32,12 @@ export class MetaPublisher implements SocialPublisher {
     const endpoint = input.platform === 'instagram' ? `${base}/${target}/media` : `${base}/${target}/photos`
     const media = input.media[0]!
     const body = new URLSearchParams({ caption: input.caption, ...(input.platform === 'instagram' ? { image_url: media.grantUrl } : { url: media.grantUrl }) })
-    const response = await this.request(endpoint, { method: 'POST', headers, body })
+    const response = await this.request(endpoint, { method: 'POST', headers, body, signal: AbortSignal.timeout(this.timeoutMs) })
     if (!response.ok) throw new Error(`Meta publish request failed (${response.status})`)
     const data: unknown = await response.json(); const containerId = typeof data === 'object' && data !== null && 'id' in data && typeof data.id === 'string' ? data.id : undefined
     if (!containerId) throw new Error('Meta response did not contain an ID; reconcile before retrying')
     if (input.platform === 'facebook') return { externalId: containerId, status: 'published' }
-    const publishResponse = await this.request(`${base}/${target}/media_publish`, { method: 'POST', headers, body: new URLSearchParams({ creation_id: containerId }) })
+    const publishResponse = await this.request(`${base}/${target}/media_publish`, { method: 'POST', headers, body: new URLSearchParams({ creation_id: containerId }), signal: AbortSignal.timeout(this.timeoutMs) })
     if (!publishResponse.ok) throw new Error(`Meta media_publish request failed (${publishResponse.status})`)
     const publishData: unknown = await publishResponse.json(); const externalId = typeof publishData === 'object' && publishData !== null && 'id' in publishData && typeof publishData.id === 'string' ? publishData.id : undefined
     if (!externalId) throw new Error('Meta response did not contain a published media ID; reconcile before retrying')
