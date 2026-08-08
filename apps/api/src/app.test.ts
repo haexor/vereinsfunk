@@ -4708,10 +4708,10 @@ describe('Paket 020: Rechtliche Pflichten und Datenschutzbetrieb', () => {
             from: (table: string) => {
               if (table === 'retention_settings') {
                 return {
-                  select: () => chain({ data: null, error: null }),
-                  insert: (row: Record<string, unknown>) => {
+                  select: () => chain(inserted ? { data: { ...RETENTION_SETTINGS_ROW, updated_by: USER_ID }, error: null } : { data: null, error: null }),
+                  upsert: () => {
                     inserted = true
-                    return { select: () => ({ single: async () => ({ data: { ...RETENTION_SETTINGS_ROW, updated_by: row.updated_by }, error: null }) }) }
+                    return chain({ data: null, error: null })
                   },
                 }
               }
@@ -5275,6 +5275,9 @@ describe('Paket 020: Rechtliche Pflichten und Datenschutzbetrieb', () => {
           ({
             from: (table: string) => {
               if (table === 'audit_chain_signatures') return chain({ data: { signed_at: '2026-03-01T00:00:00Z', head_hash: 'abc123', signature: signed.signature, key_version: signed.keyVersion }, error: null })
+              // Der signierte Kopf-Hash muss weiterhin als hash einer audit_events-Zeile dieses
+              // Vereins vorkommen, sonst waere die Kette trotz gueltiger Signatur manipuliert.
+              if (table === 'audit_events') return chain({ data: [{ id: 'still-present' }], error: null })
               throw new Error(`unexpected table: ${table}`)
             },
             rpc: async (fn: string) => {
@@ -5360,7 +5363,7 @@ describe('Paket 020: Rechtliche Pflichten und Datenschutzbetrieb', () => {
                     organization_id: ORGANIZATION_ID, legal_name: 'SV Nordstadt e.V.', legal_form: 'e_v', register_court: 'AG Musterstadt',
                     register_number: 'VR 1234', street: 'Vereinsweg', house_number: '1', postal_code: '12345', city: 'Musterstadt',
                     country_code: 'DE', contact_email: 'info@example.local', contact_phone: null, website_url: null, founded_year: 1921,
-                    responsible_person_profile_id: null,
+                    responsible_person_profile_id: null, imprint_published: false,
                   },
                   error: null,
                 })
@@ -5386,7 +5389,7 @@ describe('Paket 020: Rechtliche Pflichten und Datenschutzbetrieb', () => {
           ({
             from: (table: string) => {
               if (table === 'organizations') return chain({ data: { name: 'SV Nordstadt' }, error: null })
-              if (table === 'organization_profiles') return chain({ data: { legal_name: 'SV Nordstadt e.V.', legal_form: 'e_v', register_court: null, register_number: null, street: null, house_number: null, postal_code: null, city: null, country_code: 'DE', contact_email: 'info@example.local', contact_phone: null, website_url: null, responsible_person_profile_id: null }, error: null })
+              if (table === 'organization_profiles') return chain({ data: { legal_name: 'SV Nordstadt e.V.', legal_form: 'e_v', register_court: null, register_number: null, street: null, house_number: null, postal_code: null, city: null, country_code: 'DE', contact_email: 'info@example.local', contact_phone: null, website_url: null, responsible_person_profile_id: null, imprint_published: true }, error: null })
               throw new Error(`unexpected table: ${table}`)
             },
           }) as unknown as SupabaseClient,
@@ -5395,6 +5398,25 @@ describe('Paket 020: Rechtliche Pflichten und Datenschutzbetrieb', () => {
       const response = await app.inject({ method: 'GET', url: `/v1/organizations/${ORGANIZATION_ID}/imprint` })
       expect(response.statusCode).toBe(200)
       expect(response.json()).toMatchObject({ organizationName: 'SV Nordstadt', legalName: 'SV Nordstadt e.V.' })
+    })
+
+    // Regression (adversariale Pruefung): ohne ausdrueckliche Freigabe darf diese Route keine
+    // Kontakt-/Adress-/Registerangaben ausliefern, auch wenn organization_profiles befuellt ist.
+    it('returns not_found when the organization has not published its imprint', async () => {
+      const clients: SupabaseClientFactory = {
+        forUser: () => ({}) as unknown as SupabaseClient,
+        forService: () =>
+          ({
+            from: (table: string) => {
+              if (table === 'organizations') return chain({ data: { name: 'SV Nordstadt' }, error: null })
+              if (table === 'organization_profiles') return chain({ data: { legal_name: 'SV Nordstadt e.V.', legal_form: 'e_v', register_court: null, register_number: null, street: null, house_number: null, postal_code: null, city: null, country_code: 'DE', contact_email: 'info@example.local', contact_phone: null, website_url: null, responsible_person_profile_id: null, imprint_published: false }, error: null })
+              throw new Error(`unexpected table: ${table}`)
+            },
+          }) as unknown as SupabaseClient,
+      }
+      const app = await startApp({ supabaseClients: clients })
+      const response = await app.inject({ method: 'GET', url: `/v1/organizations/${ORGANIZATION_ID}/imprint` })
+      expect(response.statusCode).toBe(404)
     })
 
     it('returns not_found for an unknown organization', async () => {
@@ -5445,7 +5467,7 @@ describe('Paket 020: Rechtliche Pflichten und Datenschutzbetrieb', () => {
         forService: () =>
           ({
             from: (table: string) => {
-              if (table === 'social_connections') return { select: () => ({ eq: () => ({ eq: () => ({ limit: async () => ({ data: [{ id: 'channel-1' }], error: null }) }) }) }) }
+              if (table === 'social_connections') return chain({ data: [{ id: 'channel-1' }], error: null })
               throw new Error(`unexpected table: ${table}`)
             },
           }) as unknown as SupabaseClient,
@@ -5457,6 +5479,41 @@ describe('Paket 020: Rechtliche Pflichten und Datenschutzbetrieb', () => {
       })
       expect(response.statusCode).toBe(409)
       expect(response.json()).toMatchObject({ error: 'editorial_responsible_cannot_be_removed' })
+    })
+
+    // Regression (adversariale Pruefung): ein archivierter/getrennter Kanal darf die Entfernung
+    // nicht mehr blockieren, weil DELETE /v1/channels/:id die Zeile stehen laesst statt sie zu
+    // loeschen -- ohne den archived_at-Filter waere die benannte Person dauerhaft unentfernbar.
+    it('allows removing a membership when the only matching channel is archived', async () => {
+      const clients: SupabaseClientFactory = {
+        forUser: () =>
+          ({
+            from: (table: string) => {
+              if (table === 'organization_memberships') {
+                return {
+                  select: () => chain({ data: { organization_id: ORGANIZATION_ID, department_id: null, team_id: null, user_id: USER_ID, role: 'editor' }, error: null }),
+                  delete: () => ({ eq: () => ({ select: async () => ({ data: [{ id: MEMBERSHIP_ID }], error: null }) }) }),
+                }
+              }
+              if (table === 'organization_profiles') return chain({ data: { responsible_person_profile_id: null }, error: null })
+              throw new Error(`unexpected table: ${table}`)
+            },
+          }) as unknown as SupabaseClient,
+        forService: () =>
+          ({
+            from: (table: string) => {
+              if (table === 'social_connections') return chain({ data: [], error: null })
+              if (table === 'audit_events') return { insert: async () => ({ error: null }) }
+              throw new Error(`unexpected table: ${table}`)
+            },
+          }) as unknown as SupabaseClient,
+      }
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({
+        method: 'DELETE', url: `/v1/memberships/${MEMBERSHIP_ID}?scope=organization`, headers: { authorization: `Bearer ${token}` },
+      })
+      expect(response.statusCode).toBe(204)
     })
   })
 })

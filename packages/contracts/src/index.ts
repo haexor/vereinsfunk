@@ -122,7 +122,10 @@ export const ConsentRecordSchema = z.object({
   id: UuidSchema,
   organizationId: UuidSchema,
   directoryPersonId: UuidSchema.nullable(),
-  pseudonymousSubjectRef: z.string(),
+  // POST /v1/data-subjects/:personId/erase setzt dieses Feld auf NULL (die Zeile selbst bleibt als
+  // Nachweis bestehen, nur die identifizierende Verknuepfung verschwindet) -- nicht nullable haette
+  // eine sonst gueltige Anfrage mit ZodError und 400 invalid_request scheitern lassen.
+  pseudonymousSubjectRef: z.string().nullable(),
   scope: z.string(),
   scopeStructured: ConsentScopeSchema,
   origin: ConsentOriginSchema,
@@ -504,6 +507,10 @@ const OrganizationProfileFieldsSchema = z.object({
   websiteUrl: z.url().nullable().optional(),
   foundedYear: z.int().min(1800).max(2100).nullable().optional(),
   responsiblePersonProfileId: UuidSchema.nullable().optional(),
+  // Ausdrueckliche Freigabe fuer GET /v1/organizations/:id/imprint (oeffentlich, ohne Anmeldung) --
+  // ohne dieses Feld wuerden Kontakt-/Adress-/Registerangaben, die nur zur internen Verwaltung
+  // eingetragen wurden, ungefragt veroeffentlicht (adversariale Pruefung). Default false.
+  imprintPublished: z.boolean().optional(),
 })
 export const OrganizationProfileUpdateSchema = OrganizationProfileFieldsSchema.refine(
   (value) => Object.keys(value).length > 0,
@@ -512,6 +519,7 @@ export const OrganizationProfileUpdateSchema = OrganizationProfileFieldsSchema.r
 export const OrganizationProfileSchema = OrganizationProfileFieldsSchema.extend({
   organizationId: UuidSchema,
   countryCode: CountryCodeSchema,
+  imprintPublished: z.boolean(),
 })
 
 // Nur Felder, die eine Abteilung/Mannschaft ueberhaupt selbst setzen kann (siehe

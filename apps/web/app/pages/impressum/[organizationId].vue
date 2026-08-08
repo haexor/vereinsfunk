@@ -25,6 +25,19 @@ function orNotProvided(value: string | null): string {
   return value ?? 'nicht angegeben'
 }
 
+// new URL() akzeptiert auch javascript:-URIs als gueltige URL (WHATWG-Standard) -- ohne diese
+// Pruefung koennte ein Verein hier einen aktiven Link mit ausfuehrbarem Inhalt hinterlegen, der auf
+// dieser oeffentlichen, anmeldungsfreien Seite jedem Besucher angezeigt wird.
+function safeHttpUrl(value: string | null): string | null {
+  if (!value) return null
+  try {
+    const parsed = new URL(value)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? value : null
+  } catch {
+    return null
+  }
+}
+
 // useAsyncData statt eines client-only onMounted-Fetches: diese Seite soll gerade OHNE
 // JavaScript und fuer Suchmaschinen/Link-Vorschauen lesbar sein (kein noindex, im Gegensatz zu
 // den Einwilligungs-Token-Seiten, siehe Dateikommentar oben) -- ein "if (import.meta.client)"
@@ -102,7 +115,7 @@ useHead({ title: computed(() => (imprint.value ? `Impressum — ${imprint.value.
         <p class="mt-2 text-sm text-[#43483f]">
           E-Mail: {{ orNotProvided(imprint.contactEmail) }}<br />
           Telefon: {{ orNotProvided(imprint.contactPhone) }}<br />
-          Website: <template v-if="imprint.websiteUrl"><a :href="imprint.websiteUrl" class="font-semibold text-forest" rel="noopener">{{ imprint.websiteUrl }}</a></template><template v-else>nicht angegeben</template>
+          Website: <template v-if="safeHttpUrl(imprint.websiteUrl)"><a :href="safeHttpUrl(imprint.websiteUrl)!" class="font-semibold text-forest" rel="noopener">{{ imprint.websiteUrl }}</a></template><template v-else>nicht angegeben</template>
         </p>
       </section>
 

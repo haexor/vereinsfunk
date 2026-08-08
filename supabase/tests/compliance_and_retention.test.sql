@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(47);
+select plan(48);
 
 set local role postgres;
 
@@ -61,6 +61,9 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub', '71000000-0000-4000-8000-000000000001', true);
 select is((select count(*)::integer from public.retention_deletions where organization_id = '71000000-1000-4000-8000-000000000001'), 1,
   'the organization admin sees the retention deletion log of their own club');
+select set_config('request.jwt.claim.sub', '71000000-0000-4000-8000-000000000004', true);
+select is((select count(*)::integer from public.retention_deletions where organization_id = '71000000-1000-4000-8000-000000000001'), 0,
+  'a foreign organization admin sees none of this club''s retention deletion log');
 
 -- 8-9: data_subject_requests -- due_at wird per Trigger aus received_at gesetzt, ein Kalendermonat,
 -- auch am Monatsende (Postgres' date+interval normalisiert bereits korrekt auf den letzten
@@ -320,4 +323,4 @@ update public.consent_records set pseudonymous_subject_ref = null, signer_name =
 select ok(true, 'pseudonymous_subject_ref and signer_name can be cleared on an existing consent record');
 
 select * from finish();
-commit;
+rollback;

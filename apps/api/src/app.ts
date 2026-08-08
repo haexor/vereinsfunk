@@ -269,6 +269,7 @@ const PROFILE_UPDATE_COLUMNS: Record<string, string> = {
   websiteUrl: 'website_url',
   foundedYear: 'founded_year',
   responsiblePersonProfileId: 'responsible_person_profile_id',
+  imprintPublished: 'imprint_published',
 }
 
 function toProfileUpdatePayload(input: Record<string, unknown>): Record<string, unknown> {
@@ -561,7 +562,7 @@ type ConsentRecordRow = {
   id: string
   organization_id: string
   directory_person_id: string | null
-  pseudonymous_subject_ref: string
+  pseudonymous_subject_ref: string | null
   scope: string
   scope_structured: ConsentScope
   origin: 'paper' | 'digital' | 'imported'
@@ -3494,6 +3495,10 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       .select('id')
       .eq('organization_id', scope.organizationId)
       .eq('editorial_responsible_profile_id', existing.data.user_id)
+      // Ein getrennter/archivierter Kanal veroeffentlicht nichts mehr und traegt keine
+      // presserechtliche Verantwortung -- ohne diesen Filter bliebe die benannte Person
+      // dauerhaft unentfernbar, weil DELETE /v1/channels/:id die Zeile bewusst stehen laesst.
+      .is('archived_at', null)
       .limit(1)
     if (editorialResponsible.error) throw editorialResponsible.error
     if (editorialResponsible.data.length > 0) {
@@ -6954,9 +6959,16 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const existing = await service.from('retention_settings').select(RETENTION_SETTINGS_COLUMNS).eq('organization_id', organizationId).maybeSingle()
     if (existing.error) throw existing.error
     if (existing.data) return existing.data
-    const inserted = await service.from('retention_settings').insert({ organization_id: organizationId, updated_by: actorUserId }).select(RETENTION_SETTINGS_COLUMNS).single()
+    // upsert statt insert: zwei gleichzeitige Aufrufe (die Oberflaeche laedt mehrere
+    // Aufbewahrungsrouten parallel) liefen sonst im zweiten Aufruf in den Primaerschluessel
+    // und antworteten mit 500 statt mit den Standardwerten.
+    const inserted = await service
+      .from('retention_settings')
+      .upsert({ organization_id: organizationId, updated_by: actorUserId }, { onConflict: 'organization_id', ignoreDuplicates: true })
     if (inserted.error) throw inserted.error
-    return inserted.data
+    const reread = await service.from('retention_settings').select(RETENTION_SETTINGS_COLUMNS).eq('organization_id', organizationId).single()
+    if (reread.error) throw reread.error
+    return reread.data
   }
 
   app.get('/v1/organizations/:id/retention-settings', async (request, reply) => {
@@ -7040,12 +7052,36 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const correlationId = randomUUID()
     const results: { ruleKey: string; entityType: string; entityCount: number; cutoffDate: string }[] = []
 
+    const CHUNK_SIZE = 100
+    function chunked<T>(values: readonly T[]): T[][] {
+      const chunks: T[][] = []
+      for (let offset = 0; offset < values.length; offset += CHUNK_SIZE) chunks.push(values.slice(offset, offset + CHUNK_SIZE))
+      return chunks
+    }
+
     async function removeStorageObjects(rows: readonly { bucket_id: string; object_path: string }[]): Promise<void> {
       const pathsByBucket = new Map<string, string[]>()
       for (const row of rows) pathsByBucket.set(row.bucket_id, [...(pathsByBucket.get(row.bucket_id) ?? []), row.object_path])
       for (const [bucketId, paths] of pathsByBucket) {
-        const removed = await service.storage.from(bucketId).remove(paths)
-        if (removed.error) throw removed.error
+        for (const batch of chunked(paths)) {
+          const removed = await service.storage.from(bucketId).remove(batch)
+          if (removed.error) throw removed.error
+        }
+      }
+    }
+
+    // Die IDs stehen als Query-String in der URL -- eine unbegrenzte Liste reisst die
+    // Header-Grenze des Gateways (dieselbe Grenze wie bei den Profil-Bloecken in GET /members).
+    async function deleteByIds(table: string, ids: readonly string[]): Promise<void> {
+      for (const batch of chunked(ids)) {
+        const deleted = await service.from(table).delete().in('id', batch)
+        if (deleted.error) throw deleted.error
+      }
+    }
+    async function updateByIds(table: string, payload: Record<string, unknown>, ids: readonly string[]): Promise<void> {
+      for (const batch of chunked(ids)) {
+        const updated = await service.from(table).update(payload).in('id', batch)
+        if (updated.error) throw updated.error
       }
     }
 
@@ -7057,8 +7093,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const rawMediaRows = rawMediaCandidates.data as { media_asset_id: string; bucket_id: string; object_path: string }[]
     if (!input.dryRun && rawMediaRows.length > 0) {
       await removeStorageObjects(rawMediaRows)
-      const updated = await service.from('media_assets').update({ upload_status: 'deleted' }).in('id', rawMediaRows.map((row) => row.media_asset_id))
-      if (updated.error) throw updated.error
+      await updateByIds('media_assets', { upload_status: 'deleted' }, rawMediaRows.map((row) => row.media_asset_id))
     }
     results.push({ ruleKey: 'raw_media', entityType: 'media_assets', entityCount: rawMediaRows.length, cutoffDate: rawMediaCutoff.toISOString().slice(0, 10) })
 
@@ -7072,8 +7107,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       const derivativeRows = derivativeCandidates.data as { media_derivative_id: string; bucket_id: string; object_path: string }[]
       if (!input.dryRun && derivativeRows.length > 0) {
         await removeStorageObjects(derivativeRows)
-        const deleted = await service.from('media_derivatives').delete().in('id', derivativeRows.map((row) => row.media_derivative_id))
-        if (deleted.error) throw deleted.error
+        await deleteByIds('media_derivatives', derivativeRows.map((row) => row.media_derivative_id))
       }
       results.push({ ruleKey: 'media_derivatives', entityType: 'media_derivatives', entityCount: derivativeRows.length, cutoffDate: derivativeCutoff.toISOString().slice(0, 10) })
     }
@@ -7085,17 +7119,19 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     // PostgREST-Wildcard-Syntax zu riskieren.
     const auditCutoff = new Date(now - settings.audit_event_days * 86_400_000)
     const auditConsentExceptionCutoff = cutoffYearsAgo(now, settings.consent_evidence_years)
-    const auditCandidates = await service.from('audit_events').select('id, action, created_at').eq('organization_id', params.id).lt('created_at', auditCutoff.toISOString())
-    if (auditCandidates.error) throw auditCandidates.error
-    const auditIds = (auditCandidates.data as { id: string; action: string; created_at: string }[])
+    // fetchAllRows aus demselben Grund wie in GET /members: max_rows haette den Loeschlauf
+    // still nach 1000 Zeilen beendet und das Ergebnis trotzdem als erledigt gemeldet.
+    const auditCandidates = await fetchAllRows<{ id: string; action: string; created_at: string }>((from, to) =>
+      service.from('audit_events').select('id, action, created_at').eq('organization_id', params.id).lt('created_at', auditCutoff.toISOString()).range(from, to),
+    )
+    const auditIds = auditCandidates
       .filter((row) => {
         const isConsentOrGuardianRelated = row.action.startsWith('consent') || row.action.includes('guardian')
         return !isConsentOrGuardianRelated || new Date(row.created_at).getTime() < auditConsentExceptionCutoff.getTime()
       })
       .map((row) => row.id)
     if (!input.dryRun && auditIds.length > 0) {
-      const deleted = await service.from('audit_events').delete().in('id', auditIds)
-      if (deleted.error) throw deleted.error
+      await deleteByIds('audit_events', auditIds)
     }
     results.push({ ruleKey: 'audit_events', entityType: 'audit_events', entityCount: auditIds.length, cutoffDate: auditCutoff.toISOString().slice(0, 10) })
 
@@ -7110,11 +7146,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const consentEvidenceRows = consentEvidenceCandidates.data as { consent_record_id: string; bucket_id: string; object_path: string }[]
     if (!input.dryRun && consentEvidenceRows.length > 0) {
       await removeStorageObjects(consentEvidenceRows)
-      const updated = await service
-        .from('consent_records')
-        .update({ evidence_path: null, evidence_deleted_at: new Date(now).toISOString() })
-        .in('id', consentEvidenceRows.map((row) => row.consent_record_id))
-      if (updated.error) throw updated.error
+      await updateByIds(
+        'consent_records',
+        { evidence_path: null, evidence_deleted_at: new Date(now).toISOString() },
+        consentEvidenceRows.map((row) => row.consent_record_id),
+      )
     }
     results.push({ ruleKey: 'consent_evidence', entityType: 'consent_records', entityCount: consentEvidenceRows.length, cutoffDate: consentEvidenceCutoff.toISOString().slice(0, 10) })
 
@@ -7124,38 +7160,38 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     // Nachweis "wann wurde geantwortet" mit aufraeumen, den sie gar nicht betreffen sollte.
     const nowIso = new Date(now).toISOString()
     let expiredTokenCount = 0
-    const invitationCandidates = await service.from('invitations').select('id').eq('organization_id', params.id).lt('expires_at', nowIso).is('accepted_at', null)
-    if (invitationCandidates.error) throw invitationCandidates.error
-    const invitationIds = invitationCandidates.data.map((row) => row.id as string)
+    const invitationIds = (
+      await fetchAllRows<{ id: string }>((from, to) =>
+        service.from('invitations').select('id').eq('organization_id', params.id).lt('expires_at', nowIso).is('accepted_at', null).range(from, to),
+      )
+    ).map((row) => row.id)
     expiredTokenCount += invitationIds.length
-    if (!input.dryRun && invitationIds.length > 0) {
-      const deleted = await service.from('invitations').delete().in('id', invitationIds)
-      if (deleted.error) throw deleted.error
-    }
-    const consentRequestCandidates = await service.from('consent_requests').select('id').eq('organization_id', params.id).lt('expires_at', nowIso).in('status', ['sent', 'expired'])
-    if (consentRequestCandidates.error) throw consentRequestCandidates.error
-    const consentRequestIds = consentRequestCandidates.data.map((row) => row.id as string)
+    if (!input.dryRun && invitationIds.length > 0) await deleteByIds('invitations', invitationIds)
+
+    const consentRequestIds = (
+      await fetchAllRows<{ id: string }>((from, to) =>
+        service.from('consent_requests').select('id').eq('organization_id', params.id).lt('expires_at', nowIso).in('status', ['sent', 'expired']).range(from, to),
+      )
+    ).map((row) => row.id)
     expiredTokenCount += consentRequestIds.length
-    if (!input.dryRun && consentRequestIds.length > 0) {
-      const deleted = await service.from('consent_requests').delete().in('id', consentRequestIds)
-      if (deleted.error) throw deleted.error
-    }
-    const mediaGrantCandidates = await service.from('publication_media_grants').select('id').eq('organization_id', params.id).lt('expires_at', nowIso)
-    if (mediaGrantCandidates.error) throw mediaGrantCandidates.error
-    const mediaGrantIds = mediaGrantCandidates.data.map((row) => row.id as string)
+    if (!input.dryRun && consentRequestIds.length > 0) await deleteByIds('consent_requests', consentRequestIds)
+
+    const mediaGrantIds = (
+      await fetchAllRows<{ id: string }>((from, to) =>
+        service.from('publication_media_grants').select('id').eq('organization_id', params.id).lt('expires_at', nowIso).range(from, to),
+      )
+    ).map((row) => row.id)
     expiredTokenCount += mediaGrantIds.length
-    if (!input.dryRun && mediaGrantIds.length > 0) {
-      const deleted = await service.from('publication_media_grants').delete().in('id', mediaGrantIds)
-      if (deleted.error) throw deleted.error
-    }
-    const idempotencyKeyCandidates = await service.from('idempotency_keys').select('id').eq('organization_id', params.id).lt('expires_at', nowIso)
-    if (idempotencyKeyCandidates.error) throw idempotencyKeyCandidates.error
-    const idempotencyKeyIds = idempotencyKeyCandidates.data.map((row) => row.id as string)
+    if (!input.dryRun && mediaGrantIds.length > 0) await deleteByIds('publication_media_grants', mediaGrantIds)
+
+    const idempotencyKeyIds = (
+      await fetchAllRows<{ id: string }>((from, to) =>
+        service.from('idempotency_keys').select('id').eq('organization_id', params.id).lt('expires_at', nowIso).range(from, to),
+      )
+    ).map((row) => row.id)
     expiredTokenCount += idempotencyKeyIds.length
-    if (!input.dryRun && idempotencyKeyIds.length > 0) {
-      const deleted = await service.from('idempotency_keys').delete().in('id', idempotencyKeyIds)
-      if (deleted.error) throw deleted.error
-    }
+    if (!input.dryRun && idempotencyKeyIds.length > 0) await deleteByIds('idempotency_keys', idempotencyKeyIds)
+
     results.push({ ruleKey: 'expired_tokens', entityType: 'multiple', entityCount: expiredTokenCount, cutoffDate: nowIso.slice(0, 10) })
 
     // Auskunftsbuendel (GET /v1/data-subjects/:personId/export) sind keiner Tabelle zugeordnet --
@@ -7166,14 +7202,26 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     // Zwischenprodukt, keine Aufbewahrungsentscheidung des Vereins. Ueber storage.list() ermittelt,
     // weil kein Tabelleneintrag je Export existiert.
     const staleExportsCutoff = new Date(now - 7 * 86_400_000)
-    const exportsList = await service.storage.from('raw-media').list(`organizations/${params.id}/exports`, { limit: 1000 })
-    if (exportsList.error) throw exportsList.error
-    const staleExportPaths = (exportsList.data ?? [])
-      .filter((file) => file.created_at !== null && new Date(file.created_at).getTime() < staleExportsCutoff.getTime())
-      .map((file) => `organizations/${params.id}/exports/${file.name}`)
+    const exportsPrefix = `organizations/${params.id}/exports`
+    const staleExportPaths: string[] = []
+    // storage.list unterliegt keinem PostgREST-max_rows, aber demselben Prinzip: ohne Bloetterung
+    // ueber offset wuerde ein Bestand jenseits von 1000 Dateien still auf die erste Seite gekappt.
+    for (let offset = 0; ; offset += 1000) {
+      const exportsPage = await service.storage.from('raw-media').list(exportsPrefix, { limit: 1000, offset })
+      if (exportsPage.error) throw exportsPage.error
+      const page = exportsPage.data ?? []
+      for (const file of page) {
+        if (file.created_at !== null && new Date(file.created_at).getTime() < staleExportsCutoff.getTime()) {
+          staleExportPaths.push(`${exportsPrefix}/${file.name}`)
+        }
+      }
+      if (page.length < 1000) break
+    }
     if (!input.dryRun && staleExportPaths.length > 0) {
-      const removed = await service.storage.from('raw-media').remove(staleExportPaths)
-      if (removed.error) throw removed.error
+      for (const batch of chunked(staleExportPaths)) {
+        const removed = await service.storage.from('raw-media').remove(batch)
+        if (removed.error) throw removed.error
+      }
     }
     results.push({ ruleKey: 'stale_exports', entityType: 'exports', entityCount: staleExportPaths.length, cutoffDate: staleExportsCutoff.toISOString().slice(0, 10) })
 
@@ -7670,6 +7718,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (lastSignature.data) {
       const signer = createChainSignerFromEnvironment(environment)
       signatureValid = signer.verify(lastSignature.data.head_hash ?? '', lastSignature.data.signature as string, lastSignature.data.key_version as string)
+      // Eine unveraenderte Signaturzeile allein beweist nichts: sie muss auch zum heutigen
+      // Kettenzustand passen. Eine Aufbewahrungsloeschung entfernt nur alte Zeilen und laesst
+      // den signierten Kopf-Hash bestehen -- fehlt er, wurde am Kopf der Kette eingegriffen.
+      const signedHeadHash = lastSignature.data.head_hash as string | null
+      if (signatureValid && signedHeadHash !== null) {
+        const stillPresent = await service.from('audit_events').select('id').eq('organization_id', params.id).eq('hash', signedHeadHash).limit(1)
+        if (stillPresent.error) throw stillPresent.error
+        signatureValid = stillPresent.data.length > 0
+      }
     }
     return reply.code(200).send(
       AuditChainVerificationSchema.parse({
@@ -7691,13 +7748,17 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       service.from('organizations').select('name').eq('id', params.id).maybeSingle(),
       service
         .from('organization_profiles')
-        .select('legal_name, legal_form, register_court, register_number, street, house_number, postal_code, city, country_code, contact_email, contact_phone, website_url, responsible_person_profile_id')
+        .select('legal_name, legal_form, register_court, register_number, street, house_number, postal_code, city, country_code, contact_email, contact_phone, website_url, responsible_person_profile_id, imprint_published')
         .eq('organization_id', params.id)
         .maybeSingle(),
     ])
     if (organization.error) throw organization.error
     if (profile.error) throw profile.error
     if (!organization.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    // Ohne ausdrueckliche Freigabe (Default false) veroeffentlicht diese Route nichts -- ein Verein,
+    // der Kontakt-/Adress-/Registerangaben nur zur internen Verwaltung eingetragen hat, soll sie
+    // nicht ungefragt jedem zeigen, der die Organisations-UUID kennt (adversariale Pruefung).
+    if (!profile.data?.imprint_published) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     let responsiblePersonName: string | null = null
     if (profile.data?.responsible_person_profile_id) {
       const responsible = await service.from('profiles').select('display_name').eq('id', profile.data.responsible_person_profile_id).maybeSingle()

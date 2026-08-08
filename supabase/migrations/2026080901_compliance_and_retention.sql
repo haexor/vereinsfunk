@@ -365,6 +365,17 @@ grant select (
   editorial_responsible_note, created_at, updated_at
 ) on public.social_connections to authenticated;
 
+-- 5b. Oeffentliches Impressum je Verein: ausdrueckliche Freigabe -----------------------------------
+-- GET /v1/organizations/:id/imprint (unten, service-role, ohne Anmeldung) gibt sonst Kontakt-,
+-- Adress- und Registerangaben an jeden heraus, der die Organisations-UUID kennt -- eine
+-- Zweckaenderung fuer Daten, die ein Verein nur zur internen Verwaltung eingetragen haben koennte
+-- (adversariale Pruefung). Default false: bestehende und neue Vereine veroeffentlichen nichts, bis
+-- sie ueber PATCH /v1/organizations/:id/profile aktiv zustimmen. select/update sind bereits
+-- ungefiltert auf organization_profiles vergeben (siehe Paket 009-Migration), keine weiteren Grants
+-- noetig.
+alter table public.organization_profiles
+  add column imprint_published boolean not null default false;
+
 -- 6. Storage: Pfadpraefix-Rechte innerhalb von raw-media -------------------------------------------
 -- Bislang galt fuer raw-media, rendered-media und brand-assets dieselbe, rein vereinsweite Regel
 -- (jedes Mitglied liest jedes Objekt seines Vereins) -- ausreichend fuer Submissions/Renders, aber
@@ -435,7 +446,12 @@ using (
     when 'departments' then
       (storage.foldername(name))[4] ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       and authz.is_department_member(((storage.foldername(name))[4])::uuid)
-    else authz.is_any_member_of_organization(((storage.foldername(name))[2])::uuid)
+    -- Font-Originale (organizations/<org>/brand/<scope>/font-...-original.*, siehe POST
+    -- /v1/brand/assets) landen bewusst vereinsweit lesbar in raw-media -- dasselbe Praefix, das der
+    -- else-Zweig bislang implizit mitbediente. Explizit gelistet statt ueber den Fallback, damit ein
+    -- kuenftiges, noch unbekanntes Praefix nicht versehentlich denselben vereinsweiten Zugriff erbt.
+    when 'brand' then authz.is_any_member_of_organization(((storage.foldername(name))[2])::uuid)
+    else false
   end
 );
 

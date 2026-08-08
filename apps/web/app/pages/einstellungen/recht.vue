@@ -110,6 +110,7 @@ const profileDraft = reactive({
   websiteUrl: '',
   foundedYear: '',
   responsiblePersonProfileId: '',
+  imprintPublished: false,
 })
 watch(organizationProfile, (profile) => {
   if (!profile) return
@@ -127,6 +128,7 @@ watch(organizationProfile, (profile) => {
   profileDraft.websiteUrl = profile.websiteUrl ?? ''
   profileDraft.foundedYear = profile.foundedYear ? String(profile.foundedYear) : ''
   profileDraft.responsiblePersonProfileId = profile.responsiblePersonProfileId ?? ''
+  profileDraft.imprintPublished = profile.imprintPublished
 }, { immediate: true })
 
 const profileSaving = ref(false)
@@ -155,6 +157,7 @@ async function saveProfile() {
         websiteUrl: blankToNull(profileDraft.websiteUrl),
         foundedYear: profileDraft.foundedYear.trim() ? Number(profileDraft.foundedYear) : null,
         responsiblePersonProfileId: profileDraft.responsiblePersonProfileId || null,
+        imprintPublished: profileDraft.imprintPublished,
       },
     })
     organizationProfile.value = OrganizationProfileSchema.parse(response)
@@ -505,6 +508,13 @@ async function signAuditChain() {
           Diese Angaben erscheinen im öffentlichen Impressum dieses Vereins —
           <NuxtLink v-if="organizationId" :to="`/impressum/${organizationId}`" target="_blank" class="font-semibold text-forest">/impressum/{{ organizationId }}</NuxtLink>,
           verlinkbar aus eurer Instagram- oder Facebook-Bio. Nicht ausgefüllte Felder erscheinen dort ehrlich als „nicht angegeben“, nicht als erfundener Platzhalter.
+        </p>
+        <label class="mb-4 flex items-center gap-2">
+          <input v-model="profileDraft.imprintPublished" type="checkbox" />
+          <span class="text-xs font-semibold">Öffentliches Impressum veröffentlichen</span>
+        </label>
+        <p v-if="!profileDraft.imprintPublished" class="mb-4 text-[11px] text-[#7b827d]">
+          Solange diese Freigabe nicht gesetzt ist, liefert die Impressumsseite „nicht gefunden“ — die Angaben unten bleiben intern.
         </p>
         <div class="grid gap-4 sm:grid-cols-2">
           <label class="sm:col-span-2"><span class="mb-1 block text-xs font-semibold">Name (rechtlich)</span>
