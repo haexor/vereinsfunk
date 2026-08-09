@@ -37,4 +37,15 @@ describe('createApiClient', () => {
 
     await expect(client.request('/v1/private')).rejects.toMatchObject({ code: 'unauthorized', statusCode: 401, data: { error: 'unauthorized' } })
   })
+
+  it('forwards an authenticated mutation unchanged', async () => {
+    const fetch = vi.fn().mockResolvedValue({ id: 'channel-1' })
+    const client = createApiClient({ fetch, getAuthHeaders: vi.fn().mockResolvedValue({ authorization: 'Bearer current-token' }) })
+
+    await client.request('/v1/channels/channel-1', { method: 'PATCH', body: { purpose: 'Hauptkanal' } }, z.object({ id: z.string() }))
+
+    expect(fetch).toHaveBeenCalledWith('/v1/channels/channel-1', expect.objectContaining({
+      method: 'PATCH', body: { purpose: 'Hauptkanal' }, headers: { authorization: 'Bearer current-token' },
+    }))
+  })
 })
