@@ -1257,6 +1257,7 @@ export const UpdateIntegrationSourceRequestSchema = z
   })
 
 export const SyncModeSchema = z.enum(['dry_run', 'apply'])
+export const SyncIdempotencyKeySchema = z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/)
 export const SyncRunStatusSchema = z.enum(['running', 'succeeded', 'failed', 'cancelled', 'aborted_loss_threshold'])
 export const IntegrationSyncRunSchema = z.object({
   id: UuidSchema,
@@ -1303,6 +1304,7 @@ export const ResolveSyncConflictRequestSchema = z.object({
 export const SyncSourceResponseSchema = z.object({
   run: IntegrationSyncRunSchema,
   conflicts: z.array(IntegrationSyncConflictSchema),
+  idempotencyKey: SyncIdempotencyKeySchema,
 })
 
 const IsoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)

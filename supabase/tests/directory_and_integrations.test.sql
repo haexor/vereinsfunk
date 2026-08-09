@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(45);
+select plan(54);
 
 set local role postgres;
 
@@ -260,6 +260,78 @@ select is((select count(*)::integer from public.integration_sync_runs where id =
   'an admin of a different organization sees no sync run of this one');
 select is((select count(*)::integer from public.integration_sync_conflicts where sync_run_id = '68000000-4000-4000-8000-000000000001'), 0,
   'an admin of a different organization sees none of its conflicts');
+
+-- 42-50: Paket 026 -- der Guard ist eine Service-Role-RPC. Wiederholung desselben Schluessels
+-- liefert exakt dieselbe Run-Zeile; ein anderer Apply-Lauf derselben Quelle/Domaene bekommt keinen
+-- zweiten Slot. Dry-Runs duerfen parallel bleiben, da sie keine Fachdaten schreiben.
+set local role postgres;
+-- Der fruehere Konflikt-Test hat auf dieser Quelle bewusst einen laufenden Beispiel-Run angelegt.
+-- Fuer die unabhaengigen Guard-Faelle wird er sauber abgeschlossen.
+update public.integration_sync_runs set status = 'succeeded', finished_at = now()
+  where id = '68000000-4000-4000-8000-000000000001';
+select is(
+  (select result from public.acquire_integration_sync_run(
+    '68000000-1000-4000-8000-000000000001', '68000000-2000-4000-8000-000000000002', 'people', 'apply',
+    'p026-apply-a', gen_random_uuid(), '68000000-0000-4000-8000-000000000001'
+  )),
+  'acquired', 'the first apply request atomically acquires its source/domain slot'
+);
+select is(
+  (select result from public.acquire_integration_sync_run(
+    '68000000-1000-4000-8000-000000000001', '68000000-2000-4000-8000-000000000002', 'people', 'apply',
+    'p026-apply-a', gen_random_uuid(), '68000000-0000-4000-8000-000000000001'
+  )),
+  'replay', 'the same idempotency key returns the existing run'
+);
+select is(
+  (select count(*)::integer from public.integration_sync_runs
+    where source_id = '68000000-2000-4000-8000-000000000002' and domain = 'people' and request_idempotency_key = 'p026-apply-a'),
+  1, 'a replay never creates a second sync-run row'
+);
+select is(
+  (select result from public.acquire_integration_sync_run(
+    '68000000-1000-4000-8000-000000000001', '68000000-2000-4000-8000-000000000002', 'people', 'apply',
+    'p026-apply-b', gen_random_uuid(), '68000000-0000-4000-8000-000000000001'
+  )),
+  'already_running', 'a different apply key cannot run alongside the active apply'
+);
+select is(
+  (select result from public.acquire_integration_sync_run(
+    '68000000-1000-4000-8000-000000000001', '68000000-2000-4000-8000-000000000002', 'teams', 'apply',
+    'p026-other-domain', gen_random_uuid(), '68000000-0000-4000-8000-000000000001'
+  )),
+  'acquired', 'a different domain of the same source remains independently runnable'
+);
+select is(
+  (select result from public.acquire_integration_sync_run(
+    '68000000-1000-4000-8000-000000000001', '68000000-2000-4000-8000-000000000002', 'events', 'dry_run',
+    'p026-dry-a', gen_random_uuid(), '68000000-0000-4000-8000-000000000001'
+  )),
+  'acquired', 'the first dry-run is acquired'
+);
+select is(
+  (select result from public.acquire_integration_sync_run(
+    '68000000-1000-4000-8000-000000000001', '68000000-2000-4000-8000-000000000002', 'events', 'dry_run',
+    'p026-dry-b', gen_random_uuid(), '68000000-0000-4000-8000-000000000001'
+  )),
+  'acquired', 'a second dry-run may proceed in parallel because it writes no domain rows'
+);
+select throws_ok(
+  $$select public.acquire_integration_sync_run(
+    '68000000-1000-4000-8000-000000000002', '68000000-2000-4000-8000-000000000002', 'people', 'apply',
+    'p026-cross-tenant', gen_random_uuid(), '68000000-0000-4000-8000-000000000007'
+  )$$,
+  'P0002', null, 'the guard rejects a source paired with a foreign organization id'
+);
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '68000000-0000-4000-8000-000000000001', true);
+select throws_ok(
+  $$select public.acquire_integration_sync_run(
+    '68000000-1000-4000-8000-000000000001', '68000000-2000-4000-8000-000000000002', 'people', 'apply',
+    'p026-no-direct-rpc', gen_random_uuid(), '68000000-0000-4000-8000-000000000001'
+  )$$,
+  '42501', null, 'authenticated cannot invoke the privileged sync-run guard directly'
+);
 
 select * from finish();
 rollback;

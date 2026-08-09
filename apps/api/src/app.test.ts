@@ -3024,6 +3024,7 @@ describe('Paket 014: Integrationsrahmen und Mitgliederverzeichnis', () => {
         }) as unknown as SupabaseClient,
       forService: () =>
         ({
+          rpc: async () => ({ data: [{ result: 'acquired', run_id: RUN_ID }], error: null }),
           from: (table: string) => {
             if (table === 'directory_people') return chain({ data: [], error: null })
             if (table === 'departments') return chain({ data: [], error: null })
@@ -3109,6 +3110,7 @@ describe('Paket 014: Integrationsrahmen und Mitgliederverzeichnis', () => {
         }) as unknown as SupabaseClient,
       forService: () =>
         ({
+          rpc: async () => ({ data: [{ result: 'acquired', run_id: RUN_ID }], error: null }),
           from: (table: string) => {
             if (table === 'directory_people') return chain({ data: [], error: null })
             if (table === 'departments') {
@@ -3440,6 +3442,79 @@ describe('Paket 014: Integrationsrahmen und Mitgliederverzeichnis', () => {
     expect(patchResponse.statusCode).toBe(200)
     expect(patchResponse.json()).toMatchObject({ displayName: 'Neue Anzeige' })
   })
+
+  it('replays an idempotent sync without reading import rows a second time', async () => {
+    const rpcCalls: Record<string, unknown>[] = []
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({
+        from: (table: string) => {
+          if (table !== 'integration_sources') throw new Error(`unexpected user table: ${table}`)
+          return chain({
+            data: {
+              organization_id: ORGANIZATION_ID, department_id: null, transport: 'file', endpoint_url: null,
+              enabled_domains: ['people'], field_mapping: {}, loss_threshold_percent: 30, enabled: true,
+            }, error: null,
+          })
+        },
+      }) as unknown as SupabaseClient,
+      forService: () => ({
+        rpc: async (_name: string, args: Record<string, unknown>) => {
+          rpcCalls.push(args)
+          return { data: [{ result: 'replay', run_id: RUN_ID }], error: null }
+        },
+        from: (table: string) => {
+          if (table === 'integration_sync_runs') return chain({
+            data: {
+              id: RUN_ID, organization_id: ORGANIZATION_ID, source_id: SOURCE_ID, domain: 'people', mode: 'apply', status: 'succeeded',
+              created_count: 1, updated_count: 0, retired_count: 0, skipped_count: 0, conflict_count: 0, error_class: null,
+              started_at: new Date().toISOString(), finished_at: new Date().toISOString(),
+            }, error: null,
+          })
+          if (table === 'integration_sync_conflicts') return chain({ data: [], error: null })
+          throw new Error(`replay must not read or write ${table}`)
+        },
+      }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const boundary = '----vereinsfunkReplayBoundary'
+    const body = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="mode"\r\n\r\napply\r\n--${boundary}\r\nContent-Disposition: form-data; name="domain"\r\n\r\npeople\r\n--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="never-read.csv"\r\nContent-Type: text/csv\r\n\r\nVorname\nAnna\r\n--${boundary}--\r\n`)
+    const response = await app.inject({
+      method: 'POST', url: `/v1/integration-sources/${SOURCE_ID}/sync`,
+      headers: { authorization: `Bearer ${token}`, 'idempotency-key': 'replay-001', 'content-type': `multipart/form-data; boundary=${boundary}` }, payload: body,
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ run: { id: RUN_ID, status: 'succeeded' }, idempotencyKey: 'replay-001' })
+    expect(rpcCalls).toHaveLength(1)
+    expect(rpcCalls[0]).toMatchObject({ target_source_id: SOURCE_ID, target_mode: 'apply', target_request_idempotency_key: 'replay-001' })
+  })
+
+  it('rejects a competing apply before import data is parsed', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({
+        from: () => chain({
+          data: {
+            organization_id: ORGANIZATION_ID, department_id: null, transport: 'file', endpoint_url: null,
+            enabled_domains: ['people'], field_mapping: {}, loss_threshold_percent: 30, enabled: true,
+          }, error: null,
+        }),
+      }) as unknown as SupabaseClient,
+      forService: () => ({
+        rpc: async () => ({ data: [{ result: 'already_running', run_id: RUN_ID }], error: null }),
+        from: () => { throw new Error('a competing request must not touch domain data') },
+      }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const boundary = '----vereinsfunkConcurrentBoundary'
+    const body = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="mode"\r\n\r\napply\r\n--${boundary}\r\nContent-Disposition: form-data; name="domain"\r\n\r\npeople\r\n--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="never-read.csv"\r\nContent-Type: text/csv\r\n\r\nVorname\nAnna\r\n--${boundary}--\r\n`)
+    const response = await app.inject({
+      method: 'POST', url: `/v1/integration-sources/${SOURCE_ID}/sync`,
+      headers: { authorization: `Bearer ${token}`, 'idempotency-key': 'concurrent-001', 'content-type': `multipart/form-data; boundary=${boundary}` }, payload: body,
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'sync_already_running' })
+  })
 })
 
 describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen', () => {
@@ -3488,7 +3563,14 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
   // echte Sync-Lauf berechnet hat, nicht nur, dass irgendein Insert stattfand. Nur die jeweilige
   // Fachtabelle (teams/fixtures/club_events/departments) unterscheidet sich je Test (tables).
   function syncServiceClient(tables: Record<string, unknown>): SupabaseClient {
+    let mode = 'dry_run'
+    let domain = 'teams'
     return {
+      rpc: async (_name: string, args: { target_mode?: string; target_domain?: string }) => {
+        mode = args.target_mode ?? mode
+        domain = args.target_domain ?? domain
+        return { data: [{ result: 'acquired', run_id: RUN_ID }], error: null }
+      },
       from: (table: string) => {
         if (table === 'organizations') return chain({ data: { timezone: 'Europe/Berlin' }, error: null })
         if (table === 'integration_sync_conflicts') {
@@ -3502,7 +3584,15 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
           }
         }
         if (table === 'integration_sync_runs') {
-          return { insert: (row: Record<string, unknown>) => chain({ data: { id: RUN_ID, error_class: null, started_at: new Date().toISOString(), finished_at: new Date().toISOString(), ...row }, error: null }) }
+          return {
+            update: (row: Record<string, unknown>) => chain({
+              data: {
+                id: RUN_ID, organization_id: ORGANIZATION_ID, source_id: SOURCE_ID,
+                domain, mode, error_class: null, started_at: new Date().toISOString(), ...row,
+              },
+              error: null,
+            }),
+          }
         }
         if (table === 'integration_sources') return { update: () => chain({ data: null, error: null }) }
         if (table === 'audit_events') return { insert: async () => ({ error: null }) }
