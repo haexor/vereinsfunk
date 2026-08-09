@@ -1712,6 +1712,7 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
               })
             }
             if (table === 'approval_decisions') return chain({ data: [], error: null })
+            if (table === 'approval_route_changes') return chain({ data: [], error: null })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
@@ -1728,6 +1729,7 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
     const stages = response.json().stages as { id: string; reviewerUserIds: string[] | null }[]
     expect(stages.find((stage) => stage.id === STAGE_ID)?.reviewerUserIds).toEqual([OTHER_USER_ID])
     expect(stages.find((stage) => stage.id === OUTER_STAGE_ID)?.reviewerUserIds).toBeNull()
+    expect(response.json().routeChanges).toEqual([])
   })
 
   it('rejects requesting approval with 422 and names the unfulfillable level', async () => {
@@ -1766,6 +1768,12 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
     // EIGENEN Ebene gebildet. authz.has_department_permission reicht post.approve aber von der
     // Vereinsebene nach unten durch -- eine Abteilung ohne eigene "approver"-Rolle bekam deshalb
     // einen empty_reviewer_pool-Blocker, obwohl die Vereinsleitung freigeben darf.
+    // Paket 024: request_approval() nimmt "stages" nicht mehr vom Aufrufer entgegen -- die
+    // TS-seitige Route hier ist nur noch eine VORSCHAU fuer den 422-Blocker-Fall, nicht mehr das,
+    // was an die RPC geht (die leitet ihre eigene Route selbst ab, siehe authz.resolve_review_route).
+    // Beobachtbar bleibt deshalb nur noch, DASS die Vorschau keinen Blocker meldet -- welche
+    // reviewerUserIds sie konkret berechnet, deckt weiterhin resolveReviewRoute()/
+    // buildStageDefinitions() in packages/domain bzw. den uebrigen API-Tests dieser Datei ab.
     const rpcCalls: Record<string, unknown>[] = []
     const clients: SupabaseClientFactory = {
       forUser: () =>
@@ -1796,9 +1804,148 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
       headers: { authorization: `Bearer ${token}` },
     })
     expect(response.statusCode).toBe(202)
-    const sentStages = (rpcCalls[0]!.args as { stages: { position: number; scope: string; reviewerSnapshot: { userId: string }[] }[] }).stages
-    expect(sentStages).toHaveLength(1)
-    expect(sentStages[0]).toMatchObject({ position: 1, scope: 'department', reviewerSnapshot: [{ userId: OTHER_USER_ID }] })
+    expect(rpcCalls[0]).toMatchObject({ fn: 'request_approval', args: { target_post_version_id: POST_VERSION_ID } })
+  })
+
+  it('reresolves an approval route and returns the newly opened stage', async () => {
+    const rpcCalls: Record<string, unknown>[] = []
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          rpc: async (fn: string, args: Record<string, unknown>) => {
+            rpcCalls.push({ fn, args })
+            return { data: { postId: POST_ID, approvalRequestId: APPROVAL_REQUEST_ID, status: 'awaiting_approval', firstStageId: STAGE_ID }, error: null }
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used') } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/approval-requests/${APPROVAL_REQUEST_ID}/reresolve`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { reason: 'Medienverantwortliche ist ausgetreten, neue Person benannt.' },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ approvalRequestId: APPROVAL_REQUEST_ID, status: 'awaiting_approval', firstStageId: STAGE_ID })
+    expect(rpcCalls[0]).toMatchObject({
+      fn: 'reresolve_approval_route',
+      args: { target_approval_request_id: APPROVAL_REQUEST_ID, reason: 'Medienverantwortliche ist ausgetreten, neue Person benannt.' },
+    })
+  })
+
+  it('rejects a reresolve reason shorter than ten characters with 400, before ever calling the RPC', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ rpc: async () => { throw new Error('reresolve_approval_route should not be called for an invalid reason') } }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used') } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/approval-requests/${APPROVAL_REQUEST_ID}/reresolve`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { reason: 'zu kurz' },
+    })
+    expect(response.statusCode).toBe(400)
+  })
+
+  it.each([
+    ['not_found', 404],
+    ['insufficient_permission', 403],
+    ['author_cannot_reresolve', 403],
+    ['invalid_status', 409],
+    ['route_has_rejected_stage', 409],
+    ['ambiguous_stage_mapping', 409],
+    ['reason_required', 400],
+    ['empty_reviewer_snapshot', 422],
+  ] as const)('maps %s from reresolve_approval_route to %i', async (message, status) => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ rpc: async () => ({ data: null, error: { message } }) }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used') } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/approval-requests/${APPROVAL_REQUEST_ID}/reresolve`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { reason: 'Eine ausreichend lange Begruendung fuer den Test.' },
+    })
+    expect(response.statusCode).toBe(status)
+  })
+
+  it('lists only stalled approval requests -- overdue or invalidated, not the merely open one', async () => {
+    const OVERDUE_REQUEST_ID = '10000000-4000-4000-8000-000000000010'
+    const INVALIDATED_REQUEST_ID = '10000000-4000-4000-8000-000000000011'
+    const HEALTHY_REQUEST_ID = '10000000-4000-4000-8000-000000000012'
+    const OVERDUE_POST_ID = '10000000-2000-4000-8000-000000000010'
+    const INVALIDATED_POST_ID = '10000000-2000-4000-8000-000000000011'
+    const HEALTHY_POST_ID = '10000000-2000-4000-8000-000000000012'
+    const OVERDUE_VERSION_ID = '10000000-3000-4000-8000-000000000010'
+    const INVALIDATED_VERSION_ID = '10000000-3000-4000-8000-000000000011'
+    const HEALTHY_VERSION_ID = '10000000-3000-4000-8000-000000000012'
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'approval_requests') {
+              return chain({
+                data: [
+                  { id: OVERDUE_REQUEST_ID, post_id: OVERDUE_POST_ID, post_version_id: OVERDUE_VERSION_ID, invalidated_at: null },
+                  { id: INVALIDATED_REQUEST_ID, post_id: INVALIDATED_POST_ID, post_version_id: INVALIDATED_VERSION_ID, invalidated_at: new Date().toISOString() },
+                  { id: HEALTHY_REQUEST_ID, post_id: HEALTHY_POST_ID, post_version_id: HEALTHY_VERSION_ID, invalidated_at: null },
+                ],
+                error: null,
+              })
+            }
+            if (table === 'approval_stages') {
+              return chain({
+                data: [
+                  { approval_request_id: OVERDUE_REQUEST_ID, deadline_at: new Date(Date.now() - 60_000).toISOString() },
+                  { approval_request_id: INVALIDATED_REQUEST_ID, deadline_at: null },
+                  { approval_request_id: HEALTHY_REQUEST_ID, deadline_at: new Date(Date.now() + 60_000).toISOString() },
+                ],
+                error: null,
+              })
+            }
+            if (table === 'posts') {
+              return chain({
+                data: [
+                  { id: OVERDUE_POST_ID, department_id: DEPARTMENT_ID },
+                  { id: INVALIDATED_POST_ID, department_id: DEPARTMENT_ID },
+                  { id: HEALTHY_POST_ID, department_id: DEPARTMENT_ID },
+                ],
+                error: null,
+              })
+            }
+            if (table === 'post_versions') {
+              return chain({
+                data: [
+                  { id: OVERDUE_VERSION_ID, title: 'Überfälliger Beitrag' },
+                  { id: INVALIDATED_VERSION_ID, title: 'Invalidierter Beitrag' },
+                ],
+                error: null,
+              })
+            }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used') } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/approval-requests/stalled?organizationId=${ORGANIZATION_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(200)
+    const body = response.json() as { approvalRequestId: string; isOverdue: boolean; invalidated: boolean }[]
+    expect(body.map((row) => row.approvalRequestId).sort()).toEqual([INVALIDATED_REQUEST_ID, OVERDUE_REQUEST_ID].sort())
+    expect(body.find((row) => row.approvalRequestId === OVERDUE_REQUEST_ID)).toMatchObject({ isOverdue: true, invalidated: false })
+    expect(body.find((row) => row.approvalRequestId === INVALIDATED_REQUEST_ID)).toMatchObject({ isOverdue: false, invalidated: true })
   })
 
   it('rejects reading member review trust of an organization the caller does not belong to with 403', async () => {
