@@ -7,7 +7,7 @@
 ## Status
 
 - **Priority**: P2
-- **Implementation note (2026-08-09)**: begonnen. `useApiClient()` zentralisiert API-Basis-URL, Bearer-Header und optionale Zod-Validierung. Migriert sind die Kanalseite, die Rechtsseite und die Ladepfade der Mitgliederseite. Aus `recht.vue` wurden `LegalAuditChain` und `ProcessorAgreements`, aus `marke.vue` `BrandLivePreview` ausgelagert. Restlich: Marken-, Mitglieder- und Integrationsbereiche fachlich zerlegen, API-Mutationen der migrierten Seiten vereinheitlichen sowie die geplanten Web-Tests ergänzen.
+- **Implementation note (2026-08-09)**: in Arbeit auf PR #33 mit Folge-PR #34. `useApiClient()` delegiert an den testbaren Kern `app/utils/apiClient.ts`; dieser vereinheitlicht API-Basis-URL, Bearer-Header ohne Session-Cache, optionale Zod-Validierung und typisierte Serverfehler. Öffentliche Anfragen können Auth explizit abschalten. Die API-Mutationen von `marke.vue`, `mitglieder.vue` und `integrationen.vue` sowie die Ladepfade von `kanaele.vue`, `einstellungen/recht.vue` und `mitglieder.vue` sind migriert. `marke.vue` widerruft temporäre Logo-Object-URLs jetzt auch beim Unmount. Ausgelagert sind `LegalAuditChain`, `ProcessorAgreements`, `BrandLivePreview` sowie die fünf Integrations-Komponenten `IntegrationSourceHeader`, `IntegrationSourceCreateForm`, `IntegrationSourceEditForm`, `IntegrationRunHistory` und `IntegrationConflictList`; `integrationen.vue` hat damit 440 LoC. Drei Testdateien mit acht Tests laufen verbindlich, `--passWithNoTests` ist entfernt. Restlich: fachlichen State von Marke/Mitgliedern/Integrationen in Composables ziehen, die übrigen großen Seiten weiter zerlegen, mindestens fünf Testdateien mit gezielten Seiten-Tests erreichen sowie den manuellen Browser-Smoke-Test durchführen.
 - **Effort**: L
 - **Risk**: MED
 - **Depends on**: `plans/027-api-route-module-boundaries.md`
@@ -25,7 +25,7 @@
 - `apps/web/app/pages/einstellungen/recht.vue:43-71` zeigt das wiederkehrende Load-/Header-/Parse-Muster; der Rest enthält fünf unabhängige Fachbereiche.
 - `apps/web/app/pages/marke.vue:365-402` enthält drei nahezu parallele Save-Funktionen je Scope.
 - `apps/web/app/pages/kanaele.vue:35-75` ist ein Beispiel für paralleles Laden und lokales Zod-Parsen.
-- Es existiert nur `apps/web/app/security.test.ts`; `apps/web/package.json` nutzt `--passWithNoTests`.
+- Es gibt `security.test.ts`, `utils/apiClient.test.ts` und `pages/apiClientMigration.test.ts`; der Web-Testlauf ist verbindlich und umfasst derzeit acht Tests.
 
 ## Commands you will need
 
@@ -77,7 +77,7 @@ Entferne `--passWithNoTests` erst, wenn mindestens die neuen Composable-/Kompone
 
 ## Done criteria
 
-- [ ] Alle fünf großen Seiten liegen unter 500 LoC; Zielwert 250 LoC.
+- [ ] Alle fünf großen Seiten liegen unter 500 LoC; Zielwert 250 LoC. (`integrationen.vue`: 440 LoC, die anderen vier stehen noch aus.)
 - [ ] Kein `$fetch`-Boilerplate mit `config.public.apiBase` bleibt auf migrierten Seiten.
 - [ ] API-Fehler und Zod-Validierung verhalten sich identisch oder besser getestet.
 - [ ] `pnpm check` besteht.
