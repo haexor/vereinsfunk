@@ -3515,6 +3515,95 @@ describe('Paket 014: Integrationsrahmen und Mitgliederverzeichnis', () => {
     expect(response.statusCode).toBe(409)
     expect(response.json()).toMatchObject({ error: 'sync_already_running' })
   })
+
+  it('cancels a running sync and records an audit event', async () => {
+    const audit: Record<string, unknown>[] = []
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({
+        from: (table: string) => {
+          if (table !== 'integration_sources') throw new Error(`unexpected user table: ${table}`)
+          return chain({ data: { organization_id: ORGANIZATION_ID, department_id: null }, error: null })
+        },
+      }) as unknown as SupabaseClient,
+      forService: () => ({
+        from: (table: string) => {
+          if (table === 'integration_sync_runs') {
+            return {
+              select: () => chain({ data: { id: RUN_ID, status: 'running' }, error: null }),
+              update: () => chain({
+                data: {
+                  id: RUN_ID, organization_id: ORGANIZATION_ID, source_id: SOURCE_ID, domain: 'people', mode: 'apply', status: 'cancelled',
+                  created_count: 0, updated_count: 0, retired_count: 0, skipped_count: 0, conflict_count: 0, error_class: 'cancelled_by_operator',
+                  started_at: new Date().toISOString(), finished_at: new Date().toISOString(),
+                },
+                error: null,
+              }),
+            }
+          }
+          if (table === 'integration_sources') return { update: () => chain({ data: null, error: null }) }
+          if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { audit.push(row); return { error: null } } }
+          throw new Error(`unexpected service table: ${table}`)
+        },
+      }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/integration-sources/${SOURCE_ID}/sync-runs/${RUN_ID}/cancel`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ id: RUN_ID, status: 'cancelled' })
+    expect(audit).toHaveLength(1)
+    expect(audit[0]?.action).toBe('integration_source.sync_cancelled')
+  })
+
+  it('rejects cancelling a sync run that already finished', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({
+        from: (table: string) => {
+          if (table !== 'integration_sources') throw new Error(`unexpected user table: ${table}`)
+          return chain({ data: { organization_id: ORGANIZATION_ID, department_id: null }, error: null })
+        },
+      }) as unknown as SupabaseClient,
+      forService: () => ({
+        from: (table: string) => {
+          if (table === 'integration_sync_runs') return { select: () => chain({ data: { id: RUN_ID, status: 'succeeded' }, error: null }) }
+          throw new Error(`a finished run must not be updated: ${table}`)
+        },
+      }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/integration-sources/${SOURCE_ID}/sync-runs/${RUN_ID}/cancel`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'sync_not_running' })
+  })
+
+  it('rejects cancelling a sync run without integration.manage', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({
+        from: (table: string) => {
+          if (table !== 'integration_sources') throw new Error(`unexpected user table: ${table}`)
+          return chain({ data: { organization_id: ORGANIZATION_ID, department_id: null }, error: null })
+        },
+      }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('a denied request must not touch the run row') } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: denyingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/integration-sources/${SOURCE_ID}/sync-runs/${RUN_ID}/cancel`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(403)
+  })
 })
 
 describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen', () => {
@@ -3721,6 +3810,36 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
       expect(json.run).toMatchObject({ createdCount: 0 })
       expect(json.conflicts).toHaveLength(1)
       expect(json.conflicts[0]).toMatchObject({ kind: 'invalid_record', field: 'departmentId' })
+    })
+
+    it('marks the acquired run as failed when handleTeamsSync throws -- "return handleTeamsSync(...)" without await would let the error skip the outer catch', async () => {
+      const runUpdates: Record<string, unknown>[] = []
+      const clients: SupabaseClientFactory = {
+        forUser: () => sourceOnlyUserClient(integrationSource({ department_id: null, enabled_domains: ['teams'], field_mapping: { Name: 'name' } })),
+        forService: () =>
+          ({
+            rpc: async () => ({ data: [{ result: 'acquired', run_id: RUN_ID }], error: null }),
+            from: (table: string) => {
+              if (table === 'organizations') return chain({ data: { timezone: 'Europe/Berlin' }, error: null })
+              if (table === 'teams') return chain({ data: null, error: new Error('teams table unavailable') })
+              if (table === 'integration_sync_runs') {
+                return { update: (row: Record<string, unknown>) => { runUpdates.push(row); return chain({ data: { id: RUN_ID, ...row }, error: null }) } }
+              }
+              if (table === 'integration_sources') return { update: () => chain({ data: null, error: null }) }
+              throw new Error(`unexpected table in service test fake: ${table}`)
+            },
+          }) as unknown as SupabaseClient,
+      }
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      const { boundary, body } = syncMultipartBody('dry_run', 'teams', 'Name\r\nErste Mannschaft\r\n')
+      const response = await app.inject({
+        method: 'POST', url: `/v1/integration-sources/${SOURCE_ID}/sync`,
+        headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` }, payload: body,
+      })
+      expect(response.statusCode).toBe(500)
+      expect(runUpdates).toHaveLength(1)
+      expect(runUpdates[0]).toMatchObject({ status: 'failed' })
     })
   })
 

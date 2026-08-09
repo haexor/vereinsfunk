@@ -8,7 +8,7 @@ alter table public.integration_sync_runs
 
 alter table public.integration_sync_runs
   add constraint integration_sync_runs_idempotency_unique
-    unique (organization_id, source_id, domain, request_idempotency_key);
+    unique (organization_id, source_id, domain, mode, request_idempotency_key);
 
 -- Dry-Runs aendern keine Fachdaten und duerfen deshalb parallel Vorschauen erzeugen. Apply-Laeufe
 -- dagegen werden je Quelle und Bereich serialisiert. Ein abgeschlossener Lauf gibt den Slot frei.
@@ -54,6 +54,7 @@ begin
     where organization_id = target_organization_id
       and source_id = target_source_id
       and domain = target_domain
+      and mode = target_mode
       and request_idempotency_key = target_request_idempotency_key;
   if found then
     return query select 'replay'::text, existing_run_id;
@@ -93,6 +94,7 @@ begin
       where organization_id = target_organization_id
         and source_id = target_source_id
         and domain = target_domain
+        and mode = target_mode
         and request_idempotency_key = target_request_idempotency_key;
     if found then
       return query select 'replay'::text, existing_run_id;

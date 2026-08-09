@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(54);
+select plan(55);
 
 set local role postgres;
 
@@ -287,6 +287,13 @@ select is(
   (select count(*)::integer from public.integration_sync_runs
     where source_id = '68000000-2000-4000-8000-000000000002' and domain = 'people' and request_idempotency_key = 'p026-apply-a'),
   1, 'a replay never creates a second sync-run row'
+);
+select is(
+  (select result from public.acquire_integration_sync_run(
+    '68000000-1000-4000-8000-000000000001', '68000000-2000-4000-8000-000000000002', 'people', 'dry_run',
+    'p026-apply-a', gen_random_uuid(), '68000000-0000-4000-8000-000000000001'
+  )),
+  'acquired', 'the same idempotency key under a different mode is not treated as a replay'
 );
 select is(
   (select result from public.acquire_integration_sync_run(

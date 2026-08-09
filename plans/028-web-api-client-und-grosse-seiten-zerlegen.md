@@ -77,7 +77,7 @@ Entferne `--passWithNoTests` erst, wenn mindestens die neuen Composable-/Kompone
 ## Done criteria
 
 - [ ] Alle fünf großen Seiten liegen unter 500 LoC; Zielwert 250 LoC.
-- [ ] Kein `$fetch(`${config.public.apiBase}`-Boilerplate bleibt auf migrierten Seiten.
+- [ ] Kein `$fetch`-Boilerplate mit `config.public.apiBase` bleibt auf migrierten Seiten.
 - [ ] API-Fehler und Zod-Validierung verhalten sich identisch oder besser getestet.
 - [ ] `pnpm check` besteht.
 

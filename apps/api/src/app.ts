@@ -5641,6 +5641,10 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       try {
         filePart = await request.file()
         if (!filePart) return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+        // `filePart.fields` is populated as busboy parses the multipart stream, so a field
+        // declared after the file part is only present once the file's stream -- drained here
+        // via toBuffer() -- has fully flushed (same pattern as the brand-logo upload above).
+        await filePart.toBuffer()
       } catch (error) {
         if (error instanceof Error && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE') {
           return reply.code(413).send({ error: 'file_too_large', correlationId: request.id })
@@ -5674,6 +5678,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const referenceYear = new Date().getFullYear()
 
     const headerIdempotencyKey = request.headers['idempotency-key']
+    if (Array.isArray(headerIdempotencyKey)) {
+      return reply.code(400).send({ error: 'invalid_idempotency_key', correlationId: request.id })
+    }
     const parsedIdempotencyKey = SyncIdempotencyKeySchema.safeParse(
       typeof headerIdempotencyKey === 'string' ? headerIdempotencyKey : randomUUID(),
     )
@@ -5758,9 +5765,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         sourceFieldMapping, sourceLossThresholdPercent, mode, domain, correlationId, runId, idempotencyKey, rawRows,
         organizationTimezone: organizationRow.data.timezone as string,
       }
-      if (domain === 'teams') return handleTeamsSync(syncContext)
-      if (domain === 'fixtures') return handleFixturesSync(syncContext)
-      return handleEventsSync(syncContext)
+      // await ist hier Pflicht, nicht Stil: "return handleTeamsSync(...)" ohne await verlaesst den
+      // umgebenden try-Block sofort und die spaetere Ablehnung liefe am catch (failSyncRun) vorbei --
+      // der Lauf bliebe fuer immer auf 'running' stehen und blockierte jeden weiteren Apply-Lauf.
+      if (domain === 'teams') return await handleTeamsSync(syncContext)
+      if (domain === 'fixtures') return await handleFixturesSync(syncContext)
+      return await handleEventsSync(syncContext)
     }
 
     // ab hier: domain === 'people' -- IntegrationDomainSchema laesst keinen anderen Wert mehr zu.
