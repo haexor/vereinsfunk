@@ -78,7 +78,7 @@ const organizationNav = [
 </script>
 
 <template>
-  <div class="min-h-screen bg-oat lg:flex">
+  <div class="min-h-screen bg-oat lg:flex lg:h-screen lg:overflow-hidden">
     <header class="sticky top-0 z-40 flex h-16 items-center justify-between bg-forest px-4 lg:hidden">
       <AppLogo />
       <button class="focus-ring rounded-lg p-2 text-white" aria-label="Navigation öffnen" @click="mobileOpen = !mobileOpen">
@@ -89,7 +89,7 @@ const organizationNav = [
 
     <div v-if="mobileOpen" class="fixed inset-0 z-30 bg-ink/40 backdrop-blur-sm lg:hidden" @click="mobileOpen = false" />
     <aside
-      class="fixed bottom-0 left-0 top-0 z-30 flex w-[268px] flex-col bg-forest px-4 py-5 text-white transition-transform duration-200 lg:sticky lg:translate-x-0"
+      class="fixed bottom-0 left-0 top-0 z-30 flex w-[268px] flex-col overflow-y-auto bg-forest px-4 py-5 text-white transition-transform duration-200 lg:sticky lg:h-screen lg:min-h-0 lg:translate-x-0"
       :class="mobileOpen ? 'translate-x-0 pt-20' : '-translate-x-full'"
     >
       <div class="hidden px-2 pb-7 lg:block"><AppLogo /></div>
@@ -150,6 +150,6 @@ const organizationNav = [
       </div>
     </aside>
 
-    <main class="min-w-0 flex-1"><slot /></main>
+    <main class="min-w-0 flex-1 lg:h-screen lg:min-h-0 lg:overflow-y-auto"><slot /></main>
   </div>
 </template>
