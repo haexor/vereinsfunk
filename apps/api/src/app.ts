@@ -191,6 +191,7 @@ import {
   approvalDurationSecondsSamples,
   BRAND_LOCKABLE_FIELDS,
   computeCountMetrics,
+  computeCountMetricsSeries,
   computeFunnel,
   computeTrend,
   createIdempotencyKey,
@@ -215,6 +216,7 @@ import {
   type BrandLockableField,
   type ChannelCandidate,
   type ConfigOverride,
+  type CountMetrics,
   type MediaGateBlocker,
   type MembershipRecord,
   type ReviewerRef as DomainReviewerRef,
@@ -516,6 +518,22 @@ async function fetchAllRows<T>(
     const data = page.data ?? []
     rows.push(...data)
     if (data.length < pageSize) break
+  }
+  return rows
+}
+
+// Ein .in() mit unbegrenzt vielen IDs traegt die gesamte Liste in der Anfrage-URL -- dieselbe
+// Grenze wie bei den Profil-Bloecken in GET /members und dem Retention-Lauf. Batcht in Chunks von
+// 100, statt die Ergebnisse einer einzelnen Anfrage zu verwerfen.
+async function fetchAllRowsForIds<T>(
+  ids: readonly string[],
+  fetchPage: (batch: readonly string[], from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+): Promise<T[]> {
+  const batchSize = 100
+  const rows: T[] = []
+  for (let offset = 0; offset < ids.length; offset += batchSize) {
+    const batch = ids.slice(offset, offset + batchSize)
+    rows.push(...(await fetchAllRows<T>((from, to) => fetchPage(batch, from, to))))
   }
   return rows
 }
@@ -7882,10 +7900,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     return true
   }
 
-  async function loadOrganizationTimezone(service: SupabaseClient, organizationId: string): Promise<string> {
+  // null statt Wurf, wenn die Organisation nicht (mehr) existiert -- ein geworfener Error waere ueber
+  // den generischen Fehler-Handler als 500 internal_error beantwortet worden, obwohl jede andere
+  // Route dieser Datei eine fehlende Organisation mit 404 not_found beantwortet (CodeRabbit-Fund zu
+  // PR #28). In der Praxis greift zuvor meist requirePermission mit 403, der Pfad bleibt aber
+  // erreichbar, sobald eine Rollenzeile eine inzwischen geloeschte Organisation referenziert.
+  async function loadOrganizationTimezone(service: SupabaseClient, organizationId: string): Promise<string | null> {
     const organization = await service.from('organizations').select('timezone').eq('id', organizationId).maybeSingle()
     if (organization.error) throw organization.error
-    if (!organization.data) throw new Error('organization not found')
+    if (!organization.data) return null
     return organization.data.timezone as string
   }
 
@@ -7931,10 +7954,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   async function loadApprovalDecisionsInScope(service: SupabaseClient, postIds: readonly string[]): Promise<{ decision: 'approved' | 'changes_requested' | 'rejected'; createdAt: string }[]> {
     if (postIds.length === 0) return []
-    const requestIds = (await fetchAllRows<{ id: string }>((from, to) => service.from('approval_requests').select('id').in('post_id', postIds).range(from, to))).map((row) => row.id)
+    const requestIds = (
+      await fetchAllRowsForIds<{ id: string }>(postIds, (batch, from, to) => service.from('approval_requests').select('id').in('post_id', batch).range(from, to))
+    ).map((row) => row.id)
     if (requestIds.length === 0) return []
-    const decisions = await fetchAllRows<{ decision: 'approved' | 'changes_requested' | 'rejected'; created_at: string }>((from, to) =>
-      service.from('approval_decisions').select('decision, created_at').in('approval_request_id', requestIds).range(from, to),
+    const decisions = await fetchAllRowsForIds<{ decision: 'approved' | 'changes_requested' | 'rejected'; created_at: string }>(requestIds, (batch, from, to) =>
+      service.from('approval_decisions').select('decision, created_at').in('approval_request_id', batch).range(from, to),
     )
     return decisions.map((row) => ({ decision: row.decision, createdAt: row.created_at }))
   }
@@ -7942,18 +7967,23 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   // publications hat kein department_id/team_id (Plan, "Risiken": "dieselbe Einschraenkung wie in
   // Paket 011") -- Scoping laeuft ueber die post_version_id-Liste der bereits geladenen Beitraege.
   // postId/socialConnectionId bleiben erhalten, damit "aktive Abteilungen" und die Kanal-
-  // Aufschluesselung dieselbe Ladung wiederverwenden koennen statt ein zweites Mal zu joinen.
+  // Aufschluesselung dieselbe Ladung wiederverwenden koennen statt ein zweites Mal zu joinen. `since`
+  // ist die untere Fenstergrenze des Aufrufers (Vorperiode fuer Trends eingeschlossen) -- posts/
+  // post_status_events brauchen die volle Historie (erste published-Transition, Durchlaufzeit), aber
+  // publications hat dafuer keinen fachlichen Grund und wuerde sonst bei jeder Anfrage die gesamte
+  // Vereinshistorie uebertragen (CodeRabbit-Nitpick zu PR #28).
   async function loadPublicationsForPosts(
     service: SupabaseClient,
     postIds: readonly string[],
+    since: string,
   ): Promise<{ postId: string; socialConnectionId: string; status: string; updatedAt: string }[]> {
     if (postIds.length === 0) return []
-    const versions = await fetchAllRows<{ id: string; post_id: string }>((from, to) => service.from('post_versions').select('id, post_id').in('post_id', postIds).range(from, to))
+    const versions = await fetchAllRowsForIds<{ id: string; post_id: string }>(postIds, (batch, from, to) => service.from('post_versions').select('id, post_id').in('post_id', batch).range(from, to))
     const versionToPost = new Map(versions.map((version) => [version.id, version.post_id]))
     const versionIds = versions.map((version) => version.id)
     if (versionIds.length === 0) return []
-    const publications = await fetchAllRows<{ post_version_id: string; social_connection_id: string; status: string; updated_at: string }>((from, to) =>
-      service.from('publications').select('post_version_id, social_connection_id, status, updated_at').in('post_version_id', versionIds).range(from, to),
+    const publications = await fetchAllRowsForIds<{ post_version_id: string; social_connection_id: string; status: string; updated_at: string }>(versionIds, (batch, from, to) =>
+      service.from('publications').select('post_version_id, social_connection_id, status, updated_at').in('post_version_id', batch).gte('updated_at', since).range(from, to),
     )
     return publications.map((row) => ({
       postId: versionToPost.get(row.post_version_id) ?? '',
@@ -7965,7 +7995,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   async function loadPostVersionsForPosts(service: SupabaseClient, postIds: readonly string[]): Promise<{ postId: string; versionNumber: number }[]> {
     if (postIds.length === 0) return []
-    const rows = await fetchAllRows<{ post_id: string; version_number: number }>((from, to) => service.from('post_versions').select('post_id, version_number').in('post_id', postIds).range(from, to))
+    const rows = await fetchAllRowsForIds<{ post_id: string; version_number: number }>(postIds, (batch, from, to) => service.from('post_versions').select('post_id, version_number').in('post_id', batch).range(from, to))
     return rows.map((row) => ({ postId: row.post_id, versionNumber: row.version_number }))
   }
 
@@ -7976,10 +8006,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   // nur des eigenen Teams (adversariale Pruefung, als bewusst nicht behobene Einschraenkung
   // eingeordnet: reine technische Zaehlwerte ohne Personenbezug oder Inhalt, eine Behebung
   // bräuchte eine Schemaerweiterung ausserhalb dieses Pakets). Ehrlich unveraendert statt erfunden
-  // praezisiert.
-  async function loadWorkflowRunsInScope(service: SupabaseClient, scope: AnalyticsScope): Promise<{ technicalStatus: string; updatedAt: string }[]> {
+  // praezisiert. `since` wie bei loadPublicationsForPosts: workflow_runs traegt keine posts.id-
+  // Historienabhaengigkeit, ein Zeitfilter ab der unteren Fenstergrenze verliert keine Information.
+  async function loadWorkflowRunsInScope(service: SupabaseClient, scope: AnalyticsScope, since: string): Promise<{ technicalStatus: string; updatedAt: string }[]> {
     const rows = await fetchAllRows<{ technical_status: string; updated_at: string }>((from, to) => {
-      let query = service.from('workflow_runs').select('technical_status, updated_at').eq('organization_id', scope.organizationId)
+      let query = service.from('workflow_runs').select('technical_status, updated_at').eq('organization_id', scope.organizationId).gte('updated_at', since)
       if (scope.departmentId) query = query.eq('department_id', scope.departmentId)
       return query.range(from, to)
     })
@@ -7995,8 +8026,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const service = supabaseClients.forService()
     const scope = toAnalyticsScope(query)
     const timezone = await loadOrganizationTimezone(service, query.organizationId)
+    if (timezone === null) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     const measurementStartsAt = await loadMeasurementStart(service, scope)
     const window = rangeWindow(query.from, addDays(query.to, 1), timezone)
+    // Vorab berechnet, weil publications/workflow_runs weiter unten schon ab der unteren Grenze der
+    // Vorperiode geladen werden -- der Trend-Block weiter unten braucht dieselbe previousWindow.
+    const spanDays = daysBetween(query.from, query.to) + 1
+    const previousFrom = addDays(query.from, -spanDays)
+    const previousWindow = rangeWindow(previousFrom, query.from, timezone)
 
     const posts = await loadPostsInScope(service, scope)
     const postIds = posts.map((post) => post.id)
@@ -8004,9 +8041,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const publishedTransitions = transitions.filter((transition) => transition.toStatus === 'published').map(({ postId, occurredAt }) => ({ postId, occurredAt }))
     const [approvalDecisions, publicationsWithPost, postVersions, workflowRuns] = await Promise.all([
       loadApprovalDecisionsInScope(service, postIds),
-      loadPublicationsForPosts(service, postIds),
+      loadPublicationsForPosts(service, postIds, previousWindow.startUtc),
       loadPostVersionsForPosts(service, postIds),
-      loadWorkflowRunsInScope(service, scope),
+      loadWorkflowRunsInScope(service, scope, previousWindow.startUtc),
     ])
     const publications = publicationsWithPost.map(({ status, updatedAt }) => ({ status, updatedAt }))
 
@@ -8043,10 +8080,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     let publicationsPublishedTrend: number | null = null
     let approvalRateTrend: number | null = null
     let leadTimeSecondsMedianTrend: number | null = null
-    const spanDays = daysBetween(query.from, query.to) + 1
-    const previousFrom = addDays(query.from, -spanDays)
     if (measurementStartsAt !== null && previousFrom >= measurementStartsAt) {
-      const previousWindow = rangeWindow(previousFrom, query.from, timezone)
       const previous = computeCountMetrics({ window: previousWindow, postsCreated: posts, publishedTransitions, approvalDecisions, publications, workflowRuns, postVersions })
       const previousDecided = previous.approvalsGranted + previous.approvalsChangesRequested + previous.approvalsRejected
       const previousApprovalRate = previousDecided > 0 ? previous.approvalsGranted / previousDecided : null
@@ -8104,7 +8138,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const service = supabaseClients.forService()
     const scope = toAnalyticsScope(query)
     const timezone = await loadOrganizationTimezone(service, query.organizationId)
+    if (timezone === null) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     const measurementStartsAt = await loadMeasurementStart(service, scope)
+    const requestWindowStart = rangeWindow(query.from, addDays(query.to, 1), timezone).startUtc
 
     const posts = await loadPostsInScope(service, scope)
     const postIds = posts.map((post) => post.id)
@@ -8112,9 +8148,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const publishedTransitions = transitions.filter((transition) => transition.toStatus === 'published').map(({ postId, occurredAt }) => ({ postId, occurredAt }))
     const [approvalDecisions, publicationsWithPost, postVersions, workflowRuns] = await Promise.all([
       loadApprovalDecisionsInScope(service, postIds),
-      loadPublicationsForPosts(service, postIds),
+      loadPublicationsForPosts(service, postIds, requestWindowStart),
       loadPostVersionsForPosts(service, postIds),
-      loadWorkflowRunsInScope(service, scope),
+      loadWorkflowRunsInScope(service, scope, requestWindowStart),
     ])
     const publications = publicationsWithPost.map(({ status, updatedAt }) => ({ status, updatedAt }))
 
@@ -8138,13 +8174,13 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       return days
     }
     const bucketStarts = bucketStartDays()
-    const points = bucketStarts.map((bucketStart, index) => {
+    const bucketWindows = bucketStarts.map((bucketStart, index) => {
       const nextBucketStart = bucketStarts[index + 1]
       const bucketEndExclusive = nextBucketStart ?? addDays(query.to, 1)
-      const bucketWindow = rangeWindow(bucketStart, bucketEndExclusive, timezone)
-      const metrics = computeCountMetrics({ window: bucketWindow, postsCreated: posts, publishedTransitions, approvalDecisions, publications, workflowRuns, postVersions })
-      return { bucketStart, value: metrics[query.metric] }
+      return rangeWindow(bucketStart, bucketEndExclusive, timezone)
     })
+    const bucketMetrics = computeCountMetricsSeries(bucketWindows, { postsCreated: posts, publishedTransitions, approvalDecisions, publications, workflowRuns, postVersions })
+    const points = bucketStarts.map((bucketStart, index) => ({ bucketStart, value: (bucketMetrics[index] as CountMetrics)[query.metric] }))
 
     return reply.code(200).send(
       AnalyticsTimeseriesResponseSchema.parse({
@@ -8164,13 +8200,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const service = supabaseClients.forService()
     const scope = toAnalyticsScope(query)
     const timezone = await loadOrganizationTimezone(service, query.organizationId)
+    if (timezone === null) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     const measurementStartsAt = await loadMeasurementStart(service, scope)
     const window = rangeWindow(query.from, addDays(query.to, 1), timezone)
 
     let entries: { key: string; label: string; count: number }[]
     if (query.dimension === 'channel') {
       const posts = await loadPostsInScope(service, scope)
-      const publications = await loadPublicationsForPosts(service, posts.map((post) => post.id))
+      const publications = await loadPublicationsForPosts(service, posts.map((post) => post.id), window.startUtc)
       const counts = new Map<string, number>()
       for (const publication of publications) {
         if (!isInWindow(publication.updatedAt, window)) continue
@@ -8235,6 +8272,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const service = supabaseClients.forService()
     const scope = toAnalyticsScope(query)
     const timezone = await loadOrganizationTimezone(service, query.organizationId)
+    if (timezone === null) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     const measurementStartsAt = await loadMeasurementStart(service, scope)
     const window = rangeWindow(query.from, addDays(query.to, 1), timezone)
 

@@ -229,7 +229,7 @@ const runningReal = ref(false)
 
 async function runRetention(dryRun: boolean) {
   if (!organizationId.value) return
-  if (!dryRun && !confirm('Diesen Lauf jetzt scharf ausführen? Rohmedien, ggf. abgeleitete Medien, alte Audit-Ereignisse und abgelaufene Token werden dabei unwiderruflich gelöscht. Das lässt sich nicht zurücknehmen.')) return
+  if (!dryRun && !confirm('Diesen Lauf jetzt scharf ausführen? Rohmedien, ggf. abgeleitete Medien, alte Audit-Ereignisse, abgelaufene Token und alte Statushistorie werden dabei unwiderruflich gelöscht. Das lässt sich nicht zurücknehmen.')) return
   if (dryRun) runningDry.value = true
   else runningReal.value = true
   runError.value = ''

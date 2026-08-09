@@ -220,6 +220,92 @@ export function computeCountMetrics(input: ComputeCountMetricsInput): CountMetri
   }
 }
 
+// Zeitreihen-Variante von computeCountMetrics: der API-Handler rief bislang computeCountMetrics()
+// einmal je Bucket mit der VOLLEN Rohmenge auf (bis zu 733 Buckets bei 732 Tagen Granularitaet
+// "day") -- jeder Aufruf filterte alle Arrays neu und baute firstOccurrenceByPost/maxVersionByPost
+// erneut ueber die gesamte Historie auf, macht die Bucket-Schleife quadratisch (CodeRabbit-Fund zu
+// PR #28). Sortiert hier jede Rohtabelle einmal und laesst einen gemeinsam vorrueckenden Zeiger je
+// Fenster weiterlaufen -- O(Ereignisse * log Ereignisse + Buckets) statt O(Buckets * Ereignisse).
+// Voraussetzung: windows ist aufsteigend sortiert und luckenlos (windows[i].endUtc ===
+// windows[i+1].startUtc), wie es rangeWindow(bucketStarts[i], bucketStarts[i+1]) im Aufrufer liefert
+// -- mit einer anderen Fensterliste ist das Ergebnis falsch.
+export function computeCountMetricsSeries(windows: readonly MetricsWindow[], input: Omit<ComputeCountMetricsInput, 'window'>): CountMetrics[] {
+  if (windows.length === 0) return []
+  const firstWindowStart = (windows[0] as MetricsWindow).startUtc
+
+  function bucketCounts<T>(items: readonly T[], timestampOf: (item: T) => string, matches: (item: T) => boolean): number[] {
+    const timestamps = items.filter(matches).map(timestampOf).sort()
+    let idx = 0
+    while (idx < timestamps.length && (timestamps[idx] as string) < firstWindowStart) idx++
+    return windows.map((window) => {
+      let count = 0
+      while (idx < timestamps.length && (timestamps[idx] as string) < window.endUtc) {
+        count++
+        idx++
+      }
+      return count
+    })
+  }
+
+  const postsCreatedCounts = bucketCounts(input.postsCreated, (post) => post.createdAt, () => true)
+  const approvalsGrantedCounts = bucketCounts(input.approvalDecisions, (decision) => decision.createdAt, (decision) => decision.decision === 'approved')
+  const approvalsChangesRequestedCounts = bucketCounts(input.approvalDecisions, (decision) => decision.createdAt, (decision) => decision.decision === 'changes_requested')
+  const approvalsRejectedCounts = bucketCounts(input.approvalDecisions, (decision) => decision.createdAt, (decision) => decision.decision === 'rejected')
+  const publicationsPublishedCounts = bucketCounts(input.publications, (publication) => publication.updatedAt, (publication) => publication.status === 'published')
+  const publicationsFailedCounts = bucketCounts(input.publications, (publication) => publication.updatedAt, (publication) => publication.status === 'failed')
+  const workflowRunsCounts = bucketCounts(input.workflowRuns, (run) => run.updatedAt, () => true)
+  const workflowFailuresCounts = bucketCounts(input.workflowRuns, (run) => run.updatedAt, (run) => run.technicalStatus === 'failed')
+
+  // postsPublished/revisions haengen an EINEM Zeitpunkt je Beitrag (erster published-Uebergang),
+  // nicht an jedem Rohereignis -- Erstauftreten einmal bestimmen (wie computeCountMetrics), danach
+  // denselben Zeiger-Trick auf der viel kleineren Liste "ein Eintrag je veroeffentlichtem Beitrag"
+  // anwenden statt auf der vollen Transitions-Rohmenge.
+  const firstPublishedAt = firstOccurrenceByPost(input.publishedTransitions)
+  const maxVersionByPost = new Map<string, number>()
+  for (const version of input.postVersions) {
+    const current = maxVersionByPost.get(version.postId) ?? 0
+    if (version.versionNumber > current) maxVersionByPost.set(version.postId, version.versionNumber)
+  }
+  const publishedEntries = [...firstPublishedAt.entries()].sort(([, a], [, b]) => (a < b ? -1 : a > b ? 1 : 0))
+  let publishedIdx = 0
+  while (publishedIdx < publishedEntries.length && (publishedEntries[publishedIdx] as [string, string])[1] < firstWindowStart) publishedIdx++
+  const postsPublishedCounts: number[] = []
+  const revisionsSumCounts: number[] = []
+  const revisionsCountCounts: number[] = []
+  for (const window of windows) {
+    let published = 0
+    let revisionsSum = 0
+    let revisionsCount = 0
+    while (publishedIdx < publishedEntries.length && (publishedEntries[publishedIdx] as [string, string])[1] < window.endUtc) {
+      const [postId] = publishedEntries[publishedIdx] as [string, string]
+      published++
+      const maxVersion = maxVersionByPost.get(postId)
+      if (maxVersion !== undefined) {
+        revisionsSum += maxVersion
+        revisionsCount++
+      }
+      publishedIdx++
+    }
+    postsPublishedCounts.push(published)
+    revisionsSumCounts.push(revisionsSum)
+    revisionsCountCounts.push(revisionsCount)
+  }
+
+  return windows.map((_, index) => ({
+    postsCreated: postsCreatedCounts[index] as number,
+    postsPublished: postsPublishedCounts[index] as number,
+    publicationsPublished: publicationsPublishedCounts[index] as number,
+    publicationsFailed: publicationsFailedCounts[index] as number,
+    approvalsGranted: approvalsGrantedCounts[index] as number,
+    approvalsChangesRequested: approvalsChangesRequestedCounts[index] as number,
+    approvalsRejected: approvalsRejectedCounts[index] as number,
+    revisionsSum: revisionsSumCounts[index] as number,
+    revisionsCount: revisionsCountCounts[index] as number,
+    workflowRuns: workflowRunsCounts[index] as number,
+    workflowFailures: workflowFailuresCounts[index] as number,
+  }))
+}
+
 // Durchlaufzeit: Median der Dauer vom ersten draft (posts.created_at) bis zum ersten published, nur
 // fuer Beitraege, deren erster published-Uebergang ins Fenster faellt (Plan, Abschnitt
 // "Metrikdefinitionen"). Ergebnis in Sekunden, unsortiert -- median() sortiert selbst.

@@ -50,8 +50,20 @@ const range = computed<{ from: string; to: string }>(() => {
     const lastOfPreviousMonth = addDaysToKey(firstOfThisMonth, -1)
     return { from: `${lastOfPreviousMonth.slice(0, 7)}-01`, to: lastOfPreviousMonth }
   }
-  if (rangePreset.value === 'custom' && customFrom.value && customTo.value) return { from: customFrom.value, to: customTo.value }
-  return { from: addDaysToKey(todayKey, -29), to: todayKey }
+  // custom: rohe Eingabe durchreichen, auch unvollstaendig oder ungueltig -- customRangeError
+  // unten haelt load() davon ab, damit einen Request zu schicken, und der angezeigte Zeitraum bleibt
+  // dadurch ehrlich statt still auf die letzten 30 Tage zurueckzufallen.
+  return { from: customFrom.value, to: customTo.value }
+})
+
+const ANALYTICS_MAX_RANGE_DAYS = 366 * 2 // muss mit packages/contracts/src/index.ts (AnalyticsScopeQuerySchema) uebereinstimmen.
+const customRangeError = computed<string | null>(() => {
+  if (rangePreset.value !== 'custom') return null
+  if (!customFrom.value || !customTo.value) return 'Bitte Start- und Enddatum wählen.'
+  if (customFrom.value > customTo.value) return 'Das Startdatum darf nicht nach dem Enddatum liegen.'
+  const spanDays = (new Date(customTo.value).getTime() - new Date(customFrom.value).getTime()) / 86_400_000
+  if (spanDays > ANALYTICS_MAX_RANGE_DAYS) return `Der Zeitraum darf höchstens ${ANALYTICS_MAX_RANGE_DAYS} Tage umfassen.`
+  return null
 })
 
 const RANGE_PRESETS: { value: RangePreset; label: string }[] = [
@@ -76,7 +88,9 @@ const loading = ref(true)
 const errorMessage = ref('')
 const summary = ref<AnalyticsSummary | null>(null)
 const timeseriesPoints = ref<AnalyticsTimeseriesPoint[]>([])
+const timeseriesError = ref(false)
 const breakdownEntries = ref<AnalyticsBreakdownEntry[]>([])
+const breakdownError = ref(false)
 const funnelStages = ref<AnalyticsFunnelEntry[]>([])
 
 function buildScopeQuery(): Record<string, string> {
@@ -90,6 +104,7 @@ function buildScopeQuery(): Record<string, string> {
 async function load() {
   const organizationId = scope.value?.organizationId
   if (!organizationId) { loading.value = false; return }
+  if (customRangeError.value) { errorMessage.value = customRangeError.value; loading.value = false; return }
   loading.value = true
   errorMessage.value = ''
   try {
@@ -104,7 +119,9 @@ async function load() {
     ])
     summary.value = AnalyticsSummarySchema.parse(summaryResponse)
     timeseriesPoints.value = AnalyticsTimeseriesResponseSchema.parse(timeseriesResponse).points
+    timeseriesError.value = false
     breakdownEntries.value = AnalyticsBreakdownResponseSchema.parse(breakdownResponse).entries
+    breakdownError.value = false
     funnelStages.value = AnalyticsFunnelResponseSchema.parse(funnelResponse).stages
   } catch {
     errorMessage.value = 'Die Kennzahlen konnten nicht geladen werden.'
@@ -114,26 +131,41 @@ async function load() {
 }
 await load()
 watch([() => scope.value?.organizationId, () => scope.value?.departmentId, range], () => { void load() })
+
+// Anfragezaehler statt eines leeren catch: ein Nutzer, der die Metrik/Granularitaet zweimal schnell
+// wechselt, darf nicht die zuerst gestartete (spaeter eintreffende) Antwort ueber die neuere
+// geschrieben bekommen -- eine veraltete Antwort wird verworfen, ein aktueller Fehler wird sichtbar
+// statt verschluckt (CodeRabbit-Fund zu PR #28).
+let timeseriesRequestId = 0
 watch([timeseriesMetric, timeseriesGranularity], async () => {
+  const requestId = ++timeseriesRequestId
   try {
     const headers = await useAuthHeader()
     const response = await $fetch<unknown>(`${config.public.apiBase}/v1/analytics/timeseries`, {
       headers, query: { ...buildScopeQuery(), metric: timeseriesMetric.value, granularity: timeseriesGranularity.value },
     })
+    if (requestId !== timeseriesRequestId) return
     timeseriesPoints.value = AnalyticsTimeseriesResponseSchema.parse(response).points
+    timeseriesError.value = false
   } catch {
-    // Der Rest der Seite bleibt bei einem Fehlschlag der Zeitreihe unberuehrt.
+    if (requestId !== timeseriesRequestId) return
+    timeseriesError.value = true
   }
 })
+let breakdownRequestId = 0
 watch(breakdownDimension, async () => {
+  const requestId = ++breakdownRequestId
   try {
     const headers = await useAuthHeader()
     const response = await $fetch<unknown>(`${config.public.apiBase}/v1/analytics/breakdown`, {
       headers, query: { ...buildScopeQuery(), dimension: breakdownDimension.value },
     })
+    if (requestId !== breakdownRequestId) return
     breakdownEntries.value = AnalyticsBreakdownResponseSchema.parse(response).entries
+    breakdownError.value = false
   } catch {
-    // Siehe oben.
+    if (requestId !== breakdownRequestId) return
+    breakdownError.value = true
   }
 })
 
@@ -151,8 +183,12 @@ function formatSeconds(value: number | null): string {
   if (value < 86_400) return `${(value / 3600).toFixed(1)} Std`
   return `${(value / 86_400).toFixed(1)} Tage`
 }
+// timeZone: 'UTC', weil day ein reiner Kalendertag-String ist (kein Zeitpunkt) und mit T00:00:00Z
+// verankert wird -- ohne die Option formatiert Intl.DateTimeFormat in der Browser-Zeitzone und zeigt
+// bei einer Zeitzone westlich von UTC den Vortag (CodeRabbit-Fund zu PR #28).
 function formatDate(day: string): string {
-  return new Intl.DateTimeFormat('de-DE', { day: 'numeric', month: 'short' }).format(new Date(`${day}T00:00:00Z`))
+  if (!day) return '—'
+  return new Intl.DateTimeFormat('de-DE', { day: 'numeric', month: 'short', timeZone: 'UTC' }).format(new Date(`${day}T00:00:00Z`))
 }
 
 const FUNNEL_LABELS: Record<string, string> = {
@@ -296,14 +332,15 @@ const maxFunnelCount = computed(() => Math.max(1, ...funnelStages.value.map((sta
             </div>
           </div>
         </div>
-        <div v-if="timeseriesPoints.length === 0" class="p-8 text-center text-xs text-[#7b827d]">Für diesen Zeitraum liegen keine Daten vor.</div>
+        <div v-if="timeseriesError" class="p-8 text-center text-xs font-semibold text-red-700">Die Zeitreihe konnte nicht aktualisiert werden.</div>
+        <div v-else-if="timeseriesPoints.length === 0" class="p-8 text-center text-xs text-[#7b827d]">Für diesen Zeitraum liegen keine Daten vor.</div>
         <svg v-else :viewBox="`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`" class="w-full" role="img" aria-label="Zeitreihe der gewählten Kennzahl">
           <line
-            v-for="grid in chartGridLines" :key="grid.value"
+            v-for="(grid, index) in chartGridLines" :key="index"
             :x1="CHART_PAD_LEFT" :x2="CHART_WIDTH - 8" :y1="grid.y" :y2="grid.y"
             :stroke="grid.value === 0 ? '#b7bdb2' : '#eceee7'" :stroke-width="grid.value === 0 ? 1.5 : 1"
           />
-          <text v-for="grid in chartGridLines" :key="`label-${grid.value}`" :x="CHART_PAD_LEFT - 6" :y="grid.y + 3" text-anchor="end" font-size="9" fill="#8a908b">{{ grid.value }}</text>
+          <text v-for="(grid, index) in chartGridLines" :key="`label-${index}`" :x="CHART_PAD_LEFT - 6" :y="grid.y + 3" text-anchor="end" font-size="9" fill="#8a908b">{{ grid.value }}</text>
           <path :d="chartPath" fill="none" stroke="#163a2c" stroke-width="2" />
           <text
             v-for="index in chartLabelIndices" :key="`x-${index}`"
@@ -324,7 +361,8 @@ const maxFunnelCount = computed(() => Math.max(1, ...funnelStages.value.map((sta
             >{{ dimension.label }}</button>
           </div>
         </div>
-        <div v-if="breakdownEntries.length === 0" class="p-8 text-center text-xs text-[#7b827d]">Für diesen Zeitraum liegen keine Einreichungen vor.</div>
+        <div v-if="breakdownError" class="p-8 text-center text-xs font-semibold text-red-700">Die Aufschlüsselung konnte nicht aktualisiert werden.</div>
+        <div v-else-if="breakdownEntries.length === 0" class="p-8 text-center text-xs text-[#7b827d]">Für diesen Zeitraum liegen keine Einreichungen vor.</div>
         <ul v-else class="space-y-2">
           <li v-for="entry in breakdownEntries" :key="entry.key" class="flex items-center gap-3">
             <span class="w-32 shrink-0 truncate text-xs font-semibold text-ink" :title="entry.label">{{ entry.label }}</span>

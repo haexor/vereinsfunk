@@ -5,6 +5,7 @@ import {
   BRAND_LOCKABLE_FIELDS,
   canTransition,
   computeCountMetrics,
+  computeCountMetricsSeries,
   computeFunnel,
   computeTrend,
   contrastRatio,
@@ -917,6 +918,65 @@ describe('metrics (Paket 016)', () => {
       })
       expect(result.workflowRuns).toBe(2)
       expect(result.workflowFailures).toBe(1)
+    })
+  })
+
+  // Ersetzt den bisherigen "einmal je Bucket computeCountMetrics() aufrufen"-Ansatz im API-Handler
+  // (CodeRabbit-Fund zu PR #28: quadratisch bei vielen Buckets). Wichtigster Test: Aequivalenz zu
+  // computeCountMetrics() pro Fenster einzeln aufgerufen -- die Bucket-Variante darf kein anderes
+  // Ergebnis liefern, nur schneller rechnen.
+  describe('computeCountMetricsSeries', () => {
+    const windows = [dayWindow('2026-08-08', 'Europe/Berlin'), dayWindow('2026-08-09', 'Europe/Berlin'), dayWindow('2026-08-10', 'Europe/Berlin')]
+    const input = {
+      postsCreated: [
+        { id: 'p1', createdAt: '2026-08-07T10:00:00.000Z' }, // vor dem ersten Fenster
+        { id: 'p2', createdAt: '2026-08-08T10:00:00.000Z' },
+        { id: 'p3', createdAt: '2026-08-09T10:00:00.000Z' },
+        { id: 'p4', createdAt: '2026-08-09T12:00:00.000Z' },
+        { id: 'p5', createdAt: '2026-08-11T10:00:00.000Z' }, // nach dem letzten Fenster
+      ],
+      publishedTransitions: [
+        { postId: 'p2', occurredAt: '2026-08-08T11:00:00.000Z' },
+        { postId: 'p2', occurredAt: '2026-08-10T11:00:00.000Z' }, // erneut veroeffentlicht -- zaehlt nicht nochmal
+        { postId: 'p3', occurredAt: '2026-08-10T09:00:00.000Z' },
+      ],
+      approvalDecisions: [
+        { decision: 'approved' as const, createdAt: '2026-08-08T09:00:00.000Z' },
+        { decision: 'changes_requested' as const, createdAt: '2026-08-09T09:00:00.000Z' },
+        { decision: 'rejected' as const, createdAt: '2026-08-10T09:00:00.000Z' },
+        { decision: 'approved' as const, createdAt: '2026-08-07T09:00:00.000Z' },
+      ],
+      publications: [
+        { status: 'published', updatedAt: '2026-08-08T10:00:00.000Z' },
+        { status: 'published', updatedAt: '2026-08-08T10:30:00.000Z' },
+        { status: 'failed', updatedAt: '2026-08-09T10:00:00.000Z' },
+      ],
+      workflowRuns: [
+        { technicalStatus: 'succeeded', updatedAt: '2026-08-08T08:00:00.000Z' },
+        { technicalStatus: 'failed', updatedAt: '2026-08-09T08:00:00.000Z' },
+        { technicalStatus: 'failed', updatedAt: '2026-08-11T08:00:00.000Z' },
+      ],
+      postVersions: [
+        { postId: 'p2', versionNumber: 1 }, { postId: 'p2', versionNumber: 2 },
+        { postId: 'p3', versionNumber: 1 },
+      ],
+    }
+
+    it('matches computeCountMetrics() called once per window', () => {
+      const series = computeCountMetricsSeries(windows, input)
+      const expected = windows.map((window) => computeCountMetrics({ window, ...input }))
+      expect(series).toEqual(expected)
+    })
+
+    it('assigns each bucket its own counts, ignoring events outside the whole range', () => {
+      const series = computeCountMetricsSeries(windows, input)
+      expect(series.map((metrics) => metrics.postsCreated)).toEqual([1, 2, 0])
+      expect(series.map((metrics) => metrics.postsPublished)).toEqual([1, 0, 1])
+      expect(series.map((metrics) => metrics.revisionsSum)).toEqual([2, 0, 1])
+    })
+
+    it('returns an empty array for an empty window list', () => {
+      expect(computeCountMetricsSeries([], input)).toEqual([])
     })
   })
 

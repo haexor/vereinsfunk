@@ -510,6 +510,7 @@ export {
   median,
   computeTrend,
   computeCountMetrics,
+  computeCountMetricsSeries,
   leadTimeSecondsSamples,
   approvalDurationSecondsSamples,
   computeFunnel,
