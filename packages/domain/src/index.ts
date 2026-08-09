@@ -319,7 +319,10 @@ export function resolveReviewRoute(input: {
       mode: stage.mode,
       minimumApprovals: stage.minimumApprovals,
       isMinorStage,
-      reviewerUserIds: stage.reviewerUserIds,
+      // Der Snapshot ist nicht nur eine Diagnosehilfe, sondern der konkrete Prueferkreis der
+      // angelegten Stufe. Wenn Selbstfreigabe verboten ist, darf der Autor deshalb auch nicht
+      // darin erscheinen; die SQL-Pruefung bleibt dennoch Defence in Depth fuer direkte RPCs.
+      reviewerUserIds: effectiveReviewers,
       ...(stage.deadlineHours !== undefined ? { deadlineHours: stage.deadlineHours } : {}),
     }
   })

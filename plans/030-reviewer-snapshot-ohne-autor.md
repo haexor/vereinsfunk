@@ -7,6 +7,7 @@
 ## Status
 
 - **Priority**: P2
+- **Implementation note (2026-08-09)**: erledigt. `resolveReviewRoute` gibt die gefilterten `effectiveReviewers` als Snapshot zurück; Regressionstests decken reguläre und Minderjährigenstufen ab. Die SQL-Verteidigung blieb unverändert.
 - **Effort**: S
 - **Risk**: LOW
 - **Depends on**: none

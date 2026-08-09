@@ -7,6 +7,7 @@
 ## Status
 
 - **Priority**: P2
+- **Implementation note (2026-08-09)**: begonnen. `useApiClient()` zentralisiert API-Basis-URL, Bearer-Header und optionale Zod-Validierung. Migriert sind die Kanalseite, die Rechtsseite und die Ladepfade der Mitgliederseite. Aus `recht.vue` wurden `LegalAuditChain` und `ProcessorAgreements`, aus `marke.vue` `BrandLivePreview` ausgelagert. Restlich: Marken-, Mitglieder- und Integrationsbereiche fachlich zerlegen, API-Mutationen der migrierten Seiten vereinheitlichen sowie die geplanten Web-Tests ergänzen.
 - **Effort**: L
 - **Risk**: MED
 - **Depends on**: `plans/027-api-route-module-boundaries.md`

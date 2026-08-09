@@ -418,12 +418,12 @@ describe('resolveReviewRoute', () => {
   const author = { userId: 'author' }
   const noMinors = { containsMinors: false }
 
-  function route(stages: readonly StageDefinition[], trust: readonly TrustRecord[], overrides: Partial<{ selfApprovalAllowed: boolean; allowReviewExemptions: boolean; containsMinors: boolean }> = {}) {
+  function route(stages: readonly StageDefinition[], trust: readonly TrustRecord[], overrides: Partial<{ selfApprovalAllowed: boolean; allowReviewExemptions: boolean; containsMinors: boolean; minorReviewerUserIds: readonly string[] }> = {}) {
     return resolveReviewRoute({
       stages,
       trust,
       author,
-      media: { containsMinors: overrides.containsMinors ?? noMinors.containsMinors, reviewerUserIds: ['kinderschutz'] },
+      media: { containsMinors: overrides.containsMinors ?? noMinors.containsMinors, reviewerUserIds: overrides.minorReviewerUserIds ?? ['kinderschutz'] },
       selfApprovalAllowed: overrides.selfApprovalAllowed ?? true,
       allowReviewExemptions: overrides.allowReviewExemptions ?? true,
     })
@@ -484,6 +484,14 @@ describe('resolveReviewRoute', () => {
     const result = route([stageWithAuthor], [], { selfApprovalAllowed: false })
     expect(result.stages).toHaveLength(1)
     expect(result.blockers).toEqual([])
+    expect(result.stages[0]?.reviewerUserIds).toEqual(['trainer'])
+  })
+
+  it('does not include the author in a minor-protection reviewer snapshot when self approval is disallowed', () => {
+    const result = route([], [], { selfApprovalAllowed: false, containsMinors: true, minorReviewerUserIds: ['author', 'kinderschutz'] })
+    expect(result.blockers).toEqual([])
+    expect(result.stages).toHaveLength(1)
+    expect(result.stages[0]?.reviewerUserIds).toEqual(['kinderschutz'])
   })
 
   it('produces a blocker instead of a route when a stage has an empty reviewer pool', () => {

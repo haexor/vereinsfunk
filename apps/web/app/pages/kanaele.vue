@@ -15,7 +15,7 @@ import {
 const DepartmentRowSchema = z.object({ id: z.string(), name: z.string() })
 type DepartmentRow = z.infer<typeof DepartmentRowSchema>
 
-const config = useRuntimeConfig()
+const api = useApiClient()
 const route = useRoute()
 const scope = await useScope()
 const organizationId = computed(() => scope.value?.organizationId ?? null)
@@ -46,25 +46,21 @@ async function load() {
   loading.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
     const [channelsResponse, departmentsResult, policyResponse, membersResponse] = await Promise.all([
-      $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/channels`, { headers }),
+      api.request(`/v1/organizations/${organizationId.value}/channels`, {}, SocialConnectionSchema.array()),
       useSupabaseClient().from('departments').select('id, name').eq('organization_id', organizationId.value).is('archived_at', null).order('name'),
-      $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/channel-policy`, { headers }),
-      $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/members`, { headers }),
+      api.request(`/v1/organizations/${organizationId.value}/channel-policy`, {}, ChannelPolicySchema),
+      api.request(`/v1/organizations/${organizationId.value}/members`, {}, MemberSchema.array()),
     ])
-    const parsedChannels = SocialConnectionSchema.array().safeParse(channelsResponse)
     const parsedDepartments = DepartmentRowSchema.array().safeParse(departmentsResult.data)
-    const parsedPolicy = ChannelPolicySchema.safeParse(policyResponse)
-    const parsedMembers = MemberSchema.array().safeParse(membersResponse)
-    if (!parsedChannels.success || departmentsResult.error || !parsedDepartments.success || !parsedPolicy.success || !parsedMembers.success) {
+    if (departmentsResult.error || !parsedDepartments.success) {
       errorMessage.value = 'Die Kanäle konnten nicht geladen werden.'
       return
     }
-    channels.value = parsedChannels.data
+    channels.value = channelsResponse
     departments.value = parsedDepartments.data
-    channelPolicy.value = parsedPolicy.data
-    members.value = parsedMembers.data
+    channelPolicy.value = policyResponse
+    members.value = membersResponse
   } catch {
     errorMessage.value = 'Die Kanäle konnten nicht geladen werden.'
   } finally {
@@ -115,9 +111,7 @@ async function connect(platform: SocialPlatform, ownerScope: ChannelOwnerScope, 
   connecting.value = platform
   actionError.value = ''
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<{ authorizationUrl: string }>(`${config.public.apiBase}/v1/channels/connect/${platform}/start`, {
-      headers,
+    const response = await api.request<{ authorizationUrl: string }>(`/v1/channels/connect/${platform}/start`, {
       query: { organizationId: organizationId.value, ownerScope, ownerDepartmentId },
     })
     window.location.href = response.authorizationUrl
@@ -140,9 +134,7 @@ async function loadPending() {
   if (!pendingId.value) return
   pendingLoading.value = true
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/oauth-pending/${pendingId.value}`, { headers })
-    pendingConnection.value = PendingAccountSchema.parse(response)
+    pendingConnection.value = await api.request(`/v1/oauth-pending/${pendingId.value}`, {}, PendingAccountSchema)
   } catch {
     actionError.value = 'Die Auswahl ist nicht mehr verfügbar. Bitte die Verbindung erneut starten.'
   } finally {
@@ -155,8 +147,7 @@ async function selectPendingAccount(externalAccountId: string) {
   if (!pendingId.value) return
   pendingSelecting.value = externalAccountId
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/oauth-pending/${pendingId.value}/select`, { method: 'POST', headers, body: { externalAccountId } })
+    await api.request(`/v1/oauth-pending/${pendingId.value}/select`, { method: 'POST', body: { externalAccountId } })
     pendingConnection.value = null
     await navigateTo('/kanaele')
     await load()
@@ -171,8 +162,7 @@ async function verifyChannel(channel: SocialConnection) {
   busyChannelId.value = channel.id
   actionError.value = ''
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/channels/${channel.id}/verify`, { method: 'POST', headers })
+    await api.request(`/v1/channels/${channel.id}/verify`, { method: 'POST' })
     await load()
   } catch {
     actionError.value = 'Die Prüfung ist fehlgeschlagen.'
@@ -186,8 +176,7 @@ async function disconnectChannel(channel: SocialConnection) {
   busyChannelId.value = channel.id
   actionError.value = ''
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/channels/${channel.id}`, { method: 'DELETE', headers })
+    await api.request(`/v1/channels/${channel.id}`, { method: 'DELETE' })
     await load()
   } catch {
     actionError.value = 'Der Kanal konnte nicht getrennt werden.'
@@ -200,8 +189,7 @@ async function updateChannel(channel: SocialConnection, patch: Record<string, un
   busyChannelId.value = channel.id
   actionError.value = ''
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/channels/${channel.id}`, { method: 'PATCH', headers, body: patch })
+    await api.request(`/v1/channels/${channel.id}`, { method: 'PATCH', body: patch })
     await load()
   } catch {
     actionError.value = 'Die Änderung konnte nicht gespeichert werden.'
@@ -263,10 +251,8 @@ async function saveEditorialFields(channel: SocialConnection) {
   editorialSavingId.value = channel.id
   editorialErrorByChannel[channel.id] = ''
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/channels/${channel.id}`, {
+    await api.request(`/v1/channels/${channel.id}`, {
       method: 'PATCH',
-      headers,
       body: {
         imprintUrl: (editorialImprintUrlDraft[channel.id] ?? '').trim() || null,
         privacyUrl: (editorialPrivacyUrlDraft[channel.id] ?? '').trim() || null,
@@ -294,12 +280,11 @@ async function toggleDepartmentScope(channel: SocialConnection, departmentId: st
   scopeBusyKey.value = key
   actionError.value = ''
   try {
-    const headers = await useAuthHeader()
     const existing = scopeAssignment(channel, departmentId)
     if (existing) {
-      await $fetch(`${config.public.apiBase}/v1/channel-scopes/${existing.id}`, { method: 'DELETE', headers })
+      await api.request(`/v1/channel-scopes/${existing.id}`, { method: 'DELETE' })
     } else {
-      await $fetch(`${config.public.apiBase}/v1/channels/${channel.id}/scopes`, { method: 'POST', headers, body: { scope: 'department', scopeId: departmentId, canSchedule: true } })
+      await api.request(`/v1/channels/${channel.id}/scopes`, { method: 'POST', body: { scope: 'department', scopeId: departmentId, canSchedule: true } })
     }
     await load()
   } catch {
@@ -316,12 +301,11 @@ async function toggleOrganizationScope(channel: SocialConnection) {
   scopeBusyKey.value = key
   actionError.value = ''
   try {
-    const headers = await useAuthHeader()
     const existing = organizationScopeAssignment(channel)
     if (existing) {
-      await $fetch(`${config.public.apiBase}/v1/channel-scopes/${existing.id}`, { method: 'DELETE', headers })
+      await api.request(`/v1/channel-scopes/${existing.id}`, { method: 'DELETE' })
     } else if (organizationId.value) {
-      await $fetch(`${config.public.apiBase}/v1/channels/${channel.id}/scopes`, { method: 'POST', headers, body: { scope: 'organization', scopeId: organizationId.value, canSchedule: true } })
+      await api.request(`/v1/channels/${channel.id}/scopes`, { method: 'POST', body: { scope: 'organization', scopeId: organizationId.value, canSchedule: true } })
     }
     await load()
   } catch {
@@ -337,8 +321,7 @@ async function updateChannelPolicy(flag: 'allow_department_owned_channels' | 're
   policyUpdating.value = flag
   actionError.value = ''
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/policy-settings`, { method: 'PUT', headers, body: { scope: 'organization', scopeId: organizationId.value, flag, value } })
+    await api.request('/v1/policy-settings', { method: 'PUT', body: { scope: 'organization', scopeId: organizationId.value, flag, value } })
     await load()
   } catch {
     actionError.value = 'Die Richtlinie konnte nicht geändert werden.'

@@ -77,9 +77,9 @@ Stand: 2026-08-09, geplant auf `1883758f`. Diese Arbeitspakete folgen aus dem Co
 |---|---|---|---|
 | 026 | [Synchronisationsläufe serialisieren und idempotent machen](026-sync-runs-serialisieren-und-idempotent-machen.md) | keine | erledigt; atomarer Service-Role-Guard vor jedem Quellenabruf/Fachdaten-Lookup, `Idempotency-Key` mit Replay-Antwort und ein aktiver Apply-Slot je Quelle/Bereich; parallele Dry-Runs bleiben bewusst möglich; manuell auditiertes Abbrechen bestätigter Prozessabbrüche über `POST /v1/integration-sources/:id/sync-runs/:runId/cancel` |
 | 027 | [Fastify-API in fachliche Route-Module zerlegen](027-api-route-module-boundaries.md) | 026 | bereit |
-| 028 | [Web-API-Zugriffe vereinheitlichen und große Seiten zerlegen](028-web-api-client-und-grosse-seiten-zerlegen.md) | 027 | bereit |
+| 028 | [Web-API-Zugriffe vereinheitlichen und große Seiten zerlegen](028-web-api-client-und-grosse-seiten-zerlegen.md) | 027 | in Arbeit; `useApiClient`, Recht-/Kanal-/Mitglieder-Ladepfade sowie Audit-, Auftragsverarbeiter- und Vorschau-Komponenten extrahiert; große Restbereiche folgen |
 | 029 | [Contracts und Domain-Exports fachlich aufteilen](029-contracts-und-domain-exports-aufteilen.md) | 027 | bereit |
-| 030 | [Verbotene Selbstfreigabe auch im Reviewer-Snapshot entfernen](030-reviewer-snapshot-ohne-autor.md) | keine | bereit |
+| 030 | [Verbotene Selbstfreigabe auch im Reviewer-Snapshot entfernen](030-reviewer-snapshot-ohne-autor.md) | keine | erledigt; effektive Reviewer ohne Autor werden im Snapshot zurückgegeben, einschließlich Minderjährigenstufe getestet |
 
 Empfohlene Reihenfolge: 026 und 030 können parallel erfolgen. Danach 027, dann 028 und 029 parallel. Der vorhandene In-Prozess-Rate-Limiter bleibt bis zu einer bewussten Skalierungsentscheidung ein dokumentiertes Single-Instance-Limit; die veraltete historische Einleitung dieses Indexes wird in einem separaten Dokumentationsdurchgang bereinigt, damit diese fünf Code-Pakete keine fremde Plan-Historie umschreiben.
 
