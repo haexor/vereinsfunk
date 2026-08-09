@@ -10,6 +10,7 @@ import {
 } from '@vereinsfunk/contracts'
 
 const DepartmentRowSchema = z.object({ id: z.string(), name: z.string() })
+const AuthorizationUrlSchema = z.object({ authorizationUrl: z.url() })
 
 export async function useChannels() {
   const api = useApiClient()
@@ -87,9 +88,9 @@ export async function useChannels() {
     connecting.value = platform
     actionError.value = ''
     try {
-      const response = await api.request<{ authorizationUrl: string }>(`/v1/channels/connect/${platform}/start`, {
+      const response = await api.request(`/v1/channels/connect/${platform}/start`, {
         query: { organizationId: organizationId.value, ownerScope, ownerDepartmentId },
-      })
+      }, AuthorizationUrlSchema)
       window.location.href = response.authorizationUrl
     } catch {
       actionError.value = 'Die Verbindung konnte nicht gestartet werden.'

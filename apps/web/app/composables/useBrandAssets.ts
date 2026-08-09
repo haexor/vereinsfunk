@@ -1,4 +1,5 @@
 import { findCuratedFont, isBrandAssetSelectable } from '@vereinsfunk/domain'
+import { BrandLogoUploadResponseSchema } from '@vereinsfunk/contracts'
 import type { ComputedRef, Ref } from 'vue'
 
 export type BrandTone = 'nahbar' | 'dynamisch' | 'sachlich'
@@ -200,9 +201,10 @@ export function useBrandAssets({
     const formData = new FormData()
     formData.append('variant', logoVariant.value)
     formData.append('file', logoFile.value)
-    const uploaded = await api.request<{ signedUrl: string, sanitized: boolean }>(
+    const uploaded = await api.request(
       `/v1/organizations/${organizationId.value}/brand/logo`,
       { method: 'POST', body: formData },
+      BrandLogoUploadResponseSchema,
     )
     if (logoVariant.value === 'light') logoUrl.value = uploaded.signedUrl
     else logoDarkUrl.value = uploaded.signedUrl
