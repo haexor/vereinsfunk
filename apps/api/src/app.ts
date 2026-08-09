@@ -1110,7 +1110,7 @@ interface SyncDomainContext {
 }
 
 async function handleTeamsSync(ctx: SyncDomainContext): Promise<FastifyReply> {
-  const { request, reply, service, organizationId, sourceDepartmentId, sourceId, sourceFieldMapping, sourceLossThresholdPercent, mode, domain, correlationId, runId, idempotencyKey, rawRows } = ctx
+  const { request, reply, service, organizationId, sourceDepartmentId, sourceId, sourceFieldMapping, sourceLossThresholdPercent, mode, domain, runId, idempotencyKey, rawRows } = ctx
 
   // Wie bei Personen (Paket 014): Mannschaften ohne Quelle (Duplikatvermeidung gegen von Hand
   // gepflegte Eintraege) plus bereits dieser Quelle zugeordnete Mannschaften. Anders als
@@ -1227,7 +1227,7 @@ async function handleTeamsSync(ctx: SyncDomainContext): Promise<FastifyReply> {
 }
 
 async function handleFixturesSync(ctx: SyncDomainContext): Promise<FastifyReply> {
-  const { request, reply, service, organizationId, sourceDepartmentId, sourceId, sourceFieldMapping, sourceLossThresholdPercent, mode, domain, correlationId, runId, idempotencyKey, rawRows, organizationTimezone } = ctx
+  const { request, reply, service, organizationId, sourceDepartmentId, sourceId, sourceFieldMapping, sourceLossThresholdPercent, mode, domain, runId, idempotencyKey, rawRows, organizationTimezone } = ctx
 
   // Ein Spiel braucht eine Abteilung (fixtures.department_id ist not null) und die Quelle liefert
   // keinen eigenen Abteilungsnamen (anders als teams/people) -- ohne abteilungsgebundene Quelle
@@ -1346,7 +1346,7 @@ async function handleFixturesSync(ctx: SyncDomainContext): Promise<FastifyReply>
 }
 
 async function handleEventsSync(ctx: SyncDomainContext): Promise<FastifyReply> {
-  const { request, reply, service, organizationId, sourceDepartmentId, sourceId, sourceFieldMapping, sourceLossThresholdPercent, mode, domain, correlationId, runId, idempotencyKey, rawRows, organizationTimezone } = ctx
+  const { request, reply, service, organizationId, sourceDepartmentId, sourceId, sourceFieldMapping, sourceLossThresholdPercent, mode, domain, runId, idempotencyKey, rawRows, organizationTimezone } = ctx
 
   let existingQuery = service
     .from('club_events')
