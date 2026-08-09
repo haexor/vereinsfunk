@@ -4263,6 +4263,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       if (rpc.error.message.includes('author_cannot_reresolve')) return reply.code(403).send({ error: 'author_cannot_reresolve', correlationId: request.id })
       if (rpc.error.message.includes('invalid_status')) return reply.code(409).send({ error: 'invalid_status', correlationId: request.id })
       if (rpc.error.message.includes('route_has_rejected_stage')) return reply.code(409).send({ error: 'route_has_rejected_stage', correlationId: request.id })
+      if (rpc.error.message.includes('ambiguous_stage_mapping')) return reply.code(409).send({ error: 'ambiguous_stage_mapping', correlationId: request.id })
       if (rpc.error.message.includes('reason_required')) return reply.code(400).send({ error: 'reason_required', correlationId: request.id })
       // Guertel und Hosentraeger (Plan, Schritt 6): resolve_review_route berechnet die Route bereits
       // konfigurationstreu, assert_valid_stage_list kann diese Fehler auf diesem Weg praktisch nicht
@@ -4294,31 +4295,31 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (!(await requireAuth(request, reply))) return
     const query = z.object({ organizationId: UuidSchema }).parse(request.query)
     const client = supabaseClients.forUser(request.auth!.accessToken)
-    const requests = await client.from('approval_requests').select('id, post_id, post_version_id, invalidated_at').eq('organization_id', query.organizationId)
-    if (requests.error) throw requests.error
-    if (requests.data.length === 0) return reply.code(200).send([])
-
-    const requestIds = requests.data.map((row) => row.id)
-    const stagesResult = await client.from('approval_stages').select('approval_request_id, deadline_at').in('approval_request_id', requestIds).in('status', ['open', 'stalled'])
-    if (stagesResult.error) throw stagesResult.error
-    const now = Date.now()
-    const openRequestIds = new Set(stagesResult.data.map((row) => row.approval_request_id as string))
-    const overdueRequestIds = new Set(
-      stagesResult.data.filter((row) => row.deadline_at !== null && new Date(row.deadline_at as string).getTime() < now).map((row) => row.approval_request_id as string),
+    const requestRows = await fetchAllRows<{ id: string; post_id: string; post_version_id: string; invalidated_at: string | null }>((from, to) =>
+      client.from('approval_requests').select('id, post_id, post_version_id, invalidated_at').eq('organization_id', query.organizationId).range(from, to),
     )
-    const stalled = requests.data.filter((row) => openRequestIds.has(row.id) && (row.invalidated_at !== null || overdueRequestIds.has(row.id)))
+    if (requestRows.length === 0) return reply.code(200).send([])
+
+    const requestIds = requestRows.map((row) => row.id)
+    const stageRows = await fetchAllRowsForIds<{ approval_request_id: string; deadline_at: string | null }>(requestIds, (batch, from, to) =>
+      client.from('approval_stages').select('approval_request_id, deadline_at').in('approval_request_id', batch).in('status', ['open', 'stalled']).range(from, to),
+    )
+    const now = Date.now()
+    const openRequestIds = new Set(stageRows.map((row) => row.approval_request_id))
+    const overdueRequestIds = new Set(
+      stageRows.filter((row) => row.deadline_at !== null && new Date(row.deadline_at).getTime() < now).map((row) => row.approval_request_id),
+    )
+    const stalled = requestRows.filter((row) => openRequestIds.has(row.id) && (row.invalidated_at !== null || overdueRequestIds.has(row.id)))
     if (stalled.length === 0) return reply.code(200).send([])
 
-    const postIds = Array.from(new Set(stalled.map((row) => row.post_id as string)))
-    const postVersionIds = Array.from(new Set(stalled.map((row) => row.post_version_id as string)))
-    const [postsResult, versionsResult] = await Promise.all([
-      client.from('posts').select('id, department_id').in('id', postIds),
-      client.from('post_versions').select('id, title').in('id', postVersionIds),
+    const postIds = Array.from(new Set(stalled.map((row) => row.post_id)))
+    const postVersionIds = Array.from(new Set(stalled.map((row) => row.post_version_id)))
+    const [postRows, versionRows] = await Promise.all([
+      fetchAllRowsForIds<{ id: string; department_id: string }>(postIds, (batch, from, to) => client.from('posts').select('id, department_id').in('id', batch).range(from, to)),
+      fetchAllRowsForIds<{ id: string; title: string }>(postVersionIds, (batch, from, to) => client.from('post_versions').select('id, title').in('id', batch).range(from, to)),
     ])
-    if (postsResult.error) throw postsResult.error
-    if (versionsResult.error) throw versionsResult.error
-    const departmentByPostId = new Map(postsResult.data.map((row) => [row.id, row.department_id as string]))
-    const titleByVersionId = new Map(versionsResult.data.map((row) => [row.id, row.title as string]))
+    const departmentByPostId = new Map(postRows.map((row) => [row.id, row.department_id]))
+    const titleByVersionId = new Map(versionRows.map((row) => [row.id, row.title]))
 
     return reply.code(200).send(
       stalled

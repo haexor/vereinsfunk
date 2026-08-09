@@ -1857,6 +1857,7 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
     ['author_cannot_reresolve', 403],
     ['invalid_status', 409],
     ['route_has_rejected_stage', 409],
+    ['ambiguous_stage_mapping', 409],
     ['reason_required', 400],
     ['empty_reviewer_snapshot', 422],
   ] as const)('maps %s from reresolve_approval_route to %i', async (message, status) => {

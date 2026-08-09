@@ -74,9 +74,11 @@ const reresolveReasonDraft = reactive<Record<string, string>>({})
 const reresolveOpenId = ref<string | null>(null)
 const reresolvingId = ref<string | null>(null)
 const reresolveError = ref('')
+const stalledError = ref('')
 
 async function loadStalled() {
   if (!organizationId.value) { stalledRequests.value = []; return }
+  stalledError.value = ''
   try {
     const headers = await useAuthHeader()
     const response = await $fetch<unknown>(`${config.public.apiBase}/v1/approval-requests/stalled`, {
@@ -85,6 +87,7 @@ async function loadStalled() {
     stalledRequests.value = StalledApprovalRequestSchema.array().parse(response)
   } catch {
     stalledRequests.value = []
+    stalledError.value = 'Die festhängenden Freigaben konnten nicht geladen werden.'
   }
 }
 await loadStalled()
@@ -102,7 +105,7 @@ async function reresolve(item: StalledApprovalRequest) {
     })
     reresolveOpenId.value = null
     delete reresolveReasonDraft[item.approvalRequestId]
-    await loadStalled()
+    await Promise.all([loadStalled(), load()])
   } catch {
     reresolveError.value = 'Die Route konnte nicht neu aufgelöst werden.'
   } finally {
@@ -174,7 +177,10 @@ async function reresolve(item: StalledApprovalRequest) {
     </template>
 
     <!-- Paket 024: festhaengende Freigaben der eigenen Ebene -- nur sichtbar, wenn tatsaechlich
-         etwas haengt (leere Liste ist der Normalfall). -->
+         etwas haengt (leere Liste ist der Normalfall). stalledError bleibt sichtbar, auch wenn die
+         Liste dadurch leer ist -- sonst ist ein Ladefehler von "nichts haengt fest" nicht zu
+         unterscheiden. -->
+    <p v-if="stalledError" class="mt-10 text-sm text-amber-800">{{ stalledError }}</p>
     <section v-if="stalledRequests.length" class="mt-10">
       <header class="mb-4">
         <h2 class="font-display text-xl font-bold tracking-[-.03em]">Festhängende Freigaben deiner Ebene</h2>

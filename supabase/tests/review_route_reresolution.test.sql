@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(33);
+select plan(34);
 
 set local role postgres;
 
@@ -264,8 +264,9 @@ insert into public.posts (id, organization_id, department_id, status, created_by
   ('65000000-2000-4000-8000-000000000005', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'draft_ready', '65000000-0000-4000-8000-000000000001');
 insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type, created_by_user_id) values
   ('65000000-3000-4000-8000-000000000005', '65000000-1000-4000-8000-000000000001', '65000000-2000-4000-8000-000000000005', 1, '{}', '{}', 'user', '65000000-0000-4000-8000-000000000001');
--- Zweite benannte Pruefstelle: die verwaltende Person selbst darf nicht Pruefer sein (department_admin
--- ohne eigenen Reviewer-Eintrag), also Pruefer bleiben ...005 und ...002.
+-- Zweite benannte Pruefstelle: an dieser Stelle hat die verwaltende Person (...003, department_admin)
+-- noch keinen eigenen Reviewer-Eintrag, Pruefer sind bislang ...005 und ...002. Unten (Test 24) wird
+-- ...003 zusaetzlich als dritte Prueferin benannt und im reviewer_snapshot mitgezaehlt.
 insert into public.policy_reviewers (organization_id, policy_settings_id, kind, user_id, created_by) values
   ('65000000-1000-4000-8000-000000000001',
    (select id from public.policy_settings where organization_id = '65000000-1000-4000-8000-000000000001' and scope = 'department'),
@@ -303,8 +304,9 @@ select is(
   'open', 'the extended stage -- being the only, lowest non-final stage -- is reopened after reresolution'
 );
 
--- 26-27: authz.assert_valid_stage_list bleibt intern -- authenticated erreicht weder es noch
--- authz.resolve_review_route direkt (siehe auch policy_review_routes.test.sql).
+-- 26-27: authz.resolve_review_route bleibt intern -- authenticated erreicht es nicht direkt (siehe
+-- auch policy_review_routes.test.sql); reresolve_approval_route bricht fuer eine nicht existierende
+-- approval_request_id mit not_found ab.
 select set_config('request.jwt.claim.sub', '65000000-0000-4000-8000-000000000001', true);
 select throws_ok(
   $$select authz.resolve_review_route('65000000-3000-4000-8000-000000000005'::uuid)$$,
@@ -372,6 +374,29 @@ select is(
 select is(
   (select position from public.approval_stages where approval_request_id = (select id from public.approval_requests where post_version_id = '65000000-3000-4000-8000-000000000006')),
   1, 'positions stay gapless and start at 1 after the reresolution'
+);
+
+-- 34: doppelte Stufen derselben Ebene sind ein Datenfehler -- reresolve_approval_route raet nicht,
+-- welche der beiden gemeint ist, sondern bricht ab (Plan, "Schluessel doppelt"). resolve_review_route
+-- kann so etwas selbst nicht erzeugen; von Hand simuliert, um den Abbruch zu pruefen.
+set local role postgres;
+insert into public.posts (id, organization_id, department_id, status, created_by) values
+  ('65000000-2000-4000-8000-000000000008', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'draft_ready', '65000000-0000-4000-8000-000000000001');
+insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type, created_by_user_id) values
+  ('65000000-3000-4000-8000-000000000008', '65000000-1000-4000-8000-000000000001', '65000000-2000-4000-8000-000000000008', 1, '{}', '{}', 'user', '65000000-0000-4000-8000-000000000001');
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '65000000-0000-4000-8000-000000000001', true);
+select public.request_approval('65000000-3000-4000-8000-000000000008');
+set local role postgres;
+insert into public.approval_stages (organization_id, approval_request_id, position, scope, label, mode, minimum_approvals, reviewer_snapshot, status)
+select organization_id, approval_request_id, 2, scope, label, mode, minimum_approvals, reviewer_snapshot, 'pending'
+from public.approval_stages
+where approval_request_id = (select id from public.approval_requests where post_version_id = '65000000-3000-4000-8000-000000000008');
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '65000000-0000-4000-8000-000000000003', true);
+select throws_ok(
+  $$select public.reresolve_approval_route((select id from public.approval_requests where post_version_id = '65000000-3000-4000-8000-000000000008'), 'Testet den Abbruch bei doppelter Stufenzuordnung.')$$,
+  'P0001', 'ambiguous_stage_mapping', 'reresolve_approval_route aborts instead of guessing when two existing stages share the same scope key'
 );
 
 select * from finish();

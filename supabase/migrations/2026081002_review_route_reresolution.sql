@@ -641,6 +641,22 @@ begin
   -- position").
   for stage in select * from jsonb_array_elements(new_stages) loop
     loop_index := loop_index + 1;
+
+    -- Doppelte Stufen derselben Ebene sind ein Datenfehler (Plan, "Schluessel doppelt"): raten statt
+    -- abzubrechen wuerde eine der beiden Stufen mit ihrer alten Position stehen lassen oder je nach
+    -- Entscheidungslage stillschweigend entfernen.
+    if (
+      select count(*) from public.approval_stages s
+      where s.approval_request_id = request.id
+        and s.status in ('satisfied', 'pending', 'open', 'stalled')
+        and s.scope = (stage->>'scope')::public.policy_scope
+        and s.scope_department_id is not distinct from (stage->>'scopeDepartmentId')::uuid
+        and s.scope_team_id is not distinct from (stage->>'scopeTeamId')::uuid
+        and s.is_minor_stage = (stage->>'isMinorStage')::boolean
+    ) > 1 then
+      raise exception 'ambiguous_stage_mapping';
+    end if;
+
     select id, status into matched_stage_id, matched_status
     from public.approval_stages s
     where s.approval_request_id = request.id
