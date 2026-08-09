@@ -29,13 +29,33 @@ describe('createApiClient', () => {
     await expect(client.request('/v1/value', {}, z.object({ id: z.string() }))).rejects.toThrow('expected string')
   })
 
-  it('preserves a server error code for page-specific feedback', async () => {
+  it('returns a schema-validated resource for a successful load', async () => {
+    const client = createApiClient({
+      fetch: vi.fn().mockResolvedValue({ id: 'channel-1', displayName: 'Hauptkanal' }),
+      getAuthHeaders: vi.fn().mockResolvedValue({ authorization: 'Bearer current-token' }),
+    })
+
+    await expect(client.request('/v1/channels/channel-1', {}, z.object({ id: z.string(), displayName: z.string() })))
+      .resolves.toEqual({ id: 'channel-1', displayName: 'Hauptkanal' })
+  })
+
+  it('preserves an unauthorized server error code for page-specific feedback', async () => {
     const client = createApiClient({
       fetch: vi.fn().mockRejectedValue({ statusCode: 401, data: { error: 'unauthorized' } }),
       getAuthHeaders: vi.fn().mockResolvedValue({}),
     })
 
     await expect(client.request('/v1/private')).rejects.toMatchObject({ code: 'unauthorized', statusCode: 401, data: { error: 'unauthorized' } })
+  })
+
+  it('preserves a forbidden permission error code for page-specific feedback', async () => {
+    const client = createApiClient({
+      fetch: vi.fn().mockRejectedValue({ statusCode: 403, data: { error: 'forbidden' } }),
+      getAuthHeaders: vi.fn().mockResolvedValue({ authorization: 'Bearer current-token' }),
+    })
+
+    await expect(client.request('/v1/organizations/organization-1/retention-settings'))
+      .rejects.toMatchObject({ code: 'forbidden', statusCode: 403, data: { error: 'forbidden' } })
   })
 
   it('forwards an authenticated mutation unchanged', async () => {
