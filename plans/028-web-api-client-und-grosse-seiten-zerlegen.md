@@ -7,7 +7,7 @@
 ## Status
 
 - **Priority**: P2
-- **Implementation note (2026-08-09)**: in Arbeit auf PR #33 mit Folge-PR #34. `useApiClient()` delegiert an den testbaren Kern `app/utils/apiClient.ts`; dieser vereinheitlicht API-Basis-URL, Bearer-Header ohne Session-Cache, optionale Zod-Validierung und typisierte Serverfehler. Öffentliche Anfragen können Auth explizit abschalten. Die API-Mutationen von `marke.vue`, `mitglieder.vue` und `integrationen.vue` sowie die Ladepfade von `kanaele.vue`, `einstellungen/recht.vue` und `mitglieder.vue` sind migriert. `marke.vue` widerruft temporäre Logo-Object-URLs jetzt auch beim Unmount. Ausgelagert sind `LegalAuditChain`, `ProcessorAgreements`, `BrandLivePreview` sowie die fünf Integrations-Komponenten `IntegrationSourceHeader`, `IntegrationSourceCreateForm`, `IntegrationSourceEditForm`, `IntegrationRunHistory` und `IntegrationConflictList`; `integrationen.vue` hat damit 440 LoC. Drei Testdateien mit acht Tests laufen verbindlich, `--passWithNoTests` ist entfernt. Restlich: fachlichen State von Marke/Mitgliedern/Integrationen in Composables ziehen, die übrigen großen Seiten weiter zerlegen, mindestens fünf Testdateien mit gezielten Seiten-Tests erreichen sowie den manuellen Browser-Smoke-Test durchführen.
+- **Implementation note (2026-08-09)**: in Arbeit auf PR #33 mit Folge-PR #34. `useApiClient()` delegiert an den testbaren Kern `app/utils/apiClient.ts`; dieser vereinheitlicht API-Basis-URL, Bearer-Header ohne Session-Cache, optionale Zod-Validierung und typisierte Serverfehler. Öffentliche Anfragen können Auth explizit abschalten. Die API-Mutationen von `marke.vue`, `mitglieder.vue` und `integrationen.vue` sowie die Ladepfade von `kanaele.vue`, `einstellungen/recht.vue` und `mitglieder.vue` sind migriert. `marke.vue` kapselt Asset-/Vorschau-/Upload-State in `useBrandAssets` und Override-State in `useBrandOverrides`, `mitglieder.vue` die Rollen-, Befristungs- und Vertrauensdarstellung in `MemberList`; beide Seiten liegen damit unter 500 LoC. `memberDates.ts` deckt den Ablaufzeitpunkt einer Mitgliedschaft am lokalen Tagesende korrekt ab. Ausgelagert sind außerdem `LegalAuditChain`, `ProcessorAgreements`, `BrandLivePreview` sowie die fünf Integrations-Komponenten `IntegrationSourceHeader`, `IntegrationSourceCreateForm`, `IntegrationSourceEditForm`, `IntegrationRunHistory` und `IntegrationConflictList`; `integrationen.vue` hat damit 440 LoC. Fünf Testdateien mit zwölf Tests laufen verbindlich, `--passWithNoTests` ist entfernt. Restlich: `kanaele.vue` und `einstellungen/recht.vue` zerlegen, gezielte Load-/Berechtigungs-/Mutationstests ergänzen sowie den manuellen Browser-Smoke-Test durchführen.
 - **Effort**: L
 - **Risk**: MED
 - **Depends on**: `plans/027-api-route-module-boundaries.md`
@@ -77,7 +77,7 @@ Entferne `--passWithNoTests` erst, wenn mindestens die neuen Composable-/Kompone
 
 ## Done criteria
 
-- [ ] Alle fünf großen Seiten liegen unter 500 LoC; Zielwert 250 LoC. (`integrationen.vue`: 440 LoC, die anderen vier stehen noch aus.)
+- [ ] Alle fünf großen Seiten liegen unter 500 LoC; Zielwert 250 LoC. (`integrationen.vue`: 440 LoC, `marke.vue`: 497 LoC und `mitglieder.vue`: 482 LoC; `kanaele.vue` und `einstellungen/recht.vue` stehen noch aus.)
 - [ ] Kein `$fetch`-Boilerplate mit `config.public.apiBase` bleibt auf migrierten Seiten.
 - [ ] API-Fehler und Zod-Validierung verhalten sich identisch oder besser getestet.
 - [ ] `pnpm check` besteht.
