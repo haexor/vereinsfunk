@@ -118,6 +118,7 @@ import {
   StalledApprovalRequestSchema,
   SubmissionAcceptedSchema,
   SupersedeConsentRequestSchema,
+  SyncIdempotencyKeySchema,
   SyncModeSchema,
   SyncSourceResponseSchema,
   TeamBrandSchema,
@@ -957,59 +958,49 @@ async function loadIgnoredFingerprints(service: SupabaseClient, sourceId: string
 
 async function handleAbortedSync(input: {
   service: SupabaseClient
+  runId: string
   organizationId: string
   sourceId: string
   domain: IntegrationDomain
   mode: SyncMode
-  correlationId: string
-  triggeredBy: string
+  idempotencyKey: string
 }) {
   const run = await input.service
     .from('integration_sync_runs')
-    .insert({
-      organization_id: input.organizationId, source_id: input.sourceId, domain: input.domain, mode: input.mode,
-      status: 'aborted_loss_threshold', correlation_id: input.correlationId, finished_at: new Date().toISOString(), triggered_by: input.triggeredBy,
+    .update({
+      status: 'aborted_loss_threshold', finished_at: new Date().toISOString(),
     })
+    .eq('id', input.runId)
+    .eq('status', 'running')
     .select('id, organization_id, source_id, domain, mode, status, created_count, updated_count, retired_count, skipped_count, conflict_count, error_class, started_at, finished_at')
     .single()
   if (run.error) throw run.error
   await input.service.from('integration_sources').update({ last_sync_at: new Date().toISOString(), last_sync_status: 'aborted_loss_threshold' }).eq('id', input.sourceId)
-  return SyncSourceResponseSchema.parse({ run: mapSyncRunRow(run.data), conflicts: [] })
+  return SyncSourceResponseSchema.parse({ run: mapSyncRunRow(run.data), conflicts: [], idempotencyKey: input.idempotencyKey })
 }
 
 async function finishSyncRun(input: {
   service: SupabaseClient
   request: FastifyRequest
+  runId: string
   organizationId: string
   sourceId: string
   domain: IntegrationDomain
   mode: SyncMode
-  correlationId: string
+  idempotencyKey: string
   createdCount: number
   updatedCount: number
   retiredCount: number
   skippedCount: number
   pendingConflicts: readonly PendingConflict[]
 }) {
-  const run = await input.service
-    .from('integration_sync_runs')
-    .insert({
-      organization_id: input.organizationId, source_id: input.sourceId, domain: input.domain, mode: input.mode, status: 'succeeded',
-      created_count: input.createdCount, updated_count: input.updatedCount, retired_count: input.retiredCount,
-      skipped_count: input.skippedCount, conflict_count: input.pendingConflicts.length,
-      correlation_id: input.correlationId, finished_at: new Date().toISOString(), triggered_by: input.request.auth!.userId,
-    })
-    .select('id, organization_id, source_id, domain, mode, status, created_count, updated_count, retired_count, skipped_count, conflict_count, error_class, started_at, finished_at')
-    .single()
-  if (run.error) throw run.error
-
   let conflictRows: Record<string, unknown>[] = []
   if (input.pendingConflicts.length > 0) {
     const conflictInsert = await input.service
       .from('integration_sync_conflicts')
       .insert(
         input.pendingConflicts.map((conflict) => ({
-          organization_id: input.organizationId, sync_run_id: run.data.id, source_id: input.sourceId, domain: input.domain,
+          organization_id: input.organizationId, sync_run_id: input.runId, source_id: input.sourceId, domain: input.domain,
           external_id: conflict.externalId, local_id: conflict.localId, label: conflict.label, field: conflict.field,
           current_value: conflict.currentValue, incoming_value: conflict.incomingValue, kind: conflict.kind, fingerprint: conflict.fingerprint,
         })),
@@ -1018,6 +1009,19 @@ async function finishSyncRun(input: {
     if (conflictInsert.error) throw conflictInsert.error
     conflictRows = conflictInsert.data
   }
+
+  const run = await input.service
+    .from('integration_sync_runs')
+    .update({
+      status: 'succeeded', created_count: input.createdCount, updated_count: input.updatedCount,
+      retired_count: input.retiredCount, skipped_count: input.skippedCount,
+      conflict_count: input.pendingConflicts.length, finished_at: new Date().toISOString(),
+    })
+    .eq('id', input.runId)
+    .eq('status', 'running')
+    .select('id, organization_id, source_id, domain, mode, status, created_count, updated_count, retired_count, skipped_count, conflict_count, error_class, started_at, finished_at')
+    .single()
+  if (run.error) throw run.error
 
   await input.service.from('integration_sources').update({ last_sync_at: new Date().toISOString(), last_sync_status: 'succeeded' }).eq('id', input.sourceId)
   // Inline statt des recordAuditEvent-Helfers weiter unten in dieser Datei: der ist eine Closure
@@ -1031,7 +1035,48 @@ async function finishSyncRun(input: {
   })
   if (audit.error) input.request.log.error({ err: audit.error, correlationId: input.request.id }, 'audit_events insert failed')
 
-  return SyncSourceResponseSchema.parse({ run: mapSyncRunRow(run.data), conflicts: conflictRows.map(mapSyncConflictRow) })
+  return SyncSourceResponseSchema.parse({ run: mapSyncRunRow(run.data), conflicts: conflictRows.map(mapSyncConflictRow), idempotencyKey: input.idempotencyKey })
+}
+
+async function failSyncRun(input: {
+  service: SupabaseClient
+  runId: string
+  sourceId: string
+  error: unknown
+}) {
+  const errorClass = input.error instanceof Error ? input.error.name : 'unknown'
+  const run = await input.service
+    .from('integration_sync_runs')
+    .update({ status: 'failed', error_class: errorClass, finished_at: new Date().toISOString() })
+    .eq('id', input.runId)
+    .eq('status', 'running')
+  if (run.error) throw run.error
+  const source = await input.service
+    .from('integration_sources')
+    .update({ last_sync_at: new Date().toISOString(), last_sync_status: 'failed' })
+    .eq('id', input.sourceId)
+  if (source.error) throw source.error
+}
+
+async function loadSyncSourceResponse(input: {
+  service: SupabaseClient
+  runId: string
+  idempotencyKey: string
+}) {
+  const run = await input.service
+    .from('integration_sync_runs')
+    .select('id, organization_id, source_id, domain, mode, status, created_count, updated_count, retired_count, skipped_count, conflict_count, error_class, started_at, finished_at')
+    .eq('id', input.runId)
+    .single()
+  if (run.error) throw run.error
+  const conflicts = await input.service
+    .from('integration_sync_conflicts')
+    .select('id, organization_id, sync_run_id, source_id, domain, external_id, local_id, label, field, current_value, incoming_value, kind, resolution, resolved_at, created_at')
+    .eq('sync_run_id', input.runId)
+  if (conflicts.error) throw conflicts.error
+  return SyncSourceResponseSchema.parse({
+    run: mapSyncRunRow(run.data), conflicts: conflicts.data.map(mapSyncConflictRow), idempotencyKey: input.idempotencyKey,
+  })
 }
 
 // Loest einen rohen Datumswert (iCal-Kompaktform ODER eine bereits vollstaendige ISO-Zeichenkette
@@ -1062,12 +1107,14 @@ interface SyncDomainContext {
   mode: SyncMode
   domain: IntegrationDomain
   correlationId: string
+  runId: string
+  idempotencyKey: string
   rawRows: readonly Readonly<Record<string, unknown>>[]
   organizationTimezone: string
 }
 
 async function handleTeamsSync(ctx: SyncDomainContext): Promise<FastifyReply> {
-  const { request, reply, service, organizationId, sourceDepartmentId, sourceId, sourceFieldMapping, sourceLossThresholdPercent, mode, domain, correlationId, rawRows } = ctx
+  const { request, reply, service, organizationId, sourceDepartmentId, sourceId, sourceFieldMapping, sourceLossThresholdPercent, mode, domain, runId, idempotencyKey, rawRows } = ctx
 
   // Wie bei Personen (Paket 014): Mannschaften ohne Quelle (Duplikatvermeidung gegen von Hand
   // gepflegte Eintraege) plus bereits dieser Quelle zugeordnete Mannschaften. Anders als
@@ -1121,7 +1168,7 @@ async function handleTeamsSync(ctx: SyncDomainContext): Promise<FastifyReply> {
   const match = createTeamMatchStrategy(resolver)
   const plan = planSync({ existing: existingLocals, incoming, match, policy: { lossThresholdPercent: sourceLossThresholdPercent } })
   if (plan.aborted) {
-    return reply.code(200).send(await handleAbortedSync({ service, organizationId, sourceId, domain, mode, correlationId, triggeredBy: request.auth!.userId }))
+    return reply.code(200).send(await handleAbortedSync({ service, runId, organizationId, sourceId, domain, mode, idempotencyKey }))
   }
 
   const ignoredFingerprints = await loadIgnoredFingerprints(service, sourceId)
@@ -1177,14 +1224,14 @@ async function handleTeamsSync(ctx: SyncDomainContext): Promise<FastifyReply> {
   }
 
   return reply.code(200).send(await finishSyncRun({
-    service, request, organizationId, sourceId, domain, mode, correlationId,
+    service, request, runId, organizationId, sourceId, domain, mode, idempotencyKey,
     createdCount: applicableCreated.length, updatedCount: appliedUpdatedCount, retiredCount: plan.retired.length,
     skippedCount: plan.skipped.length, pendingConflicts,
   }))
 }
 
 async function handleFixturesSync(ctx: SyncDomainContext): Promise<FastifyReply> {
-  const { request, reply, service, organizationId, sourceDepartmentId, sourceId, sourceFieldMapping, sourceLossThresholdPercent, mode, domain, correlationId, rawRows, organizationTimezone } = ctx
+  const { request, reply, service, organizationId, sourceDepartmentId, sourceId, sourceFieldMapping, sourceLossThresholdPercent, mode, domain, runId, idempotencyKey, rawRows, organizationTimezone } = ctx
 
   // Ein Spiel braucht eine Abteilung (fixtures.department_id ist not null) und die Quelle liefert
   // keinen eigenen Abteilungsnamen (anders als teams/people) -- ohne abteilungsgebundene Quelle
@@ -1236,7 +1283,7 @@ async function handleFixturesSync(ctx: SyncDomainContext): Promise<FastifyReply>
   const match = createFixtureMatchStrategy(resolver)
   const plan = planSync({ existing: existingLocals, incoming, match, policy: { lossThresholdPercent: sourceLossThresholdPercent } })
   if (plan.aborted) {
-    return reply.code(200).send(await handleAbortedSync({ service, organizationId, sourceId, domain, mode, correlationId, triggeredBy: request.auth!.userId }))
+    return reply.code(200).send(await handleAbortedSync({ service, runId, organizationId, sourceId, domain, mode, idempotencyKey }))
   }
 
   const ignoredFingerprints = await loadIgnoredFingerprints(service, sourceId)
@@ -1296,14 +1343,14 @@ async function handleFixturesSync(ctx: SyncDomainContext): Promise<FastifyReply>
   }
 
   return reply.code(200).send(await finishSyncRun({
-    service, request, organizationId, sourceId, domain, mode, correlationId,
+    service, request, runId, organizationId, sourceId, domain, mode, idempotencyKey,
     createdCount: plan.created.length, updatedCount: appliedUpdatedCount, retiredCount: plan.retired.length,
     skippedCount: plan.skipped.length, pendingConflicts,
   }))
 }
 
 async function handleEventsSync(ctx: SyncDomainContext): Promise<FastifyReply> {
-  const { request, reply, service, organizationId, sourceDepartmentId, sourceId, sourceFieldMapping, sourceLossThresholdPercent, mode, domain, correlationId, rawRows, organizationTimezone } = ctx
+  const { request, reply, service, organizationId, sourceDepartmentId, sourceId, sourceFieldMapping, sourceLossThresholdPercent, mode, domain, runId, idempotencyKey, rawRows, organizationTimezone } = ctx
 
   let existingQuery = service
     .from('club_events')
@@ -1344,7 +1391,7 @@ async function handleEventsSync(ctx: SyncDomainContext): Promise<FastifyReply> {
 
   const plan = planSync({ existing: existingLocals, incoming, match: createClubEventMatchStrategy(), policy: { lossThresholdPercent: sourceLossThresholdPercent } })
   if (plan.aborted) {
-    return reply.code(200).send(await handleAbortedSync({ service, organizationId, sourceId, domain, mode, correlationId, triggeredBy: request.auth!.userId }))
+    return reply.code(200).send(await handleAbortedSync({ service, runId, organizationId, sourceId, domain, mode, idempotencyKey }))
   }
 
   const ignoredFingerprints = await loadIgnoredFingerprints(service, sourceId)
@@ -1428,7 +1475,7 @@ async function handleEventsSync(ctx: SyncDomainContext): Promise<FastifyReply> {
   }
 
   return reply.code(200).send(await finishSyncRun({
-    service, request, organizationId, sourceId, domain, mode, correlationId,
+    service, request, runId, organizationId, sourceId, domain, mode, idempotencyKey,
     createdCount: applicableCreated.length, updatedCount: appliedUpdatedCount, retiredCount: plan.retired.length,
     skippedCount: plan.skipped.length, pendingConflicts,
   }))
@@ -5609,6 +5656,49 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     return reply.code(200).send(mapSyncConflictRow(update.data))
   })
 
+  // Recovery ist bewusst explizit statt eines stillen Leases: Nur wer den abgestuerzten Prozess
+  // operativ geprueft hat, darf seinen laufenden Slot beenden. Der Abschluss ist auditiert; ein
+  // nachfolgender Lauf sieht deshalb immer den vorherigen Status, nie eine ueberschriebene Zeile.
+  app.post('/v1/integration-sources/:id/sync-runs/:runId/cancel', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema, runId: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const source = await client.from('integration_sources').select('organization_id, department_id').eq('id', params.id).maybeSingle()
+    if (source.error) throw source.error
+    if (!source.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const scope = toPermissionScope(source.data.organization_id as string, source.data.department_id as string | null)
+    if (!(await requirePermission(request, reply, 'integration.manage', scope))) return
+
+    const service = supabaseClients.forService()
+    const existing = await service
+      .from('integration_sync_runs')
+      .select('id, status')
+      .eq('id', params.runId)
+      .eq('source_id', params.id)
+      .eq('organization_id', scope.organizationId)
+      .maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (existing.data.status !== 'running') return reply.code(409).send({ error: 'sync_not_running', correlationId: request.id })
+
+    const cancelled = await service
+      .from('integration_sync_runs')
+      .update({ status: 'cancelled', error_class: 'cancelled_by_operator', finished_at: new Date().toISOString() })
+      .eq('id', params.runId)
+      .eq('status', 'running')
+      .select('id, organization_id, source_id, domain, mode, status, created_count, updated_count, retired_count, skipped_count, conflict_count, error_class, started_at, finished_at')
+      .maybeSingle()
+    if (cancelled.error) throw cancelled.error
+    if (!cancelled.data) return reply.code(409).send({ error: 'sync_not_running', correlationId: request.id })
+    const sourceUpdate = await service.from('integration_sources').update({ last_sync_at: new Date().toISOString(), last_sync_status: 'cancelled' }).eq('id', params.id)
+    if (sourceUpdate.error) throw sourceUpdate.error
+    await recordAuditEvent(request, {
+      organizationId: scope.organizationId, action: 'integration_source.sync_cancelled', entityType: 'integration_sync_runs', entityId: params.runId,
+      metadata: { recovery: 'manual_confirmed_process_failure' },
+    })
+    return reply.code(200).send(mapSyncRunRow(cancelled.data))
+  })
+
   app.post('/v1/integration-sources/:id/sync', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
@@ -5640,16 +5730,17 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
     let mode: SyncMode
     let domain: IntegrationDomain
-    let rawRows: Readonly<Record<string, unknown>>[]
+    let filePart: Awaited<ReturnType<typeof request.file>> | undefined
 
     if (sourceTransport === 'file') {
       if (!request.isMultipart()) return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
-      let filePart: Awaited<ReturnType<typeof request.file>>
-      let buffer: Buffer
       try {
         filePart = await request.file()
         if (!filePart) return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
-        buffer = await filePart.toBuffer()
+        // `filePart.fields` is populated as busboy parses the multipart stream, so a field
+        // declared after the file part is only present once the file's stream -- drained here
+        // via toBuffer() -- has fully flushed (same pattern as the brand-logo upload above).
+        await filePart.toBuffer()
       } catch (error) {
         if (error instanceof Error && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE') {
           return reply.code(413).send({ error: 'file_too_large', correlationId: request.id })
@@ -5663,42 +5754,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       if (!modeParsed.success || !domainParsed.success) return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
       mode = modeParsed.data
       domain = domainParsed.data
-      const isXlsx = /\.xlsx?$/i.test(filePart.filename ?? '')
-      try {
-        rawRows = await collectRows(new FileSourceTransport({ key: params.id, format: isXlsx ? 'xlsx' : 'csv', buffer }))
-      } catch (error) {
-        // csv-parse/exceljs werfen bei kaputten oder falsch formatierten Dateien synchron --
-        // ohne diesen Fang landete ein einzelner unlesbarer Upload im generischen 500-Handler statt
-        // einer verstaendlichen Fehlermeldung (beim adversarialen Review gefunden).
-        request.log.warn({ err: error, correlationId: request.id }, 'file transport parse failed')
-        return reply.code(400).send({ error: 'invalid_file', correlationId: request.id })
-      }
     } else if (sourceTransport === 'ical') {
       const body = z.object({ mode: SyncModeSchema, domain: IntegrationDomainSchema }).safeParse(request.body)
       if (!body.success) return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
       mode = body.data.mode
       domain = body.data.domain
       if (!sourceEndpointUrl) return reply.code(409).send({ error: 'source_missing_endpoint', correlationId: request.id })
-      let text: string
-      try {
-        // fetchPublicUrl statt fetch: die Adresse stammt aus der Datenbank und wird aus dem Netz
-        // der API abgerufen -- ohne Zieladressenpruefung waere das ein Server-zu-Server-Proxy in
-        // Loopback, privates Netz und Cloud-Metadatendienst (siehe outboundFetch.ts). Zeit- und
-        // Groessengrenze haengen an derselben Stelle.
-        text = await fetchPublicUrl(sourceEndpointUrl)
-        // Ein erfolgreicher Abruf sagt nichts darueber aus, ob der Inhalt tatsaechlich ein
-        // iCal-Feed ist -- z. B. eine Login-Weiterleitung antwortet oft mit 200 und HTML. Ohne
-        // diese Pruefung waere ein erster Sync (existing=[] greift die Verlustschwelle nicht)
-        // still "erfolgreich" mit null Personen (beim adversarialen Review als Randfall benannt).
-        if (!text.includes('BEGIN:VCALENDAR')) throw new Error('response is not an iCal feed')
-      } catch (error) {
-        request.log.warn({ err: error, correlationId: request.id }, 'ical fetch failed')
-        if (error instanceof OutboundFetchError && error.reason === 'blocked_url') {
-          return reply.code(400).send({ error: 'endpoint_not_allowed', correlationId: request.id })
-        }
-        return reply.code(502).send({ error: 'source_fetch_failed', correlationId: request.id })
-      }
-      rawRows = await collectRows(new IcalSourceTransport({ key: params.id, text }))
     } else {
       // http/webhook: kein Adapter in diesem Paket (plans/014, "Entscheidungen vor der Umsetzung").
       return reply.code(400).send({ error: 'transport_not_implemented', correlationId: request.id })
@@ -5712,28 +5773,100 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const correlationId = randomUUID()
     const referenceYear = new Date().getFullYear()
 
+    const headerIdempotencyKey = request.headers['idempotency-key']
+    if (Array.isArray(headerIdempotencyKey)) {
+      return reply.code(400).send({ error: 'invalid_idempotency_key', correlationId: request.id })
+    }
+    const parsedIdempotencyKey = SyncIdempotencyKeySchema.safeParse(
+      typeof headerIdempotencyKey === 'string' ? headerIdempotencyKey : randomUUID(),
+    )
+    if (!parsedIdempotencyKey.success) return reply.code(400).send({ error: 'invalid_idempotency_key', correlationId: request.id })
+    const idempotencyKey = parsedIdempotencyKey.data
+
+    // Der fachliche Bereich braucht dieselbe explizite Berechtigung wie der spätere Schreibpfad.
+    // Diese Prüfung liegt vor dem atomaren Guard, damit ein abgewiesener Request keinen Lauf belegt.
+    if (domain === 'teams' || domain === 'fixtures' || domain === 'events') {
+      const domainPermission = domain === 'teams' ? 'team.manage' : domain === 'fixtures' ? 'fixture.manage' : 'event.manage'
+      if (!(await requirePermission(request, reply, domainPermission, scope))) return
+      if (domain === 'fixtures' && !sourceDepartmentId) {
+        return reply.code(409).send({ error: 'source_missing_department', correlationId: request.id })
+      }
+    }
+
+    // Atomar vor jedem iCal-Abruf und jeder fachlichen Leseabfrage: dieselbe RPC muss der
+    // künftige Hatchet-Cron benutzen. Dry-Runs sind bewusst parallel, Apply-Läufe nicht.
+    const acquired = await service.rpc('acquire_integration_sync_run', {
+      target_organization_id: organizationId,
+      target_source_id: params.id,
+      target_domain: domain,
+      target_mode: mode,
+      target_request_idempotency_key: idempotencyKey,
+      target_correlation_id: correlationId,
+      target_triggered_by: request.auth!.userId,
+    })
+    if (acquired.error) throw acquired.error
+    const guard = acquired.data?.[0] as { result: 'acquired' | 'replay' | 'already_running'; run_id: string } | undefined
+    if (!guard) throw new Error('sync run guard returned no result')
+    if (guard.result === 'replay') return reply.code(200).send(await loadSyncSourceResponse({ service, runId: guard.run_id, idempotencyKey }))
+    if (guard.result === 'already_running') {
+      return reply.code(409).send({ error: 'sync_already_running', correlationId: request.id, idempotencyKey })
+    }
+    const runId = guard.run_id
+
+    try {
+      let rawRows: Readonly<Record<string, unknown>>[]
+      if (filePart) {
+        let buffer: Buffer
+        try {
+          buffer = await filePart.toBuffer()
+        } catch (error) {
+          await failSyncRun({ service, runId, sourceId: params.id, error })
+          if (error instanceof Error && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE') {
+            return reply.code(413).send({ error: 'file_too_large', correlationId: request.id })
+          }
+          return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+        }
+        const isXlsx = /\.xlsx?$/i.test(filePart.filename ?? '')
+        try {
+          rawRows = await collectRows(new FileSourceTransport({ key: params.id, format: isXlsx ? 'xlsx' : 'csv', buffer }))
+        } catch (error) {
+          request.log.warn({ err: error, correlationId: request.id }, 'file transport parse failed')
+          await failSyncRun({ service, runId, sourceId: params.id, error })
+          return reply.code(400).send({ error: 'invalid_file', correlationId: request.id })
+        }
+      } else {
+        try {
+          const text = await fetchPublicUrl(sourceEndpointUrl!)
+          if (!text.includes('BEGIN:VCALENDAR')) throw new Error('response is not an iCal feed')
+          rawRows = await collectRows(new IcalSourceTransport({ key: params.id, text }))
+        } catch (error) {
+          request.log.warn({ err: error, correlationId: request.id }, 'ical fetch failed')
+          await failSyncRun({ service, runId, sourceId: params.id, error })
+          if (error instanceof OutboundFetchError && error.reason === 'blocked_url') {
+            return reply.code(400).send({ error: 'endpoint_not_allowed', correlationId: request.id })
+          }
+          return reply.code(502).send({ error: 'source_fetch_failed', correlationId: request.id })
+        }
+      }
+
     // teams/fixtures/events (Paket 019) sind eigene, top-level Funktionen statt weiterer
     // Verzweigungen in diesem ohnehin schon langen Handler -- die Personen-Logik direkt darunter
     // bleibt dadurch unangetastet (chirurgische Aenderung statt eines Neu-Einrueckens von 250
     // Zeilen fuer ein neues if-Level).
     if (domain === 'teams' || domain === 'fixtures' || domain === 'events') {
-      // integration.manage (oben bereits geprueft) und team.manage/fixture.manage/event.manage
-      // sind heute deckungsgleich (department_admin hat alle vier), aber nur zufaellig -- dieselbe
-      // Haertung wie canWriteGuardianContact bei der Personen-Domaene: eine kuenftige, engere
-      // Rolle mit ausschliesslich integration.manage duerfte sonst Spielplaene/Veranstaltungen
-      // schreiben, obwohl das Rechtekonzept dafuer die jeweils eigene Permission vorsieht.
-      const domainPermission = domain === 'teams' ? 'team.manage' : domain === 'fixtures' ? 'fixture.manage' : 'event.manage'
-      if (!(await requirePermission(request, reply, domainPermission, scope))) return
       const organizationRow = await service.from('organizations').select('timezone').eq('id', organizationId).single()
       if (organizationRow.error) throw organizationRow.error
       const syncContext: SyncDomainContext = {
         request, reply, service, organizationId, sourceDepartmentId, sourceId: params.id,
-        sourceFieldMapping, sourceLossThresholdPercent, mode, domain, correlationId, rawRows,
+        sourceFieldMapping, sourceLossThresholdPercent, mode, domain, correlationId, runId, idempotencyKey, rawRows,
         organizationTimezone: organizationRow.data.timezone as string,
       }
-      if (domain === 'teams') return handleTeamsSync(syncContext)
-      if (domain === 'fixtures') return handleFixturesSync(syncContext)
-      return handleEventsSync(syncContext)
+      // await ist hier Pflicht, nicht Stil: "return handleTeamsSync(...)" ohne await verlaesst den
+      // umgebenden try-Block sofort und die spaetere Ablehnung liefe am catch (failSyncRun) vorbei --
+      // der Lauf bliebe fuer immer auf 'running' stehen und blockierte jeden weiteren Apply-Lauf.
+      if (domain === 'teams') return await handleTeamsSync(syncContext)
+      if (domain === 'fixtures') return await handleFixturesSync(syncContext)
+      return await handleEventsSync(syncContext)
     }
 
     // ab hier: domain === 'people' -- IntegrationDomainSchema laesst keinen anderen Wert mehr zu.
@@ -5822,34 +5955,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     })
 
     if (plan.aborted) {
-      const run = await service
-        .from('integration_sync_runs')
-        .insert({
-          organization_id: organizationId, source_id: params.id, domain, mode, status: 'aborted_loss_threshold',
-          correlation_id: correlationId, finished_at: new Date().toISOString(), triggered_by: request.auth!.userId,
-        })
-        .select('id, organization_id, source_id, domain, mode, status, created_count, updated_count, retired_count, skipped_count, conflict_count, error_class, started_at, finished_at')
-        .single()
-      if (run.error) throw run.error
-      await service.from('integration_sources').update({ last_sync_at: new Date().toISOString(), last_sync_status: 'aborted_loss_threshold' }).eq('id', params.id)
-      return reply.code(200).send(SyncSourceResponseSchema.parse({ run: mapSyncRunRow(run.data), conflicts: [] }))
+      return reply.code(200).send(await handleAbortedSync({ service, runId, organizationId, sourceId: params.id, domain, mode, idempotencyKey }))
     }
-
-    // Der Lauf wird VOR dem ersten Schreibvorgang angelegt (status 'running', der Vorgabewert der
-    // Tabelle). Es gibt keine Transaktion ueber Anlage, Aenderung und Austritt -- bricht einer
-    // dieser Schritte ab, bleiben die bereits geschriebenen Personen bestehen. Wuerde der Lauf
-    // erst am Ende entstehen, saehe der Verein die Aenderung, aber nirgends ihre Herkunft; so
-    // bleibt in jedem Fall eine Zeile mit 'failed' und error_class zurueck.
-    const startedRun = await service
-      .from('integration_sync_runs')
-      .insert({
-        organization_id: organizationId, source_id: params.id, domain, mode,
-        correlation_id: correlationId, triggered_by: request.auth!.userId,
-      })
-      .select('id')
-      .single()
-    if (startedRun.error) throw startedRun.error
-    const runId = startedRun.data.id as string
 
     // Dauerhaft ignorierte Fingerabdruecke dieser Quelle: ein Konflikt mit demselben Fingerabdruck
     // wird nicht neu angelegt (plans/014: "wird beim naechsten Lauf nicht neu angelegt").
@@ -5977,56 +6084,18 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     }
 
     if (mode === 'apply') {
-      try {
-        await applyPlan()
-      } catch (error) {
-        // Der Lauf bleibt als 'failed' stehen, statt mit dem Request zu verschwinden: die bereits
-        // geschriebenen Personen sind sonst ohne jeden Nachweis im Verzeichnis.
-        const errorClass = error instanceof Error ? error.name : 'unknown'
-        await service.from('integration_sync_runs').update({ status: 'failed', error_class: errorClass, finished_at: new Date().toISOString() }).eq('id', runId)
-        await service.from('integration_sources').update({ last_sync_at: new Date().toISOString(), last_sync_status: 'failed' }).eq('id', params.id)
-        throw error
-      }
+      await applyPlan()
     }
 
-    const run = await service
-      .from('integration_sync_runs')
-      .update({
-        status: 'succeeded',
-        created_count: applicableCreated.length, updated_count: appliedUpdatedCount, retired_count: plan.retired.length,
-        skipped_count: plan.skipped.length, conflict_count: pendingConflicts.length,
-        finished_at: new Date().toISOString(),
-      })
-      .eq('id', runId)
-      .select('id, organization_id, source_id, domain, mode, status, created_count, updated_count, retired_count, skipped_count, conflict_count, error_class, started_at, finished_at')
-      .single()
-    if (run.error) throw run.error
-
-    let conflictRows: Record<string, unknown>[] = []
-    if (pendingConflicts.length > 0) {
-      const conflictInsert = await service
-        .from('integration_sync_conflicts')
-        .insert(
-          pendingConflicts.map((conflict) => ({
-            organization_id: organizationId, sync_run_id: runId, source_id: params.id, domain,
-            external_id: conflict.externalId, local_id: conflict.localId, label: conflict.label, field: conflict.field,
-            current_value: conflict.currentValue, incoming_value: conflict.incomingValue, kind: conflict.kind, fingerprint: conflict.fingerprint,
-          })),
-        )
-        .select('id, organization_id, sync_run_id, source_id, domain, external_id, local_id, label, field, current_value, incoming_value, kind, resolution, resolved_at, created_at')
-      if (conflictInsert.error) throw conflictInsert.error
-      conflictRows = conflictInsert.data
+    return reply.code(200).send(await finishSyncRun({
+      service, request, runId, organizationId, sourceId: params.id, domain, mode, idempotencyKey,
+      createdCount: applicableCreated.length, updatedCount: appliedUpdatedCount, retiredCount: plan.retired.length,
+      skippedCount: plan.skipped.length, pendingConflicts,
+    }))
+    } catch (error) {
+      await failSyncRun({ service, runId, sourceId: params.id, error })
+      throw error
     }
-
-    await service.from('integration_sources').update({ last_sync_at: new Date().toISOString(), last_sync_status: 'succeeded' }).eq('id', params.id)
-    await recordAuditEvent(request, {
-      organizationId, action: `integration_source.sync_${mode}`, entityType: 'integration_sync_runs', entityId: runId,
-      // appliedUpdatedCount, nicht plan.updated.length: der Audit-Eintrag darf nicht mehr
-      // Aenderungen behaupten, als tatsaechlich geschrieben wurden.
-      metadata: { created: applicableCreated.length, updated: appliedUpdatedCount, retired: plan.retired.length, conflicts: pendingConflicts.length },
-    })
-
-    return reply.code(200).send(SyncSourceResponseSchema.parse({ run: mapSyncRunRow(run.data), conflicts: conflictRows.map(mapSyncConflictRow) }))
   })
 
   // --- Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen ------------------
