@@ -10,45 +10,40 @@ Wir setzen die Planserie aus `plans/README.md` fort. Lies zuerst `plans/README.m
 
 ## Stand
 
-Erledigt: **008, 009, 010, 022, 023, 011, 012, 013, 014, 019, 015, 025, 020, 016**. Paket 016 (Auswertung: interne Kennzahlen) ist fachlich fertig, ein Review-Fix-Durchgang zu 15 CodeRabbit-Funden ist bereits gepusht (Commit `c300cbcd`). **Prüfe zuerst, ob PR #28 gemergt ist** (`gh pr view 28`, Branch `worktree-plan-016-auswertung-interne-kennzahlen`) — falls CodeRabbit auf den Review-Fix-Commit noch einmal reagiert hat, das zuerst durchgehen.
-
-Daneben läuft unabhängig von der Plan-Serie **PR #29**: kleiner Bugfix — Erscheinungsbild-Speicherfehler im Onboarding (drei fehlende Pflichtfelder im Payload von Schritt 3) plus Entfernung der wirkungslosen Tonalität-Auswahl aus dem Onboarding-Formular. Branch `worktree-onboarding-tonalitaet-entfernen`. Stand prüfen, bevor an `marke.vue` oder dem Onboarding gearbeitet wird, sonst doppelte Arbeit.
+Erledigt: **008, 009, 010, 022, 023, 011, 012, 013, 014, 019, 015, 025, 020, 016, 024**. Paket 016 (PR #28) und Paket 024 sind beide fertig gebaut, verifiziert und gemergt. Nur noch **021 (Abomodelle, Speicherkontingent)** bleibt aus der zweiten Planserie offen — technisch bereit, braucht aber vorab mehrere Geschäfts-/Steuerentscheidungen vom Nutzer (siehe unten). 017 und 018 bleiben an externen Gates (Meta App Review bzw. Rechtsgrundlage/AVV mit LLM-Anbieter) hängen.
 
 ## Empfehlung für das nächste Paket
 
-Keiner der beiden verbleibenden Kandidaten ist ohne Rückfrage baubar:
+**021 ist der einzige verbleibende Kandidat der zweiten Planserie — frag gezielt nach den unten gelisteten Geschäftsentscheidungen, bevor du baust.** Ist keine davon klärbar, prüfe stattdessen, ob eines der externen Gates (017/018) inzwischen offen ist, oder ob der Nutzer ein Paket aus der dritten Ebene (Plattform-Administration, siehe `plans/README.md`) oder einen eigenständigen Bugfix priorisiert.
 
-- **021 (Abomodelle, Speicherkontingent)** — technisch bereit (009, 010, 011 erledigt), braucht aber vorab mehrere Geschäfts-/Steuerentscheidungen vom Nutzer (Zahlungsdienstleister, Preise/Deckungsrechnung, Bestandspreise, Video im kostenlosen Tarif).
-- **024 (Freigaberoute neu auflösen)** — Entwurf steht (`plans/024-freigaberoute-neu-aufloesen.md`), aber noch nicht vom Nutzer bestätigt.
+## Was 024 mitbringt (Freigaberoute bewusst neu auflösen)
 
-**Frag gezielt nach, bevor du eines der beiden baust.** 017 und 018 bleiben an externen Gates (Meta App Review bzw. Rechtsgrundlage/AVV mit LLM-Anbieter) hängen.
+- **`authz.resolve_review_route`**: baut `buildStageDefinitions`/`resolveReviewRoute` (bislang nur TS, `apps/api`/`packages/domain`) in SQL nach — Grundlage dafür, dass `request_approval` und die neue `reresolve_approval_route` die Freigaberoute seit diesem Paket **ausschließlich selbst** ableiten, nie mehr vom Aufrufer übernehmen.
+- **`request_approval` mitgehärtet**: kein `stages`-Parameter mehr (alte Zwei-Parameter-Signatur per `drop function` entfernt). Schließt die seit Paket 011 offene, bereits ausgelieferte Lücke, dass ein Einreichender per direktem RPC-Aufruf einen selbst gewählten Prüfer — auch für die Minderjährigenstufe — hätte eintragen können, obwohl `review_mode = 'named'` etwas anderes verlangt.
+- **`public.reresolve_approval_route`**: der Ausweg aus einer festhängenden Freigabe (Prüferin ausgetreten, Frist überschritten, Medium geändert). Verwaltungsrecht (`department.manage`) im Scope, Autor ausgeschlossen, Begründung ab zehn Zeichen Pflicht, vorheriger Zustand in neuer Tabelle `approval_route_changes` festgehalten (redigierte Projektion ohne Prüfer-IDs), `invalidated_at` bekommt damit erstmals Wirkung (`authz.can_decide_stage` lehnt eine invalidierte Freigabe jetzt ab, `reresolve_approval_route` ist der Weg zurück).
+- **API**: `POST /v1/approval-requests/:id/reresolve`, `GET /v1/approval-requests/stalled` (festhängende Freigaben der eigenen Ebene — deckt überfällig/invalidiert ab, **nicht** den dritten Plan-Auslöser „reviewer_snapshot nicht mehr erfüllbar", siehe Plan), `approval_route_changes`-Verlauf in `GET /v1/post-versions/:id/approval`.
+- **Oberfläche**: neuer Abschnitt „Festhängende Freigaben deiner Ebene" auf `pages/freigaben.vue` mit Neuauflösen-Aktion.
+- **Sieben Funde beim Bauen, alle durch tatsächliche Ausführung (nicht nur Lesen) gefunden**, darunter ein **vorbestehender, seit Paket 011 nie ausgeführter Bug**: `decide_approval_stage`s Zuweisung an `posts.status` bei `rejected`/`changes_requested` scheiterte mit einem SQL-Typfehler (500) bei **jeder** Ablehnung, weil ein `CASE` mit reinen Text-Literalen in einem `UPDATE ... SET` nicht implizit auf den Enum-Zielspaltentyp castet — unbemerkt, weil kein bisheriger Test diesen Pfad gegen echtes Postgres ausgeführt hat. Vollständige Liste in `plans/024-freigaberoute-neu-aufloesen.md`, Abschnitt „Umsetzung: Ergebnis und Abweichungen vom Plan".
+- **Projektweit relevant**: `approval_requests_select`/`approval_stages_select`/`approval_route_changes_select` deckten vor diesem Paket nur Organisationsrolle, zugewiesene Prüfer und den Autor ab — eine Person mit `department.manage`, die selbst weder Prüfer noch Autor ist, konnte eine Anfrage ihrer eigenen Abteilung nicht einmal per `SELECT` finden. Alle drei Policies um eine `department.manage`-Klausel erweitert. Wer künftig eine neue RLS-Policy für `approval_requests`/`approval_stages` schreibt, muss diese Klausel mitführen.
+- **Regel für künftige `RETURNS TABLE`-Funktionen**: eine Ausgabespalte, deren Name mit einer im Funktionskörper gelesenen Tabellenspalte kollidiert (hier: `scope`), wird als PL/pgSQL-Variable verdeckt und macht jede unqualifizierte Referenz mehrdeutig — immer tabellenqualifizieren.
 
-## Was 016 mitbringt (Auswertung: interne Kennzahlen)
+## Kritische Punkte, projektweit relevant (aus 016/024/025, weiterhin gültig)
 
-- **Vier live berechnende Endpunkte** (`GET /v1/analytics/summary|timeseries|breakdown|funnel`) — kein Cache, keine Vorberechnung. `packages/domain/src/metrics.ts` trägt die reinen Rechenfunktionen, inklusive `computeCountMetricsSeries` (Review-Fix: ersetzt eine quadratische Bucket-Schleife im API-Handler durch einen einmalig sortierten Zeiger-Ansatz, O(Ereignisse·log Ereignisse + Buckets) statt O(Buckets·Ereignisse)).
-- **Neue Tabelle `post_status_events`** (Statushistorie, per Trigger auf `posts` befüllt) plus neue Aufbewahrungsregel `retention_settings.status_event_days` (Default 730 Tage), durchgesetzt im bestehenden Retention-Lauf.
-- **Neue Seite `pages/auswertung.vue`**: Kennzahlenzeile mit Trend, handgerolltes SVG (keine neue Chart-Bibliothek), Aufschlüsselung nach Abteilung/Anlass/Ziel, Funnel, Kontingentauslastung, ehrlich benannter Leerbereich für Reichweite/Interaktionen (kommt erst mit 017).
-- **Fünfter kritischer Befund der adversarialen Prüfung, projektweit relevant** (siehe `plans/README.md`, Abschnitt „Kritischster Befund"): `apps/api/src/auth.ts`s `rolesForScope` prüft Organisation-/Abteilungs-/Team-Mitgliedschaft unabhängig voneinander, nie ob die drei per Scope übergebenen IDs überhaupt zusammengehören. In 016 behoben über `assertAnalyticsScopeConsistency`, der gemeinsame `RoleProvider` selbst bewusst unverändert gelassen. **Andere Endpunkte mit demselben Query-Parameter-Muster (`toPermissionScope(organizationId, departmentId)` aus rohen Query-Parametern, danach eine Abfrage nur nach `organizationId` statt zusammengesetzt gefiltert) könnten betroffen sein — noch nicht geprüft.**
-- **Review-Fix (Commit `c300cbcd`)**: 15 CodeRabbit-Funde zu PR #28 behoben — u. a. die oben genannte quadratische Bucket-Schleife, `.in()`-Batching in drei Loadern, 404 statt 500 bei fehlender Organisation, Custom-Zeitraum-Validierung und Watcher-Race-Conditions in der Oberfläche, sechs Dokument-Inkonsistenzen im Plan (Cache-Abschnitte als verworfen markiert, Kachel-Zuordnung von 019 auf 009 korrigiert, Metrikdefinitionen-Tabelle auf tatsächliche Granularität gebracht). Ein Fund (Kontingent-RPC-Parallelität) bewusst zurückgestellt — von CodeRabbit selbst als trivial/low-value markiert.
-- **Bewusst nicht behoben, dokumentiert**: `workflow_runs` hat kein `team_id` — ein `team_manager` ohne eigene Abteilungsrolle sieht Workflow-Zählwerte der gesamten Abteilung statt nur des eigenen Teams. Kein Scope-Wähler auf der Auswertungsseite selbst (Scope kommt wie überall aus der Sidebar).
+- **Scope-Konsistenz bei zusammengesetzten IDs** (016): jeder Endpunkt, der `organizationId`/`departmentId`/`teamId` aus rohen Query-Parametern zu einem `PermissionScope` zusammensetzt, muss vor der Rechteprüfung sicherstellen, dass die IDs tatsächlich zusammengehören. `assertAnalyticsScopeConsistency` in `apps/api/src/app.ts` ist die Referenzimplementierung; noch nicht auf andere Endpunkte mit demselben Muster übertragen.
+- **Ein an anderer Stelle gelesener, aber nie geschriebener Wert legt die erwartete Form fest** (025): bei jeder Spalte, die von A geschrieben und von B (an anderer Stelle, früher gebaut) gelesen wird, ohne dass es bisher einen Schreibzugriff gab: die tatsächliche Lesestelle prüfen, nicht nur den Typ des Schreibers.
+- **CASE mit reinen Text-Literalen und Enum-Zielspalten** (024): in einem `UPDATE ... SET enum_col = CASE WHEN ... THEN 'a' ELSE 'b' END` ohne expliziten Cast löst Postgres den CASE auf `text` auf, nicht auf den Zielspaltentyp — anders als bei einem einzelnen Literal oder (beobachtet) einem `INSERT ... VALUES`. Immer `::public.<enum_type>` ergänzen, wenn ein CASE mit mehreren String-Literal-Zweigen an eine Enum-Spalte zugewiesen wird.
 
-## Kritische Punkte, projektweit relevant (aus 016 und 025, weiterhin gültig)
-
-- **Scope-Konsistenz bei zusammengesetzten IDs** (016): jeder Endpunkt, der `organizationId`/`departmentId`/`teamId` aus rohen Query-Parametern zu einem `PermissionScope` zusammensetzt, muss vor der Rechteprüfung sicherstellen, dass die IDs tatsächlich zusammengehören (nicht nur, dass der Aufrufer irgendeine Rolle in jeder einzelnen hat) — sonst lässt sich eine echte Rolle in Verein A mit einer beliebigen ID aus Verein B kombinieren. `assertAnalyticsScopeConsistency` in `apps/api/src/app.ts` ist die Referenzimplementierung; noch nicht auf andere Endpunkte mit demselben Muster übertragen.
-- **Ein an anderer Stelle gelesener, aber nie geschriebener Wert legt die erwartete Form fest — nicht die „korrekte" Verschachtelung des Quelltyps** (025): `effective_config_snapshot` wurde bis 025 von niemandem beschrieben, aber von zwei Stellen (`schedule_publication`, `available-channels`) bereits mit einer bestimmten (flachen) Formannahme gelesen. Bei jeder Spalte, die von A geschrieben und von B (an anderer Stelle, früher gebaut) gelesen wird, ohne dass es bisher einen Schreibzugriff gab: die tatsächliche Lesestelle prüfen, nicht nur den Typ des Schreibers.
-
-## Bewusst offen gelassene Punkte (unverändert seit 011/012/014/015/025/020, plus 016)
+## Bewusst offen gelassene Punkte (unverändert seit 011/012/014/015/020/025, plus 016/024)
 
 - `submit_requires_permission` existiert als Spalte, hat aber keine Bedeutung (011).
-- Benachrichtigung der Prüfer, der tägliche „Stufen als stalled markieren"-Job, `recompute_directory_minor_status()` (014), `flag_channels_needing_reconnect()`/`cleanup_expired_oauth_state()` (012), Retention-Lauf und Audit-Signatur (020) — alle warten weiterhin auf den Hatchet-Cron aus Paket 004, der weiterhin nicht produktiv läuft.
-- Eine tatsächlich blockierte Freigaberoute lässt sich noch nicht auflösen — Paket 024 (Entwurf, noch nicht bestätigt).
-- `request_approval` prüft weiterhin nicht, ob die vom Aufrufer genannten Prüfer die in der Richtlinie **konfigurierten** sind (`plans/024-freigaberoute-neu-aufloesen.md`, Abschnitt 2).
+- Benachrichtigung der Prüfer, der tägliche „Stufen als stalled markieren"-Job, `recompute_directory_minor_status()` (014), `flag_channels_needing_reconnect()`/`cleanup_expired_oauth_state()` (012), Retention-Lauf und Audit-Signatur (020) — alle warten weiterhin auf den Hatchet-Cron aus Paket 004, der weiterhin nicht produktiv läuft. Benachrichtigung neu benannter Prüfer nach einer Neuauflösung (024) fällt in dieselbe Kategorie.
 - `evaluateMediaGate`/`computeMediaGateBlockersForPostVersion` bleiben rein informativ für Reviewer, nicht als echter Blocker in `decide_approval_stage`/`schedule_publication` verdrahtet.
-- Der UI-Trigger für `request_approval` fehlt in `erstellen.vue` — `freigaben.vue` bleibt deshalb leer, bis dieser Trigger gebaut wird.
+- Der UI-Trigger für `request_approval` fehlt weiterhin in `erstellen.vue` — `freigaben.vue`s „wartet auf mich"-Liste bleibt deshalb meist leer, und der in 024 gebaute `approval_route_changes`-Verlauf in `GET /v1/post-versions/:id/approval` hat noch keine Detailseite, die ihn anzeigt (derselbe fehlende Trigger).
+- `GET /v1/approval-requests/stalled` (024) deckt nur zwei der drei geplanten Auslöser ab (überfällig, invalidiert) — „reviewer_snapshot nicht mehr erfüllbar" (`unresolvableReviewers`) fehlt, siehe Plan.
 - Kein Hatchet-Cron, der eine künftig geplante Veröffentlichung automatisch ausführt — `POST /v1/publications/:id/execute` bleibt ein expliziter, manueller Trigger.
 - Vollständige, irreversible Vereinskonto-Löschung fehlt (020).
 - `workflow_runs` hat kein `team_id` — ein `team_manager` sieht Workflow-Zählwerte der gesamten Abteilung statt nur des eigenen Teams (016).
-- Der gemeinsame `RoleProvider` (`apps/api/src/auth.ts`) ist nicht gegen das Scope-Konsistenz-Muster aus 016 geprüft, außer am neuen Analytics-Endpunkt.
+- Der gemeinsame `RoleProvider` (`apps/api/src/auth.ts`) ist nicht gegen das Scope-Konsistenz-Muster aus 016 geprüft, außer am Analytics-Endpunkt.
 
 ## Vorgehen je Arbeitspaket
 
@@ -60,18 +55,20 @@ Pläne zitieren konkrete `file:line`-Stellen. Vor dem Bauen mehrere Agents paral
 
 ### Phase 2 — Umsetzen
 
-`EnterWorktree` vor der ersten Codeänderung, ein Branch je Paket. **Nach `EnterWorktree` jeden absoluten Dateipfad mit dem zurückgegebenen Worktree-Präfix schreiben, nicht den Hauptcheckout-Pfad aus Gewohnheit weiterverwenden** — das ist in dieser Serie bereits dreimal versehentlich passiert (015, 020, 016: ein Plan-Update aus Phase 1 landete im Hauptcheckout statt im Worktree und blieb dort unstaged liegen, bis es beim nächsten Session-Start entdeckt und verworfen wurde). Migration → Domain → API → Oberfläche → Rückbau ist überwiegend seriell. Parallelisierbar: reine Domainfunktionen mit Tests sobald das Modell feststeht, pgTAP-Tests parallel zur Migration, Oberflächenarbeit sobald die Contracts fest sind. **Nicht** parallel: zwei Agents an derselben Migrationsdatei, an `packages/contracts/src/index.ts` oder `packages/domain/src/index.ts`.
+`EnterWorktree` vor der ersten Codeänderung, ein Branch je Paket. **Nach `EnterWorktree` jeden absoluten Dateipfad mit dem zurückgegebenen Worktree-Präfix schreiben, nicht den Hauptcheckout-Pfad aus Gewohnheit weiterverwenden** — das ist in dieser Serie bereits dreimal versehentlich passiert (015, 020, 016). Migration → Domain → API → Oberfläche → Rückbau ist überwiegend seriell. Parallelisierbar: reine Domainfunktionen mit Tests sobald das Modell feststeht, pgTAP-Tests parallel zur Migration, Oberflächenarbeit sobald die Contracts fest sind. **Nicht** parallel: zwei Agents an derselben Migrationsdatei, an `packages/contracts/src/index.ts` oder `packages/domain/src/index.ts`.
+
+**Bei jeder neuen PL/pgSQL-Funktion, die tatsächliche Logik enthält (nicht nur eine einfache Abfrage): vor dem Weiterbauen einmal ausführen** (`pnpm db:reset` + ein pgTAP-Aufruf oder ein Testfall), nicht nur `db:reset` allein — Postgres prüft einen PL/pgSQL-Funktionskörper syntaktisch/semantisch erst bei der ersten Ausführung, nicht beim Anlegen. Paket 024 hat allein dadurch sieben echte Fehler gefunden, die `db:reset` durchgelassen hätte (mehrdeutige Spaltennamen, fehlende Enum-Casts, eine Fensterfunktion in einer Aggregatfunktion, ein vorbestehender, nie ausgeführter Bug in bereits produktivem Code).
 
 **Env-Dateien für den manuellen Browser-Test liegen an der Worktree-WURZEL, nicht in `apps/api/`**: `apps/api/package.json`s `dev`-Skript lädt `../../.env` relativ zum `apps/api`-Arbeitsverzeichnis — das ist die Worktree-Wurzel (zwei Ebenen höher), nicht `apps/api/.env`.
 
 ### Phase 3 — Adversarial prüfen (parallel, unterschiedliche Blickwinkel)
 
-1. **Mandantentrennung** — `organization_id` auf jeder neuen Tabelle, zusammengesetzte Fremdschlüssel, positive **und** negative RLS-Tests. Bei jeder neuen `security definer`-RPC: übernimmt sie sicherheitsrelevante Parameter vom Aufrufer? Bei jeder neuen RLS-Policy mit `EXISTS`/`JOIN`: unterliegt der Aufrufer dabei der Policy der abgefragten Tabelle? Bei jeder service-role-Löschung anhand einer Pfad-/Referenzspalte ohne CHECK: kann ein Aufrufer im eigenen Verein diese Spalte auf ein fremdes Ziel zeigen lassen (siehe 020s Cross-Tenant-Fund)? Bei jedem Endpunkt, der `organizationId`/`departmentId`/`teamId` aus Query-Parametern zu einem Scope zusammensetzt: sind die IDs auf Zusammengehörigkeit geprüft, nicht nur einzeln auf eine Rolle (siehe 016s Scope-Konsistenz-Fund)?
-2. **Rechte** — kommt jemand an Aktionen/Daten, die der Plan ausdrücklich verwehrt? Bekommt jede Rolle, die laut Plan etwas verwalten soll, die dafür nötige Permission auch tatsächlich in **beiden** Permission-Tabellen (TS und SQL)?
+1. **Mandantentrennung** — `organization_id` auf jeder neuen Tabelle, zusammengesetzte Fremdschlüssel, positive **und** negative RLS-Tests. Bei jeder neuen `security definer`-RPC: übernimmt sie sicherheitsrelevante Parameter vom Aufrufer? Bei jeder neuen RLS-Policy mit `EXISTS`/`JOIN`: unterliegt der Aufrufer dabei der Policy der abgefragten Tabelle? Bei jeder service-role-Löschung anhand einer Pfad-/Referenzspalte ohne CHECK: kann ein Aufrufer im eigenen Verein diese Spalte auf ein fremdes Ziel zeigen lassen (siehe 020s Cross-Tenant-Fund)? Bei jedem Endpunkt, der `organizationId`/`departmentId`/`teamId` aus Query-Parametern zu einem Scope zusammensetzt: sind die IDs auf Zusammengehörigkeit geprüft (siehe 016s Scope-Konsistenz-Fund)?
+2. **Rechte** — kommt jemand an Aktionen/Daten, die der Plan ausdrücklich verwehrt? Bekommt jede Rolle, die laut Plan etwas verwalten soll, die dafür nötige Permission auch tatsächlich in **beiden** Permission-Tabellen (TS und SQL)? Kann eine verwaltende Person eine Zeile per RPC überhaupt referenzieren, oder fehlt ihr dafür die RLS-Sichtbarkeit (siehe 024s Fund zu `approval_requests_select`)?
 3. **Geheimnisse** — Token, Elternkontakt, Einwilligungsnachweise, Provenienz-Felder: landen sie in einem `select` für `authenticated`, der breiter ist als nötig?
 4. **Verträge** — jede Systemgrenze mit Zod, Grenzfälle abgedeckt, jeder SQL-Fehlerpfad auf einen sinnvollen HTTP-Status gemappt (nicht nur ein generischer 500 bei einem CHECK-Verstoß, siehe 020).
-5. **Rückbau** — jeder Inventar-Eintrag erledigt, kein erfundener Wert durch Null/Platzhalter ersetzt. Bei jeder in der Oberfläche behaupteten Frist/Zusage: existiert dafür tatsächlich Code, der sie einhält (dieselbe Fehlerklasse wie ursprünglich bei 020s Auslöser, seitdem bereits einmal in 020 selbst wiederholt bei `consent_evidence_years`)?
-6. **Gelesen-vor-geschrieben** — bei jeder Spalte, die von einer neuen Stelle erstmals BESCHRIEBEN wird, aber von einer älteren Stelle bereits GELESEN wird: die tatsächliche Lesestelle prüfen, nicht nur den Typ nachbilden (siehe „Kritische Punkte" oben).
+5. **Rückbau** — jeder Inventar-Eintrag erledigt, kein erfundener Wert durch Null/Platzhalter ersetzt.
+6. **Gelesen-vor-geschrieben** — bei jeder Spalte, die von einer neuen Stelle erstmals BESCHRIEBEN wird, aber von einer älteren Stelle bereits GELESEN wird: die tatsächliche Lesestelle prüfen, nicht nur den Typ nachbilden.
 
 Ein Fund gilt erst als echt, wenn reproduzierbar. Unklare Funde von einem zweiten Agent widerlegen lassen.
 
@@ -98,7 +95,7 @@ Alles muss grün sein. Danach Statuswert in `plans/README.md` auf `erledigt` set
 - `AGENTS.md` gilt: jede mandantenbezogene Tabelle mit `organization_id`, zusammengesetzte Fremdschlüssel, RLS mit positiven und negativen Tests, Service Role nur in API und Workern, Provider nur hinter Interfaces, Zod an jeder Systemgrenze.
 - Übergreifende Regeln in `plans/README.md` sind bindend.
 - **Kein erfundener Wert wird durch eine Null oder einen grauen Balken ersetzt.**
-- Chirurgische Änderungen: nur anfassen, was das Paket verlangt. Kein Refactoring angrenzenden Codes, kein Aufräumen fremden toten Codes — nur erwähnen. Wird durch die eigene Änderung Code ungenutzt (z. B. ein DI-Slot ohne verbleibenden Aufrufer), diesen aber entfernen statt tote Infrastruktur zurückzulassen.
+- Chirurgische Änderungen: nur anfassen, was das Paket verlangt. Kein Refactoring angrenzenden Codes, kein Aufräumen fremden toten Codes — nur erwähnen. Wird durch die eigene Änderung Code ungenutzt (z. B. ein DI-Slot ohne verbleibenden Aufrufer), diesen aber entfernen statt tote Infrastruktur zurückzulassen. Ein beim Bauen entdeckter, echter vorbestehender Bug in Code, den das Paket ohnehin per `create or replace` neu fasst, darf mitbehoben werden (siehe 024s `decide_approval_stage`-Fund) — aber nur dort, nicht als Anlass für ein größeres Refactoring.
 - Minimaler Code. Keine Abstraktion für einen einzigen Aufrufer, keine ungefragte Konfigurierbarkeit.
 - Neue Laufzeitabhängigkeiten vor dem Festlegen kurz auf bekannte CVEs prüfen (`pnpm audit`).
 - Commits und PR-Beschreibungen ohne jeden Hinweis auf Claude, Anthropic oder Claude Code.
@@ -110,11 +107,10 @@ Alles muss grün sein. Danach Statuswert in `plans/README.md` auf `erledigt` set
 
 ## Offene Entscheidungen
 
-`plans/README.md` listet sie am Ende. Für 021 wird mindestens eine Entscheidung gebraucht, für 024 eine Bestätigung:
+`plans/README.md` listet sie am Ende. Für 021 wird mindestens eine Entscheidung gebraucht:
 
 - **021 (Abomodelle)**: alles, was Geld betrifft — Zahlungsdienstleister, Preise/Deckungsrechnung, Bestandspreise, Video im kostenlosen Tarif.
-- **024 (Freigaberoute neu auflösen)**: Entwurf steht, noch nicht bestätigt.
-- **011 (weiterhin ungeklärt)**: automatische Eskalation an die übergeordnete Ebene nach Fristablauf einer blockierten Prüfstufe — nur eine automatische *Freigabe* ist ausgeschlossen, eine Eskalation nicht.
+- **011 (weiterhin ungeklärt)**: automatische Eskalation an die übergeordnete Ebene nach Fristablauf einer blockierten Prüfstufe — nur eine automatische *Freigabe* ist ausgeschlossen, eine Eskalation nicht. Seit 024 ist der manuelle Ausweg (Neuauflösung durch eine verwaltende Person) gebaut; eine zusätzliche automatische Eskalation bleibt eine separate, noch offene Frage.
 - **010 (falls E-Mail-Versand noch nicht entschieden ist)**: eigener Anbieter oder Supabase Auth Invite.
 
 Frag gezielt nach, statt eine Annahme zu treffen.

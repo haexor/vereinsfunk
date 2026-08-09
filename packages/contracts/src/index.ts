@@ -873,12 +873,32 @@ export const ApprovalDecisionSchema = z.object({
   reason: z.string().nullable(),
   createdAt: z.iso.datetime({ offset: true }),
 })
+// Paket 024: redigierte Projektion des Zustands VOR einer Neuaufloesung -- bewusst ohne
+// Pruefer-IDs (siehe plans/024, "Datenmodell": die opened_at-basierte Sichtbarkeitsregel fuer den
+// Autor darf ueber den Verlauf nicht umgangen werden).
+export const ApprovalRouteChangeStageSchema = z.object({
+  position: z.number().int().positive(),
+  label: z.string(),
+  scope: ScopeLevelSchema,
+  status: ApprovalStageStatusSchema,
+  reviewerCount: z.number().int().nonnegative(),
+})
+export const ApprovalRouteChangeSchema = z.object({
+  id: UuidSchema,
+  changedBy: UuidSchema,
+  reason: z.string(),
+  stagesBefore: z.array(ApprovalRouteChangeStageSchema),
+  createdAt: z.iso.datetime({ offset: true }),
+})
 export const ApprovalRequestSchema = z.object({
   id: UuidSchema,
   postId: UuidSchema,
   postVersionId: UuidSchema,
   stages: z.array(ApprovalStageSchema),
   decisions: z.array(ApprovalDecisionSchema),
+  // .default([]) haelt bestehende Konsumenten ohne diese Angabe kompatibel, gleiches Muster wie
+  // mediaGateBlockers oben.
+  routeChanges: z.array(ApprovalRouteChangeSchema).default([]),
 })
 export const RequestApprovalResponseSchema = z.object({
   postId: UuidSchema,
@@ -894,6 +914,30 @@ export const DecideApprovalStageResponseSchema = z.object({
   stageStatus: ApprovalStageStatusSchema,
   postStatus: z.string(),
   nextStageId: UuidSchema.optional(),
+})
+
+// Paket 024: eine laufende Freigabe bewusst neu aufloesen (plans/024-freigaberoute-neu-aufloesen.md).
+export const ReresolveApprovalRouteRequestSchema = z.object({
+  reason: z.string().trim().min(10).max(2000),
+})
+export const ReresolveApprovalRouteResponseSchema = z.object({
+  postId: UuidSchema,
+  approvalRequestId: UuidSchema,
+  status: z.string(),
+  firstStageId: UuidSchema.nullable(),
+})
+// Festhaengende Freigabe der eigenen Ebene (plans/024, "Oberflaeche"): mindestens eine offene
+// Stufe ist ueberfaellig ODER die Anfrage ist invalidiert. Bewusst kleiner als der Plan-Entwurf --
+// "der reviewer_snapshot ist nicht mehr erfuellbar" (unresolvableReviewers) fehlt, siehe
+// plans/024, "Umsetzung: Ergebnis und Abweichungen vom Plan".
+export const StalledApprovalRequestSchema = z.object({
+  approvalRequestId: UuidSchema,
+  postId: UuidSchema,
+  postVersionId: UuidSchema,
+  departmentId: UuidSchema,
+  postTitle: z.string(),
+  isOverdue: z.boolean(),
+  invalidated: z.boolean(),
 })
 
 export const ChannelQuotaSchema = z.object({
@@ -1611,9 +1655,13 @@ export type SetMemberReviewTrustRequest = z.infer<typeof SetMemberReviewTrustReq
 export type ApprovalStage = z.infer<typeof ApprovalStageSchema>
 export type ApprovalDecision = z.infer<typeof ApprovalDecisionSchema>
 export type ApprovalRequest = z.infer<typeof ApprovalRequestSchema>
+export type ApprovalRouteChange = z.infer<typeof ApprovalRouteChangeSchema>
 export type RequestApprovalResponse = z.infer<typeof RequestApprovalResponseSchema>
 export type DecideApprovalStageRequest = z.infer<typeof DecideApprovalStageRequestSchema>
 export type DecideApprovalStageResponse = z.infer<typeof DecideApprovalStageResponseSchema>
+export type ReresolveApprovalRouteRequest = z.infer<typeof ReresolveApprovalRouteRequestSchema>
+export type ReresolveApprovalRouteResponse = z.infer<typeof ReresolveApprovalRouteResponseSchema>
+export type StalledApprovalRequest = z.infer<typeof StalledApprovalRequestSchema>
 export type ChannelQuota = z.infer<typeof ChannelQuotaSchema>
 export type CreateChannelQuotaRequest = z.infer<typeof CreateChannelQuotaRequestSchema>
 export type UpdateChannelQuotaRequest = z.infer<typeof UpdateChannelQuotaRequestSchema>

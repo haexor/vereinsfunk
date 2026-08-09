@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(44);
+select plan(46);
 
 set local role postgres;
 
@@ -230,13 +230,18 @@ select throws_ok(
   '42501', null, 'authenticated cannot call count_publications_in_period directly anymore'
 );
 
--- 27: request_approval() muss reviewer_snapshot-Eintraege gegen echte Mitgliedschaft DIESES
--- Vereins pruefen -- sonst koennte jede aufrufberechtigte Person eine voellig fremde userId als
--- Pruefer eintragen (Mandantentrennung-Fund).
-select set_config('request.jwt.claim.sub', '64000000-0000-4000-8000-000000000001', true);
+-- 27, 29: Paket 024 zieht request_approval() den "stages"-Parameter komplett -- die Funktion leitet
+-- die Route seither ausschliesslich selbst ab (authz.resolve_review_route), ein eingeschleuster
+-- Pruefer oder eine leere Stufenliste sind seitdem STRUKTURELL unmoeglich statt nur GEPRUEFT. Die
+-- Pruefungen selbst leben jetzt in authz.assert_valid_stage_list, herausgeloest, damit
+-- reresolve_approval_route dieselbe Fassung benutzt (Plan 024, "Kein Duplikat") -- als
+-- security-definer-Funktion ohne Grant an authenticated (siehe Test unten) direkt nur als postgres
+-- pruefbar, wie jede rein interne Bausteinfunktion.
+set local role postgres;
 select throws_ok(
-  $$select public.request_approval(
-    '64000000-3000-4000-8000-000000000005'::uuid,
+  $$select authz.assert_valid_stage_list(
+    '64000000-1000-4000-8000-000000000001'::uuid, '64000000-0000-4000-8000-000000000001'::uuid,
+    false, false, true,
     jsonb_build_array(jsonb_build_object(
       'position', 1, 'scope', 'organization', 'scopeDepartmentId', null, 'scopeTeamId', null,
       'label', 'Eingeschleust', 'mode', 'named', 'minimumApprovals', 1, 'isMinorStage', false,
@@ -244,16 +249,27 @@ select throws_ok(
       'deadlineHours', null
     ))
   )$$,
-  'P0001', 'invalid_reviewer_snapshot', 'request_approval rejects a reviewer_snapshot naming someone who is not even a member of this organization'
+  'P0001', 'invalid_reviewer_snapshot', 'assert_valid_stage_list rejects a reviewer_snapshot naming someone who is not even a member of this organization'
 );
-
--- 29: eine leere Stufenliste darf keine tatsaechlich konfigurierte Pruefpflicht umgehen -- sonst
--- koennte jede Person mit post.submit ihren eigenen Beitrag per direktem RPC-Aufruf sofort
--- genehmigen, unabhaengig von der Richtlinie (Rechte-Review-Fund). Abteilung Fussball hat
--- review_required = true aus dem Policy-Reviewers-Check-Constraint-Test oben.
 select throws_ok(
-  $$select public.request_approval('64000000-3000-4000-8000-000000000005'::uuid, '[]'::jsonb)$$,
-  'P0001', 'review_required', 'request_approval rejects an empty stage list when the department actually requires review'
+  $$select authz.assert_valid_stage_list(
+    '64000000-1000-4000-8000-000000000001'::uuid, '64000000-0000-4000-8000-000000000001'::uuid,
+    false, true, true, '[]'::jsonb
+  )$$,
+  'P0001', 'review_required', 'assert_valid_stage_list rejects an empty stage list when review is actually required'
+);
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '64000000-0000-4000-8000-000000000001', true);
+select throws_ok(
+  $$select authz.assert_valid_stage_list(
+    '64000000-1000-4000-8000-000000000001'::uuid, '64000000-0000-4000-8000-000000000001'::uuid,
+    false, false, true, '[]'::jsonb
+  )$$,
+  '42501', null, 'authenticated cannot call authz.assert_valid_stage_list directly -- only request_approval/reresolve_approval_route may'
+);
+select throws_ok(
+  $$select authz.resolve_review_route('64000000-3000-4000-8000-000000000005'::uuid)$$,
+  '42501', null, 'authenticated cannot call authz.resolve_review_route directly -- it would expose reviewer identities for any post_version_id without an access check'
 );
 
 -- 28: policy_reviewers.created_by ist wie policy_settings.updated_by und member_review_trust.
@@ -341,14 +357,16 @@ select set_config('request.jwt.claim.sub', '64000000-0000-4000-8000-000000000098
 select is((select count(*)::integer from public.member_review_trust where organization_id = '64000000-1000-4000-8000-000000000001'), 0,
   'a member of another club reads no member_review_trust row of this club');
 
--- 39-40: request_approval() muss die STRUKTUR der Stufenliste pruefen, nicht nur ihren Inhalt.
--- decide_approval_stage sucht die Folgestufe ueber position + 1: mit den Positionen 1 und 3 wuerde
--- Stufe 3 nie oeffnen und der Beitrag nach Stufe 1 sofort auf 'approved' gehen -- so liesse sich
--- jede aeussere Stufe ueberspringen, auch die unbefreibare Minderjaehrigenstufe.
-select set_config('request.jwt.claim.sub', '64000000-0000-4000-8000-000000000001', true);
+-- 39-40: assert_valid_stage_list muss die STRUKTUR der Stufenliste pruefen, nicht nur ihren Inhalt
+-- (Paket 024: aus request_approval herausgeloest, siehe Test 27/29 oben). decide_approval_stage
+-- sucht die Folgestufe ueber position + 1: mit den Positionen 1 und 3 wuerde Stufe 3 nie oeffnen und
+-- der Beitrag nach Stufe 1 sofort auf 'approved' gehen -- so liesse sich jede aeussere Stufe
+-- ueberspringen, auch die unbefreibare Minderjaehrigenstufe.
+set local role postgres;
 select throws_ok(
-  $$select public.request_approval(
-    '64000000-3000-4000-8000-000000000005'::uuid,
+  $$select authz.assert_valid_stage_list(
+    '64000000-1000-4000-8000-000000000001'::uuid, '64000000-0000-4000-8000-000000000001'::uuid,
+    true, false, true,
     jsonb_build_array(
       jsonb_build_object('position', 1, 'scope', 'department', 'scopeDepartmentId', '64000000-1100-4000-8000-000000000001', 'scopeTeamId', null,
         'label', 'Abteilung', 'mode', 'named', 'minimumApprovals', 1, 'isMinorStage', false,
@@ -358,19 +376,21 @@ select throws_ok(
         'reviewerSnapshot', jsonb_build_array(jsonb_build_object('userId', '64000000-0000-4000-8000-000000000003')), 'deadlineHours', null)
     )
   )$$,
-  'P0001', 'invalid_stage_positions', 'request_approval rejects a gap in the stage positions that would silently skip the outer stage'
+  'P0001', 'invalid_stage_positions', 'assert_valid_stage_list rejects a gap in the stage positions that would silently skip the outer stage'
 );
 select throws_ok(
-  $$select public.request_approval(
-    '64000000-3000-4000-8000-000000000005'::uuid,
+  $$select authz.assert_valid_stage_list(
+    '64000000-1000-4000-8000-000000000001'::uuid, '64000000-0000-4000-8000-000000000001'::uuid,
+    false, false, true,
     jsonb_build_array(jsonb_build_object(
       'position', 1, 'scope', 'department', 'scopeDepartmentId', '64000000-1100-4000-8000-000000000001', 'scopeTeamId', null,
       'label', 'Ohne Pruefer', 'mode', 'named', 'minimumApprovals', 1, 'isMinorStage', false,
       'reviewerSnapshot', '[]'::jsonb, 'deadlineHours', null
     ))
   )$$,
-  'P0001', 'empty_reviewer_snapshot', 'request_approval rejects a stage without any reviewer, which nobody could ever decide'
+  'P0001', 'empty_reviewer_snapshot', 'assert_valid_stage_list rejects a stage without any reviewer, which nobody could ever decide'
 );
+set local role authenticated;
 
 -- 41: policy_reviewers.user_id verweist nur auf public.profiles und kann deshalb keinen
 -- zusammengesetzten Fremdschluessel auf den Verein tragen -- policy_reviewers_insert prueft die

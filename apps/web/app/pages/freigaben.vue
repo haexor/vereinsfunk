@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { AlertTriangle, Check, MessageSquareText, ShieldCheck, X } from '@lucide/vue'
-import { ApprovalStageSchema, type ApprovalStage, type MediaGateBlocker } from '@vereinsfunk/contracts'
+import { AlertTriangle, Check, MessageSquareText, RefreshCw, ShieldCheck, X } from '@lucide/vue'
+import { ApprovalStageSchema, StalledApprovalRequestSchema, type ApprovalStage, type MediaGateBlocker, type StalledApprovalRequest } from '@vereinsfunk/contracts'
 
 // Paket 015: Medien-Gate-Blocker (evaluateMediaGate) je Stufe -- eine fehlende oder nicht
 // passende Einwilligung ist jetzt sichtbar, statt nur beim Freigeben selbst zu scheitern.
@@ -62,6 +62,51 @@ async function decide(stage: ApprovalStage, decision: 'approved' | 'changes_requ
     actionError.value = 'Die Entscheidung konnte nicht gespeichert werden.'
   } finally {
     decidingStageId.value = null
+  }
+}
+
+// Paket 024: festhaengende Freigaben der eigenen Ebene -- getrennt von "wartet auf mich" oben, weil
+// eine verwaltende Person hier nicht zwingend selbst Pruefer ist. GET /v1/approval-requests/stalled
+// liefert ueber RLS ohnehin nur, was die aufrufende Person sehen darf (department.manage genuegt);
+// eine leere Liste ist deshalb der Normalfall fuer die meisten Mitglieder, kein Fehler.
+const stalledRequests = ref<StalledApprovalRequest[]>([])
+const reresolveReasonDraft = reactive<Record<string, string>>({})
+const reresolveOpenId = ref<string | null>(null)
+const reresolvingId = ref<string | null>(null)
+const reresolveError = ref('')
+
+async function loadStalled() {
+  if (!organizationId.value) { stalledRequests.value = []; return }
+  try {
+    const headers = await useAuthHeader()
+    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/approval-requests/stalled`, {
+      headers, query: { organizationId: organizationId.value },
+    })
+    stalledRequests.value = StalledApprovalRequestSchema.array().parse(response)
+  } catch {
+    stalledRequests.value = []
+  }
+}
+await loadStalled()
+watch(organizationId, () => void loadStalled())
+
+async function reresolve(item: StalledApprovalRequest) {
+  const reason = reresolveReasonDraft[item.approvalRequestId]?.trim() ?? ''
+  if (reason.length < 10) { reresolveError.value = 'Die Begründung muss mindestens 10 Zeichen lang sein.'; return }
+  reresolvingId.value = item.approvalRequestId
+  reresolveError.value = ''
+  try {
+    const headers = await useAuthHeader()
+    await $fetch(`${config.public.apiBase}/v1/approval-requests/${item.approvalRequestId}/reresolve`, {
+      method: 'POST', headers, body: { reason },
+    })
+    reresolveOpenId.value = null
+    delete reresolveReasonDraft[item.approvalRequestId]
+    await loadStalled()
+  } catch {
+    reresolveError.value = 'Die Route konnte nicht neu aufgelöst werden.'
+  } finally {
+    reresolvingId.value = null
   }
 }
 </script>
@@ -127,5 +172,53 @@ async function decide(stage: ApprovalStage, decision: 'approved' | 'changes_requ
         <div class="p-12 text-center text-sm text-[#7b827d]">Keine Freigaben warten derzeit auf dich.</div>
       </div>
     </template>
+
+    <!-- Paket 024: festhaengende Freigaben der eigenen Ebene -- nur sichtbar, wenn tatsaechlich
+         etwas haengt (leere Liste ist der Normalfall). -->
+    <section v-if="stalledRequests.length" class="mt-10">
+      <header class="mb-4">
+        <h2 class="font-display text-xl font-bold tracking-[-.03em]">Festhängende Freigaben deiner Ebene</h2>
+        <p class="mt-1 text-sm text-[#727a75]">Überfällig oder durch ein geändertes Medium ungültig geworden. Eine Neuauflösung ersetzt den Prüferkreis anhand der aktuellen Richtlinie.</p>
+      </header>
+      <p v-if="reresolveError" class="mb-4 text-sm text-amber-800">{{ reresolveError }}</p>
+      <div class="grid gap-4 lg:grid-cols-2">
+        <article v-for="item in stalledRequests" :key="item.approvalRequestId" class="card p-5">
+          <div class="flex items-start justify-between gap-4">
+            <h3 class="font-display text-sm font-bold">{{ item.postTitle || 'Ohne Titel' }}</h3>
+            <div class="flex shrink-0 gap-1.5">
+              <span v-if="item.isOverdue" class="rounded-full bg-amber-100 px-3 py-1 text-[11px] font-bold text-amber-800">Überfällig</span>
+              <span v-if="item.invalidated" class="rounded-full bg-rose-100 px-3 py-1 text-[11px] font-bold text-rose-800">Medium geändert</span>
+            </div>
+          </div>
+          <template v-if="reresolveOpenId === item.approvalRequestId">
+            <label class="mt-4 mb-3 block"><span class="mb-1 block text-xs font-semibold">Begründung für die Neuauflösung (mind. 10 Zeichen, für den Autor sichtbar)</span>
+              <input v-model="reresolveReasonDraft[item.approvalRequestId]" maxlength="2000" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" />
+            </label>
+            <div class="flex gap-2">
+              <button
+                type="button" class="focus-ring flex-1 rounded-xl border border-[#dfe0d9] px-3 py-2.5 text-xs font-semibold"
+                @click="reresolveOpenId = null"
+              >
+                Abbrechen
+              </button>
+              <button
+                type="button" :disabled="reresolvingId === item.approvalRequestId"
+                class="focus-ring flex flex-1 items-center justify-center gap-2 rounded-xl bg-forest px-3 py-2.5 text-xs font-bold text-white disabled:opacity-60"
+                @click="reresolve(item)"
+              >
+                <RefreshCw :size="14" /> Route neu auflösen
+              </button>
+            </div>
+          </template>
+          <button
+            v-else type="button"
+            class="focus-ring mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-[#dfe0d9] px-3 py-2.5 text-xs font-semibold"
+            @click="reresolveOpenId = item.approvalRequestId"
+          >
+            <RefreshCw :size="14" /> Neu auflösen
+          </button>
+        </article>
+      </div>
+    </section>
   </div>
 </template>
