@@ -1,5 +1,8 @@
 <script setup lang="ts">
+import { z } from 'zod'
 import { ProcessorAgreementSchema, type ProcessorAgreement, type ProcessorAgreementStatus } from '@vereinsfunk/contracts'
+
+const DocumentUrlSchema = z.object({ signedUrl: z.url() })
 
 const props = defineProps<{ organizationId: string | null }>()
 const api = useApiClient()
@@ -76,7 +79,7 @@ async function viewAgreementDocument(agreement: ProcessorAgreement) {
   viewingAgreementId.value = agreement.id
   actionError.value = ''
   try {
-    const response = await api.request<{ signedUrl: string }>(`/v1/processor-agreements/${agreement.id}/document-url`)
+    const response = await api.request(`/v1/processor-agreements/${agreement.id}/document-url`, {}, DocumentUrlSchema)
     window.open(response.signedUrl, '_blank', 'noopener')
   } catch {
     actionError.value = 'Das Dokument konnte nicht geöffnet werden.'

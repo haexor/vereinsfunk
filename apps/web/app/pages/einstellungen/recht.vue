@@ -61,9 +61,6 @@ watch(organizationId, () => { void load() })
 function formatDate(value: string | null): string {
   return value ? new Date(value).toLocaleDateString('de-DE') : 'nicht angegeben'
 }
-function formatDateTime(value: string | null): string {
-  return value ? new Date(value).toLocaleString('de-DE') : 'nicht angegeben'
-}
 function errorCodeOf(error: unknown): string | undefined {
   return (error as { data?: { error?: string } })?.data?.error
 }
