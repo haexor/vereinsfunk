@@ -9,7 +9,7 @@ import {
   type IntegrationSyncRun,
 } from '@vereinsfunk/contracts'
 
-const config = useRuntimeConfig()
+const api = useApiClient()
 const session = await useSession()
 const scope = await useScope()
 
@@ -39,9 +39,7 @@ async function load() {
   loading.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/integration-sources`, { headers })
-    sources.value = IntegrationSourceSchema.array().parse(response)
+    sources.value = await api.request(`/v1/organizations/${organizationId.value}/integration-sources`, {}, IntegrationSourceSchema.array())
   } catch {
     errorMessage.value = 'Die Quellen konnten nicht geladen werden.'
   } finally {
@@ -125,7 +123,6 @@ async function createSource() {
   createSubmitting.value = true
   createError.value = ''
   try {
-    const headers = await useAuthHeader()
     const body: Record<string, unknown> = {
       transport: createForm.transport,
       providerKey: createForm.providerKey.trim(),
@@ -136,8 +133,8 @@ async function createSource() {
     if (createForm.departmentId) body.departmentId = createForm.departmentId
     if (createForm.transport === 'ical') body.endpointUrl = createForm.endpointUrl.trim()
     if (createForm.lossThresholdPercent) body.lossThresholdPercent = Number(createForm.lossThresholdPercent)
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/integration-sources`, { method: 'POST', headers, body })
-    sources.value = [...sources.value, IntegrationSourceSchema.parse(response)]
+    const response = await api.request(`/v1/organizations/${organizationId.value}/integration-sources`, { method: 'POST', body }, IntegrationSourceSchema)
+    sources.value = [...sources.value, response]
     createForm.providerKey = ''
     createForm.displayName = ''
     createForm.endpointUrl = ''
@@ -157,9 +154,7 @@ async function toggleEnabled(source: IntegrationSource) {
   busySourceId.value = source.id
   actionError.value = ''
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/integration-sources/${source.id}`, { method: 'PATCH', headers, body: { enabled: !source.enabled } })
-    const updated = IntegrationSourceSchema.parse(response)
+    const updated = await api.request(`/v1/integration-sources/${source.id}`, { method: 'PATCH', body: { enabled: !source.enabled } }, IntegrationSourceSchema)
     sources.value = sources.value.map((item) => (item.id === updated.id ? updated : item))
   } catch {
     actionError.value = 'Der Status konnte nicht geändert werden.'
@@ -190,15 +185,13 @@ async function saveEdit(source: IntegrationSource) {
   editSubmitting.value = true
   editError.value = ''
   try {
-    const headers = await useAuthHeader()
     const body: Record<string, unknown> = {
       displayName: editForm.displayName.trim(),
       fieldMapping: buildFieldMapping(editMappingRows),
       lossThresholdPercent: Number(editForm.lossThresholdPercent) || 30,
     }
     if (source.transport === 'ical') body.endpointUrl = editForm.endpointUrl.trim()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/integration-sources/${source.id}`, { method: 'PATCH', headers, body })
-    const updated = IntegrationSourceSchema.parse(response)
+    const updated = await api.request(`/v1/integration-sources/${source.id}`, { method: 'PATCH', body }, IntegrationSourceSchema)
     sources.value = sources.value.map((item) => (item.id === updated.id ? updated : item))
     editingSourceId.value = null
   } catch {
@@ -248,16 +241,15 @@ async function runSync(source: IntegrationSource) {
   syncSubmitting.value = true
   syncError.value = ''
   try {
-    const headers = await useAuthHeader()
     let response: unknown
     if (source.transport === 'file') {
       const formData = new FormData()
       formData.append('mode', syncMode.value)
       formData.append('domain', 'people')
       formData.append('file', syncFile.value as File)
-      response = await $fetch(`${config.public.apiBase}/v1/integration-sources/${source.id}/sync`, { method: 'POST', headers, body: formData })
+      response = await api.request(`/v1/integration-sources/${source.id}/sync`, { method: 'POST', body: formData })
     } else {
-      response = await $fetch(`${config.public.apiBase}/v1/integration-sources/${source.id}/sync`, { method: 'POST', headers, body: { mode: syncMode.value, domain: 'people' } })
+      response = await api.request(`/v1/integration-sources/${source.id}/sync`, { method: 'POST', body: { mode: syncMode.value, domain: 'people' } })
     }
     syncResults[source.id] = SyncSourceResponseSchema.parse(response)
     if (historySourceId.value === source.id) await loadHistory(source.id)
@@ -280,9 +272,7 @@ const historyLoading = ref(false)
 async function loadHistory(sourceId: string) {
   historyLoading.value = true
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/integration-sources/${sourceId}/sync-runs`, { headers })
-    historyRuns.value = IntegrationSyncRunSchema.array().parse(response)
+    historyRuns.value = await api.request(`/v1/integration-sources/${sourceId}/sync-runs`, {}, IntegrationSyncRunSchema.array())
   } catch {
     historyRuns.value = []
   } finally {
@@ -307,12 +297,9 @@ const conflictBusyId = ref<string | null>(null)
 async function loadConflicts(sourceId: string) {
   conflictsLoading.value = true
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/integration-sources/${sourceId}/conflicts`, {
-      headers,
+    conflictItems.value = await api.request(`/v1/integration-sources/${sourceId}/conflicts`, {
       query: showResolvedConflicts.value ? {} : { resolution: 'pending' },
-    })
-    conflictItems.value = IntegrationSyncConflictSchema.array().parse(response)
+    }, IntegrationSyncConflictSchema.array())
   } catch {
     conflictItems.value = []
   } finally {
@@ -331,9 +318,7 @@ async function resolveConflict(conflict: IntegrationSyncConflict, resolution: 'k
   conflictBusyId.value = conflict.id
   conflictActionError.value = ''
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/integration-sync-conflicts/${conflict.id}`, { method: 'PATCH', headers, body: { resolution } })
-    const updated = IntegrationSyncConflictSchema.parse(response)
+    const updated = await api.request(`/v1/integration-sync-conflicts/${conflict.id}`, { method: 'PATCH', body: { resolution } }, IntegrationSyncConflictSchema)
     for (const key of Object.keys(syncResults)) {
       const entry = syncResults[key]
       if (entry) entry.conflicts = entry.conflicts.map((item) => (item.id === updated.id ? updated : item))

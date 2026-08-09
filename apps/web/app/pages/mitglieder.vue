@@ -17,7 +17,6 @@ import {
 } from '@vereinsfunk/contracts'
 
 const api = useApiClient()
-const config = useRuntimeConfig()
 const session = await useSession()
 const scope = await useScope()
 
@@ -188,13 +187,11 @@ async function sendInvitation() {
   inviteError.value = ''
   inviteSuccess.value = false
   try {
-    const headers = await useAuthHeader()
     // Eine Team-Einladung muss die ELTERN-Abteilung mitschicken: CreateInvitationRequestSchema
     // verlangt departmentId zusammen mit teamId, und resolveInvitationScope() in apps/api prueft
     // beide gegeneinander. Ohne die Abteilung schlug jede Team-Einladung mit 400 fehl.
-    const response = await $fetch<{ emailDelivered?: boolean }>(`${config.public.apiBase}/v1/invitations`, {
+    const response = await api.request<{ emailDelivered?: boolean }>('/v1/invitations', {
       method: 'POST',
-      headers,
       body: {
         organizationId: organizationId.value,
         departmentId: departmentIdFor(inviteScope.value, inviteScopeId.value),
@@ -232,8 +229,7 @@ async function removeMembership(membershipId: string, scopeLevel: ScopeLevel) {
   if (!confirm('Mitgliedschaft wirklich entfernen?')) return
   actionError.value = ''
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/memberships/${membershipId}`, { method: 'DELETE', headers, query: { scope: scopeLevel } })
+    await api.request(`/v1/memberships/${membershipId}`, { method: 'DELETE', query: { scope: scopeLevel } })
     await load()
   } catch {
     actionError.value = 'Die Mitgliedschaft konnte nicht entfernt werden.'
@@ -299,9 +295,8 @@ async function changeRole(entry: MemberRoleEntry) {
   roleChangeSubmitting.value = entry.membershipId
   roleChangeError.value = ''
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/memberships/${entry.membershipId}`, {
-      method: 'PATCH', headers, query: { scope: entry.scope }, body: { role: nextRole },
+    await api.request(`/v1/memberships/${entry.membershipId}`, {
+      method: 'PATCH', query: { scope: entry.scope }, body: { role: nextRole },
     })
     expandedMembershipId.value = null
     await load()
@@ -316,10 +311,9 @@ async function setExpiry(entry: MemberRoleEntry) {
   expirySubmitting.value = entry.membershipId
   roleChangeError.value = ''
   try {
-    const headers = await useAuthHeader()
     const draft = expiryDraft[entry.membershipId]
-    await $fetch(`${config.public.apiBase}/v1/memberships/${entry.membershipId}/expiry`, {
-      method: 'PATCH', headers, query: { scope: entry.scope },
+    await api.request(`/v1/memberships/${entry.membershipId}/expiry`, {
+      method: 'PATCH', query: { scope: entry.scope },
       body: { expiresAt: draft ? endOfDayIso(draft, timezone.value) : null },
     })
     await load()
@@ -362,10 +356,8 @@ async function saveTrust(entry: MemberRoleEntry, userId: string) {
   trustSubmitting.value = entry.membershipId
   trustError.value = ''
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/member-review-trust`, {
+    await api.request('/v1/member-review-trust', {
       method: 'PUT',
-      headers,
       body: {
         scope: entry.scope, scopeId: entry.scopeId, userId,
         submitAllowed: trustSubmitAllowedDraft[entry.membershipId],
@@ -385,8 +377,7 @@ async function saveTrust(entry: MemberRoleEntry, userId: string) {
 async function resendInvitation(id: string) {
   actionError.value = ''
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<{ emailDelivered?: boolean }>(`${config.public.apiBase}/v1/invitations/${id}/resend`, { method: 'POST', headers })
+    const response = await api.request<{ emailDelivered?: boolean }>(`/v1/invitations/${id}/resend`, { method: 'POST' })
     // Siehe sendInvitation(): ein fehlgeschlagener SMTP-Versand ist kein Fehlerstatus, muss aber
     // sichtbar sein -- sonst wartet die eingeladene Person auf eine Mail, die nie ankam.
     if (response?.emailDelivered === false) {
@@ -402,8 +393,7 @@ async function revokeInvitation(id: string) {
   if (!confirm('Einladung wirklich widerrufen?')) return
   actionError.value = ''
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/invitations/${id}/revoke`, { method: 'POST', headers })
+    await api.request(`/v1/invitations/${id}/revoke`, { method: 'POST' })
     await load()
   } catch {
     actionError.value = 'Die Einladung konnte nicht widerrufen werden.'

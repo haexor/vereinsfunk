@@ -49,7 +49,7 @@ const LOCKABLE_FIELD_LABELS: Readonly<Record<string, string>> = {
 }
 const LOCKABLE_FIELDS = BRAND_LOCKABLE_FIELDS.map((key) => ({ key, label: LOCKABLE_FIELD_LABELS[key]! }))
 
-const config = useRuntimeConfig()
+const api = useApiClient()
 const scope = await useScope()
 const organizationId = computed(() => scope.value?.organizationId ?? null)
 const supabase = useSupabaseClient()
@@ -345,14 +345,14 @@ function onLogoSelected(event: Event, variant: 'light' | 'dark') {
   logoPreviewUrl.value = file ? URL.createObjectURL(file) : ''
 }
 
-async function saveOrgLogoIfSelected(headers: Record<string, string>) {
+async function saveOrgLogoIfSelected() {
   if (!logoFile.value || !organizationId.value) return
   const formData = new FormData()
   formData.append('variant', logoVariant.value)
   formData.append('file', logoFile.value)
-  const uploaded = await $fetch<{ signedUrl: string, sanitized: boolean }>(
-    `${config.public.apiBase}/v1/organizations/${organizationId.value}/brand/logo`,
-    { method: 'POST', headers, body: formData },
+  const uploaded = await api.request<{ signedUrl: string, sanitized: boolean }>(
+    `/v1/organizations/${organizationId.value}/brand/logo`,
+    { method: 'POST', body: formData },
   )
   if (logoVariant.value === 'light') logoUrl.value = uploaded.signedUrl
   else logoDarkUrl.value = uploaded.signedUrl
@@ -362,10 +362,9 @@ async function saveOrgLogoIfSelected(headers: Record<string, string>) {
   logoPreviewUrl.value = ''
 }
 
-async function saveOrganization(headers: Record<string, string>) {
-  await $fetch(`${config.public.apiBase}/v1/organizations/${organizationId.value}/brand`, {
+async function saveOrganization() {
+  await api.request(`/v1/organizations/${organizationId.value}/brand`, {
     method: 'PUT',
-    headers,
     body: {
       primaryColor: org.primaryColor, accentColor: org.accentColor, backgroundColor: org.backgroundColor,
       textColor: org.textColor, onPrimaryColor: org.onPrimaryColor, tone: org.tone,
@@ -376,11 +375,10 @@ async function saveOrganization(headers: Record<string, string>) {
   })
 }
 
-async function saveDepartment(headers: Record<string, string>, departmentId: string) {
+async function saveDepartment(departmentId: string) {
   const value = overrideFor(departmentId)
-  await $fetch(`${config.public.apiBase}/v1/departments/${departmentId}/brand`, {
+  await api.request(`/v1/departments/${departmentId}/brand`, {
     method: 'PUT',
-    headers,
     body: {
       primaryColor: value.primaryColor, accentColor: value.accentColor, tone: value.tone,
       logoAssetId: value.logoAssetId, displayFontAssetId: value.displayFontAssetId, bodyFontAssetId: value.bodyFontAssetId,
@@ -389,11 +387,10 @@ async function saveDepartment(headers: Record<string, string>, departmentId: str
   })
 }
 
-async function saveTeam(headers: Record<string, string>, teamId: string) {
+async function saveTeam(teamId: string) {
   const value = teamOverrideFor(teamId)
-  await $fetch(`${config.public.apiBase}/v1/teams/${teamId}/brand`, {
+  await api.request(`/v1/teams/${teamId}/brand`, {
     method: 'PUT',
-    headers,
     body: {
       primaryColor: value.primaryColor, accentColor: value.accentColor, tone: value.tone,
       logoAssetId: value.logoAssetId, displayFontAssetId: value.displayFontAssetId, bodyFontAssetId: value.bodyFontAssetId,
@@ -406,11 +403,10 @@ async function save() {
   saving.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
-    await saveOrgLogoIfSelected(headers)
-    if (activeLevel.value === 'organization') await saveOrganization(headers)
-    else if (activeLevel.value === 'department' && activeDepartmentId.value) await saveDepartment(headers, activeDepartmentId.value)
-    else if (activeLevel.value === 'team' && activeTeamId.value) await saveTeam(headers, activeTeamId.value)
+    await saveOrgLogoIfSelected()
+    if (activeLevel.value === 'organization') await saveOrganization()
+    else if (activeLevel.value === 'department' && activeDepartmentId.value) await saveDepartment(activeDepartmentId.value)
+    else if (activeLevel.value === 'team' && activeTeamId.value) await saveTeam(activeTeamId.value)
     await loadAll()
   } catch {
     errorMessage.value = 'Die Marke konnte nicht gespeichert werden. Bitte erneut versuchen.'
@@ -451,14 +447,13 @@ async function uploadAsset(event: Event, kind: string) {
   uploadingAsset.value = true
   uploadError.value = ''
   try {
-    const headers = await useAuthHeader()
     const formData = new FormData()
     formData.append('organizationId', organizationId.value)
     if (activeDepartmentId.value) formData.append('departmentId', activeDepartmentId.value)
     if (activeLevel.value === 'team' && activeTeamId.value) formData.append('teamId', activeTeamId.value)
     formData.append('kind', kind)
     formData.append('file', file)
-    await $fetch(`${config.public.apiBase}/v1/brand/assets`, { method: 'POST', headers, body: formData })
+    await api.request('/v1/brand/assets', { method: 'POST', body: formData })
     await loadAll()
   } catch {
     uploadError.value = 'Die Datei konnte nicht hochgeladen werden. Bitte Format und Größe prüfen.'
@@ -479,10 +474,8 @@ async function confirmLicense(assetId: string) {
   if (!draft.confirmed || !draft.licenseHolder.trim()) return
   confirmingLicense.value = assetId
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/brand/assets/${assetId}/confirm-license`, {
+    await api.request(`/v1/brand/assets/${assetId}/confirm-license`, {
       method: 'POST',
-      headers,
       body: { licenseHolder: draft.licenseHolder, licenseNote: draft.licenseNote || undefined, confirmed: true },
     })
     await loadAll()
@@ -502,6 +495,10 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
   activeDepartmentId.value = departmentId
   activeTeamId.value = teamId
 }
+
+onBeforeUnmount(() => {
+  if (logoPreviewUrl.value) URL.revokeObjectURL(logoPreviewUrl.value)
+})
 </script>
 
 <template>
