@@ -36,12 +36,7 @@ function trim(value: string) { return value.trim() }
 const departmentName = useState('onboarding-department-name', () => '')
 const departmentSuggestions = ['Fußball', 'Handball', 'Turnen', 'Leichtathletik', 'Schwimmen', 'Tennis', 'Volleyball', 'Basketball', 'Tischtennis', 'Gesamtverein']
 
-const brand = useState('onboarding-brand-form', () => ({ primaryColor: '#163a2c', accentColor: '#caff4a', tone: 'nahbar' as 'nahbar' | 'dynamisch' | 'sachlich' }))
-const tones: { id: 'nahbar' | 'dynamisch' | 'sachlich'; label: string; text: string }[] = [
-  { id: 'nahbar', label: 'Nahbar & herzlich', text: 'Persönlich, ehrlich und gemeinschaftlich.' },
-  { id: 'dynamisch', label: 'Dynamisch & motivierend', text: 'Aktiv, emotional und mit viel Energie.' },
-  { id: 'sachlich', label: 'Klar & informativ', text: 'Präzise, ruhig und auf den Punkt.' },
-]
+const brand = useState('onboarding-brand-form', () => ({ primaryColor: '#163a2c', accentColor: '#caff4a' }))
 const logoFile = ref<File | null>(null)
 const logoPreviewUrl = ref('')
 const logoSanitizedNotice = ref(false)
@@ -143,7 +138,13 @@ async function saveBranding() {
       body: {
         primaryColor: brand.value.primaryColor,
         accentColor: brand.value.accentColor,
-        tone: brand.value.tone,
+        // Hintergrund-/Text-/Kontrastfarbe und Tonalität werden im Onboarding nicht erhoben
+        // (siehe /marke) -- PUT /brand ersetzt alle Felder, deshalb hier dieselben Defaults
+        // wie das Formular auf /marke, statt den Nutzer danach zu fragen.
+        backgroundColor: '#f6f4ec',
+        textColor: '#122820',
+        onPrimaryColor: '#ffffff',
+        tone: 'nahbar',
         displayFontKey: 'manrope',
         bodyFontKey: 'dm_sans',
       },
@@ -263,12 +264,6 @@ const session = await useSession()
                 <label><span class="mb-1.5 block text-xs font-semibold">Akzentfarbe</span><div class="flex items-center gap-2 rounded-xl border border-[#dfe0d9] bg-white p-2"><input v-model="brand.accentColor" type="color" class="h-8 w-8 border-0 bg-transparent" /><span class="text-xs">{{ brand.accentColor }}</span></div></label>
               </div>
               <p v-if="lowContrastWarning" class="mt-2 flex items-center gap-1.5 text-[11px] text-amber-800"><AlertTriangle :size="13" /> Diese Primärfarbe hat wenig Kontrast zu weißem Text (WCAG AA empfiehlt mindestens 4,5:1).</p>
-              <div class="mt-5 space-y-2">
-                <label v-for="item in tones" :key="item.id" class="focus-ring flex cursor-pointer gap-3 rounded-xl border p-3" :class="brand.tone === item.id ? 'border-forest bg-[#f2f6e9]' : 'border-[#e1e2db]'">
-                  <input v-model="brand.tone" type="radio" :value="item.id" class="mt-1 accent-[#163a2c]" />
-                  <span><strong class="block text-xs">{{ item.label }}</strong><span class="mt-1 block text-[10px] text-[#7b827d]">{{ item.text }}</span></span>
-                </label>
-              </div>
               <p class="mt-4 text-[11px] text-[#8a9086]">Schriftpaar: Manrope / DM Sans. Weitere Schriften folgen mit dem Marken-Baustein.</p>
             </div>
             <div class="relative overflow-hidden rounded-[22px] p-6 text-white shadow-xs" :style="{ backgroundColor: brand.primaryColor }">
