@@ -348,76 +348,18 @@ async function resolveConflict(conflict: IntegrationSyncConflict, resolution: 'k
     <template v-else>
       <p v-if="actionError" class="mb-4 text-sm text-amber-800">{{ actionError }}</p>
 
-      <section class="card mb-6 p-6">
-        <h2 class="mb-4 font-display text-base font-bold">Quelle einrichten</h2>
-        <form class="grid gap-3 sm:grid-cols-2" @submit.prevent="createSource">
-          <label><span class="mb-1 block text-xs font-semibold">Transport</span>
-            <select v-model="createForm.transport" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm">
-              <option value="file">Datei (CSV/XLSX)</option>
-              <option value="ical">Kalender-Feed (iCal)</option>
-            </select>
-          </label>
-          <label><span class="mb-1 block text-xs font-semibold">Anbieterkennung</span>
-            <input v-model="createForm.providerKey" required maxlength="80" placeholder="z. B. csv" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm" />
-          </label>
-          <label class="sm:col-span-2"><span class="mb-1 block text-xs font-semibold">Anzeigename</span>
-            <input v-model="createForm.displayName" required maxlength="160" placeholder="z. B. Mitgliederexport Verbandssoftware" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm" />
-          </label>
-          <label><span class="mb-1 block text-xs font-semibold">Bereich</span>
-            <select v-model="createForm.departmentId" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm">
-              <option v-if="canManageOrgWide" value="">Vereinsweit</option>
-              <option v-for="department in departmentOptionsForCreate" :key="department.id" :value="department.id">{{ department.name }}</option>
-            </select>
-          </label>
-          <label v-if="createForm.transport === 'ical'"><span class="mb-1 block text-xs font-semibold">Kalender-Adresse</span>
-            <input v-model="createForm.endpointUrl" type="url" required placeholder="https://…" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm" />
-          </label>
-          <label><span class="mb-1 block text-xs font-semibold">Verlustschwelle (%)</span>
-            <input v-model="createForm.lossThresholdPercent" type="number" min="1" max="100" placeholder="30" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm" />
-          </label>
-
-          <div class="sm:col-span-2">
-            <p class="mb-2 text-xs font-semibold">Feldzuordnung</p>
-            <p class="mb-2 text-[11px] text-[#7b827d]">Welche Spalte der Datei entspricht welchem internen Feld? Wird gespeichert, damit der nächste Import ohne erneutes Zuordnen läuft.</p>
-            <div v-for="(row, index) in mappingRows" :key="index" class="mb-2 flex flex-wrap items-center gap-2">
-              <input v-model="row.column" placeholder="Spalte in der Datei" class="focus-ring w-44 rounded-lg border border-[#dfe0d9] p-2 text-xs" />
-              <span class="text-xs text-[#9aa096]">→</span>
-              <select v-model="row.field" class="focus-ring rounded-lg border border-[#dfe0d9] p-2 text-xs">
-                <option value="">Internes Feld wählen …</option>
-                <option v-for="target in mappingTargetsFor(createForm.departmentId || null)" :key="target.value" :value="target.value">{{ target.label }}</option>
-              </select>
-              <button type="button" class="focus-ring text-xs text-[#8a9186] hover:text-amber-800" @click="removeMappingRow(index)">Entfernen</button>
-            </div>
-            <button type="button" class="focus-ring text-xs font-semibold text-forest" @click="addMappingRow">+ Zeile hinzufügen</button>
-          </div>
-
-          <div class="sm:col-span-2">
-            <p v-if="createError" class="mb-2 text-xs text-amber-800">{{ createError }}</p>
-            <button type="submit" :disabled="createSubmitting" class="focus-ring rounded-xl bg-forest px-4 py-2.5 text-xs font-bold text-white disabled:opacity-60">
-              {{ createSubmitting ? 'Wird angelegt …' : 'Quelle anlegen' }}
-            </button>
-          </div>
-        </form>
-      </section>
+      <IntegrationSourceCreateForm
+        :form="createForm" :mapping-rows="mappingRows" :departments="departmentOptionsForCreate"
+        :can-manage-org-wide="canManageOrgWide" :submitting="createSubmitting" :error="createError"
+        :mapping-targets-for="mappingTargetsFor" @submit="createSource" @add-row="addMappingRow" @remove-row="removeMappingRow"
+      />
 
       <section v-for="source in sources" :key="source.id" class="card mb-4 p-6" :class="{ 'opacity-60': !source.enabled }">
-        <div class="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p class="font-display text-base font-bold">{{ source.displayName }}</p>
-            <p class="mt-1 text-[11px] text-[#9aa096]">
-              {{ TRANSPORT_LABELS[source.transport] ?? source.transport }} · {{ scopeLabel(source.departmentId) }} ·
-              {{ source.enabledDomains.map((domain) => DOMAIN_LABELS[domain] ?? domain).join(', ') }}
-            </p>
-            <p class="mt-1 text-[11px] text-[#9aa096]">
-              <span v-if="source.lastSyncAt">Letzter Lauf: {{ new Date(source.lastSyncAt).toLocaleString('de-DE') }} · {{ RUN_STATUS_LABELS[source.lastSyncStatus ?? ''] ?? source.lastSyncStatus }}</span>
-              <span v-else>Noch nicht synchronisiert.</span>
-            </p>
-          </div>
-          <label class="flex shrink-0 items-center gap-2 text-xs font-semibold">
-            <input type="checkbox" :checked="source.enabled" :disabled="busySourceId === source.id" @change="toggleEnabled(source)" />
-            Aktiv
-          </label>
-        </div>
+        <IntegrationSourceHeader
+          :source="source" :busy="busySourceId === source.id" :transport-labels="TRANSPORT_LABELS"
+          :domain-labels="DOMAIN_LABELS" :run-status-labels="RUN_STATUS_LABELS" :scope-label="scopeLabel"
+          @toggle="toggleEnabled(source)"
+        />
 
         <div class="mt-4 flex flex-wrap gap-2">
           <button type="button" class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-2 text-[11px] font-semibold" @click="openSync(source)">Sync ausführen</button>
@@ -430,40 +372,11 @@ async function resolveConflict(conflict: IntegrationSyncConflict, resolution: 'k
           </button>
         </div>
 
-        <div v-if="editingSourceId === source.id" class="mt-4 rounded-xl border border-[#e8e9e2] bg-[#f7f8f4] p-4">
-          <p class="mb-3 text-xs font-semibold">Quelle bearbeiten</p>
-          <div class="grid gap-3 sm:grid-cols-2">
-            <label><span class="mb-1 block text-xs font-semibold">Anzeigename</span>
-              <input v-model="editForm.displayName" maxlength="160" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" />
-            </label>
-            <label v-if="source.transport === 'ical'"><span class="mb-1 block text-xs font-semibold">Kalender-Adresse</span>
-              <input v-model="editForm.endpointUrl" type="url" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" />
-            </label>
-            <label><span class="mb-1 block text-xs font-semibold">Verlustschwelle (%)</span>
-              <input v-model="editForm.lossThresholdPercent" type="number" min="1" max="100" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" />
-            </label>
-          </div>
-          <div class="mt-3">
-            <p class="mb-2 text-xs font-semibold">Feldzuordnung</p>
-            <div v-for="(row, index) in editMappingRows" :key="index" class="mb-2 flex flex-wrap items-center gap-2">
-              <input v-model="row.column" placeholder="Spalte in der Datei" class="focus-ring w-44 rounded-lg border border-[#dfe0d9] p-2 text-xs" />
-              <span class="text-xs text-[#9aa096]">→</span>
-              <select v-model="row.field" class="focus-ring rounded-lg border border-[#dfe0d9] p-2 text-xs">
-                <option value="">Internes Feld wählen …</option>
-                <option v-for="target in mappingTargetsFor(source.departmentId)" :key="target.value" :value="target.value">{{ target.label }}</option>
-              </select>
-              <button type="button" class="focus-ring text-xs text-[#8a9186] hover:text-amber-800" @click="editMappingRows.splice(index, 1)">Entfernen</button>
-            </div>
-            <button type="button" class="focus-ring text-xs font-semibold text-forest" @click="editMappingRows.push({ column: '', field: '' })">+ Zeile hinzufügen</button>
-          </div>
-          <p v-if="editError" class="mt-2 text-xs text-amber-800">{{ editError }}</p>
-          <div class="mt-3 flex gap-2">
-            <button type="button" :disabled="editSubmitting" class="focus-ring rounded-lg bg-forest px-3 py-2 text-[11px] font-bold text-white disabled:opacity-60" @click="saveEdit(source)">
-              {{ editSubmitting ? 'Wird gespeichert …' : 'Speichern' }}
-            </button>
-            <button type="button" class="focus-ring text-xs text-[#8a9186]" @click="editingSourceId = null">Abbrechen</button>
-          </div>
-        </div>
+        <IntegrationSourceEditForm
+          v-if="editingSourceId === source.id" :source="source" :form="editForm" :mapping-rows="editMappingRows"
+          :submitting="editSubmitting" :error="editError" :mapping-targets-for="mappingTargetsFor"
+          @save="saveEdit(source)" @cancel="editingSourceId = null" @add-row="editMappingRows.push({ column: '', field: '' })" @remove-row="editMappingRows.splice($event, 1)"
+        />
 
         <div v-if="syncingSourceId === source.id" class="mt-4 rounded-xl border border-[#e8e9e2] bg-[#f7f8f4] p-4">
           <p class="mb-3 text-xs font-semibold">Sync ausführen</p>
@@ -496,44 +409,15 @@ async function resolveConflict(conflict: IntegrationSyncConflict, resolution: 'k
                 Entscheidung wird vermerkt. Um die Daten tatsächlich zu ändern: Quelle/Zuordnung korrigieren und erneut synchronisieren, oder die Person manuell bearbeiten.
               </p>
               <p v-if="conflictActionError" class="text-amber-800">{{ conflictActionError }}</p>
-              <div v-for="conflict in syncResults[source.id]!.conflicts" :key="conflict.id" class="rounded-lg border border-[#e8e9e2] p-2.5">
-                <p class="font-semibold">{{ conflict.label }} · {{ CONFLICT_KIND_LABELS[conflict.kind] ?? conflict.kind }}</p>
-                <p class="mt-1 text-[#7b827d]">Feld: {{ conflict.field }}</p>
-                <div class="mt-1 grid gap-1 sm:grid-cols-2">
-                  <p>Aktuell: {{ conflict.currentValue ?? '–' }}</p>
-                  <p>Eingehend: {{ conflict.incomingValue ?? '–' }}</p>
-                </div>
-                <div v-if="conflict.resolution === 'pending'" class="mt-2 flex flex-wrap gap-2">
-                  <button type="button" :disabled="conflictBusyId === conflict.id" class="focus-ring rounded-lg border border-[#dfe0d9] px-2.5 py-1.5 text-[10px] font-semibold" @click="resolveConflict(conflict, 'take_incoming')">Übernehmen</button>
-                  <button type="button" :disabled="conflictBusyId === conflict.id" class="focus-ring rounded-lg border border-[#dfe0d9] px-2.5 py-1.5 text-[10px] font-semibold" @click="resolveConflict(conflict, 'keep_current')">Behalten</button>
-                  <button type="button" :disabled="conflictBusyId === conflict.id" class="focus-ring rounded-lg border border-[#dfe0d9] px-2.5 py-1.5 text-[10px] font-semibold text-amber-800" @click="resolveConflict(conflict, 'ignore_permanently')">Dauerhaft ignorieren</button>
-                </div>
-                <p v-else class="mt-2 text-[10px] text-[#9aa096]">Entschieden: {{ RESOLUTION_LABELS[conflict.resolution] }}</p>
-              </div>
+              <IntegrationConflictList
+                :conflicts="syncResults[source.id]!.conflicts" :labels="{ ...CONFLICT_KIND_LABELS, ...RESOLUTION_LABELS }"
+                :busy-id="conflictBusyId" @resolve="resolveConflict"
+              />
             </div>
           </div>
         </div>
 
-        <div v-if="historySourceId === source.id" class="mt-4 rounded-xl border border-[#e8e9e2] bg-[#f7f8f4] p-4 text-xs">
-          <p class="mb-2 font-semibold">Verlauf der Läufe</p>
-          <p v-if="historyLoading" class="text-[#7b827d]">Wird geladen …</p>
-          <div v-else-if="!historyRuns.length" class="text-[#9aa096]">Noch kein Lauf vorhanden.</div>
-          <div v-else class="space-y-2">
-            <div v-for="run in historyRuns" :key="run.id" class="rounded-lg border border-[#e8e9e2] p-2.5">
-              <p class="font-semibold">
-                {{ run.mode === 'dry_run' ? 'Trockenlauf' : 'Übernahme' }} · {{ RUN_STATUS_LABELS[run.status] ?? run.status }}
-              </p>
-              <p class="mt-1 text-[#7b827d]">
-                {{ run.createdCount }} neu, {{ run.updatedCount }} geändert, {{ run.retiredCount }} stillgelegt, {{ run.skippedCount }} übersprungen, {{ run.conflictCount }} Konflikte
-              </p>
-              <p v-if="run.errorClass" class="mt-1 text-amber-800">Fehlerklasse: {{ run.errorClass }}</p>
-              <p class="mt-1 text-[#9aa096]">
-                Gestartet: {{ new Date(run.startedAt).toLocaleString('de-DE') }} ·
-                {{ run.finishedAt ? `beendet: ${new Date(run.finishedAt).toLocaleString('de-DE')}` : 'läuft noch' }}
-              </p>
-            </div>
-          </div>
-        </div>
+        <IntegrationRunHistory v-if="historySourceId === source.id" :loading="historyLoading" :runs="historyRuns" :status-labels="RUN_STATUS_LABELS" />
 
         <div v-if="conflictsSourceId === source.id" class="mt-4 rounded-xl border border-[#e8e9e2] bg-[#f7f8f4] p-4 text-xs">
           <div class="mb-2 flex items-center justify-between">
@@ -546,22 +430,7 @@ async function resolveConflict(conflict: IntegrationSyncConflict, resolution: 'k
           <p v-if="conflictActionError" class="mb-2 text-amber-800">{{ conflictActionError }}</p>
           <p v-if="conflictsLoading" class="text-[#7b827d]">Wird geladen …</p>
           <div v-else-if="!conflictItems.length" class="text-[#9aa096]">Keine offenen Konflikte.</div>
-          <div v-else class="space-y-2">
-            <div v-for="conflict in conflictItems" :key="conflict.id" class="rounded-lg border border-[#e8e9e2] p-2.5">
-              <p class="font-semibold">{{ conflict.label }} · {{ CONFLICT_KIND_LABELS[conflict.kind] ?? conflict.kind }}</p>
-              <p class="mt-1 text-[#7b827d]">Feld: {{ conflict.field }}</p>
-              <div class="mt-1 grid gap-1 sm:grid-cols-2">
-                <p>Aktuell: {{ conflict.currentValue ?? '–' }}</p>
-                <p>Eingehend: {{ conflict.incomingValue ?? '–' }}</p>
-              </div>
-              <div v-if="conflict.resolution === 'pending'" class="mt-2 flex flex-wrap gap-2">
-                <button type="button" :disabled="conflictBusyId === conflict.id" class="focus-ring rounded-lg border border-[#dfe0d9] px-2.5 py-1.5 text-[10px] font-semibold" @click="resolveConflict(conflict, 'take_incoming')">Übernehmen</button>
-                <button type="button" :disabled="conflictBusyId === conflict.id" class="focus-ring rounded-lg border border-[#dfe0d9] px-2.5 py-1.5 text-[10px] font-semibold" @click="resolveConflict(conflict, 'keep_current')">Behalten</button>
-                <button type="button" :disabled="conflictBusyId === conflict.id" class="focus-ring rounded-lg border border-[#dfe0d9] px-2.5 py-1.5 text-[10px] font-semibold text-amber-800" @click="resolveConflict(conflict, 'ignore_permanently')">Dauerhaft ignorieren</button>
-              </div>
-              <p v-else class="mt-2 text-[10px] text-[#9aa096]">Entschieden: {{ RESOLUTION_LABELS[conflict.resolution] }}</p>
-            </div>
-          </div>
+          <IntegrationConflictList v-else :conflicts="conflictItems" :labels="{ ...CONFLICT_KIND_LABELS, ...RESOLUTION_LABELS }" :busy-id="conflictBusyId" @resolve="resolveConflict" />
         </div>
       </section>
 
