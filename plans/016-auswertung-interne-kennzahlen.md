@@ -68,7 +68,7 @@ Trendangaben („+18 %“) werden nur berechnet, wenn eine **vollständige** Vor
 
 ## Datenmodell
 
-Migration `2026080409_metrics.sql`:
+Migration `2026081001_metrics.sql`:
 
 ```sql
 -- Ohne Historie keine Durchlaufzeit.
@@ -172,27 +172,27 @@ export function aggregateRange(days: readonly DailyMetrics[]): RangeMetrics
 export function computeTrend(current: RangeMetrics, previous: RangeMetrics | null): Trend | null
 ```
 
-`aggregateRange` darf Perzentile **nicht** aus Tagesperzentilen mitteln — das ist mathematisch falsch. Für Zeiträume werden die Rohwerte erneut gelesen oder ein t-digest-Sketch je Tag gespeichert. Für den erwarteten Datenumfang eines Vereins ist erneutes Lesen die einfachere und ausreichende Lösung: die Perzentile werden für den angefragten Zeitraum direkt aus `post_status_events` berechnet, während Zählwerte aus dem Aggregat kommen.
+Perzentile dürfen **nicht** aus Tagesperzentilen gemittelt werden — das ist mathematisch falsch. Für Zeiträume werden die Rohwerte erneut gelesen oder ein t-digest-Sketch je Tag gespeichert. Für den erwarteten Datenumfang eines Vereins ist erneutes Lesen die einfachere und ausreichende Lösung: sowohl Perzentile als auch Zählwerte werden für den angefragten Zeitraum direkt aus den Rohtabellen berechnet — kein Wert kommt aus einem Aggregat, siehe Abweichung 4.
 
 `computeTrend` gibt `null` zurück, wenn die Vorperiode unvollständig oder leer ist. Kein Fallback auf 0 %.
 
-### 2. Aggregationsjob
+### 2. Aggregationsjob — **verworfener Entwurf, nicht gebaut, siehe Abweichung 4**
 
-- Hatchet-Cron `aggregate-metrics`, täglich kurz nach Mitternacht je Vereinszeitzone, plus Nachberechnung eines Zeitraums auf Anfrage. Der Workflow-Name muss in `WorkflowNameSchema` ergänzt werden (`packages/contracts/src/index.ts:82`).
+~~- Hatchet-Cron `aggregate-metrics`, täglich kurz nach Mitternacht je Vereinszeitzone, plus Nachberechnung eines Zeitraums auf Anfrage. Der Workflow-Name muss in `WorkflowNameSchema` ergänzt werden (`packages/contracts/src/index.ts:82`).
 - Idempotent: dasselbe Datum zweimal zu rechnen erzeugt dasselbe Ergebnis (`insert ... on conflict do update`). `idempotency_keys` (`202608020001:234-244`) ist dafür vorhanden.
 - Fairness-Key `organizationId`, damit ein großer Verein die anderen nicht blockiert — analog zu `fairnessKey` in `apps/worker/src/workflows.ts:16`.
-- Nachricht enthält nur `organizationId`, `day`, `correlationId`. Keine Kennzahlen in der Nachricht, entsprechend `ADR-002`.
+- Nachricht enthält nur `organizationId`, `day`, `correlationId`. Keine Kennzahlen in der Nachricht, entsprechend `ADR-002`.~~
 
 ### 3. Endpunkte
 
-- `GET /v1/analytics/summary?from&to&scope&scopeId` → Zählwerte, Perzentile, Trend, Kontingentauslastung
-- `GET /v1/analytics/timeseries?from&to&metric&granularity=day|week|month`
-- `GET /v1/analytics/breakdown?from&to&dimension=department|team|channel|preset|goal|format`
-- `GET /v1/analytics/funnel?from&to` → Entwurf → Freigabe angefragt → freigegeben → geplant → veröffentlicht, mit Abbrüchen je Stufe
+- `GET /v1/analytics/summary?organizationId&departmentId&teamId&from&to` → Zählwerte, Perzentile, Trend, Kontingentauslastung
+- `GET /v1/analytics/timeseries?organizationId&departmentId&teamId&from&to&metric&granularity=day|week|month`
+- `GET /v1/analytics/breakdown?organizationId&departmentId&teamId&from&to&dimension=department|team|channel|preset|goal|format`
+- `GET /v1/analytics/funnel?organizationId&departmentId&teamId&from&to` → Entwurf → Freigabe angefragt → freigegeben → geplant → veröffentlicht, mit Abbrüchen je Stufe
 
 Alle Endpunkte verlangen `analytics.view` im angefragten Scope und liefern ausschließlich Daten dieses Scopes. Ein `department_admin` sieht seine Abteilung, nicht den Verein. Zeitraum auf maximal 24 Monate begrenzt. **Eine dokumentierte, bewusst nicht behobene Ausnahme** (siehe „Umsetzung: Ergebnis und Abweichungen vom Plan"): `workflow_runs` trägt kein `team_id` (Schema seit der ersten Content-Pipeline-Migration), ein `team_manager` ohne eigene Abteilungsrolle sieht in den Workflow-Zählwerten deshalb die gesamte Abteilung statt nur das eigene Team.
 
-Jede Antwort trägt `coverage`: welche Tage aus dem Aggregat kommen, welche live gerechnet wurden und ab wann Daten überhaupt vorliegen. Ein Verein, der letzte Woche gestartet ist, muss sehen, dass „letzte 30 Tage“ nur sieben Tage enthält — sonst liest er einen Einbruch, wo nur Datenmangel ist.
+Jede Antwort trägt `coverage`: ab wann Daten überhaupt vorliegen (`measurementStartsAt`) sowie der angefragte Zeitraum. Keine Aggregat-/Live-Unterscheidung mehr, siehe Abweichung 4 — jeder Tag wird gleich (live) berechnet. Ein Verein, der letzte Woche gestartet ist, muss sehen, dass „letzte 30 Tage“ nur sieben Tage enthält — sonst liest er einen Einbruch, wo nur Datenmangel ist.
 
 ### 4. Oberfläche
 
@@ -216,8 +216,8 @@ Für die Darstellung gilt: eine Kennzahl ohne Bezugsgröße ist keine Aussage. J
 | `pages/auswertung.vue:1` | vier erfundene Plattformkennzahlen mit erfundenen Trends | echte interne Kennzahlen; Plattformwerte als benannt leerer Bereich |
 | `pages/auswertung.vue:1` | `bars=[38,52,...]` ohne Skala und Quelle | echte Zeitreihe mit Achsen und `coverage` |
 | `pages/auswertung.vue:1` | „Die letzten 30 Tage über alle Abteilungen“ als fester Text | tatsächlich gewählter Zeitraum und Scope |
-| `pages/index.vue:10-15` | Kennzahlen inkl. „Reichweite 24,8k +18 %“ | drei echte Zählwerte aus `GET /v1/analytics/summary` |
-| `pages/index.vue:88-95` | „18 / 24 Beiträge“, „3 / 4 Abteilungen aktiv“ | entfällt bzw. echte aktive Einheiten ohne erfundenes Ziel |
+| ~~`pages/index.vue:10-15`~~ | ~~Kennzahlen inkl. „Reichweite 24,8k +18 %“~~ | bereits erledigt in Paket 009, siehe Abweichung 6 — nicht Teil dieses Pakets |
+| ~~`pages/index.vue:88-95`~~ | ~~„18 / 24 Beiträge“, „3 / 4 Abteilungen aktiv“~~ | bereits erledigt in Paket 009, siehe Abweichung 6 — nicht Teil dieses Pakets |
 
 ## Verifikation
 
@@ -226,7 +226,7 @@ Für die Darstellung gilt: eine Kennzahl ohne Bezugsgröße ist keine Aussage. J
 - pgTAP: Statuswechsel erzeugt genau eine Historienzeile; Wechsel auf denselben Status erzeugt keine; Historie ist ohne `analytics.view` nicht lesbar; Aggregat eines fremden Vereins ist unsichtbar.
 - ~~Aggregationstests: derselbe Tag zweimal gerechnet ergibt identische Werte; Nachberechnung nach nachträglicher Statusänderung korrigiert das Aggregat.~~ Entfällt: kein Aggregat, siehe Abweichung 4. Live-Berechnung ist bei jedem Aufruf deterministisch dieselbe Funktion über dieselben Rohzeilen, eine gesonderte Idempotenzprüfung ist ohne Nebenwirkungen kein zusätzlicher Test.
 - API-Tests: Abteilungsadmin erhält keine vereinsweiten Zahlen; Zeitraum über 24 Monate → 400; `coverage` weist einen jungen Verein korrekt aus.
-- manuell: Beitrag durch den vollen Lebenszyklus führen, Kennzahlen ändern sich nachvollziehbar; Beitrag ablehnen, Änderungsquote steigt; Aggregation laufen lassen, Werte bleiben identisch. **Solange Paket 005/006 nicht existieren, ist dieser manuelle Test nur über direkte DB-/RPC-Eingriffe durchführbar, nicht über den echten Produktpfad** — siehe Korrektur zu Zeile 16.
+- manuell: Beitrag durch den vollen Lebenszyklus führen, Kennzahlen ändern sich nachvollziehbar; Beitrag ablehnen, Änderungsquote steigt. **Solange Paket 005/006 nicht existieren, ist dieser manuelle Test nur über direkte DB-/RPC-Eingriffe durchführbar, nicht über den echten Produktpfad** — siehe Korrektur zu Zeile 16.
 
 ## Risiken und offene Entscheidungen
 
@@ -243,5 +243,7 @@ Umgesetzt wie im Abschnitt „Abweichungen vom Plan“ oben festgelegt: `post_st
 **Kritischster Fund der adversarialen Prüfung, projektweit relevant**: `apps/api/src/auth.ts`s `rolesForScope` prüft `organization_memberships`, `department_memberships` und `team_memberships` vollständig unabhängig voneinander — an keiner Stelle wird geprüft, dass die drei übergebenen IDs überhaupt zusammengehören. Ein Aufrufer mit einer echten Abteilungsrolle (`analytics.view`) im eigenen Verein A hätte `organizationId=<fremder Verein B>` mit der eigenen, echten `departmentId` aus A kombinieren können: `requirePermission` wäre über die reale Abteilungsrolle in A durchgegangen, obwohl die Anfrage inhaltlich Verein B betraf. Die meisten Loader dieses Pakets filtern zusammengesetzt nach `organization_id` UND `department_id` und liefern bei einem solchen inkonsistenten Paar zufällig leer — die Kontingentauslastung in `GET /v1/analytics/summary` filterte `channel_quotas` dagegen ausschließlich nach `organizationId` und hätte echte Konfigurations- und Nutzungsdaten eines fremden Vereins zurückgegeben. **Behoben**: `assertAnalyticsScopeConsistency` (`apps/api/src/app.ts`) prüft vor jeder Rechteprüfung über den Nutzer-Client (RLS), dass eine angegebene `departmentId` tatsächlich zu `organizationId` gehört und eine `teamId` zur `departmentId` — lehnt sonst mit 404 ab, bevor überhaupt ein Service-Role-Client entsteht. Der gemeinsam genutzte `RoleProvider` selbst wurde bewusst nicht geändert (größerer, eigenständiger Eingriff mit projektweiter Wirkung, verdient eine eigene Prüfung außerhalb dieses Pakets — andere Endpunkte, die `toPermissionScope(organizationId, departmentId)` aus rohen Query-Parametern bilden, könnten je nach nachgelagerter Abfrage demselben Muster unterliegen). Regressionstest: `apps/api/src/app.test.ts`, „rejects a departmentId that belongs to a different organization than the one requested“.
 
 Zwei weitere, geringere Funde derselben Prüfung, beide bewusst nicht behoben und im Code dokumentiert: `workflow_runs` hat kein `team_id` (Schema seit der ersten Content-Pipeline-Migration) — ein `team_manager` ohne eigene Abteilungsrolle sieht in den Workflow-Zählwerten die gesamte Abteilung statt nur das eigene Team; reine technische Zählwerte ohne Personenbezug, eine Behebung bräuchte eine Schemaerweiterung außerhalb dieses Pakets. `computeFunnel` zählt die Stufe „Freigabe angefragt“ nach dem gleichen „erstes Auftreten“-Prinzip wie `postsPublished` — ein Beitrag, der vor dem angefragten Zeitraum zum ersten Mal in `awaiting_approval` eintrat und erst innerhalb des Zeitraums nach einem Änderungswunsch erneut eintrat, wird für dieses Fenster nicht zusätzlich gezählt; konsistent mit dem sonst durchgängigen Prinzip, aber je nach Erwartung überraschend.
+
+**CodeRabbit hat den `workflow_runs`-Team-Scope-Punkt in einer zweiten Review-Runde zu PR #28 erneut als Major eingestuft** und eine echte Behebung statt nur Dokumentation verlangt. Bewusst erneut zurückgestellt: die Einschätzung oben steht unverändert — reine technische Zählwerte ohne Personenbezug, eine Behebung bräuchte eine Schemaerweiterung (`team_id` auf `workflow_runs`, dessen `entity_id` je nach `workflow_name` auf unterschiedliche Tabellen zeigt) außerhalb des Scopes eines Review-Fixes.
 
 Bewusst kleiner als der ursprüngliche Entwurf: kein Team-Filter und keine Scope-Auswahl auf der Auswertungsseite selbst (die aktive Verein-/Abteilungsauswahl kommt wie auf jeder anderen Seite aus der Sidebar), Aufschlüsselung in der Oberfläche nur nach Abteilung/Anlass/Ziel (die API unterstützt zusätzlich Team/Kanal/Format, ungenutzt in der UI, da im Abschnitt „Oberfläche“ des Plans nicht gefordert).

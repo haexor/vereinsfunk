@@ -978,6 +978,11 @@ describe('metrics (Paket 016)', () => {
     it('returns an empty array for an empty window list', () => {
       expect(computeCountMetricsSeries([], input)).toEqual([])
     })
+
+    it('throws when windows are not ascending and contiguous', () => {
+      const gappy = [dayWindow('2026-08-08', 'Europe/Berlin'), dayWindow('2026-08-10', 'Europe/Berlin')]
+      expect(() => computeCountMetricsSeries(gappy, input)).toThrow(/ascending and contiguous/)
+    })
   })
 
   describe('leadTimeSecondsSamples', () => {

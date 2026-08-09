@@ -231,6 +231,11 @@ export function computeCountMetrics(input: ComputeCountMetricsInput): CountMetri
 // -- mit einer anderen Fensterliste ist das Ergebnis falsch.
 export function computeCountMetricsSeries(windows: readonly MetricsWindow[], input: Omit<ComputeCountMetricsInput, 'window'>): CountMetrics[] {
   if (windows.length === 0) return []
+  for (let i = 1; i < windows.length; i++) {
+    if ((windows[i] as MetricsWindow).startUtc !== (windows[i - 1] as MetricsWindow).endUtc) {
+      throw new Error('computeCountMetricsSeries: windows must be ascending and contiguous')
+    }
+  }
   const firstWindowStart = (windows[0] as MetricsWindow).startUtc
 
   function bucketCounts<T>(items: readonly T[], timestampOf: (item: T) => string, matches: (item: T) => boolean): number[] {
