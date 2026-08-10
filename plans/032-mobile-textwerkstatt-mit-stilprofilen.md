@@ -110,7 +110,7 @@ Create `content_style_profiles` with `id`, `organization_id`, optional `departme
 
 `additionalInstructions` is a constrained editorial preference, not an executable system prompt -- it stays bounded and low-priority in prompt assembly so it can never override grounding, safety or platform rules, independent of what it names. Person-name fields and „write like …“ directives are explicitly allowed (Produktentscheidung above). The API resolves the closest allowed scope; anyone who holds `post.create` at that scope may create and use their own custom style profile there too -- creating a persona is not gated behind a separate configuration permission (e.g. `department.manage`). Editing/deleting a profile someone else created remains a scope-admin action.
 
-When a draft is accepted, store a complete `style_profile_snapshot`, a `prompt_template_version`, the selected provider model identifier and provider configuration ID (not key), plus a deterministic input hash on the new `post_version` or a linked immutable `post_generation_provenance` record. Persist no raw provider prompt, original media bytes, secret or free-form chain-of-thought. The effective configuration snapshot continues to include content policy and required hashtags so an approved version is reproducible.
+When a draft is accepted, atomically create the new `post_version` together with its linked, immutable `post_generation_provenance` record — a complete `style_profile_snapshot`, a `prompt_template_version`, the selected provider model identifier and provider configuration ID (not key), plus a deterministic input hash. An accepted AI-generated `post_version` must never exist without its provenance row; the two are written in the same transaction/RPC and reference each other one-to-one (`post_generation_provenance.post_version_id` unique). Persist no raw provider prompt, original media bytes, secret or free-form chain-of-thought. The effective configuration snapshot continues to include content policy and required hashtags so an approved version is reproducible.
 
 ### 3. Generation and iteration contracts
 
@@ -169,7 +169,7 @@ Create the additive migration, RLS policies and pgTAP tests described in “Targ
 
 Write an ADR recording the non-imitative style-profile rule, priority order of prompt layers, data minimisation and version snapshot requirement. Update the product plan to state that v1 generates text and supports user-provided photos/videos; it never generates a video.
 
-**Verify**: `pnpm db:reset && pnpm db:test && pnpm --filter @vereinsfunk/api test` → all pass, including positive and negative two-organisation tests for profiles and profile-to-team cross-tenant references.
+**Verify**: `pnpm db:reset && pnpm exec supabase test db supabase/tests/text_workshop_foundation.test.sql && pnpm --filter @vereinsfunk/api test` → all pass, including positive and negative two-organisation tests for profiles and profile-to-team cross-tenant references. The full `pnpm db:test` run currently fails independently of this package on known pre-existing fixture collisions in `consent_management` and `metrics` (see “Verifikation und bekannter Baseline-Befund” in `plans/NEXT-SESSION.md`); do not claim the full run passes until that baseline fix lands separately.
 
 ### Step 3: Build a real structured LLM adapter and evaluation suite
 
@@ -181,7 +181,7 @@ Create a checked-in, synthetic evaluation fixture set: terse bullet input, full 
 
 ### Step 4: Implement composition jobs, candidates and immutable revisions
 
-After Plan 004 supplies a working outbox and worker, add composition-session persistence/status and the ID-only `generate-text-post`/`revise-text-post` workflows. The API must create the session transactionally with its outbox record, authorise it by post scope, and return an idempotent session handle. The worker reloads facts/style/current version, writes a candidate or controlled failure, and never writes an accepted version as a side effect of generation.
+After Plan 004 supplies a working outbox and worker, add composition-session persistence/status and the ID-only `generate-text-post`/`revise-text-post` workflows. A session's initial creation has no `post_id` yet, so the API must authorise it by the caller's checked organisation/department/team membership and `post.create` permission at the chosen scope; only later actions on an existing session — revisions, candidate acceptance, manual edits — authorise by the resulting post's scope. The API must create the session transactionally with its outbox record and return an idempotent session handle. The worker reloads facts/style/current version, writes a candidate or controlled failure, and never writes an accepted version as a side effect of generation.
 
 Add explicit API commands to accept a candidate and to save manual content. Implement the post/version write as one transaction/RPC, including version-number allocation, current-version update, media associations, previous-approval invalidation and audit event. Do not copy the current `apps/api/src/app.ts` sequence of several PostgREST writes; the race-sensitive revision path needs a database transaction. Use compare-and-set/session state to prevent double acceptance.
 

@@ -1,6 +1,6 @@
 # Prompt für die nächste Session
 
-Arbeite im Repository `/home/haex/Projekte/vereinsfunk`.
+Arbeite im Repository-Root (dieses Checkout).
 
 Lies vor Änderungen vollständig:
 

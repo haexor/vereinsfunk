@@ -44,6 +44,14 @@ create unique index content_style_profiles_department_slug_unique
 create unique index content_style_profiles_team_slug_unique
   on public.content_style_profiles (organization_id, team_id, slug) where team_id is not null;
 
+-- Used by composition_sessions' requested_formats check below. A plain CHECK expression cannot
+-- contain a subquery, so the count(distinct ...) comparison needed to reject duplicate array
+-- elements lives in this small immutable helper instead.
+create or replace function public.jsonb_text_array_is_distinct(value jsonb)
+returns boolean language sql immutable set search_path = public, pg_temp as $$
+  select count(*) = count(distinct element) from jsonb_array_elements_text(value) as element;
+$$;
+
 create table public.composition_sessions (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations(id) on delete cascade,
@@ -60,8 +68,9 @@ create table public.composition_sessions (
     and requested_formats <@ '["text_post", "photo_post", "video_post"]'::jsonb
     -- Mirrors CreateCompositionSessionSchema's superRefine: a user-uploaded video is never
     -- misrepresented as an AI-generated Reel, so video_post cannot share a session with
-    -- another presentation type.
+    -- another presentation type, and requestedFormats must not contain duplicates.
     and not (requested_formats @> '["video_post"]'::jsonb and jsonb_array_length(requested_formats) > 1)
+    and public.jsonb_text_array_is_distinct(requested_formats)
   ),
   source_material jsonb not null check (jsonb_typeof(source_material) = 'object'),
   style_profile_id uuid,
@@ -98,6 +107,9 @@ create table public.composition_session_media (
   foreign key (organization_id, media_asset_id)
     references public.media_assets(organization_id, id) on delete restrict
 );
+-- Support composition_session_media's on delete restrict FK to media_assets: without this,
+-- deleting/updating a media_assets row forces a sequential scan to check for references.
+create index composition_session_media_media_asset_idx on public.composition_session_media(organization_id, media_asset_id);
 
 create table public.generation_candidates (
   id uuid primary key default gen_random_uuid(),
@@ -152,12 +164,16 @@ create table public.post_generation_provenance (
     references public.llm_provider_configurations(id) on delete restrict
 );
 
+-- not valid + separate validate: an unvalidated check only scans new/changed rows, so it does not
+-- hold ACCESS EXCLUSIVE for a full-table scan of the existing (all-null) column.
 alter table public.media_assets add column compression_provenance jsonb;
 alter table public.media_assets add constraint media_assets_compression_provenance_check
-  check (compression_provenance is null or jsonb_typeof(compression_provenance) = 'object');
+  check (compression_provenance is null or jsonb_typeof(compression_provenance) = 'object') not valid;
+alter table public.media_assets validate constraint media_assets_compression_provenance_check;
 alter table public.media_derivatives add column compression_provenance jsonb;
 alter table public.media_derivatives add constraint media_derivatives_compression_provenance_check
-  check (compression_provenance is null or jsonb_typeof(compression_provenance) = 'object');
+  check (compression_provenance is null or jsonb_typeof(compression_provenance) = 'object') not valid;
+alter table public.media_derivatives validate constraint media_derivatives_compression_provenance_check;
 
 alter table public.content_style_profiles enable row level security;
 alter table public.content_style_profiles force row level security;

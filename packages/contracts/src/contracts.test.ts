@@ -18,6 +18,7 @@ import {
   CreateInvitationRequestSchema,
   CreateMembershipRequestSchema,
   CreateSubmissionSchema,
+  CustomStyleProfileSchema,
   DepartmentSchema,
   DirectoryPersonSchema,
   GeneratedPostSchema,
@@ -126,8 +127,22 @@ describe('text workshop contracts', () => {
     // departmentId/teamId may be omitted entirely for an organization-wide profile, not just set to null.
     const orgWideProfile = { organizationId: org, slug: 'unser-ton', name: 'Unser Ton', description: 'Warm und konkret', styleRules, avoidRules: ['Floskeln'] }
     expect(CreateCustomStyleProfileRequestSchema.safeParse(orgWideProfile).success).toBe(true)
+    // teamId without departmentId must be rejected on both the request schema and the persisted
+    // record schema -- CustomStyleProfileSchema extends the checked StyleProfileScopeSchema, and
+    // the scope superRefine must still apply after that extend.
+    expect(CreateCustomStyleProfileRequestSchema.safeParse({ ...profile, departmentId: undefined, teamId: team }).success).toBe(false)
     expect(CreateGenerationCommandSchema.safeParse({ sessionId: org, generationIntent: 'revise', revisionInstruction: 'Bitte kürzer und mit konkretem Termin.' }).success).toBe(true)
     expect(CreateGenerationCommandSchema.safeParse({ sessionId: org, generationIntent: 'revise' }).success).toBe(false)
+  })
+
+  it('keeps the teamId-requires-departmentId scope rule after CustomStyleProfileSchema extends it', () => {
+    const record = {
+      id: org, organizationId: org, departmentId: department, teamId: team, slug: 'unser-ton', name: 'Unser Ton',
+      kind: 'custom' as const, description: 'Warm und konkret', styleRules, avoidRules: ['Floskeln'],
+      isActive: true, createdBy: org, createdAt: '2026-08-05T12:34:56.789+00:00', updatedAt: '2026-08-05T12:34:56.789+00:00',
+    }
+    expect(CustomStyleProfileSchema.safeParse(record).success).toBe(true)
+    expect(CustomStyleProfileSchema.safeParse({ ...record, departmentId: null }).success).toBe(false)
   })
 
   it('requires compression output measurements only when compression succeeded', () => {
