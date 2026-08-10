@@ -1218,7 +1218,7 @@ describe('structure, memberships and invitations', () => {
               }
             }
             const rows = table === 'organization_memberships' ? organizationRows : []
-            return { select: () => ({ eq: () => ({ range: async (from: number) => ({ data: from === 0 ? rows : [], error: null }) }) }) }
+            return { select: () => ({ eq: () => ({ order: () => ({ range: async (from: number) => ({ data: from === 0 ? rows : [], error: null }) }) }) }) }
           },
         }) as unknown as SupabaseClient,
       forService: () => ({}) as unknown as SupabaseClient,
@@ -1248,12 +1248,12 @@ describe('structure, memberships and invitations', () => {
               return { select: () => ({ in: async (_c: string, ids: string[]) => ({ data: ids.map((id) => ({ id, display_name: 'Person' })), error: null }) }) }
             }
             if (table === 'organization_memberships') {
-              return { select: () => ({ eq: () => ({ range: async (from: number) => ({ data: from === 0 ? [{ id: '10000000-3000-4000-8000-000000000101', user_id: ownerUserId, role: 'organization_owner', expires_at: null }] : [], error: null }) }) }) }
+              return { select: () => ({ eq: () => ({ order: () => ({ range: async (from: number) => ({ data: from === 0 ? [{ id: '10000000-3000-4000-8000-000000000101', user_id: ownerUserId, role: 'organization_owner', expires_at: null }] : [], error: null }) }) }) }) }
             }
             if (table === 'department_memberships') {
-              return { select: () => ({ eq: () => ({ range: async (from: number) => ({ data: from === 0 ? [{ id: '10000000-3000-4000-8000-000000000102', user_id: editorUserId, role: 'editor', expires_at: null, department_id: DEPARTMENT_ID }] : [], error: null }) }) }) }
+              return { select: () => ({ eq: () => ({ order: () => ({ range: async (from: number) => ({ data: from === 0 ? [{ id: '10000000-3000-4000-8000-000000000102', user_id: editorUserId, role: 'editor', expires_at: null, department_id: DEPARTMENT_ID }] : [], error: null }) }) }) }) }
             }
-            return { select: () => ({ eq: () => ({ range: async () => ({ data: [], error: null }) }) }) }
+            return { select: () => ({ eq: () => ({ order: () => ({ range: async () => ({ data: [], error: null }) }) }) }) }
           },
         }) as unknown as SupabaseClient,
       forService: () => ({}) as unknown as SupabaseClient,
@@ -1990,6 +1990,8 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
                 if (column === 'status') statusFilters.push(values)
                 return builder
               },
+              order: () => builder,
+              range: () => builder,
               then: (resolve: (value: { data: unknown; error: unknown }) => unknown) => resolve({ data: [stageRow], error: null }),
             }
             return builder
@@ -2350,7 +2352,7 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
                   return chain({ data: { token_ciphertext: ciphertextToBytea(sealed.ciphertext), token_key_version: 'v1' }, error: null })
                 }
                 if (table === 'post_media') return chain({ data: [{ position: 0, media_derivative_id: '25000000-5000-4000-8000-000000000001' }], error: null })
-                if (table === 'media_derivatives') return chain({ data: { id: '25000000-5000-4000-8000-000000000001', sha256: 'a'.repeat(64), mime_type: 'image/png', status: 'ready' }, error: null })
+                if (table === 'media_derivatives') return chain({ data: [{ id: '25000000-5000-4000-8000-000000000001', sha256: 'a'.repeat(64), mime_type: 'image/png', status: 'ready' }], error: null })
                 if (table === 'publication_media_grants') {
                   return {
                     insert: async () => ({ error: null }),

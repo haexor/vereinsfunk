@@ -1,0 +1,313 @@
+import type { ConsentScope, OutputFormat, ScopeLevel } from '@vereinsfunk/contracts'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import { mergeEffectiveConfig, resolveEffectiveConfig, type ConfigOverride, type TrustRecord } from '@vereinsfunk/domain'
+import type { FastifyRequest } from 'fastify'
+import type { PermissionScope } from '../auth.js'
+import type { SupabaseClientFactory } from './context.js'
+
+// Von mehreren Route-Modulen und dem verbleibenden app.ts benoetigt (Richtlinien/Freigaben,
+// Kanaele und Mitglieder/Einladungen loesen alle scope+scopeId oder ein Membership-Tripel auf) --
+// hier zentral statt in jedem Modul dupliziert, damit spaetere Extraktionen (Paket 027) diese
+// Funktionen nicht erneut abschreiben muessen.
+
+// supabase/config.toml caps a single response at max_rows=1000 -- a plain select() on a large
+// organization's membership table would silently truncate the roster. Pages through range()
+// until a page comes back short.
+//
+// Contract: without ORDER BY, Postgres does not guarantee a stable row order between two
+// requests -- concurrent writes or a changed query plan can make page 2 repeat or skip rows from
+// page 1 (gefunden im Code-Review dieses Pakets). Every fetchPage callback MUST add
+// `.order('id', { ascending: true })` (or another column that is both unique and indexed) so
+// pages tile the table exactly once.
+export async function fetchAllRows<T>(
+  fetchPage: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+): Promise<T[]> {
+  const pageSize = 1000
+  const rows: T[] = []
+  for (let from = 0; ; from += pageSize) {
+    const page = await fetchPage(from, from + pageSize - 1)
+    if (page.error) throw page.error
+    const data = page.data ?? []
+    rows.push(...data)
+    if (data.length < pageSize) break
+  }
+  return rows
+}
+
+// Ein .in() mit unbegrenzt vielen IDs traegt die gesamte Liste in der Anfrage-URL -- dieselbe
+// Grenze wie bei den Profil-Bloecken in GET /members und dem Retention-Lauf. Batcht in Chunks von
+// 100, statt die Ergebnisse einer einzelnen Anfrage zu verwerfen. Derselbe Sortier-Vertrag wie
+// fetchAllRows gilt je Batch.
+export async function fetchAllRowsForIds<T>(
+  ids: readonly string[],
+  fetchPage: (batch: readonly string[], from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+): Promise<T[]> {
+  const batchSize = 100
+  const rows: T[] = []
+  for (let offset = 0; offset < ids.length; offset += batchSize) {
+    const batch = ids.slice(offset, offset + batchSize)
+    rows.push(...(await fetchAllRows<T>((from, to) => fetchPage(batch, from, to))))
+  }
+  return rows
+}
+
+// Loest scope+scopeId (aus CreateMembershipRequestSchema) in einen PermissionScope auf --
+// organizationId muss fuer department/team erst nachgeschlagen werden, damit requirePermission
+// und canAssignRole (beide brauchen den vollen Scope-Pfad) korrekt kaskadieren koennen.
+export async function resolveMembershipScope(
+  client: SupabaseClient,
+  scope: ScopeLevel,
+  scopeId: string,
+): Promise<PermissionScope | null> {
+  if (scope === 'organization') return { organizationId: scopeId }
+  if (scope === 'department') {
+    const department = await client.from('departments').select('organization_id').eq('id', scopeId).maybeSingle()
+    if (department.error) throw department.error
+    return department.data ? { organizationId: department.data.organization_id as string, departmentId: scopeId } : null
+  }
+  const team = await client.from('teams').select('organization_id, department_id').eq('id', scopeId).maybeSingle()
+  if (team.error) throw team.error
+  return team.data ? { organizationId: team.data.organization_id as string, departmentId: team.data.department_id as string, teamId: scopeId } : null
+}
+
+// exactOptionalPropertyTypes verbietet departmentId/teamId: undefined -- die Schluessel muessen
+// bei Abwesenheit ganz fehlen statt explizit auf undefined gesetzt zu sein.
+export function toPermissionScope(organizationId: string, departmentId?: string | null, teamId?: string | null): PermissionScope {
+  return { organizationId, ...(departmentId ? { departmentId } : {}), ...(teamId ? { teamId } : {}) }
+}
+
+// Eine befristete Mitgliedschaft oder Befreiung ist nach expires_at wirkungslos. Jede Abfrage auf
+// organization_memberships/department_memberships/team_memberships/member_review_trust, deren
+// Ergebnis eine Berechtigung traegt, filtert damit -- dieselbe Bedingung, die die authz-Funktionen
+// in SQL verwenden ("expires_at is null or expires_at > now()"). Als gemeinsamer Helfer, damit die
+// Stellen nicht auseinanderlaufen (beim Review dieses Pakets gefunden: drei Stellen ohne Filter).
+export function notExpiredFilter(): string {
+  return `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`
+}
+
+// Deckt dieselbe Mitgliedschaft ab wie authz.is_any_member_of_organization (RLS-Grundlage von
+// policy_settings_select): Organisationsrolle ODER Abteilungs- ODER Teammitgliedschaft, nicht
+// nur eine Organisationsrolle wie roleProvider.rolesForScope(..., { organizationId }) allein
+// prueft. Von Richtlinien/Freigaben und mehreren noch nicht extrahierten Domaenen (Kanaele,
+// Integration, Datenschutz) gebraucht -- deshalb hier statt je Modul dupliziert.
+export async function isAnyMemberOfOrganization(client: SupabaseClient, userId: string, organizationId: string): Promise<boolean> {
+  const notExpired = notExpiredFilter()
+  const [org, department, team] = await Promise.all([
+    client.from('organization_memberships').select('id').eq('organization_id', organizationId).eq('user_id', userId).or(notExpired).limit(1),
+    client.from('department_memberships').select('id').eq('organization_id', organizationId).eq('user_id', userId).or(notExpired).limit(1),
+    client.from('team_memberships').select('id').eq('organization_id', organizationId).eq('user_id', userId).or(notExpired).limit(1),
+  ])
+  if (org.error) throw org.error
+  if (department.error) throw department.error
+  if (team.error) throw team.error
+  return org.data.length > 0 || department.data.length > 0 || team.data.length > 0
+}
+
+// Einfacher In-Prozess-Sliding-Window-Zaehler statt einer neuen Abhaengigkeit (@fastify/rate-limit):
+// die oeffentlichen Einwilligungsseiten unten sind die exponierteste Flaeche des Systems (Plan
+// 015, Abschnitt 3) und brauchen ein Rate-Limit pro IP und pro Token. Fuer einen einzelnen
+// API-Prozess ausreichend; ein mehrknotiges Produktions-Deployment braucht einen gemeinsamen
+// Speicher (Redis) statt dieser lokalen Map -- dokumentierte Grenze, kein stiller Kompromiss.
+// Modul-Singleton: von app.ts (Datenschutz-Routen) und routes/policies.ts (Media-Grants) geteilt,
+// damit beide weiterhin denselben Zaehler pro Praefix-Key benutzen.
+const rateLimitBuckets = new Map<string, { count: number; resetAt: number }>()
+let nextRateLimitSweepAt = 0
+export function checkRateLimit(key: string, limit: number, windowMs: number): boolean {
+  const now = Date.now()
+  // Diese Routen sind oeffentlich erreichbar; ohne Aufraeumen wuerde jede neue Quell-IP dauerhaft
+  // einen Eintrag belegen (gefunden im Code-Review). Nur bei Bedarf durchsuchen, statt bei jedem
+  // Aufruf ueber die ganze Map zu iterieren -- und selbst dann hoechstens einmal pro Minute, sonst
+  // wuerde ein Schwarm neuer IPs bei gleichzeitig >10.000 aktiven Eintraegen (resetAt >= now, der
+  // Durchlauf loescht dann nichts) jeden weiteren Aufruf erneut die ganze Map durchsuchen lassen.
+  if (rateLimitBuckets.size > 10_000 && now >= nextRateLimitSweepAt) {
+    nextRateLimitSweepAt = now + 60_000
+    for (const [bucketKey, entry] of rateLimitBuckets) {
+      if (entry.resetAt < now) rateLimitBuckets.delete(bucketKey)
+    }
+  }
+  const bucket = rateLimitBuckets.get(key)
+  if (!bucket || bucket.resetAt < now) {
+    rateLimitBuckets.set(key, { count: 1, resetAt: now + windowMs })
+    return true
+  }
+  if (bucket.count >= limit) return false
+  bucket.count += 1
+  return true
+}
+
+// Dieselbe Form wie die inline geschriebenen audit_events-Inserts (Service-Client, weil
+// audit_events fuer authenticated keine INSERT-Policy hat; Fehler werden geloggt, nicht geworfen --
+// ein fehlgeschlagener Audit-Eintrag darf die bereits durchgefuehrte Aenderung nicht nachtraeglich
+// als Fehler ausgeben). Als Factory statt einer einzelnen Funktion, weil recordAuditEvent
+// supabaseClients aus der Closure von buildApp brauchte -- app.ts und jedes Route-Modul rufen
+// createAuditRecorder(supabaseClients) einmal auf und behalten den vertrauten Zwei-Parameter-Aufruf.
+export function createAuditRecorder(supabaseClients: SupabaseClientFactory) {
+  return async function recordAuditEvent(
+    request: FastifyRequest,
+    event: { organizationId: string; action: string; entityType: string; entityId: string | null; metadata?: Record<string, unknown> },
+  ): Promise<void> {
+    const audit = await supabaseClients.forService().from('audit_events').insert({
+      organization_id: event.organizationId,
+      actor_user_id: request.auth!.userId,
+      action: event.action,
+      entity_type: event.entityType,
+      entity_id: event.entityId,
+      correlation_id: request.id,
+      metadata: event.metadata ?? {},
+    })
+    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+  }
+}
+
+// Gemeinsame Zeilenform fuer consent_records (Paket 015) -- gebraucht sowohl von den noch nicht
+// extrahierten Datenschutz-Routen als auch von computeMediaGateBlockersForPostVersion in
+// routes/policies.ts (Freigabe-Medien-Gate liest bestehende Einwilligungen).
+export const CONSENT_RECORD_SELECT =
+  'id, organization_id, directory_person_id, pseudonymous_subject_ref, scope, scope_structured, origin, source_id, signed_at, signer_name, signer_role, guardian_confirmed, valid_from, valid_until, revoked_at, revoked_by, revocation_reason, superseded_by, created_at'
+
+export type ConsentRecordRow = {
+  id: string
+  organization_id: string
+  directory_person_id: string | null
+  pseudonymous_subject_ref: string | null
+  scope: string
+  scope_structured: ConsentScope
+  origin: 'paper' | 'digital' | 'imported'
+  source_id: string | null
+  signed_at: string | null
+  signer_name: string | null
+  signer_role: 'self' | 'guardian' | null
+  guardian_confirmed: boolean
+  valid_from: string
+  valid_until: string | null
+  revoked_at: string | null
+  revoked_by: 'self' | 'guardian' | 'organization' | null
+  revocation_reason: string | null
+  superseded_by: string | null
+  created_at: string
+}
+
+// Regelaufloesung je Ebene (Paket 011/023) -- gebraucht von routes/policies.ts (Richtlinien-
+// Oberflaeche, Freigaberouten) UND vom in app.ts verbleibenden POST /v1/submissions
+// (evaluateSubmitPermission vor der ersten Persistenz), deshalb hier statt in einem Route-Modul.
+export const POLICY_RULE_COLUMNS =
+  'id, submit_requires_permission, review_required, review_mode, review_stage_label, review_minimum_approvals, review_deadline_hours, minor_approval_required, self_approval_allowed, allow_same_reviewer_across_stages, allow_review_exemptions, media_requires_consent_check, allowed_presets, allowed_formats, allowed_channel_ids, forbidden_topics, required_hashtags, tone, consent_expires_on_leave, consent_validity_months'
+
+export interface PolicyRuleRow {
+  id: string
+  review_required: boolean | null
+  review_mode: 'any_with_permission' | 'named' | null
+  review_stage_label: string | null
+  review_minimum_approvals: number | null
+  review_deadline_hours: number | null
+  minor_approval_required: boolean | null
+  self_approval_allowed: boolean | null
+  allow_same_reviewer_across_stages: boolean | null
+  allow_review_exemptions: boolean | null
+  media_requires_consent_check: boolean | null
+  allowed_presets: string[] | null
+  allowed_formats: OutputFormat[] | null
+  allowed_channel_ids: string[] | null
+  forbidden_topics: string[]
+  required_hashtags: string[]
+  tone: string | null
+  // Paket 015: consent_expires_on_leave ist Vererbungssemantik (mergeEffectiveConfig), analog zu
+  // media_requires_consent_check; consent_validity_months ist knotenlokal wie
+  // review_minimum_approvals -- own/effective in mapConfigToRuleValues (routes/policies.ts) sind identisch.
+  consent_expires_on_leave: boolean | null
+  consent_validity_months: number | null
+}
+
+// Alle Regelzeilen einer Organisation in EINER Abfrage, indiziert je Ebene -- dasselbe Muster wie
+// fetchPolicyRows fuer die zwei booleschen Flags aus 023. Eine Auflösung je Ebene mit eigener
+// Abfrage erzeugte ueber alle Ebenen hinweg eine N+1-Kette (bei 10 Abteilungen und 40 Teams 141
+// Abfragen auf policy_settings allein, beim Review dieses Pakets gefunden).
+export interface PolicyRuleRows {
+  orgRow: PolicyRuleRow | null
+  deptRowById: Map<string, PolicyRuleRow>
+  teamRowById: Map<string, PolicyRuleRow>
+}
+
+export async function fetchPolicyRuleRows(client: SupabaseClient, organizationId: string): Promise<PolicyRuleRows> {
+  const rows = await client.from('policy_settings').select(`${POLICY_RULE_COLUMNS}, scope, department_id, team_id`).eq('organization_id', organizationId)
+  if (rows.error) throw rows.error
+  const data = rows.data as (PolicyRuleRow & { scope: ScopeLevel; department_id: string | null; team_id: string | null })[]
+  return {
+    orgRow: data.find((row) => row.scope === 'organization') ?? null,
+    deptRowById: new Map(data.filter((row) => row.scope === 'department').map((row) => [row.department_id as string, row])),
+    teamRowById: new Map(data.filter((row) => row.scope === 'team').map((row) => [row.team_id as string, row])),
+  }
+}
+
+export function ownPolicyRuleRow(rows: PolicyRuleRows, scope: ScopeLevel, departmentId: string | null, teamId: string | null): PolicyRuleRow | null {
+  if (scope === 'organization') return rows.orgRow
+  if (scope === 'department') return rows.deptRowById.get(departmentId!) ?? null
+  return rows.teamRowById.get(teamId!) ?? null
+}
+
+// Nur die Felder mit echter Vererbungssemantik fliessen in mergeEffectiveConfig ein.
+// review_required/review_mode/review_stage_label/review_minimum_approvals/review_deadline_hours
+// und allow_review_exemptions sind additiv/knotenlokal (Plan 011, "Freigabestufen: additiv") --
+// sie werden direkt aus der eigenen Zeile gelesen, nicht ueber Ebenen gemischt.
+export function toRuleOverride(row: PolicyRuleRow | null): ConfigOverride {
+  if (!row) return {}
+  return {
+    policies: {
+      ...(row.review_required !== null ? { approvalRequired: row.review_required } : {}),
+      ...(row.minor_approval_required !== null ? { minorApprovalRequired: row.minor_approval_required } : {}),
+      forbiddenTopics: row.forbidden_topics,
+      requiredHashtags: row.required_hashtags,
+      ...(row.self_approval_allowed !== null ? { selfApprovalAllowed: row.self_approval_allowed } : {}),
+      ...(row.allow_same_reviewer_across_stages !== null ? { allowSameReviewerAcrossStages: row.allow_same_reviewer_across_stages } : {}),
+      ...(row.media_requires_consent_check !== null ? { mediaRequiresConsentCheck: row.media_requires_consent_check } : {}),
+      ...(row.consent_expires_on_leave !== null ? { consentExpiresOnLeave: row.consent_expires_on_leave } : {}),
+      allowedPresets: row.allowed_presets,
+      allowedFormats: row.allowed_formats,
+      allowedChannelIds: row.allowed_channel_ids,
+    },
+  }
+}
+
+// Loest die effektive Konfiguration einer Ebene aus den bereits geladenen Regelzeilen auf, indem
+// sie die Kette Verein -> (Abteilung) -> (Team) durchlaeuft (Plan 011 gilt fuer GET-alle wie
+// PUT-eine-Ebene gleich).
+export function computeRuleEntry(
+  rows: PolicyRuleRows, scope: ScopeLevel, scopeId: string, departmentIdForTeam: string | null,
+): { ownRow: PolicyRuleRow | null; config: ReturnType<typeof resolveEffectiveConfig> } {
+  let config = resolveEffectiveConfig(toRuleOverride(rows.orgRow))
+  let ownRow = rows.orgRow
+  if (scope !== 'organization') {
+    const departmentId = scope === 'department' ? scopeId : departmentIdForTeam!
+    const departmentRow = ownPolicyRuleRow(rows, 'department', departmentId, null)
+    config = mergeEffectiveConfig(config, toRuleOverride(departmentRow))
+    ownRow = departmentRow
+    if (scope === 'team') {
+      const teamRow = ownPolicyRuleRow(rows, 'team', departmentId, scopeId)
+      config = mergeEffectiveConfig(config, toRuleOverride(teamRow))
+      ownRow = teamRow
+    }
+  }
+  return { ownRow, config }
+}
+
+export async function resolveScopedEffectiveConfig(client: SupabaseClient, organizationId: string, departmentId: string, teamId: string | null) {
+  const rows = await fetchPolicyRuleRows(client, organizationId)
+  return computeRuleEntry(rows, teamId ? 'team' : 'department', teamId ?? departmentId, departmentId).config
+}
+
+export async function fetchMemberTrust(
+  client: SupabaseClient, userId: string, organizationId: string, departmentId: string, teamId: string | null,
+): Promise<TrustRecord[]> {
+  // Eine abgelaufene Befreiung darf keine Freigabestufe mehr entfernen -- deshalb derselbe
+  // Ablauffilter wie bei den Mitgliedschaften (beim Review dieses Pakets gefunden).
+  const rows = await client
+    .from('member_review_trust')
+    .select('scope, department_id, team_id, submit_allowed, review_requirement')
+    .eq('organization_id', organizationId)
+    .eq('user_id', userId)
+    .or(notExpiredFilter())
+  if (rows.error) throw rows.error
+  return rows.data
+    .filter((row) => row.scope === 'organization' || (row.scope === 'department' && row.department_id === departmentId) || (row.scope === 'team' && teamId !== null && row.team_id === teamId))
+    .map((row) => ({ scope: row.scope as ScopeLevel, submitAllowed: row.submit_allowed as boolean, reviewRequirement: row.review_requirement as TrustRecord['reviewRequirement'] }))
+}
