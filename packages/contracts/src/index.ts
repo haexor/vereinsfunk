@@ -6,6 +6,126 @@ export const CommunicationGoalSchema = z.enum([
   'inform', 'inspire', 'thank', 'invite', 'recruit', 'educate', 'strengthen_community',
 ])
 export const OutputFormatSchema = z.enum(['feed_image', 'carousel', 'story', 'reel'])
+// Historical rows can still contain the former visual formats (including `reel`).
+// New text-workshop commands deliberately use this separate schema so a user-uploaded
+// video is never misrepresented as an AI-generated Reel.
+export const CompositionFormatSchema = z.enum(['text_post', 'photo_post', 'video_post'])
+export const MediaAssetKindSchema = z.enum(['image', 'video'])
+export const CompressionMethodSchema = z.enum(['device', 'server'])
+export const CompressionFailureReasonSchema = z.enum([
+  'unsupported_codec', 'unsupported_device', 'memory_guardrail', 'battery_guardrail',
+  'network_guardrail', 'transcode_failed', 'cancelled',
+])
+export const CompressionProvenanceSchema = z.object({
+  method: CompressionMethodSchema,
+  profileVersion: z.string().trim().min(1).max(80),
+  inputBytes: z.int().nonnegative(),
+  outputBytes: z.int().positive(),
+  container: z.literal('mp4'),
+  videoCodec: z.literal('h264'),
+  audioCodec: z.literal('aac').nullable(),
+  width: z.int().positive().max(1080),
+  height: z.int().positive().max(1080),
+  durationMs: z.int().positive().max(180_000),
+  failureReason: CompressionFailureReasonSchema.nullable().default(null),
+})
+export const ImageUploadMetadataSchema = z.object({
+  kind: z.literal('image'),
+  mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp', 'image/heic']),
+  byteSize: z.int().positive().max(20 * 1024 * 1024),
+  width: z.int().positive().max(12_000),
+  height: z.int().positive().max(12_000),
+})
+export const VideoUploadMetadataSchema = z.object({
+  kind: z.literal('video'),
+  mimeType: z.literal('video/mp4'),
+  byteSize: z.int().positive().max(250 * 1024 * 1024),
+  width: z.int().positive().max(1080),
+  height: z.int().positive().max(1080),
+  durationMs: z.int().positive().max(180_000),
+  container: z.literal('mp4'),
+  videoCodec: z.literal('h264'),
+  audioCodec: z.literal('aac').nullable(),
+})
+export const AttachmentUploadMetadataSchema = z.discriminatedUnion('kind', [ImageUploadMetadataSchema, VideoUploadMetadataSchema])
+
+const StyleProfileInstructionSchema = z.string().trim().max(1_000).refine(
+  (value) => !/\b(?:schreib(?:e)?\s+wie|im\s+stil\s+von|write\s+like|imitier(?:e)?)\b/i.test(value),
+  'Style profiles describe editorial attributes, not people to imitate',
+)
+export const StyleProfileRulesSchema = z.object({
+  sentenceLength: z.enum(['short', 'mixed', 'long']),
+  energy: z.int().min(1).max(5),
+  humour: z.enum(['none', 'light']),
+  formality: z.enum(['casual', 'balanced', 'formal']),
+  perspective: z.enum(['we', 'club', 'you']),
+  bannedPhrases: z.array(z.string().trim().min(1).max(120)).max(30),
+  additionalInstructions: StyleProfileInstructionSchema.default(''),
+}).strict()
+export const SystemStyleProfileSlugSchema = z.enum([
+  'klar_erklaerend', 'warm_gemeinschaftlich', 'lebendig_sportlich', 'leicht_humorvoll', 'feierlich_wertschaetzend',
+])
+export const StyleProfileKindSchema = z.enum(['system', 'custom'])
+export const StyleProfileScopeSchema = z.object({
+  organizationId: UuidSchema,
+  departmentId: UuidSchema.nullable(),
+  teamId: UuidSchema.nullable(),
+}).superRefine((scope, context) => {
+  if (scope.teamId && !scope.departmentId) context.addIssue({ code: 'custom', message: 'teamId requires departmentId' })
+})
+export const CustomStyleProfileSchema = StyleProfileScopeSchema.extend({
+  id: UuidSchema,
+  slug: ContentPresetSlugSchema,
+  name: z.string().trim().min(1).max(80).refine((value) => !/\b(?:wie|von)\b/i.test(value), 'Profile names must not reference a person to imitate'),
+  kind: z.literal('custom'),
+  description: z.string().trim().min(1).max(500),
+  styleRules: StyleProfileRulesSchema,
+  avoidRules: z.array(z.string().trim().min(1).max(160)).max(30),
+  isActive: z.boolean(),
+  createdBy: UuidSchema,
+  createdAt: z.iso.datetime({ offset: true }),
+  updatedAt: z.iso.datetime({ offset: true }),
+})
+export const CreateCustomStyleProfileRequestSchema = z.object({
+  organizationId: UuidSchema,
+  departmentId: UuidSchema.nullable(),
+  teamId: UuidSchema.nullable(),
+  slug: ContentPresetSlugSchema,
+  name: z.string().trim().min(1).max(80).refine((value) => !/\b(?:wie|von)\b/i.test(value), 'Profile names must not reference a person to imitate'),
+  description: z.string().trim().min(1).max(500),
+  styleRules: StyleProfileRulesSchema,
+  avoidRules: z.array(z.string().trim().min(1).max(160)).max(30),
+}).superRefine((profile, context) => {
+  if (profile.teamId && !profile.departmentId) context.addIssue({ code: 'custom', message: 'teamId requires departmentId' })
+  if (profile.slug === 'klar_erklaerend' || profile.slug === 'warm_gemeinschaftlich' || profile.slug === 'lebendig_sportlich' || profile.slug === 'leicht_humorvoll' || profile.slug === 'feierlich_wertschaetzend') {
+    context.addIssue({ code: 'custom', message: 'System style profile slugs are reserved' })
+  }
+})
+export const GenerationIntentSchema = z.enum(['initial', 'revise'])
+export const GenerationCandidateStatusSchema = z.enum(['pending', 'generating', 'ready', 'failed', 'accepted', 'abandoned', 'expired'])
+export const CompositionSessionStatusSchema = z.enum(['draft', 'queued', 'generating', 'candidate_ready', 'failed', 'accepted', 'abandoned', 'expired'])
+export const CreateCompositionSessionSchema = z.object({
+  organizationId: UuidSchema,
+  departmentId: UuidSchema,
+  teamId: UuidSchema.nullable().optional(),
+  presetSlug: ContentPresetSlugSchema,
+  communicationGoal: CommunicationGoalSchema,
+  requestedFormats: z.array(CompositionFormatSchema).min(1).max(3).superRefine((formats, context) => {
+    if (formats.includes('video_post') && formats.length > 1) context.addIssue({ code: 'custom', message: 'video_post cannot be combined with another presentation type' })
+  }),
+  styleProfileId: UuidSchema.nullable().optional(),
+  sourceMaterial: z.lazy(() => SourceMaterialSchema),
+  mediaAssetIds: z.array(UuidSchema).max(10).default([]),
+  sourceRevision: z.int().positive().default(1),
+})
+export const CreateGenerationCommandSchema = z.object({
+  sessionId: UuidSchema,
+  generationIntent: GenerationIntentSchema,
+  revisionInstruction: z.string().trim().min(1).max(500).optional(),
+}).superRefine((command, context) => {
+  if (command.generationIntent === 'revise' && !command.revisionInstruction) context.addIssue({ code: 'custom', message: 'A revision instruction is required' })
+  if (command.generationIntent === 'initial' && command.revisionInstruction) context.addIssue({ code: 'custom', message: 'An initial generation does not accept a revision instruction' })
+})
 export const SourceFactValueSchema = z.union([z.string().trim().min(1).max(500), z.number().finite(), z.boolean()])
 
 export const SourceMaterialSchema = z.object({
@@ -1794,3 +1914,11 @@ export type AnalyticsFunnelQuery = z.infer<typeof AnalyticsFunnelQuerySchema>
 export type AnalyticsFunnelStage = z.infer<typeof AnalyticsFunnelStageSchema>
 export type AnalyticsFunnelEntry = z.infer<typeof AnalyticsFunnelEntrySchema>
 export type AnalyticsFunnelResponse = z.infer<typeof AnalyticsFunnelResponseSchema>
+export type CompositionFormat = z.infer<typeof CompositionFormatSchema>
+export type AttachmentUploadMetadata = z.infer<typeof AttachmentUploadMetadataSchema>
+export type CompressionProvenance = z.infer<typeof CompressionProvenanceSchema>
+export type StyleProfileRules = z.infer<typeof StyleProfileRulesSchema>
+export type CustomStyleProfile = z.infer<typeof CustomStyleProfileSchema>
+export type CreateCustomStyleProfileRequest = z.infer<typeof CreateCustomStyleProfileRequestSchema>
+export type CreateCompositionSession = z.infer<typeof CreateCompositionSessionSchema>
+export type CreateGenerationCommand = z.infer<typeof CreateGenerationCommandSchema>

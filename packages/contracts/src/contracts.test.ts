@@ -12,11 +12,15 @@ import {
   CreateDirectoryPersonRequestSchema,
   CreateIntegrationSourceRequestSchema,
   CreateInvitationRequestSchema,
+  CreateCompositionSessionSchema,
+  CreateCustomStyleProfileRequestSchema,
+  CreateGenerationCommandSchema,
   CreateMembershipRequestSchema,
   CreateSubmissionSchema,
   DepartmentSchema,
   DirectoryPersonSchema,
   GeneratedPostSchema,
+  VideoUploadMetadataSchema,
   InvitationSchema,
   MemberRoleEntrySchema,
   OnboardingStateSchema,
@@ -82,6 +86,39 @@ describe('contracts', () => {
     expect(GeneratedPostSchema.safeParse({ ...base, hashtags: Array(13).fill('#sport') }).success).toBe(
       false,
     )
+  })
+})
+
+describe('text workshop contracts', () => {
+  const styleRules = {
+    sentenceLength: 'short' as const, energy: 3, humour: 'light' as const,
+    formality: 'balanced' as const, perspective: 'we' as const,
+    bannedPhrases: ['Unvergesslicher Moment'], additionalInstructions: 'Konkrete Details zuerst.',
+  }
+
+  it('accepts text/photo/video composition choices but keeps historical reels outside new commands', () => {
+    const input = CreateCompositionSessionSchema.parse({
+      organizationId: org, departmentId: department, presetSlug: 'event', communicationGoal: 'invite',
+      requestedFormats: ['video_post'], sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [], doNotMention: [] },
+    })
+    expect(input.requestedFormats).toEqual(['video_post'])
+    expect(CreateCompositionSessionSchema.safeParse({ ...input, requestedFormats: ['reel'] }).success).toBe(false)
+    expect(CreateSubmissionSchema.safeParse({ ...input, requestedFormats: ['reel'] }).success).toBe(true)
+  })
+
+  it('requires the supported, bounded upload-video delivery profile', () => {
+    const video = { kind: 'video', mimeType: 'video/mp4', byteSize: 1_000_000, width: 1080, height: 608, durationMs: 30_000, container: 'mp4', videoCodec: 'h264', audioCodec: 'aac' }
+    expect(VideoUploadMetadataSchema.safeParse(video).success).toBe(true)
+    expect(VideoUploadMetadataSchema.safeParse({ ...video, videoCodec: 'vp9' }).success).toBe(false)
+    expect(VideoUploadMetadataSchema.safeParse({ ...video, durationMs: 180_001 }).success).toBe(false)
+  })
+
+  it('only permits attribute-based custom style profiles and bounded revision instructions', () => {
+    const profile = { organizationId: org, departmentId: department, teamId: null, slug: 'unser-ton', name: 'Unser Ton', description: 'Warm und konkret', styleRules, avoidRules: ['Floskeln'] }
+    expect(CreateCustomStyleProfileRequestSchema.safeParse(profile).success).toBe(true)
+    expect(CreateCustomStyleProfileRequestSchema.safeParse({ ...profile, styleRules: { ...styleRules, additionalInstructions: 'Schreibe wie eine bekannte Person' } }).success).toBe(false)
+    expect(CreateGenerationCommandSchema.safeParse({ sessionId: org, generationIntent: 'revise', revisionInstruction: 'Bitte kürzer und mit konkretem Termin.' }).success).toBe(true)
+    expect(CreateGenerationCommandSchema.safeParse({ sessionId: org, generationIntent: 'revise' }).success).toBe(false)
   })
 })
 

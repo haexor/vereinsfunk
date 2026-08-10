@@ -1,28 +1,58 @@
 # Prompt für die nächste Session
 
-## Aktueller Refactoring-Stand (2026-08-10)
+Arbeite im Repository `/home/haex/Projekte/vereinsfunk`.
 
-- Branch `worktree-plan-027-continue-channels-oauth`, PR [#38](https://github.com/haexor/vereinsfunk/pull/38) gegen `main` ist offen (Stand: ungemergt). **Vor dem Weiterarbeiten `gh pr view 38 --json state,mergedAt` prüfen**: ist er noch offen, auf demselben Branch weitercommitten; ist er gemergt, einen neuen Worktree/Branch von `main` aus starten, statt diesen wiederzuverwenden.
-- Diese Session hat Paket 027 um eine weitere Domäne erweitert:
-  - **Kanäle, OAuth und Publishing** (`apps/api/src/routes/channels.ts`, 568 LoC): `organizations/:id/channels`, `channels/:id` (PATCH/DELETE/verify/scopes), `channel-scopes/:id`, `organizations/:id/channel-policy`, `channels/connect/:platform/start`+`callback`, `oauth-pending/:id` (GET/select), `post-versions/:id/available-channels`. Der eigentliche Publishing-Teil (`SocialPublisher`, `publications/:id/execute`, Scheduling) saß bereits vorher in `routes/policies.ts` (Paket 011/025-Zusammenhang) — hier trotz des Domänennamens nicht nochmal angefasst.
-  - **Erkenntnis**: anders als bei Richtlinien/Freigaben brauchte diese Extraktion **keinen neuen Eintrag** in `routes/shared.ts` (313 LoC, unverändert). `isAnyMemberOfOrganization`/`toPermissionScope`/`resolveMembershipScope`/`createAuditRecorder` waren schon vorhanden; `SOCIAL_CONNECTION_COLUMNS` und die OAuth-State-/Pending-Connection-Logik sind ausschließlich von Kanälen selbst gebraucht und blieben lokal in `routes/channels.ts`.
-  - **Nebenfund**: beim Verschieben von `SOCIAL_CONNECTION_COLUMNS` lag direkt darüber ein Kommentar, der inhaltlich zu `isBrandAssetSelectable` (Plan 013, Design-Entscheidung zu Logo-/Schrift-Referenzen) gehört — ein Waisen-Kommentar aus der `routes/organization.ts`-Extraktion einer früheren Session, der beim Verschieben des dazugehörigen Codes zurückblieb. Da die Zeile, an der er hing, ohnehin entfernt wurde, ist er mitentfernt worden statt fehlerhaft nach `routes/channels.ts` zu wandern; `routes/organization.ts:220` trägt bereits eine eigene, zutreffende Erklärung derselben Design-Entscheidung.
-- `apps/api/src/app.ts`: 5.162 → 4.598 LoC in dieser Session (Ausgangswert vor Paket 027: 8.301 LoC). Ein verwaister Import (`resolveMembershipScope`, nur noch in einem Kommentar erwähnt, kein echter Aufruf mehr) fiel erst bei `pnpm lint` auf, nicht bei `tsc` — wie in der letzten Session dokumentiert, ESLint (`no-unused-vars`) ist hier zuverlässiger.
-- Verifiziert: `pnpm --filter @vereinsfunk/api typecheck`, `pnpm --filter @vereinsfunk/api test` (263/263 bestehen unverändert), `pnpm lint`, `pnpm check` (voller Workspace-Gate inkl. Build) — alle grün. `git diff --check` sauber.
-- **Abweichung vom Plan-Text weiterhin nicht behoben**: Step 3 sieht die Aufteilung von `app.test.ts` in `*.routes.test.ts` je Domäne vor. Das ist für keine der sechs bisher extrahierten Domänen geschehen — alle 263 Tests laufen weiterhin zentral. Siehe `plans/027-api-route-module-boundaries.md`, Abschnitt „Current state“.
+Lies vor Änderungen vollständig:
 
-## Nächste Schritte
+- `AGENTS.md`
+- `docs/product/implementation-plan.md`
+- `docs/adr/ADR-001-multi-tenant-supabase.md` bis `ADR-006-media-approval-snapshots.md`
+- `docs/adr/ADR-010-text-workshop-style-profiles-and-generation-provenance.md`
+- `plans/002-private-media-consent-and-approval-gate.md`
+- `plans/004-hatchet-production-orchestration.md`
+- `plans/025-inhalts-pipeline-entwurf-und-veroeffentlichung.md`
+- `plans/030-reviewer-snapshot-ohne-autor.md`
+- `plans/032-mobile-textwerkstatt-mit-stilprofilen.md`
+- `plans/README.md`
 
-1. Lies vollständig: `AGENTS.md`, `docs/product/implementation-plan.md`, `plans/README.md`, `plans/027-api-route-module-boundaries.md` (Abschnitte „Current state“ und „Fortschritt Step 3“).
-2. PR-Status dieser Session prüfen (siehe oben), dann `git status --short --branch` und `git log --oneline main..HEAD -- apps/api`. Bestehende Änderungen bewahren.
-3. Nächste Domäne laut Reihenfolge: **Integration, Verzeichnis und Einwilligung** — umfasst `organizations/:id/integration-sources` (GET/POST), `integration-sources/:id` (PATCH), `integration-sources/:id/sync-runs` (GET), `integration-sources/:id/conflicts` (GET), `integration-sync-conflicts/:id` (PATCH), `integration-sources/:id/sync-runs/:runId/cancel` (POST), `integration-sources/:id/sync` (POST, der mit Abstand größte Einzelendpunkt — Paket 026 Sperrlogik), `organizations/:id/directory-people` (GET/POST), `directory-people/:id` (PATCH), `directory-people/:id/guardian-contact` (GET), `me/profile` (GET/PATCH), sowie die komplette Einwilligungsverwaltung aus Paket 015 (`organizations/:id/consent-text`, `consents`, `consent-requests`, inkl. der öffentlichen unauthentifizierten Routen `consent-requests/by-token/:token` und `consents/by-revocation-token/:token`). Vor dem Schneiden mit `grep -n "isAnyMemberOfOrganization(\|recordAuditEvent(\|checkRateLimit(\|CONSENT_RECORD_SELECT" apps/api/src/app.ts` prüfen, welche Aufrufe in diesem Bereich liegen — `checkRateLimit` und `CONSENT_RECORD_SELECT` kommen bereits aus `routes/shared.ts` (letztere ist extra für die öffentlichen Einwilligungsrouten dort zentral abgelegt, siehe `routes/shared.ts` Kommentar).
-4. Diese Domäne ist die bisher fachlich breiteste (drei Unterbereiche aus dem ursprünglichen Domänennamen: Integration, Verzeichnis, Einwilligung) — abwägen, ob ein Modul (`routes/integrations.ts`) oder mehrere sinnvoller sind, und die Entscheidung kurz im Plan-Dokument begründen statt stillschweigend zu setzen.
-5. Danach: Datenschutz (Retention, Auskunft/Löschung, Auftragsverarbeiter, Audit-Chain, Impressum), Analytics — Reihenfolge aus dem Plan.
-6. Für Plattform-Administration + LLM-Provider-Verwaltung (Paket 022, unmittelbar vor den Kanal-Routen in `app.ts`, alle `requirePlatformAdmin`-gated) und für `POST /v1/submissions` (Inhalts-Pipeline) fehlt weiterhin eine Zuordnung zu einer der acht ursprünglich benannten Domänen — vor der Extraktion entscheiden (eigenes Modul je Konzern oder Ergänzung einer bestehenden Domäne) und im Plan vermerken.
-7. Nach jeder Extraktion: `pnpm --filter @vereinsfunk/api test`, `pnpm --filter @vereinsfunk/api typecheck`, `pnpm lint`; bei Abschluss der gesamten Domäne zusätzlich `pnpm check`. Verwaiste Importe (Contracts-Schemas, `@vereinsfunk/domain`-Symbole, `apiMappers.ts`-Funktionen) nach jeder Extraktion prüfen — ESLint (`no-unused-vars`) findet sie zuverlässig, `tsc` allein nicht immer.
-8. Erst wenn `app.ts` nur noch Bootstrap/Registrierung enthält (Richtwert < 500 LoC, siehe Done-Kriterien in `plans/027-api-route-module-boundaries.md`): Step 4 (zentraler Tenant-Scope-Guard) und die Testaufteilung aus Step 3 nachholen oder bewusst als Abweichung dokumentieren.
-9. Vor jedem Commit `git diff --check`; dann committen und pushen. Paket 029 (Contracts/Domain-Exports) bleibt bis zum Abschluss von 027 zurückgestellt.
+Prüfe zuerst `git status --short --branch`, `git log --oneline main..HEAD` und den PR-Status des aktuellen Branches. Bewahre alle vorhandenen Änderungen. Keine Commits oder Pushes ohne ausdrückliche Aufforderung.
 
-## Weiterer Ablauf
+## Erreichter Stand von Paket 032
 
-Paket 027 läuft (Route-Kontext, Brand/Organisation, Struktur, Mitglieder/Einladungen, Richtlinien/Freigaben, Kanäle/OAuth erledigt; drei benannte Domänen + zwei ungeklärte Bereiche offen). Danach Paket 029; keine API-Verträge ohne begründete, dokumentierte Entscheidung ändern.
+- Teilphase 1 ist fertig und geprüft: Zod-Verträge für `text_post|photo_post|video_post`, Stilprofile, Kompositionssitzungen, getrennte Kandidaten und kontrollierte Video-Kompressionsprovenienz.
+- Migration `2026081003_text_workshop_foundation.sql` enthält `content_style_profiles`, `composition_sessions`, `composition_session_media`, `generation_candidates` und `post_generation_provenance`; alle tenantbezogen, mit Composite-FKs, RLS und Service-Role-only Writes.
+- `supabase/tests/text_workshop_foundation.test.sql` deckt positives Lesen sowie negative Cross-Tenant-, Direkt-Write- und Imitationsfälle ab.
+- ADR-010 schreibt text-only Generierung, keine Personenimitation, feste Prompt-Priorität und datensparsame, unveränderliche Provenienz fest.
+- Es gibt absichtlich noch keine API-Route, keinen Upload, keine Web-UI und keinen LLM-Aufruf.
+
+## Zwingende Reihenfolge
+
+1. **Paket 004 zuerst vervollständigen.** Baue und belege eine transaktionale Supabase-Outbox, einen real startenden Hatchet-Worker und einen echten SDK-Dispatcher. Nachrichten enthalten ausschließlich IDs, Revision, Correlation-ID, Priorität und Idempotenzschlüssel. Verifiziere mindestens Retry, Nicht-Retry, Duplicate Trigger, Restart, Cancel/Reschedule und Fairness. Kein externer LLM-Aufruf vor diesem Nachweis.
+2. **Danach Paket 002 vervollständigen.** Baue den privaten Upload-, Scan-/Normalisierungs-, Derivat- und Freigabegate-Pfad. Originale dürfen nie über `post_media` veröffentlicht werden. `evaluateMediaGate` und `assertApprovalSnapshot` müssen bei Freigabe und Publishing tatsächlich blockieren.
+3. **Erst danach Paket 032 fortsetzen.** Implementiere zunächst Stilprofil-CRUD und die Kompositionssitzungs-API mit Zod, Autorisierung, Audit und der bereits vorhandenen Outbox. Danach den Worker-gebundenen, strukturierten Textgenerator und getrennte Kandidaten. Jede Übernahme oder manuelle Änderung legt atomar eine neue `post_version` an; keine bestehende Version aktualisieren.
+4. Medien erst nach 002 aktivieren. Beim Video zuerst den dokumentierten Browser-Kompressionsspike durchführen. Ohne sicheren lokalen Encoder nur explizite private Quarantäne + serverseitigen Fallback anbieten; niemals still das Original hochladen. Medien niemals ans LLM senden.
+5. Den mobilen Editor erst auf die reale Session-/Kandidaten-API aufsetzen. Der Freigabe-CTA ruft die echte Request-Approval-Route auf und navigiert nicht nur.
+
+## Nicht verhandelbare Grenzen
+
+- Supabase ist die fachliche Source of Truth; Hatchet ist nur technische Ausführung.
+- Zod an jeder Systemgrenze, RLS plus positive und negative Tenant-Tests für jede neue Tabelle.
+- Service Role nur API/Worker, nie Browser; Hatchet-Payloads enthalten keine Texte, Medien oder Secrets.
+- LLM generiert Text, niemals Videos; keine Bild-/Videoanalyse durch das LLM, keine Gesichtserkennung oder Face-Tracking.
+- Stilprofile enthalten Attribute statt Personenimitation oder freie Systemprompts.
+- Freigegebene `post_versions` und fertige Derivate sind unveränderlich.
+
+## Verifikation und bekannter Baseline-Befund
+
+Nach jeder Teilphase passende Pakettests ausführen; vor Abschluss mindestens:
+
+```bash
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm db:reset
+pnpm db:test
+```
+
+Die neue Textwerkstatt-pgTAP-Datei besteht einzeln. Der vollständige bestehende `pnpm db:test`-Lauf scheitert derzeit zusätzlich an Fixture-Kollisionen in `consent_management.test.sql` und `metrics.test.sql`: `auth.users` erzeugt dort inzwischen via Bootstrap automatisch `profiles`, die Tests legen dieselben Profile erneut an. Diesen Baseline-Fehler beim nächsten Datenbankpaket zuerst sauber isolieren und mit einem fokussierten Fix beheben; ihn nicht durch Abschwächung von RLS oder das Überspringen der Tests verdecken.
