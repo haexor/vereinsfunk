@@ -19,8 +19,9 @@
 
 ## Current state
 
-- Stand 2026-08-10: `apps/api/src/app.ts` ist auf 6.789 LoC gesunken (Ausgangswert 8.301 LoC). Bereits extrahiert: `routes/context.ts` (`ApiRouteContext`), `routes/shared.ts` (`fetchAllRows`, `resolveMembershipScope`, `toPermissionScope` — mehrfach domänenübergreifend gebraucht, deshalb zentral statt je Modul dupliziert), `routes/organization.ts` (Brand/Organisation), `routes/structure.ts` (Abteilungen/Teams) und `routes/members.ts` (Mitglieder/Mitgliedschaften/Einladungen).
-- Noch in `app.ts`: Richtlinien/Freigaben (Policy-Settings/-Rules/-Reviewers, Member-Review-Trust, Approval-Stages), Kanäle/OAuth/Publishing, Integration/Verzeichnis/Einwilligung, Datenschutz (Retention, Auskunft/Löschung, Auftragsverarbeiter, Audit-Chain, Impressum), Analytics — sowie Plattform-Administration (Paket 022), die in keine der ursprünglich benannten Domänen fällt und bei der nächsten Extraktion eine eigene Zuordnung braucht.
+- Stand 2026-08-10: `apps/api/src/app.ts` ist auf 5.162 LoC gesunken (Ausgangswert 8.301 LoC). Bereits extrahiert: `routes/context.ts` (`ApiRouteContext`), `routes/organization.ts` (Brand/Organisation), `routes/structure.ts` (Abteilungen/Teams), `routes/members.ts` (Mitglieder/Mitgliedschaften/Einladungen) und `routes/policies.ts` (Richtlinien und Freigaben, 1.440 LoC — die bisher größte Extraktion, siehe unten). `routes/shared.ts` (302 LoC) ist auf vier Extraktionen gewachsen: `fetchAllRows`/`fetchAllRowsForIds`/`resolveMembershipScope`/`toPermissionScope` (aus Paket 010/023-Zeit) sowie `notExpiredFilter`/`isAnyMemberOfOrganization`/`checkRateLimit`/`createAuditRecorder`/`CONSENT_RECORD_SELECT`/`ConsentRecordRow`/die komplette Regelauflösung (`POLICY_RULE_COLUMNS`, `PolicyRuleRow(s)`, `fetchPolicyRuleRows`, `ownPolicyRuleRow`, `toRuleOverride`, `computeRuleEntry`, `resolveScopedEffectiveConfig`, `fetchMemberTrust`) — alle domänenübergreifend gebraucht (siehe „Erkenntnis" unten), deshalb zentral statt je Modul dupliziert.
+- Noch in `app.ts`: Kanäle/OAuth/Publishing, Integration/Verzeichnis/Einwilligung, Datenschutz (Retention, Auskunft/Löschung, Auftragsverarbeiter, Audit-Chain, Impressum), Analytics, `POST /v1/submissions` (Inhalts-Pipeline, in keiner der acht Domänen benannt) — sowie Plattform-Administration (Paket 022) und die LLM-Provider-Verwaltung, die direkt daran anschließt (beide `requirePlatformAdmin`-gated, in keiner der ursprünglich benannten Domänen enthalten und bei der nächsten Extraktion eine eigene Zuordnung brauchen).
+- **Erkenntnis aus der Richtlinien/Freigaben-Extraktion**: die Regelauflösung (`fetchPolicyRuleRows`/`computeRuleEntry`/`fetchMemberTrust` u. a.) ist kein Domänen-internes Detail, sondern wird auch von `POST /v1/submissions` gebraucht (Paket 011: `evaluateSubmitPermission` vor der ersten Persistenz). Ebenso `recordAuditEvent` (fast jede verbleibende Domäne) und `isAnyMemberOfOrganization`/`checkRateLimit` (Kanäle, Integration, Datenschutz). `recordAuditEvent` brauchte dafür eine Factory (`createAuditRecorder(supabaseClients)`) statt einer einzelnen Funktion, weil es `supabaseClients` bisher aus der `buildApp`-Closure bezog — `app.ts` und jedes Route-Modul rufen sie einmal auf und behalten den vertrauten Zwei-Parameter-Aufruf. Wer als Nächstes extrahiert, sollte vor dem Verschieben einer scheinbar domänenlokalen Funktion knapp prüfen, ob sie auch außerhalb der eigenen Zeilenspanne aufgerufen wird (`grep -n "<funktionsname>("  apps/api/src/app.ts`) statt sich auf die Nähe zu den eigenen Routen zu verlassen.
 - `apps/api/src/app.test.ts` wurde bislang **nicht** wie in Step 3 vorgesehen aufgeteilt: alle Tests (263, nach Paket/Feature per `describe`-Block geordnet) laufen weiterhin zentral und decken auch die bereits extrahierten Module ab. Das ist eine bewusste Abweichung der bisherigen Durchläufe, keine vergessene Aufgabe für die verbleibenden Domänen — wird hier für Transparenz nachgetragen, nicht rückwirkend korrigiert.
 - `apps/api/src/auth.ts` ist das Vorbild für einen frameworknahen, testbaren Adapter; `apps/api/src/outboundFetch.ts` das Vorbild für eine schmale Infrastrukturgrenze.
 - Architekturvorgaben: Zod an allen Grenzen, Service Role nur API/Worker, Provider hinter Interfaces, Tenant-IDs immer serverseitig konsistent.
@@ -31,12 +32,13 @@
 - [x] Brand und Organisation (`routes/organization.ts`)
 - [x] Struktur — Abteilungen und Teams (`routes/structure.ts`)
 - [x] Mitglieder und Einladungen (`routes/members.ts`)
-- [ ] Richtlinien und Freigaben
+- [x] Richtlinien und Freigaben (`routes/policies.ts`) — inkl. Channel-Quotas (gehören inhaltlich zur Kontingent-/Richtlinienlogik aus Paket 011, nicht zu Kanäle/OAuth trotz des Namens)
 - [ ] Kanäle, OAuth und Publishing
 - [ ] Integration, Verzeichnis und Einwilligung
 - [ ] Datenschutz
 - [ ] Analytics
-- [ ] Plattform-Administration (Paket 022) — nicht in der ursprünglichen Domänenliste enthalten, bleibt bis zur Klärung in `app.ts`
+- [ ] Plattform-Administration (Paket 022) und LLM-Provider-Verwaltung — nicht in der ursprünglichen Domänenliste enthalten, bleiben bis zur Klärung in `app.ts`
+- [ ] `POST /v1/submissions` (Inhalts-Pipeline) — ebenfalls nicht in der ursprünglichen Domänenliste enthalten
 
 ## Commands you will need
 
