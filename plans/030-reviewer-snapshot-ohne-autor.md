@@ -7,6 +7,7 @@
 ## Status
 
 - **Priority**: P2
+- **Implementation note (2026-08-09)**: erledigt. `resolveReviewRoute` gibt die gefilterten `effectiveReviewers` als Snapshot zurück; Regressionstests decken reguläre und Minderjährigenstufen ab. Die SQL-Verteidigung blieb unverändert.
 - **Effort**: S
 - **Risk**: LOW
 - **Depends on**: none
@@ -61,10 +62,10 @@ Erweitere den vorhandenen Test mit `reviewerUserIds: ['author', 'trainer']` und 
 
 ## Done criteria
 
-- [ ] Der Autor erscheint bei verbotener Selbstfreigabe in keinem regulär erzeugten Reviewer-Snapshot.
-- [ ] Author-only bleibt ein verständlicher Blocker.
-- [ ] SQL-Verteidigung bleibt unverändert.
-- [ ] `pnpm check` besteht.
+- [x] Der Autor erscheint bei verbotener Selbstfreigabe in keinem regulär erzeugten Reviewer-Snapshot.
+- [x] Author-only bleibt ein verständlicher Blocker.
+- [x] SQL-Verteidigung bleibt unverändert.
+- [x] `pnpm check` besteht.
 
 ## STOP conditions
 

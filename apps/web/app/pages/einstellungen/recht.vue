@@ -1,30 +1,23 @@
 <script setup lang="ts">
 import {
-  AuditChainVerificationSchema,
   MemberSchema,
   OrganizationProfileSchema,
   ProcessingRecordSchema,
-  ProcessorAgreementSchema,
   RetentionDeletionSchema,
   RetentionSettingsSchema,
   RunRetentionResponseSchema,
-  SignAuditChainResponseSchema,
-  type AuditChainVerification,
   type Member,
   type OrganizationProfile,
   type ProcessingRecord,
-  type ProcessorAgreement,
-  type ProcessorAgreementStatus,
   type RetentionDeletion,
   type RetentionSettings,
   type RunRetentionResponse,
-  type SignAuditChainResponse,
 } from '@vereinsfunk/contracts'
 
 // Paket 020: Rechtliche Pflichten und Datenschutzbetrieb -- Aufbewahrung, Betroffenenanfragen-
 // Verweis, Verarbeitungsdokumentation, Auftragsverarbeiter und der manipulationssichere
 // Audit-Trail auf einer Seite, analog zur Struktur von einstellungen/index.vue.
-const config = useRuntimeConfig()
+const api = useApiClient()
 const scope = await useScope()
 const organizationId = computed(() => scope.value?.organizationId ?? null)
 const canManage = computed(() => useCan('organization.manage', { organizationId: organizationId.value ?? '' }))
@@ -36,7 +29,6 @@ const actionError = ref('')
 const retentionSettings = ref<RetentionSettings | null>(null)
 const deletions = ref<RetentionDeletion[]>([])
 const processingRecords = ref<ProcessingRecord[]>([])
-const agreements = ref<ProcessorAgreement[]>([])
 const organizationProfile = ref<OrganizationProfile | null>(null)
 const members = ref<Member[]>([])
 
@@ -45,22 +37,18 @@ async function load() {
   loading.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
-    const base = `${config.public.apiBase}/v1/organizations/${organizationId.value}`
-    const [settingsResponse, deletionsResponse, recordsResponse, agreementsResponse, profileResponse, membersResponse] = await Promise.all([
-      $fetch<unknown>(`${base}/retention-settings`, { headers }),
-      $fetch<unknown>(`${base}/retention-deletions`, { headers }),
-      $fetch<unknown>(`${base}/processing-records`, { headers }),
-      $fetch<unknown>(`${base}/processor-agreements`, { headers }),
-      $fetch<unknown>(`${base}/profile`, { headers }),
-      $fetch<unknown>(`${base}/members`, { headers }),
+    const [settingsResponse, deletionsResponse, recordsResponse, profileResponse, membersResponse] = await Promise.all([
+      api.request(`/v1/organizations/${organizationId.value}/retention-settings`, {}, RetentionSettingsSchema),
+      api.request(`/v1/organizations/${organizationId.value}/retention-deletions`, {}, RetentionDeletionSchema.array()),
+      api.request(`/v1/organizations/${organizationId.value}/processing-records`, {}, ProcessingRecordSchema.array()),
+      api.request(`/v1/organizations/${organizationId.value}/profile`, {}, OrganizationProfileSchema),
+      api.request(`/v1/organizations/${organizationId.value}/members`, {}, MemberSchema.array()),
     ])
-    retentionSettings.value = RetentionSettingsSchema.parse(settingsResponse)
-    deletions.value = RetentionDeletionSchema.array().parse(deletionsResponse)
-    processingRecords.value = ProcessingRecordSchema.array().parse(recordsResponse)
-    agreements.value = ProcessorAgreementSchema.array().parse(agreementsResponse)
-    organizationProfile.value = OrganizationProfileSchema.parse(profileResponse)
-    members.value = MemberSchema.array().parse(membersResponse)
+    retentionSettings.value = settingsResponse
+    deletions.value = deletionsResponse
+    processingRecords.value = recordsResponse
+    organizationProfile.value = profileResponse
+    members.value = membersResponse
   } catch {
     errorMessage.value = 'Die rechtlichen Einstellungen konnten nicht geladen werden.'
   } finally {
@@ -72,9 +60,6 @@ watch(organizationId, () => { void load() })
 
 function formatDate(value: string | null): string {
   return value ? new Date(value).toLocaleDateString('de-DE') : 'nicht angegeben'
-}
-function formatDateTime(value: string | null): string {
-  return value ? new Date(value).toLocaleString('de-DE') : 'nicht angegeben'
 }
 function errorCodeOf(error: unknown): string | undefined {
   return (error as { data?: { error?: string } })?.data?.error
@@ -138,10 +123,8 @@ async function saveProfile() {
   profileSaving.value = true
   profileSaveError.value = ''
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/profile`, {
+    organizationProfile.value = await api.request(`/v1/organizations/${organizationId.value}/profile`, {
       method: 'PATCH',
-      headers,
       body: {
         legalName: blankToNull(profileDraft.legalName),
         legalForm: profileDraft.legalForm || null,
@@ -159,8 +142,7 @@ async function saveProfile() {
         responsiblePersonProfileId: profileDraft.responsiblePersonProfileId || null,
         imprintPublished: profileDraft.imprintPublished,
       },
-    })
-    organizationProfile.value = OrganizationProfileSchema.parse(response)
+    }, OrganizationProfileSchema)
   } catch (error) {
     profileSaveError.value = errorCodeOf(error) === 'invalid_responsible_person'
       ? 'Die gewählte Person ist kein aktives Mitglied dieses Vereins.'
@@ -191,10 +173,8 @@ async function saveRetentionSettings() {
   retentionSaving.value = true
   retentionSaveError.value = ''
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/retention-settings`, {
+    retentionSettings.value = await api.request(`/v1/organizations/${organizationId.value}/retention-settings`, {
       method: 'PUT',
-      headers,
       body: {
         rawMediaDays: retentionDraft.rawMediaDays,
         derivativeDays: retentionDraft.derivativeEnabled ? retentionDraft.derivativeDays : null,
@@ -202,8 +182,7 @@ async function saveRetentionSettings() {
         consentEvidenceYears: retentionDraft.consentEvidenceYears,
         statusEventDays: retentionDraft.statusEventDays,
       },
-    })
-    retentionSettings.value = RetentionSettingsSchema.parse(response)
+    }, RetentionSettingsSchema)
   } catch {
     retentionSaveError.value = 'Die Aufbewahrungsfristen konnten nicht gespeichert werden.'
   } finally {
@@ -234,13 +213,10 @@ async function runRetention(dryRun: boolean) {
   else runningReal.value = true
   runError.value = ''
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/retention/run`, { method: 'POST', headers, body: { dryRun } })
-    runResult.value = RunRetentionResponseSchema.parse(response)
+    runResult.value = await api.request(`/v1/organizations/${organizationId.value}/retention/run`, { method: 'POST', body: { dryRun } }, RunRetentionResponseSchema)
     runWasDry.value = dryRun
     if (!dryRun) {
-      const deletionsResponse = await $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/retention-deletions`, { headers })
-      deletions.value = RetentionDeletionSchema.array().parse(deletionsResponse)
+      deletions.value = await api.request(`/v1/organizations/${organizationId.value}/retention-deletions`, {}, RetentionDeletionSchema.array())
     }
   } catch {
     runError.value = 'Der Lauf konnte nicht ausgeführt werden.'
@@ -268,10 +244,8 @@ async function createProcessingRecord() {
   creatingRecord.value = true
   recordCreateError.value = ''
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/processing-records`, {
+    const record = await api.request(`/v1/organizations/${organizationId.value}/processing-records`, {
       method: 'POST',
-      headers,
       body: {
         purpose: newRecordForm.purpose,
         legalBasis: newRecordForm.legalBasis,
@@ -282,8 +256,8 @@ async function createProcessingRecord() {
         transferSafeguard: newRecordForm.thirdCountryTransfer ? (newRecordForm.transferSafeguard.trim() || null) : null,
         retentionNote: newRecordForm.retentionNote,
       },
-    })
-    processingRecords.value = [...processingRecords.value, ProcessingRecordSchema.parse(response)]
+    }, ProcessingRecordSchema)
+    processingRecords.value = [...processingRecords.value, record]
     Object.assign(newRecordForm, emptyRecordForm())
   } catch {
     recordCreateError.value = 'Die Verarbeitung konnte nicht angelegt werden.'
@@ -317,10 +291,8 @@ async function saveEditRecord() {
   editRecordSaving.value = true
   editRecordError.value = ''
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/processing-records/${editingRecordId.value}`, {
+    const updated = await api.request(`/v1/processing-records/${editingRecordId.value}`, {
       method: 'PATCH',
-      headers,
       body: {
         purpose: editRecordForm.purpose,
         legalBasis: editRecordForm.legalBasis,
@@ -331,8 +303,7 @@ async function saveEditRecord() {
         transferSafeguard: editRecordForm.thirdCountryTransfer ? (editRecordForm.transferSafeguard.trim() || null) : null,
         retentionNote: editRecordForm.retentionNote,
       },
-    })
-    const updated = ProcessingRecordSchema.parse(response)
+    }, ProcessingRecordSchema)
     processingRecords.value = processingRecords.value.map((item) => (item.id === updated.id ? updated : item))
     editingRecordId.value = null
   } catch {
@@ -347,9 +318,7 @@ async function confirmRecord(record: ProcessingRecord) {
   confirmingRecordId.value = record.id
   actionError.value = ''
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/processing-records/${record.id}`, { method: 'PATCH', headers, body: { confirmReviewed: true } })
-    const updated = ProcessingRecordSchema.parse(response)
+    const updated = await api.request(`/v1/processing-records/${record.id}`, { method: 'PATCH', body: { confirmReviewed: true } }, ProcessingRecordSchema)
     processingRecords.value = processingRecords.value.map((item) => (item.id === updated.id ? updated : item))
   } catch {
     actionError.value = 'Die Bestätigung konnte nicht gespeichert werden.'
@@ -358,134 +327,6 @@ async function confirmRecord(record: ProcessingRecord) {
   }
 }
 
-// --- Auftragsverarbeiter ---------------------------------------------------------------------
-
-const AGREEMENT_STATUS_LABELS: Record<ProcessorAgreementStatus, string> = { pending: 'Ausstehend', active: 'Aktiv', expired: 'Abgelaufen', terminated: 'Beendet' }
-const AGREEMENT_STATUS_CLASSES: Record<ProcessorAgreementStatus, string> = {
-  pending: 'bg-amber-100 text-amber-800',
-  active: 'bg-emerald-100 text-emerald-800',
-  expired: 'bg-red-100 text-red-800',
-  terminated: 'bg-[#eef0ea] text-[#7b827d]',
-}
-const AGREEMENT_STATUS_OPTIONS: ProcessorAgreementStatus[] = ['pending', 'active', 'expired', 'terminated']
-
-const agreementForm = reactive({ processorName: '', purpose: '', signedAt: '', validUntil: '', status: 'pending' as ProcessorAgreementStatus, file: null as File | null })
-const creatingAgreement = ref(false)
-const agreementCreateError = ref('')
-
-async function createAgreement() {
-  if (!organizationId.value) return
-  creatingAgreement.value = true
-  agreementCreateError.value = ''
-  try {
-    const headers = await useAuthHeader()
-    let response: unknown
-    if (agreementForm.file) {
-      const body = new FormData()
-      body.set('processorName', agreementForm.processorName)
-      body.set('purpose', agreementForm.purpose)
-      if (agreementForm.signedAt) body.set('signedAt', agreementForm.signedAt)
-      if (agreementForm.validUntil) body.set('validUntil', agreementForm.validUntil)
-      body.set('status', agreementForm.status)
-      body.set('file', agreementForm.file)
-      response = await $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/processor-agreements`, { method: 'POST', headers, body })
-    } else {
-      response = await $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/processor-agreements`, {
-        method: 'POST',
-        headers,
-        body: {
-          processorName: agreementForm.processorName,
-          purpose: agreementForm.purpose,
-          signedAt: agreementForm.signedAt || undefined,
-          validUntil: agreementForm.validUntil || undefined,
-          status: agreementForm.status,
-        },
-      })
-    }
-    agreements.value = [...agreements.value, ProcessorAgreementSchema.parse(response)]
-    agreementForm.processorName = ''
-    agreementForm.purpose = ''
-    agreementForm.signedAt = ''
-    agreementForm.validUntil = ''
-    agreementForm.status = 'pending'
-    agreementForm.file = null
-  } catch {
-    agreementCreateError.value = 'Die Vereinbarung konnte nicht angelegt werden.'
-  } finally {
-    creatingAgreement.value = false
-  }
-}
-
-const changingAgreementId = ref<string | null>(null)
-async function changeAgreementStatus(agreement: ProcessorAgreement, status: ProcessorAgreementStatus) {
-  if (status === agreement.status) return
-  changingAgreementId.value = agreement.id
-  actionError.value = ''
-  try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/processor-agreements/${agreement.id}`, { method: 'PATCH', headers, body: { status } })
-    const updated = ProcessorAgreementSchema.parse(response)
-    agreements.value = agreements.value.map((item) => (item.id === updated.id ? updated : item))
-  } catch {
-    actionError.value = 'Der Status konnte nicht geändert werden.'
-  } finally {
-    changingAgreementId.value = null
-  }
-}
-
-const viewingAgreementId = ref<string | null>(null)
-async function viewAgreementDocument(agreement: ProcessorAgreement) {
-  viewingAgreementId.value = agreement.id
-  actionError.value = ''
-  try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<{ signedUrl: string }>(`${config.public.apiBase}/v1/processor-agreements/${agreement.id}/document-url`, { headers })
-    window.open(response.signedUrl, '_blank', 'noopener')
-  } catch {
-    actionError.value = 'Das Dokument konnte nicht geöffnet werden.'
-  } finally {
-    viewingAgreementId.value = null
-  }
-}
-
-// --- Audit-Kette -------------------------------------------------------------------------------
-
-const auditVerification = ref<AuditChainVerification | null>(null)
-const auditVerifying = ref(false)
-const auditVerifyError = ref('')
-async function verifyAuditChain() {
-  if (!organizationId.value) return
-  auditVerifying.value = true
-  auditVerifyError.value = ''
-  try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/audit-chain/verify`, { headers })
-    auditVerification.value = AuditChainVerificationSchema.parse(response)
-  } catch {
-    auditVerifyError.value = 'Die Kette konnte nicht geprüft werden.'
-  } finally {
-    auditVerifying.value = false
-  }
-}
-
-const auditSignResult = ref<SignAuditChainResponse | null>(null)
-const auditSigning = ref(false)
-const auditSignError = ref('')
-async function signAuditChain() {
-  if (!organizationId.value) return
-  auditSigning.value = true
-  auditSignError.value = ''
-  try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/audit-chain/sign`, { method: 'POST', headers })
-    auditSignResult.value = SignAuditChainResponseSchema.parse(response)
-    await verifyAuditChain()
-  } catch {
-    auditSignError.value = 'Die Kette konnte nicht signiert werden.'
-  } finally {
-    auditSigning.value = false
-  }
-}
 </script>
 
 <template>
@@ -745,107 +586,9 @@ async function signAuditChain() {
         </form>
       </section>
 
-      <!-- Auftragsverarbeiter -->
-      <section class="card mb-6 p-6">
-        <h2 class="mb-1 font-display text-base font-bold">Auftragsverarbeiter</h2>
-        <p class="mb-4 text-[11px] text-[#7b827d]">Supabase, Hosting, E-Mail-Versand, LLM-Anbieter, Meta und ggf. Quellsysteme — jeweils mit dem eigenen Vertrag, falls vorhanden.</p>
+      <ProcessorAgreements :organization-id="organizationId" />
 
-        <ul class="mb-4 space-y-2">
-          <li v-for="agreement in agreements" :key="agreement.id" class="rounded-lg bg-[#f7f8f4] px-3 py-2.5">
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <p class="text-sm font-semibold">{{ agreement.processorName }}</p>
-                <p class="text-[11px] text-[#9aa096]">{{ agreement.purpose }}</p>
-              </div>
-              <span class="rounded-full px-2.5 py-1 text-[10px] font-bold" :class="AGREEMENT_STATUS_CLASSES[agreement.status]">{{ AGREEMENT_STATUS_LABELS[agreement.status] }}</span>
-            </div>
-            <p class="mt-1.5 text-[11px] text-[#9aa096]">
-              Unterzeichnet: {{ formatDate(agreement.signedAt) }} · Gültig bis: {{ formatDate(agreement.validUntil) }} ·
-              {{ agreement.hasDocument ? 'Dokument hinterlegt' : 'Kein Dokument hinterlegt' }}
-            </p>
-            <label class="mt-2 inline-flex items-center gap-2 text-[11px]">
-              <span class="font-semibold">Status ändern:</span>
-              <select
-                :value="agreement.status"
-                :disabled="changingAgreementId === agreement.id"
-                class="focus-ring rounded-lg border border-[#dfe0d9] p-1.5 text-[11px]"
-                @change="changeAgreementStatus(agreement, ($event.target as HTMLSelectElement).value as typeof agreement.status)"
-              >
-                <option v-for="option in AGREEMENT_STATUS_OPTIONS" :key="option" :value="option">{{ AGREEMENT_STATUS_LABELS[option] }}</option>
-              </select>
-            </label>
-            <button
-              v-if="agreement.hasDocument"
-              type="button"
-              :disabled="viewingAgreementId === agreement.id"
-              class="focus-ring ml-3 mt-2 rounded-lg border border-[#dfe0d9] px-2.5 py-1 text-[11px] font-semibold disabled:opacity-50"
-              @click="viewAgreementDocument(agreement)"
-            >
-              {{ viewingAgreementId === agreement.id ? 'Öffnet …' : 'Dokument ansehen' }}
-            </button>
-          </li>
-          <li v-if="!agreements.length" class="text-xs text-[#9aa096]">Noch kein Auftragsverarbeiter erfasst.</li>
-        </ul>
-
-        <h3 class="mb-3 mt-4 text-xs font-bold uppercase tracking-wide text-[#7b827d]">Neu anlegen</h3>
-        <form class="grid gap-3 sm:grid-cols-2" @submit.prevent="createAgreement">
-          <label><span class="mb-1 block text-xs font-semibold">Name</span>
-            <input v-model="agreementForm.processorName" required maxlength="200" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-sm" />
-          </label>
-          <label><span class="mb-1 block text-xs font-semibold">Zweck</span>
-            <input v-model="agreementForm.purpose" required maxlength="300" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-sm" />
-          </label>
-          <label><span class="mb-1 block text-xs font-semibold">Unterzeichnet am</span>
-            <input v-model="agreementForm.signedAt" type="date" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-sm" />
-          </label>
-          <label><span class="mb-1 block text-xs font-semibold">Gültig bis</span>
-            <input v-model="agreementForm.validUntil" type="date" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-sm" />
-          </label>
-          <label><span class="mb-1 block text-xs font-semibold">Status</span>
-            <select v-model="agreementForm.status" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-sm">
-              <option v-for="option in AGREEMENT_STATUS_OPTIONS" :key="option" :value="option">{{ AGREEMENT_STATUS_LABELS[option] }}</option>
-            </select>
-          </label>
-          <label><span class="mb-1 block text-xs font-semibold">Vertragsdokument (PDF oder DOCX, optional)</span>
-            <input type="file" accept=".pdf,.docx" class="focus-ring w-full text-xs" @change="agreementForm.file = ($event.target as HTMLInputElement).files?.[0] ?? null" />
-          </label>
-          <div class="sm:col-span-2">
-            <p v-if="agreementCreateError" class="mb-2 text-xs text-amber-800">{{ agreementCreateError }}</p>
-            <button type="submit" :disabled="creatingAgreement" class="focus-ring rounded-xl bg-forest px-4 py-2.5 text-xs font-bold text-white disabled:opacity-60">
-              {{ creatingAgreement ? 'Wird angelegt …' : 'Anlegen' }}
-            </button>
-          </div>
-        </form>
-      </section>
-
-      <!-- Audit-Kette -->
-      <section class="card p-6">
-        <h2 class="mb-1 font-display text-base font-bold">Manipulationssicherer Audit-Trail</h2>
-        <p class="mb-4 text-[11px] text-[#7b827d]">Rollen- und Mitgliedschaftsänderungen sind als Hash-Kette verkettet. Signieren macht den aktuellen Kettenkopf mit einem Schlüssel außerhalb der Datenbank nachweisbar.</p>
-
-        <div class="flex flex-wrap gap-2">
-          <button type="button" :disabled="auditVerifying" class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-2 text-[11px] font-semibold disabled:opacity-60" @click="verifyAuditChain">
-            {{ auditVerifying ? 'Wird geprüft …' : 'Kette prüfen' }}
-          </button>
-          <button type="button" :disabled="auditSigning" class="focus-ring rounded-lg bg-forest px-3 py-2 text-[11px] font-bold text-white disabled:opacity-60" @click="signAuditChain">
-            {{ auditSigning ? 'Wird signiert …' : 'Jetzt signieren' }}
-          </button>
-        </div>
-        <p v-if="auditVerifyError" class="mt-3 text-xs text-amber-800">{{ auditVerifyError }}</p>
-        <p v-if="auditSignError" class="mt-3 text-xs text-amber-800">{{ auditSignError }}</p>
-
-        <div v-if="auditVerification" class="mt-4 rounded-xl p-4" :class="auditVerification.tamperedCount > 0 ? 'bg-red-50' : 'bg-[#f4f5ef]'">
-          <p v-if="auditVerification.tamperedCount > 0" class="text-sm font-bold text-red-800">Manipulation erkannt: {{ auditVerification.tamperedCount }} von {{ auditVerification.checkedCount }} geprüften Ereignissen weichen von der erwarteten Kette ab.</p>
-          <p v-else class="text-sm font-semibold text-ink">Keine Manipulation erkannt — {{ auditVerification.checkedCount }} Ereignisse geprüft.</p>
-          <p v-if="auditVerification.unlinkedCount > 0" class="mt-1 text-[11px] text-[#7b827d]">{{ auditVerification.unlinkedCount }} Ereignisse sind nicht verkettet — das ist nach einer regulären Aufbewahrungslöschung normal und kein Alarmsignal für sich.</p>
-          <p class="mt-1 text-[11px] text-[#9aa096]">Zuletzt signiert: {{ formatDateTime(auditVerification.lastSignedAt) }}</p>
-        </div>
-
-        <div v-if="auditSignResult" class="mt-4 rounded-xl bg-[#f4f5ef] p-4 text-[11px] text-[#43483f]">
-          <p class="font-semibold text-ink">Signatur hinterlegt</p>
-          <p class="mt-1">{{ auditSignResult.eventCount }} Ereignisse, Schlüsselversion {{ auditSignResult.keyVersion }}, signiert am {{ formatDateTime(auditSignResult.signedAt) }}.</p>
-        </div>
-      </section>
+      <LegalAuditChain :organization-id="organizationId" />
     </template>
   </div>
 </template>

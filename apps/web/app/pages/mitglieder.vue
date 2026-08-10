@@ -16,6 +16,7 @@ import {
   type ScopeLevel,
 } from '@vereinsfunk/contracts'
 
+const api = useApiClient()
 const config = useRuntimeConfig()
 const session = await useSession()
 const scope = await useScope()
@@ -141,29 +142,26 @@ async function load() {
   loading.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
     const [membersResponse, invitationsResponse] = await Promise.all([
-      $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/members`, { headers }),
-      $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/invitations`, { headers }),
+      api.request(`/v1/organizations/${organizationId.value}/members`, {}, MemberSchema.array()),
+      api.request(`/v1/organizations/${organizationId.value}/invitations`, {}, InvitationSchema.array()),
     ])
-    members.value = MemberSchema.array().parse(membersResponse)
+    members.value = membersResponse
     // Der Invitations-Endpunkt filtert nur accepted_at/revoked_at -- eine abgelaufene, aber noch
     // offene Einladung wuerde sonst weiter unter "Offene Einladungen" erscheinen, obwohl
     // "Erneut senden"/"Widerrufen" nichts mehr an ihr aendern koennen (beim Review gefunden).
-    invitations.value = InvitationSchema.array().parse(invitationsResponse).filter((invitation) => new Date(invitation.expiresAt) > new Date())
+    invitations.value = invitationsResponse.filter((invitation) => new Date(invitation.expiresAt) > new Date())
     // Die Richtlinien sind sekundaer: ohne sie bleibt die Mitgliederliste bedienbar, und
     // inviteAllowedFor() faellt auf "erlaubt" zurueck. Die API entscheidet ohnehin endgueltig.
     try {
-      const policySettingsResponse = await $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/policy-settings`, { headers })
-      policySettings.value = PolicySettingSchema.array().parse(policySettingsResponse)
+      policySettings.value = await api.request(`/v1/organizations/${organizationId.value}/policy-settings`, {}, PolicySettingSchema.array())
     } catch {
       policySettings.value = []
     }
     // Vertrauen ist ebenfalls sekundaer -- ohne sichtbare Eintraege gilt fuer jede Person "geerbt"
     // (Paket 011).
     try {
-      const trustResponse = await $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/member-review-trust`, { headers })
-      memberReviewTrust.value = MemberReviewTrustSchema.array().parse(trustResponse)
+      memberReviewTrust.value = await api.request(`/v1/organizations/${organizationId.value}/member-review-trust`, {}, MemberReviewTrustSchema.array())
     } catch {
       memberReviewTrust.value = []
     }

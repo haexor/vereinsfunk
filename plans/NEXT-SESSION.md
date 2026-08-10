@@ -1,5 +1,14 @@
 # Prompt für die nächste Session
 
+## Aktueller Refactoring-Stand (2026-08-09)
+
+- Paket 030 ist umgesetzt: bei verbotener Selbstfreigabe enthält der Reviewer-Snapshot den Autor nicht mehr; Domain-Tests decken auch die Minderjährigenstufe ab.
+- Paket 028 ist teilweise umgesetzt: `apps/web/app/composables/useApiClient.ts` zentralisiert Browser-API-Zugriffe. Migriert sind `kanaele.vue`, `einstellungen/recht.vue` und die Ladepfade von `mitglieder.vue`.
+- Ausgelagerte Komponenten: `LegalAuditChain.vue`, `ProcessorAgreements.vue`, `BrandLivePreview.vue`.
+- `apps/api/src/apiMappers.ts` enthält die aus `app.ts` gezogenen Mapper und Brand-/Einladungshelfer; `app.ts` bleibt weiterhin der große nächste Refactoring-Block.
+- Letzte erfolgreiche Prüfungen: Web-Typecheck und Web-Tests, API-/Domain-Tests sowie ein vollständiger Workspace-Check vor den letzten Web-Schritten. Vor neuen Änderungen immer erneut passend zum Scope prüfen.
+- Noch offen: Paket 028 vollständig abschließen (vor allem `marke.vue`, `mitglieder.vue`, `integrationen.vue`), dann 027 (Routenmodule) und 029 (Contracts/Domain-Aufteilung). Bestehende uncommittete Änderungen des Refactoring-PRs bewahren.
+
 Alles unter der Trennlinie in eine neue Claude-Code-Session kopieren. Die Pläne selbst liegen in `plans/008`–`plans/025`, der Index in [plans/README.md](README.md).
 
 ---
