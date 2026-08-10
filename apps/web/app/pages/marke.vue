@@ -1,41 +1,13 @@
 <script setup lang="ts">
 import { AlertTriangle, Check, LoaderCircle, Upload } from '@lucide/vue'
-import { BRAND_LOCKABLE_FIELDS, curatedFontPairings, findCuratedFont, isBrandAssetSelectable, meetsMinimumContrast, resolveBrand } from '@vereinsfunk/domain'
+import { BRAND_LOCKABLE_FIELDS, curatedFontPairings, meetsMinimumContrast, resolveBrand } from '@vereinsfunk/domain'
+import { type BrandOrganizationState, type BrandScopeLevel, type BrandTone, useBrandAssets } from '../composables/useBrandAssets'
+import { useBrandOverrides } from '../composables/useBrandOverrides'
 
-type BrandTone = 'nahbar' | 'dynamisch' | 'sachlich'
-type ScopeLevelName = 'organization' | 'department' | 'team'
+type ScopeLevelName = BrandScopeLevel
 
 interface DepartmentRow { id: string, name: string }
 interface TeamRow { id: string, name: string, departmentId: string }
-
-interface BrandAssetRow {
-  id: string
-  departmentId: string | null
-  teamId: string | null
-  kind: string
-  objectPath: string
-  status: string
-  fontFamily: string | null
-  fontWeight: number | null
-  fontStyle: string | null
-  licenseHolder: string | null
-  createdAt: string
-}
-
-// Overrides einer Abteilung/Mannschaft: null je Feld heisst "geerbt", ein Wert heisst "eigen" --
-// dieselbe Semantik wie policy_settings' "geerbt vs. eigener Wert" (Paket 011).
-interface LevelOverride {
-  primaryColor: string | null
-  accentColor: string | null
-  tone: BrandTone | null
-  logoAssetId: string | null
-  displayFontAssetId: string | null
-  bodyFontAssetId: string | null
-  displayFontKey: string | null // nur clientseitig zur Anzeige der kuratierten Auswahl, es gibt keine Spalte
-  bodyFontKey: string | null
-  allowTeamOverrides?: boolean
-  lockedFields?: string[]
-}
 
 // Genau BRAND_LOCKABLE_FIELDS aus packages/domain, nur mit deutschem Etikett: eine Sperre wirkt
 // ausschliesslich auf Felder, die eine Abteilung/Mannschaft ueberhaupt selbst fuehren kann.
@@ -49,7 +21,7 @@ const LOCKABLE_FIELD_LABELS: Readonly<Record<string, string>> = {
 }
 const LOCKABLE_FIELDS = BRAND_LOCKABLE_FIELDS.map((key) => ({ key, label: LOCKABLE_FIELD_LABELS[key]! }))
 
-const config = useRuntimeConfig()
+const api = useApiClient()
 const scope = await useScope()
 const organizationId = computed(() => scope.value?.organizationId ?? null)
 const supabase = useSupabaseClient()
@@ -58,18 +30,15 @@ const loading = ref(true)
 const loadError = ref(false)
 const saving = ref(false)
 const errorMessage = ref('')
-const sanitizedNotice = ref(false)
 
 const departments = ref<DepartmentRow[]>([])
 const teams = ref<TeamRow[]>([])
-const assets = ref<BrandAssetRow[]>([])
-const assetSignedUrls = ref<Record<string, string>>({})
 
 const activeLevel = ref<ScopeLevelName>('organization')
 const activeDepartmentId = ref<string | null>(null)
 const activeTeamId = ref<string | null>(null)
 
-const org = reactive({
+const org = reactive<BrandOrganizationState>({
   primaryColor: '#163a2c',
   accentColor: '#caff4a',
   backgroundColor: '#f6f4ec',
@@ -85,42 +54,7 @@ const org = reactive({
   logoPath: null as string | null,
   logoDarkPath: null as string | null,
 })
-const logoUrl = ref('')
-const logoDarkUrl = ref('')
-const logoFile = ref<File | null>(null)
-const logoPreviewUrl = ref('')
-const logoVariant = ref<'light' | 'dark'>('light')
-
-function emptyOverride(): LevelOverride {
-  return { primaryColor: null, accentColor: null, tone: null, logoAssetId: null, displayFontAssetId: null, bodyFontAssetId: null, displayFontKey: null, bodyFontKey: null }
-}
-const departmentOverrides = ref<Record<string, LevelOverride>>({})
-const teamOverrides = ref<Record<string, LevelOverride>>({})
-
-function newDepartmentOverride(): LevelOverride {
-  return { ...emptyOverride(), allowTeamOverrides: true, lockedFields: [] }
-}
-
-// Lesen legt nichts an. Ein computed darf seine eigenen Abhaengigkeiten nicht veraendern -- der
-// fruehere Schreibzugriff aus activeDepartmentOverride/resolved heraus invalidierte die
-// Berechnung, die ihn ausgeloest hatte, und lieferte auf Server und Client unterschiedliche
-// Zustaende (die im Paket dokumentierte Hydration-Abweichung auf /marke).
-function readOverride(departmentId: string): LevelOverride {
-  return departmentOverrides.value[departmentId] ?? newDepartmentOverride()
-}
-function readTeamOverride(teamId: string): LevelOverride {
-  return teamOverrides.value[teamId] ?? emptyOverride()
-}
-
-// Angelegt wird ausschliesslich aus Event-Handlern (selectScope, save).
-function overrideFor(departmentId: string): LevelOverride {
-  if (!departmentOverrides.value[departmentId]) departmentOverrides.value[departmentId] = newDepartmentOverride()
-  return departmentOverrides.value[departmentId]!
-}
-function teamOverrideFor(teamId: string): LevelOverride {
-  if (!teamOverrides.value[teamId]) teamOverrides.value[teamId] = emptyOverride()
-  return teamOverrides.value[teamId]!
-}
+const { departmentOverrides, teamOverrides, readOverride, readTeamOverride, overrideFor, teamOverrideFor } = useBrandOverrides()
 
 const activeDepartmentOverride = computed(() => (activeDepartmentId.value ? readOverride(activeDepartmentId.value) : null))
 const activeTeamOverride = computed(() => (activeTeamId.value ? readTeamOverride(activeTeamId.value) : null))
@@ -156,115 +90,6 @@ const contrastChecks = computed(() => [
   { label: 'Auf-Primär-Text auf Primärfarbe', ...meetsMinimumContrast(resolved.value.onPrimaryColor, resolved.value.primaryColor) },
   { label: 'Text auf Akzentfarbe', ...meetsMinimumContrast(resolved.value.textColor, resolved.value.accentColor) },
 ])
-
-function assetOrigin(asset: BrandAssetRow): string {
-  if (asset.teamId) return 'aus dieser Mannschaft'
-  if (asset.departmentId) return 'aus dieser Abteilung'
-  return 'vom Verein'
-}
-
-const selectableLogoAssets = computed(() =>
-  assets.value.filter(
-    (asset) =>
-      asset.status === 'ready' &&
-      asset.kind !== 'font' &&
-      isBrandAssetSelectable(
-        { scope: asset.teamId ? 'team' : asset.departmentId ? 'department' : 'organization', departmentId: asset.departmentId ?? undefined, teamId: asset.teamId ?? undefined },
-        activeLevel.value,
-        activeDepartmentId.value ?? undefined,
-        activeTeamId.value ?? undefined,
-      ),
-  ),
-)
-const selectableFontAssets = computed(() =>
-  assets.value.filter(
-    (asset) =>
-      asset.status === 'ready' &&
-      asset.kind === 'font' &&
-      isBrandAssetSelectable(
-        { scope: asset.teamId ? 'team' : asset.departmentId ? 'department' : 'organization', departmentId: asset.departmentId ?? undefined, teamId: asset.teamId ?? undefined },
-        activeLevel.value,
-        activeDepartmentId.value ?? undefined,
-        activeTeamId.value ?? undefined,
-      ),
-  ),
-)
-const ownFontAssets = computed(() =>
-  assets.value.filter((asset) => {
-    if (asset.kind !== 'font') return false
-    if (activeLevel.value === 'organization') return asset.departmentId === null && asset.teamId === null
-    if (activeLevel.value === 'department') return asset.departmentId === activeDepartmentId.value && asset.teamId === null
-    return asset.teamId === activeTeamId.value
-  }),
-)
-const pendingLicenseAssets = computed(() => ownFontAssets.value.filter((asset) => asset.status === 'processing'))
-// logo_primary/logo_dark haben oben im Abschnitt "Logo" ihre eigene Vorschau (hell/dunkel) --
-// hier nur die weiteren Varianten, sonst erscheint das Vereinslogo doppelt auf der Seite.
-const ownLogoAssets = computed(() =>
-  assets.value.filter((asset) => {
-    if (asset.kind === 'font' || asset.kind === 'logo_primary' || asset.kind === 'logo_dark' || asset.status === 'replaced') return false
-    if (activeLevel.value === 'organization') return asset.departmentId === null && asset.teamId === null
-    if (activeLevel.value === 'department') return asset.departmentId === activeDepartmentId.value && asset.teamId === null
-    return asset.teamId === activeTeamId.value
-  }),
-)
-
-async function signAsset(asset: BrandAssetRow) {
-  if (assetSignedUrls.value[asset.id]) return
-  const signed = await supabase.storage.from('brand-assets').createSignedUrl(asset.objectPath, 600)
-  if (signed.data) assetSignedUrls.value[asset.id] = signed.data.signedUrl
-}
-watch(assets, (list) => { for (const asset of list) if (asset.kind !== 'font' && asset.status !== 'replaced') void signAsset(asset) }, { immediate: true })
-
-// Live-Vorschau: fuer eine eigene Schrift wird ein @font-face mit signierter URL injiziert,
-// damit die Vorschau exakt zeigt, was auch im Rendering verwendet wuerde (Plan 013, "kein
-// Beitrag sieht in der Vorschau anders aus als im Ergebnis").
-const PREVIEW_DISPLAY_FAMILY = 'vf-preview-display'
-const PREVIEW_BODY_FAMILY = 'vf-preview-body'
-const previewFontFaceCss = ref('')
-
-// Die Regel landet per useHead als innerHTML in einem <style>-Element. Ein Apostroph oder eine
-// </style>-Folge in der URL wuerde den Block verlassen -- unwahrscheinlich bei einer signierten
-// Supabase-URL, aber sie ist nichts, was diese Seite selbst gebildet hat.
-function cssUrlLiteral(url: string): string {
-  return `'${url.replace(/[\\'"<>]/g, (character) => `\\${character.charCodeAt(0).toString(16)} `)}'`
-}
-
-async function fontFamilyForPreview(assetId: string | null, fontKey: string | null, cssFamilyName: string): Promise<{ family: string, faceRule: string | null }> {
-  if (assetId) {
-    const asset = assets.value.find((row) => row.id === assetId && row.kind === 'font' && row.status === 'ready')
-    if (asset) {
-      const signed = await supabase.storage.from('brand-assets').createSignedUrl(asset.objectPath, 600)
-      if (signed.data) return { family: cssFamilyName, faceRule: `@font-face { font-family: '${cssFamilyName}'; src: url(${cssUrlLiteral(signed.data.signedUrl)}) format('woff2'); font-weight: ${asset.fontWeight ?? 400}; font-style: ${asset.fontStyle ?? 'normal'}; }` }
-    }
-  }
-  const curated = findCuratedFont(fontKey ?? 'manrope')
-  return { family: curated?.family ?? 'Manrope', faceRule: null }
-}
-
-const previewDisplayFamily = ref('Manrope')
-const previewBodyFamily = ref('DM Sans')
-
-// Beide Aufrufe signieren ueber das Netz. Ohne onCleanup koennte ein frueher gestarteter
-// Durchlauf nach einem spaeteren zurueckkehren und die Vorschau auf die Schrift der zuvor
-// gewaehlten Ebene zuruecksetzen.
-watchEffect(async (onCleanup) => {
-  let cancelled = false
-  onCleanup(() => { cancelled = true })
-  const display = await fontFamilyForPreview(resolved.value.displayFontAssetId, resolved.value.displayFontKey, PREVIEW_DISPLAY_FAMILY)
-  const body = await fontFamilyForPreview(resolved.value.bodyFontAssetId, resolved.value.bodyFontKey, PREVIEW_BODY_FAMILY)
-  if (cancelled) return
-  previewDisplayFamily.value = display.family
-  previewBodyFamily.value = body.family
-  previewFontFaceCss.value = [display.faceRule, body.faceRule].filter(Boolean).join('\n')
-})
-useHead(() => ({ style: previewFontFaceCss.value ? [{ innerHTML: previewFontFaceCss.value }] : [] }))
-
-const previewLogoUrl = computed(() => {
-  const assetId = resolved.value.logoAssetId
-  if (!assetId) return activeLevel.value === 'organization' ? logoUrl.value : ''
-  return assetSignedUrls.value[assetId] ?? ''
-})
 
 async function loadAll() {
   if (!organizationId.value) { loading.value = false; return }
@@ -335,37 +160,50 @@ async function loadAll() {
     loading.value = false
   }
 }
+const {
+  assets,
+  assetSignedUrls,
+  logoUrl,
+  logoDarkUrl,
+  logoPreviewUrl,
+  logoVariant,
+  sanitizedNotice,
+  selectableLogoAssets,
+  selectableFontAssets,
+  pendingLicenseAssets,
+  ownLogoAssets,
+  previewDisplayFamily,
+  previewBodyFamily,
+  previewLogoUrl,
+  uploadingAsset,
+  uploadError,
+  confirmingLicense,
+  assetOrigin,
+  onLogoSelected,
+  saveOrgLogoIfSelected,
+  activeFontAssetId,
+  toggleFontAsset,
+  uploadAsset,
+  licenseDraftFor,
+  confirmLicense,
+} = useBrandAssets({
+  api,
+  supabase,
+  organizationId,
+  org,
+  activeLevel,
+  activeDepartmentId,
+  activeTeamId,
+  activeDepartmentOverride,
+  activeTeamOverride,
+  resolved,
+  reload: loadAll,
+})
 await loadAll()
 
-function onLogoSelected(event: Event, variant: 'light' | 'dark') {
-  const file = (event.target as HTMLInputElement).files?.[0] ?? null
-  if (logoPreviewUrl.value) URL.revokeObjectURL(logoPreviewUrl.value)
-  logoFile.value = file
-  logoVariant.value = variant
-  logoPreviewUrl.value = file ? URL.createObjectURL(file) : ''
-}
-
-async function saveOrgLogoIfSelected(headers: Record<string, string>) {
-  if (!logoFile.value || !organizationId.value) return
-  const formData = new FormData()
-  formData.append('variant', logoVariant.value)
-  formData.append('file', logoFile.value)
-  const uploaded = await $fetch<{ signedUrl: string, sanitized: boolean }>(
-    `${config.public.apiBase}/v1/organizations/${organizationId.value}/brand/logo`,
-    { method: 'POST', headers, body: formData },
-  )
-  if (logoVariant.value === 'light') logoUrl.value = uploaded.signedUrl
-  else logoDarkUrl.value = uploaded.signedUrl
-  sanitizedNotice.value = uploaded.sanitized
-  logoFile.value = null
-  URL.revokeObjectURL(logoPreviewUrl.value)
-  logoPreviewUrl.value = ''
-}
-
-async function saveOrganization(headers: Record<string, string>) {
-  await $fetch(`${config.public.apiBase}/v1/organizations/${organizationId.value}/brand`, {
+async function saveOrganization() {
+  await api.request(`/v1/organizations/${organizationId.value}/brand`, {
     method: 'PUT',
-    headers,
     body: {
       primaryColor: org.primaryColor, accentColor: org.accentColor, backgroundColor: org.backgroundColor,
       textColor: org.textColor, onPrimaryColor: org.onPrimaryColor, tone: org.tone,
@@ -376,11 +214,10 @@ async function saveOrganization(headers: Record<string, string>) {
   })
 }
 
-async function saveDepartment(headers: Record<string, string>, departmentId: string) {
+async function saveDepartment(departmentId: string) {
   const value = overrideFor(departmentId)
-  await $fetch(`${config.public.apiBase}/v1/departments/${departmentId}/brand`, {
+  await api.request(`/v1/departments/${departmentId}/brand`, {
     method: 'PUT',
-    headers,
     body: {
       primaryColor: value.primaryColor, accentColor: value.accentColor, tone: value.tone,
       logoAssetId: value.logoAssetId, displayFontAssetId: value.displayFontAssetId, bodyFontAssetId: value.bodyFontAssetId,
@@ -389,11 +226,10 @@ async function saveDepartment(headers: Record<string, string>, departmentId: str
   })
 }
 
-async function saveTeam(headers: Record<string, string>, teamId: string) {
+async function saveTeam(teamId: string) {
   const value = teamOverrideFor(teamId)
-  await $fetch(`${config.public.apiBase}/v1/teams/${teamId}/brand`, {
+  await api.request(`/v1/teams/${teamId}/brand`, {
     method: 'PUT',
-    headers,
     body: {
       primaryColor: value.primaryColor, accentColor: value.accentColor, tone: value.tone,
       logoAssetId: value.logoAssetId, displayFontAssetId: value.displayFontAssetId, bodyFontAssetId: value.bodyFontAssetId,
@@ -406,90 +242,15 @@ async function save() {
   saving.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
-    await saveOrgLogoIfSelected(headers)
-    if (activeLevel.value === 'organization') await saveOrganization(headers)
-    else if (activeLevel.value === 'department' && activeDepartmentId.value) await saveDepartment(headers, activeDepartmentId.value)
-    else if (activeLevel.value === 'team' && activeTeamId.value) await saveTeam(headers, activeTeamId.value)
+    await saveOrgLogoIfSelected()
+    if (activeLevel.value === 'organization') await saveOrganization()
+    else if (activeLevel.value === 'department' && activeDepartmentId.value) await saveDepartment(activeDepartmentId.value)
+    else if (activeLevel.value === 'team' && activeTeamId.value) await saveTeam(activeTeamId.value)
     await loadAll()
   } catch {
     errorMessage.value = 'Die Marke konnte nicht gespeichert werden. Bitte erneut versuchen.'
   } finally {
     saving.value = false
-  }
-}
-
-// Ueberschrift UND Fliesstext koennen eine eigene Schrift bekommen, und beides laesst sich wieder
-// zuruecknehmen -- ohne den Ruecksetzweg bliebe eine einmal gewaehlte eigene Schrift dauerhaft
-// aktiv, weil das kuratierte Paar nur greift, solange keine Asset-ID gesetzt ist.
-function assignFontAsset(role: 'display' | 'body', assetId: string | null) {
-  const key = role === 'display' ? 'displayFontAssetId' : 'bodyFontAssetId'
-  if (activeLevel.value === 'organization') { org[key] = assetId; return }
-  const target = activeLevel.value === 'department' ? activeDepartmentOverride.value : activeTeamOverride.value
-  if (target) target[key] = assetId
-}
-
-function activeFontAssetId(role: 'display' | 'body'): string | null {
-  const key = role === 'display' ? 'displayFontAssetId' : 'bodyFontAssetId'
-  if (activeLevel.value === 'organization') return org[key]
-  return (activeLevel.value === 'department' ? activeDepartmentOverride.value : activeTeamOverride.value)?.[key] ?? null
-}
-
-// Erneuter Klick auf die aktive Rolle nimmt die Auswahl zurueck -- das kuratierte Paar greift
-// wieder, sobald keine Asset-ID mehr gesetzt ist.
-function toggleFontAsset(role: 'display' | 'body', assetId: string) {
-  assignFontAsset(role, activeFontAssetId(role) === assetId ? null : assetId)
-}
-
-const uploadingAsset = ref(false)
-const uploadError = ref('')
-
-async function uploadAsset(event: Event, kind: string) {
-  const file = (event.target as HTMLInputElement).files?.[0] ?? null
-  ;(event.target as HTMLInputElement).value = ''
-  if (!file || !organizationId.value) return
-  uploadingAsset.value = true
-  uploadError.value = ''
-  try {
-    const headers = await useAuthHeader()
-    const formData = new FormData()
-    formData.append('organizationId', organizationId.value)
-    if (activeDepartmentId.value) formData.append('departmentId', activeDepartmentId.value)
-    if (activeLevel.value === 'team' && activeTeamId.value) formData.append('teamId', activeTeamId.value)
-    formData.append('kind', kind)
-    formData.append('file', file)
-    await $fetch(`${config.public.apiBase}/v1/brand/assets`, { method: 'POST', headers, body: formData })
-    await loadAll()
-  } catch {
-    uploadError.value = 'Die Datei konnte nicht hochgeladen werden. Bitte Format und Größe prüfen.'
-  } finally {
-    uploadingAsset.value = false
-  }
-}
-
-const licenseDrafts = ref<Record<string, { licenseHolder: string, licenseNote: string, confirmed: boolean }>>({})
-function licenseDraftFor(assetId: string) {
-  if (!licenseDrafts.value[assetId]) licenseDrafts.value[assetId] = { licenseHolder: '', licenseNote: '', confirmed: false }
-  return licenseDrafts.value[assetId]!
-}
-const confirmingLicense = ref<string | null>(null)
-
-async function confirmLicense(assetId: string) {
-  const draft = licenseDraftFor(assetId)
-  if (!draft.confirmed || !draft.licenseHolder.trim()) return
-  confirmingLicense.value = assetId
-  try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/brand/assets/${assetId}/confirm-license`, {
-      method: 'POST',
-      headers,
-      body: { licenseHolder: draft.licenseHolder, licenseNote: draft.licenseNote || undefined, confirmed: true },
-    })
-    await loadAll()
-  } catch {
-    uploadError.value = 'Die Lizenz konnte nicht bestätigt werden.'
-  } finally {
-    confirmingLicense.value = null
   }
 }
 
@@ -502,6 +263,7 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
   activeDepartmentId.value = departmentId
   activeTeamId.value = teamId
 }
+
 </script>
 
 <template>

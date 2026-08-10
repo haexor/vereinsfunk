@@ -7,7 +7,7 @@
 ## Status
 
 - **Priority**: P2
-- **Implementation note (2026-08-09)**: begonnen. `useApiClient()` zentralisiert API-Basis-URL, Bearer-Header und optionale Zod-Validierung. Migriert sind die Kanalseite, die Rechtsseite und die Ladepfade der Mitgliederseite. Aus `recht.vue` wurden `LegalAuditChain` und `ProcessorAgreements`, aus `marke.vue` `BrandLivePreview` ausgelagert. Restlich: Marken-, Mitglieder- und Integrationsbereiche fachlich zerlegen, API-Mutationen der migrierten Seiten vereinheitlichen sowie die geplanten Web-Tests ergänzen.
+- **Implementation note (2026-08-10)**: erledigt auf PR #34 gegen PR #33. `useApiClient()` delegiert an den testbaren Kern `app/utils/apiClient.ts`; dieser vereinheitlicht API-Basis-URL, Bearer-Header ohne Session-Cache, optionale Zod-Validierung und typisierte Serverfehler. Öffentliche Anfragen können Auth explizit abschalten. Die API-Mutationen von `marke.vue`, `mitglieder.vue` und `integrationen.vue` sowie die Ladepfade von `kanaele.vue`, `einstellungen/recht.vue` und `mitglieder.vue` sind migriert. `kanaele.vue` ist jetzt eine Composition Root über `useChannels` und `ChannelCard`; die Rechtsseite hat Formulare für Impressum und Aufbewahrungsfristen in fachliche Komponenten ausgelagert. Damit liegen alle fünf großen Seiten unter 500 LoC. `marke.vue` kapselt Asset-/Vorschau-/Upload-State in `useBrandAssets` und Override-State in `useBrandOverrides`, `mitglieder.vue` die Rollen-, Befristungs- und Vertrauensdarstellung in `MemberList`; `memberDates.ts` deckt den Ablaufzeitpunkt einer Mitgliedschaft am lokalen Tagesende korrekt ab. Ausgelagert sind außerdem `LegalAuditChain`, `ProcessorAgreements`, `BrandLivePreview` sowie die fünf Integrations-Komponenten `IntegrationSourceHeader`, `IntegrationSourceCreateForm`, `IntegrationSourceEditForm`, `IntegrationRunHistory` und `IntegrationConflictList`; `integrationen.vue` hat damit 440 LoC. Sechs Testdateien mit sechzehn Tests laufen verbindlich, `--passWithNoTests` ist entfernt. Erfolgreicher, schema-validierter Load und ein `403 forbidden` sind direkt am API-Client getestet. Der authentifizierte Smoke-Test lief mit frischem lokalen Supabase-Reset, Wegwerf-Env-Dateien außerhalb des Worktrees und einer lokalen Sitzung: Laden und erwartete Mutationen von Marke, Mitgliedern, Integrationen und Rechtsseite funktionierten ohne unerwartete Browser-Konsolen- oder Netzwerkfehler; der Retention-Testlauf löschte nichts. Der fehlende lokale Meta-Adapter lieferte in Kanälen verständlich „Die Verbindung konnte nicht gestartet werden.“; ein Konto ohne Vereinsmitgliedschaft erhielt auf der Rechtsseite den verständlichen Berechtigungshinweis. `useIntegrationSources` bleibt bewusst aus: die Seite ist der einzige Aufrufer, daher würde ein weiteres Composable nur eine Abstraktionshülle schaffen.
 - **Effort**: L
 - **Risk**: MED
 - **Depends on**: `plans/027-api-route-module-boundaries.md`
@@ -25,7 +25,7 @@
 - `apps/web/app/pages/einstellungen/recht.vue:43-71` zeigt das wiederkehrende Load-/Header-/Parse-Muster; der Rest enthält fünf unabhängige Fachbereiche.
 - `apps/web/app/pages/marke.vue:365-402` enthält drei nahezu parallele Save-Funktionen je Scope.
 - `apps/web/app/pages/kanaele.vue:35-75` ist ein Beispiel für paralleles Laden und lokales Zod-Parsen.
-- Es existiert nur `apps/web/app/security.test.ts`; `apps/web/package.json` nutzt `--passWithNoTests`.
+- Es gibt `security.test.ts`, `utils/apiClient.test.ts` und `pages/apiClientMigration.test.ts`; der Web-Testlauf ist verbindlich und umfasst derzeit acht Tests.
 
 ## Commands you will need
 
@@ -77,10 +77,10 @@ Entferne `--passWithNoTests` erst, wenn mindestens die neuen Composable-/Kompone
 
 ## Done criteria
 
-- [ ] Alle fünf großen Seiten liegen unter 500 LoC; Zielwert 250 LoC.
-- [ ] Kein `$fetch`-Boilerplate mit `config.public.apiBase` bleibt auf migrierten Seiten.
-- [ ] API-Fehler und Zod-Validierung verhalten sich identisch oder besser getestet.
-- [ ] `pnpm check` besteht.
+- [x] Alle fünf großen Seiten liegen unter 500 LoC; Zielwert 250 LoC. (`integrationen.vue`: 440 LoC, `marke.vue`: 497 LoC, `mitglieder.vue`: 482 LoC, `kanaele.vue`: 55 LoC und `einstellungen/recht.vue`: 492 LoC.)
+- [x] Kein `$fetch`-Boilerplate mit `config.public.apiBase` bleibt auf migrierten Seiten.
+- [x] API-Fehler und Zod-Validierung verhalten sich identisch oder besser getestet.
+- [x] `pnpm check` besteht.
 
 ## STOP conditions
 

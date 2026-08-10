@@ -15,9 +15,9 @@ import {
   type ReviewRequirement,
   type ScopeLevel,
 } from '@vereinsfunk/contracts'
+import { endOfDayIso, localDateKey } from '../utils/memberDates'
 
 const api = useApiClient()
-const config = useRuntimeConfig()
 const session = await useSession()
 const scope = await useScope()
 
@@ -188,13 +188,11 @@ async function sendInvitation() {
   inviteError.value = ''
   inviteSuccess.value = false
   try {
-    const headers = await useAuthHeader()
     // Eine Team-Einladung muss die ELTERN-Abteilung mitschicken: CreateInvitationRequestSchema
     // verlangt departmentId zusammen mit teamId, und resolveInvitationScope() in apps/api prueft
     // beide gegeneinander. Ohne die Abteilung schlug jede Team-Einladung mit 400 fehl.
-    const response = await $fetch<{ emailDelivered?: boolean }>(`${config.public.apiBase}/v1/invitations`, {
+    const response = await api.request<{ emailDelivered?: boolean }>('/v1/invitations', {
       method: 'POST',
-      headers,
       body: {
         organizationId: organizationId.value,
         departmentId: departmentIdFor(inviteScope.value, inviteScopeId.value),
@@ -232,8 +230,7 @@ async function removeMembership(membershipId: string, scopeLevel: ScopeLevel) {
   if (!confirm('Mitgliedschaft wirklich entfernen?')) return
   actionError.value = ''
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/memberships/${membershipId}`, { method: 'DELETE', headers, query: { scope: scopeLevel } })
+    await api.request(`/v1/memberships/${membershipId}`, { method: 'DELETE', query: { scope: scopeLevel } })
     await load()
   } catch {
     actionError.value = 'Die Mitgliedschaft konnte nicht entfernt werden.'
@@ -249,32 +246,6 @@ const expiryDraft = reactive<Record<string, string>>({})
 const roleChangeError = ref('')
 const roleChangeSubmitting = ref<string | null>(null)
 const expirySubmitting = ref<string | null>(null)
-
-// type="date" kennt nur ein Kalenderdatum, keine Uhrzeit. Ein reines .slice(0, 10) auf einem
-// ISO-Zeitstempel liest das UTC-Kalenderdatum aus -- in Zeitzonen mit negativem Offset zeigt das
-// Feld dann den Vortag an (beim Review gefunden). localDateKey liest stattdessen den Kalendertag
-// in der Vereinszeitzone, wie schon in kalender.vue/index.vue.
-function localDateKey(date: Date, timeZone: string): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date)
-}
-
-function tzOffsetMinutes(date: Date, timeZone: string): number {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
-  }).formatToParts(date)
-  const value = (type: string) => Number(parts.find((part) => part.type === type)?.value)
-  const asUtc = Date.UTC(value('year'), value('month') - 1, value('day'), value('hour'), value('minute'), value('second'))
-  return (asUtc - date.getTime()) / 60000
-}
-
-// Das Tagesende (nicht Mitternacht UTC) in der Vereinszeitzone haelt den gewaehlten Tag
-// vollstaendig gueltig -- vorher lief eine Befristung in Zeitzonen mit positivem Offset (z. B.
-// Europe/Berlin) schon in der ersten Morgenstunde des gewaehlten Tages ab (beim Review gefunden).
-function endOfDayIso(dateKey: string, timeZone: string): string {
-  const [year, month, day] = dateKey.split('-').map(Number) as [number, number, number]
-  const utcGuess = Date.UTC(year, month - 1, day, 23, 59, 59, 999)
-  return new Date(utcGuess - tzOffsetMinutes(new Date(utcGuess), timeZone) * 60000).toISOString()
-}
 
 function toggleExpanded(entry: MemberRoleEntry, userId: string) {
   if (expandedMembershipId.value === entry.membershipId) {
@@ -299,9 +270,8 @@ async function changeRole(entry: MemberRoleEntry) {
   roleChangeSubmitting.value = entry.membershipId
   roleChangeError.value = ''
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/memberships/${entry.membershipId}`, {
-      method: 'PATCH', headers, query: { scope: entry.scope }, body: { role: nextRole },
+    await api.request(`/v1/memberships/${entry.membershipId}`, {
+      method: 'PATCH', query: { scope: entry.scope }, body: { role: nextRole },
     })
     expandedMembershipId.value = null
     await load()
@@ -316,10 +286,9 @@ async function setExpiry(entry: MemberRoleEntry) {
   expirySubmitting.value = entry.membershipId
   roleChangeError.value = ''
   try {
-    const headers = await useAuthHeader()
     const draft = expiryDraft[entry.membershipId]
-    await $fetch(`${config.public.apiBase}/v1/memberships/${entry.membershipId}/expiry`, {
-      method: 'PATCH', headers, query: { scope: entry.scope },
+    await api.request(`/v1/memberships/${entry.membershipId}/expiry`, {
+      method: 'PATCH', query: { scope: entry.scope },
       body: { expiresAt: draft ? endOfDayIso(draft, timezone.value) : null },
     })
     await load()
@@ -362,10 +331,8 @@ async function saveTrust(entry: MemberRoleEntry, userId: string) {
   trustSubmitting.value = entry.membershipId
   trustError.value = ''
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/member-review-trust`, {
+    await api.request('/v1/member-review-trust', {
       method: 'PUT',
-      headers,
       body: {
         scope: entry.scope, scopeId: entry.scopeId, userId,
         submitAllowed: trustSubmitAllowedDraft[entry.membershipId],
@@ -385,8 +352,7 @@ async function saveTrust(entry: MemberRoleEntry, userId: string) {
 async function resendInvitation(id: string) {
   actionError.value = ''
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<{ emailDelivered?: boolean }>(`${config.public.apiBase}/v1/invitations/${id}/resend`, { method: 'POST', headers })
+    const response = await api.request<{ emailDelivered?: boolean }>(`/v1/invitations/${id}/resend`, { method: 'POST' })
     // Siehe sendInvitation(): ein fehlgeschlagener SMTP-Versand ist kein Fehlerstatus, muss aber
     // sichtbar sein -- sonst wartet die eingeladene Person auf eine Mail, die nie ankam.
     if (response?.emailDelivered === false) {
@@ -402,8 +368,7 @@ async function revokeInvitation(id: string) {
   if (!confirm('Einladung wirklich widerrufen?')) return
   actionError.value = ''
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/invitations/${id}/revoke`, { method: 'POST', headers })
+    await api.request(`/v1/invitations/${id}/revoke`, { method: 'POST' })
     await load()
   } catch {
     actionError.value = 'Die Einladung konnte nicht widerrufen werden.'
@@ -465,110 +430,29 @@ const canInviteHere = computed(() => availableInviteScopes.value.length > 0)
         </form>
       </section>
 
-      <section class="card mb-6 divide-y divide-[#e8e9e2]">
-        <div v-for="member in members" :key="member.userId" class="flex items-start gap-4 p-4 sm:px-6">
-          <span class="mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#dce6d8] text-xs font-bold">
-            {{ member.displayName.split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join('').toUpperCase() }}
-          </span>
-          <div class="flex-1">
-            <div class="text-sm font-semibold">{{ member.displayName }}</div>
-            <div class="mt-1.5 flex flex-wrap gap-1.5">
-              <span
-                v-for="entry in member.roles"
-                :key="entry.membershipId"
-                class="inline-flex items-center gap-1.5 rounded-full bg-[#eef1ea] px-2.5 py-1 text-[10px] font-semibold text-[#3d453f]"
-              >
-                <button
-                  v-if="entry.canChangeRole || entry.canSetExpiry || canManageTrust(entry)"
-                  type="button"
-                  :aria-expanded="expandedMembershipId === entry.membershipId"
-                  :aria-controls="`membership-detail-${entry.membershipId}`"
-                  class="focus-ring"
-                  @click="toggleExpanded(entry, member.userId)"
-                >
-                  {{ roleLabels[entry.role] ?? entry.role }} · {{ scopeName(entry.scope, entry.scopeId) }}
-                </button>
-                <span v-else>{{ roleLabels[entry.role] ?? entry.role }} · {{ scopeName(entry.scope, entry.scopeId) }}</span>
-                <button
-                  v-if="entry.canRemove"
-                  type="button"
-                  :aria-label="`${roleLabels[entry.role] ?? entry.role} in ${scopeName(entry.scope, entry.scopeId)} entfernen`"
-                  class="focus-ring text-[#8a9186] hover:text-amber-800"
-                  @click="removeMembership(entry.membershipId, entry.scope)"
-                >
-                  ×
-                </button>
-              </span>
-            </div>
-            <div
-              v-for="entry in member.roles.filter((item) => item.membershipId === expandedMembershipId)"
-              :key="`${entry.membershipId}-detail`"
-              :id="`membership-detail-${entry.membershipId}`"
-              class="mt-3 grid gap-3 rounded-xl border border-[#e8e9e2] bg-[#f7f8f4] p-3 sm:grid-cols-2"
-            >
-              <label v-if="entry.canChangeRole"><span class="mb-1 block text-xs font-semibold">Rolle in {{ scopeName(entry.scope, entry.scopeId) }}</span>
-                <div class="flex gap-2">
-                  <select v-model="roleDraft[entry.membershipId]" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs">
-                    <option v-for="role in availableRolesFor(entry)" :key="role" :value="role">{{ roleLabels[role] ?? role }}</option>
-                  </select>
-                  <button
-                    type="button"
-                    :disabled="roleChangeSubmitting === entry.membershipId || roleDraft[entry.membershipId] === entry.role"
-                    class="focus-ring shrink-0 rounded-lg bg-forest px-3 py-2 text-[10px] font-bold text-white disabled:opacity-60"
-                    @click="changeRole(entry)"
-                  >
-                    Ändern
-                  </button>
-                </div>
-              </label>
-              <label v-if="entry.canSetExpiry"><span class="mb-1 block text-xs font-semibold">Befristet bis</span>
-                <div class="flex gap-2">
-                  <input v-model="expiryDraft[entry.membershipId]" type="date" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" />
-                  <button
-                    type="button"
-                    :disabled="expirySubmitting === entry.membershipId"
-                    class="focus-ring shrink-0 rounded-lg border border-[#dfe0d9] px-3 py-2 text-[10px] font-semibold disabled:opacity-60"
-                    @click="setExpiry(entry)"
-                  >
-                    Speichern
-                  </button>
-                </div>
-              </label>
-              <p v-if="roleChangeError" class="text-xs text-amber-800 sm:col-span-2">{{ roleChangeError }}</p>
-
-              <div v-if="canManageTrust(entry)" class="grid gap-3 border-t border-[#e8e9e2] pt-3 sm:col-span-2 sm:grid-cols-2">
-                <p class="text-xs font-semibold sm:col-span-2">Vertrauen in {{ scopeName(entry.scope, entry.scopeId) }}</p>
-                <label class="flex items-center gap-2"><input v-model="trustSubmitAllowedDraft[entry.membershipId]" type="checkbox" /> <span class="text-xs">Darf einreichen</span></label>
-                <label><span class="mb-1 block text-xs font-semibold">Prüfung</span>
-                  <select v-model="trustRequirementDraft[entry.membershipId]" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs">
-                    <option value="inherit">geerbt</option>
-                    <option value="always">immer erforderlich</option>
-                    <option value="waived">befreit (außer Minderjährigenstufe)</option>
-                  </select>
-                </label>
-                <label class="sm:col-span-2"><span class="mb-1 block text-xs font-semibold">Begründung</span>
-                  <input v-model="trustReasonDraft[entry.membershipId]" maxlength="500" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" />
-                </label>
-                <label><span class="mb-1 block text-xs font-semibold">Befristet bis</span>
-                  <input v-model="trustExpiryDraft[entry.membershipId]" type="date" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" />
-                </label>
-                <div class="flex items-end">
-                  <button
-                    type="button"
-                    :disabled="trustSubmitting === entry.membershipId"
-                    class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-2 text-[10px] font-semibold disabled:opacity-60"
-                    @click="saveTrust(entry, member.userId)"
-                  >
-                    {{ trustSubmitting === entry.membershipId ? 'Wird gespeichert …' : 'Speichern' }}
-                  </button>
-                </div>
-                <p v-if="trustError" class="text-xs text-amber-800 sm:col-span-2">{{ trustError }}</p>
-              </div>
-            </div>
-          </div>
-        </div>
-        <p v-if="!members.length" class="p-8 text-center text-xs text-[#9aa096]">Noch seid ihr allein hier.</p>
-      </section>
+      <MemberList
+        :members="members"
+        :expanded-membership-id="expandedMembershipId"
+        :role-draft="roleDraft"
+        :expiry-draft="expiryDraft"
+        :role-change-error="roleChangeError"
+        :role-change-submitting="roleChangeSubmitting"
+        :expiry-submitting="expirySubmitting"
+        :trust-submit-allowed-draft="trustSubmitAllowedDraft"
+        :trust-requirement-draft="trustRequirementDraft"
+        :trust-reason-draft="trustReasonDraft"
+        :trust-expiry-draft="trustExpiryDraft"
+        :trust-submitting="trustSubmitting"
+        :trust-error="trustError"
+        :scope-name="scopeName"
+        :can-manage-trust="canManageTrust"
+        :toggle-expanded="toggleExpanded"
+        :remove-membership="removeMembership"
+        :available-roles-for="availableRolesFor"
+        :change-role="changeRole"
+        :set-expiry="setExpiry"
+        :save-trust="saveTrust"
+      />
 
       <section v-if="invitations.length" class="card p-6">
         <h2 class="mb-4 font-display text-base font-bold">Offene Einladungen</h2>
