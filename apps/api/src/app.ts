@@ -259,16 +259,14 @@ import { mapLlmProviderConfigurationRow } from './llmProviders.js'
 import { fetchPublicUrl, isAllowedOutboundUrl, OutboundFetchError } from './outboundFetch.js'
 import { byteaToBuffer, ciphertextToBytea, createChainSignerFromEnvironment, createSecretBoxFromEnvironment } from './secretBox.js'
 import { createServiceClient, createUserClient } from './supabase.js'
+import type { ApiRouteContext, MediaUploadService, SupabaseClientFactory } from './routes/context.js'
+
+export type { MediaUploadService, SupabaseClientFactory } from './routes/context.js'
 
 // Injectable the same way orchestrator/uploads/roleProvider already are: routes that create
 // an organization or its profile need a real Postgres round-trip (RLS, the owner-limit
 // enforced inside create_organization, the responsible-person trigger), which a test should
 // fake rather than require a live Supabase instance for `pnpm test`.
-export interface SupabaseClientFactory {
-  forUser(accessToken: string): SupabaseClient
-  forService(): SupabaseClient
-}
-
 export interface BuildAppOptions {
   logger?: boolean
   uploads?: MediaUploadService
@@ -282,11 +280,6 @@ export interface BuildAppOptions {
   // ein MetaPublisher braucht das entschluesselte Connection-Token, kann also nicht einmalig beim
   // Start konstruiert werden wie die anderen Injectables hier.
   publisher?: SocialPublisher
-}
-
-export interface MediaUploadService {
-  create(input: { organizationId: string; departmentId: string; assetId: string; filename: string; mimeType: string; byteSize: number }): Promise<{ uploadUrl: string; objectPath: string; expiresAt: string }>
-  complete(input: { assetId: string; sha256: string }): Promise<{ accepted: true }>
 }
 
 class LocalUploadService implements MediaUploadService {
@@ -1351,6 +1344,19 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       accessToken,
       ...(platform === 'instagram' ? { instagramAccountId: externalAccountId } : { facebookPageId: externalAccountId }),
     })
+  }
+  const context: ApiRouteContext = {
+    environment,
+    uploads,
+    supabaseClients,
+    roleProvider,
+    platformAdminProvider,
+    emailSender,
+    metaOAuthClient,
+    requireAuth,
+    requirePermission,
+    requirePlatformAdmin,
+    createPublisherForConnection,
   }
 
   // Genau der eine Ursprung, unter dem das Frontend laeuft -- dieselbe Quelle wie fuer die
