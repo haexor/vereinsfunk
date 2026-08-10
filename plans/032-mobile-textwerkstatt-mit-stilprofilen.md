@@ -86,11 +86,12 @@ The creation request becomes a small composition-session command:
 {
   organizationId, departmentId, teamId?, presetSlug, communicationGoal,
   requestedFormats: ['text_post' | 'photo_post' | 'video_post'],
+  targetPlatforms: string[] /* non-empty, validated channel/platform keys */,
   styleProfileId?, sourceMaterial, mediaAssetIds?: string[]
 }
 ```
 
-The client validates with Zod before sending; the API independently validates membership, `post.create`, asset ownership, asset readiness and scope. It stores the original input in `submissions` and only IDs in the outbox workflow. Existing historic formats/slugs remain readable; do not mutate old post data just to remove `reel`.
+`requestedFormats` and `targetPlatforms` are separate dimensions: the former is the presentation type from this section, the latter the concrete channel selection `post_variants` already stores per platform (`202608030001:21-85`). The client validates with Zod before sending; the API independently validates membership, `post.create`, asset ownership, asset readiness and scope, and checks each requested platform's capability against the chosen format before generation — an incompatible pairing (e.g. Instagram text-only) is rejected here, not silently converted. The generator and the worker use the same platform list to produce one `post_variants` row per platform. It stores the original input in `submissions` and only IDs in the outbox workflow. Existing historic formats/slugs remain readable; do not mutate old post data just to remove `reel`.
 
 ### 2. Style profiles and snapshots
 
@@ -105,7 +106,9 @@ Create `content_style_profiles` with `id`, `organization_id`, optional `departme
 
 `additionalInstructions` is a constrained editorial preference, not an executable system prompt. Reject person-name fields and do not persist an unstructured “write like …” directive. The API resolves the closest allowed scope; scope administrators may create/edit profiles only where they can manage policy/content configuration. Add explicit permission(s) if existing `department.manage` is too broad; do not grant contributors configuration rights by accident.
 
-When a draft is accepted, store a complete `style_profile_snapshot`, a `prompt_template_version`, the selected provider model identifier and provider configuration ID (not key), plus a deterministic input hash on the new `post_version` or a linked immutable `post_generation_provenance` record. Persist no raw provider prompt, original media bytes, secret or free-form chain-of-thought. The effective configuration snapshot continues to include content policy and required hashtags so an approved version is reproducible.
+The imitation rule from “Produktentscheidung” is enforced at the API boundary, not only translated by the UI: every free-text field a user or an organisation controls — `description`, `avoid_rules`, `additionalInstructions`, and the bounded revision instruction in section 3 — is checked server-side for person-imitation phrasing (“wie Person X”, named public figures, claimed authorship or endorsement) before it is persisted or forwarded to the generator. A direct API call bypassing the UI's own rewrite must be rejected the same way. Provider responses get the same check as part of `assertGroundedPost` before a candidate is shown: an output that names or imitates a real person fails closed like an ungrounded claim. Steps 2 and 3 each add rejection tests for this.
+
+When a draft is accepted, store a complete `style_profile_snapshot`, a `prompt_template_version`, the selected provider model identifier, the provider configuration ID (not key) and an immutable hash of the effective non-secret provider parameters actually used (endpoint, model, temperature/limits and similar), plus a deterministic input hash on the new `post_version` or a linked immutable `post_generation_provenance` record. The hash matters because `llm_provider_configurations` is a live, editable row (`2026080502_platform_administration.sql`): an admin changing it later must not silently rewrite what an already-approved version claims to be reproducible from. Persist no raw provider prompt, original media bytes, secret or free-form chain-of-thought. The effective configuration snapshot continues to include content policy and required hashtags so an approved version is reproducible.
 
 ### 3. Generation and iteration contracts
 
@@ -118,7 +121,7 @@ Extend the content engine with a provider-neutral `StructuredContentGenerator`. 
 
 The custom profile and revision instruction are data, never higher-priority instructions. On conflicting user text, preserve the hard layer. Validate the returned JSON with Zod and `assertGroundedPost`; malformed, unsupported or ungrounded output must fail closed and show a recoverable status, not be inserted as a post version.
 
-Use the completed Hatchet outbox from Plan 004 for external LLM calls. The API returns a composition/session ID and the UI subscribes or polls status, so the mobile screen appears responsive while the LLM runs. Hatchet receives the ID, source revision, correlation ID and idempotency key only; the worker reloads current state via service role, invokes the selected provider with a timeout/cost limit, writes the result and emits a safe status. A retry must not produce a second accepted version; its key includes session/version/input hash.
+Use the completed Hatchet outbox from Plan 004 for external LLM calls. The API returns a composition/session ID and the UI subscribes or polls status, so the mobile screen appears responsive while the LLM runs. The composition session stores the accepted input at creation time — source facts revision, resolved style profile snapshot and, for a revision, the current version ID and instruction — together with their combined input hash; Hatchet receives only the session ID, that revision, correlation ID and idempotency key. The worker loads this stored snapshot, never re-reads facts/style/version as they stand at execution time: if either changed between session creation and worker run, the generated candidate must still match what the session claims it was built from. The worker invokes the selected provider with a timeout/cost limit and writes the result guarded by a compare-and-set on the session's expected status (`pending` → `completed`/`failed`), so a stale or duplicate worker run cannot overwrite a result or move the session out of order. A retry must not produce a second accepted version; its key includes session/version/input hash.
 
 For a first generation and every AI revision, keep a candidate separate from the immutable accepted version. The user can compare it with the current version and choose **Übernehmen**, **erneut anweisen** or **selbst bearbeiten**. Only **Übernehmen** creates `post_versions` vN+1 (`created_by_type='llm'`); saving manual editor text creates vN+1 (`created_by_type='user'`). Both atomically update `posts.current_version_id`, invalidate prior approval where applicable and audit the action. Never update vN in place. An abandoned candidate may be retained as a short-lived, access-controlled generation session for reload/retry, then removed under a documented retention rule; it must never become publishable.
 
@@ -148,6 +151,8 @@ Replace the wizard as the default flow with a single, thumb-friendly composition
 - result: editable caption first, an expandable facts/quality card, selected-style badge, candidate-vs-current diff, and actions for direct save, one-line change request, regenerate and submit for approval;
 - all controls have 44px minimum targets, keyboard focus, screen-reader labels, explicit error text, no hover-only states, and no data loss when changing profile or navigating back.
 
+The auto-saved draft is scoped to the current user, organisation and browser session, not just size-bounded: it stores only the fields needed to resume (text, chosen goal/format/platforms/style, attachment IDs — never media bytes or a signed URL, which expire and would leak through a shared or reused device), and it is cleared on logout, on switching user or organisation, and when the session expires. The “Mehr” sheet's advanced fields fall under the same auto-save and the same clearing rules. Step 6 adds tests for these transitions.
+
 Build a real `/beitraege` list that shows status, current version, selected mode and latest update; its card opens the editor/resume route. The approval CTA calls `POST /v1/post-versions/:id/request-approval` for the chosen current version, then either shows the required approver state or offers scheduling only after approval. It must not merely navigate to `/freigaben`.
 
 ## Steps
@@ -160,7 +165,7 @@ Write the Zod schemas and type exports for text/photo/video presentation, image/
 
 ### Step 2: Add tenant-safe style profiles and provenance
 
-Create the additive migration, RLS policies and pgTAP tests described in “Target design”. Ensure each profile’s department/team belongs to its organisation with composite FKs. Add service-role-only writes where that matches existing post/configuration mutations and user-role read policies no broader than necessary. Add profile CRUD routes with Zod plus audit events, and the compact mobile profile picker/management UI.
+Create the additive migration, RLS policies and pgTAP tests described in “Target design”. Ensure each profile’s department/team belongs to its organisation with composite FKs. Add service-role-only writes where that matches existing post/configuration mutations and user-role read policies no broader than necessary. Add profile CRUD routes with Zod plus audit events, server-side rejection of person-imitation phrasing in every free-text profile field, and the compact mobile profile picker/management UI.
 
 Write an ADR recording the non-imitative style-profile rule, priority order of prompt layers, data minimisation and version snapshot requirement. Update the product plan to state that v1 generates text and supports user-provided photos/videos; it never generates a video.
 
@@ -170,17 +175,17 @@ Write an ADR recording the non-imitative style-profile rule, priority order of p
 
 Keep `FakeContentGenerator` for deterministic local tests. Add an injected production generator behind the existing `ContentGenerator` boundary; the API/worker selects only an active platform-admin configuration and decrypts the provider secret only server-side. Use provider-native structured output where the configured protocol supports it, then Zod-parse as a second boundary. Include a provider health/error taxonomy with timeouts and redacted, structured telemetry; never log caption/source text, API keys, full prompts or media URLs.
 
-Create a checked-in, synthetic evaluation fixture set: terse bullet input, full pasted post, missing facts, forbidden topic, required hashtag, a warm club-life example, a light-humour example, a custom profile, a malicious instruction embedded in source text, and an image-context note. Assert schema, source IDs, no invented claim, style constraints, absence of banned filler phrases, token/cost ceiling and correct “ask for details” outcome. Do not use real member names or photos in fixtures.
+Create a checked-in, synthetic evaluation fixture set: terse bullet input, full pasted post, missing facts, forbidden topic, required hashtag, a warm club-life example, a light-humour example, a custom profile, a malicious instruction embedded in source text, a provider response imitating a named person, and an image-context note. Assert schema, source IDs, no invented claim, style constraints, absence of banned filler phrases, token/cost ceiling and correct “ask for details” outcome. Do not use real member names or photos in fixtures.
 
-**Verify**: `pnpm --filter @vereinsfunk/content-engine test && pnpm --filter @vereinsfunk/api test` → exit 0; tests prove an ungrounded provider response and prompt-injection-like source text cannot create a candidate/version.
+**Verify**: `pnpm --filter @vereinsfunk/content-engine test && pnpm --filter @vereinsfunk/api test` → exit 0; tests prove an ungrounded provider response, a person-imitation response and prompt-injection-like source text cannot create a candidate/version.
 
 ### Step 4: Implement composition jobs, candidates and immutable revisions
 
-After Plan 004 supplies a working outbox and worker, add composition-session persistence/status and the ID-only `generate-text-post`/`revise-text-post` workflows. The API must create the session transactionally with its outbox record, authorise it by post scope, and return an idempotent session handle. The worker reloads facts/style/current version, writes a candidate or controlled failure, and never writes an accepted version as a side effect of generation.
+After Plan 004 supplies a working outbox and worker, add composition-session persistence/status and the ID-only `generate-text-post`/`revise-text-post` workflows. The API must create the session transactionally with its outbox record and its accepted input snapshot (facts revision, style snapshot, current version reference and input hash), authorise it by post scope, and return an idempotent session handle. The worker loads that stored snapshot rather than current state, writes a candidate or controlled failure guarded by compare-and-set on session status, and never writes an accepted version as a side effect of generation.
 
 Add explicit API commands to accept a candidate and to save manual content. Implement the post/version write as one transaction/RPC, including version-number allocation, current-version update, media associations, previous-approval invalidation and audit event. Do not copy the current `apps/api/src/app.ts` sequence of several PostgREST writes; the race-sensitive revision path needs a database transaction. Use compare-and-set/session state to prevent double acceptance.
 
-**Verify**: `pnpm --filter @vereinsfunk/api test && pnpm --filter @vereinsfunk/worker test && pnpm db:test` → tests cover duplicate trigger, two simultaneous accepts, AI acceptance, manual save, candidate abandonment, edit after approval, tenant denial and revision failure without a partial post.
+**Verify**: `pnpm --filter @vereinsfunk/api test && pnpm --filter @vereinsfunk/worker test && pnpm db:test` → tests cover duplicate trigger, two simultaneous accepts, AI acceptance, manual save, candidate abandonment, edit after approval, tenant denial, revision failure without a partial post, and a stale worker write losing compare-and-set against session status.
 
 ### Step 5: Deliver device-first video compression, private media attachment and approval snapshots
 
@@ -190,9 +195,9 @@ First execute and document the browser-compression spike described above. Implem
 
 ### Step 6: Deliver and test the mobile editor end-to-end
 
-Extract focused Vue components from `erstellen.vue` (composer, style picker, photo strip, generation state, candidate diff, quality card and editor) and use the existing `useApiClient` boundary. Preserve unsent input locally per session with a bounded draft strategy and clear recovery/discard controls. Add `beitraege.vue` list/load/resume flow and make approval an actual API action.
+Extract focused Vue components from `erstellen.vue` (composer, style picker, photo strip, generation state, candidate diff, quality card and editor) and use the existing `useApiClient` boundary. Preserve unsent input locally, scoped to user/organisation/session as specified in “Mobile interaction design”, with a bounded draft strategy, automatic clearing on logout/user/tenant switch and session expiry, and clear recovery/discard controls. Add `beitraege.vue` list/load/resume flow and make approval an actual API action.
 
-Write component tests for narrow and wide viewports, keyboard traversal, 44px action controls, changing profiles without losing text, photo/video upload progress, local compression, fallback disclosure, cancellation, generation retry, direct edit, AI revision and approval submission. Add one authenticated browser smoke test when the repository’s browser test harness is available; otherwise document a manual mobile-viewport script for iOS Safari and Android Chrome in the plan’s implementation notes.
+Write component tests for narrow and wide viewports, keyboard traversal, 44px action controls, changing profiles without losing text, photo/video upload progress, local compression, fallback disclosure, cancellation, generation retry, direct edit, AI revision, approval submission, and draft-storage clearing on logout, user switch and session expiry. Add one authenticated browser smoke test when the repository’s browser test harness is available; otherwise document a manual mobile-viewport script for iOS Safari and Android Chrome in the plan’s implementation notes.
 
 **Verify**: `pnpm --filter @vereinsfunk/web test && pnpm --filter @vereinsfunk/web typecheck && pnpm check` → exit 0. On a 360px viewport a user can make and submit a text-only post, photo post and supported video post without horizontal scrolling or a desktop-only interaction.
 
