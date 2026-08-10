@@ -33,7 +33,11 @@ create table public.content_style_profiles (
   check (team_id is null or department_id is not null),
   check (cardinality(avoid_rules) <= 30),
   check (not (name ~* '\m(schreib(e)? wie|im stil von|write like|imitier(e)?)\M')),
-  check (not (description ~* '\m(schreib(e)? wie|im stil von|write like|imitier(e)?)\M'))
+  check (not (description ~* '\m(schreib(e)? wie|im stil von|write like|imitier(e)?)\M')),
+  -- The five curated system slugs stay reviewed application registry data (see comment
+  -- above); without this check the Zod-only reservation in CreateCustomStyleProfileRequestSchema
+  -- would be the sole guard, and any writer that bypasses it could shadow a system profile.
+  check (slug not in ('klar_erklaerend', 'warm_gemeinschaftlich', 'lebendig_sportlich', 'leicht_humorvoll', 'feierlich_wertschaetzend'))
 );
 create unique index content_style_profiles_organization_slug_unique
   on public.content_style_profiles (organization_id, slug) where department_id is null;
@@ -49,11 +53,17 @@ create table public.composition_sessions (
   team_id uuid,
   post_id uuid,
   preset_slug text not null check (preset_slug ~ '^[a-z][a-z0-9]*([_-][a-z0-9]+)*$'),
-  communication_goal text not null,
+  communication_goal text not null check (communication_goal in (
+    'inform', 'inspire', 'thank', 'invite', 'recruit', 'educate', 'strengthen_community'
+  )),
   requested_formats jsonb not null check (
     jsonb_typeof(requested_formats) = 'array'
     and jsonb_array_length(requested_formats) between 1 and 3
     and requested_formats <@ '["text_post", "photo_post", "video_post"]'::jsonb
+    -- Mirrors CreateCompositionSessionSchema's superRefine: a user-uploaded video is never
+    -- misrepresented as an AI-generated Reel, so video_post cannot share a session with
+    -- another presentation type.
+    and not (requested_formats @> '["video_post"]'::jsonb and jsonb_array_length(requested_formats) > 1)
   ),
   source_material jsonb not null check (jsonb_typeof(source_material) = 'object'),
   style_profile_id uuid,
@@ -129,7 +139,8 @@ create table public.post_generation_provenance (
   style_profile_snapshot jsonb not null check (jsonb_typeof(style_profile_snapshot) = 'object'),
   prompt_template_version text not null check (char_length(prompt_template_version) between 1 and 120),
   provider_model_id text not null check (char_length(provider_model_id) between 1 and 200),
-  provider_configuration_id uuid,
+  -- ADR-010: "Provider-Modell und -Konfigurations-ID" are both required for reproducibility.
+  provider_configuration_id uuid not null,
   input_hash text not null check (input_hash ~ '^[a-f0-9]{64}$'),
   created_at timestamptz not null default now(),
   unique (organization_id, post_version_id),
@@ -166,14 +177,27 @@ create policy content_style_profiles_select on public.content_style_profiles for
   or (team_id is null and department_id is not null and authz.is_department_member(department_id))
   or (department_id is null and authz.is_organization_member(organization_id))
 );
+-- Same team_id branch as posts/submissions/post_versions (2026080603_post_visibility.sql):
+-- a team_manager with only a team_memberships row (no department_memberships row) must still
+-- see and edit their own team's sessions/candidates/provenance.
 create policy composition_sessions_select on public.composition_sessions for select to authenticated using (
-  created_by = auth.uid() or authz.has_department_permission(department_id, 'post.edit')
+  created_by = auth.uid()
+  or authz.has_department_permission(department_id, 'post.edit')
+  or (team_id is not null and authz.has_team_permission(team_id, 'post.edit'))
 );
 create policy composition_session_media_select on public.composition_session_media for select to authenticated using (
-  exists (select 1 from public.composition_sessions session where session.id = composition_session_id and session.organization_id = composition_session_media.organization_id and (session.created_by = auth.uid() or authz.has_department_permission(session.department_id, 'post.edit')))
+  exists (select 1 from public.composition_sessions session where session.id = composition_session_id and session.organization_id = composition_session_media.organization_id and (
+    session.created_by = auth.uid()
+    or authz.has_department_permission(session.department_id, 'post.edit')
+    or (session.team_id is not null and authz.has_team_permission(session.team_id, 'post.edit'))
+  ))
 );
 create policy generation_candidates_select on public.generation_candidates for select to authenticated using (
-  exists (select 1 from public.composition_sessions session where session.id = composition_session_id and session.organization_id = generation_candidates.organization_id and (session.created_by = auth.uid() or authz.has_department_permission(session.department_id, 'post.edit')))
+  exists (select 1 from public.composition_sessions session where session.id = composition_session_id and session.organization_id = generation_candidates.organization_id and (
+    session.created_by = auth.uid()
+    or authz.has_department_permission(session.department_id, 'post.edit')
+    or (session.team_id is not null and authz.has_team_permission(session.team_id, 'post.edit'))
+  ))
 );
 create policy post_generation_provenance_select on public.post_generation_provenance for select to authenticated using (
   exists (
@@ -181,7 +205,10 @@ create policy post_generation_provenance_select on public.post_generation_proven
     join public.posts post on post.id = version.post_id and post.organization_id = version.organization_id
     where version.id = post_generation_provenance.post_version_id
       and version.organization_id = post_generation_provenance.organization_id
-      and authz.is_department_member(post.department_id)
+      and (
+        authz.is_department_member(post.department_id)
+        or (post.team_id is not null and authz.has_team_membership(post.team_id))
+      )
   )
 );
 
@@ -203,5 +230,9 @@ create trigger post_generation_provenance_immutable before update or delete on p
 
 create index composition_sessions_scope_idx on public.composition_sessions(organization_id, department_id, created_at desc);
 create index generation_candidates_session_idx on public.generation_candidates(organization_id, composition_session_id, created_at desc);
+-- Support generation_candidates' on delete restrict FKs to post_versions: without these,
+-- deleting/updating a post_versions row forces a sequential scan to check for references.
+create index generation_candidates_base_post_version_idx on public.generation_candidates(base_post_version_id) where base_post_version_id is not null;
+create index generation_candidates_accepted_post_version_idx on public.generation_candidates(accepted_post_version_id) where accepted_post_version_id is not null;
 
 commit;

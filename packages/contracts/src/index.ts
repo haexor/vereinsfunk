@@ -20,14 +20,20 @@ export const CompressionProvenanceSchema = z.object({
   method: CompressionMethodSchema,
   profileVersion: z.string().trim().min(1).max(80),
   inputBytes: z.int().nonnegative(),
-  outputBytes: z.int().positive(),
+  outputBytes: z.int().positive().nullable(),
   container: z.literal('mp4'),
   videoCodec: z.literal('h264'),
   audioCodec: z.literal('aac').nullable(),
-  width: z.int().positive().max(1080),
-  height: z.int().positive().max(1080),
-  durationMs: z.int().positive().max(180_000),
+  width: z.int().positive().max(1080).nullable(),
+  height: z.int().positive().max(1080).nullable(),
+  durationMs: z.int().positive().max(180_000).nullable(),
   failureReason: CompressionFailureReasonSchema.nullable().default(null),
+}).superRefine((provenance, context) => {
+  // A failed/cancelled compression never produced real output bytes, dimensions or duration --
+  // only a successful run must report them.
+  if (provenance.failureReason === null && (provenance.outputBytes === null || provenance.width === null || provenance.height === null || provenance.durationMs === null)) {
+    context.addIssue({ code: 'custom', message: 'outputBytes, width, height and durationMs are required when compression succeeded' })
+  }
 })
 export const ImageUploadMetadataSchema = z.object({
   kind: z.literal('image'),
@@ -49,8 +55,10 @@ export const VideoUploadMetadataSchema = z.object({
 })
 export const AttachmentUploadMetadataSchema = z.discriminatedUnion('kind', [ImageUploadMetadataSchema, VideoUploadMetadataSchema])
 
+// Mirrors the DB CHECKs on content_style_profiles.name/description (2026081003_text_workshop_foundation.sql).
+const PERSON_IMITATION_PATTERN = /\b(?:schreib(?:e)?\s+wie|im\s+stil\s+von|write\s+like|imitier(?:e)?)\b/i
 const StyleProfileInstructionSchema = z.string().trim().max(1_000).refine(
-  (value) => !/\b(?:schreib(?:e)?\s+wie|im\s+stil\s+von|write\s+like|imitier(?:e)?)\b/i.test(value),
+  (value) => !PERSON_IMITATION_PATTERN.test(value),
   'Style profiles describe editorial attributes, not people to imitate',
 )
 export const StyleProfileRulesSchema = z.object({
@@ -76,9 +84,9 @@ export const StyleProfileScopeSchema = z.object({
 export const CustomStyleProfileSchema = StyleProfileScopeSchema.extend({
   id: UuidSchema,
   slug: ContentPresetSlugSchema,
-  name: z.string().trim().min(1).max(80).refine((value) => !/\b(?:wie|von)\b/i.test(value), 'Profile names must not reference a person to imitate'),
+  name: z.string().trim().min(1).max(80).refine((value) => !PERSON_IMITATION_PATTERN.test(value), 'Profile names must not reference a person to imitate'),
   kind: z.literal('custom'),
-  description: z.string().trim().min(1).max(500),
+  description: z.string().trim().min(1).max(500).refine((value) => !PERSON_IMITATION_PATTERN.test(value), 'Profile descriptions must not reference a person to imitate'),
   styleRules: StyleProfileRulesSchema,
   avoidRules: z.array(z.string().trim().min(1).max(160)).max(30),
   isActive: z.boolean(),
@@ -88,16 +96,16 @@ export const CustomStyleProfileSchema = StyleProfileScopeSchema.extend({
 })
 export const CreateCustomStyleProfileRequestSchema = z.object({
   organizationId: UuidSchema,
-  departmentId: UuidSchema.nullable(),
-  teamId: UuidSchema.nullable(),
+  departmentId: UuidSchema.nullable().optional(),
+  teamId: UuidSchema.nullable().optional(),
   slug: ContentPresetSlugSchema,
-  name: z.string().trim().min(1).max(80).refine((value) => !/\b(?:wie|von)\b/i.test(value), 'Profile names must not reference a person to imitate'),
-  description: z.string().trim().min(1).max(500),
+  name: z.string().trim().min(1).max(80).refine((value) => !PERSON_IMITATION_PATTERN.test(value), 'Profile names must not reference a person to imitate'),
+  description: z.string().trim().min(1).max(500).refine((value) => !PERSON_IMITATION_PATTERN.test(value), 'Profile descriptions must not reference a person to imitate'),
   styleRules: StyleProfileRulesSchema,
   avoidRules: z.array(z.string().trim().min(1).max(160)).max(30),
 }).superRefine((profile, context) => {
   if (profile.teamId && !profile.departmentId) context.addIssue({ code: 'custom', message: 'teamId requires departmentId' })
-  if (profile.slug === 'klar_erklaerend' || profile.slug === 'warm_gemeinschaftlich' || profile.slug === 'lebendig_sportlich' || profile.slug === 'leicht_humorvoll' || profile.slug === 'feierlich_wertschaetzend') {
+  if ((SystemStyleProfileSlugSchema.options as readonly string[]).includes(profile.slug)) {
     context.addIssue({ code: 'custom', message: 'System style profile slugs are reserved' })
   }
 })
@@ -112,6 +120,7 @@ export const CreateCompositionSessionSchema = z.object({
   communicationGoal: CommunicationGoalSchema,
   requestedFormats: z.array(CompositionFormatSchema).min(1).max(3).superRefine((formats, context) => {
     if (formats.includes('video_post') && formats.length > 1) context.addIssue({ code: 'custom', message: 'video_post cannot be combined with another presentation type' })
+    if (new Set(formats).size !== formats.length) context.addIssue({ code: 'custom', message: 'requestedFormats must not contain duplicates' })
   }),
   styleProfileId: UuidSchema.nullable().optional(),
   sourceMaterial: z.lazy(() => SourceMaterialSchema),

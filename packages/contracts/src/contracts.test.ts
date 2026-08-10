@@ -6,21 +6,21 @@ import {
   AnalyticsScopeQuerySchema,
   AnalyticsTimeseriesQuerySchema,
   BrandAssetSchema,
+  CompressionProvenanceSchema,
   ConfirmBrandAssetLicenseRequestSchema,
   ContentSuggestionSchema,
   CreateBrandAssetRequestSchema,
-  CreateDirectoryPersonRequestSchema,
-  CreateIntegrationSourceRequestSchema,
-  CreateInvitationRequestSchema,
   CreateCompositionSessionSchema,
   CreateCustomStyleProfileRequestSchema,
+  CreateDirectoryPersonRequestSchema,
   CreateGenerationCommandSchema,
+  CreateIntegrationSourceRequestSchema,
+  CreateInvitationRequestSchema,
   CreateMembershipRequestSchema,
   CreateSubmissionSchema,
   DepartmentSchema,
   DirectoryPersonSchema,
   GeneratedPostSchema,
-  VideoUploadMetadataSchema,
   InvitationSchema,
   MemberRoleEntrySchema,
   OnboardingStateSchema,
@@ -38,6 +38,7 @@ import {
   UpdateDirectoryPersonRequestSchema,
   UpdateMembershipExpiryRequestSchema,
   UpdatePolicySettingRequestSchema,
+  VideoUploadMetadataSchema,
 } from './index.js'
 
 const org = '11111111-1111-4111-8111-111111111111'
@@ -104,6 +105,7 @@ describe('text workshop contracts', () => {
     expect(input.requestedFormats).toEqual(['video_post'])
     expect(CreateCompositionSessionSchema.safeParse({ ...input, requestedFormats: ['reel'] }).success).toBe(false)
     expect(CreateSubmissionSchema.safeParse({ ...input, requestedFormats: ['reel'] }).success).toBe(true)
+    expect(CreateCompositionSessionSchema.safeParse({ ...input, requestedFormats: ['text_post', 'text_post'] }).success).toBe(false)
   })
 
   it('requires the supported, bounded upload-video delivery profile', () => {
@@ -117,8 +119,29 @@ describe('text workshop contracts', () => {
     const profile = { organizationId: org, departmentId: department, teamId: null, slug: 'unser-ton', name: 'Unser Ton', description: 'Warm und konkret', styleRules, avoidRules: ['Floskeln'] }
     expect(CreateCustomStyleProfileRequestSchema.safeParse(profile).success).toBe(true)
     expect(CreateCustomStyleProfileRequestSchema.safeParse({ ...profile, styleRules: { ...styleRules, additionalInstructions: 'Schreibe wie eine bekannte Person' } }).success).toBe(false)
+    // description gets the same person-imitation check as name, not just styleRules.additionalInstructions.
+    expect(CreateCustomStyleProfileRequestSchema.safeParse({ ...profile, description: 'Schreibe wie unser Vorstand' }).success).toBe(false)
+    // "wie"/"von" as ordinary German words must not trip the check -- only the imitation phrases do.
+    expect(CreateCustomStyleProfileRequestSchema.safeParse({ ...profile, name: 'Wie wir kommunizieren' }).success).toBe(true)
+    expect(CreateCustomStyleProfileRequestSchema.safeParse({ ...profile, description: 'Neuigkeiten von der Vorstandssitzung' }).success).toBe(true)
+    expect(CreateCustomStyleProfileRequestSchema.safeParse({ ...profile, slug: 'klar_erklaerend' }).success).toBe(false)
+    // departmentId/teamId may be omitted entirely for an organization-wide profile, not just set to null.
+    const orgWideProfile = { organizationId: org, slug: 'unser-ton', name: 'Unser Ton', description: 'Warm und konkret', styleRules, avoidRules: ['Floskeln'] }
+    expect(CreateCustomStyleProfileRequestSchema.safeParse(orgWideProfile).success).toBe(true)
     expect(CreateGenerationCommandSchema.safeParse({ sessionId: org, generationIntent: 'revise', revisionInstruction: 'Bitte kürzer und mit konkretem Termin.' }).success).toBe(true)
     expect(CreateGenerationCommandSchema.safeParse({ sessionId: org, generationIntent: 'revise' }).success).toBe(false)
+  })
+
+  it('requires compression output measurements only when compression succeeded', () => {
+    const succeeded = {
+      method: 'device' as const, profileVersion: 'v1', inputBytes: 2_000_000, outputBytes: 900_000,
+      container: 'mp4' as const, videoCodec: 'h264' as const, audioCodec: 'aac' as const,
+      width: 1080, height: 608, durationMs: 20_000, failureReason: null,
+    }
+    expect(CompressionProvenanceSchema.safeParse(succeeded).success).toBe(true)
+    expect(CompressionProvenanceSchema.safeParse({ ...succeeded, outputBytes: null }).success).toBe(false)
+    const failed = { ...succeeded, outputBytes: null, width: null, height: null, durationMs: null, failureReason: 'memory_guardrail' as const }
+    expect(CompressionProvenanceSchema.safeParse(failed).success).toBe(true)
   })
 })
 
