@@ -21,7 +21,7 @@ import { mapInvitationRow, membershipTableFor } from '../apiMappers.js'
 import { buildInvitationEmail, generateInvitationToken } from '../invitations.js'
 import type { PermissionScope } from '../auth.js'
 import type { ApiRouteContext } from './context.js'
-import { fetchAllRows, resolveMembershipScope, toPermissionScope } from './shared.js'
+import { createAuditRecorder, fetchAllRows, resolveMembershipScope, toPermissionScope } from './shared.js'
 
 // POST /v1/invitations nimmt organizationId/departmentId/teamId direkt vom Client entgegen.
 // Ungeprueft wuerde requirePermission auf einer Scope-Kette pruefen, die client-seitig frei
@@ -69,6 +69,7 @@ async function resolveScopeName(client: SupabaseClient, scope: PermissionScope, 
 
 export function registerMemberRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients, roleProvider, emailSender, environment } = context
+  const recordAuditEvent = createAuditRecorder(supabaseClients)
 
   app.get('/v1/organizations/:id/members', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
@@ -76,13 +77,13 @@ export function registerMemberRoutes(app: FastifyInstance, context: ApiRouteCont
     const client = supabaseClients.forUser(request.auth!.accessToken)
     const [orgRows, deptRows, teamRows] = await Promise.all([
       fetchAllRows<{ id: string; user_id: string; role: string; expires_at: string | null }>((from, to) =>
-        client.from('organization_memberships').select('id, user_id, role, expires_at').eq('organization_id', params.id).range(from, to),
+        client.from('organization_memberships').select('id, user_id, role, expires_at').eq('organization_id', params.id).order('id', { ascending: true }).range(from, to),
       ),
       fetchAllRows<{ id: string; user_id: string; role: string; expires_at: string | null; department_id: string }>((from, to) =>
-        client.from('department_memberships').select('id, user_id, role, expires_at, department_id').eq('organization_id', params.id).range(from, to),
+        client.from('department_memberships').select('id, user_id, role, expires_at, department_id').eq('organization_id', params.id).order('id', { ascending: true }).range(from, to),
       ),
       fetchAllRows<{ id: string; user_id: string; role: string; expires_at: string | null; team_id: string; department_id: string }>((from, to) =>
-        client.from('team_memberships').select('id, user_id, role, expires_at, team_id, department_id').eq('organization_id', params.id).range(from, to),
+        client.from('team_memberships').select('id, user_id, role, expires_at, team_id, department_id').eq('organization_id', params.id).order('id', { ascending: true }).range(from, to),
       ),
     ])
 
@@ -178,16 +179,13 @@ export function registerMemberRoutes(app: FastifyInstance, context: ApiRouteCont
       if (insert.error.code === '42501') return reply.code(403).send({ error: 'invite_not_allowed', correlationId: request.id })
       throw insert.error
     }
-    const audit = await supabaseClients.forService().from('audit_events').insert({
-      organization_id: scope.organizationId,
-      actor_user_id: request.auth!.userId,
+    await recordAuditEvent(request, {
+      organizationId: scope.organizationId,
       action: 'membership.created',
-      entity_type: table,
-      entity_id: insert.data.id,
-      correlation_id: request.id,
+      entityType: table,
+      entityId: insert.data.id as string,
       metadata: { userId: input.userId, role: input.role, scope: input.scope, scopeId: input.scopeId },
     })
-    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
     const canRemoveNewRole = canRemoveRole(roles, insert.data.role as Role)
     return reply.code(201).send(
       MemberRoleEntrySchema.parse({
@@ -246,16 +244,13 @@ export function registerMemberRoutes(app: FastifyInstance, context: ApiRouteCont
     }
     const result = rpc.data as { membershipId: string; userId: string; role: string; expiresAt: string | null; fromRole: string }
     const scopeId = query.scope === 'organization' ? scope.organizationId : query.scope === 'department' ? scope.departmentId! : (existing.data.team_id as string)
-    const audit = await supabaseClients.forService().from('audit_events').insert({
-      organization_id: scope.organizationId,
-      actor_user_id: request.auth!.userId,
+    await recordAuditEvent(request, {
+      organizationId: scope.organizationId,
       action: 'membership.role_changed',
-      entity_type: table,
-      entity_id: result.membershipId,
-      correlation_id: request.id,
+      entityType: table,
+      entityId: result.membershipId,
       metadata: { userId: result.userId, fromRole: result.fromRole, toRole: result.role, scope: query.scope, scopeId },
     })
-    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
     const canRemoveNewRole = canRemoveRole(roles, result.role as Role)
     return reply.code(200).send(
       MemberRoleEntrySchema.parse({
@@ -301,16 +296,13 @@ export function registerMemberRoutes(app: FastifyInstance, context: ApiRouteCont
     }
     const result = rpc.data as { membershipId: string; expiresAt: string | null }
     const scopeId = query.scope === 'organization' ? scope.organizationId : query.scope === 'department' ? scope.departmentId! : (existing.data.team_id as string)
-    const audit = await supabaseClients.forService().from('audit_events').insert({
-      organization_id: scope.organizationId,
-      actor_user_id: request.auth!.userId,
+    await recordAuditEvent(request, {
+      organizationId: scope.organizationId,
       action: 'membership.expiry_changed',
-      entity_type: table,
-      entity_id: result.membershipId,
-      correlation_id: request.id,
+      entityType: table,
+      entityId: result.membershipId,
       metadata: { userId: existing.data.user_id, expiresAt: result.expiresAt, scope: query.scope, scopeId },
     })
-    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
     return reply.code(200).send(
       MemberRoleEntrySchema.parse({
         membershipId: result.membershipId, scope: query.scope, scopeId, role: existing.data.role, expiresAt: result.expiresAt,
@@ -381,16 +373,13 @@ export function registerMemberRoutes(app: FastifyInstance, context: ApiRouteCont
       throw del.error
     }
     if (del.data.length === 0) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
-    const audit = await supabaseClients.forService().from('audit_events').insert({
-      organization_id: scope.organizationId,
-      actor_user_id: request.auth!.userId,
+    await recordAuditEvent(request, {
+      organizationId: scope.organizationId,
       action: 'membership.removed',
-      entity_type: table,
-      entity_id: params.id,
-      correlation_id: request.id,
+      entityType: table,
+      entityId: params.id,
       metadata: { userId: existing.data.user_id, role: existing.data.role, scope: query.scope },
     })
-    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
     return reply.code(204).send()
   })
 
@@ -495,16 +484,13 @@ export function registerMemberRoutes(app: FastifyInstance, context: ApiRouteCont
       emailDelivered = false
       request.log.error({ err: error, correlationId: request.id }, 'invitation email delivery failed')
     }
-    const audit = await supabaseClients.forService().from('audit_events').insert({
-      organization_id: scope.organizationId,
-      actor_user_id: request.auth!.userId,
+    await recordAuditEvent(request, {
+      organizationId: scope.organizationId,
       action: 'invitation.created',
-      entity_type: 'invitations',
-      entity_id: insertData.id,
-      correlation_id: request.id,
+      entityType: 'invitations',
+      entityId: insertData.id as string,
       metadata: { email: input.email, role: input.role, departmentId: scope.departmentId ?? null, teamId: scope.teamId ?? null, emailDelivered },
     })
-    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
 
     return reply.code(201).send({ ...InvitationSchema.parse(mapInvitationRow(insertData)), emailDelivered })
   })
@@ -550,16 +536,13 @@ export function registerMemberRoutes(app: FastifyInstance, context: ApiRouteCont
       emailDelivered = false
       request.log.error({ err: error, correlationId: request.id }, 'invitation email delivery failed')
     }
-    const audit = await supabaseClients.forService().from('audit_events').insert({
-      organization_id: scope.organizationId,
-      actor_user_id: request.auth!.userId,
+    await recordAuditEvent(request, {
+      organizationId: scope.organizationId,
       action: 'invitation.resent',
-      entity_type: 'invitations',
-      entity_id: params.id,
-      correlation_id: request.id,
+      entityType: 'invitations',
+      entityId: params.id,
       metadata: { email: existing.data.email, emailDelivered },
     })
-    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
     return reply.code(200).send({ ...InvitationSchema.parse(mapInvitationRow(updateData)), emailDelivered })
   })
 
@@ -593,16 +576,13 @@ export function registerMemberRoutes(app: FastifyInstance, context: ApiRouteCont
       .select('id, organization_id, department_id, team_id, email, role, invited_by, expires_at, accepted_at, revoked_at, last_sent_at, send_count, created_at')
       .single()
     if (update.error) throw update.error
-    const audit = await supabaseClients.forService().from('audit_events').insert({
-      organization_id: scope.organizationId,
-      actor_user_id: request.auth!.userId,
+    await recordAuditEvent(request, {
+      organizationId: scope.organizationId,
       action: 'invitation.revoked',
-      entity_type: 'invitations',
-      entity_id: params.id,
-      correlation_id: request.id,
+      entityType: 'invitations',
+      entityId: params.id,
       metadata: { email: existing.data.email },
     })
-    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
     return reply.code(200).send(InvitationSchema.parse(mapInvitationRow(update.data)))
   })
 

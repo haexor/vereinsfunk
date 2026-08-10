@@ -13,6 +13,12 @@ import type { SupabaseClientFactory } from './context.js'
 // supabase/config.toml caps a single response at max_rows=1000 -- a plain select() on a large
 // organization's membership table would silently truncate the roster. Pages through range()
 // until a page comes back short.
+//
+// Contract: without ORDER BY, Postgres does not guarantee a stable row order between two
+// requests -- concurrent writes or a changed query plan can make page 2 repeat or skip rows from
+// page 1 (gefunden im Code-Review dieses Pakets). Every fetchPage callback MUST add
+// `.order('id', { ascending: true })` (or another column that is both unique and indexed) so
+// pages tile the table exactly once.
 export async function fetchAllRows<T>(
   fetchPage: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
 ): Promise<T[]> {
@@ -30,7 +36,8 @@ export async function fetchAllRows<T>(
 
 // Ein .in() mit unbegrenzt vielen IDs traegt die gesamte Liste in der Anfrage-URL -- dieselbe
 // Grenze wie bei den Profil-Bloecken in GET /members und dem Retention-Lauf. Batcht in Chunks von
-// 100, statt die Ergebnisse einer einzelnen Anfrage zu verwerfen.
+// 100, statt die Ergebnisse einer einzelnen Anfrage zu verwerfen. Derselbe Sortier-Vertrag wie
+// fetchAllRows gilt je Batch.
 export async function fetchAllRowsForIds<T>(
   ids: readonly string[],
   fetchPage: (batch: readonly string[], from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
@@ -104,12 +111,16 @@ export async function isAnyMemberOfOrganization(client: SupabaseClient, userId: 
 // Modul-Singleton: von app.ts (Datenschutz-Routen) und routes/policies.ts (Media-Grants) geteilt,
 // damit beide weiterhin denselben Zaehler pro Praefix-Key benutzen.
 const rateLimitBuckets = new Map<string, { count: number; resetAt: number }>()
+let nextRateLimitSweepAt = 0
 export function checkRateLimit(key: string, limit: number, windowMs: number): boolean {
   const now = Date.now()
   // Diese Routen sind oeffentlich erreichbar; ohne Aufraeumen wuerde jede neue Quell-IP dauerhaft
   // einen Eintrag belegen (gefunden im Code-Review). Nur bei Bedarf durchsuchen, statt bei jedem
-  // Aufruf ueber die ganze Map zu iterieren.
-  if (rateLimitBuckets.size > 10_000) {
+  // Aufruf ueber die ganze Map zu iterieren -- und selbst dann hoechstens einmal pro Minute, sonst
+  // wuerde ein Schwarm neuer IPs bei gleichzeitig >10.000 aktiven Eintraegen (resetAt >= now, der
+  // Durchlauf loescht dann nichts) jeden weiteren Aufruf erneut die ganze Map durchsuchen lassen.
+  if (rateLimitBuckets.size > 10_000 && now >= nextRateLimitSweepAt) {
+    nextRateLimitSweepAt = now + 60_000
     for (const [bucketKey, entry] of rateLimitBuckets) {
       if (entry.resetAt < now) rateLimitBuckets.delete(bucketKey)
     }

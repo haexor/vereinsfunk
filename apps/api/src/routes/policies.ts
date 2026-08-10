@@ -209,17 +209,17 @@ async function membersWithApprovePermission(
   const pages = [
     ...(ORG_ROLES_WITH_APPROVE.length > 0
       ? [fetchAllRows<{ user_id: string }>((from, to) =>
-          client.from('organization_memberships').select('user_id').eq('organization_id', organizationId).in('role', ORG_ROLES_WITH_APPROVE).or(notExpired).range(from, to),
+          client.from('organization_memberships').select('user_id').eq('organization_id', organizationId).in('role', ORG_ROLES_WITH_APPROVE).or(notExpired).order('id', { ascending: true }).range(from, to),
         )]
       : []),
     ...(scope !== 'organization' && DEPARTMENT_ROLES_WITH_APPROVE.length > 0
       ? [fetchAllRows<{ user_id: string }>((from, to) =>
-          client.from('department_memberships').select('user_id').eq('department_id', departmentId!).in('role', DEPARTMENT_ROLES_WITH_APPROVE).or(notExpired).range(from, to),
+          client.from('department_memberships').select('user_id').eq('department_id', departmentId!).in('role', DEPARTMENT_ROLES_WITH_APPROVE).or(notExpired).order('id', { ascending: true }).range(from, to),
         )]
       : []),
     ...(scope === 'team' && TEAM_ROLES_WITH_APPROVE.length > 0
       ? [fetchAllRows<{ user_id: string }>((from, to) =>
-          client.from('team_memberships').select('user_id').eq('team_id', teamId!).in('role', TEAM_ROLES_WITH_APPROVE).or(notExpired).range(from, to),
+          client.from('team_memberships').select('user_id').eq('team_id', teamId!).in('role', TEAM_ROLES_WITH_APPROVE).or(notExpired).order('id', { ascending: true }).range(from, to),
         )]
       : []),
   ]
@@ -247,13 +247,13 @@ async function fetchAllMemberships(client: SupabaseClient, organizationId: strin
   // duerfte in einem grossen Verein nicht daran scheitern, dass die Mitgliederseite abgeschnitten ist.
   const [orgRows, deptRows, teamRows] = await Promise.all([
     fetchAllRows<{ user_id: string; role: string }>((from, to) =>
-      client.from('organization_memberships').select('user_id, role').eq('organization_id', organizationId).or(notExpired).range(from, to),
+      client.from('organization_memberships').select('user_id, role').eq('organization_id', organizationId).or(notExpired).order('id', { ascending: true }).range(from, to),
     ),
     fetchAllRows<{ user_id: string; role: string; department_id: string }>((from, to) =>
-      client.from('department_memberships').select('user_id, role, department_id').eq('organization_id', organizationId).or(notExpired).range(from, to),
+      client.from('department_memberships').select('user_id, role, department_id').eq('organization_id', organizationId).or(notExpired).order('id', { ascending: true }).range(from, to),
     ),
     fetchAllRows<{ user_id: string; role: string; team_id: string; department_id: string }>((from, to) =>
-      client.from('team_memberships').select('user_id, role, team_id, department_id').eq('organization_id', organizationId).or(notExpired).range(from, to),
+      client.from('team_memberships').select('user_id, role, team_id, department_id').eq('organization_id', organizationId).or(notExpired).order('id', { ascending: true }).range(from, to),
     ),
   ])
   return [
@@ -943,13 +943,13 @@ export function registerPolicyRoutes(app: FastifyInstance, context: ApiRouteCont
     const query = z.object({ organizationId: UuidSchema }).parse(request.query)
     const client = supabaseClients.forUser(request.auth!.accessToken)
     const requestRows = await fetchAllRows<{ id: string; post_id: string; post_version_id: string; invalidated_at: string | null }>((from, to) =>
-      client.from('approval_requests').select('id, post_id, post_version_id, invalidated_at').eq('organization_id', query.organizationId).range(from, to),
+      client.from('approval_requests').select('id, post_id, post_version_id, invalidated_at').eq('organization_id', query.organizationId).order('id', { ascending: true }).range(from, to),
     )
     if (requestRows.length === 0) return reply.code(200).send([])
 
     const requestIds = requestRows.map((row) => row.id)
     const stageRows = await fetchAllRowsForIds<{ approval_request_id: string; deadline_at: string | null }>(requestIds, (batch, from, to) =>
-      client.from('approval_stages').select('approval_request_id, deadline_at').in('approval_request_id', batch).in('status', ['open', 'stalled']).range(from, to),
+      client.from('approval_stages').select('approval_request_id, deadline_at').in('approval_request_id', batch).in('status', ['open', 'stalled']).order('id', { ascending: true }).range(from, to),
     )
     const now = Date.now()
     const openRequestIds = new Set(stageRows.map((row) => row.approval_request_id))
@@ -962,8 +962,8 @@ export function registerPolicyRoutes(app: FastifyInstance, context: ApiRouteCont
     const postIds = Array.from(new Set(stalled.map((row) => row.post_id)))
     const postVersionIds = Array.from(new Set(stalled.map((row) => row.post_version_id)))
     const [postRows, versionRows] = await Promise.all([
-      fetchAllRowsForIds<{ id: string; department_id: string }>(postIds, (batch, from, to) => client.from('posts').select('id, department_id').in('id', batch).range(from, to)),
-      fetchAllRowsForIds<{ id: string; title: string }>(postVersionIds, (batch, from, to) => client.from('post_versions').select('id, title').in('id', batch).range(from, to)),
+      fetchAllRowsForIds<{ id: string; department_id: string }>(postIds, (batch, from, to) => client.from('posts').select('id, department_id').in('id', batch).order('id', { ascending: true }).range(from, to)),
+      fetchAllRowsForIds<{ id: string; title: string }>(postVersionIds, (batch, from, to) => client.from('post_versions').select('id, title').in('id', batch).order('id', { ascending: true }).range(from, to)),
     ])
     const departmentByPostId = new Map(postRows.map((row) => [row.id, row.department_id]))
     const titleByVersionId = new Map(versionRows.map((row) => [row.id, row.title]))
@@ -1052,29 +1052,38 @@ export function registerPolicyRoutes(app: FastifyInstance, context: ApiRouteCont
     // 'stalled' gehoert dazu: mark_stalled_approval_stages() markiert eine ueberfaellige Stufe, nimmt
     // ihr aber kein Recht (siehe authz.can_decide_stage). Ein Filter nur auf 'open' haette sie aus
     // genau der Liste verschwinden lassen, in der die zustaendige Person sie noch entscheiden soll.
-    const rows = await client
-      .from('approval_stages')
-      .select('id, position, scope, label, mode, minimum_approvals, is_minor_stage, status, reviewer_snapshot, deadline_at, approval_request_id')
-      .eq('organization_id', query.organizationId)
-      .in('status', ['open', 'stalled'])
-    if (rows.error) throw rows.error
+    // fetchAllRows wie bei GET /v1/organizations/:id/members: max_rows=1000 wuerde die Stufenliste
+    // einer grossen Organisation still abschneiden, und der Filter unten auf den eigenen
+    // reviewer_snapshot-Eintrag liesse eine zustaendige Person ihre zugewiesene Stufe nicht mehr
+    // sehen (gefunden im Code-Review dieses Pakets).
+    const stageRows = await fetchAllRows<{
+      id: string; position: number; scope: string; label: string; mode: string; minimum_approvals: number
+      is_minor_stage: boolean; status: string; reviewer_snapshot: { userId: string }[]
+      deadline_at: string | null; approval_request_id: string | null
+    }>((from, to) =>
+      client
+        .from('approval_stages')
+        .select('id, position, scope, label, mode, minimum_approvals, is_minor_stage, status, reviewer_snapshot, deadline_at, approval_request_id')
+        .eq('organization_id', query.organizationId)
+        .in('status', ['open', 'stalled'])
+        .order('id', { ascending: true })
+        .range(from, to),
+    )
     const userId = request.auth!.userId
     const now = Date.now()
-    const mine = rows.data.filter((row) => (row.reviewer_snapshot as { userId: string }[]).some((entry) => entry.userId === userId))
+    const mine = stageRows.filter((row) => (row.reviewer_snapshot as { userId: string }[]).some((entry) => entry.userId === userId))
 
     const approvalRequestIds = Array.from(new Set(mine.map((row) => row.approval_request_id as string | undefined).filter((id): id is string => Boolean(id))))
-    const approvalRequests = approvalRequestIds.length > 0
-      ? await client.from('approval_requests').select('id, post_id, post_version_id').in('id', approvalRequestIds)
-      : { data: [] as { id: string; post_id: string; post_version_id: string }[], error: null as null }
-    if (approvalRequests.error) throw approvalRequests.error
-    const postVersionByRequestId = new Map(approvalRequests.data.map((row) => [row.id, row.post_version_id]))
-    const postIds = Array.from(new Set(approvalRequests.data.map((row) => row.post_id)))
-    const posts = postIds.length > 0
-      ? await client.from('posts').select('id, department_id').in('id', postIds)
-      : { data: [] as { id: string; department_id: string }[], error: null as null }
-    if (posts.error) throw posts.error
-    const departmentByPostId = new Map(posts.data.map((row) => [row.id, row.department_id]))
-    const postIdByRequestId = new Map(approvalRequests.data.map((row) => [row.id, row.post_id]))
+    const approvalRequestRows = await fetchAllRowsForIds<{ id: string; post_id: string; post_version_id: string }>(approvalRequestIds, (batch, from, to) =>
+      client.from('approval_requests').select('id, post_id, post_version_id').in('id', batch).order('id', { ascending: true }).range(from, to),
+    )
+    const postVersionByRequestId = new Map(approvalRequestRows.map((row) => [row.id, row.post_version_id]))
+    const postIds = Array.from(new Set(approvalRequestRows.map((row) => row.post_id)))
+    const postRows = await fetchAllRowsForIds<{ id: string; department_id: string }>(postIds, (batch, from, to) =>
+      client.from('posts').select('id, department_id').in('id', batch).order('id', { ascending: true }).range(from, to),
+    )
+    const departmentByPostId = new Map(postRows.map((row) => [row.id, row.department_id]))
+    const postIdByRequestId = new Map(approvalRequestRows.map((row) => [row.id, row.post_id]))
 
     // Kein unnoetiger Roundtrip auf policy_settings, wenn es (noch) keine einzige aufloesbare
     // Stufe gibt -- betrifft insbesondere den erwarteten Normalfall ohne Inhalts-Pipeline (siehe
@@ -1227,21 +1236,34 @@ export function registerPolicyRoutes(app: FastifyInstance, context: ApiRouteCont
         await releaseClaim()
         return reply.code(503).send({ error: 'api_public_base_url_not_configured', correlationId: request.id })
       }
+      // Vorab in einer Abfrage laden statt je Zeile: ein Karussell mit zehn Bildern erzeugte sonst
+      // zehn sequentielle media_derivatives-Abfragen im Anfrage-Thread (Nitpick im Code-Review
+      // dieses Pakets). Die Grants sammeln wir ebenso und schreiben sie als ein Batch-Insert.
+      const derivativeIds = mediaRows.data.map((row) => row.media_derivative_id as string)
+      const derivativeRows = derivativeIds.length > 0
+        ? await service.from('media_derivatives').select('id, sha256, mime_type, status').in('id', derivativeIds)
+        : { data: [] as { id: string; sha256: string; mime_type: string; status: string }[], error: null as null }
+      if (derivativeRows.error) throw derivativeRows.error
+      const derivativeById = new Map(derivativeRows.data.map((row) => [row.id as string, row]))
+
       const media: PublicationMedia[] = []
+      const grantRows: { organization_id: string; media_derivative_id: string; publication_id: string; token_hash: string; expires_at: string }[] = []
       for (const row of mediaRows.data) {
-        const derivative = await service.from('media_derivatives').select('id, sha256, mime_type, status').eq('id', row.media_derivative_id as string).maybeSingle()
-        if (derivative.error) throw derivative.error
-        if (!derivative.data || derivative.data.status !== 'ready') continue
+        const derivative = derivativeById.get(row.media_derivative_id as string)
+        if (!derivative || derivative.status !== 'ready') continue
         const token = randomBytes(32).toString('base64url')
-        const grantInsert = await service.from('publication_media_grants').insert({
-          organization_id: publication.data.organization_id, media_derivative_id: derivative.data.id, publication_id: params.id,
+        grantRows.push({
+          organization_id: publication.data.organization_id, media_derivative_id: derivative.id, publication_id: params.id,
           token_hash: createHash('sha256').update(token).digest('hex'), expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
         })
-        if (grantInsert.error) throw grantInsert.error
         media.push({
-          derivativeId: derivative.data.id as string, sha256: derivative.data.sha256 as string, mimeType: derivative.data.mime_type as string,
+          derivativeId: derivative.id as string, sha256: derivative.sha256 as string, mimeType: derivative.mime_type as string,
           grantUrl: `${environment.API_PUBLIC_BASE_URL}/v1/media-grants/${token}`, role: row.position === 0 ? 'primary' : 'slide',
         })
+      }
+      if (grantRows.length > 0) {
+        const grantInsert = await service.from('publication_media_grants').insert(grantRows)
+        if (grantInsert.error) throw grantInsert.error
       }
 
       publicationInput = {
