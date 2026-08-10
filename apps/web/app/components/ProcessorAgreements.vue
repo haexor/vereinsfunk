@@ -1,5 +1,8 @@
 <script setup lang="ts">
+import { z } from 'zod'
 import { ProcessorAgreementSchema, type ProcessorAgreement, type ProcessorAgreementStatus } from '@vereinsfunk/contracts'
+
+const DocumentUrlSchema = z.object({ signedUrl: z.url() })
 
 const props = defineProps<{ organizationId: string | null }>()
 const api = useApiClient()
@@ -37,18 +40,23 @@ async function createAgreement() {
   creatingAgreement.value = true
   actionError.value = ''
   try {
-    const body = agreementForm.file ? new FormData() : {
-      processorName: agreementForm.processorName, purpose: agreementForm.purpose,
-      signedAt: agreementForm.signedAt || undefined, validUntil: agreementForm.validUntil || undefined,
-      status: agreementForm.status,
-    }
-    if (body instanceof FormData) {
-      body.set('processorName', agreementForm.processorName)
-      body.set('purpose', agreementForm.purpose)
-      if (agreementForm.signedAt) body.set('signedAt', agreementForm.signedAt)
-      if (agreementForm.validUntil) body.set('validUntil', agreementForm.validUntil)
-      body.set('status', agreementForm.status)
-      body.set('file', agreementForm.file!)
+    const file = agreementForm.file
+    let body: FormData | Record<string, unknown>
+    if (file) {
+      const form = new FormData()
+      form.set('processorName', agreementForm.processorName)
+      form.set('purpose', agreementForm.purpose)
+      if (agreementForm.signedAt) form.set('signedAt', agreementForm.signedAt)
+      if (agreementForm.validUntil) form.set('validUntil', agreementForm.validUntil)
+      form.set('status', agreementForm.status)
+      form.set('file', file)
+      body = form
+    } else {
+      body = {
+        processorName: agreementForm.processorName, purpose: agreementForm.purpose,
+        signedAt: agreementForm.signedAt || undefined, validUntil: agreementForm.validUntil || undefined,
+        status: agreementForm.status,
+      }
     }
     const agreement = await api.request(`/v1/organizations/${props.organizationId}/processor-agreements`, { method: 'POST', body }, ProcessorAgreementSchema)
     agreements.value = [...agreements.value, agreement]
@@ -76,7 +84,7 @@ async function viewAgreementDocument(agreement: ProcessorAgreement) {
   viewingAgreementId.value = agreement.id
   actionError.value = ''
   try {
-    const response = await api.request<{ signedUrl: string }>(`/v1/processor-agreements/${agreement.id}/document-url`)
+    const response = await api.request(`/v1/processor-agreements/${agreement.id}/document-url`, {}, DocumentUrlSchema)
     window.open(response.signedUrl, '_blank', 'noopener')
   } catch {
     actionError.value = 'Das Dokument konnte nicht geöffnet werden.'
@@ -97,7 +105,7 @@ watch(() => props.organizationId, () => { void load() }, { immediate: true })
       <li v-for="agreement in agreements" :key="agreement.id" class="rounded-lg bg-[#f7f8f4] px-3 py-2.5">
         <div class="flex flex-wrap items-center justify-between gap-2"><div><p class="text-sm font-semibold">{{ agreement.processorName }}</p><p class="text-[11px] text-[#9aa096]">{{ agreement.purpose }}</p></div><span class="rounded-full px-2.5 py-1 text-[10px] font-bold" :class="AGREEMENT_STATUS_CLASSES[agreement.status]">{{ AGREEMENT_STATUS_LABELS[agreement.status] }}</span></div>
         <p class="mt-1.5 text-[11px] text-[#9aa096]">Unterzeichnet: {{ formatDate(agreement.signedAt) }} · Gültig bis: {{ formatDate(agreement.validUntil) }} · {{ agreement.hasDocument ? 'Dokument hinterlegt' : 'Kein Dokument hinterlegt' }}</p>
-        <label class="mt-2 inline-flex items-center gap-2 text-[11px]"><span class="font-semibold">Status ändern:</span><select :value="agreement.status" :disabled="changingAgreementId === agreement.id" class="focus-ring rounded-lg border border-[#dfe0d9] p-1.5 text-[11px]" @change="changeAgreementStatus(agreement, ($event.target as HTMLSelectElement).value as typeof agreement.status)"><option v-for="option in AGREEMENT_STATUS_OPTIONS" :key="option" :value="option">{{ AGREEMENT_STATUS_LABELS[option] }}</option></select></label>
+        <label class="mt-2 inline-flex items-center gap-2 text-[11px]"><span class="font-semibold">Status ändern:</span><select :key="agreement.status" :value="agreement.status" :disabled="changingAgreementId === agreement.id" class="focus-ring rounded-lg border border-[#dfe0d9] p-1.5 text-[11px]" @change="changeAgreementStatus(agreement, ($event.target as HTMLSelectElement).value as typeof agreement.status)"><option v-for="option in AGREEMENT_STATUS_OPTIONS" :key="option" :value="option">{{ AGREEMENT_STATUS_LABELS[option] }}</option></select></label>
         <button v-if="agreement.hasDocument" type="button" :disabled="viewingAgreementId === agreement.id" class="focus-ring ml-3 mt-2 rounded-lg border border-[#dfe0d9] px-2.5 py-1 text-[11px] font-semibold disabled:opacity-50" @click="viewAgreementDocument(agreement)">{{ viewingAgreementId === agreement.id ? 'Öffnet …' : 'Dokument ansehen' }}</button>
       </li>
       <li v-if="!agreements.length" class="text-xs text-[#9aa096]">Noch kein Auftragsverarbeiter erfasst.</li>

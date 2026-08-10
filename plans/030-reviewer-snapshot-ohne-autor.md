@@ -62,10 +62,10 @@ Erweitere den vorhandenen Test mit `reviewerUserIds: ['author', 'trainer']` und 
 
 ## Done criteria
 
-- [ ] Der Autor erscheint bei verbotener Selbstfreigabe in keinem regulär erzeugten Reviewer-Snapshot.
-- [ ] Author-only bleibt ein verständlicher Blocker.
-- [ ] SQL-Verteidigung bleibt unverändert.
-- [ ] `pnpm check` besteht.
+- [x] Der Autor erscheint bei verbotener Selbstfreigabe in keinem regulär erzeugten Reviewer-Snapshot.
+- [x] Author-only bleibt ein verständlicher Blocker.
+- [x] SQL-Verteidigung bleibt unverändert.
+- [x] `pnpm check` besteht.
 
 ## STOP conditions
 
