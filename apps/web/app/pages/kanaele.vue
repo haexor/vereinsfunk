@@ -14,6 +14,7 @@ import {
 
 const DepartmentRowSchema = z.object({ id: z.string(), name: z.string() })
 type DepartmentRow = z.infer<typeof DepartmentRowSchema>
+const AuthorizationUrlSchema = z.object({ authorizationUrl: z.url() })
 
 const api = useApiClient()
 const route = useRoute()
@@ -111,9 +112,9 @@ async function connect(platform: SocialPlatform, ownerScope: ChannelOwnerScope, 
   connecting.value = platform
   actionError.value = ''
   try {
-    const response = await api.request<{ authorizationUrl: string }>(`/v1/channels/connect/${platform}/start`, {
+    const response = await api.request(`/v1/channels/connect/${platform}/start`, {
       query: { organizationId: organizationId.value, ownerScope, ownerDepartmentId },
-    })
+    }, AuthorizationUrlSchema)
     window.location.href = response.authorizationUrl
   } catch {
     actionError.value = 'Die Verbindung konnte nicht gestartet werden.'
