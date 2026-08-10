@@ -2,7 +2,7 @@
 
 ## Aktueller Refactoring-Stand (2026-08-10)
 
-- Arbeite auf `worktree-plan-027-continue-mitglieder-einladungen`. PR gegen `main` wird am Ende dieser Session eröffnet (bündelt Mitglieder/Einladungen und Richtlinien/Freigaben, siehe Commits auf diesem Branch).
+- Branch `worktree-plan-027-continue-mitglieder-einladungen`, PR [#36](https://github.com/haexor/vereinsfunk/pull/36) gegen `main` ist offen (Stand: ungemergt), bündelt Mitglieder/Einladungen und Richtlinien/Freigaben. **Vor dem Weiterarbeiten `gh pr view 36 --json state,mergedAt` prüfen**: ist er noch offen, auf demselben Branch weitercommitten; ist er gemergt, einen neuen Worktree/Branch von `main` aus starten, statt diesen wiederzuverwenden.
 - Diese Session hat Paket 027 um zwei Domänen erweitert:
   - **Mitglieder und Einladungen** (`apps/api/src/routes/members.ts`): Mitgliederliste, Mitgliedschafts-CRUD, alle Einladungsrouten.
   - **Richtlinien und Freigaben** (`apps/api/src/routes/policies.ts`, 1.440 LoC — die bisher größte Extraktion): Policy-Settings/-Rules/-Reviewers, Member-Review-Trust, die vier Freigabe-Durchsetzungsstellen (request-approval/decide/reresolve/stalled), Post-Version-Approval-Detail, `approval-stages/mine`, Scheduling, `publications/:id/execute`, Media-Grants und Channel-Quotas (gehören inhaltlich zur Kontingentlogik aus Paket 011, nicht zu Kanäle/OAuth).
@@ -15,7 +15,7 @@
 ## Nächste Schritte
 
 1. Lies vollständig: `AGENTS.md`, `docs/product/implementation-plan.md`, `plans/README.md`, `plans/027-api-route-module-boundaries.md` (Abschnitte „Current state" und „Fortschritt Step 3").
-2. Prüfe `git status --short --branch` und `git log --oneline main..HEAD -- apps/api`. Bestehende Änderungen bewahren.
+2. `gh pr view 36 --json state,mergedAt` prüfen (siehe oben), dann `git status --short --branch` und `git log --oneline main..HEAD -- apps/api`. Bestehende Änderungen bewahren.
 3. Nächste Domäne laut Reihenfolge: **Kanäle, OAuth und Publishing** — umfasst `organizations/:id/channels`, `channels/:id` (PATCH/DELETE/verify/scopes), `channel-scopes/:id`, `organizations/:id/channel-policy`, `channels/connect/:platform/start`, `channels/connect/:platform/callback`, `oauth-pending/:id` (GET/select), `post-versions/:id/available-channels`. Nutzt bereits `isAnyMemberOfOrganization`/`recordAuditEvent`/`resolveMembershipScope`/`toPermissionScope` aus `routes/shared.ts` — vor dem Schneiden mit `grep -n "isAnyMemberOfOrganization(\|recordAuditEvent(" apps/api/src/app.ts` prüfen, welche Aufrufe in diesem Bereich liegen.
 4. Danach: Integration/Verzeichnis/Einwilligung, Datenschutz, Analytics — Reihenfolge aus dem Plan.
 5. Für Plattform-Administration + LLM-Provider-Verwaltung (Paket 022, direkt nach den Einladungsrouten in `app.ts`, alle `requirePlatformAdmin`-gated) und für `POST /v1/submissions` (Inhalts-Pipeline) fehlt weiterhin eine Zuordnung zu einer der acht ursprünglich benannten Domänen — vor der Extraktion entscheiden (eigenes Modul je Konzern oder Ergänzung einer bestehenden Domäne) und im Plan vermerken.

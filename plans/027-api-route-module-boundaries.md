@@ -12,6 +12,7 @@
 - **Depends on**: `plans/026-sync-runs-serialisieren-und-idempotent-machen.md`
 - **Category**: tech-debt, tests
 - **Planned at**: commit `1883758f`, 2026-08-09
+- **PRs**: [#35](https://github.com/haexor/vereinsfunk/pull/35) gemergt (Route-Kontext, Brand/Organisation, Struktur); [#36](https://github.com/haexor/vereinsfunk/pull/36) offen (Mitglieder/Einladungen, Richtlinien/Freigaben)
 
 ## Why this matters
 
