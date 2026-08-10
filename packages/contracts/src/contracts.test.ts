@@ -115,15 +115,13 @@ describe('text workshop contracts', () => {
     expect(VideoUploadMetadataSchema.safeParse({ ...video, durationMs: 180_001 }).success).toBe(false)
   })
 
-  it('only permits attribute-based custom style profiles and bounded revision instructions', () => {
+  it('permits custom style profiles that name a real person to imitate and bounded revision instructions', () => {
     const profile = { organizationId: org, departmentId: department, teamId: null, slug: 'unser-ton', name: 'Unser Ton', description: 'Warm und konkret', styleRules, avoidRules: ['Floskeln'] }
     expect(CreateCustomStyleProfileRequestSchema.safeParse(profile).success).toBe(true)
-    expect(CreateCustomStyleProfileRequestSchema.safeParse({ ...profile, styleRules: { ...styleRules, additionalInstructions: 'Schreibe wie eine bekannte Person' } }).success).toBe(false)
-    // description gets the same person-imitation check as name, not just styleRules.additionalInstructions.
-    expect(CreateCustomStyleProfileRequestSchema.safeParse({ ...profile, description: 'Schreibe wie unser Vorstand' }).success).toBe(false)
-    // "wie"/"von" as ordinary German words must not trip the check -- only the imitation phrases do.
-    expect(CreateCustomStyleProfileRequestSchema.safeParse({ ...profile, name: 'Wie wir kommunizieren' }).success).toBe(true)
-    expect(CreateCustomStyleProfileRequestSchema.safeParse({ ...profile, description: 'Neuigkeiten von der Vorstandssitzung' }).success).toBe(true)
+    // Product decision (Plan 032): style profiles may name and imitate a real person -- safety is
+    // organisational (role assignment, approval routes), not a keyword filter.
+    expect(CreateCustomStyleProfileRequestSchema.safeParse({ ...profile, name: 'Mark Twain', styleRules: { ...styleRules, additionalInstructions: 'Schreibe wie Mark Twain' } }).success).toBe(true)
+    expect(CreateCustomStyleProfileRequestSchema.safeParse({ ...profile, description: 'Im Stil von unserem Vorstand' }).success).toBe(true)
     expect(CreateCustomStyleProfileRequestSchema.safeParse({ ...profile, slug: 'klar_erklaerend' }).success).toBe(false)
     // departmentId/teamId may be omitted entirely for an organization-wide profile, not just set to null.
     const orgWideProfile = { organizationId: org, slug: 'unser-ton', name: 'Unser Ton', description: 'Warm und konkret', styleRules, avoidRules: ['Floskeln'] }

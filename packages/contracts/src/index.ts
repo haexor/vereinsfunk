@@ -55,12 +55,13 @@ export const VideoUploadMetadataSchema = z.object({
 })
 export const AttachmentUploadMetadataSchema = z.discriminatedUnion('kind', [ImageUploadMetadataSchema, VideoUploadMetadataSchema])
 
-// Mirrors the DB CHECKs on content_style_profiles.name/description (2026081003_text_workshop_foundation.sql).
-const PERSON_IMITATION_PATTERN = /\b(?:schreib(?:e)?\s+wie|im\s+stil\s+von|write\s+like|imitier(?:e)?)\b/i
-const StyleProfileInstructionSchema = z.string().trim().max(1_000).refine(
-  (value) => !PERSON_IMITATION_PATTERN.test(value),
-  'Style profiles describe editorial attributes, not people to imitate',
-)
+// Product decision (Plan 032, "Kuratierte und selbst angelegte Persona"): style profiles may
+// name and imitate a real person (curated persona shipped by the platform, or custom persona an
+// org creates itself). Safety is organisational -- who gets the poster/approver role, and the
+// existing approval routes (Plan 011/024) -- not a keyword filter, which cannot reliably detect
+// intent anyway. additionalInstructions stays bounded and low-priority in prompt assembly so it
+// can never override grounding/safety/platform rules (see ADR-010), independent of this decision.
+const StyleProfileInstructionSchema = z.string().trim().max(1_000)
 export const StyleProfileRulesSchema = z.object({
   sentenceLength: z.enum(['short', 'mixed', 'long']),
   energy: z.int().min(1).max(5),
@@ -84,9 +85,9 @@ export const StyleProfileScopeSchema = z.object({
 export const CustomStyleProfileSchema = StyleProfileScopeSchema.extend({
   id: UuidSchema,
   slug: ContentPresetSlugSchema,
-  name: z.string().trim().min(1).max(80).refine((value) => !PERSON_IMITATION_PATTERN.test(value), 'Profile names must not reference a person to imitate'),
+  name: z.string().trim().min(1).max(80),
   kind: z.literal('custom'),
-  description: z.string().trim().min(1).max(500).refine((value) => !PERSON_IMITATION_PATTERN.test(value), 'Profile descriptions must not reference a person to imitate'),
+  description: z.string().trim().min(1).max(500),
   styleRules: StyleProfileRulesSchema,
   avoidRules: z.array(z.string().trim().min(1).max(160)).max(30),
   isActive: z.boolean(),
@@ -99,8 +100,8 @@ export const CreateCustomStyleProfileRequestSchema = z.object({
   departmentId: UuidSchema.nullable().optional(),
   teamId: UuidSchema.nullable().optional(),
   slug: ContentPresetSlugSchema,
-  name: z.string().trim().min(1).max(80).refine((value) => !PERSON_IMITATION_PATTERN.test(value), 'Profile names must not reference a person to imitate'),
-  description: z.string().trim().min(1).max(500).refine((value) => !PERSON_IMITATION_PATTERN.test(value), 'Profile descriptions must not reference a person to imitate'),
+  name: z.string().trim().min(1).max(80),
+  description: z.string().trim().min(1).max(500),
   styleRules: StyleProfileRulesSchema,
   avoidRules: z.array(z.string().trim().min(1).max(160)).max(30),
 }).superRefine((profile, context) => {

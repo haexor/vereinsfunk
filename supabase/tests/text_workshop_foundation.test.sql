@@ -54,9 +54,11 @@ select throws_ok(
   $$insert into public.content_style_profiles (organization_id, department_id, team_id, slug, name, description, style_rules, created_by) values ('31000000-1000-4000-8000-000000000001', '31000000-1100-4000-8000-000000000001', '32000000-2300-4000-8000-000000000002', 'cross-team', 'Cross team', 'Must fail', '{}', '31000000-0000-4000-8000-000000000001')$$,
   '23503', null, 'negative: a profile cannot reference a team from another organization'
 );
-select throws_ok(
-  $$insert into public.content_style_profiles (organization_id, department_id, slug, name, description, style_rules, created_by) values ('31000000-1000-4000-8000-000000000001', '31000000-1100-4000-8000-000000000001', 'person-imitate', 'Schreibe wie Ada', 'Must fail', '{}', '31000000-0000-4000-8000-000000000001')$$,
-  '23514', null, 'negative: database rejects an obvious person-imitation profile name'
+-- Product decision (Plan 032): style profiles may name and imitate a real person -- safety is
+-- organisational (role assignment, approval routes), not a database-level keyword filter.
+select lives_ok(
+  $$insert into public.content_style_profiles (organization_id, department_id, slug, name, description, style_rules, created_by) values ('31000000-1000-4000-8000-000000000001', '31000000-1100-4000-8000-000000000001', 'mark-twain', 'Mark Twain', 'Schreibe wie Mark Twain', '{}', '31000000-0000-4000-8000-000000000001')$$,
+  'a custom profile naming and imitating a real person is allowed'
 );
 select throws_ok(
   $$insert into public.content_style_profiles (organization_id, department_id, slug, name, description, style_rules, created_by) values ('31000000-1000-4000-8000-000000000001', '31000000-1100-4000-8000-000000000001', 'klar_erklaerend', 'Duplikat', 'Must fail', '{}', '31000000-0000-4000-8000-000000000001')$$,

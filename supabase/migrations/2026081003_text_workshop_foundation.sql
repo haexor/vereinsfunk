@@ -32,8 +32,6 @@ create table public.content_style_profiles (
     references public.teams(organization_id, department_id, id) on delete cascade,
   check (team_id is null or department_id is not null),
   check (cardinality(avoid_rules) <= 30),
-  check (not (name ~* '\m(schreib(e)? wie|im stil von|write like|imitier(e)?)\M')),
-  check (not (description ~* '\m(schreib(e)? wie|im stil von|write like|imitier(e)?)\M')),
   -- The five curated system slugs stay reviewed application registry data (see comment
   -- above); without this check the Zod-only reservation in CreateCustomStyleProfileRequestSchema
   -- would be the sole guard, and any writer that bypasses it could shadow a system profile.
