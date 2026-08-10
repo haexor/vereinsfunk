@@ -19,11 +19,24 @@
 
 ## Current state
 
-- `apps/api/src/app.ts:1-1432` enthält Imports, shared Mapper und Sync-Handler; `buildApp` beginnt bei Zeile 1433.
-- Routenblöcke sind bereits thematisch gruppiert: Brand, Struktur/Mitglieder, Richtlinien/Freigaben, Kanäle, Integrationen, Verzeichnis/Einwilligung, Datenschutz und Analytics.
+- Stand 2026-08-10: `apps/api/src/app.ts` ist auf 6.789 LoC gesunken (Ausgangswert 8.301 LoC). Bereits extrahiert: `routes/context.ts` (`ApiRouteContext`), `routes/shared.ts` (`fetchAllRows`, `resolveMembershipScope`, `toPermissionScope` — mehrfach domänenübergreifend gebraucht, deshalb zentral statt je Modul dupliziert), `routes/organization.ts` (Brand/Organisation), `routes/structure.ts` (Abteilungen/Teams) und `routes/members.ts` (Mitglieder/Mitgliedschaften/Einladungen).
+- Noch in `app.ts`: Richtlinien/Freigaben (Policy-Settings/-Rules/-Reviewers, Member-Review-Trust, Approval-Stages), Kanäle/OAuth/Publishing, Integration/Verzeichnis/Einwilligung, Datenschutz (Retention, Auskunft/Löschung, Auftragsverarbeiter, Audit-Chain, Impressum), Analytics — sowie Plattform-Administration (Paket 022), die in keine der ursprünglich benannten Domänen fällt und bei der nächsten Extraktion eine eigene Zuordnung braucht.
+- `apps/api/src/app.test.ts` wurde bislang **nicht** wie in Step 3 vorgesehen aufgeteilt: alle Tests (263, nach Paket/Feature per `describe`-Block geordnet) laufen weiterhin zentral und decken auch die bereits extrahierten Module ab. Das ist eine bewusste Abweichung der bisherigen Durchläufe, keine vergessene Aufgabe für die verbleibenden Domänen — wird hier für Transparenz nachgetragen, nicht rückwirkend korrigiert.
 - `apps/api/src/auth.ts` ist das Vorbild für einen frameworknahen, testbaren Adapter; `apps/api/src/outboundFetch.ts` das Vorbild für eine schmale Infrastrukturgrenze.
-- `apps/api/src/app.test.ts` umfasst 5.805 LoC und ordnet Tests nach Paket/Feature.
 - Architekturvorgaben: Zod an allen Grenzen, Service Role nur API/Worker, Provider hinter Interfaces, Tenant-IDs immer serverseitig konsistent.
+
+### Fortschritt Step 3 (Domänen-Extraktion)
+
+- [x] Route-Kontext (`routes/context.ts`)
+- [x] Brand und Organisation (`routes/organization.ts`)
+- [x] Struktur — Abteilungen und Teams (`routes/structure.ts`)
+- [x] Mitglieder und Einladungen (`routes/members.ts`)
+- [ ] Richtlinien und Freigaben
+- [ ] Kanäle, OAuth und Publishing
+- [ ] Integration, Verzeichnis und Einwilligung
+- [ ] Datenschutz
+- [ ] Analytics
+- [ ] Plattform-Administration (Paket 022) — nicht in der ursprünglichen Domänenliste enthalten, bleibt bis zur Klärung in `app.ts`
 
 ## Commands you will need
 
