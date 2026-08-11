@@ -144,14 +144,14 @@ Dokumentiere ein Pilot-Runbook: Provider-Key rotieren, Konfiguration deaktiviere
 
 ## Done criteria
 
-- [ ] Ein Plattform-Admin kann einen aktiven `text_generation`-Provider mit Modell, Priorität, Grenzwerten und verschlüsseltem Key verwalten; keine nicht implementierte Bild-/Videoaufgabe lässt sich aktivieren.
-- [ ] Ein `contributor` kann aus Kategorie, Stilprofil/Persona und bestätigten Stichpunkten einen echten, strukturierten Textkandidaten erhalten.
-- [ ] Der Provider erhält ausschließlich den gespeicherten, bestätigten Textbrief und keine Medien/Secrets; Logs enthalten keine Inhalte.
-- [ ] Jede KI-Antwort wird Zod-validiert und faktengebunden; ein Fehler oder ungegroundeter Text kann keinen Kandidaten/keine Version erzeugen.
-- [ ] Eine Candidate-Übernahme erzeugt genau eine neue immutable Version mitsamt Provenienz; keine bestehende/freigegebene Version wird verändert.
-- [ ] Outbox und Worker transportieren nur IDs/technische Metadaten und überstehen Retry/Doppelzustellung.
-- [ ] `pnpm check` sowie Datenbank-RLS-Tests bestehen.
-- [ ] Dokumentation benennt KI-Bild/-Video als ausdrücklich nicht geliefert und dokumentiert den Kennzeichnungs-Release-Blocker.
+- [x] Ein Plattform-Admin kann einen aktiven `text_generation`-Provider mit Modell, Priorität, Grenzwerten und verschlüsseltem Key verwalten; keine nicht implementierte Bild-/Videoaufgabe lässt sich aktivieren.
+- [x] Ein `contributor` kann aus Kategorie, Stilprofil/Persona und bestätigten Stichpunkten einen echten, strukturierten Textkandidaten erhalten.
+- [x] Der Inhalts-Payload an den Provider enthält ausschließlich den gespeicherten, bestätigten Textbrief, den Stilprofil-Snapshot und optional die auf 500 Zeichen begrenzte `revisionInstruction` — keine Medien, Secrets oder unbestätigten Inhalte. Der Worker sendet den entschlüsselten Provider-Key nur als Authentifizierungs-Header an den gewählten Provider; Browserstate, Hatchet-Payloads und Logs enthalten keine Secrets oder Inhalte.
+- [x] Jede KI-Antwort wird Zod-validiert und faktengebunden; ein Fehler oder ungegroundeter Text kann keinen Kandidaten/keine Version erzeugen.
+- [x] Eine Candidate-Übernahme erzeugt genau eine neue immutable Version mitsamt Provenienz; keine bestehende/freigegebene Version wird verändert.
+- [x] Outbox und Worker transportieren nur IDs/technische Metadaten und überstehen Retry/Doppelzustellung.
+- [x] `pnpm check` sowie Datenbank-RLS-Tests bestehen.
+- [x] Dokumentation benennt KI-Bild/-Video als ausdrücklich nicht geliefert und dokumentiert den Kennzeichnungs-Release-Blocker.
 
 ## STOP conditions
 

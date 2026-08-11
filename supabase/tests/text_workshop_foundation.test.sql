@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(40);
+select plan(44);
 
 set local role postgres;
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -100,7 +100,7 @@ select throws_ok(
 -- Fixtures for the immutability test below: a post_generation_provenance row needs a real
 -- post_version and an llm_provider_configurations row to satisfy its FKs.
 insert into public.llm_provider_configurations (id, label, protocol, base_url, model) values
-  ('31000000-4000-4000-8000-000000000001', 'Style Provider', 'anthropic', 'https://api.example.test', 'test-model');
+  ('31000000-4000-4000-8000-000000000001', 'Style Provider', 'openai', 'https://api.example.test', 'test-model');
 insert into public.posts (id, organization_id, department_id, status, created_by) values
   ('31000000-5000-4000-8000-000000000001', '31000000-1000-4000-8000-000000000001', '31000000-1100-4000-8000-000000000001', 'draft', '31000000-0000-4000-8000-000000000001');
 insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type) values
@@ -246,6 +246,26 @@ select lives_ok(
   'revision creates a separate durable candidate in the existing session'
 );
 select is((select count(*)::integer from public.generation_candidates where composition_session_id = (select id from public.composition_sessions where organization_id = '32000000-2000-4000-8000-000000000002' and input_hash = repeat('e', 64))), 2, 'one session retains initial and revision candidates separately');
+select lives_ok(
+  $$select public.create_text_generation_session(
+    '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', null,
+    'training-update', 'inform', '["text_post"]'::jsonb,
+    '{"facts":{"title":"Revisionstraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
+    null, '{"name":"System","description":"","styleRules":{"sentenceLength":"short","energy":2,"humour":"none","formality":"balanced","perspective":"club","bannedPhrases":[],"additionalInstructions":""},"avoidRules":[]}'::jsonb,
+    '{}'::jsonb, 1, repeat('e', 64), repeat('1', 64), 'revise', 'Bitte mit mehr Energie formulieren',
+    '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-revision-2'
+  )$$,
+  'a second revision receives its own durable outbox entry'
+);
+select is((select count(*)::integer from public.workflow_outbox where workflow_name = 'generate-text-post' and purpose like 'revise:%'), 2, 'each revision has a candidate-qualified workflow purpose');
+select throws_ok(
+  $$select public.accept_text_generation_candidate('32000000-2800-4000-8000-000000000002', '31000000-0000-4000-8000-000000000001')$$,
+  'P0001', 'generation_candidate_forbidden', 'negative: a member of another tenant cannot accept a candidate by ID'
+);
+select throws_ok(
+  $$insert into public.llm_provider_configurations (label, protocol, base_url, model, is_active) values ('Unsupported active provider', 'anthropic', 'https://example.invalid', 'test', true)$$,
+  '23514', null, 'negative: only implemented provider protocols can be active'
+);
 select is((select count(*)::integer from public.workflow_outbox where workflow_name = 'generate-text-post' and payload ? 'sourceMaterial'), 0, 'negative: text generation outbox payloads never contain source content');
 
 select * from finish();

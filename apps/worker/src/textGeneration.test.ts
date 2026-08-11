@@ -33,4 +33,10 @@ describe('TextGenerationExecutor', () => {
     expect(repo.markFailed).not.toHaveBeenCalled()
     expect(repo.releaseCandidate).toHaveBeenCalledWith(payload.candidateId, payload.entityId)
   })
+  it('accepts a candidate-qualified purpose and rejects a mismatched candidate ID', async () => {
+    const repo = repository()
+    const generator = { generateText: vi.fn().mockResolvedValue(post) }
+    await expect(new TextGenerationExecutor(config, repo, generator).execute({ ...payload, purpose: `revise:${payload.candidateId}` })).resolves.toBeUndefined()
+    await expect(new TextGenerationExecutor(config, repository(), generator).execute({ ...payload, purpose: 'revise:10000000-1300-4000-8000-000000000002' })).rejects.toMatchObject({ errorClass: 'invalid_generation_purpose', retryable: false })
+  })
 })

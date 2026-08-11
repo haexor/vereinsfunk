@@ -26,6 +26,15 @@ alter table public.generation_candidates
   add column prompt_template_version text;
 alter table public.composition_sessions
   add column effective_config_snapshot jsonb not null default '{}'::jsonb check (jsonb_typeof(effective_config_snapshot) = 'object');
+-- Preserve historical sessions while making duplicate pre-idempotency hashes unique.
+with ranked as (
+  select id, row_number() over (partition by organization_id, input_hash order by created_at, id) as position
+  from public.composition_sessions
+)
+update public.composition_sessions session
+set input_hash = md5(session.input_hash || ':' || session.id::text) || md5(session.id::text)
+from ranked
+where ranked.id = session.id and ranked.position > 1;
 create unique index composition_sessions_organization_input_hash_unique on public.composition_sessions(organization_id, input_hash);
 
 -- One service-only transaction creates the durable business state and its ID-only outbox record.

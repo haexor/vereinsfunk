@@ -1491,6 +1491,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const session = await client.from('composition_sessions').select('id, organization_id, department_id, team_id, status, preset_slug, communication_goal, created_at').eq('id', id).maybeSingle()
     if (session.error) throw session.error
     if (!session.data) return reply.code(404).send({ error: 'session_not_found' })
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(session.data.organization_id, session.data.department_id, session.data.team_id)))) return
     const candidates = await client.from('generation_candidates').select('id, status, generated_content, quality_flags, failure_code, accepted_post_version_id, created_at').eq('composition_session_id', id).order('created_at', { ascending: false })
     if (candidates.error) throw candidates.error
     return reply.send({ session: session.data, candidates: candidates.data })
@@ -1499,7 +1500,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   app.post('/v1/text-workshop/sessions/:id/generations', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const sessionId = z.object({ id: UuidSchema }).parse(request.params).id
-    const command = CreateGenerationCommandSchema.parse({ ...z.object({ generationIntent: z.literal('revise'), revisionInstruction: z.string() }).parse(request.body), sessionId })
+    const command = CreateGenerationCommandSchema.parse({ ...z.object({ generationIntent: z.literal('revise'), revisionInstruction: z.string().trim().min(1).max(500) }).parse(request.body), sessionId })
     const client = supabaseClients.forUser(request.auth!.accessToken)
     const session = await client
       .from('composition_sessions')
@@ -1917,6 +1918,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const params = z.object({ id: UuidSchema }).parse(request.params)
     const input = UpdateLlmProviderConfigurationRequestSchema.parse(request.body)
     if ((input.taskKind && input.taskKind !== 'text_generation') || input.protocol === 'anthropic') return reply.code(422).send({ error: 'task_kind_not_implemented', taskKind: input.taskKind ?? 'text_generation' })
+    const service = supabaseClients.forService()
+    const current = await service.from('llm_provider_configurations').select('protocol, task_kind').eq('id', params.id).maybeSingle()
+    if (current.error) throw current.error
+    if (!current.data) return reply.code(404).send({ error: 'llm_provider_not_found' })
+    const effectiveProtocol = input.protocol ?? current.data.protocol
+    const effectiveTaskKind = input.taskKind ?? current.data.task_kind
+    if (input.isActive === true && (effectiveProtocol !== 'openai' || effectiveTaskKind !== 'text_generation')) {
+      return reply.code(422).send({ error: 'unsupported_provider_configuration' })
+    }
     const payload: Record<string, unknown> = {}
     if (input.label !== undefined) payload.label = input.label
     if (input.protocol !== undefined) payload.protocol = input.protocol
@@ -1931,7 +1941,6 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     }
     if (input.priority !== undefined) payload.priority = input.priority
     if (input.isActive !== undefined) payload.is_active = input.isActive
-    const service = supabaseClients.forService()
     const update = await service
       .from('llm_provider_configurations')
       .update(payload)

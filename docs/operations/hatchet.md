@@ -14,9 +14,24 @@ Korrelation und kontrollierte Fehlerklassen.
 4. Control Plane starten und Default-Tenant anlegen:
    `docker compose -f infrastructure/hatchet/docker-compose.yml --env-file infrastructure/hatchet/.env up -d`
    und danach `docker compose -f infrastructure/hatchet/docker-compose.yml --env-file infrastructure/hatchet/.env run --rm --no-deps --entrypoint /hatchet/hatchet-admin hatchet-admin seed`.
-5. Ein kurzlebiges Worker-Token ausschließlich in die aktuelle Shell übernehmen:
-   `export HATCHET_CLIENT_TOKEN="$(docker compose -f infrastructure/hatchet/docker-compose.yml --env-file infrastructure/hatchet/.env run --rm --no-deps --entrypoint /hatchet/hatchet-admin hatchet-admin token create --expiresIn 1h)"`.
-   Das Token nicht in Shell-Historie, Git oder Logs speichern.
+5. Ein kurzlebiges Worker-Token ausschließlich in die aktuelle Shell übernehmen. Vorher Shell-Trace
+   deaktivieren; nur falls er zuvor aktiv war, danach wieder aktivieren:
+   ```bash
+   case "$-" in *x*) _hatchet_restore_xtrace=1; set +x;; *) _hatchet_restore_xtrace=0;; esac
+   _hatchet_token="$(docker compose -f infrastructure/hatchet/docker-compose.yml --env-file infrastructure/hatchet/.env run --rm --no-deps --entrypoint /hatchet/hatchet-admin hatchet-admin token create --expiresIn 1h)"
+   _hatchet_token_status=$?
+   [ "$_hatchet_restore_xtrace" -eq 1 ] && set -x
+   if [ "$_hatchet_token_status" -ne 0 ]; then
+     echo "hatchet-admin token create failed" >&2
+     unset _hatchet_restore_xtrace _hatchet_token _hatchet_token_status
+     return 1 2>/dev/null || exit 1
+   fi
+   export HATCHET_CLIENT_TOKEN="$_hatchet_token"
+   unset _hatchet_restore_xtrace _hatchet_token _hatchet_token_status
+   ```
+   Das Token nicht in Shell-Historie, Git oder Logs speichern; `set -x` bleibt während Erzeugung
+   und Zuweisung deaktiviert. Bei einem fehlgeschlagenen `token create` wird kein Worker mit einem
+   leeren oder ungültigen Token gestartet.
 
 Der Worker benötigt außerdem `HATCHET_CLIENT_API_URL`, `HATCHET_CLIENT_HOST_PORT` und
 `HATCHET_TLS=false` für den lokalen Loopback-Stack. Vor dem Test ist ein ID-only Outbox-Ereignis
@@ -39,5 +54,8 @@ terminal sein.
   ausstellen, Secret im Deployment aktualisieren und Worker neu starten. Tokens gehören nie in
   Browser, Outbox, Supabase-Fachdaten oder Logs.
 
-Für Produktionsfreigabe ist zusätzlich ein dokumentierter Fairness-Lasttest mit drei
-Abteilungen, Prozessabbruch während eines Laufs und Cancel/Reschedule erforderlich.
+Für Produktionsfreigabe ist zusätzlich ein dokumentierter Fairness-Lasttest mit **genau 30 Jobs**
+über drei Abteilungen erforderlich. Er muss faire Fortschritte zeigen und vier Ergebnisse belegen:
+Prozessabbruch während eines Laufs wird nach Lease-Ablauf genau einmal fortgesetzt, Cancel endet
+fachlich als `cancelled`, Reschedule erzeugt nur die neue Revision, und ein doppelt gesendeter
+Idempotenzschlüssel erzeugt keine zweite Fachaktion.

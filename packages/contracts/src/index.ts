@@ -1333,6 +1333,8 @@ export const LlmRuntimeParametersSchema = z.object({
   maxOutputTokens: z.int().min(128).max(4_000).default(1_200),
   structuredOutputRequired: z.literal(true).default(true),
 }).strict()
+// Breaking: systemPromptOverride was removed. Consumers must provide taskKind and
+// runtimeParameters; the only currently activatable combination is enforced by API and DB.
 export const LlmProviderConfigurationSchema = z.object({
   id: UuidSchema,
   label: z.string().trim().min(1).max(160),

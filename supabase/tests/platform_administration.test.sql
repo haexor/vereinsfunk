@@ -151,7 +151,7 @@ select ok(
 select lives_ok(
   $$with cfg as (
       insert into public.llm_provider_configurations (label, protocol, base_url, model)
-      values ('PGTAP Test Provider', 'anthropic', 'https://example.invalid', 'claude-test')
+                  values ('PGTAP Test Provider', 'openai', 'https://example.invalid', 'openai-test')
       returning id
     )
     insert into public.llm_provider_secrets (llm_provider_configuration_id, api_key_ciphertext, key_version)

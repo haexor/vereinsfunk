@@ -69,13 +69,9 @@ pnpm dev:web
 
 API-Health-Check: `http://localhost:4201/health`
 
-Für Hatchet lokal die offizielle CLI installieren und separat starten:
-
-```bash
-hatchet server start
-```
-
-Die Workflow-Implementierung bleibt beim lokalen Adapter, solange `HATCHET_CLIENT_TOKEN` nicht gesetzt und der produktive SDK-Adapter nicht als eigenes Arbeitspaket umgesetzt ist.
+Für Hatchet lokal folgt der Worker dem echten SDK-Pfad und startet ohne
+`HATCHET_CLIENT_TOKEN` fail-closed. Die lokale Control Plane, Token-Erzeugung und erforderlichen
+Worker-Variablen sind in [`docs/operations/hatchet.md`](docs/operations/hatchet.md) beschrieben.
 
 ## Lokaler Start mit Docker Compose
 

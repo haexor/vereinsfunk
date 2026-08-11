@@ -1,13 +1,13 @@
 import { createHash } from 'node:crypto'
 import { createSecretBox } from '@vereinsfunk/secrets'
 import { ContentGenerationError, OpenAiCompatibleStructuredContentGenerator, TEXT_PROMPT_TEMPLATE_VERSION, createTextGroundedContentBrief, type StructuredContentGenerator } from '@vereinsfunk/content-engine'
-import { SourceMaterialSchema, StyleProfileRulesSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
+import { SourceMaterialSchema, StyleProfileRulesSchema, UuidSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
 import { WorkflowExecutionError } from './workflows.js'
 
-type SessionRow = { id: string; organization_id: string; department_id: string; team_id: string | null; preset_slug: string; communication_goal: 'inform' | 'inspire' | 'thank' | 'invite' | 'recruit' | 'educate' | 'strengthen_community'; source_material: unknown; style_profile_snapshot: unknown }
-type CandidateRow = { id: string; status: string; revision_instruction: string | null }
-type ProviderRow = { id: string; protocol: string; base_url: string; model: string; temperature: number; max_output_tokens: number; structured_output_required: boolean; api_key_ciphertext: string; key_version: string }
+export type SessionRow = { id: string; organization_id: string; department_id: string; team_id: string | null; preset_slug: string; communication_goal: 'inform' | 'inspire' | 'thank' | 'invite' | 'recruit' | 'educate' | 'strengthen_community'; source_material: unknown; style_profile_snapshot: unknown }
+export type CandidateRow = { id: string; status: string; revision_instruction: string | null }
+export type ProviderRow = { id: string; protocol: string; base_url: string; model: string; temperature: number; max_output_tokens: number; structured_output_required: boolean; api_key_ciphertext: string; key_version: string }
 
 export interface TextGenerationRepository {
   loadSession(id: string, organizationId: string): Promise<SessionRow | null>
@@ -34,13 +34,20 @@ function parameterHash(provider: ProviderRow) {
   return createHash('sha256').update(JSON.stringify({ baseUrl: provider.base_url, model: provider.model, temperature: provider.temperature, maxOutputTokens: provider.max_output_tokens, structuredOutputRequired: provider.structured_output_required })).digest('hex')
 }
 
+function hasGenerationPurpose(payload: WorkflowPayload): boolean {
+  if (!payload.candidateId) return false
+  if (payload.purpose === 'initial' || payload.purpose === 'revise') return true // pre-migration deliveries
+  const match = /^(initial|revise):([0-9a-f-]{36})$/i.exec(payload.purpose)
+  return match !== null && match[2] === payload.candidateId && UuidSchema.safeParse(match[2]).success
+}
+
 /** Executes one ID-only generate-text-post delivery. No content crosses the Hatchet envelope. */
 export class TextGenerationExecutor {
   constructor(private readonly config: WorkerEnvironment, private readonly repository: TextGenerationRepository, private readonly generator: StructuredContentGenerator = new OpenAiCompatibleStructuredContentGenerator()) {}
 
   async execute(payload: WorkflowPayload) {
-    if (payload.purpose !== 'initial' && payload.purpose !== 'revise') throw new WorkflowExecutionError('invalid_generation_purpose', false)
     if (!payload.candidateId) throw new WorkflowExecutionError('generation_candidate_not_found', false)
+    if (!hasGenerationPurpose(payload)) throw new WorkflowExecutionError('invalid_generation_purpose', false)
     const session = await this.repository.loadSession(payload.entityId, payload.organizationId)
     if (!session || session.department_id !== payload.departmentId) throw new WorkflowExecutionError('generation_session_not_found', false)
     const candidate = await this.repository.acquirePendingCandidate(payload.candidateId, session.id, session.organization_id)

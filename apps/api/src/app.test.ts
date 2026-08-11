@@ -674,6 +674,26 @@ describe('platform administration', () => {
     expect(Object.keys(body)).not.toContain('apiKey')
     expect(Object.keys(body)).not.toContain('apiKeyCiphertext')
   })
+
+  it('rejects activating a stored provider without an implemented adapter', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({
+        from: (table: string) => {
+          if (table !== 'llm_provider_configurations') throw new Error(`unexpected table in test fake: ${table}`)
+          return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { protocol: 'anthropic', task_kind: 'text_generation' }, error: null }) }) }) }
+        },
+      }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PATCH', url: '/v1/llm-providers/a0000000-0000-4000-8000-000000000001',
+      headers: { authorization: `Bearer ${token}` }, payload: { isActive: true },
+    })
+    expect(response.statusCode).toBe(422)
+    expect(response.json()).toMatchObject({ error: 'unsupported_provider_configuration' })
+  })
 })
 
 describe('structure, memberships and invitations', () => {
