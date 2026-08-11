@@ -3,6 +3,9 @@ import { z } from 'zod'
 const emptyStringToUndefined = (value: unknown) => (value === '' ? undefined : value)
 const optionalSecret = z.preprocess(emptyStringToUndefined, z.string().min(1).optional())
 const optionalUrl = z.preprocess(emptyStringToUndefined, z.url().optional())
+const hostPort = z.string()
+  .regex(/^[a-zA-Z0-9.-]+:\d{1,5}$/, 'must be a host:port pair')
+  .refine((value) => Number(value.slice(value.lastIndexOf(':') + 1)) <= 65_535, 'must use a valid port')
 
 const ApiEnvironmentBaseSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -93,4 +96,21 @@ export type ApiEnvironment = z.infer<typeof ApiEnvironmentSchema>
 
 export function parseApiEnvironment(source: NodeJS.ProcessEnv = process.env): ApiEnvironment {
   return ApiEnvironmentSchema.parse(source)
+}
+
+/** Validated worker-only configuration. It intentionally requires service credentials in every environment. */
+export const WorkerEnvironmentSchema = z.object({
+  SUPABASE_URL: z.url(),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
+  HATCHET_CLIENT_TOKEN: z.string().min(1),
+  HATCHET_CLIENT_HOST_PORT: hostPort.default('localhost:7077'),
+  HATCHET_TLS: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
+  HATCHET_WORKER_SLOTS: z.coerce.number().int().positive().default(8),
+})
+
+export type WorkerEnvironment = z.infer<typeof WorkerEnvironmentSchema>
+
+/** Parses the worker configuration once, before any external client is created. */
+export function parseWorkerEnvironment(source: NodeJS.ProcessEnv = process.env): WorkerEnvironment {
+  return WorkerEnvironmentSchema.parse(source)
 }

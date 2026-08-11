@@ -231,14 +231,17 @@ importers:
   apps/worker:
     dependencies:
       '@hatchet-dev/typescript-sdk':
-        specifier: 1.28.0
-        version: 1.28.0(@grpc/grpc-js@1.14.4)(zod@4.4.3)
+        specifier: 1.28.1
+        version: 1.28.1(@grpc/grpc-js@1.14.4)(zod@4.4.3)
+      '@supabase/supabase-js':
+        specifier: ^2.55.0
+        version: 2.111.0
+      '@vereinsfunk/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@vereinsfunk/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
-      '@vereinsfunk/domain':
-        specifier: workspace:*
-        version: link:../../packages/domain
       '@vereinsfunk/media-processing':
         specifier: workspace:*
         version: link:../../packages/media-processing
@@ -1145,13 +1148,13 @@ packages:
     engines: {node: '>=6'}
     hasBin: true
 
-  '@hatchet-dev/typescript-sdk@1.28.0':
-    resolution: {integrity: sha512-JoBk1ODQMYBd6Yd1uv2TvYu2FOePpwH3GNDWJqHycW61BexHU19iBnejBZJGpCklDwf08Az+znG/OtABxI3BTg==}
+  '@hatchet-dev/typescript-sdk@1.28.1':
+    resolution: {integrity: sha512-shyyBFjDDStpC4Q5WMMf/+6s5jcoE24PzIpusfTg8ZuD0hlI0BlOf0R+JGHBzcf7e6zj9UdypuugLiWkyk2UnA==}
     peerDependencies:
       '@anthropic-ai/claude-agent-sdk': ^0.3.148
       '@grpc/grpc-js': ^1.14.3
       '@modelcontextprotocol/sdk': ^1.29.0
-      '@openai/agents': 0.13.2
+      '@openai/agents': 0.13.5
       '@opentelemetry/api': ^1.9.0
       '@opentelemetry/core': ^2.0.0
       '@opentelemetry/exporter-trace-otlp-grpc': ^0.220.0
@@ -7259,7 +7262,7 @@ snapshots:
       protobufjs: 7.6.5
       yargs: 17.7.3
 
-  '@hatchet-dev/typescript-sdk@1.28.0(@grpc/grpc-js@1.14.4)(zod@4.4.3)':
+  '@hatchet-dev/typescript-sdk@1.28.1(@grpc/grpc-js@1.14.4)(zod@4.4.3)':
     dependencies:
       '@bufbuild/protobuf': 2.13.0
       '@types/qs': 6.15.1

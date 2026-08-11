@@ -85,10 +85,10 @@ services:
     environment:
       NODE_ENV: development
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      SUPABASE_URL: http://host.docker.internal:4260
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-replace-with-local-service-role-key}
       HATCHET_CLIENT_TOKEN: ${HATCHET_CLIENT_TOKEN:-}
-      HATCHET_SERVER_URL: host.docker.internal:4270
-      HATCHET_API_URL: http://host.docker.internal:4271
-      HATCHET_TENANT_ID: ${HATCHET_TENANT_ID:-default}
+      HATCHET_CLIENT_HOST_PORT: host.docker.internal:7077
       HATCHET_TLS: ${HATCHET_TLS:-false}
 
   remotion:

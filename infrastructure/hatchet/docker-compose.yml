@@ -1,0 +1,90 @@
+# Self-hosted Hatchet control plane.  This is deliberately separate from Supabase:
+# Hatchet owns technical execution history only; all business state remains in Supabase.
+#
+# Copy infrastructure/hatchet/.env.example to infrastructure/hatchet/.env and provide
+# non-default secrets before starting this stack. Postgres remains private; gRPC is loopback-only
+# so the root application compose stack can reach it through host.docker.internal.
+services:
+  hatchet-postgres:
+    image: postgres:15.6
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hatchet
+      POSTGRES_PASSWORD: ${HATCHET_POSTGRES_PASSWORD:?set HATCHET_POSTGRES_PASSWORD in infrastructure/hatchet/.env}
+      POSTGRES_DB: hatchet
+    volumes:
+      - hatchet-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hatchet -d hatchet"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  hatchet-migrate:
+    image: ghcr.io/hatchet-dev/hatchet/hatchet-migrate:v0.98.9
+    restart: "no"
+    environment:
+      DATABASE_URL: ${HATCHET_DATABASE_URL:?set HATCHET_DATABASE_URL in infrastructure/hatchet/.env}
+    depends_on:
+      hatchet-postgres:
+        condition: service_healthy
+
+  hatchet-admin:
+    image: ghcr.io/hatchet-dev/hatchet/hatchet-admin:v0.98.9
+    restart: unless-stopped
+    environment: &hatchet-server-environment
+      DATABASE_URL: ${HATCHET_DATABASE_URL:?set HATCHET_DATABASE_URL in infrastructure/hatchet/.env}
+      SERVER_PORT: "8080"
+      SERVER_URL: ${HATCHET_PUBLIC_URL:?set HATCHET_PUBLIC_URL in infrastructure/hatchet/.env}
+      SERVER_AUTH_COOKIE_DOMAIN: ${HATCHET_COOKIE_DOMAIN:?set HATCHET_COOKIE_DOMAIN in infrastructure/hatchet/.env}
+      SERVER_AUTH_COOKIE_INSECURE: "false"
+      SERVER_GRPC_PORT: "7077"
+      SERVER_GRPC_BROADCAST_ADDRESS: ${HATCHET_GRPC_BROADCAST_ADDRESS:?set HATCHET_GRPC_BROADCAST_ADDRESS in infrastructure/hatchet/.env}
+      SERVER_GRPC_INSECURE: "false"
+      SERVER_MSGQUEUE_KIND: postgres
+      SERVER_OBSERVABILITY_ENABLED: "true"
+    volumes:
+      - hatchet-generated:/hatchet/generated
+    depends_on:
+      hatchet-migrate:
+        condition: service_completed_successfully
+
+  hatchet-engine:
+    image: ghcr.io/hatchet-dev/hatchet/hatchet-engine:v0.98.9
+    command: /hatchet/hatchet-engine --config /hatchet/generated
+    restart: unless-stopped
+    environment:
+      <<: *hatchet-server-environment
+      SERVER_GRPC_BIND_ADDRESS: 0.0.0.0
+      SERVER_LOGGER_LEVEL: warn
+      SERVER_LOGGER_FORMAT: json
+      DATABASE_LOGGER_LEVEL: warn
+      DATABASE_LOGGER_FORMAT: json
+    volumes:
+      - hatchet-generated:/hatchet/generated
+    ports:
+      - "127.0.0.1:7077:7077"
+    depends_on:
+      hatchet-admin:
+        condition: service_started
+
+  hatchet-api:
+    image: ghcr.io/hatchet-dev/hatchet/hatchet-api:v0.98.9
+    command: /hatchet/hatchet-api --config /hatchet/generated
+    restart: unless-stopped
+    environment:
+      <<: *hatchet-server-environment
+      SERVER_INTERNAL_CLIENT_INTERNAL_GRPC_BROADCAST_ADDRESS: hatchet-engine:7077
+      DATABASE_LOGGER_LEVEL: warn
+      DATABASE_LOGGER_FORMAT: json
+    volumes:
+      - hatchet-generated:/hatchet/generated
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      hatchet-admin:
+        condition: service_started
+
+volumes:
+  hatchet-postgres-data:
+  hatchet-generated:

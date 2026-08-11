@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ApiEnvironmentSchema } from './index.js'
+import { ApiEnvironmentSchema, WorkerEnvironmentSchema } from './index.js'
 
 const requiredProductionEnv = {
   NODE_ENV: 'production',
@@ -141,5 +141,33 @@ describe('ApiEnvironmentSchema', () => {
         SMTP_PASSWORD: requiredSmtpEnv.SMTP_PASSWORD,
       }).success,
     ).toBe(false)
+  })
+})
+
+describe('WorkerEnvironmentSchema', () => {
+  const requiredWorkerEnvironment = {
+    SUPABASE_URL: 'https://supabase.example.org',
+    SUPABASE_SERVICE_ROLE_KEY: 'service-role-secret',
+    HATCHET_CLIENT_TOKEN: 'hatchet-token',
+    HATCHET_CLIENT_HOST_PORT: 'hatchet.example.org:7077',
+    HATCHET_TLS: 'true',
+    HATCHET_WORKER_SLOTS: '8',
+  }
+
+  it('parses a complete worker configuration once into typed values', () => {
+    expect(WorkerEnvironmentSchema.parse(requiredWorkerEnvironment)).toMatchObject({ HATCHET_TLS: true, HATCHET_WORKER_SLOTS: 8 })
+  })
+
+  it.each([
+    ['HATCHET_TLS', 'ture'],
+    ['HATCHET_WORKER_SLOTS', '0'],
+    ['HATCHET_WORKER_SLOTS', '1.5'],
+    ['HATCHET_CLIENT_HOST_PORT', 'not-a-host-port'],
+    ['HATCHET_CLIENT_HOST_PORT', 'hatchet.example.org:65536'],
+    ['SUPABASE_URL', 'not-a-url'],
+    ['HATCHET_CLIENT_TOKEN', ''],
+    ['SUPABASE_SERVICE_ROLE_KEY', ''],
+  ])('rejects an invalid worker %s value', (key, value) => {
+    expect(WorkerEnvironmentSchema.safeParse({ ...requiredWorkerEnvironment, [key]: value }).success).toBe(false)
   })
 })
