@@ -331,7 +331,8 @@ CodeRabbit-Review zu PR #40 zunächst auch in Paket 032 gefundene Fehler wurde d
 `6d49b08f` behoben und ist hier nun gleich behandelt: Der Trigger feuert nur noch auf `before
 update`; die Löschsemantik liegt beim Fremdschlüssel. `authenticated` besitzt weiterhin kein
 Löschrecht auf der Tabelle. Zwei pgTAP-Assertions legen einen separaten Verein mit Einwilligungstext
-an, löschen ihn und prüfen die erfolgreiche Kaskade einschließlich der entfernten Textzeile.
+an, löschen ihn und prüfen die erfolgreiche Kaskade einschließlich der entfernten Textzeile. Geprüft
+(2026-08-11): keine weitere Migration verwendet denselben `before update or delete`-Zuschnitt.
 
 ### Bewusst vereinfacht/aufgeschoben
 
