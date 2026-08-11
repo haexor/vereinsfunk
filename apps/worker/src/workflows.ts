@@ -8,8 +8,8 @@ export const concurrency = {
   video: { global: 4, organization: 1, department: 1 }, publishing: { global: 20, organization: 4, department: 2 },
 } as const
 export interface WorkflowContext {
-  loadSubmission(id: string): Promise<{ status: string; sourceRevision?: number } | null>
-  updateSubmission(id: string, status: 'generating' | 'failed'): Promise<void>
+  loadSubmission(payload: WorkflowPayload): Promise<{ status: string; sourceRevision?: number } | null>
+  updateSubmission(payload: WorkflowPayload, status: 'generating' | 'failed'): Promise<void>
   enqueueDraft(input: WorkflowPayload): Promise<void>
 }
 export class NonRetryableWorkflowError extends NonRetryableError {}
@@ -19,17 +19,16 @@ const DEFAULT_SUBMISSION_PRIORITY = 40 // matches CreateSubmissionSchema's prior
 export async function processSubmission(raw: unknown, context: WorkflowContext): Promise<void> {
   const payload = WorkflowPayloadSchema.parse(raw)
   const submissionId = payload.submissionId ?? payload.entityId
-  const submission = await context.loadSubmission(submissionId)
+  const submission = await context.loadSubmission(payload)
   if (!submission) {
-    await context.updateSubmission(submissionId, 'failed').catch(() => {})
     throw new NonRetryableWorkflowError('submission_not_found')
   }
   if (submission.status !== 'queued' || (submission.sourceRevision !== undefined && submission.sourceRevision !== payload.sourceRevision)) return
-  await context.updateSubmission(submissionId, 'generating')
+  await context.updateSubmission(payload, 'generating')
   try {
     await context.enqueueDraft({ ...payload, submissionId, entityId: submissionId, idempotencyKey: createIdempotencyKey('draft', submissionId, payload.sourceRevision) })
   } catch (error) {
-    await context.updateSubmission(submissionId, 'failed').catch(() => {})
+    await context.updateSubmission(payload, 'failed').catch(() => {})
     throw error
   }
 }
@@ -38,7 +37,7 @@ export async function processSubmission(raw: unknown, context: WorkflowContext):
 export async function createHatchetWorker(context: WorkflowContext, env: NodeJS.ProcessEnv = process.env): Promise<Worker> {
   const token = env.HATCHET_CLIENT_TOKEN
   if (!token) throw new Error('HATCHET_CLIENT_TOKEN is required to start the worker')
-  const client = HatchetClient.init<WorkflowPayload>({ token, host_port: env.HATCHET_SERVER_URL ?? 'localhost:4270', api_url: env.HATCHET_API_URL ?? 'http://localhost:4271', tenant_id: env.HATCHET_TENANT_ID ?? 'default', tls_config: { tls_strategy: env.HATCHET_TLS === 'true' ? 'tls' : 'none' } })
+  const client = HatchetClient.init<WorkflowPayload>({ token, host_port: env.HATCHET_CLIENT_HOST_PORT ?? 'localhost:7077', tls_config: { tls_strategy: env.HATCHET_TLS === 'true' ? 'tls' : 'none' } })
   const workflow = client.task({ name: 'process-submission', inputValidator: WorkflowPayloadSchema,
     concurrency: [{ expression: "input.organizationId + ':' + input.departmentId", maxRuns: concurrency.llm.department, limitStrategy: ConcurrencyLimitStrategy.GROUP_ROUND_ROBIN }, { expression: 'input.organizationId', maxRuns: concurrency.llm.organization, limitStrategy: ConcurrencyLimitStrategy.GROUP_ROUND_ROBIN }, { expression: "'global'", maxRuns: concurrency.llm.global, limitStrategy: ConcurrencyLimitStrategy.GROUP_ROUND_ROBIN }],
     defaultPriority: priorityToHatchet(DEFAULT_SUBMISSION_PRIORITY),

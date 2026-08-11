@@ -1,23 +1,34 @@
 import { createLogger } from '@vereinsfunk/observability'
-import { concurrency } from './workflows.js'
+import { createSupabaseWorkflowContext, createWorkflowOutboxRepository } from './context.js'
+import { createHatchetClient, HatchetOrchestrator, WorkflowOutboxDispatcher } from '@vereinsfunk/orchestration'
+import { concurrency, createHatchetWorker } from './workflows.js'
 
 const logger = createLogger({ name: 'worker' })
 let stopping = false
+let worker: Awaited<ReturnType<typeof createHatchetWorker>> | undefined
 
-logger.info(
-  { adapter: process.env.HATCHET_CLIENT_TOKEN ? 'hatchet' : 'local', concurrency },
-  'worker scaffold ready',
-)
-
-const shutdown = (signal: string) => {
+const shutdown = async (signal: string) => {
   if (stopping) return
   stopping = true
+  await worker?.stop()
   logger.info({ signal }, 'worker stopped gracefully')
-  process.exit(0)
+  process.exitCode = 0
 }
 
-process.once('SIGINT', () => shutdown('SIGINT'))
-process.once('SIGTERM', () => shutdown('SIGTERM'))
+process.once('SIGINT', () => { void shutdown('SIGINT') })
+process.once('SIGTERM', () => { void shutdown('SIGTERM') })
 
-// Keep the local worker health process alive until the Hatchet adapter is configured.
-setInterval(() => logger.debug({ status: 'healthy' }, 'worker heartbeat'), 30_000).unref()
+async function main() {
+  worker = await createHatchetWorker(createSupabaseWorkflowContext(), process.env)
+  await worker.start()
+  const dispatcher = new WorkflowOutboxDispatcher(createWorkflowOutboxRepository(), new HatchetOrchestrator(createHatchetClient()))
+  const dispatch = async () => { try { await dispatcher.dispatchPending() } catch (error) { logger.error({ err: error }, 'workflow outbox dispatch failed') } }
+  await dispatch()
+  setInterval(() => { void dispatch() }, 1_000).unref()
+  logger.info({ adapter: 'hatchet', concurrency }, 'Hatchet worker started')
+}
+
+main().catch((error: unknown) => {
+  logger.fatal({ err: error }, 'Hatchet worker failed to start')
+  process.exitCode = 1
+})

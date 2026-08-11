@@ -11,7 +11,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@hatchet-dev/typescript-sdk": "1.28.0",
+    "@hatchet-dev/typescript-sdk": "1.28.1",
+    "@supabase/supabase-js": "^2.55.0",
     "@vereinsfunk/contracts": "workspace:*",
     "@vereinsfunk/domain": "workspace:*",
     "@vereinsfunk/media-processing": "workspace:*",
