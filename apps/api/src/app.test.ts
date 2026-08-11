@@ -2106,6 +2106,53 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
     expect(response.json()).toMatchObject([{ id: STAGE_ID, status: 'stalled', isOverdue: true }])
   })
 
+  it('reports the media gate blockers to a reviewer whose own RLS hides the media tables', async () => {
+    // Regression (gefunden im Code-Review zu Paket 002): die Blocker wurden ueber den Nutzer-Client
+    // geladen. post_media/media_derivatives/consent_records verlangen per RLS is_organization_member,
+    // directory_people zusaetzlich 'directory.read' -- eine reine Abteilungs-'approver'-Rolle erfuellt
+    // beides nicht und bekam eine leere Blockerliste, die wie "nichts zu beanstanden" aussieht. Der
+    // forUser-Fake unten wirft fuer genau diese Tabellen: die Stufenliste selbst darf er bedienen, die
+    // Medienauflösung nicht.
+    const STAGE_POST_ID = '11000000-2000-4000-8000-000000000001'
+    const STAGE_POST_VERSION_ID = '11000000-3000-4000-8000-000000000001'
+    const stageRow = {
+      id: STAGE_ID, position: 1, scope: 'department', label: 'Abteilung', mode: 'named', minimum_approvals: 1, is_minor_stage: false,
+      status: 'open', reviewer_snapshot: [{ userId: USER_ID }], deadline_at: null, approval_request_id: '11000000-4000-4000-8000-000000000001',
+    }
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'approval_stages') return chain({ data: [stageRow], error: null })
+            if (table === 'approval_requests') return chain({ data: [{ id: '11000000-4000-4000-8000-000000000001', post_id: STAGE_POST_ID, post_version_id: STAGE_POST_VERSION_ID }], error: null })
+            if (table === 'posts') return chain({ data: [{ id: STAGE_POST_ID, department_id: DEPARTMENT_ID }], error: null })
+            if (table === 'policy_settings') return chain({ data: [], error: null })
+            throw new Error(`the media gate must not read ${table} through the user client`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'post_versions') return chain({ data: { title: '', caption: 'Hallo Welt' }, error: null })
+            if (table === 'post_media') return chain({ data: [{ media_derivative_id: '11000000-6000-4000-8000-000000000001' }], error: null })
+            if (table === 'media_derivatives') return chain({ data: [{ id: '11000000-6000-4000-8000-000000000001', media_asset_id: '11000000-6100-4000-8000-000000000001', status: 'ready' }], error: null })
+            if (table === 'media_assets') return chain({ data: [{ id: '11000000-6100-4000-8000-000000000001', mime_type: 'image/png', scan_status: 'pending' }], error: null })
+            if (table === 'face_regions') return chain({ data: [], error: null })
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/approval-stages/mine?organizationId=${ORGANIZATION_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject([{ id: STAGE_ID, mediaGateBlockers: ['scan_pending'] }])
+  })
+
   it('requires an organizationId when listing the stages waiting for the caller', async () => {
     // Ohne Organisationsbezug saehe eine Person mit Pruefrollen in mehreren Vereinen die Freigaben
     // aller ihrer Vereine in der Liste eines einzelnen.

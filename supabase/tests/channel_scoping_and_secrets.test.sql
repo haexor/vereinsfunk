@@ -38,7 +38,7 @@ insert into public.social_connections (id, organization_id, platform, external_a
   ('65000000-8000-4000-8000-000000000003', '65000000-1000-4000-8000-000000000001', 'instagram', 'ext-c3', 'Abgelaufen', 'organization', null, 'action_required', false),
   ('65000000-8000-4000-8000-000000000004', '65000000-1000-4000-8000-000000000001', 'instagram', 'ext-c4', 'Vertraulich', 'organization', null, 'active', true);
 
--- 1-2: Geheimnisse ausserhalb des Lesepfads (Plan 012, "Sicherheitsbefund zuerst").
+-- 1-3: Geheimnisse ausserhalb des Lesepfads (Plan 012, "Sicherheitsbefund zuerst").
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '65000000-0000-4000-8000-000000000001', true);
 select throws_ok(
@@ -127,7 +127,7 @@ select throws_ok(
   'P0001', 'channel_not_allowed', 'schedule_publication rejects a channel with no channel_scopes grant covering the post''s department'
 );
 
--- 12: C1 ist bereits organisationsweit freigegeben (Test 4) -- Einplanen auf P1 gelingt.
+-- 12-13: C1 ist bereits organisationsweit freigegeben (Test 4) -- Einplanen auf P1 gelingt.
 select is(
   (select status from public.schedule_publication('65000000-3000-4000-8000-000000000001'::uuid, '65000000-8000-4000-8000-000000000001'::uuid, null)),
   'queued', 'schedule_publication succeeds once an organization-wide channel_scopes grant exists'
@@ -135,7 +135,7 @@ select is(
 set local role postgres;
 select is((select status from public.posts where id = '65000000-2000-4000-8000-000000000001'), 'scheduled', 'the post moves to scheduled after a successful schedule_publication call');
 
--- 13: C3 (action_required) ist ebenfalls organisationsweit freigegeben, aber sein Status blockiert.
+-- 14: C3 (action_required) ist ebenfalls organisationsweit freigegeben, aber sein Status blockiert.
 insert into public.channel_scopes (organization_id, social_connection_id, scope, department_id, team_id, created_by) values
   ('65000000-1000-4000-8000-000000000001', '65000000-8000-4000-8000-000000000003', 'organization', null, null, '65000000-0000-4000-8000-000000000001');
 set local role authenticated;
@@ -144,7 +144,7 @@ select throws_ok(
   'P0001', 'channel_not_allowed', 'schedule_publication rejects a channel whose status is not active'
 );
 
--- 14-15: require_channel_responsible blockt einen Kanal ohne verantwortliche Person, erlaubt ihn
+-- 15-16: require_channel_responsible blockt einen Kanal ohne verantwortliche Person, erlaubt ihn
 -- sobald eine gesetzt ist.
 set local role postgres;
 insert into public.policy_settings (organization_id, scope, require_channel_responsible, updated_by) values
@@ -162,8 +162,8 @@ select is(
   'queued', 'schedule_publication succeeds once the required responsible person is set'
 );
 
--- 16-17: authz.post_is_not_confidential_only. C4 braucht ebenfalls eine verantwortliche Person --
--- require_channel_responsible aus Test 14-15 gilt vereinsweit fort.
+-- 17-19: authz.post_is_not_confidential_only. C4 braucht ebenfalls eine verantwortliche Person --
+-- require_channel_responsible aus Test 15-16 gilt vereinsweit fort.
 set local role postgres;
 insert into public.channel_scopes (organization_id, social_connection_id, scope, department_id, team_id, created_by) values
   ('65000000-1000-4000-8000-000000000001', '65000000-8000-4000-8000-000000000004', 'organization', null, null, '65000000-0000-4000-8000-000000000001');
@@ -178,13 +178,13 @@ select is(authz.post_is_not_confidential_only('65000000-1000-4000-8000-000000000
 select is(authz.post_is_not_confidential_only('65000000-1000-4000-8000-000000000001', '65000000-3000-4000-8000-000000000001'),
   true, 'a post published to a non-confidential channel has a non-confidential publication');
 
--- 18-20: posts_select -- ein Beitrag, der ausschliesslich einen vertraulichen Kanal bedient, bleibt
+-- 20-22: posts_select -- ein Beitrag, der ausschliesslich einen vertraulichen Kanal bedient, bleibt
 -- bei der abteilungsweiten Sichtbarkeit (Plan 012, "Datenmodell"). Marketing (dept A2) hat keine
 -- Mitgliedschaft in Fussball und keinen zugewiesenen Pruefer -- reiner Sichtbarkeitstest ueber
 -- posts_visible_org_wide.
 set local role postgres;
 update public.posts set status = 'published' where id in ('65000000-2000-4000-8000-000000000001', '65000000-2000-4000-8000-000000000004');
--- Die Vereinszeile existiert bereits aus Test 14-15; policy_settings_org_unique laesst je Verein
+-- Die Vereinszeile existiert bereits aus Test 15-16; policy_settings_org_unique laesst je Verein
 -- ohnehin nur eine zu, deshalb hier nur ein update statt eines zweiten insert.
 update public.policy_settings set posts_visible_org_wide = true where organization_id = '65000000-1000-4000-8000-000000000001' and scope = 'organization';
 set local role authenticated;
@@ -197,7 +197,7 @@ select set_config('request.jwt.claim.sub', '65000000-0000-4000-8000-000000000002
 select is((select count(*)::integer from public.posts where id = '65000000-2000-4000-8000-000000000004'), 1,
   'a member of the owning department still sees the post regardless of channel confidentiality');
 
--- 21-22: set_policy_setting rejects the two channel flags outside organization scope, but accepts
+-- 23-24: set_policy_setting rejects the two channel flags outside organization scope, but accepts
 -- them at organization scope (Plan 012: "eine Abteilung darf sich diese Erlaubnis nicht selbst geben").
 select set_config('request.jwt.claim.sub', '65000000-0000-4000-8000-000000000002', true);
 select throws_ok(
@@ -210,7 +210,7 @@ select is(
   true, 'set_policy_setting accepts allow_department_owned_channels at organization scope'
 );
 
--- 23-24: flag_channels_needing_reconnect markiert nur Verbindungen, deren Token bald ablaeuft.
+-- 25-27: flag_channels_needing_reconnect markiert nur Verbindungen, deren Token bald ablaeuft.
 set local role postgres;
 update public.social_connections set token_expires_at = now() + interval '2 days' where id = '65000000-8000-4000-8000-000000000001';
 update public.social_connections set token_expires_at = now() + interval '30 days' where id = '65000000-8000-4000-8000-000000000002';
@@ -220,7 +220,7 @@ select is((select status from public.social_connections where id = '65000000-800
 select is((select status from public.social_connections where id = '65000000-8000-4000-8000-000000000002'), 'active',
   'a connection expiring well outside the warning window is left active');
 
--- 25-27: cleanup_expired_oauth_state raeumt nur abgelaufene Zwischenzustaende weg.
+-- 28-30: cleanup_expired_oauth_state raeumt nur abgelaufene Zwischenzustaende weg.
 insert into public.oauth_states (id, organization_id, platform, owner_scope, owner_department_id, nonce, created_by, expires_at) values
   ('65000000-9000-4000-8000-000000000001', '65000000-1000-4000-8000-000000000001', 'instagram', 'organization', null, 'expired-nonce', '65000000-0000-4000-8000-000000000001', now() - interval '1 hour'),
   ('65000000-9000-4000-8000-000000000002', '65000000-1000-4000-8000-000000000001', 'instagram', 'organization', null, 'fresh-nonce', '65000000-0000-4000-8000-000000000001', now() + interval '10 minutes');
@@ -231,7 +231,7 @@ select is((select count(*)::integer from public.oauth_states where id = '6500000
 select is((select count(*)::integer from public.oauth_states where id = '65000000-9000-4000-8000-000000000002'), 1, 'cleanup_expired_oauth_state leaves a not-yet-expired oauth_states row');
 select is((select count(*)::integer from public.oauth_pending_connections where id = '65000000-9100-4000-8000-000000000001'), 0, 'cleanup_expired_oauth_state removes an expired oauth_pending_connections row');
 
--- 28: leere allowedChannelIds-Liste heisst "nichts erlaubt", nicht "keine Einschraenkung" (Plan 011,
+-- 31: leere allowedChannelIds-Liste heisst "nichts erlaubt", nicht "keine Einschraenkung" (Plan 011,
 -- "Zusammenfuehrung der Ebenen"). C4 ist vereinsweit freigegeben, aktiv und hat eine verantwortliche
 -- Person -- alle Pruefungen vor der Kanalliste sind also erfuellt, es kann nur an ihr scheitern.
 set local role postgres;
@@ -246,7 +246,7 @@ select throws_ok(
   'P0001', 'channel_not_allowed', 'schedule_publication rejects every channel when allowedChannelIds is an empty list'
 );
 
--- 29-36: Paket 002 -- schedule_publication ist jetzt die Durchsetzungsgrenze fuer den
+-- 32-39: Paket 002 -- schedule_publication ist jetzt die Durchsetzungsgrenze fuer den
 -- konservativen Medien-Gate-Kern (scan_pending, derivative_stale, face_pending, consent_invalid).
 -- Ein eigener Kanal C5 statt Wiederverwendung von C1/C4: C1 wird von Test 23-24 absichtlich auf
 -- 'action_required' gesetzt, ein spaeteres schedule_publication auf C1 wuerde sonst an dessen
@@ -274,7 +274,7 @@ insert into public.post_versions (id, organization_id, post_id, version_number, 
   ('65000000-3000-4000-8000-000000000011', '65000000-1000-4000-8000-000000000001', '65000000-2000-4000-8000-000000000011', 1, '{}', '{}', 'user', '65000000-0000-4000-8000-000000000001'),
   ('65000000-3000-4000-8000-000000000012', '65000000-1000-4000-8000-000000000001', '65000000-2000-4000-8000-000000000012', 1, '{}', '{}', 'user', '65000000-0000-4000-8000-000000000001');
 
--- 29: P6 traegt kein einziges Medium (Text-only-Pilot, Plan 033) -- jeder exists()-Join auf
+-- 32: P6 traegt kein einziges Medium (Text-only-Pilot, Plan 033) -- jeder exists()-Join auf
 -- post_media laeuft ins Leere, der Gate-Check darf nichts blockieren.
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '65000000-0000-4000-8000-000000000002', true);
@@ -327,38 +327,38 @@ insert into public.face_regions (id, organization_id, media_asset_id, x, y, widt
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '65000000-0000-4000-8000-000000000002', true);
 
--- 30: scan_status='pending' auf dem verknuepften media_asset blockiert hart.
+-- 33: scan_status='pending' auf dem verknuepften media_asset blockiert hart.
 select throws_ok(
   $$select public.schedule_publication('65000000-3000-4000-8000-000000000007'::uuid, '65000000-8000-4000-8000-000000000005'::uuid, null)$$,
   'P0001', 'media_gate_blocked: scan_pending', 'schedule_publication rejects a post version whose media asset scan is not clean'
 );
 
--- 31: media_derivatives.status <> 'ready' blockiert hart.
+-- 34: media_derivatives.status <> 'ready' blockiert hart.
 select throws_ok(
   $$select public.schedule_publication('65000000-3000-4000-8000-000000000008'::uuid, '65000000-8000-4000-8000-000000000005'::uuid, null)$$,
   'P0001', 'media_gate_blocked: derivative_stale', 'schedule_publication rejects a post version whose media derivative is not ready'
 );
 
--- 32: eine unentschiedene Gesichtsregion (decision='pending') blockiert hart.
+-- 35: eine unentschiedene Gesichtsregion (decision='pending') blockiert hart.
 select throws_ok(
   $$select public.schedule_publication('65000000-3000-4000-8000-000000000009'::uuid, '65000000-8000-4000-8000-000000000005'::uuid, null)$$,
   'P0001', 'media_gate_blocked: face_pending', 'schedule_publication rejects a post version with an undecided face region'
 );
 
--- 33: ein widerrufener Consent-Record hinter einer "consented"-Entscheidung blockiert hart.
+-- 36: ein widerrufener Consent-Record hinter einer "consented"-Entscheidung blockiert hart.
 select throws_ok(
   $$select public.schedule_publication('65000000-3000-4000-8000-000000000010'::uuid, '65000000-8000-4000-8000-000000000005'::uuid, null)$$,
   'P0001', 'media_gate_blocked: consent_invalid', 'schedule_publication rejects a post version whose consent was revoked'
 );
 
--- 34: eine minderjaehrige Person ohne Erziehungsberechtigten-Unterschrift blockiert hart, selbst
+-- 37: eine minderjaehrige Person ohne Erziehungsberechtigten-Unterschrift blockiert hart, selbst
 -- ohne Widerruf.
 select throws_ok(
   $$select public.schedule_publication('65000000-3000-4000-8000-000000000011'::uuid, '65000000-8000-4000-8000-000000000005'::uuid, null)$$,
   'P0001', 'media_gate_blocked: consent_invalid', 'schedule_publication rejects consent for a minor without a guardian signer'
 );
 
--- 35-36: sauberer Scan, fertiges Derivat, gueltiger Consent -- schedule_publication blockiert nicht.
+-- 38-39: sauberer Scan, fertiges Derivat, gueltiger Consent -- schedule_publication blockiert nicht.
 select is(
   (select status from public.schedule_publication('65000000-3000-4000-8000-000000000012'::uuid, '65000000-8000-4000-8000-000000000005'::uuid, null)),
   'queued', 'schedule_publication succeeds once scan, derivative and consent are all clean'

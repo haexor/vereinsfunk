@@ -312,6 +312,13 @@ async function buildStageDefinitions(
 // minorReviewConfirmed ist bewusst konservativ immer false: ein eigenes, freigabestufenbasiertes
 // Minderjaehrigenschutz existiert bereits seit Paket 011 (is_minor_stage) und bleibt die
 // eigentliche Durchsetzung; dieser Blocker ist eine zusaetzliche, informative Erinnerung.
+//
+// client MUSS der Service-Client sein (beide Aufrufer tun das). Ueber einen Nutzer-Client ist diese
+// Funktion still fail-open, nicht bloss unvollstaendig: post_media/media_derivatives/consent_records
+// verlangen per RLS is_organization_member und directory_people zusaetzlich 'directory.read' -- fehlt
+// eines davon, kommen leere Zeilen zurueck, aus denen scanStatus 'clean', subjectIsMinor false und
+// personLeft false abgeleitet werden. Das Ergebnis ist dann eine leere Blockerliste, die aussieht
+// wie "nichts zu beanstanden" (gefunden im Code-Review zu Paket 002).
 async function computeMediaGateBlockersForPostVersion(
   client: SupabaseClient, postVersionId: string, departmentId: string, policy: { consentExpiresOnLeave: boolean },
 ): Promise<MediaGateBlocker[]> {
@@ -1112,6 +1119,19 @@ export function registerPolicyRoutes(app: FastifyInstance, context: ApiRouteCont
 
     // Mehrere Stufen eines Freigabeantrags zeigen auf dieselbe post_version_id -- ohne Memoisierung
     // wuerden bis zu sieben Abfragen je Stufe unnoetig wiederholt (gefunden im Code-Review).
+    //
+    // Die Blocker-Abfrage laeuft ueber den Service-Client, alles davor bewusst weiter ueber den
+    // Nutzer-Client: WELCHE Stufen der Aufrufer sieht, bleibt seine eigene Sichtbarkeit, aber die
+    // Blocker einer Stufe, die er entscheiden soll, muessen vollstaendig sein. Ueber den Nutzer-Client
+    // waren sie es fuer die typischen Freigebenden nicht (gefunden im Code-Review): post_media,
+    // media_derivatives und consent_records verlangen per RLS is_organization_member, also eine
+    // Organisationsrolle -- eine reine Abteilungs-'approver'-Rolle sah null Zeilen und damit die
+    // leere Blockerliste, und wer eine Organisationsrolle ohne 'directory.read' hat (social_manager)
+    // sah die Verzeichnisperson nicht und damit weder Minderjaehrigen- noch Austrittsfaelle. Beides
+    // haette dem Freigebenden "keine Einwaende" gezeigt, wo welche bestehen. Nach aussen geht nur die
+    // Liste der Blocker-Namen zu einer Stufe, fuer die der Aufrufer ohnehin als Pruefer eingetragen
+    // ist (mine-Filter oben) -- keine Medien-, Einwilligungs- oder Verzeichnisdaten.
+    const gateClient = supabaseClients.forService()
     const blockersByPostVersionId = new Map<string, Promise<MediaGateBlocker[]>>()
     const blockersByStage = await Promise.all(
       mine.map(async (row) => {
@@ -1121,7 +1141,7 @@ export function registerPolicyRoutes(app: FastifyInstance, context: ApiRouteCont
         if (!postVersionId || !departmentId) return []
         let pending = blockersByPostVersionId.get(postVersionId)
         if (!pending) {
-          pending = computeMediaGateBlockersForPostVersion(client, postVersionId, departmentId, effectivePolicyForDepartment(departmentId))
+          pending = computeMediaGateBlockersForPostVersion(gateClient, postVersionId, departmentId, effectivePolicyForDepartment(departmentId))
           blockersByPostVersionId.set(postVersionId, pending)
         }
         return pending
