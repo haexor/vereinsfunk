@@ -2,7 +2,8 @@
 # Hatchet owns technical execution history only; all business state remains in Supabase.
 #
 # Copy infrastructure/hatchet/.env.example to infrastructure/hatchet/.env and provide
-# non-default secrets before starting this stack.  Do not publish the gRPC or Postgres ports.
+# non-default secrets before starting this stack. Postgres remains private; gRPC is loopback-only
+# so the root application compose stack can reach it through host.docker.internal.
 services:
   hatchet-postgres:
     image: postgres:15.6
@@ -61,6 +62,8 @@ services:
       DATABASE_LOGGER_FORMAT: json
     volumes:
       - hatchet-generated:/hatchet/generated
+    ports:
+      - "127.0.0.1:7077:7077"
     depends_on:
       hatchet-admin:
         condition: service_started

@@ -22,6 +22,5 @@ ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build --chown=node:node /out ./
 USER node
-# Without HATCHET_CLIENT_TOKEN the worker runs its 'local' adapter (apps/worker/src/index.ts),
-# which is the deployed default until Hatchet is actually provisioned.
+# The worker validates its Supabase and Hatchet credentials before opening any connection.
 CMD ["node", "dist/index.js"]

@@ -5,6 +5,6 @@
   "type": "module",
   "exports": { ".": "./src/index.ts" },
   "scripts": { "build": "tsup src/index.ts --format esm --dts --out-dir dist", "test": "vitest run", "typecheck": "tsc -p tsconfig.json --noEmit" },
-  "dependencies": { "@hatchet-dev/typescript-sdk": "1.28.1", "@vereinsfunk/contracts": "workspace:*" },
+  "dependencies": { "@vereinsfunk/contracts": "workspace:*" },
   "devDependencies": { "tsup": "^8.5.0", "typescript": "^6.0.3", "vitest": "^4.1.10" }
 }

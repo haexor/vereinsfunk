@@ -7,8 +7,8 @@ describe('workflow outbox dispatcher', () => {
   it('marks an atomically claimed entry only after Hatchet accepts it', async () => {
     const dispatched: string[] = []
     const outbox: WorkflowOutboxRepository = {
-      claimPending: async () => [{ id: 'outbox-1', workflow: 'render-content', payload, priority: 2 }],
-      markDispatched: async (_id, runId) => { dispatched.push(runId) },
+      claimPending: async () => [{ id: 'outbox-1', claimToken: 'claim-1', workflow: 'render-content', payload, priority: 2 }],
+      markDispatched: async (_id, claimToken, runId) => { expect(claimToken).toBe('claim-1'); dispatched.push(runId) },
       markRetryableFailure: async () => { throw new Error('must not fail') },
     }
     const count = await new WorkflowOutboxDispatcher(outbox, new FakeOrchestrator()).dispatchPending()

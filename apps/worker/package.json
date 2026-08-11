@@ -13,8 +13,8 @@
   "dependencies": {
     "@hatchet-dev/typescript-sdk": "1.28.1",
     "@supabase/supabase-js": "^2.55.0",
+    "@vereinsfunk/config": "workspace:*",
     "@vereinsfunk/contracts": "workspace:*",
-    "@vereinsfunk/domain": "workspace:*",
     "@vereinsfunk/media-processing": "workspace:*",
     "@vereinsfunk/observability": "workspace:*",
     "@vereinsfunk/orchestration": "workspace:*"
