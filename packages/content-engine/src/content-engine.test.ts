@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ContentGenerationError, FakeContentGenerator, OpenAiCompatibleStructuredContentGenerator, createGroundedContentBrief } from './index.js'
+import { FakeContentGenerator, OpenAiCompatibleStructuredContentGenerator, createGroundedContentBrief, type ContentGenerationError } from './index.js'
 
 describe('fake content generator', () => {
   it('marks missing facts instead of inventing them', async () => {

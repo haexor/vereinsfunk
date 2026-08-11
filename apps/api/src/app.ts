@@ -1455,7 +1455,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const config = await resolveScopedEffectiveConfig(client, input.organizationId, input.departmentId, input.teamId ?? null)
     if (config.policies.allowedPresets?.length && !config.policies.allowedPresets.includes(input.presetSlug)) return reply.code(422).send({ error: 'preset_not_allowed' })
     let styleSnapshot: Record<string, unknown>
-    let styleProfileId: string | null = input.styleProfileId ?? null
+    const styleProfileId: string | null = input.styleProfileId ?? null
     if (styleProfileId) {
       const row = await client.from('content_style_profiles').select('id, name, description, style_rules, avoid_rules, department_id, team_id').eq('id', styleProfileId).eq('organization_id', input.organizationId).eq('is_active', true).maybeSingle()
       if (row.error) throw row.error

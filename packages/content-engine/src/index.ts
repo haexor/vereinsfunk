@@ -24,7 +24,7 @@ export function createTextGroundedContentBrief(input: Pick<CreateSubmission, 'pr
     ...Object.entries(input.sourceMaterial.facts).map(([key, value]) => ({ sourceId: `fact:${key}`, text: `${key}: ${value}` })),
     ...input.sourceMaterial.observations.map((text, index) => ({ sourceId: `observation:${index + 1}`, text })),
   ]
-  const approvedQuotes = input.sourceMaterial.quotes.filter((quote, index) => quote.approved).map((quote, index) => quote.attribution ? ({ sourceId: `quote:${index + 1}`, text: quote.text, attribution: quote.attribution }) : ({ sourceId: `quote:${index + 1}`, text: quote.text }))
+  const approvedQuotes = input.sourceMaterial.quotes.filter((quote) => quote.approved).map((quote, index) => quote.attribution ? ({ sourceId: `quote:${index + 1}`, text: quote.text, attribution: quote.attribution }) : ({ sourceId: `quote:${index + 1}`, text: quote.text }))
   return { allowedClaims, approvedQuotes, missingFacts: validateSourceMaterial(preset, input.sourceMaterial), prohibitedClaims: input.sourceMaterial.doNotMention, goal: input.communicationGoal, requestedFormats: [], presetSlug: input.presetSlug }
 }
 
