@@ -17,10 +17,13 @@ const providers = ref<LlmProviderConfigurationDto[]>([])
 
 const newProvider = reactive({
   label: '',
-  protocol: 'anthropic' as 'anthropic' | 'openai',
+  protocol: 'openai' as const,
   baseUrl: '',
   model: '',
   apiKey: '',
+  temperature: 0.2,
+  maxOutputTokens: 1200,
+  priority: 100,
 })
 
 async function load() {
@@ -50,12 +53,18 @@ async function createProvider() {
       baseUrl: newProvider.baseUrl,
       model: newProvider.model,
       apiKey: newProvider.apiKey,
+      taskKind: 'text_generation',
+      runtimeParameters: { temperature: newProvider.temperature, maxOutputTokens: newProvider.maxOutputTokens, structuredOutputRequired: true },
+      priority: newProvider.priority,
     })
     await $fetch(`${config.public.apiBase}/v1/llm-providers`, { method: 'POST', headers, body })
     newProvider.label = ''
     newProvider.baseUrl = ''
     newProvider.model = ''
     newProvider.apiKey = ''
+    newProvider.temperature = 0.2
+    newProvider.maxOutputTokens = 1200
+    newProvider.priority = 100
     await load()
   } catch {
     errorMessage.value = 'Provider konnte nicht angelegt werden.'
@@ -102,7 +111,7 @@ async function removeProvider(id: string) {
       <div class="eyebrow mb-3">Plattform-Administration</div>
       <h1 class="font-display text-3xl font-extrabold tracking-[-.04em]">LLM-Provider</h1>
       <p class="mt-2 text-sm text-[#727a75]">
-        Modelle, Accounts und API-Keys für die Texterstellung. Ein hinterlegter Schlüssel wird nie wieder im Klartext angezeigt.
+        Routing für die ausschließlich asynchrone Textgenerierung. Ein hinterlegter Schlüssel wird nie wieder im Klartext angezeigt und Provider-Aufrufe erfolgen nur im Worker.
       </p>
     </header>
 
@@ -118,10 +127,7 @@ async function removeProvider(id: string) {
             placeholder="Bezeichnung, z.B. Claude via haex-claude-proxy"
             class="focus-ring rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm sm:col-span-2"
           />
-          <select v-model="newProvider.protocol" class="focus-ring rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm">
-            <option value="anthropic">Anthropic-kompatibel</option>
-            <option value="openai">OpenAI-kompatibel</option>
-          </select>
+          <div class="rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm text-[#5c655f]">OpenAI-kompatibel · text_generation</div>
           <input
             v-model="newProvider.model"
             type="text"
@@ -136,6 +142,15 @@ async function removeProvider(id: string) {
             placeholder="Basis-URL"
             class="focus-ring rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm sm:col-span-2"
           />
+          <label class="text-xs font-semibold text-[#5c655f]">Temperatur
+            <input v-model.number="newProvider.temperature" type="number" min="0" max="2" step="0.1" required class="mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" />
+          </label>
+          <label class="text-xs font-semibold text-[#5c655f]">Max. Ausgabe-Tokens
+            <input v-model.number="newProvider.maxOutputTokens" type="number" min="128" max="4000" step="1" required class="mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" />
+          </label>
+          <label class="text-xs font-semibold text-[#5c655f] sm:col-span-2">Priorität (kleinere Zahl gewinnt)
+            <input v-model.number="newProvider.priority" type="number" step="1" required class="mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" />
+          </label>
           <input
             v-model="newProvider.apiKey"
             type="password"
@@ -162,6 +177,8 @@ async function removeProvider(id: string) {
               <th class="pb-2 pr-4 font-semibold">Protokoll</th>
               <th class="pb-2 pr-4 font-semibold">Modell</th>
               <th class="pb-2 pr-4 font-semibold">Zweck</th>
+              <th class="pb-2 pr-4 font-semibold">Laufzeit</th>
+              <th class="pb-2 pr-4 font-semibold">Priorität</th>
               <th class="pb-2 pr-4 font-semibold">Schlüssel</th>
               <th class="pb-2 pr-4 font-semibold">Aktiv</th>
               <th class="pb-2 font-semibold" />
@@ -172,7 +189,9 @@ async function removeProvider(id: string) {
               <td class="py-2 pr-4 font-medium">{{ provider.label }}</td>
               <td class="py-2 pr-4">{{ provider.protocol }}</td>
               <td class="py-2 pr-4">{{ provider.model }}</td>
-              <td class="py-2 pr-4">{{ provider.purpose }}</td>
+              <td class="py-2 pr-4">{{ provider.taskKind }}</td>
+              <td class="py-2 pr-4">{{ provider.runtimeParameters.temperature }} · {{ provider.runtimeParameters.maxOutputTokens }} Tokens</td>
+              <td class="py-2 pr-4">{{ provider.priority }}</td>
               <td class="py-2 pr-4">{{ provider.hasSecret ? 'hinterlegt' : 'fehlt' }}</td>
               <td class="py-2 pr-4">
                 <button

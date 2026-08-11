@@ -772,6 +772,12 @@ Eine saubere `MediaStorage`-Schnittstelle verhindert Lock-in. Wahrscheinlicher Z
 - personenbezogene Daten minimieren
 - vollständige Rohdaten nicht unnötig an das Modell senden
 
+**Stand 11. August 2026:** Der Text-only-Pilot nutzt ein aufgabenbasiertes Plattformrouting.
+Nur `text_generation` ist aktiv und wird ausschließlich im ID-only Worker über einen
+OpenAI-kompatiblen Structured-Output-Adapter aufgerufen. Bild-/Video-Aufgaben bleiben deaktiviert;
+Medien werden nicht an das Textmodell übertragen. Kandidaten sind von Post-Versionen getrennt und
+werden erst über eine atomare Übernahme mit Provenienz akzeptiert.
+
 ### 12.2 Zielschema
 
 ```ts

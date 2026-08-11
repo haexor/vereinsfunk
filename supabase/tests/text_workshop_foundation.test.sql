@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(36);
+select plan(40);
 
 set local role postgres;
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -219,6 +219,34 @@ select is((select count(*)::integer from public.generation_candidates), 1, 'the 
 select set_config('request.jwt.claim.sub', '31000000-0000-4000-8000-000000000001', true);
 select is((select count(*)::integer from public.composition_session_media), 0, 'negative: an unrelated tenant A member cannot read tenant B''s session media');
 select is((select count(*)::integer from public.generation_candidates), 0, 'negative: an unrelated tenant A member cannot read tenant B''s generation candidate');
+
+-- Plan 033: a revision is a separately durable candidate for the same session.  The outbox
+-- remains ID-only even when a human supplied revision instruction exists in database state.
+set local role postgres;
+select lives_ok(
+  $$select public.create_text_generation_session(
+    '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', null,
+    'training-update', 'inform', '["text_post"]'::jsonb,
+    '{"facts":{"title":"Revisionstraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
+    null, '{"name":"System","description":"","styleRules":{"sentenceLength":"short","energy":2,"humour":"none","formality":"balanced","perspective":"club","bannedPhrases":[],"additionalInstructions":""},"avoidRules":[]}'::jsonb,
+    '{}'::jsonb, 1, repeat('e', 64), repeat('f', 64), 'initial', null,
+    '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-initial'
+  )$$,
+  'initial text generation creates a durable session and candidate'
+);
+select lives_ok(
+  $$select public.create_text_generation_session(
+    '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', null,
+    'training-update', 'inform', '["text_post"]'::jsonb,
+    '{"facts":{"title":"Revisionstraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
+    null, '{"name":"System","description":"","styleRules":{"sentenceLength":"short","energy":2,"humour":"none","formality":"balanced","perspective":"club","bannedPhrases":[],"additionalInstructions":""},"avoidRules":[]}'::jsonb,
+    '{}'::jsonb, 1, repeat('e', 64), repeat('0', 64), 'revise', 'Bitte kürzer formulieren',
+    '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-revision'
+  )$$,
+  'revision creates a separate durable candidate in the existing session'
+);
+select is((select count(*)::integer from public.generation_candidates where composition_session_id = (select id from public.composition_sessions where organization_id = '32000000-2000-4000-8000-000000000002' and input_hash = repeat('e', 64))), 2, 'one session retains initial and revision candidates separately');
+select is((select count(*)::integer from public.workflow_outbox where workflow_name = 'generate-text-post' and payload ? 'sourceMaterial'), 0, 'negative: text generation outbox payloads never contain source content');
 
 select * from finish();
 rollback;
