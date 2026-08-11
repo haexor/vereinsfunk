@@ -18,12 +18,20 @@ Korrelation und kontrollierte Fehlerklassen.
    deaktivieren; nur falls er zuvor aktiv war, danach wieder aktivieren:
    ```bash
    case "$-" in *x*) _hatchet_restore_xtrace=1; set +x;; *) _hatchet_restore_xtrace=0;; esac
-   export HATCHET_CLIENT_TOKEN="$(docker compose -f infrastructure/hatchet/docker-compose.yml --env-file infrastructure/hatchet/.env run --rm --no-deps --entrypoint /hatchet/hatchet-admin hatchet-admin token create --expiresIn 1h)"
+   _hatchet_token="$(docker compose -f infrastructure/hatchet/docker-compose.yml --env-file infrastructure/hatchet/.env run --rm --no-deps --entrypoint /hatchet/hatchet-admin hatchet-admin token create --expiresIn 1h)"
+   _hatchet_token_status=$?
    [ "$_hatchet_restore_xtrace" -eq 1 ] && set -x
-   unset _hatchet_restore_xtrace
+   if [ "$_hatchet_token_status" -ne 0 ]; then
+     echo "hatchet-admin token create failed" >&2
+     unset _hatchet_restore_xtrace _hatchet_token _hatchet_token_status
+     return 1 2>/dev/null || exit 1
+   fi
+   export HATCHET_CLIENT_TOKEN="$_hatchet_token"
+   unset _hatchet_restore_xtrace _hatchet_token _hatchet_token_status
    ```
    Das Token nicht in Shell-Historie, Git oder Logs speichern; `set -x` bleibt während Erzeugung
-   und Zuweisung deaktiviert.
+   und Zuweisung deaktiviert. Bei einem fehlgeschlagenen `token create` wird kein Worker mit einem
+   leeren oder ungültigen Token gestartet.
 
 Der Worker benötigt außerdem `HATCHET_CLIENT_API_URL`, `HATCHET_CLIENT_HOST_PORT` und
 `HATCHET_TLS=false` für den lokalen Loopback-Stack. Vor dem Test ist ein ID-only Outbox-Ereignis

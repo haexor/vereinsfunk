@@ -41,7 +41,7 @@ function restoreDraft() {
   } catch { clearDraft() }
 }
 watch([presetSlug, communicationGoal, factsText, observation, quote, doNotMention, selectedProfile], persistDraft, { flush: 'sync' })
-watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, () => { restoringDraft = true; sessionId.value = null; candidate.value = null; factsText.value = ''; observation.value = ''; quote.value = ''; doNotMention.value = ''; revisionInstruction.value = ''; restoreDraft(); restoringDraft = false })
+watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; candidate.value = null; profiles.value = []; presetSlug.value = 'training_insight'; communicationGoal.value = 'inform'; selectedProfile.value = 'klar_erklaerend'; factsText.value = ''; observation.value = ''; quote.value = ''; doNotMention.value = ''; revisionInstruction.value = ''; restoreDraft(); restoringDraft = false; await loadProfiles() })
 
 async function loadProfiles() {
   if (!scope.value?.organizationId || !scope.value.departmentId) return
