@@ -4,7 +4,7 @@
 
 `POST /v1/submissions` erzeugt bei vollständigem Quellmaterial tatsächlich einen `post`/eine `post_version` — nicht mehr nur eine Vorschau. Das bereits fertige Freigabegate (Paket 011), die Einwilligungsprüfung (015) und der Kalender (019) haben damit erstmals echte Daten zum Zeigen. Ein neuer Endpunkt führt eine freigegebene, fällige Veröffentlichung tatsächlich aus: `SocialPublisher.publish()` (Paket 006, bisher nirgends aufgerufen) wird über eine sichere, kurzlebige Medienübergabe angebunden.
 
-> **Abgleich mit Paket 032 (2026-08-10)**: Paket 032 baut eine getrennte Kandidaten-/Provenienzgrundlage für spätere KI-Revisionen, verändert diesen synchronen Legacy-Entwurfspfad aber nicht. Ein externer LLM-Aufruf bleibt bis zum Abschluss von Paket 004 ausschließlich ein Blocker, nie ein Fastify-Shortcut.
+> **Abgleich mit Paket 032/033 (2026-08-11)**: Paket 032 baut eine getrennte Kandidaten-/Provenienzgrundlage für spätere KI-Revisionen, verändert diesen synchronen Legacy-Entwurfspfad aber nicht. Paket 004 ist abgeschlossen; externe Textgenerierung bleibt dennoch ausschließlich der asynchrone, ID-only Worker-Pfad aus Plan 033 und nie ein Fastify-Shortcut.
 
 ## Ausgangslage und Evidenz
 
@@ -29,7 +29,7 @@ Fünf parallele Recherche-Agents haben unabhängig denselben Befund direkt am Co
 - `packages/contracts/src/index.ts`: Response-Schema für den neuen Publish-Execute-Endpunkt.
 - Tests in `apps/api/src/app.test.ts`, ggf. `packages/content-engine`.
 
-Nicht enthalten (bewusst, siehe Begründung je Punkt unten): Medien-Gate als echter Blocker in `decide_approval_stage`/`schedule_publication` (vom Nutzer für dieses Paket ausdrücklich ausgeschlossen), `assertApprovalSnapshot`-Verdrahtung (keine Grundlage ohne echte Medien), echtes LLM, echte Gesichtserkennung/-verdeckung, Hatchet-Cron/echter Worker-Betrieb, Meta-App-Review/Sandbox-Livetest (keine echten Zugangsdaten in dieser Umgebung).
+Nicht enthalten (bewusst, siehe Begründung je Punkt unten): Medien-Gate als echter Blocker in `decide_approval_stage`/`schedule_publication` (vom Nutzer für dieses Paket ausdrücklich ausgeschlossen), `assertApprovalSnapshot`-Verdrahtung (keine Grundlage ohne echte Medien), echtes LLM, echte Gesichtserkennung/-verdeckung, die fachliche Umstellung dieser Veröffentlichung auf einen Hatchet-Scheduler, Meta-App-Review/Sandbox-Livetest (keine echten Zugangsdaten in dieser Umgebung).
 
 ## Umsetzung
 
@@ -48,7 +48,7 @@ Nach dem bestehenden `insert` in `submissions` und `FakeContentGenerator().gener
 
 ### 2. Veröffentlichung ausführen: `POST /v1/publications/:id/execute`
 
-Kein Hatchet-Scheduler verfügbar (siehe Ausgangslage) — dieser Endpunkt ist ein expliziter, synchron ausgeführter Trigger, nach demselben Muster wie der bestehende `POST /v1/integration-sources/:id/sync`. Er führt eine **fällige** Veröffentlichung tatsächlich aus, plant aber nichts automatisch zu einem künftigen Zeitpunkt — das bleibt wie mehrfach dokumentiert dem Hatchet-Cron aus Paket 004 vorbehalten.
+Dieser Endpunkt ist bewusst ein expliziter, synchron ausgeführter Trigger, nach demselben Muster wie der bestehende `POST /v1/integration-sources/:id/sync`. Er führt eine **fällige** Veröffentlichung tatsächlich aus, plant aber nichts automatisch zu einem künftigen Zeitpunkt. Paket 004 liefert die technische Orchestrierungsgrenze, die fachliche Scheduler-Migration für Veröffentlichungen bleibt ein separates Vorhaben.
 
 - `requireAuth`, dann `publications`/`post_versions`/`posts` per Service Role laden (Kette wie bei `available-channels`), `requirePermission('post.publish', {organizationId, departmentId})`.
 - `scheduled_for is not null and scheduled_for > now()` → `409 not_due_yet`. `status !== 'queued'` → `409 invalid_status` (bereits ausgeführt/fehlgeschlagen/in Arbeit; kein automatischer Retry hier).

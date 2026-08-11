@@ -15,7 +15,7 @@
 
 ## Why this matters
 
-`POST /v1/integration-sources/:id/sync` kann denselben Lauf mehrfach oder parallel starten. Die Tabelle schützt nur die Zugehörigkeit zum Mandanten, nicht einen aktiven Lauf je Quelle und Domäne. Zwei Apply-Läufe lesen denselben Ausgangszustand und können anschließend widersprüchliche Inserts, Updates oder Stilllegungen ausführen. ADR-009 nennt dies ausdrücklich als offene Grenze; vor einem Cron aus Paket 004 muss sie geschlossen sein.
+`POST /v1/integration-sources/:id/sync` kann denselben Lauf mehrfach oder parallel starten. Die Tabelle schützt nur die Zugehörigkeit zum Mandanten, nicht einen aktiven Lauf je Quelle und Domäne. Zwei Apply-Läufe lesen denselben Ausgangszustand und können anschließend widersprüchliche Inserts, Updates oder Stilllegungen ausführen. ADR-009 nennt dies ausdrücklich als offene Grenze; vor jeder fachlichen Umstellung auf einen geplanten Workflow muss sie geschlossen sein.
 
 ## Current state
 
@@ -104,4 +104,4 @@ Ergänze ADR-009: gesperrte Quelle, Idempotenzvertrag, Verhalten bei Prozessabbr
 
 ## Maintenance notes
 
-Paket 004 muss denselben DB-Guard für künftige Cron-Trigger verwenden; eine nur im HTTP-Endpunkt liegende Sperre wäre unvollständig.
+Jeder künftige Cron-/Hatchet-Trigger muss denselben DB-Guard verwenden; eine nur im HTTP-Endpunkt liegende Sperre wäre unvollständig. Paket 004 stellt dafür die technische Ausführungsgrenze bereit, ersetzt aber nicht diesen fachlichen Guard.

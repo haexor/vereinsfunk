@@ -1431,6 +1431,12 @@ Integriere Hatchet als technische Workflow-Engine:
 Hatchet darf keine vollständigen Beiträge, Secrets oder Medienpayloads speichern.
 ```
 
+**Stand 11. August 2026:** Die technische Grenze ist umgesetzt: Outbox- und
+`workflow_runs`-Lifecycle sind transaktional verbunden, die Worker registrieren die
+allow-gelisteten SDK-Workflows und verwenden Lease-CAS gegen Doppelzustellung. Der lokale
+Nachweis und das Betriebsrunbook liegen in `docs/evidence/hatchet-spike.md` beziehungsweise
+`docs/operations/hatchet.md`. Fachadapter bleiben bewusst getrennte Arbeitspakete.
+
 ### 24.6 Spätere Codex-Prompts
 
 Jede folgende Phase aus Abschnitt 19 wird in Tickets zerlegt. Ein Ticket sollte höchstens enthalten:

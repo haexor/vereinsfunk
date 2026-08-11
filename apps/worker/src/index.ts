@@ -1,14 +1,16 @@
 import { parseWorkerEnvironment } from '@vereinsfunk/config'
 import { createLogger } from '@vereinsfunk/observability'
 import { WorkflowOutboxDispatcher } from '@vereinsfunk/orchestration'
-import { createWorkflowOutboxRepository } from './context.js'
+import { createWorkflowExecutionRepository, createWorkflowOutboxRepository } from './context.js'
 import { createHatchetClient, HatchetOrchestrator } from './hatchet.js'
-import { concurrency, createHatchetWorker } from './workflows.js'
+import { concurrency, createHatchetWorker, WorkflowExecutionError, type ProductWorkflowExecutor } from './workflows.js'
 
 const logger = createLogger({ name: 'worker' })
+const WORKER_READY_TIMEOUT_MS = 30_000
 let stopping = false
 let worker: Awaited<ReturnType<typeof createHatchetWorker>> | undefined
 let workerStop: Promise<void> | undefined
+let workerRun: Promise<void> | undefined
 let dispatchInFlight: Promise<void> | undefined
 let dispatchTimer: ReturnType<typeof setInterval> | undefined
 
@@ -42,6 +44,7 @@ const shutdown = async (signal: string): Promise<void> => {
   await startup.catch(() => {})
   await dispatchInFlight
   await stopWorker()
+  await workerRun?.catch(() => {})
   logger.info({ signal }, 'worker stopped gracefully')
   process.exitCode = 0
 }
@@ -51,11 +54,26 @@ process.once('SIGTERM', () => { void shutdown('SIGTERM') })
 
 async function main(): Promise<void> {
   const config = parseWorkerEnvironment()
-  const createdWorker = await createHatchetWorker(config)
+  const runs = createWorkflowExecutionRepository(config)
+  // Product adapters are introduced by their owning product packages. Until then, completing a
+  // durable run without a business action would be unsafe, so every dispatched action fails closed.
+  const executor: ProductWorkflowExecutor = {
+    async execute(workflow) {
+      throw new WorkflowExecutionError('product_executor_unavailable', false, `no product executor is configured for ${workflow}`)
+    },
+  }
+  const createdWorker = await createHatchetWorker(config, runs, executor)
   worker = createdWorker
   if (stopping) return stopWorker()
 
-  await worker.start()
+  workerRun = worker.start()
+  void workerRun.catch((error: unknown) => {
+    if (stopping) return
+    logger.fatal({ err: error }, 'Hatchet worker stopped unexpectedly')
+    process.exitCode = 1
+    void shutdown('worker_run_failed')
+  })
+  await worker.waitUntilReady(WORKER_READY_TIMEOUT_MS)
   if (stopping) return stopWorker()
 
   const dispatcher = new WorkflowOutboxDispatcher(createWorkflowOutboxRepository(config), new HatchetOrchestrator(createHatchetClient(config)))

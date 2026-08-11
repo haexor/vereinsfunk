@@ -31,20 +31,28 @@ services:
 
   hatchet-admin:
     image: ghcr.io/hatchet-dev/hatchet/hatchet-admin:v0.98.9
-    restart: unless-stopped
+    # Generates the shared server config, then exits successfully.
+    restart: "no"
     environment: &hatchet-server-environment
+      SERVER_TARGET: admin
       DATABASE_URL: ${HATCHET_DATABASE_URL:?set HATCHET_DATABASE_URL in infrastructure/hatchet/.env}
       SERVER_PORT: "8080"
       SERVER_URL: ${HATCHET_PUBLIC_URL:?set HATCHET_PUBLIC_URL in infrastructure/hatchet/.env}
       SERVER_AUTH_COOKIE_DOMAIN: ${HATCHET_COOKIE_DOMAIN:?set HATCHET_COOKIE_DOMAIN in infrastructure/hatchet/.env}
-      SERVER_AUTH_COOKIE_INSECURE: "false"
+      SERVER_AUTH_COOKIE_SECRETS: ${HATCHET_COOKIE_SECRETS:?set HATCHET_COOKIE_SECRETS in infrastructure/hatchet/.env}
+      SERVER_ENCRYPTION_MASTER_KEYSET_FILE: /hatchet/local-keys/master.key
+      SERVER_ENCRYPTION_JWT_PRIVATE_KEYSET_FILE: /hatchet/local-keys/private_ec256.key
+      SERVER_ENCRYPTION_JWT_PUBLIC_KEYSET_FILE: /hatchet/local-keys/public_ec256.key
+      # The standalone local control plane is loopback-only and intentionally has no TLS.
+      SERVER_AUTH_COOKIE_INSECURE: "true"
       SERVER_GRPC_PORT: "7077"
       SERVER_GRPC_BROADCAST_ADDRESS: ${HATCHET_GRPC_BROADCAST_ADDRESS:?set HATCHET_GRPC_BROADCAST_ADDRESS in infrastructure/hatchet/.env}
-      SERVER_GRPC_INSECURE: "false"
+      SERVER_GRPC_INSECURE: "true"
       SERVER_MSGQUEUE_KIND: postgres
       SERVER_OBSERVABILITY_ENABLED: "true"
     volumes:
       - hatchet-generated:/hatchet/generated
+      - ./keys:/hatchet/local-keys:ro
     depends_on:
       hatchet-migrate:
         condition: service_completed_successfully
@@ -62,11 +70,12 @@ services:
       DATABASE_LOGGER_FORMAT: json
     volumes:
       - hatchet-generated:/hatchet/generated
+      - ./keys:/hatchet/local-keys:ro
     ports:
       - "127.0.0.1:7077:7077"
     depends_on:
       hatchet-admin:
-        condition: service_started
+        condition: service_completed_successfully
 
   hatchet-api:
     image: ghcr.io/hatchet-dev/hatchet/hatchet-api:v0.98.9
@@ -79,11 +88,12 @@ services:
       DATABASE_LOGGER_FORMAT: json
     volumes:
       - hatchet-generated:/hatchet/generated
+      - ./keys:/hatchet/local-keys:ro
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:
       hatchet-admin:
-        condition: service_started
+        condition: service_completed_successfully
 
 volumes:
   hatchet-postgres-data:

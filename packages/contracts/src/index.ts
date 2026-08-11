@@ -170,7 +170,8 @@ export const MembershipScopesSchema = z.array(MembershipScopeSchema)
 export const ContentTypeSchema = ContentPresetSlugSchema
 export const SafetyFlagSchema = z.enum(['minor', 'missing_consent', 'uncertain_fact', 'sensitive_data'])
 
-// Breaking: replaces the earlier contentType/facts shape; WorkflowPayloadSchema now requires entityId/idempotencyKey too.
+// Breaking: replaces the earlier contentType/facts shape; WorkflowPayloadSchema requires only IDs,
+// a technical purpose and an idempotency key -- no content can cross this boundary.
 export const CreateSubmissionSchema = z.object({
   organizationId: UuidSchema,
   departmentId: UuidSchema,
@@ -566,13 +567,17 @@ export const SignAuditChainResponseSchema = z.object({
 // 'aggregate-metrics' (Paket 016) ist ebenfalls nur reserviert: GET /v1/analytics/* berechnet jede
 // Kennzahl live aus den Rohtabellen, es gibt bislang keinen Lauf, den ein Cron ausloesen wuerde --
 // siehe plans/016-auswertung-interne-kennzahlen.md, "Abweichungen vom Plan" Punkt 4.
+// Product workflows are deliberately named here, rather than accepting arbitrary strings from
+// an outbox row. This is the first boundary that keeps an accidentally persisted task name from
+// becoming executable code in Hatchet.
 export const WorkflowNameSchema = z.enum(['process-submission', 'anonymize-media', 'render-content', 'apply-revision', 'publish-content', 'collect-analytics', 'cleanup-expired-invitations', 'sync-integration-source', 'enforce-retention', 'aggregate-metrics'])
 export const WorkflowPayloadSchema = z.object({
-  submissionId: UuidSchema.optional(), entityId: UuidSchema, organizationId: UuidSchema, departmentId: UuidSchema,
-  correlationId: UuidSchema, sourceRevision: z.int().positive(), idempotencyKey: z.string().min(1).max(240),
-}).superRefine((payload, context) => {
+  submissionId: UuidSchema.optional(), entityId: UuidSchema, organizationId: UuidSchema, departmentId: UuidSchema, teamId: UuidSchema.optional(),
+  correlationId: UuidSchema, sourceRevision: z.int().positive(), purpose: z.string().trim().min(1).max(80), idempotencyKey: z.string().min(1).max(240),
+}).strict().superRefine((payload, context) => {
   if (payload.submissionId && payload.submissionId !== payload.entityId) context.addIssue({ code: 'custom', message: 'submissionId must match entityId' })
 })
+export const WorkflowRunStatusSchema = z.enum(['queued', 'running', 'succeeded', 'failed', 'cancelled', 'action_required'])
 
 // Paket 025: postId/postVersionId sind nur bei status='queued' gesetzt -- ein Entwurf entsteht
 // erst, wenn keine Pflichtangabe fehlt (siehe evaluateSubmitPermission/FakeContentGenerator).
@@ -1781,6 +1786,8 @@ export type PlatformVariant = z.infer<typeof PlatformVariantSchema>
 export type FaceDecision = z.infer<typeof FaceDecisionSchema>
 export type MediaGateResult = z.infer<typeof MediaGateResultSchema>
 export type WorkflowPayload = z.infer<typeof WorkflowPayloadSchema>
+export type WorkflowName = z.infer<typeof WorkflowNameSchema>
+export type WorkflowRunStatus = z.infer<typeof WorkflowRunStatusSchema>
 export type MembershipScope = z.infer<typeof MembershipScopeSchema>
 export type CreateOrganizationRequest = z.infer<typeof CreateOrganizationRequestSchema>
 export type OrganizationProfileUpdate = z.infer<typeof OrganizationProfileUpdateSchema>
