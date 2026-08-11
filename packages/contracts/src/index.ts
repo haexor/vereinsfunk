@@ -575,7 +575,7 @@ export const SignAuditChainResponseSchema = z.object({
 // becoming executable code in Hatchet.
 export const WorkflowNameSchema = z.enum(['process-submission', 'generate-text-post', 'anonymize-media', 'render-content', 'apply-revision', 'publish-content', 'collect-analytics', 'cleanup-expired-invitations', 'sync-integration-source', 'enforce-retention', 'aggregate-metrics'])
 export const WorkflowPayloadSchema = z.object({
-  submissionId: UuidSchema.optional(), entityId: UuidSchema, organizationId: UuidSchema, departmentId: UuidSchema, teamId: UuidSchema.optional(),
+  submissionId: UuidSchema.optional(), candidateId: UuidSchema.optional(), entityId: UuidSchema, organizationId: UuidSchema, departmentId: UuidSchema, teamId: UuidSchema.optional(),
   correlationId: UuidSchema, sourceRevision: z.int().positive(), purpose: z.string().trim().min(1).max(80), idempotencyKey: z.string().min(1).max(240),
 }).strict().superRefine((payload, context) => {
   if (payload.submissionId && payload.submissionId !== payload.entityId) context.addIssue({ code: 'custom', message: 'submissionId must match entityId' })

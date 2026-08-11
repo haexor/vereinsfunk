@@ -11,10 +11,11 @@ type ProviderRow = { id: string; protocol: string; base_url: string; model: stri
 
 export interface TextGenerationRepository {
   loadSession(id: string, organizationId: string): Promise<SessionRow | null>
-  acquirePendingCandidate(sessionId: string, organizationId: string): Promise<CandidateRow | null>
+  acquirePendingCandidate(candidateId: string, sessionId: string, organizationId: string): Promise<CandidateRow | null>
   loadActiveTextProvider(): Promise<ProviderRow>
   markReady(candidateId: string, sessionId: string, generatedContent: unknown, metadata: { providerConfigurationId: string; providerModelId: string; providerParameterHash: string; promptTemplateVersion: string }): Promise<void>
   markFailed(candidateId: string, sessionId: string, errorClass: string): Promise<void>
+  releaseCandidate(candidateId: string, sessionId: string): Promise<void>
 }
 
 function parseSecretBox(config: WorkerEnvironment) {
@@ -39,9 +40,10 @@ export class TextGenerationExecutor {
 
   async execute(payload: WorkflowPayload) {
     if (payload.purpose !== 'initial' && payload.purpose !== 'revise') throw new WorkflowExecutionError('invalid_generation_purpose', false)
+    if (!payload.candidateId) throw new WorkflowExecutionError('generation_candidate_not_found', false)
     const session = await this.repository.loadSession(payload.entityId, payload.organizationId)
     if (!session || session.department_id !== payload.departmentId) throw new WorkflowExecutionError('generation_session_not_found', false)
-    const candidate = await this.repository.acquirePendingCandidate(session.id, session.organization_id)
+    const candidate = await this.repository.acquirePendingCandidate(payload.candidateId, session.id, session.organization_id)
     if (!candidate) return // duplicate delivery or a terminal candidate; never create a second one
     try {
       const provider = await this.repository.loadActiveTextProvider()
@@ -58,7 +60,8 @@ export class TextGenerationExecutor {
       await this.repository.markReady(candidate.id, session.id, post, { providerConfigurationId: provider.id, providerModelId: provider.model, providerParameterHash: parameterHash(provider), promptTemplateVersion: TEXT_PROMPT_TEMPLATE_VERSION })
     } catch (error) {
       const classified = error instanceof ContentGenerationError ? error : error instanceof WorkflowExecutionError ? error : new WorkflowExecutionError('generation_validation', false)
-      if (!classified.retryable) await this.repository.markFailed(candidate.id, session.id, classified.errorClass)
+      if (classified.retryable) await this.repository.releaseCandidate(candidate.id, session.id)
+      else await this.repository.markFailed(candidate.id, session.id, classified.errorClass)
       throw new WorkflowExecutionError(classified.errorClass, classified.retryable)
     }
   }

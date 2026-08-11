@@ -66,7 +66,7 @@ begin
       p_organization_id, p_department_id, 'generate-text-post', session_row.id, p_source_revision, p_generation_intent,
       p_correlation_id,
       jsonb_strip_nulls(jsonb_build_object('entityId', session_row.id, 'organizationId', p_organization_id,
-        'departmentId', p_department_id, 'teamId', p_team_id, 'correlationId', p_correlation_id,
+        'candidateId', candidate_row.id, 'departmentId', p_department_id, 'teamId', p_team_id, 'correlationId', p_correlation_id,
         'sourceRevision', p_source_revision, 'purpose', p_generation_intent, 'idempotencyKey', p_idempotency_key))
     );
     return jsonb_build_object('sessionId', session_row.id, 'candidateId', candidate_row.id);
@@ -94,7 +94,7 @@ begin
     p_organization_id, p_department_id, 'generate-text-post', session_row.id, p_source_revision, p_generation_intent,
     p_correlation_id,
     jsonb_strip_nulls(jsonb_build_object('entityId', session_row.id, 'organizationId', p_organization_id,
-      'departmentId', p_department_id, 'teamId', p_team_id, 'correlationId', p_correlation_id,
+      'candidateId', candidate_row.id, 'departmentId', p_department_id, 'teamId', p_team_id, 'correlationId', p_correlation_id,
       'sourceRevision', p_source_revision, 'purpose', p_generation_intent, 'idempotencyKey', p_idempotency_key))
   );
   return jsonb_build_object('sessionId', session_row.id, 'candidateId', candidate_row.id);

@@ -6,6 +6,8 @@ begin;
 alter table public.workflow_runs add column purpose text;
 alter table public.workflow_runs add column worker_lease_until timestamptz;
 alter table public.workflow_runs add column worker_lease_token uuid;
+-- Existing runs predate leases. A running legacy row must be recoverable immediately.
+update public.workflow_runs set worker_lease_until = now() where technical_status = 'running';
 
 do $$
 begin
@@ -67,9 +69,10 @@ returns boolean language sql immutable set search_path = public, pg_temp as $$
     and value ?& array['entityId', 'organizationId', 'departmentId', 'correlationId', 'sourceRevision', 'purpose', 'idempotencyKey']
     and not exists (
       select 1 from jsonb_object_keys(value) as key
-      where key not in ('submissionId', 'entityId', 'organizationId', 'departmentId', 'teamId', 'correlationId', 'sourceRevision', 'purpose', 'idempotencyKey')
+      where key not in ('submissionId', 'candidateId', 'entityId', 'organizationId', 'departmentId', 'teamId', 'correlationId', 'sourceRevision', 'purpose', 'idempotencyKey')
     )
     and coalesce((value->>'entityId') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', false)
+    and (not value ? 'candidateId' or (jsonb_typeof(value->'candidateId') = 'string' and coalesce((value->>'candidateId') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', false)))
     and coalesce((value->>'organizationId') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', false)
     and coalesce((value->>'departmentId') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', false)
     and coalesce((value->>'correlationId') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', false)
@@ -133,7 +136,7 @@ begin
       worker_lease_token = gen_random_uuid(), error_class = null, updated_at = now()
   where organization_id = p_organization_id and workflow_name = p_workflow_name
     and entity_id = p_entity_id and source_revision = p_source_revision and purpose = p_purpose
-    and (technical_status in ('queued', 'failed') or (technical_status = 'running' and worker_lease_until < now()))
+    and (technical_status in ('queued', 'failed') or (technical_status = 'running' and (worker_lease_until is null or worker_lease_until < now())))
   returning worker_lease_token into acquired_lease_token;
   if found then
     return query select 'acquired'::text, acquired_lease_token;

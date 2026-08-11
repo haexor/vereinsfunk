@@ -60,9 +60,9 @@ export function createTextGenerationRepository(config: WorkerEnvironment): TextG
       if (error) throw error
       return data as never
     },
-    async acquirePendingCandidate(sessionId, organizationId) {
-      // The conditional update is the candidate-level CAS. A retry sees no pending row and exits.
-      const { data, error } = await client.from('generation_candidates').update({ status: 'generating' }).eq('composition_session_id', sessionId).eq('organization_id', organizationId).eq('status', 'pending').select('id, status, revision_instruction').maybeSingle()
+    async acquirePendingCandidate(candidateId, sessionId, organizationId) {
+      // The candidate ID in the ID-only workflow payload makes this a single-row CAS.
+      const { data, error } = await client.from('generation_candidates').update({ status: 'generating' }).eq('id', candidateId).eq('composition_session_id', sessionId).eq('organization_id', organizationId).eq('status', 'pending').select('id, status, revision_instruction').maybeSingle()
       if (error) throw error
       if (!data) return null
       const sessionUpdate = await client.from('composition_sessions').update({ status: 'generating' }).eq('id', sessionId).eq('organization_id', organizationId)
@@ -91,6 +91,12 @@ export function createTextGenerationRepository(config: WorkerEnvironment): TextG
       const candidate = await client.from('generation_candidates').update({ status: 'failed', failure_code: errorClass }).eq('id', candidateId).eq('status', 'generating')
       if (candidate.error) throw candidate.error
       const session = await client.from('composition_sessions').update({ status: 'failed' }).eq('id', sessionId).eq('status', 'generating')
+      if (session.error) throw session.error
+    },
+    async releaseCandidate(candidateId, sessionId) {
+      const candidate = await client.from('generation_candidates').update({ status: 'pending' }).eq('id', candidateId).eq('status', 'generating')
+      if (candidate.error) throw candidate.error
+      const session = await client.from('composition_sessions').update({ status: 'queued' }).eq('id', sessionId).eq('status', 'generating')
       if (session.error) throw session.error
     },
   }
