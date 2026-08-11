@@ -1606,7 +1606,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       service.from('organization_memberships').select('*', { count: 'exact', head: true }).eq('organization_id', params.id),
       service.from('departments').select('*', { count: 'exact', head: true }).eq('organization_id', params.id),
       fetchAllRows<{ byte_size: number }>((from, to) =>
-        service.from('media_assets').select('byte_size').eq('organization_id', params.id).order('id', { ascending: true }).range(from, to),
+        service.from('media_assets').select('byte_size').eq('organization_id', params.id).neq('upload_status', 'deleted').order('id', { ascending: true }).range(from, to),
       ),
       fetchAllRows<{ byte_size: number }>((from, to) =>
         service.from('media_derivatives').select('byte_size').eq('organization_id', params.id).order('id', { ascending: true }).range(from, to),

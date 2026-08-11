@@ -81,7 +81,7 @@ await load()
       <section class="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div class="card p-5"><p class="text-xs text-[#727a75]">Mitglieder</p><p class="mt-1 font-display text-2xl font-bold">{{ organization.memberCount }}</p></div>
         <div class="card p-5"><p class="text-xs text-[#727a75]">Abteilungen</p><p class="mt-1 font-display text-2xl font-bold">{{ organization.departmentCount }}</p></div>
-        <div class="card p-5"><p class="text-xs text-[#727a75]">Beiträge, gesamt</p><p class="mt-1 font-display text-2xl font-bold">{{ organization.activity.year.posts }}</p></div>
+        <div class="card p-5"><p class="text-xs text-[#727a75]">Beiträge, dieses Jahr</p><p class="mt-1 font-display text-2xl font-bold">{{ organization.activity.year.posts }}</p></div>
         <div class="card p-5"><p class="text-xs text-[#727a75]">Medienspeicher</p><p class="mt-1 font-display text-2xl font-bold">{{ formatBytes(organization.storage.totalMediaBytes) }}</p></div>
       </section>
 

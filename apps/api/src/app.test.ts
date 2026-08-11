@@ -490,7 +490,7 @@ describe('platform administration', () => {
               return {
                 select: (_columns: string, options?: { head?: boolean }) => {
                   if (options?.head) return { eq: () => ({ ilike: () => ({ gte: async () => activityCount }) }) }
-                  return { eq: () => ({ order: () => ({ range: async () => ({ data: [{ byte_size: 1024 }, { byte_size: 512 }], error: null }) }) }) }
+                  return { eq: () => ({ neq: () => ({ order: () => ({ range: async () => ({ data: [{ byte_size: 1024 }, { byte_size: 512 }], error: null }) }) }) }) }
                 },
               }
             }
