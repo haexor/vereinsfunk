@@ -6,7 +6,6 @@
 > sind vorhanden. Fachadapter bleiben wie geplant eigenständige Pakete. Vor allgemeiner
 > Produktionsfreigabe ist noch der im Runbook beschriebene Kapazitätsnachweis (30 Jobs,
 > Abbruch, Cancel/Reschedule) auszuführen.
-
 > **Status-Nachtrag (2026-08-08, vor Paket 025 verifiziert)**: `@hatchet-dev/typescript-sdk` ist real als Abhängigkeit eingebunden, `apps/worker/src/workflows.ts` importierte echte SDK-Symbole und registrierte Fairness/Concurrency für einen einzigen Workflow (`process-submission`) — `apps/worker/src/index.ts` rief den Worker aber nie tatsächlich auf, der Prozess war nur ein Logger-Scaffold. `packages/orchestration` hatte nur `FakeOrchestrator` (In-Memory-Map), kein `createHatchetClient`/keine echte `HatchetOrchestrator`-Implementierung. **Ersetzt am 11. August 2026:** Der Worker registriert jetzt alle allow-gelisteten technischen Workflows, wartet auf echte SDK-Bereitschaft und dispatcht die DB-Outbox. Die fachliche Ausführung bleibt je Produktpaket injizierbar.
 >
 > **Abgleich mit Paket 032 (2026-08-10)**: Die Datenbasis für Kompositionssitzungen und Generierungskandidaten ist vorhanden, aber sie legt absichtlich keine Outbox-Zeile an und ruft keinen Provider auf. `generate-text-post`/`revise-text-post` dürfen erst nach dem hier geforderten, getesteten Dispatcher und Worker registriert werden.

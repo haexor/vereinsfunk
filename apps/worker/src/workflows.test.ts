@@ -25,8 +25,8 @@ function declarations(begin: WorkflowExecutionRepository['begin'], execute = vi.
 }
 
 describe('worker workflow registration', () => {
-  it('registers every allow-listed workflow with ID-only validation and fairness limits', () => {
-    const { definitions } = declarations(async () => 'already_handled')
+  it('registers every allow-listed workflow with ID-only validation and fairness limits', async () => {
+    const { definitions, task } = declarations(async () => ({ state: 'already_handled' }))
     expect(definitions).toHaveLength(WorkflowNameSchema.options.length)
     expect(definitions.map((definition) => definition.name)).toEqual(WorkflowNameSchema.options)
     expect(definitions[0]?.definition._tasks[0]?.concurrency).toEqual([
@@ -35,26 +35,35 @@ describe('worker workflow registration', () => {
       expect.objectContaining({ expression: "'global'", maxRuns: 20 }),
     ])
     expect(concurrency.llm).toEqual({ global: 20, organization: 4, department: 2 })
+    await expect(task({ ...payload, entityId: 'not-a-uuid' }, {} as never)).rejects.toMatchObject({ name: 'ZodError' })
   })
 
   it('does not execute duplicate deliveries', async () => {
-    const { task, execute, runs } = declarations(async () => 'already_handled')
+    const { task, execute, runs } = declarations(async () => ({ state: 'already_handled' }))
     await expect(task(payload, {} as never)).resolves.toBeUndefined()
     expect(execute).not.toHaveBeenCalled()
     expect(runs.succeed).not.toHaveBeenCalled()
   })
 
   it('retries a delivery that races the durable outbox acknowledgement', async () => {
-    const { task, execute } = declarations(async () => 'not_found')
+    const { task, execute } = declarations(async () => ({ state: 'not_found' }))
     await expect(task(payload, {} as never)).rejects.toMatchObject({ errorClass: 'run_mapping_pending', retryable: true })
     expect(execute).not.toHaveBeenCalled()
   })
 
-  it('records a non-retryable failure without permitting a partial technical action', async () => {
+  it('records a non-retryable failure and does not mark the run as succeeded', async () => {
     const execute = vi.fn<ProductWorkflowExecutor['execute']>().mockRejectedValue(new WorkflowExecutionError('authorization', false))
-    const { task, runs } = declarations(async () => 'acquired', execute)
+    const { task, runs } = declarations(async () => ({ state: 'acquired', leaseToken: '55555555-5555-4555-8555-555555555555' }), execute)
     await expect(task(payload, {} as never)).rejects.toMatchObject({ name: 'NonRetryableError' })
-    expect(runs.fail).toHaveBeenCalledWith('process-submission', payload, 'authorization', false)
+    expect(runs.fail).toHaveBeenCalledWith('process-submission', payload, '55555555-5555-4555-8555-555555555555', 'authorization', false)
+    expect(runs.succeed).not.toHaveBeenCalled()
+  })
+
+  it('records and rethrows a retryable executor failure', async () => {
+    const execute = vi.fn<ProductWorkflowExecutor['execute']>().mockRejectedValue(new WorkflowExecutionError('provider_unavailable', true))
+    const { task, runs } = declarations(async () => ({ state: 'acquired', leaseToken: '55555555-5555-4555-8555-555555555555' }), execute)
+    await expect(task(payload, {} as never)).rejects.toMatchObject({ errorClass: 'provider_unavailable', retryable: true })
+    expect(runs.fail).toHaveBeenCalledWith('process-submission', payload, '55555555-5555-4555-8555-555555555555', 'provider_unavailable', true)
     expect(runs.succeed).not.toHaveBeenCalled()
   })
 })

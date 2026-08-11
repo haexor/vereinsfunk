@@ -9,11 +9,13 @@ export const concurrency = {
   video: { global: 4, organization: 1, department: 1 }, publishing: { global: 20, organization: 4, department: 2 },
 } as const
 
-export type WorkflowRunAcquireResult = 'acquired' | 'already_handled' | 'not_found'
+export type WorkflowRunAcquireResult =
+  | { state: 'acquired'; leaseToken: string }
+  | { state: 'already_handled' | 'not_found' }
 export interface WorkflowExecutionRepository {
   begin(workflow: WorkflowName, payload: WorkflowPayload): Promise<WorkflowRunAcquireResult>
-  succeed(workflow: WorkflowName, payload: WorkflowPayload): Promise<void>
-  fail(workflow: WorkflowName, payload: WorkflowPayload, errorClass: string, retryable: boolean): Promise<void>
+  succeed(workflow: WorkflowName, payload: WorkflowPayload, leaseToken: string): Promise<void>
+  fail(workflow: WorkflowName, payload: WorkflowPayload, leaseToken: string, errorClass: string, retryable: boolean): Promise<void>
 }
 export interface ProductWorkflowExecutor {
   execute(workflow: WorkflowName, payload: WorkflowPayload): Promise<void>
@@ -63,16 +65,19 @@ export function createWorkflowDefinitions(
     fn: async (raw) => {
       const payload = WorkflowPayloadSchema.parse(raw)
       const acquired = await runs.begin(workflow, payload)
-      if (acquired === 'already_handled') return
-      // Hatchet is allowed to schedule a run before the outbox dispatcher obtains its durable
-      // acknowledgement. Retrying is the only safe response: performing an untracked action is not.
-      if (acquired === 'not_found') throw new WorkflowExecutionError('run_mapping_pending', true)
+      if (acquired.state !== 'acquired') {
+        if (acquired.state === 'already_handled') return
+        // Hatchet is allowed to schedule a run before the outbox dispatcher obtains its durable
+        // acknowledgement. Retrying is the only safe response: performing an untracked action is not.
+        throw new WorkflowExecutionError('run_mapping_pending', true)
+      }
+      const leaseToken = acquired.leaseToken
       try {
         await executor.execute(workflow, payload)
-        await runs.succeed(workflow, payload)
+        await runs.succeed(workflow, payload, leaseToken)
       } catch (error) {
         const classified = classifyWorkflowError(error)
-        await runs.fail(workflow, payload, classified.errorClass, classified.retryable)
+        await runs.fail(workflow, payload, leaseToken, classified.errorClass, classified.retryable)
         if (!classified.retryable) throw new NonRetryableError(classified.errorClass)
         throw classified
       }

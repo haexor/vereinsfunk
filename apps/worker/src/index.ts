@@ -3,9 +3,10 @@ import { createLogger } from '@vereinsfunk/observability'
 import { WorkflowOutboxDispatcher } from '@vereinsfunk/orchestration'
 import { createWorkflowExecutionRepository, createWorkflowOutboxRepository } from './context.js'
 import { createHatchetClient, HatchetOrchestrator } from './hatchet.js'
-import { concurrency, createHatchetWorker, type ProductWorkflowExecutor } from './workflows.js'
+import { concurrency, createHatchetWorker, WorkflowExecutionError, type ProductWorkflowExecutor } from './workflows.js'
 
 const logger = createLogger({ name: 'worker' })
+const WORKER_READY_TIMEOUT_MS = 30_000
 let stopping = false
 let worker: Awaited<ReturnType<typeof createHatchetWorker>> | undefined
 let workerStop: Promise<void> | undefined
@@ -54,15 +55,25 @@ process.once('SIGTERM', () => { void shutdown('SIGTERM') })
 async function main(): Promise<void> {
   const config = parseWorkerEnvironment()
   const runs = createWorkflowExecutionRepository(config)
-  // Plan 004 provides the durable envelope and run lifecycle. Concrete product adapters are
-  // injected by their own plans; this default deliberately does no provider I/O.
-  const executor: ProductWorkflowExecutor = { async execute() {} }
+  // Product adapters are introduced by their owning product packages. Until then, completing a
+  // durable run without a business action would be unsafe, so every dispatched action fails closed.
+  const executor: ProductWorkflowExecutor = {
+    async execute(workflow) {
+      throw new WorkflowExecutionError('product_executor_unavailable', false, `no product executor is configured for ${workflow}`)
+    },
+  }
   const createdWorker = await createHatchetWorker(config, runs, executor)
   worker = createdWorker
   if (stopping) return stopWorker()
 
   workerRun = worker.start()
-  await worker.waitUntilReady()
+  void workerRun.catch((error: unknown) => {
+    if (stopping) return
+    logger.fatal({ err: error }, 'Hatchet worker stopped unexpectedly')
+    process.exitCode = 1
+    void shutdown('worker_run_failed')
+  })
+  await worker.waitUntilReady(WORKER_READY_TIMEOUT_MS)
   if (stopping) return stopWorker()
 
   const dispatcher = new WorkflowOutboxDispatcher(createWorkflowOutboxRepository(config), new HatchetOrchestrator(createHatchetClient(config)))

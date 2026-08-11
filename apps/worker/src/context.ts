@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
-import { WorkflowNameSchema, WorkflowPayloadSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
+import { UuidSchema, WorkflowNameSchema, WorkflowPayloadSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
 import type { WorkflowOutboxRepository } from '@vereinsfunk/orchestration'
 import type { WorkflowExecutionRepository, WorkflowRunAcquireResult } from './workflows.js'
 
@@ -32,16 +32,18 @@ export function createWorkflowExecutionRepository(config: WorkerEnvironment): Wo
     async begin(workflow, payload): Promise<WorkflowRunAcquireResult> {
       const { data, error } = await client.rpc('begin_workflow_run', { ...rpcInput(workflow, payload), p_idempotency_key: payload.idempotencyKey })
       if (error) throw error
-      if (data === 'acquired' || data === 'already_handled' || data === 'not_found') return data
+      const result = Array.isArray(data) ? data[0] : data
+      if (result?.status === 'acquired' && typeof result.lease_token === 'string') return { state: 'acquired', leaseToken: UuidSchema.parse(result.lease_token) }
+      if (result?.status === 'already_handled' || result?.status === 'not_found') return { state: result.status }
       throw new Error('unexpected workflow run acquisition state')
     },
-    async succeed(workflow, payload) {
-      const { data, error } = await client.rpc('finish_workflow_run', { ...rpcInput(workflow, payload), p_status: 'succeeded', p_error_class: null })
+    async succeed(workflow, payload, leaseToken) {
+      const { data, error } = await client.rpc('finish_workflow_run', { ...rpcInput(workflow, payload), p_lease_token: leaseToken, p_status: 'succeeded', p_error_class: null })
       if (error || !data) throw error ?? new Error('workflow run completion lost')
     },
-    async fail(workflow, payload, errorClass, retryable) {
+    async fail(workflow, payload, leaseToken, errorClass, retryable) {
       const { data, error } = await client.rpc('finish_workflow_run', {
-        ...rpcInput(workflow, payload), p_status: retryable ? 'failed' : 'action_required', p_error_class: errorClass,
+        ...rpcInput(workflow, payload), p_lease_token: leaseToken, p_status: retryable ? 'failed' : 'action_required', p_error_class: errorClass,
       })
       if (error || !data) throw error ?? new Error('workflow run failure update lost')
     },
