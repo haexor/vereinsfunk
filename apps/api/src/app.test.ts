@@ -484,7 +484,23 @@ describe('platform administration', () => {
               return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { display_name: 'Lena Test' }, error: null }) }) }) }
             }
             if (table === 'organization_memberships' || table === 'departments') {
-              return { select: () => ({ eq: async () => ({ data: null, count: table === 'organization_memberships' ? 4 : 2, error: null }) }) }
+              return {
+                select: (columns: string, options?: { head?: boolean }) => {
+                  if (options?.head) return { eq: async () => ({ data: null, count: table === 'organization_memberships' ? 4 : 2, error: null }) }
+                  if (table === 'organization_memberships' && columns === 'user_id') {
+                    return {
+                      eq: () => ({
+                        eq: () => ({
+                          or: () => ({
+                            order: () => ({ limit: () => ({ maybeSingle: async () => ({ data: { user_id: USER_ID }, error: null }) }) }),
+                          }),
+                        }),
+                      }),
+                    }
+                  }
+                  throw new Error(`unexpected organization membership query: ${columns}`)
+                },
+              }
             }
             if (table === 'media_assets') {
               return {
@@ -501,6 +517,11 @@ describe('platform administration', () => {
             if (table === 'post_variants') return { select: () => ({ eq: () => ({ eq: () => ({ gte: async () => activityCount }) }) }) }
             throw new Error(`unexpected table in detail test fake: ${table}`)
           },
+          auth: {
+            admin: {
+              getUserById: async () => ({ data: { user: { email: 'owner@sv-test.example' } }, error: null }),
+            },
+          },
         }) as unknown as SupabaseClient,
     }
     const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: detailClients })
@@ -514,7 +535,7 @@ describe('platform administration', () => {
     expect(response.statusCode).toBe(200)
     expect(response.json()).toMatchObject({
       organizationId: ORGANIZATION_ID,
-      contact: { responsiblePersonName: 'Lena Test', email: 'kontakt@sv-test.example' },
+      contact: { responsiblePersonName: 'Lena Test', email: 'kontakt@sv-test.example', ownerAccountEmail: 'owner@sv-test.example' },
       storage: { rawMediaBytes: 1536, renderedMediaBytes: 2048, totalMediaBytes: 3584 },
       activity: { day: { posts: 3, reels: 3, videoAssets: 3 }, week: { posts: 3 } },
     })

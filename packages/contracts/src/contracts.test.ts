@@ -27,6 +27,7 @@ import {
   OnboardingStateSchema,
   OrganizationBrandUpdateSchema,
   OrganizationProfileUpdateSchema,
+  PlatformAdminOrganizationDetailSchema,
   PlatformAdminOrganizationSummarySchema,
   PlatformAdminSchema,
   PlatformSettingKeySchema,
@@ -188,6 +189,40 @@ describe('platform administration contracts', () => {
         memberCount: 1,
         departmentCount: 1,
         createdAt: offsetTimestamp,
+      }).success,
+    ).toBe(true)
+  })
+
+  it('keeps owner-account email distinct from the club contact email', () => {
+    expect(
+      PlatformAdminOrganizationDetailSchema.safeParse({
+        organizationId: org,
+        name: 'SV Nordstadt',
+        slug: 'sv-nordstadt',
+        timezone: 'Europe/Berlin',
+        createdAt: '2026-08-05T12:34:56.789+00:00',
+        memberCount: 1,
+        departmentCount: 1,
+        contact: {
+          responsiblePersonName: null,
+          ownerAccountEmail: 'owner@sv-nordstadt.example',
+          email: null,
+          phone: null,
+          legalName: null,
+          street: null,
+          houseNumber: null,
+          postalCode: null,
+          city: null,
+          countryCode: 'DE',
+          websiteUrl: null,
+        },
+        storage: { rawMediaBytes: 0, renderedMediaBytes: 0, totalMediaBytes: 0 },
+        activity: {
+          day: { posts: 0, reels: 0, videoAssets: 0 },
+          week: { posts: 0, reels: 0, videoAssets: 0 },
+          month: { posts: 0, reels: 0, videoAssets: 0 },
+          year: { posts: 0, reels: 0, videoAssets: 0 },
+        },
       }).success,
     ).toBe(true)
   })

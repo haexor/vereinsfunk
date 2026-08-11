@@ -1572,9 +1572,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const params = z.object({ id: UuidSchema }).parse(request.params)
     const service = supabaseClients.forService()
 
-    // Die Kontaktdaten stammen aus dem Vereinsprofil. Die private Login-E-Mail der
-    // verantwortlichen Person wird bewusst nicht aus auth.users ausgelesen: Als
-    // Betreiberkontakt gilt die vom Verein hierfür hinterlegte Kontaktadresse.
+    // Die Kontaktdaten stammen aus dem Vereinsprofil. Zusaetzlich wird die E-Mail
+    // eines aktiven Vereinsinhabers separat ausgewiesen: Jeder Verein wird durch
+    // ein Supabase-Konto angelegt, dessen Login-Adresse sonst bei einem noch leeren
+    // Vereinsprofil fuer die Plattform-Administration nicht sichtbar waere.
+    // auth.users wird ausschliesslich ueber den Service-Role-Client und hinter
+    // requirePlatformAdmin gelesen.
     const organization = await service
       .from('organizations')
       .select('id, name, slug, timezone, created_at')
@@ -1590,6 +1593,24 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       .maybeSingle()
     if (profileResult.error) throw profileResult.error
     const profile = profileResult.data
+
+    const ownerMembership = await service
+      .from('organization_memberships')
+      .select('user_id')
+      .eq('organization_id', params.id)
+      .eq('role', 'organization_owner')
+      .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
+      .order('created_at')
+      .limit(1)
+      .maybeSingle()
+    if (ownerMembership.error) throw ownerMembership.error
+
+    let ownerAccountEmail: string | null = null
+    if (ownerMembership.data?.user_id) {
+      const owner = await service.auth.admin.getUserById(ownerMembership.data.user_id as string)
+      if (owner.error) throw owner.error
+      ownerAccountEmail = owner.data.user?.email ?? null
+    }
 
     let responsiblePersonName: string | null = null
     if (profile?.responsible_person_profile_id) {
@@ -1647,6 +1668,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       departmentCount: departments.count ?? 0,
       contact: {
         responsiblePersonName,
+        ownerAccountEmail,
         email: profile?.contact_email ?? null,
         phone: profile?.contact_phone ?? null,
         legalName: profile?.legal_name ?? null,

@@ -1375,6 +1375,10 @@ export const PlatformAdminOrganizationDetailSchema = z.object({
   departmentCount: z.int().min(0),
   contact: z.object({
     responsiblePersonName: z.string().min(1).nullable(),
+    // Die E-Mail des aktuellen organization_owner-Accounts. Sie ist nicht mit der
+    // freiwillig gepflegten Vereins-Kontaktadresse gleichzusetzen und wird nur auf
+    // der requirePlatformAdmin-geschuetzten Detailroute ausgegeben.
+    ownerAccountEmail: z.string().email().nullable(),
     email: z.string().email().nullable(),
     phone: z.string().min(1).nullable(),
     legalName: z.string().min(1).nullable(),

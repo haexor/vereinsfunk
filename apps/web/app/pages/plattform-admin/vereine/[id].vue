@@ -90,7 +90,8 @@ await load()
         <dl class="grid gap-x-8 gap-y-4 text-sm sm:grid-cols-2">
           <div><dt class="text-xs text-[#727a75]">Verantwortliche Person</dt><dd class="mt-1 font-medium">{{ organization.contact.responsiblePersonName ?? 'Nicht hinterlegt' }}</dd></div>
           <div><dt class="text-xs text-[#727a75]">Vereinsname / Rechtsträger</dt><dd class="mt-1 font-medium">{{ organization.contact.legalName ?? organization.name }}</dd></div>
-          <div><dt class="text-xs text-[#727a75]">E-Mail</dt><dd class="mt-1 font-medium">{{ organization.contact.email ?? 'Nicht hinterlegt' }}</dd></div>
+          <div><dt class="text-xs text-[#727a75]">E-Mail (Vereinskontakt)</dt><dd class="mt-1 font-medium">{{ organization.contact.email ?? 'Nicht hinterlegt' }}</dd></div>
+          <div><dt class="text-xs text-[#727a75]">E-Mail (Inhaberkonto)</dt><dd class="mt-1 font-medium">{{ organization.contact.ownerAccountEmail ?? 'Nicht verfügbar' }}</dd></div>
           <div><dt class="text-xs text-[#727a75]">Telefon</dt><dd class="mt-1 font-medium">{{ organization.contact.phone ?? 'Nicht hinterlegt' }}</dd></div>
           <div><dt class="text-xs text-[#727a75]">Adresse</dt><dd class="mt-1 font-medium">{{ address ?? 'Nicht hinterlegt' }}</dd></div>
           <div><dt class="text-xs text-[#727a75]">Webseite</dt><dd class="mt-1 font-medium">{{ organization.contact.websiteUrl ?? 'Nicht hinterlegt' }}</dd></div>
