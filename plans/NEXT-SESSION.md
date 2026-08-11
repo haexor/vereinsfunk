@@ -4,25 +4,7 @@ Arbeite im Repository-Root (dieses Checkout).
 
 Prüfe zuerst `git status --short --branch`, `git log --oneline main..HEAD` und den PR-Status des aktuellen Branches. Bewahre alle vorhandenen Änderungen. Keine Commits oder Pushes ohne ausdrückliche Aufforderung.
 
-## Schritt 1 (vorrangig): `organization_consent_texts_immutable` behebt `ON DELETE CASCADE` nicht
-
-Eigenständiger, kleiner Bugfix — **eigener neuer Branch/Worktree**, unabhängig von `codex/plan-032-text-workshop-foundation` (dessen PR #40 ist bereits offen und sollte nicht mit fachfremden Fixes vermischt werden).
-
-Lies vor Änderungen: `plans/015-einwilligungsverwaltung.md`, Abschnitt „Nachträglich gefundener Fehler, noch offen“, sowie `plans/README.md`, „Sechster Befund“ im Abschnitt „Kritischster Befund“ der Fünften Serie.
-
-**Befund** (Code-Review zu PR #40/Paket 032, 2026-08-11): `organization_consent_texts_immutable` in `supabase/migrations/2026080801_consent_management.sql:161-163` feuert auf `before update or delete`. `organization_consent_texts.organization_id` referenziert aber `organizations(id) on delete cascade` — das Löschen einer Organisation (vollständige Vereinskonto-Löschung, Paket 020 „Bewusst nicht gebaut“) schlägt fehl, sobald mindestens ein Einwilligungstext existiert, weil die Kaskadenlöschung denselben Trigger auslöst und dieselbe Exception wirft wie ein direkter Schreibversuch.
-
-**Vorbild für den Fix**: derselbe Fehler existierte im `post_generation_provenance_immutable`-Trigger aus Paket 032 und wurde dort bereits behoben (Commit `6d49b08f`, `supabase/migrations/2026081003_text_workshop_foundation.sql` und `supabase/tests/text_workshop_foundation.test.sql`, Testname „deleting a post_version with existing provenance cascades …“). Denselben Schnitt hier anwenden:
-
-1. `supabase/migrations/2026080801_consent_management.sql`: Trigger `organization_consent_texts_immutable` von `before update or delete` auf `before update` ändern (Löschsemantik trägt bereits der Fremdschlüssel; `authenticated` hat auf die Tabelle ohnehin nur `select`, kein Löschrecht — vgl. Kommentar beim Vorbild-Fix).
-2. `supabase/tests/consent_management.test.sql`: pgTAP-Test ergänzen, der eine Organisation mit vorhandenem Einwilligungstext löscht und die erfolgreiche Kaskade prüft (plus Prüfung, dass die Zeile danach weg ist). `select plan(N)` entsprechend anpassen.
-3. Stichprobe, ob dieselbe Fehlerklasse noch woanders vorkommt: `grep -rn "before update or delete" supabase/migrations/` (Stand 2026-08-11: kein weiterer Treffer außer diesem).
-4. Verifizieren: `pnpm db:reset && pnpm db:test` → alle Dateien grün, insbesondere `consent_management.test.sql`.
-5. `plans/015-einwilligungsverwaltung.md` (Abschnitt „Nachträglich gefundener Fehler“ auf „behoben“ nachziehen) und `plans/README.md` (Zeile zu Paket 015 sowie „Sechster Befund“) entsprechend aktualisieren.
-
-Danach committen; PR nur auf ausdrücklichen Wunsch öffnen. Nicht auf den PR-#40-Branch mischen.
-
-## Schritt 2: Paket 032 fortsetzen
+## Schritt 1: Paket 032 fortsetzen
 
 Lies vor Änderungen vollständig:
 
@@ -75,4 +57,4 @@ pnpm db:reset
 pnpm db:test
 ```
 
-Stand 2026-08-11: der vollständige `pnpm db:test`-Lauf ist sauber grün (580/580 Assertions, 18 Dateien) — die früher hier dokumentierte Fixture-Kollision in `consent_management.test.sql`/`metrics.test.sql` tritt nicht mehr auf.
+Stand 2026-08-11: der vollständige `pnpm db:test`-Lauf ist sauber grün (582/582 Assertions, 18 Dateien) — die früher hier dokumentierte Fixture-Kollision in `consent_management.test.sql`/`metrics.test.sql` tritt nicht mehr auf.

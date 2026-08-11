@@ -159,7 +159,9 @@ begin
 end;
 $$;
 create trigger organization_consent_texts_immutable
-  before update or delete on public.organization_consent_texts
+  -- The organization FK owns deletion through ON DELETE CASCADE. Blocking DELETE here would
+  -- prevent complete organization cleanup once a consent-text version exists.
+  before update on public.organization_consent_texts
   for each row execute function public.organization_consent_text_immutable();
 
 alter table public.consent_requests enable row level security;
