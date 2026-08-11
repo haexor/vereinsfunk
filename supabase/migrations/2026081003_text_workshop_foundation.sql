@@ -10,12 +10,14 @@ create type public.generation_candidate_status as enum (
   'pending', 'generating', 'ready', 'failed', 'accepted', 'abandoned', 'expired'
 );
 
--- Used by content_style_profiles.avoid_rules below to mirror avoidRules' per-element
--- z.string().max(160) bound: a plain CHECK expression cannot contain a subquery, so the
--- per-element length scan lives in this small immutable helper instead.
+-- Used by content_style_profiles.avoid_rules below to mirror avoidRules'
+-- z.string().trim().min(1).max(160) bound: a plain CHECK expression cannot contain a subquery, so
+-- the per-element null/blank/length scan lives in this small immutable helper instead.
 create or replace function public.text_array_elements_within_length(value text[], max_length integer)
 returns boolean language sql immutable set search_path = public, pg_temp as $$
-  select coalesce(max(char_length(element)), 0) <= max_length from unnest(value) as element;
+  select array_position(value, null) is null
+    and coalesce(bool_and(char_length(btrim(element)) between 1 and max_length), true)
+  from unnest(value) as element;
 $$;
 
 create table public.content_style_profiles (
@@ -80,11 +82,21 @@ create table public.composition_sessions (
     and not (requested_formats @> '["video_post"]'::jsonb and jsonb_array_length(requested_formats) > 1)
     and public.jsonb_text_array_is_distinct(requested_formats)
   ),
-  -- Mirrors submissions_material_check (202608030001_content_media_workflows_publishing.sql):
-  -- the same SourceMaterialSchema shape requires all four keys, not just object-typed.
+  -- Mirrors SourceMaterialSchema (packages/contracts/src/index.ts): all four keys with their
+  -- JSON type, and its superRefine requiring at least one fact, observation or quote -- a
+  -- formally complete but empty/mistyped source_material must not pass this CHECK either.
   source_material jsonb not null check (
     jsonb_typeof(source_material) = 'object'
     and source_material ?& array['facts', 'observations', 'quotes', 'doNotMention']
+    and jsonb_typeof(source_material->'facts') = 'object'
+    and jsonb_typeof(source_material->'observations') = 'array'
+    and jsonb_typeof(source_material->'quotes') = 'array'
+    and jsonb_typeof(source_material->'doNotMention') = 'array'
+    and (
+      source_material->'facts' <> '{}'::jsonb
+      or jsonb_array_length(source_material->'observations') > 0
+      or jsonb_array_length(source_material->'quotes') > 0
+    )
   ),
   style_profile_id uuid,
   style_profile_snapshot jsonb not null check (jsonb_typeof(style_profile_snapshot) = 'object'),
@@ -164,6 +176,11 @@ create table public.post_generation_provenance (
   provider_model_id text not null check (char_length(provider_model_id) between 1 and 200),
   -- ADR-010: "Provider-Modell und -Konfigurations-ID" are both required for reproducibility.
   provider_configuration_id uuid not null,
+  -- Plan 032 "Target design": llm_provider_configurations is a live, editable row, so this hash
+  -- of the effective non-secret provider parameters actually used (endpoint, model,
+  -- temperature/limits and similar) freezes what an accepted version claims to be reproducible
+  -- from, independent of later edits to the referenced configuration.
+  provider_parameter_hash text not null check (provider_parameter_hash ~ '^[a-f0-9]{64}$'),
   input_hash text not null check (input_hash ~ '^[a-f0-9]{64}$'),
   created_at timestamptz not null default now(),
   unique (organization_id, post_version_id),
@@ -186,6 +203,23 @@ alter table public.media_assets add column compression_provenance jsonb
   check (compression_provenance is null or jsonb_typeof(compression_provenance) = 'object');
 alter table public.media_derivatives add column compression_provenance jsonb
   check (compression_provenance is null or jsonb_typeof(compression_provenance) = 'object');
+
+-- Compression provenance is a record of what actually happened during upload, not an editable
+-- field: once a worker sets it, it must stay a faithful, tamper-proof account. Allow only the
+-- initial null -> object transition; block replace, clear and any further change.
+create or replace function public.enforce_immutable_compression_provenance()
+returns trigger language plpgsql set search_path = public, pg_temp as $$
+begin
+  if old.compression_provenance is not null and new.compression_provenance is distinct from old.compression_provenance then
+    raise exception 'compression provenance is immutable once set';
+  end if;
+  return new;
+end;
+$$;
+create trigger media_assets_compression_provenance_immutable before update on public.media_assets
+  for each row execute function public.enforce_immutable_compression_provenance();
+create trigger media_derivatives_compression_provenance_immutable before update on public.media_derivatives
+  for each row execute function public.enforce_immutable_compression_provenance();
 
 alter table public.content_style_profiles enable row level security;
 alter table public.content_style_profiles force row level security;
@@ -260,7 +294,11 @@ begin
   raise exception 'post generation provenance is immutable';
 end;
 $$;
-create trigger post_generation_provenance_immutable before update or delete on public.post_generation_provenance
+-- update only: the post_version_id foreign key's on delete cascade already owns delete semantics
+-- for post/tenant cleanup (GDPR erasure among others), and authenticated only ever holds select
+-- on this table, so no direct delete by that role is possible; blocking delete here would only
+-- break the cascade (e.g. deleting a post_versions row whose provenance still exists).
+create trigger post_generation_provenance_immutable before update on public.post_generation_provenance
   for each row execute function public.enforce_immutable_post_generation_provenance();
 
 create index composition_sessions_scope_idx on public.composition_sessions(organization_id, department_id, created_at desc);

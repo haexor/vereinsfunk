@@ -27,8 +27,11 @@ Die Prompt-Reihenfolge ist fest: Faktenbindung/Sicherheits- und Plattformgrenzen
 Stilprofil, bestätigte Fakten und schließlich eine begrenzte Änderungsanweisung. Stilprofil
 und Änderungsanweisung sind Daten niedriger Priorität. Jede akzeptierte KI-Version erhält
 einen unveränderlichen Provenienzdatensatz mit Stil-Snapshot, Prompt-Template-Version,
-Provider-Modell und -Konfigurations-ID sowie Eingabehash. Der Datensatz enthält keinen
-Rohprompt, kein Secret, keine Medienbytes und keine Gedankenkette.
+Provider-Modell und -Konfigurations-ID, einem Hash der wirksamen, nicht-geheimen
+Provider-Parameter (Endpunkt, Modell, Temperatur/Limits u. Ä. -- friert ab, wovon die Version
+reproduzierbar sein soll, unabhängig von einer späteren Bearbeitung der referenzierten
+Konfiguration) sowie Eingabehash. Der Datensatz enthält keinen Rohprompt, kein Secret, keine
+Medienbytes und keine Gedankenkette.
 
 LLM-Aufrufe erfolgen ausschließlich über die transaktionale Outbox und den ID-only Worker.
 Generierungskandidaten bleiben von `post_versions` getrennt; erst eine explizite Übernahme

@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(24);
+select plan(36);
 
 set local role postgres;
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -61,6 +61,14 @@ select lives_ok(
   'a custom profile naming and imitating a real person is allowed'
 );
 select throws_ok(
+  $$insert into public.content_style_profiles (organization_id, department_id, slug, name, description, style_rules, avoid_rules, created_by) values ('31000000-1000-4000-8000-000000000001', '31000000-1100-4000-8000-000000000001', 'null-avoid-rule', 'Null avoid rule', 'Must fail', '{}', array[null]::text[], '31000000-0000-4000-8000-000000000001')$$,
+  '23514', null, 'negative: database rejects a null element in avoid_rules'
+);
+select throws_ok(
+  $$insert into public.content_style_profiles (organization_id, department_id, slug, name, description, style_rules, avoid_rules, created_by) values ('31000000-1000-4000-8000-000000000001', '31000000-1100-4000-8000-000000000001', 'blank-avoid-rule', 'Blank avoid rule', 'Must fail', '{}', array['   '], '31000000-0000-4000-8000-000000000001')$$,
+  '23514', null, 'negative: database rejects a whitespace-only element in avoid_rules'
+);
+select throws_ok(
   $$insert into public.content_style_profiles (organization_id, department_id, slug, name, description, style_rules, created_by) values ('31000000-1000-4000-8000-000000000001', '31000000-1100-4000-8000-000000000001', 'klar_erklaerend', 'Duplikat', 'Must fail', '{}', '31000000-0000-4000-8000-000000000001')$$,
   '23514', null, 'negative: database rejects a custom profile shadowing a reserved system slug'
 );
@@ -80,6 +88,14 @@ select throws_ok(
   $$insert into public.composition_sessions (organization_id, department_id, team_id, preset_slug, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values ('31000000-1000-4000-8000-000000000001', '31000000-1100-4000-8000-000000000001', '32000000-2300-4000-8000-000000000002', 'training-update', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('a', 64), '31000000-0000-4000-8000-000000000001')$$,
   '23503', null, 'negative: a session cannot reference a team from another organization/department'
 );
+select throws_ok(
+  $$insert into public.composition_sessions (organization_id, department_id, preset_slug, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'training-update', 'inform', '["text_post"]', '{"facts":[],"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('a', 64), '32000000-0000-4000-8000-000000000002')$$,
+  '23514', null, 'negative: database rejects source_material.facts that is not an object'
+);
+select throws_ok(
+  $$insert into public.composition_sessions (organization_id, department_id, preset_slug, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'training-update', 'inform', '["text_post"]', '{"facts":{},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('a', 64), '32000000-0000-4000-8000-000000000002')$$,
+  '23514', null, 'negative: database rejects source_material with no facts, observations, or quotes'
+);
 
 -- Fixtures for the immutability test below: a post_generation_provenance row needs a real
 -- post_version and an llm_provider_configurations row to satisfy its FKs.
@@ -89,12 +105,17 @@ insert into public.posts (id, organization_id, department_id, status, created_by
   ('31000000-5000-4000-8000-000000000001', '31000000-1000-4000-8000-000000000001', '31000000-1100-4000-8000-000000000001', 'draft', '31000000-0000-4000-8000-000000000001');
 insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type) values
   ('31000000-6000-4000-8000-000000000001', '31000000-1000-4000-8000-000000000001', '31000000-5000-4000-8000-000000000001', 1, '{}', '{}', 'llm');
-insert into public.post_generation_provenance (id, organization_id, post_version_id, style_profile_snapshot, prompt_template_version, provider_model_id, provider_configuration_id, input_hash) values
-  ('31000000-7000-4000-8000-000000000001', '31000000-1000-4000-8000-000000000001', '31000000-6000-4000-8000-000000000001', '{}', 'v1', 'test-model', '31000000-4000-4000-8000-000000000001', repeat('a', 64));
+insert into public.post_generation_provenance (id, organization_id, post_version_id, style_profile_snapshot, prompt_template_version, provider_model_id, provider_configuration_id, provider_parameter_hash, input_hash) values
+  ('31000000-7000-4000-8000-000000000001', '31000000-1000-4000-8000-000000000001', '31000000-6000-4000-8000-000000000001', '{}', 'v1', 'test-model', '31000000-4000-4000-8000-000000000001', repeat('a', 64), repeat('a', 64));
 select throws_ok(
   $$update public.post_generation_provenance set prompt_template_version = 'v2' where id = '31000000-7000-4000-8000-000000000001'$$,
   'P0001', 'post generation provenance is immutable', 'negative: an accepted generation provenance record cannot be updated'
 );
+select lives_ok(
+  $$delete from public.post_versions where id = '31000000-6000-4000-8000-000000000001'$$,
+  'deleting a post_version with existing provenance cascades instead of being blocked by the immutability trigger'
+);
+select is((select count(*)::integer from public.post_generation_provenance where id = '31000000-7000-4000-8000-000000000001'), 0, 'the cascade delete removed the now-orphaned provenance row');
 
 -- Regression coverage for the review-fixed RLS branches: content_style_profiles' team branch
 -- now reads via plain team membership (not the post.create write permission it wrongly reused),
@@ -143,8 +164,8 @@ insert into public.posts (id, organization_id, department_id, status, created_by
   ('31000000-5100-4000-8000-000000000001', '31000000-1000-4000-8000-000000000001', '31000000-1100-4000-8000-000000000001', 'published', '31000000-0000-4000-8000-000000000001');
 insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type) values
   ('31000000-6100-4000-8000-000000000001', '31000000-1000-4000-8000-000000000001', '31000000-5100-4000-8000-000000000001', 1, '{}', '{}', 'llm');
-insert into public.post_generation_provenance (id, organization_id, post_version_id, style_profile_snapshot, prompt_template_version, provider_model_id, provider_configuration_id, input_hash) values
-  ('31000000-7100-4000-8000-000000000001', '31000000-1000-4000-8000-000000000001', '31000000-6100-4000-8000-000000000001', '{}', 'v1', 'test-model', '31000000-4000-4000-8000-000000000001', repeat('b', 64));
+insert into public.post_generation_provenance (id, organization_id, post_version_id, style_profile_snapshot, prompt_template_version, provider_model_id, provider_configuration_id, provider_parameter_hash, input_hash) values
+  ('31000000-7100-4000-8000-000000000001', '31000000-1000-4000-8000-000000000001', '31000000-6100-4000-8000-000000000001', '{}', 'v1', 'test-model', '31000000-4000-4000-8000-000000000001', repeat('b', 64), repeat('b', 64));
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '31000000-0000-4000-8000-000000000006', true);
@@ -160,6 +181,35 @@ insert into public.composition_session_media (id, organization_id, composition_s
   ('32000000-2700-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2500-4000-8000-000000000002', '32000000-2600-4000-8000-000000000002', 0);
 insert into public.generation_candidates (id, organization_id, composition_session_id, generation_intent, input_hash) values
   ('32000000-2800-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2500-4000-8000-000000000002', 'initial', repeat('b', 64));
+
+-- Coverage for the compression_provenance immutability triggers on media_assets/media_derivatives:
+-- the first null -> object transition must succeed, any change after that must fail.
+insert into public.media_derivatives (id, organization_id, media_asset_id, recipe, recipe_version, object_path, sha256, mime_type, byte_size) values
+  ('32000000-2900-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2600-4000-8000-000000000002', '{}', 'v1', 'organizations/32000000-2000-4000-8000-000000000002/derivatives/style/original.jpg', repeat('d', 64), 'image/jpeg', 12);
+select lives_ok(
+  $$update public.media_assets set compression_provenance = '{"strategy":"device"}'::jsonb where id = '32000000-2600-4000-8000-000000000002'$$,
+  'compression provenance can be set once on a media asset'
+);
+select throws_ok(
+  $$update public.media_assets set compression_provenance = '{"strategy":"server"}'::jsonb where id = '32000000-2600-4000-8000-000000000002'$$,
+  'P0001', null, 'negative: compression provenance on a media asset cannot be replaced once set'
+);
+select throws_ok(
+  $$update public.media_assets set compression_provenance = null where id = '32000000-2600-4000-8000-000000000002'$$,
+  'P0001', null, 'negative: compression provenance on a media asset cannot be cleared once set'
+);
+select lives_ok(
+  $$update public.media_derivatives set compression_provenance = '{"strategy":"device"}'::jsonb where id = '32000000-2900-4000-8000-000000000002'$$,
+  'compression provenance can be set once on a media derivative'
+);
+select throws_ok(
+  $$update public.media_derivatives set compression_provenance = '{"strategy":"server"}'::jsonb where id = '32000000-2900-4000-8000-000000000002'$$,
+  'P0001', null, 'negative: compression provenance on a media derivative cannot be replaced once set'
+);
+select throws_ok(
+  $$update public.media_derivatives set compression_provenance = null where id = '32000000-2900-4000-8000-000000000002'$$,
+  'P0001', null, 'negative: compression provenance on a media derivative cannot be cleared once set'
+);
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '32000000-0000-4000-8000-000000000002', true);

@@ -170,9 +170,9 @@ Write the Zod schemas and type exports for text/photo/video presentation, image/
 
 Create the additive migration, RLS policies and pgTAP tests described in “Target design”. Ensure each profile’s department/team belongs to its organisation with composite FKs. Add service-role-only writes where that matches existing post/configuration mutations and user-role read policies no broader than necessary. Add profile CRUD routes with Zod plus audit events, and the compact mobile profile picker/management UI.
 
-Write an ADR recording the non-imitative style-profile rule, priority order of prompt layers, data minimisation and version snapshot requirement. Update the product plan to state that v1 generates text and supports user-provided photos/videos; it never generates a video.
+Write an ADR recording the style-profile persona rule (naming and imitating a real person is allowed; safety is organisational via role assignment and existing approval routes, not a technical filter), priority order of prompt layers, data minimisation and version snapshot requirement. Update the product plan to state that v1 generates text and supports user-provided photos/videos; it never generates a video.
 
-**Verify**: `pnpm db:reset && pnpm db:test` → all pgTAP files pass (verified 2026-08-11: 568/568 assertions across all files, including positive and negative two-organisation tests for profiles, profile-to-team cross-tenant references, and the team/org-wide visibility regression tests added in review).
+**Verify**: `pnpm db:reset && pnpm db:test` → all pgTAP files pass (verified 2026-08-11: 580/580 assertions across all files, including positive and negative two-organisation tests for profiles, profile-to-team cross-tenant references, the team/org-wide visibility regression tests, and the cascade-delete/avoid_rules/source_material/compression_provenance-immutability tests added in review).
 
 ### Step 3: Build a real structured LLM adapter and evaluation suite
 
