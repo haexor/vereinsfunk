@@ -321,6 +321,27 @@ Der Plan nennt nur die Spalten, nicht das Vererbungsmuster. Verifiziert gegen `p
 
 **Minderjährige konnten sich digital selbst einwilligen.** `evaluateConsent`s `guardian_missing`-Blocker prüft ausschließlich `signerRole === 'guardian'` — bei `signerRole: 'self'` greift er nie, unabhängig davon, ob die Person tatsächlich minderjährig ist. `POST /v1/consent-requests` übernahm `recipientRole` ungeprüft vom Aufrufer in `consent_records.signer_role`/`guardian_confirmed`; eine (versehentliche oder böswillige) Anfrage mit `recipientRole: 'self'` an eine minderjährige Person hätte nach Zustimmung eine als vollständig gültig geltende Einwilligung ohne jede Erziehungsberechtigten-Bestätigung erzeugt — Widerspruch zum Grundsatz „Keine Befreiung entfällt die Minderjährigenstufe“ (`plans/README.md`). Behoben an drei Stellen, die alle denselben Fehler machen könnten: `POST /v1/consents` (Registratur), `POST /v1/consent-requests` (digitale Anfrage), `POST /v1/consents/:id/supersede` (Ablösung) — jede prüft jetzt `directory_people.is_minor` gegen den gewählten `signerRole`/`recipientRole` und antwortet mit `400 guardian_required_for_minor`. **Bewusst nur anwendungsseitig, nicht als DB-CHECK**: die Regel ist ein Cross-Table-Vergleich (`consent_records.signer_role` gegen `directory_people.is_minor`), den ein CHECK-Constraint nicht ausdrücken kann; ein Trigger wäre möglich, wurde aber nicht gebaut, weil alle drei Schreibpfade ohnehin ausschließlich über die API mit denselben Prüfungen laufen (kein `INSERT`/`UPDATE`-Grant für `authenticated` auf `consent_records`). Zwei API-Tests decken das ab.
 
+### Nachträglich gefundener Fehler, noch offen (2026-08-11, CodeRabbit-Review zu PR #40/Paket 032)
+
+`organization_consent_texts_immutable` (oben, `before update or delete`) blockiert nicht nur ein
+direktes `UPDATE`/`DELETE` auf `organization_consent_texts`, sondern auch die reguläre
+`ON DELETE CASCADE`-Kaskade: `organization_consent_texts.organization_id references
+public.organizations(id) on delete cascade`. Das Löschen einer Organisation (vollständige
+Vereinskonto-Löschung, siehe Paket 020 „Bewusst nicht gebaut“) schlägt fehl, sobald mindestens ein
+Einwilligungstext existiert — die Kaskadenlöschung feuert denselben Trigger und wirft dieselbe
+Exception wie ein direkter Schreibversuch.
+
+Gefunden beim Code-Review von PR #40 (Paket 032): derselbe Fehler steckte im dort neuen
+`post_generation_provenance_immutable`-Trigger und wurde in einer ersten Runde als „akzeptiertes
+Muster, exaktes Vorbild ist `organization_consent_texts_immutable`“ durchgewunken — in einer
+späteren Runde als eigenständiger Kritisch-Fund erkannt und dort behoben (Commit `6d49b08f`:
+Trigger auf `before update` beschränkt, die Löschsemantik trägt bereits der Fremdschlüssel;
+`authenticated` hat auf beide Tabellen ohnehin nur `select`, kein Löschrecht). Hier in Paket 015
+**noch nicht behoben** — gleicher Fix nötig: Trigger auf `before update` beschränken, plus ein
+pgTAP-Test, der eine Organisation mit vorhandenem Einwilligungstext löscht und die erfolgreiche
+Kaskade prüft (Vorbild: der äquivalente Test in `text_workshop_foundation.test.sql`). Geprüft
+(2026-08-11): keine weitere Migration verwendet denselben `before update or delete`-Zuschnitt.
+
 ### Bewusst vereinfacht/aufgeschoben
 
 - **Übernahme aus einem Quellsystem (Plan Abschnitt 4, `origin = 'imported'`) ist nicht gebaut.** Schema trägt `source_id`/`origin = 'imported'` bereits (analog zu 014s Vorgehen bei anderen Domänen), aber kein Endpunkt und kein Sync-Adapter erzeugt solche Zeilen. Fehlt: ein dokumentiertes Zielsystem mit Testzugang für Einwilligungsstatus — dieselbe Einschränkung wie beim HTTP-Adapter in Paket 014. Nächster Schritt für ein künftiges Paket.
