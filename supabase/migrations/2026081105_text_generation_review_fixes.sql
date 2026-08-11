@@ -4,9 +4,11 @@ begin;
 update public.llm_provider_configurations
 set is_active = false
 where is_active and (task_kind <> 'text_generation' or protocol <> 'openai');
+-- NOT VALID: only the metadata catalog lock is taken here, not a full-table scan. The next
+-- migration validates existing rows under a much weaker lock.
 alter table public.llm_provider_configurations
   add constraint llm_provider_configurations_active_implemented_adapter_check
-  check (not is_active or (task_kind = 'text_generation' and protocol = 'openai'));
+  check (not is_active or (task_kind = 'text_generation' and protocol = 'openai')) not valid;
 
 -- A row lock cannot protect an as-yet nonexistent session. Serialise both session and candidate
 -- creation by the durable input hash, then use the candidate ID in the outbox uniqueness key.
