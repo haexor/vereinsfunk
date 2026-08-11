@@ -64,7 +64,11 @@ await load()
           </thead>
           <tbody>
             <tr v-for="org in organizations" :key="org.organizationId" class="border-t border-[#e9ebe4]">
-              <td class="py-2 pr-4 font-medium">{{ org.name }}</td>
+              <td class="py-2 pr-4 font-medium">
+                <NuxtLink :to="`/plattform-admin/vereine/${org.organizationId}`" class="focus-ring rounded text-forest underline-offset-2 hover:underline">
+                  {{ org.name }}
+                </NuxtLink>
+              </td>
               <td class="py-2 pr-4">{{ org.memberCount }}</td>
               <td class="py-2 pr-4">{{ org.departmentCount }}</td>
               <td class="py-2">{{ new Date(org.createdAt).toLocaleDateString('de-DE') }}</td>
