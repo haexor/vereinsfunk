@@ -1,18 +1,15 @@
 <script setup lang="ts">
-import { Plus } from '@lucide/vue'
-
-// Paket 011 wollte hier eine echte Liste mit Status, aktueller Stufe und Ablehnungsbegruendung
-// zeigen (siehe plans/011, "4. Oberflaeche"). Dafuer fehlt weiterhin ein Weg, wie ueberhaupt ein
-// echter Beitrag entsteht -- die Inhalts-Pipeline (Submission -> Post -> Post-Version, Paket
-// 001-007) ist noch nicht gebaut, siehe dieselbe bewusste Scope-Entscheidung wie bei
-// freigaben.vue. Der ehrliche Leerzustand aus Paket 008 bleibt deshalb unveraendert bestehen.
+const scope = await useScope()
+const posts = ref<{ id: string; status: string; created_at: string; current_version_id: string | null }[]>([])
+const loading = ref(true)
+if (scope.value?.organizationId) {
+  const query = useSupabaseClient().from('posts').select('id, status, created_at, current_version_id').eq('organization_id', scope.value.organizationId).order('created_at', { ascending: false })
+  if (scope.value.departmentId) query.eq('department_id', scope.value.departmentId)
+  const result = await query
+  if (!result.error) posts.value = result.data
+}
+loading.value = false
 </script>
-
 <template>
-  <div class="mx-auto max-w-[1280px] px-5 py-8 sm:px-10">
-    <header class="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><div class="eyebrow mb-3">Content</div><h1 class="font-display text-3xl font-extrabold tracking-[-.04em]">Beiträge</h1><p class="mt-2 text-sm text-[#727a75]">Alle Entwürfe, Freigaben und geplanten Inhalte.</p></div><NuxtLink to="/erstellen" class="focus-ring inline-flex items-center justify-center gap-2 rounded-xl bg-forest px-5 py-3 text-sm font-bold text-white"><Plus :size="17" /> Beitrag erstellen</NuxtLink></header>
-    <div class="card overflow-hidden">
-      <div class="p-12 text-center text-sm text-[#7b827d]">Es liegen noch keine Beiträge vor.</div>
-    </div>
-  </div>
+  <div class="mx-auto max-w-[1080px] px-5 py-8 sm:px-10"><header class="mb-8 flex items-end justify-between"><div><div class="eyebrow mb-3">Content</div><h1 class="font-display text-3xl font-extrabold">Beiträge</h1><p class="mt-2 text-sm text-[#727a75]">Entwürfe und ihre aktuellen Versionen.</p></div><NuxtLink to="/erstellen" class="rounded-xl bg-forest px-5 py-3 text-sm font-bold text-white">Beitrag erstellen</NuxtLink></header><div class="card divide-y"><p v-if="loading" class="p-8 text-sm text-[#727a75]">Lade Beiträge …</p><NuxtLink v-for="post in posts" :key="post.id" :to="post.current_version_id ? `/freigaben?postVersionId=${post.current_version_id}` : '/erstellen'" class="block p-5 hover:bg-[#fafaf7]"><strong class="text-sm">Entwurf</strong><span class="ml-3 text-xs text-[#737a75]">{{ post.status }}</span><time class="ml-3 text-xs text-[#737a75]">{{ new Date(post.created_at).toLocaleDateString('de-DE') }}</time></NuxtLink><p v-if="!loading && !posts.length" class="p-12 text-center text-sm text-[#7b827d]">Noch keine Beiträge. Starte in der Textwerkstatt.</p></div></div>
 </template>

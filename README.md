@@ -7,15 +7,18 @@ Der priorisierte, ausführbare Ausbauplan liegt in [plans/README.md](plans/READM
 ## Was bereits funktioniert
 
 - responsive Nuxt-Oberfläche für Übersicht, Beiträge, Erstellung, Freigaben, Kalender, Auswertung, Marke und Mitglieder
-- dreistufige Beitragserstellung mit strukturierten Fakten und API-/Offline-Vorschau
+- mobile Textwerkstatt mit Stilprofilen, bestätigten Quellen und Worker-generierten Textkandidaten
 - Fastify-API mit Health Check, Zod-Validierung, Correlation IDs und redigierten Logs
 - zentrale Statusmaschine, Konfigurationsvererbung und rollenbasierte Permissions
 - ID-only Worker-Vertrag mit Fairness-Key, Concurrency-Konfiguration und Idempotenz
 - Remotion-Kompositionen für Story (1080 × 1920) und Feed (1080 × 1350)
 - Supabase-Kernschema mit zusammengesetzten Tenant-FKs, RLS, privaten Buckets und pgTAP-Isolationstests
-- idempotenter Fake-Publisher und faktengebundener Fake-Content-Generator für lokale Entwicklung
+- idempotenter Fake-Publisher sowie ein worker-exklusiver, OpenAI-kompatibler Structured-Text-Adapter
 
-Echte LLM-, Hatchet-, Remotion-Lambda- und Publishing-Zugänge sind bewusst noch nicht aktiviert. Ihre Adaptergrenzen sind vorhanden, aber produktive Provider erfordern jeweils einen dokumentierten Spike, Zugangsdaten und Kosten-/Datenschutzfreigabe.
+Der Textpilot kann nach einer Plattform-Admin-Konfiguration einen echten OpenAI-kompatiblen
+Textprovider ausschließlich im Worker nutzen. Bild-/Video-KI und Medienübertragung an das LLM sind
+nicht implementiert. Publishing von KI-Text bleibt bis zur rechtlichen Kennzeichnungsentscheidung
+blockiert; Details stehen im [Pilot-Runbook](docs/operations/text-generation-pilot.md).
 
 ## Voraussetzungen
 

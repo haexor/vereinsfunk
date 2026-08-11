@@ -10,9 +10,14 @@ export function mapLlmProviderConfigurationRow(row: Record<string, unknown>, has
     baseUrl: row.base_url,
     model: row.model,
     purpose: row.purpose,
+    taskKind: row.task_kind,
+    runtimeParameters: {
+      temperature: row.temperature,
+      maxOutputTokens: row.max_output_tokens,
+      structuredOutputRequired: row.structured_output_required,
+    },
     priority: row.priority,
     isActive: row.is_active,
-    systemPromptOverride: row.system_prompt_override,
     hasSecret,
   }
 }

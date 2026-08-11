@@ -124,9 +124,12 @@ export const CreateCompositionSessionSchema = z.object({
     if (new Set(formats).size !== formats.length) context.addIssue({ code: 'custom', message: 'requestedFormats must not contain duplicates' })
   }),
   styleProfileId: UuidSchema.nullable().optional(),
+  systemStyleProfileSlug: SystemStyleProfileSlugSchema.optional(),
   sourceMaterial: z.lazy(() => SourceMaterialSchema),
   mediaAssetIds: z.array(UuidSchema).max(10).default([]),
   sourceRevision: z.int().positive().default(1),
+}).superRefine((value, context) => {
+  if (value.styleProfileId && value.systemStyleProfileSlug) context.addIssue({ code: 'custom', message: 'Choose either a custom or system style profile' })
 })
 export const CreateGenerationCommandSchema = z.object({
   sessionId: UuidSchema,
@@ -570,9 +573,9 @@ export const SignAuditChainResponseSchema = z.object({
 // Product workflows are deliberately named here, rather than accepting arbitrary strings from
 // an outbox row. This is the first boundary that keeps an accidentally persisted task name from
 // becoming executable code in Hatchet.
-export const WorkflowNameSchema = z.enum(['process-submission', 'anonymize-media', 'render-content', 'apply-revision', 'publish-content', 'collect-analytics', 'cleanup-expired-invitations', 'sync-integration-source', 'enforce-retention', 'aggregate-metrics'])
+export const WorkflowNameSchema = z.enum(['process-submission', 'generate-text-post', 'anonymize-media', 'render-content', 'apply-revision', 'publish-content', 'collect-analytics', 'cleanup-expired-invitations', 'sync-integration-source', 'enforce-retention', 'aggregate-metrics'])
 export const WorkflowPayloadSchema = z.object({
-  submissionId: UuidSchema.optional(), entityId: UuidSchema, organizationId: UuidSchema, departmentId: UuidSchema, teamId: UuidSchema.optional(),
+  submissionId: UuidSchema.optional(), candidateId: UuidSchema.optional(), entityId: UuidSchema, organizationId: UuidSchema, departmentId: UuidSchema, teamId: UuidSchema.optional(),
   correlationId: UuidSchema, sourceRevision: z.int().positive(), purpose: z.string().trim().min(1).max(80), idempotencyKey: z.string().min(1).max(240),
 }).strict().superRefine((payload, context) => {
   if (payload.submissionId && payload.submissionId !== payload.entityId) context.addIssue({ code: 'custom', message: 'submissionId must match entityId' })
@@ -1322,16 +1325,25 @@ export const PlatformSettingSchema = z.object({
 export const UpdatePlatformSettingRequestSchema = z.object({ value: JsonValueSchema })
 
 export const LlmProviderProtocolSchema = z.enum(['anthropic', 'openai'])
+// The vocabulary deliberately describes future tasks, but only text_generation has an adapter.
+// APIs must reject activating every other task until its own adapter spike exists.
+export const LlmTaskKindSchema = z.enum(['text_generation', 'image_generation', 'video_generation'])
+export const LlmRuntimeParametersSchema = z.object({
+  temperature: z.number().min(0).max(2).default(0.2),
+  maxOutputTokens: z.int().min(128).max(4_000).default(1_200),
+  structuredOutputRequired: z.literal(true).default(true),
+}).strict()
 export const LlmProviderConfigurationSchema = z.object({
   id: UuidSchema,
   label: z.string().trim().min(1).max(160),
   protocol: LlmProviderProtocolSchema,
   baseUrl: z.url(),
   model: z.string().trim().min(1).max(120),
-  purpose: z.string().trim().min(1).max(60),
+  purpose: z.string().trim().min(1).max(60), // historical display/operations field
+  taskKind: LlmTaskKindSchema,
+  runtimeParameters: LlmRuntimeParametersSchema,
   priority: z.int(),
   isActive: z.boolean(),
-  systemPromptOverride: z.string().trim().min(1).max(8000).nullable(),
   hasSecret: z.boolean(),
 })
 export const CreateLlmProviderConfigurationRequestSchema = z.object({
@@ -1339,10 +1351,11 @@ export const CreateLlmProviderConfigurationRequestSchema = z.object({
   protocol: LlmProviderProtocolSchema,
   baseUrl: z.url(),
   model: z.string().trim().min(1).max(120),
-  purpose: z.string().trim().min(1).max(60).default('default'),
+  purpose: z.string().trim().min(1).max(60).default('text_generation'),
+  taskKind: LlmTaskKindSchema.default('text_generation'),
+  runtimeParameters: LlmRuntimeParametersSchema.default({ temperature: 0.2, maxOutputTokens: 1200, structuredOutputRequired: true }),
   priority: z.int().default(100),
   isActive: z.boolean().default(true),
-  systemPromptOverride: z.string().trim().min(1).max(8000).nullable().optional(),
   apiKey: z.string().trim().min(1).max(4000),
 })
 export const UpdateLlmProviderConfigurationRequestSchema = z.object({
@@ -1351,9 +1364,10 @@ export const UpdateLlmProviderConfigurationRequestSchema = z.object({
   baseUrl: z.url().optional(),
   model: z.string().trim().min(1).max(120).optional(),
   purpose: z.string().trim().min(1).max(60).optional(),
+  taskKind: LlmTaskKindSchema.optional(),
+  runtimeParameters: LlmRuntimeParametersSchema.optional(),
   priority: z.int().optional(),
   isActive: z.boolean().optional(),
-  systemPromptOverride: z.string().trim().min(1).max(8000).nullable().optional(),
   apiKey: z.string().trim().min(1).max(4000).optional(),
 })
 
@@ -1876,6 +1890,8 @@ export type PlatformSettingKey = z.infer<typeof PlatformSettingKeySchema>
 export type PlatformSetting = z.infer<typeof PlatformSettingSchema>
 export type UpdatePlatformSettingRequest = z.infer<typeof UpdatePlatformSettingRequestSchema>
 export type LlmProviderProtocol = z.infer<typeof LlmProviderProtocolSchema>
+export type LlmTaskKind = z.infer<typeof LlmTaskKindSchema>
+export type LlmRuntimeParameters = z.infer<typeof LlmRuntimeParametersSchema>
 export type LlmProviderConfigurationDto = z.infer<typeof LlmProviderConfigurationSchema>
 export type CreateLlmProviderConfigurationRequest = z.infer<typeof CreateLlmProviderConfigurationRequestSchema>
 export type UpdateLlmProviderConfigurationRequest = z.infer<typeof UpdateLlmProviderConfigurationRequestSchema>

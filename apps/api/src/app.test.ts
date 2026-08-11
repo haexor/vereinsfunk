@@ -628,11 +628,12 @@ describe('platform administration', () => {
   it('never returns the plaintext or ciphertext API key for an LLM provider configuration', async () => {
     const configRow = {
       id: 'a0000000-0000-4000-8000-000000000001',
-      label: 'Claude via haex-claude-proxy',
-      protocol: 'anthropic',
-      base_url: 'https://claude-proxy.internal',
-      model: 'claude-opus-5',
+      label: 'OpenAI-compatible proxy',
+      protocol: 'openai',
+      base_url: 'https://llm-proxy.internal/v1',
+      model: 'approved-text-model',
       purpose: 'default',
+      task_kind: 'text_generation', temperature: 0.2, max_output_tokens: 1200, structured_output_required: true,
       priority: 100,
       is_active: true,
       system_prompt_override: null,
@@ -659,10 +660,10 @@ describe('platform administration', () => {
       url: '/v1/llm-providers',
       headers: { authorization: `Bearer ${token}` },
       payload: {
-        label: 'Claude via haex-claude-proxy',
-        protocol: 'anthropic',
-        baseUrl: 'https://claude-proxy.internal',
-        model: 'claude-opus-5',
+        label: 'OpenAI-compatible proxy',
+        protocol: 'openai',
+        baseUrl: 'https://llm-proxy.internal/v1',
+        model: 'approved-text-model',
         apiKey: 'super-secret-bearer-token',
       },
     })

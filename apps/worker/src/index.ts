@@ -1,9 +1,10 @@
 import { parseWorkerEnvironment } from '@vereinsfunk/config'
 import { createLogger } from '@vereinsfunk/observability'
 import { WorkflowOutboxDispatcher } from '@vereinsfunk/orchestration'
-import { createWorkflowExecutionRepository, createWorkflowOutboxRepository } from './context.js'
+import { createTextGenerationRepository, createWorkflowExecutionRepository, createWorkflowOutboxRepository } from './context.js'
 import { createHatchetClient, HatchetOrchestrator } from './hatchet.js'
 import { concurrency, createHatchetWorker, WorkflowExecutionError, type ProductWorkflowExecutor } from './workflows.js'
+import { TextGenerationExecutor } from './textGeneration.js'
 
 const logger = createLogger({ name: 'worker' })
 const WORKER_READY_TIMEOUT_MS = 30_000
@@ -55,10 +56,10 @@ process.once('SIGTERM', () => { void shutdown('SIGTERM') })
 async function main(): Promise<void> {
   const config = parseWorkerEnvironment()
   const runs = createWorkflowExecutionRepository(config)
-  // Product adapters are introduced by their owning product packages. Until then, completing a
-  // durable run without a business action would be unsafe, so every dispatched action fails closed.
+  const textGeneration = new TextGenerationExecutor(config, createTextGenerationRepository(config))
   const executor: ProductWorkflowExecutor = {
-    async execute(workflow) {
+    async execute(workflow, payload) {
+      if (workflow === 'generate-text-post') return textGeneration.execute(payload)
       throw new WorkflowExecutionError('product_executor_unavailable', false, `no product executor is configured for ${workflow}`)
     },
   }

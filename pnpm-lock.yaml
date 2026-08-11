@@ -239,6 +239,9 @@ importers:
       '@vereinsfunk/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@vereinsfunk/content-engine':
+        specifier: workspace:*
+        version: link:../../packages/content-engine
       '@vereinsfunk/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -251,6 +254,9 @@ importers:
       '@vereinsfunk/orchestration':
         specifier: workspace:*
         version: link:../../packages/orchestration
+      '@vereinsfunk/secrets':
+        specifier: workspace:*
+        version: link:../../packages/secrets
     devDependencies:
       '@types/node':
         specifier: ^24.1.0

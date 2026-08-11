@@ -91,6 +91,8 @@ services:
       HATCHET_CLIENT_API_URL: http://host.docker.internal:8080
       HATCHET_CLIENT_HOST_PORT: host.docker.internal:7077
       HATCHET_TLS: ${HATCHET_TLS:-false}
+      SECRET_BOX_KEYS: ${SECRET_BOX_KEYS:-}
+      SECRET_BOX_CURRENT_KEY_VERSION: ${SECRET_BOX_CURRENT_KEY_VERSION:-}
 
   remotion:
     <<: *app-base

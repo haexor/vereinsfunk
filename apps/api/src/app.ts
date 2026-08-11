@@ -23,6 +23,9 @@ import {
   CreateDirectoryPersonRequestSchema,
   CreateIntegrationSourceRequestSchema,
   CreateLlmProviderConfigurationRequestSchema,
+  CreateCompositionSessionSchema,
+  CreateGenerationCommandSchema,
+  CreateCustomStyleProfileRequestSchema,
   CreateSubmissionSchema,
   DataSubjectEraseResponseSchema,
   DataSubjectExportResponseSchema,
@@ -39,6 +42,7 @@ import {
   IntegrationSyncConflictSchema,
   IntegrationSyncRunSchema,
   LlmProviderConfigurationSchema,
+  StyleProfileRulesSchema,
   OrganizationConsentTextSchema,
   PlatformAdminOrganizationDetailSchema,
   PlatformAdminOrganizationSummarySchema,
@@ -88,6 +92,7 @@ import {
   type ScopeLevel,
   type SyncConflictKind,
   type Team,
+  type StyleProfileRules,
   type SyncMode,
 } from '@vereinsfunk/contracts'
 import { hasPermission } from '@vereinsfunk/authorization'
@@ -1406,6 +1411,136 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     return reply.code(202).send({ ...accepted, preview: generated })
   })
 
+  // Plan 033 text-only workshop.  This route does not invoke an LLM: it commits the session and
+  // an ID-only outbox envelope through one service-only RPC for the worker to execute later.
+  const systemStyleProfiles: Record<string, { name: string; description: string; styleRules: StyleProfileRules; avoidRules: string[] }> = {
+    klar_erklaerend: { name: 'Klar erklärend', description: 'Sachlich, verständlich und direkt.', styleRules: { sentenceLength: 'short', energy: 2, humour: 'none', formality: 'balanced', perspective: 'club', bannedPhrases: [], additionalInstructions: '' }, avoidRules: ['Superlative ohne Beleg'] },
+    warm_gemeinschaftlich: { name: 'Warm gemeinschaftlich', description: 'Einladend und verbunden.', styleRules: { sentenceLength: 'mixed', energy: 3, humour: 'none', formality: 'casual', perspective: 'we', bannedPhrases: [], additionalInstructions: '' }, avoidRules: [] },
+    lebendig_sportlich: { name: 'Lebendig sportlich', description: 'Aktiv und motivierend.', styleRules: { sentenceLength: 'short', energy: 4, humour: 'light', formality: 'casual', perspective: 'we', bannedPhrases: [], additionalInstructions: '' }, avoidRules: [] },
+    leicht_humorvoll: { name: 'Leicht humorvoll', description: 'Freundlich mit zurückhaltendem Humor.', styleRules: { sentenceLength: 'mixed', energy: 3, humour: 'light', formality: 'casual', perspective: 'we', bannedPhrases: [], additionalInstructions: '' }, avoidRules: ['Ironie auf Kosten Einzelner'] },
+    feierlich_wertschaetzend: { name: 'Feierlich wertschätzend', description: 'Dankbar und respektvoll.', styleRules: { sentenceLength: 'mixed', energy: 3, humour: 'none', formality: 'formal', perspective: 'club', bannedPhrases: [], additionalInstructions: '' }, avoidRules: [] },
+  }
+  const TextWorkshopScopeSchema = z.object({ organizationId: UuidSchema, departmentId: UuidSchema, teamId: UuidSchema.nullable().optional() })
+
+  app.get('/v1/content-style-profiles', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const scope = TextWorkshopScopeSchema.parse(request.query)
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(scope.organizationId, scope.departmentId, scope.teamId ?? null)))) return
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const rows = await client.from('content_style_profiles').select('id, slug, name, description, style_rules, avoid_rules, department_id, team_id, created_by, created_at, updated_at, is_active').eq('organization_id', scope.organizationId).eq('is_active', true)
+    if (rows.error) throw rows.error
+    const systems = Object.entries(systemStyleProfiles).map(([slug, profile]) => ({ id: null, slug, kind: 'system', ...profile, isActive: true }))
+    const customs = rows.data.map((row) => ({ id: row.id, slug: row.slug, kind: 'custom', name: row.name, description: row.description, styleRules: StyleProfileRulesSchema.parse(row.style_rules), avoidRules: row.avoid_rules, isActive: row.is_active }))
+    return reply.send({ profiles: [...systems, ...customs] })
+  })
+
+  app.post('/v1/content-style-profiles', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const input = CreateCustomStyleProfileRequestSchema.parse(request.body)
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(input.organizationId, input.departmentId ?? null, input.teamId ?? null)))) return
+    const service = supabaseClients.forService()
+    const inserted = await service.from('content_style_profiles').insert({ organization_id: input.organizationId, department_id: input.departmentId ?? null, team_id: input.teamId ?? null, slug: input.slug, name: input.name, kind: 'custom', description: input.description, style_rules: input.styleRules, avoid_rules: input.avoidRules, created_by: request.auth!.userId }).select('id').single()
+    if (inserted.error) throw inserted.error
+    await recordAuditEvent(request, { organizationId: input.organizationId, action: 'content_style_profile.created', entityType: 'content_style_profile', entityId: inserted.data.id as string, metadata: { scope: input.teamId ? 'team' : input.departmentId ? 'department' : 'organization' } })
+    return reply.code(201).send({ id: inserted.data.id })
+  })
+
+  app.post('/v1/text-workshop/sessions', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const input = CreateCompositionSessionSchema.parse(request.body)
+    if (input.mediaAssetIds.length > 0 || input.requestedFormats.some((format) => format !== 'text_post')) return reply.code(422).send({ error: 'text_only_pilot' })
+    const scope = toPermissionScope(input.organizationId, input.departmentId, input.teamId ?? null)
+    if (!(await requirePermission(request, reply, 'post.create', scope))) return
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const config = await resolveScopedEffectiveConfig(client, input.organizationId, input.departmentId, input.teamId ?? null)
+    if (config.policies.allowedPresets?.length && !config.policies.allowedPresets.includes(input.presetSlug)) return reply.code(422).send({ error: 'preset_not_allowed' })
+    let styleSnapshot: Record<string, unknown>
+    const styleProfileId: string | null = input.styleProfileId ?? null
+    if (styleProfileId) {
+      const row = await client.from('content_style_profiles').select('id, name, description, style_rules, avoid_rules, department_id, team_id').eq('id', styleProfileId).eq('organization_id', input.organizationId).eq('is_active', true).maybeSingle()
+      if (row.error) throw row.error
+      if (!row.data) return reply.code(404).send({ error: 'style_profile_not_found' })
+      if ((row.data.department_id !== null && row.data.department_id !== input.departmentId) || (row.data.team_id !== null && row.data.team_id !== (input.teamId ?? null))) {
+        return reply.code(404).send({ error: 'style_profile_not_found' })
+      }
+      styleSnapshot = { name: row.data.name, description: row.data.description, styleRules: StyleProfileRulesSchema.parse(row.data.style_rules), avoidRules: row.data.avoid_rules }
+    } else {
+      const profile = systemStyleProfiles[input.systemStyleProfileSlug ?? 'klar_erklaerend']!
+      styleSnapshot = { name: profile.name, description: profile.description, styleRules: profile.styleRules, avoidRules: profile.avoidRules, slug: input.systemStyleProfileSlug ?? 'klar_erklaerend' }
+    }
+    const sourceMaterial = { ...input.sourceMaterial, doNotMention: Array.from(new Set([...input.sourceMaterial.doNotMention, ...config.policies.forbiddenTopics])) }
+    const sessionHash = createHash('sha256').update(JSON.stringify({ presetSlug: input.presetSlug, goal: input.communicationGoal, sourceMaterial, styleSnapshot, sourceRevision: input.sourceRevision })).digest('hex')
+    const candidateHash = createHash('sha256').update(`${sessionHash}:initial`).digest('hex')
+    const idempotencyKey = `generate-text:${sessionHash}:${input.sourceRevision}`
+    const service = supabaseClients.forService()
+    const result = await service.rpc('create_text_generation_session', {
+      p_organization_id: input.organizationId, p_department_id: input.departmentId, p_team_id: input.teamId ?? null, p_preset_slug: input.presetSlug,
+      p_communication_goal: input.communicationGoal, p_requested_formats: input.requestedFormats, p_source_material: sourceMaterial,
+      p_style_profile_id: styleProfileId, p_style_profile_snapshot: styleSnapshot, p_effective_config_snapshot: { config: { tone: config.tone, goals: config.goals, hashtags: config.hashtags, ...config.policies } },
+      p_source_revision: input.sourceRevision, p_input_hash: sessionHash, p_candidate_input_hash: candidateHash, p_generation_intent: 'initial', p_revision_instruction: null,
+      p_created_by: request.auth!.userId, p_correlation_id: request.id, p_idempotency_key: idempotencyKey,
+    })
+    if (result.error) throw result.error
+    return reply.code(202).send({ ...z.object({ sessionId: UuidSchema, candidateId: UuidSchema }).parse(result.data), correlationId: request.id })
+  })
+
+  app.get('/v1/text-workshop/sessions/:id', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const id = z.object({ id: UuidSchema }).parse(request.params).id
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const session = await client.from('composition_sessions').select('id, organization_id, department_id, team_id, status, preset_slug, communication_goal, created_at').eq('id', id).maybeSingle()
+    if (session.error) throw session.error
+    if (!session.data) return reply.code(404).send({ error: 'session_not_found' })
+    const candidates = await client.from('generation_candidates').select('id, status, generated_content, quality_flags, failure_code, accepted_post_version_id, created_at').eq('composition_session_id', id).order('created_at', { ascending: false })
+    if (candidates.error) throw candidates.error
+    return reply.send({ session: session.data, candidates: candidates.data })
+  })
+
+  app.post('/v1/text-workshop/sessions/:id/generations', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const sessionId = z.object({ id: UuidSchema }).parse(request.params).id
+    const command = CreateGenerationCommandSchema.parse({ ...z.object({ generationIntent: z.literal('revise'), revisionInstruction: z.string() }).parse(request.body), sessionId })
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const session = await client
+      .from('composition_sessions')
+      .select('id, organization_id, department_id, team_id, preset_slug, communication_goal, requested_formats, source_material, style_profile_id, style_profile_snapshot, effective_config_snapshot, source_revision, input_hash, created_by')
+      .eq('id', sessionId)
+      .maybeSingle()
+    if (session.error) throw session.error
+    if (!session.data) return reply.code(404).send({ error: 'session_not_found' })
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(session.data.organization_id, session.data.department_id, session.data.team_id)))) return
+    const revisionInstruction = command.revisionInstruction!
+    const candidateHash = createHash('sha256').update(`${session.data.input_hash}:revise:${revisionInstruction}`).digest('hex')
+    const service = supabaseClients.forService()
+    const result = await service.rpc('create_text_generation_session', {
+      p_organization_id: session.data.organization_id, p_department_id: session.data.department_id, p_team_id: session.data.team_id,
+      p_preset_slug: session.data.preset_slug, p_communication_goal: session.data.communication_goal, p_requested_formats: session.data.requested_formats,
+      p_source_material: session.data.source_material, p_style_profile_id: session.data.style_profile_id,
+      p_style_profile_snapshot: session.data.style_profile_snapshot, p_effective_config_snapshot: session.data.effective_config_snapshot,
+      p_source_revision: session.data.source_revision, p_input_hash: session.data.input_hash, p_candidate_input_hash: candidateHash,
+      p_generation_intent: 'revise', p_revision_instruction: revisionInstruction, p_created_by: request.auth!.userId,
+      p_correlation_id: request.id, p_idempotency_key: `generate-text:${candidateHash}`,
+    })
+    if (result.error) throw result.error
+    return reply.code(202).send({ ...z.object({ sessionId: UuidSchema, candidateId: UuidSchema }).parse(result.data), correlationId: request.id })
+  })
+
+  app.post('/v1/text-workshop/candidates/:id/accept', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const id = z.object({ id: UuidSchema }).parse(request.params).id
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const candidate = await client.from('generation_candidates').select('organization_id, composition_session_id').eq('id', id).maybeSingle()
+    if (candidate.error) throw candidate.error
+    if (!candidate.data) return reply.code(404).send({ error: 'candidate_not_found' })
+    const session = await client.from('composition_sessions').select('department_id, team_id').eq('id', candidate.data.composition_session_id).single()
+    if (session.error) throw session.error
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(candidate.data.organization_id, session.data.department_id, session.data.team_id)))) return
+    const service = supabaseClients.forService()
+    const accepted = await service.rpc('accept_text_generation_candidate', { p_candidate_id: id, p_actor_user_id: request.auth!.userId })
+    if (accepted.error) throw accepted.error
+    return reply.send(accepted.data)
+  })
+
   const UploadInitiateSchema = z.object({ organizationId: UuidSchema, departmentId: UuidSchema, filename: z.string().min(1).max(120).regex(/^[^/\\]+$/), mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp', 'video/mp4']), byteSize: z.int().positive().max(100 * 1024 * 1024) })
   app.post('/v1/media/uploads', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
@@ -1727,7 +1862,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const service = supabaseClients.forService()
     const configs = await service
       .from('llm_provider_configurations')
-      .select('id, label, protocol, base_url, model, purpose, priority, is_active, system_prompt_override')
+      .select('id, label, protocol, base_url, model, purpose, task_kind, temperature, max_output_tokens, structured_output_required, priority, is_active')
       .order('priority')
     if (configs.error) throw configs.error
     const secrets = await service.from('llm_provider_secrets').select('llm_provider_configuration_id')
@@ -1742,6 +1877,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (!(await requireAuth(request, reply))) return
     if (!(await requirePlatformAdmin(request, reply))) return
     const input = CreateLlmProviderConfigurationRequestSchema.parse(request.body)
+    if (input.taskKind !== 'text_generation' || input.protocol !== 'openai') return reply.code(422).send({ error: 'task_kind_not_implemented', taskKind: input.taskKind })
     const service = supabaseClients.forService()
     const insert = await service
       .from('llm_provider_configurations')
@@ -1751,11 +1887,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         base_url: input.baseUrl,
         model: input.model,
         purpose: input.purpose,
+        task_kind: input.taskKind,
+        temperature: input.runtimeParameters.temperature,
+        max_output_tokens: input.runtimeParameters.maxOutputTokens,
+        structured_output_required: input.runtimeParameters.structuredOutputRequired,
         priority: input.priority,
         is_active: input.isActive,
-        system_prompt_override: input.systemPromptOverride ?? null,
       })
-      .select('id, label, protocol, base_url, model, purpose, priority, is_active, system_prompt_override')
+      .select('id, label, protocol, base_url, model, purpose, task_kind, temperature, max_output_tokens, structured_output_required, priority, is_active')
       .single()
     if (insert.error) throw insert.error
     const sealed = createSecretBoxFromEnvironment(environment).seal(input.apiKey, insert.data.id as string)
@@ -1777,21 +1916,27 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (!(await requirePlatformAdmin(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
     const input = UpdateLlmProviderConfigurationRequestSchema.parse(request.body)
+    if ((input.taskKind && input.taskKind !== 'text_generation') || input.protocol === 'anthropic') return reply.code(422).send({ error: 'task_kind_not_implemented', taskKind: input.taskKind ?? 'text_generation' })
     const payload: Record<string, unknown> = {}
     if (input.label !== undefined) payload.label = input.label
     if (input.protocol !== undefined) payload.protocol = input.protocol
     if (input.baseUrl !== undefined) payload.base_url = input.baseUrl
     if (input.model !== undefined) payload.model = input.model
     if (input.purpose !== undefined) payload.purpose = input.purpose
+    if (input.taskKind !== undefined) payload.task_kind = input.taskKind
+    if (input.runtimeParameters !== undefined) {
+      payload.temperature = input.runtimeParameters.temperature
+      payload.max_output_tokens = input.runtimeParameters.maxOutputTokens
+      payload.structured_output_required = input.runtimeParameters.structuredOutputRequired
+    }
     if (input.priority !== undefined) payload.priority = input.priority
     if (input.isActive !== undefined) payload.is_active = input.isActive
-    if (input.systemPromptOverride !== undefined) payload.system_prompt_override = input.systemPromptOverride
     const service = supabaseClients.forService()
     const update = await service
       .from('llm_provider_configurations')
       .update(payload)
       .eq('id', params.id)
-      .select('id, label, protocol, base_url, model, purpose, priority, is_active, system_prompt_override')
+      .select('id, label, protocol, base_url, model, purpose, task_kind, temperature, max_output_tokens, structured_output_required, priority, is_active')
       .single()
     if (update.error) throw update.error
     if (input.apiKey !== undefined) {

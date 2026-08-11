@@ -62,6 +62,7 @@ Orthogonal zur Serie 008–020: Diese Pakete betreffen den SaaS-Betreiber selbst
 | Nr. | Arbeitspaket | Abhängigkeiten | Status |
 |---|---|---|---|
 | 022 | [Plattform-Administration](022-plattform-administration.md) | 008, 009 | erledigt |
+| 033 | [Echter Textgenerator und Provider-Routing](033-echter-textgenerator-und-provider-routing.md) | 032, 004 | erledigt; Text-only Worker-Pilot mit strukturierten Kandidaten und atomarer Provenienzübernahme. Bild-/Video-KI bleibt ausdrücklich deaktiviert; KI-Text-Kennzeichnung blockiert Publishing |
 
 Hinweis zu 023: das Paket ist beim Review von 010 aus 011 herausgelöst worden (Sichtbarkeit, Mitglieder-Detailebene, Einladungsrecht als Richtlinie) und gehört **direkt nach 010**, vor 011 — es legt `policy_settings` und die Vererbungsauflösung an, die 011 dann erweitert. Die Nummer folgt nur dem nächsten freien Platz; eine Umnummerierung von 011–022 wäre teurer als diese Notiz. 012 nutzt `policy_scope` aus 023 mit.
 

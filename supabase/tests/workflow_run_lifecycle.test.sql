@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(19);
+select plan(20);
 set local role postgres;
 
 insert into public.workflow_outbox (
@@ -29,6 +29,11 @@ select is((select status from public.begin_workflow_run(
 )), 'acquired', 'first delivery acquires the run');
 select ok((select worker_lease_token is not null from public.workflow_runs where hatchet_run_id = 'hatchet-run-lifecycle-1'), 'acquired lease is owned by a unique token');
 select is((select technical_status from public.workflow_runs where hatchet_run_id = 'hatchet-run-lifecycle-1'), 'running', 'acquired run is marked running');
+update public.workflow_runs set worker_lease_until = null where hatchet_run_id = 'hatchet-run-lifecycle-1';
+select is((select status from public.begin_workflow_run(
+  '11111111-1111-4111-8111-111111111111', 'process-submission',
+  '62000000-0000-4000-8000-000000000002', 1, 'lifecycle-test', 'lifecycle:1'
+)), 'acquired', 'a legacy running run without a lease is recoverable');
 select is((select status from public.begin_workflow_run(
   '11111111-1111-4111-8111-111111111111', 'process-submission',
   '62000000-0000-4000-8000-000000000002', 1, 'lifecycle-test', 'lifecycle:1'

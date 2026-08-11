@@ -152,6 +152,8 @@ describe('WorkerEnvironmentSchema', () => {
     HATCHET_CLIENT_HOST_PORT: 'hatchet.example.org:7077',
     HATCHET_TLS: 'true',
     HATCHET_WORKER_SLOTS: '8',
+    SECRET_BOX_KEYS: JSON.stringify({ v1: Buffer.alloc(32).toString('base64') }),
+    SECRET_BOX_CURRENT_KEY_VERSION: 'v1',
   }
 
   it('parses a complete worker configuration once into typed values', () => {

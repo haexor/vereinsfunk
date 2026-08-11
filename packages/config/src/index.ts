@@ -107,6 +107,8 @@ export const WorkerEnvironmentSchema = z.object({
   HATCHET_CLIENT_HOST_PORT: hostPort.default('localhost:7077'),
   HATCHET_TLS: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
   HATCHET_WORKER_SLOTS: z.coerce.number().int().positive().default(8),
+  SECRET_BOX_KEYS: z.string().min(1),
+  SECRET_BOX_CURRENT_KEY_VERSION: z.string().min(1),
 })
 
 export type WorkerEnvironment = z.infer<typeof WorkerEnvironmentSchema>
