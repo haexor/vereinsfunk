@@ -168,7 +168,7 @@ begin
   update public.generation_candidates set status = 'ready', generated_content = p_generated_content,
       provider_configuration_id = p_provider_configuration_id, provider_model_id = p_provider_model_id,
       provider_parameter_hash = p_provider_parameter_hash, prompt_template_version = p_prompt_template_version, updated_at = now()
-    where id = p_candidate_id and status = 'generating';
+    where id = p_candidate_id and composition_session_id = p_session_id and status = 'generating';
   if not found then raise exception 'generation_candidate_ready_update_lost'; end if;
   update public.composition_sessions set status = 'candidate_ready', updated_at = now()
     where id = p_session_id and status = 'generating';
@@ -181,7 +181,7 @@ create or replace function public.mark_generation_candidate_failed(
 ) returns void language plpgsql security definer set search_path = public, pg_temp as $$
 begin
   update public.generation_candidates set status = 'failed', failure_code = p_error_class, updated_at = now()
-    where id = p_candidate_id and status = 'generating';
+    where id = p_candidate_id and composition_session_id = p_session_id and status = 'generating';
   if not found then raise exception 'generation_candidate_failed_update_lost'; end if;
   update public.composition_sessions set status = 'failed', updated_at = now()
     where id = p_session_id and status = 'generating';
@@ -194,7 +194,7 @@ create or replace function public.release_generation_candidate(
 ) returns void language plpgsql security definer set search_path = public, pg_temp as $$
 begin
   update public.generation_candidates set status = 'pending', updated_at = now()
-    where id = p_candidate_id and status = 'generating';
+    where id = p_candidate_id and composition_session_id = p_session_id and status = 'generating';
   if not found then raise exception 'generation_candidate_release_update_lost'; end if;
   update public.composition_sessions set status = 'queued', updated_at = now()
     where id = p_session_id and status = 'generating';
