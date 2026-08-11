@@ -21,6 +21,14 @@ begin;
 --   Rechtslogik dauerhaft in zwei Sprachen synchron halten muessen -- dokumentierte Restluecke,
 --   bleibt informativ ueber GET /v1/approval-stages/mine und die TS-Tiefenverteidigung in
 --   POST /v1/publications/:id/execute (HARD_PUBLISH_BLOCKERS, apps/api/src/routes/policies.ts).
+-- - person_left: evaluateConsent() zaehlt eine ausgetretene Person zu consent_invalid, aber nur
+--   wenn die Richtlinie consentExpiresOnLeave greift -- und die wird ueber die Kette Verein ->
+--   Abteilung -> Team mit einem Standardwert aus packages/domain aufgeloest. Diese Aufloesung hier
+--   nachzubauen wuerde denselben Vererbungs-Default an einer zweiten Stelle festschreiben, die bei
+--   jeder Aenderung mitwandern muesste. Der Fall wird von der TS-Tiefenverteidigung in
+--   POST /v1/publications/:id/execute abgedeckt: dort laeuft der volle evaluateConsent() ueber den
+--   Service-Client und consent_invalid ist Teil von HARD_PUBLISH_BLOCKERS. Das Einplanen gelingt in
+--   diesem Fall also, das Veroeffentlichen nicht (gefunden im Code-Review).
 --
 -- Ein Beitrag ohne jedes Medium (Text-only-Pilot, Plan 033) hat keine post_media-Zeilen -- jeder
 -- exists()-Check unten ist dann leer, das Gate blockiert nichts.
