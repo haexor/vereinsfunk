@@ -103,6 +103,7 @@ export const WorkerEnvironmentSchema = z.object({
   SUPABASE_URL: z.url(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   HATCHET_CLIENT_TOKEN: z.string().min(1),
+  HATCHET_CLIENT_API_URL: z.url().default('http://127.0.0.1:8080'),
   HATCHET_CLIENT_HOST_PORT: hostPort.default('localhost:7077'),
   HATCHET_TLS: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
   HATCHET_WORKER_SLOTS: z.coerce.number().int().positive().default(8),

@@ -1,14 +1,15 @@
 import { parseWorkerEnvironment } from '@vereinsfunk/config'
 import { createLogger } from '@vereinsfunk/observability'
 import { WorkflowOutboxDispatcher } from '@vereinsfunk/orchestration'
-import { createWorkflowOutboxRepository } from './context.js'
+import { createWorkflowExecutionRepository, createWorkflowOutboxRepository } from './context.js'
 import { createHatchetClient, HatchetOrchestrator } from './hatchet.js'
-import { concurrency, createHatchetWorker } from './workflows.js'
+import { concurrency, createHatchetWorker, type ProductWorkflowExecutor } from './workflows.js'
 
 const logger = createLogger({ name: 'worker' })
 let stopping = false
 let worker: Awaited<ReturnType<typeof createHatchetWorker>> | undefined
 let workerStop: Promise<void> | undefined
+let workerRun: Promise<void> | undefined
 let dispatchInFlight: Promise<void> | undefined
 let dispatchTimer: ReturnType<typeof setInterval> | undefined
 
@@ -42,6 +43,7 @@ const shutdown = async (signal: string): Promise<void> => {
   await startup.catch(() => {})
   await dispatchInFlight
   await stopWorker()
+  await workerRun?.catch(() => {})
   logger.info({ signal }, 'worker stopped gracefully')
   process.exitCode = 0
 }
@@ -51,11 +53,16 @@ process.once('SIGTERM', () => { void shutdown('SIGTERM') })
 
 async function main(): Promise<void> {
   const config = parseWorkerEnvironment()
-  const createdWorker = await createHatchetWorker(config)
+  const runs = createWorkflowExecutionRepository(config)
+  // Plan 004 provides the durable envelope and run lifecycle. Concrete product adapters are
+  // injected by their own plans; this default deliberately does no provider I/O.
+  const executor: ProductWorkflowExecutor = { async execute() {} }
+  const createdWorker = await createHatchetWorker(config, runs, executor)
   worker = createdWorker
   if (stopping) return stopWorker()
 
-  await worker.start()
+  workerRun = worker.start()
+  await worker.waitUntilReady()
   if (stopping) return stopWorker()
 
   const dispatcher = new WorkflowOutboxDispatcher(createWorkflowOutboxRepository(config), new HatchetOrchestrator(createHatchetClient(config)))

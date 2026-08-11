@@ -13,6 +13,7 @@ type HatchetDispatchClient = {
 export function createHatchetClient(config: WorkerEnvironment): HatchetDispatchClient {
   return HatchetClient.init<WorkflowPayload>({
     token: config.HATCHET_CLIENT_TOKEN,
+    api_url: config.HATCHET_CLIENT_API_URL,
     host_port: config.HATCHET_CLIENT_HOST_PORT,
     tls_config: { tls_strategy: config.HATCHET_TLS ? 'tls' : 'none' },
   })

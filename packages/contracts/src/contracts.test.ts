@@ -41,6 +41,7 @@ import {
   UpdateMembershipExpiryRequestSchema,
   UpdatePolicySettingRequestSchema,
   VideoUploadMetadataSchema,
+  WorkflowPayloadSchema,
 } from './index.js'
 
 const org = '11111111-1111-4111-8111-111111111111'
@@ -48,6 +49,12 @@ const department = '22222222-2222-4222-8222-222222222222'
 const team = '33333333-3333-4333-8333-333333333333'
 
 describe('contracts', () => {
+  it('accepts only small ID-based workflow payloads', () => {
+    const payload = { entityId: org, organizationId: org, departmentId: department, correlationId: team, sourceRevision: 1, purpose: 'render', idempotencyKey: 'render:1' }
+    expect(WorkflowPayloadSchema.safeParse(payload).success).toBe(true)
+    expect(WorkflowPayloadSchema.safeParse({ ...payload, caption: 'This must never reach Hatchet' }).success).toBe(false)
+  })
+
   it('rejects an invalid tenant boundary', () => {
     expect(() =>
       CreateSubmissionSchema.parse({

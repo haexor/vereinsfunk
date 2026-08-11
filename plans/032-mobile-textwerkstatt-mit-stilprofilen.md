@@ -6,7 +6,7 @@
 
 ## Status
 
-- **Implementation note (2026-08-10)**: Teilphase 1 ist umgesetzt: additive Verträge, die tenant-sicheren Tabellen `content_style_profiles`, `composition_sessions`, `composition_session_media`, `generation_candidates` und `post_generation_provenance`, kontrollierte Kompressionsprovenienz, RLS-/Negativtests sowie ADR-010. Die neue Textwerkstatt ist **nicht aktiv**, weil Plan 004 keinen funktionierenden transaktionalen Outbox-/Worker-Pfad und Plan 002 keinen echten privaten Upload-/Normalisierungs-/Freigabegate-Pfad bereitstellt. Es wurde bewusst kein synchroner LLM-Shortcut, kein Original-Anhang und keine UI-Halbfunktion eingeführt.
+- **Implementation note (2026-08-11)**: Teilphase 1 ist umgesetzt: additive Verträge, die tenant-sicheren Tabellen `content_style_profiles`, `composition_sessions`, `composition_session_media`, `generation_candidates` und `post_generation_provenance`, kontrollierte Kompressionsprovenienz, RLS-/Negativtests sowie ADR-010. Paket 004 liefert nun den nachgewiesenen transaktionalen ID-only Outbox-/Worker-Pfad. Die Textwerkstatt bleibt bis zur Session-/Provider-/Kandidatenumsetzung aus Plan 033 inaktiv; Foto-/Video-Anhänge bleiben bis Plan 002 gesperrt. Es wurde bewusst kein synchroner LLM-Shortcut, kein Original-Anhang und keine UI-Halbfunktion eingeführt.
 - **Produktentscheidung geändert (2026-08-11)**: Das ursprüngliche Verbot der Personenimitation ist zurückgenommen (Betreiberentscheidung). Stilprofile dürfen jetzt eine reale Person benennen und imitieren -- kuratiert (Plattform) oder selbst angelegt (Verein). Absicherung erfolgt organisatorisch über Rollenvergabe und die bestehenden Freigaberouten (Plan 011/024), nicht technisch. Der zugehörige Zod-Refine und die zwei DB-CHECKs auf `content_style_profiles.name`/`description` sind entfernt; die Details stehen im Abschnitt "Produktentscheidung" unten.
 - **Bekannte Diskrepanz zu `main` (2026-08-11)**: `main` enthält aus einer separaten CodeRabbit-Runde (PR #39) einen abweichenden Zuschnitt der Komposition-Session-Anfrage (`requestedFormat` einzeln + explizite `targetPlatforms`) sowie eine Personenimitations-Sperre, die beide diesem bereits migrierten und getesteten Stand widersprechen. Für diesen Merge hat der umgesetzte Stand Vorrang (`requestedFormats`-Array, Imitation erlaubt); `requestedFormat` vs. `requestedFormats` inklusive Plattform-Fähigkeitsprüfung vor Generierung ist vor Schritt 1 der nächsten Phase bewusst zu entscheiden, nicht stillschweigend zu übernehmen.
 - **Priority**: P1
@@ -41,7 +41,7 @@ Qualität wird als Produktfunktion behandelt: Der Generator muss konkrete Detail
 - `apps/api/src/app.ts:1331-1537` legt bei vollständigem Quellmaterial synchron eine `submission`, `posts`, `post_versions` und `post_variants` an. Jede erzeugte Version speichert bereits `source_facts_snapshot`, `effective_config_snapshot`, `created_by_type` und Auditdaten. Eine Bearbeitung bzw. KI-Revision einer vorhandenen Version gibt es nicht.
 - `posts` und `post_versions` sind durch ADR-003 und das Schema (`supabase/migrations/202608020001_initial_tenant_foundation.sql:151-198`) versioniert; Freigaben referenzieren `post_version_id`. Jede inhaltliche Änderung muss folglich eine neue Version erzeugen und darf niemals eine bestehende Version aktualisieren.
 - Die Tabellen für private Medien und deren Zuordnung (`media_assets`, `media_derivatives`, `post_media`, `approval_media_snapshots`) existieren seit `202608030001_content_media_workflows_publishing.sql`; `media_assets` hat bereits `mime_type`, Maße und `duration_ms`. Der echte Upload-, Normalisierungs- und Freigabegate-Pfad aus Plan 002 fehlt noch. `post_media` referenziert deshalb ausschließlich fertige Derivate, niemals Originale.
-- `apps/worker` und die `workflow_outbox`/`workflow_runs`-Tabellen sind vorbereitet, werden aber noch nicht produktiv verwendet. ADR-002 erlaubt in Hatchet nur IDs, Revision, Correlation-ID und kleine technische Metadaten — niemals Inhalte, Fotos oder Secrets.
+- `apps/worker` sowie `workflow_outbox`/`workflow_runs` sind durch Paket 004 für ID-only-Ausführung mit echter lokaler Hatchet-Zustellung nachgewiesen. Der Textwerkstatt-spezifische Executor und Kandidatenzustände fehlen weiterhin. ADR-002 erlaubt in Hatchet nur IDs, Revision, Correlation-ID und kleine technische Metadaten — niemals Inhalte, Fotos oder Secrets.
 - `apps/web/app/pages/beitraege.vue` ist weiterhin ein Leerzustand, obwohl echte Posts seit Plan 025 entstehen. Ein Editor braucht dort eine echte Liste und einen Deep Link auf den Entwurf.
 
 Verbindliche Architektur aus `AGENTS.md` und ADRs:
@@ -68,7 +68,7 @@ Verbindliche Architektur aus `AGENTS.md` und ADRs:
 - additive Supabase migration(s), `supabase/tests/*` and an ADR for style profiles / generation provenance
 - `packages/contracts`, `packages/content-engine`, `packages/domain`, API content routes and their tests
 - completing the Plan-002 private upload/normalisation path, inklusive Video-Kompressionspipeline, wo sie für Foto- oder Video-Anhänge benötigt wird
-- `apps/worker` generation/revision workflow and its tests after Plan 004 has provided outbox dispatch
+- `apps/worker` generation/revision workflow and its tests on the completed Plan-004 outbox dispatch
 - `apps/web/app/pages/erstellen.vue`, a new post-editor route, posts list, and focused components/composables under `apps/web/app/components/content` and `apps/web/app/composables`
 - relevant product documentation and `plans/README.md`
 
@@ -184,7 +184,7 @@ Create a checked-in, synthetic evaluation fixture set: terse bullet input, full 
 
 ### Step 4: Implement composition jobs, candidates and immutable revisions
 
-After Plan 004 supplies a working outbox and worker, add composition-session persistence/status and the ID-only `generate-text-post`/`revise-text-post` workflows. A session's initial creation has no `post_id` yet, so the API must authorise it by the caller's checked organisation/department/team membership and `post.create` permission at the chosen scope; only later actions on an existing session — revisions, candidate acceptance, manual edits — authorise by the resulting post's scope. The API must create the session transactionally with its outbox record and return an idempotent session handle. The worker loads the session's stored input snapshot rather than current state, writes a candidate or controlled failure guarded by compare-and-set on the session's status, and never writes an accepted version as a side effect of generation.
+Use the completed Plan-004 outbox and worker to add composition-session persistence/status and the ID-only `generate-text-post`/`revise-text-post` workflows. A session's initial creation has no `post_id` yet, so the API must authorise it by the caller's checked organisation/department/team membership and `post.create` permission at the chosen scope; only later actions on an existing session — revisions, candidate acceptance, manual edits — authorise by the resulting post's scope. The API must create the session transactionally with its outbox record and return an idempotent session handle. The worker loads the session's stored input snapshot rather than current state, writes a candidate or controlled failure guarded by compare-and-set on the session's status, and never writes an accepted version as a side effect of generation.
 
 Add explicit API commands to accept a candidate and to save manual content. Implement the post/version write as one transaction/RPC, including version-number allocation, current-version update, media associations, previous-approval invalidation and audit event. Do not copy the current `apps/api/src/app.ts` sequence of several PostgREST writes; the race-sensitive revision path needs a database transaction. Use compare-and-set/session state to prevent double acceptance.
 
@@ -228,7 +228,7 @@ Write component tests for narrow and wide viewports, keyboard traversal, 44px ac
 
 ## STOP conditions
 
-- Plan 004 does not provide a working transactional outbox/ID-only worker path: do not make an external LLM call synchronously from Fastify as a shortcut; complete or re-scope the orchestration prerequisite first.
+- The completed Plan-004 outbox/ID-only worker path cannot deliver or repeat the concrete text workflow: do not make an external LLM call synchronously from Fastify as a shortcut; repair the concrete orchestration integration first.
 - Plan 002 cannot produce an immutable, private ready image/video derivative and real media gate: do not attach original uploads to a post or silently treat them as publishable.
 - Provider structured output cannot be enforced/validated for the selected provider: do not fall back to free-text parsing in a publishable path.
 - Any implementation needs an arbitrary custom system prompt, raw photos in an LLM request, a cross-tenant read, or an in-place update of `post_versions`: stop and escalate the design conflict.
