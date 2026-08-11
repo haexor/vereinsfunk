@@ -10,12 +10,20 @@ create type public.generation_candidate_status as enum (
   'pending', 'generating', 'ready', 'failed', 'accepted', 'abandoned', 'expired'
 );
 
+-- Used by content_style_profiles.avoid_rules below to mirror avoidRules' per-element
+-- z.string().max(160) bound: a plain CHECK expression cannot contain a subquery, so the
+-- per-element length scan lives in this small immutable helper instead.
+create or replace function public.text_array_elements_within_length(value text[], max_length integer)
+returns boolean language sql immutable set search_path = public, pg_temp as $$
+  select coalesce(max(char_length(element)), 0) <= max_length from unnest(value) as element;
+$$;
+
 create table public.content_style_profiles (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations(id) on delete cascade,
   department_id uuid,
   team_id uuid,
-  slug text not null check (slug ~ '^[a-z][a-z0-9]*([_-][a-z0-9]+)*$'),
+  slug text not null check (slug ~ '^[a-z][a-z0-9]*([_-][a-z0-9]+)*$' and char_length(slug) <= 64),
   name text not null check (char_length(name) between 1 and 80),
   kind public.content_style_profile_kind not null default 'custom' check (kind = 'custom'),
   description text not null check (char_length(description) between 1 and 500),
@@ -31,7 +39,7 @@ create table public.content_style_profiles (
   foreign key (organization_id, department_id, team_id)
     references public.teams(organization_id, department_id, id) on delete cascade,
   check (team_id is null or department_id is not null),
-  check (cardinality(avoid_rules) <= 30),
+  check (cardinality(avoid_rules) <= 30 and public.text_array_elements_within_length(avoid_rules, 160)),
   -- The five curated system slugs stay reviewed application registry data (see comment
   -- above); without this check the Zod-only reservation in CreateCustomStyleProfileRequestSchema
   -- would be the sole guard, and any writer that bypasses it could shadow a system profile.
@@ -58,7 +66,7 @@ create table public.composition_sessions (
   department_id uuid not null,
   team_id uuid,
   post_id uuid,
-  preset_slug text not null check (preset_slug ~ '^[a-z][a-z0-9]*([_-][a-z0-9]+)*$'),
+  preset_slug text not null check (preset_slug ~ '^[a-z][a-z0-9]*([_-][a-z0-9]+)*$' and char_length(preset_slug) <= 64),
   communication_goal text not null check (communication_goal in (
     'inform', 'inspire', 'thank', 'invite', 'recruit', 'educate', 'strengthen_community'
   )),
@@ -72,7 +80,12 @@ create table public.composition_sessions (
     and not (requested_formats @> '["video_post"]'::jsonb and jsonb_array_length(requested_formats) > 1)
     and public.jsonb_text_array_is_distinct(requested_formats)
   ),
-  source_material jsonb not null check (jsonb_typeof(source_material) = 'object'),
+  -- Mirrors submissions_material_check (202608030001_content_media_workflows_publishing.sql):
+  -- the same SourceMaterialSchema shape requires all four keys, not just object-typed.
+  source_material jsonb not null check (
+    jsonb_typeof(source_material) = 'object'
+    and source_material ?& array['facts', 'observations', 'quotes', 'doNotMention']
+  ),
   style_profile_id uuid,
   style_profile_snapshot jsonb not null check (jsonb_typeof(style_profile_snapshot) = 'object'),
   source_revision integer not null check (source_revision > 0),
@@ -164,16 +177,15 @@ create table public.post_generation_provenance (
     references public.llm_provider_configurations(id) on delete restrict
 );
 
--- not valid + separate validate: an unvalidated check only scans new/changed rows, so it does not
--- hold ACCESS EXCLUSIVE for a full-table scan of the existing (all-null) column.
-alter table public.media_assets add column compression_provenance jsonb;
-alter table public.media_assets add constraint media_assets_compression_provenance_check
-  check (compression_provenance is null or jsonb_typeof(compression_provenance) = 'object') not valid;
-alter table public.media_assets validate constraint media_assets_compression_provenance_check;
-alter table public.media_derivatives add column compression_provenance jsonb;
-alter table public.media_derivatives add constraint media_derivatives_compression_provenance_check
-  check (compression_provenance is null or jsonb_typeof(compression_provenance) = 'object') not valid;
-alter table public.media_derivatives validate constraint media_derivatives_compression_provenance_check;
+-- Plain inline CHECK: this whole file runs in one begin;/commit; transaction (line 1/end), so a
+-- separate ADD CONSTRAINT ... NOT VALID + VALIDATE CONSTRAINT split buys nothing here -- the
+-- ACCESS EXCLUSIVE lock taken by ADD COLUMN is held for the rest of the transaction regardless,
+-- through the VALIDATE CONSTRAINT scan. That split only avoids a locked full-table scan when
+-- VALIDATE CONSTRAINT runs in a later, separate transaction.
+alter table public.media_assets add column compression_provenance jsonb
+  check (compression_provenance is null or jsonb_typeof(compression_provenance) = 'object');
+alter table public.media_derivatives add column compression_provenance jsonb
+  check (compression_provenance is null or jsonb_typeof(compression_provenance) = 'object');
 
 alter table public.content_style_profiles enable row level security;
 alter table public.content_style_profiles force row level security;
@@ -186,10 +198,15 @@ alter table public.generation_candidates force row level security;
 alter table public.post_generation_provenance enable row level security;
 alter table public.post_generation_provenance force row level security;
 
+-- Read visibility follows plain scope membership, like posts/post_versions
+-- (2026080603_post_visibility.sql), not the post.create permission that gates who may write a
+-- profile: a team/department viewer can see their scope's style profile even though only a
+-- team_manager/contributor/editor may create or use one to compose a post. is_any_member_of_organization
+-- (not is_organization_member) covers the common case of a member with only a department/team role.
 create policy content_style_profiles_select on public.content_style_profiles for select to authenticated using (
-  (team_id is not null and authz.has_team_permission(team_id, 'post.create'))
+  (team_id is not null and authz.has_team_membership(team_id))
   or (team_id is null and department_id is not null and authz.is_department_member(department_id))
-  or (department_id is null and authz.is_organization_member(organization_id))
+  or (department_id is null and authz.is_any_member_of_organization(organization_id))
 );
 -- Same team_id branch as posts/submissions/post_versions (2026080603_post_visibility.sql):
 -- a team_manager with only a team_memberships row (no department_memberships row) must still
@@ -220,7 +237,11 @@ create policy post_generation_provenance_select on public.post_generation_proven
     where version.id = post_generation_provenance.post_version_id
       and version.organization_id = post_generation_provenance.organization_id
       and (
-        authz.is_department_member(post.department_id)
+        -- Mirrors post_versions_select's third branch (2026080603_post_visibility.sql): once a
+        -- post is published/scheduled it is readable org-wide, so its provenance record must not
+        -- be more restrictive than the post/version it belongs to.
+        (post.status in ('published', 'scheduled') and authz.is_any_member_of_organization(post.organization_id))
+        or authz.is_department_member(post.department_id)
         or (post.team_id is not null and authz.has_team_membership(post.team_id))
       )
   )

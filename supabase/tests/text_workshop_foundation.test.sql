@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(14);
+select plan(24);
 
 set local role postgres;
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -95,6 +95,80 @@ select throws_ok(
   $$update public.post_generation_provenance set prompt_template_version = 'v2' where id = '31000000-7000-4000-8000-000000000001'$$,
   'P0001', 'post generation provenance is immutable', 'negative: an accepted generation provenance record cannot be updated'
 );
+
+-- Regression coverage for the review-fixed RLS branches: content_style_profiles' team branch
+-- now reads via plain team membership (not the post.create write permission it wrongly reused),
+-- and its org-wide branch reads via is_any_member_of_organization (not the narrower
+-- is_organization_member, which misses the common member with only a department/team role).
+set local role postgres;
+insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at) values
+  ('00000000-0000-0000-0000-000000000000', '32000000-0000-4000-8000-000000000004', 'authenticated', 'authenticated', 'style-d@test.local', '', '{}', '{}', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '32000000-0000-4000-8000-000000000005', 'authenticated', 'authenticated', 'style-e@test.local', '', '{}', '{}', now(), now());
+-- style-d: ONLY a team_memberships row on team B, role 'viewer' -- the exact shape that used to
+-- fail content_style_profiles_select's team branch because it required post.create.
+insert into public.team_memberships (organization_id, department_id, team_id, user_id, role) values
+  ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', '32000000-2300-4000-8000-000000000002', '32000000-0000-4000-8000-000000000004', 'viewer');
+-- style-e: ONLY a department_memberships row on department B, no organization role -- the exact
+-- shape that used to fail the org-wide branch because it required is_organization_member.
+insert into public.department_memberships (organization_id, department_id, user_id, role) values
+  ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', '32000000-0000-4000-8000-000000000005', 'viewer');
+insert into public.content_style_profiles (id, organization_id, department_id, team_id, slug, name, description, style_rules, created_by) values
+  ('32000000-2410-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', '32000000-2300-4000-8000-000000000002', 'team-b-only', 'Team B only', 'Team-scoped style', '{}', '32000000-0000-4000-8000-000000000002'),
+  ('32000000-2420-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', null, null, 'org-b-wide', 'Org B wide', 'Org-wide style', '{}', '32000000-0000-4000-8000-000000000002');
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '32000000-0000-4000-8000-000000000004', true);
+select is((select count(*)::integer from public.content_style_profiles), 2, 'a team-only viewer (role=viewer, no post.create) sees their team-scoped and the org-wide profile via plain membership');
+select is((select count(*)::integer from public.content_style_profiles where slug = 'warm-und-nah'), 0, 'negative: a team-only member still cannot see a department-scoped profile outside their team');
+
+select set_config('request.jwt.claim.sub', '32000000-0000-4000-8000-000000000005', true);
+select is((select count(*)::integer from public.content_style_profiles where slug = 'org-b-wide'), 1, 'a department-only member (no organization role) sees an org-wide style profile via is_any_member_of_organization');
+select is((select count(*)::integer from public.content_style_profiles where slug = 'team-b-only'), 0, 'negative: a department-only member cannot see a profile scoped to a team they are not in');
+
+-- Regression coverage for post_generation_provenance_select's added org-wide published/scheduled
+-- branch (mirrors post_versions_select), plus a negative case proving it stays scoped to
+-- published/scheduled posts and does not leak an unrelated draft's provenance.
+set local role postgres;
+insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at) values
+  ('00000000-0000-0000-0000-000000000000', '31000000-0000-4000-8000-000000000006', 'authenticated', 'authenticated', 'style-f@test.local', '', '{}', '{}', now(), now());
+-- style-f: department_memberships in a SIBLING department of org A, no organization role. Note
+-- is_department_member() also falls back to any organization role -- an org-role member would
+-- pass the pre-existing department branch regardless, so isolating the new org-wide branch
+-- needs a member with a department/team role elsewhere in the org instead.
+insert into public.departments (id, organization_id, name, slug) values
+  ('31000000-1900-4000-8000-000000000001', '31000000-1000-4000-8000-000000000001', 'Style Department A2', 'style-department-a2');
+insert into public.department_memberships (organization_id, department_id, user_id, role) values
+  ('31000000-1000-4000-8000-000000000001', '31000000-1900-4000-8000-000000000001', '31000000-0000-4000-8000-000000000006', 'viewer');
+insert into public.posts (id, organization_id, department_id, status, created_by) values
+  ('31000000-5100-4000-8000-000000000001', '31000000-1000-4000-8000-000000000001', '31000000-1100-4000-8000-000000000001', 'published', '31000000-0000-4000-8000-000000000001');
+insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type) values
+  ('31000000-6100-4000-8000-000000000001', '31000000-1000-4000-8000-000000000001', '31000000-5100-4000-8000-000000000001', 1, '{}', '{}', 'llm');
+insert into public.post_generation_provenance (id, organization_id, post_version_id, style_profile_snapshot, prompt_template_version, provider_model_id, provider_configuration_id, input_hash) values
+  ('31000000-7100-4000-8000-000000000001', '31000000-1000-4000-8000-000000000001', '31000000-6100-4000-8000-000000000001', '{}', 'v1', 'test-model', '31000000-4000-4000-8000-000000000001', repeat('b', 64));
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '31000000-0000-4000-8000-000000000006', true);
+select is((select count(*)::integer from public.post_generation_provenance where id = '31000000-7100-4000-8000-000000000001'), 1, 'an organization-wide member with no department/team role reads provenance for a published post via the org-wide branch');
+select is((select count(*)::integer from public.post_generation_provenance where id = '31000000-7000-4000-8000-000000000001'), 0, 'negative: the org-wide branch does not leak provenance for an unrelated draft post the member has no department/team role on');
+
+-- composition_session_media and generation_candidates had no rows or RLS assertions at all;
+-- exercise the creator-read and cross-tenant-negative shape already used for composition_sessions.
+set local role postgres;
+insert into public.media_assets (id, organization_id, department_id, bucket_id, object_path, mime_type, byte_size, sha256, scan_status, created_by) values
+  ('32000000-2600-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'raw-media', 'organizations/32000000-2000-4000-8000-000000000002/departments/32000000-2200-4000-8000-000000000002/assets/style/original.jpg', 'image/jpeg', 12, repeat('c', 64), 'clean', '32000000-0000-4000-8000-000000000002');
+insert into public.composition_session_media (id, organization_id, composition_session_id, media_asset_id, position) values
+  ('32000000-2700-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2500-4000-8000-000000000002', '32000000-2600-4000-8000-000000000002', 0);
+insert into public.generation_candidates (id, organization_id, composition_session_id, generation_intent, input_hash) values
+  ('32000000-2800-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2500-4000-8000-000000000002', 'initial', repeat('b', 64));
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '32000000-0000-4000-8000-000000000002', true);
+select is((select count(*)::integer from public.composition_session_media), 1, 'the composition session''s creator can read its attached media');
+select is((select count(*)::integer from public.generation_candidates), 1, 'the composition session''s creator can read its generation candidate');
+
+select set_config('request.jwt.claim.sub', '31000000-0000-4000-8000-000000000001', true);
+select is((select count(*)::integer from public.composition_session_media), 0, 'negative: an unrelated tenant A member cannot read tenant B''s session media');
+select is((select count(*)::integer from public.generation_candidates), 0, 'negative: an unrelated tenant A member cannot read tenant B''s generation candidate');
 
 select * from finish();
 rollback;
