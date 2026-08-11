@@ -21,13 +21,14 @@ const quote = ref('')
 const doNotMention = ref('')
 const revisionInstruction = ref('')
 const draftKey = computed(() => session.value && scope.value?.organizationId && scope.value.departmentId ? `vf:text-draft:${session.value.userId}:${scope.value.organizationId}:${scope.value.departmentId}` : null)
+let restoringDraft = false
 
 function sourceMaterial() {
   const facts = Object.fromEntries(factsText.value.split('\n').map((line) => line.split(':')).filter(([key, value]) => key?.trim() && value?.trim()).map(([key, ...rest]) => [key!.trim(), rest.join(':').trim()]))
   return { facts, observations: observation.value.trim() ? [observation.value.trim()] : [], quotes: quote.value.trim() ? [{ text: quote.value.trim(), approved: true }] : [], doNotMention: doNotMention.value.trim() ? doNotMention.value.split('\n').map((value) => value.trim()).filter(Boolean) : [] }
 }
 function persistDraft() {
-  if (!import.meta.client || !draftKey.value) return
+  if (restoringDraft || !import.meta.client || !draftKey.value) return
   localStorage.setItem(draftKey.value, JSON.stringify({ presetSlug: presetSlug.value, communicationGoal: communicationGoal.value, factsText: factsText.value, observation: observation.value, quote: quote.value, doNotMention: doNotMention.value, selectedProfile: selectedProfile.value }))
 }
 function clearDraft() { if (import.meta.client && draftKey.value) localStorage.removeItem(draftKey.value) }
@@ -39,8 +40,8 @@ function restoreDraft() {
     presetSlug.value = draft.presetSlug; communicationGoal.value = draft.communicationGoal; factsText.value = draft.factsText; observation.value = draft.observation; quote.value = draft.quote; doNotMention.value = draft.doNotMention; selectedProfile.value = draft.selectedProfile
   } catch { clearDraft() }
 }
-watch([presetSlug, communicationGoal, factsText, observation, quote, doNotMention, selectedProfile], persistDraft)
-watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, (_current, previous) => { if (import.meta.client && previous) localStorage.removeItem(`vf:text-draft:${previous}`); sessionId.value = null; candidate.value = null; restoreDraft() })
+watch([presetSlug, communicationGoal, factsText, observation, quote, doNotMention, selectedProfile], persistDraft, { flush: 'sync' })
+watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, () => { restoringDraft = true; sessionId.value = null; candidate.value = null; factsText.value = ''; observation.value = ''; quote.value = ''; doNotMention.value = ''; revisionInstruction.value = ''; restoreDraft(); restoringDraft = false })
 
 async function loadProfiles() {
   if (!scope.value?.organizationId || !scope.value.departmentId) return
@@ -68,7 +69,7 @@ async function createCandidate() {
 }
 async function acceptCandidate() {
   if (!candidate.value) return
-  try { const accepted = await api.request(`/v1/text-workshop/candidates/${candidate.value.id}/accept`, { method: 'POST' }, z.object({ postId: z.string(), postVersionId: z.string() })); await navigateTo(`/freigaben?postVersionId=${accepted.postVersionId}`) } catch { notice.value = 'Der Kandidat konnte nicht übernommen werden.' }
+  try { const accepted = await api.request(`/v1/text-workshop/candidates/${candidate.value.id}/accept`, { method: 'POST' }, z.union([z.object({ postId: z.string(), postVersionId: z.string(), alreadyAccepted: z.literal(false) }), z.object({ postVersionId: z.string(), alreadyAccepted: z.literal(true) })])); await navigateTo(`/freigaben?postVersionId=${accepted.postVersionId}`) } catch { notice.value = 'Der Kandidat konnte nicht übernommen werden.' }
 }
 async function reviseCandidate() {
   if (!sessionId.value || !revisionInstruction.value.trim()) return

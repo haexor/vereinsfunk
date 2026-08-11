@@ -9,5 +9,6 @@ Ausführung. Erst nach Annahme durch Hatchet entsteht oder aktualisiert sie den 
 `workflow_runs`-Datensatz. Worker erwerben eine zeitlich begrenzte Lease per Compare-and-Set;
 doppelte Zustellungen und abgeschlossene Läufe führen daher keine Fachaktion erneut aus. Eine
 fehlende Run-Zuordnung direkt nach der Hatchet-Annahme ist retrybar, nie ein Grund eine Aktion
-unprotokolliert auszuführen. Nur der Service Role Worker darf Outbox- und Run-Lifecycle-RPCs
-aufrufen.
+unprotokolliert auszuführen. Die Service-Role-API darf ausschließlich innerhalb der fachlichen
+Transaktion einen ID-only-Outbox-Auftrag erzeugen. Nur der Service-Role-Worker darf Outbox-Aufträge
+claimen/acknowledgen sowie Run- und Lease-Lifecycle-RPCs aufrufen.

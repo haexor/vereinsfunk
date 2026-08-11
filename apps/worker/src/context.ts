@@ -1,9 +1,25 @@
 import { createClient } from '@supabase/supabase-js'
+import { z } from 'zod'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
-import { UuidSchema, WorkflowNameSchema, WorkflowPayloadSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
+import { CommunicationGoalSchema, SourceMaterialSchema, StyleProfileRulesSchema, UuidSchema, WorkflowNameSchema, WorkflowPayloadSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
 import type { WorkflowOutboxRepository } from '@vereinsfunk/orchestration'
 import type { WorkflowExecutionRepository, WorkflowRunAcquireResult } from './workflows.js'
-import type { TextGenerationRepository } from './textGeneration.js'
+import type { CandidateRow, ProviderRow, SessionRow, TextGenerationRepository } from './textGeneration.js'
+
+const SessionRowSchema: z.ZodType<SessionRow> = z.object({
+  id: UuidSchema, organization_id: UuidSchema, department_id: UuidSchema, team_id: UuidSchema.nullable(), preset_slug: z.string().trim().min(1),
+  communication_goal: CommunicationGoalSchema, source_material: SourceMaterialSchema,
+  style_profile_snapshot: z.object({ name: z.string(), description: z.string(), styleRules: StyleProfileRulesSchema, avoidRules: z.array(z.string()) }),
+})
+const CandidateRowSchema: z.ZodType<CandidateRow> = z.object({ id: UuidSchema, status: z.literal('generating'), revision_instruction: z.string().nullable() })
+const ProviderRowSchema: z.ZodType<ProviderRow> = z.object({
+  id: UuidSchema, protocol: z.string(), base_url: z.url(), model: z.string().trim().min(1), temperature: z.coerce.number(), max_output_tokens: z.coerce.number().int().positive(),
+  structured_output_required: z.boolean(), api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1),
+})
+
+function requireMatchedRow(data: unknown, message: string) {
+  if (!Array.isArray(data) || data.length !== 1) throw new Error(message)
+}
 
 /** Creates the worker-only service-role repository from validated configuration. */
 export function createWorkflowOutboxRepository(config: WorkerEnvironment): WorkflowOutboxRepository {
@@ -58,16 +74,17 @@ export function createTextGenerationRepository(config: WorkerEnvironment): TextG
     async loadSession(id, organizationId) {
       const { data, error } = await client.from('composition_sessions').select('id, organization_id, department_id, team_id, preset_slug, communication_goal, source_material, style_profile_snapshot').eq('id', id).eq('organization_id', organizationId).maybeSingle()
       if (error) throw error
-      return data as never
+      return data === null ? null : SessionRowSchema.parse(data)
     },
     async acquirePendingCandidate(candidateId, sessionId, organizationId) {
       // The candidate ID in the ID-only workflow payload makes this a single-row CAS.
       const { data, error } = await client.from('generation_candidates').update({ status: 'generating' }).eq('id', candidateId).eq('composition_session_id', sessionId).eq('organization_id', organizationId).eq('status', 'pending').select('id, status, revision_instruction').maybeSingle()
       if (error) throw error
       if (!data) return null
-      const sessionUpdate = await client.from('composition_sessions').update({ status: 'generating' }).eq('id', sessionId).eq('organization_id', organizationId)
+      const sessionUpdate = await client.from('composition_sessions').update({ status: 'generating' }).eq('id', sessionId).eq('organization_id', organizationId).select('id')
       if (sessionUpdate.error) throw sessionUpdate.error
-      return data as never
+      requireMatchedRow(sessionUpdate.data, 'generation session acquire update lost')
+      return CandidateRowSchema.parse(data)
     },
     async loadActiveTextProvider() {
       const { data, error } = await client.from('llm_provider_configurations')
@@ -75,29 +92,38 @@ export function createTextGenerationRepository(config: WorkerEnvironment): TextG
         .eq('task_kind', 'text_generation').eq('is_active', true).order('priority').limit(2)
       if (error) throw error
       if (data.length === 0 || (data.length > 1 && data[0]!.priority === data[1]!.priority)) throw new Error('text provider configuration is ambiguous or missing')
-      const row = data[0] as Record<string, unknown>
-      const secret = row.llm_provider_secrets as { api_key_ciphertext: string; key_version: string } | { api_key_ciphertext: string; key_version: string }[]
+      const row = z.object({
+        id: UuidSchema, protocol: z.string(), base_url: z.url(), model: z.string().trim().min(1), temperature: z.coerce.number(), max_output_tokens: z.coerce.number().int().positive(),
+        structured_output_required: z.boolean(), llm_provider_secrets: z.union([z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) }), z.array(z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) })).min(1)]),
+      }).parse(data[0])
+      const secret = row.llm_provider_secrets
       const value = Array.isArray(secret) ? secret[0] : secret
       if (!value) throw new Error('text provider secret missing')
-      return { ...row, api_key_ciphertext: value.api_key_ciphertext, key_version: value.key_version } as never
+      return ProviderRowSchema.parse({ ...row, api_key_ciphertext: value.api_key_ciphertext, key_version: value.key_version })
     },
     async markReady(candidateId, sessionId, generatedContent, metadata) {
-      const { error } = await client.from('generation_candidates').update({ status: 'ready', generated_content: generatedContent, provider_configuration_id: metadata.providerConfigurationId, provider_model_id: metadata.providerModelId, provider_parameter_hash: metadata.providerParameterHash, prompt_template_version: metadata.promptTemplateVersion }).eq('id', candidateId).eq('status', 'generating')
+      const { data, error } = await client.from('generation_candidates').update({ status: 'ready', generated_content: generatedContent, provider_configuration_id: metadata.providerConfigurationId, provider_model_id: metadata.providerModelId, provider_parameter_hash: metadata.providerParameterHash, prompt_template_version: metadata.promptTemplateVersion }).eq('id', candidateId).eq('status', 'generating').select('id')
       if (error) throw error
-      const session = await client.from('composition_sessions').update({ status: 'candidate_ready' }).eq('id', sessionId).eq('status', 'generating')
+      requireMatchedRow(data, 'generation candidate ready update lost')
+      const session = await client.from('composition_sessions').update({ status: 'candidate_ready' }).eq('id', sessionId).eq('status', 'generating').select('id')
       if (session.error) throw session.error
+      requireMatchedRow(session.data, 'generation session ready update lost')
     },
     async markFailed(candidateId, sessionId, errorClass) {
-      const candidate = await client.from('generation_candidates').update({ status: 'failed', failure_code: errorClass }).eq('id', candidateId).eq('status', 'generating')
+      const candidate = await client.from('generation_candidates').update({ status: 'failed', failure_code: errorClass }).eq('id', candidateId).eq('status', 'generating').select('id')
       if (candidate.error) throw candidate.error
-      const session = await client.from('composition_sessions').update({ status: 'failed' }).eq('id', sessionId).eq('status', 'generating')
+      requireMatchedRow(candidate.data, 'generation candidate failure update lost')
+      const session = await client.from('composition_sessions').update({ status: 'failed' }).eq('id', sessionId).eq('status', 'generating').select('id')
       if (session.error) throw session.error
+      requireMatchedRow(session.data, 'generation session failure update lost')
     },
     async releaseCandidate(candidateId, sessionId) {
-      const candidate = await client.from('generation_candidates').update({ status: 'pending' }).eq('id', candidateId).eq('status', 'generating')
+      const candidate = await client.from('generation_candidates').update({ status: 'pending' }).eq('id', candidateId).eq('status', 'generating').select('id')
       if (candidate.error) throw candidate.error
-      const session = await client.from('composition_sessions').update({ status: 'queued' }).eq('id', sessionId).eq('status', 'generating')
+      requireMatchedRow(candidate.data, 'generation candidate release update lost')
+      const session = await client.from('composition_sessions').update({ status: 'queued' }).eq('id', sessionId).eq('status', 'generating').select('id')
       if (session.error) throw session.error
+      requireMatchedRow(session.data, 'generation session release update lost')
     },
   }
 }

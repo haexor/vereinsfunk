@@ -2,7 +2,7 @@
 
 Arbeite im Repository-Root dieses Checkouts. Beginne mit `git status --short --branch`, `git log --oneline main..HEAD` und dem PR-Status des aktuellen Branches. Bewahre vorhandene Änderungen; erst nach ausdrücklicher Aufforderung committen oder pushen.
 
-## Nächstes Ziel: Plan 033 vollständig umsetzen
+## Historischer Stand vor Umsetzung von Plan 033
 
 Lies vor Änderungen vollständig:
 

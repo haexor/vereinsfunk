@@ -29,6 +29,9 @@ describe('structured content generator', () => {
   it('parses structured output and never exposes an API key in its error', async () => {
     const generator = new OpenAiCompatibleStructuredContentGenerator(async (_url, init) => {
       expect(new Headers(init.headers).get('authorization')).toBe('Bearer secret')
+      const schema = JSON.parse(String(init.body)).response_format.json_schema.schema
+      expect(schema.properties.generatedClaims.items).toMatchObject({ additionalProperties: false, required: ['sourceId', 'text'] })
+      expect(schema.properties.variants.items.properties.slidePlan.items).toMatchObject({ additionalProperties: false, required: ['role'] })
       return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(grounded) } }] }), { status: 200 })
     })
     await expect(generator.generateText(input)).resolves.toMatchObject({ caption: 'Passen' })
@@ -36,5 +39,11 @@ describe('structured content generator', () => {
   it('fails closed for an ungrounded or prohibited provider answer', async () => {
     const generator = new OpenAiCompatibleStructuredContentGenerator(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ ...grounded, caption: 'Sponsor X', generatedClaims: [{ sourceId: 'made-up', text: 'Sponsor X' }] }) } }] }), { status: 200 }))
     await expect(generator.generateText(input)).rejects.toMatchObject({ errorClass: 'ungrounded', retryable: false } satisfies Partial<ContentGenerationError>)
+  })
+  it('bounds a provider request and classifies an abort as retryable network failure', async () => {
+    const generator = new OpenAiCompatibleStructuredContentGenerator(async (_url, init) => new Promise((_resolve, reject) => {
+      init.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+    }))
+    await expect(generator.generateText({ ...input, requestTimeoutMs: 1 })).rejects.toMatchObject({ errorClass: 'provider_network', retryable: true } satisfies Partial<ContentGenerationError>)
   })
 })

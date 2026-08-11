@@ -55,12 +55,19 @@ export class FakeContentGenerator implements ContentGenerator {
   }
 }
 
+/** Error information intentionally contains no input or output text and is safe for worker logs. */
+export class ContentGenerationError extends Error {
+  constructor(readonly errorClass: 'provider_network' | 'provider_rate_limit' | 'provider_server' | 'provider_schema' | 'ungrounded', readonly retryable: boolean) {
+    super(errorClass)
+  }
+}
+
 export function assertGroundedPost(post: GeneratedPost, brief: GroundedContentBrief): void {
   const allowed = new Set([...brief.allowedClaims, ...brief.approvedQuotes].map((claim) => claim.sourceId))
-  if (post.generatedClaims.some((claim) => !allowed.has(claim.sourceId)) || post.variants.some((variant) => variant.claimSourceIds.some((id) => !allowed.has(id)))) throw new Error('Generated content contains an ungrounded claim')
+  if (post.generatedClaims.some((claim) => !allowed.has(claim.sourceId)) || post.variants.some((variant) => variant.claimSourceIds.some((id) => !allowed.has(id)))) throw new ContentGenerationError('ungrounded', false)
   const rendered = [post.headline, post.caption, post.shortCaption, post.callToAction, post.altText, ...post.hashtags, ...post.verifiedFacts].join('\n').toLocaleLowerCase('de')
   if (brief.prohibitedClaims.some((phrase) => rendered.includes(phrase.toLocaleLowerCase('de')))) {
-    throw new Error('Generated content contains a prohibited phrase')
+    throw new ContentGenerationError('ungrounded', false)
   }
 }
 
@@ -75,17 +82,11 @@ export type StructuredTextGeneratorInput = {
   apiKey: string
   temperature: number
   maxOutputTokens: number
+  requestTimeoutMs?: number
 }
 
 export interface StructuredContentGenerator {
   generateText(input: StructuredTextGeneratorInput): Promise<GeneratedPost>
-}
-
-/** Error information intentionally contains no input or output text and is safe for worker logs. */
-export class ContentGenerationError extends Error {
-  constructor(readonly errorClass: 'provider_network' | 'provider_rate_limit' | 'provider_server' | 'provider_schema' | 'ungrounded', readonly retryable: boolean) {
-    super(errorClass)
-  }
 }
 
 export function buildStructuredTextPrompt(input: Pick<StructuredTextGeneratorInput, 'brief' | 'styleProfile' | 'revisionInstruction'>) {
@@ -120,16 +121,19 @@ export class OpenAiCompatibleStructuredContentGenerator implements StructuredCon
   async generateText(input: StructuredTextGeneratorInput): Promise<GeneratedPost> {
     const prompt = buildStructuredTextPrompt(input)
     let response: Response
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), input.requestTimeoutMs ?? 60_000)
     try {
       response = await this.fetcher(new URL('chat/completions', input.baseUrl.endsWith('/') ? input.baseUrl : `${input.baseUrl}/`).toString(), {
         method: 'POST',
+        signal: controller.signal,
         headers: { authorization: `Bearer ${input.apiKey}`, 'content-type': 'application/json' },
         body: JSON.stringify({ model: input.model, temperature: input.temperature, max_tokens: input.maxOutputTokens,
           response_format: { type: 'json_schema', json_schema: { name: 'generated_post', strict: true, schema: generatedPostJsonSchema } },
           messages: [{ role: 'system', content: prompt.system }, { role: 'user', content: prompt.user }],
         }),
       })
-    } catch { throw new ContentGenerationError('provider_network', true) }
+    } catch { throw new ContentGenerationError('provider_network', true) } finally { clearTimeout(timeout) }
     if (response.status === 429) throw new ContentGenerationError('provider_rate_limit', true)
     if (response.status >= 500) throw new ContentGenerationError('provider_server', true)
     if (!response.ok) throw new ContentGenerationError('provider_schema', false)
@@ -142,7 +146,7 @@ export class OpenAiCompatibleStructuredContentGenerator implements StructuredCon
       assertGroundedPost(post, input.brief)
       return post
     } catch (error) {
-      if (error instanceof Error && error.message.includes('ungrounded')) throw new ContentGenerationError('ungrounded', false)
+      if (error instanceof ContentGenerationError) throw error
       throw new ContentGenerationError('provider_schema', false)
     }
   }
@@ -156,6 +160,8 @@ const generatedPostJsonSchema = {
     verifiedFacts: { type: 'array', items: { type: 'string' } }, missingFacts: { type: 'array', items: { type: 'string' } },
     headline: { type: 'string' }, caption: { type: 'string' }, shortCaption: { type: 'string' }, callToAction: { type: 'string' },
     hashtags: { type: 'array', items: { type: 'string' } }, altText: { type: 'string' }, templateId: { type: 'string' },
-    safetyFlags: { type: 'array', items: { type: 'string' } }, generatedClaims: { type: 'array', items: { type: 'object' } }, variants: { type: 'array', items: { type: 'object' } },
+    safetyFlags: { type: 'array', items: { type: 'string' } },
+    generatedClaims: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['sourceId', 'text'], properties: { sourceId: { type: 'string' }, text: { type: 'string' } } } },
+    variants: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['platform', 'format', 'headline', 'caption', 'callToAction', 'hashtags', 'altText', 'layoutFamily', 'claimSourceIds'], properties: { platform: { type: 'string' }, format: { type: 'string' }, headline: { type: 'string' }, caption: { type: 'string' }, callToAction: { type: 'string' }, hashtags: { type: 'array', items: { type: 'string' } }, altText: { type: 'string' }, layoutFamily: { type: 'string' }, claimSourceIds: { type: 'array', items: { type: 'string' } }, slidePlan: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['role'], properties: { role: { type: 'string' } } } } } } },
   },
 } as const

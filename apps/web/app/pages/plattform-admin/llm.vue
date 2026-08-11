@@ -176,7 +176,7 @@ async function removeProvider(id: string) {
               <th class="pb-2 pr-4 font-semibold">Bezeichnung</th>
               <th class="pb-2 pr-4 font-semibold">Protokoll</th>
               <th class="pb-2 pr-4 font-semibold">Modell</th>
-              <th class="pb-2 pr-4 font-semibold">Zweck</th>
+              <th class="pb-2 pr-4 font-semibold">Aufgabe</th>
               <th class="pb-2 pr-4 font-semibold">Laufzeit</th>
               <th class="pb-2 pr-4 font-semibold">Priorität</th>
               <th class="pb-2 pr-4 font-semibold">Schlüssel</th>

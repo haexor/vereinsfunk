@@ -19,7 +19,8 @@
     "@vereinsfunk/media-processing": "workspace:*",
     "@vereinsfunk/observability": "workspace:*",
     "@vereinsfunk/orchestration": "workspace:*",
-    "@vereinsfunk/secrets": "workspace:*"
+    "@vereinsfunk/secrets": "workspace:*",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^24.1.0",

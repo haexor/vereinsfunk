@@ -16,6 +16,7 @@ returns boolean language sql immutable set search_path = public, pg_temp as $$
     and coalesce((value->>'departmentId') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', false)
     and coalesce((value->>'correlationId') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', false)
     and (not value ? 'submissionId' or (jsonb_typeof(value->'submissionId') = 'string' and coalesce((value->>'submissionId') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', false)))
+    and (not value ? 'submissionId' or value->>'submissionId' = value->>'entityId')
     and (not value ? 'teamId' or (jsonb_typeof(value->'teamId') = 'string' and coalesce((value->>'teamId') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', false)))
     and jsonb_typeof(value->'sourceRevision') = 'number' and (value->>'sourceRevision') ~ '^[1-9][0-9]*$'
     and jsonb_typeof(value->'purpose') = 'string' and value->>'purpose' = btrim(value->>'purpose') and char_length(value->>'purpose') between 1 and 80
