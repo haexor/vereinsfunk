@@ -4,6 +4,8 @@
 
 `POST /v1/submissions` erzeugt bei vollständigem Quellmaterial tatsächlich einen `post`/eine `post_version` — nicht mehr nur eine Vorschau. Das bereits fertige Freigabegate (Paket 011), die Einwilligungsprüfung (015) und der Kalender (019) haben damit erstmals echte Daten zum Zeigen. Ein neuer Endpunkt führt eine freigegebene, fällige Veröffentlichung tatsächlich aus: `SocialPublisher.publish()` (Paket 006, bisher nirgends aufgerufen) wird über eine sichere, kurzlebige Medienübergabe angebunden.
 
+> **Abgleich mit Paket 032 (2026-08-10)**: Paket 032 baut eine getrennte Kandidaten-/Provenienzgrundlage für spätere KI-Revisionen, verändert diesen synchronen Legacy-Entwurfspfad aber nicht. Ein externer LLM-Aufruf bleibt bis zum Abschluss von Paket 004 ausschließlich ein Blocker, nie ein Fastify-Shortcut.
+
 ## Ausgangslage und Evidenz
 
 Fünf parallele Recherche-Agents haben unabhängig denselben Befund direkt am Code verifiziert (Sitzung vom 2026-08-08, gegen `main` nach Merge von PR #24/Paket 015):
