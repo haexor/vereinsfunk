@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(28);
+select plan(30);
 
 set local role postgres;
 
@@ -172,7 +172,23 @@ select is(
 );
 set local role postgres;
 
--- 19-23: Widerrufskaskade -- die eigentliche Nutzprobe fuer den in diesem Paket behobenen Trigger.
+-- 19-20: Ein Einwilligungstext darf die Kaskade beim vollstaendigen Loeschen eines Vereins nicht
+-- blockieren. Der Trigger macht Textversionen weiterhin per UPDATE unveraenderlich; DELETE
+-- gehoert der organization_id-FK-Kaskade.
+insert into public.organizations (id, name, slug) values
+  ('70000000-1000-4000-8000-000000000003', 'PGTAP Consent Cascade Verein', 'pgtap-consent-cascade-verein');
+insert into public.organization_consent_texts (id, organization_id, body, created_by) values
+  ('70000000-1600-4000-8000-000000000003', '70000000-1000-4000-8000-000000000003', 'Fassung fuer die Loeschkaskade', '70000000-0000-4000-8000-000000000001');
+select lives_ok(
+  $$delete from public.organizations where id = '70000000-1000-4000-8000-000000000003'$$,
+  'deleting an organization with an existing consent text cascades instead of being blocked by the immutability trigger'
+);
+select is(
+  (select count(*)::integer from public.organization_consent_texts where id = '70000000-1600-4000-8000-000000000003'),
+  0, 'the organization delete cascade removes the associated consent text'
+);
+
+-- 21-25: Widerrufskaskade -- die eigentliche Nutzprobe fuer den in diesem Paket behobenen Trigger.
 -- Voller Beitragspfad direkt per SQL nachgestellt (keine Inhalts-Pipeline vorhanden, die das
 -- end-to-end erzeugen wuerde -- dasselbe Vorgehen wie invalidate_approvals_for_media_change vorher
 -- ungetestet war). post -> post_version -> media_asset -> media_derivative -> post_media
@@ -192,7 +208,7 @@ insert into public.face_regions (id, organization_id, media_asset_id, x, y, widt
   ('70000000-1700-4000-8000-000000000005', '70000000-1000-4000-8000-000000000001', '70000000-1700-4000-8000-000000000004', 0.1, 0.1, 0.2, 0.2, 'manual', 'minor', 'consented', '70000000-1400-4000-8000-000000000002');
 -- status='processing', nicht 'ready': media_derivative_immutable (bestehender Trigger seit
 -- 202608030001) verbietet jedes Update, sobald eine Zeile einmal 'ready' war -- der Uebergang
--- unten (Test 19) muss deshalb selbst NACH 'ready' wechseln, nicht eine bereits fertige Zeile
+-- unten (Test 21) muss deshalb selbst NACH 'ready' wechseln, nicht eine bereits fertige Zeile
 -- anfassen.
 insert into public.media_derivatives (id, organization_id, media_asset_id, recipe, recipe_version, object_path, sha256, mime_type, byte_size, status) values
   ('70000000-1700-4000-8000-000000000006', '70000000-1000-4000-8000-000000000001', '70000000-1700-4000-8000-000000000004', '{}'::jsonb, 'v1', 'organizations/x/derivative.jpg', repeat('a', 64), 'image/jpeg', 512, 'processing');
@@ -205,7 +221,7 @@ insert into public.social_connections (id, organization_id, platform, external_a
 insert into public.publications (id, organization_id, post_version_id, social_connection_id, platform, status, idempotency_key) values
   ('70000000-1700-4000-8000-00000000000a', '70000000-1000-4000-8000-000000000001', '70000000-1700-4000-8000-000000000003', '70000000-1700-4000-8000-000000000009', 'instagram', 'queued', 'publish:test:1');
 
--- 19: der zuvor kaputte Bugfix-Trigger laeuft jetzt ohne Fehler durch (Uebergang auf 'ready'),
+-- 21: der zuvor kaputte Bugfix-Trigger laeuft jetzt ohne Fehler durch (Uebergang auf 'ready'),
 -- statt mit "record 'new' has no field 'media_derivative_id'" abzubrechen.
 update public.media_derivatives set status = 'ready', ready_at = now() where id = '70000000-1700-4000-8000-000000000006';
 select ok(true, 'transitioning a media derivative to ready no longer crashes the pre-existing invalidate_approvals_for_media_change trigger (bugfix)');
@@ -217,7 +233,7 @@ select isnt(
 -- Zuruecksetzen, damit die eigentliche Widerrufskaskade unten unabhaengig geprueft werden kann.
 update public.approval_requests set invalidated_at = null where id = '70000000-1700-4000-8000-000000000008';
 
--- 20-23: Widerruf der ueber face_regions verknuepften Einwilligung loest die volle Kaskade aus:
+-- 22-25: Widerruf der ueber face_regions verknuepften Einwilligung loest die volle Kaskade aus:
 -- approval_requests invalidiert, posts auf changes_requested, publications auf cancelled.
 update public.consent_records set revoked_at = now(), revoked_by = 'organization' where id = '70000000-1400-4000-8000-000000000002';
 select isnt(
@@ -237,7 +253,7 @@ select is(
   null, 'the already-superseded predecessor is untouched by revoking its successor -- the cascade only follows face_regions, not the supersession chain'
 );
 
--- 24: ein zweiter Widerruf derselben Zeile (revoked_at bereits gesetzt) loest den Trigger nicht
+-- 26: ein zweiter Widerruf derselben Zeile (revoked_at bereits gesetzt) loest den Trigger nicht
 -- erneut aus (WHEN-Klausel: old.revoked_at is distinct from new.revoked_at).
 update public.publications set status = 'queued' where id = '70000000-1700-4000-8000-00000000000a';
 update public.approval_requests set invalidated_at = null where id = '70000000-1700-4000-8000-000000000008';
@@ -249,7 +265,7 @@ select is(
 
 set local role postgres;
 
--- 25-26: Loeschverhalten der Ablosungskette -- eigene, frische Zeilen statt der oben schon in
+-- 27-28: Loeschverhalten der Ablosungskette -- eigene, frische Zeilen statt der oben schon in
 -- die Widerrufskaskade verwickelten ...0001/...0002 (die haengt inzwischen an face_regions und
 -- ist nicht mehr loeschbar, ohne diese erst zu entfernen).
 insert into public.consent_records (id, organization_id, directory_person_id, pseudonymous_subject_ref, scope, signer_role, guardian_confirmed, signed_at, evidence_path, created_by) values
@@ -263,7 +279,7 @@ select is(
   'deleting the successor sets superseded_by to null on the predecessor -- organization_id survives'
 );
 
--- 27: eine Einwilligung mit erteilter Anfrage ist nicht loeschbar (restrict).
+-- 29: eine Einwilligung mit erteilter Anfrage ist nicht loeschbar (restrict).
 insert into public.consent_records (id, organization_id, directory_person_id, pseudonymous_subject_ref, scope, scope_structured, origin, signer_role, guardian_confirmed, signed_at, evidence_path, revocation_token_hash, created_by) values
   ('70000000-1400-4000-8000-000000000003', '70000000-1000-4000-8000-000000000001', '70000000-1300-4000-8000-000000000001', '70000000-1300-4000-8000-000000000001', 'digital erteilt',
    jsonb_build_object('purposes', array['social_media'], 'platforms', null, 'mediaKinds', array['photo'], 'contexts', null, 'namingAllowed', false, 'departmentIds', null),
@@ -274,7 +290,7 @@ select throws_ok(
   '23503', null, 'a consent record referenced by a granted consent request cannot be deleted (restrict)'
 );
 
--- 28: revocation_token_hash ist eindeutig ueber die ganze Tabelle.
+-- 30: revocation_token_hash ist eindeutig ueber die ganze Tabelle.
 select throws_ok(
   format($$insert into public.consent_records (organization_id, directory_person_id, pseudonymous_subject_ref, scope, origin, signer_role, guardian_confirmed, signed_at, evidence_path, revocation_token_hash, created_by)
     values (%L, %L, %L, 'x', 'digital', 'guardian', true, current_date, 'x', %L, '70000000-0000-4000-8000-000000000002')$$,
