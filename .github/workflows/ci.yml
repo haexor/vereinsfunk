@@ -24,6 +24,10 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
+      # Eigener Schritt, nicht Teil von `pnpm db:test`: die pgTAP-Suite selbst braucht Docker und
+      # laeuft hier nicht, diese Pruefung liest nur Dateien. Ohne sie waere der Waechter genau da
+      # blind, wo der Fehler zweimal hereinkam -- im Pull Request.
+      - run: pnpm db:test:isolation
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build

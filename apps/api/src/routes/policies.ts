@@ -312,6 +312,13 @@ async function buildStageDefinitions(
 // minorReviewConfirmed ist bewusst konservativ immer false: ein eigenes, freigabestufenbasiertes
 // Minderjaehrigenschutz existiert bereits seit Paket 011 (is_minor_stage) und bleibt die
 // eigentliche Durchsetzung; dieser Blocker ist eine zusaetzliche, informative Erinnerung.
+//
+// client MUSS der Service-Client sein (beide Aufrufer tun das). Ueber einen Nutzer-Client ist diese
+// Funktion still fail-open, nicht bloss unvollstaendig: post_media/media_derivatives/consent_records
+// verlangen per RLS is_organization_member und directory_people zusaetzlich 'directory.read' -- fehlt
+// eines davon, kommen leere Zeilen zurueck, aus denen scanStatus 'clean', subjectIsMinor false und
+// personLeft false abgeleitet werden. Das Ergebnis ist dann eine leere Blockerliste, die aussieht
+// wie "nichts zu beanstanden" (gefunden im Code-Review zu Paket 002).
 async function computeMediaGateBlockersForPostVersion(
   client: SupabaseClient, postVersionId: string, departmentId: string, policy: { consentExpiresOnLeave: boolean },
 ): Promise<MediaGateBlocker[]> {
@@ -411,6 +418,16 @@ async function computeMediaGateBlockersForPostVersion(
     faces: faceInputs, minorReviewConfirmed: false, namingNotAllowed: scan.namingNotAllowed, sensitiveTextData: scan.sensitiveTextData,
   }).blockers
 }
+
+// Paket 002: dieselbe konservative Teilmenge, die schedule_publication (2026081107) als echte,
+// per Grant direkt erreichbare Durchsetzungsgrenze in SQL nachbildet -- keine Verdopplung der
+// Rechtslogik, nur derselbe Filter zweimal angewendet. minor_review_required bleibt aussen vor
+// (minorReviewConfirmed ist oben nie erfuellbar, is_minor_stage ist die eigentliche Durchsetzung),
+// ebenso consent_scope_mismatch/naming_not_allowed/sensitive_text_data (bleiben informativ, siehe
+// Kommentar in der Migration). Diese Wiederholung hier ist Tiefenverteidigung fuer den Fall, dass
+// sich der Medien-/Consent-Zustand zwischen Einplanung und tatsaechlicher Ausfuehrung aendert
+// (Plan 002, Pflichtszenario 5: Widerruf nach Freigabe).
+const HARD_PUBLISH_BLOCKERS: readonly MediaGateBlocker[] = ['scan_pending', 'face_pending', 'consent_invalid', 'derivative_stale']
 
 export function registerPolicyRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients, roleProvider, environment, createPublisherForConnection } = context
@@ -1102,6 +1119,19 @@ export function registerPolicyRoutes(app: FastifyInstance, context: ApiRouteCont
 
     // Mehrere Stufen eines Freigabeantrags zeigen auf dieselbe post_version_id -- ohne Memoisierung
     // wuerden bis zu sieben Abfragen je Stufe unnoetig wiederholt (gefunden im Code-Review).
+    //
+    // Die Blocker-Abfrage laeuft ueber den Service-Client, alles davor bewusst weiter ueber den
+    // Nutzer-Client: WELCHE Stufen der Aufrufer sieht, bleibt seine eigene Sichtbarkeit, aber die
+    // Blocker einer Stufe, die er entscheiden soll, muessen vollstaendig sein. Ueber den Nutzer-Client
+    // waren sie es fuer die typischen Freigebenden nicht (gefunden im Code-Review): post_media,
+    // media_derivatives und consent_records verlangen per RLS is_organization_member, also eine
+    // Organisationsrolle -- eine reine Abteilungs-'approver'-Rolle sah null Zeilen und damit die
+    // leere Blockerliste, und wer eine Organisationsrolle ohne 'directory.read' hat (social_manager)
+    // sah die Verzeichnisperson nicht und damit weder Minderjaehrigen- noch Austrittsfaelle. Beides
+    // haette dem Freigebenden "keine Einwaende" gezeigt, wo welche bestehen. Nach aussen geht nur die
+    // Liste der Blocker-Namen zu einer Stufe, fuer die der Aufrufer ohnehin als Pruefer eingetragen
+    // ist (mine-Filter oben) -- keine Medien-, Einwilligungs- oder Verzeichnisdaten.
+    const gateClient = supabaseClients.forService()
     const blockersByPostVersionId = new Map<string, Promise<MediaGateBlocker[]>>()
     const blockersByStage = await Promise.all(
       mine.map(async (row) => {
@@ -1111,7 +1141,7 @@ export function registerPolicyRoutes(app: FastifyInstance, context: ApiRouteCont
         if (!postVersionId || !departmentId) return []
         let pending = blockersByPostVersionId.get(postVersionId)
         if (!pending) {
-          pending = computeMediaGateBlockersForPostVersion(client, postVersionId, departmentId, effectivePolicyForDepartment(departmentId))
+          pending = computeMediaGateBlockersForPostVersion(gateClient, postVersionId, departmentId, effectivePolicyForDepartment(departmentId))
           blockersByPostVersionId.set(postVersionId, pending)
         }
         return pending
@@ -1145,6 +1175,18 @@ export function registerPolicyRoutes(app: FastifyInstance, context: ApiRouteCont
       if (rpc.error.message.includes('invalid_status')) return reply.code(409).send({ error: 'invalid_status', correlationId: request.id })
       if (rpc.error.message.includes('channel_not_allowed')) return reply.code(422).send({ error: 'channel_not_allowed', correlationId: request.id })
       if (rpc.error.message.includes('quota_exceeded')) return reply.code(409).send({ error: 'quota_exceeded', detail: rpc.error.message, correlationId: request.id })
+      // Paket 002: schedule_publication wirft 'media_gate_blocked: <blocker>,<blocker>'. Ohne diese
+      // Zeile faellt genau der neue Gate-Fehler in throw rpc.error -- der Aufrufer bekaeme 500
+      // ("interner Fehler") fuer eine fachlich voellig korrekte Absage und erfuehre nicht, welches
+      // Medium sie ausgeloest hat (gefunden im Code-Review). Dieselbe Antwortform wie
+      // POST /v1/publications/:id/execute, damit die Oberflaeche nur einen Fall kennt.
+      if (rpc.error.message.includes('media_gate_blocked')) {
+        return reply.code(409).send({
+          error: 'media_gate_blocked',
+          blockers: (rpc.error.message.split('media_gate_blocked:')[1] ?? '').split(',').map((entry) => entry.trim()).filter(Boolean),
+          correlationId: request.id,
+        })
+      }
       throw rpc.error
     }
     return reply.code(201).send(
@@ -1184,7 +1226,29 @@ export function registerPolicyRoutes(app: FastifyInstance, context: ApiRouteCont
       return reply.code(409).send({ error: 'not_due_yet', correlationId: request.id })
     }
 
+    // Paket 002: schedule_publication (2026081107) hat denselben konservativen Kern bereits beim
+    // Einplanen durchgesetzt, aber Consent kann danach widerrufen worden sein (Pflichtszenario 5)
+    // -- der Snapshot wird hier vor jedem externen I/O erneut geladen und geprueft.
+    //
+    // Bewusst der Service-Client, nicht der Nutzer-Client (gefunden im Code-Review): directory_people
+    // ist per RLS nur mit 'directory.read' lesbar (2026080703), und die Organisationsrolle
+    // social_manager -- der typische Veroeffentlichende -- hat genau dieses Recht NICHT. Ueber den
+    // Nutzer-Client kaeme die Verzeichnisperson leer zurueck, computeMediaGateBlockersForPostVersion
+    // leitet daraus subjectIsMinor=false und personLeft=false ab und die Pruefung faellt still
+    // offen -- ausgerechnet fuer die beiden Faelle, die zwischen Freigabe und Ausfuehrung neu
+    // entstehen koennen (Minderjaehrige ohne Guardian, ausgetretene Person bei
+    // consentExpiresOnLeave). requirePermission oben hat den Aufrufer bereits autorisiert, und nach
+    // aussen geht nur die Liste der Blocker-Namen, keine Verzeichnisdaten -- dasselbe Muster wie das
+    // Lesen von guardian_email/social_connection_secrets ueber den Service-Client.
     const service = supabaseClients.forService()
+    const policyRows = await fetchPolicyRuleRows(service, publication.data.organization_id as string)
+    const policy = { consentExpiresOnLeave: computeRuleEntry(policyRows, 'department', post.data.department_id as string, null).config.policies.consentExpiresOnLeave }
+    const gateBlockers = await computeMediaGateBlockersForPostVersion(service, version.data.id as string, post.data.department_id as string, policy)
+    const hardBlockers = gateBlockers.filter((blocker) => HARD_PUBLISH_BLOCKERS.includes(blocker))
+    if (hardBlockers.length > 0) {
+      return reply.code(409).send({ error: 'media_gate_blocked', blockers: hardBlockers, correlationId: request.id })
+    }
+
     // Dieselbe Compare-and-Set-Lehre wie bei consent_records' superseded_by (Paket 015): trifft das
     // update keine Zeile, hat ein gleichzeitiger Aufruf bereits gewonnen -- kein automatischer
     // Retry hier, ein fehlgeschlagener/bereits laufender Versuch braucht eine bewusste

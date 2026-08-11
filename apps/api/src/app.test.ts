@@ -2106,6 +2106,53 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
     expect(response.json()).toMatchObject([{ id: STAGE_ID, status: 'stalled', isOverdue: true }])
   })
 
+  it('reports the media gate blockers to a reviewer whose own RLS hides the media tables', async () => {
+    // Regression (gefunden im Code-Review zu Paket 002): die Blocker wurden ueber den Nutzer-Client
+    // geladen. post_media/media_derivatives/consent_records verlangen per RLS is_organization_member,
+    // directory_people zusaetzlich 'directory.read' -- eine reine Abteilungs-'approver'-Rolle erfuellt
+    // beides nicht und bekam eine leere Blockerliste, die wie "nichts zu beanstanden" aussieht. Der
+    // forUser-Fake unten wirft fuer genau diese Tabellen: die Stufenliste selbst darf er bedienen, die
+    // Medienauflösung nicht.
+    const STAGE_POST_ID = '11000000-2000-4000-8000-000000000001'
+    const STAGE_POST_VERSION_ID = '11000000-3000-4000-8000-000000000001'
+    const stageRow = {
+      id: STAGE_ID, position: 1, scope: 'department', label: 'Abteilung', mode: 'named', minimum_approvals: 1, is_minor_stage: false,
+      status: 'open', reviewer_snapshot: [{ userId: USER_ID }], deadline_at: null, approval_request_id: '11000000-4000-4000-8000-000000000001',
+    }
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'approval_stages') return chain({ data: [stageRow], error: null })
+            if (table === 'approval_requests') return chain({ data: [{ id: '11000000-4000-4000-8000-000000000001', post_id: STAGE_POST_ID, post_version_id: STAGE_POST_VERSION_ID }], error: null })
+            if (table === 'posts') return chain({ data: [{ id: STAGE_POST_ID, department_id: DEPARTMENT_ID }], error: null })
+            if (table === 'policy_settings') return chain({ data: [], error: null })
+            throw new Error(`the media gate must not read ${table} through the user client`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'post_versions') return chain({ data: { title: '', caption: 'Hallo Welt' }, error: null })
+            if (table === 'post_media') return chain({ data: [{ media_derivative_id: '11000000-6000-4000-8000-000000000001' }], error: null })
+            if (table === 'media_derivatives') return chain({ data: [{ id: '11000000-6000-4000-8000-000000000001', media_asset_id: '11000000-6100-4000-8000-000000000001', status: 'ready' }], error: null })
+            if (table === 'media_assets') return chain({ data: [{ id: '11000000-6100-4000-8000-000000000001', mime_type: 'image/png', scan_status: 'pending' }], error: null })
+            if (table === 'face_regions') return chain({ data: [], error: null })
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/approval-stages/mine?organizationId=${ORGANIZATION_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject([{ id: STAGE_ID, mediaGateBlockers: ['scan_pending'] }])
+  })
+
   it('requires an organizationId when listing the stages waiting for the caller', async () => {
     // Ohne Organisationsbezug saehe eine Person mit Pruefrollen in mehreren Vereinen die Freigaben
     // aller ihrer Vereine in der Liste eines einzelnen.
@@ -2135,6 +2182,26 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
     })
     expect(response.statusCode).toBe(409)
     expect(response.json()).toMatchObject({ error: 'quota_exceeded', detail: 'quota_exceeded: organization/day' })
+  })
+
+  it('maps a blocked media gate to 409 naming the blockers when scheduling a publication', async () => {
+    // Paket 002: ohne eigene Zuordnung faellt genau der neue Gate-Fehler in throw rpc.error, und
+    // eine fachlich korrekte Absage kaeme als 500 ohne Angabe des blockierenden Mediums beim
+    // Aufrufer an (gefunden im Code-Review).
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ rpc: async () => ({ data: null, error: { message: 'media_gate_blocked: scan_pending,consent_invalid' } }) }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used') } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/post-versions/${POST_VERSION_ID}/schedule`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { socialConnectionId: '10000000-8000-4000-8000-000000000001', scheduledFor: null },
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'media_gate_blocked', blockers: ['scan_pending', 'consent_invalid'] })
   })
 })
 
@@ -2339,7 +2406,25 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
     }
   }
 
-  function readOnlyClients(overrides: Record<string, unknown> = {}): SupabaseClientFactory {
+  // Paket 002: computeMediaGateBlockersForPostVersion() laeuft vor jedem externen I/O erneut, und
+  // zwar ueber den SERVICE-Client -- directory_people haengt per RLS an 'directory.read', und die
+  // Organisationsrolle social_manager (der typische Veroeffentlichende) hat dieses Recht nicht.
+  // Jeder forService-Fake in diesem Block muss diese Lesungen also mitbedienen. Ohne mediaOverrides
+  // bleibt es beim Ausgangszustand aus Plan 025 -- keine post_media-Zeile (Text-only, keine
+  // Upload-Pipeline aus 002/003), kein policy_settings-Override -- und das Gate meldet keinen Blocker.
+  function mediaGateTables(table: string, mediaOverrides: Record<string, unknown> = {}) {
+    if (table === 'policy_settings') return chain({ data: [], error: null })
+    if (table === 'post_versions') return chain({ data: { id: PUB_POST_VERSION_ID, post_id: PUB_POST_ID, title: '', caption: 'Hallo Welt' }, error: null })
+    if (table === 'post_media') return chain({ data: (mediaOverrides.postMedia as unknown[] | undefined) ?? [], error: null })
+    if (table === 'media_derivatives') return chain({ data: (mediaOverrides.derivatives as unknown[] | undefined) ?? [], error: null })
+    if (table === 'media_assets') return chain({ data: (mediaOverrides.assets as unknown[] | undefined) ?? [], error: null })
+    if (table === 'face_regions') return chain({ data: (mediaOverrides.faces as unknown[] | undefined) ?? [], error: null })
+    if (table === 'consent_records') return chain({ data: (mediaOverrides.consents as unknown[] | undefined) ?? [], error: null })
+    if (table === 'directory_people') return chain({ data: (mediaOverrides.people as unknown[] | undefined) ?? [], error: null })
+    return null
+  }
+
+  function readOnlyClients(overrides: Record<string, unknown> = {}, mediaOverrides: Record<string, unknown> = {}): SupabaseClientFactory {
     return {
       forUser: () =>
         ({
@@ -2350,7 +2435,17 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
-      forService: () => ({ from: () => { throw new Error('forService should not be used by this test') } }) as unknown as SupabaseClient,
+      // Die Gate-Lesungen sind der einzige Service-Client-Zugriff, der vor dem Compare-and-Set
+      // stattfinden darf -- jede andere Tabelle (Kanal, Secret, publications-Update) wirft, damit ein
+      // vorgezogener Veroeffentlichungsschritt im Test auffliegt.
+      forService: () =>
+        ({
+          from: (table: string) => {
+            const gate = mediaGateTables(table, mediaOverrides)
+            if (gate) return gate
+            throw new Error(`forService should not be used for ${table} before the media gate`)
+          },
+        }) as unknown as SupabaseClient,
     }
   }
 
@@ -2384,12 +2479,59 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
       expect(response.json()).toMatchObject({ error: 'not_due_yet' })
     })
 
+    it('rejects with 409 media_gate_blocked when a linked media asset is not scan-clean, before any publish step', async () => {
+      // Paket 002: schedule_publication (2026081107) hat den konservativen Kern beim Einplanen
+      // bereits durchgesetzt, aber der Zustand kann sich danach aendern (Pflichtszenario 5:
+      // Widerruf nach Freigabe). Kein Veroeffentlichungsschritt darf vor diesem Check passieren --
+      // die readOnlyClients()-forService bedient ausschliesslich die Gate-Tabellen und wirft sonst.
+      const app = await startApp({
+        roleProvider: organizationManagerRoleProvider,
+        supabaseClients: readOnlyClients({}, {
+          postMedia: [{ media_derivative_id: '25000000-5000-4000-8000-000000000009' }],
+          derivatives: [{ id: '25000000-5000-4000-8000-000000000009', media_asset_id: '25000000-5000-4000-8000-000000000010', status: 'ready' }],
+          assets: [{ id: '25000000-5000-4000-8000-000000000010', mime_type: 'image/png', scan_status: 'pending' }],
+        }),
+      })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
+      expect(response.statusCode).toBe(409)
+      expect(response.json()).toMatchObject({ error: 'media_gate_blocked', blockers: ['scan_pending'] })
+    })
+
+    it('blocks a minor consent without a guardian signature even though directory_people is unreadable for the publisher', async () => {
+      // Regression (gefunden im Code-Review): der Gate-Check lief zuerst ueber den Nutzer-Client.
+      // directory_people haengt per RLS an 'directory.read' (2026080703), das der veroeffentlichenden
+      // Organisationsrolle social_manager fehlt -- die Verzeichnisperson kam leer zurueck,
+      // subjectIsMinor fiel auf false und evaluateConsent hielt die Einwilligung fuer gueltig. Der
+      // forUser-Fake unten stellt genau das nach: er wirft fuer directory_people, was auffliegt,
+      // sobald der Check dort wieder ueber den Nutzer-Client liest.
+      const app = await startApp({
+        roleProvider: organizationManagerRoleProvider,
+        supabaseClients: readOnlyClients({}, {
+          postMedia: [{ media_derivative_id: '25000000-5000-4000-8000-000000000011' }],
+          derivatives: [{ id: '25000000-5000-4000-8000-000000000011', media_asset_id: '25000000-5000-4000-8000-000000000012', status: 'ready' }],
+          assets: [{ id: '25000000-5000-4000-8000-000000000012', mime_type: 'image/png', scan_status: 'clean' }],
+          faces: [{ media_asset_id: '25000000-5000-4000-8000-000000000012', subject_kind: 'minor', decision: 'consented', consent_record_id: '25000000-5000-4000-8000-000000000013' }],
+          consents: [{
+            id: '25000000-5000-4000-8000-000000000013', guardian_confirmed: false, signer_role: 'self', superseded_by: null,
+            revoked_at: null, valid_from: null, valid_until: null, directory_person_id: '25000000-5000-4000-8000-000000000014',
+            scope_structured: { purposes: ['social_media'], platforms: null, mediaKinds: ['photo'], contexts: null, namingAllowed: false, departmentIds: null },
+          }],
+          people: [{ id: '25000000-5000-4000-8000-000000000014', first_name: 'Mia', last_name: 'Minderjaehrig', status: 'active', is_minor: true }],
+        }),
+      })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
+      expect(response.statusCode).toBe(409)
+      expect(response.json()).toMatchObject({ error: 'media_gate_blocked', blockers: ['consent_invalid'] })
+    })
+
     it('rejects with 409 invalid_status when the compare-and-set loses the race', async () => {
       // status ist bereits nicht mehr 'queued' (paralleler Aufruf/frueherer Versuch) -- die
       // Update-Eq-Kette (status='queued') trifft dann keine Zeile.
       const clients: SupabaseClientFactory = {
         ...readOnlyClients(),
-        forService: () => ({ from: (table: string) => { if (table === 'publications') return { update: () => chain({ data: null, error: null }) }; throw new Error(`unexpected table in service fake: ${table}`) } }) as unknown as SupabaseClient,
+        forService: () => ({ from: (table: string) => { const gate = mediaGateTables(table); if (gate) return gate; if (table === 'publications') return { update: () => chain({ data: null, error: null }) }; throw new Error(`unexpected table in service fake: ${table}`) } }) as unknown as SupabaseClient,
       }
       const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
       const token = await signAccessToken(USER_ID)
@@ -2407,13 +2549,16 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
         forService: () =>
           ({
             from: (table: string) => {
+              // post_media kommt hier leer zurueck -- dieselbe Antwort bedient den Gate-Check davor
+              // und die Medienauflistung fuer den Publisher danach.
+              const gate = mediaGateTables(table)
+              if (gate) return gate
               if (table === 'publications') return { update: () => chain({ data: { id: PUBLICATION_ID }, error: null }) }
               if (table === 'social_connections') return chain({ data: { external_account_id: 'page-123' }, error: null })
               if (table === 'social_connection_secrets') {
                 const sealed = createSecretBox({ v1: Buffer.alloc(32, 7).toString('base64') }, 'v1').seal('fake-access-token', PUB_SOCIAL_CONNECTION_ID)
                 return chain({ data: { token_ciphertext: ciphertextToBytea(sealed.ciphertext), token_key_version: 'v1' }, error: null })
               }
-              if (table === 'post_media') return chain({ data: [], error: null })
               // chain() liefert zusaetzlich zum insert() die select().eq().order().limit().maybeSingle()-Kette
               // fuer die naechste attempt_number (Code-Review zu PR #25: attempt_number darf nicht mehr
               // hartkodiert 1 sein, unique(publication_id,attempt_number) wuerde sonst einen Retry sprengen).
@@ -2440,14 +2585,21 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
           forService: () =>
             ({
               from: (table: string) => {
+                // Ein Medium, das beide Leser bedient: den Gate-Check davor (media_asset_id ->
+                // scan_status='clean', kein face_regions-Eintrag, Derivat 'ready') und die
+                // Medienauflistung fuer den Publisher danach (position, sha256).
+                const gate = mediaGateTables(table, {
+                  postMedia: [{ position: 0, media_derivative_id: '25000000-5000-4000-8000-000000000001' }],
+                  derivatives: [{ id: '25000000-5000-4000-8000-000000000001', media_asset_id: '25000000-5000-4000-8000-000000000002', sha256: 'a'.repeat(64), mime_type: 'image/png', status: 'ready' }],
+                  assets: [{ id: '25000000-5000-4000-8000-000000000002', mime_type: 'image/png', scan_status: 'clean' }],
+                })
+                if (gate) return gate
                 if (table === 'publications') return { update: () => chain({ data: { id: PUBLICATION_ID }, error: null }) }
                 if (table === 'social_connections') return chain({ data: { external_account_id: 'page-123' }, error: null })
                 if (table === 'social_connection_secrets') {
                   const sealed = createSecretBox({ v1: Buffer.alloc(32, 7).toString('base64') }, 'v1').seal('fake-access-token', PUB_SOCIAL_CONNECTION_ID)
                   return chain({ data: { token_ciphertext: ciphertextToBytea(sealed.ciphertext), token_key_version: 'v1' }, error: null })
                 }
-                if (table === 'post_media') return chain({ data: [{ position: 0, media_derivative_id: '25000000-5000-4000-8000-000000000001' }], error: null })
-                if (table === 'media_derivatives') return chain({ data: [{ id: '25000000-5000-4000-8000-000000000001', sha256: 'a'.repeat(64), mime_type: 'image/png', status: 'ready' }], error: null })
                 if (table === 'publication_media_grants') {
                   return {
                     insert: async () => ({ error: null }),
@@ -2491,13 +2643,14 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
         forService: () =>
           ({
             from: (table: string) => {
+              const gate = mediaGateTables(table)
+              if (gate) return gate
               if (table === 'publications') return { update: (payload: Record<string, unknown>) => { publicationUpdates.push(payload); return chain({ data: { id: PUBLICATION_ID }, error: null }) } }
               if (table === 'social_connections') return chain({ data: { external_account_id: 'page-123' }, error: null })
               if (table === 'social_connection_secrets') {
                 const sealed = createSecretBox({ v1: Buffer.alloc(32, 7).toString('base64') }, 'v1').seal('fake-access-token', PUB_SOCIAL_CONNECTION_ID)
                 return chain({ data: { token_ciphertext: ciphertextToBytea(sealed.ciphertext), token_key_version: 'v1' }, error: null })
               }
-              if (table === 'post_media') return chain({ data: [], error: null })
               if (table === 'publication_attempts') return { ...chain({ data: null, error: null }), insert: async (row: Record<string, unknown>) => { attemptsCaptured.push(row); return { error: null } } }
               if (table === 'publication_media_grants') return { update: () => ({ eq: () => ({ is: async () => ({ error: null }) }) }) }
               throw new Error(`unexpected table in service fake: ${table}`)
