@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(31);
+select plan(39);
 
 set local role postgres;
 
@@ -245,6 +245,126 @@ select throws_ok(
   $$select public.schedule_publication('65000000-3000-4000-8000-000000000005'::uuid, '65000000-8000-4000-8000-000000000004'::uuid, null)$$,
   'P0001', 'channel_not_allowed', 'schedule_publication rejects every channel when allowedChannelIds is an empty list'
 );
+
+-- 29-36: Paket 002 -- schedule_publication ist jetzt die Durchsetzungsgrenze fuer den
+-- konservativen Medien-Gate-Kern (scan_pending, derivative_stale, face_pending, consent_invalid).
+-- Ein eigener Kanal C5 statt Wiederverwendung von C1/C4: C1 wird von Test 23-24 absichtlich auf
+-- 'action_required' gesetzt, ein spaeteres schedule_publication auf C1 wuerde sonst an dessen
+-- Kanalstatus scheitern, nicht am hier zu pruefenden Medien-Gate. Sieben neue Beitraege (P6-P12),
+-- damit keiner der Faelle sich durch einen vorherigen Statuswechsel eines anderen Falls beeinflusst.
+set local role postgres;
+insert into public.social_connections (id, organization_id, platform, external_account_id, display_name, owner_scope, status, responsible_profile_id) values
+  ('65000000-8000-4000-8000-000000000005', '65000000-1000-4000-8000-000000000001', 'instagram', 'ext-c5', 'Medien-Gate-Test', 'organization', 'active', '65000000-0000-4000-8000-000000000001');
+insert into public.channel_scopes (organization_id, social_connection_id, scope, department_id, team_id, created_by) values
+  ('65000000-1000-4000-8000-000000000001', '65000000-8000-4000-8000-000000000005', 'organization', null, null, '65000000-0000-4000-8000-000000000001');
+insert into public.posts (id, organization_id, department_id, status, created_by, current_version_id) values
+  ('65000000-2000-4000-8000-000000000006', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'approved', '65000000-0000-4000-8000-000000000001', '65000000-3000-4000-8000-000000000006'),
+  ('65000000-2000-4000-8000-000000000007', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'approved', '65000000-0000-4000-8000-000000000001', '65000000-3000-4000-8000-000000000007'),
+  ('65000000-2000-4000-8000-000000000008', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'approved', '65000000-0000-4000-8000-000000000001', '65000000-3000-4000-8000-000000000008'),
+  ('65000000-2000-4000-8000-000000000009', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'approved', '65000000-0000-4000-8000-000000000001', '65000000-3000-4000-8000-000000000009'),
+  ('65000000-2000-4000-8000-000000000010', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'approved', '65000000-0000-4000-8000-000000000001', '65000000-3000-4000-8000-000000000010'),
+  ('65000000-2000-4000-8000-000000000011', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'approved', '65000000-0000-4000-8000-000000000001', '65000000-3000-4000-8000-000000000011'),
+  ('65000000-2000-4000-8000-000000000012', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'approved', '65000000-0000-4000-8000-000000000001', '65000000-3000-4000-8000-000000000012');
+insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type, created_by_user_id) values
+  ('65000000-3000-4000-8000-000000000006', '65000000-1000-4000-8000-000000000001', '65000000-2000-4000-8000-000000000006', 1, '{}', '{}', 'user', '65000000-0000-4000-8000-000000000001'),
+  ('65000000-3000-4000-8000-000000000007', '65000000-1000-4000-8000-000000000001', '65000000-2000-4000-8000-000000000007', 1, '{}', '{}', 'user', '65000000-0000-4000-8000-000000000001'),
+  ('65000000-3000-4000-8000-000000000008', '65000000-1000-4000-8000-000000000001', '65000000-2000-4000-8000-000000000008', 1, '{}', '{}', 'user', '65000000-0000-4000-8000-000000000001'),
+  ('65000000-3000-4000-8000-000000000009', '65000000-1000-4000-8000-000000000001', '65000000-2000-4000-8000-000000000009', 1, '{}', '{}', 'user', '65000000-0000-4000-8000-000000000001'),
+  ('65000000-3000-4000-8000-000000000010', '65000000-1000-4000-8000-000000000001', '65000000-2000-4000-8000-000000000010', 1, '{}', '{}', 'user', '65000000-0000-4000-8000-000000000001'),
+  ('65000000-3000-4000-8000-000000000011', '65000000-1000-4000-8000-000000000001', '65000000-2000-4000-8000-000000000011', 1, '{}', '{}', 'user', '65000000-0000-4000-8000-000000000001'),
+  ('65000000-3000-4000-8000-000000000012', '65000000-1000-4000-8000-000000000001', '65000000-2000-4000-8000-000000000012', 1, '{}', '{}', 'user', '65000000-0000-4000-8000-000000000001');
+
+-- 29: P6 traegt kein einziges Medium (Text-only-Pilot, Plan 033) -- jeder exists()-Join auf
+-- post_media laeuft ins Leere, der Gate-Check darf nichts blockieren.
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '65000000-0000-4000-8000-000000000002', true);
+select is(
+  (select status from public.schedule_publication('65000000-3000-4000-8000-000000000006'::uuid, '65000000-8000-4000-8000-000000000005'::uuid, null)),
+  'queued', 'schedule_publication succeeds for a text-only post version without any post_media row'
+);
+
+set local role postgres;
+insert into public.media_assets (id, organization_id, department_id, bucket_id, object_path, mime_type, byte_size, scan_status, created_by) values
+  ('65000000-6100-4000-8000-000000000001', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'raw-media', 'orgs/channels/gate-scan-pending.jpg', 'image/jpeg', 1024, 'pending', '65000000-0000-4000-8000-000000000001'),
+  ('65000000-6100-4000-8000-000000000002', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'raw-media', 'orgs/channels/gate-derivative-stale.jpg', 'image/jpeg', 1024, 'clean', '65000000-0000-4000-8000-000000000001'),
+  ('65000000-6100-4000-8000-000000000003', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'raw-media', 'orgs/channels/gate-face-pending.jpg', 'image/jpeg', 1024, 'clean', '65000000-0000-4000-8000-000000000001'),
+  ('65000000-6100-4000-8000-000000000004', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'raw-media', 'orgs/channels/gate-consent-revoked.jpg', 'image/jpeg', 1024, 'clean', '65000000-0000-4000-8000-000000000001'),
+  ('65000000-6100-4000-8000-000000000005', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'raw-media', 'orgs/channels/gate-consent-minor.jpg', 'image/jpeg', 1024, 'clean', '65000000-0000-4000-8000-000000000001'),
+  ('65000000-6100-4000-8000-000000000006', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'raw-media', 'orgs/channels/gate-consent-valid.jpg', 'image/jpeg', 1024, 'clean', '65000000-0000-4000-8000-000000000001');
+
+insert into public.media_derivatives (id, organization_id, media_asset_id, recipe, recipe_version, object_path, sha256, mime_type, byte_size, status) values
+  ('65000000-6300-4000-8000-000000000001', '65000000-1000-4000-8000-000000000001', '65000000-6100-4000-8000-000000000001', '{}'::jsonb, 'v1', 'orgs/channels/gate-scan-pending-derivative.jpg', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'image/jpeg', 512, 'ready'),
+  ('65000000-6300-4000-8000-000000000002', '65000000-1000-4000-8000-000000000001', '65000000-6100-4000-8000-000000000002', '{}'::jsonb, 'v1', 'orgs/channels/gate-derivative-stale-derivative.jpg', 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', 'image/jpeg', 512, 'processing'),
+  ('65000000-6300-4000-8000-000000000003', '65000000-1000-4000-8000-000000000001', '65000000-6100-4000-8000-000000000003', '{}'::jsonb, 'v1', 'orgs/channels/gate-face-pending-derivative.jpg', 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd', 'image/jpeg', 512, 'ready'),
+  ('65000000-6300-4000-8000-000000000004', '65000000-1000-4000-8000-000000000001', '65000000-6100-4000-8000-000000000004', '{}'::jsonb, 'v1', 'orgs/channels/gate-consent-revoked-derivative.jpg', 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', 'image/jpeg', 512, 'ready'),
+  ('65000000-6300-4000-8000-000000000005', '65000000-1000-4000-8000-000000000001', '65000000-6100-4000-8000-000000000005', '{}'::jsonb, 'v1', 'orgs/channels/gate-consent-minor-derivative.jpg', 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff', 'image/jpeg', 512, 'ready'),
+  ('65000000-6300-4000-8000-000000000006', '65000000-1000-4000-8000-000000000001', '65000000-6100-4000-8000-000000000006', '{}'::jsonb, 'v1', 'orgs/channels/gate-consent-valid-derivative.jpg', 'a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0', 'image/jpeg', 512, 'ready');
+
+insert into public.post_media (id, organization_id, post_version_id, media_derivative_id, position, role) values
+  ('65000000-6400-4000-8000-000000000001', '65000000-1000-4000-8000-000000000001', '65000000-3000-4000-8000-000000000007', '65000000-6300-4000-8000-000000000001', 0, 'primary'),
+  ('65000000-6400-4000-8000-000000000002', '65000000-1000-4000-8000-000000000001', '65000000-3000-4000-8000-000000000008', '65000000-6300-4000-8000-000000000002', 0, 'primary'),
+  ('65000000-6400-4000-8000-000000000003', '65000000-1000-4000-8000-000000000001', '65000000-3000-4000-8000-000000000009', '65000000-6300-4000-8000-000000000003', 0, 'primary'),
+  ('65000000-6400-4000-8000-000000000004', '65000000-1000-4000-8000-000000000001', '65000000-3000-4000-8000-000000000010', '65000000-6300-4000-8000-000000000004', 0, 'primary'),
+  ('65000000-6400-4000-8000-000000000005', '65000000-1000-4000-8000-000000000001', '65000000-3000-4000-8000-000000000011', '65000000-6300-4000-8000-000000000005', 0, 'primary'),
+  ('65000000-6400-4000-8000-000000000006', '65000000-1000-4000-8000-000000000001', '65000000-3000-4000-8000-000000000012', '65000000-6300-4000-8000-000000000006', 0, 'primary');
+
+-- Eine minderjaehrige Verzeichnisperson fuer den Guardian-Fall -- die CHECK-Constraint auf
+-- directory_people verlangt bei is_minor + status='active' eine guardian_email.
+insert into public.directory_people (id, organization_id, first_name, last_name, is_minor, guardian_email) values
+  ('65000000-6600-4000-8000-000000000001', '65000000-1000-4000-8000-000000000001', 'Mia', 'Minderjaehrig', true, 'guardian@pgtap-channels.local');
+
+insert into public.consent_records (id, organization_id, pseudonymous_subject_ref, scope, evidence_path, created_by, revoked_at, signer_role, directory_person_id) values
+  ('65000000-6500-4000-8000-000000000001', '65000000-1000-4000-8000-000000000001', 'pgtap-media-gate-revoked-subject', 'Instagram-Post', null, '65000000-0000-4000-8000-000000000001', now() - interval '1 day', null, null),
+  ('65000000-6500-4000-8000-000000000002', '65000000-1000-4000-8000-000000000001', 'pgtap-media-gate-minor-subject', 'Instagram-Post', null, '65000000-0000-4000-8000-000000000001', null, 'self', '65000000-6600-4000-8000-000000000001'),
+  ('65000000-6500-4000-8000-000000000003', '65000000-1000-4000-8000-000000000001', 'pgtap-media-gate-valid-subject', 'Instagram-Post', null, '65000000-0000-4000-8000-000000000001', null, null, null);
+
+insert into public.face_regions (id, organization_id, media_asset_id, x, y, width, height, source, subject_kind, decision, consent_record_id, created_by) values
+  ('65000000-6200-4000-8000-000000000001', '65000000-1000-4000-8000-000000000001', '65000000-6100-4000-8000-000000000003', 0.1, 0.1, 0.2, 0.2, 'manual', 'adult', 'pending', null, '65000000-0000-4000-8000-000000000001'),
+  ('65000000-6200-4000-8000-000000000002', '65000000-1000-4000-8000-000000000001', '65000000-6100-4000-8000-000000000004', 0.1, 0.1, 0.2, 0.2, 'manual', 'adult', 'consented', '65000000-6500-4000-8000-000000000001', '65000000-0000-4000-8000-000000000001'),
+  ('65000000-6200-4000-8000-000000000003', '65000000-1000-4000-8000-000000000001', '65000000-6100-4000-8000-000000000005', 0.1, 0.1, 0.2, 0.2, 'manual', 'minor', 'consented', '65000000-6500-4000-8000-000000000002', '65000000-0000-4000-8000-000000000001'),
+  ('65000000-6200-4000-8000-000000000004', '65000000-1000-4000-8000-000000000001', '65000000-6100-4000-8000-000000000006', 0.1, 0.1, 0.2, 0.2, 'manual', 'adult', 'consented', '65000000-6500-4000-8000-000000000003', '65000000-0000-4000-8000-000000000001');
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '65000000-0000-4000-8000-000000000002', true);
+
+-- 30: scan_status='pending' auf dem verknuepften media_asset blockiert hart.
+select throws_ok(
+  $$select public.schedule_publication('65000000-3000-4000-8000-000000000007'::uuid, '65000000-8000-4000-8000-000000000005'::uuid, null)$$,
+  'P0001', 'media_gate_blocked: scan_pending', 'schedule_publication rejects a post version whose media asset scan is not clean'
+);
+
+-- 31: media_derivatives.status <> 'ready' blockiert hart.
+select throws_ok(
+  $$select public.schedule_publication('65000000-3000-4000-8000-000000000008'::uuid, '65000000-8000-4000-8000-000000000005'::uuid, null)$$,
+  'P0001', 'media_gate_blocked: derivative_stale', 'schedule_publication rejects a post version whose media derivative is not ready'
+);
+
+-- 32: eine unentschiedene Gesichtsregion (decision='pending') blockiert hart.
+select throws_ok(
+  $$select public.schedule_publication('65000000-3000-4000-8000-000000000009'::uuid, '65000000-8000-4000-8000-000000000005'::uuid, null)$$,
+  'P0001', 'media_gate_blocked: face_pending', 'schedule_publication rejects a post version with an undecided face region'
+);
+
+-- 33: ein widerrufener Consent-Record hinter einer "consented"-Entscheidung blockiert hart.
+select throws_ok(
+  $$select public.schedule_publication('65000000-3000-4000-8000-000000000010'::uuid, '65000000-8000-4000-8000-000000000005'::uuid, null)$$,
+  'P0001', 'media_gate_blocked: consent_invalid', 'schedule_publication rejects a post version whose consent was revoked'
+);
+
+-- 34: eine minderjaehrige Person ohne Erziehungsberechtigten-Unterschrift blockiert hart, selbst
+-- ohne Widerruf.
+select throws_ok(
+  $$select public.schedule_publication('65000000-3000-4000-8000-000000000011'::uuid, '65000000-8000-4000-8000-000000000005'::uuid, null)$$,
+  'P0001', 'media_gate_blocked: consent_invalid', 'schedule_publication rejects consent for a minor without a guardian signer'
+);
+
+-- 35-36: sauberer Scan, fertiges Derivat, gueltiger Consent -- schedule_publication blockiert nicht.
+select is(
+  (select status from public.schedule_publication('65000000-3000-4000-8000-000000000012'::uuid, '65000000-8000-4000-8000-000000000005'::uuid, null)),
+  'queued', 'schedule_publication succeeds once scan, derivative and consent are all clean'
+);
+set local role postgres;
+select is((select status from public.posts where id = '65000000-2000-4000-8000-000000000012'), 'scheduled', 'the post with valid media moves to scheduled');
 
 select * from finish();
 rollback;

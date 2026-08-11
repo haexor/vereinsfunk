@@ -20,7 +20,7 @@ Die Systemgrenzen sind verbindlich:
 | Nr. | Arbeitspaket | Abhängigkeiten | Status |
 |---|---|---|---|
 | 001 | [Inhaltsmodell und authentische Erfassung](001-content-domain-and-authentic-capture.md) | keine | in Arbeit |
-| 002 | [Private Medien, Einwilligungen und Freigabegate](002-private-media-consent-and-approval-gate.md) | 001 | in Arbeit |
+| 002 | [Private Medien, Einwilligungen und Freigabegate](002-private-media-consent-and-approval-gate.md) | 001 | in Arbeit; `schedule_publication` erzwingt jetzt einen konservativen Medien-Gate-Kern (scan/Gesichtsentscheidung/Consent/Derivat), `POST /v1/publications/:id/execute` prüft ihn vor jedem externen Aufruf erneut. Upload-Pfad, Worker-Normalisierung, Review-UI und die feingranulare Consent-Scope-/Textscan-Prüfung als Hard-Blocker bleiben offen, siehe Plan-Status-Nachtrag |
 | 003 | [Kreative Gesichtsverdeckung für Bilder](003-creative-face-obscuring.md) | 002 | in Arbeit |
 | 004 | [Hatchet produktionsreif integrieren](004-hatchet-production-orchestration.md) | keine; parallel zu 001–003 möglich | erledigt; lokaler ID-only Dispatcher/Worker-Nachweis, Outbox-/Run-CAS und Runbook vorhanden; produktiver Last-/Fairnessnachweis bleibt Operations-Gate |
 | 005 | [Kreative Plattformvarianten und Rendering](005-creative-platform-variants-and-rendering.md) | 001, 002, 003, 004 | in Arbeit |

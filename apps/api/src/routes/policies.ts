@@ -412,6 +412,16 @@ async function computeMediaGateBlockersForPostVersion(
   }).blockers
 }
 
+// Paket 002: dieselbe konservative Teilmenge, die schedule_publication (2026081105) als echte,
+// per Grant direkt erreichbare Durchsetzungsgrenze in SQL nachbildet -- keine Verdopplung der
+// Rechtslogik, nur derselbe Filter zweimal angewendet. minor_review_required bleibt aussen vor
+// (minorReviewConfirmed ist oben nie erfuellbar, is_minor_stage ist die eigentliche Durchsetzung),
+// ebenso consent_scope_mismatch/naming_not_allowed/sensitive_text_data (bleiben informativ, siehe
+// Kommentar in der Migration). Diese Wiederholung hier ist Tiefenverteidigung fuer den Fall, dass
+// sich der Medien-/Consent-Zustand zwischen Einplanung und tatsaechlicher Ausfuehrung aendert
+// (Plan 002, Pflichtszenario 5: Widerruf nach Freigabe).
+const HARD_PUBLISH_BLOCKERS: readonly MediaGateBlocker[] = ['scan_pending', 'face_pending', 'consent_invalid', 'derivative_stale']
+
 export function registerPolicyRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients, roleProvider, environment, createPublisherForConnection } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
@@ -1182,6 +1192,17 @@ export function registerPolicyRoutes(app: FastifyInstance, context: ApiRouteCont
     const scheduledFor = publication.data.scheduled_for as string | null
     if (scheduledFor !== null && new Date(scheduledFor).getTime() > Date.now()) {
       return reply.code(409).send({ error: 'not_due_yet', correlationId: request.id })
+    }
+
+    // Paket 002: schedule_publication (2026081105) hat denselben konservativen Kern bereits beim
+    // Einplanen durchgesetzt, aber Consent kann danach widerrufen worden sein (Pflichtszenario 5)
+    // -- der Snapshot wird hier vor jedem externen I/O erneut geladen und geprueft.
+    const policyRows = await fetchPolicyRuleRows(client, publication.data.organization_id as string)
+    const policy = { consentExpiresOnLeave: computeRuleEntry(policyRows, 'department', post.data.department_id as string, null).config.policies.consentExpiresOnLeave }
+    const gateBlockers = await computeMediaGateBlockersForPostVersion(client, version.data.id as string, post.data.department_id as string, policy)
+    const hardBlockers = gateBlockers.filter((blocker) => HARD_PUBLISH_BLOCKERS.includes(blocker))
+    if (hardBlockers.length > 0) {
+      return reply.code(409).send({ error: 'media_gate_blocked', blockers: hardBlockers, correlationId: request.id })
     }
 
     const service = supabaseClients.forService()

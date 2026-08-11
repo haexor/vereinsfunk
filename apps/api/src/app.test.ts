@@ -2339,7 +2339,7 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
     }
   }
 
-  function readOnlyClients(overrides: Record<string, unknown> = {}): SupabaseClientFactory {
+  function readOnlyClients(overrides: Record<string, unknown> = {}, mediaOverrides: Record<string, unknown> = {}): SupabaseClientFactory {
     return {
       forUser: () =>
         ({
@@ -2347,6 +2347,15 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
             if (table === 'publications') return chain({ data: publicationRow(overrides), error: null })
             if (table === 'post_versions') return chain({ data: { id: PUB_POST_VERSION_ID, post_id: PUB_POST_ID, caption: 'Hallo Welt' }, error: null })
             if (table === 'posts') return chain({ data: { id: PUB_POST_ID, department_id: DEPARTMENT_ID }, error: null })
+            // Paket 002: computeMediaGateBlockersForPostVersion() laeuft jetzt vor jedem
+            // externen I/O erneut. Ohne Override bleibt es beim Ausgangszustand aus Plan 025 --
+            // kein policy_settings-Override, keine post_media-Zeile (Text-only, keine Upload-
+            // Pipeline aus 002/003) -- computeMediaGateBlockersForPostVersion gibt dann [] zurueck.
+            if (table === 'policy_settings') return chain({ data: [], error: null })
+            if (table === 'post_media') return chain({ data: (mediaOverrides.postMedia as unknown[] | undefined) ?? [], error: null })
+            if (table === 'media_derivatives') return chain({ data: (mediaOverrides.derivatives as unknown[] | undefined) ?? [], error: null })
+            if (table === 'media_assets') return chain({ data: (mediaOverrides.assets as unknown[] | undefined) ?? [], error: null })
+            if (table === 'face_regions') return chain({ data: (mediaOverrides.faces as unknown[] | undefined) ?? [], error: null })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
@@ -2382,6 +2391,25 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
       const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
       expect(response.statusCode).toBe(409)
       expect(response.json()).toMatchObject({ error: 'not_due_yet' })
+    })
+
+    it('rejects with 409 media_gate_blocked when a linked media asset is not scan-clean, without touching forService', async () => {
+      // Paket 002: schedule_publication (2026081105) hat den konservativen Kern beim Einplanen
+      // bereits durchgesetzt, aber der Zustand kann sich danach aendern (Pflichtszenario 5:
+      // Widerruf nach Freigabe). Kein forService-Aufruf darf vor diesem Check passieren -- die
+      // readOnlyClients()-forService wirft bei jedem Aufruf.
+      const app = await startApp({
+        roleProvider: organizationManagerRoleProvider,
+        supabaseClients: readOnlyClients({}, {
+          postMedia: [{ media_derivative_id: '25000000-5000-4000-8000-000000000009' }],
+          derivatives: [{ id: '25000000-5000-4000-8000-000000000009', media_asset_id: '25000000-5000-4000-8000-000000000010', status: 'ready' }],
+          assets: [{ id: '25000000-5000-4000-8000-000000000010', mime_type: 'image/png', scan_status: 'pending' }],
+        }),
+      })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
+      expect(response.statusCode).toBe(409)
+      expect(response.json()).toMatchObject({ error: 'media_gate_blocked', blockers: ['scan_pending'] })
     })
 
     it('rejects with 409 invalid_status when the compare-and-set loses the race', async () => {
