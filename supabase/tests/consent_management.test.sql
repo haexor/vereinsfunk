@@ -299,4 +299,4 @@ select throws_ok(
 );
 
 select * from finish();
-commit;
+rollback;
