@@ -467,6 +467,59 @@ describe('platform administration', () => {
     expect(response.json()).toMatchObject({ error: 'forbidden' })
   })
 
+  it('returns contact, media storage, and calendar activity for one organization to a platform admin', async () => {
+    const activityCount = { data: null, count: 3, error: null }
+    const detailClients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'organizations') {
+              return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { id: ORGANIZATION_ID, name: 'SV Test', slug: 'sv-test', timezone: 'Europe/Berlin', created_at: '2026-08-11T10:00:00+00:00' }, error: null }) }) }) }
+            }
+            if (table === 'organization_profiles') {
+              return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { legal_name: 'SV Test e.V.', street: 'Testweg', house_number: '7', postal_code: '01067', city: 'Dresden', country_code: 'DE', contact_email: 'kontakt@sv-test.example', contact_phone: '+49 351 123', website_url: 'https://sv-test.example', responsible_person_profile_id: USER_ID }, error: null }) }) }) }
+            }
+            if (table === 'profiles') {
+              return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { display_name: 'Lena Test' }, error: null }) }) }) }
+            }
+            if (table === 'organization_memberships' || table === 'departments') {
+              return { select: () => ({ eq: async () => ({ data: null, count: table === 'organization_memberships' ? 4 : 2, error: null }) }) }
+            }
+            if (table === 'media_assets') {
+              return {
+                select: (_columns: string, options?: { head?: boolean }) => {
+                  if (options?.head) return { eq: () => ({ ilike: () => ({ gte: async () => activityCount }) }) }
+                  return { eq: () => ({ neq: () => ({ order: () => ({ range: async () => ({ data: [{ byte_size: 1024 }, { byte_size: 512 }], error: null }) }) }) }) }
+                },
+              }
+            }
+            if (table === 'media_derivatives') {
+              return { select: () => ({ eq: () => ({ order: () => ({ range: async () => ({ data: [{ byte_size: 2048 }], error: null }) }) }) }) }
+            }
+            if (table === 'posts') return { select: () => ({ eq: () => ({ gte: async () => activityCount }) }) }
+            if (table === 'post_variants') return { select: () => ({ eq: () => ({ eq: () => ({ gte: async () => activityCount }) }) }) }
+            throw new Error(`unexpected table in detail test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: detailClients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/platform-admin/organizations/${ORGANIZATION_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({
+      organizationId: ORGANIZATION_ID,
+      contact: { responsiblePersonName: 'Lena Test', email: 'kontakt@sv-test.example' },
+      storage: { rawMediaBytes: 1536, renderedMediaBytes: 2048, totalMediaBytes: 3584 },
+      activity: { day: { posts: 3, reels: 3, videoAssets: 3 }, week: { posts: 3 } },
+    })
+  })
+
   it('rejects an unknown platform settings key with 400', async () => {
     const app = await startApp({ platformAdminProvider: adminProvider })
     const token = await signAccessToken(USER_ID)

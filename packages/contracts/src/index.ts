@@ -1360,6 +1360,43 @@ export const PlatformAdminOrganizationSummarySchema = z.object({
   departmentCount: z.int().min(0),
   createdAt: z.iso.datetime({ offset: true }),
 })
+export const PlatformAdminOrganizationActivitySchema = z.object({
+  posts: z.int().min(0),
+  reels: z.int().min(0),
+  videoAssets: z.int().min(0),
+})
+export const PlatformAdminOrganizationDetailSchema = z.object({
+  organizationId: UuidSchema,
+  name: z.string().min(1),
+  slug: z.string().min(1),
+  timezone: z.string().min(1),
+  createdAt: z.iso.datetime({ offset: true }),
+  memberCount: z.int().min(0),
+  departmentCount: z.int().min(0),
+  contact: z.object({
+    responsiblePersonName: z.string().min(1).nullable(),
+    email: z.string().email().nullable(),
+    phone: z.string().min(1).nullable(),
+    legalName: z.string().min(1).nullable(),
+    street: z.string().min(1).nullable(),
+    houseNumber: z.string().min(1).nullable(),
+    postalCode: z.string().min(1).nullable(),
+    city: z.string().min(1).nullable(),
+    countryCode: CountryCodeSchema,
+    websiteUrl: z.url().nullable(),
+  }),
+  storage: z.object({
+    rawMediaBytes: z.number().int().min(0),
+    renderedMediaBytes: z.number().int().min(0),
+    totalMediaBytes: z.number().int().min(0),
+  }),
+  activity: z.object({
+    day: PlatformAdminOrganizationActivitySchema,
+    week: PlatformAdminOrganizationActivitySchema,
+    month: PlatformAdminOrganizationActivitySchema,
+    year: PlatformAdminOrganizationActivitySchema,
+  }),
+})
 export const UsageMetricsQuerySchema = z.object({
   from: z.iso.datetime(),
   to: z.iso.datetime(),
@@ -1832,6 +1869,8 @@ export type LlmProviderConfigurationDto = z.infer<typeof LlmProviderConfiguratio
 export type CreateLlmProviderConfigurationRequest = z.infer<typeof CreateLlmProviderConfigurationRequestSchema>
 export type UpdateLlmProviderConfigurationRequest = z.infer<typeof UpdateLlmProviderConfigurationRequestSchema>
 export type PlatformAdminOrganizationSummary = z.infer<typeof PlatformAdminOrganizationSummarySchema>
+export type PlatformAdminOrganizationDetail = z.infer<typeof PlatformAdminOrganizationDetailSchema>
+export type PlatformAdminOrganizationActivity = z.infer<typeof PlatformAdminOrganizationActivitySchema>
 export type UsageMetricsQuery = z.infer<typeof UsageMetricsQuerySchema>
 export type UsageMetricsBucket = z.infer<typeof UsageMetricsBucketSchema>
 export type UsageMetricsResponse = z.infer<typeof UsageMetricsResponseSchema>
