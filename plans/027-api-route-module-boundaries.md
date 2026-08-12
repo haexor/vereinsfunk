@@ -36,11 +36,11 @@
 - [x] Mitglieder und Einladungen (`routes/members.ts`)
 - [x] Richtlinien und Freigaben (`routes/policies.ts`) — inkl. Channel-Quotas (gehören inhaltlich zur Kontingent-/Richtlinienlogik aus Paket 011, nicht zu Kanäle/OAuth trotz des Namens)
 - [x] Kanäle, OAuth und Publishing (`routes/channels.ts`) — Publishing selbst (`SocialPublisher`, `publications/:id/execute`) sitzt bereits in `routes/policies.ts` (Scheduling/Freigabe-Durchsetzung), hier nur Kanalverwaltung/OAuth-Fluss/`available-channels`
-- [ ] Integration, Verzeichnis und Einwilligung
-- [ ] Datenschutz
-- [ ] Analytics
-- [ ] Plattform-Administration (Paket 022) und LLM-Provider-Verwaltung — nicht in der ursprünglichen Domänenliste enthalten, bleiben bis zur Klärung in `app.ts`
-- [ ] `POST /v1/submissions` (Inhalts-Pipeline) — ebenfalls nicht in der ursprünglichen Domänenliste enthalten
+- [x] Integration, Verzeichnis und Einwilligung (`routes/integrations.ts`, `routes/directory.ts`, `routes/consent.ts` + `routes/consentPublic.ts`)
+- [x] Datenschutz (`routes/retention.ts`, `routes/dataSubjects.ts`, `routes/compliance.ts`)
+- [x] Analytics (`routes/analytics.ts`)
+- [x] Plattform-Administration (Paket 022) und LLM-Provider-Verwaltung — als `routes/platformAdmin.ts` und `routes/llmProviders.routes.ts` zugeordnet
+- [x] `POST /v1/submissions` (Inhalts-Pipeline) — zusammen mit Textwerkstatt und Medien-Endpunkten in `routes/content.ts`
 
 ## Commands you will need
 
@@ -100,10 +100,25 @@ Erstelle keine pauschale Änderung an `SupabaseRoleProvider`, ohne alle Aufrufer
 
 ## Done criteria
 
-- [ ] `app.ts` ist auf Bootstrap und Registrierung begrenzt (Richtwert: unter 500 LoC).
-- [ ] Keine externe API-Änderung und kein neuer Service-Role-Zugriff im Browser.
-- [ ] API-Tests sind nach Domänen aufgeteilt und bestehen.
-- [ ] `pnpm check` besteht.
+- [x] `app.ts` ist auf Bootstrap und Registrierung begrenzt: 192 LoC (Ausgangswert 8.301, bei Aufnahme dieser Runde 4.974).
+- [x] Keine externe API-Änderung und kein neuer Service-Role-Zugriff im Browser -- alle 263 API-Tests laufen unverändert.
+- [x] API-Tests sind nach Domänen aufgeteilt und bestehen: `app.test.ts` (6.561 LoC) ist zu zwölf `*.routes.test.ts` plus `testSupport.ts` geworden.
+- [x] `pnpm check` besteht (lint, typecheck, test, build).
+
+## Abschluss (2026-08-12)
+
+Zusätzlich zur reinen Routen-Zerlegung entstanden zwei Service-Module, weil die betroffene Logik
+mehr als ein Route-Modul bedient und ohne Fastify testbar ist: `services/integrationSync.ts`
+(+ `services/sync/{teams,fixtures,events,people}.ts`) und `services/consent.ts`,
+`services/approvalRouting.ts`, `services/mediaGate.ts`.
+
+**Fachlicher Fund bei der Zerlegung**: der Personen-Sync trug eine wortgleiche zweite Kopie von
+`loadIgnoredFingerprints`/`buildPendingConflicts`/`PendingConflict` -- Paket 019 hatte diese Helfer
+aus genau diesem Block für Mannschaften/Spiele/Veranstaltungen verallgemeinert, die Personen-Fassung
+war stehen geblieben. Alle vier Bereiche benutzen jetzt dieselbe Fassung (`handlePeopleSync` hat
+dieselbe Form wie die drei anderen Handler). `conflictFingerprint` ist dabei bitgleich geblieben
+(Trennzeichen `\u0000`), sonst hätte jeder gespeicherte `ignore_permanently`-Fingerabdruck nicht
+mehr gegriffen.
 
 ## STOP conditions
 

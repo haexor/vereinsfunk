@@ -1,0 +1,178 @@
+import { z } from 'zod'
+import { UuidSchema } from './content.js'
+import { CountryCodeSchema } from './primitives.js'
+
+// Plattform-Administration (Paket 022): der SaaS-Betreiber, orthogonal zu allen
+// vereinsbezogenen Rollen oben. Jede Schreiboperation hier ist requirePlatformAdmin-gated.
+export const JsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
+  z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(JsonValueSchema), z.record(z.string(), JsonValueSchema)]),
+)
+
+export const PlatformAdminStatusSchema = z.object({ isPlatformAdmin: z.boolean(), isDefaultAdmin: z.boolean() })
+export const PlatformAdminSchema = z.object({
+  userId: UuidSchema,
+  isDefaultAdmin: z.boolean(),
+  // offset: true -- PostgREST serialisiert timestamptz mit numerischem Offset (z.B. +00:00),
+  // nicht mit dem "Z"-Suffix, den z.iso.datetime() sonst zwingend verlangt.
+  createdAt: z.iso.datetime({ offset: true }),
+})
+export const AddPlatformAdminRequestSchema = z.object({
+  email: z.string().trim().toLowerCase().pipe(z.email()),
+})
+
+// Nur ein Schluessel existiert heute (loest 009s hartkodierte Konstante ab). Ein unbekannter
+// Schluessel wird von der API abgelehnt statt stillschweigend ungeprueft gespeichert zu werden.
+export const PlatformSettingKeySchema = z.enum(['max_organizations_per_owner'])
+export const PlatformSettingValueSchemas = {
+  max_organizations_per_owner: z.int().positive().max(1000),
+} as const satisfies Record<z.infer<typeof PlatformSettingKeySchema>, z.ZodType<unknown>>
+export const PlatformSettingSchema = z.object({
+  key: PlatformSettingKeySchema,
+  value: JsonValueSchema,
+  updatedAt: z.iso.datetime({ offset: true }),
+})
+export const UpdatePlatformSettingRequestSchema = z.object({ value: JsonValueSchema })
+
+export const LlmProviderProtocolSchema = z.enum(['anthropic', 'openai'])
+// The vocabulary deliberately describes future tasks, but only text_generation has an adapter.
+// APIs must reject activating every other task until its own adapter spike exists.
+export const LlmTaskKindSchema = z.enum(['text_generation', 'image_generation', 'video_generation'])
+export const LlmRuntimeParametersSchema = z.object({
+  temperature: z.number().min(0).max(2).default(0.2),
+  maxOutputTokens: z.int().min(128).max(4_000).default(1_200),
+  structuredOutputRequired: z.literal(true).default(true),
+}).strict()
+// Breaking: systemPromptOverride was removed. Consumers must provide taskKind and
+// runtimeParameters; the only currently activatable combination is enforced by API and DB.
+export const LlmProviderConfigurationSchema = z.object({
+  id: UuidSchema,
+  label: z.string().trim().min(1).max(160),
+  protocol: LlmProviderProtocolSchema,
+  baseUrl: z.url(),
+  model: z.string().trim().min(1).max(120),
+  purpose: z.string().trim().min(1).max(60), // historical display/operations field
+  taskKind: LlmTaskKindSchema,
+  runtimeParameters: LlmRuntimeParametersSchema,
+  priority: z.int(),
+  isActive: z.boolean(),
+  hasSecret: z.boolean(),
+})
+export const CreateLlmProviderConfigurationRequestSchema = z.object({
+  label: z.string().trim().min(1).max(160),
+  protocol: LlmProviderProtocolSchema,
+  baseUrl: z.url(),
+  model: z.string().trim().min(1).max(120),
+  purpose: z.string().trim().min(1).max(60).default('text_generation'),
+  taskKind: LlmTaskKindSchema.default('text_generation'),
+  runtimeParameters: LlmRuntimeParametersSchema.default({ temperature: 0.2, maxOutputTokens: 1200, structuredOutputRequired: true }),
+  priority: z.int().default(100),
+  isActive: z.boolean().default(true),
+  apiKey: z.string().trim().min(1).max(4000),
+})
+export const UpdateLlmProviderConfigurationRequestSchema = z.object({
+  label: z.string().trim().min(1).max(160).optional(),
+  protocol: LlmProviderProtocolSchema.optional(),
+  baseUrl: z.url().optional(),
+  model: z.string().trim().min(1).max(120).optional(),
+  purpose: z.string().trim().min(1).max(60).optional(),
+  taskKind: LlmTaskKindSchema.optional(),
+  runtimeParameters: LlmRuntimeParametersSchema.optional(),
+  priority: z.int().optional(),
+  isActive: z.boolean().optional(),
+  apiKey: z.string().trim().min(1).max(4000).optional(),
+})
+
+// Modellauswahl im Formular: statt einer im Frontend gepflegten Liste fragt die API den Provider
+// selbst. Der Schluessel kommt aus dem Formular, weil beim Anlegen noch keine Konfiguration und
+// damit kein hinterlegtes Geheimnis existiert; gespeichert wird er hier nicht.
+export const ListLlmProviderModelsRequestSchema = z.object({
+  protocol: LlmProviderProtocolSchema,
+  baseUrl: z.url(),
+  apiKey: z.string().trim().min(1).max(4000),
+})
+export const ListLlmProviderModelsResponseSchema = z.object({
+  models: z.array(z.string().trim().min(1).max(120)),
+})
+
+export const PlatformAdminOrganizationSummarySchema = z.object({
+  organizationId: UuidSchema,
+  name: z.string().min(1),
+  slug: z.string().min(1),
+  memberCount: z.int().min(0),
+  departmentCount: z.int().min(0),
+  createdAt: z.iso.datetime({ offset: true }),
+})
+export const PlatformAdminOrganizationActivitySchema = z.object({
+  posts: z.int().min(0),
+  reels: z.int().min(0),
+  videoAssets: z.int().min(0),
+})
+export const PlatformAdminOrganizationDetailSchema = z.object({
+  organizationId: UuidSchema,
+  name: z.string().min(1),
+  slug: z.string().min(1),
+  timezone: z.string().min(1),
+  createdAt: z.iso.datetime({ offset: true }),
+  memberCount: z.int().min(0),
+  departmentCount: z.int().min(0),
+  contact: z.object({
+    responsiblePersonName: z.string().min(1).nullable(),
+    // Die E-Mail des aktuellen organization_owner-Accounts. Sie ist nicht mit der
+    // freiwillig gepflegten Vereins-Kontaktadresse gleichzusetzen und wird nur auf
+    // der requirePlatformAdmin-geschuetzten Detailroute ausgegeben.
+    ownerAccountEmail: z.string().email().nullable(),
+    email: z.string().email().nullable(),
+    phone: z.string().min(1).nullable(),
+    legalName: z.string().min(1).nullable(),
+    street: z.string().min(1).nullable(),
+    houseNumber: z.string().min(1).nullable(),
+    postalCode: z.string().min(1).nullable(),
+    city: z.string().min(1).nullable(),
+    countryCode: CountryCodeSchema,
+    websiteUrl: z.url().nullable(),
+  }),
+  storage: z.object({
+    rawMediaBytes: z.number().int().min(0),
+    renderedMediaBytes: z.number().int().min(0),
+    totalMediaBytes: z.number().int().min(0),
+  }),
+  activity: z.object({
+    day: PlatformAdminOrganizationActivitySchema,
+    week: PlatformAdminOrganizationActivitySchema,
+    month: PlatformAdminOrganizationActivitySchema,
+    year: PlatformAdminOrganizationActivitySchema,
+  }),
+})
+export const UsageMetricsQuerySchema = z.object({
+  from: z.iso.datetime(),
+  to: z.iso.datetime(),
+})
+export const UsageMetricsBucketSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  postsCreated: z.int().min(0),
+  llmGeneratedVersions: z.int().min(0),
+  workflowRunsFailed: z.int().min(0),
+  publicationsFailed: z.int().min(0),
+})
+export const UsageMetricsResponseSchema = z.object({ buckets: z.array(UsageMetricsBucketSchema) })
+
+export type PlatformAdminStatus = z.infer<typeof PlatformAdminStatusSchema>
+export type PlatformAdmin = z.infer<typeof PlatformAdminSchema>
+export type AddPlatformAdminRequest = z.infer<typeof AddPlatformAdminRequestSchema>
+export type PlatformSettingKey = z.infer<typeof PlatformSettingKeySchema>
+export type PlatformSetting = z.infer<typeof PlatformSettingSchema>
+export type UpdatePlatformSettingRequest = z.infer<typeof UpdatePlatformSettingRequestSchema>
+export type LlmProviderProtocol = z.infer<typeof LlmProviderProtocolSchema>
+export type LlmTaskKind = z.infer<typeof LlmTaskKindSchema>
+export type LlmRuntimeParameters = z.infer<typeof LlmRuntimeParametersSchema>
+export type LlmProviderConfigurationDto = z.infer<typeof LlmProviderConfigurationSchema>
+export type CreateLlmProviderConfigurationRequest = z.infer<typeof CreateLlmProviderConfigurationRequestSchema>
+export type UpdateLlmProviderConfigurationRequest = z.infer<typeof UpdateLlmProviderConfigurationRequestSchema>
+export type ListLlmProviderModelsRequest = z.infer<typeof ListLlmProviderModelsRequestSchema>
+export type ListLlmProviderModelsResponse = z.infer<typeof ListLlmProviderModelsResponseSchema>
+export type PlatformAdminOrganizationSummary = z.infer<typeof PlatformAdminOrganizationSummarySchema>
+export type PlatformAdminOrganizationDetail = z.infer<typeof PlatformAdminOrganizationDetailSchema>
+export type PlatformAdminOrganizationActivity = z.infer<typeof PlatformAdminOrganizationActivitySchema>
+export type UsageMetricsQuery = z.infer<typeof UsageMetricsQuerySchema>
+export type UsageMetricsBucket = z.infer<typeof UsageMetricsBucketSchema>
+export type UsageMetricsResponse = z.infer<typeof UsageMetricsResponseSchema>
