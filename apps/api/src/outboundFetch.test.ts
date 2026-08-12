@@ -169,4 +169,19 @@ describe('fetchPublicUrl', () => {
     })
     expect(seen[1]).toEqual({ accept: 'application/json' })
   })
+
+  it('drops the x-api-key header on a cross-origin redirect -- derselbe Fall fuer den Anthropic-Adapter', async () => {
+    const seen: Array<Record<string, string> | undefined> = []
+    await fetchPublicUrl('https://example.com/v1/models', {
+      headers: { 'x-api-key': 'secret-key', accept: 'application/json' },
+      lookupImpl: publicLookup,
+      fetchImpl: async (input, init) => {
+        seen.push(init?.headers as Record<string, string> | undefined)
+        return String(input) === 'https://example.com/v1/models'
+          ? response('', { status: 302, headers: { location: 'https://elsewhere.example/v1/models' } })
+          : response('{}')
+      },
+    })
+    expect(seen[1]).toEqual({ accept: 'application/json' })
+  })
 })

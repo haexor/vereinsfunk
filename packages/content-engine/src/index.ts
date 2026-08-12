@@ -114,6 +114,17 @@ export function buildStructuredTextPrompt(input: Pick<StructuredTextGeneratorInp
 
 type FetchLike = (input: string, init: RequestInit) => Promise<Response>
 
+/**
+ * Haengt `path` ueber `URL.pathname` an, nicht per String-Konkatenation: eine Basis-URL mit
+ * Query-String wuerde sonst den Schlussteil des Pfads verschlucken, weil ein angehaengter "/"
+ * hinter dem "?" landet statt davor.
+ */
+function joinUrlPath(baseUrl: string, path: string): string {
+  const url = new URL(baseUrl)
+  url.pathname = `${url.pathname.replace(/\/$/, '')}/${path}`
+  return url.toString()
+}
+
 /** OpenAI-compatible, JSON-schema constrained adapter. It is deliberately worker injectable. */
 export class OpenAiCompatibleStructuredContentGenerator implements StructuredContentGenerator {
   constructor(private readonly fetcher: FetchLike = fetch) {}
@@ -124,7 +135,7 @@ export class OpenAiCompatibleStructuredContentGenerator implements StructuredCon
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), input.requestTimeoutMs ?? 60_000)
     try {
-      response = await this.fetcher(new URL('chat/completions', input.baseUrl.endsWith('/') ? input.baseUrl : `${input.baseUrl}/`).toString(), {
+      response = await this.fetcher(joinUrlPath(input.baseUrl, 'chat/completions'), {
         method: 'POST',
         signal: controller.signal,
         headers: { authorization: `Bearer ${input.apiKey}`, 'content-type': 'application/json' },
@@ -180,7 +191,7 @@ export class AnthropicStructuredContentGenerator implements StructuredContentGen
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), input.requestTimeoutMs ?? 60_000)
     try {
-      response = await this.fetcher(new URL('messages', input.baseUrl.endsWith('/') ? input.baseUrl : `${input.baseUrl}/`).toString(), {
+      response = await this.fetcher(joinUrlPath(input.baseUrl, 'messages'), {
         method: 'POST',
         signal: controller.signal,
         // x-api-key statt Bearer: die echte Anthropic-API verlangt es so, und die Resolver des

@@ -697,6 +697,29 @@ describe('platform administration', () => {
     expect(response.json()).toMatchObject({ error: 'unsupported_provider_configuration' })
   })
 
+  it('re-validates an already-active provider even when the patch does not touch isActive', async () => {
+    // isActive faengt oben schon ab, wenn es explizit mitgeschickt wird. Ein Patch, der isActive
+    // gar nicht erwaehnt, darf eine bereits aktive, unimplementierte Konfiguration nicht
+    // unbemerkt am Adapter-Check vorbei aendern lassen.
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({
+        from: (table: string) => {
+          if (table !== 'llm_provider_configurations') throw new Error(`unexpected table in test fake: ${table}`)
+          return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { protocol: 'legacy-unsupported', task_kind: 'text_generation', is_active: true }, error: null }) }) }) }
+        },
+      }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PATCH', url: '/v1/llm-providers/a0000000-0000-4000-8000-000000000001',
+      headers: { authorization: `Bearer ${token}` }, payload: { label: 'renamed' },
+    })
+    expect(response.statusCode).toBe(422)
+    expect(response.json()).toMatchObject({ error: 'unsupported_provider_configuration' })
+  })
+
   it('accepts a provider on the anthropic protocol', async () => {
     const configRow = {
       id: 'a0000000-0000-4000-8000-000000000002',

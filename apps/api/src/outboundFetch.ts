@@ -120,10 +120,12 @@ export interface FetchPublicUrlOptions {
 }
 
 // Weiterleitung auf eine fremde Herkunft: die Gegenstelle bekaeme sonst ein Geheimnis, das nie fuer
-// sie bestimmt war. Browser verwerfen `authorization` hier ebenso.
+// sie bestimmt war. Browser verwerfen `authorization` hier ebenso; `x-api-key` ist derselbe Fall
+// fuer den Anthropic-Adapter (siehe app.ts, /v1/llm-providers/models).
+const CREDENTIAL_HEADER_NAMES = new Set(['authorization', 'x-api-key'])
 function stripCredentialHeadersOnCrossOrigin(headers: Record<string, string>, from: string, to: string): Record<string, string> {
   if (new URL(from).origin === new URL(to).origin) return headers
-  return Object.fromEntries(Object.entries(headers).filter(([name]) => name.toLowerCase() !== 'authorization'))
+  return Object.fromEntries(Object.entries(headers).filter(([name]) => !CREDENTIAL_HEADER_NAMES.has(name.toLowerCase())))
 }
 
 /**

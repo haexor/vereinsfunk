@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(44);
+select plan(45);
 
 set local role postgres;
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -263,8 +263,12 @@ select throws_ok(
   'P0001', 'generation_candidate_forbidden', 'negative: a member of another tenant cannot accept a candidate by ID'
 );
 select throws_ok(
-  $$insert into public.llm_provider_configurations (label, protocol, base_url, model, is_active) values ('Unsupported active provider', 'anthropic', 'https://example.invalid', 'test', true)$$,
-  '23514', null, 'negative: only implemented provider protocols can be active'
+  $$insert into public.llm_provider_configurations (label, protocol, base_url, model, task_kind, is_active) values ('Unsupported active provider', 'openai', 'https://example.invalid', 'test', 'image_generation', true)$$,
+  '23514', null, 'negative: only implemented task kinds can be active'
+);
+select lives_ok(
+  $$insert into public.llm_provider_configurations (label, protocol, base_url, model, is_active) values ('Anthropic native provider', 'anthropic', 'https://api.anthropic.com/v1', 'test', true)$$,
+  'regression: anthropic is an implemented protocol and can be active'
 );
 select is((select count(*)::integer from public.workflow_outbox where workflow_name = 'generate-text-post' and payload ? 'sourceMaterial'), 0, 'negative: text generation outbox payloads never contain source content');
 

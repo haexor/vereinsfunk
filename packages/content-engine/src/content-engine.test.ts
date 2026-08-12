@@ -40,6 +40,15 @@ describe('structured content generator', () => {
     const generator = new OpenAiCompatibleStructuredContentGenerator(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ ...grounded, caption: 'Sponsor X', generatedClaims: [{ sourceId: 'made-up', text: 'Sponsor X' }] }) } }] }), { status: 200 }))
     await expect(generator.generateText(input)).rejects.toMatchObject({ errorClass: 'ungrounded', retryable: false } satisfies Partial<ContentGenerationError>)
   })
+  it('keeps the query string on a base url with one instead of swallowing the last path segment', () => {
+    // String-Konkatenation ("…/v1?key=abc" + "/") wuerde den "/" hinter das "?" haengen und damit
+    // sowohl "v1" als auch den Query-String beim Aufloesen verschlucken.
+    const generator = new OpenAiCompatibleStructuredContentGenerator(async (url) => {
+      expect(url).toBe('https://provider.example/v1/chat/completions?key=abc')
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(grounded) } }] }), { status: 200 })
+    })
+    return expect(generator.generateText({ ...input, baseUrl: 'https://provider.example/v1?key=abc' })).resolves.toMatchObject({ caption: 'Passen' })
+  })
   it('bounds a provider request and classifies an abort as retryable network failure', async () => {
     const generator = new OpenAiCompatibleStructuredContentGenerator(async (_url, init) => new Promise((_resolve, reject) => {
       init.signal?.addEventListener('abort', () => reject(new Error('aborted')))

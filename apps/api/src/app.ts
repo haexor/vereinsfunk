@@ -153,7 +153,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAuthGuards, SupabasePlatformAdminProvider, SupabaseRoleProvider, type PermissionScope, type PlatformAdminProvider, type RoleProvider } from './auth.js'
 import { mapTeamRow } from './apiMappers.js'
 import { createEmailSender, type EmailMessage, type EmailSender } from './email.js'
-import { IMPLEMENTED_LLM_PROTOCOLS, mapLlmProviderConfigurationRow, parseModelListingIds } from './llmProviders.js'
+import { IMPLEMENTED_LLM_PROTOCOLS, joinUrlPath, mapLlmProviderConfigurationRow, parseModelListingIds } from './llmProviders.js'
 import { fetchPublicUrl, isAllowedOutboundUrl, OutboundFetchError } from './outboundFetch.js'
 import { ciphertextToBytea, createChainSignerFromEnvironment, createSecretBoxFromEnvironment } from './secretBox.js'
 import { createServiceClient, createUserClient } from './supabase.js'
@@ -1923,12 +1923,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     const input = UpdateLlmProviderConfigurationRequestSchema.parse(request.body)
     if (input.taskKind && input.taskKind !== 'text_generation') return reply.code(422).send({ error: 'task_kind_not_implemented', taskKind: input.taskKind ?? 'text_generation' })
     const service = supabaseClients.forService()
-    const current = await service.from('llm_provider_configurations').select('protocol, task_kind').eq('id', params.id).maybeSingle()
+    const current = await service.from('llm_provider_configurations').select('protocol, task_kind, is_active').eq('id', params.id).maybeSingle()
     if (current.error) throw current.error
     if (!current.data) return reply.code(404).send({ error: 'llm_provider_not_found' })
     const effectiveProtocol = input.protocol ?? current.data.protocol
     const effectiveTaskKind = input.taskKind ?? current.data.task_kind
-    if (input.isActive === true && (!IMPLEMENTED_LLM_PROTOCOLS.has(effectiveProtocol as string) || effectiveTaskKind !== 'text_generation')) {
+    const effectiveIsActive = input.isActive ?? current.data.is_active
+    // Nicht nur bei explizitem isActive:true pruefen: ein Protokollwechsel auf einer bereits
+    // aktiven Zeile darf die Konfiguration ebenso wenig unimplementiert zurueckliessen.
+    if (effectiveIsActive && (!IMPLEMENTED_LLM_PROTOCOLS.has(effectiveProtocol as string) || effectiveTaskKind !== 'text_generation')) {
       return reply.code(422).send({ error: 'unsupported_provider_configuration' })
     }
     const payload: Record<string, unknown> = {}
@@ -1979,8 +1982,6 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (!(await requireAuth(request, reply))) return
     if (!(await requirePlatformAdmin(request, reply))) return
     const input = ListLlmProviderModelsRequestSchema.parse(request.body)
-    if (!isAllowedOutboundUrl(input.baseUrl)) return reply.code(400).send({ error: 'base_url_not_allowed' })
-    const base = input.baseUrl.endsWith('/') ? input.baseUrl : `${input.baseUrl}/`
     // Dieselbe Authentifizierung wie der jeweilige Adapter im Worker: sonst meldet das Formular
     // "erreichbar", wo die spaetere Generierung an 401 scheitert.
     const headers = input.protocol === 'anthropic'
@@ -1988,7 +1989,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       : { authorization: `Bearer ${input.apiKey}` }
     let payload: unknown
     try {
-      payload = JSON.parse(await fetchPublicUrl(new URL('models', base).toString(), { headers, maxBytes: 1_000_000 }))
+      // fetchPublicUrl prueft die Zieladresse bereits selbst (auch je Weiterleitung); eine
+      // vorgezogene Pruefung hier waere doppelte Arbeit fuer dasselbe Ergebnis.
+      payload = JSON.parse(await fetchPublicUrl(joinUrlPath(input.baseUrl, 'models'), { headers, maxBytes: 1_000_000 }))
     } catch (error) {
       request.log.warn({ err: error, correlationId: request.id }, 'llm provider model listing failed')
       if (error instanceof OutboundFetchError && error.reason === 'blocked_url') {

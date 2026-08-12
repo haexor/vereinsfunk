@@ -157,6 +157,7 @@ async function createProvider() {
     })
     await $fetch(`${config.public.apiBase}/v1/llm-providers`, { method: 'POST', headers, body })
     newProvider.label = ''
+    newProvider.protocol = PROVIDER_PRESETS[0].protocol
     newProvider.presetLabel = PROVIDER_PRESETS[0].label
     newProvider.baseUrl = PROVIDER_PRESETS[0].baseUrl
     newProvider.apiKey = ''
