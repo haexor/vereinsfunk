@@ -152,7 +152,12 @@ export async function fetchPublicUrl(rawUrl: string, options: FetchPublicUrlOpti
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get('location')
       if (!location) throw new OutboundFetchError('request_failed', `redirect without location (${response.status})`)
-      const next = new URL(location, current).toString()
+      let next: string
+      try {
+        next = new URL(location, current).toString()
+      } catch {
+        throw new OutboundFetchError('request_failed', `invalid redirect location (${location})`)
+      }
       currentHeaders = stripCredentialHeadersOnCrossOrigin(currentHeaders, current, next)
       current = next
       continue

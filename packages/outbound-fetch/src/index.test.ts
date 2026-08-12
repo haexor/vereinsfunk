@@ -107,6 +107,15 @@ describe('fetchPublicUrl', () => {
     ).rejects.toBeInstanceOf(OutboundFetchError)
   })
 
+  it('classifies an unparseable redirect location as OutboundFetchError instead of throwing a raw TypeError', async () => {
+    await expect(
+      fetchPublicUrl('https://example.com/feed.ics', {
+        lookupImpl: publicLookup,
+        fetchImpl: async () => response('', { status: 302, headers: { location: 'http://' } }),
+      }),
+    ).rejects.toMatchObject({ reason: 'request_failed' })
+  })
+
   it('refuses a body larger than the limit, even when content-length lies', async () => {
     await expect(
       fetchPublicUrl('https://example.com/feed.ics', {
