@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fetchPublicUrl, isAllowedOutboundUrl, isBlockedAddress, OutboundFetchError } from './outboundFetch.js'
+import { createGuardedFetch, fetchPublicUrl, isAllowedOutboundUrl, isBlockedAddress, OutboundFetchError } from './index.js'
 
 function response(body: string, init: ResponseInit = {}): Response {
   return new Response(body, { status: 200, ...init })
@@ -183,5 +183,64 @@ describe('fetchPublicUrl', () => {
       },
     })
     expect(seen[1]).toEqual({ accept: 'application/json' })
+  })
+})
+
+describe('createGuardedFetch', () => {
+  it('returns the response unchanged for an allowed target', async () => {
+    const fetcher = createGuardedFetch({
+      lookupImpl: publicLookup,
+      fetchImpl: async () => response('{"ok":true}'),
+    })
+    const result = await fetcher('https://provider.example/v1/messages', { method: 'POST' })
+    expect(await result.json()).toEqual({ ok: true })
+  })
+
+  it('refuses a blocked target before any request goes out', async () => {
+    let called = false
+    const fetcher = createGuardedFetch({ fetchImpl: async () => { called = true; return response('secrets') } })
+    await expect(fetcher('https://169.254.169.254/v1/messages', {})).rejects.toMatchObject({ reason: 'blocked_url' })
+    expect(called).toBe(false)
+  })
+
+  it('refuses a public-looking name that resolves into the internal network', async () => {
+    const fetcher = createGuardedFetch({
+      lookupImpl: async () => ['127.0.0.1'],
+      fetchImpl: async () => response('secrets'),
+    })
+    await expect(fetcher('https://provider.example/v1/messages', {})).rejects.toMatchObject({ reason: 'blocked_url' })
+  })
+
+  it('refuses a redirect instead of following it', async () => {
+    const targets: string[] = []
+    const fetcher = createGuardedFetch({
+      lookupImpl: publicLookup,
+      fetchImpl: async (input) => {
+        targets.push(String(input))
+        return response('', { status: 302, headers: { location: 'https://169.254.169.254/v1/messages' } })
+      },
+    })
+    await expect(fetcher('https://provider.example/v1/messages', {})).rejects.toMatchObject({ reason: 'blocked_url' })
+    // Only the original, allowed target was fetched; the redirect's location is never requested.
+    expect(targets).toEqual(['https://provider.example/v1/messages'])
+  })
+
+  it('refuses a body whose declared content-length already exceeds the limit', async () => {
+    const fetcher = createGuardedFetch({
+      maxBytes: 8,
+      lookupImpl: publicLookup,
+      fetchImpl: async () => response('x', { headers: { 'content-length': '9000' } }),
+    })
+    await expect(fetcher('https://provider.example/v1/messages', {})).rejects.toMatchObject({ reason: 'too_large' })
+  })
+
+  it('refuses a body larger than the limit, even when content-length lies', async () => {
+    const fetcher = createGuardedFetch({
+      maxBytes: 8,
+      lookupImpl: publicLookup,
+      fetchImpl: async () => response('weit mehr als acht Bytes'),
+    })
+    const result = await fetcher('https://provider.example/v1/messages', {})
+    await expect(result.text()).rejects.toMatchObject({ reason: 'too_large' })
   })
 })
