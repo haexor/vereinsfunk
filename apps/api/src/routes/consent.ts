@@ -178,7 +178,7 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
       directoryPersonIds = [query.directoryPersonId]
     } else if (query.departmentId) {
       const people = await fetchAllRows<{ id: string }>((from, to) =>
-        service.from('directory_people').select('id').eq('organization_id', query.organizationId).eq('department_id', query.departmentId!).range(from, to),
+        service.from('directory_people').select('id').eq('organization_id', query.organizationId).eq('department_id', query.departmentId!).order('id', { ascending: true }).range(from, to),
       )
       directoryPersonIds = people.map((person) => person.id)
       if (directoryPersonIds.length === 0) return reply.code(200).send([])

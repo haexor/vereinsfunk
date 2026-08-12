@@ -3,6 +3,7 @@ import { planSync } from '@vereinsfunk/integrations'
 import type { FastifyReply } from 'fastify'
 import { addUniquePendingConflict, buildPendingConflicts, conflictFingerprint, finishSyncRun, handleAbortedSync, loadIgnoredFingerprints, normalizeStructureName, parseIncomingRows, type SyncDomainContext } from '../integrationSync.js'
 import { resolvePersonScope } from '../integrationSync.js'
+import { fetchAllRows } from '../../routes/shared.js'
 
 // Personen (Paket 014) -- dieselbe Form wie die drei Domaenen oben. Bis zur Zerlegung stand dieser
 // Ablauf direkt im Routen-Handler und trug eine eigene, wortgleiche Kopie von
@@ -34,13 +35,19 @@ export async function handlePeopleSync(ctx: PeopleSyncContext): Promise<FastifyR
   // manuelle Umhaengung verschiebt die Person -- in beiden Faellen faende der naechste Lauf sie
   // sonst nicht mehr, legte sie erneut an und liefe in den Unique-Index auf
   // (organization_id, source_id, external_id).
-  const existingRows = await service
-    .from('directory_people')
-    .select('id, first_name, last_name, birth_year, department_id, team_id, status, source_id, external_id, source_updated_at, updated_at')
-    .eq('organization_id', organizationId)
-    .or(sourceDepartmentId ? `and(source_id.is.null,department_id.eq.${sourceDepartmentId}),source_id.eq.${sourceId}` : `source_id.is.null,source_id.eq.${sourceId}`)
-  if (existingRows.error) throw existingRows.error
-  const existingLocals: DirectoryPersonLocal[] = existingRows.data.map((row) => ({
+  // fetchAllRows: ohne Bloetterung haette PostgREST' max_rows=1000 die Bestandsliste bei vielen
+  // Personen still gekappt -- planSync haette die fehlenden dann als neu bewertet und waere beim
+  // Insert in den Unique-Index auf (organization_id, source_id, external_id) gelaufen.
+  const existingRows = await fetchAllRows<Record<string, unknown>>((from, to) =>
+    service
+      .from('directory_people')
+      .select('id, first_name, last_name, birth_year, department_id, team_id, status, source_id, external_id, source_updated_at, updated_at')
+      .eq('organization_id', organizationId)
+      .or(sourceDepartmentId ? `and(source_id.is.null,department_id.eq.${sourceDepartmentId}),source_id.eq.${sourceId}` : `source_id.is.null,source_id.eq.${sourceId}`)
+      .order('id', { ascending: true })
+      .range(from, to),
+  )
+  const existingLocals: DirectoryPersonLocal[] = existingRows.map((row) => ({
     id: row.id as string,
     externalId: row.external_id as string | null,
     sourceId: row.source_id as string | null,

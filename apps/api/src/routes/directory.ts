@@ -46,17 +46,17 @@ export function registerDirectoryRoutes(app: FastifyInstance, context: ApiRouteC
       })
       .parse(request.query)
     const client = supabaseClients.forUser(request.auth!.accessToken)
-    let builder = client
-      .from('directory_people')
-      .select(DIRECTORY_PERSON_COLUMNS)
-      .eq('organization_id', params.id)
-    if (query.departmentId) builder = builder.eq('department_id', query.departmentId)
-    if (query.teamId) builder = builder.eq('team_id', query.teamId)
-    if (query.status) builder = builder.eq('status', query.status)
-    if (query.isMinor !== undefined) builder = builder.eq('is_minor', query.isMinor)
-    const rows = await builder.order('last_name').order('first_name')
-    if (rows.error) throw rows.error
-    let visible = rows.data
+    let visible = await fetchAllRows<Record<string, unknown>>((from, to) => {
+      let builder = client
+        .from('directory_people')
+        .select(DIRECTORY_PERSON_COLUMNS)
+        .eq('organization_id', params.id)
+      if (query.departmentId) builder = builder.eq('department_id', query.departmentId)
+      if (query.teamId) builder = builder.eq('team_id', query.teamId)
+      if (query.status) builder = builder.eq('status', query.status)
+      if (query.isMinor !== undefined) builder = builder.eq('is_minor', query.isMinor)
+      return builder.order('last_name').order('first_name').order('id').range(from, to)
+    })
     if (query.missingGuardian) {
       // guardian_email ist fuer authenticated nicht selektierbar (Spaltenrechte, Migration
       // 2026080703) -- der Filter braucht deshalb die Service Role. Gefiltert wird aber erst

@@ -2,6 +2,7 @@ import { createFixtureMatchStrategy, ExternalFixtureSchema, fixtureDomainAdapter
 import { planSync } from '@vereinsfunk/integrations'
 import type { FastifyReply } from 'fastify'
 import { buildPendingConflicts, finishSyncRun, handleAbortedSync, loadIgnoredFingerprints, normalizeStructureName, parseIncomingRows, resolveScheduleDateTime, type SyncDomainContext } from '../integrationSync.js'
+import { fetchAllRows } from '../../routes/shared.js'
 
 export async function handleFixturesSync(ctx: SyncDomainContext): Promise<FastifyReply> {
   const { request, reply, service, organizationId, sourceDepartmentId, sourceId, sourceFieldMapping, sourceLossThresholdPercent, mode, domain, runId, idempotencyKey, rawRows, organizationTimezone } = ctx
@@ -11,14 +12,19 @@ export async function handleFixturesSync(ctx: SyncDomainContext): Promise<Fastif
   // ist nicht entscheidbar, wohin ein synchronisiertes Spiel gehoert.
   if (!sourceDepartmentId) return reply.code(409).send({ error: 'source_missing_department', correlationId: request.id })
 
-  const existingRows = await service
-    .from('fixtures')
-    .select('id, external_id, source_id, team_id, is_home, own_team_label, opponent_name, competition, kickoff_at, kickoff_time_confirmed, venue_name, venue_address, status, home_score, away_score, note, source_updated_at, updated_at')
-    .eq('organization_id', organizationId)
-    .eq('department_id', sourceDepartmentId)
-    .or(`source_id.is.null,source_id.eq.${sourceId}`)
-  if (existingRows.error) throw existingRows.error
-  const existingLocals: FixtureLocal[] = existingRows.data.map((row) => ({
+  // fetchAllRows aus demselben Grund wie in handlePeopleSync: ohne Bloetterung haette
+  // PostgREST' max_rows=1000 den Spielbestand still gekappt.
+  const existingRows = await fetchAllRows<Record<string, unknown>>((from, to) =>
+    service
+      .from('fixtures')
+      .select('id, external_id, source_id, team_id, is_home, own_team_label, opponent_name, competition, kickoff_at, kickoff_time_confirmed, venue_name, venue_address, status, home_score, away_score, note, source_updated_at, updated_at')
+      .eq('organization_id', organizationId)
+      .eq('department_id', sourceDepartmentId)
+      .or(`source_id.is.null,source_id.eq.${sourceId}`)
+      .order('id', { ascending: true })
+      .range(from, to),
+  )
+  const existingLocals: FixtureLocal[] = existingRows.map((row) => ({
     id: row.id as string, externalId: row.external_id as string | null, sourceId: row.source_id as string | null,
     teamId: row.team_id as string | null, isHome: row.is_home as boolean | null, ownTeamLabel: row.own_team_label as string | null,
     opponentName: row.opponent_name as string | null, competition: row.competition as string | null,

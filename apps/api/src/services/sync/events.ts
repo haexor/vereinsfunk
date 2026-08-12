@@ -55,7 +55,40 @@ export async function handleEventsSync(ctx: SyncDomainContext): Promise<FastifyR
     applicableCreated.push({ entity, startsAt: resolved.iso, startsAtConfirmed: resolved.confirmed })
   }
 
+  // Wie beim Anlegen (oben): ein nicht aufloesbares Datum wird schon hier, VOR dem apply-Zweig,
+  // ein invalid_record-Konflikt. Vorher stand diese Pruefung innerhalb von if (mode === 'apply'),
+  // die Vorschau meldete die Zeile deshalb faelschlich als aktualisierbar, und derselbe Lauf im
+  // apply-Modus widersprach seiner eigenen Vorschau mit einem Konflikt.
   let appliedUpdatedCount = plan.updated.length
+  const applicableUpdated: { update: (typeof plan.updated)[number]; startsAt: { iso: string; confirmed: boolean } | undefined; endsAt: { iso: string; confirmed: boolean } | undefined }[] = []
+  for (const update of plan.updated) {
+    let unresolvedDateField: 'startsAt' | 'endsAt' | undefined
+    let startsAt: { iso: string; confirmed: boolean } | undefined
+    let endsAt: { iso: string; confirmed: boolean } | undefined
+    if (update.external.startsAt !== undefined) {
+      const resolved = resolveScheduleDateTime(update.external.startsAt, update.external.startsAtTzid, organizationTimezone)
+      if (resolved) startsAt = resolved
+      else unresolvedDateField = 'startsAt'
+    }
+    if (!unresolvedDateField && update.external.endsAt !== undefined) {
+      const resolved = resolveScheduleDateTime(update.external.endsAt, update.external.endsAtTzid, organizationTimezone)
+      if (resolved) endsAt = resolved
+      else unresolvedDateField = 'endsAt'
+    }
+    if (unresolvedDateField) {
+      const incomingValue = unresolvedDateField === 'startsAt' ? update.external.startsAt : update.external.endsAt
+      addUniquePendingConflict(pendingConflicts, {
+        kind: 'invalid_record', label: update.local.title, field: unresolvedDateField,
+        externalId: update.external.externalId ?? null, localId: update.local.id, currentValue: null,
+        incomingValue: incomingValue ?? null,
+        fingerprint: conflictFingerprint([sourceId, domain, 'invalid_record', unresolvedDateField, update.external.externalId ?? update.local.id]),
+      })
+      appliedUpdatedCount -= 1
+      continue
+    }
+    applicableUpdated.push({ update, startsAt, endsAt })
+  }
+
   if (mode === 'apply') {
     if (applicableCreated.length > 0) {
       const insertRows = applicableCreated.map(({ entity, startsAt }) => {
@@ -73,38 +106,15 @@ export async function handleEventsSync(ctx: SyncDomainContext): Promise<FastifyR
       const insert = await service.from('club_events').insert(insertRows)
       if (insert.error) throw insert.error
     }
-    for (const update of plan.updated) {
+    for (const { update, startsAt, endsAt } of applicableUpdated) {
       const patch: Record<string, unknown> = {
         source_updated_at: update.external.sourceUpdatedAt ?? update.local.sourceUpdatedAt?.toISOString() ?? null,
       }
       if (update.external.title !== undefined) patch.title = update.external.title
       if (update.external.description !== undefined) patch.description = update.external.description
       if (update.external.category !== undefined) patch.category = update.external.category
-      // Wie beim Anlegen (oben): ein nicht aufloesbares Datum wird ein Konflikt statt eines
-      // Updates, das das betroffene Feld klammheimlich ausspart und die Zeile trotzdem als
-      // erfolgreich aktualisiert zaehlt.
-      let unresolvedDateField: 'startsAt' | 'endsAt' | undefined
-      if (update.external.startsAt !== undefined) {
-        const resolved = resolveScheduleDateTime(update.external.startsAt, update.external.startsAtTzid, organizationTimezone)
-        if (resolved) patch.starts_at = resolved.iso
-        else unresolvedDateField = 'startsAt'
-      }
-      if (!unresolvedDateField && update.external.endsAt !== undefined) {
-        const resolved = resolveScheduleDateTime(update.external.endsAt, update.external.endsAtTzid, organizationTimezone)
-        if (resolved) patch.ends_at = resolved.iso
-        else unresolvedDateField = 'endsAt'
-      }
-      if (unresolvedDateField) {
-        const incomingValue = unresolvedDateField === 'startsAt' ? update.external.startsAt : update.external.endsAt
-        addUniquePendingConflict(pendingConflicts, {
-          kind: 'invalid_record', label: update.local.title, field: unresolvedDateField,
-          externalId: update.external.externalId ?? null, localId: update.local.id, currentValue: null,
-          incomingValue: incomingValue ?? null,
-          fingerprint: conflictFingerprint([sourceId, domain, 'invalid_record', unresolvedDateField, update.external.externalId ?? update.local.id]),
-        })
-        appliedUpdatedCount -= 1
-        continue
-      }
+      if (startsAt) patch.starts_at = startsAt.iso
+      if (endsAt) patch.ends_at = endsAt.iso
       if (update.external.allDay !== undefined) patch.all_day = update.external.allDay
       if (update.external.locationName !== undefined) patch.location_name = update.external.locationName
       if (update.external.locationAddress !== undefined) patch.location_address = update.external.locationAddress

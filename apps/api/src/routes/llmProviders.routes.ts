@@ -16,6 +16,12 @@ import type { ApiRouteContext } from './context.js'
 export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePlatformAdmin, supabaseClients, environment } = context
 
+  // CRUD hier erzeugt bewusst keinen audit_events-Eintrag: die Tabelle traegt eine pro-Verein
+  // manipulationssichere Hash-Kette (organization_id NOT NULL, Advisory-Lock je Verein, Paket 020),
+  // globale Plattform-Aktionen passen dort nicht ohne Eingriff in diese Kette. Ausserdem hat die
+  // gesamte Plattform-Administration (platform_admins, platform_settings, Plan 022) bislang KEINEN
+  // eigenen Audit-Trail -- ein auf LLM-Provider beschraenkter Sonderweg waere selbst unvollstaendig.
+  // Zurueckgestellt als eigener, uebergreifender Punkt statt Einzelloesung fuer diese Route.
   app.get('/v1/llm-providers', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     if (!(await requirePlatformAdmin(request, reply))) return
@@ -40,6 +46,9 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
     // Beide Protokolle haben inzwischen einen Adapter im Worker; nur die uebrigen Aufgabenarten
     // (Bild, Video) sind weiterhin unimplementiert.
     if (input.taskKind !== 'text_generation') return reply.code(422).send({ error: 'task_kind_not_implemented', taskKind: input.taskKind })
+    // Vor dem Insert erzeugt, damit eine fehlende oder ungueltige SECRET_BOX_KEYS-Konfiguration
+    // wirft, bevor ueberhaupt eine Konfigurationszeile entsteht.
+    const secretBox = createSecretBoxFromEnvironment(environment)
     const service = supabaseClients.forService()
     const insert = await service
       .from('llm_provider_configurations')
@@ -59,12 +68,20 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
       .select('id, label, protocol, base_url, model, purpose, task_kind, temperature, max_output_tokens, structured_output_required, priority, is_active')
       .single()
     if (insert.error) throw insert.error
-    const sealed = createSecretBoxFromEnvironment(environment).seal(input.apiKey, insert.data.id as string)
-    const secretInsert = await service.from('llm_provider_secrets').insert({
-      llm_provider_configuration_id: insert.data.id,
-      api_key_ciphertext: ciphertextToBytea(sealed.ciphertext),
-      key_version: sealed.keyVersion,
-    })
+    // seal() kann ebenfalls werfen (siehe secretBox.ts) -- der try/catch faengt das ab, damit auch
+    // dieser Fehlerpfad die Konfiguration zurueckrollt, nicht nur secretInsert.error.
+    let secretInsert
+    try {
+      const sealed = secretBox.seal(input.apiKey, insert.data.id as string)
+      secretInsert = await service.from('llm_provider_secrets').insert({
+        llm_provider_configuration_id: insert.data.id,
+        api_key_ciphertext: ciphertextToBytea(sealed.ciphertext),
+        key_version: sealed.keyVersion,
+      })
+    } catch (error) {
+      await service.from('llm_provider_configurations').delete().eq('id', insert.data.id)
+      throw error
+    }
     if (secretInsert.error) {
       // Ohne Rollback bliebe eine aktive Konfiguration ohne Schluessel zurueck.
       await service.from('llm_provider_configurations').delete().eq('id', insert.data.id)

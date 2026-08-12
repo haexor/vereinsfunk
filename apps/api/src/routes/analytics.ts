@@ -292,7 +292,12 @@ export function registerAnalyticsRoutes(app: FastifyInstance, context: ApiRouteC
     // zeitraum (Plan, Abschnitt "Oberflaeche", eigener Punkt neben der Kennzahlenzeile).
     const quotaRows = await fetchAllRows<{
       id: string; scope: string; department_id: string | null; team_id: string | null; social_connection_id: string | null; period: 'day' | 'week' | 'month'; max_publications: number
-    }>((from, to) => service.from('channel_quotas').select('id, scope, department_id, team_id, social_connection_id, period, max_publications').eq('organization_id', query.organizationId).range(from, to))
+    }>((from, to) => {
+      let quotaQuery = service.from('channel_quotas').select('id, scope, department_id, team_id, social_connection_id, period, max_publications').eq('organization_id', query.organizationId)
+      if (scope.teamId) quotaQuery = quotaQuery.eq('team_id', scope.teamId)
+      else if (scope.departmentId) quotaQuery = quotaQuery.eq('department_id', scope.departmentId)
+      return quotaQuery.range(from, to)
+    })
     const nowIso = new Date().toISOString()
     // Ein Aufruf fuer alle Kontingente statt einer je Zeile: count_publications_for_quotas
     // (Migration 2026081207) ruft dieselbe Zaehlfunktion vereinsintern pro Zeile auf. Ueber

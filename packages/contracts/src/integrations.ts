@@ -151,7 +151,7 @@ const DirectoryPersonFieldsSchema = z.object({
 export const CreateDirectoryPersonRequestSchema = DirectoryPersonFieldsSchema.extend({
   firstName: z.string().trim().min(1).max(80),
   lastName: z.string().trim().min(1).max(80),
-}).refine((value) => value.teamId === undefined || value.teamId === null || value.departmentId !== undefined, {
+}).refine((value) => value.teamId === undefined || value.teamId === null || (value.departmentId !== undefined && value.departmentId !== null), {
   message: 'teamId requires departmentId',
 })
 export const UpdateDirectoryPersonRequestSchema = DirectoryPersonFieldsSchema.extend({

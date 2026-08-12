@@ -107,8 +107,15 @@ export async function computeMediaGateBlockersForPostVersion(
   })
 
   const linkedPersons = Array.from(personById.values()).map((person) => {
-    const consent = Array.from(consentById.values()).find((row) => row.directory_person_id === person.id)
-    return { firstName: person.first_name, lastName: person.last_name, namingAllowed: consent?.scope_structured.namingAllowed ?? false }
+    // Nur nicht widerrufene und nicht abgeloeste Einwilligungen zaehlen, und bei mehreren
+    // Treffern die restriktivste Bewertung -- find() waehlte bislang die erste Zeile in
+    // Einfuegereihenfolge, eine abgeloeste Einwilligung mit namingAllowed:true haette dann
+    // eine neuere mit namingAllowed:false ueberstimmen koennen.
+    const consents = Array.from(consentById.values()).filter(
+      (row) => row.directory_person_id === person.id && row.revoked_at === null && row.superseded_by === null,
+    )
+    const namingAllowed = consents.length > 0 && consents.every((row) => row.scope_structured.namingAllowed === true)
+    return { firstName: person.first_name, lastName: person.last_name, namingAllowed }
   })
   const scan = scanTextForSensitiveData(`${postVersion.data.title as string} ${postVersion.data.caption as string}`, linkedPersons)
 

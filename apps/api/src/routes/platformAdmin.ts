@@ -174,28 +174,22 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
     const orgRows = await fetchAllRows<{ id: string; name: string; slug: string; created_at: string }>((from, to) =>
       service.from('organizations').select('id, name, slug, created_at').order('created_at', { ascending: false }).order('id', { ascending: true }).range(from, to),
     )
-    // Zaehlt pro Organisation ueber `count: 'exact', head: true` statt alle Zeilen zu laden --
-    // eine ungefilterte select() koennte an supabase/config.tomls max_rows=1000 abgeschnitten
-    // werden und countByOrganization wuerde dann zu niedrige Werte liefern.
-    const counts = await Promise.all(
-      orgRows.map((row) =>
-        Promise.all([
-          service.from('organization_memberships').select('*', { count: 'exact', head: true }).eq('organization_id', row.id),
-          service.from('departments').select('*', { count: 'exact', head: true }).eq('organization_id', row.id),
-        ]),
-      ),
+    // Eine gebuendelte RPC statt zweier count-Abfragen je Organisation (N+1,
+    // count_platform_admin_organization_totals, Migration 2026081208) -- dasselbe Muster wie die
+    // Kontingentauslastung in GET /v1/analytics/summary.
+    const totals = await fetchAllRows<{ organization_id: string; member_count: number; department_count: number }>((from, to) =>
+      service.rpc('count_platform_admin_organization_totals', { target_organization_ids: orgRows.map((row) => row.id) }).order('organization_id', { ascending: true }).range(from, to),
     )
+    const totalsByOrganization = new Map(totals.map((row) => [row.organization_id, row]))
     return reply.code(200).send(
-      orgRows.map((row, index) => {
-        const [members, departments] = counts[index]!
-        if (members.error) throw members.error
-        if (departments.error) throw departments.error
+      orgRows.map((row) => {
+        const total = totalsByOrganization.get(row.id)
         return PlatformAdminOrganizationSummarySchema.parse({
           organizationId: row.id,
           name: row.name,
           slug: row.slug,
-          memberCount: members.count ?? 0,
-          departmentCount: departments.count ?? 0,
+          memberCount: total?.member_count ?? 0,
+          departmentCount: total?.department_count ?? 0,
           createdAt: row.created_at,
         })
       }),

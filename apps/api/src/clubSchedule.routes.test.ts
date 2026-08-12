@@ -463,6 +463,7 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
         gte: (column: string, value: unknown) => { result = result.filter((row) => (row[column] as string) >= (value as string)); return builder },
         lte: (column: string, value: unknown) => { result = result.filter((row) => (row[column] as string) <= (value as string)); return builder },
         order: () => builder,
+        range: () => builder,
         then: (resolve: (value: { data: unknown; error: unknown }) => unknown) => resolve({ data: result, error: null }),
       }
       return builder as PromiseLike<{ data: unknown; error: unknown }> & Record<string, unknown>

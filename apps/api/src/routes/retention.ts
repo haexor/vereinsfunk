@@ -206,7 +206,7 @@ export function registerRetentionRoutes(app: FastifyInstance, context: ApiRouteC
     // fetchAllRows aus demselben Grund wie in GET /members: max_rows haette den Loeschlauf
     // still nach 1000 Zeilen beendet und das Ergebnis trotzdem als erledigt gemeldet.
     const auditCandidates = await fetchAllRows<{ id: string; action: string; created_at: string }>((from, to) =>
-      service.from('audit_events').select('id, action, created_at').eq('organization_id', params.id).lt('created_at', auditCutoff.toISOString()).range(from, to),
+      service.from('audit_events').select('id, action, created_at').eq('organization_id', params.id).lt('created_at', auditCutoff.toISOString()).order('id', { ascending: true }).range(from, to),
     )
     const auditIds = auditCandidates
       .filter((row) => {
@@ -225,7 +225,7 @@ export function registerRetentionRoutes(app: FastifyInstance, context: ApiRouteC
     const statusEventCutoff = new Date(now - settings.status_event_days * 86_400_000)
     const statusEventIds = (
       await fetchAllRows<{ id: string }>((from, to) =>
-        service.from('post_status_events').select('id').eq('organization_id', params.id).lt('occurred_at', statusEventCutoff.toISOString()).range(from, to),
+        service.from('post_status_events').select('id').eq('organization_id', params.id).lt('occurred_at', statusEventCutoff.toISOString()).order('id', { ascending: true }).range(from, to),
       )
     ).map((row) => row.id)
     if (!input.dryRun && statusEventIds.length > 0) await deleteByIds('post_status_events', statusEventIds)
@@ -258,7 +258,7 @@ export function registerRetentionRoutes(app: FastifyInstance, context: ApiRouteC
     let expiredTokenCount = 0
     const invitationIds = (
       await fetchAllRows<{ id: string }>((from, to) =>
-        service.from('invitations').select('id').eq('organization_id', params.id).lt('expires_at', nowIso).is('accepted_at', null).range(from, to),
+        service.from('invitations').select('id').eq('organization_id', params.id).lt('expires_at', nowIso).is('accepted_at', null).order('id', { ascending: true }).range(from, to),
       )
     ).map((row) => row.id)
     expiredTokenCount += invitationIds.length
@@ -266,7 +266,7 @@ export function registerRetentionRoutes(app: FastifyInstance, context: ApiRouteC
 
     const consentRequestIds = (
       await fetchAllRows<{ id: string }>((from, to) =>
-        service.from('consent_requests').select('id').eq('organization_id', params.id).lt('expires_at', nowIso).in('status', ['sent', 'expired']).range(from, to),
+        service.from('consent_requests').select('id').eq('organization_id', params.id).lt('expires_at', nowIso).in('status', ['sent', 'expired']).order('id', { ascending: true }).range(from, to),
       )
     ).map((row) => row.id)
     expiredTokenCount += consentRequestIds.length
@@ -274,7 +274,7 @@ export function registerRetentionRoutes(app: FastifyInstance, context: ApiRouteC
 
     const mediaGrantIds = (
       await fetchAllRows<{ id: string }>((from, to) =>
-        service.from('publication_media_grants').select('id').eq('organization_id', params.id).lt('expires_at', nowIso).range(from, to),
+        service.from('publication_media_grants').select('id').eq('organization_id', params.id).lt('expires_at', nowIso).order('id', { ascending: true }).range(from, to),
       )
     ).map((row) => row.id)
     expiredTokenCount += mediaGrantIds.length
@@ -282,7 +282,7 @@ export function registerRetentionRoutes(app: FastifyInstance, context: ApiRouteC
 
     const idempotencyKeyIds = (
       await fetchAllRows<{ id: string }>((from, to) =>
-        service.from('idempotency_keys').select('id').eq('organization_id', params.id).lt('expires_at', nowIso).range(from, to),
+        service.from('idempotency_keys').select('id').eq('organization_id', params.id).lt('expires_at', nowIso).order('id', { ascending: true }).range(from, to),
       )
     ).map((row) => row.id)
     expiredTokenCount += idempotencyKeyIds.length

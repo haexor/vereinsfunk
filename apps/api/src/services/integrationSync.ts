@@ -5,7 +5,7 @@ import {
   type SyncConflictKind,
   type SyncMode,
 } from '@vereinsfunk/contracts'
-import { resolveIcalDateTime, type SourceTransport, type SyncPlanResult } from '@vereinsfunk/integrations'
+import { resolveIcalDateTime, zonedWallTimeToUtcMs, type SourceTransport, type SyncPlanResult } from '@vereinsfunk/integrations'
 import {
 } from '@vereinsfunk/club-schedule'
 import {
@@ -224,10 +224,19 @@ export async function loadSyncSourceResponse(input: {
   })
 }
 
+// ISO-Datum/-Zeit ohne Offset-Erkennung fuer den Fallback unten -- "2026-08-12T19:30:00" ist ohne
+// Z oder numerischen Offset keine eindeutige Instanz, nur eine Wanduhrzeit.
+const ISO_DATE_TIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/
+
 // Loest einen rohen Datumswert (iCal-Kompaktform ODER eine bereits vollstaendige ISO-Zeichenkette
 // aus einer Datei-Spalte) in eine UTC-Instanz auf. Ein Datei-Export mit einer eigenen
 // kickoffAt/startsAt-Spalte liefert ueblicherweise bereits ein eindeutiges Format -- dafuer gilt
-// die Angabe als bestaetigt (kein TZID-Fall). resolveIcalDateTime deckt nur die iCal-Kompaktform ab.
+// die Angabe als bestaetigt, aber nur wenn ein Z-Suffix oder numerischer Offset vorliegt.
+// resolveIcalDateTime deckt nur die iCal-Kompaktform ab. Ohne Offset (z. B. "2026-08-12T19:30:00"
+// oder ein reines Datum "2026-08-12") ist der Wert eine Wanduhrzeit, keine Instanz -- new
+// Date(rawValue) haette sie von der Prozesszeitzone abhaengig gemacht bzw. Datumsangaben als
+// UTC-Mitternacht fehlgedeutet. Dieselbe Regel wie bei resolveIcalDateTime ohne TZID: die
+// Vereinszeitzone gilt als Annahme, deshalb confirmed: false.
 export function resolveScheduleDateTime(
   rawValue: string,
   tzid: string | undefined,
@@ -235,6 +244,16 @@ export function resolveScheduleDateTime(
 ): { iso: string; confirmed: boolean } | undefined {
   const icalResolved = resolveIcalDateTime(rawValue, tzid, fallbackTimezone)
   if (icalResolved) return icalResolved
+  const isoMatch = ISO_DATE_TIME_PATTERN.exec(rawValue)
+  if (isoMatch) {
+    const [, year, month, day, hour, minute, second, offset] = isoMatch
+    if (!offset) {
+      const utcMs = zonedWallTimeToUtcMs(
+        Number(year), Number(month), Number(day), hour ? Number(hour) : 0, minute ? Number(minute) : 0, second ? Number(second) : 0, fallbackTimezone,
+      )
+      return { iso: new Date(utcMs).toISOString(), confirmed: false }
+    }
+  }
   const parsed = new Date(rawValue)
   if (!Number.isNaN(parsed.getTime())) return { iso: parsed.toISOString(), confirmed: true }
   return undefined

@@ -31,9 +31,8 @@ export function registerClubScheduleRoutes(app: FastifyInstance, context: ApiRou
     if (query.teamId) builder = builder.eq('team_id', query.teamId)
     if (query.from) builder = builder.gte('kickoff_at', query.from)
     if (query.to) builder = builder.lte('kickoff_at', query.to)
-    const rows = await builder.order('kickoff_at')
-    if (rows.error) throw rows.error
-    return reply.code(200).send(rows.data.map(mapFixtureRow))
+    const rows = await fetchAllRows<Record<string, unknown>>((from, to) => builder.order('kickoff_at').order('id').range(from, to))
+    return reply.code(200).send(rows.map(mapFixtureRow))
   })
 
   app.get('/v1/organizations/:id/club-events', async (request, reply) => {
@@ -51,9 +50,8 @@ export function registerClubScheduleRoutes(app: FastifyInstance, context: ApiRou
     if (query.teamId) builder = builder.eq('team_id', query.teamId)
     if (query.from) builder = builder.gte('starts_at', query.from)
     if (query.to) builder = builder.lte('starts_at', query.to)
-    const rows = await builder.order('starts_at')
-    if (rows.error) throw rows.error
-    return reply.code(200).send(rows.data.map(mapClubEventRow))
+    const rows = await fetchAllRows<Record<string, unknown>>((from, to) => builder.order('starts_at').order('id').range(from, to))
+    return reply.code(200).send(rows.map(mapClubEventRow))
   })
 
   app.post('/v1/fixtures/:id/dismiss-announcement', async (request, reply) => {
