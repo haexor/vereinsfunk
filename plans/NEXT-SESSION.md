@@ -1,6 +1,6 @@
 # Prompt für die nächste Session
 
-Arbeite im Repository-Root dieses Checkouts. Beginne mit `git status --short --branch`, `git log --oneline main..HEAD` und `gh pr list --state open`.
+Arbeite im Repository-Root dieses Checkouts. Beginne mit `git status --short --branch`, `git log --oneline main..HEAD` und `gh pr view 51 --json state,mergedAt` — PR #51 enthält nur die Ausplanung von Plan 035 (dieses Dokument, `plans/035-generation-recovery-trigger.md`, `plans/README.md`), keine Code-Änderung. Falls PR #51 noch offen ist, mit dem Nutzer klären, ob er vor der Umsetzung gemergt werden soll (empfohlen: ja, dann die Umsetzung in einem frischen Worktree/Branch von `main` beginnen).
 
 ## Ausgangslage: Plan 034 gemergt, Plan 035 vollständig ausgeplant
 
