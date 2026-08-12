@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(32);
+select plan(37);
 
 set local role postgres;
 
@@ -223,6 +223,48 @@ select lives_ok(
   'a department_admin can still add a regular member as authenticated'
 );
 set local role postgres;
+
+-- 29: count_platform_admin_organization_totals hat kein Privileg fuer authenticated -- dieselbe
+-- Begruendung wie bei count_publications_for_quotas: ein Grant an authenticated legte Mitglieder-/
+-- Abteilungszahlen fremder Vereine offen.
+set local role authenticated;
+select throws_ok(
+  $$select * from public.count_platform_admin_organization_totals(array['50000000-1000-4000-8000-000000000001']::uuid[])$$,
+  '42501', null, 'authenticated cannot call count_platform_admin_organization_totals directly'
+);
+set local role postgres;
+
+-- 30-31: liefert die tatsaechliche Mitglieder-/Abteilungszahl der Separation-Org (1 Mitgliedschaft
+-- aus organization_memberships, 1 Abteilung aus departments, siehe Fixtur oben) statt einer der
+-- beiden Zeilenzahlen aus dem falschen der beiden LEFT JOINs.
+select is(
+  (select member_count from public.count_platform_admin_organization_totals(
+    array['50000000-1000-4000-8000-000000000001', '50000000-9999-4000-8000-000000000099']::uuid[]
+  ) where organization_id = '50000000-1000-4000-8000-000000000001'),
+  1, 'count_platform_admin_organization_totals reports the actual member count'
+);
+select is(
+  (select department_count from public.count_platform_admin_organization_totals(
+    array['50000000-1000-4000-8000-000000000001', '50000000-9999-4000-8000-000000000099']::uuid[]
+  ) where organization_id = '50000000-1000-4000-8000-000000000001'),
+  1, 'count_platform_admin_organization_totals reports the actual department count'
+);
+
+-- 32-33: ein Verein ohne Mitgliedschaften/Abteilungen bekommt trotzdem eine Zeile mit 0/0 -- die
+-- beiden LEFT JOINs muessen coalescen, nicht die Zeile aus unnest() wegfallen lassen. Beide
+-- Spalten einzeln geprueft, sonst bliebe ein Fehler im department_count-coalesce unbemerkt.
+select is(
+  (select member_count from public.count_platform_admin_organization_totals(
+    array['50000000-1000-4000-8000-000000000001', '50000000-9999-4000-8000-000000000099']::uuid[]
+  ) where organization_id = '50000000-9999-4000-8000-000000000099'),
+  0, 'an organization id without any rows still gets member_count 0 instead of being dropped'
+);
+select is(
+  (select department_count from public.count_platform_admin_organization_totals(
+    array['50000000-1000-4000-8000-000000000001', '50000000-9999-4000-8000-000000000099']::uuid[]
+  ) where organization_id = '50000000-9999-4000-8000-000000000099'),
+  0, 'an organization id without any rows still gets department_count 0 instead of being dropped'
+);
 
 select * from finish();
 rollback;

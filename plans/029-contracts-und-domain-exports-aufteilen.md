@@ -68,10 +68,26 @@ Teile die großen Testdateien analog auf. Ergänze einen kleinen Kompatibilität
 
 ## Done criteria
 
-- [ ] Kein Contracts-/Domain-Sourcefile ist größer als 500 LoC.
-- [ ] Root-Imports aller Anwendungen bleiben gültig.
-- [ ] Keine Framework- oder Datenbankabhängigkeit landet im Domain-Paket.
-- [ ] `pnpm check` besteht.
+- [x] Kein Contracts-/Domain-Sourcefile ist größer als 500 LoC (größtes: `contracts/src/policy.ts` mit 298).
+- [x] Root-Imports aller Anwendungen bleiben gültig -- `index.ts` ist in beiden Paketen nur noch ein Barrel.
+- [x] Keine Framework- oder Datenbankabhängigkeit landet im Domain-Paket.
+- [x] `pnpm check` besteht.
+
+## Abschluss (2026-08-12)
+
+`contracts/src/index.ts` (2.016 LoC) ist in dreizehn Fachmodule zerlegt; jeder `z.infer`-Typ steht
+jetzt neben seinem Schema statt in einem 211-zeiligen Block am Dateiende. `domain/src/index.ts`
+(560 LoC) ist in `postStatus`, `effectiveConfig`, `reviewRoute`, `channels`, `mediaGate` und
+`llmProviders` zerlegt; die bestehenden `metrics/brand/consent/fonts/contrast` bleiben unverändert.
+
+**Entscheidung, die der Plan offenließ**: zwei zuvor modul-private Helfer (`CountryCodeSchema`)
+kreuzten nach der Aufteilung eine Modulgrenze. Statt sie zu exportieren -- was sie über `export *`
+zu neuen öffentlichen Verträgen gemacht hätte -- liegen sie in `contracts/src/primitives.ts`, das
+bewusst NICHT im Barrel steht. Die öffentliche Oberfläche des Pakets ist damit unverändert.
+
+Die Aufteilung lief skriptgesteuert mit einer Zyklusprüfung: ein Import-Zyklus zwischen zwei
+Vertragsmodulen hätte wegen zods Initialisierungsreihenfolge zur Laufzeit brechen können, nicht
+erst beim Typecheck. Es entstand keiner.
 
 ## STOP conditions
 

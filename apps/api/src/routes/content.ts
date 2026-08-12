@@ -1,0 +1,424 @@
+import {
+  CreateCompositionSessionSchema,
+  CreateCustomStyleProfileRequestSchema,
+  CreateGenerationCommandSchema,
+  CreateSubmissionSchema,
+  GeneratedPostSchema,
+  GenerationCandidateStatusSchema,
+  StyleProfileRulesSchema,
+  SubmissionAcceptedSchema,
+  TeamSchema,
+  UuidSchema,
+  type StyleProfileRules,
+  type Team,
+} from '@vereinsfunk/contracts'
+import { assertGroundedPost, createGroundedContentBrief, FakeContentGenerator, factsFromClubEvent, factsFromFixture } from '@vereinsfunk/content-engine'
+import { createIdempotencyKey, evaluateMediaGate, evaluateSubmitPermission } from '@vereinsfunk/domain'
+import type { FastifyInstance } from 'fastify'
+import { createHash, randomUUID } from 'node:crypto'
+import { z } from 'zod'
+import { CLUB_EVENT_COLUMNS, FIXTURE_COLUMNS, mapClubEventRow, mapFixtureRow, mapTeamRow } from '../apiMappers.js'
+import type { ApiRouteContext } from './context.js'
+import { createAuditRecorder, fetchMemberTrust, resolveScopedEffectiveConfig, toPermissionScope } from './shared.js'
+
+// Plan 033 text-only workshop. Diese Routen rufen kein LLM auf: sie schreiben Sitzung und einen
+// reinen ID-Umschlag ueber eine service-only RPC, die der Worker spaeter ausfuehrt.
+const systemStyleProfiles: Record<string, { name: string; description: string; styleRules: StyleProfileRules; avoidRules: string[] }> = {
+  klar_erklaerend: { name: 'Klar erklärend', description: 'Sachlich, verständlich und direkt.', styleRules: { sentenceLength: 'short', energy: 2, humour: 'none', formality: 'balanced', perspective: 'club', bannedPhrases: [], additionalInstructions: '' }, avoidRules: ['Superlative ohne Beleg'] },
+  warm_gemeinschaftlich: { name: 'Warm gemeinschaftlich', description: 'Einladend und verbunden.', styleRules: { sentenceLength: 'mixed', energy: 3, humour: 'none', formality: 'casual', perspective: 'we', bannedPhrases: [], additionalInstructions: '' }, avoidRules: [] },
+  lebendig_sportlich: { name: 'Lebendig sportlich', description: 'Aktiv und motivierend.', styleRules: { sentenceLength: 'short', energy: 4, humour: 'light', formality: 'casual', perspective: 'we', bannedPhrases: [], additionalInstructions: '' }, avoidRules: [] },
+  leicht_humorvoll: { name: 'Leicht humorvoll', description: 'Freundlich mit zurückhaltendem Humor.', styleRules: { sentenceLength: 'mixed', energy: 3, humour: 'light', formality: 'casual', perspective: 'we', bannedPhrases: [], additionalInstructions: '' }, avoidRules: ['Ironie auf Kosten Einzelner'] },
+  feierlich_wertschaetzend: { name: 'Feierlich wertschätzend', description: 'Dankbar und respektvoll.', styleRules: { sentenceLength: 'mixed', energy: 3, humour: 'none', formality: 'formal', perspective: 'club', bannedPhrases: [], additionalInstructions: '' }, avoidRules: [] },
+}
+
+export function registerContentRoutes(app: FastifyInstance, context: ApiRouteContext): void {
+  const { requireAuth, requirePermission, supabaseClients, uploads } = context
+  const recordAuditEvent = createAuditRecorder(supabaseClients)
+
+  app.post('/v1/submissions', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const input = CreateSubmissionSchema.parse(request.body)
+    if (!(await requirePermission(request, reply, 'post.create', { organizationId: input.organizationId, departmentId: input.departmentId }))) return
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+
+    // Paket 011: evaluateSubmitPermission vor der ersten Persistenz -- Berechtigung im Scope ist
+    // durch requirePermission oben schon bestaetigt, Vertrauen/Preset/Format sind es noch nicht.
+    const config = await resolveScopedEffectiveConfig(client, input.organizationId, input.departmentId, input.teamId ?? null)
+    const trust = await fetchMemberTrust(client, request.auth!.userId, input.organizationId, input.departmentId, input.teamId ?? null)
+    const submitCheck = evaluateSubmitPermission({
+      hasCreatePermission: true,
+      // fetchMemberTrust liefert bereits alle zutreffenden Ebenen (Verein, die Abteilung, das
+      // Team) -- ein find() auf nur EINE Ebene liesse sich durch die Wahl von teamId umgehen
+      // (Abteilungssperre bleibt unbeachtet) oder pruefte die Vereinsebene nie (beim
+      // Rechte-Review gefunden). Verschaerfung wirkt wie ueberall sonst: jede Ebene kann
+      // sperren, keine kann eine Sperre einer anderen Ebene aufheben.
+      submitAllowed: trust.every((record) => record.submitAllowed !== false),
+      presetSlug: input.presetSlug,
+      requestedFormats: input.requestedFormats,
+      allowedPresets: config.policies.allowedPresets,
+      allowedFormats: config.policies.allowedFormats,
+    })
+    if (!submitCheck.allowed) {
+      // submit_not_allowed ist eine Berechtigungsfrage (das Vertrauen dieser Person, Plan 011:
+      // "Einreichen bei submit_allowed = false -> 403"); preset_not_allowed/format_not_allowed sind
+      // inhaltliche Verstoesse gegen die Richtlinie dieses Scopes -> 422 mit maschinenlesbarem Grund.
+      const status = submitCheck.reason === 'submit_not_allowed' ? 403 : 422
+      return reply.code(status).send({ error: submitCheck.reason, correlationId: request.id })
+    }
+
+    // Herkunft eines Spiel-/Veranstaltungsbezugs leitet die API selbst aus der referenzierten
+    // Zeile her, nie aus Client-Angaben (plans/README.md, "RPC traut Client nicht") -- der Client
+    // nennt nur fixtureId/clubEventId, die tatsaechlichen Fakten/den Quellenstand bestimmt diese
+    // Anfrage selbst per factsFromFixture/factsFromClubEvent. sourceMaterial.facts bleibt
+    // trotzdem das vom Menschen bestaetigte Ergebnis (plans/019, Abschnitt 3: "er bestaetigt
+    // schneller als er tippt, aber er bestaetigt") -- provenance/snapshot sind nur die
+    // Herkunftsangabe dazu, keine Ueberschreibung der Fakten.
+    let sourceProvenance: Record<string, unknown> = {}
+    let sourceRevisionAt: string | null = null
+    let sourcePrefillSnapshot: Record<string, unknown> | null = null
+    if (input.fixtureId || input.clubEventId) {
+      const organizationRow = await client.from('organizations').select('timezone').eq('id', input.organizationId).single()
+      if (organizationRow.error) throw organizationRow.error
+      const timezone = organizationRow.data.timezone as string
+
+      if (input.fixtureId) {
+        const fixtureRow = await client
+          .from('fixtures')
+          .select(FIXTURE_COLUMNS)
+          .eq('organization_id', input.organizationId)
+          .eq('id', input.fixtureId)
+          .maybeSingle()
+        if (fixtureRow.error) throw fixtureRow.error
+        if (!fixtureRow.data || fixtureRow.data.department_id !== input.departmentId) {
+          return reply.code(400).send({ error: 'fixture_not_found_in_department', correlationId: request.id })
+        }
+        const fixture = mapFixtureRow(fixtureRow.data)
+        let team: Team | null = null
+        if (fixture.teamId) {
+          const teamRow = await client
+            .from('teams')
+            .select('id, organization_id, department_id, name, age_group, competition, source_id, archived_at, created_at')
+            .eq('id', fixture.teamId)
+            .maybeSingle()
+          if (teamRow.error) throw teamRow.error
+          team = teamRow.data ? TeamSchema.parse(mapTeamRow(teamRow.data)) : null
+        }
+        const facts = factsFromFixture(fixture, team, timezone)
+        if (facts.ok) {
+          sourceProvenance = facts.provenance
+          sourcePrefillSnapshot = facts.facts
+        }
+        sourceRevisionAt = fixture.sourceUpdatedAt ?? fixtureRow.data.updated_at as string
+      } else if (input.clubEventId) {
+        const eventRow = await client
+          .from('club_events')
+          .select(CLUB_EVENT_COLUMNS)
+          .eq('organization_id', input.organizationId)
+          .eq('id', input.clubEventId)
+          .maybeSingle()
+        if (eventRow.error) throw eventRow.error
+        if (!eventRow.data || (eventRow.data.department_id !== null && eventRow.data.department_id !== input.departmentId)) {
+          return reply.code(400).send({ error: 'event_not_found_in_department', correlationId: request.id })
+        }
+        const clubEvent = mapClubEventRow(eventRow.data)
+        const facts = factsFromClubEvent(clubEvent, timezone)
+        if (facts.ok) {
+          sourceProvenance = facts.provenance
+          sourcePrefillSnapshot = facts.facts
+        }
+        sourceRevisionAt = clubEvent.sourceUpdatedAt ?? eventRow.data.updated_at as string
+      }
+    }
+
+    // forbiddenTopics wird additiv zu doNotMention ergaenzt (Plan 011, "Durchsetzung an vier
+    // Stellen") -- die Content-Engine kennt beide nicht getrennt, nur eine gemeinsame Verbotsliste.
+    const insert = await client
+      .from('submissions')
+      .insert({
+        organization_id: input.organizationId,
+        department_id: input.departmentId,
+        team_id: input.teamId ?? null,
+        content_type: input.presetSlug,
+        preset_slug: input.presetSlug,
+        communication_goal: input.communicationGoal,
+        requested_formats: input.requestedFormats,
+        facts: input.sourceMaterial.facts,
+        source_material: {
+          ...input.sourceMaterial,
+          doNotMention: Array.from(new Set([...input.sourceMaterial.doNotMention, ...config.policies.forbiddenTopics])),
+        },
+        source_revision: input.sourceRevision,
+        fixture_id: input.fixtureId ?? null,
+        club_event_id: input.clubEventId ?? null,
+        source_provenance: sourceProvenance,
+        source_revision_at: sourceRevisionAt,
+        source_prefill_snapshot: sourcePrefillSnapshot,
+        created_by: request.auth!.userId,
+      })
+      .select('id, status')
+      .single()
+    if (insert.error) throw insert.error
+    const submissionId = insert.data.id as string
+    const correlationId = request.id
+    const generated = await new FakeContentGenerator().generate(input)
+    let draft: { postId: string; postVersionId: string } | null = null
+    if (generated.missingFacts.length === 0) {
+      // Schliesst die seit den Paketen 011/012/014/015/019 dokumentierte Luecke: bis hierhin
+      // entstand nie ein post/post_version aus einer submission (plans/025). assertGroundedPost
+      // setzt die in Plan 001 nur definierte, nie durchgesetzte Invariante erstmals durch --
+      // mit FakeContentGenerator deterministisch nie verletzt, aber kein stilles Sicherheitsnetz.
+      assertGroundedPost(generated, createGroundedContentBrief(input))
+
+      // Geflacht, NICHT die unveraenderte EffectiveConfig-Verschachtelung: schedule_publication
+      // und GET /v1/post-versions/:id/available-channels lesen bereits heute
+      // effective_config_snapshot->'config'->'allowedChannelIds' direkt, nicht
+      // ->'config'->'policies'->'allowedChannelIds'. Da bisher nichts diese Spalte beschrieb, blieb
+      // der Mismatch folgenlos -- als erster Schreibzugriff muss dieser Code die gelesene Form
+      // treffen, sonst waere die Kanal-Beschraenkung aus 011/012 ab hier stillschweigend wirkungslos.
+      const effectiveConfigSnapshot = { config: { tone: config.tone, goals: config.goals, hashtags: config.hashtags, ...config.policies } }
+
+      // posts/post_versions/post_variants haben keine Insert-Policy fuer authenticated (RLS ohne
+      // passende Policy verweigert das grundsaetzlich) -- Schreibzugriff laeuft wie bei
+      // directory_people/fixtures/consent_records ausschliesslich ueber die API mit Service Role,
+      // nach dem bereits oben erfolgten requirePermission('post.create', ...).
+      const service = supabaseClients.forService()
+      const postInsert = await service
+        .from('posts')
+        .insert({
+          organization_id: input.organizationId, department_id: input.departmentId, team_id: input.teamId ?? null,
+          submission_id: submissionId, status: 'draft_ready', created_by: request.auth!.userId,
+        })
+        .select('id')
+        .single()
+      if (postInsert.error) throw postInsert.error
+      const postId = postInsert.data.id as string
+
+      // Die vier Schreibvorgaenge sind getrennte PostgREST-Aufrufe ohne gemeinsame Transaktion --
+      // ohne diese Kompensation bliebe bei jedem Fehler nach dem posts-Insert eine 'draft_ready'-
+      // Zeile ohne current_version_id und ohne Version zurueck (Code-Review zu PR #25, dieselbe
+      // Kompensationslehre wie bei POST /v1/llm-providers und POST /v1/oauth-pending/:id/select).
+      try {
+        const versionInsert = await service
+          .from('post_versions')
+          .insert({
+            organization_id: input.organizationId, post_id: postId, version_number: 1,
+            source_facts_snapshot: input.sourceMaterial, effective_config_snapshot: effectiveConfigSnapshot,
+            title: generated.headline, caption: generated.caption, call_to_action: generated.callToAction,
+            hashtags: generated.hashtags, alt_text: generated.altText, safety_flags: generated.safetyFlags,
+            created_by_type: 'llm',
+          })
+          .select('id')
+          .single()
+        if (versionInsert.error) throw versionInsert.error
+        const postVersionId = versionInsert.data.id as string
+
+        const postUpdate = await service.from('posts').update({ current_version_id: postVersionId }).eq('id', postId)
+        if (postUpdate.error) throw postUpdate.error
+
+        // Welche Variante/welches Format zu einer konkreten Veroeffentlichung gehoert, ist Teil des
+        // noch fehlenden Kreativsystems (Plan 005) -- hier nur befuellt, weil das Datenmodell es
+        // erwartet und generated.variants es bereits vollstaendig liefert.
+        if (generated.variants.length > 0) {
+          const variantsInsert = await service.from('post_variants').insert(
+            generated.variants.map((variant) => ({
+              organization_id: input.organizationId, post_version_id: postVersionId, platform: variant.platform,
+              format: variant.format, schema_version: '1', prompt_version: generated.templateId, variant,
+            })),
+          )
+          if (variantsInsert.error) throw variantsInsert.error
+        }
+
+        await recordAuditEvent(request, {
+          organizationId: input.organizationId, action: 'post.drafted', entityType: 'post_versions', entityId: postVersionId,
+          metadata: { postId, submissionId, presetSlug: input.presetSlug },
+        })
+        draft = { postId, postVersionId }
+      } catch (err) {
+        await service.from('posts').delete().eq('id', postId)
+        throw err
+      }
+    }
+    const accepted = SubmissionAcceptedSchema.parse({
+      submissionId,
+      correlationId,
+      status: generated.missingFacts.length > 0 ? 'facts_required' : 'queued',
+      idempotencyKey: createIdempotencyKey('submission', submissionId, input.sourceRevision),
+      ...(draft ?? {}),
+    })
+
+    request.log.info(
+      {
+        organizationId: input.organizationId,
+        departmentId: input.departmentId,
+        submissionId,
+        correlationId,
+        missingFactsCount: generated.missingFacts.length,
+        postVersionId: draft?.postVersionId ?? null,
+      },
+      'submission accepted',
+    )
+
+    return reply.code(202).send({ ...accepted, preview: generated })
+  })
+
+  const TextWorkshopScopeSchema = z.object({ organizationId: UuidSchema, departmentId: UuidSchema, teamId: UuidSchema.nullable().optional() })
+
+  app.get('/v1/content-style-profiles', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const scope = TextWorkshopScopeSchema.parse(request.query)
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(scope.organizationId, scope.departmentId, scope.teamId ?? null)))) return
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const rows = await client.from('content_style_profiles').select('id, slug, name, description, style_rules, avoid_rules, department_id, team_id, created_by, created_at, updated_at, is_active').eq('organization_id', scope.organizationId).eq('is_active', true)
+    if (rows.error) throw rows.error
+    const systems = Object.entries(systemStyleProfiles).map(([slug, profile]) => ({ id: null, slug, kind: 'system', ...profile, isActive: true }))
+    const customs = rows.data.map((row) => ({ id: row.id, slug: row.slug, kind: 'custom', name: row.name, description: row.description, styleRules: StyleProfileRulesSchema.parse(row.style_rules), avoidRules: row.avoid_rules, isActive: row.is_active }))
+    return reply.send({ profiles: [...systems, ...customs] })
+  })
+
+  app.post('/v1/content-style-profiles', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const input = CreateCustomStyleProfileRequestSchema.parse(request.body)
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(input.organizationId, input.departmentId ?? null, input.teamId ?? null)))) return
+    const service = supabaseClients.forService()
+    const inserted = await service.from('content_style_profiles').insert({ organization_id: input.organizationId, department_id: input.departmentId ?? null, team_id: input.teamId ?? null, slug: input.slug, name: input.name, kind: 'custom', description: input.description, style_rules: input.styleRules, avoid_rules: input.avoidRules, created_by: request.auth!.userId }).select('id').single()
+    if (inserted.error) throw inserted.error
+    await recordAuditEvent(request, { organizationId: input.organizationId, action: 'content_style_profile.created', entityType: 'content_style_profile', entityId: inserted.data.id as string, metadata: { scope: input.teamId ? 'team' : input.departmentId ? 'department' : 'organization' } })
+    return reply.code(201).send({ id: inserted.data.id })
+  })
+
+  app.post('/v1/text-workshop/sessions', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const input = CreateCompositionSessionSchema.parse(request.body)
+    if (input.mediaAssetIds.length > 0 || input.requestedFormats.some((format) => format !== 'text_post')) return reply.code(422).send({ error: 'text_only_pilot' })
+    const scope = toPermissionScope(input.organizationId, input.departmentId, input.teamId ?? null)
+    if (!(await requirePermission(request, reply, 'post.create', scope))) return
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const config = await resolveScopedEffectiveConfig(client, input.organizationId, input.departmentId, input.teamId ?? null)
+    if (config.policies.allowedPresets?.length && !config.policies.allowedPresets.includes(input.presetSlug)) return reply.code(422).send({ error: 'preset_not_allowed' })
+    let styleSnapshot: Record<string, unknown>
+    const styleProfileId: string | null = input.styleProfileId ?? null
+    if (styleProfileId) {
+      const row = await client.from('content_style_profiles').select('id, name, description, style_rules, avoid_rules, department_id, team_id').eq('id', styleProfileId).eq('organization_id', input.organizationId).eq('is_active', true).maybeSingle()
+      if (row.error) throw row.error
+      if (!row.data) return reply.code(404).send({ error: 'style_profile_not_found' })
+      if ((row.data.department_id !== null && row.data.department_id !== input.departmentId) || (row.data.team_id !== null && row.data.team_id !== (input.teamId ?? null))) {
+        return reply.code(404).send({ error: 'style_profile_not_found' })
+      }
+      styleSnapshot = { name: row.data.name, description: row.data.description, styleRules: StyleProfileRulesSchema.parse(row.data.style_rules), avoidRules: row.data.avoid_rules }
+    } else {
+      const profile = systemStyleProfiles[input.systemStyleProfileSlug ?? 'klar_erklaerend']!
+      styleSnapshot = { name: profile.name, description: profile.description, styleRules: profile.styleRules, avoidRules: profile.avoidRules, slug: input.systemStyleProfileSlug ?? 'klar_erklaerend' }
+    }
+    const sourceMaterial = { ...input.sourceMaterial, doNotMention: Array.from(new Set([...input.sourceMaterial.doNotMention, ...config.policies.forbiddenTopics])) }
+    const sessionHash = createHash('sha256').update(JSON.stringify({ presetSlug: input.presetSlug, goal: input.communicationGoal, sourceMaterial, styleSnapshot, sourceRevision: input.sourceRevision })).digest('hex')
+    const candidateHash = createHash('sha256').update(`${sessionHash}:initial`).digest('hex')
+    const idempotencyKey = `generate-text:${sessionHash}:${input.sourceRevision}`
+    const service = supabaseClients.forService()
+    const result = await service.rpc('create_text_generation_session', {
+      p_organization_id: input.organizationId, p_department_id: input.departmentId, p_team_id: input.teamId ?? null, p_preset_slug: input.presetSlug,
+      p_communication_goal: input.communicationGoal, p_requested_formats: input.requestedFormats, p_source_material: sourceMaterial,
+      p_style_profile_id: styleProfileId, p_style_profile_snapshot: styleSnapshot, p_effective_config_snapshot: { config: { tone: config.tone, goals: config.goals, hashtags: config.hashtags, ...config.policies } },
+      p_source_revision: input.sourceRevision, p_input_hash: sessionHash, p_candidate_input_hash: candidateHash, p_generation_intent: 'initial', p_revision_instruction: null,
+      p_created_by: request.auth!.userId, p_correlation_id: request.id, p_idempotency_key: idempotencyKey,
+    })
+    if (result.error) throw result.error
+    return reply.code(202).send({ ...z.object({ sessionId: UuidSchema, candidateId: UuidSchema }).parse(result.data), correlationId: request.id })
+  })
+
+  const TextWorkshopCandidateSchema = z.object({
+    id: UuidSchema, status: GenerationCandidateStatusSchema, generated_content: GeneratedPostSchema.nullable(),
+    quality_flags: z.array(z.string()), failure_code: z.string().nullable(), triggered_by: z.enum(['member', 'automatic_recovery']),
+    accepted_post_version_id: UuidSchema.nullable(), created_at: z.string(),
+  })
+  app.get('/v1/text-workshop/sessions/:id', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const id = z.object({ id: UuidSchema }).parse(request.params).id
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const session = await client.from('composition_sessions').select('id, organization_id, department_id, team_id, status, preset_slug, communication_goal, created_at').eq('id', id).maybeSingle()
+    if (session.error) throw session.error
+    if (!session.data) return reply.code(404).send({ error: 'session_not_found' })
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(session.data.organization_id, session.data.department_id, session.data.team_id)))) return
+    const candidates = await client.from('generation_candidates').select('id, status, generated_content, quality_flags, failure_code, triggered_by, accepted_post_version_id, created_at').eq('composition_session_id', id).order('created_at', { ascending: false })
+    if (candidates.error) throw candidates.error
+    return reply.send({ session: session.data, candidates: z.array(TextWorkshopCandidateSchema).parse(candidates.data) })
+  })
+
+  app.post('/v1/text-workshop/sessions/:id/generations', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const sessionId = z.object({ id: UuidSchema }).parse(request.params).id
+    const command = CreateGenerationCommandSchema.parse({ ...z.object({ generationIntent: z.literal('revise'), revisionInstruction: z.string().trim().min(1).max(500) }).parse(request.body), sessionId })
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const session = await client
+      .from('composition_sessions')
+      .select('id, organization_id, department_id, team_id, preset_slug, communication_goal, requested_formats, source_material, style_profile_id, style_profile_snapshot, effective_config_snapshot, source_revision, input_hash, created_by')
+      .eq('id', sessionId)
+      .maybeSingle()
+    if (session.error) throw session.error
+    if (!session.data) return reply.code(404).send({ error: 'session_not_found' })
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(session.data.organization_id, session.data.department_id, session.data.team_id)))) return
+    const revisionInstruction = command.revisionInstruction!
+    const candidateHash = createHash('sha256').update(`${session.data.input_hash}:revise:${revisionInstruction}`).digest('hex')
+    const service = supabaseClients.forService()
+    const result = await service.rpc('create_text_generation_session', {
+      p_organization_id: session.data.organization_id, p_department_id: session.data.department_id, p_team_id: session.data.team_id,
+      p_preset_slug: session.data.preset_slug, p_communication_goal: session.data.communication_goal, p_requested_formats: session.data.requested_formats,
+      p_source_material: session.data.source_material, p_style_profile_id: session.data.style_profile_id,
+      p_style_profile_snapshot: session.data.style_profile_snapshot, p_effective_config_snapshot: session.data.effective_config_snapshot,
+      p_source_revision: session.data.source_revision, p_input_hash: session.data.input_hash, p_candidate_input_hash: candidateHash,
+      p_generation_intent: 'revise', p_revision_instruction: revisionInstruction, p_created_by: request.auth!.userId,
+      p_correlation_id: request.id, p_idempotency_key: `generate-text:${candidateHash}`,
+    })
+    if (result.error) throw result.error
+    return reply.code(202).send({ ...z.object({ sessionId: UuidSchema, candidateId: UuidSchema }).parse(result.data), correlationId: request.id })
+  })
+
+  app.post('/v1/text-workshop/candidates/:id/accept', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const id = z.object({ id: UuidSchema }).parse(request.params).id
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const candidate = await client.from('generation_candidates').select('organization_id, composition_session_id').eq('id', id).maybeSingle()
+    if (candidate.error) throw candidate.error
+    if (!candidate.data) return reply.code(404).send({ error: 'candidate_not_found' })
+    const session = await client.from('composition_sessions').select('department_id, team_id').eq('id', candidate.data.composition_session_id).single()
+    if (session.error) throw session.error
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(candidate.data.organization_id, session.data.department_id, session.data.team_id)))) return
+    const service = supabaseClients.forService()
+    const accepted = await service.rpc('accept_text_generation_candidate', { p_candidate_id: id, p_actor_user_id: request.auth!.userId })
+    if (accepted.error) throw accepted.error
+    return reply.send(accepted.data)
+  })
+
+  const UploadInitiateSchema = z.object({ organizationId: UuidSchema, departmentId: UuidSchema, filename: z.string().min(1).max(120).regex(/^[^/\\]+$/), mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp', 'video/mp4']), byteSize: z.int().positive().max(100 * 1024 * 1024) })
+  app.post('/v1/media/uploads', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const input = UploadInitiateSchema.parse(request.body); const assetId = randomUUID()
+    if (!(await requirePermission(request, reply, 'post.create', { organizationId: input.organizationId, departmentId: input.departmentId }))) return
+    const upload = await uploads.create({ ...input, assetId })
+    return reply.code(201).send({ assetId, ...upload })
+  })
+  app.post('/v1/media/:assetId/complete', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    // Keine requirePermission-Pruefung: welchem Verein/Abteilung ein assetId gehoert, ist
+    // erst bekannt, wenn media_assets echt persistiert wird (LocalUploadService ist noch
+    // ein Stub). Sobald das der Fall ist, muss hier die Zugehoerigkeit nachgeschlagen und
+    // gegen 'post.edit' geprueft werden -- sonst kann jeder authentifizierte Nutzer ein
+    // fremdes assetId abschliessen.
+    const params = z.object({ assetId: UuidSchema }).parse(request.params); const body = z.object({ sha256: z.string().regex(/^[a-f0-9]{64}$/i) }).parse(request.body)
+    return reply.code(202).send(await uploads.complete({ ...params, ...body }))
+  })
+  app.post('/v1/media/gate', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    // Keine requirePermission-Pruefung: reine, zustandslose Regelauswertung ohne Scope-Bezug
+    // und ohne Datenzugriff -- es gibt nichts scope-Gebundenes, gegen das zu pruefen waere.
+    const input = z.object({
+      scanStatus: z.enum(['pending', 'clean', 'failed']), facesConfirmedComplete: z.boolean(), hasOriginalSelected: z.boolean(),
+      derivativeCurrent: z.boolean(), minorReviewConfirmed: z.boolean(),
+      faces: z.array(z.object({
+        subjectKind: z.enum(['adult', 'minor', 'unknown']), decision: z.enum(['pending', 'consented', 'obscure', 'exclude']),
+        consentValid: z.boolean().optional(), consentScopeMismatch: z.boolean().optional(),
+      })),
+      namingNotAllowed: z.boolean().optional(), sensitiveTextData: z.boolean().optional(),
+    }).parse(request.body)
+    return evaluateMediaGate(input)
+  })
+}

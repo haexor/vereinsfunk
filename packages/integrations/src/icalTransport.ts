@@ -116,7 +116,10 @@ function offsetAtInstant(instantMs: number, timeZone: string): number {
   return asIfUtcMs - instantMs
 }
 
-function zonedWallTimeToUtcMs(
+// Exportiert, weil integrationSync.ts dieselbe DST-bewusste Umrechnung fuer ISO-Zeitangaben ohne
+// Offset braucht (resolveScheduleDateTime) -- eine zweite, eigene Implementierung waere hier genau
+// die Kopie, deren naechstes Auseinanderlaufen dieses Paket an anderer Stelle bereits behoben hat.
+export function zonedWallTimeToUtcMs(
   year: number,
   month: number,
   day: number,

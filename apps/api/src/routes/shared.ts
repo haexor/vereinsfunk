@@ -1,4 +1,5 @@
 import type { ConsentScope, OutputFormat, ScopeLevel } from '@vereinsfunk/contracts'
+import { canRemoveRole, hasPermission, type Permission, type Role } from '@vereinsfunk/authorization'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { mergeEffectiveConfig, resolveEffectiveConfig, type ConfigOverride, type TrustRecord } from '@vereinsfunk/domain'
 import type { FastifyRequest } from 'fastify'
@@ -74,6 +75,31 @@ export async function resolveMembershipScope(
 // bei Abwesenheit ganz fehlen statt explizit auf undefined gesetzt zu sein.
 export function toPermissionScope(organizationId: string, departmentId?: string | null, teamId?: string | null): PermissionScope {
   return { organizationId, ...(departmentId ? { departmentId } : {}), ...(teamId ? { teamId } : {}) }
+}
+
+// Wie resolveInvitationScope (routes/members.ts): departmentId/teamId serverseitig gegen ihre
+// echte organization_id/department_id verifizieren, BEVOR irgendeine Berechtigung geprueft wird --
+// sonst waeren sie client-seitig frei kombinierbar (z. B. eine fremde departmentId zu dieser
+// Organisation). Von Verzeichnis, Integration und Einwilligung gebraucht, deshalb hier.
+export async function resolveDirectoryScope(
+  client: SupabaseClient,
+  organizationId: string,
+  departmentId: string | null,
+  teamId: string | null,
+): Promise<PermissionScope | null> {
+  if (teamId) {
+    const team = await client.from('teams').select('organization_id, department_id').eq('id', teamId).maybeSingle()
+    if (team.error) throw team.error
+    if (!team.data || team.data.organization_id !== organizationId || team.data.department_id !== departmentId) return null
+    return { organizationId, departmentId: team.data.department_id as string, teamId }
+  }
+  if (departmentId) {
+    const department = await client.from('departments').select('organization_id').eq('id', departmentId).maybeSingle()
+    if (department.error) throw department.error
+    if (!department.data || department.data.organization_id !== organizationId) return null
+    return { organizationId, departmentId }
+  }
+  return { organizationId }
 }
 
 // Eine befristete Mitgliedschaft oder Befreiung ist nach expires_at wirkungslos. Jede Abfrage auf
@@ -310,4 +336,62 @@ export async function fetchMemberTrust(
   return rows.data
     .filter((row) => row.scope === 'organization' || (row.scope === 'department' && row.department_id === departmentId) || (row.scope === 'team' && teamId !== null && row.team_id === teamId))
     .map((row) => ({ scope: row.scope as ScopeLevel, submitAllowed: row.submit_allowed as boolean, reviewRequirement: row.review_requirement as TrustRecord['reviewRequirement'] }))
+}
+
+// Welche Berechtigung eine Ebene verwaltet -- von Richtlinien, Prueferzuweisungen und
+// Kontingenten gleichermassen gebraucht.
+export const POLICY_MANAGE_PERMISSION: Record<ScopeLevel, Permission> = {
+  organization: 'organization.manage',
+  department: 'department.manage',
+  team: 'team.manage',
+}
+
+// Spaltenliste einer social_connections-Zeile -- von Kanalverwaltung und OAuth-Auswahl geteilt.
+export const SOCIAL_CONNECTION_COLUMNS =
+  'id, platform, external_account_id, display_name, status, token_expires_at, last_verified_at, owner_scope, owner_department_id, responsible_profile_id, purpose, confidential, archived_at, created_at, imprint_url, privacy_url, editorial_responsible_profile_id, editorial_responsible_note'
+
+// Massgeblich fuer jede Kanal-Berechtigung ist der Kanalbesitz: eine Verbindung im Besitz einer
+// Abteilung wird in deren Scope geprueft, eine vereinseigene auf Vereinsebene (Plan 012,
+// "Zuordnung und Verantwortung"). Stand sechsmal wortgleich in routes/channels.ts.
+export function channelOwnerScope(row: { organization_id: unknown; owner_scope: unknown; owner_department_id: unknown }): PermissionScope {
+  return toPermissionScope(row.organization_id as string, row.owner_scope === 'department' ? (row.owner_department_id as string) : null)
+}
+
+// Welche Aktionen der ANFRAGENDE auf einer Mitgliedschaftszeile ausfuehren darf. Die Antwort traegt
+// die Rechte mit, statt das Frontend sie zweitens herleiten zu lassen (Paket 023) -- viermal
+// wortgleich in routes/members.ts, deshalb hier einmal.
+export function membershipCapabilities(actorRoles: readonly Role[], targetRole: Role) {
+  const canRemoveTarget = canRemoveRole(actorRoles, targetRole)
+  return {
+    canChangeRole: hasPermission(actorRoles, 'member.invite') && canRemoveTarget,
+    canSetExpiry: hasPermission(actorRoles, 'member.invite') && canRemoveTarget,
+    canRemove: hasPermission(actorRoles, 'member.remove') && canRemoveTarget,
+  }
+}
+
+// POST /v1/invitations nimmt organizationId/departmentId/teamId direkt vom Client entgegen.
+// Ungeprueft wuerde requirePermission auf einer Scope-Kette pruefen, die client-seitig frei
+// kombinierbar ist (z. B. eine fremde organizationId zusammen mit der eigenen departmentId) --
+// beim Mandantentrennung-Review gefunden, dort nur zufaellig durch den FK-Constraint auf
+// invitations abgefangen.
+export async function resolveInvitationScope(
+  client: SupabaseClient,
+  input: { organizationId: string; departmentId?: string | null | undefined; teamId?: string | null | undefined },
+): Promise<{ scope: PermissionScope; scopeName: string } | null> {
+  if (input.teamId) {
+    const team = await client.from('teams').select('organization_id, department_id, name').eq('id', input.teamId).maybeSingle()
+    if (team.error) throw team.error
+    if (!team.data || team.data.organization_id !== input.organizationId || team.data.department_id !== input.departmentId) return null
+    return {
+      scope: { organizationId: team.data.organization_id as string, departmentId: team.data.department_id as string, teamId: input.teamId },
+      scopeName: team.data.name as string,
+    }
+  }
+  if (input.departmentId) {
+    const department = await client.from('departments').select('organization_id, name').eq('id', input.departmentId).maybeSingle()
+    if (department.error) throw department.error
+    if (!department.data || department.data.organization_id !== input.organizationId) return null
+    return { scope: { organizationId: department.data.organization_id as string, departmentId: input.departmentId }, scopeName: department.data.name as string }
+  }
+  return { scope: { organizationId: input.organizationId }, scopeName: '' }
 }

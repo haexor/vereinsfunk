@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(46);
+select plan(49);
 
 set local role postgres;
 
@@ -428,6 +428,29 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub', '64000000-0000-4000-8000-000000000003', true);
 select ok(authz.can_decide_stage('64000000-5000-4000-8000-000000000002'),
   'the assigned reviewer can still decide a stage that was marked stalled after its deadline passed');
+
+-- 45: count_publications_for_quotas beantwortet die Auslastung ALLER Kontingente eines Vereins in
+-- einer Abfrage -- GET /v1/analytics/summary rief count_publications_in_period vorher je
+-- Kontingentzeile einzeln auf. Ohne eigene Mitgliedschaftspruefung, deshalb wie die gezaehlte
+-- Funktion selbst kein Grant an authenticated.
+select throws_ok(
+  $$select * from public.count_publications_for_quotas('64000000-1000-4000-8000-000000000001', now())$$,
+  '42501', null, 'authenticated cannot call count_publications_for_quotas directly'
+);
+
+-- 46-47: eine Zeile je Kontingent des Vereins, und darin exakt die Zahl des Einzelaufrufs. Eine
+-- zweite Kopie der Perioden-/Statusregeln waere genau die Stelle, an der die Auswertung und die
+-- Sperre in schedule_publication() auseinanderlaufen wuerden.
+set local role postgres;
+select is(
+  (select count(*)::integer from public.count_publications_for_quotas('64000000-1000-4000-8000-000000000001', now())),
+  1, 'count_publications_for_quotas returns exactly one row per quota of the club'
+);
+select is(
+  (select used from public.count_publications_for_quotas('64000000-1000-4000-8000-000000000001', now())),
+  public.count_publications_in_period('64000000-1000-4000-8000-000000000001', null, null, null, 'day', now()),
+  'count_publications_for_quotas reports the same usage as the per-quota call it batches'
+);
 
 select * from finish();
 rollback;
