@@ -120,6 +120,16 @@ dieselbe Form wie die drei anderen Handler). `conflictFingerprint` ist dabei bit
 (Trennzeichen `\u0000`), sonst hätte jeder gespeicherte `ignore_permanently`-Fingerabdruck nicht
 mehr gegriffen.
 
+**Fehler-Mapping in `app.ts` korrigiert**: der `setErrorHandler` zog jeden nicht-Zod-Fehler auf
+`500 internal_error`. Fastify wirft seine eigenen Fehler aber mit gesetztem `statusCode`, bevor
+überhaupt ein Handler läuft — fehlerhaftes JSON (400), leerer Rumpf (400), unpassender Content-Type
+(415), zu großer Rumpf (413). Der Aufrufer konnte „meine Anfrage war kaputt“ damit nicht von „der
+Server ist kaputt“ unterscheiden, und echte Serverfehler gingen in der Überwachung zwischen falsch
+etikettierten Client-Fehlern unter. Übernommen wird jetzt nur 4xx; ein 5xx aus einer Bibliothek
+bleibt bewusst generisch, weil `error.message` Interna tragen kann. Regressionstest:
+`apps/api/src/api.routes.test.ts`, „answers a malformed JSON body with 400, not 500“ (verifiziert
+gegen die alte Fassung: schlägt dort fehl).
+
 ## STOP conditions
 
 - Ein Modul müsste einen Response-Vertrag ändern, um extrahiert zu werden.

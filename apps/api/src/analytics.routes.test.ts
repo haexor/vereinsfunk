@@ -37,8 +37,8 @@ describe('Paket 016: Auswertung: interne Kennzahlen', () => {
         }
         throw new Error(`unexpected table: ${table}`)
       },
-      rpc: async (fn: string) => {
-        if (fn === 'count_publications_in_period') return { data: 0, error: null }
+      rpc: (fn: string) => {
+        if (fn === 'count_publications_for_quotas') return chain({ data: [], error: null })
         throw new Error(`unexpected rpc: ${fn}`)
       },
     } as unknown as SupabaseClient
@@ -136,6 +136,44 @@ describe('Paket 016: Auswertung: interne Kennzahlen', () => {
         headers: { authorization: `Bearer ${token}` },
       })
       expect(response.statusCode).toBe(404)
+    })
+
+    // Die Auslastung kommt seit Migration 2026081207 als EINE mengenwertige Abfrage zurueck (vorher
+    // ein RPC-Aufruf je Kontingentzeile) -- die Zuordnung Zeile -> Auslastung passiert seitdem hier
+    // im Code und braucht einen eigenen Test. Die zweite Zeile bewusst ohne Auslastungszeile: ein
+    // Kontingent, das zwischen den beiden Abfragen entstand, meldet 0 statt aus der Liste zu fallen.
+    it('maps the batched quota usage onto its own quota row', async () => {
+      const dailyQuotaId = '90000000-2000-4000-8000-000000000001'
+      const weeklyQuotaId = '90000000-2000-4000-8000-000000000002'
+      const quotaRows = [
+        { id: dailyQuotaId, scope: 'organization', department_id: null, team_id: null, social_connection_id: null, period: 'day', max_publications: 5 },
+        { id: weeklyQuotaId, scope: 'department', department_id: DEPARTMENT_ID, team_id: null, social_connection_id: null, period: 'week', max_publications: 9 },
+      ]
+      const service = {
+        from: (table: string) => {
+          if (table === 'organizations') return chain({ data: { timezone: 'Europe/Berlin' }, error: null })
+          if (table === 'submissions') return emptySubmissions()
+          if (table === 'channel_quotas') return chain({ data: quotaRows, error: null })
+          if (['posts', 'post_status_events', 'approval_requests', 'approval_decisions', 'post_versions', 'publications', 'workflow_runs'].includes(table)) {
+            return chain({ data: [], error: null })
+          }
+          throw new Error(`unexpected table: ${table}`)
+        },
+        rpc: (fn: string) => {
+          if (fn === 'count_publications_for_quotas') return chain({ data: [{ quota_id: dailyQuotaId, used: 4 }], error: null })
+          throw new Error(`unexpected rpc: ${fn}`)
+        },
+      } as unknown as SupabaseClient
+      const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: { forUser: () => membershipClient(), forService: () => service } })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({
+        method: 'GET', url: `/v1/analytics/summary?organizationId=${ORGANIZATION_ID}&from=2026-07-01&to=2026-07-31`, headers: { authorization: `Bearer ${token}` },
+      })
+      expect(response.statusCode).toBe(200)
+      expect((response.json() as { quotas: unknown[] }).quotas).toEqual([
+        { id: dailyQuotaId, scope: 'organization', scopeId: ORGANIZATION_ID, socialConnectionId: null, period: 'day', maxPublications: 5, used: 4 },
+        { id: weeklyQuotaId, scope: 'department', scopeId: DEPARTMENT_ID, socialConnectionId: null, period: 'week', maxPublications: 9, used: 0 },
+      ])
     })
   })
 

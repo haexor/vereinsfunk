@@ -51,6 +51,22 @@ describe('api', () => {
     expect(response.json()).toMatchObject({ error: 'unauthorized' })
   })
 
+  // Der JSON-Parser scheitert, bevor irgendein Handler laeuft -- der Fehler landet also im
+  // generischen Fehler-Handler, der bis dahin jeden Status auf 500 zog. Eine kaputte Anfrage als
+  // Serverfehler zu melden ist nicht nur fuer den Aufrufer falsch, es macht auch echte 500er in der
+  // Ueberwachung unsichtbar.
+  it('answers a malformed JSON body with 400, not 500', async () => {
+    const app = await startApp()
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/submissions',
+      headers: { 'content-type': 'application/json' },
+      payload: '{"organizationId":',
+    })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ error: 'invalid_request' })
+  })
+
   it('rejects a request with a forged signature', async () => {
     const app = await startApp()
     const forged = await new SignJWT({ aud: 'authenticated', role: 'authenticated' })

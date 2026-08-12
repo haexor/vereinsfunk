@@ -191,11 +191,20 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   registerAnalyticsRoutes(app, context)
 
+  // Fastify wirft eigene Fehler mit gesetztem statusCode, bevor ueberhaupt ein Handler laeuft:
+  // fehlerhaftes JSON (400), leerer Rumpf (400), unpassender Content-Type (415), zu grosser Rumpf
+  // (413). Die wurden hier pauschal zu "500 internal_error" -- der Aufrufer konnte "meine Anfrage
+  // war kaputt" nicht von "der Server ist kaputt" unterscheiden, und echte Serverfehler gingen in
+  // der Ueberwachung zwischen falsch etikettierten Client-Fehlern unter. Uebernommen wird nur 4xx:
+  // ein 5xx aus einer Bibliothek bleibt bewusst generisch, weil error.message Interna tragen kann.
   app.setErrorHandler((error, request, reply) => {
     request.log.warn({ err: error, correlationId: request.id }, 'request rejected')
     const isValidation = error instanceof Error && error.name === 'ZodError'
-    return reply.code(isValidation ? 400 : 500).send({
-      error: isValidation ? 'invalid_request' : 'internal_error',
+    const thrownStatus = error instanceof Error && 'statusCode' in error && typeof error.statusCode === 'number' ? error.statusCode : null
+    const clientStatus = thrownStatus !== null && thrownStatus >= 400 && thrownStatus < 500 ? thrownStatus : null
+    const statusCode = isValidation ? 400 : (clientStatus ?? 500)
+    return reply.code(statusCode).send({
+      error: statusCode === 500 ? 'internal_error' : 'invalid_request',
       correlationId: request.id,
     })
   })

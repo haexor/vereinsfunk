@@ -294,19 +294,19 @@ export function registerAnalyticsRoutes(app: FastifyInstance, context: ApiRouteC
       id: string; scope: string; department_id: string | null; team_id: string | null; social_connection_id: string | null; period: 'day' | 'week' | 'month'; max_publications: number
     }>((from, to) => service.from('channel_quotas').select('id, scope, department_id, team_id, social_connection_id, period, max_publications').eq('organization_id', query.organizationId).range(from, to))
     const nowIso = new Date().toISOString()
-    const quotas = await Promise.all(
-      quotaRows.map(async (row) => {
-        const usage = await service.rpc('count_publications_in_period', {
-          target_organization: query.organizationId, target_department: row.department_id, target_team: row.team_id,
-          target_connection: row.social_connection_id, quota_period: row.period, reference: nowIso,
-        })
-        if (usage.error) throw usage.error
-        return {
-          id: row.id, scope: row.scope, scopeId: row.team_id ?? row.department_id ?? query.organizationId,
-          socialConnectionId: row.social_connection_id, period: row.period, maxPublications: row.max_publications, used: usage.data as number,
-        }
-      }),
+    // Ein Aufruf fuer alle Kontingente statt einer je Zeile: count_publications_for_quotas
+    // (Migration 2026081207) ruft dieselbe Zaehlfunktion vereinsintern pro Zeile auf. Ueber
+    // fetchAllRows, weil auch das Ergebnis einer mengenwertigen Funktion PostgRESTs max_rows
+    // unterliegt. Eine Kontingentzeile, die zwischen den beiden Abfragen entsteht, fehlt in der
+    // Auslastungsliste -- 0 ist dann die ehrliche Antwort, sie hatte noch keine Gelegenheit.
+    const usageRows = await fetchAllRows<{ quota_id: string; used: number }>((from, to) =>
+      service.rpc('count_publications_for_quotas', { target_organization: query.organizationId, reference: nowIso }).order('quota_id', { ascending: true }).range(from, to),
     )
+    const usedByQuota = new Map(usageRows.map((row) => [row.quota_id, row.used]))
+    const quotas = quotaRows.map((row) => ({
+      id: row.id, scope: row.scope, scopeId: row.team_id ?? row.department_id ?? query.organizationId,
+      socialConnectionId: row.social_connection_id, period: row.period, maxPublications: row.max_publications, used: usedByQuota.get(row.id) ?? 0,
+    }))
 
     return reply.code(200).send(
       AnalyticsSummarySchema.parse({
