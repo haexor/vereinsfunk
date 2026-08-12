@@ -31,8 +31,12 @@ async function load() {
     ])
     organizations.value = PlatformAdminOrganizationSummarySchema.array().parse(orgsResponse)
     usage.value = UsageMetricsResponseSchema.parse(metricsResponse).buckets
-  } catch {
-    errorMessage.value = 'Daten konnten nicht geladen werden.'
+  } catch (error) {
+    const status = (error as { statusCode?: number })?.statusCode
+    errorMessage.value =
+      status === 401 ? 'Du bist nicht angemeldet.' :
+      status === 403 ? 'Du hast hier keine Berechtigung.' :
+      'Daten konnten nicht geladen werden.'
   } finally {
     loading.value = false
   }
