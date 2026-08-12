@@ -3,7 +3,7 @@ import { Check, LoaderCircle, RefreshCw, Sparkles } from '@lucide/vue'
 import { z } from 'zod'
 
 type Profile = { id: string | null; slug: string; kind: 'system' | 'custom'; name: string; description: string }
-type Candidate = { id: string; status: string; generated_content: { headline: string; caption: string; hashtags: string[]; verifiedFacts: string[]; missingFacts: string[] } | null; failure_code: string | null }
+type Candidate = { id: string; status: string; generated_content: { headline: string; caption: string; hashtags: string[]; verifiedFacts: string[]; missingFacts: string[] } | null; failure_code: string | null; triggered_by: 'member' | 'automatic_recovery' }
 const api = useApiClient()
 const session = await useSession()
 const scope = await useScope()
@@ -52,7 +52,7 @@ async function loadProfiles() {
 }
 async function refreshSession() {
   if (!sessionId.value) return
-  const response = await api.request(`/v1/text-workshop/sessions/${sessionId.value}`, {}, z.object({ candidates: z.array(z.object({ id: z.string(), status: z.string(), generated_content: z.object({ headline: z.string(), caption: z.string(), hashtags: z.array(z.string()), verifiedFacts: z.array(z.string()), missingFacts: z.array(z.string()) }).nullable(), failure_code: z.string().nullable() })) }).passthrough())
+  const response = await api.request(`/v1/text-workshop/sessions/${sessionId.value}`, {}, z.object({ candidates: z.array(z.object({ id: z.string(), status: z.string(), generated_content: z.object({ headline: z.string(), caption: z.string(), hashtags: z.array(z.string()), verifiedFacts: z.array(z.string()), missingFacts: z.array(z.string()) }).nullable(), failure_code: z.string().nullable(), triggered_by: z.enum(['member', 'automatic_recovery']) })) }).passthrough())
   candidate.value = response.candidates[0] ?? null
   if (candidate.value?.status === 'ready') clearDraft()
 }
@@ -63,7 +63,7 @@ async function createCandidate() {
   try {
     const custom = profiles.value.find((profile) => profile.id === selectedProfile.value)
     const created = await api.request('/v1/text-workshop/sessions', { method: 'POST', body: { organizationId: scope.value.organizationId, departmentId: scope.value.departmentId, presetSlug: presetSlug.value, communicationGoal: communicationGoal.value, requestedFormats: ['text_post'], ...(custom?.id ? { styleProfileId: custom.id } : { systemStyleProfileSlug: selectedProfile.value }), sourceMaterial: sourceMaterial() } }, z.object({ sessionId: z.string(), candidateId: z.string() }))
-    sessionId.value = created.sessionId; candidate.value = { id: created.candidateId, status: 'pending', generated_content: null, failure_code: null }
+    sessionId.value = created.sessionId; candidate.value = { id: created.candidateId, status: 'pending', generated_content: null, failure_code: null, triggered_by: 'member' }
     await refreshSession()
   } catch { notice.value = 'Die Textgeneration konnte nicht gestartet werden.' } finally { submitting.value = false }
 }
@@ -76,7 +76,7 @@ async function reviseCandidate() {
   submitting.value = true; notice.value = ''
   try {
     const created = await api.request(`/v1/text-workshop/sessions/${sessionId.value}/generations`, { method: 'POST', body: { generationIntent: 'revise', revisionInstruction: revisionInstruction.value.trim() } }, z.object({ sessionId: z.string(), candidateId: z.string() }))
-    candidate.value = { id: created.candidateId, status: 'pending', generated_content: null, failure_code: null }
+    candidate.value = { id: created.candidateId, status: 'pending', generated_content: null, failure_code: null, triggered_by: 'member' }
     revisionInstruction.value = ''
     await refreshSession()
   } catch { notice.value = 'Die Überarbeitung konnte nicht gestartet werden.' } finally { submitting.value = false }
@@ -95,7 +95,7 @@ await loadProfiles(); restoreDraft()
       <div class="grid gap-4 sm:grid-cols-2"><label><span class="mb-1 block text-xs font-semibold">Freigegebenes Zitat</span><input v-model="quote" class="w-full rounded-xl border p-3 text-sm" /></label><label><span class="mb-1 block text-xs font-semibold">Nicht erwähnen (je Zeile)</span><input v-model="doNotMention" class="w-full rounded-xl border p-3 text-sm" /></label></div>
       <button class="inline-flex items-center justify-center gap-2 rounded-xl bg-forest px-5 py-3 text-sm font-bold text-white disabled:opacity-60" :disabled="submitting" @click="createCandidate"><LoaderCircle v-if="submitting" class="animate-spin" :size="16" /><Sparkles v-else :size="16" /> Textkandidaten erzeugen</button>
     </section>
-    <section v-else class="card p-5 sm:p-7"><div class="flex items-center justify-between"><h2 class="font-display text-xl font-bold">{{ candidate?.status === 'ready' ? 'Textkandidat bereit' : 'Text wird erzeugt' }}</h2><button class="rounded-lg border px-3 py-2 text-xs" @click="refreshSession"><RefreshCw :size="14" /> Aktualisieren</button></div><p v-if="candidate && candidate.status !== 'ready'" class="mt-4 text-sm text-[#727a75]">Der Worker verarbeitet die Anfrage im Hintergrund. Diese Seite enthält keinen Prompt und keine Providerdaten.</p><template v-if="candidate?.generated_content"><textarea :value="candidate.generated_content.caption" readonly rows="10" class="mt-5 w-full rounded-xl border p-3 text-sm" /><div class="mt-3 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-900">{{ candidate.generated_content.verifiedFacts.length }} belegte Angaben · {{ candidate.generated_content.missingFacts.length }} offene Angaben</div><label class="mt-5 block"><span class="mb-1 block text-xs font-semibold">Überarbeitungswunsch</span><textarea v-model="revisionInstruction" rows="2" maxlength="500" class="w-full rounded-xl border p-3 text-sm" placeholder="z. B. kürzer und mit direkter Einladung" /></label><button class="mt-3 rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-60" :disabled="submitting || !revisionInstruction.trim()" @click="reviseCandidate"><RefreshCw :size="15" class="mr-1 inline" /> Überarbeiten</button><button class="mt-5 inline-flex items-center gap-2 rounded-xl bg-forest px-5 py-3 text-sm font-bold text-white" @click="acceptCandidate"><Check :size="16" /> Übernehmen und zur Freigabe</button></template><p v-if="candidate?.status === 'failed'" class="mt-4 text-sm text-red-700">Die Anfrage konnte nicht verarbeitet werden. Bitte prüfe die bestätigten Angaben und starte eine neue Sitzung.</p></section>
+    <section v-else class="card p-5 sm:p-7"><div class="flex items-center justify-between"><h2 class="font-display text-xl font-bold">{{ candidate?.status === 'ready' ? 'Textkandidat bereit' : 'Text wird erzeugt' }}</h2><button class="rounded-lg border px-3 py-2 text-xs" @click="refreshSession"><RefreshCw :size="14" /> Aktualisieren</button></div><p v-if="candidate && candidate.status !== 'ready'" class="mt-4 text-sm text-[#727a75]">Der Worker verarbeitet die Anfrage im Hintergrund. Diese Seite enthält keinen Prompt und keine Providerdaten.</p><p v-if="candidate?.triggered_by === 'automatic_recovery'" class="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-900">Diese Version wurde nach einem technischen Fehler automatisch neu erzeugt.</p><template v-if="candidate?.generated_content"><textarea :value="candidate.generated_content.caption" readonly rows="10" class="mt-5 w-full rounded-xl border p-3 text-sm" /><div class="mt-3 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-900">{{ candidate.generated_content.verifiedFacts.length }} belegte Angaben · {{ candidate.generated_content.missingFacts.length }} offene Angaben</div><label class="mt-5 block"><span class="mb-1 block text-xs font-semibold">Überarbeitungswunsch</span><textarea v-model="revisionInstruction" rows="2" maxlength="500" class="w-full rounded-xl border p-3 text-sm" placeholder="z. B. kürzer und mit direkter Einladung" /></label><button class="mt-3 rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-60" :disabled="submitting || !revisionInstruction.trim()" @click="reviseCandidate"><RefreshCw :size="15" class="mr-1 inline" /> Überarbeiten</button><button class="mt-5 inline-flex items-center gap-2 rounded-xl bg-forest px-5 py-3 text-sm font-bold text-white" @click="acceptCandidate"><Check :size="16" /> Übernehmen und zur Freigabe</button></template><p v-if="candidate?.status === 'failed'" class="mt-4 text-sm text-red-700">Die Anfrage konnte nicht verarbeitet werden. Bitte prüfe die bestätigten Angaben und starte eine neue Sitzung.</p></section>
     <p v-if="notice" class="mt-4 text-sm text-amber-800">{{ notice }}</p>
   </main>
 </template>

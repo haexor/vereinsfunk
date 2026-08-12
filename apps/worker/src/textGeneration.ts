@@ -6,16 +6,16 @@ import type { WorkerEnvironment } from '@vereinsfunk/config'
 import { WorkflowExecutionError } from './workflows.js'
 
 export type SessionRow = { id: string; organization_id: string; department_id: string; team_id: string | null; preset_slug: string; communication_goal: 'inform' | 'inspire' | 'thank' | 'invite' | 'recruit' | 'educate' | 'strengthen_community'; source_material: unknown; style_profile_snapshot: unknown }
-export type CandidateRow = { id: string; status: string; revision_instruction: string | null }
+export type CandidateRow = { id: string; status: string; revision_instruction: string | null; lease_token: string }
 export type ProviderRow = { id: string; protocol: string; base_url: string; model: string; temperature: number; max_output_tokens: number; structured_output_required: boolean; api_key_ciphertext: string; key_version: string }
 
 export interface TextGenerationRepository {
   loadSession(id: string, organizationId: string): Promise<SessionRow | null>
   acquirePendingCandidate(candidateId: string, sessionId: string, organizationId: string): Promise<CandidateRow | null>
   loadActiveTextProvider(): Promise<ProviderRow>
-  markReady(candidateId: string, sessionId: string, generatedContent: unknown, metadata: { providerConfigurationId: string; providerModelId: string; providerParameterHash: string; promptTemplateVersion: string }): Promise<void>
-  markFailed(candidateId: string, sessionId: string, errorClass: string): Promise<void>
-  releaseCandidate(candidateId: string, sessionId: string): Promise<void>
+  markReady(candidateId: string, sessionId: string, leaseToken: string, generatedContent: unknown, metadata: { providerConfigurationId: string; providerModelId: string; providerParameterHash: string; promptTemplateVersion: string }): Promise<void>
+  markFailed(candidateId: string, sessionId: string, leaseToken: string, errorClass: string): Promise<void>
+  releaseCandidate(candidateId: string, sessionId: string, leaseToken: string): Promise<void>
 }
 
 function parseSecretBox(config: WorkerEnvironment) {
@@ -74,11 +74,11 @@ export class TextGenerationExecutor {
         ...(candidate.revision_instruction ? { revisionInstruction: candidate.revision_instruction } : {}),
         model: provider.model, baseUrl: provider.base_url, apiKey, temperature: provider.temperature, maxOutputTokens: provider.max_output_tokens,
       })
-      await this.repository.markReady(candidate.id, session.id, post, { providerConfigurationId: provider.id, providerModelId: provider.model, providerParameterHash: parameterHash(provider), promptTemplateVersion: TEXT_PROMPT_TEMPLATE_VERSION })
+      await this.repository.markReady(candidate.id, session.id, candidate.lease_token, post, { providerConfigurationId: provider.id, providerModelId: provider.model, providerParameterHash: parameterHash(provider), promptTemplateVersion: TEXT_PROMPT_TEMPLATE_VERSION })
     } catch (error) {
       const classified = error instanceof ContentGenerationError ? error : error instanceof WorkflowExecutionError ? error : new WorkflowExecutionError('generation_validation', false)
-      if (classified.retryable) await this.repository.releaseCandidate(candidate.id, session.id)
-      else await this.repository.markFailed(candidate.id, session.id, classified.errorClass)
+      if (classified.retryable) await this.repository.releaseCandidate(candidate.id, session.id, candidate.lease_token)
+      else await this.repository.markFailed(candidate.id, session.id, candidate.lease_token, classified.errorClass)
       throw new WorkflowExecutionError(classified.errorClass, classified.retryable)
     }
   }

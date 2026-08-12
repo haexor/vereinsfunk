@@ -1,7 +1,7 @@
 import { parseWorkerEnvironment } from '@vereinsfunk/config'
 import { createLogger } from '@vereinsfunk/observability'
 import { WorkflowOutboxDispatcher } from '@vereinsfunk/orchestration'
-import { createTextGenerationRepository, createWorkflowExecutionRepository, createWorkflowOutboxRepository } from './context.js'
+import { createGenerationRecoveryRepository, createTextGenerationRepository, createWorkflowExecutionRepository, createWorkflowOutboxRepository } from './context.js'
 import { createHatchetClient, HatchetOrchestrator } from './hatchet.js'
 import { concurrency, createHatchetWorker, WorkflowExecutionError, type ProductWorkflowExecutor } from './workflows.js'
 import { TextGenerationExecutor } from './textGeneration.js'
@@ -63,7 +63,7 @@ async function main(): Promise<void> {
       throw new WorkflowExecutionError('product_executor_unavailable', false, `no product executor is configured for ${workflow}`)
     },
   }
-  const createdWorker = await createHatchetWorker(config, runs, executor)
+  const createdWorker = await createHatchetWorker(config, runs, executor, createGenerationRecoveryRepository(config))
   worker = createdWorker
   if (stopping) return stopWorker()
 

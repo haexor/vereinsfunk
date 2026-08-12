@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(48);
+select plan(69);
 
 set local role postgres;
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -296,6 +296,171 @@ select is(
   (select public.acquire_generation_candidate('32000000-2830-4000-8000-000000000002', '32000000-2500-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002')),
   null,
   'a duplicate delivery of an already-terminal candidate still returns null, not an exception'
+);
+
+-- Plan 035: a stale worker that crashed but was not actually dead must not overwrite the result
+-- of a second delivery that reclaimed the candidate past the 15-minute lease. generation_lease_token
+-- is the fencing token: mark_generation_candidate_ready must reject a write carrying the token
+-- issued to the first (now-superseded) delivery and accept one carrying the current token.
+set local role postgres;
+insert into public.generation_candidates (id, organization_id, composition_session_id, generation_intent, status, input_hash, updated_at) values
+  ('32000000-2840-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2500-4000-8000-000000000002', 'initial', 'pending', repeat('8', 64), now());
+select public.acquire_generation_candidate('32000000-2840-4000-8000-000000000002', '32000000-2500-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002');
+select set_config('test.lease_t1', generation_lease_token::text, false) from public.generation_candidates where id = '32000000-2840-4000-8000-000000000002';
+-- set_generation_candidates_updated_at would otherwise overwrite this backdating on the UPDATE below.
+alter table public.generation_candidates disable trigger set_generation_candidates_updated_at;
+update public.generation_candidates set updated_at = now() - interval '20 minutes' where id = '32000000-2840-4000-8000-000000000002';
+alter table public.generation_candidates enable trigger set_generation_candidates_updated_at;
+select public.acquire_generation_candidate('32000000-2840-4000-8000-000000000002', '32000000-2500-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002');
+select isnt(
+  (select generation_lease_token::text from public.generation_candidates where id = '32000000-2840-4000-8000-000000000002'),
+  current_setting('test.lease_t1'),
+  'reacquiring a candidate past the 15-minute lease issues a fresh token distinct from the crashed worker''s'
+);
+select throws_ok(
+  $$select public.mark_generation_candidate_ready('32000000-2840-4000-8000-000000000002', '32000000-2500-4000-8000-000000000002', current_setting('test.lease_t1')::uuid, '{}'::jsonb, '31000000-4000-4000-8000-000000000001', 'test-model', repeat('a', 64), 'v1')$$,
+  'P0001', 'generation_candidate_ready_update_lost',
+  'negative: a stale worker''s late write carrying the superseded lease token is fenced out'
+);
+select lives_ok(
+  $$select public.mark_generation_candidate_ready('32000000-2840-4000-8000-000000000002', '32000000-2500-4000-8000-000000000002', (select generation_lease_token from public.generation_candidates where id = '32000000-2840-4000-8000-000000000002'), '{}'::jsonb, '31000000-4000-4000-8000-000000000001', 'test-model', repeat('a', 64), 'v1')$$,
+  'the delivery holding the current lease token can mark the candidate ready'
+);
+
+-- Plan 035: triggered_by defaults to 'member' for the existing create_text_generation_session
+-- callers (member-initiated generation/revision) and is independently settable, so a member can
+-- tell an automatically retried result apart from one they themselves asked for.
+select is(
+  (select triggered_by from public.generation_candidates where composition_session_id = (select id from public.composition_sessions where organization_id = '32000000-2000-4000-8000-000000000002' and input_hash = repeat('e', 64)) and input_hash = repeat('f', 64)),
+  'member',
+  'create_text_generation_session defaults triggered_by to member for an existing caller'
+);
+select lives_ok(
+  $$insert into public.generation_candidates (organization_id, composition_session_id, generation_intent, status, input_hash, triggered_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2500-4000-8000-000000000002', 'initial', 'pending', repeat('7', 64), 'automatic_recovery')$$,
+  'a candidate can be inserted with triggered_by = automatic_recovery'
+);
+select throws_ok(
+  $$insert into public.generation_candidates (organization_id, composition_session_id, generation_intent, status, input_hash, triggered_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2500-4000-8000-000000000002', 'initial', 'pending', repeat('6', 64), 'not_a_real_trigger')$$,
+  '23514', null, 'negative: database rejects an unknown triggered_by value'
+);
+
+-- Plan 035: composition_sessions.candidate_count enforces a hard ceiling identically for a manual
+-- revision and (later) an automatic recovery attempt, not just an application-side count kept by
+-- whichever caller happens to be retrying. Seeded with candidate_count = 0 (a real session's
+-- first-candidate-included default is 1) purely to isolate the counting arithmetic: eight
+-- consecutive revision calls should succeed and only the ninth should hit the placeholder ceiling.
+set local role postgres;
+insert into public.composition_sessions (id, organization_id, department_id, team_id, preset_slug, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, status, candidate_count, created_by) values
+  ('32000000-2900-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', null, 'training-update', 'inform', '["text_post"]', '{"facts":{"title":"Limittraining"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('2', 64), 'queued', 0, '32000000-0000-4000-8000-000000000002');
+do $$
+begin
+  for i in 1..8 loop
+    perform public.create_text_generation_session(
+      '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', null,
+      'training-update', 'inform', '["text_post"]'::jsonb,
+      '{"facts":{"title":"Limittraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
+      null, '{}'::jsonb, '{}'::jsonb, 1, repeat('2', 64), encode(sha256(('limit-revision-' || i::text)::bytea), 'hex'), 'revise', 'Bitte kuerzer',
+      '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-limit-revise-' || i::text
+    );
+  end loop;
+end;
+$$;
+select is(
+  (select candidate_count from public.composition_sessions where id = '32000000-2900-4000-8000-000000000002'),
+  8,
+  'candidate_count reaches the placeholder ceiling of 8 after eight successful revision calls'
+);
+select is(
+  (select count(*)::integer from public.generation_candidates where composition_session_id = '32000000-2900-4000-8000-000000000002'),
+  8,
+  'candidate_count matches the actual row count in generation_candidates'
+);
+select throws_ok(
+  $$select public.create_text_generation_session(
+    '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', null,
+    'training-update', 'inform', '["text_post"]'::jsonb,
+    '{"facts":{"title":"Limittraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
+    null, '{}'::jsonb, '{}'::jsonb, 1, repeat('2', 64), encode(sha256('limit-revision-overflow'::bytea), 'hex'), 'revise', 'Zu viel',
+    '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-limit-overflow'
+  )$$,
+  'P0001', 'composition_session_candidate_limit_reached',
+  'negative: a ninth candidate attempt on one session is rejected once the placeholder ceiling is reached'
+);
+
+-- Plan 035: claim_stalled_generation_candidates is the trigger independent of Hatchet's own retry
+-- budget -- it must claim only a candidate stuck on 'generating' past the 15-minute threshold,
+-- leave one still within it alone, and (review fix on PR #52) leave the claimed row reclaimable
+-- rather than terminally failing it immediately -- a crash between claim and the replacement
+-- attempt must not lose the candidate. finalize_stalled_generation_recovery is the caller's
+-- explicit, fenced closing step once the replacement's fate is known. Repeated sequential calls
+-- are this codebase's established way of testing this claim-and-advance pattern (see
+-- claim_workflow_outbox's own test), rather than a new dblink-based true multi-transaction test not
+-- used anywhere else in this suite.
+set local role postgres;
+insert into public.composition_sessions (id, organization_id, department_id, team_id, preset_slug, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, status, created_by) values
+  ('32000000-3000-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', null, 'training-update', 'inform', '["text_post"]', '{"facts":{"title":"Recoverytraining"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('3', 64), 'generating', '32000000-0000-4000-8000-000000000002');
+insert into public.generation_candidates (id, organization_id, composition_session_id, generation_intent, status, input_hash, generation_lease_token, updated_at) values
+  ('32000000-3010-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-3000-4000-8000-000000000002', 'initial', 'generating', repeat('4', 64), gen_random_uuid(), now() - interval '20 minutes'),
+  ('32000000-3020-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2500-4000-8000-000000000002', 'initial', 'generating', repeat('5', 64), null, now());
+select set_config('test.stale_lease_before', (select generation_lease_token::text from public.generation_candidates where id = '32000000-3010-4000-8000-000000000002'), false);
+select is(
+  (select count(*)::integer from public.claim_stalled_generation_candidates(10)),
+  1,
+  'only the candidate stuck past the 15-minute threshold is claimed'
+);
+select is(
+  (select status::text from public.generation_candidates where id = '32000000-3010-4000-8000-000000000002'),
+  'generating',
+  'the claimed candidate is left reclaimable, not terminally failed, so a crash before finalization does not lose it'
+);
+select isnt(
+  (select generation_lease_token::text from public.generation_candidates where id = '32000000-3010-4000-8000-000000000002'),
+  current_setting('test.stale_lease_before'),
+  'claiming issues a fresh fencing token distinct from the one a crashed worker last saw'
+);
+select is(
+  (select status::text from public.composition_sessions where id = '32000000-3000-4000-8000-000000000002'),
+  'generating',
+  'the session is left untouched by the claim itself'
+);
+select is(
+  (select status::text from public.generation_candidates where id = '32000000-3020-4000-8000-000000000002'),
+  'generating',
+  'negative: a candidate still within the 15-minute threshold is left untouched'
+);
+select is(
+  (select count(*)::integer from public.claim_stalled_generation_candidates(10)),
+  0,
+  'a repeated call does not reclaim a row it just claimed, since claiming refreshes updated_at'
+);
+select throws_ok(
+  $$select public.finalize_stalled_generation_recovery('32000000-3010-4000-8000-000000000002', '32000000-3000-4000-8000-000000000002', current_setting('test.stale_lease_before')::uuid, 'stalled_after_crash')$$,
+  'P0001', 'generation_candidate_recovery_finalize_lost',
+  'negative: finalizing with a superseded lease token is fenced out'
+);
+select lives_ok(
+  $$select public.finalize_stalled_generation_recovery('32000000-3010-4000-8000-000000000002', '32000000-3000-4000-8000-000000000002', (select generation_lease_token from public.generation_candidates where id = '32000000-3010-4000-8000-000000000002'), 'stalled_after_crash')$$,
+  'finalizing with the current lease token terminally fails the candidate'
+);
+select is(
+  (select status::text from public.generation_candidates where id = '32000000-3010-4000-8000-000000000002'),
+  'failed',
+  'the finalized candidate is terminally failed'
+);
+select is(
+  (select failure_code from public.generation_candidates where id = '32000000-3010-4000-8000-000000000002'),
+  'stalled_after_crash',
+  'the finalized candidate carries the stalled-after-crash failure code'
+);
+select is(
+  (select generation_lease_token from public.generation_candidates where id = '32000000-3010-4000-8000-000000000002'),
+  null,
+  'the finalized candidate''s lease token is cleared'
+);
+select is(
+  (select status::text from public.composition_sessions where id = '32000000-3000-4000-8000-000000000002'),
+  'failed',
+  'the stalled candidate''s session is failed alongside it, mirroring mark_generation_candidate_failed'
 );
 
 select * from finish();
