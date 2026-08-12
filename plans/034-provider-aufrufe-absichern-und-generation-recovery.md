@@ -107,12 +107,33 @@ Ergänze `plans/README.md` um Zeile 034 in der Tabelle „Vierte Serie: Review u
 
 ## Done criteria
 
-- [ ] `packages/outbound-fetch` existiert, enthält die vollständige, unveränderte Zieladressenprüfung sowie eine neue Response-zurückgebende Guard-Funktion mit eigener Testabdeckung.
-- [ ] `apps/api` importiert die Guard-Logik aus dem neuen Paket, keine Duplizierung mehr.
-- [ ] Beide `StructuredContentGenerator`-Implementierungen sind standardmäßig gegen interne/private Zieladressen abgesichert, ohne dass `apps/worker` seine Konstruktion ändern musste.
-- [ ] Eine blockierte Zieladresse führt zu einem nicht wiederholbaren, klar erkennbaren `failure_code`.
-- [ ] Ein nach Absturz auf `generating` hängender Kandidat wird beim nächsten Hatchet-Versuch automatisch zurückerobert; ein noch legitim laufender Versuch wird nicht vorzeitig unterbrochen.
-- [ ] `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm db:reset`, `pnpm db:test` bestehen vollständig.
+- [x] `packages/outbound-fetch` existiert, enthält die vollständige, unveränderte Zieladressenprüfung sowie eine neue Response-zurückgebende Guard-Funktion mit eigener Testabdeckung.
+- [x] `apps/api` importiert die Guard-Logik aus dem neuen Paket, keine Duplizierung mehr.
+- [x] Beide `StructuredContentGenerator`-Implementierungen sind standardmäßig gegen interne/private Zieladressen abgesichert, ohne dass `apps/worker` seine Konstruktion ändern musste.
+- [x] Eine blockierte Zieladresse führt zu einem nicht wiederholbaren, klar erkennbaren `failure_code`.
+- [x] Ein nach Absturz auf `generating` hängender Kandidat wird beim nächsten Hatchet-Versuch automatisch zurückerobert; ein noch legitim laufender Versuch wird nicht vorzeitig unterbrochen.
+- [x] `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm db:reset`, `pnpm db:test` bestehen vollständig.
+
+### Offen: CodeRabbit-Zweitrunde auf diesem Plan (PR #50)
+
+CodeRabbit hat den Plan-Text selbst review­t (nachdem er als Commit in PR #50 landete) und drei
+Lücken gefunden, die mit Stand dieser Zeile noch nicht geschlossen sind — die sechs Haken oben
+decken sie nicht ab, auch wenn Schritt 1–3 sonst umgesetzt sind:
+
+- [ ] `createGuardedFetch` begrenzt die gelesene Antwortgröße (`maxBytes`, analog zu
+  `fetchPublicUrl`/`readCapped` in derselben Datei). Stand: fehlt — die Funktion gibt die
+  `Response` ungeprüft zurück, ein Provider (oder eine kompromittierte/falsch konfigurierte
+  Basis-URL) kann beliebig viel Speicher im Worker belegen. Offener Review-Thread, PR #50, Zeile 83.
+- [ ] Die Kandidaten-Wiedereroberung ist gegen einen veralteten Worker abgesichert (Fencing-Token
+  oder Lease, geprüft in `mark_generation_candidate_ready`/`mark_generation_candidate_failed`).
+  Stand: fehlt — `acquire_generation_candidate` erkennt Wiedereroberung nur über `updated_at`; ein
+  Worker, dessen Provider-Antwort verspätet eintrifft, kann nach der Wiedereroberung durch einen
+  neuen Worker noch ein veraltetes Ergebnis schreiben. Offener Review-Thread, PR #50, Zeile 93.
+- [ ] Ein Hatchet-Retry, der vor Ablauf der 15-Minuten-Schwelle startet, scheitert sichtbar statt
+  als No-op erfolgreich zu enden. Stand: nicht behoben — `apps/worker/src/textGeneration.ts` ist in
+  dieser Umsetzung unverändert geblieben, `if (!candidate) return` lässt `runs.succeed()` weiterhin
+  fälschlich Erfolg melden, wenn die 15 Minuten noch nicht um sind. Offener Review-Thread, PR #50,
+  Zeile 95.
 
 ## STOP conditions
 
