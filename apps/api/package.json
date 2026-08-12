@@ -24,6 +24,7 @@
     "@vereinsfunk/member-directory": "workspace:*",
     "@vereinsfunk/observability": "workspace:*",
     "@vereinsfunk/orchestration": "workspace:*",
+    "@vereinsfunk/outbound-fetch": "workspace:*",
     "@vereinsfunk/publishing": "workspace:*",
     "@vereinsfunk/secrets": "workspace:*",
     "@vereinsfunk/svg-safe": "workspace:*",

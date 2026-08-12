@@ -108,10 +108,24 @@ export interface FetchPublicUrlOptions {
   timeoutMs?: number
   maxBytes?: number
   maxRedirects?: number
+  /**
+   * Zusaetzliche Kopfzeilen, etwa ein `authorization`-Bearer. Ein Geheimnis darf einer
+   * Weiterleitung nicht ueber die Herkunft hinaus folgen (siehe Redirect-Zweig unten).
+   */
+  headers?: Record<string, string>
   /** Nur für Tests; sonst der globale fetch. */
   fetchImpl?: typeof fetch
   /** Nur für Tests; sonst die Namensauflösung des Systems. */
   lookupImpl?: AddressLookup
+}
+
+// Weiterleitung auf eine fremde Herkunft: die Gegenstelle bekaeme sonst ein Geheimnis, das nie fuer
+// sie bestimmt war. Browser verwerfen `authorization` hier ebenso; `x-api-key` ist derselbe Fall
+// fuer den Anthropic-Adapter (siehe app.ts, /v1/llm-providers/models).
+const CREDENTIAL_HEADER_NAMES = new Set(['authorization', 'x-api-key'])
+function stripCredentialHeadersOnCrossOrigin(headers: Record<string, string>, from: string, to: string): Record<string, string> {
+  if (new URL(from).origin === new URL(to).origin) return headers
+  return Object.fromEntries(Object.entries(headers).filter(([name]) => !CREDENTIAL_HEADER_NAMES.has(name.toLowerCase())))
 }
 
 /**
@@ -121,15 +135,16 @@ export interface FetchPublicUrlOptions {
  * urspruenglichen Ziels wertlos gemacht.
  */
 export async function fetchPublicUrl(rawUrl: string, options: FetchPublicUrlOptions = {}): Promise<string> {
-  const { timeoutMs = 10_000, maxBytes = 5_000_000, maxRedirects = 3, fetchImpl = fetch, lookupImpl = systemLookup } = options
+  const { timeoutMs = 10_000, maxBytes = 5_000_000, maxRedirects = 3, headers = {}, fetchImpl = fetch, lookupImpl = systemLookup } = options
   let current = rawUrl
+  let currentHeaders = headers
   for (let hop = 0; hop <= maxRedirects; hop += 1) {
     if (!isAllowedOutboundUrl(current)) throw new OutboundFetchError('blocked_url', `blocked url ${current}`)
     await assertResolvesPublicly(new URL(current).hostname, lookupImpl)
 
     let response: Response
     try {
-      response = await fetchImpl(current, { redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) })
+      response = await fetchImpl(current, { redirect: 'manual', headers: currentHeaders, signal: AbortSignal.timeout(timeoutMs) })
     } catch (error) {
       throw new OutboundFetchError('request_failed', error instanceof Error ? error.message : 'fetch failed')
     }
@@ -137,7 +152,14 @@ export async function fetchPublicUrl(rawUrl: string, options: FetchPublicUrlOpti
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get('location')
       if (!location) throw new OutboundFetchError('request_failed', `redirect without location (${response.status})`)
-      current = new URL(location, current).toString()
+      let next: string
+      try {
+        next = new URL(location, current).toString()
+      } catch {
+        throw new OutboundFetchError('request_failed', `invalid redirect location (${location})`)
+      }
+      currentHeaders = stripCredentialHeadersOnCrossOrigin(currentHeaders, current, next)
+      current = next
       continue
     }
     if (!response.ok) throw new OutboundFetchError('request_failed', `unexpected status ${response.status}`)
@@ -172,4 +194,72 @@ async function readCapped(response: Response, maxBytes: number): Promise<string>
     await reader.cancel().catch(() => {})
   }
   return text + decoder.decode()
+}
+
+export interface GuardedFetchOptions {
+  /** Nur für Tests; sonst der globale fetch. */
+  fetchImpl?: typeof fetch
+  /** Nur für Tests; sonst die Namensauflösung des Systems. */
+  lookupImpl?: AddressLookup
+  /** Wie bei {@link fetchPublicUrl}: eine Obergrenze gegen eine Gegenstelle, die beliebig viel Speicher belegen will. */
+  maxBytes?: number
+}
+
+const DEFAULT_GUARDED_FETCH_MAX_BYTES = 5_000_000
+
+/**
+ * Wie {@link fetchPublicUrl}, aber fuer Aufrufer, die die `Response` selbst auswerten wollen
+ * (Statuscode, Header, strukturierter Body) statt nur den Text zu bekommen -- gedacht fuer
+ * LLM-Provider-Endpunkte mit einer vom Verein oder einer Plattform-Administration hinterlegten
+ * Basis-URL. Eine Weiterleitung wird nicht verfolgt, sondern als `blocked_url` abgelehnt: kein
+ * bekannter Provider-Endpunkt (OpenAI-kompatibel, Anthropic Messages, haex-claude-proxy) leitet im
+ * Normalbetrieb weiter, und ihr zu folgen wuerde die Credential-Header-Entfernung aus
+ * {@link fetchPublicUrl} hier duplizieren, ohne einen echten Anwendungsfall zu bedienen.
+ */
+export function createGuardedFetch(options: GuardedFetchOptions = {}): (input: string, init: RequestInit) => Promise<Response> {
+  const { fetchImpl = fetch, lookupImpl = systemLookup, maxBytes = DEFAULT_GUARDED_FETCH_MAX_BYTES } = options
+  return async (input, init) => {
+    if (!isAllowedOutboundUrl(input)) throw new OutboundFetchError('blocked_url', `blocked url ${input}`)
+    await assertResolvesPublicly(new URL(input).hostname, lookupImpl)
+    const response = await fetchImpl(input, { ...init, redirect: 'manual' })
+    if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
+      throw new OutboundFetchError('blocked_url', `refusing to follow a redirect from ${input}`)
+    }
+    const declaredLength = Number(response.headers.get('content-length'))
+    if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+      throw new OutboundFetchError('too_large', `content-length ${declaredLength} exceeds ${maxBytes}`)
+    }
+    return capResponseBody(response, maxBytes)
+  }
+}
+
+// content-length ist nur eine Behauptung der Gegenstelle (wie in fetchPublicUrl/readCapped) --
+// ohne diese Grenze koennte eine Gegenstelle beliebig viel Speicher belegen, sobald der Aufrufer
+// den Body liest (z.B. per response.json()). Anders als readCapped gibt diese Funktion eine
+// Response zurueck, kein Text -- der Body-Stream selbst traegt die Grenze durch.
+function capResponseBody(response: Response, maxBytes: number): Response {
+  const body = response.body
+  if (!body) return response
+  let received = 0
+  const capped = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const reader = body.getReader()
+      try {
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          received += value.byteLength
+          if (received > maxBytes) { controller.error(new OutboundFetchError('too_large', `response exceeds ${maxBytes} bytes`)); return }
+          controller.enqueue(value)
+        }
+        controller.close()
+      } catch (error) {
+        controller.error(error)
+      } finally {
+        reader.releaseLock()
+      }
+    },
+    cancel(reason) { return body.cancel(reason) },
+  })
+  return new Response(capped, { status: response.status, statusText: response.statusText, headers: response.headers })
 }

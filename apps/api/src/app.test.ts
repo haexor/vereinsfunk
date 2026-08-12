@@ -681,7 +681,9 @@ describe('platform administration', () => {
       forService: () => ({
         from: (table: string) => {
           if (table !== 'llm_provider_configurations') throw new Error(`unexpected table in test fake: ${table}`)
-          return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { protocol: 'anthropic', task_kind: 'text_generation' }, error: null }) }) }) }
+          // Seit dem Anthropic-Adapter ist nicht mehr das Protokoll der unimplementierte Teil,
+          // sondern die Aufgabenart -- fuer Bild und Video gibt es im Worker keinen Generator.
+          return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { protocol: 'openai', task_kind: 'image_generation' }, error: null }) }) }) }
         },
       }) as unknown as SupabaseClient,
     }
@@ -693,6 +695,87 @@ describe('platform administration', () => {
     })
     expect(response.statusCode).toBe(422)
     expect(response.json()).toMatchObject({ error: 'unsupported_provider_configuration' })
+  })
+
+  it('re-validates an already-active provider even when the patch does not touch isActive', async () => {
+    // isActive faengt oben schon ab, wenn es explizit mitgeschickt wird. Ein Patch, der isActive
+    // gar nicht erwaehnt, darf eine bereits aktive, unimplementierte Konfiguration nicht
+    // unbemerkt am Adapter-Check vorbei aendern lassen.
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({
+        from: (table: string) => {
+          if (table !== 'llm_provider_configurations') throw new Error(`unexpected table in test fake: ${table}`)
+          return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { protocol: 'legacy-unsupported', task_kind: 'text_generation', is_active: true }, error: null }) }) }) }
+        },
+      }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PATCH', url: '/v1/llm-providers/a0000000-0000-4000-8000-000000000001',
+      headers: { authorization: `Bearer ${token}` }, payload: { label: 'renamed' },
+    })
+    expect(response.statusCode).toBe(422)
+    expect(response.json()).toMatchObject({ error: 'unsupported_provider_configuration' })
+  })
+
+  it('accepts a provider on the anthropic protocol', async () => {
+    const configRow = {
+      id: 'a0000000-0000-4000-8000-000000000002',
+      label: 'Claude via haex-claude-proxy', protocol: 'anthropic', base_url: 'https://claude-proxy.example/v1',
+      model: 'claude-opus-4-8', purpose: 'default',
+      task_kind: 'text_generation', temperature: 0.2, max_output_tokens: 1200, structured_output_required: true,
+      priority: 100, is_active: true,
+    }
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({
+        from: (table: string) => {
+          if (table === 'llm_provider_configurations') return { insert: () => ({ select: () => ({ single: async () => ({ data: configRow, error: null }) }) }) }
+          if (table === 'llm_provider_secrets') return { insert: async () => ({ error: null }) }
+          throw new Error(`unexpected table in test fake: ${table}`)
+        },
+      }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST', url: '/v1/llm-providers',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { label: 'Claude via haex-claude-proxy', protocol: 'anthropic', baseUrl: 'https://claude-proxy.example/v1', model: 'claude-opus-4-8', apiKey: 'super-secret-bearer-token' },
+    })
+    expect(response.statusCode).toBe(201)
+    expect(response.json()).toMatchObject({ protocol: 'anthropic', hasSecret: true })
+  })
+
+  it('refuses to list models behind a base url that points into the internal network', async () => {
+    // Die Adresse kommt aus dem Formular: ohne diese Pruefung waere die Modell-Abfrage ein
+    // Server-zu-Server-Proxy ins eigene Netz, auch fuer eine Plattform-Administration.
+    const app = await startApp({ platformAdminProvider: adminProvider })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/llm-providers/models',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { protocol: 'openai', baseUrl: 'https://llm-proxy.internal/v1', apiKey: 'super-secret-bearer-token' },
+    })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ error: 'base_url_not_allowed' })
+  })
+
+  it('refuses to list models without platform administration', async () => {
+    const app = await startApp({
+      platformAdminProvider: { async statusFor() { return { isPlatformAdmin: false, isDefaultAdmin: false } } },
+    })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/llm-providers/models',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { protocol: 'openai', baseUrl: 'https://api.openai.com/v1', apiKey: 'super-secret-bearer-token' },
+    })
+    expect(response.statusCode).toBe(403)
   })
 })
 
@@ -3321,7 +3404,7 @@ describe('Paket 014: Integrationsrahmen und Mitgliederverzeichnis', () => {
 
   it('refuses to store an ical endpoint that points into the internal network', async () => {
     // Ohne diese Pruefung waere die API ein Server-zu-Server-Proxy: die Adresse kommt vom Verein,
-    // abgerufen wird sie aus dem Netz der API (siehe outboundFetch.ts). Der Wert darf gar nicht
+    // abgerufen wird sie aus dem Netz der API (siehe @vereinsfunk/outbound-fetch). Der Wert darf gar nicht
     // erst gespeichert werden, damit auch ein spaeterer Lauf ihn nicht mehr vorfindet.
     const clients: SupabaseClientFactory = {
       forUser: () => ({ from: () => { throw new Error('no lookup expected for an organization-scoped source') } }) as unknown as SupabaseClient,

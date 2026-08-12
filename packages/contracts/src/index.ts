@@ -1373,6 +1373,18 @@ export const UpdateLlmProviderConfigurationRequestSchema = z.object({
   apiKey: z.string().trim().min(1).max(4000).optional(),
 })
 
+// Modellauswahl im Formular: statt einer im Frontend gepflegten Liste fragt die API den Provider
+// selbst. Der Schluessel kommt aus dem Formular, weil beim Anlegen noch keine Konfiguration und
+// damit kein hinterlegtes Geheimnis existiert; gespeichert wird er hier nicht.
+export const ListLlmProviderModelsRequestSchema = z.object({
+  protocol: LlmProviderProtocolSchema,
+  baseUrl: z.url(),
+  apiKey: z.string().trim().min(1).max(4000),
+})
+export const ListLlmProviderModelsResponseSchema = z.object({
+  models: z.array(z.string().trim().min(1).max(120)),
+})
+
 export const PlatformAdminOrganizationSummarySchema = z.object({
   organizationId: UuidSchema,
   name: z.string().min(1),
@@ -1897,6 +1909,8 @@ export type LlmRuntimeParameters = z.infer<typeof LlmRuntimeParametersSchema>
 export type LlmProviderConfigurationDto = z.infer<typeof LlmProviderConfigurationSchema>
 export type CreateLlmProviderConfigurationRequest = z.infer<typeof CreateLlmProviderConfigurationRequestSchema>
 export type UpdateLlmProviderConfigurationRequest = z.infer<typeof UpdateLlmProviderConfigurationRequestSchema>
+export type ListLlmProviderModelsRequest = z.infer<typeof ListLlmProviderModelsRequestSchema>
+export type ListLlmProviderModelsResponse = z.infer<typeof ListLlmProviderModelsResponseSchema>
 export type PlatformAdminOrganizationSummary = z.infer<typeof PlatformAdminOrganizationSummarySchema>
 export type PlatformAdminOrganizationDetail = z.infer<typeof PlatformAdminOrganizationDetailSchema>
 export type PlatformAdminOrganizationActivity = z.infer<typeof PlatformAdminOrganizationActivitySchema>

@@ -1,4 +1,5 @@
 import { GeneratedPostSchema, type CreateSubmission, type GeneratedPost, type PlatformVariant, type StyleProfileRules } from '@vereinsfunk/contracts'
+import { createGuardedFetch, OutboundFetchError } from '@vereinsfunk/outbound-fetch'
 import { getPreset, validateSourceMaterial } from './presets.js'
 
 export { factsFromFixture, factsFromClubEvent } from './schedule.js'
@@ -57,7 +58,7 @@ export class FakeContentGenerator implements ContentGenerator {
 
 /** Error information intentionally contains no input or output text and is safe for worker logs. */
 export class ContentGenerationError extends Error {
-  constructor(readonly errorClass: 'provider_network' | 'provider_rate_limit' | 'provider_server' | 'provider_schema' | 'ungrounded', readonly retryable: boolean) {
+  constructor(readonly errorClass: 'provider_network' | 'provider_rate_limit' | 'provider_server' | 'provider_schema' | 'provider_configuration' | 'ungrounded', readonly retryable: boolean) {
     super(errorClass)
   }
 }
@@ -114,9 +115,20 @@ export function buildStructuredTextPrompt(input: Pick<StructuredTextGeneratorInp
 
 type FetchLike = (input: string, init: RequestInit) => Promise<Response>
 
+/**
+ * Haengt `path` ueber `URL.pathname` an, nicht per String-Konkatenation: eine Basis-URL mit
+ * Query-String wuerde sonst den Schlussteil des Pfads verschlucken, weil ein angehaengter "/"
+ * hinter dem "?" landet statt davor.
+ */
+function joinUrlPath(baseUrl: string, path: string): string {
+  const url = new URL(baseUrl)
+  url.pathname = `${url.pathname.replace(/\/$/, '')}/${path}`
+  return url.toString()
+}
+
 /** OpenAI-compatible, JSON-schema constrained adapter. It is deliberately worker injectable. */
 export class OpenAiCompatibleStructuredContentGenerator implements StructuredContentGenerator {
-  constructor(private readonly fetcher: FetchLike = fetch) {}
+  constructor(private readonly fetcher: FetchLike = createGuardedFetch()) {}
 
   async generateText(input: StructuredTextGeneratorInput): Promise<GeneratedPost> {
     const prompt = buildStructuredTextPrompt(input)
@@ -124,7 +136,7 @@ export class OpenAiCompatibleStructuredContentGenerator implements StructuredCon
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), input.requestTimeoutMs ?? 60_000)
     try {
-      response = await this.fetcher(new URL('chat/completions', input.baseUrl.endsWith('/') ? input.baseUrl : `${input.baseUrl}/`).toString(), {
+      response = await this.fetcher(joinUrlPath(input.baseUrl, 'chat/completions'), {
         method: 'POST',
         signal: controller.signal,
         headers: { authorization: `Bearer ${input.apiKey}`, 'content-type': 'application/json' },
@@ -133,7 +145,12 @@ export class OpenAiCompatibleStructuredContentGenerator implements StructuredCon
           messages: [{ role: 'system', content: prompt.system }, { role: 'user', content: prompt.user }],
         }),
       })
-    } catch { throw new ContentGenerationError('provider_network', true) } finally { clearTimeout(timeout) }
+    } catch (error) {
+      // Eine blockierte oder umgeleitete Zieladresse ist eine dauerhafte Fehlkonfiguration, kein
+      // transienter Netzwerkfehler -- drei automatische Hatchet-Wiederholungen waeren verschwendet.
+      if (error instanceof OutboundFetchError) throw new ContentGenerationError('provider_configuration', false)
+      throw new ContentGenerationError('provider_network', true)
+    } finally { clearTimeout(timeout) }
     if (response.status === 429) throw new ContentGenerationError('provider_rate_limit', true)
     if (response.status >= 500) throw new ContentGenerationError('provider_server', true)
     if (!response.ok) throw new ContentGenerationError('provider_schema', false)
@@ -143,6 +160,72 @@ export class OpenAiCompatibleStructuredContentGenerator implements StructuredCon
       const raw = body.choices?.[0]?.message?.content
       content = typeof raw === 'string' ? JSON.parse(raw) : raw
       const post = GeneratedPostSchema.parse(content)
+      assertGroundedPost(post, input.brief)
+      return post
+    } catch (error) {
+      if (error instanceof ContentGenerationError) throw error
+      throw new ContentGenerationError('provider_schema', false)
+    }
+  }
+}
+
+/**
+ * Name des Werkzeugs, das die schemakonforme Antwort erzwingt. Der Wert ist nicht frei waehlbar:
+ * haex-claude-proxy erkennt genau diesen Namen und uebergibt dessen `input_schema` als
+ * `--json-schema` an die Claude-CLI (src/cli-format.js, OUTPUT_TOOL_NAME) -- ein anderer Name
+ * landet dort im Ausgabe-Werkzeug-Filter und die Antwort kaeme als Prosa zurueck. Fuer
+ * api.anthropic.com ist es ein gewoehnlicher Werkzeugname ohne Sonderbedeutung, derselbe Aufruf
+ * funktioniert also gegen beide Gegenstellen.
+ */
+const ANTHROPIC_OUTPUT_TOOL_NAME = 'final_result'
+
+/**
+ * Anthropic-Messages-Adapter. Strukturierte Ausgabe laeuft ueber erzwungenen Werkzeugaufruf statt
+ * ueber `output_config.format`: nur diesen Weg unterstuetzt haex-claude-proxy im Abo-Modus, in dem
+ * die Claude-CLI als Unterprozess laeuft und `output_config` nie zu sehen bekaeme.
+ *
+ * `temperature` wird bewusst nicht gesendet. Die aktuellen Claude-Modelle lehnen den Parameter mit
+ * 400 ab, und im Abo-Modus des Proxys gaebe es ohnehin keinen Regler dafuer -- der konfigurierte
+ * Wert bleibt fuer OpenAI-kompatible Provider gueltig und wird hier stillschweigend nicht benutzt.
+ */
+export class AnthropicStructuredContentGenerator implements StructuredContentGenerator {
+  constructor(private readonly fetcher: FetchLike = createGuardedFetch()) {}
+
+  async generateText(input: StructuredTextGeneratorInput): Promise<GeneratedPost> {
+    const prompt = buildStructuredTextPrompt(input)
+    let response: Response
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), input.requestTimeoutMs ?? 60_000)
+    try {
+      response = await this.fetcher(joinUrlPath(input.baseUrl, 'messages'), {
+        method: 'POST',
+        signal: controller.signal,
+        // x-api-key statt Bearer: die echte Anthropic-API verlangt es so, und die Resolver des
+        // Proxys lesen denselben Kopf. Beide Koepfe gleichzeitig lehnt api.anthropic.com ab.
+        headers: { 'x-api-key': input.apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({ model: input.model, max_tokens: input.maxOutputTokens,
+          system: prompt.system,
+          messages: [{ role: 'user', content: prompt.user }],
+          tools: [{ name: ANTHROPIC_OUTPUT_TOOL_NAME, description: 'Gibt den fertigen Vereinsbeitrag zurueck.', input_schema: generatedPostJsonSchema }],
+          tool_choice: { type: 'tool', name: ANTHROPIC_OUTPUT_TOOL_NAME },
+        }),
+      })
+    } catch (error) {
+      // Eine blockierte oder umgeleitete Zieladresse ist eine dauerhafte Fehlkonfiguration, kein
+      // transienter Netzwerkfehler -- drei automatische Hatchet-Wiederholungen waeren verschwendet.
+      if (error instanceof OutboundFetchError) throw new ContentGenerationError('provider_configuration', false)
+      throw new ContentGenerationError('provider_network', true)
+    } finally { clearTimeout(timeout) }
+    if (response.status === 429) throw new ContentGenerationError('provider_rate_limit', true)
+    if (response.status >= 500) throw new ContentGenerationError('provider_server', true)
+    if (!response.ok) throw new ContentGenerationError('provider_schema', false)
+    try {
+      const body = await response.json() as { stop_reason?: unknown; content?: Array<{ type?: unknown; name?: unknown; input?: unknown }> }
+      // Eine Ablehnung durch die Sicherheitsklassifikatoren kommt als HTTP 200 ohne Werkzeugaufruf
+      // zurueck; ein erneuter Versuch mit derselben Eingabe wuerde genauso enden.
+      if (body.stop_reason === 'refusal') throw new ContentGenerationError('provider_schema', false)
+      const block = body.content?.find((entry) => entry.type === 'tool_use' && entry.name === ANTHROPIC_OUTPUT_TOOL_NAME)
+      const post = GeneratedPostSchema.parse(block?.input)
       assertGroundedPost(post, input.brief)
       return post
     } catch (error) {

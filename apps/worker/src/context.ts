@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
 import { CommunicationGoalSchema, SourceMaterialSchema, StyleProfileRulesSchema, UuidSchema, WorkflowNameSchema, WorkflowPayloadSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
 import type { WorkflowOutboxRepository } from '@vereinsfunk/orchestration'
-import type { WorkflowExecutionRepository, WorkflowRunAcquireResult } from './workflows.js'
+import { WorkflowExecutionError, type WorkflowExecutionRepository, type WorkflowRunAcquireResult } from './workflows.js'
 import type { CandidateRow, ProviderRow, SessionRow, TextGenerationRepository } from './textGeneration.js'
 
 const SessionRowSchema: z.ZodType<SessionRow> = z.object({
@@ -76,7 +76,13 @@ export function createTextGenerationRepository(config: WorkerEnvironment): TextG
       // The candidate ID in the ID-only workflow payload makes this a single-row CAS. Candidate
       // and session move together in one transaction so a mid-way failure cannot decouple them.
       const { data, error } = await client.rpc('acquire_generation_candidate', { p_candidate_id: candidateId, p_session_id: sessionId, p_organization_id: organizationId })
-      if (error) throw error
+      if (error) {
+        // A candidate still 'generating' within the recovery window may genuinely still be in
+        // flight elsewhere -- retryable, so the workflow run is honestly marked 'failed' instead
+        // of the caller treating a null candidate as a safe no-op and reporting false success.
+        if (error.message === 'generation_candidate_still_in_progress') throw new WorkflowExecutionError('generation_candidate_still_in_progress', true)
+        throw error
+      }
       return data === null ? null : CandidateRowSchema.parse(data)
     },
     async loadActiveTextProvider() {
