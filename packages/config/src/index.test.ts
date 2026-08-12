@@ -9,6 +9,7 @@ const requiredProductionEnv = {
   SUPABASE_JWT_SECRET: 'jwt-secret-at-least-32-characters-long',
   WEB_BASE_URL: 'https://example.org',
   CONSENT_RESPONSE_HASH_PEPPER: 'pepper-at-least-32-characters-long',
+  DATABASE_URL: 'postgresql://postgres:secret@db.example.supabase.co:5432/postgres',
 }
 
 const requiredSmtpEnv = {
@@ -61,6 +62,14 @@ describe('ApiEnvironmentSchema', () => {
   it('rejects a production environment missing CONSENT_RESPONSE_HASH_PEPPER', () => {
     const withoutPepper = { ...requiredProductionEnv, CONSENT_RESPONSE_HASH_PEPPER: undefined }
     expect(ApiEnvironmentSchema.safeParse(withoutPepper).success).toBe(false)
+  })
+
+  // Plan 036: ohne diesen Wert kann der Migrations-Boot-Hook (packages/db-migrate) in Produktion
+  // nicht laufen -- ein fehlender Wert soll den Start klar mit einer field-scoped-Meldung
+  // verweigern, nicht erst beim ersten Aufruf des Boot-Hooks mit einer unklaren Exception scheitern.
+  it('rejects a production environment missing DATABASE_URL', () => {
+    const withoutDatabaseUrl = { ...requiredProductionEnv, DATABASE_URL: undefined }
+    expect(ApiEnvironmentSchema.safeParse(withoutDatabaseUrl).success).toBe(false)
   })
 
   it('allows EMAIL_PROVIDER=fake outside production', () => {
@@ -148,6 +157,7 @@ describe('WorkerEnvironmentSchema', () => {
   const requiredWorkerEnvironment = {
     SUPABASE_URL: 'https://supabase.example.org',
     SUPABASE_SERVICE_ROLE_KEY: 'service-role-secret',
+    DATABASE_URL: 'postgresql://postgres:secret@db.example.supabase.co:5432/postgres',
     HATCHET_CLIENT_TOKEN: 'hatchet-token',
     HATCHET_CLIENT_HOST_PORT: 'hatchet.example.org:7077',
     HATCHET_TLS: 'true',
@@ -169,6 +179,7 @@ describe('WorkerEnvironmentSchema', () => {
     ['SUPABASE_URL', 'not-a-url'],
     ['HATCHET_CLIENT_TOKEN', ''],
     ['SUPABASE_SERVICE_ROLE_KEY', ''],
+    ['DATABASE_URL', ''],
   ])('rejects an invalid worker %s value', (key, value) => {
     expect(WorkerEnvironmentSchema.safeParse({ ...requiredWorkerEnvironment, [key]: value }).success).toBe(false)
   })

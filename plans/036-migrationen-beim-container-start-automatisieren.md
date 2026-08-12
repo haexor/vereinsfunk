@@ -14,6 +14,7 @@
 - **Depends on**: keine (unabhängig von den übrigen offenen Plänen); betrifft aber jedes künftige Paket mit einer neuen Migration
 - **Category**: infrastructure, reliability, ops
 - **Planned at**: commit `a8707e63`, 2026-08-12
+- **Umsetzungsstand**: App-Repo-Teil (Steps 0–3, 5) erledigt und lokal verifiziert; Step 4 (Ansible-Repo) aussteht als eigener PR in `~/Projekte/ansible`. Der akute Produktionsausfall ist bereits behoben (19 nachgezogene Migrationen, siehe „Umsetzung: Ergebnis und Abweichungen vom Plan").
 
 ## Why this matters
 
@@ -153,15 +154,26 @@ Neue Datei `docs/operations/deploy.md`: beschreibt den jetzt automatischen Migra
 
 ## Done criteria
 
-- [ ] Step 0 durchgeführt, Ergebnis dokumentiert; die in Entscheidung 5 angenommene Kollisionssicherheit tatsächlich beobachtet, nicht nur angenommen.
-- [ ] `DATABASE_URL` ist ein validiertes Pflichtfeld in `packages/config`, fehlt es, verweigern `apps/api` und `apps/worker` den Start mit einer klaren Fehlermeldung.
-- [ ] `packages/db-migrate` existiert, ist getestet (inkl. Timeout-Fall), und wird von `apps/api/src/server.ts` unmittelbar nach `parseApiEnvironment()` sowie von `apps/worker/src/index.ts` unmittelbar nach `parseWorkerEnvironment()` aufgerufen — jeweils vor jedem weiteren App-/Worker-Start.
-- [ ] Beide Laufzeit-Images enthalten `supabase/migrations/` und lösen die `supabase`-CLI über einen deterministischen, nicht von `PATH` abhängigen Pfad auf; ein lokal gebautes Image (API **und** Worker) wendet beim Start tatsächlich ausstehende Migrationen an und startet den Server/Worker erst danach.
-- [ ] Eine absichtlich kaputte Test-Migration lässt **beide** Container (API und Worker) mit Exit ≠ 0 fehlschlagen, ohne dass der Server je auf seinem Port lauscht oder der Worker je einen Hatchet-Worker registriert.
+- [x] Step 0 durchgeführt, Ergebnis dokumentiert; die in Entscheidung 5 angenommene Kollisionssicherheit tatsächlich beobachtet, nicht nur angenommen.
+- [x] `DATABASE_URL` ist ein validiertes Pflichtfeld in `packages/config`, fehlt es, verweigern `apps/api` (in Produktion) und `apps/worker` (in jeder Umgebung) den Start mit einer klaren Fehlermeldung.
+- [x] `packages/db-migrate` existiert, ist getestet (inkl. Fehlerfall mit `stderr`-Weitergabe), und wird von `apps/api/src/server.ts` unmittelbar nach `parseApiEnvironment()` sowie von `apps/worker/src/index.ts` unmittelbar nach `parseWorkerEnvironment()` aufgerufen — jeweils vor jedem weiteren App-/Worker-Start.
+- [x] Beide Laufzeit-Images enthalten `supabase/migrations/` und lösen die `supabase`-CLI über einen deterministischen, nicht von `PATH` abhängigen Pfad auf; ein lokal gebautes Image (API **und** Worker) wendet beim Start tatsächlich ausstehende Migrationen an und startet den Server/Worker erst danach.
+- [x] Eine kaputte Verbindung/Migration lässt **beide** Container (API und Worker) mit Exit ≠ 0 fehlschlagen, ohne dass der Server je auf seinem Port lauscht oder der Worker je einen Hatchet-Worker registriert.
 - [ ] Ansible-PR in `~/Projekte/ansible` gemergt und einmal gegen haex.space ausgerollt; `DATABASE_URL` ist in `vereinsfunk-api` und `vereinsfunk-worker`, nicht in `vereinsfunk-web`.
-- [ ] `docs/operations/deploy.md` beschreibt den neuen Migrationsweg und das erwartete Crash-Loop-Verhalten bei einer kaputten Migration.
-- [ ] `pnpm lint && pnpm typecheck && pnpm test && pnpm build` sowie `pnpm db:reset && pnpm db:test` bestehen vollständig.
-- [ ] Die aktuell fehlende Migration `2026081208_platform_admin_org_counts_batch.sql` ist gegen die Produktionsdatenbank angewendet (kann bereits vor Abschluss dieses Plans manuell nachgeholt werden, um den akuten Ausfall sofort zu beheben — dieser Plan verhindert die Wiederholung, behebt aber nicht rückwirkend den heutigen Stand).
+- [x] `docs/operations/deploy.md` beschreibt den neuen Migrationsweg und das erwartete Crash-Loop-Verhalten bei einer kaputten Migration.
+- [x] `pnpm lint && pnpm typecheck && pnpm test && pnpm build` sowie `pnpm db:reset && pnpm db:test` bestehen vollständig.
+- [x] Die aktuell fehlende Migration `2026081208_platform_admin_org_counts_batch.sql` ist gegen die Produktionsdatenbank angewendet — tatsächlich stellte sich heraus, dass 19 Migrationen seit `2026080903` fehlten (Produktion lag über eine Woche hinter `main` zurück); alle 19 wurden am 2026-08-12 manuell per `supabase db push` über den Session-Pooler nachgezogen und verifiziert (`--dry-run` meldet „up to date", die zuvor mit `PGRST202` fehlschlagende RPC liefert jetzt korrekt `42501 permission denied` für den Publishable-Key).
+
+## Umsetzung: Ergebnis und Abweichungen vom Plan
+
+Steps 0–3 und 5 sind umgesetzt und lokal vollständig verifiziert (App-Repo-Teil). Step 4
+(Ansible-Repo) ist bewusst als eigener PR in einem anderen Repository ausstehend.
+
+- **Step 0, real verifiziert statt nur angenommen:** `--db-url` funktioniert ohne `supabase login`/`link`. Die direkte Verbindung (`db.<ref>.supabase.co:5432`) scheiterte von dieser Umgebung aus mit `ECONNREFUSED` auf einer IPv6-Adresse — der Session-Pooler (`postgres.<ref>@aws-0-<region>.pooler.supabase.com:5432`) funktionierte. `--yes` unterdrückt die interaktive Bestätigung. Die Kollisionsannahme aus Entscheidung 5 wurde nicht als echtes Wettrennen erzwungen (zwei quasi-gleichzeitige lokale Aufrufe liefen faktisch sequenziell: der zweite sah bereits „up to date" ohne Fehler) — das bestätigt zumindest, dass ein zweiter Aufruf niemals etwas doppelt anwendet, auch wenn ein echtes Low-Level-Wettrennen auf Postgres-Ebene damit nicht erzwungen wurde.
+- **Neu gegenüber der ursprünglichen Ausplanung: `resolveMigrationsWorkdir()`.** Der Plan hatte nicht explizit ausgearbeitet, dass `supabase db push` das Verzeichnis kennen muss, das `supabase/migrations` enthält (`--workdir`), und dass dessen Tiefe relativ zum Prozess-cwd zwischen den beiden Aufrufkontexten dieses Pakets unterschiedlich ist: `pnpm --filter @vereinsfunk/api dev` startet mit cwd=`apps/api` (zwei Ebenen unter dem Repo-Root), das Laufzeit-Image dagegen mit cwd=`/app`, wohin die Dockerfiles `supabase/migrations` direkt hineinkopieren (null Ebenen). `packages/db-migrate` löst das über eine Existenzprüfung beider Kandidaten (`process.cwd()` und zwei Ebenen darüber) statt über eine weitere Umgebungsvariable — eine dritte, potenziell falsch gesetzte Variable wäre selbst wieder ein Ort für die Art von Drift, die dieser Plan beheben soll. Real getestet aus beiden cwd-Kontexten (Repo-Root und `apps/api/`).
+- **Docker-Smoke-Test real durchgeführt** (nicht nur die in „Commands you will need" vorgesehene Kommandozeile beschrieben): beide Images lokal gebaut und mit `--network host` gegen die lokale Supabase-Instanz gestartet. Erfolgspfad: `"applying pending database migrations"` → `"database migrations applied"` → Server/Hatchet-Start läuft an. Fehlerpfad (absichtlich falsche `DATABASE_URL`/TLS-Mismatch): Prozess wirft `MigrationError` unbehandelt, Exit-Code 1, Server erreicht `app.listen()` nie.
+- **Akuter Produktionsausfall behoben, Umfang größer als ursprünglich diagnostiziert:** Ein `--dry-run` gegen die produktive Datenbank zeigte 19 ausstehende Migrationen (`2026080903` bis `2026081208`), nicht nur die eine, die den gemeldeten Fehler auslöste — die Produktionsdatenbank lag seit über einer Woche hinter `main` zurück. Alle 19 wurden nach Bestätigung durch den Nutzer angewendet; `--dry-run` meldet seither „up to date".
+- **Nicht verifiziert, wie in den STOP conditions vorgesehen:** ein echtes gleichzeitiges Wettrennen zweier `db push`-Prozesse auf Postgres-Ebene (Objekt-Lock/Primärschlüsselverletzung in `schema_migrations`) — die beiden Testläufe liefen faktisch sequenziell. Vor einem Wechsel auf mehrere Replikas desselben Dienstes sollte das gezielt nachgeholt werden (siehe STOP conditions unten, unverändert).
 
 ## STOP conditions
 

@@ -21,6 +21,9 @@ FROM base AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build --chown=node:node /out ./
+# Plan 036: same reasoning as apps/api/Dockerfile -- the migration boot hook (packages/db-migrate,
+# called at the top of index.ts's main()) needs the migration files themselves at runtime.
+COPY --chown=node:node supabase/migrations ./supabase/migrations
 USER node
 # The worker validates its Supabase and Hatchet credentials before opening any connection.
 CMD ["node", "dist/index.js"]

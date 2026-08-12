@@ -31,6 +31,10 @@ FROM base AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build --chown=node:node /out ./
+# Plan 036: der Migrations-Boot-Hook (packages/db-migrate, aufgerufen aus server.ts vor jeder
+# Route-Registrierung) braucht die Migrationsdateien selbst zur Laufzeit, nicht nur zur Build-Zeit
+# -- `pnpm deploy` oben kopiert nur Node-Pakete, keine losen Repo-Ordner wie supabase/migrations.
+COPY --chown=node:node supabase/migrations ./supabase/migrations
 USER node
 EXPOSE 4201
 # Same probe as the api service in docker-compose.yml. bookworm-slim ships neither curl nor wget,
