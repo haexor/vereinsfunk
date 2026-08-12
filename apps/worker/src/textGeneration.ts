@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { createSecretBox } from '@vereinsfunk/secrets'
-import { ContentGenerationError, OpenAiCompatibleStructuredContentGenerator, TEXT_PROMPT_TEMPLATE_VERSION, createTextGroundedContentBrief, type StructuredContentGenerator } from '@vereinsfunk/content-engine'
+import { AnthropicStructuredContentGenerator, ContentGenerationError, OpenAiCompatibleStructuredContentGenerator, TEXT_PROMPT_TEMPLATE_VERSION, createTextGroundedContentBrief, type StructuredContentGenerator } from '@vereinsfunk/content-engine'
 import { SourceMaterialSchema, StyleProfileRulesSchema, UuidSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
 import { WorkflowExecutionError } from './workflows.js'
@@ -41,9 +41,18 @@ function hasGenerationPurpose(payload: WorkflowPayload): boolean {
   return match !== null && match[2] === payload.candidateId && UuidSchema.safeParse(match[2]).success
 }
 
+// Ein Adapter je Protokoll. Beide sind zustandslos, eine Instanz je Prozess genuegt. Ein Protokoll
+// ohne Eintrag hier gilt als nicht implementiert -- das ist die einzige Stelle, die darueber
+// entscheidet, statt einer zweiten Liste neben der Datenbank-Constraint.
+const GENERATORS: Record<string, StructuredContentGenerator | undefined> = {
+  openai: new OpenAiCompatibleStructuredContentGenerator(),
+  anthropic: new AnthropicStructuredContentGenerator(),
+}
+
 /** Executes one ID-only generate-text-post delivery. No content crosses the Hatchet envelope. */
 export class TextGenerationExecutor {
-  constructor(private readonly config: WorkerEnvironment, private readonly repository: TextGenerationRepository, private readonly generator: StructuredContentGenerator = new OpenAiCompatibleStructuredContentGenerator()) {}
+  /** `generator` ueberschreibt die Protokollauswahl vollstaendig und ist die Testklammer. */
+  constructor(private readonly config: WorkerEnvironment, private readonly repository: TextGenerationRepository, private readonly generator?: StructuredContentGenerator) {}
 
   async execute(payload: WorkflowPayload) {
     if (!payload.candidateId) throw new WorkflowExecutionError('generation_candidate_not_found', false)
@@ -54,11 +63,12 @@ export class TextGenerationExecutor {
     if (!candidate) return // duplicate delivery or a terminal candidate; never create a second one
     try {
       const provider = await this.repository.loadActiveTextProvider()
-      if (provider.protocol !== 'openai' || !provider.structured_output_required) throw new WorkflowExecutionError('unsupported_provider_configuration', false)
+      const generator = this.generator ?? GENERATORS[provider.protocol]
+      if (!generator || !provider.structured_output_required) throw new WorkflowExecutionError('unsupported_provider_configuration', false)
       const style = session.style_profile_snapshot as { name?: unknown; description?: unknown; styleRules?: unknown; avoidRules?: unknown }
       const brief = createTextGroundedContentBrief({ presetSlug: session.preset_slug, communicationGoal: session.communication_goal, sourceMaterial: SourceMaterialSchema.parse(session.source_material) })
       const apiKey = parseSecretBox(this.config).open(ciphertextBuffer(provider.api_key_ciphertext), provider.key_version, provider.id)
-      const post = await this.generator.generateText({
+      const post = await generator.generateText({
         brief,
         styleProfile: { name: String(style.name ?? 'Systemstil'), description: String(style.description ?? ''), styleRules: StyleProfileRulesSchema.parse(style.styleRules), avoidRules: Array.isArray(style.avoidRules) ? style.avoidRules.map(String) : [] },
         ...(candidate.revision_instruction ? { revisionInstruction: candidate.revision_instruction } : {}),

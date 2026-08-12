@@ -1,13 +1,50 @@
 <script setup lang="ts">
 import {
   CreateLlmProviderConfigurationRequestSchema,
+  ListLlmProviderModelsRequestSchema,
+  ListLlmProviderModelsResponseSchema,
   LlmProviderConfigurationSchema,
   UpdateLlmProviderConfigurationRequestSchema,
   UuidSchema,
   type LlmProviderConfigurationDto,
+  type LlmProviderProtocol,
+  type LlmTaskKind,
 } from '@vereinsfunk/contracts'
 
 definePageMeta({ layout: 'admin' })
+
+// Bekannte Endpunkte je Protokoll. Die Liste belegt nur die Basis-URL vor; Modelle kommen nicht
+// von hier, sondern vom Anbieter selbst (siehe loadModels) -- eine gepflegte Modell-Liste waere
+// mit jedem Anbieter-Release veraltet. Eine eigene Proxy-Instanz hat keine feste Adresse und
+// laeuft deshalb ueber "Eigene URL …".
+// Reihenfolge ist bedeutsam: der erste Eintrag ist die Vorauswahl und muss zum Standardprotokoll
+// unten passen.
+const PROVIDER_PRESETS = [
+  { label: 'OpenAI', protocol: 'openai', baseUrl: 'https://api.openai.com/v1' },
+  { label: 'OpenRouter', protocol: 'openai', baseUrl: 'https://openrouter.ai/api/v1' },
+  { label: 'Mistral', protocol: 'openai', baseUrl: 'https://api.mistral.ai/v1' },
+  { label: 'Groq', protocol: 'openai', baseUrl: 'https://api.groq.com/openai/v1' },
+  { label: 'Anthropic', protocol: 'anthropic', baseUrl: 'https://api.anthropic.com/v1' },
+] as const
+
+// Beide Protokolle haben einen Adapter im Worker. Bei den Aufgabenarten stehen die
+// unimplementierten trotzdem im Auswahlfeld -- gesperrt, damit sichtbar ist, dass es diese Achse
+// gibt, ohne dass sich jemand einen Fehlschlag einhandelt.
+const PROTOCOL_OPTIONS = [
+  { value: 'openai', label: 'OpenAI-kompatibel', available: true },
+  { value: 'anthropic', label: 'Anthropic (nativ)', available: true },
+] as const
+const TASK_KIND_OPTIONS = [
+  { value: 'text_generation', label: 'Textgenerierung', available: true },
+  { value: 'image_generation', label: 'Bildgenerierung', available: false },
+  { value: 'video_generation', label: 'Videogenerierung', available: false },
+] as const
+const TEMPERATURE_OPTIONS = [
+  { value: 0, label: 'Präzise (0,0)' },
+  { value: 0.2, label: 'Ausgewogen (0,2)' },
+  { value: 0.7, label: 'Kreativ (0,7)' },
+  { value: 1, label: 'Sehr kreativ (1,0)' },
+] as const
 
 const config = useRuntimeConfig()
 const loading = ref(true)
@@ -15,15 +52,54 @@ const saving = ref(false)
 const errorMessage = ref('')
 const providers = ref<LlmProviderConfigurationDto[]>([])
 
+const availableModels = ref<string[]>([])
+const modelsLoading = ref(false)
+const modelsMessage = ref('')
+const useCustomModel = ref(false)
+
 const newProvider = reactive({
   label: '',
-  protocol: 'openai' as const,
-  baseUrl: '',
+  protocol: 'openai' as LlmProviderProtocol,
+  taskKind: 'text_generation' as LlmTaskKind,
+  presetLabel: PROVIDER_PRESETS[0].label as string,
+  baseUrl: PROVIDER_PRESETS[0].baseUrl as string,
   model: '',
   apiKey: '',
   temperature: 0.2,
   maxOutputTokens: 1200,
   priority: 100,
+})
+
+const usesPreset = computed(() => newProvider.presetLabel !== '')
+const showModelSelect = computed(() => availableModels.value.length > 0 && !useCustomModel.value)
+const canLoadModels = computed(() => newProvider.baseUrl.trim().length > 0 && newProvider.apiKey.trim().length > 0)
+// Ein Preset gehoert zu genau einem Protokoll -- ein OpenAI-Endpunkt unter "Anthropic (nativ)"
+// waere eine Konfiguration, die erst im Worker auffliegt.
+const visiblePresets = computed(() => PROVIDER_PRESETS.filter((preset) => preset.protocol === newProvider.protocol))
+// Der Anthropic-Adapter sendet temperature bewusst nicht (aktuelle Claude-Modelle lehnen den
+// Parameter ab). Ein bedienbarer Regler, der nichts bewirkt, waere irrefuehrend.
+const usesTemperature = computed(() => newProvider.protocol !== 'anthropic')
+
+function resetModelChoice() {
+  availableModels.value = []
+  useCustomModel.value = false
+  modelsMessage.value = ''
+  newProvider.model = ''
+}
+
+// Eine geladene Modell-Liste gehoert zu genau einer Basis-URL -- nach einem Wechsel waere sie
+// stillschweigend falsch.
+watch(() => newProvider.baseUrl, resetModelChoice)
+
+function applyPreset() {
+  const preset = visiblePresets.value.find((entry) => entry.label === newProvider.presetLabel)
+  newProvider.baseUrl = preset?.baseUrl ?? ''
+}
+
+// Protokollwechsel: das bisherige Preset gehoert zum alten Protokoll und passt jetzt nicht mehr.
+watch(() => newProvider.protocol, () => {
+  newProvider.presetLabel = visiblePresets.value[0]?.label ?? ''
+  applyPreset()
 })
 
 async function load() {
@@ -41,6 +117,28 @@ async function load() {
 }
 await load()
 
+async function loadModels() {
+  if (!canLoadModels.value) return
+  modelsLoading.value = true
+  modelsMessage.value = ''
+  try {
+    const headers = await useAuthHeader()
+    const body = ListLlmProviderModelsRequestSchema.parse({ protocol: newProvider.protocol, baseUrl: newProvider.baseUrl, apiKey: newProvider.apiKey })
+    const response = await $fetch(`${config.public.apiBase}/v1/llm-providers/models`, { method: 'POST', headers, body })
+    availableModels.value = ListLlmProviderModelsResponseSchema.parse(response).models
+    useCustomModel.value = false
+    if (!availableModels.value.includes(newProvider.model)) newProvider.model = availableModels.value[0] ?? ''
+  } catch {
+    // Nicht jeder Anbieter kennt /models. Das Formular faellt dann auf die freie Eingabe zurueck,
+    // statt das Anlegen zu blockieren.
+    availableModels.value = []
+    useCustomModel.value = true
+    modelsMessage.value = 'Modelle konnten nicht abgerufen werden. Bitte den Modellnamen eintragen.'
+  } finally {
+    modelsLoading.value = false
+  }
+}
+
 async function createProvider() {
   if (!newProvider.label.trim() || !newProvider.baseUrl.trim() || !newProvider.model.trim() || !newProvider.apiKey.trim()) return
   saving.value = true
@@ -53,18 +151,19 @@ async function createProvider() {
       baseUrl: newProvider.baseUrl,
       model: newProvider.model,
       apiKey: newProvider.apiKey,
-      taskKind: 'text_generation',
+      taskKind: newProvider.taskKind,
       runtimeParameters: { temperature: newProvider.temperature, maxOutputTokens: newProvider.maxOutputTokens, structuredOutputRequired: true },
       priority: newProvider.priority,
     })
     await $fetch(`${config.public.apiBase}/v1/llm-providers`, { method: 'POST', headers, body })
     newProvider.label = ''
-    newProvider.baseUrl = ''
-    newProvider.model = ''
+    newProvider.presetLabel = PROVIDER_PRESETS[0].label
+    newProvider.baseUrl = PROVIDER_PRESETS[0].baseUrl
     newProvider.apiKey = ''
     newProvider.temperature = 0.2
     newProvider.maxOutputTokens = 1200
     newProvider.priority = 100
+    resetModelChoice()
     await load()
   } catch {
     errorMessage.value = 'Provider konnte nicht angelegt werden.'
@@ -127,30 +226,43 @@ async function removeProvider(id: string) {
             placeholder="Bezeichnung, z.B. Claude via haex-claude-proxy"
             class="focus-ring rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm sm:col-span-2"
           />
-          <div class="rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm text-[#5c655f]">OpenAI-kompatibel · text_generation</div>
-          <input
-            v-model="newProvider.model"
-            type="text"
-            required
-            placeholder="Modell, z.B. claude-opus-5"
-            class="focus-ring rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm"
-          />
-          <input
-            v-model="newProvider.baseUrl"
-            type="url"
-            required
-            placeholder="Basis-URL"
-            class="focus-ring rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm sm:col-span-2"
-          />
-          <label class="text-xs font-semibold text-[#5c655f]">Temperatur
-            <input v-model.number="newProvider.temperature" type="number" min="0" max="2" step="0.1" required class="mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" />
+
+          <label class="text-xs font-semibold text-[#5c655f]">Protokoll
+            <select v-model="newProvider.protocol" class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal">
+              <option v-for="option in PROTOCOL_OPTIONS" :key="option.value" :value="option.value" :disabled="!option.available">
+                {{ option.available ? option.label : `${option.label} · noch nicht verfügbar` }}
+              </option>
+            </select>
           </label>
-          <label class="text-xs font-semibold text-[#5c655f]">Max. Ausgabe-Tokens
-            <input v-model.number="newProvider.maxOutputTokens" type="number" min="128" max="4000" step="1" required class="mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" />
+          <label class="text-xs font-semibold text-[#5c655f]">Aufgabe
+            <select v-model="newProvider.taskKind" class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal">
+              <option v-for="option in TASK_KIND_OPTIONS" :key="option.value" :value="option.value" :disabled="!option.available">
+                {{ option.available ? option.label : `${option.label} · noch nicht verfügbar` }}
+              </option>
+            </select>
           </label>
-          <label class="text-xs font-semibold text-[#5c655f] sm:col-span-2">Priorität (kleinere Zahl gewinnt)
-            <input v-model.number="newProvider.priority" type="number" step="1" required class="mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" />
+
+          <label class="text-xs font-semibold text-[#5c655f] sm:col-span-2">Anbieter
+            <select
+              v-model="newProvider.presetLabel"
+              class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal"
+              @change="applyPreset"
+            >
+              <option v-for="preset in visiblePresets" :key="preset.label" :value="preset.label">{{ preset.label }}</option>
+              <option value="">Eigene URL …</option>
+            </select>
           </label>
+          <label class="text-xs font-semibold text-[#5c655f] sm:col-span-2">Basis-URL
+            <input
+              v-model="newProvider.baseUrl"
+              type="url"
+              required
+              :disabled="usesPreset"
+              placeholder="https://mein-proxy.example/v1"
+              class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal disabled:bg-[#f4f5f1] disabled:text-[#7b827d]"
+            />
+          </label>
+
           <input
             v-model="newProvider.apiKey"
             type="password"
@@ -158,6 +270,62 @@ async function removeProvider(id: string) {
             placeholder="API-Key / Bearer-Token"
             class="focus-ring rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm sm:col-span-2"
           />
+
+          <label class="text-xs font-semibold text-[#5c655f] sm:col-span-2">Modell
+            <div class="mt-1 flex gap-2">
+              <select
+                v-if="showModelSelect"
+                v-model="newProvider.model"
+                required
+                class="focus-ring w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal"
+              >
+                <option v-for="model in availableModels" :key="model" :value="model">{{ model }}</option>
+              </select>
+              <input
+                v-else
+                v-model="newProvider.model"
+                type="text"
+                required
+                placeholder="Modell, z.B. claude-opus-5"
+                class="focus-ring w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal"
+              />
+              <button
+                type="button"
+                class="focus-ring shrink-0 rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-xs font-bold disabled:opacity-60"
+                :disabled="!canLoadModels || modelsLoading"
+                @click="loadModels"
+              >
+                {{ modelsLoading ? 'Lädt …' : 'Modelle laden' }}
+              </button>
+            </div>
+            <button
+              v-if="showModelSelect"
+              type="button"
+              class="focus-ring mt-1 rounded-lg text-[11px] font-semibold text-[#7b827d] underline"
+              @click="useCustomModel = true"
+            >
+              Modellnamen selbst eingeben
+            </button>
+            <p v-if="modelsMessage" class="mt-1 text-[11px] font-normal text-amber-800">{{ modelsMessage }}</p>
+            <p v-else-if="!showModelSelect" class="mt-1 text-[11px] font-normal text-[#9aa096]">Basis-URL und Schlüssel eintragen, dann Modelle laden.</p>
+          </label>
+
+          <label class="text-xs font-semibold text-[#5c655f]">Temperatur
+            <select
+              v-model.number="newProvider.temperature"
+              :disabled="!usesTemperature"
+              class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal disabled:bg-[#f4f5f1] disabled:text-[#7b827d]"
+            >
+              <option v-for="option in TEMPERATURE_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
+            </select>
+            <p v-if="!usesTemperature" class="mt-1 text-[11px] font-normal text-[#9aa096]">Wird beim Anthropic-Protokoll nicht gesendet.</p>
+          </label>
+          <label class="text-xs font-semibold text-[#5c655f]">Max. Ausgabe-Tokens
+            <input v-model.number="newProvider.maxOutputTokens" type="number" min="128" max="4000" step="1" required class="mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" />
+          </label>
+          <label class="text-xs font-semibold text-[#5c655f] sm:col-span-2">Priorität (kleinere Zahl gewinnt)
+            <input v-model.number="newProvider.priority" type="number" step="1" required class="mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" />
+          </label>
           <button
             type="submit"
             class="focus-ring rounded-xl bg-forest px-5 py-2.5 text-xs font-bold text-white disabled:opacity-60 sm:col-span-2"

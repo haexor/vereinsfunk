@@ -126,4 +126,47 @@ describe('fetchPublicUrl', () => {
       }),
     ).rejects.toMatchObject({ reason: 'too_large' })
   })
+
+  it('sends the supplied headers', async () => {
+    const seen: Array<Record<string, string> | undefined> = []
+    await fetchPublicUrl('https://example.com/v1/models', {
+      headers: { authorization: 'Bearer secret-token' },
+      lookupImpl: publicLookup,
+      fetchImpl: async (_input, init) => {
+        seen.push(init?.headers as Record<string, string> | undefined)
+        return response('{}')
+      },
+    })
+    expect(seen).toEqual([{ authorization: 'Bearer secret-token' }])
+  })
+
+  it('keeps the authorization header on a same-origin redirect', async () => {
+    const seen: Array<Record<string, string> | undefined> = []
+    await fetchPublicUrl('https://example.com/v1/models', {
+      headers: { authorization: 'Bearer secret-token' },
+      lookupImpl: publicLookup,
+      fetchImpl: async (input, init) => {
+        seen.push(init?.headers as Record<string, string> | undefined)
+        return String(input) === 'https://example.com/v1/models'
+          ? response('', { status: 302, headers: { location: 'https://example.com/v2/models' } })
+          : response('{}')
+      },
+    })
+    expect(seen).toEqual([{ authorization: 'Bearer secret-token' }, { authorization: 'Bearer secret-token' }])
+  })
+
+  it('drops the authorization header on a cross-origin redirect -- sonst bekaeme die Gegenstelle einen fremden Schluessel', async () => {
+    const seen: Array<Record<string, string> | undefined> = []
+    await fetchPublicUrl('https://example.com/v1/models', {
+      headers: { authorization: 'Bearer secret-token', accept: 'application/json' },
+      lookupImpl: publicLookup,
+      fetchImpl: async (input, init) => {
+        seen.push(init?.headers as Record<string, string> | undefined)
+        return String(input) === 'https://example.com/v1/models'
+          ? response('', { status: 302, headers: { location: 'https://elsewhere.example/v1/models' } })
+          : response('{}')
+      },
+    })
+    expect(seen[1]).toEqual({ accept: 'application/json' })
+  })
 })

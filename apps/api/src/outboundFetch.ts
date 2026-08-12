@@ -108,10 +108,22 @@ export interface FetchPublicUrlOptions {
   timeoutMs?: number
   maxBytes?: number
   maxRedirects?: number
+  /**
+   * Zusaetzliche Kopfzeilen, etwa ein `authorization`-Bearer. Ein Geheimnis darf einer
+   * Weiterleitung nicht ueber die Herkunft hinaus folgen (siehe Redirect-Zweig unten).
+   */
+  headers?: Record<string, string>
   /** Nur für Tests; sonst der globale fetch. */
   fetchImpl?: typeof fetch
   /** Nur für Tests; sonst die Namensauflösung des Systems. */
   lookupImpl?: AddressLookup
+}
+
+// Weiterleitung auf eine fremde Herkunft: die Gegenstelle bekaeme sonst ein Geheimnis, das nie fuer
+// sie bestimmt war. Browser verwerfen `authorization` hier ebenso.
+function stripCredentialHeadersOnCrossOrigin(headers: Record<string, string>, from: string, to: string): Record<string, string> {
+  if (new URL(from).origin === new URL(to).origin) return headers
+  return Object.fromEntries(Object.entries(headers).filter(([name]) => name.toLowerCase() !== 'authorization'))
 }
 
 /**
@@ -121,15 +133,16 @@ export interface FetchPublicUrlOptions {
  * urspruenglichen Ziels wertlos gemacht.
  */
 export async function fetchPublicUrl(rawUrl: string, options: FetchPublicUrlOptions = {}): Promise<string> {
-  const { timeoutMs = 10_000, maxBytes = 5_000_000, maxRedirects = 3, fetchImpl = fetch, lookupImpl = systemLookup } = options
+  const { timeoutMs = 10_000, maxBytes = 5_000_000, maxRedirects = 3, headers = {}, fetchImpl = fetch, lookupImpl = systemLookup } = options
   let current = rawUrl
+  let currentHeaders = headers
   for (let hop = 0; hop <= maxRedirects; hop += 1) {
     if (!isAllowedOutboundUrl(current)) throw new OutboundFetchError('blocked_url', `blocked url ${current}`)
     await assertResolvesPublicly(new URL(current).hostname, lookupImpl)
 
     let response: Response
     try {
-      response = await fetchImpl(current, { redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) })
+      response = await fetchImpl(current, { redirect: 'manual', headers: currentHeaders, signal: AbortSignal.timeout(timeoutMs) })
     } catch (error) {
       throw new OutboundFetchError('request_failed', error instanceof Error ? error.message : 'fetch failed')
     }
@@ -137,7 +150,9 @@ export async function fetchPublicUrl(rawUrl: string, options: FetchPublicUrlOpti
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get('location')
       if (!location) throw new OutboundFetchError('request_failed', `redirect without location (${response.status})`)
-      current = new URL(location, current).toString()
+      const next = new URL(location, current).toString()
+      currentHeaders = stripCredentialHeadersOnCrossOrigin(currentHeaders, current, next)
+      current = next
       continue
     }
     if (!response.ok) throw new OutboundFetchError('request_failed', `unexpected status ${response.status}`)

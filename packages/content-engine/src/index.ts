@@ -152,6 +152,67 @@ export class OpenAiCompatibleStructuredContentGenerator implements StructuredCon
   }
 }
 
+/**
+ * Name des Werkzeugs, das die schemakonforme Antwort erzwingt. Der Wert ist nicht frei waehlbar:
+ * haex-claude-proxy erkennt genau diesen Namen und uebergibt dessen `input_schema` als
+ * `--json-schema` an die Claude-CLI (src/cli-format.js, OUTPUT_TOOL_NAME) -- ein anderer Name
+ * landet dort im Ausgabe-Werkzeug-Filter und die Antwort kaeme als Prosa zurueck. Fuer
+ * api.anthropic.com ist es ein gewoehnlicher Werkzeugname ohne Sonderbedeutung, derselbe Aufruf
+ * funktioniert also gegen beide Gegenstellen.
+ */
+const ANTHROPIC_OUTPUT_TOOL_NAME = 'final_result'
+
+/**
+ * Anthropic-Messages-Adapter. Strukturierte Ausgabe laeuft ueber erzwungenen Werkzeugaufruf statt
+ * ueber `output_config.format`: nur diesen Weg unterstuetzt haex-claude-proxy im Abo-Modus, in dem
+ * die Claude-CLI als Unterprozess laeuft und `output_config` nie zu sehen bekaeme.
+ *
+ * `temperature` wird bewusst nicht gesendet. Die aktuellen Claude-Modelle lehnen den Parameter mit
+ * 400 ab, und im Abo-Modus des Proxys gaebe es ohnehin keinen Regler dafuer -- der konfigurierte
+ * Wert bleibt fuer OpenAI-kompatible Provider gueltig und wird hier stillschweigend nicht benutzt.
+ */
+export class AnthropicStructuredContentGenerator implements StructuredContentGenerator {
+  constructor(private readonly fetcher: FetchLike = fetch) {}
+
+  async generateText(input: StructuredTextGeneratorInput): Promise<GeneratedPost> {
+    const prompt = buildStructuredTextPrompt(input)
+    let response: Response
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), input.requestTimeoutMs ?? 60_000)
+    try {
+      response = await this.fetcher(new URL('messages', input.baseUrl.endsWith('/') ? input.baseUrl : `${input.baseUrl}/`).toString(), {
+        method: 'POST',
+        signal: controller.signal,
+        // x-api-key statt Bearer: die echte Anthropic-API verlangt es so, und die Resolver des
+        // Proxys lesen denselben Kopf. Beide Koepfe gleichzeitig lehnt api.anthropic.com ab.
+        headers: { 'x-api-key': input.apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({ model: input.model, max_tokens: input.maxOutputTokens,
+          system: prompt.system,
+          messages: [{ role: 'user', content: prompt.user }],
+          tools: [{ name: ANTHROPIC_OUTPUT_TOOL_NAME, description: 'Gibt den fertigen Vereinsbeitrag zurueck.', input_schema: generatedPostJsonSchema }],
+          tool_choice: { type: 'tool', name: ANTHROPIC_OUTPUT_TOOL_NAME },
+        }),
+      })
+    } catch { throw new ContentGenerationError('provider_network', true) } finally { clearTimeout(timeout) }
+    if (response.status === 429) throw new ContentGenerationError('provider_rate_limit', true)
+    if (response.status >= 500) throw new ContentGenerationError('provider_server', true)
+    if (!response.ok) throw new ContentGenerationError('provider_schema', false)
+    try {
+      const body = await response.json() as { stop_reason?: unknown; content?: Array<{ type?: unknown; name?: unknown; input?: unknown }> }
+      // Eine Ablehnung durch die Sicherheitsklassifikatoren kommt als HTTP 200 ohne Werkzeugaufruf
+      // zurueck; ein erneuter Versuch mit derselben Eingabe wuerde genauso enden.
+      if (body.stop_reason === 'refusal') throw new ContentGenerationError('provider_schema', false)
+      const block = body.content?.find((entry) => entry.type === 'tool_use' && entry.name === ANTHROPIC_OUTPUT_TOOL_NAME)
+      const post = GeneratedPostSchema.parse(block?.input)
+      assertGroundedPost(post, input.brief)
+      return post
+    } catch (error) {
+      if (error instanceof ContentGenerationError) throw error
+      throw new ContentGenerationError('provider_schema', false)
+    }
+  }
+}
+
 // JSON Schema is sent to the provider; Zod remains the authoritative second validation boundary.
 const generatedPostJsonSchema = {
   type: 'object', additionalProperties: false,
