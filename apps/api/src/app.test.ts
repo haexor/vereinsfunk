@@ -3404,7 +3404,7 @@ describe('Paket 014: Integrationsrahmen und Mitgliederverzeichnis', () => {
 
   it('refuses to store an ical endpoint that points into the internal network', async () => {
     // Ohne diese Pruefung waere die API ein Server-zu-Server-Proxy: die Adresse kommt vom Verein,
-    // abgerufen wird sie aus dem Netz der API (siehe outboundFetch.ts). Der Wert darf gar nicht
+    // abgerufen wird sie aus dem Netz der API (siehe @vereinsfunk/outbound-fetch). Der Wert darf gar nicht
     // erst gespeichert werden, damit auch ein spaeterer Lauf ihn nicht mehr vorfindet.
     const clients: SupabaseClientFactory = {
       forUser: () => ({ from: () => { throw new Error('no lookup expected for an organization-scoped source') } }) as unknown as SupabaseClient,

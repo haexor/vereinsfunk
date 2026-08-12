@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(45);
+select plan(48);
 
 set local role postgres;
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -271,6 +271,32 @@ select lives_ok(
   'regression: anthropic is an implemented protocol and can be active'
 );
 select is((select count(*)::integer from public.workflow_outbox where workflow_name = 'generate-text-post' and payload ? 'sourceMaterial'), 0, 'negative: text generation outbox payloads never contain source content');
+
+-- Plan 034: acquire_generation_candidate must reclaim a candidate stuck on 'generating' past the
+-- recovery threshold (a crashed worker never released it), but must not touch one still within
+-- it, since that attempt may legitimately still be running. A premature call for the latter must
+-- raise instead of returning null -- a null used to be indistinguishable from a safe duplicate
+-- delivery, which let TextGenerationExecutor.execute report false success (see context.ts).
+set local role postgres;
+insert into public.generation_candidates (id, organization_id, composition_session_id, generation_intent, status, input_hash, updated_at) values
+  ('32000000-2810-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2500-4000-8000-000000000002', 'initial', 'generating', repeat('c', 64), now() - interval '20 minutes'),
+  ('32000000-2820-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2500-4000-8000-000000000002', 'initial', 'generating', repeat('d', 64), now()),
+  ('32000000-2830-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2500-4000-8000-000000000002', 'initial', 'failed', repeat('9', 64), now());
+select isnt(
+  (select public.acquire_generation_candidate('32000000-2810-4000-8000-000000000002', '32000000-2500-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002')),
+  null,
+  'a candidate stuck on generating past the recovery threshold is reacquired after a worker crash'
+);
+select throws_ok(
+  $$select public.acquire_generation_candidate('32000000-2820-4000-8000-000000000002', '32000000-2500-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002')$$,
+  'P0001', 'generation_candidate_still_in_progress',
+  'negative: a candidate still within the recovery threshold raises instead of silently reporting success while a legitimate attempt may still be running'
+);
+select is(
+  (select public.acquire_generation_candidate('32000000-2830-4000-8000-000000000002', '32000000-2500-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002')),
+  null,
+  'a duplicate delivery of an already-terminal candidate still returns null, not an exception'
+);
 
 select * from finish();
 rollback;

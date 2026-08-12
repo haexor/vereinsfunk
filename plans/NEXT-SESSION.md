@@ -1,45 +1,18 @@
 # Prompt für die nächste Session
 
-Arbeite im Repository-Root dieses Checkouts. Beginne mit `git status --short --branch`, `git log --oneline main..HEAD` und `gh pr view 50 --json state,mergedAt` — Plan 034 hängt an PR #50 (Anthropic-Adapter/Provider-Routing-UI). Ist der PR inzwischen gemergt, auf einem frischen Branch/Worktree von `main` weiterarbeiten statt auf `worktree-llm-provider-dropdowns`; ist er noch offen, auf diesem Branch fortsetzen. Bewahre vorhandene Änderungen; erst nach ausdrücklicher Aufforderung committen oder pushen.
+Arbeite im Repository-Root dieses Checkouts. Beginne mit `git status --short --branch`, `git log --oneline main..HEAD` und `gh pr view 50 --json state,mergedAt`. Plan 034 ist umgesetzt und lokal verifiziert, aber Stand dieser Notiz noch **nicht committet/gepusht** (`worktree-llm-provider-dropdowns`) — erst nach ausdrücklicher Aufforderung committen, pushen oder eine PR öffnen. Prüfe zuerst per `git status`, ob das inzwischen doch geschehen ist (z. B. in einer Zwischensession), bevor du von einem sauberen Arbeitsverzeichnis ausgehst.
 
-## Auftrag: Plan 034 umsetzen
+## Ausgangslage: Plan 034 abgeschlossen (mit dokumentierter Restlücke)
 
-Lies vor Änderungen vollständig:
+`plans/034-provider-aufrufe-absichern-und-generation-recovery.md` ist umgesetzt, alle Done-Kriterien abgehakt oder explizit als teilweise erreicht dokumentiert:
 
-- `plans/034-provider-aufrufe-absichern-und-generation-recovery.md` (der eigentliche Plan — Drift-Check-Befehl steht direkt am Anfang)
-- `packages/content-engine/src/index.ts`
-- `apps/api/src/outboundFetch.ts`
-- `apps/worker/src/textGeneration.ts`, `apps/worker/src/workflows.ts`
-- `supabase/migrations/2026081105_text_generation_review_fixes.sql`, `supabase/migrations/2026081102_workflow_run_lifecycle.sql` (Vorbild für den Lease-Rückfall aus Schritt 3)
+- Neues Paket `packages/outbound-fetch` (verschobene Zieladressenprüfung aus dem vormaligen `apps/api/src/outboundFetch.ts`, plus `createGuardedFetch` als neue, größenbegrenzte (`maxBytes`, Default 5 MB) Response-zurückgebende Guard-Variante).
+- Beide `StructuredContentGenerator`-Adapter (`packages/content-engine/src/index.ts`) nutzen `createGuardedFetch()` als Default-Fetcher; eine blockierte oder umgeleitete Zieladresse klassifiziert jetzt als nicht-wiederholbares `ContentGenerationError('provider_configuration', false)`. `apps/worker` musste dafür nicht geändert werden.
+- Migration `2026081202_generation_candidate_lease_recovery.sql`: `acquire_generation_candidate` erobert einen seit über 15 Minuten auf `generating` hängenden Kandidaten zurück und unterscheidet dabei explizit „noch nicht reif" (`raise exception 'generation_candidate_still_in_progress'`, von `apps/worker/src/context.ts` in einen retryable Fehler übersetzt) von „echtes Duplikat/Terminalzustand" (`return null`) — ein verfrühter Hatchet-Retry meldet dadurch ehrlich `failed` statt fälschlich `succeeded`.
+- `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm db:reset`, `pnpm db:test` bestehen vollständig (630 pgTAP-Assertionen in 20 Dateien).
+- **Während der Umsetzung entdeckte, mit dem Nutzer abgestimmte Restlücke**: der 15-Minuten-Rückfall in `acquire_generation_candidate` kann nach einem echten Worker-Absturz in der Praxis nie greifen — Hatchets eigenes Wiederholungsbudget (`retries: 3`, kurzes `backoff`) ist strukturell immer vor der 15-Minuten-Marke aufgebraucht, und danach löst nichts einen weiteren Versuch aus (per Code-Suche bestätigt: kein Sweeper, kein Cron, keine Wiederbelebung eines endgültig aufgegebenen `workflow_runs`-Eintrags). Ein Threshold-Feintuning kann das nicht lösen (die Anforderungen widersprechen sich strukturell) — braucht einen eigenständigen, von Hatchet unabhängigen Trigger. Als Skizze festgehalten in `plans/035-generation-recovery-trigger.md`, bewusst nicht in dieser Session entworfen oder gebaut.
+- Bewusst zurückgestellt (siehe Plan, Abschnitt „Bewusst nicht gebaut"): provider-seitiger Idempotenz-Schlüssel gegen einen theoretisch doppelt abgerechneten LLM-Aufruf; Fencing-Token gegen einen veralteten Worker bei der Kandidaten-Wiedereroberung (gehört inhaltlich zu Plan 035, da ein unabhängiger Trigger dieselbe Wettlaufsituation berührt).
 
-### Erreichter Ausgangsstand
+## Nächster Schritt
 
-- PR #50 lieferte den Anthropic-Adapter und die Auswahlfelder im Plattform-Admin-Formular; im Review dieses PRs fielen zwei zusammenhängende, bewusst zurückgestellte Lücken im Textgenerierungspfad auf, die Plan 034 schließt.
-- **Lücke 1 (Sicherheit)**: `OpenAiCompatibleStructuredContentGenerator` und `AnthropicStructuredContentGenerator` (`packages/content-engine/src/index.ts`) rufen die admin-konfigurierte `base_url` mit rohem `fetch` auf, ohne die Zieladressenprüfung aus `apps/api/src/outboundFetch.ts`, die für denselben Zweck an anderer Stelle (Modell-Abfrage-Route, iCal-Feeds) schon existiert.
-- **Lücke 2 (stiller Datenverlust)**: Stirbt der Worker mitten in `generator.generateText(...)`, bleibt der Kandidat für immer auf `generating` stehen; Hatchets automatischer Retry meldet den Workflow-Run trotzdem als erfolgreich, weil `TextGenerationExecutor.execute()` bei einem nicht mehr `pending`-Kandidaten kommentarlos zurückkehrt.
-- Plan 034 löst beides mit einem neuen Paket `packages/outbound-fetch` (verschiebt die bestehende Guard-Logik, ergänzt eine Response-zurückgebende Variante als neuen Default-Fetcher beider Generatoren — `apps/worker` muss dafür nicht geändert werden) und einer additiven Migration, die `acquire_generation_candidate` denselben Lease-Rückfall gibt, den `workflow_runs` bereits hat.
-
-### Nicht verhandelbare Grenzen
-
-- Eine blockierte Zieladresse ist ein dauerhafter Konfigurationsfehler, kein transienter Netzwerkfehler — nicht als `retryable` klassifizieren (siehe Plan, Schritt 2).
-- Der neue Guard darf Weiterleitungen fail-closed behandeln (kein legitimer Anwendungsfall bei LLM-Provider-Endpunkten) — keine Redirect-Verfolgung samt Credential-Stripping duplizieren, außer eine STOP-Bedingung aus dem Plan greift tatsächlich.
-- Keine neue Spalte und keine neue Funktion für die Kandidaten-Wiederherstellung; `release_generation_candidate` macht den passenden Übergang bereits, `acquire_generation_candidate` braucht nur denselben Rückfall wie `begin_workflow_run`.
-- Der Recovery-Schwellenwert muss deutlich über `executionTimeout: '10m'` (`apps/worker/src/workflows.ts`) plus dem Standard-`requestTimeoutMs` (60s) liegen, sonst wird ein noch legitim laufender Versuch überschrieben.
-- Kein provider-seitiger Idempotenz-Schlüssel gegen einen theoretisch doppelt abgerechneten LLM-Aufruf — im Plan bewusst als offene Entscheidung markiert, nicht in diesem Umsetzungslauf bauen, außer der Nutzer entscheidet nach Rücksprache aktiv dafür.
-- Wenn eine STOP-Bedingung aus Plan 034 greift, nicht improvisieren: Ursache, betroffene Dateien und den kleinsten nächsten Schritt berichten.
-
-### Verifikation
-
-Nach jedem Schritt aus dem Plan die dort angegebene fokussierte Prüfung ausführen. Vor Abschluss mindestens:
-
-```bash
-pnpm install
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm build
-pnpm db:reset
-pnpm db:test
-```
-
-Stand 2026-08-12: nach dem Review-Fix zu PR #50 (Commit `c854faf1`) bestanden `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build` und `pnpm db:test` mit 627 Assertions in 20 Dateien.
+Mit dem Nutzer klären: committen/pushen/PR für Plan 034 öffnen (dieser Branch hängt bereits an PR #50 — prüfen, ob ein neuer PR oder ein Nachpush auf #50 sinnvoller ist). Plan 035 ist nur eine Skizze mit offenen Produkt-/Architekturentscheidungen (Trigger-Ort, Fencing, Quoten-Interaktion, Mitglieder-Sichtbarkeit) — vor einer Umsetzung erst vollständig ausplanen, nicht direkt implementieren. Danach aus `plans/README.md`, Tabelle „Vierte Serie“, das nächste Paket aufnehmen — 029 und 031 sind dort als „bereit“ markiert (beide abhängig von 027, das mit PR #38 vollständig gemergt ist).

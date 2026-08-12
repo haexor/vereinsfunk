@@ -1,4 +1,5 @@
 import { GeneratedPostSchema, type CreateSubmission, type GeneratedPost, type PlatformVariant, type StyleProfileRules } from '@vereinsfunk/contracts'
+import { createGuardedFetch, OutboundFetchError } from '@vereinsfunk/outbound-fetch'
 import { getPreset, validateSourceMaterial } from './presets.js'
 
 export { factsFromFixture, factsFromClubEvent } from './schedule.js'
@@ -57,7 +58,7 @@ export class FakeContentGenerator implements ContentGenerator {
 
 /** Error information intentionally contains no input or output text and is safe for worker logs. */
 export class ContentGenerationError extends Error {
-  constructor(readonly errorClass: 'provider_network' | 'provider_rate_limit' | 'provider_server' | 'provider_schema' | 'ungrounded', readonly retryable: boolean) {
+  constructor(readonly errorClass: 'provider_network' | 'provider_rate_limit' | 'provider_server' | 'provider_schema' | 'provider_configuration' | 'ungrounded', readonly retryable: boolean) {
     super(errorClass)
   }
 }
@@ -127,7 +128,7 @@ function joinUrlPath(baseUrl: string, path: string): string {
 
 /** OpenAI-compatible, JSON-schema constrained adapter. It is deliberately worker injectable. */
 export class OpenAiCompatibleStructuredContentGenerator implements StructuredContentGenerator {
-  constructor(private readonly fetcher: FetchLike = fetch) {}
+  constructor(private readonly fetcher: FetchLike = createGuardedFetch()) {}
 
   async generateText(input: StructuredTextGeneratorInput): Promise<GeneratedPost> {
     const prompt = buildStructuredTextPrompt(input)
@@ -144,7 +145,12 @@ export class OpenAiCompatibleStructuredContentGenerator implements StructuredCon
           messages: [{ role: 'system', content: prompt.system }, { role: 'user', content: prompt.user }],
         }),
       })
-    } catch { throw new ContentGenerationError('provider_network', true) } finally { clearTimeout(timeout) }
+    } catch (error) {
+      // Eine blockierte oder umgeleitete Zieladresse ist eine dauerhafte Fehlkonfiguration, kein
+      // transienter Netzwerkfehler -- drei automatische Hatchet-Wiederholungen waeren verschwendet.
+      if (error instanceof OutboundFetchError) throw new ContentGenerationError('provider_configuration', false)
+      throw new ContentGenerationError('provider_network', true)
+    } finally { clearTimeout(timeout) }
     if (response.status === 429) throw new ContentGenerationError('provider_rate_limit', true)
     if (response.status >= 500) throw new ContentGenerationError('provider_server', true)
     if (!response.ok) throw new ContentGenerationError('provider_schema', false)
@@ -183,7 +189,7 @@ const ANTHROPIC_OUTPUT_TOOL_NAME = 'final_result'
  * Wert bleibt fuer OpenAI-kompatible Provider gueltig und wird hier stillschweigend nicht benutzt.
  */
 export class AnthropicStructuredContentGenerator implements StructuredContentGenerator {
-  constructor(private readonly fetcher: FetchLike = fetch) {}
+  constructor(private readonly fetcher: FetchLike = createGuardedFetch()) {}
 
   async generateText(input: StructuredTextGeneratorInput): Promise<GeneratedPost> {
     const prompt = buildStructuredTextPrompt(input)
@@ -204,7 +210,12 @@ export class AnthropicStructuredContentGenerator implements StructuredContentGen
           tool_choice: { type: 'tool', name: ANTHROPIC_OUTPUT_TOOL_NAME },
         }),
       })
-    } catch { throw new ContentGenerationError('provider_network', true) } finally { clearTimeout(timeout) }
+    } catch (error) {
+      // Eine blockierte oder umgeleitete Zieladresse ist eine dauerhafte Fehlkonfiguration, kein
+      // transienter Netzwerkfehler -- drei automatische Hatchet-Wiederholungen waeren verschwendet.
+      if (error instanceof OutboundFetchError) throw new ContentGenerationError('provider_configuration', false)
+      throw new ContentGenerationError('provider_network', true)
+    } finally { clearTimeout(timeout) }
     if (response.status === 429) throw new ContentGenerationError('provider_rate_limit', true)
     if (response.status >= 500) throw new ContentGenerationError('provider_server', true)
     if (!response.ok) throw new ContentGenerationError('provider_schema', false)

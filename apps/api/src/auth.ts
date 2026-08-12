@@ -113,7 +113,7 @@ export function createAuthGuards(
   environment: ApiEnvironment,
   roleProvider: RoleProvider,
   platformAdminProvider: PlatformAdminProvider,
-  // jwksFetch: gleiches Injektionsmuster wie fetchImpl in outboundFetch.ts, hier fuers Ersetzen des
+  // jwksFetch: gleiches Injektionsmuster wie fetchImpl in @vereinsfunk/outbound-fetch, hier fuers Ersetzen des
   // JWKS-Abrufs in Tests -- keine echte Supabase-Instanz noetig, um die Verifikation zu pruefen.
   options: { jwksFetch?: FetchImplementation } = {},
 ) {

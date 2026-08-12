@@ -154,7 +154,7 @@ import { createAuthGuards, SupabasePlatformAdminProvider, SupabaseRoleProvider, 
 import { mapTeamRow } from './apiMappers.js'
 import { createEmailSender, type EmailMessage, type EmailSender } from './email.js'
 import { IMPLEMENTED_LLM_PROTOCOLS, joinUrlPath, mapLlmProviderConfigurationRow, parseModelListingIds } from './llmProviders.js'
-import { fetchPublicUrl, isAllowedOutboundUrl, OutboundFetchError } from './outboundFetch.js'
+import { fetchPublicUrl, isAllowedOutboundUrl, OutboundFetchError } from '@vereinsfunk/outbound-fetch'
 import { ciphertextToBytea, createChainSignerFromEnvironment, createSecretBoxFromEnvironment } from './secretBox.js'
 import { createServiceClient, createUserClient } from './supabase.js'
 import { registerChannelRoutes } from './routes/channels.js'

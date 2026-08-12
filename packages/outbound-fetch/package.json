@@ -1,5 +1,5 @@
 {
-  "name": "@vereinsfunk/content-engine",
+  "name": "@vereinsfunk/outbound-fetch",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,6 +9,5 @@
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
-  "dependencies": { "@vereinsfunk/contracts": "workspace:*", "@vereinsfunk/outbound-fetch": "workspace:*" },
   "devDependencies": { "typescript": "^6.0.3", "vitest": "^4.1.10" }
 }

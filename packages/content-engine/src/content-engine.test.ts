@@ -49,6 +49,10 @@ describe('structured content generator', () => {
     })
     return expect(generator.generateText({ ...input, baseUrl: 'https://provider.example/v1?key=abc' })).resolves.toMatchObject({ caption: 'Passen' })
   })
+  it('refuses a blocked base url by default, without an injected fetcher and without a real network call', async () => {
+    const generator = new OpenAiCompatibleStructuredContentGenerator()
+    await expect(generator.generateText({ ...input, baseUrl: 'https://169.254.169.254/v1' })).rejects.toMatchObject({ errorClass: 'provider_configuration', retryable: false } satisfies Partial<ContentGenerationError>)
+  })
   it('bounds a provider request and classifies an abort as retryable network failure', async () => {
     const generator = new OpenAiCompatibleStructuredContentGenerator(async (_url, init) => new Promise((_resolve, reject) => {
       init.signal?.addEventListener('abort', () => reject(new Error('aborted')))

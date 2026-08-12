@@ -3,6 +3,7 @@ import type { WorkerEnvironment } from '@vereinsfunk/config'
 import type { WorkflowPayload } from '@vereinsfunk/contracts'
 import { createSecretBox } from '@vereinsfunk/secrets'
 import { ContentGenerationError } from '@vereinsfunk/content-engine'
+import { WorkflowExecutionError } from './workflows.js'
 import { TextGenerationExecutor, type TextGenerationRepository } from './textGeneration.js'
 
 const payload: WorkflowPayload = { candidateId: '10000000-1300-4000-8000-000000000001', entityId: '10000000-0000-4000-8000-000000000001', organizationId: '10000000-1000-4000-8000-000000000001', departmentId: '10000000-1100-4000-8000-000000000001', correlationId: '10000000-1200-4000-8000-000000000001', sourceRevision: 1, purpose: 'initial', idempotencyKey: 'generate-text:test' }
@@ -38,5 +39,19 @@ describe('TextGenerationExecutor', () => {
     const generator = { generateText: vi.fn().mockResolvedValue(post) }
     await expect(new TextGenerationExecutor(config, repo, generator).execute({ ...payload, purpose: `revise:${payload.candidateId}` })).resolves.toBeUndefined()
     await expect(new TextGenerationExecutor(config, repository(), generator).execute({ ...payload, purpose: 'revise:10000000-1300-4000-8000-000000000002' })).rejects.toMatchObject({ errorClass: 'invalid_generation_purpose', retryable: false })
+  })
+  it('no-ops for a duplicate delivery or an already-terminal candidate', async () => {
+    const repo = repository()
+    repo.acquirePendingCandidate = vi.fn().mockResolvedValue(null)
+    const generator = { generateText: vi.fn() }
+    await expect(new TextGenerationExecutor(config, repo, generator).execute(payload)).resolves.toBeUndefined()
+    expect(generator.generateText).not.toHaveBeenCalled()
+  })
+  it('propagates a retryable failure instead of a silent no-op for a candidate still within the recovery window', async () => {
+    const repo = repository()
+    repo.acquirePendingCandidate = vi.fn().mockRejectedValue(new WorkflowExecutionError('generation_candidate_still_in_progress', true))
+    const generator = { generateText: vi.fn() }
+    await expect(new TextGenerationExecutor(config, repo, generator).execute(payload)).rejects.toMatchObject({ errorClass: 'generation_candidate_still_in_progress', retryable: true })
+    expect(generator.generateText).not.toHaveBeenCalled()
   })
 })

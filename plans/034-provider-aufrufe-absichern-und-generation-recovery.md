@@ -78,7 +78,7 @@ Ergänze in `packages/outbound-fetch/src/index.ts` eine neue Exportfunktion, die
 2. `assertResolvesPublicly(hostname, lookupImpl)` prüfen (DNS-Rebinding-Schutz, wie in `fetchPublicUrl`).
 3. `fetch(input, { ...init, redirect: 'manual' })` aufrufen.
 4. Eine Weiterleitungsantwort (Status 300–399, oder `response.type === 'opaqueredirect'`) **nicht verfolgen**, sondern als `OutboundFetchError('blocked_url', ...)` werfen. Begründung: LLM-Provider-Endpunkte (OpenAI-kompatibel, Anthropic Messages, `haex-claude-proxy`) leiten unter normalem Betrieb nicht weiter; eine Weiterleitung fail-closed zu behandeln vermeidet, die Redirect-Verfolgung samt Credential-Header-Entfernung aus `fetchPublicUrl` hierher zu duplizieren, ohne einen legitimen Anwendungsfall zu verlieren.
-5. Andernfalls die `Response` unverändert zurückgeben (keine Text-Dekodierung, keine Größengrenze — die Generatoren lesen den Body selbst und die Provider-Antworten sind strukturiert begrenzt, anders als ein beliebiger Feed).
+5. Andernfalls die `Response` zurückgeben, mit derselben `maxBytes`-Grenze wie `fetchPublicUrl` (Default 5 MB): `content-length` vorab prüfen, den Body-Stream selbst zusätzlich zählen und bei Überschreitung mit `OutboundFetchError('too_large', ...)` abbrechen, ohne den Aufrufer zur Text-Dekodierung zu zwingen — er liest weiterhin `.json()`/`.status`/`.ok` selbst. **Nachtrag aus der Umsetzung**: ursprünglich hier als „keine Größengrenze nötig" begründet, weil Provider-Antworten strukturiert begrenzt seien — CodeRabbits Review dieses Plan-Commits widersprach zu Recht (ein Provider oder eine falsch konfigurierte Basis-URL kann beliebig viel Speicher belegen), deshalb doch mit Grenze umgesetzt.
 
 Ergänze `packages/content-engine/package.json` um die neue `workspace:*`-Abhängigkeit. Ändere in `packages/content-engine/src/index.ts` den Default-Parameter beider Konstruktoren von `fetcher: FetchLike = fetch` auf `fetcher: FetchLike = createGuardedFetch()`. Bestehende Tests, die einen eigenen `fetcher` übergeben (`content-engine.test.ts`), sind davon nicht betroffen — sie überschreiben den Default ohnehin.
 
@@ -92,7 +92,9 @@ Ergänze eine additive Migration, die `acquire_generation_candidate`s `UPDATE`-B
 
 Keine neue Spalte, keine neue Funktion nötig: `release_generation_candidate` macht den passenden Übergang bereits, hier braucht `acquire_generation_candidate` nur denselben Rückfall wie `begin_workflow_run` ihn für `workflow_runs` schon hat.
 
-**Verify**: neue pgTAP-Assertion in `supabase/tests/text_workshop_foundation.test.sql` — ein Kandidat, dessen `status='generating'` und `updated_at` künstlich auf `now() - interval '20 minutes'` gesetzt ist, lässt sich erneut über `acquire_generation_candidate` erobern; ein frischer `generating`-Kandidat (`updated_at = now()`) nicht. `pnpm db:reset && pnpm db:test`.
+**Nachtrag aus der Umsetzung**: Die ursprünglich hier beschriebene `UPDATE`-Erweiterung allein reproduziert die in „Why this matters" beschriebene Falsch-Erfolg-Meldung, sobald ein Hatchet-Retry startet, bevor die 15-Minuten-Schwelle erreicht ist (siehe `TextGenerationExecutor.execute`s `if (!candidate) return`, `apps/worker/src/textGeneration.ts:63`). `acquire_generation_candidate` unterscheidet deshalb zusätzlich zwei Nullfälle: ein echtes Duplikat/ein Terminalzustand (`return null`, unverändertes Verhalten) von einem noch nicht reifen `generating`-Kandidaten (`raise exception 'generation_candidate_still_in_progress'`). `apps/worker/src/context.ts`s `acquirePendingCandidate` übersetzt diese Exception in einen retryable `WorkflowExecutionError`, wodurch der Aufruf in `execute()` propagiert statt still zu erfolgreich zu enden — `workflow_runs` landet ehrlich auf `failed`. Das schließt die Lücke nicht vollständig (siehe „Tieferer Befund" unter „Offen: CodeRabbit-Zweitrunde" unten), macht den Fehlerzustand aber sichtbar statt ihn zu verschleiern.
+
+**Verify**: pgTAP-Assertionen in `supabase/tests/text_workshop_foundation.test.sql` — ein Kandidat, dessen `status='generating'` und `updated_at` künstlich auf `now() - interval '20 minutes'` gesetzt ist, lässt sich erneut über `acquire_generation_candidate` erobern; ein frischer `generating`-Kandidat (`updated_at = now()`) wirft `generation_candidate_still_in_progress` statt `null` zurückzugeben; ein bereits `failed`-Kandidat gibt weiterhin `null` zurück. Zusätzlich `apps/worker/src/textGeneration.test.ts` für die Executor-seitige Übersetzung. `pnpm db:reset && pnpm db:test`, `pnpm --filter @vereinsfunk/worker test`.
 
 ### Step 4: Dokumentation und Plan-Index aktualisieren
 
@@ -111,29 +113,53 @@ Ergänze `plans/README.md` um Zeile 034 in der Tabelle „Vierte Serie: Review u
 - [x] `apps/api` importiert die Guard-Logik aus dem neuen Paket, keine Duplizierung mehr.
 - [x] Beide `StructuredContentGenerator`-Implementierungen sind standardmäßig gegen interne/private Zieladressen abgesichert, ohne dass `apps/worker` seine Konstruktion ändern musste.
 - [x] Eine blockierte Zieladresse führt zu einem nicht wiederholbaren, klar erkennbaren `failure_code`.
-- [x] Ein nach Absturz auf `generating` hängender Kandidat wird beim nächsten Hatchet-Versuch automatisch zurückerobert; ein noch legitim laufender Versuch wird nicht vorzeitig unterbrochen.
+- [x] `acquire_generation_candidate` erobert einen Kandidaten zurück, sobald dessen `generating`-Zustand die 15-Minuten-Schwelle überschritten hat (pgTAP-getestet), und meldet für einen noch nicht reifen Kandidaten ehrlich einen retryable Fehler statt stillschweigend Erfolg vorzutäuschen. **Nicht erreicht**: „beim nächsten Hatchet-Versuch automatisch zurückerobert" trifft nach einem echten Worker-Absturz in der Praxis nicht zu — Hatchets eigenes Wiederholungsbudget ist strukturell immer vor der 15-Minuten-Schwelle aufgebraucht (siehe Abschnitt „Tieferer Befund" unten); ein davon unabhängiger Trigger ist als Folge-Plan skizziert, nicht Teil dieses Umsetzungslaufs.
 - [x] `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm db:reset`, `pnpm db:test` bestehen vollständig.
 
 ### Offen: CodeRabbit-Zweitrunde auf diesem Plan (PR #50)
 
 CodeRabbit hat den Plan-Text selbst review­t (nachdem er als Commit in PR #50 landete) und drei
-Lücken gefunden, die mit Stand dieser Zeile noch nicht geschlossen sind — die sechs Haken oben
-decken sie nicht ab, auch wenn Schritt 1–3 sonst umgesetzt sind:
+Lücken gefunden. Stand nach der Umsetzung:
 
-- [ ] `createGuardedFetch` begrenzt die gelesene Antwortgröße (`maxBytes`, analog zu
-  `fetchPublicUrl`/`readCapped` in derselben Datei). Stand: fehlt — die Funktion gibt die
-  `Response` ungeprüft zurück, ein Provider (oder eine kompromittierte/falsch konfigurierte
-  Basis-URL) kann beliebig viel Speicher im Worker belegen. Offener Review-Thread, PR #50, Zeile 83.
+- [x] `createGuardedFetch` begrenzt die gelesene Antwortgröße (`maxBytes`, Default 5 MB wie
+  `fetchPublicUrl`). Der Response-Body läuft durch einen größenbegrenzten `ReadableStream`, der bei
+  Überschreitung mit `OutboundFetchError('too_large', ...)` abbricht — `.json()`/`.text()` des
+  Aufrufers erhalten diesen Fehler transparent. `declaredLength` wird zusätzlich vorab geprüft
+  (analog `readCapped`). Getestet in `packages/outbound-fetch/src/index.test.ts`.
 - [ ] Die Kandidaten-Wiedereroberung ist gegen einen veralteten Worker abgesichert (Fencing-Token
   oder Lease, geprüft in `mark_generation_candidate_ready`/`mark_generation_candidate_failed`).
-  Stand: fehlt — `acquire_generation_candidate` erkennt Wiedereroberung nur über `updated_at`; ein
-  Worker, dessen Provider-Antwort verspätet eintrifft, kann nach der Wiedereroberung durch einen
-  neuen Worker noch ein veraltetes Ergebnis schreiben. Offener Review-Thread, PR #50, Zeile 93.
-- [ ] Ein Hatchet-Retry, der vor Ablauf der 15-Minuten-Schwelle startet, scheitert sichtbar statt
-  als No-op erfolgreich zu enden. Stand: nicht behoben — `apps/worker/src/textGeneration.ts` ist in
-  dieser Umsetzung unverändert geblieben, `if (!candidate) return` lässt `runs.succeed()` weiterhin
-  fälschlich Erfolg melden, wenn die 15 Minuten noch nicht um sind. Offener Review-Thread, PR #50,
-  Zeile 95.
+  Stand: bewusst zurückgestellt. Die bestehenden `where status = 'generating'`-Bedingungen in
+  `mark_generation_candidate_ready`/`mark_generation_candidate_failed` verhindern zwar stille
+  Korruption (der Verlierer einer Wettlaufsituation erhält eine Exception statt eines
+  stillschweigenden Überschreibens), aber nicht, dass ein verspätetes Ergebnis eines veralteten
+  Workers vor dem eines neueren gewinnt. Ein Fencing-Token wäre eine neue Spalte auf
+  `generation_candidates` — außerhalb der für diese Session vereinbarten Grenze. Gehört inhaltlich
+  zum unten skizzierten Folge-Plan, da ein unabhängiger Recovery-Trigger dieselbe Wettlaufsituation
+  ebenfalls berührt.
+- [x] Ein Hatchet-Retry, der vor Ablauf der 15-Minuten-Schwelle startet, scheitert jetzt sichtbar
+  statt als No-op erfolgreich zu enden. `acquire_generation_candidate` unterscheidet einen
+  Kandidaten, der noch `'generating'` und nicht reif fürs Zurückerobern ist (`raise exception
+  'generation_candidate_still_in_progress'`), von einem echten Duplikat/Terminalfall (`return
+  null`). `apps/worker/src/context.ts` übersetzt die erste Exception in einen retryable
+  `WorkflowExecutionError`, wodurch `workflow_runs` ehrlich `failed` statt fälschlich `succeeded`
+  landet. **Schließt die zugrunde liegende Lücke aus „Why this matters" (Kandidat bleibt hängen,
+  Retry meldet trotzdem Erfolg) nicht vollständig** — siehe nächster Absatz.
+
+**Tieferer Befund (diese Session, über CodeRabbits drei Punkte hinaus):** Der 15-Minuten-Rückfall
+in `acquire_generation_candidate` kann nach einem echten Worker-Absturz in der Praxis nie greifen.
+Hatchets eigene drei Wiederholungen sind durchweg vor der 15-Minuten-Marke aufgebraucht (die erste
+über `executionTimeout` nach 10 Minuten ausgelöst, die beiden folgenden über das kurze `backoff`
+binnen Sekunden bis maximal 60s) — und danach gibt Hatchet den Workflow-Run endgültig auf; nichts im
+Code (bestätigt durch gezielte Suche über `apps/worker/`, `apps/api/`, die Outbox-Dispatch-Migration
+und `docs/operations/hatchet.md`) sendet einen `workflow_runs`-Eintrag mit `technical_status =
+'failed'` je erneut an Hatchet. Threshold-Werte, die dieses Fenster schließen würden, widersprechen
+sich gegenseitig: die Schwelle muss über `executionTimeout` liegen (sonst wird ein noch legitim
+laufender Versuch überschrieben), aber jeder Hatchet-Versuch nach dem ersten kommt viel früher als
+`executionTimeout` erneut — es gibt keinen Wert, der beide Anforderungen gleichzeitig erfüllt. Die
+mit dem Nutzer abgestimmte Entscheidung: den ehrlichen Fehlerzustand (dieser Schritt) jetzt
+ausliefern, den eigentlich schließenden, von Hatchets Wiederholungsbudget unabhängigen
+Recovery-Trigger als eigenen Folge-Plan skizzieren (siehe `plans/035-generation-recovery-trigger.md`),
+nicht in dieser Session entwerfen oder bauen.
 
 ## STOP conditions
 
