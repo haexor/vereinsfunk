@@ -135,12 +135,12 @@ Der 5-Minuten-Cron-Takt ist ein einstellbarer Parameter, kein Korrektheitserford
 
 ## Done criteria
 
-- [ ] `generation_candidates.generation_lease_token` existiert; `acquire_generation_candidate`/`mark_generation_candidate_ready`/`mark_generation_candidate_failed`/`release_generation_candidate` sind fenced (pgTAP-getestet: ein veralteter Token aktualisiert keine Zeile).
-- [ ] `generation_candidates.triggered_by` existiert, Default `'member'`, `create_text_generation_session` akzeptiert `p_triggered_by`; die Textwerkstatt-UI zeigt einen sichtbaren Hinweis bei `'automatic_recovery'`.
-- [ ] `composition_sessions.candidate_count` existiert, wird in `create_text_generation_session` atomar hochgezählt, eine Obergrenze wird per klar benannter Exception durchgesetzt.
-- [ ] `claim_stalled_generation_candidates` existiert und ist gegen gleichzeitige Aufrufer sicher (pgTAP).
-- [ ] `generation-recovery-scan` ist als eigener, deklarativ per `onCrons` geplanter Hatchet-Workflow registriert, unabhängig von `WorkflowNameSchema`s Pro-Entity-Schleife, und erzeugt für einen hängenden Kandidaten zuverlässig einen neuen, als `automatic_recovery` gekennzeichneten Versuch mit demselben `generation_intent`.
-- [ ] `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm db:reset`, `pnpm db:test` bestehen vollständig.
+- [x] `generation_candidates.generation_lease_token` existiert; `acquire_generation_candidate`/`mark_generation_candidate_ready`/`mark_generation_candidate_failed`/`release_generation_candidate` sind fenced (pgTAP-getestet: ein veralteter Token aktualisiert keine Zeile).
+- [x] `generation_candidates.triggered_by` existiert, Default `'member'`, `create_text_generation_session` akzeptiert `p_triggered_by`; die Textwerkstatt-UI zeigt einen sichtbaren Hinweis bei `'automatic_recovery'`.
+- [x] `composition_sessions.candidate_count` existiert, wird in `create_text_generation_session` atomar hochgezählt, eine Obergrenze wird per klar benannter Exception durchgesetzt.
+- [x] `claim_stalled_generation_candidates` existiert und ist gegen gleichzeitige Aufrufer sicher (pgTAP).
+- [x] `generation-recovery-scan` ist als eigener, deklarativ per `onCrons` geplanter Hatchet-Workflow registriert, unabhängig von `WorkflowNameSchema`s Pro-Entity-Schleife, und erzeugt für einen hängenden Kandidaten zuverlässig einen neuen, als `automatic_recovery` gekennzeichneten Versuch mit demselben `generation_intent`. **Abweichung von der Ausplanung**: registriert über die bestehende `client.task(...)`-Kurzform (nicht `client.workflow(...)`) — `onCrons` liegt auf `CreateBaseWorkflowOpts`, das in `CreateTaskWorkflowOpts` enthalten ist; per `tsc` verifiziert.
+- [x] `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm db:reset`, `pnpm db:test` bestehen vollständig.
 
 ## STOP conditions
 

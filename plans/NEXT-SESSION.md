@@ -1,23 +1,26 @@
 # Prompt für die nächste Session
 
-Arbeite im Repository-Root dieses Checkouts. Beginne mit `git status --short --branch`, `git log --oneline main..HEAD` und `gh pr view 51 --json state,mergedAt` — PR #51 enthält nur die Ausplanung von Plan 035 (dieses Dokument, `plans/035-generation-recovery-trigger.md`, `plans/README.md`), keine Code-Änderung. Falls PR #51 noch offen ist, mit dem Nutzer klären, ob er vor der Umsetzung gemergt werden soll (empfohlen: ja, dann die Umsetzung in einem frischen Worktree/Branch von `main` beginnen).
+Arbeite im Repository-Root dieses Checkouts. Beginne mit `git status --short --branch` und `git log --oneline main..HEAD`. Falls ein PR für die Umsetzung von Plan 035 (Branch `worktree-plan-035-recovery-implementierung`) noch nicht erstellt oder noch nicht gemergt ist, das zuerst klären.
 
-## Ausgangslage: Plan 034 gemergt, Plan 035 vollständig ausgeplant
+## Ausgangslage: Plan 035 umgesetzt (in diesem Worktree/Branch, noch nicht auf `main`)
 
-PR #50 (`worktree-llm-provider-dropdowns`, Plan 034: SSRF-Sperre im Textgenerierungspfad + Kandidaten-Wiederherstellung nach Absturz) ist **gemergt** (`2026-08-12T09:23:34Z`, Merge-Commit `0bd63886`). Alle Done-Kriterien aus Plan 034 sind erreicht, mit einer dokumentierten Restlücke: der 15-Minuten-Lease-Rückfall in `acquire_generation_candidate` kann nach einem echten Worker-Absturz in der Praxis nie greifen, weil Hatchets eigenes Wiederholungsbudget strukturell davor aufgebraucht ist.
+Plan 034 (PR #50) ist gemergt. Plan 035 (`plans/035-generation-recovery-trigger.md`) ist vollständig umgesetzt und lokal verifiziert:
 
-Diese Restlücke ist jetzt in `plans/035-generation-recovery-trigger.md` **vollständig ausgeplant** (nicht mehr nur eine Skizze). Alle fünf zuvor offenen Architektur-/Produktentscheidungen sind mit dem Nutzer abgestimmt:
+- **Fencing-Token**: `generation_candidates.generation_lease_token`; `acquire_generation_candidate`/`mark_generation_candidate_ready`/`mark_generation_candidate_failed`/`release_generation_candidate` sind fenced, pgTAP-getestet.
+- **Sichtbarkeit**: `generation_candidates.triggered_by` (`'member' | 'automatic_recovery'`), sichtbarer Hinweis in `apps/web/app/pages/erstellen.vue` bei `automatic_recovery`.
+- **Obergrenze**: `composition_sessions.candidate_count`, Platzhalter-Grenzwert `8` (unkalkuliert, vor Produktivbetrieb mit dem Nutzer zu bestätigen — siehe Plan, STOP conditions).
+- **Recovery-Workflow**: neue Funktion `claim_stalled_generation_candidates`, neuer eigenständiger Hatchet-Workflow `generation-recovery-scan` (`apps/worker/src/generationRecovery.ts`), deklarativ per `onCrons: ['*/5 * * * *']` registriert, außerhalb von `WorkflowNameSchema`s Pro-Entity-Schleife.
 
-1. **Trigger-Ort**: ein eigener, bei Hatchet deklarativ per `onCrons` registrierter Workflow (`generation-recovery-scan`) — kein `setInterval` im Worker-Prozess (der Nutzer wies zu Recht darauf hin, dass das einen Server-Neustart/Redeploy nicht übersteht). Der Schedule lebt in Hatchets eigenem Scheduler.
-2. **Fencing-Token**: neue Spalte `generation_candidates.generation_lease_token`, analog `workflow_runs.worker_lease_token`.
-3. **Kontingent**: **nicht Teil dieses Plans.** Der Nutzer plant ein vollständiges Token-Budget-Modell (Verein → Abteilung → Team, hartes Limit, tarifabhängig) — das ist die bereits in `plans/021-abomodelle-und-speicherkontingent.md:277-280` angekündigte Erweiterung, kein neues Thema. Separater Plan, wenn es soweit ist.
-4. **Sichtbarkeit**: neues Feld `generation_candidates.triggered_by` (`'member' | 'automatic_recovery'`).
-5. **Obergrenze**: neue Zählspalte `composition_sessions.candidate_count` mit CHECK-Constraint (Platzhalter-Grenzwert `8`, unkalkuliert — vor Produktivbetrieb bestätigen).
+**Abweichung von der Ausplanung** (technische Korrektur, per `tsc` verifiziert): der Plan ging davon aus, `onCrons` sei nur auf `client.workflow(...)` verfügbar. Tatsächlich liegt `onCrons` auf `CreateBaseWorkflowOpts`, das in `CreateTaskWorkflowOpts` (die Optionen von `client.task(...)`) enthalten ist — die im bestehenden Code bereits genutzte `client.task(...)`-Kurzform funktioniert direkt, keine `client.workflow(...)`-Umleitung nötig.
 
-Wichtige technische Erkenntnis beim Ausplanen: `WorkflowPayloadSchema` verlangt zwingend eine einzelne `entityId`/`organizationId` — ein Scan über alle hängenden Kandidaten passt nicht in das bestehende generische Pro-Entity-Workflow-Schema (`WorkflowNameSchema`/`createWorkflowDefinitions`). Der neue Workflow ist deshalb bewusst **außerhalb** dieser generischen Schleife registriert, ohne `workflow_runs`/`workflow_outbox`-Buchhaltung (er ist durch `claim_stalled_generation_candidates`s `skip locked`-Semantik bereits gegen Nebenläufigkeit sicher) — Details und Begründung stehen im Plan, Step 4.
+**Nicht behoben, wie geplant zurückgestellt**: Kontingent-Interaktion (Paket 021), provider-seitige Idempotenz gegen doppelt abgerechnete LLM-Aufrufe (aus Plan 034), UI-Anzeige verbleibender Versuche vor Erreichen der Obergrenze.
+
+Lokal verifiziert: `pnpm --filter @vereinsfunk/worker --filter @vereinsfunk/api --filter @vereinsfunk/web typecheck`, `pnpm --filter @vereinsfunk/worker test`, `pnpm db:reset && pnpm db:test` (alle grün). Vor dem PR noch ausstehend: der volle Gate (`pnpm lint && pnpm typecheck && pnpm test && pnpm build`) über das gesamte Repository sowie ein Browser-Check des `triggered_by`-Hinweises in `erstellen.vue`.
 
 ## Nächster Schritt
 
-Plan 035 umsetzen (fünf Schritte, siehe Plan: Fencing-Token, sichtbares Auslöser-Feld, Obergrenze, der eigentliche Recovery-Workflow, Dokumentation) — in einem neuen Worktree/Branch, nicht auf `main`. Vor Beginn den „Drift check" am Kopf des Plans ausführen (SDK-Version, Datei-Diffs seit `0bd63886`) und insbesondere die STOP-Bedingung zu Hatchets Server-/SDK-Cron-Unterstützung in der lokal gepinnten Version verifizieren, bevor Step 4 begonnen wird.
+1. Vollen Gate laufen lassen, PR erstellen, Review-Runde(n) abarbeiten (CodeRabbit-Muster wie bei den vorherigen Paketen).
+2. Nach Merge: `plans/README.md` bleibt aktuell (bereits in diesem Branch auf „erledigt" nachgezogen).
+3. Vor Produktivbetrieb: den `candidate_count`-Platzhalter (`8`) mit dem Nutzer kalibrieren.
 
 Alternativ, falls der Nutzer zuerst anderswo weiterarbeiten möchte: aus `plans/README.md`, Tabelle „Vierte Serie", sind 029 und 031 als „bereit" markiert (beide abhängig von 027, das mit PR #38 vollständig gemergt ist).

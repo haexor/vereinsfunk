@@ -1,8 +1,10 @@
+import { z } from 'zod'
 import { HatchetClient, type Worker } from '@hatchet-dev/typescript-sdk/v1/index.js'
 import { type TaskWorkflowDeclaration } from '@hatchet-dev/typescript-sdk/v1/declaration.js'
 import { ConcurrencyLimitStrategy, NonRetryableError } from '@hatchet-dev/typescript-sdk/v1/task.js'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
 import { WorkflowNameSchema, WorkflowPayloadSchema, type WorkflowName, type WorkflowPayload } from '@vereinsfunk/contracts'
+import { scanAndRecoverStaleCandidates, type GenerationRecoveryRepository } from './generationRecovery.js'
 
 export const concurrency = {
   llm: { global: 20, organization: 4, department: 2 }, image: { global: 12, organization: 3, department: 1 },
@@ -85,11 +87,30 @@ export function createWorkflowDefinitions(
   }))
 }
 
+/**
+ * Registers the recovery-scan cron workflow. Deliberately outside WorkflowNameSchema's generic
+ * per-entity loop above: it performs no single technical action of its own to lease -- it only
+ * detects stalled rows and, through create_text_generation_session, hands each one off to the
+ * ordinary generate-text-post path (workflow_outbox -> createWorkflowDefinitions). No
+ * workflow_runs/workflow_outbox bookkeeping either: claim_stalled_generation_candidates' own
+ * skip-locked claim already makes every tick safe against concurrent or repeated execution.
+ */
+export function createGenerationRecoveryScanWorkflow(client: HatchetClient<WorkflowPayload>, recovery: GenerationRecoveryRepository) {
+  return client.task({
+    name: 'generation-recovery-scan',
+    onCrons: ['*/5 * * * *'],
+    inputValidator: z.object({}),
+    executionTimeout: '5m',
+    fn: async () => { await scanAndRecoverStaleCandidates(recovery) },
+  })
+}
+
 /** Creates a real SDK worker and registers all bounded technical workflow envelopes. */
 export async function createHatchetWorker(
   config: WorkerEnvironment,
   runs: WorkflowExecutionRepository,
   executor: ProductWorkflowExecutor,
+  recovery: GenerationRecoveryRepository,
 ): Promise<Worker> {
   const client = HatchetClient.init<WorkflowPayload>({
     token: config.HATCHET_CLIENT_TOKEN,
@@ -98,6 +119,6 @@ export async function createHatchetWorker(
     tls_config: { tls_strategy: config.HATCHET_TLS ? 'tls' : 'none' },
   })
   const worker = await client.worker('vereinsfunk-worker', { slots: config.HATCHET_WORKER_SLOTS })
-  await worker.registerWorkflows(createWorkflowDefinitions(client, runs, executor))
+  await worker.registerWorkflows([...createWorkflowDefinitions(client, runs, executor), createGenerationRecoveryScanWorkflow(client, recovery)])
   return worker
 }

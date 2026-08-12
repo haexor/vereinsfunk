@@ -5,16 +5,30 @@ import { CommunicationGoalSchema, SourceMaterialSchema, StyleProfileRulesSchema,
 import type { WorkflowOutboxRepository } from '@vereinsfunk/orchestration'
 import { WorkflowExecutionError, type WorkflowExecutionRepository, type WorkflowRunAcquireResult } from './workflows.js'
 import type { CandidateRow, ProviderRow, SessionRow, TextGenerationRepository } from './textGeneration.js'
+import type { GenerationRecoveryRepository, RecoverableSessionRow, StalledCandidateRow } from './generationRecovery.js'
 
 const SessionRowSchema: z.ZodType<SessionRow> = z.object({
   id: UuidSchema, organization_id: UuidSchema, department_id: UuidSchema, team_id: UuidSchema.nullable(), preset_slug: z.string().trim().min(1),
   communication_goal: CommunicationGoalSchema, source_material: SourceMaterialSchema,
   style_profile_snapshot: z.object({ name: z.string(), description: z.string(), styleRules: StyleProfileRulesSchema, avoidRules: z.array(z.string()) }),
 })
-const CandidateRowSchema: z.ZodType<CandidateRow> = z.object({ id: UuidSchema, status: z.literal('generating'), revision_instruction: z.string().nullable() })
+const CandidateRowSchema: z.ZodType<CandidateRow> = z.object({ id: UuidSchema, status: z.literal('generating'), revision_instruction: z.string().nullable(), lease_token: UuidSchema })
 const ProviderRowSchema: z.ZodType<ProviderRow> = z.object({
   id: UuidSchema, protocol: z.string(), base_url: z.url(), model: z.string().trim().min(1), temperature: z.coerce.number(), max_output_tokens: z.coerce.number().int().positive(),
   structured_output_required: z.boolean(), api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1),
+})
+const StalledCandidateRowSchema: z.ZodType<StalledCandidateRow> = z.object({
+  id: UuidSchema, composition_session_id: UuidSchema, organization_id: UuidSchema, generation_intent: z.enum(['initial', 'revise']), revision_instruction: z.string().nullable(),
+})
+// Opaque passthrough fields (requested_formats/source_material/style_profile_snapshot/
+// effective_config_snapshot) are only ever handed back to create_text_generation_session
+// unchanged here, never interpreted -- unlike SessionRowSchema above, which a text generator
+// actually reads, so it needs the stricter shape.
+const RecoverableSessionRowSchema: z.ZodType<RecoverableSessionRow> = z.object({
+  organization_id: UuidSchema, department_id: UuidSchema, team_id: UuidSchema.nullable(), preset_slug: z.string().trim().min(1),
+  communication_goal: z.string(), requested_formats: z.unknown(), source_material: z.unknown(), style_profile_id: UuidSchema.nullable(),
+  style_profile_snapshot: z.unknown(), effective_config_snapshot: z.unknown(), source_revision: z.coerce.number().int().positive(),
+  input_hash: z.string().regex(/^[a-f0-9]{64}$/), created_by: UuidSchema,
 })
 
 /** Creates the worker-only service-role repository from validated configuration. */
@@ -100,21 +114,56 @@ export function createTextGenerationRepository(config: WorkerEnvironment): TextG
       if (!value) throw new Error('text provider secret missing')
       return ProviderRowSchema.parse({ ...row, api_key_ciphertext: value.api_key_ciphertext, key_version: value.key_version })
     },
-    async markReady(candidateId, sessionId, generatedContent, metadata) {
+    async markReady(candidateId, sessionId, leaseToken, generatedContent, metadata) {
       const { error } = await client.rpc('mark_generation_candidate_ready', {
-        p_candidate_id: candidateId, p_session_id: sessionId, p_generated_content: generatedContent,
+        p_candidate_id: candidateId, p_session_id: sessionId, p_lease_token: leaseToken, p_generated_content: generatedContent,
         p_provider_configuration_id: metadata.providerConfigurationId, p_provider_model_id: metadata.providerModelId,
         p_provider_parameter_hash: metadata.providerParameterHash, p_prompt_template_version: metadata.promptTemplateVersion,
       })
       if (error) throw error
     },
-    async markFailed(candidateId, sessionId, errorClass) {
-      const { error } = await client.rpc('mark_generation_candidate_failed', { p_candidate_id: candidateId, p_session_id: sessionId, p_error_class: errorClass })
+    async markFailed(candidateId, sessionId, leaseToken, errorClass) {
+      const { error } = await client.rpc('mark_generation_candidate_failed', { p_candidate_id: candidateId, p_session_id: sessionId, p_lease_token: leaseToken, p_error_class: errorClass })
       if (error) throw error
     },
-    async releaseCandidate(candidateId, sessionId) {
-      const { error } = await client.rpc('release_generation_candidate', { p_candidate_id: candidateId, p_session_id: sessionId })
+    async releaseCandidate(candidateId, sessionId, leaseToken) {
+      const { error } = await client.rpc('release_generation_candidate', { p_candidate_id: candidateId, p_session_id: sessionId, p_lease_token: leaseToken })
       if (error) throw error
+    },
+  }
+}
+
+/** Worker-only data access for the recovery-scan cron workflow. Never called from a product workflow. */
+export function createGenerationRecoveryRepository(config: WorkerEnvironment): GenerationRecoveryRepository {
+  const client = createClient(config.SUPABASE_URL, config.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  return {
+    async claimStalledCandidates(limit) {
+      const { data, error } = await client.rpc('claim_stalled_generation_candidates', { p_limit: limit })
+      if (error) throw error
+      return (data ?? []).map((row: unknown) => StalledCandidateRowSchema.parse(row))
+    },
+    async loadSessionForRecovery(sessionId, organizationId) {
+      const { data, error } = await client.from('composition_sessions')
+        .select('organization_id, department_id, team_id, preset_slug, communication_goal, requested_formats, source_material, style_profile_id, style_profile_snapshot, effective_config_snapshot, source_revision, input_hash, created_by')
+        .eq('id', sessionId).eq('organization_id', organizationId).maybeSingle()
+      if (error) throw error
+      return data === null ? null : RecoverableSessionRowSchema.parse(data)
+    },
+    async createRecoveryAttempt(session, stale, candidateInputHash, correlationId, idempotencyKey) {
+      const { error } = await client.rpc('create_text_generation_session', {
+        p_organization_id: session.organization_id, p_department_id: session.department_id, p_team_id: session.team_id,
+        p_preset_slug: session.preset_slug, p_communication_goal: session.communication_goal, p_requested_formats: session.requested_formats,
+        p_source_material: session.source_material, p_style_profile_id: session.style_profile_id,
+        p_style_profile_snapshot: session.style_profile_snapshot, p_effective_config_snapshot: session.effective_config_snapshot,
+        p_source_revision: session.source_revision, p_input_hash: session.input_hash, p_candidate_input_hash: candidateInputHash,
+        p_generation_intent: stale.generation_intent, p_revision_instruction: stale.revision_instruction, p_created_by: session.created_by,
+        p_correlation_id: correlationId, p_idempotency_key: idempotencyKey, p_triggered_by: 'automatic_recovery',
+      })
+      if (error) {
+        if (error.message === 'composition_session_candidate_limit_reached') return 'limit_reached'
+        throw error
+      }
+      return 'created'
     },
   }
 }

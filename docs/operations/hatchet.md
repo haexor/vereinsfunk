@@ -54,6 +54,29 @@ terminal sein.
   ausstellen, Secret im Deployment aktualisieren und Worker neu starten. Tokens gehören nie in
   Browser, Outbox, Supabase-Fachdaten oder Logs.
 
+## Recovery-Scan (`generation-recovery-scan`)
+
+Ein einziger, deklarativ per `onCrons: ['*/5 * * * *']` geplanter Workflow
+(`apps/worker/src/generationRecovery.ts`, registriert in `createHatchetWorker`), unabhängig von
+`WorkflowNameSchema`s Pro-Entity-Schleife. Alle fünf Minuten prüft er, ob ein Textgenerierungs-
+Kandidat seit über 15 Minuten auf `generating` hängt (`claim_stalled_generation_candidates`) —
+das ist der Fall, wenn ein Worker mitten in der Generierung abgestürzt ist und Hatchets eigenes
+Wiederholungsbudget (`retries: 3`, `executionTimeout: '10m'`) bereits vor dieser Schwelle
+aufgebraucht war. Jeder gefundene Kandidat wird ehrlich `failed` gesetzt und über
+`create_text_generation_session` (`triggered_by = 'automatic_recovery'`) neu aufgesetzt.
+
+Kein eigener `workflow_runs`/`workflow_outbox`-Eintrag: `claim_stalled_generation_candidates`s
+`for update skip locked` macht jeden Tick bereits sicher gegen gleichzeitige oder wiederholte
+Ausführung, unabhängig davon, wie viele Worker-Replikas denselben Cron registriert haben.
+
+**Pausieren/Löschen im Betrieb** (z. B. bei einer versehentlich zu aggressiven Reeroberung): über
+das Hatchet-Dashboard (Bereich „Scheduled"/„Cron") den Eintrag für `generation-recovery-scan`
+suchen und pausieren oder löschen, oder programmatisch über den SDK-`CronClient`:
+`await client.crons.list({ workflow: 'generation-recovery-scan' })` zum Auffinden, danach
+`await client.crons.delete(cron)`. Ein pausierter/gelöschter Scan lässt hängende Kandidaten
+einfach liegen (keine andere Fachaktion hängt daran) — beim nächsten Worker-Neustart mit
+unverändertem Code registriert sich der Cron erneut.
+
 Für Produktionsfreigabe ist zusätzlich ein dokumentierter Fairness-Lasttest mit **genau 30 Jobs**
 über drei Abteilungen erforderlich. Er muss faire Fortschritte zeigen und vier Ergebnisse belegen:
 Prozessabbruch während eines Laufs wird nach Lease-Ablauf genau einmal fortgesetzt, Cancel endet

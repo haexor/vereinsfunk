@@ -2,7 +2,8 @@ import { HatchetClient } from '@hatchet-dev/typescript-sdk/v1/index.js'
 import { describe, expect, it, vi } from 'vitest'
 import type { WorkflowPayload } from '@vereinsfunk/contracts'
 import { WorkflowNameSchema } from '@vereinsfunk/contracts'
-import { concurrency, createWorkflowDefinitions, WorkflowExecutionError, type ProductWorkflowExecutor, type WorkflowExecutionRepository } from './workflows.js'
+import type { GenerationRecoveryRepository } from './generationRecovery.js'
+import { concurrency, createGenerationRecoveryScanWorkflow, createWorkflowDefinitions, WorkflowExecutionError, type ProductWorkflowExecutor, type WorkflowExecutionRepository } from './workflows.js'
 
 const payload: WorkflowPayload = {
   entityId: '11111111-1111-4111-8111-111111111111', organizationId: '22222222-2222-4222-8222-222222222222',
@@ -65,5 +66,26 @@ describe('worker workflow registration', () => {
     await expect(task(payload, {} as never)).rejects.toMatchObject({ errorClass: 'provider_unavailable', retryable: true })
     expect(runs.fail).toHaveBeenCalledWith('process-submission', payload, '55555555-5555-4555-8555-555555555555', 'provider_unavailable', true)
     expect(runs.succeed).not.toHaveBeenCalled()
+  })
+})
+
+describe('generation-recovery-scan registration', () => {
+  it('is registered outside WorkflowNameSchema, scheduled by cron, and not ID-only validated', () => {
+    const client = HatchetClient.init<WorkflowPayload>({ token: 'x.eyJzdWIiOiJ0ZXN0LXRlbmFudCJ9.x', api_url: 'http://localhost:8080', host_port: 'localhost:7077', tls_config: { tls_strategy: 'none' } })
+    const recovery: GenerationRecoveryRepository = { claimStalledCandidates: vi.fn().mockResolvedValue([]), loadSessionForRecovery: vi.fn(), createRecoveryAttempt: vi.fn() }
+    const declaration = createGenerationRecoveryScanWorkflow(client, recovery)
+    expect(declaration.name).toBe('generation-recovery-scan')
+    expect(WorkflowNameSchema.options).not.toContain('generation-recovery-scan')
+    expect(declaration.definition.onCrons).toEqual(['*/5 * * * *'])
+  })
+  it('scans for stalled candidates when triggered', async () => {
+    const client = HatchetClient.init<WorkflowPayload>({ token: 'x.eyJzdWIiOiJ0ZXN0LXRlbmFudCJ9.x', api_url: 'http://localhost:8080', host_port: 'localhost:7077', tls_config: { tls_strategy: 'none' } })
+    const claimStalledCandidates = vi.fn().mockResolvedValue([])
+    const recovery: GenerationRecoveryRepository = { claimStalledCandidates, loadSessionForRecovery: vi.fn(), createRecoveryAttempt: vi.fn() }
+    const declaration = createGenerationRecoveryScanWorkflow(client, recovery)
+    const task = declaration.definition._tasks[0]?.fn
+    if (!task) throw new Error('generation-recovery-scan handler was not registered')
+    await task({}, {} as never)
+    expect(claimStalledCandidates).toHaveBeenCalled()
   })
 })

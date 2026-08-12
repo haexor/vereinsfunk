@@ -1494,7 +1494,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (session.error) throw session.error
     if (!session.data) return reply.code(404).send({ error: 'session_not_found' })
     if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(session.data.organization_id, session.data.department_id, session.data.team_id)))) return
-    const candidates = await client.from('generation_candidates').select('id, status, generated_content, quality_flags, failure_code, accepted_post_version_id, created_at').eq('composition_session_id', id).order('created_at', { ascending: false })
+    const candidates = await client.from('generation_candidates').select('id, status, generated_content, quality_flags, failure_code, triggered_by, accepted_post_version_id, created_at').eq('composition_session_id', id).order('created_at', { ascending: false })
     if (candidates.error) throw candidates.error
     return reply.send({ session: session.data, candidates: candidates.data })
   })
