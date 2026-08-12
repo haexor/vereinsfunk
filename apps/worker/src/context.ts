@@ -19,15 +19,18 @@ const ProviderRowSchema: z.ZodType<ProviderRow> = z.object({
 })
 const StalledCandidateRowSchema: z.ZodType<StalledCandidateRow> = z.object({
   id: UuidSchema, composition_session_id: UuidSchema, organization_id: UuidSchema, generation_intent: z.enum(['initial', 'revise']), revision_instruction: z.string().nullable(),
+  generation_lease_token: UuidSchema,
 })
 // Opaque passthrough fields (requested_formats/source_material/style_profile_snapshot/
 // effective_config_snapshot) are only ever handed back to create_text_generation_session
 // unchanged here, never interpreted -- unlike SessionRowSchema above, which a text generator
-// actually reads, so it needs the stricter shape.
+// actually reads, so it needs the stricter shape. Still .nonoptional(): a missing key must be
+// rejected at this boundary rather than silently passed through create_text_generation_session
+// as a JSON null.
 const RecoverableSessionRowSchema: z.ZodType<RecoverableSessionRow> = z.object({
   organization_id: UuidSchema, department_id: UuidSchema, team_id: UuidSchema.nullable(), preset_slug: z.string().trim().min(1),
-  communication_goal: z.string(), requested_formats: z.unknown(), source_material: z.unknown(), style_profile_id: UuidSchema.nullable(),
-  style_profile_snapshot: z.unknown(), effective_config_snapshot: z.unknown(), source_revision: z.coerce.number().int().positive(),
+  communication_goal: CommunicationGoalSchema, requested_formats: z.unknown().nonoptional(), source_material: z.unknown().nonoptional(), style_profile_id: UuidSchema.nullable(),
+  style_profile_snapshot: z.unknown().nonoptional(), effective_config_snapshot: z.unknown().nonoptional(), source_revision: z.coerce.number().int().positive(),
   input_hash: z.string().regex(/^[a-f0-9]{64}$/), created_by: UuidSchema,
 })
 
@@ -164,6 +167,12 @@ export function createGenerationRecoveryRepository(config: WorkerEnvironment): G
         throw error
       }
       return 'created'
+    },
+    async finalizeRecovery(stale, failureCode) {
+      const { error } = await client.rpc('finalize_stalled_generation_recovery', {
+        p_candidate_id: stale.id, p_session_id: stale.composition_session_id, p_lease_token: stale.generation_lease_token, p_failure_code: failureCode,
+      })
+      if (error) throw error
     },
   }
 }

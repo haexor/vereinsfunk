@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(64);
+select plan(69);
 
 set local role postgres;
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -389,17 +389,20 @@ select throws_ok(
 
 -- Plan 035: claim_stalled_generation_candidates is the trigger independent of Hatchet's own retry
 -- budget -- it must claim only a candidate stuck on 'generating' past the 15-minute threshold,
--- leave one still within it alone, terminally fail the stale candidate and its session together
--- (mirrors mark_generation_candidate_failed's coupling), and never reclaim what it has already
--- failed on a repeated call. Repeated sequential calls are this codebase's established way of
--- testing this claim-and-advance pattern (see claim_workflow_outbox's own test), rather than a new
--- dblink-based true multi-transaction test not used anywhere else in this suite.
+-- leave one still within it alone, and (review fix on PR #52) leave the claimed row reclaimable
+-- rather than terminally failing it immediately -- a crash between claim and the replacement
+-- attempt must not lose the candidate. finalize_stalled_generation_recovery is the caller's
+-- explicit, fenced closing step once the replacement's fate is known. Repeated sequential calls
+-- are this codebase's established way of testing this claim-and-advance pattern (see
+-- claim_workflow_outbox's own test), rather than a new dblink-based true multi-transaction test not
+-- used anywhere else in this suite.
 set local role postgres;
 insert into public.composition_sessions (id, organization_id, department_id, team_id, preset_slug, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, status, created_by) values
   ('32000000-3000-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', null, 'training-update', 'inform', '["text_post"]', '{"facts":{"title":"Recoverytraining"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('3', 64), 'generating', '32000000-0000-4000-8000-000000000002');
-insert into public.generation_candidates (id, organization_id, composition_session_id, generation_intent, status, input_hash, updated_at) values
-  ('32000000-3010-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-3000-4000-8000-000000000002', 'initial', 'generating', repeat('4', 64), now() - interval '20 minutes'),
-  ('32000000-3020-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2500-4000-8000-000000000002', 'initial', 'generating', repeat('5', 64), now());
+insert into public.generation_candidates (id, organization_id, composition_session_id, generation_intent, status, input_hash, generation_lease_token, updated_at) values
+  ('32000000-3010-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-3000-4000-8000-000000000002', 'initial', 'generating', repeat('4', 64), gen_random_uuid(), now() - interval '20 minutes'),
+  ('32000000-3020-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2500-4000-8000-000000000002', 'initial', 'generating', repeat('5', 64), null, now());
+select set_config('test.stale_lease_before', (select generation_lease_token::text from public.generation_candidates where id = '32000000-3010-4000-8000-000000000002'), false);
 select is(
   (select count(*)::integer from public.claim_stalled_generation_candidates(10)),
   1,
@@ -407,23 +410,18 @@ select is(
 );
 select is(
   (select status::text from public.generation_candidates where id = '32000000-3010-4000-8000-000000000002'),
-  'failed',
-  'the claimed candidate is terminally failed'
+  'generating',
+  'the claimed candidate is left reclaimable, not terminally failed, so a crash before finalization does not lose it'
 );
-select is(
-  (select failure_code from public.generation_candidates where id = '32000000-3010-4000-8000-000000000002'),
-  'stalled_after_crash',
-  'the claimed candidate carries the stalled-after-crash failure code'
-);
-select is(
-  (select generation_lease_token from public.generation_candidates where id = '32000000-3010-4000-8000-000000000002'),
-  null,
-  'the claimed candidate''s lease token is cleared'
+select isnt(
+  (select generation_lease_token::text from public.generation_candidates where id = '32000000-3010-4000-8000-000000000002'),
+  current_setting('test.stale_lease_before'),
+  'claiming issues a fresh fencing token distinct from the one a crashed worker last saw'
 );
 select is(
   (select status::text from public.composition_sessions where id = '32000000-3000-4000-8000-000000000002'),
-  'failed',
-  'the stalled candidate''s session is failed alongside it, mirroring mark_generation_candidate_failed'
+  'generating',
+  'the session is left untouched by the claim itself'
 );
 select is(
   (select status::text from public.generation_candidates where id = '32000000-3020-4000-8000-000000000002'),
@@ -433,7 +431,36 @@ select is(
 select is(
   (select count(*)::integer from public.claim_stalled_generation_candidates(10)),
   0,
-  'a repeated call does not reclaim a candidate it has already failed'
+  'a repeated call does not reclaim a row it just claimed, since claiming refreshes updated_at'
+);
+select throws_ok(
+  $$select public.finalize_stalled_generation_recovery('32000000-3010-4000-8000-000000000002', '32000000-3000-4000-8000-000000000002', current_setting('test.stale_lease_before')::uuid, 'stalled_after_crash')$$,
+  'P0001', 'generation_candidate_recovery_finalize_lost',
+  'negative: finalizing with a superseded lease token is fenced out'
+);
+select lives_ok(
+  $$select public.finalize_stalled_generation_recovery('32000000-3010-4000-8000-000000000002', '32000000-3000-4000-8000-000000000002', (select generation_lease_token from public.generation_candidates where id = '32000000-3010-4000-8000-000000000002'), 'stalled_after_crash')$$,
+  'finalizing with the current lease token terminally fails the candidate'
+);
+select is(
+  (select status::text from public.generation_candidates where id = '32000000-3010-4000-8000-000000000002'),
+  'failed',
+  'the finalized candidate is terminally failed'
+);
+select is(
+  (select failure_code from public.generation_candidates where id = '32000000-3010-4000-8000-000000000002'),
+  'stalled_after_crash',
+  'the finalized candidate carries the stalled-after-crash failure code'
+);
+select is(
+  (select generation_lease_token from public.generation_candidates where id = '32000000-3010-4000-8000-000000000002'),
+  null,
+  'the finalized candidate''s lease token is cleared'
+);
+select is(
+  (select status::text from public.composition_sessions where id = '32000000-3000-4000-8000-000000000002'),
+  'failed',
+  'the stalled candidate''s session is failed alongside it, mirroring mark_generation_candidate_failed'
 );
 
 select * from finish();

@@ -5,7 +5,11 @@ begin;
 -- must hold regardless) forever. The limit applies to every caller alike (manual revision and
 -- automatic recovery), not just an application-side count kept by the recovery trigger itself.
 -- Placeholder value (8), uncalibrated -- confirm or adjust with the operator before production use.
-alter table public.composition_sessions add column candidate_count integer not null default 1;
+-- Added without a default first: an existing session can already have more than one candidate, so
+-- the backfill below must reflect the real row count instead of defaulting every session to 1.
+alter table public.composition_sessions add column candidate_count integer;
+update public.composition_sessions s set candidate_count = greatest(1, (select count(*) from public.generation_candidates c where c.composition_session_id = s.id));
+alter table public.composition_sessions alter column candidate_count set not null, alter column candidate_count set default 1;
 
 create or replace function public.create_text_generation_session(
   p_organization_id uuid, p_department_id uuid, p_team_id uuid, p_preset_slug text,

@@ -72,7 +72,7 @@ describe('worker workflow registration', () => {
 describe('generation-recovery-scan registration', () => {
   it('is registered outside WorkflowNameSchema, scheduled by cron, and not ID-only validated', () => {
     const client = HatchetClient.init<WorkflowPayload>({ token: 'x.eyJzdWIiOiJ0ZXN0LXRlbmFudCJ9.x', api_url: 'http://localhost:8080', host_port: 'localhost:7077', tls_config: { tls_strategy: 'none' } })
-    const recovery: GenerationRecoveryRepository = { claimStalledCandidates: vi.fn().mockResolvedValue([]), loadSessionForRecovery: vi.fn(), createRecoveryAttempt: vi.fn() }
+    const recovery: GenerationRecoveryRepository = { claimStalledCandidates: vi.fn().mockResolvedValue([]), loadSessionForRecovery: vi.fn(), createRecoveryAttempt: vi.fn(), finalizeRecovery: vi.fn() }
     const declaration = createGenerationRecoveryScanWorkflow(client, recovery)
     expect(declaration.name).toBe('generation-recovery-scan')
     expect(WorkflowNameSchema.options).not.toContain('generation-recovery-scan')
@@ -81,7 +81,7 @@ describe('generation-recovery-scan registration', () => {
   it('scans for stalled candidates when triggered', async () => {
     const client = HatchetClient.init<WorkflowPayload>({ token: 'x.eyJzdWIiOiJ0ZXN0LXRlbmFudCJ9.x', api_url: 'http://localhost:8080', host_port: 'localhost:7077', tls_config: { tls_strategy: 'none' } })
     const claimStalledCandidates = vi.fn().mockResolvedValue([])
-    const recovery: GenerationRecoveryRepository = { claimStalledCandidates, loadSessionForRecovery: vi.fn(), createRecoveryAttempt: vi.fn() }
+    const recovery: GenerationRecoveryRepository = { claimStalledCandidates, loadSessionForRecovery: vi.fn(), createRecoveryAttempt: vi.fn(), finalizeRecovery: vi.fn() }
     const declaration = createGenerationRecoveryScanWorkflow(client, recovery)
     const task = declaration.definition._tasks[0]?.fn
     if (!task) throw new Error('generation-recovery-scan handler was not registered')

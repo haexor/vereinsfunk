@@ -36,6 +36,8 @@ import {
   DirectoryPersonSchema,
   DirectoryPersonStatusSchema,
   FixtureSchema,
+  GeneratedPostSchema,
+  GenerationCandidateStatusSchema,
   HealthSchema,
   IntegrationDomainSchema,
   IntegrationSourceSchema,
@@ -1486,6 +1488,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     return reply.code(202).send({ ...z.object({ sessionId: UuidSchema, candidateId: UuidSchema }).parse(result.data), correlationId: request.id })
   })
 
+  const TextWorkshopCandidateSchema = z.object({
+    id: UuidSchema, status: GenerationCandidateStatusSchema, generated_content: GeneratedPostSchema.nullable(),
+    quality_flags: z.array(z.string()), failure_code: z.string().nullable(), triggered_by: z.enum(['member', 'automatic_recovery']),
+    accepted_post_version_id: UuidSchema.nullable(), created_at: z.string(),
+  })
   app.get('/v1/text-workshop/sessions/:id', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const id = z.object({ id: UuidSchema }).parse(request.params).id
@@ -1496,7 +1503,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(session.data.organization_id, session.data.department_id, session.data.team_id)))) return
     const candidates = await client.from('generation_candidates').select('id, status, generated_content, quality_flags, failure_code, triggered_by, accepted_post_version_id, created_at').eq('composition_session_id', id).order('created_at', { ascending: false })
     if (candidates.error) throw candidates.error
-    return reply.send({ session: session.data, candidates: candidates.data })
+    return reply.send({ session: session.data, candidates: z.array(TextWorkshopCandidateSchema).parse(candidates.data) })
   })
 
   app.post('/v1/text-workshop/sessions/:id/generations', async (request, reply) => {
