@@ -225,8 +225,24 @@ export async function loadSyncSourceResponse(input: {
 }
 
 // ISO-Datum/-Zeit ohne Offset-Erkennung fuer den Fallback unten -- "2026-08-12T19:30:00" ist ohne
-// Z oder numerischen Offset keine eindeutige Instanz, nur eine Wanduhrzeit.
-const ISO_DATE_TIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/
+// Z oder numerischen Offset keine eindeutige Instanz, nur eine Wanduhrzeit. Die Sekundenbruchteile
+// werden separat erfasst (Gruppe 7), damit sie nicht stillschweigend verworfen werden.
+const ISO_DATE_TIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.(\d+))?)?(Z|[+-]\d{2}:?\d{2})?$/
+
+// Das Muster oben prueft nur die Syntax -- "2026-02-30" oder "19:61" passen ebenso wie ein
+// gueltiges Datum. new Date(...)/Date.UTC(...) normalisieren ungueltige Kalenderwerte
+// stillschweigend (30. Februar wird zum 2. Maerz) statt sie abzulehnen. Ohne diese Pruefung haette
+// ein Tippfehler in der Quelle ein verschobenes, aber scheinbar gueltiges Datum gespeichert statt
+// eines invalid_record-Konflikts.
+function isValidCalendarDateTime(year: number, month: number, day: number, hour: number, minute: number, second: number): boolean {
+  if (month < 1 || month > 12) return false
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate()
+  if (day < 1 || day > daysInMonth) return false
+  if (hour < 0 || hour > 23) return false
+  if (minute < 0 || minute > 59) return false
+  if (second < 0 || second > 59) return false
+  return true
+}
 
 // Loest einen rohen Datumswert (iCal-Kompaktform ODER eine bereits vollstaendige ISO-Zeichenkette
 // aus einer Datei-Spalte) in eine UTC-Instanz auf. Ein Datei-Export mit einer eigenen
@@ -237,6 +253,9 @@ const ISO_DATE_TIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?:
 // Date(rawValue) haette sie von der Prozesszeitzone abhaengig gemacht bzw. Datumsangaben als
 // UTC-Mitternacht fehlgedeutet. Dieselbe Regel wie bei resolveIcalDateTime ohne TZID: die
 // Vereinszeitzone gilt als Annahme, deshalb confirmed: false.
+// Bewusst kein Fallback auf new Date(rawValue) fuer Werte, die das obige Muster gar nicht treffen
+// (z. B. "2026/08/12" oder "August 12, 2026") -- ein so freizuegiger Fallback haette dieselbe
+// Prozesszeitzone-Abhaengigkeit wie der Offset-lose Fall, aber faelschlich als confirmed:true.
 export function resolveScheduleDateTime(
   rawValue: string,
   tzid: string | undefined,
@@ -245,18 +264,23 @@ export function resolveScheduleDateTime(
   const icalResolved = resolveIcalDateTime(rawValue, tzid, fallbackTimezone)
   if (icalResolved) return icalResolved
   const isoMatch = ISO_DATE_TIME_PATTERN.exec(rawValue)
-  if (isoMatch) {
-    const [, year, month, day, hour, minute, second, offset] = isoMatch
-    if (!offset) {
-      const utcMs = zonedWallTimeToUtcMs(
-        Number(year), Number(month), Number(day), hour ? Number(hour) : 0, minute ? Number(minute) : 0, second ? Number(second) : 0, fallbackTimezone,
-      )
-      return { iso: new Date(utcMs).toISOString(), confirmed: false }
-    }
+  if (!isoMatch) return undefined
+  const [, year, month, day, hour, minute, second, fraction, offset] = isoMatch
+  const y = Number(year)
+  const mo = Number(month)
+  const d = Number(day)
+  const h = hour ? Number(hour) : 0
+  const mi = minute ? Number(minute) : 0
+  const s = second ? Number(second) : 0
+  if (!isValidCalendarDateTime(y, mo, d, h, mi, s)) return undefined
+  const milliseconds = fraction ? Number(fraction.slice(0, 3).padEnd(3, '0')) : 0
+  if (offset) {
+    const parsed = new Date(rawValue)
+    if (Number.isNaN(parsed.getTime())) return undefined
+    return { iso: parsed.toISOString(), confirmed: true }
   }
-  const parsed = new Date(rawValue)
-  if (!Number.isNaN(parsed.getTime())) return { iso: parsed.toISOString(), confirmed: true }
-  return undefined
+  const utcMs = zonedWallTimeToUtcMs(y, mo, d, h, mi, s, fallbackTimezone)
+  return { iso: new Date(utcMs + milliseconds).toISOString(), confirmed: false }
 }
 
 // Normalisiert und validiert die Rohzeilen einer Quelle gegen das Schema des Bereichs. Eine Zeile,
