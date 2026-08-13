@@ -1,4 +1,4 @@
-import { GeneratedPostSchema, type CreateSubmission, type GeneratedPost, type PlatformVariant, type StyleProfileRules } from '@vereinsfunk/contracts'
+import { GeneratedPostSchema, type CreateSubmission, type GeneratedPost, type PlatformVariant, type StyleProfileSnapshot } from '@vereinsfunk/contracts'
 import { createGuardedFetch, OutboundFetchError } from '@vereinsfunk/outbound-fetch'
 import { getPreset, validateSourceMaterial } from './presets.js'
 
@@ -76,7 +76,7 @@ export const TEXT_PROMPT_TEMPLATE_VERSION = 'text-workshop-v1'
 
 export type StructuredTextGeneratorInput = {
   brief: GroundedContentBrief
-  styleProfile: { name: string; description: string; styleRules: StyleProfileRules; avoidRules: readonly string[]; doRules: readonly string[] }
+  styleProfile: StyleProfileSnapshot
   revisionInstruction?: string
   model: string
   baseUrl: string

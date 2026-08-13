@@ -54,4 +54,13 @@ describe('TextGenerationExecutor', () => {
     await expect(new TextGenerationExecutor(config, repo, generator).execute(payload)).rejects.toMatchObject({ errorClass: 'generation_candidate_still_in_progress', retryable: true })
     expect(generator.generateText).not.toHaveBeenCalled()
   })
+  it('marks a candidate failed instead of crashing when a pre-migration snapshot has the old dial shape', async () => {
+    const repo = repository()
+    repo.loadSession = vi.fn().mockResolvedValue({ id: payload.entityId, organization_id: payload.organizationId, department_id: payload.departmentId, team_id: null, preset_slug: 'training', communication_goal: 'inform', source_material: { facts: { topic: 'Passen' }, observations: [], quotes: [], doNotMention: [] }, style_profile_snapshot: { name: 'Klar', description: 'klar', styleRules: { sentenceLength: 'short', energy: 3, humour: 'none', formality: 'balanced', perspective: 'we', bannedPhrases: [], additionalInstructions: '' }, avoidRules: [] } })
+    const generator = { generateText: vi.fn() }
+    await expect(new TextGenerationExecutor(config, repo, generator).execute(payload)).rejects.toMatchObject({ errorClass: 'generation_validation', retryable: false })
+    expect(repo.markFailed).toHaveBeenCalledWith(payload.candidateId, payload.entityId, '10000000-1300-4000-8000-000000000099', 'generation_validation')
+    expect(repo.releaseCandidate).not.toHaveBeenCalled()
+    expect(generator.generateText).not.toHaveBeenCalled()
+  })
 })

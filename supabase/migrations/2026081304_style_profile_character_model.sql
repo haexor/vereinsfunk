@@ -18,8 +18,10 @@ alter table public.platform_style_personas add constraint platform_style_persona
 -- Reset existing rows to the new schema's empty-but-valid shape ('{}' parses against the new
 -- StyleProfileRulesSchema because every field there defaults). No production data exists yet
 -- (pilot-readiness gate still closed) -- only locally/pilot-created personas and profiles, which
--- the operator/member who created them can re-author with the new fields.
-update public.content_style_profiles set style_rules = '{}'::jsonb;
-update public.platform_style_personas set style_rules = '{}'::jsonb;
+-- the operator/member who created them can re-author with the new fields. The WHERE guard skips
+-- rows already at '{}' so the set_updated_at trigger doesn't bump updated_at on rows this
+-- migration doesn't actually change.
+update public.content_style_profiles set style_rules = '{}'::jsonb where style_rules <> '{}'::jsonb;
+update public.platform_style_personas set style_rules = '{}'::jsonb where style_rules <> '{}'::jsonb;
 
 commit;

@@ -1,16 +1,21 @@
 import { createClient } from '@supabase/supabase-js'
 import { z } from 'zod'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
-import { CommunicationGoalSchema, SourceMaterialSchema, StyleProfileSnapshotSchema, UuidSchema, WorkflowNameSchema, WorkflowPayloadSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
+import { CommunicationGoalSchema, SourceMaterialSchema, UuidSchema, WorkflowNameSchema, WorkflowPayloadSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
 import type { WorkflowOutboxRepository } from '@vereinsfunk/orchestration'
 import { WorkflowExecutionError, type WorkflowExecutionRepository, type WorkflowRunAcquireResult } from './workflows.js'
 import type { CandidateRow, ProviderRow, SessionRow, TextGenerationRepository } from './textGeneration.js'
 import type { GenerationRecoveryRepository, RecoverableSessionRow, StalledCandidateRow } from './generationRecovery.js'
 
+// style_profile_snapshot stays unvalidated here: a pre-migration snapshot in the old dial shape
+// must not fail loadSession() before acquirePendingCandidate() runs, or a stuck 'pending'
+// candidate could never be reclaimed by recovery (which only reclaims 'generating' rows).
+// textGeneration.ts's execute() is the single place that parses it, inside its try/catch, where
+// a schema mismatch is properly classified and the candidate is marked failed.
 const SessionRowSchema: z.ZodType<SessionRow> = z.object({
   id: UuidSchema, organization_id: UuidSchema, department_id: UuidSchema, team_id: UuidSchema.nullable(), preset_slug: z.string().trim().min(1),
   communication_goal: CommunicationGoalSchema, source_material: SourceMaterialSchema,
-  style_profile_snapshot: StyleProfileSnapshotSchema,
+  style_profile_snapshot: z.unknown(),
 })
 const CandidateRowSchema: z.ZodType<CandidateRow> = z.object({ id: UuidSchema, status: z.literal('generating'), revision_instruction: z.string().nullable(), lease_token: UuidSchema })
 const ProviderRowSchema: z.ZodType<ProviderRow> = z.object({

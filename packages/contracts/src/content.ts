@@ -86,8 +86,8 @@ export const StyleProfileSnapshotSchema = z.object({
   name: z.string(),
   description: z.string(),
   styleRules: StyleProfileRulesSchema,
-  avoidRules: z.array(z.string()),
-  doRules: z.array(z.string()),
+  avoidRules: StyleProfileRuleListSchema,
+  doRules: StyleProfileRuleListSchema,
 })
 export const SystemStyleProfileSlugSchema = z.enum([
   'klar_erklaerend', 'warm_gemeinschaftlich', 'lebendig_sportlich', 'leicht_humorvoll', 'feierlich_wertschaetzend',
@@ -312,6 +312,7 @@ export type CompositionFormat = z.infer<typeof CompositionFormatSchema>
 export type AttachmentUploadMetadata = z.infer<typeof AttachmentUploadMetadataSchema>
 export type CompressionProvenance = z.infer<typeof CompressionProvenanceSchema>
 export type StyleProfileRules = z.infer<typeof StyleProfileRulesSchema>
+export type StyleProfileSnapshot = z.infer<typeof StyleProfileSnapshotSchema>
 export type CustomStyleProfile = z.infer<typeof CustomStyleProfileSchema>
 export type CreateCustomStyleProfileRequest = z.infer<typeof CreateCustomStyleProfileRequestSchema>
 export type PlatformStylePersona = z.infer<typeof PlatformStylePersonaSchema>
