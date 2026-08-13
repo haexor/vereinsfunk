@@ -6,12 +6,13 @@ type MappingTarget = { value: string; label: string }
 
 defineProps<{
   source: IntegrationSource
-  form: { displayName: string; endpointUrl: string; lossThresholdPercent: string }
-  mappingRows: MappingRow[]
   submitting: boolean
   error: string
   mappingTargetsFor: (departmentId: string | null) => MappingTarget[]
 }>()
+
+const form = defineModel<{ displayName: string; endpointUrl: string; lossThresholdPercent: string }>('form', { required: true })
+const mappingRows = defineModel<MappingRow[]>('mappingRows', { required: true })
 
 const emit = defineEmits<{ save: []; cancel: []; addRow: []; removeRow: [index: number] }>()
 </script>

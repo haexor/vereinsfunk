@@ -37,5 +37,8 @@ export default tseslint.config(
         sourceType: 'module',
       },
     },
+    rules: {
+      'vue/no-mutating-props': 'error',
+    },
   },
 )

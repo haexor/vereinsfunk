@@ -263,7 +263,7 @@ async function deleteProfile(profile: CustomStyleProfile) {
       </section>
 
       <StyleProfileEditorForm
-        :draft="draft"
+        v-model:draft="draft"
         :saving="creating"
         :error="createError"
         :previewing="creatingPreviewing"
@@ -280,7 +280,7 @@ async function deleteProfile(profile: CustomStyleProfile) {
           <template v-if="editingId === profile.id">
             <p class="mb-3 text-[11px] font-semibold uppercase tracking-wide text-[#9aa096]">{{ scopeLabel(profile) }}</p>
             <StyleProfileEditorForm
-              :draft="editDraft"
+              v-model:draft="editDraft"
               :saving="editSaving"
               :error="editError"
               :previewing="editPreviewing"

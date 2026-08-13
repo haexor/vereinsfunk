@@ -241,8 +241,8 @@ async function removeMembership(membershipId: string, scopeLevel: ScopeLevel) {
 // Einladungsrecht statt eines separaten Rollen-Editors. canChangeRole/canRemove/canSetExpiry
 // kommen fertig aus der API -- die Oberflaeche leitet die Berechtigung nicht selbst her.
 const expandedMembershipId = ref<string | null>(null)
-const roleDraft = reactive<Record<string, AssignableRole | ''>>({})
-const expiryDraft = reactive<Record<string, string>>({})
+const roleDraft = ref<AssignableRole | ''>('')
+const expiryDraft = ref('')
 const roleChangeError = ref('')
 const roleChangeSubmitting = ref<string | null>(null)
 const expirySubmitting = ref<string | null>(null)
@@ -253,8 +253,8 @@ function toggleExpanded(entry: MemberRoleEntry, userId: string) {
     return
   }
   expandedMembershipId.value = entry.membershipId
-  roleDraft[entry.membershipId] = entry.role as AssignableRole
-  expiryDraft[entry.membershipId] = entry.expiresAt ? localDateKey(new Date(entry.expiresAt), timezone.value) : ''
+  roleDraft.value = entry.role as AssignableRole
+  expiryDraft.value = entry.expiresAt ? localDateKey(new Date(entry.expiresAt), timezone.value) : ''
   roleChangeError.value = ''
   initTrustDraft(entry, userId)
 }
@@ -265,7 +265,7 @@ function availableRolesFor(entry: MemberRoleEntry): AssignableRole[] {
 }
 
 async function changeRole(entry: MemberRoleEntry) {
-  const nextRole = roleDraft[entry.membershipId]
+  const nextRole = roleDraft.value
   if (!nextRole || nextRole === entry.role) return
   roleChangeSubmitting.value = entry.membershipId
   roleChangeError.value = ''
@@ -286,7 +286,7 @@ async function setExpiry(entry: MemberRoleEntry) {
   expirySubmitting.value = entry.membershipId
   roleChangeError.value = ''
   try {
-    const draft = expiryDraft[entry.membershipId]
+    const draft = expiryDraft.value
     await api.request(`/v1/memberships/${entry.membershipId}/expiry`, {
       method: 'PATCH', query: { scope: entry.scope },
       body: { expiresAt: draft ? endOfDayIso(draft, timezone.value) : null },
@@ -311,20 +311,19 @@ function trustFor(entry: MemberRoleEntry, userId: string): MemberReviewTrust | u
   return memberReviewTrust.value.find((record) => record.scope === entry.scope && record.scopeId === entry.scopeId && record.userId === userId)
 }
 
-const trustSubmitAllowedDraft = reactive<Record<string, boolean>>({})
-const trustRequirementDraft = reactive<Record<string, ReviewRequirement>>({})
-const trustReasonDraft = reactive<Record<string, string>>({})
-const trustExpiryDraft = reactive<Record<string, string>>({})
+const trustSubmitAllowedDraft = ref(true)
+const trustRequirementDraft = ref<ReviewRequirement>('inherit')
+const trustReasonDraft = ref('')
+const trustExpiryDraft = ref('')
 const trustSubmitting = ref<string | null>(null)
 const trustError = ref('')
 
 function initTrustDraft(entry: MemberRoleEntry, userId: string) {
-  const key = entry.membershipId
   const existing = trustFor(entry, userId)
-  trustSubmitAllowedDraft[key] = existing?.submitAllowed ?? true
-  trustRequirementDraft[key] = existing?.reviewRequirement ?? 'inherit'
-  trustReasonDraft[key] = existing?.reason ?? ''
-  trustExpiryDraft[key] = existing?.expiresAt ? localDateKey(new Date(existing.expiresAt), timezone.value) : ''
+  trustSubmitAllowedDraft.value = existing?.submitAllowed ?? true
+  trustRequirementDraft.value = existing?.reviewRequirement ?? 'inherit'
+  trustReasonDraft.value = existing?.reason ?? ''
+  trustExpiryDraft.value = existing?.expiresAt ? localDateKey(new Date(existing.expiresAt), timezone.value) : ''
 }
 
 async function saveTrust(entry: MemberRoleEntry, userId: string) {
@@ -335,10 +334,10 @@ async function saveTrust(entry: MemberRoleEntry, userId: string) {
       method: 'PUT',
       body: {
         scope: entry.scope, scopeId: entry.scopeId, userId,
-        submitAllowed: trustSubmitAllowedDraft[entry.membershipId],
-        reviewRequirement: trustRequirementDraft[entry.membershipId],
-        reason: trustReasonDraft[entry.membershipId]?.trim() || null,
-        expiresAt: trustExpiryDraft[entry.membershipId] ? endOfDayIso(trustExpiryDraft[entry.membershipId]!, timezone.value) : null,
+        submitAllowed: trustSubmitAllowedDraft.value,
+        reviewRequirement: trustRequirementDraft.value,
+        reason: trustReasonDraft.value.trim() || null,
+        expiresAt: trustExpiryDraft.value ? endOfDayIso(trustExpiryDraft.value, timezone.value) : null,
       },
     })
     await load()
@@ -433,15 +432,15 @@ const canInviteHere = computed(() => availableInviteScopes.value.length > 0)
       <MemberList
         :members="members"
         :expanded-membership-id="expandedMembershipId"
-        :role-draft="roleDraft"
-        :expiry-draft="expiryDraft"
+        v-model:role-draft="roleDraft"
+        v-model:expiry-draft="expiryDraft"
         :role-change-error="roleChangeError"
         :role-change-submitting="roleChangeSubmitting"
         :expiry-submitting="expirySubmitting"
-        :trust-submit-allowed-draft="trustSubmitAllowedDraft"
-        :trust-requirement-draft="trustRequirementDraft"
-        :trust-reason-draft="trustReasonDraft"
-        :trust-expiry-draft="trustExpiryDraft"
+        v-model:trust-submit-allowed-draft="trustSubmitAllowedDraft"
+        v-model:trust-requirement-draft="trustRequirementDraft"
+        v-model:trust-reason-draft="trustReasonDraft"
+        v-model:trust-expiry-draft="trustExpiryDraft"
         :trust-submitting="trustSubmitting"
         :trust-error="trustError"
         :scope-name="scopeName"

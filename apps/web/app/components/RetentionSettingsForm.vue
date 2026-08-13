@@ -1,9 +1,9 @@
 <script setup lang="ts">
 defineProps<{
-  draft: { rawMediaDays: number; derivativeEnabled: boolean; derivativeDays: number; auditEventDays: number; consentEvidenceYears: number; statusEventDays: number }
   saving: boolean
   error: string
 }>()
+const draft = defineModel<{ rawMediaDays: number; derivativeEnabled: boolean; derivativeDays: number; auditEventDays: number; consentEvidenceYears: number; statusEventDays: number }>('draft', { required: true })
 const emit = defineEmits<{ save: [] }>()
 </script>
 

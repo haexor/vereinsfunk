@@ -346,9 +346,9 @@ async function confirmRecord(record: ProcessingRecord) {
     <template v-else>
       <p v-if="actionError" class="mb-4 text-sm text-amber-800">{{ actionError }}</p>
 
-      <LegalOrganizationProfileForm :organization-id="organizationId" :members="members" :profile-draft="profileDraft" :legal-forms="LEGAL_FORMS" :saving="profileSaving" :error="profileSaveError" @save="saveProfile" />
+      <LegalOrganizationProfileForm :organization-id="organizationId" :members="members" v-model:profile-draft="profileDraft" :legal-forms="LEGAL_FORMS" :saving="profileSaving" :error="profileSaveError" @save="saveProfile" />
 
-      <RetentionSettingsForm :draft="retentionDraft" :saving="retentionSaving" :error="retentionSaveError" @save="saveRetentionSettings" />
+      <RetentionSettingsForm v-model:draft="retentionDraft" :saving="retentionSaving" :error="retentionSaveError" @save="saveRetentionSettings" />
 
       <!-- Retention-Lauf -->
       <section class="card mb-6 p-6">

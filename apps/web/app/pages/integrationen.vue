@@ -349,7 +349,7 @@ async function resolveConflict(conflict: IntegrationSyncConflict, resolution: 'k
       <p v-if="actionError" class="mb-4 text-sm text-amber-800">{{ actionError }}</p>
 
       <IntegrationSourceCreateForm
-        :form="createForm" :mapping-rows="mappingRows" :departments="departmentOptionsForCreate"
+        v-model:form="createForm" v-model:mapping-rows="mappingRows" :departments="departmentOptionsForCreate"
         :can-manage-org-wide="canManageOrgWide" :submitting="createSubmitting" :error="createError"
         :mapping-targets-for="mappingTargetsFor" @submit="createSource" @add-row="addMappingRow" @remove-row="removeMappingRow"
       />
@@ -373,7 +373,7 @@ async function resolveConflict(conflict: IntegrationSyncConflict, resolution: 'k
         </div>
 
         <IntegrationSourceEditForm
-          v-if="editingSourceId === source.id" :source="source" :form="editForm" :mapping-rows="editMappingRows"
+          v-if="editingSourceId === source.id" :source="source" v-model:form="editForm" v-model:mapping-rows="editMappingRows"
           :submitting="editSubmitting" :error="editError" :mapping-targets-for="mappingTargetsFor"
           @save="saveEdit(source)" @cancel="editingSourceId = null" @add-row="editMappingRows.push({ column: '', field: '' })" @remove-row="editMappingRows.splice($event, 1)"
         />
