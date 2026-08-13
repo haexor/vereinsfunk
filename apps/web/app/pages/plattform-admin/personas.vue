@@ -143,7 +143,7 @@ async function removePersona(persona: PlatformStylePersona) {
       </section>
 
       <StyleProfileEditorForm
-        :draft="draft"
+        v-model:draft="draft"
         :saving="saving"
         :error="formError"
         :previewing="previewing"

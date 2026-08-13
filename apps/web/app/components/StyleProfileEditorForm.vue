@@ -3,8 +3,7 @@ import { LoaderCircle, Sparkles } from '@lucide/vue'
 import type { GeneratedPost } from '@vereinsfunk/contracts'
 import type { StyleProfileDraft } from '../utils/styleProfileDraft'
 
-const props = withDefaults(defineProps<{
-  draft: StyleProfileDraft
+withDefaults(defineProps<{
   saving: boolean
   error: string
   previewing: boolean
@@ -17,9 +16,11 @@ const props = withDefaults(defineProps<{
   cancellable: false,
 })
 
+const draft = defineModel<StyleProfileDraft>('draft', { required: true })
+
 const emit = defineEmits<{ save: []; preview: []; cancel: [] }>()
 
-const canPreview = computed(() => Boolean(props.draft.name.trim() && props.draft.description.trim() && props.draft.sampleInput.trim()))
+const canPreview = computed(() => Boolean(draft.value.name.trim() && draft.value.description.trim() && draft.value.sampleInput.trim()))
 </script>
 
 <template>
