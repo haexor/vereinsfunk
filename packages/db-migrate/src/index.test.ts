@@ -20,6 +20,27 @@ describe('runPendingMigrations', () => {
     await expect(runPendingMigrations('postgresql://example', { runner })).rejects.toThrow(/already exists/)
   })
 
+  // Regression: `execFile`'s own error/stderr can echo the full invoked command line,
+  // including `--db-url <databaseUrl>` -- a MigrationError must never carry the raw
+  // connection string (with its password) into a container log.
+  it('redacts the database URL from a thrown MigrationError', async () => {
+    const databaseUrl = 'postgresql://postgres:secret-password@db.example:5432/postgres'
+    const runner = vi.fn(async () => {
+      const error = new Error(`Command failed: supabase db push --db-url ${databaseUrl}`) as Error & { stderr: string }
+      error.stderr = `connection to ${databaseUrl} refused`
+      throw error
+    })
+    let rejection: unknown
+    try {
+      await runPendingMigrations(databaseUrl, { runner })
+    } catch (error) {
+      rejection = error
+    }
+    expect(rejection).toBeInstanceOf(MigrationError)
+    expect((rejection as Error).message).not.toContain('secret-password')
+    expect((rejection as Error).message).toContain('[redacted]')
+  })
+
   it('logs before and after a successful run', async () => {
     const log = vi.fn()
     await runPendingMigrations('postgresql://example', { runner: async () => {}, log })

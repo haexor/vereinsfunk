@@ -68,8 +68,13 @@ describe('ApiEnvironmentSchema', () => {
   // nicht laufen -- ein fehlender Wert soll den Start klar mit einer field-scoped-Meldung
   // verweigern, nicht erst beim ersten Aufruf des Boot-Hooks mit einer unklaren Exception scheitern.
   it('rejects a production environment missing DATABASE_URL', () => {
-    const withoutDatabaseUrl = { ...requiredProductionEnv, DATABASE_URL: undefined }
+    const withoutDatabaseUrl = { ...requiredProductionEnv, DATABASE_URL: undefined, EMAIL_PROVIDER: 'smtp', ...requiredSmtpEnv }
     expect(ApiEnvironmentSchema.safeParse(withoutDatabaseUrl).success).toBe(false)
+  })
+
+  it('rejects a malformed DATABASE_URL', () => {
+    const malformedDatabaseUrl = { ...requiredProductionEnv, DATABASE_URL: 'not-a-postgres-url', EMAIL_PROVIDER: 'smtp', ...requiredSmtpEnv }
+    expect(ApiEnvironmentSchema.safeParse(malformedDatabaseUrl).success).toBe(false)
   })
 
   it('allows EMAIL_PROVIDER=fake outside production', () => {
@@ -180,6 +185,7 @@ describe('WorkerEnvironmentSchema', () => {
     ['HATCHET_CLIENT_TOKEN', ''],
     ['SUPABASE_SERVICE_ROLE_KEY', ''],
     ['DATABASE_URL', ''],
+    ['DATABASE_URL', 'not-a-postgres-url'],
   ])('rejects an invalid worker %s value', (key, value) => {
     expect(WorkerEnvironmentSchema.safeParse({ ...requiredWorkerEnvironment, [key]: value }).success).toBe(false)
   })

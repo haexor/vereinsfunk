@@ -49,3 +49,23 @@ IPv4-only-Umgebungen aus nicht erreichbar.
 Verwaltet in `~/Projekte/ansible` (separates Repository), Rolle `vereinsfunk`,
 `secrets/<host>.yml` unter `vereinsfunk.database_url` -- siehe dortige
 `roles/vereinsfunk/defaults/main.yml` für den bisherigen manuellen Weg, den dieser Plan ablöst.
+
+## Bei Kompromittierungsverdacht: `DATABASE_URL` rotieren
+
+Anders als `SUPABASE_SERVICE_ROLE_KEY` (PostgREST/RLS-Bypass) ist `DATABASE_URL` eine echte
+Postgres-Rolle mit vollem Schema-Schreibzugriff -- der größte Blast-Radius eines einzelnen
+Credentials in diesem Projekt (Entscheidung 3,
+`plans/036-migrationen-beim-container-start-automatisieren.md`). Bei Verdacht auf
+Kompromittierung von `vereinsfunk-api` oder `vereinsfunk-worker`:
+
+1. Supabase Dashboard -> Project Settings -> Database -> **Reset database password**. Invalidiert
+   sofort jede bestehende Direktverbindung mit dem alten Passwort (Session-Pooler eingeschlossen);
+   `SUPABASE_SERVICE_ROLE_KEY`/PostgREST bleiben davon unberührt, das ist ein separates Credential.
+2. Neues Passwort in `~/Projekte/ansible`, `secrets/<host>.yml` unter
+   `vereinsfunk.supabase_db_url` eintragen.
+3. Playbook erneut gegen den betroffenen Host laufen lassen -- das rendert `DATABASE_URL` neu und
+   startet `vereinsfunk-api`/`-worker` dabei automatisch neu (`recreate: always` im Docker-Pfad,
+   `state: restarted` im Quadlet-Pfad), kein manueller Zusatzschritt nötig.
+4. `docker logs vereinsfunk-api`/`-worker` prüfen: "applying pending database migrations" ->
+   "database migrations applied" bestätigt, dass der Boot-Hook mit dem neuen Credential
+   durchläuft.

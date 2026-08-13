@@ -3,6 +3,8 @@ import { z } from 'zod'
 const emptyStringToUndefined = (value: unknown) => (value === '' ? undefined : value)
 const optionalSecret = z.preprocess(emptyStringToUndefined, z.string().min(1).optional())
 const optionalUrl = z.preprocess(emptyStringToUndefined, z.url().optional())
+const postgresUrl = z.string().regex(/^postgres(ql)?:\/\//, 'must start with postgres:// or postgresql://')
+const optionalPostgresUrl = z.preprocess(emptyStringToUndefined, postgresUrl.optional())
 const hostPort = z.string()
   .regex(/^[a-zA-Z0-9.-]+:\d{1,5}$/, 'must be a host:port pair')
   .refine((value) => Number(value.slice(value.lastIndexOf(':') + 1)) <= 65_535, 'must use a valid port')
@@ -23,7 +25,7 @@ const ApiEnvironmentBaseSchema = z.object({
   // Plan 036: direkte Postgres-Verbindung (nicht die PostgREST-URL oben) fuer den
   // Migrations-Boot-Hook (packages/db-migrate). Anders als jede andere Verbindung in diesem
   // Projekt kein PostgREST/Auth-Admin-Zugriff, sondern eine volle Postgres-Rolle mit DDL-Rechten.
-  DATABASE_URL: optionalSecret,
+  DATABASE_URL: optionalPostgresUrl,
   HATCHET_CLIENT_TOKEN: optionalSecret,
   OPENAI_API_KEY: optionalSecret,
   // 'mixpost' widersprach der getroffenen Architekturentscheidung (plans/README.md: Mixpost wird im
@@ -107,7 +109,7 @@ export const WorkerEnvironmentSchema = z.object({
   SUPABASE_URL: z.url(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   // Plan 036: siehe DATABASE_URL-Kommentar in ApiEnvironmentBaseSchema oben.
-  DATABASE_URL: z.string().min(1),
+  DATABASE_URL: postgresUrl,
   HATCHET_CLIENT_TOKEN: z.string().min(1),
   HATCHET_CLIENT_API_URL: z.url().default('http://127.0.0.1:8080'),
   HATCHET_CLIENT_HOST_PORT: hostPort.default('localhost:7077'),

@@ -66,6 +66,13 @@ export interface RunPendingMigrationsOptions {
  * bestehende Restart-Policy neu startet, ist ein sichtbarer Zustand; eine API, die still gegen ein
  * halb migriertes Schema weiterlaeuft, ist genau der unsichtbare Fehler, den dieser Hook verhindern soll.
  */
+// `execFile`'s own error/`stderr` can echo the full invoked command line, including
+// `--db-url <databaseUrl>` -- redact the literal connection string before it reaches a
+// MigrationError, and from there any log that prints it.
+function redact(text: string, secret: string): string {
+  return secret ? text.split(secret).join('[redacted]') : text
+}
+
 export async function runPendingMigrations(databaseUrl: string, options: RunPendingMigrationsOptions = {}): Promise<void> {
   const { runner = defaultCliRunner, log = () => {} } = options
   log('applying pending database migrations')
@@ -74,7 +81,7 @@ export async function runPendingMigrations(databaseUrl: string, options: RunPend
   } catch (error) {
     const stderr = error && typeof error === 'object' && 'stderr' in error ? String((error as { stderr?: unknown }).stderr) : ''
     const message = error instanceof Error ? error.message : String(error)
-    throw new MigrationError(`supabase db push failed: ${message}${stderr ? ` -- ${stderr}` : ''}`)
+    throw new MigrationError(redact(`supabase db push failed: ${message}${stderr ? ` -- ${stderr}` : ''}`, databaseUrl))
   }
   log('database migrations applied')
 }

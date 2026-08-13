@@ -14,7 +14,7 @@
 - **Depends on**: keine (unabhängig von den übrigen offenen Plänen); betrifft aber jedes künftige Paket mit einer neuen Migration
 - **Category**: infrastructure, reliability, ops
 - **Planned at**: commit `a8707e63`, 2026-08-12
-- **Umsetzungsstand**: App-Repo-Teil (Steps 0–3, 5) erledigt und lokal verifiziert; Step 4 (Ansible-Repo) aussteht als eigener PR in `~/Projekte/ansible`. Der akute Produktionsausfall ist bereits behoben (19 nachgezogene Migrationen, siehe „Umsetzung: Ergebnis und Abweichungen vom Plan").
+- **Umsetzungsstand**: App-Repo-Teil (Steps 0–3, 5) umgesetzt und lokal verifiziert, PR #55 offen (Review-Funde nachgezogen, noch nicht gemergt — der Boot-Hook läuft daher noch nicht in Produktion). Step 4 (Ansible-Repo) als PR #104 gemergt und bereits auf haex.space ausgerollt (`DATABASE_URL` steht im gerenderten `docker-compose.yml`). Der akute Produktionsausfall ist bereits behoben (19 nachgezogene Migrationen, siehe „Umsetzung: Ergebnis und Abweichungen vom Plan").
 
 ## Why this matters
 
@@ -154,7 +154,8 @@ Neue Datei `docs/operations/deploy.md`: beschreibt den jetzt automatischen Migra
 
 ## Done criteria
 
-- [x] Step 0 durchgeführt, Ergebnis dokumentiert; die in Entscheidung 5 angenommene Kollisionssicherheit tatsächlich beobachtet, nicht nur angenommen.
+- [x] Step 0 durchgeführt, Ergebnis dokumentiert.
+- [ ] Die in Entscheidung 5 angenommene Kollisionssicherheit tatsächlich unter echter Nebenläufigkeit beobachtet, nicht nur angenommen — **nicht erreicht**: die beiden Testläufe in Step 0 liefen faktisch sequenziell statt als echtes Wettrennen (siehe „Umsetzung: Ergebnis und Abweichungen vom Plan" und STOP conditions). Entscheidung 5 (kein Advisory-Lock) bleibt bewusst bestehen; ein echter Race-Test gegen ein Wegwerf-/Vorschau-Projekt steht vor einem Wechsel auf mehrere Replikas weiterhin aus.
 - [x] `DATABASE_URL` ist ein validiertes Pflichtfeld in `packages/config`, fehlt es, verweigern `apps/api` (in Produktion) und `apps/worker` (in jeder Umgebung) den Start mit einer klaren Fehlermeldung.
 - [x] `packages/db-migrate` existiert, ist getestet (inkl. Fehlerfall mit `stderr`-Weitergabe), und wird von `apps/api/src/server.ts` unmittelbar nach `parseApiEnvironment()` sowie von `apps/worker/src/index.ts` unmittelbar nach `parseWorkerEnvironment()` aufgerufen — jeweils vor jedem weiteren App-/Worker-Start.
 - [x] Beide Laufzeit-Images enthalten `supabase/migrations/` und lösen die `supabase`-CLI über einen deterministischen, nicht von `PATH` abhängigen Pfad auf; ein lokal gebautes Image (API **und** Worker) wendet beim Start tatsächlich ausstehende Migrationen an und startet den Server/Worker erst danach.
@@ -174,6 +175,7 @@ Steps 0–3 und 5 sind umgesetzt und lokal vollständig verifiziert (App-Repo-Te
 - **Docker-Smoke-Test real durchgeführt** (nicht nur die in „Commands you will need" vorgesehene Kommandozeile beschrieben): beide Images lokal gebaut und mit `--network host` gegen die lokale Supabase-Instanz gestartet. Erfolgspfad: `"applying pending database migrations"` → `"database migrations applied"` → Server/Hatchet-Start läuft an. Fehlerpfad (absichtlich falsche `DATABASE_URL`/TLS-Mismatch): Prozess wirft `MigrationError` unbehandelt, Exit-Code 1, Server erreicht `app.listen()` nie.
 - **Akuter Produktionsausfall behoben, Umfang größer als ursprünglich diagnostiziert:** Ein `--dry-run` gegen die produktive Datenbank zeigte 19 ausstehende Migrationen (`2026080903` bis `2026081208`), nicht nur die eine, die den gemeldeten Fehler auslöste — die Produktionsdatenbank lag seit über einer Woche hinter `main` zurück. Alle 19 wurden nach Bestätigung durch den Nutzer angewendet; `--dry-run` meldet seither „up to date".
 - **Nicht verifiziert, wie in den STOP conditions vorgesehen:** ein echtes gleichzeitiges Wettrennen zweier `db push`-Prozesse auf Postgres-Ebene (Objekt-Lock/Primärschlüsselverletzung in `schema_migrations`) — die beiden Testläufe liefen faktisch sequenziell. Vor einem Wechsel auf mehrere Replikas desselben Dienstes sollte das gezielt nachgeholt werden (siehe STOP conditions unten, unverändert).
+- **CodeRabbit-Review zu PR #55:** `DATABASE_URL` validiert jetzt zusätzlich das `postgres(ql)://`-Präfix (`packages/config`), `MigrationError` redigiert die rohe Verbindungs-URL aus `error.message`/`stderr`, bevor sie geloggt werden kann (`packages/db-migrate`), und ein Testfixture-Fehler (fehlendes `EMAIL_PROVIDER=smtp` ließ den DATABASE_URL-Test aus dem falschen Grund grün werden) ist behoben. Der Vorschlag, Entscheidung 5 durch einen echten Advisory-Lock zu ersetzen, wurde bewusst nicht übernommen (siehe Kommentar auf dem PR) — Begründung unverändert: neue `pg`-Laufzeitabhängigkeit und ein Stall- statt Crash-Loop-Fehlermodus stehen einem heute seltenen, durch transaktionale Migrationen bereits entschärften Kollisionsfenster gegenüber.
 
 ## STOP conditions
 
