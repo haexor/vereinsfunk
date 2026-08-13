@@ -1,5 +1,6 @@
 import type { Permission } from '@vereinsfunk/authorization'
 import type { ApiEnvironment } from '@vereinsfunk/config'
+import type { StructuredContentGenerator } from '@vereinsfunk/content-engine'
 import type { MetaOAuthClient, SocialPublisher } from '@vereinsfunk/publishing'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyReply, FastifyRequest } from 'fastify'
@@ -34,4 +35,10 @@ export interface ApiRouteContext extends ApiRouteGuards {
   emailSender: EmailSender
   metaOAuthClient: MetaOAuthClient
   createPublisherForConnection(platform: 'instagram' | 'facebook', accessToken: string, externalAccountId: string): SocialPublisher
+  // Plan 040: "Persona/Stilprofil testen" ueberschreibt die Protokollauswahl vollstaendig, genau
+  // wie TextGenerationExecutor.generator im Worker (apps/worker/src/textGeneration.ts) -- ein Test
+  // kann so eine echte Provider-Zeile faken (fuer model/baseUrl/apiKey), ohne einen echten
+  // ausgehenden Fetch ueber createGuardedFetch() ausloesen zu muessen. Ausserhalb von Tests immer
+  // undefined; previewStyleProfile (routes/shared.ts) waehlt dann anhand des Provider-Protokolls.
+  textGenerator?: StructuredContentGenerator
 }

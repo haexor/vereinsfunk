@@ -1,12 +1,14 @@
 import {
   CreatePlatformStylePersonaRequestSchema,
   PlatformStylePersonaSchema,
+  PreviewPlatformStylePersonaRequestSchema,
   UpdatePlatformStylePersonaRequestSchema,
   UuidSchema,
 } from '@vereinsfunk/contracts'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ApiRouteContext } from './context.js'
+import { previewStyleProfile } from './shared.js'
 
 const PERSONA_COLUMNS = 'id, slug, name, description, style_rules, avoid_rules, do_rules, is_active, created_by, created_at, updated_at'
 
@@ -24,7 +26,7 @@ function mapPersonaRow(row: Record<string, unknown>) {
 // audit_events-Eintrag: die gesamte Plattform-Administration hat bislang keinen eigenen
 // Audit-Trail, ein auf Personas beschraenkter Sonderweg waere selbst unvollstaendig.
 export function registerPlatformPersonaRoutes(app: FastifyInstance, context: ApiRouteContext): void {
-  const { requireAuth, requirePlatformAdmin, supabaseClients } = context
+  const { environment, requireAuth, requirePlatformAdmin, supabaseClients, textGenerator } = context
 
   app.get('/v1/platform-style-personas', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
@@ -80,5 +82,16 @@ export function registerPlatformPersonaRoutes(app: FastifyInstance, context: Api
     const del = await service.from('platform_style_personas').delete().eq('id', params.id)
     if (del.error) throw del.error
     return reply.code(204).send()
+  })
+
+  // "Persona testen": calls the active text provider directly and synchronously, no
+  // session/candidate row (see previewStyleProfile, routes/shared.ts).
+  app.post('/v1/platform-style-personas/preview', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    if (!(await requirePlatformAdmin(request, reply))) return
+    const input = PreviewPlatformStylePersonaRequestSchema.parse(request.body)
+    const result = await previewStyleProfile(supabaseClients, environment, input, textGenerator)
+    if (!result.ok) return reply.code(result.status).send({ error: result.error, correlationId: request.id })
+    return reply.code(200).send(result.post)
   })
 }

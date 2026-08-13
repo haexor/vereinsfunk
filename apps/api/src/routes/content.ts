@@ -3,11 +3,14 @@ import {
   CreateCustomStyleProfileRequestSchema,
   CreateGenerationCommandSchema,
   CreateSubmissionSchema,
+  CustomStyleProfileSchema,
   GeneratedPostSchema,
   GenerationCandidateStatusSchema,
+  PreviewCustomStyleProfileRequestSchema,
   StyleProfileRulesSchema,
   SubmissionAcceptedSchema,
   TeamSchema,
+  UpdateCustomStyleProfileRequestSchema,
   UuidSchema,
   type StyleProfileRules,
   type Team,
@@ -19,7 +22,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { CLUB_EVENT_COLUMNS, FIXTURE_COLUMNS, mapClubEventRow, mapFixtureRow, mapTeamRow } from '../apiMappers.js'
 import type { ApiRouteContext } from './context.js'
-import { createAuditRecorder, fetchMemberTrust, resolveScopedEffectiveConfig, toPermissionScope } from './shared.js'
+import { createAuditRecorder, fetchMemberTrust, previewStyleProfile, resolveScopedEffectiveConfig, toPermissionScope } from './shared.js'
 
 // Plan 033 text-only workshop. Diese Routen rufen kein LLM auf: sie schreiben Sitzung und einen
 // reinen ID-Umschlag ueber eine service-only RPC, die der Worker spaeter ausfuehrt.
@@ -31,8 +34,18 @@ const systemStyleProfiles: Record<string, { name: string; description: string; s
   feierlich_wertschaetzend: { name: 'Feierlich wertschätzend', description: 'Dankbar und respektvoll.', styleRules: { toneTags: ['feierlich', 'dankbar', 'respektvoll'], catchphrases: [], exampleInput: '25 Jahre Vereinsmitgliedschaft von Herrn Schmidt', exampleOutput: 'Seit 25 Jahren trägt Herr Schmidt unseren Verein mit – dafür sagen wir von Herzen Danke.', additionalInstructions: '' }, avoidRules: [], doRules: ['Dank/Anerkennung aussprechen'] },
 }
 
+const CUSTOM_STYLE_PROFILE_COLUMNS = 'id, organization_id, department_id, team_id, slug, name, description, style_rules, avoid_rules, do_rules, is_active, created_by, created_at, updated_at'
+function mapCustomStyleProfileRow(row: Record<string, unknown>) {
+  return {
+    id: row.id, organizationId: row.organization_id, departmentId: row.department_id, teamId: row.team_id,
+    slug: row.slug, kind: 'custom' as const, name: row.name, description: row.description,
+    styleRules: StyleProfileRulesSchema.parse(row.style_rules), avoidRules: row.avoid_rules, doRules: row.do_rules,
+    isActive: row.is_active, createdBy: row.created_by, createdAt: row.created_at, updatedAt: row.updated_at,
+  }
+}
+
 export function registerContentRoutes(app: FastifyInstance, context: ApiRouteContext): void {
-  const { requireAuth, requirePermission, supabaseClients, uploads } = context
+  const { environment, requireAuth, requirePermission, supabaseClients, textGenerator, uploads } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
 
   app.post('/v1/submissions', async (request, reply) => {
@@ -290,6 +303,57 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (inserted.error) throw inserted.error
     await recordAuditEvent(request, { organizationId: input.organizationId, action: 'content_style_profile.created', entityType: 'content_style_profile', entityId: inserted.data.id as string, metadata: { scope: input.teamId ? 'team' : input.departmentId ? 'department' : 'organization' } })
     return reply.code(201).send({ id: inserted.data.id })
+  })
+
+  // Scope is derived from the existing row, never from the client (plans/README.md, "RPC traut
+  // Client nicht") -- organizationId/departmentId/teamId are immutable and not part of the
+  // request body, unlike POST above which still has to establish them.
+  app.patch('/v1/content-style-profiles/:id', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const service = supabaseClients.forService()
+    const existing = await service.from('content_style_profiles').select('organization_id, department_id, team_id').eq('id', params.id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return reply.code(404).send({ error: 'content_style_profile_not_found' })
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(existing.data.organization_id, existing.data.department_id, existing.data.team_id)))) return
+    const input = UpdateCustomStyleProfileRequestSchema.parse(request.body)
+    const payload: Record<string, unknown> = {}
+    if (input.slug !== undefined) payload.slug = input.slug
+    if (input.name !== undefined) payload.name = input.name
+    if (input.description !== undefined) payload.description = input.description
+    if (input.styleRules !== undefined) payload.style_rules = input.styleRules
+    if (input.avoidRules !== undefined) payload.avoid_rules = input.avoidRules
+    if (input.doRules !== undefined) payload.do_rules = input.doRules
+    if (input.isActive !== undefined) payload.is_active = input.isActive
+    const update = await service.from('content_style_profiles').update(payload).eq('id', params.id).select(CUSTOM_STYLE_PROFILE_COLUMNS).maybeSingle()
+    if (update.error) throw update.error
+    if (!update.data) return reply.code(404).send({ error: 'content_style_profile_not_found' })
+    return reply.code(200).send(CustomStyleProfileSchema.parse(mapCustomStyleProfileRow(update.data)))
+  })
+
+  app.delete('/v1/content-style-profiles/:id', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const service = supabaseClients.forService()
+    const existing = await service.from('content_style_profiles').select('organization_id, department_id, team_id').eq('id', params.id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return reply.code(404).send({ error: 'content_style_profile_not_found' })
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(existing.data.organization_id, existing.data.department_id, existing.data.team_id)))) return
+    const del = await service.from('content_style_profiles').delete().eq('id', params.id)
+    if (del.error) throw del.error
+    return reply.code(204).send()
+  })
+
+  // "Stilprofil testen": calls the active text provider directly and synchronously, no
+  // session/candidate row (see previewStyleProfile, routes/shared.ts). Scope-gated like POST
+  // above -- a member may only preview a profile in a scope they could actually create one in.
+  app.post('/v1/content-style-profiles/preview', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const input = PreviewCustomStyleProfileRequestSchema.parse(request.body)
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(input.organizationId, input.departmentId ?? null, input.teamId ?? null)))) return
+    const result = await previewStyleProfile(supabaseClients, environment, input, textGenerator)
+    if (!result.ok) return reply.code(result.status).send({ error: result.error, correlationId: request.id })
+    return reply.code(200).send(result.post)
   })
 
   app.post('/v1/text-workshop/sessions', async (request, reply) => {

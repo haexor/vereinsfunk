@@ -174,6 +174,44 @@ export const UpdatePlatformStylePersonaRequestSchema = z.object({
     context.addIssue({ code: 'custom', message: 'At least one field must be provided' })
   }
 })
+// Scope (organizationId/departmentId/teamId) is not part of this shape -- a profile's scope is
+// immutable, PATCH /v1/content-style-profiles/:id derives it from the existing row instead.
+export const UpdateCustomStyleProfileRequestSchema = z.object({
+  slug: ContentPresetSlugSchema.optional(),
+  name: z.string().trim().min(1).max(80).optional(),
+  description: z.string().trim().min(1).max(500).optional(),
+  styleRules: StyleProfileRulesSchema.optional(),
+  avoidRules: StyleProfileRuleListSchema.optional(),
+  doRules: StyleProfileRuleListSchema.optional(),
+  isActive: z.boolean().optional(),
+}).superRefine((profile, context) => {
+  if (profile.slug !== undefined && (SystemStyleProfileSlugSchema.options as readonly string[]).includes(profile.slug)) {
+    context.addIssue({ code: 'custom', path: ['slug'], message: 'System style profile slugs are reserved' })
+  }
+  if (Object.values(profile).every((value) => value === undefined)) {
+    context.addIssue({ code: 'custom', message: 'At least one field must be provided' })
+  }
+})
+// Plan 040: "Persona/Stilprofil testen" calls the active text provider directly and
+// synchronously -- no session/candidate row, no preset. sampleInput plays the role a preset's
+// sourceMaterial normally plays (a single allowedClaim); there is no communicationGoal/preset
+// here, so previewStyleProfile (apps/api/src/routes/shared.ts) fills those in with fixed values.
+const StyleProfilePreviewCoreSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  description: z.string().trim().min(1).max(500),
+  styleRules: StyleProfileRulesSchema,
+  avoidRules: StyleProfileRuleListSchema,
+  doRules: StyleProfileRuleListSchema,
+  sampleInput: z.string().trim().min(1).max(300),
+})
+export const PreviewPlatformStylePersonaRequestSchema = StyleProfilePreviewCoreSchema
+export const PreviewCustomStyleProfileRequestSchema = StyleProfilePreviewCoreSchema.extend({
+  organizationId: UuidSchema,
+  departmentId: UuidSchema.nullable().optional(),
+  teamId: UuidSchema.nullable().optional(),
+}).superRefine((profile, context) => {
+  if (profile.teamId && !profile.departmentId) context.addIssue({ code: 'custom', message: 'teamId requires departmentId' })
+})
 export const GenerationIntentSchema = z.enum(['initial', 'revise'])
 export const GenerationCandidateStatusSchema = z.enum(['pending', 'generating', 'ready', 'failed', 'accepted', 'abandoned', 'expired'])
 export const CompositionSessionStatusSchema = z.enum(['draft', 'queued', 'generating', 'candidate_ready', 'failed', 'accepted', 'abandoned', 'expired'])
@@ -318,5 +356,8 @@ export type CreateCustomStyleProfileRequest = z.infer<typeof CreateCustomStylePr
 export type PlatformStylePersona = z.infer<typeof PlatformStylePersonaSchema>
 export type CreatePlatformStylePersonaRequest = z.infer<typeof CreatePlatformStylePersonaRequestSchema>
 export type UpdatePlatformStylePersonaRequest = z.infer<typeof UpdatePlatformStylePersonaRequestSchema>
+export type UpdateCustomStyleProfileRequest = z.infer<typeof UpdateCustomStyleProfileRequestSchema>
+export type PreviewPlatformStylePersonaRequest = z.infer<typeof PreviewPlatformStylePersonaRequestSchema>
+export type PreviewCustomStyleProfileRequest = z.infer<typeof PreviewCustomStyleProfileRequestSchema>
 export type CreateCompositionSession = z.infer<typeof CreateCompositionSessionSchema>
 export type CreateGenerationCommand = z.infer<typeof CreateGenerationCommandSchema>
