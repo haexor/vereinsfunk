@@ -67,7 +67,13 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
       })
       .select('id, label, protocol, base_url, model, purpose, task_kind, temperature, max_output_tokens, structured_output_required, priority, is_active')
       .single()
-    if (insert.error) throw insert.error
+    // Eine aktive Aufgabenart vergibt jede Prioritaet nur einmal (2026081305): zwei gleichrangige
+    // aktive Provider liessen offen, welcher der aktive ist. Der Konflikt wird hier sichtbar --
+    // in der Verwaltung, wo die Prioritaet im selben Formular steht -- statt spaeter im Lesepfad.
+    if (insert.error) {
+      if (insert.error.code === '23505') return reply.code(409).send({ error: 'priority_already_taken', correlationId: request.id })
+      throw insert.error
+    }
     // seal() kann ebenfalls werfen (siehe secretBox.ts) -- der try/catch faengt das ab, damit auch
     // dieser Fehlerpfad die Konfiguration zurueckrollt, nicht nur secretInsert.error.
     let secretInsert
@@ -128,7 +134,12 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
       .eq('id', params.id)
       .select('id, label, protocol, base_url, model, purpose, task_kind, temperature, max_output_tokens, structured_output_required, priority, is_active')
       .single()
-    if (update.error) throw update.error
+    // Trifft nicht nur eine geaenderte Prioritaet: auch das Aktivschalten einer vorbereiteten
+    // Ersatzzeile laeuft in den Index, wenn ihre Prioritaet bereits vergeben ist.
+    if (update.error) {
+      if (update.error.code === '23505') return reply.code(409).send({ error: 'priority_already_taken', correlationId: request.id })
+      throw update.error
+    }
     if (input.apiKey !== undefined) {
       const sealed = createSecretBoxFromEnvironment(environment).seal(input.apiKey, params.id)
       const upsert = await service.from('llm_provider_secrets').upsert({

@@ -107,12 +107,16 @@ export function createTextGenerationRepository(config: WorkerEnvironment): TextG
       }
       return data === null ? null : CandidateRowSchema.parse(data)
     },
+    // Seit 2026081305 vergibt eine aktive Aufgabenart jede Prioritaet nur einmal -- die vorderste
+    // Zeile ist damit eindeutig. Die frueher hier noetige Gleichstandspruefung (zwei Zeilen laden,
+    // bei gleicher Prioritaet abbrechen) haette den Konflikt erst hier gemeldet, wo ihn niemand
+    // mehr aufloesen kann; er scheitert jetzt schon beim Speichern in der Provider-Verwaltung.
     async loadActiveTextProvider() {
       const { data, error } = await client.from('llm_provider_configurations')
-        .select('id, protocol, base_url, model, temperature, max_output_tokens, structured_output_required, priority, llm_provider_secrets!inner(api_key_ciphertext, key_version)')
-        .eq('task_kind', 'text_generation').eq('is_active', true).order('priority').limit(2)
+        .select('id, protocol, base_url, model, temperature, max_output_tokens, structured_output_required, llm_provider_secrets!inner(api_key_ciphertext, key_version)')
+        .eq('task_kind', 'text_generation').eq('is_active', true).order('priority').limit(1)
       if (error) throw error
-      if (data.length === 0 || (data.length > 1 && data[0]!.priority === data[1]!.priority)) throw new Error('text provider configuration is ambiguous or missing')
+      if (data.length === 0) throw new Error('no active text provider is configured')
       const row = z.object({
         id: UuidSchema, protocol: z.string(), base_url: z.url(), model: z.string().trim().min(1), temperature: z.coerce.number(), max_output_tokens: z.coerce.number().int().positive(),
         structured_output_required: z.boolean(), llm_provider_secrets: z.union([z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) }), z.array(z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) })).min(1)]),

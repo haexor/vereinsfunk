@@ -166,8 +166,11 @@ async function createProvider() {
     newProvider.priority = 100
     resetModelChoice()
     await load()
-  } catch {
-    errorMessage.value = 'Provider konnte nicht angelegt werden.'
+  } catch (error) {
+    const code = (error as { data?: { error?: string } })?.data?.error
+    errorMessage.value = code === 'priority_already_taken'
+      ? 'Diese Priorität ist für die Aufgabenart bereits an einen aktiven Provider vergeben. Bitte eine andere Zahl wählen.'
+      : 'Provider konnte nicht angelegt werden.'
   } finally {
     saving.value = false
   }
@@ -182,8 +185,11 @@ async function toggleActive(provider: LlmProviderConfigurationDto) {
     const body = UpdateLlmProviderConfigurationRequestSchema.parse({ isActive: !provider.isActive })
     await $fetch(`${config.public.apiBase}/v1/llm-providers/${id}`, { method: 'PATCH', headers, body })
     await load()
-  } catch {
-    errorMessage.value = 'Status konnte nicht geändert werden.'
+  } catch (error) {
+    const code = (error as { data?: { error?: string } })?.data?.error
+    errorMessage.value = code === 'priority_already_taken'
+      ? 'Die Priorität dieses Providers ist bereits an einen aktiven Provider derselben Aufgabenart vergeben. Bitte zuerst die Priorität ändern.'
+      : 'Status konnte nicht geändert werden.'
   } finally {
     saving.value = false
   }
@@ -324,7 +330,7 @@ async function removeProvider(id: string) {
           <label class="text-xs font-semibold text-[#5c655f]">Max. Ausgabe-Tokens
             <input v-model.number="newProvider.maxOutputTokens" type="number" min="128" max="4000" step="1" required class="mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" />
           </label>
-          <label class="text-xs font-semibold text-[#5c655f] sm:col-span-2">Priorität (kleinere Zahl gewinnt)
+          <label class="text-xs font-semibold text-[#5c655f] sm:col-span-2">Priorität (kleinere Zahl gewinnt, je Aufgabenart nur einmal aktiv)
             <input v-model.number="newProvider.priority" type="number" step="1" required class="mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" />
           </label>
           <button
