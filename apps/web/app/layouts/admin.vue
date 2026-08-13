@@ -7,6 +7,7 @@ async function logout() {
 const adminNav = [
   { label: 'Übersicht', to: '/plattform-admin' },
   { label: 'Admins', to: '/plattform-admin/admins' },
+  { label: 'Tarife', to: '/plattform-admin/tarife' },
   { label: 'Einstellungen', to: '/plattform-admin/einstellungen' },
   { label: 'LLM-Provider', to: '/plattform-admin/llm' },
   { label: 'Personas', to: '/plattform-admin/personas' },

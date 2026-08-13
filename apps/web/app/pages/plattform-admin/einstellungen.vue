@@ -53,7 +53,8 @@ async function saveLimit() {
       <div class="eyebrow mb-3">Plattform-Administration</div>
       <h1 class="font-display text-3xl font-extrabold tracking-[-.04em]">Einstellungen</h1>
       <p class="mt-2 text-sm text-[#727a75]">
-        Globale Limits. Abo-Pläne und Speicherkontingente werden in einem eigenen Paket verwaltet.
+        Globale Limits. Tarife, Preise und Beitragskontingente werden unter
+        <NuxtLink to="/plattform-admin/tarife" class="underline hover:text-forest">Tarife</NuxtLink> verwaltet.
       </p>
     </header>
 

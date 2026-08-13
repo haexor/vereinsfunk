@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { BarChart3, BookUser, Building2, CalendarDays, CheckCircle2, ChevronDown, FileText, LayoutDashboard, LogOut, Menu, Palette, Plug, Plus, Scale, Settings, Share2, ShieldCheck, Users, UserRound, UserSearch, X } from '@lucide/vue'
+import { BarChart3, BookUser, Building2, CalendarDays, CheckCircle2, ChevronDown, CreditCard, FileText, LayoutDashboard, LogOut, Menu, Palette, Plug, Plus, Scale, Settings, Share2, ShieldCheck, Users, UserRound, UserSearch, X } from '@lucide/vue'
 
 const mobileOpen = ref(false)
 const route = useRoute()
@@ -72,6 +72,7 @@ const organizationNav = [
   { label: 'Kanäle', to: '/kanaele', icon: Share2 },
   { label: 'Integrationen', to: '/integrationen', icon: Plug },
   { label: 'Einstellungen', to: '/einstellungen', icon: Settings },
+  { label: 'Tarif', to: '/einstellungen/tarif', icon: CreditCard },
   { label: 'Recht & Datenschutz', to: '/einstellungen/recht', icon: Scale },
   { label: 'Betroffenenanfragen', to: '/datenschutz/anfragen', icon: UserSearch },
 ]

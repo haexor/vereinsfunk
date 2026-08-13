@@ -174,6 +174,15 @@ export const SetContentLimitOverrideRequestSchema = z.object({
   overrideReason: z.string().trim().min(1).max(500),
 }).refine(durationOnlyForAiVideo, { message: 'maxDurationSeconds is only meaningful for ai_video' })
 
+// PR 2 brachte nur die beiden PUT-Endpunkte zum Setzen -- die Vereinsdetailseite braucht aber eine
+// Lesestelle, um den aktuellen Stand vor dem Bearbeiten anzuzeigen (beim Bauen von PR 3 gefunden,
+// im Ausfuehrungsplan fehlte ein GET-Gegenstueck fuer die Plattform-Admin-Sicht).
+export const PlatformAdminOrganizationSubscriptionSchema = OrganizationSubscriptionSchema.extend({
+  planDisplayName: z.string(),
+  effectiveLimits: EffectiveLimitsSchema,
+  contentLimitOverrides: z.array(ContentLimitOverrideSchema),
+})
+
 export type MediaOrigin = z.infer<typeof MediaOriginSchema>
 export type SubscriptionStatus = z.infer<typeof SubscriptionStatusSchema>
 export type SubscriptionPlanContentLimit = z.infer<typeof SubscriptionPlanContentLimitSchema>
@@ -193,6 +202,7 @@ export type CreateSubscriptionPlanRequest = z.infer<typeof CreateSubscriptionPla
 export type UpdateSubscriptionPlanRequest = z.infer<typeof UpdateSubscriptionPlanRequestSchema>
 export type SetSubscriptionPlanContentLimitsRequest = z.infer<typeof SetSubscriptionPlanContentLimitsRequestSchema>
 export type OrganizationSubscription = z.infer<typeof OrganizationSubscriptionSchema>
+export type PlatformAdminOrganizationSubscription = z.infer<typeof PlatformAdminOrganizationSubscriptionSchema>
 export type SetOrganizationSubscriptionRequest = z.infer<typeof SetOrganizationSubscriptionRequestSchema>
 export type ContentLimitOverride = z.infer<typeof ContentLimitOverrideSchema>
 export type SetContentLimitOverrideRequest = z.infer<typeof SetContentLimitOverrideRequestSchema>
