@@ -161,27 +161,33 @@ async function removePersona(persona: PlatformStylePersona) {
       <section class="card mb-6 p-6">
         <h2 class="mb-4 font-display text-base font-bold">Persona anlegen</h2>
         <form class="grid gap-3 sm:grid-cols-2" @submit.prevent="createPersona">
-          <input
-            v-model="newPersona.slug"
-            type="text"
-            required
-            placeholder="Slug, z.B. kapitaen-klar"
-            class="focus-ring rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm"
-          />
-          <input
-            v-model="newPersona.name"
-            type="text"
-            required
-            placeholder="Name, z.B. Kapitän Klar"
-            class="focus-ring rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm"
-          />
-          <textarea
-            v-model="newPersona.description"
-            required
-            rows="2"
-            placeholder="Kurzbeschreibung für die Auswahl in der Textwerkstatt"
-            class="focus-ring rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm sm:col-span-2"
-          />
+          <label class="text-xs font-semibold text-[#5c655f]">Slug
+            <input
+              v-model="newPersona.slug"
+              type="text"
+              required
+              placeholder="z.B. kapitaen-klar"
+              class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal"
+            />
+          </label>
+          <label class="text-xs font-semibold text-[#5c655f]">Name
+            <input
+              v-model="newPersona.name"
+              type="text"
+              required
+              placeholder="z.B. Kapitän Klar"
+              class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal"
+            />
+          </label>
+          <label class="text-xs font-semibold text-[#5c655f] sm:col-span-2">Beschreibung
+            <textarea
+              v-model="newPersona.description"
+              required
+              rows="2"
+              placeholder="Kurzbeschreibung für die Auswahl in der Textwerkstatt"
+              class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal"
+            />
+          </label>
 
           <label class="text-xs font-semibold text-[#5c655f]">Satzlänge
             <select v-model="newPersona.sentenceLength" class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal">
@@ -247,8 +253,10 @@ async function removePersona(persona: PlatformStylePersona) {
               <td class="py-2 pr-4">{{ persona.description }}</td>
               <td class="py-2 pr-4">
                 <button
+                  type="button"
                   class="focus-ring rounded-lg px-2 py-1 text-[11px] font-semibold"
                   :class="persona.isActive ? 'text-forest' : 'text-[#9aa096]'"
+                  :disabled="saving"
                   @click="toggleActive(persona)"
                 >
                   {{ persona.isActive ? 'Aktiv' : 'Inaktiv' }}

@@ -64,7 +64,8 @@ async function createCandidate() {
   submitting.value = true; notice.value = ''
   try {
     const selected = profiles.value.find((profile) => (profile.id ?? profile.slug) === selectedProfile.value)
-    const profileChoice = selected?.kind === 'custom' ? { styleProfileId: selected.id } : selected?.kind === 'persona' ? { personaSlug: selected.slug } : { systemStyleProfileSlug: selectedProfile.value }
+    if (!selected) { selectedProfile.value = 'klar_erklaerend'; notice.value = 'Das gewählte Stilprofil ist nicht mehr verfügbar. Bitte wähle erneut.'; submitting.value = false; return }
+    const profileChoice = selected.kind === 'custom' ? { styleProfileId: selected.id } : selected.kind === 'persona' ? { personaSlug: selected.slug } : { systemStyleProfileSlug: selected.slug }
     const created = await api.request('/v1/text-workshop/sessions', { method: 'POST', body: { organizationId: scope.value.organizationId, departmentId: scope.value.departmentId, presetSlug: presetSlug.value, communicationGoal: communicationGoal.value, requestedFormats: ['text_post'], ...profileChoice, sourceMaterial: sourceMaterial() } }, z.object({ sessionId: z.string(), candidateId: z.string() }))
     sessionId.value = created.sessionId; candidate.value = { id: created.candidateId, status: 'pending', generated_content: null, failure_code: null, triggered_by: 'member' }
     await refreshSession()

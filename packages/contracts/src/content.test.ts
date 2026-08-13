@@ -129,7 +129,8 @@ describe('text workshop contracts', () => {
     const record = { id: org, ...persona, isActive: true, createdBy: org, createdAt: '2026-08-13T12:00:00+00:00', updatedAt: '2026-08-13T12:00:00+00:00' }
     expect(PlatformStylePersonaSchema.safeParse(record).success).toBe(true)
     expect(UpdatePlatformStylePersonaRequestSchema.safeParse({ isActive: false }).success).toBe(true)
-    expect(UpdatePlatformStylePersonaRequestSchema.safeParse({}).success).toBe(true)
+    expect(UpdatePlatformStylePersonaRequestSchema.safeParse({}).success).toBe(false)
+    expect(UpdatePlatformStylePersonaRequestSchema.safeParse({ slug: 'klar_erklaerend' }).success).toBe(false)
   })
 
   it('requires compression output measurements only when compression succeeded', () => {

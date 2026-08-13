@@ -143,6 +143,13 @@ export const UpdatePlatformStylePersonaRequestSchema = z.object({
   styleRules: StyleProfileRulesSchema.optional(),
   avoidRules: z.array(z.string().trim().min(1).max(160)).max(30).optional(),
   isActive: z.boolean().optional(),
+}).superRefine((persona, context) => {
+  if (persona.slug !== undefined && (SystemStyleProfileSlugSchema.options as readonly string[]).includes(persona.slug)) {
+    context.addIssue({ code: 'custom', path: ['slug'], message: 'System style profile slugs are reserved' })
+  }
+  if (Object.values(persona).every((value) => value === undefined)) {
+    context.addIssue({ code: 'custom', message: 'At least one field must be provided' })
+  }
 })
 export const GenerationIntentSchema = z.enum(['initial', 'revise'])
 export const GenerationCandidateStatusSchema = z.enum(['pending', 'generating', 'ready', 'failed', 'accepted', 'abandoned', 'expired'])
