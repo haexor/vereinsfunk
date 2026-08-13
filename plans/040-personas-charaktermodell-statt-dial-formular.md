@@ -223,3 +223,58 @@ grün; keine Migrationsänderung, daher kein erneuter `pnpm db:reset && pnpm db:
 
 Offen: PR 3 (geteilte `StyleProfileEditorForm.vue`, neue Vereins-Seite `/stilprofile`, Nav-Eintrag,
 Umstellung von `plattform-admin/personas.vue`).
+
+## Umsetzung: Ergebnis und Abweichungen vom Plan (PR 3)
+
+PR 3 vollständig umgesetzt: `StyleProfileEditorForm.vue` (`apps/web/app/components/`) bündelt
+Name/Beschreibung/Tonalitäts-Tags/Catchphrases/Do's/Don'ts/Beispiel-Input/-Output/
+`additionalInstructions` sowie den "Persona/Stilprofil testen"-Button; Slug (nur beim
+Plattform-Admin-Formular) und Scope-Auswahl (nur bei `/stilprofile`) bleiben bewusst außerhalb
+der Komponente, da beide nicht Teil des gemeinsamen Charakter-Modells sind. Zwei neue geteilte
+Utilities in `apps/web/app/utils/styleProfileDraft.ts` (`styleRulesFromDraft`/`avoidRulesFromDraft`/
+`doRulesFromDraft`, `styleProfileDraftFrom` für die Rückrichtung beim Bearbeiten,
+`previewErrorMessage` für die ehrliche 422/429-Fehlermeldung) — von `plattform-admin/personas.vue`
+und `stilprofile.vue` gemeinsam verwendet.
+
+`plattform-admin/personas.vue` von direktem `$fetch`/`useAuthHeader`/`useRuntimeConfig` auf
+`useApiClient()` umgestellt (Angleichung an das inzwischen etablierte Muster, z. B. `erstellen.vue`,
+`recht.vue`) — reine Aufräumarbeit an der Datei, die ohnehin komplett neu geschrieben wurde. Editieren
+bestehender Personas bleibt bewusst außerhalb des Umfangs (nur Anlegen/Aktivieren-Umschalten/Löschen,
+wie zuvor) — der Plan-Text verlangte für diese Seite nur den Feld-Austausch, keine neue
+Bearbeitungsfähigkeit.
+
+Neue Seite `stilprofile.vue`: Scope-Auswahl und Sichtbarkeits-/Berechtigungslogik lesen ausschließlich
+aus der bereits geladenen `useSession()`-Sitzung (keine zusätzliche Supabase-Abfrage für
+Abteilungen/Mannschaften nötig, da `MembershipScopeSchema` Namen und Rollen je Ebene schon mitbringt) —
+eine Vereinfachung gegenüber dem im Plan skizzierten Ansatz nach dem Muster von `marke.vue`. Die
+Liste selbst liest `content_style_profiles` direkt per Supabase-Client (RLS filtert Sichtbarkeit
+serverseitig exakt auf Team-/Abteilungs-/Vereinsmitgliedschaft, siehe `content_style_profiles_select`-
+Policy) statt über `GET /v1/content-style-profiles` — jener Endpunkt ist für den Auswahl-Picker in
+`erstellen.vue` gebaut und gibt für `kind: 'custom'`-Einträge bewusst kein `departmentId`/`teamId`
+zurück, das die Verwaltungsseite aber für Scope-Anzeige und -Filterung braucht. Anlage übernimmt den
+Slug automatisch aus dem Namen (`slugify`, per `\p{M}`-Unicode-Property nach `NFKD` für
+Diakritika-Streifung) — Vereinsmitglieder sollen keinen technischen Slug von Hand eingeben müssen,
+anders als beim kuratierten Plattform-Admin-Formular. Seitengate ist binär auf
+`post.create` irgendwo im Verein (`canCreateAnywhere`): ein Mitglied ganz ohne dieses Recht sieht
+weder Formular noch Liste, auch wenn anderswo im Verein für sie sichtbare Profile existieren
+("gesperrt/leer" wie in der Aufgabenstellung gefordert, nicht nur "kein Anlegen-Formular").
+
+Nav-Eintrag "Stilprofile" (Icon `Feather`) in `layouts/default.vue` zwischen "Marke & Tonalität"
+und "Struktur"; Komfort-Link "Eigene Stilprofile verwalten →" unterhalb der Stilprofil-Auswahl in
+`erstellen.vue`.
+
+`pnpm lint/typecheck/test/build` (alle 20/21 Pakete) grün; keine Migrationsänderung in dieser PR,
+daher kein erneuter `pnpm db:reset && pnpm db:test`-Lauf nötig. Manueller Smoke-Test im echten
+lokalen Stack (eigener, isolierter API-Prozess auf Port 4211, da der zufällig auf Port 4201
+laufende API-Prozess eines anderen Worktrees mit gesetztem `SUPABASE_JWT_SECRET` jede Anfrage mit
+401 ablehnte — siehe `SUPABASE_JWT_SECRET`-Kommentar in `.env.example`, ES256/JWKS lokal, kein
+HS256-Secret): Plattform-Admin legt Persona mit Tags/Catchphrases/Few-Shot an, "Persona testen"
+liefert die erwartete ehrliche Fehlermeldung ("Kein Text-Provider eingerichtet"), Persona erscheint
+in `/erstellen` unter "Personas". Vereinsmitglied mit `post.create` legt über `/stilprofile` ein
+eigenes Profil an, bearbeitet es (Beschreibung ändert sich sichtbar in der Liste) und löscht es
+wieder. Mitglied ohne `post.create` (testweise angelegte `organization_viewer`-Rolle ohne jede
+Abteilungsmitgliedschaft) sieht die Seite gesperrt, kein Formular sichtbar. Alle drei Szenarien
+per Playwright gegen den echten lokalen Stack verifiziert (Screenshots), Testdaten danach aus der
+lokalen DB entfernt.
+
+Damit ist Plan 040 vollständig umgesetzt (PR 1 #64, PR 2 #65, PR 3 dieser PR).
