@@ -270,9 +270,15 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     const client = supabaseClients.forUser(request.auth!.accessToken)
     const rows = await client.from('content_style_profiles').select('id, slug, name, description, style_rules, avoid_rules, department_id, team_id, created_by, created_at, updated_at, is_active').eq('organization_id', scope.organizationId).eq('is_active', true)
     if (rows.error) throw rows.error
+    // Plan 037: platform-admin-curated personas are the third, global source alongside the
+    // hardcoded system modes and each organization's own custom profiles -- no organization_id
+    // filter, since platform_style_personas has none.
+    const personaRows = await client.from('platform_style_personas').select('id, slug, name, description, style_rules, avoid_rules').eq('is_active', true)
+    if (personaRows.error) throw personaRows.error
     const systems = Object.entries(systemStyleProfiles).map(([slug, profile]) => ({ id: null, slug, kind: 'system', ...profile, isActive: true }))
+    const personas = personaRows.data.map((row) => ({ id: row.id, slug: row.slug, kind: 'persona', name: row.name, description: row.description, styleRules: StyleProfileRulesSchema.parse(row.style_rules), avoidRules: row.avoid_rules, isActive: true }))
     const customs = rows.data.map((row) => ({ id: row.id, slug: row.slug, kind: 'custom', name: row.name, description: row.description, styleRules: StyleProfileRulesSchema.parse(row.style_rules), avoidRules: row.avoid_rules, isActive: row.is_active }))
-    return reply.send({ profiles: [...systems, ...customs] })
+    return reply.send({ profiles: [...systems, ...personas, ...customs] })
   })
 
   app.post('/v1/content-style-profiles', async (request, reply) => {
@@ -305,6 +311,13 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
         return reply.code(404).send({ error: 'style_profile_not_found' })
       }
       styleSnapshot = { name: row.data.name, description: row.data.description, styleRules: StyleProfileRulesSchema.parse(row.data.style_rules), avoidRules: row.data.avoid_rules }
+    } else if (input.personaSlug) {
+      // Plan 037: a platform persona has no organization_id/department_id/team_id to scope
+      // against -- unlike styleProfileId above, only is_active gates it.
+      const persona = await client.from('platform_style_personas').select('name, description, style_rules, avoid_rules').eq('slug', input.personaSlug).eq('is_active', true).maybeSingle()
+      if (persona.error) throw persona.error
+      if (!persona.data) return reply.code(404).send({ error: 'persona_not_found' })
+      styleSnapshot = { name: persona.data.name, description: persona.data.description, styleRules: StyleProfileRulesSchema.parse(persona.data.style_rules), avoidRules: persona.data.avoid_rules, slug: input.personaSlug }
     } else {
       const profile = systemStyleProfiles[input.systemStyleProfileSlug ?? 'klar_erklaerend']!
       styleSnapshot = { name: profile.name, description: profile.description, styleRules: profile.styleRules, avoidRules: profile.avoidRules, slug: input.systemStyleProfileSlug ?? 'klar_erklaerend' }

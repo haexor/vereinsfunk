@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CompressionProvenanceSchema, CreateCompositionSessionSchema, CreateCustomStyleProfileRequestSchema, CreateGenerationCommandSchema, CreateSubmissionSchema, CustomStyleProfileSchema, GeneratedPostSchema, VideoUploadMetadataSchema, WorkflowPayloadSchema } from './index.js'
+import { CompressionProvenanceSchema, CreateCompositionSessionSchema, CreateCustomStyleProfileRequestSchema, CreateGenerationCommandSchema, CreatePlatformStylePersonaRequestSchema, CreateSubmissionSchema, CustomStyleProfileSchema, GeneratedPostSchema, PlatformStylePersonaSchema, UpdatePlatformStylePersonaRequestSchema, VideoUploadMetadataSchema, WorkflowPayloadSchema } from './index.js'
 import { department, org, team } from './testFixtures.js'
 
 describe('contracts', () => {
@@ -105,6 +105,32 @@ describe('text workshop contracts', () => {
     }
     expect(CustomStyleProfileSchema.safeParse(record).success).toBe(true)
     expect(CustomStyleProfileSchema.safeParse({ ...record, departmentId: null }).success).toBe(false)
+  })
+
+  it('allows at most one of styleProfileId, systemStyleProfileSlug, or personaSlug', () => {
+    const base = {
+      organizationId: org, departmentId: department, presetSlug: 'event', communicationGoal: 'invite',
+      requestedFormats: ['text_post'] as const, sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [], doNotMention: [] },
+    }
+    expect(CreateCompositionSessionSchema.safeParse(base).success).toBe(true)
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, styleProfileId: org }).success).toBe(true)
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, systemStyleProfileSlug: 'klar_erklaerend' }).success).toBe(true)
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, personaSlug: 'kapitaen-klar' }).success).toBe(true)
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, styleProfileId: org, systemStyleProfileSlug: 'klar_erklaerend' }).success).toBe(false)
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, styleProfileId: org, personaSlug: 'kapitaen-klar' }).success).toBe(false)
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, systemStyleProfileSlug: 'klar_erklaerend', personaSlug: 'kapitaen-klar' }).success).toBe(false)
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, styleProfileId: org, systemStyleProfileSlug: 'klar_erklaerend', personaSlug: 'kapitaen-klar' }).success).toBe(false)
+  })
+
+  it('validates the platform persona catalogue and reserves system profile slugs', () => {
+    const persona = { slug: 'kapitaen-klar', name: 'Kapitän Klar', description: 'Direkt und anfeuernd.', styleRules, avoidRules: ['Ironie'] }
+    expect(CreatePlatformStylePersonaRequestSchema.safeParse(persona).success).toBe(true)
+    expect(CreatePlatformStylePersonaRequestSchema.safeParse({ ...persona, slug: 'klar_erklaerend' }).success).toBe(false)
+    const record = { id: org, ...persona, isActive: true, createdBy: org, createdAt: '2026-08-13T12:00:00+00:00', updatedAt: '2026-08-13T12:00:00+00:00' }
+    expect(PlatformStylePersonaSchema.safeParse(record).success).toBe(true)
+    expect(UpdatePlatformStylePersonaRequestSchema.safeParse({ isActive: false }).success).toBe(true)
+    expect(UpdatePlatformStylePersonaRequestSchema.safeParse({}).success).toBe(false)
+    expect(UpdatePlatformStylePersonaRequestSchema.safeParse({ slug: 'klar_erklaerend' }).success).toBe(false)
   })
 
   it('requires compression output measurements only when compression succeeded', () => {

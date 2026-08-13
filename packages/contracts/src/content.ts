@@ -110,6 +110,47 @@ export const CreateCustomStyleProfileRequestSchema = z.object({
     context.addIssue({ code: 'custom', message: 'System style profile slugs are reserved' })
   }
 })
+// Plan 037: a platform-admin-curated, global persona catalogue -- no organization_id, no
+// composite foreign key (see platform_style_personas migration). Referenced by slug only, frozen
+// into composition_sessions.style_profile_snapshot exactly like the five hardcoded system modes.
+export const PlatformStylePersonaSchema = z.object({
+  id: UuidSchema,
+  slug: ContentPresetSlugSchema,
+  name: z.string().trim().min(1).max(80),
+  description: z.string().trim().min(1).max(500),
+  styleRules: StyleProfileRulesSchema,
+  avoidRules: z.array(z.string().trim().min(1).max(160)).max(30),
+  isActive: z.boolean(),
+  createdBy: UuidSchema,
+  createdAt: z.iso.datetime({ offset: true }),
+  updatedAt: z.iso.datetime({ offset: true }),
+})
+export const CreatePlatformStylePersonaRequestSchema = z.object({
+  slug: ContentPresetSlugSchema,
+  name: z.string().trim().min(1).max(80),
+  description: z.string().trim().min(1).max(500),
+  styleRules: StyleProfileRulesSchema,
+  avoidRules: z.array(z.string().trim().min(1).max(160)).max(30),
+}).superRefine((persona, context) => {
+  if ((SystemStyleProfileSlugSchema.options as readonly string[]).includes(persona.slug)) {
+    context.addIssue({ code: 'custom', message: 'System style profile slugs are reserved' })
+  }
+})
+export const UpdatePlatformStylePersonaRequestSchema = z.object({
+  slug: ContentPresetSlugSchema.optional(),
+  name: z.string().trim().min(1).max(80).optional(),
+  description: z.string().trim().min(1).max(500).optional(),
+  styleRules: StyleProfileRulesSchema.optional(),
+  avoidRules: z.array(z.string().trim().min(1).max(160)).max(30).optional(),
+  isActive: z.boolean().optional(),
+}).superRefine((persona, context) => {
+  if (persona.slug !== undefined && (SystemStyleProfileSlugSchema.options as readonly string[]).includes(persona.slug)) {
+    context.addIssue({ code: 'custom', path: ['slug'], message: 'System style profile slugs are reserved' })
+  }
+  if (Object.values(persona).every((value) => value === undefined)) {
+    context.addIssue({ code: 'custom', message: 'At least one field must be provided' })
+  }
+})
 export const GenerationIntentSchema = z.enum(['initial', 'revise'])
 export const GenerationCandidateStatusSchema = z.enum(['pending', 'generating', 'ready', 'failed', 'accepted', 'abandoned', 'expired'])
 export const CompositionSessionStatusSchema = z.enum(['draft', 'queued', 'generating', 'candidate_ready', 'failed', 'accepted', 'abandoned', 'expired'])
@@ -125,11 +166,16 @@ export const CreateCompositionSessionSchema = z.object({
   }),
   styleProfileId: UuidSchema.nullable().optional(),
   systemStyleProfileSlug: SystemStyleProfileSlugSchema.optional(),
+  // Plan 037: a third, mutually exclusive choice alongside styleProfileId/systemStyleProfileSlug.
+  // Validated only on form here, like ContentPresetSlugSchema elsewhere -- actual existence and
+  // isActive are checked at runtime in the route, exactly like styleProfileId already is today.
+  personaSlug: ContentPresetSlugSchema.optional(),
   sourceMaterial: z.lazy(() => SourceMaterialSchema),
   mediaAssetIds: z.array(UuidSchema).max(10).default([]),
   sourceRevision: z.int().positive().default(1),
 }).superRefine((value, context) => {
-  if (value.styleProfileId && value.systemStyleProfileSlug) context.addIssue({ code: 'custom', message: 'Choose either a custom or system style profile' })
+  const chosen = [value.styleProfileId, value.systemStyleProfileSlug, value.personaSlug].filter((field) => field !== undefined && field !== null)
+  if (chosen.length > 1) context.addIssue({ code: 'custom', message: 'Choose at most one of styleProfileId, systemStyleProfileSlug, or personaSlug' })
 })
 export const CreateGenerationCommandSchema = z.object({
   sessionId: UuidSchema,
@@ -245,5 +291,8 @@ export type CompressionProvenance = z.infer<typeof CompressionProvenanceSchema>
 export type StyleProfileRules = z.infer<typeof StyleProfileRulesSchema>
 export type CustomStyleProfile = z.infer<typeof CustomStyleProfileSchema>
 export type CreateCustomStyleProfileRequest = z.infer<typeof CreateCustomStyleProfileRequestSchema>
+export type PlatformStylePersona = z.infer<typeof PlatformStylePersonaSchema>
+export type CreatePlatformStylePersonaRequest = z.infer<typeof CreatePlatformStylePersonaRequestSchema>
+export type UpdatePlatformStylePersonaRequest = z.infer<typeof UpdatePlatformStylePersonaRequestSchema>
 export type CreateCompositionSession = z.infer<typeof CreateCompositionSessionSchema>
 export type CreateGenerationCommand = z.infer<typeof CreateGenerationCommandSchema>
