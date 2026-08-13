@@ -8,7 +8,7 @@ import {
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ApiRouteContext } from './context.js'
-import { checkRateLimit, previewStyleProfile } from './shared.js'
+import { checkRateLimit, previewStyleProfile, resolvePreviewIdempotencyKey } from './shared.js'
 
 const PERSONA_COLUMNS = 'id, slug, name, description, style_rules, avoid_rules, do_rules, is_active, created_by, created_at, updated_at'
 
@@ -95,7 +95,11 @@ export function registerPlatformPersonaRoutes(app: FastifyInstance, context: Api
       return reply.code(429).send({ error: 'rate_limited', correlationId: request.id })
     }
     const input = PreviewPlatformStylePersonaRequestSchema.parse(request.body)
-    const result = await previewStyleProfile(supabaseClients, environment, input, textGenerator)
+    // A retried request (client-side timeout, double-click) must not bill the provider twice --
+    // resolvePreviewIdempotencyKey/previewStyleProfile share one in-flight call per key (shared.ts).
+    const idempotencyKey = resolvePreviewIdempotencyKey(request)
+    if (idempotencyKey === null) return reply.code(400).send({ error: 'invalid_idempotency_key', correlationId: request.id })
+    const result = await previewStyleProfile(supabaseClients, environment, input, idempotencyKey, textGenerator)
     if (!result.ok) return reply.code(result.status).send({ error: result.error, correlationId: request.id })
     return reply.code(200).send(result.post)
   })

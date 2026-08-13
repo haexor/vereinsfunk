@@ -157,6 +157,32 @@ describe('platform style personas', () => {
       expect(response.json()).toMatchObject({ error: 'text_provider_not_configured' })
     })
 
+    // Ein Client-Retry (Timeout, Doppelklick) mit demselben Idempotency-Key darf den Provider
+    // nicht ein zweites Mal kostenpflichtig aufrufen -- previewStyleProfile teilt sich den
+    // laufenden Aufruf (shared.ts).
+    it('shares one provider call between concurrent retries with the same Idempotency-Key', async () => {
+      let calls = 0
+      const clients: SupabaseClientFactory = {
+        forUser: () => { throw new Error('forUser should not be called by this route') },
+        forService: () => activeTextProviderService(),
+      }
+      const app = await startApp({
+        platformAdminProvider: adminProvider, supabaseClients: clients,
+        textGenerator: { generateText: async () => { calls += 1; return FAKE_GENERATED_POST } },
+      })
+      const token = await signAccessToken(USER_ID)
+      const send = () => app.inject({
+        method: 'POST', url: '/v1/platform-style-personas/preview',
+        headers: { authorization: `Bearer ${token}`, 'idempotency-key': 'persona-preview-retry-1' },
+        payload: PREVIEW_PAYLOAD,
+      })
+      const [first, second] = await Promise.all([send(), send()])
+      expect(first.statusCode).toBe(200)
+      expect(second.statusCode).toBe(200)
+      expect(second.json()).toEqual(first.json())
+      expect(calls).toBe(1)
+    })
+
     it('maps a provider rate limit to 429', async () => {
       const clients: SupabaseClientFactory = {
         forUser: () => { throw new Error('forUser should not be called by this route') },

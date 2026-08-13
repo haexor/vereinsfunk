@@ -206,5 +206,20 @@ grün; keine Migrationsänderung, daher kein erneuter `pnpm db:reset && pnpm db:
   jetzt festgehalten und geprüft, dazu zwei neue Fälle (fremde `departmentId` → 404, Rate-Limit
   → 429). 19 statt 17 Tests in den beiden Dateien.
 
+### Nachgehärtet in einer zweiten Code-Review-Runde von PR 2
+
+- **Idempotenz auf beiden Preview-Routen.** Ein Client-Retry (Timeout, Doppelklick) mit demselben
+  `Idempotency-Key`-Header hätte sonst einen zweiten kostenpflichtigen Provider-Aufruf ausgelöst —
+  das Rate-Limit verhindert das nicht, es zählt nur die Gesamtmenge pro Minute. Die
+  `idempotency_keys`-Tabelle (atomare Absicherung wie bei `routes/integrations.ts`) passt hier
+  nicht: sie verlangt eine `organization_id`, `platform-style-personas/preview` hat keine (Plan
+  037, Plattform-Personas sind global). Stattdessen ein In-Prozess-Single-Flight in
+  `previewStyleProfile` (`routes/shared.ts`), analog zu `checkRateLimit` daneben — gleiche
+  Ein-Prozess-Einschränkung, gleiches niedriges Risiko für einen Testen-Knopf. Fällt ohne Header
+  auf einen zufälligen Schlüssel zurück (wie `routes/integrations.ts` es vormacht), daher
+  unverändertes Verhalten bis PR 3 den Header auf einen Retry tatsächlich wiederholt. Je ein neuer
+  Test pro Datei belegt, dass zwei gleichzeitige Aufrufe mit demselben Schlüssel sich einen
+  Provider-Aufruf teilen. 21 statt 19 Tests in den beiden Dateien.
+
 Offen: PR 3 (geteilte `StyleProfileEditorForm.vue`, neue Vereins-Seite `/stilprofile`, Nav-Eintrag,
 Umstellung von `plattform-admin/personas.vue`).

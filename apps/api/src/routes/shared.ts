@@ -6,6 +6,7 @@ import { UuidSchema } from '@vereinsfunk/contracts'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { mergeEffectiveConfig, resolveEffectiveConfig, type ConfigOverride, type TrustRecord } from '@vereinsfunk/domain'
 import type { FastifyRequest } from 'fastify'
+import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { PermissionScope } from '../auth.js'
 import { byteaToBuffer, createSecretBoxFromEnvironment } from '../secretBox.js'
@@ -429,7 +430,55 @@ export type StyleProfilePreviewResult =
   | { ok: true; post: GeneratedPost }
   | { ok: false; status: number; error: string }
 
+// Same shape as packages/contracts/src/integrations.ts's SyncIdempotencyKeySchema, duplicated
+// rather than imported: that one is named for the sync domain, and this header is generic HTTP
+// convention, not a sync concept.
+const PreviewIdempotencyKeySchema = z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/)
+
+// A client-side timeout/retry on either preview route must not trigger a second billed provider
+// call for the same logical attempt (gefunden im Code-Review dieses Pakets). The integrations
+// sync route (routes/integrations.ts) guards the same problem with an atomic RPC backed by the
+// idempotency_keys table, but that table requires a non-null organization_id -- platform-style-
+// personas/preview has none (Plan 037, platform personas are global). Mirrors checkRateLimit's
+// in-memory approach above instead: same one-process-only caveat, same low-stakes tradeoff for a
+// preview button.
+//
+// Falls back to a random key when the client sends none, exactly like the sync route -- until PR
+// 3/3's frontend actually resends the same key on retry, every call gets its own random key and
+// this is a no-op, so today's behavior is unchanged.
+export function resolvePreviewIdempotencyKey(request: FastifyRequest): string | null {
+  const header = request.headers['idempotency-key']
+  if (Array.isArray(header)) return null
+  const parsed = PreviewIdempotencyKeySchema.safeParse(header ?? randomUUID())
+  return parsed.success ? parsed.data : null
+}
+
+const previewByIdempotencyKey = new Map<string, { promise: Promise<StyleProfilePreviewResult>; expiresAt: number }>()
+let nextPreviewSweepAt = 0
+const PREVIEW_DEDUPE_WINDOW_MS = 120_000
+
 export async function previewStyleProfile(
+  supabaseClients: SupabaseClientFactory,
+  environment: ApiEnvironment,
+  input: { name: string; description: string; styleRules: StyleProfileRules; avoidRules: readonly string[]; doRules: readonly string[]; sampleInput: string },
+  idempotencyKey: string,
+  generatorOverride?: StructuredContentGenerator,
+): Promise<StyleProfilePreviewResult> {
+  const now = Date.now()
+  if (previewByIdempotencyKey.size > 1_000 && now >= nextPreviewSweepAt) {
+    nextPreviewSweepAt = now + 60_000
+    for (const [key, entry] of previewByIdempotencyKey) {
+      if (entry.expiresAt < now) previewByIdempotencyKey.delete(key)
+    }
+  }
+  const existing = previewByIdempotencyKey.get(idempotencyKey)
+  if (existing && existing.expiresAt >= now) return existing.promise
+  const promise = runStyleProfilePreview(supabaseClients, environment, input, generatorOverride)
+  previewByIdempotencyKey.set(idempotencyKey, { promise, expiresAt: now + PREVIEW_DEDUPE_WINDOW_MS })
+  return promise
+}
+
+async function runStyleProfilePreview(
   supabaseClients: SupabaseClientFactory,
   environment: ApiEnvironment,
   input: { name: string; description: string; styleRules: StyleProfileRules; avoidRules: readonly string[]; doRules: readonly string[]; sampleInput: string },

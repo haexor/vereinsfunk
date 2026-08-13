@@ -22,7 +22,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { CLUB_EVENT_COLUMNS, FIXTURE_COLUMNS, mapClubEventRow, mapFixtureRow, mapTeamRow } from '../apiMappers.js'
 import type { ApiRouteContext } from './context.js'
-import { checkRateLimit, createAuditRecorder, fetchMemberTrust, previewStyleProfile, resolveDirectoryScope, resolveScopedEffectiveConfig, toPermissionScope } from './shared.js'
+import { checkRateLimit, createAuditRecorder, fetchMemberTrust, previewStyleProfile, resolveDirectoryScope, resolvePreviewIdempotencyKey, resolveScopedEffectiveConfig, toPermissionScope } from './shared.js'
 
 // Plan 033 text-only workshop. Diese Routen rufen kein LLM auf: sie schreiben Sitzung und einen
 // reinen ID-Umschlag ueber eine service-only RPC, die der Worker spaeter ausfuehrt.
@@ -368,7 +368,11 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     const scope = await resolveDirectoryScope(client, input.organizationId, input.departmentId ?? null, input.teamId ?? null)
     if (scope === null) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     if (!(await requirePermission(request, reply, 'post.create', scope))) return
-    const result = await previewStyleProfile(supabaseClients, environment, input, textGenerator)
+    // A retried request (client-side timeout, double-click) must not bill the provider twice --
+    // resolvePreviewIdempotencyKey/previewStyleProfile share one in-flight call per key (shared.ts).
+    const idempotencyKey = resolvePreviewIdempotencyKey(request)
+    if (idempotencyKey === null) return reply.code(400).send({ error: 'invalid_idempotency_key', correlationId: request.id })
+    const result = await previewStyleProfile(supabaseClients, environment, input, idempotencyKey, textGenerator)
     if (!result.ok) return reply.code(result.status).send({ error: result.error, correlationId: request.id })
     return reply.code(200).send(result.post)
   })
