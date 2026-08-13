@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Archive, ArchiveRestore, Plus, Trash2 } from '@lucide/vue'
 import { z } from 'zod'
-import { PolicySettingSchema, type PolicyFlag, type PolicySetting, type ScopeLevel } from '@vereinsfunk/contracts'
+import { PolicySettingSchema, StorageUsageResponseSchema, type PolicyFlag, type PolicySetting, type ScopeLevel, type StorageUsageResponse } from '@vereinsfunk/contracts'
 
 const DepartmentRowSchema = z.object({ id: z.string(), name: z.string(), slug: z.string(), archived_at: z.string().nullable() })
 const TeamRowSchema = z.object({ id: z.string(), name: z.string(), department_id: z.string(), archived_at: z.string().nullable() })
@@ -18,6 +18,8 @@ const departments = ref<DepartmentRow[]>([])
 const teams = ref<TeamRow[]>([])
 const policySettings = ref<PolicySetting[]>([])
 const policyUpdating = ref<string | null>(null)
+const storageUsageByDepartment = reactive<Record<string, StorageUsageResponse>>({})
+const storageUsageByTeam = reactive<Record<string, StorageUsageResponse>>({})
 
 const teamsByDepartment = computed(() => {
   const map = new Map<string, TeamRow[]>()
@@ -74,7 +76,32 @@ async function load() {
   for (const team of teams.value) renameDraft[team.id] ??= team.name
   loading.value = false
 }
+
+// Eigener, nicht blockierender Ladevorgang: der Speicherbalken je Abteilung/Team ist eine
+// Zusatzanzeige (Plan 021), kein Grund, die Kernseite (Umbenennen/Archivieren/Löschen) bei einem
+// Fehlschlag unbenutzbar zu machen. departmentId wird bei Teams mitgeschickt, weil
+// storage_usage_bytes() sie fuer den brand_assets-Teil der Aufschluesselung braucht.
+async function loadStorageUsage() {
+  if (!organizationId.value) return
+  const headers = await useAuthHeader()
+  await Promise.all([
+    ...departments.value.map(async (department) => {
+      try {
+        const response = await $fetch(`${config.public.apiBase}/v1/storage/usage`, { headers, query: { organizationId: organizationId.value, departmentId: department.id } })
+        storageUsageByDepartment[department.id] = StorageUsageResponseSchema.parse(response)
+      } catch { /* Speicherbalken bleibt fuer diese Abteilung leer, der Rest der Seite bleibt nutzbar. */ }
+    }),
+    ...teams.value.map(async (team) => {
+      try {
+        const response = await $fetch(`${config.public.apiBase}/v1/storage/usage`, { headers, query: { organizationId: organizationId.value, departmentId: team.department_id, teamId: team.id } })
+        storageUsageByTeam[team.id] = StorageUsageResponseSchema.parse(response)
+      } catch { /* Speicherbalken bleibt fuer dieses Team leer, der Rest der Seite bleibt nutzbar. */ }
+    }),
+  ])
+}
+
 await load()
+void loadStorageUsage()
 
 const newDepartmentName = ref('')
 const creatingDepartment = ref(false)
@@ -87,7 +114,7 @@ const actionError = ref('')
 watch(organizationId, () => {
   newDepartmentName.value = ''
   actionError.value = ''
-  void load()
+  void load().then(() => loadStorageUsage())
 })
 
 // Abteilungen und Teams stecken auch in useSession() (authz.membership_scopes speist den
@@ -98,6 +125,7 @@ watch(organizationId, () => {
 async function reload() {
   await refreshSession()
   await load()
+  await loadStorageUsage()
 }
 
 async function createDepartment() {
@@ -299,6 +327,15 @@ async function updatePolicySetting(scopeLevel: ScopeLevel, scopeId: string, flag
           </div>
         </div>
 
+        <UsageBar
+          v-if="storageUsageByDepartment[department.id]"
+          class="mb-4"
+          label="Speicher"
+          :used="storageUsageByDepartment[department.id]!.usedBytes"
+          :max="storageUsageByDepartment[department.id]!.limitBytes"
+          :format-value="formatBytes"
+        />
+
         <PolicyFlagToggles
           v-if="policySettingFor('department', department.id)"
           class="mb-4"
@@ -329,6 +366,14 @@ async function updatePolicySetting(scopeLevel: ScopeLevel, scopeId: string, flag
                 </button>
               </div>
             </div>
+            <UsageBar
+              v-if="storageUsageByTeam[team.id]"
+              class="mt-1.5"
+              label="Speicher"
+              :used="storageUsageByTeam[team.id]!.usedBytes"
+              :max="storageUsageByTeam[team.id]!.limitBytes"
+              :format-value="formatBytes"
+            />
             <PolicyFlagToggles
               v-if="policySettingFor('team', team.id)"
               class="mt-1.5"

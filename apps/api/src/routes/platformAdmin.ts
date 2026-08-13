@@ -4,6 +4,7 @@ import {
   CreateSubscriptionPlanRequestSchema,
   OrganizationSubscriptionSchema,
   PlatformAdminOrganizationDetailSchema,
+  PlatformAdminOrganizationSubscriptionSchema,
   PlatformAdminOrganizationSummarySchema,
   PlatformAdminSchema,
   PlatformAdminStatusSchema,
@@ -490,6 +491,41 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
     })
     if (result.error) throw result.error
     return reply.code(200).send({ contentLimits: (result.data as { media_origin: string; max_per_month: number | null; max_duration_seconds: number | null }[]).map((limit) => SubscriptionPlanContentLimitSchema.parse({ mediaOrigin: limit.media_origin, maxPerMonth: limit.max_per_month, maxDurationSeconds: limit.max_duration_seconds })) })
+  })
+
+  // Lesestelle fuer den aktuellen Tarifstand eines Vereins -- PR 2 brachte nur die beiden
+  // PUT-Endpunkte zum Setzen, die Vereinsdetailseite (PR 3) braucht aber eine Ansicht des
+  // Bestehenden, bevor sie es ueberschreibt (im Ausfuehrungsplan fehlte dieses GET-Gegenstueck).
+  app.get('/v1/platform-admin/organizations/:organizationId/subscription', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    if (!(await requirePlatformAdmin(request, reply))) return
+    const params = z.object({ organizationId: UuidSchema }).parse(request.params)
+    const service = supabaseClients.forService()
+    const subscription = await service
+      .from('organization_subscriptions')
+      .select('organization_id, plan_key, status, storage_bytes_override, max_teams_override, max_departments_override, override_reason')
+      .eq('organization_id', params.organizationId)
+      .maybeSingle()
+    if (subscription.error) throw subscription.error
+    if (!subscription.data) return reply.code(404).send({ error: 'subscription_not_found', correlationId: request.id })
+    const [plan, effectiveLimits, contentLimitOverrides] = await Promise.all([
+      service.from('subscription_plans').select('display_name').eq('key', subscription.data.plan_key).single(),
+      service.rpc('effective_limits', { target: params.organizationId }),
+      service.from('organization_content_limit_overrides').select('media_origin, max_per_month, max_duration_seconds, override_reason').eq('organization_id', params.organizationId),
+    ])
+    if (plan.error) throw plan.error
+    if (effectiveLimits.error) throw effectiveLimits.error
+    if (contentLimitOverrides.error) throw contentLimitOverrides.error
+    const limitsRow = effectiveLimits.data[0] as { storage_bytes: number; max_teams: number | null; max_departments: number | null }
+    return reply.code(200).send(PlatformAdminOrganizationSubscriptionSchema.parse({
+      organizationId: subscription.data.organization_id, planKey: subscription.data.plan_key, planDisplayName: plan.data.display_name, status: subscription.data.status,
+      storageBytesOverride: subscription.data.storage_bytes_override, maxTeamsOverride: subscription.data.max_teams_override, maxDepartmentsOverride: subscription.data.max_departments_override,
+      overrideReason: subscription.data.override_reason,
+      effectiveLimits: { storageBytes: limitsRow.storage_bytes, maxTeams: limitsRow.max_teams, maxDepartments: limitsRow.max_departments },
+      contentLimitOverrides: contentLimitOverrides.data.map((row) => ({
+        mediaOrigin: row.media_origin, maxPerMonth: row.max_per_month, maxDurationSeconds: row.max_duration_seconds, overrideReason: row.override_reason,
+      })),
+    }))
   })
 
   app.put('/v1/platform-admin/organizations/:organizationId/subscription', async (request, reply) => {

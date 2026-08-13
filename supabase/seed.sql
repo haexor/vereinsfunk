@@ -57,3 +57,12 @@ insert into public.organization_onboarding (organization_id, completed_steps) va
   ('11111111-1111-4111-8111-111111111111', array['branding', 'responsible_person']),
   ('99999999-9999-4999-8999-999999999999', '{}')
 on conflict (organization_id) do nothing;
+
+-- Plan 021: die Backfill-Zeile in der Migration (2026081302) laeuft VOR diesem Seed -- beide
+-- Organisationen hier existieren zu diesem Zeitpunkt noch nicht und bekommen dadurch keine
+-- organization_subscriptions-Zeile automatisch. Ohne sie liefert GET /v1/subscription 404 fuer
+-- jeden lokalen Demo-Verein (beim manuellen Browser-Test dieses Pakets gefunden).
+insert into public.organization_subscriptions (organization_id, plan_key) values
+  ('11111111-1111-4111-8111-111111111111', 'free'),
+  ('99999999-9999-4999-8999-999999999999', 'free')
+on conflict (organization_id) do nothing;
