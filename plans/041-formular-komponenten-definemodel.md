@@ -12,7 +12,7 @@
 - **Depends on**: none
 - **Category**: refactor, code quality
 - **Planned at**: commit `28dce97c`, 2026-08-13
-- **Implementation note (2026-08-14)**: Schritt 2–6 umgesetzt und als **PR #69** offen. Schritt 1 (`StyleProfileEditorForm.vue`) bleibt blockiert — die Datei existiert nur auf dem noch offenen PR #67 (`worktree-plan-040-pr3-frontend`), nicht auf `main`, gegen das dieser Plan geschrieben wurde. Folgt in einem eigenen Nachtrag, sobald PR #67 gemergt ist.
+- **Implementation note (2026-08-14)**: Alle sechs Schritte inklusive Schritt 1 (`StyleProfileEditorForm.vue`) als **PR #69** umgesetzt und gemergt (nach Merge von PR #67 wurde `StyleProfileEditorForm.vue` per Merge-Commit in den Branch nachgezogen und in einem letzten Commit ebenfalls auf `defineModel` umgestellt). Manueller Test aus Schritt 5 (Mitgliedschaftswechsel ohne Speichern) nachträglich per Playwright verifiziert: kein Datendurchsickern zwischen zwei Mitgliedschaften.
 
 ## Why this matters
 
@@ -121,13 +121,13 @@ Ergänze in `eslint.config.mjs` im `files: ['**/*.vue']`-Block `rules: { 'vue/no
 
 ## Done criteria
 
-- [ ] Keine der fünf Form-A-Komponenten, `ChannelCard.vue` oder `MemberList.vue` mutiert ihr Prop mehr direkt; alle nutzen `defineModel`.
-- [ ] Alle sieben betroffenen Aufrufstellen (`personas.vue`, `stilprofile.vue` ×2, `einstellungen/recht.vue` ×2, `integrationen.vue` ×2, `kanaele.vue`, `mitglieder.vue`) nutzen `v-model:feld=`.
-- [ ] `pages/mitglieder.vue` verwendet für die sechs Membership-Drafts einfache `ref`s statt `Record<string, X>`.
-- [ ] `vue/no-mutating-props` ist aktiv und findet keine Funde mehr.
-- [ ] `pnpm check` grün.
-- [ ] Manueller Test aus Schritt 5 (Zeilenwechsel ohne Speichern) bestätigt: kein Datendurchsickern zwischen zwei Mitgliedschaften.
-- [ ] Keine Änderung an `useChannels.ts`, `IntegrationSource*`-Fachlogik, API-Aufrufen oder sonstigem Nicht-Template-/Nicht-Draft-Code.
+- [x] Keine der fünf Form-A-Komponenten, `ChannelCard.vue` oder `MemberList.vue` mutiert ihr Prop mehr direkt; alle nutzen `defineModel`.
+- [x] Alle sieben betroffenen Aufrufstellen (`personas.vue`, `stilprofile.vue` ×2, `einstellungen/recht.vue` ×2, `integrationen.vue` ×2, `kanaele.vue`, `mitglieder.vue`) nutzen `v-model:feld=`.
+- [x] `pages/mitglieder.vue` verwendet für die sechs Membership-Drafts einfache `ref`s statt `Record<string, X>`.
+- [x] `vue/no-mutating-props` ist aktiv und findet keine Funde mehr.
+- [x] `pnpm check` grün.
+- [x] Manueller Test aus Schritt 5 (Zeilenwechsel ohne Speichern) bestätigt: kein Datendurchsickern zwischen zwei Mitgliedschaften.
+- [x] Keine Änderung an `useChannels.ts`, `IntegrationSource*`-Fachlogik, API-Aufrufen oder sonstigem Nicht-Template-/Nicht-Draft-Code.
 
 ## STOP conditions
 
