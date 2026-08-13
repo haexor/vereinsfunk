@@ -1,6 +1,7 @@
 import multipart from '@fastify/multipart'
 import cors from '@fastify/cors'
 import { parseApiEnvironment } from '@vereinsfunk/config'
+import type { StructuredContentGenerator } from '@vereinsfunk/content-engine'
 import { HealthSchema } from '@vereinsfunk/contracts'
 import { FakePublisher, MetaPublisher, RealMetaOAuthClient, type MetaOAuthClient, type SocialPublisher } from '@vereinsfunk/publishing'
 import Fastify, { LogController, type FastifyInstance, type FastifyServerOptions } from 'fastify'
@@ -54,6 +55,9 @@ export interface BuildAppOptions {
   // ein MetaPublisher braucht das entschluesselte Connection-Token, kann also nicht einmalig beim
   // Start konstruiert werden wie die anderen Injectables hier.
   publisher?: SocialPublisher
+  // Plan 040: Ueberschreibung fuer Tests, analog zu TextGenerationExecutor.generator im Worker --
+  // laesst "Persona/Stilprofil testen" ohne echten ausgehenden Fetch testen.
+  textGenerator?: StructuredContentGenerator
 }
 
 class LocalUploadService implements MediaUploadService {
@@ -125,6 +129,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     requirePermission,
     requirePlatformAdmin,
     createPublisherForConnection,
+    ...(options.textGenerator ? { textGenerator: options.textGenerator } : {}),
   }
   // Genau der eine Ursprung, unter dem das Frontend laeuft -- dieselbe Quelle wie fuer die
   // Einladungslinks weiter unten. Vorher stand hier in Entwicklung Port 4200 fest verdrahtet

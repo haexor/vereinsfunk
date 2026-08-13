@@ -1,9 +1,15 @@
-import type { ConsentScope, OutputFormat, ScopeLevel } from '@vereinsfunk/contracts'
+import type { ConsentScope, GeneratedPost, OutputFormat, ScopeLevel, StyleProfileRules } from '@vereinsfunk/contracts'
 import { canRemoveRole, hasPermission, type Permission, type Role } from '@vereinsfunk/authorization'
+import type { ApiEnvironment } from '@vereinsfunk/config'
+import { AnthropicStructuredContentGenerator, ContentGenerationError, OpenAiCompatibleStructuredContentGenerator, type GroundedContentBrief, type StructuredContentGenerator } from '@vereinsfunk/content-engine'
+import { UuidSchema } from '@vereinsfunk/contracts'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { mergeEffectiveConfig, resolveEffectiveConfig, type ConfigOverride, type TrustRecord } from '@vereinsfunk/domain'
 import type { FastifyRequest } from 'fastify'
+import { randomUUID } from 'node:crypto'
+import { z } from 'zod'
 import type { PermissionScope } from '../auth.js'
+import { byteaToBuffer, createSecretBoxFromEnvironment } from '../secretBox.js'
 import type { SupabaseClientFactory } from './context.js'
 
 // Von mehreren Route-Modulen und dem verbleibenden app.ts benoetigt (Richtlinien/Freigaben,
@@ -394,4 +400,130 @@ export async function resolveInvitationScope(
     return { scope: { organizationId: department.data.organization_id as string, departmentId: input.departmentId }, scopeName: department.data.name as string }
   }
   return { scope: { organizationId: input.organizationId }, scopeName: '' }
+}
+
+// Plan 040: "Persona/Stilprofil testen" (routes/content.ts, routes/platformPersonas.routes.ts)
+// calls the active text provider directly and synchronously, unlike POST
+// /v1/text-workshop/sessions which only ever writes an ID-only Hatchet delivery for the worker to
+// pick up. The provider row shape and its decryption mirror apps/worker/src/context.ts's
+// loadActiveTextProvider/apps/worker/src/textGeneration.ts's parseSecretBox+ciphertextBuffer --
+// duplicated deliberately rather than imported, since apps do not depend on each other in this
+// workspace (see pnpm-workspace.yaml); the actual provider adapters
+// (OpenAiCompatibleStructuredContentGenerator/AnthropicStructuredContentGenerator) and the secret
+// box helpers already live in shared packages apps/api depends on regardless.
+const ActiveTextProviderRowSchema = z.object({
+  id: UuidSchema, protocol: z.string(), base_url: z.url(), model: z.string().trim().min(1),
+  temperature: z.coerce.number(), max_output_tokens: z.coerce.number().int().positive(),
+  structured_output_required: z.boolean(),
+  llm_provider_secrets: z.union([
+    z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) }),
+    z.array(z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) })).min(1),
+  ]),
+})
+
+const PREVIEW_TEXT_GENERATORS: Record<string, StructuredContentGenerator | undefined> = {
+  openai: new OpenAiCompatibleStructuredContentGenerator(),
+  anthropic: new AnthropicStructuredContentGenerator(),
+}
+
+export type StyleProfilePreviewResult =
+  | { ok: true; post: GeneratedPost }
+  | { ok: false; status: number; error: string }
+
+// Same shape as packages/contracts/src/integrations.ts's SyncIdempotencyKeySchema, duplicated
+// rather than imported: that one is named for the sync domain, and this header is generic HTTP
+// convention, not a sync concept.
+const PreviewIdempotencyKeySchema = z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/)
+
+// A client-side timeout/retry on either preview route must not trigger a second billed provider
+// call for the same logical attempt (gefunden im Code-Review dieses Pakets). The integrations
+// sync route (routes/integrations.ts) guards the same problem with an atomic RPC backed by the
+// idempotency_keys table, but that table requires a non-null organization_id -- platform-style-
+// personas/preview has none (Plan 037, platform personas are global). Mirrors checkRateLimit's
+// in-memory approach above instead: same one-process-only caveat, same low-stakes tradeoff for a
+// preview button.
+//
+// Falls back to a random key when the client sends none, exactly like the sync route -- until PR
+// 3/3's frontend actually resends the same key on retry, every call gets its own random key and
+// this is a no-op, so today's behavior is unchanged.
+export function resolvePreviewIdempotencyKey(request: FastifyRequest): string | null {
+  const header = request.headers['idempotency-key']
+  if (Array.isArray(header)) return null
+  const parsed = PreviewIdempotencyKeySchema.safeParse(header ?? randomUUID())
+  return parsed.success ? parsed.data : null
+}
+
+const previewByIdempotencyKey = new Map<string, { promise: Promise<StyleProfilePreviewResult>; expiresAt: number }>()
+let nextPreviewSweepAt = 0
+const PREVIEW_DEDUPE_WINDOW_MS = 120_000
+
+export async function previewStyleProfile(
+  supabaseClients: SupabaseClientFactory,
+  environment: ApiEnvironment,
+  input: { name: string; description: string; styleRules: StyleProfileRules; avoidRules: readonly string[]; doRules: readonly string[]; sampleInput: string },
+  idempotencyKey: string,
+  generatorOverride?: StructuredContentGenerator,
+): Promise<StyleProfilePreviewResult> {
+  const now = Date.now()
+  if (previewByIdempotencyKey.size > 1_000 && now >= nextPreviewSweepAt) {
+    nextPreviewSweepAt = now + 60_000
+    for (const [key, entry] of previewByIdempotencyKey) {
+      if (entry.expiresAt < now) previewByIdempotencyKey.delete(key)
+    }
+  }
+  const existing = previewByIdempotencyKey.get(idempotencyKey)
+  if (existing && existing.expiresAt >= now) return existing.promise
+  const promise = runStyleProfilePreview(supabaseClients, environment, input, generatorOverride)
+  previewByIdempotencyKey.set(idempotencyKey, { promise, expiresAt: now + PREVIEW_DEDUPE_WINDOW_MS })
+  return promise
+}
+
+async function runStyleProfilePreview(
+  supabaseClients: SupabaseClientFactory,
+  environment: ApiEnvironment,
+  input: { name: string; description: string; styleRules: StyleProfileRules; avoidRules: readonly string[]; doRules: readonly string[]; sampleInput: string },
+  generatorOverride?: StructuredContentGenerator,
+): Promise<StyleProfilePreviewResult> {
+  const service = supabaseClients.forService()
+  const configs = await service
+    .from('llm_provider_configurations')
+    .select('id, protocol, base_url, model, temperature, max_output_tokens, structured_output_required, priority, llm_provider_secrets!inner(api_key_ciphertext, key_version)')
+    .eq('task_kind', 'text_generation').eq('is_active', true).order('priority').limit(2)
+  if (configs.error) throw configs.error
+  const rows = configs.data as Record<string, unknown>[]
+  if (rows.length === 0 || (rows.length > 1 && rows[0]!.priority === rows[1]!.priority)) {
+    return { ok: false, status: 422, error: 'text_provider_not_configured' }
+  }
+  const row = ActiveTextProviderRowSchema.parse(rows[0])
+  const generator = generatorOverride ?? PREVIEW_TEXT_GENERATORS[row.protocol]
+  if (!generator || !row.structured_output_required) {
+    return { ok: false, status: 422, error: 'unsupported_provider_configuration' }
+  }
+  const secret = Array.isArray(row.llm_provider_secrets) ? row.llm_provider_secrets[0]! : row.llm_provider_secrets
+  const apiKey = createSecretBoxFromEnvironment(environment).open(byteaToBuffer(secret.api_key_ciphertext), secret.key_version, row.id)
+  // No preset exists for a preview -- built by hand instead of createTextGroundedContentBrief,
+  // which requires a real registered preset slug. sampleInput is the sole allowedClaim, exactly
+  // as sourceMaterial.facts/observations feed allowedClaims for a real submission.
+  const brief: GroundedContentBrief = {
+    allowedClaims: [{ sourceId: 'sample', text: input.sampleInput }],
+    approvedQuotes: [], missingFacts: [], prohibitedClaims: [],
+    goal: 'inform', requestedFormats: [], presetSlug: 'preview',
+  }
+  try {
+    const post = await generator.generateText({
+      brief,
+      styleProfile: { name: input.name, description: input.description, styleRules: input.styleRules, avoidRules: [...input.avoidRules], doRules: [...input.doRules] },
+      model: row.model, baseUrl: row.base_url, apiKey, temperature: row.temperature, maxOutputTokens: row.max_output_tokens,
+      // Kuerzer als die 60 s des Adapters (packages/content-engine): der Worker darf so lange
+      // warten, weil dort niemand an einer offenen HTTP-Verbindung haengt -- hier wartet ein
+      // Browser auf den "Testen"-Knopf, und jede wartende Anfrage haelt eine Verbindung.
+      requestTimeoutMs: 30_000,
+    })
+    return { ok: true, post }
+  } catch (error) {
+    if (error instanceof ContentGenerationError) {
+      return { ok: false, status: error.errorClass === 'provider_rate_limit' ? 429 : 502, error: error.errorClass }
+    }
+    throw error
+  }
 }

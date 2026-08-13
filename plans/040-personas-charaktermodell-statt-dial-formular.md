@@ -143,3 +143,83 @@ Damit zieht PR 1 auch `do_rules` durch alle bestehenden Lese-/Schreibpfade
 
 `pnpm lint/typecheck/test/build` (alle 20 Pakete) und `pnpm db:reset && pnpm db:test`
 (23 Testdateien, 728 pgTAP-Assertions) grün.
+
+## Umsetzung: Ergebnis und Abweichungen vom Plan (PR 2)
+
+PR 2 vollständig umgesetzt: `PATCH`/`DELETE /v1/content-style-profiles/:id` (gleiches
+`post.create`-Scope-Gate wie `POST`, Scope aus der bestehenden Zeile hergeleitet statt vom Client
+übernommen — "RPC traut Client nicht"), sowie `POST /v1/content-style-profiles/preview` und
+`POST /v1/platform-style-personas/preview`. Beide Preview-Routen teilen sich eine neue Funktion
+`previewStyleProfile` (`apps/api/src/routes/shared.ts`): baut den `GroundedContentBrief` von Hand
+(`sampleInput` als einziger `allowedClaim`, `goal: 'inform'`, `presetSlug: 'preview'`), lädt den
+aktiven Text-Provider und ruft `generator.generateText(...)` synchron auf, kein DB-Write.
+
+Geprüft und wie im Plan vorgesehen entschieden: die Provider-Lade-/Entschlüsselungslogik aus
+`apps/worker/src/textGeneration.ts`/`context.ts` wird NICHT importiert (Apps hängen in diesem
+Workspace nicht voneinander ab), sondern die Abfrage gegen `llm_provider_configurations` in
+`previewStyleProfile` bewusst klein dupliziert. Die Entschlüsselung selbst ist keine Dopplung:
+`apps/api/src/secretBox.ts` hatte bereits eigene, äquivalente Helfer
+(`createSecretBoxFromEnvironment`/`byteaToBuffer`, seit Paket 011/012), und die eigentlichen
+Provider-Adapter (`OpenAiCompatibleStructuredContentGenerator`/`AnthropicStructuredContentGenerator`)
+kommen unverändert aus dem bereits von `apps/api` abhängigen `@vereinsfunk/content-engine`.
+
+Neu (nicht im Plan-Text explizit benannt, aber notwendig für echte Tests ohne Netzwerkzugriff):
+`ApiRouteContext.textGenerator`/`BuildAppOptions.textGenerator`, eine Testklammer nach demselben
+Muster wie `TextGenerationExecutor.generator` im Worker — überschreibt die
+Protokoll→Generator-Auswahl vollständig, damit ein Test einen gefakten `llm_provider_configurations`-
+Provider (inkl. mit dem Test-`SECRET_BOX_KEYS` versiegeltem Secret) ohne echten ausgehenden Fetch
+durchspielen kann.
+
+Contracts: `UpdateCustomStyleProfileRequestSchema` (analog `UpdatePlatformStylePersonaRequestSchema`,
+aber ohne Scope-Felder — Scope ist unveränderlich) sowie `PreviewPlatformStylePersonaRequestSchema`/
+`PreviewCustomStyleProfileRequestSchema` (gemeinsamer Kern `{name, description, styleRules,
+avoidRules, doRules, sampleInput}`, Letzteres zusätzlich mit `organizationId`/`departmentId`/
+`teamId` für das Scope-Gate).
+
+17 neue API-Tests (7 in `platformPersonas.routes.test.ts`, 10 in `content.routes.test.ts`): 403/404-
+Fälle, PATCH/DELETE-Rundlauf, Preview-Erfolg mit gemocktem Generator, fehlender Provider (422),
+Rate-Limit (429) und ungrounded-Fehler (502). `pnpm lint/typecheck/test/build` (alle 20/21 Pakete)
+grün; keine Migrationsänderung, daher kein erneuter `pnpm db:reset && pnpm db:test`-Lauf nötig.
+
+### Nachgehärtet im Code-Review von PR 2
+
+- **Kostenlimit auf beiden Preview-Routen.** Ein Aufruf löst sofort einen kostenpflichtigen
+  Provider-Abruf aus; ohne Limit ist der "Testen"-Knopf ein Kostenhebel, den eine Schleife im
+  Browser beliebig oft zieht. `checkRateLimit` (`routes/shared.ts`, seit Paket 015) mit 10
+  Aufrufen pro Minute **pro Nutzer** statt pro IP — hinter einer Vereins-IP sitzen viele legitime
+  Mitglieder. Gilt auch für Plattform-Admins.
+- **Audit-Eintrag für `PATCH`/`DELETE`.** `POST` schrieb bereits
+  `content_style_profile.created`; Ändern und Löschen blieben spurlos. Jetzt
+  `content_style_profile.updated` (mit den geänderten Feldnamen) und `.deleted` (mit der Ebene),
+  wie `directory_person.updated` und `department.deleted` es vormachen. Die Plattform-Personas
+  bleiben bewusst ohne Trail (siehe Kopfkommentar in `platformPersonas.routes.ts`).
+- **`departmentId`/`teamId` der Preview-Anfrage gegen ihre echte `organization_id` geprüft**
+  (`resolveDirectoryScope`, wie Verzeichnis/Integration/Einwilligung es tun). `rolesForScope`
+  vereinigt Organisations-, Abteilungs- und Teamrollen, eine frei kombinierte fremde
+  `departmentId` kann die Rollenmenge also nur vergrößern. Bei `POST` fängt der zusammengesetzte
+  Fremdschlüssel der Tabelle die Kombination ab — die Preview-Route schreibt nichts und hatte
+  diesen Rückhalt nicht.
+- **30 s Zeitlimit statt der 60 s des Adapters.** Der Worker darf 60 s warten, weil dort niemand
+  an einer offenen HTTP-Verbindung hängt; hier wartet ein Browser.
+- **Tests:** Der Fake gab die Update-Nutzlast unbesehen weg — eine vertauschte Zuordnung
+  (`do_rules` aus `avoidRules`) wäre unbemerkt durchgelaufen. Nutzlast und geprüfter Scope werden
+  jetzt festgehalten und geprüft, dazu zwei neue Fälle (fremde `departmentId` → 404, Rate-Limit
+  → 429). 19 statt 17 Tests in den beiden Dateien.
+
+### Nachgehärtet in einer zweiten Code-Review-Runde von PR 2
+
+- **Idempotenz auf beiden Preview-Routen.** Ein Client-Retry (Timeout, Doppelklick) mit demselben
+  `Idempotency-Key`-Header hätte sonst einen zweiten kostenpflichtigen Provider-Aufruf ausgelöst —
+  das Rate-Limit verhindert das nicht, es zählt nur die Gesamtmenge pro Minute. Die
+  `idempotency_keys`-Tabelle (atomare Absicherung wie bei `routes/integrations.ts`) passt hier
+  nicht: sie verlangt eine `organization_id`, `platform-style-personas/preview` hat keine (Plan
+  037, Plattform-Personas sind global). Stattdessen ein In-Prozess-Single-Flight in
+  `previewStyleProfile` (`routes/shared.ts`), analog zu `checkRateLimit` daneben — gleiche
+  Ein-Prozess-Einschränkung, gleiches niedriges Risiko für einen Testen-Knopf. Fällt ohne Header
+  auf einen zufälligen Schlüssel zurück (wie `routes/integrations.ts` es vormacht), daher
+  unverändertes Verhalten bis PR 3 den Header auf einen Retry tatsächlich wiederholt. Je ein neuer
+  Test pro Datei belegt, dass zwei gleichzeitige Aufrufe mit demselben Schlüssel sich einen
+  Provider-Aufruf teilen. 21 statt 19 Tests in den beiden Dateien.
+
+Offen: PR 3 (geteilte `StyleProfileEditorForm.vue`, neue Vereins-Seite `/stilprofile`, Nav-Eintrag,
+Umstellung von `plattform-admin/personas.vue`).
