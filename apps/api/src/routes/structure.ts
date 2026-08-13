@@ -22,7 +22,10 @@ app.post('/v1/organizations/:orgId/departments', async (request, reply) => {
   if (!(await requirePermission(request, reply, 'department.manage', { organizationId: params.orgId }))) return
   const client = supabaseClients.forUser(request.auth!.accessToken)
   const rpc = await client.rpc('create_department', { target_organization_id: params.orgId, department_name: input.name })
-  if (rpc.error) throw rpc.error
+  if (rpc.error) {
+    if (rpc.error.message.includes('structure limit reached')) return reply.code(409).send({ error: 'structure_limit_reached', correlationId: request.id })
+    throw rpc.error
+  }
   const department = await client.from('departments').select('id, organization_id, name, slug, archived_at, created_at').eq('id', rpc.data as string).single()
   if (department.error) throw department.error
   // audit_events ist append-only und wird ausschliesslich privilegiert beschrieben ("Inserts

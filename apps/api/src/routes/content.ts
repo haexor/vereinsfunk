@@ -13,7 +13,7 @@ import {
   type Team,
 } from '@vereinsfunk/contracts'
 import { assertGroundedPost, createGroundedContentBrief, FakeContentGenerator, factsFromClubEvent, factsFromFixture } from '@vereinsfunk/content-engine'
-import { createIdempotencyKey, evaluateMediaGate, evaluateSubmitPermission } from '@vereinsfunk/domain'
+import { createIdempotencyKey, evaluateMediaGate, evaluateStorageReservation, evaluateSubmitPermission } from '@vereinsfunk/domain'
 import type { FastifyInstance } from 'fastify'
 import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
@@ -406,6 +406,51 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (!(await requireAuth(request, reply))) return
     const input = UploadInitiateSchema.parse(request.body); const assetId = randomUUID()
     if (!(await requirePermission(request, reply, 'post.create', { organizationId: input.organizationId, departmentId: input.departmentId }))) return
+    const service = supabaseClients.forService()
+    // Plan 021: geprueft wird VOR dem Ausstellen der signierten URL, nicht erst nach dem Hochladen
+    // -- sonst laege das Objekt schon im Bucket, wenn die Grenze auffiel. Ohne jede
+    // organization_subscriptions-Zeile gilt weiterhin "keine Grenze aus diesem Paket" (Datenmodell-
+    // Kommentar der Migration), dieselbe Ausnahme wie in schedule_publication.
+    const subscription = await service.from('organization_subscriptions').select('organization_id').eq('organization_id', input.organizationId).maybeSingle()
+    if (subscription.error) throw subscription.error
+    if (subscription.data) {
+      const [effectiveLimits, departmentLimit, organizationUsage, departmentUsage] = await Promise.all([
+        service.rpc('effective_limits', { target: input.organizationId }),
+        service.from('storage_limits').select('storage_bytes').eq('organization_id', input.organizationId).eq('scope', 'department').eq('department_id', input.departmentId).is('team_id', null).maybeSingle(),
+        service.rpc('storage_usage_bytes', { target_organization: input.organizationId, target_department: null, target_team: null }),
+        service.rpc('storage_usage_bytes', { target_organization: input.organizationId, target_department: input.departmentId, target_team: null }),
+      ])
+      if (effectiveLimits.error) throw effectiveLimits.error
+      if (departmentLimit.error) throw departmentLimit.error
+      if (organizationUsage.error) throw organizationUsage.error
+      if (departmentUsage.error) throw departmentUsage.error
+      const organizationBytes = (effectiveLimits.data[0] as { storage_bytes: number } | undefined)?.storage_bytes
+      if (organizationBytes !== undefined) {
+        const departmentLimitBytes = departmentLimit.data?.storage_bytes as number | undefined
+        const reservation = evaluateStorageReservation({
+          limits: { organizationBytes, ...(departmentLimitBytes !== undefined ? { departmentBytes: departmentLimitBytes } : {}) },
+          usage: { organizationBytes: organizationUsage.data as number, departmentBytes: departmentUsage.data as number },
+          announcedBytes: input.byteSize,
+        })
+        if (!reservation.allowed) {
+          return reply.code(409).send({
+            error: 'storage_limit_reached', scope: reservation.blockingScope, limitBytes: reservation.limitBytes, usedBytes: reservation.usedBytes,
+            correlationId: request.id,
+          })
+        }
+      }
+    }
+    // Reservierung als echte media_assets-Zeile, damit storage_usage_bytes() sie ab jetzt
+    // mitzaehlt -- Ist-Groessen-Abgleich bei /complete und Verfall unvollstaendiger
+    // Reservierungen bleiben offen, bis Paket 001/002 eine echte Upload-Pipeline liefert (siehe
+    // Plan 021, Kontext). object_path folgt demselben Muster wie LocalUploadService.create() unten,
+    // weil die echte Pfadvergabe dort passiert und hier noch nicht bekannt ist.
+    const reservationInsert = await service.from('media_assets').insert({
+      id: assetId, organization_id: input.organizationId, department_id: input.departmentId,
+      bucket_id: 'raw-media', object_path: `organizations/${input.organizationId}/departments/${input.departmentId}/assets/${assetId}/${input.filename}`,
+      mime_type: input.mimeType, byte_size: input.byteSize, upload_status: 'initiated', created_by: request.auth!.userId,
+    })
+    if (reservationInsert.error) throw reservationInsert.error
     const upload = await uploads.create({ ...input, assetId })
     return reply.code(201).send({ assetId, ...upload })
   })

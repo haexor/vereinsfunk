@@ -32,6 +32,7 @@ import { registerPolicyRoutes } from './routes/policies.js'
 import { registerPublishingRoutes } from './routes/publishing.js'
 import { registerRetentionRoutes } from './routes/retention.js'
 import { registerStructureRoutes } from './routes/structure.js'
+import { registerSubscriptionRoutes } from './routes/subscriptions.js'
 import type { ApiRouteContext, MediaUploadService, SupabaseClientFactory } from './routes/context.js'
 
 export type { MediaUploadService, SupabaseClientFactory } from './routes/context.js'
@@ -169,6 +170,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   registerApprovalRoutes(app, context)
   registerPublishingRoutes(app, context)
   registerChannelQuotaRoutes(app, context)
+  registerSubscriptionRoutes(app, context)
 
   registerPlatformAdminRoutes(app, context)
 
