@@ -33,5 +33,8 @@ export default defineNuxtConfig({
       supabaseAnonKey: process.env.NUXT_PUBLIC_SUPABASE_ANON_KEY ?? '',
     },
   },
-  typescript: { typeCheck: true, strict: true },
+  // ci.yml prueft Typen bereits separat nativ per `pnpm typecheck`. Ein zweiter vue-tsc-Lauf
+  // hier ist im Docker-Image-Build (apps/web/Dockerfile) unter QEMU-arm64-Emulation ein
+  // Kandidat fuer Worker-Thread-Haenger -- daher dort per SKIP_TYPECHECK abgeschaltet.
+  typescript: { typeCheck: process.env.SKIP_TYPECHECK !== 'true', strict: true },
 })

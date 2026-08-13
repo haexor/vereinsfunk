@@ -18,6 +18,9 @@ RUN pnpm install --frozen-lockfile --filter @vereinsfunk/web...
 # they are deliberately left unset here: Nitro re-reads NUXT_PUBLIC_* from the environment on
 # every start, and the process environment wins over any baked or file-based value. That keeps
 # one image usable across environments instead of burying a hostname in a layer.
+# CI prueft Typen bereits separat (pnpm typecheck); der zusaetzliche vue-tsc-Lauf im Build
+# ist unter QEMU-arm64-Emulation ein Kandidat fuer Worker-Thread-Haenger -- siehe nuxt.config.ts.
+ENV SKIP_TYPECHECK=true
 RUN pnpm --filter @vereinsfunk/web build
 
 FROM node:24-bookworm-slim AS runtime
