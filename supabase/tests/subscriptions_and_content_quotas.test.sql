@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(32);
+select plan(38);
 
 set local role postgres;
 
@@ -113,6 +113,11 @@ select throws_ok($$select * from public.subscription_plans$$, '42501', null, 'au
 select throws_ok($$select * from public.organization_subscriptions where organization_id = '41000000-1000-4000-8000-000000000001'$$, '42501', null, 'authenticated cannot read organization_subscriptions directly, not even their own club''s row');
 select throws_ok($$update public.organization_subscriptions set plan_key = 'free' where organization_id = '41000000-1000-4000-8000-000000000001'$$, '42501', null, 'authenticated cannot write organization_subscriptions directly');
 select throws_ok($$insert into public.subscription_plan_content_limits (plan_key, media_origin, max_per_month) values ('pgtap_test_plan', 'own_upload', 99)$$, '42501', null, 'authenticated cannot write subscription_plan_content_limits directly');
+select throws_ok($$select * from public.organization_content_limit_overrides where organization_id = '41000000-1000-4000-8000-000000000001'$$, '42501', null, 'authenticated cannot read organization_content_limit_overrides directly, not even their own club''s row');
+select throws_ok(
+  $$insert into public.organization_content_limit_overrides (organization_id, media_origin, max_per_month, override_reason, override_by) values ('41000000-1000-4000-8000-000000000001', 'ai_video', 2, 'Testversuch', '41000000-0000-4000-8000-000000000001')$$,
+  '42501', null, 'authenticated cannot write organization_content_limit_overrides directly'
+);
 set local role postgres;
 
 -- storage_limits: echtes Scope-CHECK, Unique-Index, RLS.
@@ -141,6 +146,18 @@ select set_config('request.jwt.claim.sub', '41000000-0000-4000-8000-000000000002
 select throws_ok(
   $$insert into public.storage_limits (organization_id, scope, department_id, storage_bytes, set_by) values ('41000000-1000-4000-8000-000000000001', 'department', '41000000-1100-4000-8000-000000000001', 300000, '41000000-0000-4000-8000-000000000002')$$,
   '42501', null, 'a viewer without department.manage cannot write a storage_limits row of their own club'
+);
+-- Die drei throws_ok-Faelle oben belegen nur, wer NICHT schreiben darf -- ohne diesen positiven
+-- Gegenpart waere ein fehlender Grant fuer authenticated genauso unauffaellig gewesen wie eine
+-- korrekt verweigernde Policy (beim CodeRabbit-Review gefunden). storage_limits_update pruefte
+-- dieselbe Bedingung wie storage_limits_insert -- ein Update auf die bereits bestehende
+-- Abteilungszeile ist deshalb ebenso aussagekraeftig, ohne eine dritte Abteilung anlegen zu
+-- muessen (die den spaeteren Struktur-Grenztests in die Quere gekommen waere).
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '41000000-0000-4000-8000-000000000001', true);
+select lives_ok(
+  $$update public.storage_limits set storage_bytes = 450000 where organization_id = '41000000-1000-4000-8000-000000000001' and scope = 'department' and department_id = '41000000-1100-4000-8000-000000000001'$$,
+  'a department admin can update the storage_limits row of their own department'
 );
 set local role postgres;
 
@@ -175,6 +192,22 @@ select throws_ok(
 update public.organization_subscriptions set max_departments_override = null
   where organization_id = '41000000-1000-4000-8000-000000000001';
 
+-- Reaktivierungs-Bypass: archived_at direkt per UPDATE auf null zuruecksetzen darf die Grenze
+-- ebenso wenig umgehen wie ein INSERT (CodeRabbit-Fund oben, enforce_structure_limit() feuerte
+-- bisher nur bei INSERT). Der Verein steht nach dem Downgrade oben bereits ueber dem jetzt
+-- wirksamen Tarifwert (2 aktive Abteilungen bei max_departments = 1) -- Archivieren einer davon
+-- bringt die aktive Zahl exakt auf die Grenze, danach muss die Reaktivierung derselben Abteilung
+-- am selben Trigger scheitern wie eine echte Neuanlage.
+update public.departments set archived_at = now() where organization_id = '41000000-1000-4000-8000-000000000001' and slug = 'zweite-abteilung';
+select is(
+  (select count(*)::integer from public.departments where organization_id = '41000000-1000-4000-8000-000000000001' and archived_at is null),
+  1, 'archiving the second department brings the active count back down to exactly the limit'
+);
+select throws_ok(
+  $$update public.departments set archived_at = null where organization_id = '41000000-1000-4000-8000-000000000001' and slug = 'zweite-abteilung'$$,
+  'P0001', 'structure limit reached for this organization', 'reactivating an archived department is rejected by the same trigger once the active count is already at the limit'
+);
+
 -- schedule_publication: Tarifkontingent nach Medienherkunft. Testtarif: own_upload maximal 1/Monat,
 -- ai_video maximal 5/Monat mit 10 Sekunden Hoechstlaenge. Ein einziger Beitrag (mehrere Versionen),
 -- weil schedule_publication ihn nach Erfolg auf 'scheduled' setzt -- zwischen den Aufrufen wird der
@@ -184,11 +217,14 @@ insert into public.posts (id, organization_id, department_id, status, created_by
 insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type, created_by_user_id) values
   ('41000000-3000-4000-8000-000000000001', '41000000-1000-4000-8000-000000000001', '41000000-2000-4000-8000-000000000001', 1, '{}', '{}', 'user', '41000000-0000-4000-8000-000000000001'),
   ('41000000-3000-4000-8000-000000000002', '41000000-1000-4000-8000-000000000001', '41000000-2000-4000-8000-000000000001', 2, '{}', '{}', 'user', '41000000-0000-4000-8000-000000000001'),
-  ('41000000-3000-4000-8000-000000000003', '41000000-1000-4000-8000-000000000001', '41000000-2000-4000-8000-000000000001', 3, '{}', '{}', 'user', '41000000-0000-4000-8000-000000000001'),
   ('41000000-3000-4000-8000-000000000005', '41000000-1000-4000-8000-000000000001', '41000000-2000-4000-8000-000000000001', 5, '{}', '{}', 'user', '41000000-0000-4000-8000-000000000001');
 insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type, created_by_user_id, media_origin, ai_generated_video_duration_seconds) values
   ('41000000-3000-4000-8000-000000000004', '41000000-1000-4000-8000-000000000001', '41000000-2000-4000-8000-000000000001', 4, '{}', '{}', 'user', '41000000-0000-4000-8000-000000000001', 'ai_video', 25);
-update public.post_versions set media_origin = 'ai_image' where id = '41000000-3000-4000-8000-000000000003';
+-- post_versions hat keinen Immutability-Trigger, aber ein UPDATE auf media_origin nach dem Insert
+-- ist trotzdem unnoetig -- direkt beim Insert gesetzt, wie Version 4 (beim CodeRabbit-Review
+-- dieses Pakets als Testhygiene-Fund benannt).
+insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type, created_by_user_id, media_origin) values
+  ('41000000-3000-4000-8000-000000000003', '41000000-1000-4000-8000-000000000001', '41000000-2000-4000-8000-000000000001', 3, '{}', '{}', 'user', '41000000-0000-4000-8000-000000000001', 'ai_image');
 select is((select media_origin from public.post_versions where id = '41000000-3000-4000-8000-000000000001'), 'own_upload', 'media_origin defaults to own_upload for a post_version created via the existing path');
 
 insert into public.social_connections (id, organization_id, platform, external_account_id, display_name) values
@@ -236,6 +272,21 @@ set local role authenticated;
 select ok(
   (select status from public.schedule_publication('41000000-3000-4000-8000-000000000005', '41000000-8000-4000-8000-000000000001', now() + interval '1 hour')) = 'queued',
   'once the earlier publication is marked failed, a new own_upload version can be scheduled again within the same month'
+);
+
+-- Fehlt fuer eine Herkunftsart JEDE Zeile (weder Tarif noch Uebersteuerung), gilt das laut
+-- Datenmodell als 0, nicht unbegrenzt -- die Schleife allein hat ihren Rumpf fuer eine fehlende
+-- Zeile nie ausgefuehrt und liess sie deshalb bislang unbegrenzt durch (CodeRabbit-Fund oben).
+-- pgtap_incomplete_plan hat nur eine own_upload-Zeile, keine fuer ai_image.
+set local role postgres;
+update public.organization_subscriptions set plan_key = 'pgtap_incomplete_plan' where organization_id = '41000000-1000-4000-8000-000000000001';
+insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type, created_by_user_id, media_origin) values
+  ('41000000-3000-4000-8000-000000000006', '41000000-1000-4000-8000-000000000001', '41000000-2000-4000-8000-000000000001', 6, '{}', '{}', 'user', '41000000-0000-4000-8000-000000000001', 'ai_image');
+update public.posts set status = 'approved' where id = '41000000-2000-4000-8000-000000000001';
+set local role authenticated;
+select throws_ok(
+  $$select public.schedule_publication('41000000-3000-4000-8000-000000000006', '41000000-8000-4000-8000-000000000001', now() + interval '1 hour')$$,
+  'P0001', 'content_quota_exceeded: ai_image/0', 'a media_origin entirely missing from the plan (no limit row, no override) is treated as zero, not unlimited'
 );
 
 select * from finish();

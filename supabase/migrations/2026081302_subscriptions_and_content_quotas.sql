@@ -373,6 +373,13 @@ declare
   current_count integer;
   max_allowed integer;
 begin
+  -- Ohne diese Sperre koennten zwei gleichzeitige Einfuegungen an der Grenze beide dieselbe
+  -- "current_count < max_allowed"-Pruefung bestehen (READ COMMITTED sieht fuer beide denselben
+  -- Stand), und der Verein laeuft um eins ueber sein Limit -- exakt der Grund, warum
+  -- schedule_publication() dieselbe Sperre je Verein haelt (beim CodeRabbit-Review dieses Pakets
+  -- gefunden). Anderer Salt (1) als dort (0), damit Struktur- und Kontingentpruefungen sich nicht
+  -- gegenseitig unnoetig blockieren.
+  perform pg_advisory_xact_lock(hashtextextended(new.organization_id::text, 1));
   if tg_table_name = 'departments' then
     select count(*) into current_count from public.departments
      where organization_id = new.organization_id and archived_at is null;
@@ -393,6 +400,15 @@ create trigger departments_enforce_limit before insert on public.departments
   for each row execute function public.enforce_structure_limit();
 create trigger teams_enforce_limit before insert on public.teams
   for each row execute function public.enforce_structure_limit();
+-- Archivieren/Entarchivieren aendert archived_at ueber ein gewoehnliches UPDATE (apps/api/src/
+-- routes/structure.ts) -- ohne diesen zweiten Trigger liesse sich die Grenze umgehen, indem man
+-- eine Abteilung archiviert und wieder entarchiviert, sobald der Verein bereits am Limit ist
+-- (beim CodeRabbit-Review gefunden). Die WHEN-Klausel beschraenkt das auf genau den
+-- Reaktivierungs-Uebergang, ein reines Umbenennen loest die Pruefung nicht erneut aus.
+create trigger departments_enforce_limit_on_reactivate before update of archived_at on public.departments
+  for each row when (old.archived_at is not null and new.archived_at is null) execute function public.enforce_structure_limit();
+create trigger teams_enforce_limit_on_reactivate before update of archived_at on public.teams
+  for each row when (old.archived_at is not null and new.archived_at is null) execute function public.enforce_structure_limit();
 
 -- Beitragszaehler je Herkunft: post_versions braucht ein Herkunftsfeld. Default 'own_upload' fuer
 -- jede bestehende und jede neue Zeile -- solange KI-Bild-/Videoerzeugung nicht existiert, setzt
@@ -463,6 +479,7 @@ declare
   require_responsible boolean;
   quota_row record;
   content_limit_row record;
+  content_limit_found boolean;
   result public.publications;
   media_blockers text[] := '{}';
 begin
@@ -583,11 +600,23 @@ begin
     end if;
   end loop;
 
-  -- Tarifkontingent nach Medienherkunft, unter derselben Vereinssperre wie die Schleife oben.
-  -- Nur die Herkunftsart der einzuplanenden Version wird geprueft -- ein ausgeschoepftes
-  -- KI-Video-Kontingent blockiert keine eigenen Beitraege.
-  for content_limit_row in select * from public.effective_content_limits(post.organization_id) loop
-    if content_limit_row.media_origin = version.media_origin then
+  -- Tarifkontingent nach Medienherkunft, unter derselben Vereinssperre wie die Schleife oben. Nur
+  -- die Herkunftsart der einzuplanenden Version wird geprueft -- ein ausgeschoepftes
+  -- KI-Video-Kontingent blockiert keine eigenen Beitraege. Ohne JEDE organization_subscriptions-
+  -- Zeile gilt weiterhin "keine Grenze aus diesem Paket" (Datenmodell-Kommentar) -- das betrifft
+  -- Vereine, die vor dieser Migration entstanden sind und noch nicht ueber create_organization()
+  -- nachgezogen wurden, u. a. zahlreiche bestehende pgTAP-Fixtures. NUR wenn eine Abo-Zeile
+  -- existiert, aber fuer genau diese Herkunftsart JEDE Zeile fehlt (weder Tarif noch
+  -- Uebersteuerung), gilt 0 statt unbegrenzt -- die Schleife allein wuerde das faelschlich als
+  -- "keine Grenze" behandeln, weil ihr Rumpf fuer eine fehlende Zeile nie ausgefuehrt wird (beim
+  -- CodeRabbit-Review dieses Pakets gefunden: ein Tarif ohne z. B. eine ai_image-Zeile liess
+  -- KI-Bilder bislang ungeprueft durch).
+  if exists (select 1 from public.organization_subscriptions where organization_id = post.organization_id) then
+    content_limit_found := false;
+    for content_limit_row in
+      select * from public.effective_content_limits(post.organization_id) where media_origin = version.media_origin
+    loop
+      content_limit_found := true;
       if content_limit_row.media_origin = 'ai_video' and version.ai_generated_video_duration_seconds is not null
          and content_limit_row.max_duration_seconds is not null
          and version.ai_generated_video_duration_seconds > content_limit_row.max_duration_seconds then
@@ -597,8 +626,11 @@ begin
          and public.count_publications_in_period(post.organization_id, null, null, null, 'month', now(), version.media_origin) >= content_limit_row.max_per_month then
         raise exception 'content_quota_exceeded: %/%', version.media_origin, content_limit_row.max_per_month;
       end if;
+    end loop;
+    if not content_limit_found then
+      raise exception 'content_quota_exceeded: %/0', version.media_origin;
     end if;
-  end loop;
+  end if;
 
   insert into public.publications (organization_id, post_version_id, social_connection_id, platform, scheduled_for, idempotency_key)
   values (
