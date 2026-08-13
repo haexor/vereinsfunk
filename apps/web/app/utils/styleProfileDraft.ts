@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import type { StyleProfileRules } from '@vereinsfunk/contracts'
 
 // Shared form shape for StyleProfileEditorForm.vue -- list-typed fields (toneTags/catchphrases/
@@ -74,11 +75,14 @@ export function styleProfileDraftFrom(profile: {
   }
 }
 
+const PreviewErrorPayloadSchema = z.object({ data: z.object({ error: z.string() }) })
+
 // Maps request-layer error codes (routes/shared.ts, previewStyleProfile) to an honest,
 // non-technical message -- "kein lokaler Provider" must read differently from a transient
 // provider failure, per the Plan 040 smoke test.
 export function previewErrorMessage(error: unknown): string {
-  const code = (error as { data?: { error?: string } })?.data?.error
+  const parsed = PreviewErrorPayloadSchema.safeParse(error)
+  const code = parsed.success ? parsed.data.data.error : undefined
   if (code === 'text_provider_not_configured' || code === 'unsupported_provider_configuration') {
     return 'Kein Text-Provider eingerichtet -- ohne Provider-Konfiguration ist kein Testergebnis möglich.'
   }

@@ -18,6 +18,7 @@ const errorMessage = ref('')
 const personas = ref<PlatformStylePersona[]>([])
 
 const draft = reactive({ slug: '', ...emptyStyleProfileDraft() })
+const formError = ref('')
 
 function resetForm() {
   draft.slug = ''
@@ -40,7 +41,7 @@ await load()
 async function createPersona() {
   if (!draft.slug.trim() || !draft.name.trim() || !draft.description.trim()) return
   saving.value = true
-  errorMessage.value = ''
+  formError.value = ''
   try {
     const body = CreatePlatformStylePersonaRequestSchema.parse({
       slug: draft.slug,
@@ -55,7 +56,7 @@ async function createPersona() {
     previewResult.value = null
     await load()
   } catch {
-    errorMessage.value = 'Persona konnte nicht angelegt werden.'
+    formError.value = 'Persona konnte nicht angelegt werden.'
   } finally {
     saving.value = false
   }
@@ -64,6 +65,8 @@ async function createPersona() {
 const previewing = ref(false)
 const previewResult = ref<GeneratedPost | null>(null)
 const previewError = ref('')
+const previewKey = ref(crypto.randomUUID())
+watch(draft, () => { previewKey.value = crypto.randomUUID() })
 
 async function testPersona() {
   previewing.value = true
@@ -77,7 +80,8 @@ async function testPersona() {
       doRules: doRulesFromDraft(draft),
       sampleInput: draft.sampleInput,
     })
-    previewResult.value = await api.request('/v1/platform-style-personas/preview', { method: 'POST', body, headers: { 'idempotency-key': crypto.randomUUID() } }, GeneratedPostSchema)
+    previewResult.value = await api.request('/v1/platform-style-personas/preview', { method: 'POST', body, headers: { 'idempotency-key': previewKey.value } }, GeneratedPostSchema)
+    previewKey.value = crypto.randomUUID()
   } catch (error) {
     previewError.value = previewErrorMessage(error)
   } finally {
@@ -141,7 +145,7 @@ async function removePersona(persona: PlatformStylePersona) {
       <StyleProfileEditorForm
         :draft="draft"
         :saving="saving"
-        :error="errorMessage"
+        :error="formError"
         :previewing="previewing"
         :preview-result="previewResult"
         :preview-error="previewError"

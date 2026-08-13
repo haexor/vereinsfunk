@@ -62,15 +62,18 @@ const loadError = ref(false)
 const profiles = ref<CustomStyleProfile[]>([])
 
 async function load() {
-  if (!organizationId.value) { loading.value = false; return }
+  const requestedOrganizationId = organizationId.value
+  if (!requestedOrganizationId) { loading.value = false; return }
   loading.value = true
   loadError.value = false
   try {
     const result = await supabase
       .from('content_style_profiles')
       .select('id, organization_id, department_id, team_id, slug, name, description, style_rules, avoid_rules, do_rules, is_active, created_by, created_at, updated_at')
-      .eq('organization_id', organizationId.value)
+      .eq('organization_id', requestedOrganizationId)
       .order('created_at', { ascending: false })
+    // Nach dem await pruefen, ob der Verein inzwischen gewechselt hat (Muster aus layouts/default.vue).
+    if (organizationId.value !== requestedOrganizationId) return
     if (result.error) { loadError.value = true; return }
     profiles.value = result.data.map((row) => CustomStyleProfileSchema.parse({
       id: row.id, organizationId: row.organization_id, departmentId: row.department_id, teamId: row.team_id,
@@ -79,7 +82,7 @@ async function load() {
       isActive: row.is_active, createdBy: row.created_by, createdAt: row.created_at, updatedAt: row.updated_at,
     }))
   } finally {
-    loading.value = false
+    if (organizationId.value === requestedOrganizationId) loading.value = false
   }
 }
 await load()
@@ -105,6 +108,8 @@ const createError = ref('')
 const creatingPreviewing = ref(false)
 const creatingPreviewResult = ref<GeneratedPost | null>(null)
 const creatingPreviewError = ref('')
+const creatingPreviewKey = ref(crypto.randomUUID())
+watch(draft, () => { creatingPreviewKey.value = crypto.randomUUID() })
 
 async function createProfile() {
   const scopeChoice = scopeChoices.value.find((choice) => choice.key === selectedScopeKey.value)
@@ -140,7 +145,8 @@ async function previewCreate() {
       styleRules: styleRulesFromDraft(draft), avoidRules: avoidRulesFromDraft(draft), doRules: doRulesFromDraft(draft),
       sampleInput: draft.sampleInput,
     })
-    creatingPreviewResult.value = await api.request('/v1/content-style-profiles/preview', { method: 'POST', body, headers: { 'idempotency-key': crypto.randomUUID() } }, GeneratedPostSchema)
+    creatingPreviewResult.value = await api.request('/v1/content-style-profiles/preview', { method: 'POST', body, headers: { 'idempotency-key': creatingPreviewKey.value } }, GeneratedPostSchema)
+    creatingPreviewKey.value = crypto.randomUUID()
   } catch (error) {
     creatingPreviewError.value = previewErrorMessage(error)
   } finally {
@@ -157,6 +163,8 @@ const editError = ref('')
 const editPreviewing = ref(false)
 const editPreviewResult = ref<GeneratedPost | null>(null)
 const editPreviewError = ref('')
+const editPreviewKey = ref(crypto.randomUUID())
+watch(editDraft, () => { editPreviewKey.value = crypto.randomUUID() })
 
 function startEdit(profile: CustomStyleProfile) {
   editingId.value = profile.id
@@ -167,6 +175,8 @@ function startEdit(profile: CustomStyleProfile) {
 }
 function cancelEdit() {
   editingId.value = null
+  editPreviewResult.value = null
+  editPreviewError.value = ''
 }
 async function saveEdit() {
   if (!editingId.value || !editDraft.name.trim() || !editDraft.description.trim()) return
@@ -179,6 +189,8 @@ async function saveEdit() {
     })
     await api.request(`/v1/content-style-profiles/${editingId.value}`, { method: 'PATCH', body })
     editingId.value = null
+    editPreviewResult.value = null
+    editPreviewError.value = ''
     await load()
   } catch {
     editError.value = 'Die Änderung konnte nicht gespeichert werden.'
@@ -198,7 +210,8 @@ async function previewEdit() {
       styleRules: styleRulesFromDraft(editDraft), avoidRules: avoidRulesFromDraft(editDraft), doRules: doRulesFromDraft(editDraft),
       sampleInput: editDraft.sampleInput,
     })
-    editPreviewResult.value = await api.request('/v1/content-style-profiles/preview', { method: 'POST', body, headers: { 'idempotency-key': crypto.randomUUID() } }, GeneratedPostSchema)
+    editPreviewResult.value = await api.request('/v1/content-style-profiles/preview', { method: 'POST', body, headers: { 'idempotency-key': editPreviewKey.value } }, GeneratedPostSchema)
+    editPreviewKey.value = crypto.randomUUID()
   } catch (error) {
     editPreviewError.value = previewErrorMessage(error)
   } finally {
