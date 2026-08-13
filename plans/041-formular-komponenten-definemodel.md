@@ -8,7 +8,7 @@
 
 - **Priority**: P3
 - **Effort**: M
-- **Risk**: LOW (mechanisch, keine Fachlogik betroffen; eine Komponente bewusst ausgeklammert, siehe unten)
+- **Risk**: LOW für Schritt 1–4 (rein mechanisch); MEDIUM für Schritt 5 (`MemberList.vue`/`pages/mitglieder.vue`) — echte Zustandsänderung, deren Verhaltensäquivalenz durch Nachverfolgen aller Lese-/Schreibstellen begründet, aber nicht automatisch bewiesen ist
 - **Depends on**: none
 - **Category**: refactor, code quality
 - **Planned at**: commit `28dce97c`, 2026-08-13
@@ -33,17 +33,17 @@ Codebase-weite Prüfung (`grep -rl defineProps apps/web/app/{components,pages,la
 
 `mappingRows` ist ein Array-Prop, dessen Elemente (`row.column`, `row.field`) im `v-for` der Komponente selbst mutiert werden — technisch dieselbe verschachtelte Mutation wie bei `draft.name`, nur eine Ebene tiefer. Ein einziges `defineModel<MappingRow[]>('mappingRows')` deckt das ab, keine Sonderbehandlung nötig.
 
-**Form B — Record<string, X>-Prop, indiziert über eine zur Laufzeit wechselnde ID (braucht echte Umstrukturierung statt reinem API-Tausch):**
+**Form B — Record<string, X>-Prop, indiziert über eine zur Laufzeit wechselnde ID:**
 
 | Komponente | Props | Aufrufstelle |
 |---|---|---|
 | `components/ChannelCard.vue:4-17` | `purposeDraft`, `editorialImprintUrlDraft`, `editorialPrivacyUrlDraft`, `editorialResponsibleProfileIdDraft`, `editorialResponsibleNoteDraft` (je `Record<string, string>`, indiziert über `channel.id`) | `pages/kanaele.vue:45` |
 | `components/MemberList.vue:5-27` | `roleDraft`, `expiryDraft`, `trustSubmitAllowedDraft`, `trustRequirementDraft`, `trustReasonDraft`, `trustExpiryDraft` (indiziert über `entry.membershipId`) | `pages/mitglieder.vue:433` |
 
-Der Unterschied zwischen beiden ist entscheidend für dieses Vorhaben:
+Der Unterschied zwischen beiden ist entscheidend für den Zuschnitt der Schritte:
 
 - `ChannelCard.vue` bekommt genau **eine** Karte pro `<ChannelCard>`-Aufruf — `pages/kanaele.vue:45` iteriert selbst per `v-for="channel in channelsState.channels"` und übergibt jeder Instanz das komplette Dictionary, nur um daraus intern den einen für sie relevanten Eintrag `purposeDraft[channel.id]` zu lesen/schreiben. Das lässt sich verlustfrei in fünf skalare `defineModel`-Felder auflösen: die Komponente bekommt statt `purposeDraft: Record<string,string>` nur noch `purpose: string`, und die Aufrufstelle bindet `v-model:purpose="channelsState.purposeDraft[channel.id]"` — Vue erlaubt `v-model` auf einen beliebigen Lvalue-Ausdruck, auch einen dynamischen Property-Zugriff. `useChannels.ts` selbst (die Dictionaries, ihre Initialisierung, `savePurpose`/`saveEditorialFields`) bleibt unverändert; nur die Bindungssyntax an der einen Aufrufstelle und die Prop-Signatur von `ChannelCard.vue` ändern sich.
-- `MemberList.vue` ist dagegen selbst eine Listenkomponente: `pages/mitglieder.vue:433` erzeugt nur **eine** `<MemberList>`-Instanz, die intern per `v-for="member in members"` und einem verschachtelten, nach `expandedMembershipId` gefilterten `v-for` (Zeile 47) über beliebig viele Mitgliedschaften iteriert und für die aktuell aufgeklappte per dynamischem Schlüssel `entry.membershipId` in die sechs Dictionaries greift. Ein `defineModel` kann nicht durch einen zur Laufzeit wechselnden Schlüssel parametrisiert werden — ein einzelnes skalares Modell pro Feld gibt es hier nicht, weil die Komponente selbst entscheidet, für welchen Eintrag es gerade gilt. Eine echte Lösung bräuchte eine Restrukturierung von `pages/mitglieder.vue`: statt sechs flacher, für alle Mitglieder vorgehaltener Dictionaries ein einzelnes „aktueller Entwurf“-Objekt nach dem in `pages/stilprofile.vue` (`editDraft`/`startEdit`) bereits etablierten Muster, das bei jedem `toggleExpanded` neu befüllt wird. Das ist eine Zustands-Redesign-Entscheidung in `changeRole`/`setExpiry`/`saveTrust` und `toggleExpanded`, keine reine API-Fassaden-Änderung — **bewusst nicht Teil dieses Plans**, siehe „Out of scope“.
+- `MemberList.vue` ist dagegen selbst eine Listenkomponente: `pages/mitglieder.vue:433` erzeugt nur **eine** `<MemberList>`-Instanz, die intern per `v-for="member in members"` und einem verschachtelten, nach `expandedMembershipId` gefilterten `v-for` (Zeile 47) über beliebig viele Mitgliedschaften iteriert. Ein `defineModel` kann nicht direkt durch einen zur Laufzeit wechselnden Schlüssel parametrisiert werden. Nachverfolgen aller Lese-/Schreibstellen in `pages/mitglieder.vue` zeigt aber: die sechs Dictionaries sind trotz ihres Typs faktisch **nie** Mehrfach-Register — `toggleExpanded` (Zeile 250) schreibt `roleDraft`/`expiryDraft` ausschließlich für die gerade aufklappende `entry.membershipId` (Zeile 256-257), `initTrustDraft` (Zeile 321, von `toggleExpanded` aus Zeile 259 gerufen) ebenso für die vier Trust-Felder; gelesen werden alle sechs ausschließlich in `changeRole`/`setExpiry`/`saveTrust` (Zeile 268, 289, 338-341), und die jeweils aufrufenden Buttons existieren im Template nur für den einen Eintrag, dessen `membershipId === expandedMembershipId` ist (Filter in `MemberList.vue:47`). Es gibt also faktisch nie einen zweiten „lebenden“ Schlüssel gleichzeitig — die sechs Dictionaries sind ein Umweg um einen einzelnen „aktueller Entwurf“-Wert je Feld, ähnlich dem in `pages/stilprofile.vue` bereits etablierten `editDraft`. Sie lassen sich 1:1 durch sechs skalare `ref`s ersetzen (kein Objekt/Dictionary mehr nötig), ohne das Verhalten zu ändern — siehe Schritt 5.
 
 Randfund, keine Aktion nötig: `components/ProcessorAgreements.vue:15` hat ein `agreementForm`, das per `reactive()` **lokaler** Komponentenzustand ist, kein Prop — trotz `v-model="agreementForm.*"` kein Fall dieses Musters.
 
@@ -56,21 +56,22 @@ Randfund, keine Aktion nötig: `components/ProcessorAgreements.vue:15` hat ein `
 | Web-Tests | `cd apps/web && pnpm test` | exit 0, inkl. `pages/channelComposition.test.ts` (prüft nur das Vorhandensein von `<ChannelCard`, bleibt bestehen) |
 | Build | `pnpm build --filter=@vereinsfunk/web` | exit 0 |
 | Voller Gate | `pnpm check` | exit 0 |
-| Restmuster prüfen | `grep -rn 'v-model="\(draft\|profileDraft\|form\)\.' apps/web/app/components` | keine Treffer außer bereits auf `defineModel` umgestellten Komponenten (dort ist es dann kein Prop mehr, sondern der `defineModel`-Rückgabewert — Treffer erwartbar, aber `defineProps` in derselben Datei sollte das Feld nicht mehr enthalten) |
+| Restmuster prüfen (Form A) | `grep -rn 'v-model="\(draft\|profileDraft\|form\)\.' apps/web/app/components` | Treffer nur noch in Komponenten, die diese Namen als `defineModel`-Rückgabewert führen (kein `defineProps`-Feld mehr desselben Namens in derselben Datei) |
+| Restmuster prüfen (Form B) | `grep -rn 'Draft\[' apps/web/app/components/ChannelCard.vue apps/web/app/components/MemberList.vue` | keine Treffer mehr — nach Schritt 4/5 gibt es keinen `[channel.id]`/`[entry.membershipId]`-Zugriff mehr in diesen zwei Dateien |
 
 ## Scope
 
 **In scope**
 
 - Form A: `StyleProfileEditorForm.vue`, `RetentionSettingsForm.vue`, `LegalOrganizationProfileForm.vue`, `IntegrationSourceCreateForm.vue`, `IntegrationSourceEditForm.vue` — je auf `defineModel` umgestellt, samt aller Aufrufstellen.
-- Form B, nur `ChannelCard.vue` — fünf Record-Props durch fünf skalare `defineModel`-Felder ersetzt, `pages/kanaele.vue` entsprechend angepasst.
+- Form B: `ChannelCard.vue` — fünf Record-Props durch fünf skalare `defineModel`-Felder ersetzt, `pages/kanaele.vue` entsprechend angepasst.
+- Form B: `MemberList.vue` — sechs Record-Props durch sechs skalare `defineModel`-Felder ersetzt; dafür in `pages/mitglieder.vue` die sechs Dictionaries durch sechs einfache `ref`s ersetzt (siehe Schritt 5 für die genaue Begründung der Verhaltensäquivalenz).
 - Neue ESLint-Regel `vue/no-mutating-props: 'error'` im `**/*.vue`-Block von `eslint.config.mjs`, als Regressionsschutz nach Abschluss der Migration.
 
 **Out of scope**
 
-- `MemberList.vue` / `pages/mitglieder.vue` — braucht ein Zustands-Redesign (Dictionary → aktueller Entwurf), keine reine API-Umstellung; verdient einen eigenen Plan, falls gewünscht.
 - Aktivierung von `eslint-plugin-vue`s vollem `flat/recommended`-Regelsatz — würde unabhängig von diesem Vorhaben zusätzliche, hier nicht untersuchte Lint-Funde aufreißen.
-- Jede Verhaltens- oder UX-Änderung; die Zustandsformen in `useChannels.ts` und den betroffenen Seiten bleiben identisch, nur die Bindungssyntax ändert sich.
+- Jede darüber hinausgehende Verhaltens- oder UX-Änderung; `useChannels.ts` und alle API-Aufrufe bleiben identisch, nur Bindungssyntax und (in `pages/mitglieder.vue`) die Datenstruktur der sechs Drafts ändern sich.
 - Die bereits in PR #67 gepushten Idempotency-/Race-Fixes an `stilprofile.vue`/`personas.vue` — unabhängig davon, hier nicht wiederholt.
 
 ## Steps
@@ -99,28 +100,42 @@ Ersetze die fünf `Record<string, string>`-Props durch fünf skalare Modelle: `p
 
 **Verify**: `cd apps/web && pnpm typecheck && pnpm test` → exit 0, `pages/channelComposition.test.ts` bleibt grün (prüft nur String-Vorhandensein von `<ChannelCard`). Manuell: Kanal-Zweck und Impressumsfelder in `/kanaele` bearbeiten und speichern, Werte kommen unverändert in `savePurpose`/`saveEditorialFields` an.
 
-### Step 5: Regressionsschutz und Gesamtabnahme
+### Step 5: `MemberList.vue` und `pages/mitglieder.vue` — Dictionaries durch skalare Refs ersetzen, dann `defineModel`
 
-Ergänze in `eslint.config.mjs` im `files: ['**/*.vue']`-Block `rules: { 'vue/no-mutating-props': 'error' }`. Lauf `pnpm lint` — er darf ausschließlich in `MemberList.vue` (bewusst ausgeklammert, siehe „Out of scope“) neue Funde zeigen; jeder andere neue Fund bedeutet, dass Schritt 1–4 unvollständig war oder die Codebase-Prüfung oben eine achte Stelle übersehen hat.
+Anders als Schritt 1–4 ist das ein Zwei-Ebenen-Schritt: zuerst die Datenstruktur im Parent vereinfachen, dann erst die Prop-Schnittstelle umstellen — beides zusammen in einem Schritt, weil eine Zwischenstufe (Dictionary bleibt, nur Komponente auf `defineModel` umgestellt) syntaktisch nicht geht.
 
-**Verify**: `pnpm check` → exit 0 bis auf den erwarteten `MemberList.vue`-Fund. Falls `MemberList.vue` zu einem harten Lint-Fehler wird statt einer Warnung: entweder gezielt per `// eslint-disable-next-line vue/no-mutating-props` mit Verweis auf diesen Plan kommentieren, oder die Regel vorerst als `'warn'` statt `'error'` setzen — Entscheidung dem Ausführenden überlassen, mit Begründung im PR.
+1. In `pages/mitglieder.vue`: `roleDraft`/`expiryDraft` (Zeile 244-245, `reactive<Record<...>>({})`) durch `const roleDraft = ref<AssignableRole | ''>('')` und `const expiryDraft = ref('')` ersetzen. Ebenso `trustSubmitAllowedDraft`/`trustRequirementDraft`/`trustReasonDraft`/`trustExpiryDraft` (Zeile 314-317) durch vier einfache `ref`s mit denselben Default-Werten wie bisher in `initTrustDraft` (`true`, `'inherit'`, `''`, `''`).
+2. In `toggleExpanded` (Zeile 250-260): `roleDraft[entry.membershipId] = ...` → `roleDraft.value = ...`, ebenso `expiryDraft`. In `initTrustDraft` (Zeile 321-328): `xDraft[key] = ...` → `xDraft.value = ...` für alle vier Felder; der Parameter `key`/`entry.membershipId` entfällt dort ersatzlos.
+3. In `changeRole` (Zeile 267-269): `roleDraft[entry.membershipId]` → `roleDraft.value`. In `setExpiry` (Zeile 285-289): `expiryDraft[entry.membershipId]` → `expiryDraft.value`. In `saveTrust` (Zeile 330-342): alle vier `xDraft[entry.membershipId]` → `xDraft.value`; `trustReasonDraft.value.trim()` braucht kein `?.` mehr, weil der Ref nie `undefined` ist.
+4. In `MemberList.vue`: die sechs `Record<string, X>`-Props aus `defineProps` entfernen, durch sechs `defineModel`-Aufrufe ersetzen: `roleDraft` (`AssignableRole | ''`), `expiryDraft` (`string`), `trustSubmitAllowedDraft` (`boolean`), `trustRequirementDraft` (`ReviewRequirement`), `trustReasonDraft` (`string`), `trustExpiryDraft` (`string`) — je `{ required: true }`. Im Template jedes `xDraft[entry.membershipId]` durch `xDraft` ersetzen (Zeilen 50, 51, 56, 63-66) — das schließt den Button-Vergleich `roleDraft[entry.membershipId] === entry.role` (Zeile 51) ein.
+5. In `pages/mitglieder.vue:433-455`: alle sechs `:x-draft="xDraft"`-Bindungen auf `v-model:x-draft="xDraft"` umstellen.
+
+**Verify**: `cd apps/web && pnpm typecheck && pnpm test` → exit 0. Manuell in `/mitglieder`: eine Mitgliedschaft aufklappen, Rolle ändern **ohne zu speichern**, zuklappen, eine **andere** Mitgliedschaft aufklappen — deren Rolle/Befristung/Vertrauenseinstellungen müssen die eigenen sein, nicht die zuvor eingetragenen (das ist exakt das Szenario, das die Verhaltensäquivalenz aus „Current state“ beweist oder widerlegt). Danach Rolle ändern und speichern, Befristung setzen, Vertrauen speichern — je einmal, Ergebnis wie vor der Umstellung.
+
+### Step 6: Regressionsschutz und Gesamtabnahme
+
+Ergänze in `eslint.config.mjs` im `files: ['**/*.vue']`-Block `rules: { 'vue/no-mutating-props': 'error' }`. Lauf `pnpm lint` — jeder Fund bedeutet, dass ein vorheriger Schritt unvollständig war oder die Codebase-Prüfung oben eine achte Stelle übersehen hat.
+
+**Verify**: `pnpm check` → exit 0.
 
 ## Done criteria
 
-- [ ] Keine der fünf Form-A-Komponenten und `ChannelCard.vue` mutiert ihr Prop mehr direkt; alle nutzen `defineModel`.
-- [ ] Alle sechs betroffenen Aufrufstellen (`personas.vue`, `stilprofile.vue` ×2, `einstellungen/recht.vue` ×2, `integrationen.vue` ×2, `kanaele.vue`) nutzen `v-model:feld=`.
-- [ ] `vue/no-mutating-props` ist aktiv; einziger verbleibender Fund ist `MemberList.vue`, mit Begründung im PR benannt.
-- [ ] `pnpm check` grün (abgesehen vom erwarteten Lint-Fund).
-- [ ] Keine Änderung an `useChannels.ts`, `IntegrationSource*`-Fachlogik oder sonstigem Nicht-Template-Code außer den Prop-Deklarationen selbst.
+- [ ] Keine der fünf Form-A-Komponenten, `ChannelCard.vue` oder `MemberList.vue` mutiert ihr Prop mehr direkt; alle nutzen `defineModel`.
+- [ ] Alle sieben betroffenen Aufrufstellen (`personas.vue`, `stilprofile.vue` ×2, `einstellungen/recht.vue` ×2, `integrationen.vue` ×2, `kanaele.vue`, `mitglieder.vue`) nutzen `v-model:feld=`.
+- [ ] `pages/mitglieder.vue` verwendet für die sechs Membership-Drafts einfache `ref`s statt `Record<string, X>`.
+- [ ] `vue/no-mutating-props` ist aktiv und findet keine Funde mehr.
+- [ ] `pnpm check` grün.
+- [ ] Manueller Test aus Schritt 5 (Zeilenwechsel ohne Speichern) bestätigt: kein Datendurchsickern zwischen zwei Mitgliedschaften.
+- [ ] Keine Änderung an `useChannels.ts`, `IntegrationSource*`-Fachlogik, API-Aufrufen oder sonstigem Nicht-Template-/Nicht-Draft-Code.
 
 ## STOP conditions
 
 - Eine der Form-A-Komponenten liest oder schreibt ihr Draft-Prop noch an einer weiteren Stelle außerhalb des Templates (z. B. ein `watch` auf die Objektidentität) — dann prüfen, ob `defineModel`s Ref-Semantik das noch erfüllt, bevor umgestellt wird.
+- Der manuelle Test in Schritt 5 zeigt Datendurchsickern zwischen zwei Mitgliedschaften — die in „Current state“ behauptete Verhaltensäquivalenz war falsch; nicht weitermachen, Ursache klären (evtl. gibt es doch einen Pfad, der zwei Einträge gleichzeitig referenziert, etwa durch schnelles Doppel-Klicken).
 - `vue/no-mutating-props` findet einen achten, hier nicht erfassten Fall — Scope bewusst erweitern, nicht stillschweigend mitziehen.
-- Der Ausführende ist geneigt, `MemberList.vue` "schnell mit" zu migrieren — nicht ohne die in „Current state“ beschriebene Zustands-Restrukturierung von `pages/mitglieder.vue` einzuplanen und separat zu entscheiden.
 
 ## Maintenance notes
 
 `defineModel<T>('name')` macht das Feld standardmäßig **optional**, auch wenn die ursprüngliche `defineProps<{...}>()`-Deklaration es implizit als Pflichtfeld typisierte. Jedes hier migrierte Feld wird an jeder bestehenden Aufrufstelle immer übergeben — deshalb überall `{ required: true }` setzen, sonst verschlechtert sich die Typsicherheit stillschweigend gegenüber dem Ist-Zustand.
 
-`ChannelCard.vue` und `MemberList.vue` sehen im Diff ähnlich aus (beide Record-Props über eine Item-ID), sind aber strukturell verschieden: der entscheidende Unterschied ist, ob die Elternseite pro Zeile eine eigene Komponenteninstanz erzeugt (`kanaele.vue`, ja) oder die Komponente selbst über alle Zeilen iteriert (`mitglieder.vue`, nein). Bei jeder künftigen ähnlichen Komponente zuerst diese Frage klären, bevor `defineModel` als Lösung angenommen wird.
+`ChannelCard.vue` und `MemberList.vue` sahen im Diff ähnlich aus (beide Record-Props über eine Item-ID), sind aber strukturell verschieden: der entscheidende Unterschied ist, ob die Elternseite pro Zeile eine eigene Komponenteninstanz erzeugt (`kanaele.vue`, ja) oder die Komponente selbst über alle Zeilen iteriert (`mitglieder.vue`, nein). Bei `MemberList.vue` ging die Umstellung trotzdem, weil eine dritte Bedingung erfüllt war: die Liste zeigt ohnehin nur je eine Zeile gleichzeitig im Bearbeitungsmodus (`expandedMembershipId`), wodurch das Dictionary in Wahrheit nie mehr als einen lebenden Eintrag hatte. Bei jeder künftigen ähnlichen Komponente vor der `defineModel`-Entscheidung klären: (1) Eine Komponenteninstanz pro Zeile, oder (2) eine Instanz mit interner Iteration, aber nachweislich nur ein gleichzeitig editierbarer Eintrag. Nur wenn weder (1) noch (2) zutrifft, bleibt tatsächlich nur eine State-Redesign-Entscheidung außerhalb einer reinen `defineModel`-Umstellung.
