@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(37);
+select plan(40);
 
 set local role postgres;
 
@@ -264,6 +264,32 @@ select is(
     array['50000000-1000-4000-8000-000000000001', '50000000-9999-4000-8000-000000000099']::uuid[]
   ) where organization_id = '50000000-9999-4000-8000-000000000099'),
   0, 'an organization id without any rows still gets department_count 0 instead of being dropped'
+);
+
+-- Eine aktive Aufgabenart darf jede Prioritaet nur einmal vergeben, sonst waere "der aktive
+-- Provider" undefiniert (2026081305). Die Zeile aus dem CRUD-Smoke oben belegt bereits
+-- (text_generation, 100, aktiv) und dient hier als Gegenpart.
+select throws_ok(
+  $$insert into public.llm_provider_configurations (label, protocol, base_url, model, priority)
+    values ('PGTAP Duplicate Priority', 'openai', 'https://example.invalid', 'openai-test', 100)$$,
+  '23505', null, 'a second active text provider cannot take an already used priority'
+);
+select lives_ok(
+  $$insert into public.llm_provider_configurations (label, protocol, base_url, model, priority, is_active)
+    values ('PGTAP Standby', 'openai', 'https://example.invalid', 'openai-test', 100, false)$$,
+  'an inactive provider may keep a priority an active one already uses'
+);
+-- Dass eine andere Aufgabenart dieselbe Prioritaet belegen darf, laesst sich hier nicht pruefen:
+-- llm_provider_configurations_active_implemented_adapter_check (2026081201) verbietet jede aktive
+-- Zeile ausser text_generation, und inaktive Zeilen faellt der partielle Index ohnehin nicht an.
+-- Die Spalte task_kind steht im Index fuer die Aufgabenarten, die es noch nicht gibt (siehe
+-- 2026081103: das Vokabular ist absichtlich breiter als die Umsetzung).
+
+-- Der vorbereitete Ersatz aus dem Fall davor darf erst aktiv werden, wenn seine Prioritaet frei
+-- ist -- genau der Moment, in dem die Verwaltung den Konflikt anzeigen soll.
+select throws_ok(
+  $$update public.llm_provider_configurations set is_active = true where label = 'PGTAP Standby'$$,
+  '23505', null, 'activating a standby onto an occupied priority is rejected'
 );
 
 select * from finish();

@@ -279,8 +279,10 @@ select throws_ok(
   $$insert into public.llm_provider_configurations (label, protocol, base_url, model, task_kind, is_active) values ('Unsupported active provider', 'openai', 'https://example.invalid', 'test', 'image_generation', true)$$,
   '23514', null, 'negative: only implemented task kinds can be active'
 );
+-- Eigene Prioritaet: die Fixtur "Style Provider" oben ist ebenfalls aktiv und belegt seit
+-- 2026081305 die Default-Prioritaet 100 fuer text_generation.
 select lives_ok(
-  $$insert into public.llm_provider_configurations (label, protocol, base_url, model, is_active) values ('Anthropic native provider', 'anthropic', 'https://api.anthropic.com/v1', 'test', true)$$,
+  $$insert into public.llm_provider_configurations (label, protocol, base_url, model, is_active, priority) values ('Anthropic native provider', 'anthropic', 'https://api.anthropic.com/v1', 'test', true, 200)$$,
   'regression: anthropic is an implemented protocol and can be active'
 );
 select is((select count(*)::integer from public.workflow_outbox where workflow_name = 'generate-text-post' and payload ? 'sourceMaterial'), 0, 'negative: text generation outbox payloads never contain source content');
