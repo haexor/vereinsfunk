@@ -1,79 +1,35 @@
 <script setup lang="ts">
 import {
   CreatePlatformStylePersonaRequestSchema,
+  GeneratedPostSchema,
   PlatformStylePersonaSchema,
-  UpdatePlatformStylePersonaRequestSchema,
-  UuidSchema,
+  PreviewPlatformStylePersonaRequestSchema,
+  type GeneratedPost,
   type PlatformStylePersona,
 } from '@vereinsfunk/contracts'
+import { avoidRulesFromDraft, doRulesFromDraft, emptyStyleProfileDraft, previewErrorMessage, styleRulesFromDraft } from '../../utils/styleProfileDraft'
 
 definePageMeta({ layout: 'admin' })
 
-const SENTENCE_LENGTH_OPTIONS = [
-  { value: 'short', label: 'Kurz' },
-  { value: 'mixed', label: 'Gemischt' },
-  { value: 'long', label: 'Lang' },
-] as const
-const HUMOUR_OPTIONS = [
-  { value: 'none', label: 'Kein Humor' },
-  { value: 'light', label: 'Leichter Humor' },
-] as const
-const FORMALITY_OPTIONS = [
-  { value: 'casual', label: 'Locker' },
-  { value: 'balanced', label: 'Ausgewogen' },
-  { value: 'formal', label: 'Formell' },
-] as const
-const PERSPECTIVE_OPTIONS = [
-  { value: 'we', label: 'Wir' },
-  { value: 'club', label: 'Der Verein' },
-  { value: 'you', label: 'Du/Sie' },
-] as const
-
-const config = useRuntimeConfig()
+const api = useApiClient()
 const loading = ref(true)
 const saving = ref(false)
 const errorMessage = ref('')
 const personas = ref<PlatformStylePersona[]>([])
 
-const newPersona = reactive({
-  slug: '',
-  name: '',
-  description: '',
-  sentenceLength: 'short' as 'short' | 'mixed' | 'long',
-  energy: 3,
-  humour: 'none' as 'none' | 'light',
-  formality: 'balanced' as 'casual' | 'balanced' | 'formal',
-  perspective: 'we' as 'we' | 'club' | 'you',
-  bannedPhrasesText: '',
-  additionalInstructions: '',
-  avoidRulesText: '',
-})
+const draft = reactive({ slug: '', ...emptyStyleProfileDraft() })
+const formError = ref('')
 
 function resetForm() {
-  newPersona.slug = ''
-  newPersona.name = ''
-  newPersona.description = ''
-  newPersona.sentenceLength = 'short'
-  newPersona.energy = 3
-  newPersona.humour = 'none'
-  newPersona.formality = 'balanced'
-  newPersona.perspective = 'we'
-  newPersona.bannedPhrasesText = ''
-  newPersona.additionalInstructions = ''
-  newPersona.avoidRulesText = ''
-}
-
-function linesToList(value: string): string[] {
-  return value.split('\n').map((line) => line.trim()).filter(Boolean)
+  draft.slug = ''
+  Object.assign(draft, emptyStyleProfileDraft())
 }
 
 async function load() {
   loading.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch(`${config.public.apiBase}/v1/platform-style-personas`, { headers })
-    personas.value = PlatformStylePersonaSchema.array().parse(response)
+    personas.value = await api.request('/v1/platform-style-personas', {}, PlatformStylePersonaSchema.array())
   } catch {
     errorMessage.value = 'Personas konnten nicht geladen werden.'
   } finally {
@@ -83,33 +39,53 @@ async function load() {
 await load()
 
 async function createPersona() {
-  if (!newPersona.slug.trim() || !newPersona.name.trim() || !newPersona.description.trim()) return
+  if (!draft.slug.trim() || !draft.name.trim() || !draft.description.trim()) return
   saving.value = true
-  errorMessage.value = ''
+  formError.value = ''
   try {
-    const headers = await useAuthHeader()
     const body = CreatePlatformStylePersonaRequestSchema.parse({
-      slug: newPersona.slug,
-      name: newPersona.name,
-      description: newPersona.description,
-      styleRules: {
-        sentenceLength: newPersona.sentenceLength,
-        energy: newPersona.energy,
-        humour: newPersona.humour,
-        formality: newPersona.formality,
-        perspective: newPersona.perspective,
-        bannedPhrases: linesToList(newPersona.bannedPhrasesText),
-        additionalInstructions: newPersona.additionalInstructions,
-      },
-      avoidRules: linesToList(newPersona.avoidRulesText),
+      slug: draft.slug,
+      name: draft.name,
+      description: draft.description,
+      styleRules: styleRulesFromDraft(draft),
+      avoidRules: avoidRulesFromDraft(draft),
+      doRules: doRulesFromDraft(draft),
     })
-    await $fetch(`${config.public.apiBase}/v1/platform-style-personas`, { method: 'POST', headers, body })
+    await api.request('/v1/platform-style-personas', { method: 'POST', body })
     resetForm()
+    previewResult.value = null
     await load()
   } catch {
-    errorMessage.value = 'Persona konnte nicht angelegt werden.'
+    formError.value = 'Persona konnte nicht angelegt werden.'
   } finally {
     saving.value = false
+  }
+}
+
+const previewing = ref(false)
+const previewResult = ref<GeneratedPost | null>(null)
+const previewError = ref('')
+const previewKey = ref(crypto.randomUUID())
+watch(draft, () => { previewKey.value = crypto.randomUUID() })
+
+async function testPersona() {
+  previewing.value = true
+  previewError.value = ''
+  try {
+    const body = PreviewPlatformStylePersonaRequestSchema.parse({
+      name: draft.name,
+      description: draft.description,
+      styleRules: styleRulesFromDraft(draft),
+      avoidRules: avoidRulesFromDraft(draft),
+      doRules: doRulesFromDraft(draft),
+      sampleInput: draft.sampleInput,
+    })
+    previewResult.value = await api.request('/v1/platform-style-personas/preview', { method: 'POST', body, headers: { 'idempotency-key': previewKey.value } }, GeneratedPostSchema)
+    previewKey.value = crypto.randomUUID()
+  } catch (error) {
+    previewError.value = previewErrorMessage(error)
+  } finally {
+    previewing.value = false
   }
 }
 
@@ -117,10 +93,7 @@ async function toggleActive(persona: PlatformStylePersona) {
   saving.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
-    const id = UuidSchema.parse(persona.id)
-    const body = UpdatePlatformStylePersonaRequestSchema.parse({ isActive: !persona.isActive })
-    await $fetch(`${config.public.apiBase}/v1/platform-style-personas/${id}`, { method: 'PATCH', headers, body })
+    await api.request(`/v1/platform-style-personas/${persona.id}`, { method: 'PATCH', body: { isActive: !persona.isActive } })
     await load()
   } catch {
     errorMessage.value = 'Status konnte nicht geändert werden.'
@@ -134,9 +107,7 @@ async function removePersona(persona: PlatformStylePersona) {
   saving.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
-    const id = UuidSchema.parse(persona.id)
-    await $fetch(`${config.public.apiBase}/v1/platform-style-personas/${id}`, { method: 'DELETE', headers })
+    await api.request(`/v1/platform-style-personas/${persona.id}`, { method: 'DELETE' })
     await load()
   } catch {
     errorMessage.value = 'Persona konnte nicht entfernt werden.'
@@ -160,79 +131,28 @@ async function removePersona(persona: PlatformStylePersona) {
     <template v-else>
       <section class="card mb-6 p-6">
         <h2 class="mb-4 font-display text-base font-bold">Persona anlegen</h2>
-        <form class="grid gap-3 sm:grid-cols-2" @submit.prevent="createPersona">
-          <label class="text-xs font-semibold text-[#5c655f]">Slug
-            <input
-              v-model="newPersona.slug"
-              type="text"
-              required
-              placeholder="z.B. kapitaen-klar"
-              class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal"
-            />
-          </label>
-          <label class="text-xs font-semibold text-[#5c655f]">Name
-            <input
-              v-model="newPersona.name"
-              type="text"
-              required
-              placeholder="z.B. Kapitän Klar"
-              class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal"
-            />
-          </label>
-          <label class="text-xs font-semibold text-[#5c655f] sm:col-span-2">Beschreibung
-            <textarea
-              v-model="newPersona.description"
-              required
-              rows="2"
-              placeholder="Kurzbeschreibung für die Auswahl in der Textwerkstatt"
-              class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal"
-            />
-          </label>
-
-          <label class="text-xs font-semibold text-[#5c655f]">Satzlänge
-            <select v-model="newPersona.sentenceLength" class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal">
-              <option v-for="option in SENTENCE_LENGTH_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
-            </select>
-          </label>
-          <label class="text-xs font-semibold text-[#5c655f]">Energie (1–5)
-            <input v-model.number="newPersona.energy" type="number" min="1" max="5" step="1" required class="mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" />
-          </label>
-          <label class="text-xs font-semibold text-[#5c655f]">Humor
-            <select v-model="newPersona.humour" class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal">
-              <option v-for="option in HUMOUR_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
-            </select>
-          </label>
-          <label class="text-xs font-semibold text-[#5c655f]">Formalität
-            <select v-model="newPersona.formality" class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal">
-              <option v-for="option in FORMALITY_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
-            </select>
-          </label>
-          <label class="text-xs font-semibold text-[#5c655f] sm:col-span-2">Perspektive
-            <select v-model="newPersona.perspective" class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal">
-              <option v-for="option in PERSPECTIVE_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
-            </select>
-          </label>
-
-          <label class="text-xs font-semibold text-[#5c655f] sm:col-span-2">Verbotene Formulierungen (eine je Zeile)
-            <textarea v-model="newPersona.bannedPhrasesText" rows="3" class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" />
-          </label>
-          <label class="text-xs font-semibold text-[#5c655f] sm:col-span-2">Zusätzliche Anweisung (max. 1000 Zeichen, niedrig priorisiert)
-            <textarea v-model="newPersona.additionalInstructions" rows="3" maxlength="1000" class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" />
-            <p class="mt-1 text-[11px] font-normal text-[#9aa096]">{{ newPersona.additionalInstructions.length }}/1000 Zeichen</p>
-          </label>
-          <label class="text-xs font-semibold text-[#5c655f] sm:col-span-2">Zu vermeiden (eine je Zeile)
-            <textarea v-model="newPersona.avoidRulesText" rows="3" class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" />
-          </label>
-
-          <button
-            type="submit"
-            class="focus-ring rounded-xl bg-forest px-5 py-2.5 text-xs font-bold text-white disabled:opacity-60 sm:col-span-2"
-            :disabled="saving"
-          >
-            Anlegen
-          </button>
-        </form>
+        <label class="mb-4 block text-xs font-semibold text-[#5c655f]">Slug
+          <input
+            v-model="draft.slug"
+            type="text"
+            required
+            placeholder="z.B. kapitaen-klar"
+            class="focus-ring mt-1 w-full max-w-sm rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal"
+          />
+        </label>
       </section>
+
+      <StyleProfileEditorForm
+        :draft="draft"
+        :saving="saving"
+        :error="formError"
+        :previewing="previewing"
+        :preview-result="previewResult"
+        :preview-error="previewError"
+        submit-label="Anlegen"
+        @save="createPersona"
+        @preview="testPersona"
+      />
 
       <section class="card overflow-x-auto p-6">
         <h2 class="mb-4 font-display text-base font-bold">Personas ({{ personas.length }})</h2>
