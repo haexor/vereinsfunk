@@ -485,13 +485,19 @@ async function runStyleProfilePreview(
   generatorOverride?: StructuredContentGenerator,
 ): Promise<StyleProfilePreviewResult> {
   const service = supabaseClients.forService()
+  // Seit 2026081305 vergibt eine aktive Aufgabenart jede Prioritaet nur einmal -- die vorderste
+  // Zeile ist damit eindeutig, und die frueher hier noetige Gleichstandspruefung (zwei Zeilen
+  // laden, bei gleicher Prioritaet abbrechen) kann nicht mehr greifen. Sie haette den Konflikt
+  // ohnehin erst hier gemeldet, wo ihn niemand mehr aufloesen kann, und dazu unter dem Namen
+  // text_provider_not_configured -- der Konflikt scheitert jetzt beim Speichern in der
+  // Provider-Verwaltung (POST/PATCH /v1/llm-providers, 409 priority_already_taken).
   const configs = await service
     .from('llm_provider_configurations')
-    .select('id, protocol, base_url, model, temperature, max_output_tokens, structured_output_required, priority, llm_provider_secrets!inner(api_key_ciphertext, key_version)')
-    .eq('task_kind', 'text_generation').eq('is_active', true).order('priority').limit(2)
+    .select('id, protocol, base_url, model, temperature, max_output_tokens, structured_output_required, llm_provider_secrets!inner(api_key_ciphertext, key_version)')
+    .eq('task_kind', 'text_generation').eq('is_active', true).order('priority').limit(1)
   if (configs.error) throw configs.error
   const rows = configs.data as Record<string, unknown>[]
-  if (rows.length === 0 || (rows.length > 1 && rows[0]!.priority === rows[1]!.priority)) {
+  if (rows.length === 0) {
     return { ok: false, status: 422, error: 'text_provider_not_configured' }
   }
   const row = ActiveTextProviderRowSchema.parse(rows[0])
