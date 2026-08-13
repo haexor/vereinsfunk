@@ -16,6 +16,7 @@
     "@vereinsfunk/config": "workspace:*",
     "@vereinsfunk/content-engine": "workspace:*",
     "@vereinsfunk/contracts": "workspace:*",
+    "@vereinsfunk/db-migrate": "workspace:*",
     "@vereinsfunk/media-processing": "workspace:*",
     "@vereinsfunk/observability": "workspace:*",
     "@vereinsfunk/orchestration": "workspace:*",

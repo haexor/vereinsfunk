@@ -7,7 +7,7 @@ import { WorkflowExecutionError } from './workflows.js'
 import { TextGenerationExecutor, type TextGenerationRepository } from './textGeneration.js'
 
 const payload: WorkflowPayload = { candidateId: '10000000-1300-4000-8000-000000000001', entityId: '10000000-0000-4000-8000-000000000001', organizationId: '10000000-1000-4000-8000-000000000001', departmentId: '10000000-1100-4000-8000-000000000001', correlationId: '10000000-1200-4000-8000-000000000001', sourceRevision: 1, purpose: 'initial', idempotencyKey: 'generate-text:test' }
-const config = { SUPABASE_URL: 'https://db.example', SUPABASE_SERVICE_ROLE_KEY: 'service', HATCHET_CLIENT_TOKEN: 'token', SECRET_BOX_KEYS: JSON.stringify({ v1: Buffer.alloc(32, 1).toString('base64') }), SECRET_BOX_CURRENT_KEY_VERSION: 'v1' } as WorkerEnvironment
+const config = { SUPABASE_URL: 'https://db.example', SUPABASE_SERVICE_ROLE_KEY: 'service', DATABASE_URL: 'postgresql://postgres:secret@db.example:5432/postgres', HATCHET_CLIENT_TOKEN: 'token', SECRET_BOX_KEYS: JSON.stringify({ v1: Buffer.alloc(32, 1).toString('base64') }), SECRET_BOX_CURRENT_KEY_VERSION: 'v1' } as WorkerEnvironment
 const post = { verifiedFacts: ['topic: Passen'], missingFacts: [], headline: 'Passen', caption: 'Passen', shortCaption: 'Passen', callToAction: '', hashtags: [], altText: 'Passen', templateId: 'v1', safetyFlags: [], generatedClaims: [{ sourceId: 'fact:topic', text: 'topic: Passen' }], variants: [] }
 
 function repository(): TextGenerationRepository {

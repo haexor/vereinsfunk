@@ -1,8 +1,21 @@
 import { parseApiEnvironment } from '@vereinsfunk/config'
+import { runPendingMigrations } from '@vereinsfunk/db-migrate'
 import { buildApp } from './app.js'
 import { createServiceClient } from './supabase.js'
 
 const environment = parseApiEnvironment()
+
+// Plan 036: laeuft vor jeder Route-Registrierung und jeder Abfrage -- Watchtower tauscht dieses
+// Image unabhaengig von jedem Ansible-Lauf aus, ein Hook direkt im Prozessstart ist der einzige
+// Punkt, den dieses Rollout-Modell zuverlaessig trifft. DATABASE_URL ist in Produktion Pflicht
+// (packages/config), lokal optional -- ohne sie ueberspringt der Hook sich selbst, mit ihr laeuft
+// er identisch zu Produktion (siehe .env.example). Ein Fehler hier wird bewusst NICHT abgefangen:
+// anders als der bootstrap_platform_admin-Aufruf unten (der einen fehlenden auth.users-Eintrag
+// tolerieren darf) muss ein Migrationsfehler den Start verweigern, nicht still weiterlaufen.
+if (environment.DATABASE_URL) {
+  await runPendingMigrations(environment.DATABASE_URL, { log: (message) => console.log(message) })
+}
+
 const app = await buildApp()
 
 // Bootstrap ist idempotent (siehe bootstrap_platform_admin) -- ein fehlender auth.users-

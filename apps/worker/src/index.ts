@@ -1,4 +1,5 @@
 import { parseWorkerEnvironment } from '@vereinsfunk/config'
+import { runPendingMigrations } from '@vereinsfunk/db-migrate'
 import { createLogger } from '@vereinsfunk/observability'
 import { WorkflowOutboxDispatcher } from '@vereinsfunk/orchestration'
 import { createGenerationRecoveryRepository, createTextGenerationRepository, createWorkflowExecutionRepository, createWorkflowOutboxRepository } from './context.js'
@@ -55,6 +56,11 @@ process.once('SIGTERM', () => { void shutdown('SIGTERM') })
 
 async function main(): Promise<void> {
   const config = parseWorkerEnvironment()
+  // Plan 036: laeuft vor jeder Repository-/Client-Erstellung, aus demselben Grund wie der
+  // identische Hook in apps/api/src/server.ts. Ein Fehler wirft hier unveraendert bis zum
+  // bestehenden startup.catch(...) unten durch -- derselbe harte Fehlschlag-Pfad, den ein
+  // fehlerhaftes parseWorkerEnvironment() schon heute ausloest.
+  await runPendingMigrations(config.DATABASE_URL, { log: (message) => logger.info(message) })
   const runs = createWorkflowExecutionRepository(config)
   const textGeneration = new TextGenerationExecutor(config, createTextGenerationRepository(config))
   const executor: ProductWorkflowExecutor = {
