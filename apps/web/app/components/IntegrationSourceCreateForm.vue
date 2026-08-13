@@ -3,14 +3,15 @@ type MappingRow = { column: string; field: string }
 type MappingTarget = { value: string; label: string }
 
 defineProps<{
-  form: { transport: 'file' | 'ical'; providerKey: string; displayName: string; departmentId: string; endpointUrl: string; lossThresholdPercent: string }
-  mappingRows: MappingRow[]
   departments: ReadonlyArray<{ id: string; name: string }>
   canManageOrgWide: boolean
   submitting: boolean
   error: string
   mappingTargetsFor: (departmentId: string | null) => MappingTarget[]
 }>()
+
+const form = defineModel<{ transport: 'file' | 'ical'; providerKey: string; displayName: string; departmentId: string; endpointUrl: string; lossThresholdPercent: string }>('form', { required: true })
+const mappingRows = defineModel<MappingRow[]>('mappingRows', { required: true })
 
 const emit = defineEmits<{ submit: []; addRow: []; removeRow: [index: number] }>()
 </script>

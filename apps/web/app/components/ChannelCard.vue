@@ -7,14 +7,15 @@ const props = defineProps<{
   busy: boolean
   canManage: boolean
   departmentName: (departmentId: string | null) => string
-  purposeDraft: Record<string, string>
-  editorialImprintUrlDraft: Record<string, string>
-  editorialPrivacyUrlDraft: Record<string, string>
-  editorialResponsibleProfileIdDraft: Record<string, string>
-  editorialResponsibleNoteDraft: Record<string, string>
   editorialSaving: boolean
   editorialError: string | undefined
 }>()
+
+const purposeDraft = defineModel<string>('purposeDraft', { required: true })
+const editorialImprintUrlDraft = defineModel<string>('editorialImprintUrlDraft', { required: true })
+const editorialPrivacyUrlDraft = defineModel<string>('editorialPrivacyUrlDraft', { required: true })
+const editorialResponsibleProfileIdDraft = defineModel<string>('editorialResponsibleProfileIdDraft', { required: true })
+const editorialResponsibleNoteDraft = defineModel<string>('editorialResponsibleNoteDraft', { required: true })
 
 const emit = defineEmits<{
   verify: []
@@ -56,17 +57,17 @@ function tokenExpiryLabel(): string | null {
 
     <template v-if="canManage">
       <div class="mt-4 flex flex-wrap items-center gap-2">
-        <input v-model="purposeDraft[channel.id]" placeholder="Zweck, z. B. Hauptkanal" class="focus-ring flex-1 rounded-lg border border-[#dfe0d9] p-2 text-xs" @blur="emit('savePurpose')" @keyup.enter="emit('savePurpose')" />
+        <input v-model="purposeDraft" placeholder="Zweck, z. B. Hauptkanal" class="focus-ring flex-1 rounded-lg border border-[#dfe0d9] p-2 text-xs" @blur="emit('savePurpose')" @keyup.enter="emit('savePurpose')" />
         <button type="button" :disabled="busy" class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-2 text-[11px] font-semibold disabled:opacity-60" @click="emit('verify')">Verbindung prüfen</button>
         <button type="button" :disabled="busy || channel.status === 'disconnected'" class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-2 text-[11px] font-semibold text-amber-800 disabled:opacity-60" @click="emit('disconnect')">Trennen</button>
       </div>
       <div class="mt-4 border-t border-[#e8e9e2] pt-4">
         <p class="mb-2 text-[11px] font-semibold text-[#7b827d]">Presserechtliche Pflichtangaben</p>
         <div class="grid gap-2 sm:grid-cols-2">
-          <label><span class="mb-1 block text-[11px] font-semibold">Impressum-URL</span><input v-model="editorialImprintUrlDraft[channel.id]" type="url" placeholder="https://…" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" /></label>
-          <label><span class="mb-1 block text-[11px] font-semibold">Datenschutz-URL</span><input v-model="editorialPrivacyUrlDraft[channel.id]" type="url" placeholder="https://…" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" /></label>
-          <label><span class="mb-1 block text-[11px] font-semibold">Redaktionell verantwortliche Person (§ 18 MStV)</span><select v-model="editorialResponsibleProfileIdDraft[channel.id]" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs"><option value="">Keine benannt</option><option v-for="member in members" :key="member.userId" :value="member.userId">{{ member.displayName }}</option></select></label>
-          <label><span class="mb-1 block text-[11px] font-semibold">Notiz</span><input v-model="editorialResponsibleNoteDraft[channel.id]" maxlength="500" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" /></label>
+          <label><span class="mb-1 block text-[11px] font-semibold">Impressum-URL</span><input v-model="editorialImprintUrlDraft" type="url" placeholder="https://…" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" /></label>
+          <label><span class="mb-1 block text-[11px] font-semibold">Datenschutz-URL</span><input v-model="editorialPrivacyUrlDraft" type="url" placeholder="https://…" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" /></label>
+          <label><span class="mb-1 block text-[11px] font-semibold">Redaktionell verantwortliche Person (§ 18 MStV)</span><select v-model="editorialResponsibleProfileIdDraft" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs"><option value="">Keine benannt</option><option v-for="member in members" :key="member.userId" :value="member.userId">{{ member.displayName }}</option></select></label>
+          <label><span class="mb-1 block text-[11px] font-semibold">Notiz</span><input v-model="editorialResponsibleNoteDraft" maxlength="500" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" /></label>
         </div>
         <p v-if="editorialError" class="mt-2 text-[11px] text-amber-800">{{ editorialError }}</p>
         <button type="button" :disabled="editorialSaving" class="focus-ring mt-2 rounded-lg border border-[#dfe0d9] px-3 py-2 text-[11px] font-semibold disabled:opacity-60" @click="emit('saveEditorial')">{{ editorialSaving ? 'Wird gespeichert …' : 'Pflichtangaben speichern' }}</button>

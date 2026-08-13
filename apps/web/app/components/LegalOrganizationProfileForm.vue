@@ -4,15 +4,16 @@ import type { Member, OrganizationProfile } from '@vereinsfunk/contracts'
 defineProps<{
   organizationId: string | null
   members: Member[]
-  profileDraft: {
-    legalName: string; legalForm: '' | NonNullable<OrganizationProfile['legalForm']>; registerCourt: string; registerNumber: string
-    street: string; houseNumber: string; postalCode: string; city: string; countryCode: string; contactEmail: string
-    contactPhone: string; websiteUrl: string; foundedYear: string; responsiblePersonProfileId: string; imprintPublished: boolean
-  }
   legalForms: { id: NonNullable<OrganizationProfile['legalForm']>; label: string }[]
   saving: boolean
   error: string
 }>()
+
+const profileDraft = defineModel<{
+  legalName: string; legalForm: '' | NonNullable<OrganizationProfile['legalForm']>; registerCourt: string; registerNumber: string
+  street: string; houseNumber: string; postalCode: string; city: string; countryCode: string; contactEmail: string
+  contactPhone: string; websiteUrl: string; foundedYear: string; responsiblePersonProfileId: string; imprintPublished: boolean
+}>('profileDraft', { required: true })
 
 const emit = defineEmits<{ save: [] }>()
 </script>

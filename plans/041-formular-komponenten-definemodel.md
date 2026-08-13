@@ -12,6 +12,7 @@
 - **Depends on**: none
 - **Category**: refactor, code quality
 - **Planned at**: commit `28dce97c`, 2026-08-13
+- **Implementation note (2026-08-14)**: Schritt 1 (`StyleProfileEditorForm.vue`) ist blockiert — die Datei existiert nur auf dem noch offenen PR #67 (`worktree-plan-040-pr3-frontend`), nicht auf `main`, gegen das dieser Plan geschrieben wurde. Umsetzung startet deshalb mit Schritt 2; Schritt 1 folgt in einem eigenen Nachtrag, sobald PR #67 gemergt ist.
 
 ## Why this matters
 
