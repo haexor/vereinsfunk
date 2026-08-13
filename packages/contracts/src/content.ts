@@ -62,15 +62,33 @@ export const AttachmentUploadMetadataSchema = z.discriminatedUnion('kind', [Imag
 // intent anyway. additionalInstructions stays bounded and low-priority in prompt assembly so it
 // can never override grounding/safety/platform rules (see ADR-010), independent of this decision.
 const StyleProfileInstructionSchema = z.string().trim().max(1_000)
+// Plan 040: replaces the earlier dial-shaped rules (sentenceLength/energy/humour/formality/
+// perspective/bannedPhrases) with a character model that is easier to fill in for a named
+// persona ("im Stil von Zlatan Ibrahimović") than an abstract 1-5 energy scale. bannedPhrases is
+// retired without replacement -- avoidRules (below) already covers the same "don't say this"
+// concept, so the two no longer overlap.
 export const StyleProfileRulesSchema = z.object({
-  sentenceLength: z.enum(['short', 'mixed', 'long']),
-  energy: z.int().min(1).max(5),
-  humour: z.enum(['none', 'light']),
-  formality: z.enum(['casual', 'balanced', 'formal']),
-  perspective: z.enum(['we', 'club', 'you']),
-  bannedPhrases: z.array(z.string().trim().min(1).max(120)).max(30),
+  toneTags: z.array(z.string().trim().min(1).max(40)).max(10).default([]),
+  catchphrases: z.array(z.string().trim().min(1).max(40)).max(20).default([]),
+  exampleInput: z.string().trim().max(300).default(''),
+  exampleOutput: z.string().trim().max(1_500).default(''),
   additionalInstructions: StyleProfileInstructionSchema.default(''),
 }).strict()
+// Shared bound for avoidRules/doRules, both database-backed columns with the identical
+// text_array_elements_within_length(value, 160)/cardinality <= 30 CHECK (see
+// 2026081003_text_workshop_foundation.sql and 2026081304_style_profile_character_model.sql).
+const StyleProfileRuleListSchema = z.array(z.string().trim().min(1).max(160)).max(30)
+// The shape composition_sessions.style_profile_snapshot/post_generation_provenance.
+// style_profile_snapshot are frozen into (apps/api/src/routes/content.ts) and read back out of
+// (apps/worker/src/context.ts, apps/worker/src/textGeneration.ts) -- one shared schema instead of
+// two independently maintained copies of the same shape.
+export const StyleProfileSnapshotSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  styleRules: StyleProfileRulesSchema,
+  avoidRules: z.array(z.string()),
+  doRules: z.array(z.string()),
+})
 export const SystemStyleProfileSlugSchema = z.enum([
   'klar_erklaerend', 'warm_gemeinschaftlich', 'lebendig_sportlich', 'leicht_humorvoll', 'feierlich_wertschaetzend',
 ])
@@ -89,7 +107,8 @@ export const CustomStyleProfileSchema = StyleProfileScopeSchema.extend({
   kind: z.literal('custom'),
   description: z.string().trim().min(1).max(500),
   styleRules: StyleProfileRulesSchema,
-  avoidRules: z.array(z.string().trim().min(1).max(160)).max(30),
+  avoidRules: StyleProfileRuleListSchema,
+  doRules: StyleProfileRuleListSchema,
   isActive: z.boolean(),
   createdBy: UuidSchema,
   createdAt: z.iso.datetime({ offset: true }),
@@ -103,7 +122,8 @@ export const CreateCustomStyleProfileRequestSchema = z.object({
   name: z.string().trim().min(1).max(80),
   description: z.string().trim().min(1).max(500),
   styleRules: StyleProfileRulesSchema,
-  avoidRules: z.array(z.string().trim().min(1).max(160)).max(30),
+  avoidRules: StyleProfileRuleListSchema,
+  doRules: StyleProfileRuleListSchema,
 }).superRefine((profile, context) => {
   if (profile.teamId && !profile.departmentId) context.addIssue({ code: 'custom', message: 'teamId requires departmentId' })
   if ((SystemStyleProfileSlugSchema.options as readonly string[]).includes(profile.slug)) {
@@ -119,7 +139,8 @@ export const PlatformStylePersonaSchema = z.object({
   name: z.string().trim().min(1).max(80),
   description: z.string().trim().min(1).max(500),
   styleRules: StyleProfileRulesSchema,
-  avoidRules: z.array(z.string().trim().min(1).max(160)).max(30),
+  avoidRules: StyleProfileRuleListSchema,
+  doRules: StyleProfileRuleListSchema,
   isActive: z.boolean(),
   createdBy: UuidSchema,
   createdAt: z.iso.datetime({ offset: true }),
@@ -130,7 +151,8 @@ export const CreatePlatformStylePersonaRequestSchema = z.object({
   name: z.string().trim().min(1).max(80),
   description: z.string().trim().min(1).max(500),
   styleRules: StyleProfileRulesSchema,
-  avoidRules: z.array(z.string().trim().min(1).max(160)).max(30),
+  avoidRules: StyleProfileRuleListSchema,
+  doRules: StyleProfileRuleListSchema,
 }).superRefine((persona, context) => {
   if ((SystemStyleProfileSlugSchema.options as readonly string[]).includes(persona.slug)) {
     context.addIssue({ code: 'custom', message: 'System style profile slugs are reserved' })
@@ -141,7 +163,8 @@ export const UpdatePlatformStylePersonaRequestSchema = z.object({
   name: z.string().trim().min(1).max(80).optional(),
   description: z.string().trim().min(1).max(500).optional(),
   styleRules: StyleProfileRulesSchema.optional(),
-  avoidRules: z.array(z.string().trim().min(1).max(160)).max(30).optional(),
+  avoidRules: StyleProfileRuleListSchema.optional(),
+  doRules: StyleProfileRuleListSchema.optional(),
   isActive: z.boolean().optional(),
 }).superRefine((persona, context) => {
   if (persona.slug !== undefined && (SystemStyleProfileSlugSchema.options as readonly string[]).includes(persona.slug)) {

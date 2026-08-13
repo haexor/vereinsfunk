@@ -3,8 +3,8 @@ import { chain, DEPARTMENT_ID, grantingRoleProvider, ORGANIZATION_ID, signAccess
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
 
-const STYLE_RULES = { sentenceLength: 'short', energy: 4, humour: 'light', formality: 'casual', perspective: 'we', bannedPhrases: [], additionalInstructions: '' }
-const PERSONA_ROW = { id: '3b000000-0000-4000-8000-000000000001', slug: 'kapitaen-klar', name: 'Kapitän Klar', description: 'Direkt und anfeuernd.', style_rules: STYLE_RULES, avoid_rules: ['Ironie'] }
+const STYLE_RULES = { toneTags: ['direkt', 'anfeuernd'], catchphrases: [], exampleInput: '', exampleOutput: '', additionalInstructions: '' }
+const PERSONA_ROW = { id: '3b000000-0000-4000-8000-000000000001', slug: 'kapitaen-klar', name: 'Kapitän Klar', description: 'Direkt und anfeuernd.', style_rules: STYLE_RULES, avoid_rules: ['Ironie'], do_rules: [] }
 
 describe('GET /v1/content-style-profiles', () => {
   it('merges hardcoded system modes, platform personas, and custom club profiles with the correct kind', async () => {
@@ -12,7 +12,7 @@ describe('GET /v1/content-style-profiles', () => {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'content_style_profiles') return chain({ data: [{ id: 'c0000000-0000-4000-8000-000000000001', slug: 'unser-ton', name: 'Unser Ton', description: 'Warm.', style_rules: STYLE_RULES, avoid_rules: [], is_active: true }], error: null })
+            if (table === 'content_style_profiles') return chain({ data: [{ id: 'c0000000-0000-4000-8000-000000000001', slug: 'unser-ton', name: 'Unser Ton', description: 'Warm.', style_rules: STYLE_RULES, avoid_rules: [], do_rules: [], is_active: true }], error: null })
             if (table === 'platform_style_personas') return chain({ data: [PERSONA_ROW], error: null })
             throw new Error(`unexpected table in test fake: ${table}`)
           },

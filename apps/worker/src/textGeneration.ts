@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { createSecretBox } from '@vereinsfunk/secrets'
 import { AnthropicStructuredContentGenerator, ContentGenerationError, OpenAiCompatibleStructuredContentGenerator, TEXT_PROMPT_TEMPLATE_VERSION, createTextGroundedContentBrief, type StructuredContentGenerator } from '@vereinsfunk/content-engine'
-import { SourceMaterialSchema, StyleProfileRulesSchema, UuidSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
+import { SourceMaterialSchema, StyleProfileSnapshotSchema, UuidSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
 import { WorkflowExecutionError } from './workflows.js'
 
@@ -65,12 +65,12 @@ export class TextGenerationExecutor {
       const provider = await this.repository.loadActiveTextProvider()
       const generator = this.generator ?? GENERATORS[provider.protocol]
       if (!generator || !provider.structured_output_required) throw new WorkflowExecutionError('unsupported_provider_configuration', false)
-      const style = session.style_profile_snapshot as { name?: unknown; description?: unknown; styleRules?: unknown; avoidRules?: unknown }
+      const style = StyleProfileSnapshotSchema.parse(session.style_profile_snapshot)
       const brief = createTextGroundedContentBrief({ presetSlug: session.preset_slug, communicationGoal: session.communication_goal, sourceMaterial: SourceMaterialSchema.parse(session.source_material) })
       const apiKey = parseSecretBox(this.config).open(ciphertextBuffer(provider.api_key_ciphertext), provider.key_version, provider.id)
       const post = await generator.generateText({
         brief,
-        styleProfile: { name: String(style.name ?? 'Systemstil'), description: String(style.description ?? ''), styleRules: StyleProfileRulesSchema.parse(style.styleRules), avoidRules: Array.isArray(style.avoidRules) ? style.avoidRules.map(String) : [] },
+        styleProfile: { name: style.name, description: style.description, styleRules: style.styleRules, avoidRules: style.avoidRules, doRules: style.doRules },
         ...(candidate.revision_instruction ? { revisionInstruction: candidate.revision_instruction } : {}),
         model: provider.model, baseUrl: provider.base_url, apiKey, temperature: provider.temperature, maxOutputTokens: provider.max_output_tokens,
       })

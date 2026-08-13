@@ -23,12 +23,12 @@ import { createAuditRecorder, fetchMemberTrust, resolveScopedEffectiveConfig, to
 
 // Plan 033 text-only workshop. Diese Routen rufen kein LLM auf: sie schreiben Sitzung und einen
 // reinen ID-Umschlag ueber eine service-only RPC, die der Worker spaeter ausfuehrt.
-const systemStyleProfiles: Record<string, { name: string; description: string; styleRules: StyleProfileRules; avoidRules: string[] }> = {
-  klar_erklaerend: { name: 'Klar erklärend', description: 'Sachlich, verständlich und direkt.', styleRules: { sentenceLength: 'short', energy: 2, humour: 'none', formality: 'balanced', perspective: 'club', bannedPhrases: [], additionalInstructions: '' }, avoidRules: ['Superlative ohne Beleg'] },
-  warm_gemeinschaftlich: { name: 'Warm gemeinschaftlich', description: 'Einladend und verbunden.', styleRules: { sentenceLength: 'mixed', energy: 3, humour: 'none', formality: 'casual', perspective: 'we', bannedPhrases: [], additionalInstructions: '' }, avoidRules: [] },
-  lebendig_sportlich: { name: 'Lebendig sportlich', description: 'Aktiv und motivierend.', styleRules: { sentenceLength: 'short', energy: 4, humour: 'light', formality: 'casual', perspective: 'we', bannedPhrases: [], additionalInstructions: '' }, avoidRules: [] },
-  leicht_humorvoll: { name: 'Leicht humorvoll', description: 'Freundlich mit zurückhaltendem Humor.', styleRules: { sentenceLength: 'mixed', energy: 3, humour: 'light', formality: 'casual', perspective: 'we', bannedPhrases: [], additionalInstructions: '' }, avoidRules: ['Ironie auf Kosten Einzelner'] },
-  feierlich_wertschaetzend: { name: 'Feierlich wertschätzend', description: 'Dankbar und respektvoll.', styleRules: { sentenceLength: 'mixed', energy: 3, humour: 'none', formality: 'formal', perspective: 'club', bannedPhrases: [], additionalInstructions: '' }, avoidRules: [] },
+const systemStyleProfiles: Record<string, { name: string; description: string; styleRules: StyleProfileRules; avoidRules: string[]; doRules: string[] }> = {
+  klar_erklaerend: { name: 'Klar erklärend', description: 'Sachlich, verständlich und direkt.', styleRules: { toneTags: ['klar', 'sachlich'], catchphrases: [], exampleInput: '3:1 Sieg im Lokalderby, Tore: Müller, Meier, 500 Zuschauer', exampleOutput: '3:1 gegen den Lokalrivalen. Müller und Meier trafen vor 500 Zuschauern – ein klarer Auftritt unserer Mannschaft.', additionalInstructions: '' }, avoidRules: ['Superlative ohne Beleg'], doRules: [] },
+  warm_gemeinschaftlich: { name: 'Warm gemeinschaftlich', description: 'Einladend und verbunden.', styleRules: { toneTags: ['warm', 'gemeinschaftlich', 'einladend'], catchphrases: ['unsere Gemeinschaft'], exampleInput: 'Vereinsfest am Samstag, alle Abteilungen dabei', exampleOutput: 'Am Samstag feiern wir gemeinsam – alle Abteilungen unter einem Dach. Schön, dass wir das als Gemeinschaft erleben dürfen.', additionalInstructions: '' }, avoidRules: [], doRules: ['Zusammenhalt/Gemeinschaft erwähnen'] },
+  lebendig_sportlich: { name: 'Lebendig sportlich', description: 'Aktiv und motivierend.', styleRules: { toneTags: ['lebendig', 'sportlich', 'motivierend'], catchphrases: ['Vollgas'], exampleInput: 'Sieg im Auswärtsspiel, 2:0, starke zweite Halbzeit', exampleOutput: '2:0 auswärts! Nach der Pause volle Power – so geht Einsatz.', additionalInstructions: '' }, avoidRules: [], doRules: ['Energie/Tempo im Text spürbar machen'] },
+  leicht_humorvoll: { name: 'Leicht humorvoll', description: 'Freundlich mit zurückhaltendem Humor.', styleRules: { toneTags: ['humorvoll', 'freundlich', 'locker'], catchphrases: [], exampleInput: 'Trainingsauftakt nach der Sommerpause, alle etwas außer Form', exampleOutput: 'Nach der Sommerpause ächzten die Beine beim ersten Sprint – aber der Spaß war sofort wieder da.', additionalInstructions: '' }, avoidRules: ['Ironie auf Kosten Einzelner'], doRules: [] },
+  feierlich_wertschaetzend: { name: 'Feierlich wertschätzend', description: 'Dankbar und respektvoll.', styleRules: { toneTags: ['feierlich', 'dankbar', 'respektvoll'], catchphrases: [], exampleInput: '25 Jahre Vereinsmitgliedschaft von Herrn Schmidt', exampleOutput: 'Seit 25 Jahren trägt Herr Schmidt unseren Verein mit – dafür sagen wir von Herzen Danke.', additionalInstructions: '' }, avoidRules: [], doRules: ['Dank/Anerkennung aussprechen'] },
 }
 
 export function registerContentRoutes(app: FastifyInstance, context: ApiRouteContext): void {
@@ -268,16 +268,16 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     const scope = TextWorkshopScopeSchema.parse(request.query)
     if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(scope.organizationId, scope.departmentId, scope.teamId ?? null)))) return
     const client = supabaseClients.forUser(request.auth!.accessToken)
-    const rows = await client.from('content_style_profiles').select('id, slug, name, description, style_rules, avoid_rules, department_id, team_id, created_by, created_at, updated_at, is_active').eq('organization_id', scope.organizationId).eq('is_active', true)
+    const rows = await client.from('content_style_profiles').select('id, slug, name, description, style_rules, avoid_rules, do_rules, department_id, team_id, created_by, created_at, updated_at, is_active').eq('organization_id', scope.organizationId).eq('is_active', true)
     if (rows.error) throw rows.error
     // Plan 037: platform-admin-curated personas are the third, global source alongside the
     // hardcoded system modes and each organization's own custom profiles -- no organization_id
     // filter, since platform_style_personas has none.
-    const personaRows = await client.from('platform_style_personas').select('id, slug, name, description, style_rules, avoid_rules').eq('is_active', true)
+    const personaRows = await client.from('platform_style_personas').select('id, slug, name, description, style_rules, avoid_rules, do_rules').eq('is_active', true)
     if (personaRows.error) throw personaRows.error
     const systems = Object.entries(systemStyleProfiles).map(([slug, profile]) => ({ id: null, slug, kind: 'system', ...profile, isActive: true }))
-    const personas = personaRows.data.map((row) => ({ id: row.id, slug: row.slug, kind: 'persona', name: row.name, description: row.description, styleRules: StyleProfileRulesSchema.parse(row.style_rules), avoidRules: row.avoid_rules, isActive: true }))
-    const customs = rows.data.map((row) => ({ id: row.id, slug: row.slug, kind: 'custom', name: row.name, description: row.description, styleRules: StyleProfileRulesSchema.parse(row.style_rules), avoidRules: row.avoid_rules, isActive: row.is_active }))
+    const personas = personaRows.data.map((row) => ({ id: row.id, slug: row.slug, kind: 'persona', name: row.name, description: row.description, styleRules: StyleProfileRulesSchema.parse(row.style_rules), avoidRules: row.avoid_rules, doRules: row.do_rules, isActive: true }))
+    const customs = rows.data.map((row) => ({ id: row.id, slug: row.slug, kind: 'custom', name: row.name, description: row.description, styleRules: StyleProfileRulesSchema.parse(row.style_rules), avoidRules: row.avoid_rules, doRules: row.do_rules, isActive: row.is_active }))
     return reply.send({ profiles: [...systems, ...personas, ...customs] })
   })
 
@@ -286,7 +286,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     const input = CreateCustomStyleProfileRequestSchema.parse(request.body)
     if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(input.organizationId, input.departmentId ?? null, input.teamId ?? null)))) return
     const service = supabaseClients.forService()
-    const inserted = await service.from('content_style_profiles').insert({ organization_id: input.organizationId, department_id: input.departmentId ?? null, team_id: input.teamId ?? null, slug: input.slug, name: input.name, kind: 'custom', description: input.description, style_rules: input.styleRules, avoid_rules: input.avoidRules, created_by: request.auth!.userId }).select('id').single()
+    const inserted = await service.from('content_style_profiles').insert({ organization_id: input.organizationId, department_id: input.departmentId ?? null, team_id: input.teamId ?? null, slug: input.slug, name: input.name, kind: 'custom', description: input.description, style_rules: input.styleRules, avoid_rules: input.avoidRules, do_rules: input.doRules, created_by: request.auth!.userId }).select('id').single()
     if (inserted.error) throw inserted.error
     await recordAuditEvent(request, { organizationId: input.organizationId, action: 'content_style_profile.created', entityType: 'content_style_profile', entityId: inserted.data.id as string, metadata: { scope: input.teamId ? 'team' : input.departmentId ? 'department' : 'organization' } })
     return reply.code(201).send({ id: inserted.data.id })
@@ -304,23 +304,23 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     let styleSnapshot: Record<string, unknown>
     const styleProfileId: string | null = input.styleProfileId ?? null
     if (styleProfileId) {
-      const row = await client.from('content_style_profiles').select('id, name, description, style_rules, avoid_rules, department_id, team_id').eq('id', styleProfileId).eq('organization_id', input.organizationId).eq('is_active', true).maybeSingle()
+      const row = await client.from('content_style_profiles').select('id, name, description, style_rules, avoid_rules, do_rules, department_id, team_id').eq('id', styleProfileId).eq('organization_id', input.organizationId).eq('is_active', true).maybeSingle()
       if (row.error) throw row.error
       if (!row.data) return reply.code(404).send({ error: 'style_profile_not_found' })
       if ((row.data.department_id !== null && row.data.department_id !== input.departmentId) || (row.data.team_id !== null && row.data.team_id !== (input.teamId ?? null))) {
         return reply.code(404).send({ error: 'style_profile_not_found' })
       }
-      styleSnapshot = { name: row.data.name, description: row.data.description, styleRules: StyleProfileRulesSchema.parse(row.data.style_rules), avoidRules: row.data.avoid_rules }
+      styleSnapshot = { name: row.data.name, description: row.data.description, styleRules: StyleProfileRulesSchema.parse(row.data.style_rules), avoidRules: row.data.avoid_rules, doRules: row.data.do_rules }
     } else if (input.personaSlug) {
       // Plan 037: a platform persona has no organization_id/department_id/team_id to scope
       // against -- unlike styleProfileId above, only is_active gates it.
-      const persona = await client.from('platform_style_personas').select('name, description, style_rules, avoid_rules').eq('slug', input.personaSlug).eq('is_active', true).maybeSingle()
+      const persona = await client.from('platform_style_personas').select('name, description, style_rules, avoid_rules, do_rules').eq('slug', input.personaSlug).eq('is_active', true).maybeSingle()
       if (persona.error) throw persona.error
       if (!persona.data) return reply.code(404).send({ error: 'persona_not_found' })
-      styleSnapshot = { name: persona.data.name, description: persona.data.description, styleRules: StyleProfileRulesSchema.parse(persona.data.style_rules), avoidRules: persona.data.avoid_rules, slug: input.personaSlug }
+      styleSnapshot = { name: persona.data.name, description: persona.data.description, styleRules: StyleProfileRulesSchema.parse(persona.data.style_rules), avoidRules: persona.data.avoid_rules, doRules: persona.data.do_rules, slug: input.personaSlug }
     } else {
       const profile = systemStyleProfiles[input.systemStyleProfileSlug ?? 'klar_erklaerend']!
-      styleSnapshot = { name: profile.name, description: profile.description, styleRules: profile.styleRules, avoidRules: profile.avoidRules, slug: input.systemStyleProfileSlug ?? 'klar_erklaerend' }
+      styleSnapshot = { name: profile.name, description: profile.description, styleRules: profile.styleRules, avoidRules: profile.avoidRules, doRules: profile.doRules, slug: input.systemStyleProfileSlug ?? 'klar_erklaerend' }
     }
     const sourceMaterial = { ...input.sourceMaterial, doNotMention: Array.from(new Set([...input.sourceMaterial.doNotMention, ...config.policies.forbiddenTopics])) }
     const sessionHash = createHash('sha256').update(JSON.stringify({ presetSlug: input.presetSlug, goal: input.communicationGoal, sourceMaterial, styleSnapshot, sourceRevision: input.sourceRevision })).digest('hex')

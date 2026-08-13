@@ -8,12 +8,12 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ApiRouteContext } from './context.js'
 
-const PERSONA_COLUMNS = 'id, slug, name, description, style_rules, avoid_rules, is_active, created_by, created_at, updated_at'
+const PERSONA_COLUMNS = 'id, slug, name, description, style_rules, avoid_rules, do_rules, is_active, created_by, created_at, updated_at'
 
 function mapPersonaRow(row: Record<string, unknown>) {
   return {
     id: row.id, slug: row.slug, name: row.name, description: row.description,
-    styleRules: row.style_rules, avoidRules: row.avoid_rules, isActive: row.is_active,
+    styleRules: row.style_rules, avoidRules: row.avoid_rules, doRules: row.do_rules, isActive: row.is_active,
     createdBy: row.created_by, createdAt: row.created_at, updatedAt: row.updated_at,
   }
 }
@@ -44,7 +44,7 @@ export function registerPlatformPersonaRoutes(app: FastifyInstance, context: Api
       .from('platform_style_personas')
       .insert({
         slug: input.slug, name: input.name, description: input.description,
-        style_rules: input.styleRules, avoid_rules: input.avoidRules, created_by: request.auth!.userId,
+        style_rules: input.styleRules, avoid_rules: input.avoidRules, do_rules: input.doRules, created_by: request.auth!.userId,
       })
       .select(PERSONA_COLUMNS)
       .single()
@@ -64,6 +64,7 @@ export function registerPlatformPersonaRoutes(app: FastifyInstance, context: Api
     if (input.description !== undefined) payload.description = input.description
     if (input.styleRules !== undefined) payload.style_rules = input.styleRules
     if (input.avoidRules !== undefined) payload.avoid_rules = input.avoidRules
+    if (input.doRules !== undefined) payload.do_rules = input.doRules
     if (input.isActive !== undefined) payload.is_active = input.isActive
     const update = await service.from('platform_style_personas').update(payload).eq('id', params.id).select(PERSONA_COLUMNS).maybeSingle()
     if (update.error) throw update.error

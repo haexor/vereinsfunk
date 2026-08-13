@@ -4,7 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
 
 const PERSONA_ID = '3a000000-0000-4000-8000-000000000001'
-const STYLE_RULES = { sentenceLength: 'short', energy: 4, humour: 'light', formality: 'casual', perspective: 'we', bannedPhrases: [], additionalInstructions: '' }
+const STYLE_RULES = { toneTags: ['direkt', 'anfeuernd'], catchphrases: [], exampleInput: '', exampleOutput: '', additionalInstructions: '' }
 
 describe('platform style personas', () => {
   it('rejects a non-platform-admin on every route', async () => {
@@ -12,7 +12,7 @@ describe('platform style personas', () => {
     const token = await signAccessToken(USER_ID)
     const requests = [
       { method: 'GET' as const, url: '/v1/platform-style-personas' },
-      { method: 'POST' as const, url: '/v1/platform-style-personas', payload: { slug: 'kapitaen-klar', name: 'Kapitän Klar', description: 'Direkt.', styleRules: STYLE_RULES, avoidRules: [] } },
+      { method: 'POST' as const, url: '/v1/platform-style-personas', payload: { slug: 'kapitaen-klar', name: 'Kapitän Klar', description: 'Direkt.', styleRules: STYLE_RULES, avoidRules: [], doRules: [] } },
       { method: 'PATCH' as const, url: `/v1/platform-style-personas/${PERSONA_ID}`, payload: { isActive: false } },
       { method: 'DELETE' as const, url: `/v1/platform-style-personas/${PERSONA_ID}` },
     ]
@@ -25,7 +25,7 @@ describe('platform style personas', () => {
   it('runs a create, patch, delete roundtrip for a platform admin', async () => {
     const personaRow = {
       id: PERSONA_ID, slug: 'kapitaen-klar', name: 'Kapitän Klar', description: 'Direkt und anfeuernd.',
-      style_rules: STYLE_RULES, avoid_rules: [], is_active: true, created_by: USER_ID,
+      style_rules: STYLE_RULES, avoid_rules: [], do_rules: [], is_active: true, created_by: USER_ID,
       created_at: '2026-08-13T10:00:00+00:00', updated_at: '2026-08-13T10:00:00+00:00',
     }
     let deleted = false
@@ -48,7 +48,7 @@ describe('platform style personas', () => {
 
     const created = await app.inject({
       method: 'POST', url: '/v1/platform-style-personas', headers: { authorization: `Bearer ${token}` },
-      payload: { slug: 'kapitaen-klar', name: 'Kapitän Klar', description: 'Direkt und anfeuernd.', styleRules: STYLE_RULES, avoidRules: [] },
+      payload: { slug: 'kapitaen-klar', name: 'Kapitän Klar', description: 'Direkt und anfeuernd.', styleRules: STYLE_RULES, avoidRules: [], doRules: [] },
     })
     expect(created.statusCode).toBe(201)
     expect(created.json()).toMatchObject({ id: PERSONA_ID, slug: 'kapitaen-klar', isActive: true })
@@ -70,7 +70,7 @@ describe('platform style personas', () => {
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'POST', url: '/v1/platform-style-personas', headers: { authorization: `Bearer ${token}` },
-      payload: { slug: 'klar_erklaerend', name: 'Duplikat', description: 'Must fail', styleRules: STYLE_RULES, avoidRules: [] },
+      payload: { slug: 'klar_erklaerend', name: 'Duplikat', description: 'Must fail', styleRules: STYLE_RULES, avoidRules: [], doRules: [] },
     })
     expect(response.statusCode).toBe(400)
   })

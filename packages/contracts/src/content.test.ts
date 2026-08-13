@@ -55,9 +55,9 @@ describe('contracts', () => {
 
 describe('text workshop contracts', () => {
   const styleRules = {
-    sentenceLength: 'short' as const, energy: 3, humour: 'light' as const,
-    formality: 'balanced' as const, perspective: 'we' as const,
-    bannedPhrases: ['Unvergesslicher Moment'], additionalInstructions: 'Konkrete Details zuerst.',
+    toneTags: ['warm', 'nah'], catchphrases: ['unsere Gemeinschaft'],
+    exampleInput: 'Sommerfest am Samstag', exampleOutput: 'Am Samstag feiern wir gemeinsam.',
+    additionalInstructions: 'Konkrete Details zuerst.',
   }
 
   it('accepts text/photo/video composition choices but keeps historical reels outside new commands', () => {
@@ -79,7 +79,7 @@ describe('text workshop contracts', () => {
   })
 
   it('permits custom style profiles that name a real person to imitate and bounded revision instructions', () => {
-    const profile = { organizationId: org, departmentId: department, teamId: null, slug: 'unser-ton', name: 'Unser Ton', description: 'Warm und konkret', styleRules, avoidRules: ['Floskeln'] }
+    const profile = { organizationId: org, departmentId: department, teamId: null, slug: 'unser-ton', name: 'Unser Ton', description: 'Warm und konkret', styleRules, avoidRules: ['Floskeln'], doRules: ['Fans erwähnen'] }
     expect(CreateCustomStyleProfileRequestSchema.safeParse(profile).success).toBe(true)
     // Product decision (Plan 032): style profiles may name and imitate a real person -- safety is
     // organisational (role assignment, approval routes), not a keyword filter.
@@ -87,7 +87,7 @@ describe('text workshop contracts', () => {
     expect(CreateCustomStyleProfileRequestSchema.safeParse({ ...profile, description: 'Im Stil von unserem Vorstand' }).success).toBe(true)
     expect(CreateCustomStyleProfileRequestSchema.safeParse({ ...profile, slug: 'klar_erklaerend' }).success).toBe(false)
     // departmentId/teamId may be omitted entirely for an organization-wide profile, not just set to null.
-    const orgWideProfile = { organizationId: org, slug: 'unser-ton', name: 'Unser Ton', description: 'Warm und konkret', styleRules, avoidRules: ['Floskeln'] }
+    const orgWideProfile = { organizationId: org, slug: 'unser-ton', name: 'Unser Ton', description: 'Warm und konkret', styleRules, avoidRules: ['Floskeln'], doRules: ['Fans erwähnen'] }
     expect(CreateCustomStyleProfileRequestSchema.safeParse(orgWideProfile).success).toBe(true)
     // teamId without departmentId must be rejected on both the request schema and the persisted
     // record schema -- CustomStyleProfileSchema extends the checked StyleProfileScopeSchema, and
@@ -100,7 +100,7 @@ describe('text workshop contracts', () => {
   it('keeps the teamId-requires-departmentId scope rule after CustomStyleProfileSchema extends it', () => {
     const record = {
       id: org, organizationId: org, departmentId: department, teamId: team, slug: 'unser-ton', name: 'Unser Ton',
-      kind: 'custom' as const, description: 'Warm und konkret', styleRules, avoidRules: ['Floskeln'],
+      kind: 'custom' as const, description: 'Warm und konkret', styleRules, avoidRules: ['Floskeln'], doRules: ['Fans erwähnen'],
       isActive: true, createdBy: org, createdAt: '2026-08-05T12:34:56.789+00:00', updatedAt: '2026-08-05T12:34:56.789+00:00',
     }
     expect(CustomStyleProfileSchema.safeParse(record).success).toBe(true)
@@ -123,7 +123,7 @@ describe('text workshop contracts', () => {
   })
 
   it('validates the platform persona catalogue and reserves system profile slugs', () => {
-    const persona = { slug: 'kapitaen-klar', name: 'Kapitän Klar', description: 'Direkt und anfeuernd.', styleRules, avoidRules: ['Ironie'] }
+    const persona = { slug: 'kapitaen-klar', name: 'Kapitän Klar', description: 'Direkt und anfeuernd.', styleRules, avoidRules: ['Ironie'], doRules: ['Fans erwähnen'] }
     expect(CreatePlatformStylePersonaRequestSchema.safeParse(persona).success).toBe(true)
     expect(CreatePlatformStylePersonaRequestSchema.safeParse({ ...persona, slug: 'klar_erklaerend' }).success).toBe(false)
     const record = { id: org, ...persona, isActive: true, createdBy: org, createdAt: '2026-08-13T12:00:00+00:00', updatedAt: '2026-08-13T12:00:00+00:00' }

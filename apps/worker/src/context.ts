@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { z } from 'zod'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
-import { CommunicationGoalSchema, SourceMaterialSchema, StyleProfileRulesSchema, UuidSchema, WorkflowNameSchema, WorkflowPayloadSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
+import { CommunicationGoalSchema, SourceMaterialSchema, StyleProfileSnapshotSchema, UuidSchema, WorkflowNameSchema, WorkflowPayloadSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
 import type { WorkflowOutboxRepository } from '@vereinsfunk/orchestration'
 import { WorkflowExecutionError, type WorkflowExecutionRepository, type WorkflowRunAcquireResult } from './workflows.js'
 import type { CandidateRow, ProviderRow, SessionRow, TextGenerationRepository } from './textGeneration.js'
@@ -10,7 +10,7 @@ import type { GenerationRecoveryRepository, RecoverableSessionRow, StalledCandid
 const SessionRowSchema: z.ZodType<SessionRow> = z.object({
   id: UuidSchema, organization_id: UuidSchema, department_id: UuidSchema, team_id: UuidSchema.nullable(), preset_slug: z.string().trim().min(1),
   communication_goal: CommunicationGoalSchema, source_material: SourceMaterialSchema,
-  style_profile_snapshot: z.object({ name: z.string(), description: z.string(), styleRules: StyleProfileRulesSchema, avoidRules: z.array(z.string()) }),
+  style_profile_snapshot: StyleProfileSnapshotSchema,
 })
 const CandidateRowSchema: z.ZodType<CandidateRow> = z.object({ id: UuidSchema, status: z.literal('generating'), revision_instruction: z.string().nullable(), lease_token: UuidSchema })
 const ProviderRowSchema: z.ZodType<ProviderRow> = z.object({
