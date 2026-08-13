@@ -22,7 +22,10 @@ app.post('/v1/organizations/:orgId/departments', async (request, reply) => {
   if (!(await requirePermission(request, reply, 'department.manage', { organizationId: params.orgId }))) return
   const client = supabaseClients.forUser(request.auth!.accessToken)
   const rpc = await client.rpc('create_department', { target_organization_id: params.orgId, department_name: input.name })
-  if (rpc.error) throw rpc.error
+  if (rpc.error) {
+    if (rpc.error.message.includes('structure limit reached')) return reply.code(409).send({ error: 'structure_limit_reached', correlationId: request.id })
+    throw rpc.error
+  }
   const department = await client.from('departments').select('id, organization_id, name, slug, archived_at, created_at').eq('id', rpc.data as string).single()
   if (department.error) throw department.error
   // audit_events ist append-only und wird ausschliesslich privilegiert beschrieben ("Inserts
@@ -117,7 +120,10 @@ app.post('/v1/departments/:id/teams', async (request, reply) => {
     .insert({ organization_id: department.data.organization_id, department_id: params.id, name: input.name })
     .select('id, organization_id, department_id, name, age_group, competition, source_id, archived_at, created_at')
     .single()
-  if (insert.error) throw insert.error
+  if (insert.error) {
+    if (insert.error.message.includes('structure limit reached')) return reply.code(409).send({ error: 'structure_limit_reached', correlationId: request.id })
+    throw insert.error
+  }
   const audit = await supabaseClients.forService().from('audit_events').insert({
     organization_id: department.data.organization_id,
     actor_user_id: request.auth!.userId,

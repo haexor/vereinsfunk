@@ -25,6 +25,12 @@ export function registerPublishingRoutes(app: FastifyInstance, context: ApiRoute
       if (rpc.error.message.includes('not_found')) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
       if (rpc.error.message.includes('invalid_status')) return reply.code(409).send({ error: 'invalid_status', correlationId: request.id })
       if (rpc.error.message.includes('channel_not_allowed')) return reply.code(422).send({ error: 'channel_not_allowed', correlationId: request.id })
+      // Plan 021: beide vor dem bestehenden quota_exceeded-Zweig, weil "content_quota_exceeded"
+      // die Teilzeichenkette "quota_exceeded" selbst enthaelt -- in der bisherigen Reihenfolge
+      // waere der neue Fehler faelschlich als der alte, vereinsweite channel_quotas-Fehler
+      // gemeldet worden.
+      if (rpc.error.message.includes('content_quota_exceeded')) return reply.code(409).send({ error: 'content_quota_exceeded', detail: rpc.error.message, correlationId: request.id })
+      if (rpc.error.message.includes('content_duration_exceeded')) return reply.code(409).send({ error: 'content_duration_exceeded', detail: rpc.error.message, correlationId: request.id })
       if (rpc.error.message.includes('quota_exceeded')) return reply.code(409).send({ error: 'quota_exceeded', detail: rpc.error.message, correlationId: request.id })
       // Paket 002: schedule_publication wirft 'media_gate_blocked: <blocker>,<blocker>'. Ohne diese
       // Zeile faellt genau der neue Gate-Fehler in throw rpc.error -- der Aufrufer bekaeme 500

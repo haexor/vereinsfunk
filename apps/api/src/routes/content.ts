@@ -406,6 +406,25 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (!(await requireAuth(request, reply))) return
     const input = UploadInitiateSchema.parse(request.body); const assetId = randomUUID()
     if (!(await requirePermission(request, reply, 'post.create', { organizationId: input.organizationId, departmentId: input.departmentId }))) return
+    const service = supabaseClients.forService()
+    // Plan 021: geprueft wird VOR dem Ausstellen der signierten URL, nicht erst nach dem Hochladen
+    // -- sonst laege das Objekt schon im Bucket, wenn die Grenze auffiel. reserve_storage_upload()
+    // prueft und reserviert atomar unter einer Vereinssperre (dieselbe Begruendung wie
+    // enforce_structure_limit()/schedule_publication(): zwei parallele Uploads knapp unter der
+    // Grenze duerfen sie nicht gemeinsam ueberschreiten -- eine getrennte TS-seitige Pruefung vor
+    // einem ungesperrten insert liesse genau das zu, gefunden im eigenen Review dieser PR).
+    // object_path folgt demselben Muster wie LocalUploadService.create() unten, weil die echte
+    // Pfadvergabe dort passiert und hier noch nicht bekannt ist.
+    const reservation = await service.rpc('reserve_storage_upload', {
+      target_organization: input.organizationId, target_department: input.departmentId, target_asset_id: assetId,
+      target_bucket_id: 'raw-media', target_object_path: `organizations/${input.organizationId}/departments/${input.departmentId}/assets/${assetId}/${input.filename}`,
+      target_mime_type: input.mimeType, announced_bytes: input.byteSize, target_created_by: request.auth!.userId,
+    })
+    if (reservation.error) {
+      const match = reservation.error.message.match(/storage_limit_reached: (organization|department)\/(\d+)\/(\d+)/)
+      if (match) return reply.code(409).send({ error: 'storage_limit_reached', scope: match[1], limitBytes: Number(match[2]), usedBytes: Number(match[3]), correlationId: request.id })
+      throw reservation.error
+    }
     const upload = await uploads.create({ ...input, assetId })
     return reply.code(201).send({ assetId, ...upload })
   })
