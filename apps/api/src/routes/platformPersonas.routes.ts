@@ -8,7 +8,7 @@ import {
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ApiRouteContext } from './context.js'
-import { previewStyleProfile } from './shared.js'
+import { checkRateLimit, previewStyleProfile } from './shared.js'
 
 const PERSONA_COLUMNS = 'id, slug, name, description, style_rules, avoid_rules, do_rules, is_active, created_by, created_at, updated_at'
 
@@ -89,6 +89,11 @@ export function registerPlatformPersonaRoutes(app: FastifyInstance, context: Api
   app.post('/v1/platform-style-personas/preview', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     if (!(await requirePlatformAdmin(request, reply))) return
+    // Dasselbe Kostenlimit wie auf der Vereinsseite (routes/content.ts): auch ein Plattform-Admin
+    // soll den Provider nicht in einer Schleife abrufen koennen, absichtlich oder versehentlich.
+    if (!checkRateLimit(`style-preview:${request.auth!.userId}`, 10, 60_000)) {
+      return reply.code(429).send({ error: 'rate_limited', correlationId: request.id })
+    }
     const input = PreviewPlatformStylePersonaRequestSchema.parse(request.body)
     const result = await previewStyleProfile(supabaseClients, environment, input, textGenerator)
     if (!result.ok) return reply.code(result.status).send({ error: result.error, correlationId: request.id })

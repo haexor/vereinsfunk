@@ -465,6 +465,10 @@ export async function previewStyleProfile(
       brief,
       styleProfile: { name: input.name, description: input.description, styleRules: input.styleRules, avoidRules: [...input.avoidRules], doRules: [...input.doRules] },
       model: row.model, baseUrl: row.base_url, apiKey, temperature: row.temperature, maxOutputTokens: row.max_output_tokens,
+      // Kuerzer als die 60 s des Adapters (packages/content-engine): der Worker darf so lange
+      // warten, weil dort niemand an einer offenen HTTP-Verbindung haengt -- hier wartet ein
+      // Browser auf den "Testen"-Knopf, und jede wartende Anfrage haelt eine Verbindung.
+      requestTimeoutMs: 30_000,
     })
     return { ok: true, post }
   } catch (error) {

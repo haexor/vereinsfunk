@@ -181,5 +181,30 @@ Fälle, PATCH/DELETE-Rundlauf, Preview-Erfolg mit gemocktem Generator, fehlender
 Rate-Limit (429) und ungrounded-Fehler (502). `pnpm lint/typecheck/test/build` (alle 20/21 Pakete)
 grün; keine Migrationsänderung, daher kein erneuter `pnpm db:reset && pnpm db:test`-Lauf nötig.
 
+### Nachgehärtet im Code-Review von PR 2
+
+- **Kostenlimit auf beiden Preview-Routen.** Ein Aufruf löst sofort einen kostenpflichtigen
+  Provider-Abruf aus; ohne Limit ist der "Testen"-Knopf ein Kostenhebel, den eine Schleife im
+  Browser beliebig oft zieht. `checkRateLimit` (`routes/shared.ts`, seit Paket 015) mit 10
+  Aufrufen pro Minute **pro Nutzer** statt pro IP — hinter einer Vereins-IP sitzen viele legitime
+  Mitglieder. Gilt auch für Plattform-Admins.
+- **Audit-Eintrag für `PATCH`/`DELETE`.** `POST` schrieb bereits
+  `content_style_profile.created`; Ändern und Löschen blieben spurlos. Jetzt
+  `content_style_profile.updated` (mit den geänderten Feldnamen) und `.deleted` (mit der Ebene),
+  wie `directory_person.updated` und `department.deleted` es vormachen. Die Plattform-Personas
+  bleiben bewusst ohne Trail (siehe Kopfkommentar in `platformPersonas.routes.ts`).
+- **`departmentId`/`teamId` der Preview-Anfrage gegen ihre echte `organization_id` geprüft**
+  (`resolveDirectoryScope`, wie Verzeichnis/Integration/Einwilligung es tun). `rolesForScope`
+  vereinigt Organisations-, Abteilungs- und Teamrollen, eine frei kombinierte fremde
+  `departmentId` kann die Rollenmenge also nur vergrößern. Bei `POST` fängt der zusammengesetzte
+  Fremdschlüssel der Tabelle die Kombination ab — die Preview-Route schreibt nichts und hatte
+  diesen Rückhalt nicht.
+- **30 s Zeitlimit statt der 60 s des Adapters.** Der Worker darf 60 s warten, weil dort niemand
+  an einer offenen HTTP-Verbindung hängt; hier wartet ein Browser.
+- **Tests:** Der Fake gab die Update-Nutzlast unbesehen weg — eine vertauschte Zuordnung
+  (`do_rules` aus `avoidRules`) wäre unbemerkt durchgelaufen. Nutzlast und geprüfter Scope werden
+  jetzt festgehalten und geprüft, dazu zwei neue Fälle (fremde `departmentId` → 404, Rate-Limit
+  → 429). 19 statt 17 Tests in den beiden Dateien.
+
 Offen: PR 3 (geteilte `StyleProfileEditorForm.vue`, neue Vereins-Seite `/stilprofile`, Nav-Eintrag,
 Umstellung von `plattform-admin/personas.vue`).
