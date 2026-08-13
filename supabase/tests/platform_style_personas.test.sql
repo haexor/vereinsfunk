@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(15);
+select plan(18);
 
 set local role postgres;
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -13,7 +13,7 @@ insert into public.departments (id, organization_id, name, slug) values
   ('39000000-1100-4000-8000-000000000001', '39000000-1000-4000-8000-000000000001', 'Persona Department', 'persona-department');
 
 insert into public.platform_style_personas (id, slug, name, description, style_rules, avoid_rules, created_by) values
-  ('39000000-2000-4000-8000-000000000001', 'kapitaen-klar', 'Kapitän Klar', 'Direkt und anfeuernd wie ein Kapitän.', '{"sentenceLength":"short","energy":4,"humour":"light","formality":"casual","perspective":"we","bannedPhrases":[],"additionalInstructions":""}', '{Ironie}', '39000000-0000-4000-8000-000000000001');
+  ('39000000-2000-4000-8000-000000000001', 'kapitaen-klar', 'Kapitän Klar', 'Direkt und anfeuernd wie ein Kapitän.', '{"toneTags":["direkt","anfeuernd"],"catchphrases":[],"exampleInput":"","exampleOutput":"","additionalInstructions":""}', '{Ironie}', '39000000-0000-4000-8000-000000000001');
 
 -- RLS: select is unrestricted for any authenticated user, no organizational scope involved.
 set local role authenticated;
@@ -68,6 +68,20 @@ select throws_ok(
 select throws_ok(
   $$insert into public.platform_style_personas (slug, name, description, style_rules, avoid_rules, created_by) values ('too-many-avoid-rules', 'Invalid', 'Must fail', '{}', array(select 'r' || generate_series(1, 31)::text), '39000000-0000-4000-8000-000000000001')$$,
   '23514', null, 'negative: database rejects more than 30 avoid_rules elements'
+);
+
+-- do_rules mirrors avoid_rules exactly, same helper, same bounds.
+select throws_ok(
+  $$insert into public.platform_style_personas (slug, name, description, style_rules, do_rules, created_by) values ('null-do-rule', 'Invalid', 'Must fail', '{}', array[null]::text[], '39000000-0000-4000-8000-000000000001')$$,
+  '23514', null, 'negative: database rejects a null element in do_rules'
+);
+select throws_ok(
+  $$insert into public.platform_style_personas (slug, name, description, style_rules, do_rules, created_by) values ('blank-do-rule', 'Invalid', 'Must fail', '{}', array['   '], '39000000-0000-4000-8000-000000000001')$$,
+  '23514', null, 'negative: database rejects a whitespace-only element in do_rules'
+);
+select throws_ok(
+  $$insert into public.platform_style_personas (slug, name, description, style_rules, do_rules, created_by) values ('too-many-do-rules', 'Invalid', 'Must fail', '{}', array(select 'r' || generate_series(1, 31)::text), '39000000-0000-4000-8000-000000000001')$$,
+  '23514', null, 'negative: database rejects more than 30 do_rules elements'
 );
 
 -- The five hardcoded system modes stay reserved for a persona slug too.

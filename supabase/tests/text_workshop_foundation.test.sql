@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(69);
+select plan(72);
 
 set local role postgres;
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -28,8 +28,8 @@ insert into public.department_memberships (organization_id, department_id, user_
 insert into public.team_memberships (organization_id, department_id, team_id, user_id, role) values
   ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', '32000000-2300-4000-8000-000000000002', '32000000-0000-4000-8000-000000000003', 'team_manager');
 insert into public.content_style_profiles (id, organization_id, department_id, slug, name, description, style_rules, avoid_rules, created_by) values
-  ('31000000-1200-4000-8000-000000000001', '31000000-1000-4000-8000-000000000001', '31000000-1100-4000-8000-000000000001', 'klar-und-nah', 'Klar und nah', 'Kurze, konkrete Sätze', '{"sentenceLength":"short","energy":3,"humour":"none","formality":"balanced","perspective":"we","bannedPhrases":[],"additionalInstructions":""}', '{Floskeln}', '31000000-0000-4000-8000-000000000001'),
-  ('32000000-2400-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'warm-und-nah', 'Warm und nah', 'Gemeinschaft zuerst', '{"sentenceLength":"mixed","energy":3,"humour":"light","formality":"balanced","perspective":"we","bannedPhrases":[],"additionalInstructions":""}', '{Phrasen}', '32000000-0000-4000-8000-000000000002');
+  ('31000000-1200-4000-8000-000000000001', '31000000-1000-4000-8000-000000000001', '31000000-1100-4000-8000-000000000001', 'klar-und-nah', 'Klar und nah', 'Kurze, konkrete Sätze', '{"toneTags":["klar","sachlich"],"catchphrases":[],"exampleInput":"","exampleOutput":"","additionalInstructions":""}', '{Floskeln}', '31000000-0000-4000-8000-000000000001'),
+  ('32000000-2400-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'warm-und-nah', 'Warm und nah', 'Gemeinschaft zuerst', '{"toneTags":["warm","gemeinschaftlich"],"catchphrases":[],"exampleInput":"","exampleOutput":"","additionalInstructions":""}', '{Phrasen}', '32000000-0000-4000-8000-000000000002');
 insert into public.composition_sessions (id, organization_id, department_id, team_id, preset_slug, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values
   ('32000000-2500-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', '32000000-2300-4000-8000-000000000002', 'training-update', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('a', 64), '32000000-0000-4000-8000-000000000002');
 
@@ -67,6 +67,19 @@ select throws_ok(
 select throws_ok(
   $$insert into public.content_style_profiles (organization_id, department_id, slug, name, description, style_rules, avoid_rules, created_by) values ('31000000-1000-4000-8000-000000000001', '31000000-1100-4000-8000-000000000001', 'blank-avoid-rule', 'Blank avoid rule', 'Must fail', '{}', array['   '], '31000000-0000-4000-8000-000000000001')$$,
   '23514', null, 'negative: database rejects a whitespace-only element in avoid_rules'
+);
+-- do_rules mirrors avoid_rules exactly, same helper, same bounds.
+select throws_ok(
+  $$insert into public.content_style_profiles (organization_id, department_id, slug, name, description, style_rules, do_rules, created_by) values ('31000000-1000-4000-8000-000000000001', '31000000-1100-4000-8000-000000000001', 'null-do-rule', 'Null do rule', 'Must fail', '{}', array[null]::text[], '31000000-0000-4000-8000-000000000001')$$,
+  '23514', null, 'negative: database rejects a null element in do_rules'
+);
+select throws_ok(
+  $$insert into public.content_style_profiles (organization_id, department_id, slug, name, description, style_rules, do_rules, created_by) values ('31000000-1000-4000-8000-000000000001', '31000000-1100-4000-8000-000000000001', 'blank-do-rule', 'Blank do rule', 'Must fail', '{}', array['   '], '31000000-0000-4000-8000-000000000001')$$,
+  '23514', null, 'negative: database rejects a whitespace-only element in do_rules'
+);
+select throws_ok(
+  $$insert into public.content_style_profiles (organization_id, department_id, slug, name, description, style_rules, do_rules, created_by) values ('31000000-1000-4000-8000-000000000001', '31000000-1100-4000-8000-000000000001', 'too-many-do-rules', 'Too many do rules', 'Must fail', '{}', array(select 'r' || generate_series(1, 31)::text), '31000000-0000-4000-8000-000000000001')$$,
+  '23514', null, 'negative: database rejects more than 30 do_rules elements'
 );
 select throws_ok(
   $$insert into public.content_style_profiles (organization_id, department_id, slug, name, description, style_rules, created_by) values ('31000000-1000-4000-8000-000000000001', '31000000-1100-4000-8000-000000000001', 'klar_erklaerend', 'Duplikat', 'Must fail', '{}', '31000000-0000-4000-8000-000000000001')$$,
@@ -228,7 +241,7 @@ select lives_ok(
     '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', null,
     'training-update', 'inform', '["text_post"]'::jsonb,
     '{"facts":{"title":"Revisionstraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
-    null, '{"name":"System","description":"","styleRules":{"sentenceLength":"short","energy":2,"humour":"none","formality":"balanced","perspective":"club","bannedPhrases":[],"additionalInstructions":""},"avoidRules":[]}'::jsonb,
+    null, '{"name":"System","description":"","styleRules":{"toneTags":["klar"],"catchphrases":[],"exampleInput":"","exampleOutput":"","additionalInstructions":""},"avoidRules":[]}'::jsonb,
     '{}'::jsonb, 1, repeat('e', 64), repeat('f', 64), 'initial', null,
     '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-initial'
   )$$,
@@ -239,7 +252,7 @@ select lives_ok(
     '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', null,
     'training-update', 'inform', '["text_post"]'::jsonb,
     '{"facts":{"title":"Revisionstraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
-    null, '{"name":"System","description":"","styleRules":{"sentenceLength":"short","energy":2,"humour":"none","formality":"balanced","perspective":"club","bannedPhrases":[],"additionalInstructions":""},"avoidRules":[]}'::jsonb,
+    null, '{"name":"System","description":"","styleRules":{"toneTags":["klar"],"catchphrases":[],"exampleInput":"","exampleOutput":"","additionalInstructions":""},"avoidRules":[]}'::jsonb,
     '{}'::jsonb, 1, repeat('e', 64), repeat('0', 64), 'revise', 'Bitte kürzer formulieren',
     '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-revision'
   )$$,
@@ -251,7 +264,7 @@ select lives_ok(
     '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', null,
     'training-update', 'inform', '["text_post"]'::jsonb,
     '{"facts":{"title":"Revisionstraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
-    null, '{"name":"System","description":"","styleRules":{"sentenceLength":"short","energy":2,"humour":"none","formality":"balanced","perspective":"club","bannedPhrases":[],"additionalInstructions":""},"avoidRules":[]}'::jsonb,
+    null, '{"name":"System","description":"","styleRules":{"toneTags":["klar"],"catchphrases":[],"exampleInput":"","exampleOutput":"","additionalInstructions":""},"avoidRules":[]}'::jsonb,
     '{}'::jsonb, 1, repeat('e', 64), repeat('1', 64), 'revise', 'Bitte mit mehr Energie formulieren',
     '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-revision-2'
   )$$,

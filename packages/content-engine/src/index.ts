@@ -1,4 +1,4 @@
-import { GeneratedPostSchema, type CreateSubmission, type GeneratedPost, type PlatformVariant, type StyleProfileRules } from '@vereinsfunk/contracts'
+import { GeneratedPostSchema, type CreateSubmission, type GeneratedPost, type PlatformVariant, type StyleProfileSnapshot } from '@vereinsfunk/contracts'
 import { createGuardedFetch, OutboundFetchError } from '@vereinsfunk/outbound-fetch'
 import { getPreset, validateSourceMaterial } from './presets.js'
 
@@ -76,7 +76,7 @@ export const TEXT_PROMPT_TEMPLATE_VERSION = 'text-workshop-v1'
 
 export type StructuredTextGeneratorInput = {
   brief: GroundedContentBrief
-  styleProfile: { name: string; description: string; styleRules: StyleProfileRules; avoidRules: readonly string[] }
+  styleProfile: StyleProfileSnapshot
   revisionInstruction?: string
   model: string
   baseUrl: string
@@ -100,7 +100,7 @@ export function buildStructuredTextPrompt(input: Pick<StructuredTextGeneratorInp
       'Niemals Fakten, Namen, Ergebnisse, Termine oder Zitate ergänzen. Verwende nur claimSourceIds aus den bestätigten Quellen.',
       'Beachte verbotene Nennungen und Stil-No-Gos. Bei fehlenden Fakten nenne sie in missingFacts statt sie zu erfinden.',
       `Stilprofil: ${input.styleProfile.name}. ${input.styleProfile.description}`,
-      `Stilregeln: ${JSON.stringify(input.styleProfile.styleRules)}. No-Gos: ${JSON.stringify(input.styleProfile.avoidRules)}`,
+      `Stilregeln: ${JSON.stringify(input.styleProfile.styleRules)}. Dos: ${JSON.stringify(input.styleProfile.doRules)}. No-Gos: ${JSON.stringify(input.styleProfile.avoidRules)}`,
     ].join('\n'),
     user: JSON.stringify({
       confirmedSources: { claims: input.brief.allowedClaims, approvedQuotes: input.brief.approvedQuotes },
