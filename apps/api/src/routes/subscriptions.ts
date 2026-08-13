@@ -1,4 +1,5 @@
 import {
+  ChangeSubscriptionPlanRequestSchema,
   PublicationsUsageResponseSchema,
   SetStorageLimitRequestSchema,
   StorageLimitSchema,
@@ -14,7 +15,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ApiRouteContext } from './context.js'
-import { isAnyMemberOfOrganization, resolveMembershipScope } from './shared.js'
+import { createAuditRecorder, isAnyMemberOfOrganization, POLICY_MANAGE_PERMISSION, resolveMembershipScope } from './shared.js'
 
 async function loadEffectiveLimits(service: SupabaseClient, organizationId: string) {
   const result = await service.rpc('effective_limits', { target: organizationId })
@@ -54,6 +55,7 @@ async function loadContentQuotaUsage(service: SupabaseClient, organizationId: st
 
 export function registerSubscriptionRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, roleProvider, supabaseClients } = context
+  const recordAuditEvent = createAuditRecorder(supabaseClients)
 
   app.get('/v1/subscription', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
@@ -133,10 +135,22 @@ export function registerSubscriptionRoutes(app: FastifyInstance, context: ApiRou
 
   app.post('/v1/subscription/plan', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
-    const body = z.object({ organizationId: UuidSchema, planKey: z.string().regex(/^[a-z][a-z0-9_]*$/) }).parse(request.body)
+    const body = ChangeSubscriptionPlanRequestSchema.extend({ organizationId: UuidSchema }).parse(request.body)
     if (!(await requirePermission(request, reply, 'billing.manage', { organizationId: body.organizationId }))) return
     const service = supabaseClients.forService()
-    const target = await service.from('subscription_plans').select('key').eq('key', body.planKey).maybeSingle()
+    const today = new Date().toISOString().slice(0, 10)
+    // Dieselbe Buchbarkeitsregel wie GET /v1/subscription/plans -- ohne sie liesse sich ein
+    // individuell vereinbarter (is_self_serviceable=false) oder gerade nicht verfuegbarer Tarif per
+    // direktem Aufruf umgehen, obwohl er in der Auswahlliste gar nicht erscheint (beim eigenen
+    // Review gefunden: der Wechsel-Endpunkt pruefte bisher nur "existiert der Schluessel").
+    const target = await service
+      .from('subscription_plans')
+      .select('key')
+      .eq('key', body.planKey)
+      .eq('is_self_serviceable', true)
+      .or(`available_from.is.null,available_from.lte.${today}`)
+      .or(`available_until.is.null,available_until.gte.${today}`)
+      .maybeSingle()
     if (target.error) throw target.error
     if (!target.data) return reply.code(404).send({ error: 'plan_not_found', correlationId: request.id })
     const previous = await service.from('organization_subscriptions').select('plan_key').eq('organization_id', body.organizationId).maybeSingle()
@@ -144,12 +158,10 @@ export function registerSubscriptionRoutes(app: FastifyInstance, context: ApiRou
     const update = await service.from('organization_subscriptions').update({ plan_key: body.planKey }).eq('organization_id', body.organizationId).select('organization_id').maybeSingle()
     if (update.error) throw update.error
     if (!update.data) return reply.code(404).send({ error: 'subscription_not_found', correlationId: request.id })
-    const audit = await service.from('audit_events').insert({
-      organization_id: body.organizationId, actor_user_id: request.auth!.userId, action: 'subscription.plan_changed',
-      entity_type: 'organization_subscriptions', entity_id: body.organizationId, correlation_id: request.id,
+    await recordAuditEvent(request, {
+      organizationId: body.organizationId, action: 'subscription.plan_changed', entityType: 'organization_subscriptions', entityId: body.organizationId,
       metadata: { fromPlanKey: previous.data?.plan_key ?? null, toPlanKey: body.planKey },
     })
-    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
     return reply.code(204).send()
   })
 
@@ -160,7 +172,12 @@ export function registerSubscriptionRoutes(app: FastifyInstance, context: ApiRou
     const client = supabaseClients.forUser(request.auth!.accessToken)
     const scope = await resolveMembershipScope(client, input.scope, input.scopeId)
     if (!scope || scope.organizationId !== params.id) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
-    if (!(await requirePermission(request, reply, 'department.manage', scope))) return
+    // department.manage fuer eine Abteilungsgrenze, team.manage fuer eine Mannschaftsgrenze --
+    // dieselbe Zuordnung wie bei Richtlinien und channel_quotas (POLICY_MANAGE_PERMISSION), nicht
+    // hartkodiert 'department.manage' fuer beide Faelle. Ein team_manager (haelt team.manage,
+    // nicht department.manage) waere sonst von der storage_limits_insert-RLS-Policy her berechtigt
+    // gewesen, an der API-Pruefung aber immer gescheitert (beim eigenen Review gefunden).
+    if (!(await requirePermission(request, reply, POLICY_MANAGE_PERMISSION[input.scope], scope))) return
     // storage_limits_unique normalisiert team_id per coalesce() auf eine Sentinel-UUID (siehe
     // Migration) -- ein Ausdrucks-Index, den PostgREST-Upsert nicht als onConflict-Ziel
     // referenzieren kann. Deshalb hier von Hand nachschlagen und dann update-oder-insert, statt
@@ -199,23 +216,21 @@ export function registerSubscriptionRoutes(app: FastifyInstance, context: ApiRou
     const service = supabaseClients.forService()
     const targetDepartment = query.departmentId ?? null
     const targetTeam = query.teamId ?? null
-    // team_id ist in storage_limits nur bei scope='team' gesetzt -- ueber team_id allein
-    // eindeutig, ein zusaetzlicher department_id-Filter waere redundant und muesste sonst
-    // .is('team_id', null) fuer den Abteilungsfall gesondert behandeln.
-    let limitQuery = service.from('storage_limits').select('storage_bytes').eq('organization_id', query.organizationId)
-    limitQuery = targetTeam
-      ? limitQuery.eq('scope', 'team').eq('team_id', targetTeam)
-      : limitQuery.eq('scope', 'department').eq('department_id', targetDepartment as string).is('team_id', null)
-    const [usage, ownUploads, renderedMedia, brandAssets, limitRow] = await Promise.all([
+    const [usage, breakdown] = await Promise.all([
       service.rpc('storage_usage_bytes', { target_organization: query.organizationId, target_department: targetDepartment, target_team: targetTeam }),
-      sumMediaAssetBytes(service, query.organizationId, targetDepartment),
-      sumMediaDerivativeBytes(service, query.organizationId, targetDepartment),
-      sumBrandAssetBytes(service, query.organizationId, targetDepartment, targetTeam),
-      targetTeam || targetDepartment ? limitQuery.maybeSingle() : Promise.resolve({ data: null, error: null }),
+      service.rpc('storage_usage_breakdown', { target_organization: query.organizationId, target_department: targetDepartment, target_team: targetTeam }),
     ])
     if (usage.error) throw usage.error
-    let limitBytes: number | null = null
+    if (breakdown.error) throw breakdown.error
+    const breakdownRow = breakdown.data[0] as { own_uploads: number; rendered_media: number; brand_assets: number }
+    let limitBytes: number | null
     if (targetTeam || targetDepartment) {
+      // team_id ist in storage_limits nur bei scope='team' gesetzt -- ueber team_id allein
+      // eindeutig, ein zusaetzlicher department_id-Filter waere redundant und muesste sonst
+      // .is('team_id', null) fuer den Abteilungsfall gesondert behandeln.
+      let limitQuery = service.from('storage_limits').select('storage_bytes').eq('organization_id', query.organizationId)
+      limitQuery = targetTeam ? limitQuery.eq('scope', 'team').eq('team_id', targetTeam) : limitQuery.eq('scope', 'department').eq('department_id', targetDepartment as string).is('team_id', null)
+      const limitRow = await limitQuery.maybeSingle()
       if (limitRow.error) throw limitRow.error
       limitBytes = (limitRow.data?.storage_bytes as number | undefined) ?? null
     } else {
@@ -225,7 +240,7 @@ export function registerSubscriptionRoutes(app: FastifyInstance, context: ApiRou
     return reply.code(200).send(StorageUsageResponseSchema.parse({
       usedBytes: usage.data as number,
       limitBytes,
-      breakdown: { ownUploads, renderedMedia, brandAssets },
+      breakdown: { ownUploads: breakdownRow.own_uploads, renderedMedia: breakdownRow.rendered_media, brandAssets: breakdownRow.brand_assets },
     }))
   })
 
@@ -239,32 +254,4 @@ export function registerSubscriptionRoutes(app: FastifyInstance, context: ApiRou
     const quotas = await loadContentQuotaUsage(service, query.organizationId)
     return reply.code(200).send(PublicationsUsageResponseSchema.parse({ quotas }))
   })
-}
-
-async function sumMediaAssetBytes(service: SupabaseClient, organizationId: string, departmentId: string | null): Promise<number> {
-  let query = service.from('media_assets').select('byte_size').eq('organization_id', organizationId).neq('upload_status', 'deleted')
-  if (departmentId) query = query.eq('department_id', departmentId)
-  const result = await query
-  if (result.error) throw result.error
-  return result.data.reduce((total, row) => total + (row.byte_size as number), 0)
-}
-
-async function sumMediaDerivativeBytes(service: SupabaseClient, organizationId: string, departmentId: string | null): Promise<number> {
-  const assetIds = departmentId
-    ? (await service.from('media_assets').select('id').eq('organization_id', organizationId).eq('department_id', departmentId)).data?.map((row) => row.id as string)
-    : undefined
-  let query = service.from('media_derivatives').select('byte_size').eq('organization_id', organizationId)
-  if (assetIds) query = query.in('media_asset_id', assetIds)
-  const result = await query
-  if (result.error) throw result.error
-  return result.data.reduce((total, row) => total + (row.byte_size as number), 0)
-}
-
-async function sumBrandAssetBytes(service: SupabaseClient, organizationId: string, departmentId: string | null, teamId: string | null): Promise<number> {
-  let query = service.from('brand_assets').select('byte_size').eq('organization_id', organizationId)
-  if (teamId) query = query.eq('team_id', teamId)
-  else if (departmentId) query = query.eq('department_id', departmentId)
-  const result = await query
-  if (result.error) throw result.error
-  return result.data.reduce((total, row) => total + (row.byte_size as number), 0)
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  chain, DEPARTMENT_ID, denyingRoleProvider, grantingRoleProvider, nonAdminProvider, organizationManagerRoleProvider, ORGANIZATION_ID, USER_ID,
+  DEPARTMENT_ID, denyingRoleProvider, grantingRoleProvider, nonAdminProvider, organizationManagerRoleProvider, ORGANIZATION_ID, USER_ID,
   signAccessToken, startApp,
 } from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -116,28 +116,20 @@ describe('POST /v1/post-versions/:id/schedule -- content quota mapping', () => {
 })
 
 describe('POST /v1/media/uploads -- storage_limit_reached', () => {
-  // organization.storageBytes (1000) already fully used -- any announced size is rejected before
-  // the (unreachable) uploads.create() call, matching "checked when the signed URL is issued".
-  function storageServiceClient(usedBytes: number): SupabaseClient {
-    return {
-      from: (table: string) => {
-        if (table === 'organization_subscriptions') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
-        if (table === 'storage_limits') return chain({ data: null, error: null })
-        if (table === 'media_assets') return { insert: async () => ({ error: null }) }
-        throw new Error(`unexpected table in storage test fake: ${table}`)
-      },
-      rpc: async (name: string, params: Record<string, unknown>) => {
-        if (name === 'effective_limits') return { data: [{ storage_bytes: 1000, max_teams: null, max_departments: null }], error: null }
-        if (name === 'storage_usage_bytes') return { data: params.target_department ? usedBytes : usedBytes, error: null }
-        throw new Error(`unexpected rpc in storage test fake: ${name}`)
-      },
-    } as unknown as SupabaseClient
-  }
-
+  // Die Pruefung und die Reservierung laufen seit dem Review-Fix atomar in
+  // reserve_storage_upload() (Migration 2026081303) -- die Route ruft nur noch diese eine RPC auf.
   it('rejects an upload once the organization storage limit is already reached', async () => {
+    let capturedParams: Record<string, unknown> | undefined
     const clients: SupabaseClientFactory = {
       forUser: () => ({}) as unknown as SupabaseClient,
-      forService: () => storageServiceClient(1000),
+      forService: () =>
+        ({
+          rpc: async (name: string, params: Record<string, unknown>) => {
+            if (name !== 'reserve_storage_upload') throw new Error(`unexpected rpc in storage test fake: ${name}`)
+            capturedParams = params
+            return { data: null, error: { message: 'storage_limit_reached: organization/1000/1000' } }
+          },
+        }) as unknown as SupabaseClient,
     }
     const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients, uploads: { create: async () => { throw new Error('uploads.create should not be reached once storage is full') }, complete: async () => ({ accepted: true }) } })
     const token = await signAccessToken(USER_ID)
@@ -147,22 +139,14 @@ describe('POST /v1/media/uploads -- storage_limit_reached', () => {
     })
     expect(response.statusCode).toBe(409)
     expect(response.json()).toMatchObject({ error: 'storage_limit_reached', scope: 'organization', limitBytes: 1000, usedBytes: 1000 })
+    expect(capturedParams).toMatchObject({ target_organization: ORGANIZATION_ID, target_department: DEPARTMENT_ID, announced_bytes: 10 })
   })
 
-  it('accepts an upload under the limit and reserves a media_assets row before issuing the upload URL', async () => {
-    const reservationRows: Record<string, unknown>[] = []
+  it('accepts an upload under the limit and issues the upload URL after the RPC reservation succeeds', async () => {
+    const reservationRow = { id: '10000000-9000-4000-8000-000000000001', organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, byte_size: 10, upload_status: 'initiated' }
     const clients: SupabaseClientFactory = {
       forUser: () => ({}) as unknown as SupabaseClient,
-      forService: () => {
-        const base = storageServiceClient(0)
-        return {
-          ...base,
-          from: (table: string) => {
-            if (table === 'media_assets') return { insert: async (row: Record<string, unknown>) => { reservationRows.push(row); return { error: null } } }
-            return (base as unknown as { from: (t: string) => unknown }).from(table)
-          },
-        } as unknown as SupabaseClient
-      },
+      forService: () => ({ rpc: async () => ({ data: reservationRow, error: null }) }) as unknown as SupabaseClient,
     }
     const app = await startApp({
       roleProvider: grantingRoleProvider, supabaseClients: clients,
@@ -174,6 +158,6 @@ describe('POST /v1/media/uploads -- storage_limit_reached', () => {
       payload: { organizationId: ORGANIZATION_ID, departmentId: DEPARTMENT_ID, filename: 'foto.jpg', mimeType: 'image/jpeg', byteSize: 10 },
     })
     expect(response.statusCode).toBe(201)
-    expect(reservationRows[0]).toMatchObject({ organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, byte_size: 10, upload_status: 'initiated' })
+    expect(response.json()).toMatchObject({ uploadUrl: 'https://storage.invalid/x' })
   })
 })

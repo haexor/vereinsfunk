@@ -24,7 +24,23 @@ import {
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ApiRouteContext } from './context.js'
-import { fetchAllRows } from './shared.js'
+import { createAuditRecorder, fetchAllRows } from './shared.js'
+
+// Dieselben zwoelf Felder wurden bislang an drei Stellen (Liste, Anlegen, Aendern) einzeln
+// zusammengebaut -- ein neues Tariffeld haette an einer der drei Stellen vergessen werden koennen,
+// ohne dass SubscriptionPlanSchema.parse() das erkennen wuerde (es prueft die Form, nicht ob eine
+// Stelle ein Feld unterschlaegt). Jetzt eine Zuordnung.
+function toSubscriptionPlanDto(
+  row: { key: string; display_name: string; monthly_price_cents: number | null; currency: string; storage_bytes: number; max_teams: number | null; max_departments: number | null; is_self_serviceable: boolean; sort_order: number; available_from: string | null; available_until: string | null },
+  contentLimits: readonly { media_origin: string; max_per_month: number | null; max_duration_seconds: number | null }[],
+) {
+  return SubscriptionPlanSchema.parse({
+    key: row.key, displayName: row.display_name, monthlyPriceCents: row.monthly_price_cents, currency: row.currency,
+    storageBytes: row.storage_bytes, maxTeams: row.max_teams, maxDepartments: row.max_departments,
+    isSelfServiceable: row.is_self_serviceable, sortOrder: row.sort_order, availableFrom: row.available_from, availableUntil: row.available_until,
+    contentLimits: contentLimits.map((limit) => ({ mediaOrigin: limit.media_origin, maxPerMonth: limit.max_per_month, maxDurationSeconds: limit.max_duration_seconds })),
+  })
+}
 
 type CalendarDate = { year: number; month: number; day: number }
 type CalendarDateTime = CalendarDate & { hour: number; minute: number; second: number }
@@ -87,6 +103,7 @@ function currentPeriodStarts(timeZone: string): Record<'day' | 'week' | 'month' 
 
 export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePlatformAdmin, supabaseClients, platformAdminProvider } = context
+  const recordAuditEvent = createAuditRecorder(supabaseClients)
 
   // --- Plattform-Administration (Paket 022) -------------------------------------------
   // Alle Routen ab hier sind requirePlatformAdmin-gated und verwenden ausschliesslich den
@@ -382,16 +399,7 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
     const contentLimits = await service.from('subscription_plan_content_limits').select('plan_key, media_origin, max_per_month, max_duration_seconds')
     if (contentLimits.error) throw contentLimits.error
     return reply.code(200).send(
-      plans.data.map((row) =>
-        SubscriptionPlanSchema.parse({
-          key: row.key, displayName: row.display_name, monthlyPriceCents: row.monthly_price_cents, currency: row.currency,
-          storageBytes: row.storage_bytes, maxTeams: row.max_teams, maxDepartments: row.max_departments,
-          isSelfServiceable: row.is_self_serviceable, sortOrder: row.sort_order, availableFrom: row.available_from, availableUntil: row.available_until,
-          contentLimits: contentLimits.data
-            .filter((limit) => limit.plan_key === row.key)
-            .map((limit) => ({ mediaOrigin: limit.media_origin, maxPerMonth: limit.max_per_month, maxDurationSeconds: limit.max_duration_seconds })),
-        }),
-      ),
+      plans.data.map((row) => toSubscriptionPlanDto(row, contentLimits.data.filter((limit) => limit.plan_key === row.key))),
     )
   })
 
@@ -418,16 +426,17 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
       .insert(input.contentLimits.map((limit) => ({ plan_key: input.key, media_origin: limit.mediaOrigin, max_per_month: limit.maxPerMonth, max_duration_seconds: limit.maxDurationSeconds })))
     if (limitsInsert.error) {
       // Ohne Rollback bliebe ein Tarif ohne jedes Kontingent zurueck -- dasselbe Muster wie beim
-      // LLM-Provider-Geheimnis in llmProviders.routes.ts.
-      await service.from('subscription_plans').delete().eq('key', input.key)
+      // LLM-Provider-Geheimnis in llmProviders.routes.ts. Der Rollback-delete wird selbst geprueft
+      // und geloggt: schlaegt er ebenfalls fehl, bliebe sonst ein verwaister Tarif ohne jedes
+      // Signal fuer manuelles Aufraeumen zurueck (beim eigenen Review gefunden).
+      const rollback = await service.from('subscription_plans').delete().eq('key', input.key)
+      if (rollback.error) request.log.error({ err: rollback.error, correlationId: request.id, planKey: input.key }, 'rollback of orphaned subscription plan failed')
       throw limitsInsert.error
     }
-    return reply.code(201).send(SubscriptionPlanSchema.parse({
-      key: input.key, displayName: input.displayName, monthlyPriceCents: input.monthlyPriceCents, currency: input.currency,
-      storageBytes: input.storageBytes, maxTeams: input.maxTeams, maxDepartments: input.maxDepartments,
-      isSelfServiceable: input.isSelfServiceable, sortOrder: input.sortOrder, availableFrom: input.availableFrom, availableUntil: input.availableUntil,
-      contentLimits: input.contentLimits,
-    }))
+    return reply.code(201).send(toSubscriptionPlanDto(
+      { key: input.key, display_name: input.displayName, monthly_price_cents: input.monthlyPriceCents, currency: input.currency, storage_bytes: input.storageBytes, max_teams: input.maxTeams, max_departments: input.maxDepartments, is_self_serviceable: input.isSelfServiceable, sort_order: input.sortOrder, available_from: input.availableFrom, available_until: input.availableUntil },
+      input.contentLimits.map((limit) => ({ media_origin: limit.mediaOrigin, max_per_month: limit.maxPerMonth, max_duration_seconds: limit.maxDurationSeconds })),
+    ))
   })
 
   app.patch('/v1/platform-admin/subscription-plans/:key', async (request, reply) => {
@@ -457,12 +466,7 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
     if (!update.data) return reply.code(404).send({ error: 'plan_not_found', correlationId: request.id })
     const contentLimits = await service.from('subscription_plan_content_limits').select('media_origin, max_per_month, max_duration_seconds').eq('plan_key', params.key)
     if (contentLimits.error) throw contentLimits.error
-    return reply.code(200).send(SubscriptionPlanSchema.parse({
-      key: update.data.key, displayName: update.data.display_name, monthlyPriceCents: update.data.monthly_price_cents, currency: update.data.currency,
-      storageBytes: update.data.storage_bytes, maxTeams: update.data.max_teams, maxDepartments: update.data.max_departments,
-      isSelfServiceable: update.data.is_self_serviceable, sortOrder: update.data.sort_order, availableFrom: update.data.available_from, availableUntil: update.data.available_until,
-      contentLimits: contentLimits.data.map((limit) => ({ mediaOrigin: limit.media_origin, maxPerMonth: limit.max_per_month, maxDurationSeconds: limit.max_duration_seconds })),
-    }))
+    return reply.code(200).send(toSubscriptionPlanDto(update.data, contentLimits.data))
   })
 
   app.put('/v1/platform-admin/subscription-plans/:key/content-limits', async (request, reply) => {
@@ -474,16 +478,18 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
     const plan = await service.from('subscription_plans').select('key').eq('key', params.key).maybeSingle()
     if (plan.error) throw plan.error
     if (!plan.data) return reply.code(404).send({ error: 'plan_not_found', correlationId: request.id })
-    // Ersetzt die komplette Zeilenmenge dieses Tarifs -- eine im Request fehlende Herkunftsart wird
-    // dadurch zu 0 (fehlende Zeile), nicht stillschweigend beibehalten (siehe Datenmodell:
-    // "null lueschen die Zeile explizit statt sie stillschweigend auf unbegrenzt zu setzen").
-    const del = await service.from('subscription_plan_content_limits').delete().eq('plan_key', params.key)
-    if (del.error) throw del.error
-    const insert = await service
-      .from('subscription_plan_content_limits')
-      .insert(input.contentLimits.map((limit) => ({ plan_key: params.key, media_origin: limit.mediaOrigin, max_per_month: limit.maxPerMonth, max_duration_seconds: limit.maxDurationSeconds })))
-    if (insert.error) throw insert.error
-    return reply.code(200).send({ contentLimits: input.contentLimits.map((limit) => SubscriptionPlanContentLimitSchema.parse(limit)) })
+    // set_subscription_plan_content_limits() ersetzt delete()+insert() ueber zwei getrennte
+    // PostgREST-Aufrufe durch eine Transaktion (Migration 2026081303) -- ein fehlschlagender insert
+    // nach erfolgreichem delete liess sonst einen Tarif ohne jedes Kontingent zurueck (beim eigenen
+    // Review gefunden). Eine im Request fehlende Herkunftsart wird dadurch zu 0 (fehlende Zeile),
+    // nicht stillschweigend beibehalten (siehe Datenmodell: "null loescht die Zeile explizit statt
+    // sie stillschweigend auf unbegrenzt zu setzen").
+    const result = await service.rpc('set_subscription_plan_content_limits', {
+      target_plan_key: params.key,
+      target_limits: input.contentLimits.map((limit) => ({ mediaOrigin: limit.mediaOrigin, maxPerMonth: limit.maxPerMonth, maxDurationSeconds: limit.maxDurationSeconds })),
+    })
+    if (result.error) throw result.error
+    return reply.code(200).send({ contentLimits: (result.data as { media_origin: string; max_per_month: number | null; max_duration_seconds: number | null }[]).map((limit) => SubscriptionPlanContentLimitSchema.parse({ mediaOrigin: limit.media_origin, maxPerMonth: limit.max_per_month, maxDurationSeconds: limit.max_duration_seconds })) })
   })
 
   app.put('/v1/platform-admin/organizations/:organizationId/subscription', async (request, reply) => {
@@ -512,12 +518,10 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
       if (upsert.error.code === '23503') return reply.code(404).send({ error: 'organization_not_found', correlationId: request.id })
       throw upsert.error
     }
-    const audit = await service.from('audit_events').insert({
-      organization_id: params.organizationId, actor_user_id: request.auth!.userId, action: 'subscription.overridden',
-      entity_type: 'organization_subscriptions', entity_id: params.organizationId, correlation_id: request.id,
+    await recordAuditEvent(request, {
+      organizationId: params.organizationId, action: 'subscription.overridden', entityType: 'organization_subscriptions', entityId: params.organizationId,
       metadata: { planKey: input.planKey, hasOverride },
     })
-    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
     return reply.code(200).send(OrganizationSubscriptionSchema.parse({
       organizationId: upsert.data.organization_id, planKey: upsert.data.plan_key, status: upsert.data.status,
       storageBytesOverride: upsert.data.storage_bytes_override, maxTeamsOverride: upsert.data.max_teams_override, maxDepartmentsOverride: upsert.data.max_departments_override,
@@ -546,12 +550,10 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
       if (upsert.error.code === '23503') return reply.code(404).send({ error: 'organization_not_found', correlationId: request.id })
       throw upsert.error
     }
-    const audit = await service.from('audit_events').insert({
-      organization_id: params.organizationId, actor_user_id: request.auth!.userId, action: 'content_limit_override.set',
-      entity_type: 'organization_content_limit_overrides', entity_id: params.organizationId, correlation_id: request.id,
+    await recordAuditEvent(request, {
+      organizationId: params.organizationId, action: 'content_limit_override.set', entityType: 'organization_content_limit_overrides', entityId: params.organizationId,
       metadata: { mediaOrigin: input.mediaOrigin, maxPerMonth: input.maxPerMonth, maxDurationSeconds: input.maxDurationSeconds },
     })
-    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
     return reply.code(200).send(ContentLimitOverrideSchema.parse({
       mediaOrigin: upsert.data.media_origin, maxPerMonth: upsert.data.max_per_month, maxDurationSeconds: upsert.data.max_duration_seconds, overrideReason: upsert.data.override_reason,
     }))

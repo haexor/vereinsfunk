@@ -120,7 +120,10 @@ app.post('/v1/departments/:id/teams', async (request, reply) => {
     .insert({ organization_id: department.data.organization_id, department_id: params.id, name: input.name })
     .select('id, organization_id, department_id, name, age_group, competition, source_id, archived_at, created_at')
     .single()
-  if (insert.error) throw insert.error
+  if (insert.error) {
+    if (insert.error.message.includes('structure limit reached')) return reply.code(409).send({ error: 'structure_limit_reached', correlationId: request.id })
+    throw insert.error
+  }
   const audit = await supabaseClients.forService().from('audit_events').insert({
     organization_id: department.data.organization_id,
     actor_user_id: request.auth!.userId,

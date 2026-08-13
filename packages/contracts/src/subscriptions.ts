@@ -4,14 +4,29 @@ import { UuidSchema } from './content.js'
 // Plan 021: Tarife, Speicherkontingent und Beitragskontingente nach Medienherkunft.
 export const MediaOriginSchema = z.enum(['own_upload', 'ai_image', 'ai_video'])
 export const SubscriptionStatusSchema = z.enum(['active', 'past_due', 'cancelled', 'suspended'])
+// Eine Regel, an zwei Stellen (Tarif-Kontingentzeile, Kontingent-Uebersteuerung) gepruft --
+// dieselbe Funktion statt zweimal denselben Ausdruck, damit eine kuenftige Aenderung (z. B. eine
+// weitere laengenbeschraenkte Herkunftsart) nicht eine der beiden Stellen vergessen kann.
+function durationOnlyForAiVideo(value: { mediaOrigin: string; maxDurationSeconds: number | null }): boolean {
+  return value.maxDurationSeconds === null || value.mediaOrigin === 'ai_video'
+}
 // null = unbegrenzt fuer diese Herkunft -- dasselbe Vokabular wie in der Migration.
 export const SubscriptionPlanContentLimitSchema = z.object({
   mediaOrigin: MediaOriginSchema,
   maxPerMonth: z.int().positive().nullable(),
   maxDurationSeconds: z.int().positive().nullable(),
-}).refine((value) => value.maxDurationSeconds === null || value.mediaOrigin === 'ai_video', {
-  message: 'maxDurationSeconds is only meaningful for ai_video',
-})
+}).refine(durationOnlyForAiVideo, { message: 'maxDurationSeconds is only meaningful for ai_video' })
+
+// Fehlt eine Herkunftsart komplett, gilt sie laut Datenmodell als 0, nicht unbegrenzt (siehe
+// Migration, Kommentar zu subscription_plan_content_limits) -- schedule_publication() setzt genau
+// das durch. Ohne diese Pruefung koennte ein Tarif mit nur einer von drei Zeilen angelegt werden,
+// und GET /v1/subscription wuerde die fehlende Herkunftsart schlicht nicht auflisten, obwohl jede
+// Einplanung dieser Art serverseitig abgelehnt wird (Divergenz zwischen angezeigtem und
+// durchgesetztem Zustand, beim eigenen Review gefunden).
+function hasExactlyOneRowPerMediaOrigin(limits: readonly { mediaOrigin: string }[]): boolean {
+  const origins = limits.map((limit) => limit.mediaOrigin)
+  return MediaOriginSchema.options.every((origin) => origins.filter((value) => value === origin).length === 1)
+}
 
 export const SubscriptionPlanSchema = z.object({
   key: z.string().regex(/^[a-z][a-z0-9_]*$/),
@@ -108,7 +123,7 @@ export const CreateSubscriptionPlanRequestSchema = z.object({
   sortOrder: z.int().default(0),
   availableFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
   availableUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
-  contentLimits: z.array(SubscriptionPlanContentLimitSchema).min(1),
+  contentLimits: z.array(SubscriptionPlanContentLimitSchema).length(3).refine(hasExactlyOneRowPerMediaOrigin, { message: 'exactly one row per media origin is required' }),
 })
 export const UpdateSubscriptionPlanRequestSchema = z.object({
   displayName: z.string().trim().min(1).max(120).optional(),
@@ -123,7 +138,7 @@ export const UpdateSubscriptionPlanRequestSchema = z.object({
   availableUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
 })
 export const SetSubscriptionPlanContentLimitsRequestSchema = z.object({
-  contentLimits: z.array(SubscriptionPlanContentLimitSchema).min(1),
+  contentLimits: z.array(SubscriptionPlanContentLimitSchema).length(3).refine(hasExactlyOneRowPerMediaOrigin, { message: 'exactly one row per media origin is required' }),
 })
 
 // --- Plattform-Admin: Tarifzuordnung und operative Uebersteuerung je Verein ---------------------
@@ -157,9 +172,7 @@ export const SetContentLimitOverrideRequestSchema = z.object({
   maxPerMonth: z.int().positive().nullable(),
   maxDurationSeconds: z.int().positive().nullable(),
   overrideReason: z.string().trim().min(1).max(500),
-}).refine((value) => value.maxDurationSeconds === null || value.mediaOrigin === 'ai_video', {
-  message: 'maxDurationSeconds is only meaningful for ai_video',
-})
+}).refine(durationOnlyForAiVideo, { message: 'maxDurationSeconds is only meaningful for ai_video' })
 
 export type MediaOrigin = z.infer<typeof MediaOriginSchema>
 export type SubscriptionStatus = z.infer<typeof SubscriptionStatusSchema>
