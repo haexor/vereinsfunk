@@ -9,6 +9,7 @@ const adminNav = [
   { label: 'Admins', to: '/plattform-admin/admins' },
   { label: 'Einstellungen', to: '/plattform-admin/einstellungen' },
   { label: 'LLM-Provider', to: '/plattform-admin/llm' },
+  { label: 'Personas', to: '/plattform-admin/personas' },
 ]
 </script>
 

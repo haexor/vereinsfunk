@@ -27,6 +27,7 @@ import { registerInvitationRoutes } from './routes/invitations.js'
 import { registerMemberRoutes } from './routes/members.js'
 import { registerOrganizationRoutes } from './routes/organization.js'
 import { registerPlatformAdminRoutes } from './routes/platformAdmin.js'
+import { registerPlatformPersonaRoutes } from './routes/platformPersonas.routes.js'
 import { registerPolicyRoutes } from './routes/policies.js'
 import { registerPublishingRoutes } from './routes/publishing.js'
 import { registerRetentionRoutes } from './routes/retention.js'
@@ -172,6 +173,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   registerPlatformAdminRoutes(app, context)
 
   registerLlmProviderRoutes(app, context)
+  registerPlatformPersonaRoutes(app, context)
 
   registerChannelRoutes(app, context)
   registerChannelOAuthRoutes(app, context)

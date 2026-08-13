@@ -2,7 +2,7 @@
 import { Check, LoaderCircle, RefreshCw, Sparkles } from '@lucide/vue'
 import { z } from 'zod'
 
-type Profile = { id: string | null; slug: string; kind: 'system' | 'custom'; name: string; description: string }
+type Profile = { id: string | null; slug: string; kind: 'system' | 'persona' | 'custom'; name: string; description: string }
 type Candidate = { id: string; status: string; generated_content: { headline: string; caption: string; hashtags: string[]; verifiedFacts: string[]; missingFacts: string[] } | null; failure_code: string | null; triggered_by: 'member' | 'automatic_recovery' }
 const api = useApiClient()
 const session = await useSession()
@@ -13,6 +13,8 @@ const sessionId = ref<string | null>(null)
 const candidate = ref<Candidate | null>(null)
 const profiles = ref<Profile[]>([])
 const selectedProfile = ref<string>('klar_erklaerend')
+const PROFILE_GROUP_LABELS = { system: 'Basis-Stile', persona: 'Personas', custom: 'Eigene Profile' } as const
+const profileGroups = computed(() => (['system', 'persona', 'custom'] as const).map((kind) => ({ label: PROFILE_GROUP_LABELS[kind], items: profiles.value.filter((profile) => profile.kind === kind) })).filter((group) => group.items.length))
 const presetSlug = ref('training_insight')
 const communicationGoal = ref('inform')
 const factsText = ref('')
@@ -46,7 +48,7 @@ watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}
 async function loadProfiles() {
   if (!scope.value?.organizationId || !scope.value.departmentId) return
   try {
-    const response = await api.request('/v1/content-style-profiles', { query: { organizationId: scope.value.organizationId, departmentId: scope.value.departmentId } }, z.object({ profiles: z.array(z.object({ id: z.string().nullable(), slug: z.string(), kind: z.enum(['system', 'custom']), name: z.string(), description: z.string() }).passthrough()) }))
+    const response = await api.request('/v1/content-style-profiles', { query: { organizationId: scope.value.organizationId, departmentId: scope.value.departmentId } }, z.object({ profiles: z.array(z.object({ id: z.string().nullable(), slug: z.string(), kind: z.enum(['system', 'persona', 'custom']), name: z.string(), description: z.string() }).passthrough()) }))
     profiles.value = response.profiles
   } catch { notice.value = 'Stilprofile konnten nicht geladen werden.' }
 }
@@ -61,8 +63,9 @@ async function createCandidate() {
   if (!Object.keys(sourceMaterial().facts).length && !observation.value.trim() && !quote.value.trim()) { notice.value = 'Gib mindestens eine bestätigte Tatsache, Beobachtung oder ein freigegebenes Zitat an.'; return }
   submitting.value = true; notice.value = ''
   try {
-    const custom = profiles.value.find((profile) => profile.id === selectedProfile.value)
-    const created = await api.request('/v1/text-workshop/sessions', { method: 'POST', body: { organizationId: scope.value.organizationId, departmentId: scope.value.departmentId, presetSlug: presetSlug.value, communicationGoal: communicationGoal.value, requestedFormats: ['text_post'], ...(custom?.id ? { styleProfileId: custom.id } : { systemStyleProfileSlug: selectedProfile.value }), sourceMaterial: sourceMaterial() } }, z.object({ sessionId: z.string(), candidateId: z.string() }))
+    const selected = profiles.value.find((profile) => (profile.id ?? profile.slug) === selectedProfile.value)
+    const profileChoice = selected?.kind === 'custom' ? { styleProfileId: selected.id } : selected?.kind === 'persona' ? { personaSlug: selected.slug } : { systemStyleProfileSlug: selectedProfile.value }
+    const created = await api.request('/v1/text-workshop/sessions', { method: 'POST', body: { organizationId: scope.value.organizationId, departmentId: scope.value.departmentId, presetSlug: presetSlug.value, communicationGoal: communicationGoal.value, requestedFormats: ['text_post'], ...profileChoice, sourceMaterial: sourceMaterial() } }, z.object({ sessionId: z.string(), candidateId: z.string() }))
     sessionId.value = created.sessionId; candidate.value = { id: created.candidateId, status: 'pending', generated_content: null, failure_code: null, triggered_by: 'member' }
     await refreshSession()
   } catch { notice.value = 'Die Textgeneration konnte nicht gestartet werden.' } finally { submitting.value = false }
@@ -89,7 +92,7 @@ await loadProfiles(); restoreDraft()
     <header class="mb-7"><div class="eyebrow mb-2">Textwerkstatt</div><h1 class="font-display text-3xl font-extrabold">Aus bestätigten Angaben formulieren</h1><p class="mt-2 text-sm text-[#727a75]">Dieser Pilot erstellt nur Text. Foto- und Videoanhänge sind noch nicht verfügbar und werden nie an das Sprachmodell gesendet.</p></header>
     <section v-if="!sessionId" class="card grid gap-5 p-5 sm:p-7">
       <div class="grid gap-4 sm:grid-cols-2"><label><span class="mb-1 block text-xs font-semibold">Anlass</span><input v-model="presetSlug" class="w-full rounded-xl border p-3 text-sm" placeholder="z. B. training_insight" /></label><label><span class="mb-1 block text-xs font-semibold">Kommunikationsziel</span><select v-model="communicationGoal" class="w-full rounded-xl border p-3 text-sm"><option value="inform">Informieren</option><option value="invite">Einladen</option><option value="thank">Danken</option><option value="recruit">Gewinnen</option><option value="inspire">Inspirieren</option></select></label></div>
-      <fieldset><legend class="mb-2 text-xs font-semibold">Stilprofil</legend><div class="grid gap-2 sm:grid-cols-2"><button v-for="profile in profiles" :key="profile.slug" class="rounded-xl border p-3 text-left text-sm" :class="selectedProfile === (profile.id ?? profile.slug) ? 'border-forest bg-[#eff4e6]' : ''" @click="selectedProfile = profile.id ?? profile.slug"><strong>{{ profile.name }}</strong><span class="mt-1 block text-xs text-[#737a75]">{{ profile.description }}</span></button></div></fieldset>
+      <fieldset><legend class="mb-2 text-xs font-semibold">Stilprofil</legend><div v-for="group in profileGroups" :key="group.label" class="mb-3"><p class="mb-1 text-[11px] font-semibold text-[#9aa096]">{{ group.label }}</p><div class="grid gap-2 sm:grid-cols-2"><button v-for="profile in group.items" :key="profile.slug" class="rounded-xl border p-3 text-left text-sm" :class="selectedProfile === (profile.id ?? profile.slug) ? 'border-forest bg-[#eff4e6]' : ''" @click="selectedProfile = profile.id ?? profile.slug"><strong>{{ profile.name }}</strong><span class="mt-1 block text-xs text-[#737a75]">{{ profile.description }}</span></button></div></div></fieldset>
       <label><span class="mb-1 block text-xs font-semibold">Bestätigte Fakten (eine Zeile je „Feld: Wert“)</span><textarea v-model="factsText" rows="4" class="w-full rounded-xl border p-3 text-sm" placeholder="Übung: Passen&#10;Gruppe: U12" /></label>
       <label><span class="mb-1 block text-xs font-semibold">Beobachtung oder Rohtext</span><textarea v-model="observation" rows="3" class="w-full rounded-xl border p-3 text-sm" /></label>
       <div class="grid gap-4 sm:grid-cols-2"><label><span class="mb-1 block text-xs font-semibold">Freigegebenes Zitat</span><input v-model="quote" class="w-full rounded-xl border p-3 text-sm" /></label><label><span class="mb-1 block text-xs font-semibold">Nicht erwähnen (je Zeile)</span><input v-model="doNotMention" class="w-full rounded-xl border p-3 text-sm" /></label></div>
