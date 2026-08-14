@@ -101,7 +101,13 @@ Die Zeichengrenze ist bereits jargonfrei, braucht aber einen Satz, was der Wert 
 
 **Verify**: `pnpm lint` → exit 0.
 
-## PR 3: Regler am Beitrag
+## PR 3: Regler am Beitrag (Steps 1/2/3/5 umgesetzt)
+
+Steps 1, 2, 3 und 5 sind umgesetzt wie unten beschrieben, vollständig grün verifiziert (lint/typecheck/test/build sowie `db:reset`/`db:test`, 746 pgTAP-Tests — PR 3 selbst braucht keine Migration) und per Playwright manuell durchgespielt: ohne aktiven Provider/Kanal ist der Regler unsichtbar und beide Plattformen ausgegraut; mit einem aktiven `openai`-Provider erscheinen alle vier Stufen samt Hinweistext; nach Anlegen eines Instagram-Kanals ist Instagram anhakbar und vorausgewählt, Facebook bleibt ausgegraut; eine angelegte Sitzung trägt `target_platforms`/`temperature`/`max_characters` korrekt in der Datenbank. Step 4 bleibt wie geplant außerhalb von Paket 042.
+
+**Reihenfolge der Prüfungen in `POST /v1/text-workshop/sessions`:** Die Plattform-Verfügbarkeitsprüfung sitzt bewusst NACH der Stilprofil-/Persona-Auflösung (nicht direkt nach `preset_not_allowed`), damit ein unbekannter `personaSlug` weiterhin sein eigenes 404 liefert, statt von der Plattformprüfung überdeckt zu werden.
+
+**Ergänzung zum Plan:** `resolveTextGenerationPlatformAvailability` (routes/shared.ts) bündelt die Abfrage von `social_connections`/`channel_scopes`/`policy_settings`/`text_generation_platform_defaults` in einer Funktion und wird von `GET /v1/text-generation-platforms` UND von `POST /v1/text-workshop/sessions` (Durchsetzung) gemeinsam genutzt — dieselbe Abfrage liefert nebenbei `maxCharacters` je Plattform, wodurch die vorher separate `text_generation_platform_defaults`-Abfrage in der Sitzungs-Anlage entfällt.
 
 ### Step 1: Sichtbarkeit der Temperatur klären — `GET /v1/text-generation-capabilities`
 
@@ -172,11 +178,11 @@ Fix: `temperature` nur in den Hash aufnehmen, wenn der gewählte Adapter sie sen
 - [x] `text_generation_platform_defaults` existiert, ist für jedes Mitglied lesbar und nur für Plattform-Admins schreibbar (PR 1)
 - [x] Die Plattform-Grenze ist eine **Zeichen**-Grenze, keine Token-Zahl (PR 1, nachgezogen 2026-08-14)
 - [x] Ein Plattform-Admin kann die Zeichengrenze je Plattform in der Oberfläche pflegen (PR 2)
-- [ ] Ein Mitglied wählt die Persona-Intensität am Beitrag; bei einem `anthropic`-Provider ist die Wahl nicht sichtbar statt wirkungslos bedienbar (PR 3)
-- [ ] Das Formular zeigt nur Plattformen an, auf die der Scope veröffentlichen kann, und die API lehnt andere mit 422 ab (PR 3)
-- [ ] `provider_parameter_hash` enthält `temperature` nur, wenn sie gesendet wurde (PR 3)
+- [x] Ein Mitglied wählt die Persona-Intensität am Beitrag; bei einem `anthropic`-Provider ist die Wahl nicht sichtbar statt wirkungslos bedienbar (PR 3)
+- [x] Das Formular zeigt nur Plattformen an, auf die der Scope veröffentlichen kann, und die API lehnt andere mit 422 ab (PR 3)
+- [x] `provider_parameter_hash` enthält `temperature` nur, wenn sie gesendet wurde (PR 3)
 - [ ] Getrennte Texte je Plattform bei stark abweichender Länge — **eigenes Paket**, nicht 042
-- [ ] Voller Gate plus `db:test` grün nach jedem PR
+- [x] Voller Gate plus `db:test` grün nach jedem PR
 
 ## STOP conditions
 

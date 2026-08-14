@@ -7,6 +7,20 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
 import type { PermissionScope, RoleProvider } from './auth.js'
 
+// Ein aktiver, organisationsweiter Kanal je Plattform -- die Sitzungs-Anlage lehnt seit Plan 042,
+// PR 3 Step 3 jede Plattform ohne einen solchen Kanal mit 422 ab. Von jedem Test wiederverwendet,
+// der lediglich "ein Kanal existiert" braucht, nicht die Verfuegbarkeitspruefung selbst testet.
+const AVAILABLE_CHANNEL_FIXTURES = {
+  socialConnections: [
+    { id: 'channel-instagram', platform: 'instagram', status: 'active', archived_at: null, responsible_profile_id: null },
+    { id: 'channel-facebook', platform: 'facebook', status: 'active', archived_at: null, responsible_profile_id: null },
+  ],
+  channelScopes: [
+    { social_connection_id: 'channel-instagram', scope: 'organization', department_id: null, team_id: null, can_schedule: true },
+    { social_connection_id: 'channel-facebook', scope: 'organization', department_id: null, team_id: null, can_schedule: true },
+  ],
+}
+
 const STYLE_RULES = { toneTags: ['direkt', 'anfeuernd'], catchphrases: [], examples: [], additionalInstructions: '' }
 const PERSONA_ROW = { id: '3b000000-0000-4000-8000-000000000001', slug: 'kapitaen-klar', name: 'Kapitän Klar', description: 'Direkt und anfeuernd.', style_rules: STYLE_RULES, avoid_rules: ['Ironie'], do_rules: [] }
 const PROFILE_ID = '3e000000-0000-4000-8000-000000000001'
@@ -122,17 +136,16 @@ describe('POST /v1/text-workshop/sessions', () => {
           from: (table: string) => {
             if (table === 'policy_settings') return chain({ data: [], error: null })
             if (table === 'platform_style_personas') return chain({ data: PERSONA_ROW, error: null })
+            if (table === 'social_connections') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.socialConnections, error: null })
+            if (table === 'channel_scopes') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.channelScopes, error: null })
+            // Seit der Mehrfachauswahl sind beide Plattformen vorausgewaehlt, die Route liest die
+            // Vorgaben also bei jeder Sitzungsanlage ohne expliziten maxCharacters-Wert.
+            if (table === 'text_generation_platform_defaults') return chain({ data: [{ platform: 'instagram', max_characters: 2200 }, { platform: 'facebook', max_characters: 2200 }], error: null })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
       forService: () =>
         ({
-          // Seit der Mehrfachauswahl sind beide Plattformen vorausgewaehlt, die Route liest die
-          // Vorgaben also bei jeder Sitzungsanlage ohne expliziten maxCharacters-Wert.
-          from: (table: string) => {
-            if (table !== 'text_generation_platform_defaults') throw new Error(`unexpected table in test fake: ${table}`)
-            return chain({ data: [{ platform: 'instagram', max_characters: 2200 }, { platform: 'facebook', max_characters: 2200 }], error: null })
-          },
           rpc: async (_name: string, params: Record<string, unknown>) => {
             capturedRpcParams = params
             return { data: { sessionId: '3c000000-0000-4000-8000-000000000001', candidateId: '3c000000-0000-4000-8000-000000000002' }, error: null }
@@ -181,18 +194,17 @@ describe('POST /v1/text-workshop/sessions', () => {
         ({
           from: (table: string) => {
             if (table === 'policy_settings') return chain({ data: [], error: null })
+            if (table === 'social_connections') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.socialConnections, error: null })
+            if (table === 'channel_scopes') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.channelScopes, error: null })
+            // Ein Platzhalter, dem eine Vorgabezeile fehlt, faellt auf TEXT_GENERATION_DEFAULT_MAX_CHARACTERS
+            // zurueck (siehe resolveTextGenerationPlatformAvailability) -- fuer den min()-Nachweis reicht es,
+            // wenn jeder Fall genau die Vorgaben mitbringt, die er pruefen will.
+            if (table === 'text_generation_platform_defaults') return chain({ data: Object.entries(options.platformDefaults ?? {}).map(([platform, characters]) => ({ platform, max_characters: characters })), error: null })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
       forService: () =>
         ({
-          from: (table: string) => {
-            if (table !== 'text_generation_platform_defaults') throw new Error(`unexpected table in test fake: ${table}`)
-            // Der Fake gibt alle bekannten Vorgaben zurueck: die Route filtert per .in() auf die
-            // gewaehlten Plattformen, was chain() nicht nachbildet. Fuer den min()-Nachweis reicht
-            // das, weil jeder Fall seine eigene Vorgabenmenge mitbringt.
-            return chain({ data: Object.entries(options.platformDefaults ?? {}).map(([platform, characters]) => ({ platform, max_characters: characters })), error: null })
-          },
           rpc: async (_name: string, params: Record<string, unknown>) => {
             options.onRpc?.(params)
             return { data: { sessionId: '3c000000-0000-4000-8000-000000000001', candidateId: '3c000000-0000-4000-8000-000000000002' }, error: null }
@@ -254,6 +266,125 @@ describe('POST /v1/text-workshop/sessions', () => {
       expect(response.statusCode).toBe(202)
     }
     expect(hashes.size).toBe(6)
+  })
+
+  // Plan 042, PR 3 Step 3: die Anzeige in erstellen.vue ist Bequemlichkeit, diese Pruefung ist die
+  // Regel -- ein Beitrag darf nicht fuer eine Plattform entstehen, auf die der Scope gar nicht
+  // veroeffentlichen kann.
+  it('rejects a target platform without an eingerichteten channel with 422', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'policy_settings') return chain({ data: [], error: null })
+            // Nur Instagram hat einen Kanal -- Facebook fehlt komplett.
+            if (table === 'social_connections') return chain({ data: [AVAILABLE_CHANNEL_FIXTURES.socialConnections[0]], error: null })
+            if (table === 'channel_scopes') return chain({ data: [AVAILABLE_CHANNEL_FIXTURES.channelScopes[0]], error: null })
+            if (table === 'text_generation_platform_defaults') return chain({ data: [], error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => { throw new Error('forService should not be called once a target platform is unavailable') },
+    }
+    const response = await createSession(clients, { ...basePayload, targetPlatforms: ['instagram', 'facebook'] })
+    expect(response.statusCode).toBe(422)
+    expect(response.json()).toMatchObject({ error: 'platform_not_available', platform: 'facebook' })
+  })
+})
+
+describe('GET /v1/text-generation-platforms', () => {
+  const query = { organizationId: ORGANIZATION_ID, departmentId: DEPARTMENT_ID }
+
+  it('reports available: true with the platform default once a channel and no restriction exist', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'policy_settings') return chain({ data: [], error: null })
+            if (table === 'social_connections') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.socialConnections, error: null })
+            if (table === 'channel_scopes') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.channelScopes, error: null })
+            if (table === 'text_generation_platform_defaults') return chain({ data: [{ platform: 'instagram', max_characters: 2200 }, { platform: 'facebook', max_characters: 1500 }], error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => { throw new Error('forService should not be called by this route') },
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: '/v1/text-generation-platforms', headers: { authorization: `Bearer ${token}` }, query })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual(expect.arrayContaining([
+      { platform: 'instagram', available: true, maxCharacters: 2200 },
+      { platform: 'facebook', available: true, maxCharacters: 1500 },
+    ]))
+  })
+
+  it('reports reason: no_channel when no social connection exists for a platform', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'policy_settings') return chain({ data: [], error: null })
+            if (table === 'social_connections') return chain({ data: [AVAILABLE_CHANNEL_FIXTURES.socialConnections[0]], error: null })
+            if (table === 'channel_scopes') return chain({ data: [AVAILABLE_CHANNEL_FIXTURES.channelScopes[0]], error: null })
+            if (table === 'text_generation_platform_defaults') return chain({ data: [], error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => { throw new Error('forService should not be called by this route') },
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: '/v1/text-generation-platforms', headers: { authorization: `Bearer ${token}` }, query })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual(expect.arrayContaining([
+      { platform: 'instagram', available: true, maxCharacters: 2200 },
+      { platform: 'facebook', available: false, maxCharacters: 2200, reason: 'no_channel' },
+    ]))
+  })
+
+  // Unterscheidet "kein Kanal eingerichtet" von "ein Kanal existiert, ist aber per Richtlinie
+  // ausgeschlossen" -- beides fuehrt sonst ununterscheidbar zu "nicht verfuegbar".
+  it('reports reason: restricted_by_policy when a channel exists but allowedChannelIds excludes it', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'policy_settings') {
+              return chain({
+                data: [{
+                  id: 'policy-row-1', scope: 'organization', department_id: null, team_id: null,
+                  submit_requires_permission: null, review_required: null, review_mode: null, review_stage_label: null, review_minimum_approvals: null, review_deadline_hours: null,
+                  minor_approval_required: null, self_approval_allowed: null, allow_same_reviewer_across_stages: null, allow_review_exemptions: null, media_requires_consent_check: null,
+                  allowed_presets: null, allowed_formats: null, allowed_channel_ids: ['channel-instagram'], forbidden_topics: [], required_hashtags: [], tone: null,
+                  consent_expires_on_leave: null, consent_validity_months: null,
+                }],
+                error: null,
+              })
+            }
+            if (table === 'social_connections') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.socialConnections, error: null })
+            if (table === 'channel_scopes') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.channelScopes, error: null })
+            if (table === 'text_generation_platform_defaults') return chain({ data: [], error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => { throw new Error('forService should not be called by this route') },
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: '/v1/text-generation-platforms', headers: { authorization: `Bearer ${token}` }, query })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual(expect.arrayContaining([
+      { platform: 'instagram', available: true, maxCharacters: 2200 },
+      { platform: 'facebook', available: false, maxCharacters: 2200, reason: 'restricted_by_policy' },
+    ]))
+  })
+
+  it('rejects a member without post.create in the requested scope', async () => {
+    const app = await startApp({ roleProvider: denyingRoleProvider, supabaseClients: { forUser: () => ({}) as unknown as SupabaseClient, forService: () => { throw new Error('forService should not be called once the permission check fails') } } })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: '/v1/text-generation-platforms', headers: { authorization: `Bearer ${token}` }, query })
+    expect(response.statusCode).toBe(403)
   })
 })
 

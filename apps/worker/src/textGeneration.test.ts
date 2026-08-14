@@ -19,6 +19,14 @@ function repository(): TextGenerationRepository {
   }
 }
 
+function repositoryWithProtocolAndTemperature(protocol: string, temperature: number): TextGenerationRepository {
+  const repo = repository()
+  repo.loadSession = vi.fn().mockResolvedValue({ id: payload.entityId, organization_id: payload.organizationId, department_id: payload.departmentId, team_id: null, preset_slug: 'training', communication_goal: 'inform', source_material: { facts: { topic: 'Passen' }, observations: [], quotes: [], doNotMention: [] }, style_profile_snapshot: { name: 'Klar', description: 'klar', styleRules: { toneTags: ['klar'], catchphrases: [], examples: [], additionalInstructions: '' }, avoidRules: [], doRules: [] }, max_characters: 2200, temperature })
+  const sealed = createSecretBox({ v1: Buffer.alloc(32, 1).toString('base64') }, 'v1').seal('provider-key', 'provider-1')
+  repo.loadActiveTextProvider = vi.fn().mockResolvedValue({ id: 'provider-1', protocol, base_url: 'https://provider.example/v1', model: 'synthetic', structured_output_required: true, api_key_ciphertext: `\\x${sealed.ciphertext.toString('hex')}`, key_version: 'v1' })
+  return repo
+}
+
 describe('TextGenerationExecutor', () => {
   it('writes one candidate and never a post version', async () => {
     const repo = repository()
@@ -62,5 +70,29 @@ describe('TextGenerationExecutor', () => {
     expect(repo.markFailed).toHaveBeenCalledWith(payload.candidateId, payload.entityId, '10000000-1300-4000-8000-000000000099', 'generation_validation')
     expect(repo.releaseCandidate).not.toHaveBeenCalled()
     expect(generator.generateText).not.toHaveBeenCalled()
+  })
+
+  // Plan 042, PR 3 Step 5: the Anthropic adapter never sends temperature (AnthropicStructuredContentGenerator
+  // in packages/content-engine), so provider_parameter_hash must not vary with it for that protocol --
+  // otherwise the hash would claim a parameter was used that was never actually sent.
+  it('excludes temperature from provider_parameter_hash for a protocol that never sends it, includes it otherwise', async () => {
+    const generator = { generateText: vi.fn().mockResolvedValue(post) }
+    const anthropicLow = repositoryWithProtocolAndTemperature('anthropic', 0.3)
+    await new TextGenerationExecutor(config, anthropicLow, generator).execute(payload)
+    const anthropicLowHash = vi.mocked(anthropicLow.markReady).mock.calls[0]![4]!.providerParameterHash
+
+    const anthropicHigh = repositoryWithProtocolAndTemperature('anthropic', 1.0)
+    await new TextGenerationExecutor(config, anthropicHigh, generator).execute(payload)
+    const anthropicHighHash = vi.mocked(anthropicHigh.markReady).mock.calls[0]![4]!.providerParameterHash
+    expect(anthropicHighHash).toBe(anthropicLowHash)
+
+    const openaiLow = repositoryWithProtocolAndTemperature('openai', 0.3)
+    await new TextGenerationExecutor(config, openaiLow, generator).execute(payload)
+    const openaiLowHash = vi.mocked(openaiLow.markReady).mock.calls[0]![4]!.providerParameterHash
+
+    const openaiHigh = repositoryWithProtocolAndTemperature('openai', 1.0)
+    await new TextGenerationExecutor(config, openaiHigh, generator).execute(payload)
+    const openaiHighHash = vi.mocked(openaiHigh.markReady).mock.calls[0]![4]!.providerParameterHash
+    expect(openaiHighHash).not.toBe(openaiLowHash)
   })
 })

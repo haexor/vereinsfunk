@@ -259,6 +259,15 @@ export const TEXT_GENERATION_TEMPERATURE_STEPS = [
   { value: 1.0, label: 'Vollgas', hint: 'Maximale Übertreibung, volle Show.' },
 ] as const
 export const TextGenerationTemperatureSchema = z.literal(TEXT_GENERATION_TEMPERATURE_STEPS.map((step) => step.value))
+// Plan 042, PR 3 Step 3: eine Route statt zweier, weil das Formular beides zusammen braucht --
+// was anhakbar ist UND welche Laenge daraus folgt. available: false wird ausgegraut angezeigt,
+// nicht versteckt, sonst raetselt ein Mitglied, warum eine Plattform fehlt.
+export const TextGenerationPlatformAvailabilitySchema = z.object({
+  platform: SocialPlatformSchema,
+  available: z.boolean(),
+  maxCharacters: MaxCharactersSchema,
+  reason: z.enum(['no_channel', 'restricted_by_policy']).optional(),
+})
 // Die "Ausgewogen"-Stufe als Vorgabe -- aus der Liste gelesen statt als zweites 0.6-Literal, sonst
 // wuerde ein Umbau der Stufen einen Default hinterlassen, den das eigene Schema ablehnt.
 export const TEXT_GENERATION_DEFAULT_TEMPERATURE = TEXT_GENERATION_TEMPERATURE_STEPS[1].value
@@ -428,3 +437,4 @@ export type PreviewPlatformStylePersonaRequest = z.infer<typeof PreviewPlatformS
 export type PreviewCustomStyleProfileRequest = z.infer<typeof PreviewCustomStyleProfileRequestSchema>
 export type CreateCompositionSession = z.infer<typeof CreateCompositionSessionSchema>
 export type CreateGenerationCommand = z.infer<typeof CreateGenerationCommandSchema>
+export type TextGenerationPlatformAvailability = z.infer<typeof TextGenerationPlatformAvailabilitySchema>

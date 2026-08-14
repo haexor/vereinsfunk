@@ -30,8 +30,17 @@ function ciphertextBuffer(value: string) {
   return Buffer.from(value.slice(2), 'hex')
 }
 
+// Plan 042, PR 3 Step 5: provider_parameter_hash muss die tatsaechlich benutzten Parameter
+// hashen. Der Anthropic-Adapter sendet temperature bewusst nie (siehe generateText unten) -- sie
+// in den Hash aufzunehmen, waere eine falsche Provenienz-Angabe. Dieselbe Protokollpruefung wie
+// GET /v1/text-generation-capabilities (llmProviders.routes.ts).
 function parameterHash(provider: ProviderRow, session: SessionRow) {
-  return createHash('sha256').update(JSON.stringify({ baseUrl: provider.base_url, model: provider.model, temperature: session.temperature, maxCharacters: session.max_characters, maxOutputTokens: TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS, structuredOutputRequired: provider.structured_output_required })).digest('hex')
+  return createHash('sha256').update(JSON.stringify({
+    baseUrl: provider.base_url, model: provider.model,
+    ...(provider.protocol === 'openai' ? { temperature: session.temperature } : {}),
+    maxCharacters: session.max_characters, maxOutputTokens: TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS,
+    structuredOutputRequired: provider.structured_output_required,
+  })).digest('hex')
 }
 
 function hasGenerationPurpose(payload: WorkflowPayload): boolean {

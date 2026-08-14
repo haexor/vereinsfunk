@@ -94,6 +94,14 @@ export const UpdateTextGenerationPlatformDefaultRequestSchema = z.object({
   maxCharacters: MaxCharactersSchema,
 })
 
+// Plan 042, PR 3 Step 1: die Textwerkstatt (ein normales Mitglied) kann GET /v1/llm-providers
+// nicht sehen (requirePlatformAdmin), muss aber wissen, ob der Temperatur-Regler ueberhaupt eine
+// Wirkung hat -- der Anthropic-Adapter sendet temperature bewusst nicht. Bewusst nur ein Boolean:
+// die Antwort verraet weder Anbieter noch Endpunkt noch Modell.
+export const TextGenerationCapabilitiesSchema = z.object({
+  temperatureSupported: z.boolean(),
+})
+
 // Modellauswahl im Formular: statt einer im Frontend gepflegten Liste fragt die API den Provider
 // selbst. Der Schluessel kommt aus dem Formular, weil beim Anlegen noch keine Konfiguration und
 // damit kein hinterlegtes Geheimnis existiert; gespeichert wird er hier nicht.
@@ -181,6 +189,7 @@ export type CreateLlmProviderConfigurationRequest = z.infer<typeof CreateLlmProv
 export type UpdateLlmProviderConfigurationRequest = z.infer<typeof UpdateLlmProviderConfigurationRequestSchema>
 export type TextGenerationPlatformDefault = z.infer<typeof TextGenerationPlatformDefaultSchema>
 export type UpdateTextGenerationPlatformDefaultRequest = z.infer<typeof UpdateTextGenerationPlatformDefaultRequestSchema>
+export type TextGenerationCapabilities = z.infer<typeof TextGenerationCapabilitiesSchema>
 export type ListLlmProviderModelsRequest = z.infer<typeof ListLlmProviderModelsRequestSchema>
 export type ListLlmProviderModelsResponse = z.infer<typeof ListLlmProviderModelsResponseSchema>
 export type PlatformAdminOrganizationSummary = z.infer<typeof PlatformAdminOrganizationSummarySchema>

@@ -1,10 +1,10 @@
-import type { ConsentScope, GeneratedPost, OutputFormat, ScopeLevel, StyleProfilePromptPreview, StyleProfileRules } from '@vereinsfunk/contracts'
+import type { ConsentScope, GeneratedPost, OutputFormat, ScopeLevel, SocialPlatform, StyleProfilePromptPreview, StyleProfileRules } from '@vereinsfunk/contracts'
 import { canRemoveRole, hasPermission, type Permission, type Role } from '@vereinsfunk/authorization'
 import type { ApiEnvironment } from '@vereinsfunk/config'
 import { AnthropicStructuredContentGenerator, buildStructuredTextPrompt, ContentGenerationError, OpenAiCompatibleStructuredContentGenerator, type GroundedContentBrief, type StructuredContentGenerator } from '@vereinsfunk/content-engine'
-import { TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS, TEXT_GENERATION_DEFAULT_TEMPERATURE, UuidSchema } from '@vereinsfunk/contracts'
+import { SocialPlatformSchema, TEXT_GENERATION_DEFAULT_MAX_CHARACTERS, TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS, TEXT_GENERATION_DEFAULT_TEMPERATURE, UuidSchema } from '@vereinsfunk/contracts'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { mergeEffectiveConfig, resolveEffectiveConfig, type ConfigOverride, type TrustRecord } from '@vereinsfunk/domain'
+import { mergeEffectiveConfig, resolveAvailableChannels, resolveEffectiveConfig, type ChannelCandidate, type ConfigOverride, type ScopeLevelName, type TrustRecord } from '@vereinsfunk/domain'
 import type { FastifyRequest } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
@@ -325,6 +325,60 @@ export function computeRuleEntry(
 export async function resolveScopedEffectiveConfig(client: SupabaseClient, organizationId: string, departmentId: string, teamId: string | null) {
   const rows = await fetchPolicyRuleRows(client, organizationId)
   return computeRuleEntry(rows, teamId ? 'team' : 'department', teamId ?? departmentId, departmentId).config
+}
+
+export type TextGenerationPlatformAvailability = { available: boolean; maxCharacters: number; reason?: 'no_channel' | 'restricted_by_policy' }
+
+// Plan 042, PR 3 Step 3: "auf welchen Plattformen darf dieser Scope ueberhaupt veroeffentlichen"
+// -- dieselbe Frage, die routes/channels.ts's GET /v1/post-versions/:id/available-channels fuer
+// einen bestehenden Beitrag beantwortet, hier aber vor der Erzeugung und je Plattform statt je
+// Kanal-ID. Zwei Aufloesungen (mit und ohne allowedChannelIds-Einschraenkung), um "kein Kanal
+// eingerichtet" von "ein Kanal existiert, ist aber per Richtlinie ausgeschlossen" zu unterscheiden
+// -- beides fuehrt sonst ununterscheidbar zu "nicht verfuegbar".
+export async function resolveTextGenerationPlatformAvailability(
+  client: SupabaseClient, organizationId: string, departmentId: string, teamId: string | null, allowedChannelIds: readonly string[] | null,
+): Promise<Map<SocialPlatform, TextGenerationPlatformAvailability>> {
+  const [connections, scopeRows, policyRow, platformDefaults] = await Promise.all([
+    client.from('social_connections').select('id, platform, status, archived_at, responsible_profile_id').eq('organization_id', organizationId),
+    client.from('channel_scopes').select('social_connection_id, scope, department_id, team_id, can_schedule').eq('organization_id', organizationId),
+    client.from('policy_settings').select('require_channel_responsible').eq('organization_id', organizationId).eq('scope', 'organization').maybeSingle(),
+    client.from('text_generation_platform_defaults').select('platform, max_characters'),
+  ])
+  if (connections.error) throw connections.error
+  if (scopeRows.error) throw scopeRows.error
+  if (policyRow.error) throw policyRow.error
+  if (platformDefaults.error) throw platformDefaults.error
+
+  const targetScope: ScopeLevelName = teamId ? 'team' : 'department'
+  const requireChannelResponsible = policyRow.data?.require_channel_responsible ?? false
+  const maxCharactersByPlatform = new Map(platformDefaults.data.map((row) => [row.platform as SocialPlatform, row.max_characters as number]))
+
+  const result = new Map<SocialPlatform, TextGenerationPlatformAvailability>()
+  for (const platform of SocialPlatformSchema.options) {
+    const candidates: ChannelCandidate[] = connections.data
+      .filter((connection) => connection.platform === platform)
+      .map((connection) => ({
+        socialConnectionId: connection.id as string,
+        status: connection.status as ChannelCandidate['status'],
+        archivedAt: connection.archived_at as string | null,
+        responsibleProfileId: connection.responsible_profile_id as string | null,
+        scopeGrants: scopeRows.data
+          .filter((row) => row.social_connection_id === connection.id)
+          .map((row) => ({
+            scope: row.scope as ScopeLevelName,
+            ...(row.department_id ? { departmentId: row.department_id as string } : {}),
+            ...(row.team_id ? { teamId: row.team_id as string } : {}),
+            canSchedule: row.can_schedule as boolean,
+          })),
+      }))
+    const unrestricted = resolveAvailableChannels({ scope: targetScope, departmentId, ...(teamId ? { teamId } : {}), channels: candidates, allowedChannelIds: null, requireChannelResponsible })
+    const restricted = resolveAvailableChannels({ scope: targetScope, departmentId, ...(teamId ? { teamId } : {}), channels: candidates, allowedChannelIds, requireChannelResponsible })
+    const maxCharacters = maxCharactersByPlatform.get(platform) ?? TEXT_GENERATION_DEFAULT_MAX_CHARACTERS
+    result.set(platform, restricted.length > 0
+      ? { available: true, maxCharacters }
+      : { available: false, maxCharacters, reason: unrestricted.length > 0 ? 'restricted_by_policy' : 'no_channel' })
+  }
+  return result
 }
 
 export async function fetchMemberTrust(

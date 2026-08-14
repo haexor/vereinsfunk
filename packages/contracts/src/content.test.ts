@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CompressionProvenanceSchema, CreateCompositionSessionSchema, CreateCustomStyleProfileRequestSchema, CreateGenerationCommandSchema, CreatePlatformStylePersonaRequestSchema, CreateSubmissionSchema, CustomStyleProfileSchema, GeneratedPostSchema, PlatformStylePersonaSchema, TEXT_GENERATION_TEMPERATURE_STEPS, UpdatePlatformStylePersonaRequestSchema, VideoUploadMetadataSchema, WorkflowPayloadSchema } from './index.js'
+import { CompressionProvenanceSchema, CreateCompositionSessionSchema, CreateCustomStyleProfileRequestSchema, CreateGenerationCommandSchema, CreatePlatformStylePersonaRequestSchema, CreateSubmissionSchema, CustomStyleProfileSchema, GeneratedPostSchema, PlatformStylePersonaSchema, TEXT_GENERATION_TEMPERATURE_STEPS, TextGenerationPlatformAvailabilitySchema, UpdatePlatformStylePersonaRequestSchema, VideoUploadMetadataSchema, WorkflowPayloadSchema } from './index.js'
 import { department, org, team } from './testFixtures.js'
 
 describe('contracts', () => {
@@ -151,6 +151,15 @@ describe('text workshop contracts', () => {
     expect(CreateCompositionSessionSchema.safeParse({ ...base, targetPlatforms: ['instagram', 'instagram'] }).success).toBe(false)
     expect(CreateCompositionSessionSchema.safeParse({ ...base, targetPlatforms: ['threads'] }).success).toBe(false)
     expect(CreateCompositionSessionSchema.safeParse({ ...base, maxCharacters: 99 }).success).toBe(false)
+  })
+
+  // Plan 042, PR 3 Step 3: reason is only meaningful together with available: false, but the
+  // schema itself does not enforce that pairing -- the route is the single place that decides it.
+  it('accepts a platform availability entry with or without a reason', () => {
+    expect(TextGenerationPlatformAvailabilitySchema.safeParse({ platform: 'instagram', available: true, maxCharacters: 2200 }).success).toBe(true)
+    expect(TextGenerationPlatformAvailabilitySchema.safeParse({ platform: 'facebook', available: false, maxCharacters: 2200, reason: 'no_channel' }).success).toBe(true)
+    expect(TextGenerationPlatformAvailabilitySchema.safeParse({ platform: 'facebook', available: false, maxCharacters: 2200, reason: 'restricted_by_policy' }).success).toBe(true)
+    expect(TextGenerationPlatformAvailabilitySchema.safeParse({ platform: 'facebook', available: false, maxCharacters: 2200, reason: 'unknown' }).success).toBe(false)
   })
 
   it('validates the platform persona catalogue and reserves system profile slugs', () => {

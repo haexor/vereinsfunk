@@ -502,3 +502,45 @@ describe('text generation platform defaults', () => {
   })
 })
 
+// Plan 042, PR 3 Step 1: the text workshop (a plain member) cannot see GET /v1/llm-providers
+// (requirePlatformAdmin), but needs to know whether the temperature regler has any effect --
+// the Anthropic adapter never sends it.
+describe('text generation capabilities', () => {
+  function serviceReturning(rows: { protocol: string }[]): SupabaseClientFactory {
+    return {
+      forUser: () => { throw new Error('forUser should not be called by this route') },
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table !== 'llm_provider_configurations') throw new Error(`unexpected table in test fake: ${table}`)
+            return chain({ data: rows, error: null })
+          },
+        }) as unknown as SupabaseClient,
+    }
+  }
+
+  it('reports temperatureSupported: false for an active anthropic provider', async () => {
+    const app = await startApp({ platformAdminProvider: nonAdminProvider, supabaseClients: serviceReturning([{ protocol: 'anthropic' }]) })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: '/v1/text-generation-capabilities', headers: { authorization: `Bearer ${token}` } })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ temperatureSupported: false })
+  })
+
+  it('reports temperatureSupported: true for an active openai provider, reachable without platform admin', async () => {
+    const app = await startApp({ platformAdminProvider: nonAdminProvider, supabaseClients: serviceReturning([{ protocol: 'openai' }]) })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: '/v1/text-generation-capabilities', headers: { authorization: `Bearer ${token}` } })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ temperatureSupported: true })
+  })
+
+  it('reports temperatureSupported: false when no text provider is active', async () => {
+    const app = await startApp({ platformAdminProvider: nonAdminProvider, supabaseClients: serviceReturning([]) })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: '/v1/text-generation-capabilities', headers: { authorization: `Bearer ${token}` } })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ temperatureSupported: false })
+  })
+})
+
