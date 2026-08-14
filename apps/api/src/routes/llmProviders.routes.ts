@@ -3,7 +3,10 @@ import {
   ListLlmProviderModelsRequestSchema,
   ListLlmProviderModelsResponseSchema,
   LlmProviderConfigurationSchema,
+  SocialPlatformSchema,
+  TextGenerationPlatformDefaultSchema,
   UpdateLlmProviderConfigurationRequestSchema,
+  UpdateTextGenerationPlatformDefaultRequestSchema,
   UuidSchema,
 } from '@vereinsfunk/contracts'
 import { fetchPublicUrl, OutboundFetchError } from '@vereinsfunk/outbound-fetch'
@@ -28,7 +31,7 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
     const service = supabaseClients.forService()
     const configs = await service
       .from('llm_provider_configurations')
-      .select('id, label, protocol, base_url, model, purpose, task_kind, temperature, max_output_tokens, structured_output_required, priority, is_active')
+      .select('id, label, protocol, base_url, model, purpose, task_kind, structured_output_required, priority, is_active')
       .order('priority')
     if (configs.error) throw configs.error
     const secrets = await service.from('llm_provider_secrets').select('llm_provider_configuration_id')
@@ -59,13 +62,11 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
         model: input.model,
         purpose: input.purpose,
         task_kind: input.taskKind,
-        temperature: input.runtimeParameters.temperature,
-        max_output_tokens: input.runtimeParameters.maxOutputTokens,
-        structured_output_required: input.runtimeParameters.structuredOutputRequired,
+        structured_output_required: input.structuredOutputRequired,
         priority: input.priority,
         is_active: input.isActive,
       })
-      .select('id, label, protocol, base_url, model, purpose, task_kind, temperature, max_output_tokens, structured_output_required, priority, is_active')
+      .select('id, label, protocol, base_url, model, purpose, task_kind, structured_output_required, priority, is_active')
       .single()
     // Eine aktive Aufgabenart vergibt jede Prioritaet nur einmal (2026081305): zwei gleichrangige
     // aktive Provider liessen offen, welcher der aktive ist. Der Konflikt wird hier sichtbar --
@@ -121,18 +122,14 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
     if (input.model !== undefined) payload.model = input.model
     if (input.purpose !== undefined) payload.purpose = input.purpose
     if (input.taskKind !== undefined) payload.task_kind = input.taskKind
-    if (input.runtimeParameters !== undefined) {
-      payload.temperature = input.runtimeParameters.temperature
-      payload.max_output_tokens = input.runtimeParameters.maxOutputTokens
-      payload.structured_output_required = input.runtimeParameters.structuredOutputRequired
-    }
+    if (input.structuredOutputRequired !== undefined) payload.structured_output_required = input.structuredOutputRequired
     if (input.priority !== undefined) payload.priority = input.priority
     if (input.isActive !== undefined) payload.is_active = input.isActive
     const update = await service
       .from('llm_provider_configurations')
       .update(payload)
       .eq('id', params.id)
-      .select('id, label, protocol, base_url, model, purpose, task_kind, temperature, max_output_tokens, structured_output_required, priority, is_active')
+      .select('id, label, protocol, base_url, model, purpose, task_kind, structured_output_required, priority, is_active')
       .single()
     // Trifft nicht nur eine geaenderte Prioritaet: auch das Aktivschalten einer vorbereiteten
     // Ersatzzeile laeuft in den Index, wenn ihre Prioritaet bereits vergeben ist.
@@ -197,5 +194,40 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
     const del = await service.from('llm_provider_configurations').delete().eq('id', params.id)
     if (del.error) throw del.error
     return reply.code(204).send()
+  })
+
+  // Nur requireAuth, kein requirePlatformAdmin: die Textwerkstatt muss den Standardwert zum
+  // Vorbefuellen sehen koennen, ohne dass der Nutzer Plattform-Admin ist -- die Route bestaetigt
+  // nur, was die text_generation_platform_defaults_select-Policy ohnehin jedem Mitglied erlaubt.
+  app.get('/v1/text-generation-platform-defaults', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const result = await client.from('text_generation_platform_defaults').select('platform, max_characters, updated_at').order('platform')
+    if (result.error) throw result.error
+    return reply.code(200).send(
+      result.data.map((row) => TextGenerationPlatformDefaultSchema.parse({ platform: row.platform, maxCharacters: row.max_characters, updatedAt: row.updated_at })),
+    )
+  })
+
+  app.put('/v1/text-generation-platform-defaults/:platform', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    if (!(await requirePlatformAdmin(request, reply))) return
+    const params = z.object({ platform: SocialPlatformSchema }).parse(request.params)
+    const body = UpdateTextGenerationPlatformDefaultRequestSchema.parse(request.body)
+    const service = supabaseClients.forService()
+    // maybeSingle statt single: die Route aendert nur bestehende Zeilen (angelegt vom Seed in
+    // 2026081308), sie legt keine an. Fehlt die Zeile -- etwa weil eine spaetere Migration die
+    // Plattform-Menge erweitert, ohne sie zu befuellen -- ist das ein 404, kein 500 aus PGRST116.
+    const update = await service
+      .from('text_generation_platform_defaults')
+      .update({ max_characters: body.maxCharacters, updated_by: request.auth!.userId })
+      .eq('platform', params.platform)
+      .select('platform, max_characters, updated_at')
+      .maybeSingle()
+    if (update.error) throw update.error
+    if (!update.data) return reply.code(404).send({ error: 'text_generation_platform_default_not_found' })
+    return reply.code(200).send(
+      TextGenerationPlatformDefaultSchema.parse({ platform: update.data.platform, maxCharacters: update.data.max_characters, updatedAt: update.data.updated_at }),
+    )
   })
 }

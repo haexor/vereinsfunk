@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { SocialPlatformSchema } from './primitives.js'
 
 export const UuidSchema = z.uuid()
 export const ContentPresetSlugSchema = z.string().regex(/^[a-z][a-z0-9]*(?:[_-][a-z0-9]+)*$/).max(64)
@@ -225,6 +226,43 @@ export const StyleProfilePromptPreviewSchema = z.object({ system: z.string(), us
 export const GenerationIntentSchema = z.enum(['initial', 'revise'])
 export const GenerationCandidateStatusSchema = z.enum(['pending', 'generating', 'ready', 'failed', 'accepted', 'abandoned', 'expired'])
 export const CompositionSessionStatusSchema = z.enum(['draft', 'queued', 'generating', 'candidate_ready', 'failed', 'accepted', 'abandoned', 'expired'])
+
+// Die Laengengrenze einer Plattform ist eine ZEICHEN-Grenze, kein Token-Budget: Instagram und X
+// weisen einen zu langen Beitrag ab, und Tokens lassen sich darauf nicht verlaesslich umrechnen.
+// Das Token-Budget bleibt daneben bestehen, ist aber nur die Leine fuer das Modell (global, nicht
+// pro Plattform) -- die verbindliche Grenze ist max_characters.
+//
+// Dieselbe Spanne wie die CHECK-Constraints (composition_sessions.max_characters,
+// text_generation_platform_defaults.max_characters): einmal benannt, damit die API nicht irgendwann
+// einen Wert annimmt, den die Datenbank mit 23514 zurueckweist. Die Obergrenze 10000 laesst Raum
+// fuer die tatsaechlichen Plattform-Maxima (X 280, Mastodon 500, LinkedIn 3000, Instagram 2200);
+// wirksam gedeckelt wird ein Beitrag zusaetzlich durch GeneratedPostSchema.caption.
+export const MaxCharactersSchema = z.int().min(100).max(10_000)
+export const TEXT_GENERATION_DEFAULT_MAX_CHARACTERS = 2200
+// Reines Modell-Budget, absichtlich nicht pro Plattform: es verhindert einen davonlaufenden
+// Aufruf, waehrend die Plattform-Grenze ueber max_characters wirkt.
+export const TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS = 1200
+
+// Paket 042: wie stark die Persona-Stimme im jeweiligen Beitrag durchschlaegt -- nicht der Ton
+// selbst (der kommt von der Persona). Single Source of Truth fuer die DB-CHECK-Constraint
+// (composition_sessions.temperature), die API-Validierung und den Frontend-Regler.
+//
+// Achtung fuer die Regler-UI (PR 3): der Anthropic-Adapter sendet temperature bewusst nicht
+// (aktuelle Claude-Modelle lehnen den Parameter mit 400 ab, siehe
+// AnthropicStructuredContentGenerator in packages/content-engine/src/index.ts). Laeuft der aktive
+// Text-Provider auf diesem Protokoll, bleibt die Stufenwahl ohne Wirkung -- die entfernte
+// Provider-UI hatte dafuer einen eigenen Hinweis, die Beitrags-UI braucht ihn wieder.
+export const TEXT_GENERATION_TEMPERATURE_STEPS = [
+  { value: 0.3, label: 'Dezent', hint: 'Die Persona schimmert nur leicht durch.' },
+  { value: 0.6, label: 'Ausgewogen', hint: 'Gute Mischung aus Fakten und Persona-Stil.' },
+  { value: 0.8, label: 'Ausgeprägt', hint: 'Der typische Sound der Persona dominiert.' },
+  { value: 1.0, label: 'Vollgas', hint: 'Maximale Übertreibung, volle Show.' },
+] as const
+export const TextGenerationTemperatureSchema = z.literal(TEXT_GENERATION_TEMPERATURE_STEPS.map((step) => step.value))
+// Die "Ausgewogen"-Stufe als Vorgabe -- aus der Liste gelesen statt als zweites 0.6-Literal, sonst
+// wuerde ein Umbau der Stufen einen Default hinterlassen, den das eigene Schema ablehnt.
+export const TEXT_GENERATION_DEFAULT_TEMPERATURE = TEXT_GENERATION_TEMPERATURE_STEPS[1].value
+
 export const CreateCompositionSessionSchema = z.object({
   organizationId: UuidSchema,
   departmentId: UuidSchema,
@@ -244,6 +282,23 @@ export const CreateCompositionSessionSchema = z.object({
   sourceMaterial: z.lazy(() => SourceMaterialSchema),
   mediaAssetIds: z.array(UuidSchema).max(10).default([]),
   sourceRevision: z.int().positive().default(1),
+  // Paket 042: Mehrfachauswahl, weil ein Verein denselben Beitrag ueblicherweise auf mehreren
+  // Plattformen veroeffentlicht. Aus der Auswahl leitet die Route die verbindliche Zeichengrenze ab
+  // (Sitzungs-Override > kleinste Vorgabe der gewaehlten Plattformen > Fallback, siehe
+  // routes/content.ts). Welche Plattformen ein Mitglied ueberhaupt anhaken darf, ergibt sich aus den
+  // eingerichteten Kanaelen seines Scopes -- diese Pruefung fehlt noch (Plan 042, PR 3).
+  //
+  // Der Vorgabewert ist bewusst ausgeschrieben und NICHT aus SocialPlatformSchema.options
+  // abgeleitet: sobald eine Kurzform-Plattform dazukommt, wuerde "alle vorausgewaehlt" zusammen mit
+  // der min()-Regel jeden Beitrag stillschweigend auf deren Laenge zusammenstauchen. Bei deutlich
+  // unterschiedlichen Grenzen gehoeren getrennte Texte je Plattform hin
+  // (GeneratedPostSchema.variants, Plan 005) statt eines gemeinsam gekuerzten Textes.
+  targetPlatforms: z.array(SocialPlatformSchema).min(1).max(SocialPlatformSchema.options.length).superRefine((platforms, context) => {
+    if (new Set(platforms).size !== platforms.length) context.addIssue({ code: 'custom', message: 'targetPlatforms must not contain duplicates' })
+  }).default(['instagram', 'facebook']),
+  // Zeichen, nicht Tokens: die Plattform weist einen zu langen Beitrag ab.
+  maxCharacters: MaxCharactersSchema.optional(),
+  temperature: TextGenerationTemperatureSchema.default(TEXT_GENERATION_DEFAULT_TEMPERATURE),
 }).superRefine((value, context) => {
   const chosen = [value.styleProfileId, value.systemStyleProfileSlug, value.personaSlug].filter((field) => field !== undefined && field !== null)
   if (chosen.length > 1) context.addIssue({ code: 'custom', message: 'Choose at most one of styleProfileId, systemStyleProfileSlug, or personaSlug' })
@@ -323,7 +378,7 @@ export const PlatformVariantSchema = z.object({
 
 export const GeneratedPostSchema = z.object({
   verifiedFacts: z.array(z.string()).max(60), missingFacts: z.array(z.string()).max(30),
-  headline: z.string().max(80), caption: z.string().max(1800), shortCaption: z.string().max(500),
+  headline: z.string().max(80), caption: z.string().max(10_000), shortCaption: z.string().max(500),
   callToAction: z.string().max(240), hashtags: z.array(z.string()).max(12), altText: z.string().max(500),
   templateId: z.string().min(1), safetyFlags: z.array(SafetyFlagSchema),
   generatedClaims: z.array(ClaimSchema).max(60).default([]), variants: z.array(PlatformVariantSchema).max(8).default([]),

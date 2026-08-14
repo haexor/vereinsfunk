@@ -83,6 +83,8 @@ export type StructuredTextGeneratorInput = {
   apiKey: string
   temperature: number
   maxOutputTokens: number
+  /** Verbindliche Zeichengrenze der knappsten Ziel-Plattform. Fehlt im Preview-Pfad, der keine hat. */
+  maxCharacters?: number
   requestTimeoutMs?: number
 }
 
@@ -90,7 +92,7 @@ export interface StructuredContentGenerator {
   generateText(input: StructuredTextGeneratorInput): Promise<GeneratedPost>
 }
 
-export function buildStructuredTextPrompt(input: Pick<StructuredTextGeneratorInput, 'brief' | 'styleProfile' | 'revisionInstruction'>) {
+export function buildStructuredTextPrompt(input: Pick<StructuredTextGeneratorInput, 'brief' | 'styleProfile' | 'revisionInstruction' | 'maxCharacters'>) {
   const instruction = input.revisionInstruction ? input.revisionInstruction.slice(0, 500) : undefined
   // The ordering is the ADR-010 priority ordering. User-controlled material is data, never an
   // instruction with more authority than these fixed rules.
@@ -101,6 +103,9 @@ export function buildStructuredTextPrompt(input: Pick<StructuredTextGeneratorInp
       'Beachte verbotene Nennungen und Stil-No-Gos. Bei fehlenden Fakten nenne sie in missingFacts statt sie zu erfinden.',
       `Stilprofil: ${input.styleProfile.name}. ${input.styleProfile.description}`,
       `Stilregeln: ${JSON.stringify(input.styleProfile.styleRules)}. Dos: ${JSON.stringify(input.styleProfile.doRules)}. No-Gos: ${JSON.stringify(input.styleProfile.avoidRules)}`,
+      // Die Zielplattform weist einen zu langen Beitrag ab. Die Angabe steht hier, weil das
+      // Token-Budget des Aufrufs sie nicht ersetzen kann -- Tokens sind keine Zeichen.
+      ...(input.maxCharacters ? [`Der Beitragstext (caption) darf hoechstens ${input.maxCharacters} Zeichen lang sein.`] : []),
     ].join('\n'),
     user: JSON.stringify({
       confirmedSources: { claims: input.brief.allowedClaims, approvedQuotes: input.brief.approvedQuotes },

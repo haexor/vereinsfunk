@@ -10,6 +10,7 @@ import {
   StyleProfileRulesSchema,
   SubmissionAcceptedSchema,
   TeamSchema,
+  TEXT_GENERATION_DEFAULT_MAX_CHARACTERS,
   UpdateCustomStyleProfileRequestSchema,
   UuidSchema,
   type StyleProfileRules,
@@ -422,14 +423,41 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
       styleSnapshot = { name: profile.name, description: profile.description, styleRules: profile.styleRules, avoidRules: profile.avoidRules, doRules: profile.doRules, slug: input.systemStyleProfileSlug ?? 'klar_erklaerend' }
     }
     const sourceMaterial = { ...input.sourceMaterial, doNotMention: Array.from(new Set([...input.sourceMaterial.doNotMention, ...config.policies.forbiddenTopics])) }
-    const sessionHash = createHash('sha256').update(JSON.stringify({ presetSlug: input.presetSlug, goal: input.communicationGoal, sourceMaterial, styleSnapshot, sourceRevision: input.sourceRevision })).digest('hex')
+    // Sortiert, damit ['facebook','instagram'] und ['instagram','facebook'] dieselbe Anfrage
+    // bleiben -- sonst erzeugte dieselbe Auswahl je nach Reihenfolge der Haekchen zwei Sitzungen.
+    const targetPlatforms = [...input.targetPlatforms].sort()
+    // targetPlatforms/maxOutputTokens/temperature gehoeren in den Hash: die Sitzung friert sie ein
+    // und der RPC gibt fuer einen bereits bekannten Hash die vorhandene Sitzung samt Kandidat
+    // zurueck. Ohne sie wuerde ein zweites Absenden desselben Materials mit anderer Regler-Stufe
+    // stillschweigend den alten Kandidaten liefern -- die neue Stufe waere nirgends gespeichert und
+    // ueber `revise` auch nicht mehr erreichbar. Gehasht wird die Anfrage, nicht der aufgeloeste
+    // Token-Wert: ein echter Wiederholungsversuch derselben Anfrage bleibt damit idempotent, auch
+    // wenn ein Plattform-Admin die Vorgabe zwischenzeitlich geaendert hat.
+    const sessionHash = createHash('sha256').update(JSON.stringify({
+      presetSlug: input.presetSlug, goal: input.communicationGoal, sourceMaterial, styleSnapshot, sourceRevision: input.sourceRevision,
+      targetPlatforms, maxCharacters: input.maxCharacters ?? null, temperature: input.temperature,
+    })).digest('hex')
     const candidateHash = createHash('sha256').update(`${sessionHash}:initial`).digest('hex')
     const idempotencyKey = `generate-text:${sessionHash}:${input.sourceRevision}`
     const service = supabaseClients.forService()
+    // Aufgeloest bei Anlage, danach eingefroren (siehe composition_sessions.max_characters):
+    // expliziter Request-Wert > kleinste Vorgabe der gewaehlten Plattformen > generischer Fallback.
+    // Das Minimum, nicht der Durchschnitt oder die erste Wahl: ein einziger Text soll auf jeder
+    // angehakten Plattform passen, also gibt die knappste den Rahmen vor. Fehlt fuer eine gewaehlte
+    // Plattform die Vorgabezeile, zaehlt sie hier nicht mit -- eine fehlende Zeile darf die Laenge
+    // nicht heimlich hochsetzen, und ihr Fehlen ist ein Betreiberproblem (siehe PUT-Route).
+    let maxCharacters = input.maxCharacters ?? null
+    if (maxCharacters === null) {
+      const platformDefaults = await service.from('text_generation_platform_defaults').select('max_characters').in('platform', targetPlatforms)
+      if (platformDefaults.error) throw platformDefaults.error
+      const limits = (platformDefaults.data ?? []).map((row) => row.max_characters as number)
+      maxCharacters = limits.length > 0 ? Math.min(...limits) : null
+    }
     const result = await service.rpc('create_text_generation_session', {
       p_organization_id: input.organizationId, p_department_id: input.departmentId, p_team_id: input.teamId ?? null, p_preset_slug: input.presetSlug,
       p_communication_goal: input.communicationGoal, p_requested_formats: input.requestedFormats, p_source_material: sourceMaterial,
       p_style_profile_id: styleProfileId, p_style_profile_snapshot: styleSnapshot, p_effective_config_snapshot: { config: { tone: config.tone, goals: config.goals, hashtags: config.hashtags, ...config.policies } },
+      p_target_platforms: targetPlatforms, p_max_characters: maxCharacters ?? TEXT_GENERATION_DEFAULT_MAX_CHARACTERS, p_temperature: input.temperature,
       p_source_revision: input.sourceRevision, p_input_hash: sessionHash, p_candidate_input_hash: candidateHash, p_generation_intent: 'initial', p_revision_instruction: null,
       p_created_by: request.auth!.userId, p_correlation_id: request.id, p_idempotency_key: idempotencyKey,
     })
@@ -446,7 +474,10 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (!(await requireAuth(request, reply))) return
     const id = z.object({ id: UuidSchema }).parse(request.params).id
     const client = supabaseClients.forUser(request.auth!.accessToken)
-    const session = await client.from('composition_sessions').select('id, organization_id, department_id, team_id, status, preset_slug, communication_goal, created_at').eq('id', id).maybeSingle()
+    // target_platforms/max_characters/temperature mitlesen: sie sind bei Anlage eingefroren, also
+    // kann nur diese Antwort zeigen, mit welcher Regler-Stufe die Sitzung laeuft -- sonst waeren die
+    // Werte fuer die UI und den Support nur per direkter DB-Abfrage sichtbar.
+    const session = await client.from('composition_sessions').select('id, organization_id, department_id, team_id, status, preset_slug, communication_goal, target_platforms, max_characters, temperature, created_at').eq('id', id).maybeSingle()
     if (session.error) throw session.error
     if (!session.data) return reply.code(404).send({ error: 'session_not_found' })
     if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(session.data.organization_id, session.data.department_id, session.data.team_id)))) return
@@ -462,7 +493,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     const client = supabaseClients.forUser(request.auth!.accessToken)
     const session = await client
       .from('composition_sessions')
-      .select('id, organization_id, department_id, team_id, preset_slug, communication_goal, requested_formats, source_material, style_profile_id, style_profile_snapshot, effective_config_snapshot, source_revision, input_hash, created_by')
+      .select('id, organization_id, department_id, team_id, preset_slug, communication_goal, requested_formats, source_material, style_profile_id, style_profile_snapshot, effective_config_snapshot, target_platforms, max_characters, temperature, source_revision, input_hash, created_by')
       .eq('id', sessionId)
       .maybeSingle()
     if (session.error) throw session.error
@@ -476,6 +507,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
       p_preset_slug: session.data.preset_slug, p_communication_goal: session.data.communication_goal, p_requested_formats: session.data.requested_formats,
       p_source_material: session.data.source_material, p_style_profile_id: session.data.style_profile_id,
       p_style_profile_snapshot: session.data.style_profile_snapshot, p_effective_config_snapshot: session.data.effective_config_snapshot,
+      p_target_platforms: session.data.target_platforms, p_max_characters: session.data.max_characters, p_temperature: session.data.temperature,
       p_source_revision: session.data.source_revision, p_input_hash: session.data.input_hash, p_candidate_input_hash: candidateHash,
       p_generation_intent: 'revise', p_revision_instruction: revisionInstruction, p_created_by: request.auth!.userId,
       p_correlation_id: request.id, p_idempotency_key: `generate-text:${candidateHash}`,

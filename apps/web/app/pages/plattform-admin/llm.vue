@@ -39,13 +39,6 @@ const TASK_KIND_OPTIONS = [
   { value: 'image_generation', label: 'Bildgenerierung', available: false },
   { value: 'video_generation', label: 'Videogenerierung', available: false },
 ] as const
-const TEMPERATURE_OPTIONS = [
-  { value: 0, label: 'Präzise (0,0)' },
-  { value: 0.2, label: 'Ausgewogen (0,2)' },
-  { value: 0.7, label: 'Kreativ (0,7)' },
-  { value: 1, label: 'Sehr kreativ (1,0)' },
-] as const
-
 const config = useRuntimeConfig()
 const loading = ref(true)
 const saving = ref(false)
@@ -65,8 +58,6 @@ const newProvider = reactive({
   baseUrl: PROVIDER_PRESETS[0].baseUrl as string,
   model: '',
   apiKey: '',
-  temperature: 0.2,
-  maxOutputTokens: 1200,
   priority: 100,
 })
 
@@ -76,9 +67,6 @@ const canLoadModels = computed(() => newProvider.baseUrl.trim().length > 0 && ne
 // Ein Preset gehoert zu genau einem Protokoll -- ein OpenAI-Endpunkt unter "Anthropic (nativ)"
 // waere eine Konfiguration, die erst im Worker auffliegt.
 const visiblePresets = computed(() => PROVIDER_PRESETS.filter((preset) => preset.protocol === newProvider.protocol))
-// Der Anthropic-Adapter sendet temperature bewusst nicht (aktuelle Claude-Modelle lehnen den
-// Parameter ab). Ein bedienbarer Regler, der nichts bewirkt, waere irrefuehrend.
-const usesTemperature = computed(() => newProvider.protocol !== 'anthropic')
 
 function resetModelChoice() {
   availableModels.value = []
@@ -152,7 +140,6 @@ async function createProvider() {
       model: newProvider.model,
       apiKey: newProvider.apiKey,
       taskKind: newProvider.taskKind,
-      runtimeParameters: { temperature: newProvider.temperature, maxOutputTokens: newProvider.maxOutputTokens, structuredOutputRequired: true },
       priority: newProvider.priority,
     })
     await $fetch(`${config.public.apiBase}/v1/llm-providers`, { method: 'POST', headers, body })
@@ -161,8 +148,6 @@ async function createProvider() {
     newProvider.presetLabel = PROVIDER_PRESETS[0].label
     newProvider.baseUrl = PROVIDER_PRESETS[0].baseUrl
     newProvider.apiKey = ''
-    newProvider.temperature = 0.2
-    newProvider.maxOutputTokens = 1200
     newProvider.priority = 100
     resetModelChoice()
     await load()
@@ -317,19 +302,6 @@ async function removeProvider(id: string) {
             <p v-else-if="!showModelSelect" class="mt-1 text-[11px] font-normal text-[#9aa096]">Basis-URL und Schlüssel eintragen, dann Modelle laden.</p>
           </label>
 
-          <label class="text-xs font-semibold text-[#5c655f]">Temperatur
-            <select
-              v-model.number="newProvider.temperature"
-              :disabled="!usesTemperature"
-              class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal disabled:bg-[#f4f5f1] disabled:text-[#7b827d]"
-            >
-              <option v-for="option in TEMPERATURE_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
-            </select>
-            <p v-if="!usesTemperature" class="mt-1 text-[11px] font-normal text-[#9aa096]">Wird beim Anthropic-Protokoll nicht gesendet.</p>
-          </label>
-          <label class="text-xs font-semibold text-[#5c655f]">Max. Ausgabe-Tokens
-            <input v-model.number="newProvider.maxOutputTokens" type="number" min="128" max="4000" step="1" required class="mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" />
-          </label>
           <label class="text-xs font-semibold text-[#5c655f] sm:col-span-2">Priorität (kleinere Zahl gewinnt, je Aufgabenart nur einmal aktiv)
             <input v-model.number="newProvider.priority" type="number" step="1" required class="mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" />
           </label>
@@ -352,7 +324,6 @@ async function removeProvider(id: string) {
               <th class="pb-2 pr-4 font-semibold">Protokoll</th>
               <th class="pb-2 pr-4 font-semibold">Modell</th>
               <th class="pb-2 pr-4 font-semibold">Aufgabe</th>
-              <th class="pb-2 pr-4 font-semibold">Laufzeit</th>
               <th class="pb-2 pr-4 font-semibold">Priorität</th>
               <th class="pb-2 pr-4 font-semibold">Schlüssel</th>
               <th class="pb-2 pr-4 font-semibold">Aktiv</th>
@@ -365,7 +336,6 @@ async function removeProvider(id: string) {
               <td class="py-2 pr-4">{{ provider.protocol }}</td>
               <td class="py-2 pr-4">{{ provider.model }}</td>
               <td class="py-2 pr-4">{{ provider.taskKind }}</td>
-              <td class="py-2 pr-4">{{ provider.runtimeParameters.temperature }} · {{ provider.runtimeParameters.maxOutputTokens }} Tokens</td>
               <td class="py-2 pr-4">{{ provider.priority }}</td>
               <td class="py-2 pr-4">{{ provider.hasSecret ? 'hinterlegt' : 'fehlt' }}</td>
               <td class="py-2 pr-4">

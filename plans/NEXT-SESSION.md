@@ -1,26 +1,35 @@
 # Prompt für die nächste Session
 
-Arbeite im Repository-Root dieses Checkouts. Beginne mit `git status --short --branch` und `git log --oneline main..HEAD`. Falls PR #52 (Plan 035, Branch `worktree-plan-035-recovery-implementierung`) noch nicht gemergt ist, das zuerst klären.
+Arbeite im Repository-Root dieses Checkouts. Beginne mit `git status --short --branch`, `git fetch origin` und `git log --oneline origin/main..HEAD`. Falls PR #74 (Plan 042 PR 1, Branch `worktree-paket-042-llm-runtime-params`) noch nicht gemergt ist, das zuerst klären — PR 2 und PR 3 setzen darauf auf.
 
-## Ausgangslage: Plan 035 umgesetzt, PR #52 offen, Review-Runde 1 abgearbeitet
+## Ausgangslage: Plan 042 PR 1 offen (PR #74), Code-Review abgearbeitet
 
-Plan 034 (PR #50) ist gemergt. Plan 035 (`plans/035-generation-recovery-trigger.md`) ist vollständig umgesetzt:
+`plans/042-llm-laufzeitparameter-vom-provider-zur-sitzung.md` ist die verbindliche Beschreibung; sie wurde am 2026-08-14 nachträglich verschriftlicht, weil beim Code-Review von PR #74 auffiel, dass dieses Paket als einziges keine committete Plandatei hatte.
 
-- **Fencing-Token**: `generation_candidates.generation_lease_token`; `acquire_generation_candidate`/`mark_generation_candidate_ready`/`mark_generation_candidate_failed`/`release_generation_candidate`/`finalize_stalled_generation_recovery` sind fenced, pgTAP-getestet.
-- **Sichtbarkeit**: `generation_candidates.triggered_by` (`'member' | 'automatic_recovery'`), sichtbarer Hinweis in `apps/web/app/pages/erstellen.vue` bei `automatic_recovery`.
-- **Obergrenze**: `composition_sessions.candidate_count`, Platzhalter-Grenzwert `8` (unkalkuliert, vor Produktivbetrieb mit dem Nutzer zu bestätigen — siehe Plan, STOP conditions).
-- **Recovery-Workflow**: `claim_stalled_generation_candidates` claimt nur (Fencing-Token/`updated_at` erneuert, kein terminaler Status), `finalize_stalled_generation_recovery` setzt den alten Kandidaten erst `failed`, sobald der Ersatzversuch erzeugt wurde oder das Kandidatenlimit erreicht ist — ein Absturz zwischen beiden Schritten verliert den Kandidaten dadurch nicht, siehe `docs/operations/hatchet.md`. Eigenständiger Hatchet-Workflow `generation-recovery-scan` (`apps/worker/src/generationRecovery.ts`), deklarativ per `onCrons: ['*/5 * * * *']` registriert, außerhalb von `WorkflowNameSchema`s Pro-Entity-Schleife.
+PR 1 verschiebt `temperature` und die Längengrenze aus `llm_provider_configurations`:
 
-**Abweichung von der Ausplanung** (technische Korrektur, per `tsc` verifiziert): der Plan ging davon aus, `onCrons` sei nur auf `client.workflow(...)` verfügbar. Tatsächlich liegt `onCrons` auf `CreateBaseWorkflowOpts`, das in `CreateTaskWorkflowOpts` (die Optionen von `client.task(...)`) enthalten ist — die im bestehenden Code bereits genutzte `client.task(...)`-Kurzform funktioniert direkt, keine `client.workflow(...)`-Umleitung nötig.
+- **`temperature`** ist Beitrags-Einstellung des Mitglieds, begrenzt auf vier feste Stufen (`TEXT_GENERATION_TEMPERATURE_STEPS`: 0.3 Dezent / 0.6 Ausgewogen / 0.8 Ausgeprägt / 1.0 Vollgas).
+- **Die Längengrenze** ist eine betreibergepflegte **Zeichen**-Vorgabe je Ziel-Plattform (`text_generation_platform_defaults.max_characters`, für jedes Mitglied lesbar, nur über Service-Role hinter `requirePlatformAdmin` schreibbar). Kein Token-Budget: die Plattform weist einen zu langen Beitrag ab, Tokens lassen sich darauf nicht verlässlich umrechnen.
+- Der Ersteller wählt **mehrere** Ziel-Plattformen (`target_platforms`); die knappste Vorgabe gibt die Länge vor.
+- Alle drei Werte werden bei Sitzungsanlage auf `composition_sessions` eingefroren.
 
-**Nicht behoben, wie geplant zurückgestellt**: Kontingent-Interaktion (Paket 021), provider-seitige Idempotenz gegen doppelt abgerechnete LLM-Aufrufe (aus Plan 034), UI-Anzeige verbleibender Versuche vor Erreichen der Obergrenze.
+**Abweichungen von der Ausplanung**: `drop function` + `create function` statt `create or replace` (die drei neuen RPC-Parameter werden mittig eingefügt, Postgres erkennt das sonst nicht als Ersatz — Muster aus `2026081204`); `apps/web/app/pages/plattform-admin/llm.vue` musste wegen des Contracts-Breaking-Change (`runtimeParameters` entfällt) schon in PR 1 mechanisch mit.
 
-Lokal verifiziert: der volle Gate (`pnpm lint && pnpm typecheck && pnpm test && pnpm build`), `pnpm db:reset && pnpm db:test` sowie ein Browser-Check des `triggered_by`-Hinweises in `erstellen.vue` (alle grün, siehe PR-Beschreibung #52).
+**Aus dem Code-Review nachgezogen** (Commits `6c932e1d`, `67423ef7` und die Folgecommits vom 14.08.): der kritische Fund war der `input_hash` ohne die drei neuen Felder — der `if found`-Zweig von `create_text_generation_session` gibt für einen bekannten Hash die vorhandene Sitzung samt Kandidat zurück und ignoriert die übergebenen Laufzeitwerte, also lieferte ein zweites Absenden desselben Materials mit anderer Reglerstufe stumm den alten Kandidaten. Außerdem `maybeSingle()`+404 statt `single()` auf dem PUT, die vier Kopien von `instagram`/`facebook` zu einer `SocialPlatformSchema` in `primitives.ts` zusammengeführt (die Kanal-Domäne und die Textwerkstatt teilen die Menge jetzt bewusst — ein Zwischenstand hatte sie getrennt, was mit der Kanal-Bindung aus PR 3 falsch wäre), Zeichenspanne und Defaults einmal in den Contracts, eingefrorene Werte in `GET /v1/text-workshop/sessions/:id`, Routentests für beide neuen Endpunkte.
+
+**Bewusst nicht gemacht**: keine Datenmigration der alten Provider-Werte — `temperature 0.2` ist in der neuen Skala kein legaler Wert mehr, und das alte Token-Limit ist ohnehin durch eine Zeichengrenze ersetzt, die der Plattform-Admin in PR 2 pflegt.
+
+Verifiziert: voller Gate (`pnpm lint && pnpm typecheck && pnpm test && pnpm build`) und `pnpm db:reset && pnpm db:test` (746 pgTAP-Tests) auf dem aktuellen Stand, nach jeder Änderungsrunde.
 
 ## Nächster Schritt
 
-1. Verbleibende CodeRabbit-Runde(n) zu PR #52 abarbeiten, dann mergen.
-2. Nach Merge: `plans/README.md` bleibt aktuell (bereits in diesem Branch auf „erledigt" nachgezogen).
-3. Vor Produktivbetrieb: den `candidate_count`-Platzhalter (`8`) mit dem Nutzer kalibrieren.
+1. PR #74 mergen.
+2. **PR 2** (klein): Vorgaben-Abschnitt in `plattform-admin/llm.vue` — die API-Hälften `GET`/`PUT /v1/text-generation-platform-defaults` existieren seit PR 1 und haben noch keinen Konsumenten.
+3. **PR 3**: Regler am Beitrag in `erstellen.vue`. Zwei Punkte vorher klären bzw. beachten:
+   - **Entschieden (2026-08-14)**: Läuft für die Textgenerierung ein Anbieter mit `anthropic`-Protokoll, wird der Regler ausgegraut oder nicht angezeigt — der Adapter sendet `temperature` bewusst nicht. Dafür braucht es eine neue schmale Leseroute `GET /v1/text-generation-capabilities → { temperatureSupported: boolean }` (nur `requireAuth`), weil `GET /v1/llm-providers` hinter `requirePlatformAdmin` liegt und die Textwerkstatt ein normales Mitglied benutzt. Nur ein Boolean, damit die Antwort weder Anbieter noch Endpunkt verrät.
+   - **Entschieden**: Die Plattform-Auswahl ist im Formular sichtbar, Mehrfachauswahl, beide vorausgewählt — aber **nur Plattformen, auf die der Scope veröffentlichen kann** (Kanäle aus Paket 012, Delegation/Einschränkung aus 011/023). Dafür fehlt eine Leseroute `GET /v1/text-generation-platforms?organizationId&departmentId&teamId`, und `POST /v1/text-workshop/sessions` muss dieselbe Auflösung serverseitig durchsetzen (422 `platform_not_available`). Details: Plan 042, PR 3, Step 3.
+   - Ebenfalls in PR 3: `provider_parameter_hash` nimmt `temperature` heute auch für `anthropic`-Provider auf, die sie nie senden — die Provenienz behauptet damit etwas Falsches.
 
-Alternativ, falls der Nutzer zuerst anderswo weiterarbeiten möchte: aus `plans/README.md`, Tabelle „Vierte Serie", sind 029 und 031 als „bereit" markiert (beide abhängig von 027, das mit PR #38 vollständig gemergt ist).
+**Als eigenes Paket auszuplanen** (nicht 042): getrennte Texte je Plattform, sobald sich die Zeichengrenzen stark unterscheiden — `GeneratedPostSchema.variants` ist dafür vorhanden und heute leer (Paket 005). Daran hängt die offene fachliche Frage, ob zwei Varianten eine gemeinsame Freigabe erhalten oder je eine eigene, und was gilt, wenn eine freigegeben und eine abgelehnt wird (Freigabekette aus 011/024 arbeitet heute auf **einer** `post_version`). Ebenfalls offen: eine **harte** Prüfung der Zeichengrenze nach der Generierung — heute nennt der System-Prompt die Grenze nur, durchgesetzt wird global über `GeneratedPostSchema.caption` (2200). Zusätzlich vorgesehen sind Twitter/X, LinkedIn und Mastodon als weitere Kanäle; jede neue Plattform braucht eine Seed-Zeile mit ihrer echten Zeichengrenze (STOP conditions in Plan 042).
+
+Alternativ, falls zuerst anderswo weitergearbeitet werden soll: `plans/README.md` führt **038** (Hatchet produktiv betreiben) als geplant, mit dem Befund, dass `vereinsfunk-worker` in Produktion seit dem Merge von Plan 004 crash-loopt — das ist der dringlichste offene Betriebspunkt. **029** und **031** sind weiterhin als bereit markiert.

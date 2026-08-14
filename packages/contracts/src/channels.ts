@@ -1,10 +1,13 @@
 import { z } from 'zod'
 import { UuidSchema } from './content.js'
+import { SocialPlatformSchema } from './primitives.js'
 import { AssignableRoleSchema, ScopeLevelSchema, rolesForScopeLevel } from './structure.js'
 
 // Paket 012: Kanaele und Social-Accounts --------------------------------------------------------
 
-export const SocialPlatformSchema = z.enum(['instagram', 'facebook'])
+// Paket 042: die Plattform-Menge lebt in primitives.ts, damit content.ts (Ziel-Plattformen eines
+// Beitrags) sie ohne Zyklus mitbenutzt. Re-Export, damit bestehende Importe aus channels.js bleiben.
+export { SocialPlatformSchema }
 export const SocialConnectionStatusSchema = z.enum(['active', 'action_required', 'disconnected'])
 // team ist kein gueltiger Kanalbesitz (siehe social_connections_owner_check) -- eigenes Schema
 // statt des geteilten ScopeLevelSchema, damit ein Team hier gar nicht erst waehlbar ist.
@@ -95,7 +98,7 @@ export const CreateMembershipRequestSchema = z.object({
 })
 export const UpdateMembershipRequestSchema = z.object({ role: AssignableRoleSchema })
 
-export type SocialPlatform = z.infer<typeof SocialPlatformSchema>
+export type { SocialPlatform } from './primitives.js'
 export type SocialConnectionStatus = z.infer<typeof SocialConnectionStatusSchema>
 export type ChannelOwnerScope = z.infer<typeof ChannelOwnerScopeSchema>
 export type ChannelScopeAssignment = z.infer<typeof ChannelScopeAssignmentSchema>

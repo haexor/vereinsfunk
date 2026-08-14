@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import type { SocialPlatform } from '@vereinsfunk/contracts'
 import { createLogger } from '@vereinsfunk/observability'
 
 const logger = createLogger({ name: 'worker' })
@@ -7,7 +8,8 @@ export type StalledCandidateRow = { id: string; composition_session_id: string; 
 export type RecoverableSessionRow = {
   organization_id: string; department_id: string; team_id: string | null; preset_slug: string; communication_goal: string
   requested_formats: unknown; source_material: unknown; style_profile_id: string | null; style_profile_snapshot: unknown
-  effective_config_snapshot: unknown; source_revision: number; input_hash: string; created_by: string
+  effective_config_snapshot: unknown; target_platforms: SocialPlatform[]; max_characters: number; temperature: number
+  source_revision: number; input_hash: string; created_by: string
 }
 export type RecoveryOutcome = 'created' | 'limit_reached'
 

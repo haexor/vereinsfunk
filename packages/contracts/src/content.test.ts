@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CompressionProvenanceSchema, CreateCompositionSessionSchema, CreateCustomStyleProfileRequestSchema, CreateGenerationCommandSchema, CreatePlatformStylePersonaRequestSchema, CreateSubmissionSchema, CustomStyleProfileSchema, GeneratedPostSchema, PlatformStylePersonaSchema, UpdatePlatformStylePersonaRequestSchema, VideoUploadMetadataSchema, WorkflowPayloadSchema } from './index.js'
+import { CompressionProvenanceSchema, CreateCompositionSessionSchema, CreateCustomStyleProfileRequestSchema, CreateGenerationCommandSchema, CreatePlatformStylePersonaRequestSchema, CreateSubmissionSchema, CustomStyleProfileSchema, GeneratedPostSchema, PlatformStylePersonaSchema, TEXT_GENERATION_TEMPERATURE_STEPS, UpdatePlatformStylePersonaRequestSchema, VideoUploadMetadataSchema, WorkflowPayloadSchema } from './index.js'
 import { department, org, team } from './testFixtures.js'
 
 describe('contracts', () => {
@@ -120,6 +120,37 @@ describe('text workshop contracts', () => {
     expect(CreateCompositionSessionSchema.safeParse({ ...base, styleProfileId: org, personaSlug: 'kapitaen-klar' }).success).toBe(false)
     expect(CreateCompositionSessionSchema.safeParse({ ...base, systemStyleProfileSlug: 'klar_erklaerend', personaSlug: 'kapitaen-klar' }).success).toBe(false)
     expect(CreateCompositionSessionSchema.safeParse({ ...base, styleProfileId: org, systemStyleProfileSlug: 'klar_erklaerend', personaSlug: 'kapitaen-klar' }).success).toBe(false)
+  })
+
+  // Paket 042: temperature is the member's own choice per post, limited to the four fixed regler
+  // steps -- not a free number, and not inherited from the persona/style profile.
+  it('defaults temperature to the "Ausgewogen" step and rejects any value off the four fixed steps', () => {
+    const base = {
+      organizationId: org, departmentId: department, presetSlug: 'event', communicationGoal: 'invite',
+      requestedFormats: ['text_post'] as const, sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [], doNotMention: [] },
+    }
+    expect(CreateCompositionSessionSchema.parse(base).temperature).toBe(0.6)
+    for (const step of TEXT_GENERATION_TEMPERATURE_STEPS) {
+      expect(CreateCompositionSessionSchema.safeParse({ ...base, temperature: step.value }).success).toBe(true)
+    }
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, temperature: 0.5 }).success).toBe(false)
+  })
+
+  // Mehrfachauswahl: der Verein postet denselben Text ueblicherweise auf mehreren Plattformen, die
+  // knappste Vorgabe gibt dann die Laenge vor (min() in routes/content.ts). Ohne Angabe sind beide
+  // Plattformen vorausgewaehlt -- leer ist keine gueltige Wahl mehr.
+  it('preselects both platforms and rejects an empty, duplicated or unknown selection', () => {
+    const base = {
+      organizationId: org, departmentId: department, presetSlug: 'event', communicationGoal: 'invite',
+      requestedFormats: ['text_post'] as const, sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [], doNotMention: [] },
+    }
+    expect(CreateCompositionSessionSchema.parse(base).targetPlatforms).toEqual(['instagram', 'facebook'])
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, targetPlatforms: ['instagram'], maxCharacters: 500 }).success).toBe(true)
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, targetPlatforms: ['facebook', 'instagram'] }).success).toBe(true)
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, targetPlatforms: [] }).success).toBe(false)
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, targetPlatforms: ['instagram', 'instagram'] }).success).toBe(false)
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, targetPlatforms: ['threads'] }).success).toBe(false)
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, maxCharacters: 99 }).success).toBe(false)
   })
 
   it('validates the platform persona catalogue and reserves system profile slugs', () => {
