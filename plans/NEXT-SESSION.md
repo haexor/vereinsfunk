@@ -1,6 +1,6 @@
 # Prompt für die nächste Session
 
-Arbeite im Repository-Root dieses Checkouts. Beginne mit `git status --short --branch`, `git fetch origin` und `git log --oneline origin/main..HEAD`. Paket 042 ist abgeschlossen: PR #74 (PR 1) und #75 (PR 2) sind gemergt, **PR #76 (PR 3)** ist offen und trägt bereits seine Review-Fixes — falls noch nicht gemergt, das zuerst klären.
+Arbeite im Repository-Root dieses Checkouts. Beginne mit `git status --short --branch`, `git fetch origin` und `git log --oneline origin/main..HEAD`. Paket 042 ist vollständig abgeschlossen: PR #74 (PR 1), #75 (PR 2) und #76 (PR 3, samt Review-Fixes) sind alle gemergt.
 
 ## Ausgangslage: Paket 042 abgeschlossen, Paket 039 ausgeplant
 
@@ -23,7 +23,7 @@ Betreiberentscheidung vom 2026-08-14: der eigene Blog ist **ein Kanal wie jeder 
 
 Zwei Dinge sind beim Umsetzen wichtig:
 
-1. **`social_connections` kennt heute keinen Anlageweg ohne OAuth.** Zeilen entstehen ausschließlich in `apps/api/src/routes/channelOAuth.ts:198`; eine `POST /v1/channels`-Route existiert nicht, und `token_ciphertext` ist `not null`. Beides ist Teil von PR 1.
+1. **`social_connections` kennt heute keinen Anlageweg ohne OAuth.** Zeilen entstehen ausschließlich in `apps/api/src/routes/channelOAuth.ts:198`; eine `POST /v1/channels`-Route existiert nicht. Das Token selbst liegt seit Paket 012 auf der getrennten Tabelle `social_connection_secrets`, nicht auf `social_connections` — ein Website-Kanal braucht dort einfach keine Zeile. Beides ist Teil von PR 1.
 2. **Der Plattform-CHECK steht an sieben Stellen in SQL.** Ein übersehener schlägt erst beim ersten echten Blog-Beitrag zu, nicht beim Anlegen des Kanals — die Liste steht im Plan unter „Current state".
 
 Der **Auslieferungsmechanismus** (wie der Beitrag auf die Vereinsseite kommt: Feed, Webhook, CMS-Plugin, Einbettcode) ist bewusst **nicht** Teil von 039 und braucht erst eine Ausgangslage-Recherche und eine Betreiberentscheidung.

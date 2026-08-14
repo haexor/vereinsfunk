@@ -502,3 +502,57 @@ describe('text generation platform defaults', () => {
   })
 })
 
+// Plan 042, PR 3 Step 1: the text workshop (a plain member) cannot see GET /v1/llm-providers
+// (requirePlatformAdmin), but needs to know whether the temperature regler has any effect --
+// the Anthropic adapter never sends it.
+describe('text generation capabilities', () => {
+  function serviceReturning(rows: { protocol: string }[], onSelect?: (columns: string) => void): SupabaseClientFactory {
+    return {
+      forUser: () => { throw new Error('forUser should not be called by this route') },
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table !== 'llm_provider_configurations') throw new Error(`unexpected table in test fake: ${table}`)
+            return { select: (columns: string) => { onSelect?.(columns); return chain({ data: rows, error: null }) } }
+          },
+        }) as unknown as SupabaseClient,
+    }
+  }
+
+  it('reports temperatureSupported: false for an active anthropic provider', async () => {
+    const app = await startApp({ platformAdminProvider: nonAdminProvider, supabaseClients: serviceReturning([{ protocol: 'anthropic' }]) })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: '/v1/text-generation-capabilities', headers: { authorization: `Bearer ${token}` } })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ temperatureSupported: false })
+  })
+
+  it('reports temperatureSupported: true for an active openai provider, reachable without platform admin', async () => {
+    const app = await startApp({ platformAdminProvider: nonAdminProvider, supabaseClients: serviceReturning([{ protocol: 'openai' }]) })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: '/v1/text-generation-capabilities', headers: { authorization: `Bearer ${token}` } })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ temperatureSupported: true })
+  })
+
+  // Der Worker generiert nur mit einer Konfiguration, die auch ein Geheimnis hat (der !inner-Join in
+  // loadActiveTextProvider). Ohne denselben Join meldete diese Route das Protokoll einer Zeile, die
+  // nie generiert -- und blendete den Regler passend dazu falsch ein oder aus. Das Filtern erledigt
+  // PostgREST, hier bleibt die Form der Abfrage zu sichern.
+  it('asks for the same secret-bearing configurations the worker generates with', async () => {
+    let columns: string | undefined
+    const app = await startApp({ platformAdminProvider: nonAdminProvider, supabaseClients: serviceReturning([{ protocol: 'openai' }], (selected) => { columns = selected }) })
+    const token = await signAccessToken(USER_ID)
+    expect((await app.inject({ method: 'GET', url: '/v1/text-generation-capabilities', headers: { authorization: `Bearer ${token}` } })).statusCode).toBe(200)
+    expect(columns).toContain('llm_provider_secrets!inner')
+  })
+
+  it('reports temperatureSupported: false when no text provider is active', async () => {
+    const app = await startApp({ platformAdminProvider: nonAdminProvider, supabaseClients: serviceReturning([]) })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: '/v1/text-generation-capabilities', headers: { authorization: `Bearer ${token}` } })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ temperatureSupported: false })
+  })
+})
+
