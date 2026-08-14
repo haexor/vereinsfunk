@@ -80,7 +80,7 @@ const LEGAL_FORMS: { id: NonNullable<OrganizationProfile['legalForm']>; label: s
   { id: 'sonstige', label: 'Sonstige' },
 ]
 
-const profileDraft = reactive({
+const profileDraft = ref({
   legalName: '',
   legalForm: '' as '' | NonNullable<OrganizationProfile['legalForm']>,
   registerCourt: '',
@@ -99,21 +99,21 @@ const profileDraft = reactive({
 })
 watch(organizationProfile, (profile) => {
   if (!profile) return
-  profileDraft.legalName = profile.legalName ?? ''
-  profileDraft.legalForm = profile.legalForm ?? ''
-  profileDraft.registerCourt = profile.registerCourt ?? ''
-  profileDraft.registerNumber = profile.registerNumber ?? ''
-  profileDraft.street = profile.street ?? ''
-  profileDraft.houseNumber = profile.houseNumber ?? ''
-  profileDraft.postalCode = profile.postalCode ?? ''
-  profileDraft.city = profile.city ?? ''
-  profileDraft.countryCode = profile.countryCode
-  profileDraft.contactEmail = profile.contactEmail ?? ''
-  profileDraft.contactPhone = profile.contactPhone ?? ''
-  profileDraft.websiteUrl = profile.websiteUrl ?? ''
-  profileDraft.foundedYear = profile.foundedYear ? String(profile.foundedYear) : ''
-  profileDraft.responsiblePersonProfileId = profile.responsiblePersonProfileId ?? ''
-  profileDraft.imprintPublished = profile.imprintPublished
+  profileDraft.value.legalName = profile.legalName ?? ''
+  profileDraft.value.legalForm = profile.legalForm ?? ''
+  profileDraft.value.registerCourt = profile.registerCourt ?? ''
+  profileDraft.value.registerNumber = profile.registerNumber ?? ''
+  profileDraft.value.street = profile.street ?? ''
+  profileDraft.value.houseNumber = profile.houseNumber ?? ''
+  profileDraft.value.postalCode = profile.postalCode ?? ''
+  profileDraft.value.city = profile.city ?? ''
+  profileDraft.value.countryCode = profile.countryCode
+  profileDraft.value.contactEmail = profile.contactEmail ?? ''
+  profileDraft.value.contactPhone = profile.contactPhone ?? ''
+  profileDraft.value.websiteUrl = profile.websiteUrl ?? ''
+  profileDraft.value.foundedYear = profile.foundedYear ? String(profile.foundedYear) : ''
+  profileDraft.value.responsiblePersonProfileId = profile.responsiblePersonProfileId ?? ''
+  profileDraft.value.imprintPublished = profile.imprintPublished
 }, { immediate: true })
 
 const profileSaving = ref(false)
@@ -126,21 +126,21 @@ async function saveProfile() {
     organizationProfile.value = await api.request(`/v1/organizations/${organizationId.value}/profile`, {
       method: 'PATCH',
       body: {
-        legalName: blankToNull(profileDraft.legalName),
-        legalForm: profileDraft.legalForm || null,
-        registerCourt: blankToNull(profileDraft.registerCourt),
-        registerNumber: blankToNull(profileDraft.registerNumber),
-        street: blankToNull(profileDraft.street),
-        houseNumber: blankToNull(profileDraft.houseNumber),
-        postalCode: blankToNull(profileDraft.postalCode),
-        city: blankToNull(profileDraft.city),
-        countryCode: profileDraft.countryCode.trim().toUpperCase(),
-        contactEmail: blankToNull(profileDraft.contactEmail),
-        contactPhone: blankToNull(profileDraft.contactPhone),
-        websiteUrl: blankToNull(profileDraft.websiteUrl),
-        foundedYear: profileDraft.foundedYear.trim() ? Number(profileDraft.foundedYear) : null,
-        responsiblePersonProfileId: profileDraft.responsiblePersonProfileId || null,
-        imprintPublished: profileDraft.imprintPublished,
+        legalName: blankToNull(profileDraft.value.legalName),
+        legalForm: profileDraft.value.legalForm || null,
+        registerCourt: blankToNull(profileDraft.value.registerCourt),
+        registerNumber: blankToNull(profileDraft.value.registerNumber),
+        street: blankToNull(profileDraft.value.street),
+        houseNumber: blankToNull(profileDraft.value.houseNumber),
+        postalCode: blankToNull(profileDraft.value.postalCode),
+        city: blankToNull(profileDraft.value.city),
+        countryCode: profileDraft.value.countryCode.trim().toUpperCase(),
+        contactEmail: blankToNull(profileDraft.value.contactEmail),
+        contactPhone: blankToNull(profileDraft.value.contactPhone),
+        websiteUrl: blankToNull(profileDraft.value.websiteUrl),
+        foundedYear: profileDraft.value.foundedYear.trim() ? Number(profileDraft.value.foundedYear) : null,
+        responsiblePersonProfileId: profileDraft.value.responsiblePersonProfileId || null,
+        imprintPublished: profileDraft.value.imprintPublished,
       },
     }, OrganizationProfileSchema)
   } catch (error) {
@@ -154,16 +154,16 @@ async function saveProfile() {
 
 // --- Aufbewahrungsfristen -----------------------------------------------------------------
 
-const retentionDraft = reactive({ rawMediaDays: 90, derivativeEnabled: false, derivativeDays: 90, auditEventDays: 1095, consentEvidenceYears: 5, statusEventDays: 730 })
+const retentionDraft = ref({ rawMediaDays: 90, derivativeEnabled: false, derivativeDays: 90, auditEventDays: 1095, consentEvidenceYears: 5, statusEventDays: 730 })
 watch(retentionSettings, (value) => {
   if (!value) return
-  retentionDraft.rawMediaDays = value.rawMediaDays
-  retentionDraft.derivativeEnabled = value.derivativeDays !== null
-  retentionDraft.derivativeDays = value.derivativeDays ?? 90
-  retentionDraft.auditEventDays = value.auditEventDays
-  retentionDraft.consentEvidenceYears = value.consentEvidenceYears
+  retentionDraft.value.rawMediaDays = value.rawMediaDays
+  retentionDraft.value.derivativeEnabled = value.derivativeDays !== null
+  retentionDraft.value.derivativeDays = value.derivativeDays ?? 90
+  retentionDraft.value.auditEventDays = value.auditEventDays
+  retentionDraft.value.consentEvidenceYears = value.consentEvidenceYears
   // Paket 016: Statushistorie (post_status_events) fuer die Durchlaufzeit-Messung.
-  retentionDraft.statusEventDays = value.statusEventDays
+  retentionDraft.value.statusEventDays = value.statusEventDays
 }, { immediate: true })
 
 const retentionSaving = ref(false)
@@ -176,11 +176,11 @@ async function saveRetentionSettings() {
     retentionSettings.value = await api.request(`/v1/organizations/${organizationId.value}/retention-settings`, {
       method: 'PUT',
       body: {
-        rawMediaDays: retentionDraft.rawMediaDays,
-        derivativeDays: retentionDraft.derivativeEnabled ? retentionDraft.derivativeDays : null,
-        auditEventDays: retentionDraft.auditEventDays,
-        consentEvidenceYears: retentionDraft.consentEvidenceYears,
-        statusEventDays: retentionDraft.statusEventDays,
+        rawMediaDays: retentionDraft.value.rawMediaDays,
+        derivativeDays: retentionDraft.value.derivativeEnabled ? retentionDraft.value.derivativeDays : null,
+        auditEventDays: retentionDraft.value.auditEventDays,
+        consentEvidenceYears: retentionDraft.value.consentEvidenceYears,
+        statusEventDays: retentionDraft.value.statusEventDays,
       },
     }, RetentionSettingsSchema)
   } catch {

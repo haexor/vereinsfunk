@@ -102,28 +102,28 @@ function slugify(value: string): string {
   return slug || 'profil'
 }
 
-const draft = reactive(emptyStyleProfileDraft())
+const draft = ref(emptyStyleProfileDraft())
 const creating = ref(false)
 const createError = ref('')
 const creatingPreviewing = ref(false)
 const creatingPreviewResult = ref<GeneratedPost | null>(null)
 const creatingPreviewError = ref('')
 const creatingPreviewKey = ref(crypto.randomUUID())
-watch(draft, () => { creatingPreviewKey.value = crypto.randomUUID() })
+watch(draft, () => { creatingPreviewKey.value = crypto.randomUUID() }, { deep: true })
 
 async function createProfile() {
   const scopeChoice = scopeChoices.value.find((choice) => choice.key === selectedScopeKey.value)
-  if (!organizationId.value || !scopeChoice || !draft.name.trim() || !draft.description.trim()) return
+  if (!organizationId.value || !scopeChoice || !draft.value.name.trim() || !draft.value.description.trim()) return
   creating.value = true
   createError.value = ''
   try {
     const body = CreateCustomStyleProfileRequestSchema.parse({
       organizationId: organizationId.value, departmentId: scopeChoice.departmentId, teamId: scopeChoice.teamId,
-      slug: slugify(draft.name), name: draft.name, description: draft.description,
-      styleRules: styleRulesFromDraft(draft), avoidRules: avoidRulesFromDraft(draft), doRules: doRulesFromDraft(draft),
+      slug: slugify(draft.value.name), name: draft.value.name, description: draft.value.description,
+      styleRules: styleRulesFromDraft(draft.value), avoidRules: avoidRulesFromDraft(draft.value), doRules: doRulesFromDraft(draft.value),
     })
     await api.request('/v1/content-style-profiles', { method: 'POST', body })
-    Object.assign(draft, emptyStyleProfileDraft())
+    draft.value = emptyStyleProfileDraft()
     creatingPreviewResult.value = null
     await load()
   } catch {
@@ -141,9 +141,9 @@ async function previewCreate() {
   try {
     const body = PreviewCustomStyleProfileRequestSchema.parse({
       organizationId: organizationId.value, departmentId: scopeChoice.departmentId, teamId: scopeChoice.teamId,
-      name: draft.name, description: draft.description,
-      styleRules: styleRulesFromDraft(draft), avoidRules: avoidRulesFromDraft(draft), doRules: doRulesFromDraft(draft),
-      sampleInput: draft.sampleInput,
+      name: draft.value.name, description: draft.value.description,
+      styleRules: styleRulesFromDraft(draft.value), avoidRules: avoidRulesFromDraft(draft.value), doRules: doRulesFromDraft(draft.value),
+      sampleInput: draft.value.sampleInput,
     })
     creatingPreviewResult.value = await api.request('/v1/content-style-profiles/preview', { method: 'POST', body, headers: { 'idempotency-key': creatingPreviewKey.value } }, GeneratedPostSchema)
     creatingPreviewKey.value = crypto.randomUUID()
@@ -157,18 +157,18 @@ async function previewCreate() {
 // --- Bearbeitung ---------------------------------------------------------------------------
 
 const editingId = ref<string | null>(null)
-const editDraft = reactive(emptyStyleProfileDraft())
+const editDraft = ref(emptyStyleProfileDraft())
 const editSaving = ref(false)
 const editError = ref('')
 const editPreviewing = ref(false)
 const editPreviewResult = ref<GeneratedPost | null>(null)
 const editPreviewError = ref('')
 const editPreviewKey = ref(crypto.randomUUID())
-watch(editDraft, () => { editPreviewKey.value = crypto.randomUUID() })
+watch(editDraft, () => { editPreviewKey.value = crypto.randomUUID() }, { deep: true })
 
 function startEdit(profile: CustomStyleProfile) {
   editingId.value = profile.id
-  Object.assign(editDraft, styleProfileDraftFrom(profile))
+  editDraft.value = styleProfileDraftFrom(profile)
   editError.value = ''
   editPreviewResult.value = null
   editPreviewError.value = ''
@@ -179,13 +179,13 @@ function cancelEdit() {
   editPreviewError.value = ''
 }
 async function saveEdit() {
-  if (!editingId.value || !editDraft.name.trim() || !editDraft.description.trim()) return
+  if (!editingId.value || !editDraft.value.name.trim() || !editDraft.value.description.trim()) return
   editSaving.value = true
   editError.value = ''
   try {
     const body = UpdateCustomStyleProfileRequestSchema.parse({
-      name: editDraft.name, description: editDraft.description,
-      styleRules: styleRulesFromDraft(editDraft), avoidRules: avoidRulesFromDraft(editDraft), doRules: doRulesFromDraft(editDraft),
+      name: editDraft.value.name, description: editDraft.value.description,
+      styleRules: styleRulesFromDraft(editDraft.value), avoidRules: avoidRulesFromDraft(editDraft.value), doRules: doRulesFromDraft(editDraft.value),
     })
     await api.request(`/v1/content-style-profiles/${editingId.value}`, { method: 'PATCH', body })
     editingId.value = null
@@ -206,9 +206,9 @@ async function previewEdit() {
   try {
     const body = PreviewCustomStyleProfileRequestSchema.parse({
       organizationId: organizationId.value, departmentId: profile.departmentId, teamId: profile.teamId,
-      name: editDraft.name, description: editDraft.description,
-      styleRules: styleRulesFromDraft(editDraft), avoidRules: avoidRulesFromDraft(editDraft), doRules: doRulesFromDraft(editDraft),
-      sampleInput: editDraft.sampleInput,
+      name: editDraft.value.name, description: editDraft.value.description,
+      styleRules: styleRulesFromDraft(editDraft.value), avoidRules: avoidRulesFromDraft(editDraft.value), doRules: doRulesFromDraft(editDraft.value),
+      sampleInput: editDraft.value.sampleInput,
     })
     editPreviewResult.value = await api.request('/v1/content-style-profiles/preview', { method: 'POST', body, headers: { 'idempotency-key': editPreviewKey.value } }, GeneratedPostSchema)
     editPreviewKey.value = crypto.randomUUID()

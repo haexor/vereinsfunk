@@ -66,7 +66,7 @@ function scopeLabel(departmentId: string | null): string {
 
 // --- Quelle einrichten -------------------------------------------------------------------
 
-const createForm = reactive({
+const createForm = ref({
   transport: 'file' as 'file' | 'ical',
   providerKey: '',
   displayName: '',
@@ -74,7 +74,7 @@ const createForm = reactive({
   endpointUrl: '',
   lossThresholdPercent: '',
 })
-const mappingRows = reactive<{ column: string; field: string }[]>([{ column: '', field: '' }])
+const mappingRows = ref<{ column: string; field: string }[]>([{ column: '', field: '' }])
 const createSubmitting = ref(false)
 const createError = ref('')
 
@@ -84,7 +84,7 @@ watch(
   departmentOptionsForCreate,
   (list) => {
     if (canManageOrgWide.value) return
-    if (!list.some((department) => department.id === createForm.departmentId)) createForm.departmentId = list[0]?.id ?? ''
+    if (!list.some((department) => department.id === createForm.value.departmentId)) createForm.value.departmentId = list[0]?.id ?? ''
   },
   { immediate: true },
 )
@@ -107,8 +107,8 @@ function mappingTargetsFor(departmentId: string | null): typeof FIELD_MAPPING_BA
   return canManageDepartment(departmentId) ? [...FIELD_MAPPING_BASE_TARGETS, ...GUARDIAN_MAPPING_TARGETS] : FIELD_MAPPING_BASE_TARGETS
 }
 
-function addMappingRow() { mappingRows.push({ column: '', field: '' }) }
-function removeMappingRow(index: number) { mappingRows.splice(index, 1) }
+function addMappingRow() { mappingRows.value.push({ column: '', field: '' }) }
+function removeMappingRow(index: number) { mappingRows.value.splice(index, 1) }
 
 function buildFieldMapping(rows: { column: string; field: string }[]): Record<string, string> {
   return Object.fromEntries(rows.filter((row) => row.column.trim() && row.field).map((row) => [row.column.trim(), row.field]))
@@ -116,7 +116,7 @@ function buildFieldMapping(rows: { column: string; field: string }[]): Record<st
 
 async function createSource() {
   if (!organizationId.value) return
-  if (createForm.transport === 'ical' && !createForm.endpointUrl.trim()) {
+  if (createForm.value.transport === 'ical' && !createForm.value.endpointUrl.trim()) {
     createError.value = 'Für einen Kalender-Feed ist eine Adresse erforderlich.'
     return
   }
@@ -124,22 +124,22 @@ async function createSource() {
   createError.value = ''
   try {
     const body: Record<string, unknown> = {
-      transport: createForm.transport,
-      providerKey: createForm.providerKey.trim(),
-      displayName: createForm.displayName.trim(),
+      transport: createForm.value.transport,
+      providerKey: createForm.value.providerKey.trim(),
+      displayName: createForm.value.displayName.trim(),
       enabledDomains: ['people'],
-      fieldMapping: buildFieldMapping(mappingRows),
+      fieldMapping: buildFieldMapping(mappingRows.value),
     }
-    if (createForm.departmentId) body.departmentId = createForm.departmentId
-    if (createForm.transport === 'ical') body.endpointUrl = createForm.endpointUrl.trim()
-    if (createForm.lossThresholdPercent) body.lossThresholdPercent = Number(createForm.lossThresholdPercent)
+    if (createForm.value.departmentId) body.departmentId = createForm.value.departmentId
+    if (createForm.value.transport === 'ical') body.endpointUrl = createForm.value.endpointUrl.trim()
+    if (createForm.value.lossThresholdPercent) body.lossThresholdPercent = Number(createForm.value.lossThresholdPercent)
     const response = await api.request(`/v1/organizations/${organizationId.value}/integration-sources`, { method: 'POST', body }, IntegrationSourceSchema)
     sources.value = [...sources.value, response]
-    createForm.providerKey = ''
-    createForm.displayName = ''
-    createForm.endpointUrl = ''
-    createForm.lossThresholdPercent = ''
-    mappingRows.splice(0, mappingRows.length, { column: '', field: '' })
+    createForm.value.providerKey = ''
+    createForm.value.displayName = ''
+    createForm.value.endpointUrl = ''
+    createForm.value.lossThresholdPercent = ''
+    mappingRows.value.splice(0, mappingRows.value.length, { column: '', field: '' })
   } catch {
     createError.value = 'Die Quelle konnte nicht angelegt werden.'
   } finally {
@@ -166,18 +166,18 @@ async function toggleEnabled(source: IntegrationSource) {
 // --- Bearbeiten (Anzeigename, Endpunkt, Feldzuordnung, Verlustschwelle) ------------------
 
 const editingSourceId = ref<string | null>(null)
-const editForm = reactive({ displayName: '', endpointUrl: '', lossThresholdPercent: '30' })
-const editMappingRows = reactive<{ column: string; field: string }[]>([])
+const editForm = ref({ displayName: '', endpointUrl: '', lossThresholdPercent: '30' })
+const editMappingRows = ref<{ column: string; field: string }[]>([])
 const editSubmitting = ref(false)
 const editError = ref('')
 
 function startEdit(source: IntegrationSource) {
   editingSourceId.value = source.id
-  editForm.displayName = source.displayName
-  editForm.endpointUrl = source.endpointUrl ?? ''
-  editForm.lossThresholdPercent = String(source.lossThresholdPercent)
+  editForm.value.displayName = source.displayName
+  editForm.value.endpointUrl = source.endpointUrl ?? ''
+  editForm.value.lossThresholdPercent = String(source.lossThresholdPercent)
   const entries = Object.entries(source.fieldMapping).map(([column, field]) => ({ column, field }))
-  editMappingRows.splice(0, editMappingRows.length, ...(entries.length > 0 ? entries : [{ column: '', field: '' }]))
+  editMappingRows.value.splice(0, editMappingRows.value.length, ...(entries.length > 0 ? entries : [{ column: '', field: '' }]))
   editError.value = ''
 }
 
@@ -186,11 +186,11 @@ async function saveEdit(source: IntegrationSource) {
   editError.value = ''
   try {
     const body: Record<string, unknown> = {
-      displayName: editForm.displayName.trim(),
-      fieldMapping: buildFieldMapping(editMappingRows),
-      lossThresholdPercent: Number(editForm.lossThresholdPercent) || 30,
+      displayName: editForm.value.displayName.trim(),
+      fieldMapping: buildFieldMapping(editMappingRows.value),
+      lossThresholdPercent: Number(editForm.value.lossThresholdPercent) || 30,
     }
-    if (source.transport === 'ical') body.endpointUrl = editForm.endpointUrl.trim()
+    if (source.transport === 'ical') body.endpointUrl = editForm.value.endpointUrl.trim()
     const updated = await api.request(`/v1/integration-sources/${source.id}`, { method: 'PATCH', body }, IntegrationSourceSchema)
     sources.value = sources.value.map((item) => (item.id === updated.id ? updated : item))
     editingSourceId.value = null
