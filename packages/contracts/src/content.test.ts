@@ -56,7 +56,7 @@ describe('contracts', () => {
 describe('text workshop contracts', () => {
   const styleRules = {
     toneTags: ['warm', 'nah'], catchphrases: ['unsere Gemeinschaft'],
-    exampleInput: 'Sommerfest am Samstag', exampleOutput: 'Am Samstag feiern wir gemeinsam.',
+    examples: [{ input: 'Sommerfest am Samstag', output: 'Am Samstag feiern wir gemeinsam.' }],
     additionalInstructions: 'Konkrete Details zuerst.',
   }
 

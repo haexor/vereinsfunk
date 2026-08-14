@@ -67,11 +67,14 @@ const StyleProfileInstructionSchema = z.string().trim().max(1_000)
 // persona ("im Stil von Zlatan Ibrahimović") than an abstract 1-5 energy scale. bannedPhrases is
 // retired without replacement -- avoidRules (below) already covers the same "don't say this"
 // concept, so the two no longer overlap.
+export const StyleProfileExampleSchema = z.object({
+  input: z.string().trim().max(300),
+  output: z.string().trim().max(1_500),
+})
 export const StyleProfileRulesSchema = z.object({
   toneTags: z.array(z.string().trim().min(1).max(40)).max(10).default([]),
   catchphrases: z.array(z.string().trim().min(1).max(40)).max(20).default([]),
-  exampleInput: z.string().trim().max(300).default(''),
-  exampleOutput: z.string().trim().max(1_500).default(''),
+  examples: z.array(StyleProfileExampleSchema).max(5).default([]),
   additionalInstructions: StyleProfileInstructionSchema.default(''),
 }).strict()
 // Shared bound for avoidRules/doRules, both database-backed columns with the identical
@@ -212,6 +215,10 @@ export const PreviewCustomStyleProfileRequestSchema = StyleProfilePreviewCoreSch
 }).superRefine((profile, context) => {
   if (profile.teamId && !profile.departmentId) context.addIssue({ code: 'custom', message: 'teamId requires departmentId' })
 })
+// "System-Prompt anzeigen": same request shape as the preview above (it needs the exact same
+// draft state to build the prompt), but the response is the assembled prompt text instead of a
+// generated post -- no provider call, no cost, so this is a pure, side-effect-free readback.
+export const StyleProfilePromptPreviewSchema = z.object({ system: z.string(), user: z.string() })
 export const GenerationIntentSchema = z.enum(['initial', 'revise'])
 export const GenerationCandidateStatusSchema = z.enum(['pending', 'generating', 'ready', 'failed', 'accepted', 'abandoned', 'expired'])
 export const CompositionSessionStatusSchema = z.enum(['draft', 'queued', 'generating', 'candidate_ready', 'failed', 'accepted', 'abandoned', 'expired'])
@@ -349,6 +356,7 @@ export type MediaGateBlocker = z.infer<typeof MediaGateBlockerSchema>
 export type CompositionFormat = z.infer<typeof CompositionFormatSchema>
 export type AttachmentUploadMetadata = z.infer<typeof AttachmentUploadMetadataSchema>
 export type CompressionProvenance = z.infer<typeof CompressionProvenanceSchema>
+export type StyleProfileExample = z.infer<typeof StyleProfileExampleSchema>
 export type StyleProfileRules = z.infer<typeof StyleProfileRulesSchema>
 export type StyleProfileSnapshot = z.infer<typeof StyleProfileSnapshotSchema>
 export type CustomStyleProfile = z.infer<typeof CustomStyleProfileSchema>

@@ -4,6 +4,7 @@ import {
   CustomStyleProfileSchema,
   GeneratedPostSchema,
   PreviewCustomStyleProfileRequestSchema,
+  StyleProfilePromptPreviewSchema,
   UpdateCustomStyleProfileRequestSchema,
   type CustomStyleProfile,
   type GeneratedPost,
@@ -125,6 +126,7 @@ async function createProfile() {
     await api.request('/v1/content-style-profiles', { method: 'POST', body })
     draft.value = emptyStyleProfileDraft()
     creatingPreviewResult.value = null
+    creatingPromptPreviewResult.value = null
     await load()
   } catch {
     createError.value = 'Das Stilprofil konnte nicht angelegt werden. Prüfe, ob der Name in diesem Bereich schon vergeben ist.'
@@ -154,6 +156,30 @@ async function previewCreate() {
   }
 }
 
+const creatingPromptPreviewing = ref(false)
+const creatingPromptPreviewResult = ref<{ system: string; user: string } | null>(null)
+const creatingPromptPreviewError = ref('')
+
+async function showPromptCreate() {
+  const scopeChoice = scopeChoices.value.find((choice) => choice.key === selectedScopeKey.value)
+  if (!organizationId.value || !scopeChoice) return
+  creatingPromptPreviewing.value = true
+  creatingPromptPreviewError.value = ''
+  try {
+    const body = PreviewCustomStyleProfileRequestSchema.parse({
+      organizationId: organizationId.value, departmentId: scopeChoice.departmentId, teamId: scopeChoice.teamId,
+      name: draft.value.name, description: draft.value.description,
+      styleRules: styleRulesFromDraft(draft.value), avoidRules: avoidRulesFromDraft(draft.value), doRules: doRulesFromDraft(draft.value),
+      sampleInput: draft.value.sampleInput,
+    })
+    creatingPromptPreviewResult.value = await api.request('/v1/content-style-profiles/prompt-preview', { method: 'POST', body }, StyleProfilePromptPreviewSchema)
+  } catch {
+    creatingPromptPreviewError.value = 'Der System-Prompt konnte nicht angezeigt werden.'
+  } finally {
+    creatingPromptPreviewing.value = false
+  }
+}
+
 // --- Bearbeitung ---------------------------------------------------------------------------
 
 const editingId = ref<string | null>(null)
@@ -166,17 +192,25 @@ const editPreviewError = ref('')
 const editPreviewKey = ref(crypto.randomUUID())
 watch(editDraft, () => { editPreviewKey.value = crypto.randomUUID() }, { deep: true })
 
+const editPromptPreviewing = ref(false)
+const editPromptPreviewResult = ref<{ system: string; user: string } | null>(null)
+const editPromptPreviewError = ref('')
+
 function startEdit(profile: CustomStyleProfile) {
   editingId.value = profile.id
   editDraft.value = styleProfileDraftFrom(profile)
   editError.value = ''
   editPreviewResult.value = null
   editPreviewError.value = ''
+  editPromptPreviewResult.value = null
+  editPromptPreviewError.value = ''
 }
 function cancelEdit() {
   editingId.value = null
   editPreviewResult.value = null
   editPreviewError.value = ''
+  editPromptPreviewResult.value = null
+  editPromptPreviewError.value = ''
 }
 async function saveEdit() {
   if (!editingId.value || !editDraft.value.name.trim() || !editDraft.value.description.trim()) return
@@ -216,6 +250,25 @@ async function previewEdit() {
     editPreviewError.value = previewErrorMessage(error)
   } finally {
     editPreviewing.value = false
+  }
+}
+async function showPromptEdit() {
+  const profile = profiles.value.find((item) => item.id === editingId.value)
+  if (!profile || !organizationId.value) return
+  editPromptPreviewing.value = true
+  editPromptPreviewError.value = ''
+  try {
+    const body = PreviewCustomStyleProfileRequestSchema.parse({
+      organizationId: organizationId.value, departmentId: profile.departmentId, teamId: profile.teamId,
+      name: editDraft.value.name, description: editDraft.value.description,
+      styleRules: styleRulesFromDraft(editDraft.value), avoidRules: avoidRulesFromDraft(editDraft.value), doRules: doRulesFromDraft(editDraft.value),
+      sampleInput: editDraft.value.sampleInput,
+    })
+    editPromptPreviewResult.value = await api.request('/v1/content-style-profiles/prompt-preview', { method: 'POST', body }, StyleProfilePromptPreviewSchema)
+  } catch {
+    editPromptPreviewError.value = 'Der System-Prompt konnte nicht angezeigt werden.'
+  } finally {
+    editPromptPreviewing.value = false
   }
 }
 
@@ -269,9 +322,13 @@ async function deleteProfile(profile: CustomStyleProfile) {
         :previewing="creatingPreviewing"
         :preview-result="creatingPreviewResult"
         :preview-error="creatingPreviewError"
+        :prompt-previewing="creatingPromptPreviewing"
+        :prompt-preview-result="creatingPromptPreviewResult"
+        :prompt-preview-error="creatingPromptPreviewError"
         submit-label="Anlegen"
         @save="createProfile"
         @preview="previewCreate"
+        @prompt-preview="showPromptCreate"
       />
 
       <section class="card p-6">
@@ -286,10 +343,14 @@ async function deleteProfile(profile: CustomStyleProfile) {
               :previewing="editPreviewing"
               :preview-result="editPreviewResult"
               :preview-error="editPreviewError"
+              :prompt-previewing="editPromptPreviewing"
+              :prompt-preview-result="editPromptPreviewResult"
+              :prompt-preview-error="editPromptPreviewError"
               submit-label="Speichern"
               cancellable
               @save="saveEdit"
               @preview="previewEdit"
+              @prompt-preview="showPromptEdit"
               @cancel="cancelEdit"
             />
           </template>

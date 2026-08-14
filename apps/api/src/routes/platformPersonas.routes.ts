@@ -8,7 +8,7 @@ import {
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ApiRouteContext } from './context.js'
-import { checkRateLimit, previewStyleProfile, resolvePreviewIdempotencyKey } from './shared.js'
+import { buildStyleProfilePromptPreview, checkRateLimit, previewStyleProfile, resolvePreviewIdempotencyKey } from './shared.js'
 
 const PERSONA_COLUMNS = 'id, slug, name, description, style_rules, avoid_rules, do_rules, is_active, created_by, created_at, updated_at'
 
@@ -102,5 +102,16 @@ export function registerPlatformPersonaRoutes(app: FastifyInstance, context: Api
     const result = await previewStyleProfile(supabaseClients, environment, input, idempotencyKey, textGenerator)
     if (!result.ok) return reply.code(result.status).send({ error: result.error, correlationId: request.id })
     return reply.code(200).send(result.post)
+  })
+
+  // "System-Prompt anzeigen": no provider call, no DB read, no cost -- see
+  // buildStyleProfilePromptPreview (routes/shared.ts). Same request shape and permission gate as
+  // /preview above since it needs the identical draft state, but no rate limit/idempotency key
+  // needed since nothing billable happens.
+  app.post('/v1/platform-style-personas/prompt-preview', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    if (!(await requirePlatformAdmin(request, reply))) return
+    const input = PreviewPlatformStylePersonaRequestSchema.parse(request.body)
+    return reply.code(200).send(buildStyleProfilePromptPreview(input))
   })
 }

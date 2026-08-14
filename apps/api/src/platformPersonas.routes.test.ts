@@ -8,7 +8,7 @@ import type { SupabaseClientFactory } from './app.js'
 
 const PERSONA_ID = '3a000000-0000-4000-8000-000000000001'
 const PROVIDER_ID = '3a100000-0000-4000-8000-000000000001'
-const STYLE_RULES = { toneTags: ['direkt', 'anfeuernd'], catchphrases: [], exampleInput: '', exampleOutput: '', additionalInstructions: '' }
+const STYLE_RULES = { toneTags: ['direkt', 'anfeuernd'], catchphrases: [], examples: [], additionalInstructions: '' }
 const PREVIEW_PAYLOAD = { name: 'Kapitän Klar', description: 'Direkt.', styleRules: STYLE_RULES, avoidRules: [], doRules: [], sampleInput: '3:1 Sieg im Lokalderby' }
 const FAKE_GENERATED_POST = {
   verifiedFacts: ['3:1 Sieg im Lokalderby'], missingFacts: [], headline: '3:1 gewonnen!', caption: '3:1 gewonnen!', shortCaption: '3:1 gewonnen!',
@@ -44,6 +44,7 @@ describe('platform style personas', () => {
       { method: 'PATCH' as const, url: `/v1/platform-style-personas/${PERSONA_ID}`, payload: { isActive: false } },
       { method: 'DELETE' as const, url: `/v1/platform-style-personas/${PERSONA_ID}` },
       { method: 'POST' as const, url: '/v1/platform-style-personas/preview', payload: PREVIEW_PAYLOAD },
+      { method: 'POST' as const, url: '/v1/platform-style-personas/prompt-preview', payload: PREVIEW_PAYLOAD },
     ]
     for (const req of requests) {
       const response = await app.inject({ ...req, headers: { authorization: `Bearer ${token}` } })
@@ -198,6 +199,24 @@ describe('platform style personas', () => {
       })
       expect(response.statusCode).toBe(429)
       expect(response.json()).toMatchObject({ error: 'provider_rate_limit' })
+    })
+  })
+
+  describe('POST /v1/platform-style-personas/prompt-preview', () => {
+    it('assembles the prompt without touching the DB or a provider', async () => {
+      const clients: SupabaseClientFactory = {
+        forUser: () => { throw new Error('forUser should not be called by this route') },
+        forService: () => { throw new Error('forService should not be called by this route') },
+      }
+      const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({
+        method: 'POST', url: '/v1/platform-style-personas/prompt-preview', headers: { authorization: `Bearer ${token}` }, payload: PREVIEW_PAYLOAD,
+      })
+      expect(response.statusCode).toBe(200)
+      const body = response.json()
+      expect(body.system).toContain('Kapitän Klar')
+      expect(body.user).toContain('3:1 Sieg im Lokalderby')
     })
   })
 })

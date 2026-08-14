@@ -24,7 +24,7 @@ describe('structured content generator', () => {
     presetSlug: 'training', communicationGoal: 'inform' as const, requestedFormats: ['feed_image'] as ('feed_image')[],
     sourceMaterial: { facts: { topic: 'Passen' }, observations: ['Die Gruppe trainierte Passen.'], quotes: [], doNotMention: ['Sponsor X'] }, sourceRevision: 1, priority: 40,
   }
-  const input = { brief: createGroundedContentBrief(source), styleProfile: { name: 'Klar', description: 'Kurz', styleRules: { toneTags: ['klar'], catchphrases: [], exampleInput: '', exampleOutput: '', additionalInstructions: '' }, avoidRules: [], doRules: [] }, model: 'synthetic', baseUrl: 'https://provider.example/v1', apiKey: 'secret', temperature: 0.2, maxOutputTokens: 400 }
+  const input = { brief: createGroundedContentBrief(source), styleProfile: { name: 'Klar', description: 'Kurz', styleRules: { toneTags: ['klar'], catchphrases: [], examples: [], additionalInstructions: '' }, avoidRules: [], doRules: [] }, model: 'synthetic', baseUrl: 'https://provider.example/v1', apiKey: 'secret', temperature: 0.2, maxOutputTokens: 400 }
   const grounded = { verifiedFacts: ['topic: Passen'], missingFacts: [], headline: 'Passen', caption: 'Passen', shortCaption: 'Passen', callToAction: '', hashtags: [], altText: 'Passen', templateId: 'v1', safetyFlags: [], generatedClaims: [{ sourceId: 'fact:topic', text: 'topic: Passen' }], variants: [] }
   it('parses structured output and never exposes an API key in its error', async () => {
     const generator = new OpenAiCompatibleStructuredContentGenerator(async (_url, init) => {
@@ -32,6 +32,13 @@ describe('structured content generator', () => {
       const schema = JSON.parse(String(init.body)).response_format.json_schema.schema
       expect(schema.properties.generatedClaims.items).toMatchObject({ additionalProperties: false, required: ['sourceId', 'text'] })
       expect(schema.properties.variants.items.properties.slidePlan.items).toMatchObject({ additionalProperties: false, required: ['role'] })
+      // A provider answer with a plausible-but-not-quite-right value (e.g. format "post") must be
+      // rejected by the provider itself instead of silently passing its schema and only failing our
+      // own Zod parse afterwards as an opaque provider_schema error.
+      expect(schema.properties.variants.items.properties.platform.enum).toEqual(['instagram', 'facebook'])
+      expect(schema.properties.variants.items.properties.format.enum).toEqual(['feed_image', 'carousel', 'story', 'reel'])
+      expect(schema.properties.variants.items.properties.layoutFamily.enum).toEqual(['photo_moment', 'training', 'quote', 'collage', 'invitation', 'thanks', 'result'])
+      expect(schema.properties.safetyFlags.items.enum).toEqual(['minor', 'missing_consent', 'uncertain_fact', 'sensitive_data'])
       return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(grounded) } }] }), { status: 200 })
     })
     await expect(generator.generateText(input)).resolves.toMatchObject({ caption: 'Passen' })
