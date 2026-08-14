@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AddPlatformAdminRequestSchema, OnboardingStateSchema, PlatformAdminOrganizationDetailSchema, PlatformAdminOrganizationSummarySchema, PlatformAdminSchema, PlatformSettingKeySchema, PlatformSettingSchema, PlatformSettingValueSchemas, TextGenerationPlatformDefaultSchema, UpdateTextGenerationPlatformDefaultRequestSchema } from './index.js'
+import { AddPlatformAdminRequestSchema, OnboardingStateSchema, PlatformAdminOrganizationDetailSchema, PlatformAdminOrganizationSummarySchema, PlatformAdminSchema, PlatformSettingKeySchema, PlatformSettingSchema, PlatformSettingValueSchemas, TextGenerationCapabilitiesSchema, TextGenerationPlatformDefaultSchema, UpdateTextGenerationPlatformDefaultRequestSchema } from './index.js'
 import { org } from './testFixtures.js'
 
 describe('platform administration contracts', () => {
@@ -107,6 +107,13 @@ describe('text generation platform defaults contracts', () => {
     expect(UpdateTextGenerationPlatformDefaultRequestSchema.safeParse({ maxCharacters: 100 }).success).toBe(true)
     expect(UpdateTextGenerationPlatformDefaultRequestSchema.safeParse({ maxCharacters: 10000 }).success).toBe(true)
     expect(UpdateTextGenerationPlatformDefaultRequestSchema.safeParse({ maxCharacters: 10001 }).success).toBe(false)
+  })
+})
+
+describe('text generation capabilities contract', () => {
+  it('is a bare boolean, revealing neither provider nor model', () => {
+    const parsed = TextGenerationCapabilitiesSchema.parse({ temperatureSupported: true })
+    expect(Object.keys(parsed)).toEqual(['temperatureSupported'])
   })
 })
 

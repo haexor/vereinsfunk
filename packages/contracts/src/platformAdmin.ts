@@ -94,6 +94,25 @@ export const UpdateTextGenerationPlatformDefaultRequestSchema = z.object({
   maxCharacters: MaxCharactersSchema,
 })
 
+// Plan 042, PR 3 Step 1: die Textwerkstatt (ein normales Mitglied) kann GET /v1/llm-providers
+// nicht sehen (requirePlatformAdmin), muss aber wissen, ob der Temperatur-Regler ueberhaupt eine
+// Wirkung hat -- der Anthropic-Adapter sendet temperature bewusst nicht. Bewusst nur ein Boolean:
+// die Antwort verraet weder Anbieter noch Endpunkt noch Modell.
+export const TextGenerationCapabilitiesSchema = z.object({
+  temperatureSupported: z.boolean(),
+})
+
+// Welches Protokoll temperature tatsaechlich mitsendet -- eine Quelle statt zweier
+// Zeichenkettenvergleiche, die auseinanderlaufen koennen: die API blendet den Regler danach aus
+// (GET /v1/text-generation-capabilities) und der Worker nimmt temperature danach in den
+// provider_parameter_hash auf (apps/worker/src/textGeneration.ts). Waeren sich beide uneins, hiesse
+// entweder ein wirkungsloser Regler bedienbar oder der Hash behauptete eine nie gesendete
+// Provenienz. Der Anthropic-Adapter sendet sie bewusst nicht (aktuelle Claude-Modelle lehnen den
+// Parameter mit 400 ab, siehe AnthropicStructuredContentGenerator).
+export function providerSendsTemperature(protocol: string): boolean {
+  return protocol === 'openai'
+}
+
 // Modellauswahl im Formular: statt einer im Frontend gepflegten Liste fragt die API den Provider
 // selbst. Der Schluessel kommt aus dem Formular, weil beim Anlegen noch keine Konfiguration und
 // damit kein hinterlegtes Geheimnis existiert; gespeichert wird er hier nicht.
@@ -181,6 +200,7 @@ export type CreateLlmProviderConfigurationRequest = z.infer<typeof CreateLlmProv
 export type UpdateLlmProviderConfigurationRequest = z.infer<typeof UpdateLlmProviderConfigurationRequestSchema>
 export type TextGenerationPlatformDefault = z.infer<typeof TextGenerationPlatformDefaultSchema>
 export type UpdateTextGenerationPlatformDefaultRequest = z.infer<typeof UpdateTextGenerationPlatformDefaultRequestSchema>
+export type TextGenerationCapabilities = z.infer<typeof TextGenerationCapabilitiesSchema>
 export type ListLlmProviderModelsRequest = z.infer<typeof ListLlmProviderModelsRequestSchema>
 export type ListLlmProviderModelsResponse = z.infer<typeof ListLlmProviderModelsResponseSchema>
 export type PlatformAdminOrganizationSummary = z.infer<typeof PlatformAdminOrganizationSummarySchema>

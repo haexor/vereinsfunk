@@ -3,7 +3,9 @@ import {
   ListLlmProviderModelsRequestSchema,
   ListLlmProviderModelsResponseSchema,
   LlmProviderConfigurationSchema,
+  providerSendsTemperature,
   SocialPlatformSchema,
+  TextGenerationCapabilitiesSchema,
   TextGenerationPlatformDefaultSchema,
   UpdateLlmProviderConfigurationRequestSchema,
   UpdateTextGenerationPlatformDefaultRequestSchema,
@@ -229,5 +231,25 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
     return reply.code(200).send(
       TextGenerationPlatformDefaultSchema.parse({ platform: update.data.platform, maxCharacters: update.data.max_characters, updatedAt: update.data.updated_at }),
     )
+  })
+
+  // Nur requireAuth, kein requirePlatformAdmin, wie die Plattform-Vorgaben oben: die Textwerkstatt
+  // (ein normales Mitglied) braucht diese Antwort, um den Temperatur-Regler auszugrauen. Service-
+  // Client, weil authenticated auf llm_provider_configurations kein Privileg hat (siehe pgTAP).
+  app.get('/v1/text-generation-capabilities', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const service = supabaseClients.forService()
+    // Dieselbe Auswahl wie loadActiveTextProvider() im Worker (apps/worker/src/context.ts): eine
+    // aktive Aufgabenart vergibt jede Prioritaet nur einmal (2026081305), die vorderste Zeile ist
+    // also eindeutig der Provider, der eine echte Generierung tatsaechlich bedient. Der !inner-Join
+    // gehoert dazu: eine aktive Konfiguration ohne hinterlegtes Geheimnis ist ein modellierter
+    // Zustand (GET /v1/llm-providers gibt dafuer hasSecret: false zurueck), und der Worker
+    // ueberspringt sie. Ohne den Join meldete diese Route das Protokoll einer Zeile, die nie
+    // generiert (Review dieses PRs).
+    const result = await service.from('llm_provider_configurations').select('protocol, llm_provider_secrets!inner(key_version)').eq('task_kind', 'text_generation').eq('is_active', true).order('priority').limit(1)
+    if (result.error) throw result.error
+    // Ist kein Provider aktiv, ist die Frage ohnehin hinfaellig -- dann laesst sich kein Beitrag
+    // erzeugen.
+    return reply.code(200).send(TextGenerationCapabilitiesSchema.parse({ temperatureSupported: providerSendsTemperature(result.data[0]?.protocol ?? '') }))
   })
 }

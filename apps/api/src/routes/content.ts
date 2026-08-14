@@ -11,6 +11,7 @@ import {
   SubmissionAcceptedSchema,
   TeamSchema,
   TEXT_GENERATION_DEFAULT_MAX_CHARACTERS,
+  TextGenerationPlatformAvailabilitySchema,
   UpdateCustomStyleProfileRequestSchema,
   UuidSchema,
   type StyleProfileRules,
@@ -23,7 +24,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { CLUB_EVENT_COLUMNS, FIXTURE_COLUMNS, mapClubEventRow, mapFixtureRow, mapTeamRow } from '../apiMappers.js'
 import type { ApiRouteContext } from './context.js'
-import { buildStyleProfilePromptPreview, checkRateLimit, createAuditRecorder, fetchMemberTrust, previewStyleProfile, resolveDirectoryScope, resolvePreviewIdempotencyKey, resolveScopedEffectiveConfig, toPermissionScope } from './shared.js'
+import { buildStyleProfilePromptPreview, checkRateLimit, createAuditRecorder, fetchMemberTrust, previewStyleProfile, resolveDirectoryScope, resolvePreviewIdempotencyKey, resolveScopedEffectiveConfig, resolveTextGenerationPlatformAvailability, toPermissionScope } from './shared.js'
 
 // Plan 033 text-only workshop. Diese Routen rufen kein LLM auf: sie schreiben Sitzung und einen
 // reinen ID-Umschlag ueber eine service-only RPC, die der Worker spaeter ausfuehrt.
@@ -295,6 +296,31 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     return reply.send({ profiles: [...systems, ...personas, ...customs] })
   })
 
+  // Plan 042, PR 3 Step 3: welche Plattformen dieser Scope ueberhaupt anhaken darf, und welche
+  // Zeichengrenze daraus je Plattform folgt -- eine Route statt zweier, weil das Formular beides
+  // zusammen braucht. Dieselbe Berechtigung wie die Sitzungs-Anlage selbst: wer hier lesen darf,
+  // haette an dieser Stelle ohnehin einen Beitrag anlegen duerfen.
+  app.get('/v1/text-generation-platforms', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const scope = TextWorkshopScopeSchema.parse(request.query)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    // Wie /preview oben: departmentId/teamId gegen ihre echte organization_id verifizieren, BEVOR
+    // die Berechtigung geprueft wird -- sonst waeren sie client-seitig frei kombinierbar (Review
+    // dieses PRs).
+    const resolvedScope = await resolveDirectoryScope(client, scope.organizationId, scope.departmentId, scope.teamId ?? null)
+    if (resolvedScope === null) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'post.create', resolvedScope))) return
+    const config = await resolveScopedEffectiveConfig(client, scope.organizationId, scope.departmentId, scope.teamId ?? null)
+    const availability = await resolveTextGenerationPlatformAvailability(client, scope.organizationId, scope.departmentId, scope.teamId ?? null, config.policies.allowedChannelIds)
+    return reply.code(200).send(
+      z.array(TextGenerationPlatformAvailabilitySchema).parse(
+        // Fehlt die Vorgabezeile, zeigt die Anzeige den generischen Fallback -- eine Zahl muss hier
+        // stehen. Fuer die verbindliche Grenze der Sitzung zaehlt sie dagegen nicht mit (unten).
+        [...availability.entries()].map(([platform, entry]) => ({ ...entry, platform, maxCharacters: entry.maxCharacters ?? TEXT_GENERATION_DEFAULT_MAX_CHARACTERS })),
+      ),
+    )
+  })
+
   app.post('/v1/content-style-profiles', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const input = CreateCustomStyleProfileRequestSchema.parse(request.body)
@@ -426,6 +452,12 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     // Sortiert, damit ['facebook','instagram'] und ['instagram','facebook'] dieselbe Anfrage
     // bleiben -- sonst erzeugte dieselbe Auswahl je nach Reihenfolge der Haekchen zwei Sitzungen.
     const targetPlatforms = [...input.targetPlatforms].sort()
+    // Nur Plattformen erlauben, auf die dieser Scope tatsaechlich veroeffentlichen kann (Plan 042,
+    // PR 3 Step 3) -- die Anzeige in erstellen.vue ist Bequemlichkeit, diese Pruefung ist die Regel
+    // (vgl. "Berechtigungen aus einer Quelle").
+    const platformAvailability = await resolveTextGenerationPlatformAvailability(client, input.organizationId, input.departmentId, input.teamId ?? null, config.policies.allowedChannelIds)
+    const unavailablePlatform = targetPlatforms.find((platform) => !platformAvailability.get(platform)?.available)
+    if (unavailablePlatform) return reply.code(422).send({ error: 'platform_not_available', platform: unavailablePlatform, correlationId: request.id })
     // targetPlatforms/maxOutputTokens/temperature gehoeren in den Hash: die Sitzung friert sie ein
     // und der RPC gibt fuer einen bereits bekannten Hash die vorhandene Sitzung samt Kandidat
     // zurueck. Ohne sie wuerde ein zweites Absenden desselben Materials mit anderer Regler-Stufe
@@ -441,23 +473,20 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     const idempotencyKey = `generate-text:${sessionHash}:${input.sourceRevision}`
     const service = supabaseClients.forService()
     // Aufgeloest bei Anlage, danach eingefroren (siehe composition_sessions.max_characters):
-    // expliziter Request-Wert > kleinste Vorgabe der gewaehlten Plattformen > generischer Fallback.
-    // Das Minimum, nicht der Durchschnitt oder die erste Wahl: ein einziger Text soll auf jeder
-    // angehakten Plattform passen, also gibt die knappste den Rahmen vor. Fehlt fuer eine gewaehlte
-    // Plattform die Vorgabezeile, zaehlt sie hier nicht mit -- eine fehlende Zeile darf die Laenge
-    // nicht heimlich hochsetzen, und ihr Fehlen ist ein Betreiberproblem (siehe PUT-Route).
-    let maxCharacters = input.maxCharacters ?? null
-    if (maxCharacters === null) {
-      const platformDefaults = await service.from('text_generation_platform_defaults').select('max_characters').in('platform', targetPlatforms)
-      if (platformDefaults.error) throw platformDefaults.error
-      const limits = (platformDefaults.data ?? []).map((row) => row.max_characters as number)
-      maxCharacters = limits.length > 0 ? Math.min(...limits) : null
-    }
+    // expliziter Request-Wert > kleinste Vorgabe der gewaehlten Plattformen (aus derselben
+    // Verfuegbarkeitspruefung oben) > generischer Fallback. Das Minimum, nicht der Durchschnitt
+    // oder die erste Wahl: ein einziger Text soll auf jeder angehakten Plattform passen, also gibt
+    // die knappste den Rahmen vor. Fehlt fuer eine gewaehlte Plattform die Vorgabezeile, zaehlt sie
+    // hier nicht mit -- weder darf ihr Fehlen die Laenge heimlich hochsetzen noch den ausdruecklich
+    // gesetzten Wert einer anderen Plattform auf den Fallback herunterziehen, und ihr Fehlen ist
+    // ein Betreiberproblem (siehe PUT-Route).
+    const platformLimits = targetPlatforms.map((platform) => platformAvailability.get(platform)!.maxCharacters).filter((limit): limit is number => limit !== null)
+    const maxCharacters = input.maxCharacters ?? (platformLimits.length > 0 ? Math.min(...platformLimits) : TEXT_GENERATION_DEFAULT_MAX_CHARACTERS)
     const result = await service.rpc('create_text_generation_session', {
       p_organization_id: input.organizationId, p_department_id: input.departmentId, p_team_id: input.teamId ?? null, p_preset_slug: input.presetSlug,
       p_communication_goal: input.communicationGoal, p_requested_formats: input.requestedFormats, p_source_material: sourceMaterial,
       p_style_profile_id: styleProfileId, p_style_profile_snapshot: styleSnapshot, p_effective_config_snapshot: { config: { tone: config.tone, goals: config.goals, hashtags: config.hashtags, ...config.policies } },
-      p_target_platforms: targetPlatforms, p_max_characters: maxCharacters ?? TEXT_GENERATION_DEFAULT_MAX_CHARACTERS, p_temperature: input.temperature,
+      p_target_platforms: targetPlatforms, p_max_characters: maxCharacters, p_temperature: input.temperature,
       p_source_revision: input.sourceRevision, p_input_hash: sessionHash, p_candidate_input_hash: candidateHash, p_generation_intent: 'initial', p_revision_instruction: null,
       p_created_by: request.auth!.userId, p_correlation_id: request.id, p_idempotency_key: idempotencyKey,
     })
