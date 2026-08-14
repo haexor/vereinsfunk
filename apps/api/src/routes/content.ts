@@ -303,8 +303,13 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
   app.get('/v1/text-generation-platforms', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const scope = TextWorkshopScopeSchema.parse(request.query)
-    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(scope.organizationId, scope.departmentId, scope.teamId ?? null)))) return
     const client = supabaseClients.forUser(request.auth!.accessToken)
+    // Wie /preview oben: departmentId/teamId gegen ihre echte organization_id verifizieren, BEVOR
+    // die Berechtigung geprueft wird -- sonst waeren sie client-seitig frei kombinierbar (Review
+    // dieses PRs).
+    const resolvedScope = await resolveDirectoryScope(client, scope.organizationId, scope.departmentId, scope.teamId ?? null)
+    if (resolvedScope === null) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'post.create', resolvedScope))) return
     const config = await resolveScopedEffectiveConfig(client, scope.organizationId, scope.departmentId, scope.teamId ?? null)
     const availability = await resolveTextGenerationPlatformAvailability(client, scope.organizationId, scope.departmentId, scope.teamId ?? null, config.policies.allowedChannelIds)
     return reply.code(200).send(

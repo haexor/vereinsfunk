@@ -126,7 +126,12 @@ async function createCandidate() {
     await refreshSession()
   } catch (error) {
     const code = (error as { data?: { error?: string } })?.data?.error
-    notice.value = code === 'platform_not_available' ? 'Eine gewählte Plattform ist nicht mehr verfügbar. Bitte Auswahl aktualisieren.' : 'Die Textgeneration konnte nicht gestartet werden.'
+    if (code === 'platform_not_available') {
+      await loadPlatformAvailability()
+      notice.value = 'Eine gewählte Plattform ist nicht mehr verfügbar. Bitte Auswahl aktualisieren.'
+    } else {
+      notice.value = 'Die Textgeneration konnte nicht gestartet werden.'
+    }
   } finally { submitting.value = false }
 }
 async function acceptCandidate() {
@@ -164,6 +169,7 @@ await Promise.all([loadProfiles(), loadPlatformAvailability(), loadCapabilities(
             v-for="entry in platforms" :key="entry.platform" type="button"
             class="rounded-xl border px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
             :class="selectedPlatforms.includes(entry.platform) ? 'border-forest bg-[#eff4e6]' : ''"
+            :aria-pressed="selectedPlatforms.includes(entry.platform)"
             :disabled="!entry.available"
             :title="entry.reason ? PLATFORM_UNAVAILABLE_REASONS[entry.reason] : undefined"
             @click="togglePlatform(entry.platform)"
@@ -181,6 +187,7 @@ await Promise.all([loadProfiles(), loadPlatformAvailability(), loadCapabilities(
             v-for="step in TEXT_GENERATION_TEMPERATURE_STEPS" :key="step.value" type="button"
             class="rounded-xl border p-2 text-center text-xs font-semibold"
             :class="temperature === step.value ? 'border-forest bg-[#eff4e6]' : ''"
+            :aria-pressed="temperature === step.value"
             @click="temperature = step.value"
           >
             {{ step.label }}

@@ -319,6 +319,7 @@ describe('GET /v1/text-generation-platforms', () => {
       forUser: () =>
         ({
           from: (table: string) => {
+            if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
             if (table === 'policy_settings') return policySettingsFake()
             if (table === 'social_connections') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.socialConnections, error: null })
             if (table === 'channel_scopes') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.channelScopes, error: null })
@@ -343,6 +344,7 @@ describe('GET /v1/text-generation-platforms', () => {
       forUser: () =>
         ({
           from: (table: string) => {
+            if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
             if (table === 'policy_settings') return policySettingsFake()
             if (table === 'social_connections') return chain({ data: [AVAILABLE_CHANNEL_FIXTURES.socialConnections[0]], error: null })
             if (table === 'channel_scopes') return chain({ data: [AVAILABLE_CHANNEL_FIXTURES.channelScopes[0]], error: null })
@@ -369,6 +371,7 @@ describe('GET /v1/text-generation-platforms', () => {
       forUser: () =>
         ({
           from: (table: string) => {
+            if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
             if (table === 'policy_settings') {
               return policySettingsFake({
                 ruleRows: [{
@@ -406,6 +409,7 @@ describe('GET /v1/text-generation-platforms', () => {
       forUser: () =>
         ({
           from: (table: string) => {
+            if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
             if (table === 'policy_settings') return policySettingsFake({ requireChannelResponsible: true })
             if (table === 'social_connections') return chain({ data: [{ ...AVAILABLE_CHANNEL_FIXTURES.socialConnections[0], responsible_profile_id: 'profile-1' }, AVAILABLE_CHANNEL_FIXTURES.socialConnections[1]], error: null })
             if (table === 'channel_scopes') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.channelScopes, error: null })
@@ -426,10 +430,27 @@ describe('GET /v1/text-generation-platforms', () => {
   })
 
   it('rejects a member without post.create in the requested scope', async () => {
-    const app = await startApp({ roleProvider: denyingRoleProvider, supabaseClients: { forUser: () => ({}) as unknown as SupabaseClient, forService: () => { throw new Error('forService should not be called once the permission check fails') } } })
+    const app = await startApp({ roleProvider: denyingRoleProvider, supabaseClients: { forUser: () => scopeResolvingUserClient(), forService: () => { throw new Error('forService should not be called once the permission check fails') } } })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({ method: 'GET', url: '/v1/text-generation-platforms', headers: { authorization: `Bearer ${token}` }, query })
     expect(response.statusCode).toBe(403)
+  })
+
+  // Ohne diese Pruefung koennte eine fremde departmentId frei mit der eigenen organizationId
+  // kombiniert werden -- rolesForScope vereinigt die Rollen beider Ebenen, die Kombination kann
+  // die Rollenmenge also nur vergroessern (Review dieses PRs, wie /preview oben).
+  it('rejects a departmentId that does not belong to the requested organization', async () => {
+    const app = await startApp({
+      roleProvider: grantingRoleProvider,
+      supabaseClients: {
+        forUser: () => scopeResolvingUserClient({ organization_id: '3f000000-0000-4000-8000-000000000001' }),
+        forService: () => { throw new Error('forService should not be called once scope resolution fails') },
+      },
+    })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: '/v1/text-generation-platforms', headers: { authorization: `Bearer ${token}` }, query })
+    expect(response.statusCode).toBe(404)
+    expect(response.json()).toMatchObject({ error: 'not_found' })
   })
 })
 
