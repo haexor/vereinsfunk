@@ -28,6 +28,7 @@ jobs:
       fail-fast: false
       matrix:
         app: [api, worker, web]
+        arch: [amd64, arm64]
         include:
           - arch: amd64
             runner: ubuntu-latest
