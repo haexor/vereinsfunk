@@ -20,7 +20,7 @@
 - **`temperature`** ist eine Gestaltungsentscheidung *am einzelnen Beitrag*: wie stark die gewählte Persona-Stimme durchschlagen soll. Das gehört dem Mitglied, das den Beitrag schreibt, nicht dem Betreiber.
 - **Die Längengrenze** ist eine Eigenschaft der *Ziel-Plattform*: ein Instagram-Text darf höchstens 2200 Zeichen haben, ein Tweet 280. Das gehört einer plattformweiten, betreibergepflegten Vorgabe — nicht dem Provider, der für alle Plattformen derselbe ist. Und es ist eine **Zeichen**-Grenze: die Plattform weist einen zu langen Beitrag ab, ein Token-Budget lässt sich darauf nicht verlässlich umrechnen.
 
-Weil ein Verein denselben Beitrag üblicherweise auf mehreren Plattformen veröffentlicht, wählt der Ersteller **mehrere** Ziel-Plattformen — und nur solche, auf die sein Scope tatsächlich veröffentlichen kann (PR 3, Step 3). Solange die Grenzen ähnlich sind, ergibt das genau einen Text, dessen Länge sich nach der **knappsten** Auswahl richtet. Weichen die Grenzen stark ab, ist das die falsche Antwort und es gehören getrennte Texte je Plattform her — siehe PR 3, Step 4.
+Weil ein Verein denselben Beitrag üblicherweise auf mehreren Plattformen veröffentlicht, wählt der Ersteller **mehrere** Ziel-Plattformen — und nur solche, auf die sein Scope tatsächlich veröffentlichen kann (PR 3, Step 3). Das ergibt genau **einen** Text, dessen Länge sich nach der **knappsten** Auswahl richtet, und dieser eine Text wird auf allen gewählten Plattformen gleich veröffentlicht. Das gilt unabhängig davon, wie weit die Grenzen auseinanderliegen: Blog und X zusammen ergeben einen Beitrag mit 280 Zeichen. Wer je Plattform einen eigenen Text will, erzeugt je Plattform eine eigene Sitzung mit nur dieser Plattform (Betreiberentscheidung vom 2026-08-14, siehe PR 3, Step 4).
 
 Ein Provider bleibt danach reine Zugangs- und Routing-Konfiguration (Protokoll, Endpunkt, Modell, Priorität). Das ist die Voraussetzung dafür, dass ein Wechsel des Anbieters keine inhaltliche Änderung an den Beiträgen bedeutet.
 
@@ -135,6 +135,8 @@ Die Stufen sind bewusst benannt, nicht als Zahl gezeigt: die Zahl ist ein Anbiet
 
 ### Step 3: Plattform-Auswahl am Beitrag, begrenzt auf das Veröffentlichbare
 
+> **Die automatische Vorauswahl ist überholt.** Aufgehoben durch Betreiberentscheidung vom 2026-08-14, aus derselben Design-Sitzung nach dem Code-Review von PR #76 wie Step 4 — siehe `plans/044-zielplattformen-vorgaben-und-harte-laengengrenze.md`, PR 1. „Beide vorausgewählt“ war die zum Merge-Zeitpunkt umgesetzte und verifizierte Vorgabe (siehe unten), gilt aber nicht mehr als Ziel: keine Plattform ist ab Werk angehakt, Verein/Abteilung setzen stattdessen eigene Vorgaben, sonst startet die Auswahl leer.
+
 **Entschieden (2026-08-14):** Der Ersteller wählt die Ziel-Plattformen direkt im Formular, Mehrfachauswahl, beide vorausgewählt. Angezeigt werden aber **nur Plattformen, auf die dieser Scope überhaupt veröffentlichen kann** — der Verein richtet Kanäle ein, eine Abteilung darf sie (wenn der Vereinsadmin es erlaubt) um eigene erweitern oder weiter einschränken. Eine Plattform anzubieten, für die kein Kanal existiert, erzeugt einen Beitrag, der nie veröffentlicht werden kann.
 
 Das ist die „Plattform-Fähigkeitsprüfung vor Generierung", die Plan 032 als offen markiert hat.
@@ -152,7 +154,23 @@ Serverseitig durchsetzen, nicht nur anzeigen: `POST /v1/text-workshop/sessions` 
 
 **Verify**: Routentests — ein Scope ohne Facebook-Kanal bekommt `available: false` für Facebook, und ein `POST` mit `targetPlatforms: ['facebook']` wird 422. Manuell in `/erstellen`: Kanal in `/kanaele` entfernen, Formular neu laden, Plattform ist ausgegraut.
 
-### Step 4: Getrennte Texte bei stark abweichender Länge
+### Step 4: ~~Getrennte Texte bei stark abweichender Länge~~ — verworfen
+
+> **Aufgehoben durch Betreiberentscheidung vom 2026-08-14 (nach dem Code-Review von PR #76).** Der ursprüngliche Text steht unten zur Nachvollziehbarkeit; er ist **nicht mehr die Vorgabe**.
+
+**Die min()-Regel ist die Absicht, nicht die Notlösung.** Wer mehrere Plattformen gemeinsam anhakt, will ausdrücklich **einen** Beitrag, der auf allen erscheint — dann gilt die Grenze des restriktivsten Mediums, und derselbe Text wird überall so veröffentlicht. Blog und X zusammen ergeben also einen Beitrag mit 280 Zeichen. Das ist kein Kompromiss, den man später reparieren müsste, sondern das gewünschte Verhalten.
+
+Wer je Plattform einen eigenen Text will, **erzeugt je Plattform eine eigene Sitzung** mit nur dieser einen Plattform in der Auswahl. Das funktioniert heute schon vollständig: `target_platforms` steckt im `input_hash` (Review-Fix zu PR 1), dieselbe Materialbasis mit anderer Plattformauswahl ist deshalb eine **neue** Sitzung und kein Dedup-Treffer. Jede Sitzung führt zu ihrer eigenen `post_version` und damit zu ihrer eigenen Freigabe.
+
+Damit lösen sich beide Folgefragen des alten Step 4 ersatzlos auf:
+
+- **`GeneratedPostSchema.variants` bleibt leer.** Kein Kandidat mit mehreren Varianten aus einem Provider-Aufruf, keine Abhängigkeit auf Paket 005 an dieser Stelle.
+- **Die Freigabekette bleibt unverändert.** Die offene Frage „eine gemeinsame Freigabe oder je eine eigene, und was gilt bei einer Ablehnung“ entfällt — es gibt nie zwei Texte an einer `post_version`.
+
+**Was stattdessen gebraucht wird**, ist reine Bequemlichkeit: das erneute Laden der Einstellungen eines früheren Beitrags, damit derselbe Prompt schnell ein zweites Mal mit anderer Plattformauswahl laufen kann. Ausgeplant als **Paket 043**.
+
+<details>
+<summary>Ursprünglicher, verworfener Text</summary>
 
 **Entschieden (2026-08-14):** Bei **deutlich** unterschiedlichen Zeichengrenzen der gewählten Plattformen wird nicht ein gemeinsam gekürzter Text erzeugt, sondern **je Plattform ein eigener Text**, und beide werden angezeigt. Das ist die Antwort auf das Problem der min()-Regel: wer Facebook und X anhakt, bekämpfte sonst einen Tweet als Facebook-Beitrag.
 
@@ -162,6 +180,8 @@ Damit hängen zwei Dinge zusammen, die dieser Plan nicht mehr allein lösen kann
 2. **Freigabe**: zwei Texte können zwei Freigaben brauchen. Die Freigaberoute arbeitet heute auf **einer** `post_version` (Paket 011/024). Ob zwei Varianten eine gemeinsame Freigabe erhalten oder je eine eigene — und was gilt, wenn eine freigegeben und eine abgelehnt wird — ist eine fachliche Entscheidung mit Folgen für `post_versions`, die Freigabekette und die Veröffentlichung.
 
 **Nicht Teil von Paket 042.** Gehört als eigenes Paket ausgeplant (Arbeitstitel: „Pro-Plattform-Varianten und ihre Freigabe", Abhängigkeit 005 + 011/024). Bis dahin gilt die min()-Regel, die für Instagram/Facebook (beide großzügig) unschädlich ist. **Schwelle:** sobald eine Plattform mit einer Grenze unter etwa der Hälfte der großzügigsten gewählten hinzukommt, ist min() nicht mehr vertretbar — praktisch also mit der ersten Kurzform-Plattform (X 280, Mastodon 500).
+
+</details>
 
 ### Step 5: Provenienz nicht lügen lassen
 
@@ -189,8 +209,7 @@ Fix: `temperature` nur in den Hash aufnehmen, wenn der gewählte Adapter sie sen
 - **Eine weitere eingefrorene Spalte auf `composition_sessions` landet, ohne in den `input_hash` zu wandern.** Dann wiederholt sich der Fund aus dem Review-Fix von PR 1: der Wiederverwendungszweig des RPC ignoriert die Parameter stumm, und die neue Nutzereingabe ist unerreichbar.
 - **Die vier Stufen werden geändert oder erweitert**, ohne den CHECK in `2026081309` und `TEXT_GENERATION_TEMPERATURE_STEPS` gemeinsam anzufassen — die API akzeptiert sonst einen Wert, den die Datenbank mit 23514 zurückweist.
 - **Eine neue Plattform kommt hinzu** (Twitter/X, LinkedIn und Mastodon sind vorgesehen), ohne dass `SocialPlatformSchema`, der CHECK von `text_generation_platform_defaults`, der CHECK auf `composition_sessions.target_platforms` **und** ein Seed mit deren echter Zeichengrenze mitgezogen werden. Ohne Seed-Zeile lässt sich für sie keine Länge bestimmen, und die Route rechnet sie stillschweigend aus dem Minimum heraus.
-- **Eine Kurzform-Plattform wird angeboten, während noch die min()-Regel gilt.** Dann ist der Beitrag für jede andere gewählte Plattform auf deren Länge zusammengestaucht — siehe Step 4, ab da braucht es Varianten.
-- **Der Vorgabewert von `targetPlatforms` wird aus `SocialPlatformSchema.options` abgeleitet.** Mit einer Kurzform-Plattform in der Menge würde „alles vorausgewählt" jeden Beitrag auf deren Länge kürzen.
+- **Der Vorgabewert von `targetPlatforms` wird aus `SocialPlatformSchema.options` abgeleitet.** Mit einer Kurzform-Plattform in der Menge würde „alles vorausgewählt“ jeden Beitrag stillschweigend auf deren Länge kürzen. Die min()-Regel selbst ist erwünscht (Step 4) — eine **Vorauswahl**, die sie unbemerkt auslöst, ist es nicht: der Ersteller muss die kurze Plattform bewusst angehakt haben (siehe Plan 044, das die heutige automatische Vorauswahl aus Step 3 dafür ganz zurücknimmt).
 - **PR 3 rendert den Regler, ohne `temperatureSupported` auszuwerten** — das ist genau der irreführende Zustand, den Step 1 verhindert.
 
 ## Maintenance notes
