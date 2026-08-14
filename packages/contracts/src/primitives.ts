@@ -13,5 +13,10 @@ export const CountryCodeSchema = z.string().regex(/^[A-Z]{2}$/)
 // Textwerkstatt-Kopie wuerde bei jedem neuen Kanal (Twitter/LinkedIn/Mastodon sind vorgesehen)
 // auseinanderlaufen. Jede neue Plattform braucht dafuer eine Zeile in
 // text_generation_platform_defaults -- siehe STOP conditions in plans/042.
-export const SocialPlatformSchema = z.enum(['instagram', 'facebook'])
+//
+// 'website' (Plan 039): die eigene Vereinswebsite/der eigene Blog ist ein Kanal wie jeder andere,
+// kein Sonderfall. Was ihn von Instagram/Facebook unterscheidet -- kein OAuth-Token, eine eigene
+// Adresse statt einer externen Konto-ID -- sitzt an den Spalten von social_connections, nicht an
+// diesem Enum (siehe MetaOAuthPlatformSchema in channels.ts fuer die enger gefasste OAuth-Menge).
+export const SocialPlatformSchema = z.enum(['instagram', 'facebook', 'website'])
 export type SocialPlatform = z.infer<typeof SocialPlatformSchema>

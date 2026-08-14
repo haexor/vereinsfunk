@@ -44,7 +44,7 @@ const TASK_KIND_OPTIONS = [
   { value: 'image_generation', label: 'Bildgenerierung', available: false },
   { value: 'video_generation', label: 'Videogenerierung', available: false },
 ] as const
-const PLATFORM_LABELS: Record<SocialPlatform, string> = { instagram: 'Instagram', facebook: 'Facebook' }
+const PLATFORM_LABELS: Record<SocialPlatform, string> = { instagram: 'Instagram', facebook: 'Facebook', website: 'Eigene Website' }
 const config = useRuntimeConfig()
 const loading = ref(true)
 const saving = ref(false)

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { createSecretBox } from '@vereinsfunk/secrets'
 import { AnthropicStructuredContentGenerator, ContentGenerationError, OpenAiCompatibleStructuredContentGenerator, TEXT_PROMPT_TEMPLATE_VERSION, createTextGroundedContentBrief, type StructuredContentGenerator } from '@vereinsfunk/content-engine'
-import { providerSendsTemperature, SourceMaterialSchema, StyleProfileSnapshotSchema, TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS, UuidSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
+import { deriveTextGenerationMaxOutputTokens, providerSendsTemperature, SourceMaterialSchema, StyleProfileSnapshotSchema, UuidSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
 import { WorkflowExecutionError } from './workflows.js'
 
@@ -34,11 +34,17 @@ function ciphertextBuffer(value: string) {
 // hashen. Der Anthropic-Adapter sendet temperature bewusst nie (siehe generateText unten) -- sie
 // in den Hash aufzunehmen, waere eine falsche Provenienz-Angabe. providerSendsTemperature() ist
 // dieselbe Quelle, aus der GET /v1/text-generation-capabilities den Regler aus- oder einblendet.
-function parameterHash(provider: ProviderRow, session: SessionRow) {
+//
+// Plan 039, PR 1 Step 4: maxOutputTokens ist seitdem abgeleitet statt eine feste Konstante -- der
+// Hash aendert sich dadurch bewusst (der tatsaechlich gesendete Parameter aendert sich ja auch),
+// das ist eine gewollte Provenienz-Aenderung, keine Regression. Der Wert wird hereingereicht statt
+// hier neu berechnet: er haengt neben max_characters auch an der Belegzahl des Briefs, und zwei
+// Ableitungen derselben Zahl liefen sonst auseinander (Review dieses PRs).
+function parameterHash(provider: ProviderRow, session: SessionRow, maxOutputTokens: number) {
   return createHash('sha256').update(JSON.stringify({
     baseUrl: provider.base_url, model: provider.model,
     ...(providerSendsTemperature(provider.protocol) ? { temperature: session.temperature } : {}),
-    maxCharacters: session.max_characters, maxOutputTokens: TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS,
+    maxCharacters: session.max_characters, maxOutputTokens,
     structuredOutputRequired: provider.structured_output_required,
   })).digest('hex')
 }
@@ -77,16 +83,21 @@ export class TextGenerationExecutor {
       const style = StyleProfileSnapshotSchema.parse(session.style_profile_snapshot)
       const brief = createTextGroundedContentBrief({ presetSlug: session.preset_slug, communicationGoal: session.communication_goal, sourceMaterial: SourceMaterialSchema.parse(session.source_material) })
       const apiKey = parseSecretBox(this.config).open(ciphertextBuffer(provider.api_key_ciphertext), provider.key_version, provider.id)
+      // Belegzahl aus dem Brief, nicht aus dem Rohmaterial: assertGroundedPost prueft gegen genau
+      // diese Menge, und sie ist es, die die Antwort ueber verifiedFacts/generatedClaims verlaengert.
+      const maxOutputTokens = deriveTextGenerationMaxOutputTokens(session.max_characters, brief.allowedClaims.length + brief.approvedQuotes.length)
       const post = await generator.generateText({
         brief,
         styleProfile: { name: style.name, description: style.description, styleRules: style.styleRules, avoidRules: style.avoidRules, doRules: style.doRules },
         ...(candidate.revision_instruction ? { revisionInstruction: candidate.revision_instruction } : {}),
         // maxOutputTokens ist nur die Leine fuer den Aufruf; die verbindliche Grenze der Ziel-
-        // Plattform ist maxCharacters und steht im Prompt.
+        // Plattform ist maxCharacters und steht im Prompt. Aus maxCharacters und der Belegzahl
+        // abgeleitet (Plan 039, PR 1 Step 4), damit weder eine hoehere Plattform-Vorgabe (Website:
+        // 5000 Zeichen) noch ein belegreicher Spielbericht an einem festen Token-Budget scheitert.
         model: provider.model, baseUrl: provider.base_url, apiKey, temperature: session.temperature,
-        maxOutputTokens: TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS, maxCharacters: session.max_characters,
+        maxOutputTokens, maxCharacters: session.max_characters,
       })
-      await this.repository.markReady(candidate.id, session.id, candidate.lease_token, post, { providerConfigurationId: provider.id, providerModelId: provider.model, providerParameterHash: parameterHash(provider, session), promptTemplateVersion: TEXT_PROMPT_TEMPLATE_VERSION })
+      await this.repository.markReady(candidate.id, session.id, candidate.lease_token, post, { providerConfigurationId: provider.id, providerModelId: provider.model, providerParameterHash: parameterHash(provider, session, maxOutputTokens), promptTemplateVersion: TEXT_PROMPT_TEMPLATE_VERSION })
     } catch (error) {
       const classified = error instanceof ContentGenerationError ? error : error instanceof WorkflowExecutionError ? error : new WorkflowExecutionError('generation_validation', false)
       if (classified.retryable) await this.repository.releaseCandidate(candidate.id, session.id, candidate.lease_token)

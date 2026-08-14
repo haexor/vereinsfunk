@@ -1,13 +1,18 @@
 <script setup lang="ts">
-const props = defineProps<{ platform: 'instagram' | 'facebook'; inverse?: boolean }>()
+import type { SocialPlatform } from '@vereinsfunk/contracts'
+
+const props = defineProps<{ platform: SocialPlatform; inverse?: boolean }>()
+
+const LABELS: Record<SocialPlatform, string> = { instagram: 'Instagram', facebook: 'Facebook', website: 'Eigene Website' }
+const GLYPHS: Record<SocialPlatform, string> = { instagram: 'IG', facebook: 'f', website: '🌐' }
 </script>
 
 <template>
   <span
     class="grid h-6 w-6 place-items-center rounded-full text-[10px] font-bold"
     :class="props.inverse ? 'bg-white/15 text-white' : 'bg-[#eef0ea] text-forest'"
-    :title="props.platform === 'instagram' ? 'Instagram' : 'Facebook'"
+    :title="LABELS[props.platform]"
   >
-    {{ props.platform === 'instagram' ? 'IG' : 'f' }}
+    {{ GLYPHS[props.platform] }}
   </span>
 </template>

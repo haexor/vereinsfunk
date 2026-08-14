@@ -1,11 +1,11 @@
-import { ChannelConnectStartRequestSchema, ChannelOwnerScopeSchema, OAuthPendingConnectionSchema, SelectOAuthAccountRequestSchema, SocialConnectionSchema, SocialPlatformSchema, UuidSchema } from '@vereinsfunk/contracts'
+import { ChannelConnectStartRequestSchema, ChannelOwnerScopeSchema, MetaOAuthPlatformSchema, OAuthPendingConnectionSchema, SelectOAuthAccountRequestSchema, SocialConnectionSchema, UuidSchema } from '@vereinsfunk/contracts'
 import type { FastifyInstance } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { mapChannelScopeRow, mapSocialConnectionRow, metaRedirectUri } from '../apiMappers.js'
 import { ciphertextToBytea, createSecretBoxFromEnvironment } from '../secretBox.js'
 import type { ApiRouteContext } from './context.js'
-import { channelOwnerScope, createAuditRecorder, SOCIAL_CONNECTION_COLUMNS, toPermissionScope } from './shared.js'
+import { channelOwnerScope, createAuditRecorder, isDepartmentOwnedChannelAllowed, SOCIAL_CONNECTION_COLUMNS, toPermissionScope } from './shared.js'
 
 export function registerChannelOAuthRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients, environment, metaOAuthClient } = context
@@ -16,7 +16,9 @@ export function registerChannelOAuthRoutes(app: FastifyInstance, context: ApiRou
   // zurueck und die Oberflaeche navigiert selbst dorthin (window.location.href).
   app.get('/v1/channels/connect/:platform/start', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
-    const params = z.object({ platform: SocialPlatformSchema }).parse(request.params)
+    // MetaOAuthPlatformSchema statt SocialPlatformSchema: ein Website-Kanal entsteht nie ueber
+    // OAuth (Plan 039, POST /v1/channels), 'website' waere hier immer ein Fehleingang.
+    const params = z.object({ platform: MetaOAuthPlatformSchema }).parse(request.params)
     // ownerDepartmentId kommt hier als Query-Parameter statt im Body (GET) -- der leere String ist
     // deshalb ein gueltiger Eingangswert und bedeutet "nicht gesetzt": ein null-Wert wird von der
     // Query-Serialisierung des Browsers (ufo/withQuery hinter $fetch) als schluessellosen Parameter
@@ -34,18 +36,8 @@ export function registerChannelOAuthRoutes(app: FastifyInstance, context: ApiRou
     const ownerDepartmentId = start.ownerDepartmentId
     const scope = toPermissionScope(query.organizationId, ownerDepartmentId)
     if (!(await requirePermission(request, reply, 'social_account.manage', scope))) return
-    if (start.ownerScope === 'department') {
-      const policyRow = await supabaseClients
-        .forUser(request.auth!.accessToken)
-        .from('policy_settings')
-        .select('allow_department_owned_channels')
-        .eq('organization_id', query.organizationId)
-        .eq('scope', 'organization')
-        .maybeSingle()
-      if (policyRow.error) throw policyRow.error
-      if (!(policyRow.data?.allow_department_owned_channels ?? false)) {
-        return reply.code(403).send({ error: 'department_owned_channels_not_allowed', correlationId: request.id })
-      }
+    if (start.ownerScope === 'department' && !(await isDepartmentOwnedChannelAllowed(supabaseClients.forUser(request.auth!.accessToken), query.organizationId))) {
+      return reply.code(403).send({ error: 'department_owned_channels_not_allowed', correlationId: request.id })
     }
     if (!environment.META_OAUTH_REDIRECT_URL) return reply.code(503).send({ error: 'meta_not_configured', correlationId: request.id })
     const nonce = randomUUID()
@@ -68,7 +60,7 @@ export function registerChannelOAuthRoutes(app: FastifyInstance, context: ApiRou
   // Vertrauensgrenze ist state: unerraten, einmalig, kurzlebig, an Organisation/Besitzebene
   // gebunden (Plan 012: "state niemals ungeprueft zurueckvertrauen").
   app.get('/v1/channels/connect/:platform/callback', async (request, reply) => {
-    const params = z.object({ platform: SocialPlatformSchema }).parse(request.params)
+    const params = z.object({ platform: MetaOAuthPlatformSchema }).parse(request.params)
     const query = z.object({ code: z.string().optional(), state: z.string().optional(), error: z.string().optional() }).parse(request.query)
     const webBaseUrl = environment.WEB_BASE_URL ?? 'http://localhost:4200'
 

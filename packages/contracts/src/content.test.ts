@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CompressionProvenanceSchema, CreateCompositionSessionSchema, CreateCustomStyleProfileRequestSchema, CreateGenerationCommandSchema, CreatePlatformStylePersonaRequestSchema, CreateSubmissionSchema, CustomStyleProfileSchema, GeneratedPostSchema, PlatformStylePersonaSchema, TEXT_GENERATION_TEMPERATURE_STEPS, TextGenerationPlatformAvailabilitySchema, UpdatePlatformStylePersonaRequestSchema, VideoUploadMetadataSchema, WorkflowPayloadSchema } from './index.js'
+import { CompressionProvenanceSchema, CreateCompositionSessionSchema, CreateCustomStyleProfileRequestSchema, CreateGenerationCommandSchema, CreatePlatformStylePersonaRequestSchema, CreateSubmissionSchema, CustomStyleProfileSchema, deriveTextGenerationMaxOutputTokens, GeneratedPostSchema, PlatformStylePersonaSchema, TEXT_GENERATION_TEMPERATURE_STEPS, TextGenerationPlatformAvailabilitySchema, UpdatePlatformStylePersonaRequestSchema, VideoUploadMetadataSchema, WorkflowPayloadSchema } from './index.js'
 import { department, org, team } from './testFixtures.js'
 
 describe('contracts', () => {
@@ -183,6 +183,33 @@ describe('text workshop contracts', () => {
     expect(CompressionProvenanceSchema.safeParse({ ...succeeded, outputBytes: null }).success).toBe(false)
     const failed = { ...succeeded, outputBytes: null, width: null, height: null, durationMs: null, failureReason: 'memory_guardrail' as const }
     expect(CompressionProvenanceSchema.safeParse(failed).success).toBe(true)
+  })
+
+  // Plan 039, PR 1 Step 4: ohne diese Ableitung waere die 5000-Zeichen-Vorgabe eines Website-Kanals
+  // ein leeres Versprechen -- der Provideraufruf haette weiterhin nur ein festes 1200-Token-Budget.
+  it('derives a token budget that grows with max_characters and never falls below the previous fixed budget', () => {
+    const instagram = deriveTextGenerationMaxOutputTokens(2200)
+    const website = deriveTextGenerationMaxOutputTokens(5000)
+    expect(website).toBeGreaterThan(instagram)
+    // Kernzusage: die Bildunterschrift muss reinpassen. Zwei Zeichen je Token ist die konservative
+    // Kante fuer deutschen Text -- bei drei kaeme ein 5000-Zeichen-Blogbeitrag abgeschnitten zurueck.
+    expect(website).toBeGreaterThanOrEqual(Math.ceil(5000 / 2))
+    // Keine bestehende Sitzung darf durch die Ableitung WENIGER bekommen als die alte Konstante.
+    // Ohne Untergrenze faellt der kleinste erlaubte Wert (100 Zeichen) auf 550 statt 1200.
+    expect(deriveTextGenerationMaxOutputTokens(100)).toBe(1200)
+    expect(instagram).toBeGreaterThanOrEqual(1200)
+  })
+
+  // Der Belegteil der Antwort (verifiedFacts UND generatedClaims -- jeder Beleg erscheint zweimal)
+  // waechst mit dem Quellmaterial, nicht mit der Zeichengrenze. Ein fester Zuschlag liess genau den
+  // belegreichen Spielbericht verhungern, fuer den die Textwerkstatt gebaut ist.
+  it('grows the budget with the claim count, not only with max_characters', () => {
+    const withoutClaims = deriveTextGenerationMaxOutputTokens(2200)
+    const withClaims = deriveTextGenerationMaxOutputTokens(2200, 24)
+    expect(withClaims).toBeGreaterThan(withoutClaims)
+    // Zwei Sitzungen mit derselben Zeichengrenze, aber unterschiedlich viel Quellmaterial, duerfen
+    // nicht dasselbe Budget bekommen -- sonst ist die Belegzahl im Provenienz-Hash wertlos.
+    expect(deriveTextGenerationMaxOutputTokens(2200, 9)).not.toBe(withClaims)
   })
 })
 

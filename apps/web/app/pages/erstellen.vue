@@ -5,7 +5,7 @@ import { z } from 'zod'
 
 type Profile = { id: string | null; slug: string; kind: 'system' | 'persona' | 'custom'; name: string; description: string }
 type Candidate = { id: string; status: string; generated_content: { headline: string; caption: string; hashtags: string[]; verifiedFacts: string[]; missingFacts: string[] } | null; failure_code: string | null; triggered_by: 'member' | 'automatic_recovery' }
-const PLATFORM_LABELS: Record<SocialPlatform, string> = { instagram: 'Instagram', facebook: 'Facebook' }
+const PLATFORM_LABELS: Record<SocialPlatform, string> = { instagram: 'Instagram', facebook: 'Facebook', website: 'Eigene Website' }
 type PlatformUnavailableReason = 'no_channel' | 'restricted_by_policy'
 const PLATFORM_UNAVAILABLE_REASONS: Record<PlatformUnavailableReason, string> = {
   no_channel: 'Kein Kanal eingerichtet.',

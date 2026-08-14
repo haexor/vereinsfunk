@@ -135,6 +135,21 @@ export async function isAnyMemberOfOrganization(client: SupabaseClient, userId: 
   return org.data.length > 0 || department.data.length > 0 || team.data.length > 0
 }
 
+// Ein abteilungseigener Kanal -- Instagram/Facebook per OAuth (channelOAuth.ts), ein Website-Kanal
+// per POST /v1/channels (Plan 039) -- braucht dieselbe vereinsweite Freigabe (Plan 012: "eine
+// Abteilung darf sich diese Erlaubnis nicht selbst geben"). Beide Anlagewege teilen sich diese
+// Pruefung, damit sie nicht auseinanderlaufen.
+export async function isDepartmentOwnedChannelAllowed(client: SupabaseClient, organizationId: string): Promise<boolean> {
+  const policyRow = await client
+    .from('policy_settings')
+    .select('allow_department_owned_channels')
+    .eq('organization_id', organizationId)
+    .eq('scope', 'organization')
+    .maybeSingle()
+  if (policyRow.error) throw policyRow.error
+  return policyRow.data?.allow_department_owned_channels ?? false
+}
+
 // Einfacher In-Prozess-Sliding-Window-Zaehler statt einer neuen Abhaengigkeit (@fastify/rate-limit):
 // die oeffentlichen Einwilligungsseiten unten sind die exponierteste Flaeche des Systems (Plan
 // 015, Abschnitt 3) und brauchen ein Rate-Limit pro IP und pro Token. Fuer einen einzelnen
@@ -368,7 +383,7 @@ export async function resolveTextGenerationPlatformAvailability(
   client: SupabaseClient, organizationId: string, departmentId: string, teamId: string | null, allowedChannelIds: readonly string[] | null,
 ): Promise<Map<SocialPlatform, TextGenerationPlatformResolution>> {
   const [connections, scopeRows, policyRow, platformDefaults] = await Promise.all([
-    client.from('social_connections').select('id, platform, status, archived_at, responsible_profile_id').eq('organization_id', organizationId),
+    client.from('social_connections').select('id, platform, status, archived_at, responsible_profile_id, max_characters').eq('organization_id', organizationId),
     client.from('channel_scopes').select('social_connection_id, scope, department_id, team_id, can_schedule').eq('organization_id', organizationId),
     client.from('policy_settings').select('require_channel_responsible').eq('organization_id', organizationId).eq('scope', 'organization').maybeSingle(),
     client.from('text_generation_platform_defaults').select('platform, max_characters'),
@@ -381,6 +396,8 @@ export async function resolveTextGenerationPlatformAvailability(
   const targetScope: ScopeLevelName = teamId ? 'team' : 'department'
   const requireChannelResponsible = policyRow.data?.require_channel_responsible ?? false
   const maxCharactersByPlatform = new Map(platformDefaults.data.map((row) => [row.platform as SocialPlatform, row.max_characters as number]))
+  // Plan 039, PR 1 Step 3: je Kanal eine eigene Laengengrenze (social_connections.max_characters).
+  const maxCharactersByConnectionId = new Map(connections.data.map((row) => [row.id as string, row.max_characters as number | null]))
 
   const result = new Map<SocialPlatform, TextGenerationPlatformResolution>()
   const scopeInput = { scope: targetScope, departmentId, ...(teamId ? { teamId } : {}) }
@@ -388,7 +405,26 @@ export async function resolveTextGenerationPlatformAvailability(
     const candidates = toChannelCandidates(connections.data.filter((connection) => connection.platform === platform), scopeRows.data)
     const withoutPolicies = resolveAvailableChannels({ ...scopeInput, channels: candidates, allowedChannelIds: null, requireChannelResponsible: false })
     const withPolicies = resolveAvailableChannels({ ...scopeInput, channels: candidates, allowedChannelIds, requireChannelResponsible })
-    const maxCharacters = maxCharactersByPlatform.get(platform) ?? null
+    const platformDefault = maxCharactersByPlatform.get(platform) ?? null
+    // Kleinste, nicht erste: stehen einem Scope zwei Kanaele derselben Plattform mit
+    // unterschiedlicher eigener Grenze zur Verfuegung, muss ein Text auf beiden erscheinen koennen.
+    // Ein Kanal ohne eigenen Wert geht mit der globalen Plattform-Vorgabe als seinem Kandidaten in
+    // dieselbe Minimumbildung ein -- er faellt nicht aus der min() heraus, nur weil er selbst null
+    // traegt (sonst zoege eine fehlende Kanal-Grenze eine hoeher gesetzte Vorgabe faelschlich herab).
+    // Die globale Vorgabe ist Deckel, nicht nur Ersatzwert (Review dieses PRs): sie beschreibt bei
+    // Instagram/Facebook die tatsaechliche Grenze der fremden Plattform, und die kann ein Verein
+    // nicht durch einen eigenen Kanalwert anheben -- ein 10000-Zeichen-Instagram-Text waere beim
+    // Veroeffentlichen schlicht unbrauchbar. Nach unten bleibt der Kanalwert frei: kuerzer als die
+    // Plattform erlaubt darf jeder Kanal sein, laenger nicht. Fehlt eine Vorgabezeile
+    // (platformDefault null), gilt allein der Kanalwert -- dann gibt es nichts zu deckeln.
+    const perChannelLimits = withPolicies
+      .map((socialConnectionId) => {
+        const channelLimit = maxCharactersByConnectionId.get(socialConnectionId) ?? null
+        if (channelLimit === null) return platformDefault
+        return platformDefault === null ? channelLimit : Math.min(channelLimit, platformDefault)
+      })
+      .filter((limit): limit is number => limit !== null)
+    const maxCharacters = withPolicies.length > 0 ? (perChannelLimits.length > 0 ? Math.min(...perChannelLimits) : null) : platformDefault
     result.set(platform, withPolicies.length > 0
       ? { available: true, maxCharacters }
       : { available: false, maxCharacters, reason: withoutPolicies.length > 0 ? 'restricted_by_policy' : 'no_channel' })
@@ -423,7 +459,7 @@ export const POLICY_MANAGE_PERMISSION: Record<ScopeLevel, Permission> = {
 
 // Spaltenliste einer social_connections-Zeile -- von Kanalverwaltung und OAuth-Auswahl geteilt.
 export const SOCIAL_CONNECTION_COLUMNS =
-  'id, platform, external_account_id, display_name, status, token_expires_at, last_verified_at, owner_scope, owner_department_id, responsible_profile_id, purpose, confidential, archived_at, created_at, imprint_url, privacy_url, editorial_responsible_profile_id, editorial_responsible_note'
+  'id, platform, external_account_id, display_name, status, token_expires_at, last_verified_at, owner_scope, owner_department_id, responsible_profile_id, purpose, confidential, archived_at, created_at, imprint_url, privacy_url, editorial_responsible_profile_id, editorial_responsible_note, website_url, max_characters'
 
 // Massgeblich fuer jede Kanal-Berechtigung ist der Kanalbesitz: eine Verbindung im Besitz einer
 // Abteilung wird in deren Scope geprueft, eine vereinseigene auf Vereinsebene (Plan 012,

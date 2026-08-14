@@ -240,8 +240,48 @@ export const CompositionSessionStatusSchema = z.enum(['draft', 'queued', 'genera
 export const MaxCharactersSchema = z.int().min(100).max(10_000)
 export const TEXT_GENERATION_DEFAULT_MAX_CHARACTERS = 2200
 // Reines Modell-Budget, absichtlich nicht pro Plattform: es verhindert einen davonlaufenden
-// Aufruf, waehrend die Plattform-Grenze ueber max_characters wirkt.
+// Aufruf, waehrend die Plattform-Grenze ueber max_characters wirkt. Bleibt die feste Vorgabe fuer
+// den Preview-Pfad (previewStyleProfile, routes/shared.ts), der keinen Sitzungs-max_characters
+// kennt -- fuer eine echte Sitzung liefert deriveTextGenerationMaxOutputTokens unten den Wert.
 export const TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS = 1200
+
+// Plan 039, PR 1 Step 4: ohne diese Ableitung waere eine hoehere Plattform-Vorgabe (allen voran der
+// Website-Kanal mit 5000 Zeichen, siehe text_generation_platform_defaults) ein leeres Versprechen --
+// die Provider-Anfrage haette weiterhin nur das feste 1200-Token-Budget oben, und ein zu langer
+// Beitrag kaeme mitten im Satz abgeschnitten zurueck.
+//
+// Drei Groessen, weil die Antwort aus drei Teilen besteht, die unabhaengig voneinander wachsen
+// (Review dieses PRs -- eine einzelne "Zeichen / 3 + Pauschale"-Formel war an beiden Enden zu knapp):
+//
+// 1. Die Bildunterschrift selbst. ZWEI Zeichen je Token, nicht drei: die BPE-Tokenizer von Anthropic
+//    und OpenAI sind auf Englisch (~4 Zeichen/Token) trainiert, deutscher Text mit Komposita und
+//    Umlauten liegt bei ~2,0-2,5. Drei war die optimistische Kante -- ein 5000-Zeichen-Blogbeitrag
+//    waere damit bei etwa der Haelfte abgeschnitten.
+// 2. Der feste JSON-Rahmen: Headline, kurze Bildunterschrift, Call-to-Action, Alt-Text, Hashtags,
+//    Schluessel und Syntax.
+// 3. Der Beleg-Anteil, und der ist NICHT pauschal: assertGroundedPost verlangt, dass jeder belegte
+//    Claim in der Antwort auftaucht, und GeneratedPostSchema laesst ihn gleich zweimal auftauchen
+//    (verifiedFacts UND generatedClaims). Ein Spielbericht mit 24 Belegen kostet so mehr Tokens als
+//    die gesamte Bildunterschrift. Mit einem festen Zuschlag verhungerte genau der Fall, fuer den
+//    die Textwerkstatt gebaut ist.
+//
+// Keine Obergrenze mehr: MaxCharactersSchema (10000) und SourceMaterialSchema (30 Fakten +
+// 20 Beobachtungen + 10 Zitate = 60 Belege) decken den Aufruf bereits auf rund 12100 Token, und ein
+// Deckel darunter waere wieder das stille Abschneiden, das dieser Schritt gerade beseitigt.
+// Untergrenze ist das bisherige feste Budget -- keine bestehende Sitzung darf durch diese Ableitung
+// WENIGER bekommen als vorher (bei 2200 Zeichen waeren es sonst 1134 statt 1200 gewesen).
+//
+// Die Faktoren sind geschaetzt, nicht gemessen (offener Punkt in plans/039) -- vor dem ersten echten
+// Blogbetrieb einmal gegen einen 5000-Zeichen-Beitrag mit vielen Belegen gegenpruefen.
+const TEXT_GENERATION_CHARACTERS_PER_TOKEN = 2
+const TEXT_GENERATION_ENVELOPE_TOKENS = 500
+const TEXT_GENERATION_TOKENS_PER_CLAIM = 110
+export function deriveTextGenerationMaxOutputTokens(maxCharacters: number, claimCount = 0): number {
+  const derived = Math.ceil(maxCharacters / TEXT_GENERATION_CHARACTERS_PER_TOKEN)
+    + TEXT_GENERATION_ENVELOPE_TOKENS
+    + claimCount * TEXT_GENERATION_TOKENS_PER_CLAIM
+  return Math.max(TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS, derived)
+}
 
 // Paket 042: wie stark die Persona-Stimme im jeweiligen Beitrag durchschlaegt -- nicht der Ton
 // selbst (der kommt von der Persona). Single Source of Truth fuer die DB-CHECK-Constraint

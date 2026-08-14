@@ -429,6 +429,81 @@ describe('GET /v1/text-generation-platforms', () => {
     ]))
   })
 
+  // Plan 039, PR 1 Step 3: die Laengengrenze je Kanal geht in dieselbe Minimumbildung ein wie die
+  // globale Plattform-Vorgabe -- ein Text soll auf jedem verfuegbaren Kanal derselben Plattform
+  // erscheinen koennen, also gibt der knappste Kanal den Rahmen vor.
+  it('resolves maxCharacters as the minimum across two available channels of the same platform, each with its own limit', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
+            if (table === 'policy_settings') return policySettingsFake()
+            if (table === 'social_connections') return chain({
+              data: [
+                { id: 'channel-website-a', platform: 'website', status: 'active', archived_at: null, responsible_profile_id: null, max_characters: 3000 },
+                { id: 'channel-website-b', platform: 'website', status: 'active', archived_at: null, responsible_profile_id: null, max_characters: 1500 },
+              ], error: null,
+            })
+            if (table === 'channel_scopes') return chain({
+              data: [
+                { social_connection_id: 'channel-website-a', scope: 'organization', department_id: null, team_id: null, can_schedule: true },
+                { social_connection_id: 'channel-website-b', scope: 'organization', department_id: null, team_id: null, can_schedule: true },
+              ], error: null,
+            })
+            if (table === 'text_generation_platform_defaults') return chain({ data: [{ platform: 'website', max_characters: 5000 }], error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => { throw new Error('forService should not be called by this route') },
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: '/v1/text-generation-platforms', headers: { authorization: `Bearer ${token}` }, query })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual(expect.arrayContaining([
+      { platform: 'website', available: true, maxCharacters: 1500 },
+    ]))
+  })
+
+  // Ein Kanal ohne eigenen Wert faellt nicht aus der min() heraus, nur weil er selbst null traegt --
+  // er geht mit der globalen Plattform-Vorgabe als seinem eigenen Kandidaten in dieselbe Bildung
+  // ein. Sonst zoege eine hoeher gesetzte Vorgabe (hier 5000) faelschlich auf den Wert eines
+  // GROSSZUEGIGEREN Kanals (6000) herauf.
+  it('a channel without its own override contributes the platform default to the minimum, not the higher sibling limit', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
+            if (table === 'policy_settings') return policySettingsFake()
+            if (table === 'social_connections') return chain({
+              data: [
+                { id: 'channel-website-a', platform: 'website', status: 'active', archived_at: null, responsible_profile_id: null, max_characters: 6000 },
+                { id: 'channel-website-b', platform: 'website', status: 'active', archived_at: null, responsible_profile_id: null, max_characters: null },
+              ], error: null,
+            })
+            if (table === 'channel_scopes') return chain({
+              data: [
+                { social_connection_id: 'channel-website-a', scope: 'organization', department_id: null, team_id: null, can_schedule: true },
+                { social_connection_id: 'channel-website-b', scope: 'organization', department_id: null, team_id: null, can_schedule: true },
+              ], error: null,
+            })
+            if (table === 'text_generation_platform_defaults') return chain({ data: [{ platform: 'website', max_characters: 5000 }], error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => { throw new Error('forService should not be called by this route') },
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: '/v1/text-generation-platforms', headers: { authorization: `Bearer ${token}` }, query })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual(expect.arrayContaining([
+      { platform: 'website', available: true, maxCharacters: 5000 },
+    ]))
+  })
+
   it('rejects a member without post.create in the requested scope', async () => {
     const app = await startApp({ roleProvider: denyingRoleProvider, supabaseClients: { forUser: () => scopeResolvingUserClient(), forService: () => { throw new Error('forService should not be called once the permission check fails') } } })
     const token = await signAccessToken(USER_ID)

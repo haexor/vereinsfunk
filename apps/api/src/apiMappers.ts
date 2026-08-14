@@ -121,6 +121,7 @@ export function mapSocialConnectionRow(row: Record<string, unknown>) {
     archivedAt: row.archived_at, createdAt: row.created_at, imprintUrl: row.imprint_url,
     privacyUrl: row.privacy_url, editorialResponsibleProfileId: row.editorial_responsible_profile_id,
     editorialResponsibleNote: row.editorial_responsible_note,
+    websiteUrl: row.website_url, maxCharacters: row.max_characters,
   }
 }
 
