@@ -9,9 +9,18 @@ on:
 # The host pulls `latest` (podman-auto-update.timer on haex.cloud, Watchtower elsewhere), so
 # only main moves that tag. Every build also gets an immutable sha-<sha> tag, which is what the
 # Ansible role pins to when a deploy needs to stay put.
+#
+# haex.cloud is aarch64. An amd64-only image lands there and dies with `exec format error` on
+# first start -- that is exactly how the Kodus deploy failed on that host. The arm64 leg used to
+# be QEMU-emulated from an amd64 runner, but esbuild (a Go binary, pulled in via Vite for the web
+# app) hung indefinitely under that emulation -- Go's signal-based goroutine preemption is
+# unreliable in QEMU user-mode (golang/go#67355, evanw/esbuild#2485), and the web image's
+# `vite build` got stuck mid-`transforming` for over an hour before it had to be cancelled. Each
+# arch now builds natively on its own runner instead, pushed by digest and merged into one
+# multi-arch manifest below -- no QEMU involved anywhere.
 jobs:
-  images:
-    runs-on: ubuntu-latest
+  build:
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
@@ -19,14 +28,60 @@ jobs:
       fail-fast: false
       matrix:
         app: [api, worker, web]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
-      # haex.cloud is aarch64. An amd64-only image lands there and dies with
-      # `exec format error` on first start -- that is exactly how the Kodus
-      # deploy failed on that host. QEMU makes the arm64 leg cross-buildable
-      # from the amd64 runner; it is the slow part of this workflow, so switch
-      # to a native arm64 runner in the matrix if the build time starts to hurt.
-      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/vereinsfunk-${{ matrix.app }}
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/${{ matrix.app }}/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/vereinsfunk-${{ matrix.app }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.app }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}-${{ matrix.arch }}
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.app }}-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [api, worker, web]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-${{ matrix.app }}-*
+          merge-multiple: true
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -41,13 +96,12 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
             type=ref,event=tag
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: apps/${{ matrix.app }}/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.app }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'ghcr.io/${{ github.repository_owner }}/vereinsfunk-${{ matrix.app }}@sha256:%s ' *)
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect ghcr.io/${{ github.repository_owner }}/vereinsfunk-${{ matrix.app }}:${{ steps.meta.outputs.version }}
