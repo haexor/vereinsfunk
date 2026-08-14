@@ -8,6 +8,7 @@ import {
   UpdateCustomStyleProfileRequestSchema,
   type CustomStyleProfile,
   type GeneratedPost,
+  type StyleProfilePromptPreview,
 } from '@vereinsfunk/contracts'
 import { avoidRulesFromDraft, doRulesFromDraft, emptyStyleProfileDraft, previewErrorMessage, styleProfileDraftFrom, styleRulesFromDraft } from '../utils/styleProfileDraft'
 
@@ -135,18 +136,23 @@ async function createProfile() {
   }
 }
 
-async function previewCreate() {
+function createPreviewRequestBody() {
   const scopeChoice = scopeChoices.value.find((choice) => choice.key === selectedScopeKey.value)
-  if (!organizationId.value || !scopeChoice) return
+  if (!organizationId.value || !scopeChoice) return null
+  return PreviewCustomStyleProfileRequestSchema.parse({
+    organizationId: organizationId.value, departmentId: scopeChoice.departmentId, teamId: scopeChoice.teamId,
+    name: draft.value.name, description: draft.value.description,
+    styleRules: styleRulesFromDraft(draft.value), avoidRules: avoidRulesFromDraft(draft.value), doRules: doRulesFromDraft(draft.value),
+    sampleInput: draft.value.sampleInput,
+  })
+}
+
+async function previewCreate() {
+  const body = createPreviewRequestBody()
+  if (!body) return
   creatingPreviewing.value = true
   creatingPreviewError.value = ''
   try {
-    const body = PreviewCustomStyleProfileRequestSchema.parse({
-      organizationId: organizationId.value, departmentId: scopeChoice.departmentId, teamId: scopeChoice.teamId,
-      name: draft.value.name, description: draft.value.description,
-      styleRules: styleRulesFromDraft(draft.value), avoidRules: avoidRulesFromDraft(draft.value), doRules: doRulesFromDraft(draft.value),
-      sampleInput: draft.value.sampleInput,
-    })
     creatingPreviewResult.value = await api.request('/v1/content-style-profiles/preview', { method: 'POST', body, headers: { 'idempotency-key': creatingPreviewKey.value } }, GeneratedPostSchema)
     creatingPreviewKey.value = crypto.randomUUID()
   } catch (error) {
@@ -157,21 +163,15 @@ async function previewCreate() {
 }
 
 const creatingPromptPreviewing = ref(false)
-const creatingPromptPreviewResult = ref<{ system: string; user: string } | null>(null)
+const creatingPromptPreviewResult = ref<StyleProfilePromptPreview | null>(null)
 const creatingPromptPreviewError = ref('')
 
 async function showPromptCreate() {
-  const scopeChoice = scopeChoices.value.find((choice) => choice.key === selectedScopeKey.value)
-  if (!organizationId.value || !scopeChoice) return
+  const body = createPreviewRequestBody()
+  if (!body) return
   creatingPromptPreviewing.value = true
   creatingPromptPreviewError.value = ''
   try {
-    const body = PreviewCustomStyleProfileRequestSchema.parse({
-      organizationId: organizationId.value, departmentId: scopeChoice.departmentId, teamId: scopeChoice.teamId,
-      name: draft.value.name, description: draft.value.description,
-      styleRules: styleRulesFromDraft(draft.value), avoidRules: avoidRulesFromDraft(draft.value), doRules: doRulesFromDraft(draft.value),
-      sampleInput: draft.value.sampleInput,
-    })
     creatingPromptPreviewResult.value = await api.request('/v1/content-style-profiles/prompt-preview', { method: 'POST', body }, StyleProfilePromptPreviewSchema)
   } catch {
     creatingPromptPreviewError.value = 'Der System-Prompt konnte nicht angezeigt werden.'
@@ -193,7 +193,7 @@ const editPreviewKey = ref(crypto.randomUUID())
 watch(editDraft, () => { editPreviewKey.value = crypto.randomUUID() }, { deep: true })
 
 const editPromptPreviewing = ref(false)
-const editPromptPreviewResult = ref<{ system: string; user: string } | null>(null)
+const editPromptPreviewResult = ref<StyleProfilePromptPreview | null>(null)
 const editPromptPreviewError = ref('')
 
 function startEdit(profile: CustomStyleProfile) {
@@ -232,18 +232,23 @@ async function saveEdit() {
     editSaving.value = false
   }
 }
-async function previewEdit() {
+function editPreviewRequestBody() {
   const profile = profiles.value.find((item) => item.id === editingId.value)
-  if (!profile || !organizationId.value) return
+  if (!profile || !organizationId.value) return null
+  return PreviewCustomStyleProfileRequestSchema.parse({
+    organizationId: organizationId.value, departmentId: profile.departmentId, teamId: profile.teamId,
+    name: editDraft.value.name, description: editDraft.value.description,
+    styleRules: styleRulesFromDraft(editDraft.value), avoidRules: avoidRulesFromDraft(editDraft.value), doRules: doRulesFromDraft(editDraft.value),
+    sampleInput: editDraft.value.sampleInput,
+  })
+}
+
+async function previewEdit() {
+  const body = editPreviewRequestBody()
+  if (!body) return
   editPreviewing.value = true
   editPreviewError.value = ''
   try {
-    const body = PreviewCustomStyleProfileRequestSchema.parse({
-      organizationId: organizationId.value, departmentId: profile.departmentId, teamId: profile.teamId,
-      name: editDraft.value.name, description: editDraft.value.description,
-      styleRules: styleRulesFromDraft(editDraft.value), avoidRules: avoidRulesFromDraft(editDraft.value), doRules: doRulesFromDraft(editDraft.value),
-      sampleInput: editDraft.value.sampleInput,
-    })
     editPreviewResult.value = await api.request('/v1/content-style-profiles/preview', { method: 'POST', body, headers: { 'idempotency-key': editPreviewKey.value } }, GeneratedPostSchema)
     editPreviewKey.value = crypto.randomUUID()
   } catch (error) {
@@ -253,17 +258,11 @@ async function previewEdit() {
   }
 }
 async function showPromptEdit() {
-  const profile = profiles.value.find((item) => item.id === editingId.value)
-  if (!profile || !organizationId.value) return
+  const body = editPreviewRequestBody()
+  if (!body) return
   editPromptPreviewing.value = true
   editPromptPreviewError.value = ''
   try {
-    const body = PreviewCustomStyleProfileRequestSchema.parse({
-      organizationId: organizationId.value, departmentId: profile.departmentId, teamId: profile.teamId,
-      name: editDraft.value.name, description: editDraft.value.description,
-      styleRules: styleRulesFromDraft(editDraft.value), avoidRules: avoidRulesFromDraft(editDraft.value), doRules: doRulesFromDraft(editDraft.value),
-      sampleInput: editDraft.value.sampleInput,
-    })
     editPromptPreviewResult.value = await api.request('/v1/content-style-profiles/prompt-preview', { method: 'POST', body }, StyleProfilePromptPreviewSchema)
   } catch {
     editPromptPreviewError.value = 'Der System-Prompt konnte nicht angezeigt werden.'

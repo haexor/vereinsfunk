@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { LoaderCircle, Plus, Sparkles, Terminal, Trash2 } from '@lucide/vue'
-import type { GeneratedPost } from '@vereinsfunk/contracts'
+import { STYLE_PROFILE_MAX_EXAMPLES, type GeneratedPost, type StyleProfilePromptPreview } from '@vereinsfunk/contracts'
 import type { StyleProfileDraft } from '../utils/styleProfileDraft'
 
 withDefaults(defineProps<{
@@ -10,7 +10,7 @@ withDefaults(defineProps<{
   previewResult: GeneratedPost | null
   previewError: string
   promptPreviewing: boolean
-  promptPreviewResult: { system: string; user: string } | null
+  promptPreviewResult: StyleProfilePromptPreview | null
   promptPreviewError: string
   submitLabel?: string
   cancellable?: boolean
@@ -25,7 +25,6 @@ const emit = defineEmits<{ save: []; preview: []; promptPreview: []; cancel: [] 
 
 const canPreview = computed(() => Boolean(draft.value.name.trim() && draft.value.description.trim() && draft.value.sampleInput.trim()))
 
-const MAX_EXAMPLES = 5
 const TABS = [
   { id: 'grunddaten', label: 'Grunddaten' },
   { id: 'tonalitaet', label: 'Tonalität' },
@@ -34,6 +33,10 @@ const TABS = [
 ] as const
 type TabId = typeof TABS[number]['id']
 const activeTab = ref<TabId>('grunddaten')
+
+function addExample() {
+  draft.value.examples.push({ id: crypto.randomUUID(), input: '', output: '' })
+}
 </script>
 
 <template>
@@ -88,7 +91,7 @@ const activeTab = ref<TabId>('grunddaten')
       <p v-if="!draft.examples.length" class="rounded-xl border border-dashed border-[#dfe0d9] p-4 text-xs text-[#9aa096]">
         Noch kein Beispiel hinzugefügt. Ein Beispielpaar zeigt, wie ein Rohtext in den fertigen Stil übersetzt werden soll.
       </p>
-      <div v-for="(example, index) in draft.examples" :key="index" class="rounded-xl border border-[#dfe0d9] p-4">
+      <div v-for="(example, index) in draft.examples" :key="example.id" class="rounded-xl border border-[#dfe0d9] p-4">
         <div class="mb-2 flex items-center justify-between">
           <p class="text-xs font-semibold text-[#5c655f]">Beispiel {{ index + 1 }}</p>
           <button type="button" class="focus-ring rounded-lg p-1 text-[#9aa096] hover:text-amber-800" @click="draft.examples.splice(index, 1)">
@@ -104,9 +107,9 @@ const activeTab = ref<TabId>('grunddaten')
       </div>
       <button
         type="button"
-        :disabled="draft.examples.length >= MAX_EXAMPLES"
+        :disabled="draft.examples.length >= STYLE_PROFILE_MAX_EXAMPLES"
         class="focus-ring inline-flex items-center gap-2 rounded-xl border border-dashed border-[#dfe0d9] px-4 py-2.5 text-xs font-bold text-[#43483f] disabled:opacity-40"
-        @click="draft.examples.push({ input: '', output: '' })"
+        @click="addExample"
       >
         <Plus :size="14" /> Beispiel hinzufügen
       </button>

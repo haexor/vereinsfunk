@@ -1,7 +1,9 @@
 import { z } from 'zod'
 import type { StyleProfileRules } from '@vereinsfunk/contracts'
 
-export interface StyleProfileExampleDraft { input: string; output: string }
+// id is a client-only key for the "Beispiele" list (StyleProfileEditorForm.vue's v-for) so
+// deleting one example doesn't reshuffle Vue's keyed diff across the rest -- never sent to the API.
+export interface StyleProfileExampleDraft { id: string; input: string; output: string }
 
 // Shared form shape for StyleProfileEditorForm.vue -- list-typed fields (toneTags/catchphrases/
 // avoidRules/doRules) are edited as one-per-line text, matching the codebase's existing
@@ -44,7 +46,7 @@ export function styleRulesFromDraft(draft: StyleProfileDraft): StyleProfileRules
     catchphrases: linesToList(draft.catchphrasesText),
     examples: draft.examples
       .map((example) => ({ input: example.input.trim(), output: example.output.trim() }))
-      .filter((example) => example.input || example.output),
+      .filter((example) => example.input && example.output),
     additionalInstructions: draft.additionalInstructions.trim(),
   }
 }
@@ -69,7 +71,7 @@ export function styleProfileDraftFrom(profile: {
     description: profile.description,
     toneTagsText: profile.styleRules.toneTags.join('\n'),
     catchphrasesText: profile.styleRules.catchphrases.join('\n'),
-    examples: profile.styleRules.examples.map((example) => ({ ...example })),
+    examples: profile.styleRules.examples.map((example) => ({ id: crypto.randomUUID(), ...example })),
     additionalInstructions: profile.styleRules.additionalInstructions,
     avoidRulesText: profile.avoidRules.join('\n'),
     doRulesText: profile.doRules.join('\n'),

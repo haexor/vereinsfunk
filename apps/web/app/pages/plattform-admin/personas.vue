@@ -7,6 +7,7 @@ import {
   StyleProfilePromptPreviewSchema,
   type GeneratedPost,
   type PlatformStylePersona,
+  type StyleProfilePromptPreview,
 } from '@vereinsfunk/contracts'
 import { avoidRulesFromDraft, doRulesFromDraft, emptyStyleProfileDraft, previewErrorMessage, styleRulesFromDraft } from '../../utils/styleProfileDraft'
 
@@ -63,6 +64,17 @@ async function createPersona() {
   }
 }
 
+function previewRequestBody() {
+  return PreviewPlatformStylePersonaRequestSchema.parse({
+    name: draft.value.name,
+    description: draft.value.description,
+    styleRules: styleRulesFromDraft(draft.value),
+    avoidRules: avoidRulesFromDraft(draft.value),
+    doRules: doRulesFromDraft(draft.value),
+    sampleInput: draft.value.sampleInput,
+  })
+}
+
 const previewing = ref(false)
 const previewResult = ref<GeneratedPost | null>(null)
 const previewError = ref('')
@@ -73,15 +85,7 @@ async function testPersona() {
   previewing.value = true
   previewError.value = ''
   try {
-    const body = PreviewPlatformStylePersonaRequestSchema.parse({
-      name: draft.value.name,
-      description: draft.value.description,
-      styleRules: styleRulesFromDraft(draft.value),
-      avoidRules: avoidRulesFromDraft(draft.value),
-      doRules: doRulesFromDraft(draft.value),
-      sampleInput: draft.value.sampleInput,
-    })
-    previewResult.value = await api.request('/v1/platform-style-personas/preview', { method: 'POST', body, headers: { 'idempotency-key': previewKey.value } }, GeneratedPostSchema)
+    previewResult.value = await api.request('/v1/platform-style-personas/preview', { method: 'POST', body: previewRequestBody(), headers: { 'idempotency-key': previewKey.value } }, GeneratedPostSchema)
     previewKey.value = crypto.randomUUID()
   } catch (error) {
     previewError.value = previewErrorMessage(error)
@@ -91,22 +95,14 @@ async function testPersona() {
 }
 
 const promptPreviewing = ref(false)
-const promptPreviewResult = ref<{ system: string; user: string } | null>(null)
+const promptPreviewResult = ref<StyleProfilePromptPreview | null>(null)
 const promptPreviewError = ref('')
 
 async function showPrompt() {
   promptPreviewing.value = true
   promptPreviewError.value = ''
   try {
-    const body = PreviewPlatformStylePersonaRequestSchema.parse({
-      name: draft.value.name,
-      description: draft.value.description,
-      styleRules: styleRulesFromDraft(draft.value),
-      avoidRules: avoidRulesFromDraft(draft.value),
-      doRules: doRulesFromDraft(draft.value),
-      sampleInput: draft.value.sampleInput,
-    })
-    promptPreviewResult.value = await api.request('/v1/platform-style-personas/prompt-preview', { method: 'POST', body }, StyleProfilePromptPreviewSchema)
+    promptPreviewResult.value = await api.request('/v1/platform-style-personas/prompt-preview', { method: 'POST', body: previewRequestBody() }, StyleProfilePromptPreviewSchema)
   } catch {
     promptPreviewError.value = 'Der System-Prompt konnte nicht angezeigt werden.'
   } finally {

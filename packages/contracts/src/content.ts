@@ -71,10 +71,13 @@ export const StyleProfileExampleSchema = z.object({
   input: z.string().trim().max(300),
   output: z.string().trim().max(1_500),
 })
+// Shared by the Zod bound below and the "Beispiel hinzufügen" button's disabled state
+// (StyleProfileEditorForm.vue) so the UI cap can't silently drift from what the API accepts.
+export const STYLE_PROFILE_MAX_EXAMPLES = 5
 export const StyleProfileRulesSchema = z.object({
   toneTags: z.array(z.string().trim().min(1).max(40)).max(10).default([]),
   catchphrases: z.array(z.string().trim().min(1).max(40)).max(20).default([]),
-  examples: z.array(StyleProfileExampleSchema).max(5).default([]),
+  examples: z.array(StyleProfileExampleSchema).max(STYLE_PROFILE_MAX_EXAMPLES).default([]),
   additionalInstructions: StyleProfileInstructionSchema.default(''),
 }).strict()
 // Shared bound for avoidRules/doRules, both database-backed columns with the identical
@@ -358,6 +361,7 @@ export type AttachmentUploadMetadata = z.infer<typeof AttachmentUploadMetadataSc
 export type CompressionProvenance = z.infer<typeof CompressionProvenanceSchema>
 export type StyleProfileExample = z.infer<typeof StyleProfileExampleSchema>
 export type StyleProfileRules = z.infer<typeof StyleProfileRulesSchema>
+export type StyleProfilePromptPreview = z.infer<typeof StyleProfilePromptPreviewSchema>
 export type StyleProfileSnapshot = z.infer<typeof StyleProfileSnapshotSchema>
 export type CustomStyleProfile = z.infer<typeof CustomStyleProfileSchema>
 export type CreateCustomStyleProfileRequest = z.infer<typeof CreateCustomStyleProfileRequestSchema>
