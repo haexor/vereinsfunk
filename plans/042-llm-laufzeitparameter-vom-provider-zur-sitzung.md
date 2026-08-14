@@ -81,9 +81,11 @@ Zwei Entscheidungen aus dem Review-Fix wurden nach Rückmeldung des Betreibers k
 
 Wer PR 1 in Produktion bringt, sollte einen von 1200 abweichenden `max_output_tokens`-Wert vorher notieren.
 
-## PR 2: Plattform-Vorgaben verwalten
+## PR 2: Plattform-Vorgaben verwalten (umgesetzt)
 
 Die API-Hälften existieren seit PR 1 und haben keinen Konsumenten. PR 2 baut die UI dazu.
+
+Umgesetzt wie unten beschrieben, vollständig grün verifiziert (lint/typecheck/test/build) und per Playwright manuell durchgespielt: Instagram-Zeichengrenze auf 1500 gesetzt, gespeichert, neu geladen (Wert blieb, `updatedAt` bewegte sich), danach auf 2200 zurückgesetzt, um keine Testdaten in der lokalen DB zu hinterlassen.
 
 ### Step 1: Vorgaben-Abschnitt in `plattform-admin/llm.vue`
 
@@ -169,7 +171,7 @@ Fix: `temperature` nur in den Hash aufnehmen, wenn der gewählte Adapter sie sen
 - [x] `composition_sessions` friert `target_platforms`/`max_characters`/`temperature` bei Anlage ein, und alle drei sind Teil des `input_hash` (PR 1 + Review-Fix)
 - [x] `text_generation_platform_defaults` existiert, ist für jedes Mitglied lesbar und nur für Plattform-Admins schreibbar (PR 1)
 - [x] Die Plattform-Grenze ist eine **Zeichen**-Grenze, keine Token-Zahl (PR 1, nachgezogen 2026-08-14)
-- [ ] Ein Plattform-Admin kann die Zeichengrenze je Plattform in der Oberfläche pflegen (PR 2)
+- [x] Ein Plattform-Admin kann die Zeichengrenze je Plattform in der Oberfläche pflegen (PR 2)
 - [ ] Ein Mitglied wählt die Persona-Intensität am Beitrag; bei einem `anthropic`-Provider ist die Wahl nicht sichtbar statt wirkungslos bedienbar (PR 3)
 - [ ] Das Formular zeigt nur Plattformen an, auf die der Scope veröffentlichen kann, und die API lehnt andere mit 422 ab (PR 3)
 - [ ] `provider_parameter_hash` enthält `temperature` nur, wenn sie gesendet wurde (PR 3)

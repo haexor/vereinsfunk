@@ -1,8 +1,8 @@
 # Prompt für die nächste Session
 
-Arbeite im Repository-Root dieses Checkouts. Beginne mit `git status --short --branch`, `git fetch origin` und `git log --oneline origin/main..HEAD`. Falls PR #74 (Plan 042 PR 1, Branch `worktree-paket-042-llm-runtime-params`) noch nicht gemergt ist, das zuerst klären — PR 2 und PR 3 setzen darauf auf.
+Arbeite im Repository-Root dieses Checkouts. Beginne mit `git status --short --branch`, `git fetch origin` und `git log --oneline origin/main..HEAD`. PR #74 (Plan 042 PR 1) ist gemergt; PR 2 ist umgesetzt und offen — falls noch nicht gemergt, das zuerst klären, bevor an PR 3 weitergearbeitet wird.
 
-## Ausgangslage: Plan 042 PR 1 offen (PR #74), Code-Review abgearbeitet
+## Ausgangslage: Plan 042 PR 1 gemergt (PR #74), PR 2 umgesetzt
 
 `plans/042-llm-laufzeitparameter-vom-provider-zur-sitzung.md` ist die verbindliche Beschreibung; sie wurde am 2026-08-14 nachträglich verschriftlicht, weil beim Code-Review von PR #74 auffiel, dass dieses Paket als einziges keine committete Plandatei hatte.
 
@@ -23,9 +23,9 @@ Verifiziert: voller Gate (`pnpm lint && pnpm typecheck && pnpm test && pnpm buil
 
 ## Nächster Schritt
 
-1. PR #74 mergen.
-2. **PR 2** (klein): Vorgaben-Abschnitt in `plattform-admin/llm.vue` — die API-Hälften `GET`/`PUT /v1/text-generation-platform-defaults` existieren seit PR 1 und haben noch keinen Konsumenten.
-3. **PR 3**: Regler am Beitrag in `erstellen.vue`. Zwei Punkte vorher klären bzw. beachten:
+**PR 2 ist umgesetzt** (Vorgaben-Abschnitt in `plattform-admin/llm.vue`, Instagram/Facebook-Zeilen mit Zeichengrenze und Speichern-Button, 404-Meldung für eine fehlende Vorgabezeile, jargonfreier Erklärsatz). Voller Gate grün, per Playwright manuell durchgespielt (Wert geändert, neu geladen, `updatedAt` bewegt, zurückgesetzt). Falls dieser PR noch offen ist, zuerst mergen.
+
+1. **PR 3**: Regler am Beitrag in `erstellen.vue`. Zwei Punkte vorher klären bzw. beachten:
    - **Entschieden (2026-08-14)**: Läuft für die Textgenerierung ein Anbieter mit `anthropic`-Protokoll, wird der Regler ausgegraut oder nicht angezeigt — der Adapter sendet `temperature` bewusst nicht. Dafür braucht es eine neue schmale Leseroute `GET /v1/text-generation-capabilities → { temperatureSupported: boolean }` (nur `requireAuth`), weil `GET /v1/llm-providers` hinter `requirePlatformAdmin` liegt und die Textwerkstatt ein normales Mitglied benutzt. Nur ein Boolean, damit die Antwort weder Anbieter noch Endpunkt verrät.
    - **Entschieden**: Die Plattform-Auswahl ist im Formular sichtbar, Mehrfachauswahl, beide vorausgewählt — aber **nur Plattformen, auf die der Scope veröffentlichen kann** (Kanäle aus Paket 012, Delegation/Einschränkung aus 011/023). Dafür fehlt eine Leseroute `GET /v1/text-generation-platforms?organizationId&departmentId&teamId`, und `POST /v1/text-workshop/sessions` muss dieselbe Auflösung serverseitig durchsetzen (422 `platform_not_available`). Details: Plan 042, PR 3, Step 3.
    - Ebenfalls in PR 3: `provider_parameter_hash` nimmt `temperature` heute auch für `anthropic`-Provider auf, die sie nie senden — die Provenienz behauptet damit etwas Falsches.
