@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CompressionProvenanceSchema, CreateCompositionSessionSchema, CreateCustomStyleProfileRequestSchema, CreateGenerationCommandSchema, CreatePlatformStylePersonaRequestSchema, CreateSubmissionSchema, CustomStyleProfileSchema, GeneratedPostSchema, PlatformStylePersonaSchema, TEXT_GENERATION_TEMPERATURE_STEPS, TextGenerationPlatformAvailabilitySchema, UpdatePlatformStylePersonaRequestSchema, VideoUploadMetadataSchema, WorkflowPayloadSchema } from './index.js'
+import { CompressionProvenanceSchema, CreateCompositionSessionSchema, CreateCustomStyleProfileRequestSchema, CreateGenerationCommandSchema, CreatePlatformStylePersonaRequestSchema, CreateSubmissionSchema, CustomStyleProfileSchema, deriveTextGenerationMaxOutputTokens, GeneratedPostSchema, PlatformStylePersonaSchema, TEXT_GENERATION_TEMPERATURE_STEPS, TextGenerationPlatformAvailabilitySchema, UpdatePlatformStylePersonaRequestSchema, VideoUploadMetadataSchema, WorkflowPayloadSchema } from './index.js'
 import { department, org, team } from './testFixtures.js'
 
 describe('contracts', () => {
@@ -183,6 +183,19 @@ describe('text workshop contracts', () => {
     expect(CompressionProvenanceSchema.safeParse({ ...succeeded, outputBytes: null }).success).toBe(false)
     const failed = { ...succeeded, outputBytes: null, width: null, height: null, durationMs: null, failureReason: 'memory_guardrail' as const }
     expect(CompressionProvenanceSchema.safeParse(failed).success).toBe(true)
+  })
+
+  // Plan 039, PR 1 Step 4: ohne diese Ableitung waere die 5000-Zeichen-Vorgabe eines Website-Kanals
+  // ein leeres Versprechen -- der Provideraufruf haette weiterhin nur ein festes 1200-Token-Budget.
+  it('derives a token budget from max_characters, growing with it but capped for the hard upper bound', () => {
+    const instagram = deriveTextGenerationMaxOutputTokens(2200)
+    const website = deriveTextGenerationMaxOutputTokens(5000)
+    const ceiling = deriveTextGenerationMaxOutputTokens(10_000)
+    expect(website).toBeGreaterThan(instagram)
+    // Die Obergrenze greift bei max_characters: 10000 -- ohne Deckel waere der Wert hier hoeher als
+    // die schlichte Fortsetzung der Formel (Zeichen / 3 + Zuschlag).
+    expect(ceiling).toBeLessThan(Math.ceil(10_000 / 3) + 400)
+    expect(ceiling).toBeGreaterThan(website)
   })
 })
 

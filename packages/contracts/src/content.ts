@@ -240,8 +240,26 @@ export const CompositionSessionStatusSchema = z.enum(['draft', 'queued', 'genera
 export const MaxCharactersSchema = z.int().min(100).max(10_000)
 export const TEXT_GENERATION_DEFAULT_MAX_CHARACTERS = 2200
 // Reines Modell-Budget, absichtlich nicht pro Plattform: es verhindert einen davonlaufenden
-// Aufruf, waehrend die Plattform-Grenze ueber max_characters wirkt.
+// Aufruf, waehrend die Plattform-Grenze ueber max_characters wirkt. Bleibt die feste Vorgabe fuer
+// den Preview-Pfad (previewStyleProfile, routes/shared.ts), der keinen Sitzungs-max_characters
+// kennt -- fuer eine echte Sitzung liefert deriveTextGenerationMaxOutputTokens unten den Wert.
 export const TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS = 1200
+
+// Plan 039, PR 1 Step 4: ohne diese Ableitung waere eine hoehere Plattform-Vorgabe (allen voran der
+// Website-Kanal mit 5000 Zeichen, siehe text_generation_platform_defaults) ein leeres Versprechen --
+// die Provider-Anfrage haette weiterhin nur das feste 1200-Token-Budget oben, und ein zu langer
+// Beitrag kaeme mitten im Satz abgeschnitten zurueck. Faustregel fuer deutschen Text: ~3 Zeichen je
+// Token fuer die Bildunterschrift, plus ein fester Zuschlag fuer die uebrigen JSON-Felder der
+// Antwort (Headline, kurze Bildunterschrift, Call-to-Action, Alt-Text, Hashtags, JSON-Syntax).
+// Gedeckelt, damit ein sehr hoch gesetzter Sitzungswert (bis 10000 laut MaxCharactersSchema) keinen
+// unbegrenzt teuren Aufruf erzeugt -- ein realistischer Blogbeitrag (5000 Zeichen, ca. 2067 Token)
+// bleibt deutlich darunter. Der Umrechnungsfaktor ist geschaetzt, nicht gemessen (offener Punkt in
+// plans/039) -- vor dem Merge einmal gegen einen echten 5000-Zeichen-Blogbeitrag pruefen.
+const TEXT_GENERATION_TOKEN_SURCHARGE = 400
+const TEXT_GENERATION_MAX_OUTPUT_TOKENS_CEILING = 3000
+export function deriveTextGenerationMaxOutputTokens(maxCharacters: number): number {
+  return Math.min(TEXT_GENERATION_MAX_OUTPUT_TOKENS_CEILING, Math.ceil(maxCharacters / 3) + TEXT_GENERATION_TOKEN_SURCHARGE)
+}
 
 // Paket 042: wie stark die Persona-Stimme im jeweiligen Beitrag durchschlaegt -- nicht der Ton
 // selbst (der kommt von der Persona). Single Source of Truth fuer die DB-CHECK-Constraint

@@ -65,6 +65,10 @@ Naheliegend wäre ein getrenntes `TextGenerationTargetSchema`, weil eine Website
 **4. Beliebig viele Website-Kanäle, auf Vereins- wie auf Abteilungsebene.**
 Betreiberentscheidung vom 2026-08-14. Ein Verein hat plausibel eine Hauptseite und daneben Abteilungsblogs; eine Begrenzung auf einen Kanal je Verein wäre eine Vorgabe, die der Betreiber ausdrücklich nicht machen will. Dafür ist **nichts Neues nötig**: `social_connections.owner_scope`/`owner_department_id` tragen die Besitzebene bereits (`channelOwnerScope` in `routes/shared.ts` wertet sie aus), und `channel_scopes` regelt unabhängig davon, wer senden darf. Der Unique-Index greift deshalb auf der **Adresse**, nicht auf der Organisation: `unique (organization_id, website_url) where platform = 'website'` — derselbe Blog nicht zweimal, beliebig viele verschiedene schon.
 
+## Abweichung bei der Umsetzung
+
+`SocialPlatformSchema` ist eine gemeinsame Quelle für Kanäle, Textwerkstatt **und** mehrere Frontend-`Record<SocialPlatform, …>`-Literale (`PLATFORM_LABELS` in `erstellen.vue` und `plattform-admin/llm.vue`, die Prop von `PlatformIcon.vue`). Die Erweiterung des Enums um `'website'` in PR 1 (Step 1) lässt `pnpm typecheck` deshalb schon vor PR 2 fehlschlagen — TypeScript verlangt einen `website`-Eintrag in jedem dieser Records, sonst bricht `apps/web` die Kompilierung. Da PR 1 eigenständig auf `main` gemergt wird (PR 2 baut erst danach auf), musste die reine Typvervollständigung (Label „Eigene Website“ ergänzen, `PlatformIcon`-Prop auf `SocialPlatform` erweitern) bereits in PR 1 mit hinein — nicht die eigentliche Oberfläche aus PR 2 Step 5/6, nur das, was der Compiler zwingend braucht. **Verifiziert**: `pnpm typecheck` ist nach PR 1 grün, ohne dass eine Anlage-Oberfläche für Website-Kanäle existiert. PR 2 Step 6 entfällt dadurch die Label-Zeile; die Mitglieds-Obergrenze bleibt offen.
+
 ## PR 1: Datenmodell, Kanalanlage, Längenauflösung und Token-Leine
 
 ### Step 1 — Migration: `website` als Plattform

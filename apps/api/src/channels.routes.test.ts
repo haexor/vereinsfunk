@@ -165,6 +165,143 @@ describe('Paket 012: Kanaele und Social-Accounts', () => {
     expect(response.json()).toMatchObject({ error: 'responsible_not_a_member' })
   })
 
+  // Plan 039: die einzige Kanal-Anlage ohne OAuth.
+  describe('POST /v1/channels (website channels)', () => {
+    const socialManagerRoleProvider: RoleProvider = { async rolesForScope() { return ['social_manager'] } }
+    const basePayload = { organizationId: ORGANIZATION_ID, platform: 'website', displayName: 'Vereinsblog', websiteUrl: 'https://verein.example/blog', ownerScope: 'organization', ownerDepartmentId: null }
+
+    it('rejects any platform other than website -- instagram/facebook stay OAuth-only', async () => {
+      const app = await startApp({ roleProvider: socialManagerRoleProvider })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({
+        method: 'POST', url: '/v1/channels', headers: { authorization: `Bearer ${token}` }, payload: { ...basePayload, platform: 'instagram' },
+      })
+      expect(response.statusCode).toBe(422)
+      expect(response.json()).toMatchObject({ error: 'platform_requires_oauth' })
+    })
+
+    it('rejects a website_url that resolves into the internal network (SSRF guard)', async () => {
+      const clients: SupabaseClientFactory = {
+        forUser: () => ({}) as unknown as SupabaseClient,
+        forService: () => ({ from: () => { throw new Error('forService should not be used once the SSRF guard rejects the request') } }) as unknown as SupabaseClient,
+      }
+      const app = await startApp({ roleProvider: socialManagerRoleProvider, supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({
+        method: 'POST', url: '/v1/channels', headers: { authorization: `Bearer ${token}` }, payload: { ...basePayload, websiteUrl: 'https://169.254.169.254/blog' },
+      })
+      expect(response.statusCode).toBe(400)
+      expect(response.json()).toMatchObject({ error: 'website_url_not_allowed' })
+    })
+
+    it('rejects the request for a caller without social_account.manage', async () => {
+      const app = await startApp({ roleProvider: denyingRoleProvider })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'POST', url: '/v1/channels', headers: { authorization: `Bearer ${token}` }, payload: basePayload })
+      expect(response.statusCode).toBe(403)
+    })
+
+    it('creates an organization-owned website channel, grants the owning scope, and canonicalizes the URL', async () => {
+      const insertedRow = {
+        id: CONNECTION_ID, platform: 'website', external_account_id: null, display_name: 'Vereinsblog', status: 'active',
+        token_expires_at: null, last_verified_at: null, owner_scope: 'organization', owner_department_id: null, responsible_profile_id: null,
+        purpose: null, confidential: false, archived_at: null, created_at: '2026-08-14T09:00:00+00:00', imprint_url: null, privacy_url: null,
+        editorial_responsible_profile_id: null, editorial_responsible_note: null, website_url: 'https://verein.example/blog', max_characters: null,
+      }
+      let socialConnectionsInsertPayload: Record<string, unknown> | undefined
+      let channelScopesInsertPayload: Record<string, unknown> | undefined
+      const clients: SupabaseClientFactory = {
+        forUser: () => ({}) as unknown as SupabaseClient,
+        forService: () =>
+          ({
+            from: (table: string) => {
+              if (table === 'social_connections') {
+                return { insert: (row: Record<string, unknown>) => { socialConnectionsInsertPayload = row; return { select: () => ({ single: async () => ({ data: insertedRow, error: null }) }) } } }
+              }
+              if (table === 'channel_scopes') {
+                return {
+                  insert: (row: Record<string, unknown>) => { channelScopesInsertPayload = row; return { error: null } },
+                  select: () => chain({ data: [{ id: '10000000-9000-4000-8000-000000000001', scope: 'organization', department_id: null, team_id: null, can_schedule: true }], error: null }),
+                }
+              }
+              if (table === 'audit_events') return { insert: async () => ({ error: null }) }
+              throw new Error(`unexpected table in test fake: ${table}`)
+            },
+          }) as unknown as SupabaseClient,
+      }
+      const app = await startApp({ roleProvider: socialManagerRoleProvider, supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      // https:// und der abschliessende "/" auf der reinen Domain duerfen keinen zweiten
+      // gespeicherten Wert ergeben (Entwurfsentscheidung, Step 1) -- hier ueber Grossschreibung im Host.
+      const response = await app.inject({
+        method: 'POST', url: '/v1/channels', headers: { authorization: `Bearer ${token}` },
+        payload: { ...basePayload, websiteUrl: 'https://Verein.example/blog' },
+      })
+      expect(response.statusCode).toBe(201)
+      expect(socialConnectionsInsertPayload).toMatchObject({ platform: 'website', website_url: 'https://verein.example/blog', owner_scope: 'organization', owner_department_id: null })
+      expect(channelScopesInsertPayload).toMatchObject({ social_connection_id: CONNECTION_ID, scope: 'organization', can_schedule: true })
+      expect(response.json()).toMatchObject({ id: CONNECTION_ID, platform: 'website', websiteUrl: 'https://verein.example/blog', externalAccountId: null, maxCharacters: null })
+    })
+
+    it('maps a duplicate website_url for the same club to 409', async () => {
+      const clients: SupabaseClientFactory = {
+        forUser: () => ({}) as unknown as SupabaseClient,
+        forService: () =>
+          ({
+            from: (table: string) => {
+              if (table === 'social_connections') return { insert: () => ({ select: () => ({ single: async () => ({ data: null, error: { code: '23505', message: 'duplicate key' } }) }) }) }
+              throw new Error(`unexpected table in test fake: ${table}`)
+            },
+          }) as unknown as SupabaseClient,
+      }
+      const app = await startApp({ roleProvider: socialManagerRoleProvider, supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'POST', url: '/v1/channels', headers: { authorization: `Bearer ${token}` }, payload: basePayload })
+      expect(response.statusCode).toBe(409)
+      expect(response.json()).toMatchObject({ error: 'website_url_already_connected' })
+    })
+  })
+
+  // Plan 039, PR 1 Step 3: der Verein legt die Laengengrenze selbst fest, null setzt sie auf die
+  // globale Plattform-Vorgabe zurueck.
+  it('PATCH /v1/channels/:id writes a per-channel maxCharacters override', async () => {
+    const socialManagerRoleProvider: RoleProvider = { async rolesForScope() { return ['social_manager'] } }
+    let updatePayload: Record<string, unknown> | undefined
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'social_connections') return chain({ data: { organization_id: ORGANIZATION_ID, owner_scope: 'organization', owner_department_id: null }, error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'social_connections') {
+              return {
+                update: (payload: Record<string, unknown>) => {
+                  updatePayload = payload
+                  return { eq: () => ({ select: () => ({ single: async () => ({ data: { id: CONNECTION_ID, platform: 'website', external_account_id: null, display_name: 'Vereinsblog', status: 'active', token_expires_at: null, last_verified_at: null, owner_scope: 'organization', owner_department_id: null, responsible_profile_id: null, purpose: null, confidential: false, archived_at: null, created_at: '2026-08-14T09:00:00+00:00', imprint_url: null, privacy_url: null, editorial_responsible_profile_id: null, editorial_responsible_note: null, website_url: 'https://verein.example/blog', max_characters: 1500 }, error: null }) }) }) }
+                },
+              }
+            }
+            if (table === 'channel_scopes') return chain({ data: [], error: null })
+            if (table === 'audit_events') return { insert: async () => ({ error: null }) }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: socialManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PATCH', url: `/v1/channels/${CONNECTION_ID}`, headers: { authorization: `Bearer ${token}` }, payload: { maxCharacters: 1500 },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(updatePayload).toMatchObject({ max_characters: 1500 })
+    expect(response.json()).toMatchObject({ maxCharacters: 1500 })
+  })
+
   it('maps the organization_only_flag rejection to 422 when a department tries to set a channel-only policy flag', async () => {
     const clients: SupabaseClientFactory = {
       forUser: () =>

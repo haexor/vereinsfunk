@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { createSecretBox } from '@vereinsfunk/secrets'
 import { AnthropicStructuredContentGenerator, ContentGenerationError, OpenAiCompatibleStructuredContentGenerator, TEXT_PROMPT_TEMPLATE_VERSION, createTextGroundedContentBrief, type StructuredContentGenerator } from '@vereinsfunk/content-engine'
-import { providerSendsTemperature, SourceMaterialSchema, StyleProfileSnapshotSchema, TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS, UuidSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
+import { deriveTextGenerationMaxOutputTokens, providerSendsTemperature, SourceMaterialSchema, StyleProfileSnapshotSchema, UuidSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
 import { WorkflowExecutionError } from './workflows.js'
 
@@ -34,11 +34,15 @@ function ciphertextBuffer(value: string) {
 // hashen. Der Anthropic-Adapter sendet temperature bewusst nie (siehe generateText unten) -- sie
 // in den Hash aufzunehmen, waere eine falsche Provenienz-Angabe. providerSendsTemperature() ist
 // dieselbe Quelle, aus der GET /v1/text-generation-capabilities den Regler aus- oder einblendet.
+//
+// Plan 039, PR 1 Step 4: maxOutputTokens ist seitdem aus session.max_characters abgeleitet statt
+// einer festen Konstante -- der Hash aendert sich dadurch bewusst (der tatsaechlich gesendete
+// Parameter aendert sich ja auch), das ist eine gewollte Provenienz-Aenderung, keine Regression.
 function parameterHash(provider: ProviderRow, session: SessionRow) {
   return createHash('sha256').update(JSON.stringify({
     baseUrl: provider.base_url, model: provider.model,
     ...(providerSendsTemperature(provider.protocol) ? { temperature: session.temperature } : {}),
-    maxCharacters: session.max_characters, maxOutputTokens: TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS,
+    maxCharacters: session.max_characters, maxOutputTokens: deriveTextGenerationMaxOutputTokens(session.max_characters),
     structuredOutputRequired: provider.structured_output_required,
   })).digest('hex')
 }
@@ -82,9 +86,11 @@ export class TextGenerationExecutor {
         styleProfile: { name: style.name, description: style.description, styleRules: style.styleRules, avoidRules: style.avoidRules, doRules: style.doRules },
         ...(candidate.revision_instruction ? { revisionInstruction: candidate.revision_instruction } : {}),
         // maxOutputTokens ist nur die Leine fuer den Aufruf; die verbindliche Grenze der Ziel-
-        // Plattform ist maxCharacters und steht im Prompt.
+        // Plattform ist maxCharacters und steht im Prompt. Aus maxCharacters abgeleitet (Plan 039,
+        // PR 1 Step 4), damit eine hoehere Plattform-Vorgabe (Website: 5000 Zeichen) nicht an einem
+        // festen Token-Budget scheitert.
         model: provider.model, baseUrl: provider.base_url, apiKey, temperature: session.temperature,
-        maxOutputTokens: TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS, maxCharacters: session.max_characters,
+        maxOutputTokens: deriveTextGenerationMaxOutputTokens(session.max_characters), maxCharacters: session.max_characters,
       })
       await this.repository.markReady(candidate.id, session.id, candidate.lease_token, post, { providerConfigurationId: provider.id, providerModelId: provider.model, providerParameterHash: parameterHash(provider, session), promptTemplateVersion: TEXT_PROMPT_TEMPLATE_VERSION })
     } catch (error) {
