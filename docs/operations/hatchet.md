@@ -38,6 +38,31 @@ Der Worker benötigt außerdem `HATCHET_CLIENT_API_URL`, `HATCHET_CLIENT_HOST_PO
 über die jeweilige Fachtransaktion anzulegen; danach muss der zugehörige `workflow_runs`-Status
 terminal sein.
 
+## Produktionsbetrieb (haex.space)
+
+Seit Plan 038 (`ansible`-Repo, Commits `ed096a2`/`f08a6c1`) läuft ein selbst gehosteter Hatchet-Stack
+auf haex.space: eigenständige Rolle `roles/hatchet` (Postgres, `migrate`, `admin`, `engine`, `api`),
+unabhängig von der `vereinsfunk`-Rolle in `haex.space.play.yml` eingehängt — keine host-veröffentlichten
+Ports außer einem loopback-only Operator-Dashboard. `vereinsfunk-worker` erreicht `hatchet-engine`/
+`hatchet-api` über ein gemeinsames externes Docker-Netzwerk beim Compose-Servicenamen, **nicht** über
+`host.docker.internal` wie im ursprünglichen Plan vorgesehen: auf nativem Linux-Dockerd löst
+`host.docker.internal` auf die Bridge-Gateway-IP auf, nicht auf `127.0.0.1` — gegen einen
+Wegwerf-Stack verifiziert, danach auf den Shared-Network-Ansatz umgeschwenkt. `HATCHET_TLS=false`
+ist nötig, weil `hatchet-engine` mit `SERVER_GRPC_INSECURE=true` läuft, der Worker-Adapter aber ohne
+diesen Schalter einen TLS-Handshake gegen den Klartext-Port versucht.
+
+Die Token-Erzeugung bleibt ein manueller, dokumentierter Betreiberschritt (`roles/hatchet/README.md`
+im `ansible`-Repo) — sie kann erst nach dem ersten Deploy der Rolle laufen, weil sie den dabei
+angelegten Tenant referenziert. Der Namensdrift `HATCHET_SERVER_URL`/`HATCHET_API_URL` vs.
+`HATCHET_CLIENT_HOST_PORT`/`HATCHET_CLIENT_API_URL` ist für den Docker-Pfad (haex.space) behoben; der
+Quadlet-Pfad (haex.cloud) trägt die alten Namen bewusst weiter, weil dieser Host heute keine aktive
+vereinsfunk-Produktion ist.
+
+Stand: `vereinsfunk-worker` läuft auf haex.space stabil (`RestartCount=0`), `generation-recovery-scan`
+vollzieht seinen Fünf-Minuten-Takt erfolgreich. Der unten beschriebene 30-Job-Fairnessnachweis für die
+volle Produktionsfreigabe aus Plan 004 ist damit noch **nicht** erbracht — das strukturelle Gate
+(Hatchet läuft überhaupt) ist geschlossen, der eigentliche Lasttest bleibt offen.
+
 ## Betriebsvorfälle
 
 - **Outbox-Stau:** Nur die Anzahl, das Alter und Fehlerklassen prüfen. Dispatcher und Worker

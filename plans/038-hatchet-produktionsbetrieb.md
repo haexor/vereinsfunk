@@ -2,7 +2,11 @@
 
 - **Category**: infrastructure, reliability
 - **Planned at**: commit `4a701cad`, 2026-08-13
-- **Umsetzungsstand**: geplant, noch nicht begonnen.
+- **Umsetzungsstand**: erledigt — im `ansible`-Repo umgesetzt (Commits `ed096a2`/`f08a6c1`,
+  2026-08-13), unabhängig von dieser Codebasis. Details und eine Abweichung von Entscheidung 1
+  (Shared-Network statt `host.docker.internal`) stehen in `docs/operations/hatchet.md`. Diese
+  Plandatei bleibt als historischer Entwurf stehen; die Umsetzung selbst weicht an einer Stelle
+  begründet davon ab.
 
 ## Why this matters
 
@@ -150,17 +154,18 @@ ssh haex.space "docker inspect vereinsfunk-worker --format 'RestartCount={{.Rest
 
 ## Done criteria
 
-- [ ] `roles/hatchet` existiert im `ansible`-Repository, unabhängig von `vereinsfunk` eingehängt,
+- [x] `roles/hatchet` existiert im `ansible`-Repository, unabhängig von `vereinsfunk` eingehängt,
       mit frisch generierten (nicht Platzhalter-)Secrets in `secrets/haex.space.yml`.
-- [ ] `HATCHET_CLIENT_HOST_PORT`/`HATCHET_CLIENT_API_URL` ersetzen `HATCHET_SERVER_URL`/
-      `HATCHET_API_URL` in allen `vereinsfunk`-Templates; `host.docker.internal` ist aus
-      `vereinsfunk-api`/`-worker` heraus erreichbar (Docker- **und** Quadlet-Pfad).
-- [ ] Bootstrap-Reihenfolge aus Entscheidung 6 real gegen haex.space durchgeführt, echtes
+- [x] `HATCHET_CLIENT_HOST_PORT`/`HATCHET_CLIENT_API_URL` ersetzen `HATCHET_SERVER_URL`/
+      `HATCHET_API_URL` im Docker-Pfad (haex.space) — **abweichend von diesem Plan** über ein
+      gemeinsames Docker-Netzwerk statt `host.docker.internal` (siehe Umsetzungsstand oben); der
+      Quadlet-Pfad (haex.cloud) trägt die alten Namen bewusst weiter, da nicht aktiv.
+- [x] Bootstrap-Reihenfolge aus Entscheidung 6 real gegen haex.space durchgeführt, echtes
       Worker-Token in `secrets/haex.space.yml` hinterlegt.
-- [ ] `docker logs vereinsfunk-worker` zeigt nach dem zweiten vollen Playbook-Lauf einen
-      registrierten Hatchet-Worker statt einer `ZodError`; `docker inspect`s `RestartCount` bleibt
-      über mindestens 10 Minuten unverändert.
-- [ ] `docs/operations/hatchet.md` und `plans/README.md` (Plan 004) spiegeln den tatsächlich
+- [x] `docker logs vereinsfunk-worker` zeigt einen registrierten Hatchet-Worker statt einer
+      `ZodError`; `docker inspect`s `RestartCount` bestätigt `0` bei laufendem Container,
+      `generation-recovery-scan` vollzieht seinen Fünf-Minuten-Takt erfolgreich (verifiziert 2026-08-14).
+- [x] `docs/operations/hatchet.md` und `plans/README.md` (Plan 004) spiegeln den tatsächlich
       erreichten Produktionsstand wider.
 
 ## STOP conditions
