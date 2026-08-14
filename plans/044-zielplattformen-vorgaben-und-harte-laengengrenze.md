@@ -84,6 +84,12 @@ Die Vorgabe gehört zu den Richtlinien, erscheint auf denselben Seiten wie `Poli
 
 **Verifizieren**: Playwright-Smoke — Vereinsvorgabe setzen, in einer Abteilung „geerbt“ sehen, dort abwählen, Vererbung greift nicht mehr.
 
+## Stand nach der Umsetzung von PR 1
+
+Umgesetzt wie geplant, mit einer Korrektur zu Step 4: `default_target_platforms` ist schema-seitig ein Feld von `PolicyRuleValuesSchema` (dieselbe `own`/`effective`-Struktur wie `allowedPresets`/`forbiddenTopics`/etc.), nicht von `PolicySettingSchema` (den zwei booleschen Umschaltern aus `PolicyFlagToggles.vue`). Die neue Komponente (`DefaultTargetPlatformsPicker.vue`) sitzt deshalb in `einstellungen/index.vue`s bereits vorhandenem „Inhalt und Kanäle“-Abschnitt, direkt neben den anderen `PolicyRuleValues`-Feldern — nicht auf `struktur.vue`, wo `PolicyFlagToggles.vue` lebt. Die im Plan verlangte Bedienung (drei sichtbar unterscheidbare Zustände über einen Umschalter geerbt/eigene Vorgabe, darunter eine Checkbox-Auswahl der drei Plattformen) ist unverändert erfüllt.
+
+**Verifiziert**: `pnpm db:reset && pnpm db:test` (769 pgTAP-Fälle, inkl. 7 neuer Fälle für CHECK und `set_policy_rules`-Coalesce-Verhalten), `pnpm lint`, `pnpm typecheck` (36/36), `pnpm test` (36/36, inkl. 2 neuer API-Routen-Tests für `isDefault`, 1 neuer Domain-Test für die drei Merge-Zustände) und `pnpm build` sind grün. Der Playwright-Smoke-Test selbst konnte mangels Browser-Werkzeug in dieser Sitzung nicht durchgeführt werden (dieselbe Einschränkung wie bei Paket 039 PR 2).
+
 ## Stand nach der Umsetzung von PR 2
 
 Umgesetzt wie geplant, mit einer Ergaenzung zu Step 6: `ContentGenerationError` traegt jetzt ein

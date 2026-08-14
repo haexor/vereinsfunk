@@ -312,11 +312,18 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (!(await requirePermission(request, reply, 'post.create', resolvedScope))) return
     const config = await resolveScopedEffectiveConfig(client, scope.organizationId, scope.departmentId, scope.teamId ?? null)
     const availability = await resolveTextGenerationPlatformAvailability(client, scope.organizationId, scope.departmentId, scope.teamId ?? null, config.policies.allowedChannelIds)
+    // Plan 044, PR 1 Step 3: mit der Verfuegbarkeit geschnitten -- eine Plattform in der Vorgabe
+    // ohne (mehr) eingerichteten Kanal ist nicht isDefault, sonst liefe erstellen.vue vorausgewaehlt
+    // in ein 422 (dasselbe Schneiden, das restoreDraft dort schon fuer gespeicherte Entwuerfe macht).
+    const defaultPlatforms = new Set(config.policies.defaultTargetPlatforms ?? [])
     return reply.code(200).send(
       z.array(TextGenerationPlatformAvailabilitySchema).parse(
         // Fehlt die Vorgabezeile, zeigt die Anzeige den generischen Fallback -- eine Zahl muss hier
         // stehen. Fuer die verbindliche Grenze der Sitzung zaehlt sie dagegen nicht mit (unten).
-        [...availability.entries()].map(([platform, entry]) => ({ ...entry, platform, maxCharacters: entry.maxCharacters ?? TEXT_GENERATION_DEFAULT_MAX_CHARACTERS })),
+        [...availability.entries()].map(([platform, entry]) => ({
+          ...entry, platform, maxCharacters: entry.maxCharacters ?? TEXT_GENERATION_DEFAULT_MAX_CHARACTERS,
+          isDefault: entry.available && defaultPlatforms.has(platform),
+        })),
       ),
     )
   })

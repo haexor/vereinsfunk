@@ -63,6 +63,23 @@ describe('effective config', () => {
     expect(result.policies.allowedPresets).toEqual([])
   })
 
+  // Plan 044: die Gegenseite zu mergeAllowedList -- ein gesetzter Wert ERSETZT die Vorgabe der
+  // aeusseren Ebene komplett, statt sie nur zu verschmaelern (Schnittmenge waere hier falsch: eine
+  // Abteilung mit ['facebook'] soll die Vereinsvorgabe ['instagram'] ersetzen koennen, nicht auf
+  // die leere Schnittmenge kollabieren).
+  it('inherits defaultTargetPlatforms when a level does not set it, distinguishes null from an explicit empty selection, and lets a set value replace rather than narrow', () => {
+    const base = { policies: { approvalRequired: false, minorApprovalRequired: false, minimumApprovals: 1, forbiddenTopics: [], ...baseFields, defaultTargetPlatforms: ['instagram'] } }
+
+    const inherited = mergeEffectiveConfig(base, { policies: { defaultTargetPlatforms: null } })
+    expect(inherited.policies.defaultTargetPlatforms).toEqual(['instagram'])
+
+    const explicitlyEmpty = mergeEffectiveConfig(base, { policies: { defaultTargetPlatforms: [] } })
+    expect(explicitlyEmpty.policies.defaultTargetPlatforms).toEqual([])
+
+    const replaced = mergeEffectiveConfig(base, { policies: { defaultTargetPlatforms: ['facebook'] } })
+    expect(replaced.policies.defaultTargetPlatforms).toEqual(['facebook'])
+  })
+
   it('locks consentExpiresOnLeave to true once any level requires it, never back (Paket 015)', () => {
     const base = { policies: { approvalRequired: false, minorApprovalRequired: false, minimumApprovals: 1, forbiddenTopics: [], ...baseFields } }
     const tightened = mergeEffectiveConfig(base, { policies: { consentExpiresOnLeave: true } })

@@ -2,7 +2,7 @@ import { ContentGenerationError } from '@vereinsfunk/content-engine'
 import { createSecretBox } from '@vereinsfunk/secrets'
 import { describe, expect, it } from 'vitest'
 import { ciphertextToBytea } from './secretBox.js'
-import { chain, DEPARTMENT_ID, denyingRoleProvider, grantingRoleProvider, ORGANIZATION_ID, signAccessToken, startApp, USER_ID } from './testSupport.js'
+import { chain, DEPARTMENT_ID, denyingRoleProvider, emptyPolicyRuleColumns, grantingRoleProvider, ORGANIZATION_ID, signAccessToken, startApp, USER_ID } from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
 import type { PermissionScope, RoleProvider } from './auth.js'
@@ -136,9 +136,12 @@ describe('GET /v1/content-style-profiles', () => {
 })
 
 describe('POST /v1/text-workshop/sessions', () => {
+  // Plan 044, PR 1 Step 1: targetPlatforms hat keinen Schema-Vorgabewert mehr -- das Fixture setzt
+  // beide Plattformen deshalb explizit, damit die uebrigen Faelle unten unveraendert bleiben.
   const basePayload = {
     organizationId: ORGANIZATION_ID, departmentId: DEPARTMENT_ID, presetSlug: 'training_insight', communicationGoal: 'inform',
     requestedFormats: ['text_post'], sourceMaterial: { facts: { title: 'Training' }, observations: [], quotes: [], doNotMention: [] },
+    targetPlatforms: ['instagram', 'facebook'],
   }
 
   it('resolves an active persona by slug into the style snapshot', async () => {
@@ -151,8 +154,8 @@ describe('POST /v1/text-workshop/sessions', () => {
             if (table === 'platform_style_personas') return chain({ data: PERSONA_ROW, error: null })
             if (table === 'social_connections') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.socialConnections, error: null })
             if (table === 'channel_scopes') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.channelScopes, error: null })
-            // Seit der Mehrfachauswahl sind beide Plattformen vorausgewaehlt, die Route liest die
-            // Vorgaben also bei jeder Sitzungsanlage ohne expliziten maxCharacters-Wert.
+            // basePayload setzt beide Plattformen explizit, die Route liest die Vorgaben also bei
+            // jeder Sitzungsanlage ohne expliziten maxCharacters-Wert.
             if (table === 'text_generation_platform_defaults') return chain({ data: [{ platform: 'instagram', max_characters: 2200 }, { platform: 'facebook', max_characters: 2200 }], error: null })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
@@ -248,7 +251,7 @@ describe('POST /v1/text-workshop/sessions', () => {
     expect((await createSession(sessionCreatingClients({ onRpc: (params) => { fallback = params } }), basePayload)).statusCode).toBe(202)
     expect(fallback?.p_max_characters).toBe(2200)
     expect(fallback?.p_temperature).toBe(0.6)
-    // Ohne Angabe sind beide Plattformen vorausgewaehlt, sortiert an den RPC uebergeben.
+    // basePayload traegt beide Plattformen, sortiert an den RPC uebergeben.
     expect(fallback?.p_target_platforms).toEqual(['facebook', 'instagram'])
 
     // ... und umgekehrt darf eine fehlende Zeile die ausdrueckliche Vorgabe einer anderen Plattform
@@ -334,8 +337,8 @@ describe('GET /v1/text-generation-platforms', () => {
     const response = await app.inject({ method: 'GET', url: '/v1/text-generation-platforms', headers: { authorization: `Bearer ${token}` }, query })
     expect(response.statusCode).toBe(200)
     expect(response.json()).toEqual(expect.arrayContaining([
-      { platform: 'instagram', available: true, maxCharacters: 2200 },
-      { platform: 'facebook', available: true, maxCharacters: 1500 },
+      { platform: 'instagram', available: true, maxCharacters: 2200, isDefault: false },
+      { platform: 'facebook', available: true, maxCharacters: 1500, isDefault: false },
     ]))
   })
 
@@ -359,8 +362,8 @@ describe('GET /v1/text-generation-platforms', () => {
     const response = await app.inject({ method: 'GET', url: '/v1/text-generation-platforms', headers: { authorization: `Bearer ${token}` }, query })
     expect(response.statusCode).toBe(200)
     expect(response.json()).toEqual(expect.arrayContaining([
-      { platform: 'instagram', available: true, maxCharacters: 2200 },
-      { platform: 'facebook', available: false, maxCharacters: 2200, reason: 'no_channel' },
+      { platform: 'instagram', available: true, maxCharacters: 2200, isDefault: false },
+      { platform: 'facebook', available: false, maxCharacters: 2200, isDefault: false, reason: 'no_channel' },
     ]))
   })
 
@@ -396,8 +399,8 @@ describe('GET /v1/text-generation-platforms', () => {
     const response = await app.inject({ method: 'GET', url: '/v1/text-generation-platforms', headers: { authorization: `Bearer ${token}` }, query })
     expect(response.statusCode).toBe(200)
     expect(response.json()).toEqual(expect.arrayContaining([
-      { platform: 'instagram', available: true, maxCharacters: 2200 },
-      { platform: 'facebook', available: false, maxCharacters: 2200, reason: 'restricted_by_policy' },
+      { platform: 'instagram', available: true, maxCharacters: 2200, isDefault: false },
+      { platform: 'facebook', available: false, maxCharacters: 2200, isDefault: false, reason: 'restricted_by_policy' },
     ]))
   })
 
@@ -424,8 +427,44 @@ describe('GET /v1/text-generation-platforms', () => {
     const response = await app.inject({ method: 'GET', url: '/v1/text-generation-platforms', headers: { authorization: `Bearer ${token}` }, query })
     expect(response.statusCode).toBe(200)
     expect(response.json()).toEqual(expect.arrayContaining([
-      { platform: 'instagram', available: true, maxCharacters: 2200 },
-      { platform: 'facebook', available: false, maxCharacters: 2200, reason: 'restricted_by_policy' },
+      { platform: 'instagram', available: true, maxCharacters: 2200, isDefault: false },
+      { platform: 'facebook', available: false, maxCharacters: 2200, isDefault: false, reason: 'restricted_by_policy' },
+    ]))
+  })
+
+  // Plan 044, PR 1 Step 3: die Vorgabe wird mit der Verfuegbarkeit geschnitten -- eine Plattform in
+  // der Vorgabe ohne eingerichteten Kanal ist nicht isDefault, sonst liefe erstellen.vue
+  // vorausgewaehlt in ein 422.
+  it('reports isDefault only for a platform that is both in the default and actually available', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
+            if (table === 'policy_settings') {
+              return policySettingsFake({
+                ruleRows: [{
+                  id: 'policy-row-1', scope: 'organization', department_id: null, team_id: null,
+                  ...emptyPolicyRuleColumns(), default_target_platforms: ['instagram', 'facebook'],
+                }],
+              })
+            }
+            // Nur Instagram hat einen Kanal -- Facebook fehlt komplett.
+            if (table === 'social_connections') return chain({ data: [AVAILABLE_CHANNEL_FIXTURES.socialConnections[0]], error: null })
+            if (table === 'channel_scopes') return chain({ data: [AVAILABLE_CHANNEL_FIXTURES.channelScopes[0]], error: null })
+            if (table === 'text_generation_platform_defaults') return chain({ data: [], error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => { throw new Error('forService should not be called by this route') },
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: '/v1/text-generation-platforms', headers: { authorization: `Bearer ${token}` }, query })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual(expect.arrayContaining([
+      { platform: 'instagram', available: true, maxCharacters: 2200, isDefault: true },
+      { platform: 'facebook', available: false, maxCharacters: 2200, isDefault: false, reason: 'no_channel' },
     ]))
   })
 
@@ -462,7 +501,7 @@ describe('GET /v1/text-generation-platforms', () => {
     const response = await app.inject({ method: 'GET', url: '/v1/text-generation-platforms', headers: { authorization: `Bearer ${token}` }, query })
     expect(response.statusCode).toBe(200)
     expect(response.json()).toEqual(expect.arrayContaining([
-      { platform: 'website', available: true, maxCharacters: 1500 },
+      { platform: 'website', available: true, maxCharacters: 1500, isDefault: false },
     ]))
   })
 
@@ -500,7 +539,7 @@ describe('GET /v1/text-generation-platforms', () => {
     const response = await app.inject({ method: 'GET', url: '/v1/text-generation-platforms', headers: { authorization: `Bearer ${token}` }, query })
     expect(response.statusCode).toBe(200)
     expect(response.json()).toEqual(expect.arrayContaining([
-      { platform: 'website', available: true, maxCharacters: 5000 },
+      { platform: 'website', available: true, maxCharacters: 5000, isDefault: false },
     ]))
   })
 

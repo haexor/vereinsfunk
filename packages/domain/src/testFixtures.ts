@@ -11,5 +11,6 @@ export const baseFields = {
   allowedPresets: null,
   allowedFormats: null,
   allowedChannelIds: null,
+  defaultTargetPlatforms: null,
 } as const
 

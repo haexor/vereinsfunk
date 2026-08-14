@@ -62,7 +62,7 @@ const draft = reactive<PolicyRuleValues>({
   reviewRequired: null, reviewMode: null, reviewStageLabel: null, reviewMinimumApprovals: null, reviewDeadlineHours: null,
   minorApprovalRequired: null, selfApprovalAllowed: null, allowSameReviewerAcrossStages: null, allowReviewExemptions: null,
   mediaRequiresConsentCheck: null, consentExpiresOnLeave: null, consentValidityMonths: null,
-  allowedPresets: null, allowedFormats: null, allowedChannelIds: null,
+  allowedPresets: null, allowedFormats: null, allowedChannelIds: null, defaultTargetPlatforms: null,
   forbiddenTopics: [], requiredHashtags: [], tone: null,
 })
 const forbiddenTopicsText = ref('')
@@ -308,6 +308,14 @@ function reviewerLabel(reviewer: { kind: string; userId: string | null; role: st
             <label><span class="mb-1 block text-xs font-semibold">Tonalität</span>
               <input v-model="draft.tone" :disabled="!selectedEntry.canEdit" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-sm" />
             </label>
+          </div>
+          <div class="mt-4 border-t border-[#e8e9e2] pt-4">
+            <span class="mb-1 block text-xs font-semibold">Zielplattform-Vorgabe der Textwerkstatt</span>
+            <DefaultTargetPlatformsPicker
+              v-model:own-value="draft.defaultTargetPlatforms"
+              :disabled="!selectedEntry.canEdit"
+              :effective-value="selectedEntry.effective.defaultTargetPlatforms ?? []"
+            />
           </div>
           <p v-if="saveError" class="mt-3 text-xs text-amber-800">{{ saveError }}</p>
           <button v-if="selectedEntry.canEdit" type="button" :disabled="saving" class="focus-ring mt-4 rounded-xl bg-forest px-4 py-2.5 text-xs font-bold text-white disabled:opacity-60" @click="save">

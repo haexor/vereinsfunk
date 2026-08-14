@@ -13,6 +13,7 @@ import {
   type PolicyRuleValues,
   type ReviewerRef,
   type ScopeLevel,
+  type SocialPlatform,
 } from '@vereinsfunk/contracts'
 import { hasPermission, type Role } from '@vereinsfunk/authorization'
 import type { resolveEffectiveConfig } from '@vereinsfunk/domain'
@@ -87,6 +88,7 @@ function mapOwnRowToRuleValues(row: PolicyRuleRow | null): PolicyRuleValues {
     allowedPresets: row?.allowed_presets ?? null,
     allowedFormats: row?.allowed_formats ?? null,
     allowedChannelIds: row?.allowed_channel_ids ?? null,
+    defaultTargetPlatforms: row?.default_target_platforms ?? null,
     forbiddenTopics: row?.forbidden_topics ?? [],
     requiredHashtags: row?.required_hashtags ?? [],
     tone: row?.tone ?? null,
@@ -113,6 +115,7 @@ function mapConfigToRuleValues(config: ReturnType<typeof resolveEffectiveConfig>
     allowedPresets: config.policies.allowedPresets ? [...config.policies.allowedPresets] : null,
     allowedFormats: config.policies.allowedFormats ? ([...config.policies.allowedFormats] as OutputFormat[]) : null,
     allowedChannelIds: config.policies.allowedChannelIds ? [...config.policies.allowedChannelIds] : null,
+    defaultTargetPlatforms: config.policies.defaultTargetPlatforms ? ([...config.policies.defaultTargetPlatforms] as SocialPlatform[]) : null,
     forbiddenTopics: [...config.policies.forbiddenTopics],
     requiredHashtags: [...config.policies.requiredHashtags],
     tone: config.tone ?? null,
