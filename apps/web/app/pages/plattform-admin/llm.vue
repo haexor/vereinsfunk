@@ -4,11 +4,16 @@ import {
   ListLlmProviderModelsRequestSchema,
   ListLlmProviderModelsResponseSchema,
   LlmProviderConfigurationSchema,
+  SocialPlatformSchema,
+  TextGenerationPlatformDefaultSchema,
   UpdateLlmProviderConfigurationRequestSchema,
+  UpdateTextGenerationPlatformDefaultRequestSchema,
   UuidSchema,
   type LlmProviderConfigurationDto,
   type LlmProviderProtocol,
   type LlmTaskKind,
+  type SocialPlatform,
+  type TextGenerationPlatformDefault,
 } from '@vereinsfunk/contracts'
 
 definePageMeta({ layout: 'admin' })
@@ -39,11 +44,18 @@ const TASK_KIND_OPTIONS = [
   { value: 'image_generation', label: 'Bildgenerierung', available: false },
   { value: 'video_generation', label: 'Videogenerierung', available: false },
 ] as const
+const PLATFORM_LABELS: Record<SocialPlatform, string> = { instagram: 'Instagram', facebook: 'Facebook' }
 const config = useRuntimeConfig()
 const loading = ref(true)
 const saving = ref(false)
 const errorMessage = ref('')
 const providers = ref<LlmProviderConfigurationDto[]>([])
+
+const platformDefaults = ref<TextGenerationPlatformDefault[]>([])
+const platformDefaultsLoading = ref(true)
+const platformDefaultDrafts = reactive<Partial<Record<SocialPlatform, number>>>({})
+const platformDefaultSaving = reactive<Partial<Record<SocialPlatform, boolean>>>({})
+const platformDefaultErrors = reactive<Partial<Record<SocialPlatform, string>>>({})
 
 const availableModels = ref<string[]>([])
 const modelsLoading = ref(false)
@@ -104,6 +116,53 @@ async function load() {
   }
 }
 await load()
+
+function platformDefaultUpdatedAt(platform: SocialPlatform): string {
+  const row = platformDefaults.value.find((entry) => entry.platform === platform)
+  return row ? new Date(row.updatedAt).toLocaleString('de-DE') : '–'
+}
+
+async function loadPlatformDefaults() {
+  platformDefaultsLoading.value = true
+  try {
+    const headers = await useAuthHeader()
+    const response = await $fetch(`${config.public.apiBase}/v1/text-generation-platform-defaults`, { headers })
+    platformDefaults.value = TextGenerationPlatformDefaultSchema.array().parse(response)
+    for (const row of platformDefaults.value) platformDefaultDrafts[row.platform] = row.maxCharacters
+  } catch {
+    errorMessage.value = 'Zeichengrenzen konnten nicht geladen werden.'
+  } finally {
+    platformDefaultsLoading.value = false
+  }
+}
+await loadPlatformDefaults()
+
+// Der 404-Fall (text_generation_platform_default_not_found) tritt nur auf, wenn eine spaetere
+// Migration die Plattform-Menge erweitert, ohne die neue Zeile zu befuellen (siehe Plan 042,
+// STOP conditions) -- die Zeile fehlt dann auch schon beim Laden, nicht erst beim Speichern.
+async function savePlatformDefault(platform: SocialPlatform) {
+  const draft = platformDefaultDrafts[platform]
+  if (draft === undefined) return
+  platformDefaultSaving[platform] = true
+  platformDefaultErrors[platform] = ''
+  try {
+    const headers = await useAuthHeader()
+    const body = UpdateTextGenerationPlatformDefaultRequestSchema.parse({ maxCharacters: draft })
+    const response = await $fetch(`${config.public.apiBase}/v1/text-generation-platform-defaults/${platform}`, { method: 'PUT', headers, body })
+    const updated = TextGenerationPlatformDefaultSchema.parse(response)
+    const index = platformDefaults.value.findIndex((row) => row.platform === platform)
+    if (index >= 0) platformDefaults.value[index] = updated
+    else platformDefaults.value.push(updated)
+    platformDefaultDrafts[platform] = updated.maxCharacters
+  } catch (error) {
+    const code = (error as { data?: { error?: string } })?.data?.error
+    platformDefaultErrors[platform] = code === 'text_generation_platform_default_not_found'
+      ? 'Für diese Plattform ist keine Vorgabe angelegt.'
+      : 'Zeichengrenze konnte nicht gespeichert werden.'
+  } finally {
+    platformDefaultSaving[platform] = false
+  }
+}
 
 async function loadModels() {
   if (!canLoadModels.value) return
@@ -360,6 +419,55 @@ async function removeProvider(id: string) {
           </tbody>
         </table>
         <p v-if="!providers.length" class="py-4 text-center text-xs text-[#9aa096]">Noch kein Provider konfiguriert.</p>
+      </section>
+
+      <section class="card overflow-x-auto p-6">
+        <h2 class="mb-1 font-display text-base font-bold">Plattform-Vorgaben</h2>
+        <p class="mb-4 text-xs text-[#727a75]">
+          Obergrenze für die Länge eines erzeugten Textes je Plattform, in Zeichen. 2.200 entspricht Instagrams Bildtext-Grenze.
+        </p>
+        <div v-if="platformDefaultsLoading" class="p-4 text-center text-xs text-[#7b827d]">Wird geladen …</div>
+        <table v-else class="w-full text-left text-xs">
+          <thead>
+            <tr class="text-[#7b827d]">
+              <th class="pb-2 pr-4 font-semibold">Plattform</th>
+              <th class="pb-2 pr-4 font-semibold">Zeichengrenze</th>
+              <th class="pb-2 pr-4 font-semibold">Aktualisiert am</th>
+              <th class="pb-2 font-semibold" />
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="platform in SocialPlatformSchema.options" :key="platform" class="border-t border-[#e9ebe4]">
+              <td class="py-2 pr-4 font-medium">{{ PLATFORM_LABELS[platform] }}</td>
+              <td class="py-2 pr-4">
+                <input
+                  v-if="platformDefaultDrafts[platform] !== undefined"
+                  v-model.number="platformDefaultDrafts[platform]"
+                  type="number"
+                  min="100"
+                  max="10000"
+                  step="1"
+                  class="focus-ring w-28 rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-xs font-normal"
+                />
+                <span v-else class="text-[#9aa096]">Für diese Plattform ist keine Vorgabe angelegt.</span>
+              </td>
+              <td class="py-2 pr-4 text-[#7b827d]">{{ platformDefaultUpdatedAt(platform) }}</td>
+              <td class="py-2 text-right">
+                <button
+                  type="button"
+                  class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-[11px] font-semibold disabled:opacity-60"
+                  :disabled="platformDefaultSaving[platform] || platformDefaultDrafts[platform] === undefined"
+                  @click="savePlatformDefault(platform)"
+                >
+                  {{ platformDefaultSaving[platform] ? 'Speichert …' : 'Speichern' }}
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p v-for="platform in SocialPlatformSchema.options" :key="`error-${platform}`" v-show="platformDefaultErrors[platform]" class="mt-2 text-[11px] font-normal text-amber-800">
+          {{ PLATFORM_LABELS[platform] }}: {{ platformDefaultErrors[platform] }}
+        </p>
       </section>
       <p v-if="errorMessage" class="mt-4 text-sm text-amber-800">{{ errorMessage }}</p>
     </template>
