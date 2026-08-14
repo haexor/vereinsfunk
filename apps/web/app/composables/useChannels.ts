@@ -99,6 +99,43 @@ export async function useChannels() {
   }
 
   const connectDepartmentId = ref('')
+
+  const websiteForm = reactive({ displayName: '', url: '', maxCharacters: '' })
+  const creatingWebsite = ref(false)
+  // Teilt sich connectDepartmentId mit den OAuth-Verbinden-Knoepfen oben (Plan 039, PR 2 Step 5):
+  // ist eine Abteilung dort gewaehlt, entsteht auch der Website-Kanal in ihrem Besitz, sonst
+  // vereinsweit -- dieselbe Auswahl, ein Kanal wie jeder andere.
+  async function createWebsiteChannel() {
+    if (!organizationId.value || !websiteForm.displayName.trim() || !websiteForm.url.trim()) return
+    creatingWebsite.value = true
+    actionError.value = ''
+    try {
+      const ownerScope: ChannelOwnerScope = connectDepartmentId.value ? 'department' : 'organization'
+      const trimmedMax = websiteForm.maxCharacters.trim()
+      await api.request('/v1/channels', {
+        method: 'POST',
+        body: {
+          organizationId: organizationId.value,
+          platform: 'website',
+          displayName: websiteForm.displayName.trim(),
+          websiteUrl: websiteForm.url.trim(),
+          ownerScope,
+          ownerDepartmentId: ownerScope === 'department' ? connectDepartmentId.value : null,
+          ...(trimmedMax ? { maxCharacters: Number(trimmedMax) } : {}),
+        },
+      })
+      websiteForm.displayName = ''
+      websiteForm.url = ''
+      websiteForm.maxCharacters = ''
+      await load()
+    } catch (error) {
+      actionError.value = errorCodeOf(error) === 'website_url_already_connected'
+        ? 'Diese Adresse ist bereits als Kanal verbunden.'
+        : 'Der Kanal konnte nicht angelegt werden. Bitte Adresse prüfen.'
+    } finally {
+      creatingWebsite.value = false
+    }
+  }
   const pendingId = computed(() => (typeof route.query.pending === 'string' ? route.query.pending : null))
   const pendingConnection = ref<z.infer<typeof OAuthPendingConnectionSchema> | null>(null)
   const pendingLoading = ref(false)
@@ -170,6 +207,22 @@ export async function useChannels() {
     } finally {
       busyChannelId.value = null
     }
+  }
+
+  // Nur fuer Website-Kanaele bedienbar (ChannelCard.vue): Instagram/Facebook bleiben von der
+  // globalen Plattform-Vorgabe des Betreibers gesteuert (Entwurfsentscheidung 3, Plan 039).
+  const maxCharactersDraft = reactive<Record<string, string>>({})
+  watch(channels, (list) => {
+    for (const channel of list) {
+      if (maxCharactersDraft[channel.id] === undefined) maxCharactersDraft[channel.id] = channel.maxCharacters !== null ? String(channel.maxCharacters) : ''
+    }
+  }, { immediate: true })
+  function saveMaxCharacters(channel: SocialConnection) {
+    const raw = (maxCharactersDraft[channel.id] ?? '').trim()
+    const value = raw === '' ? null : Number(raw)
+    if (value === channel.maxCharacters) return
+    if (value !== null && (!Number.isInteger(value) || value < 100 || value > 10_000)) return
+    void updateChannel(channel, { maxCharacters: value })
   }
 
   const purposeDraft = reactive<Record<string, string>>({})
@@ -281,12 +334,12 @@ export async function useChannels() {
 
   return {
     actionError, assignmentChannels, busyChannelId, canManageChannel, canManageOrganizationChannels,
-    channelPolicy, channels, connect, connectDepartmentId, connecting, departmentName, departments,
+    channelPolicy, channels, connect, connectDepartmentId, connecting, creatingWebsite, createWebsiteChannel, departmentName, departments,
     editorialErrorByChannel, editorialImprintUrlDraft, editorialPrivacyUrlDraft, editorialResponsibleNoteDraft,
-    editorialResponsibleProfileIdDraft, editorialSavingId, errorMessage, loading, members, oauthError,
+    editorialResponsibleProfileIdDraft, editorialSavingId, errorMessage, loading, maxCharactersDraft, members, oauthError,
     organizationId, pendingConnection, pendingId, pendingLoading, pendingSelecting, policyUpdating,
-    purposeDraft, saveEditorialFields, savePurpose, scopeAssignment, scopeBusyKey, selectPendingAccount,
+    purposeDraft, saveEditorialFields, saveMaxCharacters, savePurpose, scopeAssignment, scopeBusyKey, selectPendingAccount,
     toggleDepartmentScope, toggleOrganizationScope, updateChannelPolicy, verifyChannel, disconnectChannel,
-    organizationScopeAssignment,
+    organizationScopeAssignment, websiteForm,
   }
 }
