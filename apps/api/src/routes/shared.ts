@@ -1,7 +1,7 @@
-import type { ConsentScope, GeneratedPost, OutputFormat, ScopeLevel, StyleProfileRules } from '@vereinsfunk/contracts'
+import type { ConsentScope, GeneratedPost, OutputFormat, ScopeLevel, StyleProfilePromptPreview, StyleProfileRules } from '@vereinsfunk/contracts'
 import { canRemoveRole, hasPermission, type Permission, type Role } from '@vereinsfunk/authorization'
 import type { ApiEnvironment } from '@vereinsfunk/config'
-import { AnthropicStructuredContentGenerator, ContentGenerationError, OpenAiCompatibleStructuredContentGenerator, type GroundedContentBrief, type StructuredContentGenerator } from '@vereinsfunk/content-engine'
+import { AnthropicStructuredContentGenerator, buildStructuredTextPrompt, ContentGenerationError, OpenAiCompatibleStructuredContentGenerator, type GroundedContentBrief, type StructuredContentGenerator } from '@vereinsfunk/content-engine'
 import { UuidSchema } from '@vereinsfunk/contracts'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { mergeEffectiveConfig, resolveEffectiveConfig, type ConfigOverride, type TrustRecord } from '@vereinsfunk/domain'
@@ -457,10 +457,12 @@ const previewByIdempotencyKey = new Map<string, { promise: Promise<StyleProfileP
 let nextPreviewSweepAt = 0
 const PREVIEW_DEDUPE_WINDOW_MS = 120_000
 
+type StyleProfilePreviewInput = { name: string; description: string; styleRules: StyleProfileRules; avoidRules: readonly string[]; doRules: readonly string[]; sampleInput: string }
+
 export async function previewStyleProfile(
   supabaseClients: SupabaseClientFactory,
   environment: ApiEnvironment,
-  input: { name: string; description: string; styleRules: StyleProfileRules; avoidRules: readonly string[]; doRules: readonly string[]; sampleInput: string },
+  input: StyleProfilePreviewInput,
   idempotencyKey: string,
   generatorOverride?: StructuredContentGenerator,
 ): Promise<StyleProfilePreviewResult> {
@@ -478,10 +480,40 @@ export async function previewStyleProfile(
   return promise
 }
 
+// No preset exists for a preview -- built by hand instead of createTextGroundedContentBrief,
+// which requires a real registered preset slug. sampleInput is the sole allowedClaim, exactly as
+// sourceMaterial.facts/observations feed allowedClaims for a real submission. Shared by the actual
+// LLM preview below and by buildStyleProfilePromptPreview (the "show system prompt" readback),
+// which needs the identical brief without calling a provider.
+function styleProfilePreviewBrief(sampleInput: string): GroundedContentBrief {
+  return {
+    allowedClaims: [{ sourceId: 'sample', text: sampleInput }],
+    approvedQuotes: [], missingFacts: [], prohibitedClaims: [],
+    goal: 'inform', requestedFormats: [], presetSlug: 'preview',
+  }
+}
+
+// Shared by the real preview (below) and buildStyleProfilePromptPreview (the "show system prompt"
+// readback): both need the identical {brief, styleProfile} pair buildStructuredTextPrompt/
+// generateText build their prompt from, for the same draft input.
+function previewGenerationArgs(input: StyleProfilePreviewInput): { brief: GroundedContentBrief; styleProfile: { name: string; description: string; styleRules: StyleProfileRules; avoidRules: string[]; doRules: string[] } } {
+  return {
+    brief: styleProfilePreviewBrief(input.sampleInput),
+    styleProfile: { name: input.name, description: input.description, styleRules: input.styleRules, avoidRules: [...input.avoidRules], doRules: [...input.doRules] },
+  }
+}
+
+// "System-Prompt anzeigen": assembles the exact prompt a real preview/generation would send, with
+// no provider call, no DB read and no secret involved -- a pure readback of the draft's current
+// state, safe to call on every keystroke's worth of debouncing without cost or rate limiting.
+export function buildStyleProfilePromptPreview(input: StyleProfilePreviewInput): StyleProfilePromptPreview {
+  return buildStructuredTextPrompt(previewGenerationArgs(input))
+}
+
 async function runStyleProfilePreview(
   supabaseClients: SupabaseClientFactory,
   environment: ApiEnvironment,
-  input: { name: string; description: string; styleRules: StyleProfileRules; avoidRules: readonly string[]; doRules: readonly string[]; sampleInput: string },
+  input: StyleProfilePreviewInput,
   generatorOverride?: StructuredContentGenerator,
 ): Promise<StyleProfilePreviewResult> {
   const service = supabaseClients.forService()
@@ -507,18 +539,9 @@ async function runStyleProfilePreview(
   }
   const secret = Array.isArray(row.llm_provider_secrets) ? row.llm_provider_secrets[0]! : row.llm_provider_secrets
   const apiKey = createSecretBoxFromEnvironment(environment).open(byteaToBuffer(secret.api_key_ciphertext), secret.key_version, row.id)
-  // No preset exists for a preview -- built by hand instead of createTextGroundedContentBrief,
-  // which requires a real registered preset slug. sampleInput is the sole allowedClaim, exactly
-  // as sourceMaterial.facts/observations feed allowedClaims for a real submission.
-  const brief: GroundedContentBrief = {
-    allowedClaims: [{ sourceId: 'sample', text: input.sampleInput }],
-    approvedQuotes: [], missingFacts: [], prohibitedClaims: [],
-    goal: 'inform', requestedFormats: [], presetSlug: 'preview',
-  }
   try {
     const post = await generator.generateText({
-      brief,
-      styleProfile: { name: input.name, description: input.description, styleRules: input.styleRules, avoidRules: [...input.avoidRules], doRules: [...input.doRules] },
+      ...previewGenerationArgs(input),
       model: row.model, baseUrl: row.base_url, apiKey, temperature: row.temperature, maxOutputTokens: row.max_output_tokens,
       // Kuerzer als die 60 s des Adapters (packages/content-engine): der Worker darf so lange
       // warten, weil dort niemand an einer offenen HTTP-Verbindung haengt -- hier wartet ein

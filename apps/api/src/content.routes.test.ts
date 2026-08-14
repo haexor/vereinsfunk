@@ -7,7 +7,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
 import type { PermissionScope, RoleProvider } from './auth.js'
 
-const STYLE_RULES = { toneTags: ['direkt', 'anfeuernd'], catchphrases: [], exampleInput: '', exampleOutput: '', additionalInstructions: '' }
+const STYLE_RULES = { toneTags: ['direkt', 'anfeuernd'], catchphrases: [], examples: [], additionalInstructions: '' }
 const PERSONA_ROW = { id: '3b000000-0000-4000-8000-000000000001', slug: 'kapitaen-klar', name: 'Kapitän Klar', description: 'Direkt und anfeuernd.', style_rules: STYLE_RULES, avoid_rules: ['Ironie'], do_rules: [] }
 const PROFILE_ID = '3e000000-0000-4000-8000-000000000001'
 const PROFILE_ROW = {
@@ -357,5 +357,36 @@ describe('POST /v1/content-style-profiles/preview', () => {
     })
     expect(response.statusCode).toBe(502)
     expect(response.json()).toMatchObject({ error: 'ungrounded' })
+  })
+})
+
+describe('POST /v1/content-style-profiles/prompt-preview', () => {
+  it('assembles the prompt without touching a provider', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => scopeResolvingUserClient(),
+      forService: () => { throw new Error('forService should not be called by this route') },
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST', url: '/v1/content-style-profiles/prompt-preview', headers: { authorization: `Bearer ${token}` }, payload: PREVIEW_PAYLOAD,
+    })
+    expect(response.statusCode).toBe(200)
+    const body = response.json()
+    expect(body.system).toContain('Unser Ton')
+    expect(body.user).toContain('3:1 Sieg im Lokalderby')
+  })
+
+  it('rejects a member without post.create in the requested scope', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => scopeResolvingUserClient(),
+      forService: () => { throw new Error('forService should not be called by this route') },
+    }
+    const app = await startApp({ roleProvider: denyingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST', url: '/v1/content-style-profiles/prompt-preview', headers: { authorization: `Bearer ${token}` }, payload: PREVIEW_PAYLOAD,
+    })
+    expect(response.statusCode).toBe(403)
   })
 })

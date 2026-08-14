@@ -22,16 +22,16 @@ import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { CLUB_EVENT_COLUMNS, FIXTURE_COLUMNS, mapClubEventRow, mapFixtureRow, mapTeamRow } from '../apiMappers.js'
 import type { ApiRouteContext } from './context.js'
-import { checkRateLimit, createAuditRecorder, fetchMemberTrust, previewStyleProfile, resolveDirectoryScope, resolvePreviewIdempotencyKey, resolveScopedEffectiveConfig, toPermissionScope } from './shared.js'
+import { buildStyleProfilePromptPreview, checkRateLimit, createAuditRecorder, fetchMemberTrust, previewStyleProfile, resolveDirectoryScope, resolvePreviewIdempotencyKey, resolveScopedEffectiveConfig, toPermissionScope } from './shared.js'
 
 // Plan 033 text-only workshop. Diese Routen rufen kein LLM auf: sie schreiben Sitzung und einen
 // reinen ID-Umschlag ueber eine service-only RPC, die der Worker spaeter ausfuehrt.
 const systemStyleProfiles: Record<string, { name: string; description: string; styleRules: StyleProfileRules; avoidRules: string[]; doRules: string[] }> = {
-  klar_erklaerend: { name: 'Klar erklärend', description: 'Sachlich, verständlich und direkt.', styleRules: { toneTags: ['klar', 'sachlich'], catchphrases: [], exampleInput: '3:1 Sieg im Lokalderby, Tore: Müller, Meier, 500 Zuschauer', exampleOutput: '3:1 gegen den Lokalrivalen. Müller und Meier trafen vor 500 Zuschauern – ein klarer Auftritt unserer Mannschaft.', additionalInstructions: '' }, avoidRules: ['Superlative ohne Beleg'], doRules: [] },
-  warm_gemeinschaftlich: { name: 'Warm gemeinschaftlich', description: 'Einladend und verbunden.', styleRules: { toneTags: ['warm', 'gemeinschaftlich', 'einladend'], catchphrases: ['unsere Gemeinschaft'], exampleInput: 'Vereinsfest am Samstag, alle Abteilungen dabei', exampleOutput: 'Am Samstag feiern wir gemeinsam – alle Abteilungen unter einem Dach. Schön, dass wir das als Gemeinschaft erleben dürfen.', additionalInstructions: '' }, avoidRules: [], doRules: ['Zusammenhalt/Gemeinschaft erwähnen'] },
-  lebendig_sportlich: { name: 'Lebendig sportlich', description: 'Aktiv und motivierend.', styleRules: { toneTags: ['lebendig', 'sportlich', 'motivierend'], catchphrases: ['Vollgas'], exampleInput: 'Sieg im Auswärtsspiel, 2:0, starke zweite Halbzeit', exampleOutput: '2:0 auswärts! Nach der Pause volle Power – so geht Einsatz.', additionalInstructions: '' }, avoidRules: [], doRules: ['Energie/Tempo im Text spürbar machen'] },
-  leicht_humorvoll: { name: 'Leicht humorvoll', description: 'Freundlich mit zurückhaltendem Humor.', styleRules: { toneTags: ['humorvoll', 'freundlich', 'locker'], catchphrases: [], exampleInput: 'Trainingsauftakt nach der Sommerpause, alle etwas außer Form', exampleOutput: 'Nach der Sommerpause ächzten die Beine beim ersten Sprint – aber der Spaß war sofort wieder da.', additionalInstructions: '' }, avoidRules: ['Ironie auf Kosten Einzelner'], doRules: [] },
-  feierlich_wertschaetzend: { name: 'Feierlich wertschätzend', description: 'Dankbar und respektvoll.', styleRules: { toneTags: ['feierlich', 'dankbar', 'respektvoll'], catchphrases: [], exampleInput: '25 Jahre Vereinsmitgliedschaft von Herrn Schmidt', exampleOutput: 'Seit 25 Jahren trägt Herr Schmidt unseren Verein mit – dafür sagen wir von Herzen Danke.', additionalInstructions: '' }, avoidRules: [], doRules: ['Dank/Anerkennung aussprechen'] },
+  klar_erklaerend: { name: 'Klar erklärend', description: 'Sachlich, verständlich und direkt.', styleRules: { toneTags: ['klar', 'sachlich'], catchphrases: [], examples: [{ input: '3:1 Sieg im Lokalderby, Tore: Müller, Meier, 500 Zuschauer', output: '3:1 gegen den Lokalrivalen. Müller und Meier trafen vor 500 Zuschauern – ein klarer Auftritt unserer Mannschaft.' }], additionalInstructions: '' }, avoidRules: ['Superlative ohne Beleg'], doRules: [] },
+  warm_gemeinschaftlich: { name: 'Warm gemeinschaftlich', description: 'Einladend und verbunden.', styleRules: { toneTags: ['warm', 'gemeinschaftlich', 'einladend'], catchphrases: ['unsere Gemeinschaft'], examples: [{ input: 'Vereinsfest am Samstag, alle Abteilungen dabei', output: 'Am Samstag feiern wir gemeinsam – alle Abteilungen unter einem Dach. Schön, dass wir das als Gemeinschaft erleben dürfen.' }], additionalInstructions: '' }, avoidRules: [], doRules: ['Zusammenhalt/Gemeinschaft erwähnen'] },
+  lebendig_sportlich: { name: 'Lebendig sportlich', description: 'Aktiv und motivierend.', styleRules: { toneTags: ['lebendig', 'sportlich', 'motivierend'], catchphrases: ['Vollgas'], examples: [{ input: 'Sieg im Auswärtsspiel, 2:0, starke zweite Halbzeit', output: '2:0 auswärts! Nach der Pause volle Power – so geht Einsatz.' }], additionalInstructions: '' }, avoidRules: [], doRules: ['Energie/Tempo im Text spürbar machen'] },
+  leicht_humorvoll: { name: 'Leicht humorvoll', description: 'Freundlich mit zurückhaltendem Humor.', styleRules: { toneTags: ['humorvoll', 'freundlich', 'locker'], catchphrases: [], examples: [{ input: 'Trainingsauftakt nach der Sommerpause, alle etwas außer Form', output: 'Nach der Sommerpause ächzten die Beine beim ersten Sprint – aber der Spaß war sofort wieder da.' }], additionalInstructions: '' }, avoidRules: ['Ironie auf Kosten Einzelner'], doRules: [] },
+  feierlich_wertschaetzend: { name: 'Feierlich wertschätzend', description: 'Dankbar und respektvoll.', styleRules: { toneTags: ['feierlich', 'dankbar', 'respektvoll'], catchphrases: [], examples: [{ input: '25 Jahre Vereinsmitgliedschaft von Herrn Schmidt', output: 'Seit 25 Jahren trägt Herr Schmidt unseren Verein mit – dafür sagen wir von Herzen Danke.' }], additionalInstructions: '' }, avoidRules: [], doRules: ['Dank/Anerkennung aussprechen'] },
 }
 
 const CUSTOM_STYLE_PROFILE_COLUMNS = 'id, organization_id, department_id, team_id, slug, name, description, style_rules, avoid_rules, do_rules, is_active, created_by, created_at, updated_at'
@@ -375,6 +375,20 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     const result = await previewStyleProfile(supabaseClients, environment, input, idempotencyKey, textGenerator)
     if (!result.ok) return reply.code(result.status).send({ error: result.error, correlationId: request.id })
     return reply.code(200).send(result.post)
+  })
+
+  // "System-Prompt anzeigen": no provider call, no cost -- see buildStyleProfilePromptPreview
+  // (routes/shared.ts). Same scope gate as /preview above (same draft data, same "may only look at
+  // a scope one could actually create a profile in" rule), but no rate limit/idempotency key
+  // needed since nothing billable happens.
+  app.post('/v1/content-style-profiles/prompt-preview', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const input = PreviewCustomStyleProfileRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const scope = await resolveDirectoryScope(client, input.organizationId, input.departmentId ?? null, input.teamId ?? null)
+    if (scope === null) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'post.create', scope))) return
+    return reply.code(200).send(buildStyleProfilePromptPreview(input))
   })
 
   app.post('/v1/text-workshop/sessions', async (request, reply) => {

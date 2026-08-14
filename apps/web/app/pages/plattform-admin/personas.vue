@@ -4,8 +4,10 @@ import {
   GeneratedPostSchema,
   PlatformStylePersonaSchema,
   PreviewPlatformStylePersonaRequestSchema,
+  StyleProfilePromptPreviewSchema,
   type GeneratedPost,
   type PlatformStylePersona,
+  type StyleProfilePromptPreview,
 } from '@vereinsfunk/contracts'
 import { avoidRulesFromDraft, doRulesFromDraft, emptyStyleProfileDraft, previewErrorMessage, styleRulesFromDraft } from '../../utils/styleProfileDraft'
 
@@ -53,12 +55,24 @@ async function createPersona() {
     await api.request('/v1/platform-style-personas', { method: 'POST', body })
     resetForm()
     previewResult.value = null
+    promptPreviewResult.value = null
     await load()
   } catch {
     formError.value = 'Persona konnte nicht angelegt werden.'
   } finally {
     saving.value = false
   }
+}
+
+function previewRequestBody() {
+  return PreviewPlatformStylePersonaRequestSchema.parse({
+    name: draft.value.name,
+    description: draft.value.description,
+    styleRules: styleRulesFromDraft(draft.value),
+    avoidRules: avoidRulesFromDraft(draft.value),
+    doRules: doRulesFromDraft(draft.value),
+    sampleInput: draft.value.sampleInput,
+  })
 }
 
 const previewing = ref(false)
@@ -71,20 +85,28 @@ async function testPersona() {
   previewing.value = true
   previewError.value = ''
   try {
-    const body = PreviewPlatformStylePersonaRequestSchema.parse({
-      name: draft.value.name,
-      description: draft.value.description,
-      styleRules: styleRulesFromDraft(draft.value),
-      avoidRules: avoidRulesFromDraft(draft.value),
-      doRules: doRulesFromDraft(draft.value),
-      sampleInput: draft.value.sampleInput,
-    })
-    previewResult.value = await api.request('/v1/platform-style-personas/preview', { method: 'POST', body, headers: { 'idempotency-key': previewKey.value } }, GeneratedPostSchema)
+    previewResult.value = await api.request('/v1/platform-style-personas/preview', { method: 'POST', body: previewRequestBody(), headers: { 'idempotency-key': previewKey.value } }, GeneratedPostSchema)
     previewKey.value = crypto.randomUUID()
   } catch (error) {
     previewError.value = previewErrorMessage(error)
   } finally {
     previewing.value = false
+  }
+}
+
+const promptPreviewing = ref(false)
+const promptPreviewResult = ref<StyleProfilePromptPreview | null>(null)
+const promptPreviewError = ref('')
+
+async function showPrompt() {
+  promptPreviewing.value = true
+  promptPreviewError.value = ''
+  try {
+    promptPreviewResult.value = await api.request('/v1/platform-style-personas/prompt-preview', { method: 'POST', body: previewRequestBody() }, StyleProfilePromptPreviewSchema)
+  } catch {
+    promptPreviewError.value = 'Der System-Prompt konnte nicht angezeigt werden.'
+  } finally {
+    promptPreviewing.value = false
   }
 }
 
@@ -148,9 +170,13 @@ async function removePersona(persona: PlatformStylePersona) {
         :previewing="previewing"
         :preview-result="previewResult"
         :preview-error="previewError"
+        :prompt-previewing="promptPreviewing"
+        :prompt-preview-result="promptPreviewResult"
+        :prompt-preview-error="promptPreviewError"
         submit-label="Anlegen"
         @save="createPersona"
         @preview="testPersona"
+        @prompt-preview="showPrompt"
       />
 
       <section class="card overflow-x-auto p-6">

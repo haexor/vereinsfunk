@@ -1,16 +1,21 @@
 import { z } from 'zod'
 import type { StyleProfileRules } from '@vereinsfunk/contracts'
 
+// id is a client-only key for the "Beispiele" list (StyleProfileEditorForm.vue's v-for) so
+// deleting one example doesn't reshuffle Vue's keyed diff across the rest -- never sent to the API.
+export interface StyleProfileExampleDraft { id: string; input: string; output: string }
+
 // Shared form shape for StyleProfileEditorForm.vue -- list-typed fields (toneTags/catchphrases/
 // avoidRules/doRules) are edited as one-per-line text, matching the codebase's existing
 // avoidRules/bannedPhrases textarea convention (see the former plattform-admin/personas.vue).
+// examples stays a real array (not one-per-line text) since each pair needs two independent,
+// differently-bounded fields (input <=300 chars, output <=1500).
 export interface StyleProfileDraft {
   name: string
   description: string
   toneTagsText: string
   catchphrasesText: string
-  exampleInput: string
-  exampleOutput: string
+  examples: StyleProfileExampleDraft[]
   additionalInstructions: string
   avoidRulesText: string
   doRulesText: string
@@ -23,8 +28,7 @@ export function emptyStyleProfileDraft(): StyleProfileDraft {
     description: '',
     toneTagsText: '',
     catchphrasesText: '',
-    exampleInput: '',
-    exampleOutput: '',
+    examples: [],
     additionalInstructions: '',
     avoidRulesText: '',
     doRulesText: '',
@@ -40,8 +44,9 @@ export function styleRulesFromDraft(draft: StyleProfileDraft): StyleProfileRules
   return {
     toneTags: linesToList(draft.toneTagsText),
     catchphrases: linesToList(draft.catchphrasesText),
-    exampleInput: draft.exampleInput.trim(),
-    exampleOutput: draft.exampleOutput.trim(),
+    examples: draft.examples
+      .map((example) => ({ input: example.input.trim(), output: example.output.trim() }))
+      .filter((example) => example.input && example.output),
     additionalInstructions: draft.additionalInstructions.trim(),
   }
 }
@@ -66,8 +71,7 @@ export function styleProfileDraftFrom(profile: {
     description: profile.description,
     toneTagsText: profile.styleRules.toneTags.join('\n'),
     catchphrasesText: profile.styleRules.catchphrases.join('\n'),
-    exampleInput: profile.styleRules.exampleInput,
-    exampleOutput: profile.styleRules.exampleOutput,
+    examples: profile.styleRules.examples.map((example) => ({ id: crypto.randomUUID(), ...example })),
     additionalInstructions: profile.styleRules.additionalInstructions,
     avoidRulesText: profile.avoidRules.join('\n'),
     doRulesText: profile.doRules.join('\n'),

@@ -1,4 +1,4 @@
-import { GeneratedPostSchema, type CreateSubmission, type GeneratedPost, type PlatformVariant, type StyleProfileSnapshot } from '@vereinsfunk/contracts'
+import { GeneratedPostSchema, PlatformVariantSchema, SafetyFlagSchema, type CreateSubmission, type GeneratedPost, type PlatformVariant, type StyleProfileSnapshot } from '@vereinsfunk/contracts'
 import { createGuardedFetch, OutboundFetchError } from '@vereinsfunk/outbound-fetch'
 import { getPreset, validateSourceMaterial } from './presets.js'
 
@@ -236,6 +236,15 @@ export class AnthropicStructuredContentGenerator implements StructuredContentGen
 }
 
 // JSON Schema is sent to the provider; Zod remains the authoritative second validation boundary.
+// platform/format/layoutFamily/safetyFlags are enums on the Zod side (PlatformVariantSchema,
+// SafetyFlagSchema) -- read here via .options instead of re-typed as bare `string` so the two
+// never drift apart again. A prior drift meant the provider could return a plausible-but-invalid
+// value (e.g. format "post") that passed its own (looser) schema and only failed Zod afterwards,
+// surfacing as an opaque provider_schema error with no indication of which field was wrong.
+const platformEnum = PlatformVariantSchema.shape.platform.options
+const formatEnum = PlatformVariantSchema.shape.format.options
+const layoutFamilyEnum = PlatformVariantSchema.shape.layoutFamily.options
+const safetyFlagEnum = SafetyFlagSchema.options
 const generatedPostJsonSchema = {
   type: 'object', additionalProperties: false,
   required: ['verifiedFacts', 'missingFacts', 'headline', 'caption', 'shortCaption', 'callToAction', 'hashtags', 'altText', 'templateId', 'safetyFlags', 'generatedClaims', 'variants'],
@@ -243,8 +252,8 @@ const generatedPostJsonSchema = {
     verifiedFacts: { type: 'array', items: { type: 'string' } }, missingFacts: { type: 'array', items: { type: 'string' } },
     headline: { type: 'string' }, caption: { type: 'string' }, shortCaption: { type: 'string' }, callToAction: { type: 'string' },
     hashtags: { type: 'array', items: { type: 'string' } }, altText: { type: 'string' }, templateId: { type: 'string' },
-    safetyFlags: { type: 'array', items: { type: 'string' } },
+    safetyFlags: { type: 'array', items: { type: 'string', enum: safetyFlagEnum } },
     generatedClaims: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['sourceId', 'text'], properties: { sourceId: { type: 'string' }, text: { type: 'string' } } } },
-    variants: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['platform', 'format', 'headline', 'caption', 'callToAction', 'hashtags', 'altText', 'layoutFamily', 'claimSourceIds'], properties: { platform: { type: 'string' }, format: { type: 'string' }, headline: { type: 'string' }, caption: { type: 'string' }, callToAction: { type: 'string' }, hashtags: { type: 'array', items: { type: 'string' } }, altText: { type: 'string' }, layoutFamily: { type: 'string' }, claimSourceIds: { type: 'array', items: { type: 'string' } }, slidePlan: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['role'], properties: { role: { type: 'string' } } } } } } },
+    variants: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['platform', 'format', 'headline', 'caption', 'callToAction', 'hashtags', 'altText', 'layoutFamily', 'claimSourceIds'], properties: { platform: { type: 'string', enum: platformEnum }, format: { type: 'string', enum: formatEnum }, headline: { type: 'string' }, caption: { type: 'string' }, callToAction: { type: 'string' }, hashtags: { type: 'array', items: { type: 'string' } }, altText: { type: 'string' }, layoutFamily: { type: 'string', enum: layoutFamilyEnum }, claimSourceIds: { type: 'array', items: { type: 'string' } }, slidePlan: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['role'], properties: { role: { type: 'string' } } } } } } },
   },
 } as const
