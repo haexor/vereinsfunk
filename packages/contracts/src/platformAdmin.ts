@@ -1,6 +1,5 @@
 import { z } from 'zod'
-import { SocialPlatformSchema } from './channels.js'
-import { UuidSchema } from './content.js'
+import { MaxOutputTokensSchema, TextGenerationPlatformSchema, UuidSchema } from './content.js'
 import { CountryCodeSchema } from './primitives.js'
 
 // Plattform-Administration (Paket 022): der SaaS-Betreiber, orthogonal zu allen
@@ -82,13 +81,16 @@ export const UpdateLlmProviderConfigurationRequestSchema = z.object({
 // Analog PlatformSettingSchema/UpdatePlatformSettingRequestSchema oben, aber ein eigenes Schema
 // statt eines weiteren PlatformSettingKey-Eintrags: der Wert ist hier pro Social-Media-Plattform
 // (nicht global) und die Tabelle ist fuer jedes Mitglied lesbar, nicht nur fuer Plattform-Admins.
+// TextGenerationPlatformSchema, nicht SocialPlatformSchema: die Tabelle kennt genau die Plattformen
+// der Textwerkstatt (CHECK auf instagram/facebook). Ein neuer Kanal in der Kanal-Domaene darf hier
+// nicht automatisch mitgelten, sonst nimmt die Route einen Wert an, fuer den es keine Zeile gibt.
 export const TextGenerationPlatformDefaultSchema = z.object({
-  platform: SocialPlatformSchema,
-  maxOutputTokens: z.int().min(128).max(4_000),
+  platform: TextGenerationPlatformSchema,
+  maxOutputTokens: MaxOutputTokensSchema,
   updatedAt: z.iso.datetime({ offset: true }),
 })
 export const UpdateTextGenerationPlatformDefaultRequestSchema = z.object({
-  maxOutputTokens: z.int().min(128).max(4_000),
+  maxOutputTokens: MaxOutputTokensSchema,
 })
 
 // Modellauswahl im Formular: statt einer im Frontend gepflegten Liste fragt die API den Provider

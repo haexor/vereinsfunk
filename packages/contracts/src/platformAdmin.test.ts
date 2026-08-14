@@ -96,7 +96,7 @@ describe('text generation platform defaults contracts', () => {
     ).toBe(true)
   })
 
-  it('rejects a platform outside the SocialPlatformSchema enum', () => {
+  it('rejects a platform the text workshop has no default row for', () => {
     expect(
       TextGenerationPlatformDefaultSchema.safeParse({ platform: 'threads', maxOutputTokens: 1200, updatedAt: '2026-08-05T12:34:56.789+00:00' }).success,
     ).toBe(false)

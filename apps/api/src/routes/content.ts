@@ -10,6 +10,7 @@ import {
   StyleProfileRulesSchema,
   SubmissionAcceptedSchema,
   TeamSchema,
+  TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS,
   UpdateCustomStyleProfileRequestSchema,
   UuidSchema,
   type StyleProfileRules,
@@ -22,7 +23,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { CLUB_EVENT_COLUMNS, FIXTURE_COLUMNS, mapClubEventRow, mapFixtureRow, mapTeamRow } from '../apiMappers.js'
 import type { ApiRouteContext } from './context.js'
-import { buildStyleProfilePromptPreview, checkRateLimit, createAuditRecorder, fetchMemberTrust, previewStyleProfile, resolveDirectoryScope, resolvePreviewIdempotencyKey, resolveScopedEffectiveConfig, TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS, toPermissionScope } from './shared.js'
+import { buildStyleProfilePromptPreview, checkRateLimit, createAuditRecorder, fetchMemberTrust, previewStyleProfile, resolveDirectoryScope, resolvePreviewIdempotencyKey, resolveScopedEffectiveConfig, toPermissionScope } from './shared.js'
 
 // Plan 033 text-only workshop. Diese Routen rufen kein LLM auf: sie schreiben Sitzung und einen
 // reinen ID-Umschlag ueber eine service-only RPC, die der Worker spaeter ausfuehrt.
@@ -422,7 +423,17 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
       styleSnapshot = { name: profile.name, description: profile.description, styleRules: profile.styleRules, avoidRules: profile.avoidRules, doRules: profile.doRules, slug: input.systemStyleProfileSlug ?? 'klar_erklaerend' }
     }
     const sourceMaterial = { ...input.sourceMaterial, doNotMention: Array.from(new Set([...input.sourceMaterial.doNotMention, ...config.policies.forbiddenTopics])) }
-    const sessionHash = createHash('sha256').update(JSON.stringify({ presetSlug: input.presetSlug, goal: input.communicationGoal, sourceMaterial, styleSnapshot, sourceRevision: input.sourceRevision })).digest('hex')
+    // targetPlatform/maxOutputTokens/temperature gehoeren in den Hash: die Sitzung friert sie ein
+    // und der RPC gibt fuer einen bereits bekannten Hash die vorhandene Sitzung samt Kandidat
+    // zurueck. Ohne sie wuerde ein zweites Absenden desselben Materials mit anderer Regler-Stufe
+    // stillschweigend den alten Kandidaten liefern -- die neue Stufe waere nirgends gespeichert und
+    // ueber `revise` auch nicht mehr erreichbar. Gehasht wird die Anfrage, nicht der aufgeloeste
+    // Token-Wert: ein echter Wiederholungsversuch derselben Anfrage bleibt damit idempotent, auch
+    // wenn ein Plattform-Admin die Vorgabe zwischenzeitlich geaendert hat.
+    const sessionHash = createHash('sha256').update(JSON.stringify({
+      presetSlug: input.presetSlug, goal: input.communicationGoal, sourceMaterial, styleSnapshot, sourceRevision: input.sourceRevision,
+      targetPlatform: input.targetPlatform ?? null, maxOutputTokens: input.maxOutputTokens ?? null, temperature: input.temperature,
+    })).digest('hex')
     const candidateHash = createHash('sha256').update(`${sessionHash}:initial`).digest('hex')
     const idempotencyKey = `generate-text:${sessionHash}:${input.sourceRevision}`
     const service = supabaseClients.forService()
@@ -455,7 +466,10 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (!(await requireAuth(request, reply))) return
     const id = z.object({ id: UuidSchema }).parse(request.params).id
     const client = supabaseClients.forUser(request.auth!.accessToken)
-    const session = await client.from('composition_sessions').select('id, organization_id, department_id, team_id, status, preset_slug, communication_goal, created_at').eq('id', id).maybeSingle()
+    // target_platform/max_output_tokens/temperature mitlesen: sie sind bei Anlage eingefroren, also
+    // kann nur diese Antwort zeigen, mit welcher Regler-Stufe die Sitzung laeuft -- sonst waeren die
+    // Werte fuer die UI und den Support nur per direkter DB-Abfrage sichtbar.
+    const session = await client.from('composition_sessions').select('id, organization_id, department_id, team_id, status, preset_slug, communication_goal, target_platform, max_output_tokens, temperature, created_at').eq('id', id).maybeSingle()
     if (session.error) throw session.error
     if (!session.data) return reply.code(404).send({ error: 'session_not_found' })
     if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(session.data.organization_id, session.data.department_id, session.data.team_id)))) return

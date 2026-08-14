@@ -2,7 +2,7 @@ import type { ConsentScope, GeneratedPost, OutputFormat, ScopeLevel, StyleProfil
 import { canRemoveRole, hasPermission, type Permission, type Role } from '@vereinsfunk/authorization'
 import type { ApiEnvironment } from '@vereinsfunk/config'
 import { AnthropicStructuredContentGenerator, buildStructuredTextPrompt, ContentGenerationError, OpenAiCompatibleStructuredContentGenerator, type GroundedContentBrief, type StructuredContentGenerator } from '@vereinsfunk/content-engine'
-import { UuidSchema } from '@vereinsfunk/contracts'
+import { TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS, TEXT_GENERATION_DEFAULT_TEMPERATURE, UuidSchema } from '@vereinsfunk/contracts'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { mergeEffectiveConfig, resolveEffectiveConfig, type ConfigOverride, type TrustRecord } from '@vereinsfunk/domain'
 import type { FastifyRequest } from 'fastify'
@@ -404,11 +404,9 @@ export async function resolveInvitationScope(
 
 // Paket 042: temperature/maxOutputTokens sind jetzt Beitrags-/Sitzungs-Einstellungen, nicht mehr
 // Provider-Merkmale. Der Preview-Pfad hat keinen Beitrags-/Sitzungskontext (siehe
-// runStyleProfilePreview unten) und bekommt dafuer bewusst keine neue UI -- feste Konstanten
-// statt eines Lookups. routes/content.ts importiert denselben Fallback fuer die
-// max_output_tokens-Aufloesung einer Sitzung ohne Zielplattform.
-export const TEXT_GENERATION_DEFAULT_TEMPERATURE = 0.6
-export const TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS = 1200
+// runStyleProfilePreview unten) und bekommt dafuer bewusst keine neue UI -- die festen Vorgaben aus
+// den Contracts statt eines Lookups. Dort stehen sie neben dem Regler und der Token-Spanne, damit
+// Preview und echte Sitzung nicht auf zwei getrennt gepflegten Zahlen laufen.
 
 // Plan 040: "Persona/Stilprofil testen" (routes/content.ts, routes/platformPersonas.routes.ts)
 // calls the active text provider directly and synchronously, unlike POST

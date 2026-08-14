@@ -3,8 +3,8 @@ import {
   ListLlmProviderModelsRequestSchema,
   ListLlmProviderModelsResponseSchema,
   LlmProviderConfigurationSchema,
-  SocialPlatformSchema,
   TextGenerationPlatformDefaultSchema,
+  TextGenerationPlatformSchema,
   UpdateLlmProviderConfigurationRequestSchema,
   UpdateTextGenerationPlatformDefaultRequestSchema,
   UuidSchema,
@@ -212,16 +212,20 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
   app.put('/v1/text-generation-platform-defaults/:platform', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     if (!(await requirePlatformAdmin(request, reply))) return
-    const params = z.object({ platform: SocialPlatformSchema }).parse(request.params)
+    const params = z.object({ platform: TextGenerationPlatformSchema }).parse(request.params)
     const body = UpdateTextGenerationPlatformDefaultRequestSchema.parse(request.body)
     const service = supabaseClients.forService()
+    // maybeSingle statt single: die Route aendert nur bestehende Zeilen (angelegt vom Seed in
+    // 2026081308), sie legt keine an. Fehlt die Zeile -- etwa weil eine spaetere Migration die
+    // Plattform-Menge erweitert, ohne sie zu befuellen -- ist das ein 404, kein 500 aus PGRST116.
     const update = await service
       .from('text_generation_platform_defaults')
       .update({ max_output_tokens: body.maxOutputTokens, updated_by: request.auth!.userId })
       .eq('platform', params.platform)
       .select('platform, max_output_tokens, updated_at')
-      .single()
+      .maybeSingle()
     if (update.error) throw update.error
+    if (!update.data) return reply.code(404).send({ error: 'text_generation_platform_default_not_found' })
     return reply.code(200).send(
       TextGenerationPlatformDefaultSchema.parse({ platform: update.data.platform, maxOutputTokens: update.data.max_output_tokens, updatedAt: update.data.updated_at }),
     )

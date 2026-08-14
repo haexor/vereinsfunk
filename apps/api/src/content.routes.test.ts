@@ -165,6 +165,73 @@ describe('POST /v1/text-workshop/sessions', () => {
     expect(response.statusCode).toBe(404)
     expect(response.json()).toMatchObject({ error: 'persona_not_found' })
   })
+
+  // Paket 042: max_output_tokens wird bei Anlage EINMAL aufgeloest und danach eingefroren --
+  // Sitzungs-Override > Plattform-Vorgabe > generischer Fallback. Ein vertauschter Vorrang waere
+  // ohne diese drei Faelle nirgends sichtbar.
+  function sessionCreatingClients(options: { platformDefault?: number | null; onRpc?: (params: Record<string, unknown>) => void }): SupabaseClientFactory {
+    return {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'policy_settings') return chain({ data: [], error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table !== 'text_generation_platform_defaults') throw new Error(`unexpected table in test fake: ${table}`)
+            return chain({ data: options.platformDefault == null ? null : { max_output_tokens: options.platformDefault }, error: null })
+          },
+          rpc: async (_name: string, params: Record<string, unknown>) => {
+            options.onRpc?.(params)
+            return { data: { sessionId: '3c000000-0000-4000-8000-000000000001', candidateId: '3c000000-0000-4000-8000-000000000002' }, error: null }
+          },
+        }) as unknown as SupabaseClient,
+    }
+  }
+
+  async function createSession(clients: SupabaseClientFactory, payload: Record<string, unknown>) {
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    return app.inject({ method: 'POST', url: '/v1/text-workshop/sessions', headers: { authorization: `Bearer ${token}` }, payload })
+  }
+
+  it('resolves max_output_tokens from the request override, then the platform default, then the fallback', async () => {
+    let override: Record<string, unknown> | undefined
+    expect((await createSession(sessionCreatingClients({ platformDefault: 800, onRpc: (params) => { override = params } }), { ...basePayload, targetPlatform: 'instagram', maxOutputTokens: 300 })).statusCode).toBe(202)
+    expect(override?.p_max_output_tokens).toBe(300)
+
+    let platform: Record<string, unknown> | undefined
+    expect((await createSession(sessionCreatingClients({ platformDefault: 800, onRpc: (params) => { platform = params } }), { ...basePayload, targetPlatform: 'instagram' })).statusCode).toBe(202)
+    expect(platform?.p_max_output_tokens).toBe(800)
+    expect(platform?.p_target_platform).toBe('instagram')
+
+    // Ohne Zielplattform wird die Vorgaben-Tabelle gar nicht gelesen -- der Fake wuerde bei einem
+    // Zugriff eine unerwartete Tabelle melden, wenn diese Bedingung je wegfaellt.
+    let fallback: Record<string, unknown> | undefined
+    expect((await createSession(sessionCreatingClients({ onRpc: (params) => { fallback = params } }), basePayload)).statusCode).toBe(202)
+    expect(fallback?.p_max_output_tokens).toBe(1200)
+    expect(fallback?.p_target_platform).toBeNull()
+    expect(fallback?.p_temperature).toBe(0.6)
+  })
+
+  // Der RPC gibt fuer einen bereits bekannten input_hash die vorhandene Sitzung samt Kandidat
+  // zurueck und ignoriert die uebergebenen Laufzeitwerte. Waeren die Regler-Stufe und die
+  // Zielplattform nicht im Hash, wuerde ein zweites Absenden mit anderer Stufe stillschweigend den
+  // alten Kandidaten liefern -- die neue Stufe waere nirgends gespeichert.
+  it('gives a session a distinct input hash per temperature step and target platform', async () => {
+    const hashes = new Set<string>()
+    for (const extra of [{}, { temperature: 1.0 }, { temperature: 0.3 }, { targetPlatform: 'instagram' }, { targetPlatform: 'facebook' }, { targetPlatform: 'facebook', maxOutputTokens: 300 }]) {
+      const response = await createSession(
+        sessionCreatingClients({ platformDefault: 800, onRpc: (params) => { hashes.add(params.p_input_hash as string) } }),
+        { ...basePayload, ...extra },
+      )
+      expect(response.statusCode).toBe(202)
+    }
+    expect(hashes.size).toBe(6)
+  })
 })
 
 describe('PATCH/DELETE /v1/content-style-profiles/:id', () => {

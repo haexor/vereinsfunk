@@ -228,19 +228,36 @@ export const CompositionSessionStatusSchema = z.enum(['draft', 'queued', 'genera
 
 // channels.ts already imports UuidSchema from here, so importing SocialPlatformSchema from
 // channels.ts would be a cycle -- a local duplicate (this repo has ~7 already) instead, exactly
-// like PlatformVariantSchema.platform below.
-const TextGenerationPlatformSchema = z.enum(['instagram', 'facebook'])
+// like PlatformVariantSchema.platform below. Exportiert, damit platformAdmin.ts (Plattform-
+// Vorgaben), die Route und der Worker nicht je eine eigene Kopie derselben zwei Werte fuehren --
+// die Menge steht sonst nur noch in den beiden DB-CHECKs.
+export const TextGenerationPlatformSchema = z.enum(['instagram', 'facebook'])
+
+// Dieselbe Spanne wie die CHECK-Constraints (composition_sessions.max_output_tokens,
+// text_generation_platform_defaults.max_output_tokens): einmal benannt, damit die API nicht
+// irgendwann einen Wert annimmt, den die Datenbank mit 23514 zurueckweist.
+export const MaxOutputTokensSchema = z.int().min(128).max(4_000)
+export const TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS = 1200
 
 // Paket 042: wie stark die Persona-Stimme im jeweiligen Beitrag durchschlaegt -- nicht der Ton
 // selbst (der kommt von der Persona). Single Source of Truth fuer die DB-CHECK-Constraint
 // (composition_sessions.temperature), die API-Validierung und den Frontend-Regler.
+//
+// Achtung fuer die Regler-UI (PR 3): der Anthropic-Adapter sendet temperature bewusst nicht
+// (aktuelle Claude-Modelle lehnen den Parameter mit 400 ab, siehe
+// AnthropicStructuredContentGenerator in packages/content-engine/src/index.ts). Laeuft der aktive
+// Text-Provider auf diesem Protokoll, bleibt die Stufenwahl ohne Wirkung -- die entfernte
+// Provider-UI hatte dafuer einen eigenen Hinweis, die Beitrags-UI braucht ihn wieder.
 export const TEXT_GENERATION_TEMPERATURE_STEPS = [
   { value: 0.3, label: 'Dezent', hint: 'Die Persona schimmert nur leicht durch.' },
   { value: 0.6, label: 'Ausgewogen', hint: 'Gute Mischung aus Fakten und Persona-Stil.' },
   { value: 0.8, label: 'Ausgeprägt', hint: 'Der typische Sound der Persona dominiert.' },
   { value: 1.0, label: 'Vollgas', hint: 'Maximale Übertreibung, volle Show.' },
 ] as const
-const TextGenerationTemperatureSchema = z.union(TEXT_GENERATION_TEMPERATURE_STEPS.map((step) => z.literal(step.value)))
+const TextGenerationTemperatureSchema = z.literal(TEXT_GENERATION_TEMPERATURE_STEPS.map((step) => step.value))
+// Die "Ausgewogen"-Stufe als Vorgabe -- aus der Liste gelesen statt als zweites 0.6-Literal, sonst
+// wuerde ein Umbau der Stufen einen Default hinterlassen, den das eigene Schema ablehnt.
+export const TEXT_GENERATION_DEFAULT_TEMPERATURE = TEXT_GENERATION_TEMPERATURE_STEPS[1].value
 
 export const CreateCompositionSessionSchema = z.object({
   organizationId: UuidSchema,
@@ -265,8 +282,8 @@ export const CreateCompositionSessionSchema = z.object({
   // Plattform-Vorgabe > generischer Fallback, siehe routes/content.ts) -- echtes Pro-Plattform-
   // Rendering ist Zukunftswerk (Plan 005).
   targetPlatform: TextGenerationPlatformSchema.nullable().optional(),
-  maxOutputTokens: z.int().min(128).max(4_000).optional(),
-  temperature: TextGenerationTemperatureSchema.default(0.6),
+  maxOutputTokens: MaxOutputTokensSchema.optional(),
+  temperature: TextGenerationTemperatureSchema.default(TEXT_GENERATION_DEFAULT_TEMPERATURE),
 }).superRefine((value, context) => {
   const chosen = [value.styleProfileId, value.systemStyleProfileSlug, value.personaSlug].filter((field) => field !== undefined && field !== null)
   if (chosen.length > 1) context.addIssue({ code: 'custom', message: 'Choose at most one of styleProfileId, systemStyleProfileSlug, or personaSlug' })
@@ -394,5 +411,6 @@ export type UpdatePlatformStylePersonaRequest = z.infer<typeof UpdatePlatformSty
 export type UpdateCustomStyleProfileRequest = z.infer<typeof UpdateCustomStyleProfileRequestSchema>
 export type PreviewPlatformStylePersonaRequest = z.infer<typeof PreviewPlatformStylePersonaRequestSchema>
 export type PreviewCustomStyleProfileRequest = z.infer<typeof PreviewCustomStyleProfileRequestSchema>
+export type TextGenerationPlatform = z.infer<typeof TextGenerationPlatformSchema>
 export type CreateCompositionSession = z.infer<typeof CreateCompositionSessionSchema>
 export type CreateGenerationCommand = z.infer<typeof CreateGenerationCommandSchema>

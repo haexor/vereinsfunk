@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ORGANIZATION_ID, USER_ID, adminProvider, defaultAdminProvider, nonAdminProvider, signAccessToken, startApp } from './testSupport.js'
+import { ORGANIZATION_ID, USER_ID, adminProvider, chain, defaultAdminProvider, nonAdminProvider, signAccessToken, startApp } from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
 
@@ -387,6 +387,118 @@ describe('platform administration', () => {
       payload: { protocol: 'openai', baseUrl: 'https://api.openai.com/v1', apiKey: 'super-secret-bearer-token' },
     })
     expect(response.statusCode).toBe(403)
+  })
+})
+
+describe('text generation platform defaults', () => {
+  const DEFAULT_ROWS = [
+    { platform: 'facebook', max_output_tokens: 1200, updated_at: '2026-08-13T10:00:00+00:00' },
+    { platform: 'instagram', max_output_tokens: 1200, updated_at: '2026-08-13T10:00:00+00:00' },
+  ]
+
+  // Die Leseroute traegt bewusst nur requireAuth: die Textwerkstatt muss die Vorgabe vorbefuellen
+  // koennen. Ohne diesen Test wuerde ein spaeter hinzugefuegtes requirePlatformAdmin die
+  // Textwerkstatt fuer normale Mitglieder lautlos brechen.
+  it('lets a plain member read every platform default', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table !== 'text_generation_platform_defaults') throw new Error(`unexpected table in test fake: ${table}`)
+            return chain({ data: DEFAULT_ROWS, error: null })
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => { throw new Error('forService should not be called by this route') },
+    }
+    const app = await startApp({ platformAdminProvider: nonAdminProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'GET', url: '/v1/text-generation-platform-defaults', headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual([
+      { platform: 'facebook', maxOutputTokens: 1200, updatedAt: '2026-08-13T10:00:00+00:00' },
+      { platform: 'instagram', maxOutputTokens: 1200, updatedAt: '2026-08-13T10:00:00+00:00' },
+    ])
+  })
+
+  it('refuses to change a platform default without platform administration', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => { throw new Error('forService should not be called once the platform-admin check fails') },
+    }
+    const app = await startApp({ platformAdminProvider: nonAdminProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PUT', url: '/v1/text-generation-platform-defaults/instagram',
+      headers: { authorization: `Bearer ${token}` }, payload: { maxOutputTokens: 2000 },
+    })
+    expect(response.statusCode).toBe(403)
+  })
+
+  it('records the writing platform admin on the updated row', async () => {
+    let updatePayload: Record<string, unknown> | undefined
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table !== 'text_generation_platform_defaults') throw new Error(`unexpected table in test fake: ${table}`)
+            return {
+              update: (payload: Record<string, unknown>) => {
+                updatePayload = payload
+                return chain({ data: { platform: 'instagram', max_output_tokens: 2000, updated_at: '2026-08-14T09:00:00+00:00' }, error: null })
+              },
+            }
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PUT', url: '/v1/text-generation-platform-defaults/instagram',
+      headers: { authorization: `Bearer ${token}` }, payload: { maxOutputTokens: 2000 },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ platform: 'instagram', maxOutputTokens: 2000, updatedAt: '2026-08-14T09:00:00+00:00' })
+    expect(updatePayload).toEqual({ max_output_tokens: 2000, updated_by: USER_ID })
+  })
+
+  // Die Route aendert nur bestehende Seed-Zeilen. Eine fehlende Zeile ist ein 404 -- vorher lief
+  // sie ueber single() und damit in einen 500 aus PGRST116.
+  it('answers 404 when the platform has no default row to update', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table !== 'text_generation_platform_defaults') throw new Error(`unexpected table in test fake: ${table}`)
+            return { update: () => chain({ data: null, error: null }) }
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PUT', url: '/v1/text-generation-platform-defaults/facebook',
+      headers: { authorization: `Bearer ${token}` }, payload: { maxOutputTokens: 2000 },
+    })
+    expect(response.statusCode).toBe(404)
+    expect(response.json()).toMatchObject({ error: 'text_generation_platform_default_not_found' })
+  })
+
+  it('rejects a platform the text workshop has no default row for', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => { throw new Error('forService should not be called for an unknown platform') },
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PUT', url: '/v1/text-generation-platform-defaults/threads',
+      headers: { authorization: `Bearer ${token}` }, payload: { maxOutputTokens: 2000 },
+    })
+    expect(response.statusCode).toBe(400)
   })
 })
 
