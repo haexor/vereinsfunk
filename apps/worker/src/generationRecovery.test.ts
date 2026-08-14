@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { scanAndRecoverStaleCandidates, type GenerationRecoveryRepository, type RecoverableSessionRow, type StalledCandidateRow } from './generationRecovery.js'
 
 const stale: StalledCandidateRow = { id: '10000000-3010-4000-8000-000000000001', composition_session_id: '10000000-3000-4000-8000-000000000001', organization_id: '10000000-1000-4000-8000-000000000001', generation_intent: 'revise', revision_instruction: 'kuerzer bitte', generation_lease_token: '10000000-9010-4000-8000-000000000001' }
-const session: RecoverableSessionRow = { organization_id: stale.organization_id, department_id: '10000000-1100-4000-8000-000000000001', team_id: null, preset_slug: 'training', communication_goal: 'inform', requested_formats: ['text_post'], source_material: {}, style_profile_id: null, style_profile_snapshot: {}, effective_config_snapshot: {}, source_revision: 1, input_hash: 'a'.repeat(64), created_by: '10000000-0000-4000-8000-000000000001' }
+const session: RecoverableSessionRow = { organization_id: stale.organization_id, department_id: '10000000-1100-4000-8000-000000000001', team_id: null, preset_slug: 'training', communication_goal: 'inform', requested_formats: ['text_post'], source_material: {}, style_profile_id: null, style_profile_snapshot: {}, effective_config_snapshot: {}, target_platform: null, max_output_tokens: 1200, temperature: 0.6, source_revision: 1, input_hash: 'a'.repeat(64), created_by: '10000000-0000-4000-8000-000000000001' }
 
 function repository(overrides: Partial<GenerationRecoveryRepository> = {}): GenerationRecoveryRepository {
   return {

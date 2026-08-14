@@ -5,9 +5,9 @@ import { SourceMaterialSchema, StyleProfileSnapshotSchema, UuidSchema, type Work
 import type { WorkerEnvironment } from '@vereinsfunk/config'
 import { WorkflowExecutionError } from './workflows.js'
 
-export type SessionRow = { id: string; organization_id: string; department_id: string; team_id: string | null; preset_slug: string; communication_goal: 'inform' | 'inspire' | 'thank' | 'invite' | 'recruit' | 'educate' | 'strengthen_community'; source_material: unknown; style_profile_snapshot: unknown }
+export type SessionRow = { id: string; organization_id: string; department_id: string; team_id: string | null; preset_slug: string; communication_goal: 'inform' | 'inspire' | 'thank' | 'invite' | 'recruit' | 'educate' | 'strengthen_community'; source_material: unknown; style_profile_snapshot: unknown; max_output_tokens: number; temperature: number }
 export type CandidateRow = { id: string; status: string; revision_instruction: string | null; lease_token: string }
-export type ProviderRow = { id: string; protocol: string; base_url: string; model: string; temperature: number; max_output_tokens: number; structured_output_required: boolean; api_key_ciphertext: string; key_version: string }
+export type ProviderRow = { id: string; protocol: string; base_url: string; model: string; structured_output_required: boolean; api_key_ciphertext: string; key_version: string }
 
 export interface TextGenerationRepository {
   loadSession(id: string, organizationId: string): Promise<SessionRow | null>
@@ -30,8 +30,8 @@ function ciphertextBuffer(value: string) {
   return Buffer.from(value.slice(2), 'hex')
 }
 
-function parameterHash(provider: ProviderRow) {
-  return createHash('sha256').update(JSON.stringify({ baseUrl: provider.base_url, model: provider.model, temperature: provider.temperature, maxOutputTokens: provider.max_output_tokens, structuredOutputRequired: provider.structured_output_required })).digest('hex')
+function parameterHash(provider: ProviderRow, session: SessionRow) {
+  return createHash('sha256').update(JSON.stringify({ baseUrl: provider.base_url, model: provider.model, temperature: session.temperature, maxOutputTokens: session.max_output_tokens, structuredOutputRequired: provider.structured_output_required })).digest('hex')
 }
 
 function hasGenerationPurpose(payload: WorkflowPayload): boolean {
@@ -72,9 +72,9 @@ export class TextGenerationExecutor {
         brief,
         styleProfile: { name: style.name, description: style.description, styleRules: style.styleRules, avoidRules: style.avoidRules, doRules: style.doRules },
         ...(candidate.revision_instruction ? { revisionInstruction: candidate.revision_instruction } : {}),
-        model: provider.model, baseUrl: provider.base_url, apiKey, temperature: provider.temperature, maxOutputTokens: provider.max_output_tokens,
+        model: provider.model, baseUrl: provider.base_url, apiKey, temperature: session.temperature, maxOutputTokens: session.max_output_tokens,
       })
-      await this.repository.markReady(candidate.id, session.id, candidate.lease_token, post, { providerConfigurationId: provider.id, providerModelId: provider.model, providerParameterHash: parameterHash(provider), promptTemplateVersion: TEXT_PROMPT_TEMPLATE_VERSION })
+      await this.repository.markReady(candidate.id, session.id, candidate.lease_token, post, { providerConfigurationId: provider.id, providerModelId: provider.model, providerParameterHash: parameterHash(provider, session), promptTemplateVersion: TEXT_PROMPT_TEMPLATE_VERSION })
     } catch (error) {
       const classified = error instanceof ContentGenerationError ? error : error instanceof WorkflowExecutionError ? error : new WorkflowExecutionError('generation_validation', false)
       if (classified.retryable) await this.repository.releaseCandidate(candidate.id, session.id, candidate.lease_token)

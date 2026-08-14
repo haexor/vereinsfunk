@@ -225,6 +225,23 @@ export const StyleProfilePromptPreviewSchema = z.object({ system: z.string(), us
 export const GenerationIntentSchema = z.enum(['initial', 'revise'])
 export const GenerationCandidateStatusSchema = z.enum(['pending', 'generating', 'ready', 'failed', 'accepted', 'abandoned', 'expired'])
 export const CompositionSessionStatusSchema = z.enum(['draft', 'queued', 'generating', 'candidate_ready', 'failed', 'accepted', 'abandoned', 'expired'])
+
+// channels.ts already imports UuidSchema from here, so importing SocialPlatformSchema from
+// channels.ts would be a cycle -- a local duplicate (this repo has ~7 already) instead, exactly
+// like PlatformVariantSchema.platform below.
+const TextGenerationPlatformSchema = z.enum(['instagram', 'facebook'])
+
+// Paket 042: wie stark die Persona-Stimme im jeweiligen Beitrag durchschlaegt -- nicht der Ton
+// selbst (der kommt von der Persona). Single Source of Truth fuer die DB-CHECK-Constraint
+// (composition_sessions.temperature), die API-Validierung und den Frontend-Regler.
+export const TEXT_GENERATION_TEMPERATURE_STEPS = [
+  { value: 0.3, label: 'Dezent', hint: 'Die Persona schimmert nur leicht durch.' },
+  { value: 0.6, label: 'Ausgewogen', hint: 'Gute Mischung aus Fakten und Persona-Stil.' },
+  { value: 0.8, label: 'Ausgeprägt', hint: 'Der typische Sound der Persona dominiert.' },
+  { value: 1.0, label: 'Vollgas', hint: 'Maximale Übertreibung, volle Show.' },
+] as const
+const TextGenerationTemperatureSchema = z.union(TEXT_GENERATION_TEMPERATURE_STEPS.map((step) => z.literal(step.value)))
+
 export const CreateCompositionSessionSchema = z.object({
   organizationId: UuidSchema,
   departmentId: UuidSchema,
@@ -244,6 +261,12 @@ export const CreateCompositionSessionSchema = z.object({
   sourceMaterial: z.lazy(() => SourceMaterialSchema),
   mediaAssetIds: z.array(UuidSchema).max(10).default([]),
   sourceRevision: z.int().positive().default(1),
+  // Paket 042: dient ausschliesslich der max_output_tokens-Aufloesung (Sitzungs-Override >
+  // Plattform-Vorgabe > generischer Fallback, siehe routes/content.ts) -- echtes Pro-Plattform-
+  // Rendering ist Zukunftswerk (Plan 005).
+  targetPlatform: TextGenerationPlatformSchema.nullable().optional(),
+  maxOutputTokens: z.int().min(128).max(4_000).optional(),
+  temperature: TextGenerationTemperatureSchema.default(0.6),
 }).superRefine((value, context) => {
   const chosen = [value.styleProfileId, value.systemStyleProfileSlug, value.personaSlug].filter((field) => field !== undefined && field !== null)
   if (chosen.length > 1) context.addIssue({ code: 'custom', message: 'Choose at most one of styleProfileId, systemStyleProfileSlug, or personaSlug' })

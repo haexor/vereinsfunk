@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(72);
+select plan(76);
 
 set local role postgres;
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -242,7 +242,7 @@ select lives_ok(
     'training-update', 'inform', '["text_post"]'::jsonb,
     '{"facts":{"title":"Revisionstraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
     null, '{"name":"System","description":"","styleRules":{"toneTags":["klar"],"catchphrases":[],"exampleInput":"","exampleOutput":"","additionalInstructions":""},"avoidRules":[]}'::jsonb,
-    '{}'::jsonb, 1, repeat('e', 64), repeat('f', 64), 'initial', null,
+    '{}'::jsonb, null, 1200, 0.6, 1, repeat('e', 64), repeat('f', 64), 'initial', null,
     '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-initial'
   )$$,
   'initial text generation creates a durable session and candidate'
@@ -253,7 +253,7 @@ select lives_ok(
     'training-update', 'inform', '["text_post"]'::jsonb,
     '{"facts":{"title":"Revisionstraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
     null, '{"name":"System","description":"","styleRules":{"toneTags":["klar"],"catchphrases":[],"exampleInput":"","exampleOutput":"","additionalInstructions":""},"avoidRules":[]}'::jsonb,
-    '{}'::jsonb, 1, repeat('e', 64), repeat('0', 64), 'revise', 'Bitte kürzer formulieren',
+    '{}'::jsonb, null, 1200, 0.6, 1, repeat('e', 64), repeat('0', 64), 'revise', 'Bitte kürzer formulieren',
     '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-revision'
   )$$,
   'revision creates a separate durable candidate in the existing session'
@@ -265,7 +265,7 @@ select lives_ok(
     'training-update', 'inform', '["text_post"]'::jsonb,
     '{"facts":{"title":"Revisionstraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
     null, '{"name":"System","description":"","styleRules":{"toneTags":["klar"],"catchphrases":[],"exampleInput":"","exampleOutput":"","additionalInstructions":""},"avoidRules":[]}'::jsonb,
-    '{}'::jsonb, 1, repeat('e', 64), repeat('1', 64), 'revise', 'Bitte mit mehr Energie formulieren',
+    '{}'::jsonb, null, 1200, 0.6, 1, repeat('e', 64), repeat('1', 64), 'revise', 'Bitte mit mehr Energie formulieren',
     '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-revision-2'
   )$$,
   'a second revision receives its own durable outbox entry'
@@ -374,7 +374,7 @@ begin
       '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', null,
       'training-update', 'inform', '["text_post"]'::jsonb,
       '{"facts":{"title":"Limittraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
-      null, '{}'::jsonb, '{}'::jsonb, 1, repeat('2', 64), encode(sha256(('limit-revision-' || i::text)::bytea), 'hex'), 'revise', 'Bitte kuerzer',
+      null, '{}'::jsonb, '{}'::jsonb, null, 1200, 0.6, 1, repeat('2', 64), encode(sha256(('limit-revision-' || i::text)::bytea), 'hex'), 'revise', 'Bitte kuerzer',
       '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-limit-revise-' || i::text
     );
   end loop;
@@ -395,7 +395,7 @@ select throws_ok(
     '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', null,
     'training-update', 'inform', '["text_post"]'::jsonb,
     '{"facts":{"title":"Limittraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
-    null, '{}'::jsonb, '{}'::jsonb, 1, repeat('2', 64), encode(sha256('limit-revision-overflow'::bytea), 'hex'), 'revise', 'Zu viel',
+    null, '{}'::jsonb, '{}'::jsonb, null, 1200, 0.6, 1, repeat('2', 64), encode(sha256('limit-revision-overflow'::bytea), 'hex'), 'revise', 'Zu viel',
     '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-limit-overflow'
   )$$,
   'P0001', 'composition_session_candidate_limit_reached',
@@ -476,6 +476,27 @@ select is(
   (select status::text from public.composition_sessions where id = '32000000-3000-4000-8000-000000000002'),
   'failed',
   'the stalled candidate''s session is failed alongside it, mirroring mark_generation_candidate_failed'
+);
+
+-- Plan 042: target_platform/max_output_tokens/temperature are frozen at session creation, like
+-- effective_config_snapshot -- create_text_generation_session's p_target_platform: null,
+-- p_max_output_tokens: 1200, p_temperature: 0.6 (used throughout this file) must land unchanged.
+select is(
+  (select row(target_platform, max_output_tokens, temperature) from public.composition_sessions where organization_id = '32000000-2000-4000-8000-000000000002' and input_hash = repeat('e', 64)),
+  row(null::text, 1200, 0.6),
+  'create_text_generation_session freezes target_platform/max_output_tokens/temperature onto the new session'
+);
+select throws_ok(
+  $$insert into public.composition_sessions (organization_id, department_id, preset_slug, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, target_platform, created_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'training-update', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, encode(sha256('paket-042-invalid-platform'::bytea), 'hex'), 'twitter', '32000000-0000-4000-8000-000000000002')$$,
+  '23514', null, 'negative: target_platform only accepts instagram or facebook'
+);
+select throws_ok(
+  $$insert into public.composition_sessions (organization_id, department_id, preset_slug, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, max_output_tokens, created_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'training-update', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, encode(sha256('paket-042-invalid-tokens'::bytea), 'hex'), 127, '32000000-0000-4000-8000-000000000002')$$,
+  '23514', null, 'negative: max_output_tokens below 128 is rejected'
+);
+select throws_ok(
+  $$insert into public.composition_sessions (organization_id, department_id, preset_slug, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, temperature, created_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'training-update', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, encode(sha256('paket-042-invalid-temperature'::bytea), 'hex'), 0.5, '32000000-0000-4000-8000-000000000002')$$,
+  '23514', null, 'negative: temperature only accepts one of the four fixed regler steps'
 );
 
 select * from finish();

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { SocialPlatformSchema } from './channels.js'
 import { UuidSchema } from './content.js'
 import { CountryCodeSchema } from './primitives.js'
 
@@ -37,13 +38,9 @@ export const LlmProviderProtocolSchema = z.enum(['anthropic', 'openai'])
 // The vocabulary deliberately describes future tasks, but only text_generation has an adapter.
 // APIs must reject activating every other task until its own adapter spike exists.
 export const LlmTaskKindSchema = z.enum(['text_generation', 'image_generation', 'video_generation'])
-export const LlmRuntimeParametersSchema = z.object({
-  temperature: z.number().min(0).max(2).default(0.2),
-  maxOutputTokens: z.int().min(128).max(4_000).default(1_200),
-  structuredOutputRequired: z.literal(true).default(true),
-}).strict()
-// Breaking: systemPromptOverride was removed. Consumers must provide taskKind and
-// runtimeParameters; the only currently activatable combination is enforced by API and DB.
+// Breaking: systemPromptOverride was removed. Paket 042 moved temperature/maxOutputTokens off
+// the provider entirely (see TEXT_GENERATION_TEMPERATURE_STEPS/text-generation-platform-defaults
+// in content.ts) -- a provider is now purely access/routing configuration.
 export const LlmProviderConfigurationSchema = z.object({
   id: UuidSchema,
   label: z.string().trim().min(1).max(160),
@@ -52,7 +49,7 @@ export const LlmProviderConfigurationSchema = z.object({
   model: z.string().trim().min(1).max(120),
   purpose: z.string().trim().min(1).max(60), // historical display/operations field
   taskKind: LlmTaskKindSchema,
-  runtimeParameters: LlmRuntimeParametersSchema,
+  structuredOutputRequired: z.literal(true),
   priority: z.int(),
   isActive: z.boolean(),
   hasSecret: z.boolean(),
@@ -64,7 +61,7 @@ export const CreateLlmProviderConfigurationRequestSchema = z.object({
   model: z.string().trim().min(1).max(120),
   purpose: z.string().trim().min(1).max(60).default('text_generation'),
   taskKind: LlmTaskKindSchema.default('text_generation'),
-  runtimeParameters: LlmRuntimeParametersSchema.default({ temperature: 0.2, maxOutputTokens: 1200, structuredOutputRequired: true }),
+  structuredOutputRequired: z.literal(true).default(true),
   priority: z.int().default(100),
   isActive: z.boolean().default(true),
   apiKey: z.string().trim().min(1).max(4000),
@@ -76,10 +73,22 @@ export const UpdateLlmProviderConfigurationRequestSchema = z.object({
   model: z.string().trim().min(1).max(120).optional(),
   purpose: z.string().trim().min(1).max(60).optional(),
   taskKind: LlmTaskKindSchema.optional(),
-  runtimeParameters: LlmRuntimeParametersSchema.optional(),
+  structuredOutputRequired: z.literal(true).optional(),
   priority: z.int().optional(),
   isActive: z.boolean().optional(),
   apiKey: z.string().trim().min(1).max(4000).optional(),
+})
+
+// Analog PlatformSettingSchema/UpdatePlatformSettingRequestSchema oben, aber ein eigenes Schema
+// statt eines weiteren PlatformSettingKey-Eintrags: der Wert ist hier pro Social-Media-Plattform
+// (nicht global) und die Tabelle ist fuer jedes Mitglied lesbar, nicht nur fuer Plattform-Admins.
+export const TextGenerationPlatformDefaultSchema = z.object({
+  platform: SocialPlatformSchema,
+  maxOutputTokens: z.int().min(128).max(4_000),
+  updatedAt: z.iso.datetime({ offset: true }),
+})
+export const UpdateTextGenerationPlatformDefaultRequestSchema = z.object({
+  maxOutputTokens: z.int().min(128).max(4_000),
 })
 
 // Modellauswahl im Formular: statt einer im Frontend gepflegten Liste fragt die API den Provider
@@ -164,10 +173,11 @@ export type PlatformSetting = z.infer<typeof PlatformSettingSchema>
 export type UpdatePlatformSettingRequest = z.infer<typeof UpdatePlatformSettingRequestSchema>
 export type LlmProviderProtocol = z.infer<typeof LlmProviderProtocolSchema>
 export type LlmTaskKind = z.infer<typeof LlmTaskKindSchema>
-export type LlmRuntimeParameters = z.infer<typeof LlmRuntimeParametersSchema>
 export type LlmProviderConfigurationDto = z.infer<typeof LlmProviderConfigurationSchema>
 export type CreateLlmProviderConfigurationRequest = z.infer<typeof CreateLlmProviderConfigurationRequestSchema>
 export type UpdateLlmProviderConfigurationRequest = z.infer<typeof UpdateLlmProviderConfigurationRequestSchema>
+export type TextGenerationPlatformDefault = z.infer<typeof TextGenerationPlatformDefaultSchema>
+export type UpdateTextGenerationPlatformDefaultRequest = z.infer<typeof UpdateTextGenerationPlatformDefaultRequestSchema>
 export type ListLlmProviderModelsRequest = z.infer<typeof ListLlmProviderModelsRequestSchema>
 export type ListLlmProviderModelsResponse = z.infer<typeof ListLlmProviderModelsResponseSchema>
 export type PlatformAdminOrganizationSummary = z.infer<typeof PlatformAdminOrganizationSummarySchema>

@@ -68,7 +68,7 @@ function activeTextProviderService(rows: Record<string, unknown>[] | null = null
   const sealed = createSecretBox({ v1: Buffer.alloc(32, 7).toString('base64') }, 'v1').seal('sk-test-key', PROVIDER_ID)
   const defaultRow = {
     id: PROVIDER_ID, protocol: 'openai', base_url: 'https://provider.example.test/v1', model: 'gpt-test',
-    temperature: 0.4, max_output_tokens: 500, structured_output_required: true, priority: 1,
+    structured_output_required: true, priority: 1,
     llm_provider_secrets: { api_key_ciphertext: ciphertextToBytea(sealed.ciphertext), key_version: 'v1' },
   }
   return {

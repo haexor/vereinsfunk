@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AddPlatformAdminRequestSchema, OnboardingStateSchema, PlatformAdminOrganizationDetailSchema, PlatformAdminOrganizationSummarySchema, PlatformAdminSchema, PlatformSettingKeySchema, PlatformSettingSchema, PlatformSettingValueSchemas } from './index.js'
+import { AddPlatformAdminRequestSchema, OnboardingStateSchema, PlatformAdminOrganizationDetailSchema, PlatformAdminOrganizationSummarySchema, PlatformAdminSchema, PlatformSettingKeySchema, PlatformSettingSchema, PlatformSettingValueSchemas, TextGenerationPlatformDefaultSchema, UpdateTextGenerationPlatformDefaultRequestSchema } from './index.js'
 import { org } from './testFixtures.js'
 
 describe('platform administration contracts', () => {
@@ -86,6 +86,27 @@ describe('onboarding contracts', () => {
 
   it('still accepts a null dismissedAt', () => {
     expect(OnboardingStateSchema.safeParse({ completedSteps: [], dismissedAt: null }).success).toBe(true)
+  })
+})
+
+describe('text generation platform defaults contracts', () => {
+  it('accepts a PostgREST-shaped updatedAt timestamp with a numeric UTC offset', () => {
+    expect(
+      TextGenerationPlatformDefaultSchema.safeParse({ platform: 'instagram', maxOutputTokens: 1200, updatedAt: '2026-08-05T12:34:56.789+00:00' }).success,
+    ).toBe(true)
+  })
+
+  it('rejects a platform outside the SocialPlatformSchema enum', () => {
+    expect(
+      TextGenerationPlatformDefaultSchema.safeParse({ platform: 'threads', maxOutputTokens: 1200, updatedAt: '2026-08-05T12:34:56.789+00:00' }).success,
+    ).toBe(false)
+  })
+
+  it('keeps maxOutputTokens within the same 128-4000 bounds as the DB CHECK constraint', () => {
+    expect(UpdateTextGenerationPlatformDefaultRequestSchema.safeParse({ maxOutputTokens: 127 }).success).toBe(false)
+    expect(UpdateTextGenerationPlatformDefaultRequestSchema.safeParse({ maxOutputTokens: 128 }).success).toBe(true)
+    expect(UpdateTextGenerationPlatformDefaultRequestSchema.safeParse({ maxOutputTokens: 4000 }).success).toBe(true)
+    expect(UpdateTextGenerationPlatformDefaultRequestSchema.safeParse({ maxOutputTokens: 4001 }).success).toBe(false)
   })
 })
 

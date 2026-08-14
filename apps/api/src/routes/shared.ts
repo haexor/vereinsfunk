@@ -402,6 +402,14 @@ export async function resolveInvitationScope(
   return { scope: { organizationId: input.organizationId }, scopeName: '' }
 }
 
+// Paket 042: temperature/maxOutputTokens sind jetzt Beitrags-/Sitzungs-Einstellungen, nicht mehr
+// Provider-Merkmale. Der Preview-Pfad hat keinen Beitrags-/Sitzungskontext (siehe
+// runStyleProfilePreview unten) und bekommt dafuer bewusst keine neue UI -- feste Konstanten
+// statt eines Lookups. routes/content.ts importiert denselben Fallback fuer die
+// max_output_tokens-Aufloesung einer Sitzung ohne Zielplattform.
+export const TEXT_GENERATION_DEFAULT_TEMPERATURE = 0.6
+export const TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS = 1200
+
 // Plan 040: "Persona/Stilprofil testen" (routes/content.ts, routes/platformPersonas.routes.ts)
 // calls the active text provider directly and synchronously, unlike POST
 // /v1/text-workshop/sessions which only ever writes an ID-only Hatchet delivery for the worker to
@@ -413,7 +421,6 @@ export async function resolveInvitationScope(
 // box helpers already live in shared packages apps/api depends on regardless.
 const ActiveTextProviderRowSchema = z.object({
   id: UuidSchema, protocol: z.string(), base_url: z.url(), model: z.string().trim().min(1),
-  temperature: z.coerce.number(), max_output_tokens: z.coerce.number().int().positive(),
   structured_output_required: z.boolean(),
   llm_provider_secrets: z.union([
     z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) }),
@@ -525,7 +532,7 @@ async function runStyleProfilePreview(
   // Provider-Verwaltung (POST/PATCH /v1/llm-providers, 409 priority_already_taken).
   const configs = await service
     .from('llm_provider_configurations')
-    .select('id, protocol, base_url, model, temperature, max_output_tokens, structured_output_required, llm_provider_secrets!inner(api_key_ciphertext, key_version)')
+    .select('id, protocol, base_url, model, structured_output_required, llm_provider_secrets!inner(api_key_ciphertext, key_version)')
     .eq('task_kind', 'text_generation').eq('is_active', true).order('priority').limit(1)
   if (configs.error) throw configs.error
   const rows = configs.data as Record<string, unknown>[]
@@ -542,7 +549,7 @@ async function runStyleProfilePreview(
   try {
     const post = await generator.generateText({
       ...previewGenerationArgs(input),
-      model: row.model, baseUrl: row.base_url, apiKey, temperature: row.temperature, maxOutputTokens: row.max_output_tokens,
+      model: row.model, baseUrl: row.base_url, apiKey, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, maxOutputTokens: TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS,
       // Kuerzer als die 60 s des Adapters (packages/content-engine): der Worker darf so lange
       // warten, weil dort niemand an einer offenen HTTP-Verbindung haengt -- hier wartet ein
       // Browser auf den "Testen"-Knopf, und jede wartende Anfrage haelt eine Verbindung.

@@ -22,7 +22,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { CLUB_EVENT_COLUMNS, FIXTURE_COLUMNS, mapClubEventRow, mapFixtureRow, mapTeamRow } from '../apiMappers.js'
 import type { ApiRouteContext } from './context.js'
-import { buildStyleProfilePromptPreview, checkRateLimit, createAuditRecorder, fetchMemberTrust, previewStyleProfile, resolveDirectoryScope, resolvePreviewIdempotencyKey, resolveScopedEffectiveConfig, toPermissionScope } from './shared.js'
+import { buildStyleProfilePromptPreview, checkRateLimit, createAuditRecorder, fetchMemberTrust, previewStyleProfile, resolveDirectoryScope, resolvePreviewIdempotencyKey, resolveScopedEffectiveConfig, TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS, toPermissionScope } from './shared.js'
 
 // Plan 033 text-only workshop. Diese Routen rufen kein LLM auf: sie schreiben Sitzung und einen
 // reinen ID-Umschlag ueber eine service-only RPC, die der Worker spaeter ausfuehrt.
@@ -426,10 +426,19 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     const candidateHash = createHash('sha256').update(`${sessionHash}:initial`).digest('hex')
     const idempotencyKey = `generate-text:${sessionHash}:${input.sourceRevision}`
     const service = supabaseClients.forService()
+    // Aufgeloest bei Anlage, danach eingefroren (siehe composition_sessions.max_output_tokens):
+    // expliziter Request-Wert > Plattform-Vorgabe > generischer Fallback.
+    let maxOutputTokens = input.maxOutputTokens ?? null
+    if (maxOutputTokens === null && input.targetPlatform) {
+      const platformDefault = await service.from('text_generation_platform_defaults').select('max_output_tokens').eq('platform', input.targetPlatform).maybeSingle()
+      if (platformDefault.error) throw platformDefault.error
+      maxOutputTokens = platformDefault.data?.max_output_tokens ?? null
+    }
     const result = await service.rpc('create_text_generation_session', {
       p_organization_id: input.organizationId, p_department_id: input.departmentId, p_team_id: input.teamId ?? null, p_preset_slug: input.presetSlug,
       p_communication_goal: input.communicationGoal, p_requested_formats: input.requestedFormats, p_source_material: sourceMaterial,
       p_style_profile_id: styleProfileId, p_style_profile_snapshot: styleSnapshot, p_effective_config_snapshot: { config: { tone: config.tone, goals: config.goals, hashtags: config.hashtags, ...config.policies } },
+      p_target_platform: input.targetPlatform ?? null, p_max_output_tokens: maxOutputTokens ?? TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS, p_temperature: input.temperature,
       p_source_revision: input.sourceRevision, p_input_hash: sessionHash, p_candidate_input_hash: candidateHash, p_generation_intent: 'initial', p_revision_instruction: null,
       p_created_by: request.auth!.userId, p_correlation_id: request.id, p_idempotency_key: idempotencyKey,
     })
@@ -462,7 +471,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     const client = supabaseClients.forUser(request.auth!.accessToken)
     const session = await client
       .from('composition_sessions')
-      .select('id, organization_id, department_id, team_id, preset_slug, communication_goal, requested_formats, source_material, style_profile_id, style_profile_snapshot, effective_config_snapshot, source_revision, input_hash, created_by')
+      .select('id, organization_id, department_id, team_id, preset_slug, communication_goal, requested_formats, source_material, style_profile_id, style_profile_snapshot, effective_config_snapshot, target_platform, max_output_tokens, temperature, source_revision, input_hash, created_by')
       .eq('id', sessionId)
       .maybeSingle()
     if (session.error) throw session.error
@@ -476,6 +485,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
       p_preset_slug: session.data.preset_slug, p_communication_goal: session.data.communication_goal, p_requested_formats: session.data.requested_formats,
       p_source_material: session.data.source_material, p_style_profile_id: session.data.style_profile_id,
       p_style_profile_snapshot: session.data.style_profile_snapshot, p_effective_config_snapshot: session.data.effective_config_snapshot,
+      p_target_platform: session.data.target_platform, p_max_output_tokens: session.data.max_output_tokens, p_temperature: session.data.temperature,
       p_source_revision: session.data.source_revision, p_input_hash: session.data.input_hash, p_candidate_input_hash: candidateHash,
       p_generation_intent: 'revise', p_revision_instruction: revisionInstruction, p_created_by: request.auth!.userId,
       p_correlation_id: request.id, p_idempotency_key: `generate-text:${candidateHash}`,

@@ -194,7 +194,7 @@ describe('platform administration', () => {
       base_url: 'https://llm-proxy.internal/v1',
       model: 'approved-text-model',
       purpose: 'default',
-      task_kind: 'text_generation', temperature: 0.2, max_output_tokens: 1200, structured_output_required: true,
+      task_kind: 'text_generation', structured_output_required: true,
       priority: 100,
       is_active: true,
       system_prompt_override: null,
@@ -286,7 +286,7 @@ describe('platform administration', () => {
       id: 'a0000000-0000-4000-8000-000000000002',
       label: 'Claude via haex-claude-proxy', protocol: 'anthropic', base_url: 'https://claude-proxy.example/v1',
       model: 'claude-opus-4-8', purpose: 'default',
-      task_kind: 'text_generation', temperature: 0.2, max_output_tokens: 1200, structured_output_required: true,
+      task_kind: 'text_generation', structured_output_required: true,
       priority: 100, is_active: true,
     }
     const clients: SupabaseClientFactory = {
