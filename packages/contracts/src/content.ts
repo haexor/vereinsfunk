@@ -312,6 +312,12 @@ export const TextGenerationPlatformAvailabilitySchema = z.object({
   available: z.boolean(),
   maxCharacters: MaxCharactersSchema,
   reason: z.enum(['no_channel', 'restricted_by_policy']).optional(),
+  // Plan 044, PR 1 Step 3: aus der effektiven default_target_platforms-Vorgabe des angefragten
+  // Scopes aufgeloest, MIT der Verfuegbarkeit geschnitten -- eine Plattform in der Vorgabe ohne
+  // (mehr) eingerichteten Kanal ist nicht isDefault, sonst liefe das Formular vorausgewaehlt in ein
+  // 422. erstellen.vue hakt genau die Plattformen an, fuer die dies true ist; ist keine Vorgabe
+  // gesetzt, ist isDefault fuer jede Plattform false und die Auswahl startet leer.
+  isDefault: z.boolean(),
 })
 // Die "Ausgewogen"-Stufe als Vorgabe -- aus der Liste gelesen statt als zweites 0.6-Literal, sonst
 // wuerde ein Umbau der Stufen einen Default hinterlassen, den das eigene Schema ablehnt.
@@ -341,18 +347,18 @@ export const CreateCompositionSessionSchema = z.object({
   // (Sitzungs-Override > kleinste Vorgabe der gewaehlten Plattformen > Fallback, siehe
   // routes/content.ts). Welche Plattformen ein Mitglied ueberhaupt anhaken darf, ergibt sich aus den
   // eingerichteten Kanaelen seines Scopes; die Route prueft das seit Plan 042, PR 3 selbst und
-  // antwortet mit 422 platform_not_available. Der Vorgabewert unten ist deshalb kein sicherer
-  // Rueckfall mehr: ein Verein ohne Facebook-Kanal laeuft damit in genau dieses 422. Wer die Route
-  // aufruft, sollte targetPlatforms aus GET /v1/text-generation-platforms setzen statt wegzulassen.
+  // antwortet mit 422 platform_not_available.
   //
-  // Der Vorgabewert ist bewusst ausgeschrieben und NICHT aus SocialPlatformSchema.options
-  // abgeleitet: sobald eine Kurzform-Plattform dazukommt, wuerde "alle vorausgewaehlt" zusammen mit
-  // der min()-Regel jeden Beitrag stillschweigend auf deren Laenge zusammenstauchen. Bei deutlich
-  // unterschiedlichen Grenzen gehoeren getrennte Texte je Plattform hin
-  // (GeneratedPostSchema.variants, Plan 005) statt eines gemeinsam gekuerzten Textes.
+  // Plan 044, PR 1 Step 1: kein Vorgabewert mehr -- es gibt keinen, der fuer jeden Verein
+  // funktioniert. `['instagram','facebook']` scheiterte bei jedem Verein ohne beide Kanaele an
+  // genau diesem 422, und jede aus SocialPlatformSchema.options abgeleitete Variante wuerde mit der
+  // ersten Kurzform-Plattform zusammen mit der min()-Regel jeden Beitrag stillschweigend auf deren
+  // Laenge zusammenstauchen. Auf welchen Plattformen ein Verein veroeffentlicht, ist seine Sache --
+  // GET /v1/text-generation-platforms liefert die eigene Vorgabe des Vereins/der Abteilung
+  // (isDefault), erstellen.vue hakt genau die an, sonst startet die Auswahl leer.
   targetPlatforms: z.array(SocialPlatformSchema).min(1).max(SocialPlatformSchema.options.length).superRefine((platforms, context) => {
     if (new Set(platforms).size !== platforms.length) context.addIssue({ code: 'custom', message: 'targetPlatforms must not contain duplicates' })
-  }).default(['instagram', 'facebook']),
+  }),
   // Zeichen, nicht Tokens: die Plattform weist einen zu langen Beitrag ab.
   maxCharacters: MaxCharactersSchema.optional(),
   temperature: TextGenerationTemperatureSchema.default(TEXT_GENERATION_DEFAULT_TEMPERATURE),

@@ -94,7 +94,10 @@ async function loadPlatformAvailability() {
   try {
     const response = await api.request('/v1/text-generation-platforms', { query: { organizationId: scope.value.organizationId, departmentId: scope.value.departmentId } }, z.array(TextGenerationPlatformAvailabilitySchema))
     platforms.value = response
-    selectedPlatforms.value = response.filter((entry) => entry.available).map((entry) => entry.platform)
+    // Plan 044, PR 1 Step 3: keine Plattform ist ab Werk vorausgewaehlt -- angehakt wird nur, was
+    // der Verein/die Abteilung als eigene Vorgabe gesetzt hat (isDefault, bereits mit der
+    // Verfuegbarkeit geschnitten). Ohne Vorgabe startet die Auswahl leer.
+    selectedPlatforms.value = response.filter((entry) => entry.isDefault).map((entry) => entry.platform)
   } catch { notice.value = 'Zielplattformen konnten nicht geladen werden.' }
 }
 async function refreshSession() {
@@ -165,7 +168,15 @@ async function reviseCandidate() {
     await refreshSession()
   } catch { notice.value = 'Die Überarbeitung konnte nicht gestartet werden.' } finally { submitting.value = false }
 }
-await Promise.all([loadProfiles(), loadPlatformAvailability(), loadCapabilities()]); restoreDraft()
+// Dieselbe restoringDraft-Klammer wie im Scope-Wechsel oben, und aus demselben Grund:
+// loadPlatformAvailability() schreibt selectedPlatforms, der persistDraft-Watcher laeuft mit
+// flush: 'sync' also noch VOR restoreDraft() -- und legte den noch leeren Formularzustand ueber den
+// gespeicherten Entwurf. Nach jedem Neuladen war das getippte Quellmaterial damit still verloren
+// (Review von Paket 044 PR 1; bestand schon vorher, faellt hier nur an derselben Zeile auf).
+restoringDraft = true
+await Promise.all([loadProfiles(), loadPlatformAvailability(), loadCapabilities()])
+restoreDraft()
+restoringDraft = false
 </script>
 
 <template>

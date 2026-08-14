@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { ContentPresetSlugSchema, MediaGateBlockerSchema, OutputFormatSchema, UuidSchema } from './content.js'
+import { SocialPlatformSchema } from './primitives.js'
 import { AssignableRoleSchema, ScopeLevelSchema } from './structure.js'
 
 // Richtlinien mit Vererbung (Paket 023): zwei boolesche Felder je Ebene, `null` heisst "von oben
@@ -91,6 +92,10 @@ export const PolicyRuleValuesSchema = z.object({
   allowedPresets: z.array(ContentPresetSlugSchema).nullable(),
   allowedFormats: z.array(OutputFormatSchema).nullable(),
   allowedChannelIds: z.array(UuidSchema).nullable(),
+  // Plan 044: null = geerbt, [] = ausdruecklich keine Vorauswahl -- anders als die drei Felder
+  // oben ersetzt ein gesetzter Wert die Vorgabe der aeusseren Ebene komplett (packages/domain,
+  // mergeReplaceableList), statt sie nur einzuengen.
+  defaultTargetPlatforms: z.array(SocialPlatformSchema).nullable(),
   forbiddenTopics: z.array(z.string().trim().min(1).max(200)),
   requiredHashtags: z.array(z.string().regex(/^#[\p{L}\p{N}_]+$/u)),
   tone: z.string().trim().min(1).max(60).nullable(),

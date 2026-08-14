@@ -74,6 +74,7 @@ describe('text workshop contracts', () => {
     const input = CreateCompositionSessionSchema.parse({
       organizationId: org, departmentId: department, presetSlug: 'event', communicationGoal: 'invite',
       requestedFormats: ['video_post'], sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [], doNotMention: [] },
+      targetPlatforms: ['instagram'],
     })
     expect(input.requestedFormats).toEqual(['video_post'])
     expect(CreateCompositionSessionSchema.safeParse({ ...input, requestedFormats: ['reel'] }).success).toBe(false)
@@ -121,6 +122,7 @@ describe('text workshop contracts', () => {
     const base = {
       organizationId: org, departmentId: department, presetSlug: 'event', communicationGoal: 'invite',
       requestedFormats: ['text_post'] as const, sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [], doNotMention: [] },
+      targetPlatforms: ['instagram'] as const,
     }
     expect(CreateCompositionSessionSchema.safeParse(base).success).toBe(true)
     expect(CreateCompositionSessionSchema.safeParse({ ...base, styleProfileId: org }).success).toBe(true)
@@ -138,6 +140,7 @@ describe('text workshop contracts', () => {
     const base = {
       organizationId: org, departmentId: department, presetSlug: 'event', communicationGoal: 'invite',
       requestedFormats: ['text_post'] as const, sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [], doNotMention: [] },
+      targetPlatforms: ['instagram'] as const,
     }
     expect(CreateCompositionSessionSchema.parse(base).temperature).toBe(0.6)
     for (const step of TEXT_GENERATION_TEMPERATURE_STEPS) {
@@ -146,30 +149,32 @@ describe('text workshop contracts', () => {
     expect(CreateCompositionSessionSchema.safeParse({ ...base, temperature: 0.5 }).success).toBe(false)
   })
 
-  // Mehrfachauswahl: der Verein postet denselben Text ueblicherweise auf mehreren Plattformen, die
-  // knappste Vorgabe gibt dann die Laenge vor (min() in routes/content.ts). Ohne Angabe sind beide
-  // Plattformen vorausgewaehlt -- leer ist keine gueltige Wahl mehr.
-  it('preselects both platforms and rejects an empty, duplicated or unknown selection', () => {
+  // Plan 044, PR 1 Step 1: kein Vorgabewert mehr -- auf welchen Plattformen ein Verein
+  // veroeffentlicht, ist seine Sache, nicht die des Betreibers. targetPlatforms ist deshalb ein
+  // Pflichtfeld geworden; ohne Angabe schlaegt die Anfrage fehl statt still ['instagram','facebook']
+  // einzusetzen (das waere seit Plan 042 PR 3 fuer jeden Verein ohne beide Kanaele ein garantiertes
+  // 422 gewesen). min(1) bleibt: leer ist der Zustand vor dem Absenden, keine gueltige Wahl.
+  it('requires an explicit, non-empty targetPlatforms selection, rejects duplicates or an unknown platform', () => {
     const base = {
       organizationId: org, departmentId: department, presetSlug: 'event', communicationGoal: 'invite',
       requestedFormats: ['text_post'] as const, sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [], doNotMention: [] },
     }
-    expect(CreateCompositionSessionSchema.parse(base).targetPlatforms).toEqual(['instagram', 'facebook'])
+    expect(CreateCompositionSessionSchema.safeParse(base).success).toBe(false)
     expect(CreateCompositionSessionSchema.safeParse({ ...base, targetPlatforms: ['instagram'], maxCharacters: 500 }).success).toBe(true)
     expect(CreateCompositionSessionSchema.safeParse({ ...base, targetPlatforms: ['facebook', 'instagram'] }).success).toBe(true)
     expect(CreateCompositionSessionSchema.safeParse({ ...base, targetPlatforms: [] }).success).toBe(false)
     expect(CreateCompositionSessionSchema.safeParse({ ...base, targetPlatforms: ['instagram', 'instagram'] }).success).toBe(false)
     expect(CreateCompositionSessionSchema.safeParse({ ...base, targetPlatforms: ['threads'] }).success).toBe(false)
-    expect(CreateCompositionSessionSchema.safeParse({ ...base, maxCharacters: 99 }).success).toBe(false)
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, targetPlatforms: ['instagram'], maxCharacters: 99 }).success).toBe(false)
   })
 
   // Plan 042, PR 3 Step 3: reason is only meaningful together with available: false, but the
   // schema itself does not enforce that pairing -- the route is the single place that decides it.
   it('accepts a platform availability entry with or without a reason', () => {
-    expect(TextGenerationPlatformAvailabilitySchema.safeParse({ platform: 'instagram', available: true, maxCharacters: 2200 }).success).toBe(true)
-    expect(TextGenerationPlatformAvailabilitySchema.safeParse({ platform: 'facebook', available: false, maxCharacters: 2200, reason: 'no_channel' }).success).toBe(true)
-    expect(TextGenerationPlatformAvailabilitySchema.safeParse({ platform: 'facebook', available: false, maxCharacters: 2200, reason: 'restricted_by_policy' }).success).toBe(true)
-    expect(TextGenerationPlatformAvailabilitySchema.safeParse({ platform: 'facebook', available: false, maxCharacters: 2200, reason: 'unknown' }).success).toBe(false)
+    expect(TextGenerationPlatformAvailabilitySchema.safeParse({ platform: 'instagram', available: true, maxCharacters: 2200, isDefault: true }).success).toBe(true)
+    expect(TextGenerationPlatformAvailabilitySchema.safeParse({ platform: 'facebook', available: false, maxCharacters: 2200, isDefault: false, reason: 'no_channel' }).success).toBe(true)
+    expect(TextGenerationPlatformAvailabilitySchema.safeParse({ platform: 'facebook', available: false, maxCharacters: 2200, isDefault: false, reason: 'restricted_by_policy' }).success).toBe(true)
+    expect(TextGenerationPlatformAvailabilitySchema.safeParse({ platform: 'facebook', available: false, maxCharacters: 2200, isDefault: false, reason: 'unknown' }).success).toBe(false)
   })
 
   it('validates the platform persona catalogue and reserves system profile slugs', () => {

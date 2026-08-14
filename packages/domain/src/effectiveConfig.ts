@@ -20,6 +20,11 @@ export interface EffectiveConfig {
     allowedPresets: readonly string[] | null
     allowedFormats: readonly string[] | null
     allowedChannelIds: readonly string[] | null
+    // Plan 044: null = geerbt (die Ebene darunter uebernimmt, was darueber gilt), [] = ausdruecklich
+    // keine Vorauswahl. Anders als die drei Felder oben (Schnittmenge, kann nur enger werden)
+    // ERSETZT ein gesetzter Wert die Vorgabe der aeusseren Ebene vollstaendig -- eine Abteilung soll
+    // die Vereinsvorgabe abbestellen oder durch eine andere ersetzen koennen, nicht nur verschmaelern.
+    defaultTargetPlatforms: readonly string[] | null
   }
 }
 
@@ -37,6 +42,17 @@ function mergeAllowedList(
   if (next == null) return current
   if (current == null) return next
   return current.filter((value) => next.includes(value))
+}
+
+// Plan 044: dieselbe undefined/null-Behandlung wie mergeAllowedList (beides "auf dieser Ebene nicht
+// gesetzt, erben"), aber ein gesetzter Wert ERSETZT current komplett statt ihn nur einzuengen --
+// siehe defaultTargetPlatforms oben.
+function mergeReplaceableList(
+  current: readonly string[] | null,
+  next: readonly string[] | null | undefined,
+): readonly string[] | null {
+  if (next == null) return current
+  return next
 }
 
 export function mergeEffectiveConfig(
@@ -80,6 +96,10 @@ export function mergeEffectiveConfig(
           current.policies.allowedChannelIds,
           policies?.allowedChannelIds,
         ),
+        defaultTargetPlatforms: mergeReplaceableList(
+          current.policies.defaultTargetPlatforms,
+          policies?.defaultTargetPlatforms,
+        ),
       },
     }
   }, base)
@@ -103,6 +123,8 @@ export const DEFAULT_EFFECTIVE_CONFIG: EffectiveConfig = {
     allowedPresets: null,
     allowedFormats: null,
     allowedChannelIds: null,
+    // Keine Plattform ist ab Werk vorausgewaehlt (Plan 044, Betreiberentscheidung).
+    defaultTargetPlatforms: null,
   },
 }
 

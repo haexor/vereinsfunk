@@ -84,6 +84,19 @@ Die Vorgabe gehört zu den Richtlinien, erscheint auf denselben Seiten wie `Poli
 
 **Verifizieren**: Playwright-Smoke — Vereinsvorgabe setzen, in einer Abteilung „geerbt“ sehen, dort abwählen, Vererbung greift nicht mehr.
 
+## Stand nach der Umsetzung von PR 1
+
+Umgesetzt wie geplant, mit einer Korrektur zu Step 4: `default_target_platforms` ist schema-seitig ein Feld von `PolicyRuleValuesSchema` (dieselbe `own`/`effective`-Struktur wie `allowedPresets`/`forbiddenTopics`/etc.), nicht von `PolicySettingSchema` (den zwei booleschen Umschaltern aus `PolicyFlagToggles.vue`). Die neue Komponente (`DefaultTargetPlatformsPicker.vue`) sitzt deshalb in `einstellungen/index.vue`s bereits vorhandenem „Inhalt und Kanäle“-Abschnitt, direkt neben den anderen `PolicyRuleValues`-Feldern — nicht auf `struktur.vue`, wo `PolicyFlagToggles.vue` lebt. Die im Plan verlangte Bedienung (drei sichtbar unterscheidbare Zustände über einen Umschalter geerbt/eigene Vorgabe, darunter eine Checkbox-Auswahl der drei Plattformen) ist unverändert erfüllt.
+
+**Verifiziert**: `pnpm db:reset && pnpm db:test` (769 pgTAP-Fälle, inkl. 7 neuer Fälle für CHECK und `set_policy_rules`-Coalesce-Verhalten), `pnpm lint`, `pnpm typecheck` (36/36), `pnpm test` (36/36, inkl. 2 neuer API-Routen-Tests für `isDefault`, 1 neuer Domain-Test für die drei Merge-Zustände) und `pnpm build` sind grün. Der Playwright-Smoke-Test selbst konnte mangels Browser-Werkzeug in dieser Sitzung nicht durchgeführt werden (dieselbe Einschränkung wie bei Paket 039 PR 2).
+
+### Zusätzlich aus dem Review von PR 1
+
+Zwei Funde, beide in der Oberfläche, beide mit einem Regressionstest abgesichert (`apps/web/app/pages/targetPlatformDefaults.test.ts`):
+
+1. **Der „geerbt“-Hinweis zeigte den eigenen Wert als den der übergeordneten Ebene.** `DefaultTargetPlatformsPicker.vue` bekam `selectedEntry.effective.defaultTargetPlatforms` — `effective` einer Ebene rechnet aber ihre **eigene** Zeile mit. Wer eine eigene Vorgabe hatte und auf „geerbt“ umschaltete, sah damit genau den Wert als Vorgabe von oben, den er gerade abwählte; auf Vereinsebene behauptete der Hinweis zudem eine übergeordnete Ebene, die es nicht gibt. Die Komponente nimmt jetzt `inheritedValue` — die effektive Auflösung der **übergeordneten** Ebene, in `einstellungen/index.vue` aus dem Eintrag des Vereins bzw. der Elternabteilung (über das schon vorhandene `selectedDepartmentId`) aufgelöst, auf Vereinsebene `[]`.
+2. **Der gespeicherte Entwurf in `erstellen.vue` ging bei jedem Neuladen verloren** (bestand schon vor diesem Paket, fällt aber an der hier geänderten Zeile auf). `persistDraft` hängt an einem Watcher mit `flush: 'sync'`; `loadPlatformAvailability()` schreibt `selectedPlatforms` und löste ihn damit noch **vor** `restoreDraft()` aus, was den leeren Formularzustand über den gespeicherten Entwurf legte. Der Seitenaufbau steht jetzt in derselben `restoringDraft`-Klammer wie der Scope-Wechsel darüber. Nachgestellt mit Vues Reaktivität: ohne die Klammer kommt `factsText` als `''` zurück, mit ihr als der gespeicherte Text.
+
 ## Stand nach der Umsetzung von PR 2
 
 Umgesetzt wie geplant, mit einer Ergaenzung zu Step 6: `ContentGenerationError` traegt jetzt ein
