@@ -58,7 +58,12 @@ export class FakeContentGenerator implements ContentGenerator {
 
 /** Error information intentionally contains no input or output text and is safe for worker logs. */
 export class ContentGenerationError extends Error {
-  constructor(readonly errorClass: 'provider_network' | 'provider_rate_limit' | 'provider_server' | 'provider_schema' | 'provider_configuration' | 'ungrounded', readonly retryable: boolean) {
+  constructor(
+    readonly errorClass: 'provider_network' | 'provider_rate_limit' | 'provider_server' | 'provider_schema' | 'provider_configuration' | 'ungrounded' | 'caption_too_long',
+    readonly retryable: boolean,
+    /** Nur bei `caption_too_long` gesetzt: wie viele Zeichen die Antwort ueber die Grenze ging. */
+    readonly overBy?: number,
+  ) {
     super(errorClass)
   }
 }
@@ -70,6 +75,27 @@ export function assertGroundedPost(post: GeneratedPost, brief: GroundedContentBr
   if (brief.prohibitedClaims.some((phrase) => rendered.includes(phrase.toLocaleLowerCase('de')))) {
     throw new ContentGenerationError('ungrounded', false)
   }
+}
+
+// UTF-16-Code-Units, dieselbe Einheit, die MaxCharactersSchema und der System-Prompt (`Der
+// Beitragstext (caption) darf hoechstens N Zeichen lang sein`) bereits stillschweigend voraussetzen.
+// Instagram/Facebook/Website (Plan 039) zaehlen alle so. Eigene, benannte Funktion statt eines
+// verstreuten `.length`-Aufrufs: eine kuenftige Plattform mit abweichender Zaehlweise (X gewichtet
+// Zeichenbereiche unterschiedlich und rechnet jede URL pauschal als 23 Zeichen) ersetzt sie lokal,
+// ohne die Aufrufstelle unten zu aendern (Plan 044, offener Punkt 1).
+export function countCharactersForPlatform(text: string): number {
+  return text.length
+}
+
+// Die Plattform weist einen zu langen Beitrag ab -- ein Zeichen zu viel und der Beitrag wird
+// abgelehnt (Betreiberentscheidung, Plan 044). Neben assertGroundedPost, damit sie fuer jeden
+// Aufrufer greift, nicht nur den Worker. Geprueft wird ausschliesslich `caption`: headline (80),
+// shortCaption (500) und altText (500) haben eigene, unabhaengige Grenzen. `maxCharacters` fehlt im
+// Preview-Pfad (kein Sitzungskontext) -- dort greift keine Pruefung.
+export function assertCaptionLength(post: GeneratedPost, maxCharacters: number | undefined): void {
+  if (maxCharacters === undefined) return
+  const length = countCharactersForPlatform(post.caption)
+  if (length > maxCharacters) throw new ContentGenerationError('caption_too_long', false, length - maxCharacters)
 }
 
 export const TEXT_PROMPT_TEMPLATE_VERSION = 'text-workshop-v1'
@@ -166,6 +192,7 @@ export class OpenAiCompatibleStructuredContentGenerator implements StructuredCon
       content = typeof raw === 'string' ? JSON.parse(raw) : raw
       const post = GeneratedPostSchema.parse(content)
       assertGroundedPost(post, input.brief)
+      assertCaptionLength(post, input.maxCharacters)
       return post
     } catch (error) {
       if (error instanceof ContentGenerationError) throw error
@@ -232,6 +259,7 @@ export class AnthropicStructuredContentGenerator implements StructuredContentGen
       const block = body.content?.find((entry) => entry.type === 'tool_use' && entry.name === ANTHROPIC_OUTPUT_TOOL_NAME)
       const post = GeneratedPostSchema.parse(block?.input)
       assertGroundedPost(post, input.brief)
+      assertCaptionLength(post, input.maxCharacters)
       return post
     } catch (error) {
       if (error instanceof ContentGenerationError) throw error

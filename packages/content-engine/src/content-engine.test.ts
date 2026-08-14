@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { AnthropicStructuredContentGenerator, FakeContentGenerator, OpenAiCompatibleStructuredContentGenerator, createGroundedContentBrief, type ContentGenerationError } from './index.js'
+import { AnthropicStructuredContentGenerator, assertCaptionLength, countCharactersForPlatform, FakeContentGenerator, OpenAiCompatibleStructuredContentGenerator, createGroundedContentBrief, type ContentGenerationError } from './index.js'
+import type { GeneratedPost } from '@vereinsfunk/contracts'
 
 describe('fake content generator', () => {
   it('marks missing facts instead of inventing them', async () => {
@@ -103,5 +104,53 @@ describe('structured content generator', () => {
   it('fails closed for an ungrounded anthropic answer', async () => {
     const generator = new AnthropicStructuredContentGenerator(async () => new Response(JSON.stringify({ stop_reason: 'tool_use', content: [{ type: 'tool_use', name: 'final_result', input: { ...grounded, caption: 'Sponsor X', generatedClaims: [{ sourceId: 'made-up', text: 'Sponsor X' }] } }] }), { status: 200 }))
     await expect(generator.generateText(input)).rejects.toMatchObject({ errorClass: 'ungrounded', retryable: false } satisfies Partial<ContentGenerationError>)
+  })
+
+  // Plan 044, Step 5: ein Zeichen zu viel und die Plattform lehnt ab -- die Pruefung greift ueber
+  // denselben generateText-Aufruf wie assertGroundedPost, fuer jeden Aufrufer, nicht nur den Worker.
+  it('rejects a caption one character over maxCharacters, accepts it exactly at the limit', async () => {
+    const tooLong = new OpenAiCompatibleStructuredContentGenerator(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ ...grounded, caption: 'a'.repeat(11) }) } }] }), { status: 200 }))
+    await expect(tooLong.generateText({ ...input, maxCharacters: 10 })).rejects.toMatchObject({ errorClass: 'caption_too_long', retryable: false, overBy: 1 } satisfies Partial<ContentGenerationError>)
+
+    const exact = new OpenAiCompatibleStructuredContentGenerator(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ ...grounded, caption: 'a'.repeat(10) }) } }] }), { status: 200 }))
+    await expect(exact.generateText({ ...input, maxCharacters: 10 })).resolves.toMatchObject({ caption: 'a'.repeat(10) })
+  })
+
+  it('skips the length check when maxCharacters is absent, as in the preview path', async () => {
+    const generator = new OpenAiCompatibleStructuredContentGenerator(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ ...grounded, caption: 'a'.repeat(5_000) }) } }] }), { status: 200 }))
+    await expect(generator.generateText(input)).resolves.toMatchObject({ caption: 'a'.repeat(5_000) })
+  })
+})
+
+describe('assertCaptionLength', () => {
+  const post: GeneratedPost = { verifiedFacts: [], missingFacts: [], headline: 'H', caption: '', shortCaption: 'S', callToAction: '', hashtags: [], altText: 'Alt', templateId: 'v1', safetyFlags: [], generatedClaims: [], variants: [] }
+
+  it('passes when caption.length equals maxCharacters exactly, fails one over', () => {
+    expect(() => assertCaptionLength({ ...post, caption: 'a'.repeat(10) }, 10)).not.toThrow()
+    expect(() => assertCaptionLength({ ...post, caption: 'a'.repeat(11) }, 10)).toThrow(
+      expect.objectContaining({ errorClass: 'caption_too_long', retryable: false, overBy: 1 }),
+    )
+  })
+
+  // Ein Emoji ausserhalb der BMP ist ein Surrogatpaar -- zwei UTF-16-Code-Units fuer ein einziges
+  // wahrgenommenes Zeichen. countCharactersForPlatform zaehlt Code-Units, nicht Grapheme.
+  it('counts an emoji as two UTF-16 code units, exactly at the boundary', () => {
+    const caption = `${'a'.repeat(8)}😀`
+    expect(countCharactersForPlatform(caption)).toBe(10)
+    expect(() => assertCaptionLength({ ...post, caption }, 10)).not.toThrow()
+    expect(() => assertCaptionLength({ ...post, caption: `${caption}x` }, 10)).toThrow()
+  })
+
+  // Basisbuchstabe + kombinierender Akzent (U+0301, nicht das vorkomponierte e-Akut) ist fuer
+  // Menschen ein Zeichen, fuer UTF-16 zwei Code-Units -- derselbe Grund, aus einer anderen Richtung.
+  it('counts a base letter plus combining accent as two UTF-16 code units, exactly at the boundary', () => {
+    const caption = `${'a'.repeat(8)}é`
+    expect(countCharactersForPlatform(caption)).toBe(10)
+    expect(() => assertCaptionLength({ ...post, caption }, 10)).not.toThrow()
+    expect(() => assertCaptionLength({ ...post, caption: `${caption}x` }, 10)).toThrow()
+  })
+
+  it('does not check when maxCharacters is undefined', () => {
+    expect(() => assertCaptionLength({ ...post, caption: 'a'.repeat(100_000) }, undefined)).not.toThrow()
   })
 })

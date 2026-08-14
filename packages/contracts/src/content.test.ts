@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CompressionProvenanceSchema, CreateCompositionSessionSchema, CreateCustomStyleProfileRequestSchema, CreateGenerationCommandSchema, CreatePlatformStylePersonaRequestSchema, CreateSubmissionSchema, CustomStyleProfileSchema, deriveTextGenerationMaxOutputTokens, GeneratedPostSchema, PlatformStylePersonaSchema, TEXT_GENERATION_TEMPERATURE_STEPS, TextGenerationPlatformAvailabilitySchema, UpdatePlatformStylePersonaRequestSchema, VideoUploadMetadataSchema, WorkflowPayloadSchema } from './index.js'
+import { CompressionProvenanceSchema, CreateCompositionSessionSchema, CreateCustomStyleProfileRequestSchema, CreateGenerationCommandSchema, CreatePlatformStylePersonaRequestSchema, CreateSubmissionSchema, CustomStyleProfileSchema, deriveTextGenerationMaxOutputTokens, GeneratedPostSchema, MaxCharactersSchema, PlatformStylePersonaSchema, TEXT_GENERATION_TEMPERATURE_STEPS, TextGenerationPlatformAvailabilitySchema, UpdatePlatformStylePersonaRequestSchema, VideoUploadMetadataSchema, WorkflowPayloadSchema } from './index.js'
 import { department, org, team } from './testFixtures.js'
 
 describe('contracts', () => {
@@ -50,6 +50,16 @@ describe('contracts', () => {
     expect(GeneratedPostSchema.safeParse({ ...base, hashtags: Array(13).fill('#sport') }).success).toBe(
       false,
     )
+  })
+
+  // Plan 044, Step 7: die Obergrenze muss mindestens so gross bleiben wie die groesste
+  // Plattform-Vorgabe, sonst weist GeneratedPostSchema einen zulaessigen Beitrag ab, bevor
+  // assertCaptionLength (packages/content-engine) ueberhaupt greift.
+  it('accepts a caption at MaxCharactersSchemas ceiling, rejects one character more', () => {
+    const atCeiling = { verifiedFacts: [], missingFacts: [], headline: 'Titel', caption: 'a'.repeat(10_000), shortCaption: 'Text', callToAction: 'Komm vorbei', altText: 'Motiv', templateId: 'event-v1', safetyFlags: [], hashtags: [] }
+    expect(MaxCharactersSchema.safeParse(10_000).success).toBe(true)
+    expect(GeneratedPostSchema.safeParse(atCeiling).success).toBe(true)
+    expect(GeneratedPostSchema.safeParse({ ...atCeiling, caption: 'a'.repeat(10_001) }).success).toBe(false)
   })
 })
 
