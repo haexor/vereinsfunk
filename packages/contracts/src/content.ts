@@ -234,10 +234,15 @@ export const CompositionSessionStatusSchema = z.enum(['draft', 'queued', 'genera
 //
 // Dieselbe Spanne wie die CHECK-Constraints (composition_sessions.max_characters,
 // text_generation_platform_defaults.max_characters): einmal benannt, damit die API nicht irgendwann
-// einen Wert annimmt, den die Datenbank mit 23514 zurueckweist. Die Obergrenze 10000 laesst Raum
-// fuer die tatsaechlichen Plattform-Maxima (X 280, Mastodon 500, LinkedIn 3000, Instagram 2200);
-// wirksam gedeckelt wird ein Beitrag zusaetzlich durch GeneratedPostSchema.caption.
-export const MaxCharactersSchema = z.int().min(100).max(10_000)
+// einen Wert annimmt, den die Datenbank mit 23514 zurueckweist. Die Obergrenze laesst Raum fuer die
+// tatsaechlichen Plattform-Maxima (X 280, Mastodon 500, LinkedIn 3000, Instagram 2200).
+//
+// GeneratedPostSchema.caption unten teilt sich denselben Wert (Plan 044, Step 7): die Obergrenze muss
+// mindestens so gross bleiben wie die groesste Plattform-Vorgabe, sonst weist das eigene Schema einen
+// zulaessigen Blogbeitrag ab, bevor assertCaptionLength (packages/content-engine) ueberhaupt greift.
+// Sichtbar aneinandergekoppelt statt zufaellig uebereinstimmend.
+const MAX_CHARACTERS_CEILING = 10_000
+export const MaxCharactersSchema = z.int().min(100).max(MAX_CHARACTERS_CEILING)
 export const TEXT_GENERATION_DEFAULT_MAX_CHARACTERS = 2200
 // Reines Modell-Budget, absichtlich nicht pro Plattform: es verhindert einen davonlaufenden
 // Aufruf, waehrend die Plattform-Grenze ueber max_characters wirkt. Bleibt die feste Vorgabe fuer
@@ -430,7 +435,7 @@ export const PlatformVariantSchema = z.object({
 
 export const GeneratedPostSchema = z.object({
   verifiedFacts: z.array(z.string()).max(60), missingFacts: z.array(z.string()).max(30),
-  headline: z.string().max(80), caption: z.string().max(10_000), shortCaption: z.string().max(500),
+  headline: z.string().max(80), caption: z.string().max(MAX_CHARACTERS_CEILING), shortCaption: z.string().max(500),
   callToAction: z.string().max(240), hashtags: z.array(z.string()).max(12), altText: z.string().max(500),
   templateId: z.string().min(1), safetyFlags: z.array(SafetyFlagSchema),
   generatedClaims: z.array(ClaimSchema).max(60).default([]), variants: z.array(PlatformVariantSchema).max(8).default([]),

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { createSecretBox } from '@vereinsfunk/secrets'
 import { AnthropicStructuredContentGenerator, ContentGenerationError, OpenAiCompatibleStructuredContentGenerator, TEXT_PROMPT_TEMPLATE_VERSION, createTextGroundedContentBrief, type StructuredContentGenerator } from '@vereinsfunk/content-engine'
-import { deriveTextGenerationMaxOutputTokens, providerSendsTemperature, SourceMaterialSchema, StyleProfileSnapshotSchema, UuidSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
+import { deriveTextGenerationMaxOutputTokens, providerSendsTemperature, SourceMaterialSchema, StyleProfileSnapshotSchema, UuidSchema, type GeneratedPost, type WorkflowPayload } from '@vereinsfunk/contracts'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
 import { WorkflowExecutionError } from './workflows.js'
 
@@ -86,17 +86,32 @@ export class TextGenerationExecutor {
       // Belegzahl aus dem Brief, nicht aus dem Rohmaterial: assertGroundedPost prueft gegen genau
       // diese Menge, und sie ist es, die die Antwort ueber verifiedFacts/generatedClaims verlaengert.
       const maxOutputTokens = deriveTextGenerationMaxOutputTokens(session.max_characters, brief.allowedClaims.length + brief.approvedQuotes.length)
-      const post = await generator.generateText({
+      const generationArgs = {
         brief,
         styleProfile: { name: style.name, description: style.description, styleRules: style.styleRules, avoidRules: style.avoidRules, doRules: style.doRules },
-        ...(candidate.revision_instruction ? { revisionInstruction: candidate.revision_instruction } : {}),
         // maxOutputTokens ist nur die Leine fuer den Aufruf; die verbindliche Grenze der Ziel-
         // Plattform ist maxCharacters und steht im Prompt. Aus maxCharacters und der Belegzahl
         // abgeleitet (Plan 039, PR 1 Step 4), damit weder eine hoehere Plattform-Vorgabe (Website:
         // 5000 Zeichen) noch ein belegreicher Spielbericht an einem festen Token-Budget scheitert.
         model: provider.model, baseUrl: provider.base_url, apiKey, temperature: session.temperature,
         maxOutputTokens, maxCharacters: session.max_characters,
-      })
+      }
+      let post: GeneratedPost
+      try {
+        post = await generator.generateText({ ...generationArgs, ...(candidate.revision_instruction ? { revisionInstruction: candidate.revision_instruction } : {}) })
+      } catch (error) {
+        if (!(error instanceof ContentGenerationError) || error.errorClass !== 'caption_too_long') throw error
+        // Ein interner, kandidatenslot-neutraler Wiederholversuch (Plan 044, Step 6): das Modell
+        // erfaehrt die tatsaechliche Ueberlaenge, statt dass der Kandidat sofort als gescheitert
+        // gilt. composition_sessions.candidate_count zaehlt nur neue Kandidatenzeilen -- hier
+        // entsteht keine, derselbe Grundsatz wie bei Infrastruktur-Wiederholungen ("die Zaehlstelle
+        // so legen, dass interne Versuche sie nicht erreichen"). Scheitert auch dieser zweite
+        // Versuch (an derselben oder einer anderen Ursache), propagiert der Fehler unveraendert in
+        // den aeusseren catch-Block unten -- echter Fehlschlag statt eines weiteren Versuchs.
+        const correction = `Der vorige Entwurf war ${error.overBy} Zeichen zu lang, kuerze auf hoechstens ${session.max_characters} Zeichen.`
+        const revisionInstruction = candidate.revision_instruction ? `${candidate.revision_instruction} ${correction}` : correction
+        post = await generator.generateText({ ...generationArgs, revisionInstruction })
+      }
       await this.repository.markReady(candidate.id, session.id, candidate.lease_token, post, { providerConfigurationId: provider.id, providerModelId: provider.model, providerParameterHash: parameterHash(provider, session, maxOutputTokens), promptTemplateVersion: TEXT_PROMPT_TEMPLATE_VERSION })
     } catch (error) {
       const classified = error instanceof ContentGenerationError ? error : error instanceof WorkflowExecutionError ? error : new WorkflowExecutionError('generation_validation', false)

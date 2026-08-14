@@ -27,6 +27,12 @@ function repositoryWithProtocolAndTemperature(protocol: string, temperature: num
   return repo
 }
 
+function repositoryWithRevisionInstruction(instruction: string): TextGenerationRepository {
+  const repo = repository()
+  repo.acquirePendingCandidate = vi.fn().mockResolvedValue({ id: payload.candidateId, status: 'generating', lease_token: '10000000-1300-4000-8000-000000000099', revision_instruction: instruction })
+  return repo
+}
+
 function repositoryWithMaxCharacters(maxCharacters: number, observations: string[] = []): TextGenerationRepository {
   const repo = repository()
   repo.loadSession = vi.fn().mockResolvedValue({ id: payload.entityId, organization_id: payload.organizationId, department_id: payload.departmentId, team_id: null, preset_slug: 'training', communication_goal: 'inform', source_material: { facts: { topic: 'Passen' }, observations, quotes: [], doNotMention: [] }, style_profile_snapshot: { name: 'Klar', description: 'klar', styleRules: { toneTags: ['klar'], catchphrases: [], examples: [], additionalInstructions: '' }, avoidRules: [], doRules: [] }, max_characters: maxCharacters, temperature: 0.6 })
@@ -138,5 +144,48 @@ describe('TextGenerationExecutor', () => {
 
     expect(richTokens).toBeGreaterThan(sparseTokens)
     expect(richHash).not.toBe(sparseHash)
+  })
+
+  // Plan 044, Step 6: der interne Wiederholversuch darf keinen Kandidaten-Slot verbrauchen -- er
+  // laeuft komplett innerhalb dieses einen execute()-Aufrufs, ohne releaseCandidate/markFailed
+  // zwischen den beiden generateText-Versuchen.
+  it('retries once internally after a too-long caption, without releasing or failing the candidate', async () => {
+    const repo = repository()
+    const generator = { generateText: vi.fn().mockRejectedValueOnce(new ContentGenerationError('caption_too_long', false, 37)).mockResolvedValueOnce(post) }
+    await new TextGenerationExecutor(config, repo, generator).execute(payload)
+    expect(generator.generateText).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(generator.generateText).mock.calls[1]![0]!.revisionInstruction).toContain('37 Zeichen zu lang')
+    expect(vi.mocked(generator.generateText).mock.calls[1]![0]!.revisionInstruction).toContain('2200 Zeichen')
+    expect(repo.markReady).toHaveBeenCalledTimes(1)
+    expect(repo.markFailed).not.toHaveBeenCalled()
+    expect(repo.releaseCandidate).not.toHaveBeenCalled()
+  })
+
+  it('combines an existing revision instruction with the length correction on retry', async () => {
+    const repo = repositoryWithRevisionInstruction('Mehr Emotionen bitte.')
+    const generator = { generateText: vi.fn().mockRejectedValueOnce(new ContentGenerationError('caption_too_long', false, 10)).mockResolvedValueOnce(post) }
+    await new TextGenerationExecutor(config, repo, generator).execute(payload)
+    const secondCallArgs = vi.mocked(generator.generateText).mock.calls[1]![0]!
+    expect(secondCallArgs.revisionInstruction).toContain('Mehr Emotionen bitte.')
+    expect(secondCallArgs.revisionInstruction).toContain('10 Zeichen zu lang')
+    // Der erste Versuch traegt weiterhin nur die urspruengliche Anweisung des Mitglieds.
+    expect(vi.mocked(generator.generateText).mock.calls[0]![0]!.revisionInstruction).toBe('Mehr Emotionen bitte.')
+  })
+
+  it('fails the candidate, not retryable, when the internal retry is also too long -- exactly two attempts, no second candidate', async () => {
+    const repo = repository()
+    const generator = { generateText: vi.fn().mockRejectedValue(new ContentGenerationError('caption_too_long', false, 12)) }
+    await expect(new TextGenerationExecutor(config, repo, generator).execute(payload)).rejects.toMatchObject({ errorClass: 'caption_too_long', retryable: false })
+    expect(generator.generateText).toHaveBeenCalledTimes(2)
+    expect(repo.markFailed).toHaveBeenCalledWith(payload.candidateId, payload.entityId, '10000000-1300-4000-8000-000000000099', 'caption_too_long')
+    expect(repo.releaseCandidate).not.toHaveBeenCalled()
+  })
+
+  it('does not intercept an unrelated error on the first attempt', async () => {
+    const repo = repository()
+    const generator = { generateText: vi.fn().mockRejectedValue(new ContentGenerationError('provider_rate_limit', true)) }
+    await expect(new TextGenerationExecutor(config, repo, generator).execute(payload)).rejects.toMatchObject({ errorClass: 'provider_rate_limit', retryable: true })
+    expect(generator.generateText).toHaveBeenCalledTimes(1)
+    expect(repo.releaseCandidate).toHaveBeenCalled()
   })
 })

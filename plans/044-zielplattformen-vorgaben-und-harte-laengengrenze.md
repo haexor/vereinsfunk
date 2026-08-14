@@ -84,6 +84,22 @@ Die Vorgabe gehört zu den Richtlinien, erscheint auf denselben Seiten wie `Poli
 
 **Verifizieren**: Playwright-Smoke — Vereinsvorgabe setzen, in einer Abteilung „geerbt“ sehen, dort abwählen, Vererbung greift nicht mehr.
 
+## Stand nach der Umsetzung von PR 2
+
+Umgesetzt wie geplant, mit einer Ergaenzung zu Step 6: `ContentGenerationError` traegt jetzt ein
+optionales drittes Feld `overBy` (nur bei `caption_too_long` gesetzt), weil `assertCaptionLength`
+den zu langen Post nicht zurueckgibt, sondern wirft -- ohne dieses Feld haette der Worker die
+tatsaechliche Ueberlaenge fuer die verschaerfte Anweisung nicht gekannt. `caption_too_long` ist
+durchgehend `retryable: false`: der interne Wiederholversuch laeuft komplett innerhalb von
+`TextGenerationExecutor.execute()` (zwei `generateText`-Aufrufe, ein `markReady`/`markFailed`),
+nie ueber Hatchets eigenen Retry- oder den Recovery-Scan-Pfad -- genau das haette einen
+Kandidaten-Slot verbraucht.
+
+**Verifiziert**: `pnpm lint`, `pnpm typecheck` (36/36), `pnpm test` (36/36, u. a. 4 neue
+Worker-Tests fuer den Wiederholversuch, 5 neue content-engine-Tests inkl. Emoji/kombiniertem
+Zeichen an der Grenze, 1 neuer Contracts-Test fuer die caption-Kopplung) und `pnpm build` sind
+gruen. Keine Migration in diesem PR, daher kein `db:test` noetig.
+
 ## PR 2: Die Zeichengrenze hart durchsetzen
 
 ### Step 5 — Prüfung nach der Generierung
