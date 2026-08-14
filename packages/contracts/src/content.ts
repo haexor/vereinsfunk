@@ -258,7 +258,7 @@ export const TEXT_GENERATION_TEMPERATURE_STEPS = [
   { value: 0.8, label: 'Ausgeprägt', hint: 'Der typische Sound der Persona dominiert.' },
   { value: 1.0, label: 'Vollgas', hint: 'Maximale Übertreibung, volle Show.' },
 ] as const
-const TextGenerationTemperatureSchema = z.literal(TEXT_GENERATION_TEMPERATURE_STEPS.map((step) => step.value))
+export const TextGenerationTemperatureSchema = z.literal(TEXT_GENERATION_TEMPERATURE_STEPS.map((step) => step.value))
 // Die "Ausgewogen"-Stufe als Vorgabe -- aus der Liste gelesen statt als zweites 0.6-Literal, sonst
 // wuerde ein Umbau der Stufen einen Default hinterlassen, den das eigene Schema ablehnt.
 export const TEXT_GENERATION_DEFAULT_TEMPERATURE = TEXT_GENERATION_TEMPERATURE_STEPS[1].value
@@ -378,7 +378,7 @@ export const PlatformVariantSchema = z.object({
 
 export const GeneratedPostSchema = z.object({
   verifiedFacts: z.array(z.string()).max(60), missingFacts: z.array(z.string()).max(30),
-  headline: z.string().max(80), caption: z.string().max(2200), shortCaption: z.string().max(500),
+  headline: z.string().max(80), caption: z.string().max(10_000), shortCaption: z.string().max(500),
   callToAction: z.string().max(240), hashtags: z.array(z.string()).max(12), altText: z.string().max(500),
   templateId: z.string().min(1), safetyFlags: z.array(SafetyFlagSchema),
   generatedClaims: z.array(ClaimSchema).max(60).default([]), variants: z.array(PlatformVariantSchema).max(8).default([]),

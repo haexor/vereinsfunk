@@ -2,7 +2,7 @@
 
 > **Executor instructions**: Drei PRs in dieser Reihenfolge. PR 1 ist umgesetzt und gemergt-bereit (**PR #74**) — dieser Plan wurde nachträglich geschrieben, nachdem beim Code-Review von PR #74 auffiel, dass er als einziges Paket keine committete Plandatei hatte. PR 2 und PR 3 setzen auf dem gemergten Stand von PR #74 auf.
 >
-> **Drift check (run first)**: `git log --oneline -3 -- packages/contracts/src/content.ts packages/contracts/src/platformAdmin.ts supabase/migrations` — der jüngste Commit an diesen Pfaden muss PR #74 (bzw. dessen Review-Fix `6c932e1d`) sein.
+> **Drift check (run first)**: `git log --oneline -3 -- packages/contracts/src/content.ts packages/contracts/src/platformAdmin.ts supabase/migrations` — der jüngste Commit an diesen Pfaden muss vom Branch `worktree-paket-042-llm-runtime-params` (PR #74) stammen. Ein einzelner Commit-Hash reicht dafür nicht als Referenz, weil der Branch nach dem Review-Fix noch mehrfach fortgeschrieben wurde (`67423ef7`, danach weitere Commits vom 14. August 2026) — gegen den PR-Branch bzw. dessen main-Stand nach dem Merge prüfen, nicht gegen eine einzelne Review-Fix-Revision.
 
 ## Status
 
@@ -74,12 +74,12 @@ Zwei Entscheidungen aus dem Review-Fix wurden nach Rückmeldung des Betreibers k
 
 ### Bewusste Nicht-Entscheidung: keine Datenmigration der alten Provider-Werte
 
-`2026081307` verwirft die konfigurierten Werte, `2026081309` befüllt bestehende Sitzungen mit 0.6/1200. Kein Backfill trägt die echten Werte weiter, und das bleibt so:
+`2026081307` verwirft die konfigurierten Werte, `2026081309` befüllt bestehende Sitzungen mit `temperature = 0.6` und `max_characters = 2200`. Kein Backfill trägt die echten Werte weiter, und das bleibt so:
 
 - **`temperature`**: der bisherige Vorgabewert 0.2 ist in der neuen Vier-Stufen-Skala **kein legaler Wert mehr** (CHECK `in (0.3, 0.6, 0.8, 1.0)`). Er ist nicht übertragbar, egal wie sorgfältig migriert wird.
-- **`max_output_tokens`**: der Seed 1200 entspricht dem bisherigen Vorgabewert. Ein davon abweichender, vom Betreiber gesetzter Wert (z. B. 400 als Kostendeckel) geht verloren, ist aber über die Vorgaben-UI aus PR 2 wieder eintragbar — von genau der Person, die ihn gesetzt hat.
+- **`max_characters`**: der Seed 2200 ist Instagrams echte Bildtext-Grenze, nicht der bisherige `max_output_tokens`-Wert des Providers — seit der Nachjustierung oben sind das ohnehin verschiedene Einheiten. Ein vom Betreiber abweichend gesetzter `max_output_tokens`-Wert (z. B. 400 als Kostendeckel) geht ersatzlos verloren; `TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS` bleibt als globale Konstante bei 1200. Die Zeichengrenze je Plattform ist über die Vorgaben-UI aus PR 2 pflegbar — von genau der Person, die sie braucht.
 
-Wer PR 1 in Produktion bringt, sollte den alten Wert vorher notieren, wenn er von 1200 abwich.
+Wer PR 1 in Produktion bringt, sollte einen von 1200 abweichenden `max_output_tokens`-Wert vorher notieren.
 
 ## PR 2: Plattform-Vorgaben verwalten
 
@@ -87,15 +87,15 @@ Die API-Hälften existieren seit PR 1 und haben keinen Konsumenten. PR 2 baut di
 
 ### Step 1: Vorgaben-Abschnitt in `plattform-admin/llm.vue`
 
-Eigener Abschnitt unter der Provider-Tabelle: je Plattform (`instagram`, `facebook`) eine Zeile mit `max_output_tokens` als Zahlenfeld (min 128, max 4000, aus `MaxOutputTokensSchema`) und Speichern-Knopf pro Zeile, plus Anzeige von `updatedAt`. Laden über `GET /v1/text-generation-platform-defaults`, schreiben über `PUT /v1/text-generation-platform-defaults/:platform`. Der 404-Fall aus dem Review-Fix braucht eine eigene Meldung („Für diese Plattform ist keine Vorgabe angelegt") — er tritt nur auf, wenn eine späte Migration die Plattform-Menge erweitert, ohne zu befüllen.
+Eigener Abschnitt unter der Provider-Tabelle: je Plattform (`instagram`, `facebook`) eine Zeile mit `max_characters` als Zahlenfeld (100–10000, aus `MaxCharactersSchema`) und Speichern-Knopf pro Zeile, plus Anzeige von `updatedAt`. Laden über `GET /v1/text-generation-platform-defaults`, schreiben über `PUT /v1/text-generation-platform-defaults/:platform`. Der 404-Fall aus dem Review-Fix braucht eine eigene Meldung („Für diese Plattform ist keine Vorgabe angelegt") — er tritt nur auf, wenn eine späte Migration die Plattform-Menge erweitert, ohne zu befüllen.
 
 Der Abschnitt gehört bewusst neben die Provider und nicht in `plattform-admin/einstellungen.vue`: er hängt fachlich an der Textgenerierung, nicht an den globalen `platform_settings`.
 
-**Verify**: `cd apps/web && pnpm typecheck && pnpm test` → exit 0. Manuell: Wert auf 800 ändern, neu laden, Wert steht; `updatedAt` hat sich bewegt. Als Nicht-Plattform-Admin ist die Seite ohnehin nicht erreichbar.
+**Verify**: `cd apps/web && pnpm typecheck && pnpm test` → exit 0. Manuell: Wert auf 1500 ändern, neu laden, Wert steht; `updatedAt` hat sich bewegt. Als Nicht-Plattform-Admin ist die Seite ohnehin nicht erreichbar.
 
 ### Step 2: Formulierung ohne Anbieter-Jargon
 
-„Max. Ausgabe-Tokens" ist Betreiber-UI, darf also technisch bleiben — aber mit einem Satz, was der Wert bewirkt („Obergrenze für die Länge eines erzeugten Textes je Ziel-Plattform; unkalibrierter Platzhalter, 1200 entspricht dem bisherigen globalen Wert"). Kundenseitige Grenzen bleiben von Tokens frei (siehe Paket 021).
+Die Zeichengrenze ist bereits jargonfrei, braucht aber einen Satz, was der Wert bewirkt („Obergrenze für die Länge eines erzeugten Textes auf dieser Plattform; 2200 entspricht Instagrams Bildtext-Grenze"). Kundenseitige Grenzen bleiben von Tokens frei (siehe Paket 021).
 
 **Verify**: `pnpm lint` → exit 0.
 

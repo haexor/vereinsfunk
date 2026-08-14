@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { z } from 'zod'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
-import { CommunicationGoalSchema, SocialPlatformSchema, SourceMaterialSchema, UuidSchema, WorkflowNameSchema, WorkflowPayloadSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
+import { CommunicationGoalSchema, MaxCharactersSchema, SocialPlatformSchema, SourceMaterialSchema, TextGenerationTemperatureSchema, UuidSchema, WorkflowNameSchema, WorkflowPayloadSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
 import type { WorkflowOutboxRepository } from '@vereinsfunk/orchestration'
 import { WorkflowExecutionError, type WorkflowExecutionRepository, type WorkflowRunAcquireResult } from './workflows.js'
 import type { CandidateRow, ProviderRow, SessionRow, TextGenerationRepository } from './textGeneration.js'
@@ -15,7 +15,7 @@ import type { GenerationRecoveryRepository, RecoverableSessionRow, StalledCandid
 const SessionRowSchema: z.ZodType<SessionRow> = z.object({
   id: UuidSchema, organization_id: UuidSchema, department_id: UuidSchema, team_id: UuidSchema.nullable(), preset_slug: z.string().trim().min(1),
   communication_goal: CommunicationGoalSchema, source_material: SourceMaterialSchema,
-  style_profile_snapshot: z.unknown(), max_characters: z.coerce.number().int().positive(), temperature: z.coerce.number(),
+  style_profile_snapshot: z.unknown(), max_characters: z.coerce.number().pipe(MaxCharactersSchema), temperature: z.coerce.number().pipe(TextGenerationTemperatureSchema),
 })
 const CandidateRowSchema: z.ZodType<CandidateRow> = z.object({ id: UuidSchema, status: z.literal('generating'), revision_instruction: z.string().nullable(), lease_token: UuidSchema })
 const ProviderRowSchema: z.ZodType<ProviderRow> = z.object({
@@ -36,7 +36,7 @@ const RecoverableSessionRowSchema: z.ZodType<RecoverableSessionRow> = z.object({
   organization_id: UuidSchema, department_id: UuidSchema, team_id: UuidSchema.nullable(), preset_slug: z.string().trim().min(1),
   communication_goal: CommunicationGoalSchema, requested_formats: z.unknown().nonoptional(), source_material: z.unknown().nonoptional(), style_profile_id: UuidSchema.nullable(),
   style_profile_snapshot: z.unknown().nonoptional(), effective_config_snapshot: z.unknown().nonoptional(),
-  target_platforms: z.array(SocialPlatformSchema), max_characters: z.coerce.number().int().positive(), temperature: z.coerce.number(),
+  target_platforms: z.array(SocialPlatformSchema), max_characters: z.coerce.number().pipe(MaxCharactersSchema), temperature: z.coerce.number().pipe(TextGenerationTemperatureSchema),
   source_revision: z.coerce.number().int().positive(),
   input_hash: z.string().regex(/^[a-f0-9]{64}$/), created_by: UuidSchema,
 })
