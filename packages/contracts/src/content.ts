@@ -295,7 +295,10 @@ export const CreateCompositionSessionSchema = z.object({
   // Plattformen veroeffentlicht. Aus der Auswahl leitet die Route die verbindliche Zeichengrenze ab
   // (Sitzungs-Override > kleinste Vorgabe der gewaehlten Plattformen > Fallback, siehe
   // routes/content.ts). Welche Plattformen ein Mitglied ueberhaupt anhaken darf, ergibt sich aus den
-  // eingerichteten Kanaelen seines Scopes -- diese Pruefung fehlt noch (Plan 042, PR 3).
+  // eingerichteten Kanaelen seines Scopes; die Route prueft das seit Plan 042, PR 3 selbst und
+  // antwortet mit 422 platform_not_available. Der Vorgabewert unten ist deshalb kein sicherer
+  // Rueckfall mehr: ein Verein ohne Facebook-Kanal laeuft damit in genau dieses 422. Wer die Route
+  // aufruft, sollte targetPlatforms aus GET /v1/text-generation-platforms setzen statt wegzulassen.
   //
   // Der Vorgabewert ist bewusst ausgeschrieben und NICHT aus SocialPlatformSchema.options
   // abgeleitet: sobald eine Kurzform-Plattform dazukommt, wuerde "alle vorausgewaehlt" zusammen mit

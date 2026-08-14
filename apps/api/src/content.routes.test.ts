@@ -21,6 +21,19 @@ const AVAILABLE_CHANNEL_FIXTURES = {
   ],
 }
 
+// policy_settings wird auf zwei Arten gelesen: fetchPolicyRuleRows holt alle Regelzeilen einer
+// Organisation (Array, direkt awaited), resolveTextGenerationPlatformAvailability nur das
+// vereinsweite require_channel_responsible (Objekt, per maybeSingle). chain() liefert fuer beide
+// Abschluesse dieselbe Nutzlast -- ohne diese Unterscheidung laeuft jeder Test mit
+// require_channel_responsible = false, egal was seine Vorrichtung behauptet.
+function policySettingsFake(options: { ruleRows?: unknown[]; requireChannelResponsible?: boolean } = {}) {
+  return {
+    select: (columns: string) => columns === 'require_channel_responsible'
+      ? chain({ data: { require_channel_responsible: options.requireChannelResponsible ?? false }, error: null })
+      : chain({ data: options.ruleRows ?? [], error: null }),
+  }
+}
+
 const STYLE_RULES = { toneTags: ['direkt', 'anfeuernd'], catchphrases: [], examples: [], additionalInstructions: '' }
 const PERSONA_ROW = { id: '3b000000-0000-4000-8000-000000000001', slug: 'kapitaen-klar', name: 'Kapitän Klar', description: 'Direkt und anfeuernd.', style_rules: STYLE_RULES, avoid_rules: ['Ironie'], do_rules: [] }
 const PROFILE_ID = '3e000000-0000-4000-8000-000000000001'
@@ -134,7 +147,7 @@ describe('POST /v1/text-workshop/sessions', () => {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'policy_settings') return chain({ data: [], error: null })
+            if (table === 'policy_settings') return policySettingsFake()
             if (table === 'platform_style_personas') return chain({ data: PERSONA_ROW, error: null })
             if (table === 'social_connections') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.socialConnections, error: null })
             if (table === 'channel_scopes') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.channelScopes, error: null })
@@ -168,7 +181,7 @@ describe('POST /v1/text-workshop/sessions', () => {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'policy_settings') return chain({ data: [], error: null })
+            if (table === 'policy_settings') return policySettingsFake()
             if (table === 'platform_style_personas') return chain({ data: null, error: null })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
@@ -193,7 +206,7 @@ describe('POST /v1/text-workshop/sessions', () => {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'policy_settings') return chain({ data: [], error: null })
+            if (table === 'policy_settings') return policySettingsFake()
             if (table === 'social_connections') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.socialConnections, error: null })
             if (table === 'channel_scopes') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.channelScopes, error: null })
             // Ein Platzhalter, dem eine Vorgabezeile fehlt, faellt auf TEXT_GENERATION_DEFAULT_MAX_CHARACTERS
@@ -237,6 +250,12 @@ describe('POST /v1/text-workshop/sessions', () => {
     expect(fallback?.p_temperature).toBe(0.6)
     // Ohne Angabe sind beide Plattformen vorausgewaehlt, sortiert an den RPC uebergeben.
     expect(fallback?.p_target_platforms).toEqual(['facebook', 'instagram'])
+
+    // ... und umgekehrt darf eine fehlende Zeile die ausdrueckliche Vorgabe einer anderen Plattform
+    // nicht auf den generischen Wert herunterziehen: sie zaehlt in der min()-Bildung gar nicht mit.
+    let mixed: Record<string, unknown> | undefined
+    expect((await createSession(sessionCreatingClients({ platformDefaults: { instagram: 3000 }, onRpc: (params) => { mixed = params } }), basePayload)).statusCode).toBe(202)
+    expect(mixed?.p_max_characters).toBe(3000)
   })
 
   // Der Kern der Mehrfachauswahl: ein Text fuer mehrere Plattformen richtet sich nach der
@@ -276,7 +295,7 @@ describe('POST /v1/text-workshop/sessions', () => {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'policy_settings') return chain({ data: [], error: null })
+            if (table === 'policy_settings') return policySettingsFake()
             // Nur Instagram hat einen Kanal -- Facebook fehlt komplett.
             if (table === 'social_connections') return chain({ data: [AVAILABLE_CHANNEL_FIXTURES.socialConnections[0]], error: null })
             if (table === 'channel_scopes') return chain({ data: [AVAILABLE_CHANNEL_FIXTURES.channelScopes[0]], error: null })
@@ -300,7 +319,7 @@ describe('GET /v1/text-generation-platforms', () => {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'policy_settings') return chain({ data: [], error: null })
+            if (table === 'policy_settings') return policySettingsFake()
             if (table === 'social_connections') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.socialConnections, error: null })
             if (table === 'channel_scopes') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.channelScopes, error: null })
             if (table === 'text_generation_platform_defaults') return chain({ data: [{ platform: 'instagram', max_characters: 2200 }, { platform: 'facebook', max_characters: 1500 }], error: null })
@@ -324,7 +343,7 @@ describe('GET /v1/text-generation-platforms', () => {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'policy_settings') return chain({ data: [], error: null })
+            if (table === 'policy_settings') return policySettingsFake()
             if (table === 'social_connections') return chain({ data: [AVAILABLE_CHANNEL_FIXTURES.socialConnections[0]], error: null })
             if (table === 'channel_scopes') return chain({ data: [AVAILABLE_CHANNEL_FIXTURES.channelScopes[0]], error: null })
             if (table === 'text_generation_platform_defaults') return chain({ data: [], error: null })
@@ -351,18 +370,44 @@ describe('GET /v1/text-generation-platforms', () => {
         ({
           from: (table: string) => {
             if (table === 'policy_settings') {
-              return chain({
-                data: [{
+              return policySettingsFake({
+                ruleRows: [{
                   id: 'policy-row-1', scope: 'organization', department_id: null, team_id: null,
                   submit_requires_permission: null, review_required: null, review_mode: null, review_stage_label: null, review_minimum_approvals: null, review_deadline_hours: null,
                   minor_approval_required: null, self_approval_allowed: null, allow_same_reviewer_across_stages: null, allow_review_exemptions: null, media_requires_consent_check: null,
                   allowed_presets: null, allowed_formats: null, allowed_channel_ids: ['channel-instagram'], forbidden_topics: [], required_hashtags: [], tone: null,
                   consent_expires_on_leave: null, consent_validity_months: null,
                 }],
-                error: null,
               })
             }
             if (table === 'social_connections') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.socialConnections, error: null })
+            if (table === 'channel_scopes') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.channelScopes, error: null })
+            if (table === 'text_generation_platform_defaults') return chain({ data: [], error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => { throw new Error('forService should not be called by this route') },
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: '/v1/text-generation-platforms', headers: { authorization: `Bearer ${token}` }, query })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual(expect.arrayContaining([
+      { platform: 'instagram', available: true, maxCharacters: 2200 },
+      { platform: 'facebook', available: false, maxCharacters: 2200, reason: 'restricted_by_policy' },
+    ]))
+  })
+
+  // require_channel_responsible ist ebenfalls eine Richtlinie: ein vorhandener Kanal ohne
+  // eingetragene verantwortliche Person darf nicht als "kein Kanal eingerichtet" gemeldet werden,
+  // sonst legt der Verein einen zweiten Kanal an, statt die Person einzutragen.
+  it('reports reason: restricted_by_policy when a channel exists but has no responsible person', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'policy_settings') return policySettingsFake({ requireChannelResponsible: true })
+            if (table === 'social_connections') return chain({ data: [{ ...AVAILABLE_CHANNEL_FIXTURES.socialConnections[0], responsible_profile_id: 'profile-1' }, AVAILABLE_CHANNEL_FIXTURES.socialConnections[1]], error: null })
             if (table === 'channel_scopes') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.channelScopes, error: null })
             if (table === 'text_generation_platform_defaults') return chain({ data: [], error: null })
             throw new Error(`unexpected table in test fake: ${table}`)

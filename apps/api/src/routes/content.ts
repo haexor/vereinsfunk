@@ -10,6 +10,7 @@ import {
   StyleProfileRulesSchema,
   SubmissionAcceptedSchema,
   TeamSchema,
+  TEXT_GENERATION_DEFAULT_MAX_CHARACTERS,
   TextGenerationPlatformAvailabilitySchema,
   UpdateCustomStyleProfileRequestSchema,
   UuidSchema,
@@ -308,7 +309,9 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     const availability = await resolveTextGenerationPlatformAvailability(client, scope.organizationId, scope.departmentId, scope.teamId ?? null, config.policies.allowedChannelIds)
     return reply.code(200).send(
       z.array(TextGenerationPlatformAvailabilitySchema).parse(
-        [...availability.entries()].map(([platform, entry]) => ({ platform, ...entry })),
+        // Fehlt die Vorgabezeile, zeigt die Anzeige den generischen Fallback -- eine Zahl muss hier
+        // stehen. Fuer die verbindliche Grenze der Sitzung zaehlt sie dagegen nicht mit (unten).
+        [...availability.entries()].map(([platform, entry]) => ({ ...entry, platform, maxCharacters: entry.maxCharacters ?? TEXT_GENERATION_DEFAULT_MAX_CHARACTERS })),
       ),
     )
   })
@@ -466,10 +469,14 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     const service = supabaseClients.forService()
     // Aufgeloest bei Anlage, danach eingefroren (siehe composition_sessions.max_characters):
     // expliziter Request-Wert > kleinste Vorgabe der gewaehlten Plattformen (aus derselben
-    // Verfuegbarkeitspruefung oben, die bereits einen Fallback fuer eine fehlende Vorgabezeile
-    // traegt). Das Minimum, nicht der Durchschnitt oder die erste Wahl: ein einziger Text soll auf
-    // jeder angehakten Plattform passen, also gibt die knappste den Rahmen vor.
-    const maxCharacters = input.maxCharacters ?? Math.min(...targetPlatforms.map((platform) => platformAvailability.get(platform)!.maxCharacters))
+    // Verfuegbarkeitspruefung oben) > generischer Fallback. Das Minimum, nicht der Durchschnitt
+    // oder die erste Wahl: ein einziger Text soll auf jeder angehakten Plattform passen, also gibt
+    // die knappste den Rahmen vor. Fehlt fuer eine gewaehlte Plattform die Vorgabezeile, zaehlt sie
+    // hier nicht mit -- weder darf ihr Fehlen die Laenge heimlich hochsetzen noch den ausdruecklich
+    // gesetzten Wert einer anderen Plattform auf den Fallback herunterziehen, und ihr Fehlen ist
+    // ein Betreiberproblem (siehe PUT-Route).
+    const platformLimits = targetPlatforms.map((platform) => platformAvailability.get(platform)!.maxCharacters).filter((limit): limit is number => limit !== null)
+    const maxCharacters = input.maxCharacters ?? (platformLimits.length > 0 ? Math.min(...platformLimits) : TEXT_GENERATION_DEFAULT_MAX_CHARACTERS)
     const result = await service.rpc('create_text_generation_session', {
       p_organization_id: input.organizationId, p_department_id: input.departmentId, p_team_id: input.teamId ?? null, p_preset_slug: input.presetSlug,
       p_communication_goal: input.communicationGoal, p_requested_formats: input.requestedFormats, p_source_material: sourceMaterial,

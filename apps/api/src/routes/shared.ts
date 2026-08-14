@@ -2,7 +2,7 @@ import type { ConsentScope, GeneratedPost, OutputFormat, ScopeLevel, SocialPlatf
 import { canRemoveRole, hasPermission, type Permission, type Role } from '@vereinsfunk/authorization'
 import type { ApiEnvironment } from '@vereinsfunk/config'
 import { AnthropicStructuredContentGenerator, buildStructuredTextPrompt, ContentGenerationError, OpenAiCompatibleStructuredContentGenerator, type GroundedContentBrief, type StructuredContentGenerator } from '@vereinsfunk/content-engine'
-import { SocialPlatformSchema, TEXT_GENERATION_DEFAULT_MAX_CHARACTERS, TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS, TEXT_GENERATION_DEFAULT_TEMPERATURE, UuidSchema } from '@vereinsfunk/contracts'
+import { SocialPlatformSchema, TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS, TEXT_GENERATION_DEFAULT_TEMPERATURE, UuidSchema } from '@vereinsfunk/contracts'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { mergeEffectiveConfig, resolveAvailableChannels, resolveEffectiveConfig, type ChannelCandidate, type ConfigOverride, type ScopeLevelName, type TrustRecord } from '@vereinsfunk/domain'
 import type { FastifyRequest } from 'fastify'
@@ -327,17 +327,46 @@ export async function resolveScopedEffectiveConfig(client: SupabaseClient, organ
   return computeRuleEntry(rows, teamId ? 'team' : 'department', teamId ?? departmentId, departmentId).config
 }
 
-export type TextGenerationPlatformAvailability = { available: boolean; maxCharacters: number; reason?: 'no_channel' | 'restricted_by_policy' }
+// maxCharacters bleibt null, wenn fuer die Plattform keine Vorgabezeile existiert: eine fehlende
+// Zeile darf die Laenge weder heimlich hochsetzen noch heimlich senken, also entscheidet erst der
+// Aufrufer, was ihr Fehlen bedeutet (Anzeige: Fallback, min()-Bildung: nicht mitzaehlen).
+export type TextGenerationPlatformResolution = { available: boolean; maxCharacters: number | null; reason?: 'no_channel' | 'restricted_by_policy' }
+
+type ChannelConnectionRow = { id: unknown; status: unknown; archived_at: unknown; responsible_profile_id: unknown }
+type ChannelScopeRow = { social_connection_id: unknown; scope: unknown; department_id: unknown; team_id: unknown; can_schedule: unknown }
+
+// Baut die Kandidatenliste, die resolveAvailableChannels erwartet, aus den beiden Rohtabellen.
+// Stand wortgleich in routes/channels.ts (Kanalauswahl eines bestehenden Beitrags) und hier --
+// zwei Kopien haetten frueher oder later zwei Antworten auf "worauf darf dieser Scope senden".
+export function toChannelCandidates(connections: readonly ChannelConnectionRow[], scopeRows: readonly ChannelScopeRow[]): ChannelCandidate[] {
+  return connections.map((connection) => ({
+    socialConnectionId: connection.id as string,
+    status: connection.status as ChannelCandidate['status'],
+    archivedAt: connection.archived_at as string | null,
+    responsibleProfileId: connection.responsible_profile_id as string | null,
+    scopeGrants: scopeRows
+      .filter((row) => row.social_connection_id === connection.id)
+      .map((row) => ({
+        scope: row.scope as ScopeLevelName,
+        ...(row.department_id ? { departmentId: row.department_id as string } : {}),
+        ...(row.team_id ? { teamId: row.team_id as string } : {}),
+        canSchedule: row.can_schedule as boolean,
+      })),
+  }))
+}
 
 // Plan 042, PR 3 Step 3: "auf welchen Plattformen darf dieser Scope ueberhaupt veroeffentlichen"
 // -- dieselbe Frage, die routes/channels.ts's GET /v1/post-versions/:id/available-channels fuer
 // einen bestehenden Beitrag beantwortet, hier aber vor der Erzeugung und je Plattform statt je
-// Kanal-ID. Zwei Aufloesungen (mit und ohne allowedChannelIds-Einschraenkung), um "kein Kanal
-// eingerichtet" von "ein Kanal existiert, ist aber per Richtlinie ausgeschlossen" zu unterscheiden
-// -- beides fuehrt sonst ununterscheidbar zu "nicht verfuegbar".
+// Kanal-ID. Zwei Aufloesungen, um "kein Kanal eingerichtet" von "ein Kanal existiert, ist aber per
+// Richtlinie ausgeschlossen" zu unterscheiden -- beides fuehrt sonst ununterscheidbar zu "nicht
+// verfuegbar". Die Vergleichsaufloesung laesst BEIDE Richtlinien fallen (allowedChannelIds und
+// require_channel_responsible): ein Kanal ohne eingetragene verantwortliche Person ist per
+// Richtlinie ausgeschlossen, nicht "nicht eingerichtet" -- sonst schickt der Hinweistext einen
+// Verein einen zweiten Kanal anlegen, statt die Person einzutragen (Review dieses PRs).
 export async function resolveTextGenerationPlatformAvailability(
   client: SupabaseClient, organizationId: string, departmentId: string, teamId: string | null, allowedChannelIds: readonly string[] | null,
-): Promise<Map<SocialPlatform, TextGenerationPlatformAvailability>> {
+): Promise<Map<SocialPlatform, TextGenerationPlatformResolution>> {
   const [connections, scopeRows, policyRow, platformDefaults] = await Promise.all([
     client.from('social_connections').select('id, platform, status, archived_at, responsible_profile_id').eq('organization_id', organizationId),
     client.from('channel_scopes').select('social_connection_id, scope, department_id, team_id, can_schedule').eq('organization_id', organizationId),
@@ -353,30 +382,16 @@ export async function resolveTextGenerationPlatformAvailability(
   const requireChannelResponsible = policyRow.data?.require_channel_responsible ?? false
   const maxCharactersByPlatform = new Map(platformDefaults.data.map((row) => [row.platform as SocialPlatform, row.max_characters as number]))
 
-  const result = new Map<SocialPlatform, TextGenerationPlatformAvailability>()
+  const result = new Map<SocialPlatform, TextGenerationPlatformResolution>()
+  const scopeInput = { scope: targetScope, departmentId, ...(teamId ? { teamId } : {}) }
   for (const platform of SocialPlatformSchema.options) {
-    const candidates: ChannelCandidate[] = connections.data
-      .filter((connection) => connection.platform === platform)
-      .map((connection) => ({
-        socialConnectionId: connection.id as string,
-        status: connection.status as ChannelCandidate['status'],
-        archivedAt: connection.archived_at as string | null,
-        responsibleProfileId: connection.responsible_profile_id as string | null,
-        scopeGrants: scopeRows.data
-          .filter((row) => row.social_connection_id === connection.id)
-          .map((row) => ({
-            scope: row.scope as ScopeLevelName,
-            ...(row.department_id ? { departmentId: row.department_id as string } : {}),
-            ...(row.team_id ? { teamId: row.team_id as string } : {}),
-            canSchedule: row.can_schedule as boolean,
-          })),
-      }))
-    const unrestricted = resolveAvailableChannels({ scope: targetScope, departmentId, ...(teamId ? { teamId } : {}), channels: candidates, allowedChannelIds: null, requireChannelResponsible })
-    const restricted = resolveAvailableChannels({ scope: targetScope, departmentId, ...(teamId ? { teamId } : {}), channels: candidates, allowedChannelIds, requireChannelResponsible })
-    const maxCharacters = maxCharactersByPlatform.get(platform) ?? TEXT_GENERATION_DEFAULT_MAX_CHARACTERS
-    result.set(platform, restricted.length > 0
+    const candidates = toChannelCandidates(connections.data.filter((connection) => connection.platform === platform), scopeRows.data)
+    const withoutPolicies = resolveAvailableChannels({ ...scopeInput, channels: candidates, allowedChannelIds: null, requireChannelResponsible: false })
+    const withPolicies = resolveAvailableChannels({ ...scopeInput, channels: candidates, allowedChannelIds, requireChannelResponsible })
+    const maxCharacters = maxCharactersByPlatform.get(platform) ?? null
+    result.set(platform, withPolicies.length > 0
       ? { available: true, maxCharacters }
-      : { available: false, maxCharacters, reason: unrestricted.length > 0 ? 'restricted_by_policy' : 'no_channel' })
+      : { available: false, maxCharacters, reason: withoutPolicies.length > 0 ? 'restricted_by_policy' : 'no_channel' })
   }
   return result
 }

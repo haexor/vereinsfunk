@@ -102,6 +102,17 @@ export const TextGenerationCapabilitiesSchema = z.object({
   temperatureSupported: z.boolean(),
 })
 
+// Welches Protokoll temperature tatsaechlich mitsendet -- eine Quelle statt zweier
+// Zeichenkettenvergleiche, die auseinanderlaufen koennen: die API blendet den Regler danach aus
+// (GET /v1/text-generation-capabilities) und der Worker nimmt temperature danach in den
+// provider_parameter_hash auf (apps/worker/src/textGeneration.ts). Waeren sich beide uneins, hiesse
+// entweder ein wirkungsloser Regler bedienbar oder der Hash behauptete eine nie gesendete
+// Provenienz. Der Anthropic-Adapter sendet sie bewusst nicht (aktuelle Claude-Modelle lehnen den
+// Parameter mit 400 ab, siehe AnthropicStructuredContentGenerator).
+export function providerSendsTemperature(protocol: string): boolean {
+  return protocol === 'openai'
+}
+
 // Modellauswahl im Formular: statt einer im Frontend gepflegten Liste fragt die API den Provider
 // selbst. Der Schluessel kommt aus dem Formular, weil beim Anlegen noch keine Konfiguration und
 // damit kein hinterlegtes Geheimnis existiert; gespeichert wird er hier nicht.

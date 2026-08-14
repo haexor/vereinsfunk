@@ -3,6 +3,7 @@ import {
   ListLlmProviderModelsRequestSchema,
   ListLlmProviderModelsResponseSchema,
   LlmProviderConfigurationSchema,
+  providerSendsTemperature,
   SocialPlatformSchema,
   TextGenerationCapabilitiesSchema,
   TextGenerationPlatformDefaultSchema,
@@ -240,12 +241,15 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
     const service = supabaseClients.forService()
     // Dieselbe Auswahl wie loadActiveTextProvider() im Worker (apps/worker/src/context.ts): eine
     // aktive Aufgabenart vergibt jede Prioritaet nur einmal (2026081305), die vorderste Zeile ist
-    // also eindeutig der Provider, der eine echte Generierung tatsaechlich bedient.
-    const result = await service.from('llm_provider_configurations').select('protocol').eq('task_kind', 'text_generation').eq('is_active', true).order('priority').limit(1)
+    // also eindeutig der Provider, der eine echte Generierung tatsaechlich bedient. Der !inner-Join
+    // gehoert dazu: eine aktive Konfiguration ohne hinterlegtes Geheimnis ist ein modellierter
+    // Zustand (GET /v1/llm-providers gibt dafuer hasSecret: false zurueck), und der Worker
+    // ueberspringt sie. Ohne den Join meldete diese Route das Protokoll einer Zeile, die nie
+    // generiert (Review dieses PRs).
+    const result = await service.from('llm_provider_configurations').select('protocol, llm_provider_secrets!inner(key_version)').eq('task_kind', 'text_generation').eq('is_active', true).order('priority').limit(1)
     if (result.error) throw result.error
-    // Der Anthropic-Adapter sendet temperature bewusst nicht (aktuelle Claude-Modelle lehnen den
-    // Parameter mit 400 ab, siehe AnthropicStructuredContentGenerator). Ist kein Provider aktiv,
-    // ist die Frage ohnehin hinfaellig -- dann laesst sich kein Beitrag erzeugen.
-    return reply.code(200).send(TextGenerationCapabilitiesSchema.parse({ temperatureSupported: result.data[0]?.protocol === 'openai' }))
+    // Ist kein Provider aktiv, ist die Frage ohnehin hinfaellig -- dann laesst sich kein Beitrag
+    // erzeugen.
+    return reply.code(200).send(TextGenerationCapabilitiesSchema.parse({ temperatureSupported: providerSendsTemperature(result.data[0]?.protocol ?? '') }))
   })
 }

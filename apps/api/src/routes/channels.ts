@@ -7,13 +7,13 @@ import {
   UpdateSocialConnectionRequestSchema,
   UuidSchema,
 } from '@vereinsfunk/contracts'
-import { resolveAvailableChannels, type ChannelCandidate, type ScopeLevelName } from '@vereinsfunk/domain'
+import { resolveAvailableChannels } from '@vereinsfunk/domain'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { mapChannelScopeRow, mapSocialConnectionRow } from '../apiMappers.js'
 import { byteaToBuffer, createSecretBoxFromEnvironment } from '../secretBox.js'
 import type { ApiRouteContext } from './context.js'
-import { channelOwnerScope, createAuditRecorder, isAnyMemberOfOrganization, resolveMembershipScope, SOCIAL_CONNECTION_COLUMNS } from './shared.js'
+import { channelOwnerScope, createAuditRecorder, isAnyMemberOfOrganization, resolveMembershipScope, SOCIAL_CONNECTION_COLUMNS, toChannelCandidates } from './shared.js'
 
 export function registerChannelRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients, environment, metaOAuthClient } = context
@@ -278,20 +278,7 @@ export function registerChannelRoutes(app: FastifyInstance, context: ApiRouteCon
     const snapshotConfig = (version.data.effective_config_snapshot as { config?: { allowedChannelIds?: unknown } } | null)?.config
     const allowedChannelIds = Array.isArray(snapshotConfig?.allowedChannelIds) ? (snapshotConfig!.allowedChannelIds as string[]) : null
 
-    const candidates: ChannelCandidate[] = connections.data.map((connection) => ({
-      socialConnectionId: connection.id as string,
-      status: connection.status as ChannelCandidate['status'],
-      archivedAt: connection.archived_at as string | null,
-      responsibleProfileId: connection.responsible_profile_id as string | null,
-      scopeGrants: scopeRows.data
-        .filter((row) => row.social_connection_id === connection.id)
-        .map((row) => ({
-          scope: row.scope as ScopeLevelName,
-          ...(row.department_id ? { departmentId: row.department_id as string } : {}),
-          ...(row.team_id ? { teamId: row.team_id as string } : {}),
-          canSchedule: row.can_schedule as boolean,
-        })),
-    }))
+    const candidates = toChannelCandidates(connections.data, scopeRows.data)
 
     const available = resolveAvailableChannels({
       scope: post.data.team_id ? 'team' : 'department',

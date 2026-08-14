@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { createSecretBox } from '@vereinsfunk/secrets'
 import { AnthropicStructuredContentGenerator, ContentGenerationError, OpenAiCompatibleStructuredContentGenerator, TEXT_PROMPT_TEMPLATE_VERSION, createTextGroundedContentBrief, type StructuredContentGenerator } from '@vereinsfunk/content-engine'
-import { SourceMaterialSchema, StyleProfileSnapshotSchema, TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS, UuidSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
+import { providerSendsTemperature, SourceMaterialSchema, StyleProfileSnapshotSchema, TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS, UuidSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
 import { WorkflowExecutionError } from './workflows.js'
 
@@ -32,12 +32,12 @@ function ciphertextBuffer(value: string) {
 
 // Plan 042, PR 3 Step 5: provider_parameter_hash muss die tatsaechlich benutzten Parameter
 // hashen. Der Anthropic-Adapter sendet temperature bewusst nie (siehe generateText unten) -- sie
-// in den Hash aufzunehmen, waere eine falsche Provenienz-Angabe. Dieselbe Protokollpruefung wie
-// GET /v1/text-generation-capabilities (llmProviders.routes.ts).
+// in den Hash aufzunehmen, waere eine falsche Provenienz-Angabe. providerSendsTemperature() ist
+// dieselbe Quelle, aus der GET /v1/text-generation-capabilities den Regler aus- oder einblendet.
 function parameterHash(provider: ProviderRow, session: SessionRow) {
   return createHash('sha256').update(JSON.stringify({
     baseUrl: provider.base_url, model: provider.model,
-    ...(provider.protocol === 'openai' ? { temperature: session.temperature } : {}),
+    ...(providerSendsTemperature(provider.protocol) ? { temperature: session.temperature } : {}),
     maxCharacters: session.max_characters, maxOutputTokens: TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS,
     structuredOutputRequired: provider.structured_output_required,
   })).digest('hex')
