@@ -7,19 +7,22 @@ begin;
 -- eine eigene Adresse statt eines externen Konto-IDs, eine vom Verein selbst gepflegte Laengengrenze
 -- -- sitzt an den Spalten, nicht am Enum.
 
--- 1. Plattform-CHECK erweitern -- nur an den fuenf Stellen, die auch fuer die Textwerkstatt und die
--- Veroeffentlichung gelten. oauth_states/oauth_pending_connections bleiben auf
--- ('instagram','facebook'): ein Website-Kanal entsteht nie ueber OAuth (Step 2 unten).
+-- 1. Plattform-CHECK erweitern -- nur dort, wo in diesem Paket auch tatsaechlich 'website'
+-- geschrieben wird: der Kanal selbst, die Plattform-Vorgaben und die Ziel-Plattformen einer
+-- Sitzung. oauth_states/oauth_pending_connections bleiben auf ('instagram','facebook'): ein
+-- Website-Kanal entsteht nie ueber OAuth (Step 2 unten).
+--
+-- publications/post_variants bleiben BEWUSST eng (Review dieses PRs). Plan 039 sagt zu: "Bis zum
+-- Folgepaket erzeugt ein Blog-Kanal keine Veroeffentlichungszeile" -- durchgesetzt wird das hier,
+-- nicht in der API: schedule_publication() ist security-definer und per
+-- "grant execute ... to authenticated" (2026080606) direkt ueber PostgREST aufrufbar, ein reiner
+-- TS-Riegel waere also umgehbar. Die RPC kopiert connection.platform ungefiltert in publications;
+-- ohne diesen CHECK entstuende fuer einen Blog-Kanal eine Zeile, die POST /v1/publications/:id/execute
+-- danach nie ausfuehren kann (kein social_connection_secrets-Eintrag -- Entwurfsentscheidung 2) und
+-- die zudem PublicationSchema (packages/contracts/src/policy.ts) beim Serialisieren zerbricht.
+-- Erweitert wird beides erst mit dem Auslieferungspaket, das den Blog wirklich bespielen kann.
 alter table public.social_connections drop constraint social_connections_platform_check;
 alter table public.social_connections add constraint social_connections_platform_check
-  check (platform in ('instagram', 'facebook', 'website'));
-
-alter table public.publications drop constraint publications_platform_check;
-alter table public.publications add constraint publications_platform_check
-  check (platform in ('instagram', 'facebook', 'website'));
-
-alter table public.post_variants drop constraint post_variants_platform_check;
-alter table public.post_variants add constraint post_variants_platform_check
   check (platform in ('instagram', 'facebook', 'website'));
 
 alter table public.text_generation_platform_defaults drop constraint text_generation_platform_defaults_platform_check;
@@ -48,8 +51,13 @@ alter table public.social_connections add constraint social_connections_platform
 -- nie als Duplikat). Beliebig viele Website-Kanaele je Verein, auf Vereins- wie auf Abteilungsebene
 -- (Entwurfsentscheidung 4) -- nur derselbe Blog nicht zweimal. Kanonisierung (Schema/Host-Case/
 -- Root-Trailing-Slash) sitzt im Schreibpfad (POST /v1/channels), nicht hier.
+--
+-- "archived_at is null" gehoert in das Praedikat (Review dieses PRs): DELETE /v1/channels/:id
+-- archiviert nur (status='disconnected', archived_at=now()), die Zeile bleibt stehen. Ohne diese
+-- Bedingung blockiert ein einmal archivierter Blog seine eigene Adresse fuer immer -- die Anlage
+-- antwortet 409 und es gibt keinen Weg zurueck, weil kein Endpunkt eine Verbindung reaktiviert.
 create unique index social_connections_website_url_unique on public.social_connections (organization_id, website_url)
-  where platform = 'website';
+  where platform = 'website' and archived_at is null;
 
 -- 3. Laengengrenze je Kanal -- null heisst "globale Plattform-Vorgabe gilt" (Entwurfsentscheidung 3).
 alter table public.social_connections add column max_characters integer;

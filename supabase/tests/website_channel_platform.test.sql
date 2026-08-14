@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(13);
+select plan(15);
 
 set local role postgres;
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -92,6 +92,26 @@ insert into public.composition_sessions (id, organization_id, department_id, pre
   ('76000000-4000-4000-8000-000000000001', '76000000-1000-4000-8000-000000000001', '76000000-1100-4000-8000-000000000001', 'training-update', 'inform', '["text_post"]', '{"facts":{"title":"Blog"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('a', 64), array['website']::text[], '76000000-0000-4000-8000-000000000001');
 select is((select target_platforms from public.composition_sessions where id = '76000000-4000-4000-8000-000000000001'), array['website']::text[],
   'a composition session may target website alone, with no Instagram/Facebook channel required');
+
+-- 13: publications stays instagram/facebook-only until the delivery package lands (Plan 039: "Bis
+-- zum Folgepaket erzeugt ein Blog-Kanal keine Veroeffentlichungszeile"). This CHECK is the binding
+-- guard, not the API: schedule_publication() is security-definer and granted to authenticated, so a
+-- member can call it straight through PostgREST. Without it a blog channel yields a publications row
+-- that POST /v1/publications/:id/execute can never run -- there is no social_connection_secrets row.
+select throws_ok(
+  $$insert into public.publications (organization_id, post_version_id, social_connection_id, platform, scheduled_for, idempotency_key)
+    values ('76000000-1000-4000-8000-000000000001', '76000000-3000-4000-8000-000000000001', '76000000-8000-4000-8000-000000000001', 'website', now(), 'publish:website:pgtap')$$,
+  '23514', null, 'negative: publications still rejects platform=website until delivery exists'
+);
+
+-- 14: archiving a blog frees its address again. DELETE /v1/channels/:id only sets
+-- status/archived_at, and no endpoint reactivates a connection -- without "archived_at is null" in
+-- the index predicate a club that archived its blog could never re-add that address (409 forever).
+update public.social_connections set archived_at = now(), status = 'disconnected' where id = '76000000-8000-4000-8000-000000000001';
+insert into public.social_connections (id, organization_id, platform, website_url, display_name, owner_scope) values
+  ('76000000-8000-4000-8000-000000000004', '76000000-1000-4000-8000-000000000001', 'website', 'https://verein.example/blog', 'Vereinsblog, neu angelegt', 'organization');
+select is((select count(*)::integer from public.social_connections where organization_id = '76000000-1000-4000-8000-000000000001' and website_url = 'https://verein.example/blog'), 2,
+  'the same address can be re-added once the previous channel is archived');
 
 select * from finish();
 rollback;

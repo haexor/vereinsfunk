@@ -411,8 +411,18 @@ export async function resolveTextGenerationPlatformAvailability(
     // Ein Kanal ohne eigenen Wert geht mit der globalen Plattform-Vorgabe als seinem Kandidaten in
     // dieselbe Minimumbildung ein -- er faellt nicht aus der min() heraus, nur weil er selbst null
     // traegt (sonst zoege eine fehlende Kanal-Grenze eine hoeher gesetzte Vorgabe faelschlich herab).
+    // Die globale Vorgabe ist Deckel, nicht nur Ersatzwert (Review dieses PRs): sie beschreibt bei
+    // Instagram/Facebook die tatsaechliche Grenze der fremden Plattform, und die kann ein Verein
+    // nicht durch einen eigenen Kanalwert anheben -- ein 10000-Zeichen-Instagram-Text waere beim
+    // Veroeffentlichen schlicht unbrauchbar. Nach unten bleibt der Kanalwert frei: kuerzer als die
+    // Plattform erlaubt darf jeder Kanal sein, laenger nicht. Fehlt eine Vorgabezeile
+    // (platformDefault null), gilt allein der Kanalwert -- dann gibt es nichts zu deckeln.
     const perChannelLimits = withPolicies
-      .map((socialConnectionId) => maxCharactersByConnectionId.get(socialConnectionId) ?? platformDefault)
+      .map((socialConnectionId) => {
+        const channelLimit = maxCharactersByConnectionId.get(socialConnectionId) ?? null
+        if (channelLimit === null) return platformDefault
+        return platformDefault === null ? channelLimit : Math.min(channelLimit, platformDefault)
+      })
       .filter((limit): limit is number => limit !== null)
     const maxCharacters = withPolicies.length > 0 ? (perChannelLimits.length > 0 ? Math.min(...perChannelLimits) : null) : platformDefault
     result.set(platform, withPolicies.length > 0

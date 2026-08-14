@@ -187,15 +187,29 @@ describe('text workshop contracts', () => {
 
   // Plan 039, PR 1 Step 4: ohne diese Ableitung waere die 5000-Zeichen-Vorgabe eines Website-Kanals
   // ein leeres Versprechen -- der Provideraufruf haette weiterhin nur ein festes 1200-Token-Budget.
-  it('derives a token budget from max_characters, growing with it but capped for the hard upper bound', () => {
+  it('derives a token budget that grows with max_characters and never falls below the previous fixed budget', () => {
     const instagram = deriveTextGenerationMaxOutputTokens(2200)
     const website = deriveTextGenerationMaxOutputTokens(5000)
-    const ceiling = deriveTextGenerationMaxOutputTokens(10_000)
     expect(website).toBeGreaterThan(instagram)
-    // Die Obergrenze greift bei max_characters: 10000 -- ohne Deckel waere der Wert hier hoeher als
-    // die schlichte Fortsetzung der Formel (Zeichen / 3 + Zuschlag).
-    expect(ceiling).toBeLessThan(Math.ceil(10_000 / 3) + 400)
-    expect(ceiling).toBeGreaterThan(website)
+    // Kernzusage: die Bildunterschrift muss reinpassen. Zwei Zeichen je Token ist die konservative
+    // Kante fuer deutschen Text -- bei drei kaeme ein 5000-Zeichen-Blogbeitrag abgeschnitten zurueck.
+    expect(website).toBeGreaterThanOrEqual(Math.ceil(5000 / 2))
+    // Keine bestehende Sitzung darf durch die Ableitung WENIGER bekommen als die alte Konstante.
+    // Ohne Untergrenze faellt der kleinste erlaubte Wert (100 Zeichen) auf 550 statt 1200.
+    expect(deriveTextGenerationMaxOutputTokens(100)).toBe(1200)
+    expect(instagram).toBeGreaterThanOrEqual(1200)
+  })
+
+  // Der Belegteil der Antwort (verifiedFacts UND generatedClaims -- jeder Beleg erscheint zweimal)
+  // waechst mit dem Quellmaterial, nicht mit der Zeichengrenze. Ein fester Zuschlag liess genau den
+  // belegreichen Spielbericht verhungern, fuer den die Textwerkstatt gebaut ist.
+  it('grows the budget with the claim count, not only with max_characters', () => {
+    const withoutClaims = deriveTextGenerationMaxOutputTokens(2200)
+    const withClaims = deriveTextGenerationMaxOutputTokens(2200, 24)
+    expect(withClaims).toBeGreaterThan(withoutClaims)
+    // Zwei Sitzungen mit derselben Zeichengrenze, aber unterschiedlich viel Quellmaterial, duerfen
+    // nicht dasselbe Budget bekommen -- sonst ist die Belegzahl im Provenienz-Hash wertlos.
+    expect(deriveTextGenerationMaxOutputTokens(2200, 9)).not.toBe(withClaims)
   })
 })
 

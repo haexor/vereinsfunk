@@ -489,7 +489,7 @@ select is(
 );
 select throws_ok(
   $$insert into public.composition_sessions (organization_id, department_id, preset_slug, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, target_platforms, created_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'training-update', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, encode(sha256('paket-042-invalid-platform'::bytea), 'hex'), array['twitter']::text[], '32000000-0000-4000-8000-000000000002')$$,
-  '23514', null, 'negative: target_platforms only accepts instagram or facebook'
+  '23514', null, 'negative: target_platforms only accepts instagram, facebook or website'
 );
 -- Mehrfachauswahl darf keine Doppelung enthalten, sonst zaehlt eine Plattform bei einer kuenftigen
 -- Pro-Plattform-Ausgabe (Plan 005) doppelt. Der Wert kaeme sonst am <@-Test vorbei.

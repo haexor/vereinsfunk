@@ -27,9 +27,9 @@ function repositoryWithProtocolAndTemperature(protocol: string, temperature: num
   return repo
 }
 
-function repositoryWithMaxCharacters(maxCharacters: number): TextGenerationRepository {
+function repositoryWithMaxCharacters(maxCharacters: number, observations: string[] = []): TextGenerationRepository {
   const repo = repository()
-  repo.loadSession = vi.fn().mockResolvedValue({ id: payload.entityId, organization_id: payload.organizationId, department_id: payload.departmentId, team_id: null, preset_slug: 'training', communication_goal: 'inform', source_material: { facts: { topic: 'Passen' }, observations: [], quotes: [], doNotMention: [] }, style_profile_snapshot: { name: 'Klar', description: 'klar', styleRules: { toneTags: ['klar'], catchphrases: [], examples: [], additionalInstructions: '' }, avoidRules: [], doRules: [] }, max_characters: maxCharacters, temperature: 0.6 })
+  repo.loadSession = vi.fn().mockResolvedValue({ id: payload.entityId, organization_id: payload.organizationId, department_id: payload.departmentId, team_id: null, preset_slug: 'training', communication_goal: 'inform', source_material: { facts: { topic: 'Passen' }, observations, quotes: [], doNotMention: [] }, style_profile_snapshot: { name: 'Klar', description: 'klar', styleRules: { toneTags: ['klar'], catchphrases: [], examples: [], additionalInstructions: '' }, avoidRules: [], doRules: [] }, max_characters: maxCharacters, temperature: 0.6 })
   return repo
 }
 
@@ -105,20 +105,38 @@ describe('TextGenerationExecutor', () => {
   // Plan 039, PR 1 Step 4: ohne diese Ableitung waere eine hoehere Plattform-Vorgabe (Website:
   // 5000 Zeichen) ein leeres Versprechen -- der Aufruf haette weiterhin nur das feste
   // 1200-Token-Budget, unabhaengig davon, was die Sitzung tatsaechlich erlaubt.
-  it('derives maxOutputTokens from session.max_characters, changing both the call and provider_parameter_hash', async () => {
+  it('derives maxOutputTokens from session.max_characters', async () => {
     const shortSession = repositoryWithMaxCharacters(2200)
     const generatorForShort = { generateText: vi.fn().mockResolvedValue(post) }
     await new TextGenerationExecutor(config, shortSession, generatorForShort).execute(payload)
     const shortTokens = vi.mocked(generatorForShort.generateText).mock.calls[0]![0]!.maxOutputTokens
-    const shortHash = vi.mocked(shortSession.markReady).mock.calls[0]![4]!.providerParameterHash
 
     const longSession = repositoryWithMaxCharacters(5000)
     const generatorForLong = { generateText: vi.fn().mockResolvedValue(post) }
     await new TextGenerationExecutor(config, longSession, generatorForLong).execute(payload)
     const longTokens = vi.mocked(generatorForLong.generateText).mock.calls[0]![0]!.maxOutputTokens
-    const longHash = vi.mocked(longSession.markReady).mock.calls[0]![4]!.providerParameterHash
 
     expect(longTokens).toBeGreaterThan(shortTokens)
-    expect(longHash).not.toBe(shortHash)
+  })
+
+  // Isoliert den abgeleiteten Wert IM HASH: beide Sitzungen haben dieselbe max_characters, die schon
+  // fuer sich im Hash steht -- unterschiedlich ist allein die Belegzahl, und die wirkt ausschliesslich
+  // ueber maxOutputTokens. Ein Vergleich zweier max_characters-Werte (so stand es hier bis zum Review
+  // dieses PRs) haette auch dann bestanden, wenn der abgeleitete Wert gar nicht im Hash landet.
+  it('feeds the derived maxOutputTokens into provider_parameter_hash, independently of max_characters', async () => {
+    const sparse = repositoryWithMaxCharacters(2200)
+    const generatorForSparse = { generateText: vi.fn().mockResolvedValue(post) }
+    await new TextGenerationExecutor(config, sparse, generatorForSparse).execute(payload)
+    const sparseTokens = vi.mocked(generatorForSparse.generateText).mock.calls[0]![0]!.maxOutputTokens
+    const sparseHash = vi.mocked(sparse.markReady).mock.calls[0]![4]!.providerParameterHash
+
+    const rich = repositoryWithMaxCharacters(2200, ['Erste Beobachtung', 'Zweite Beobachtung', 'Dritte Beobachtung'])
+    const generatorForRich = { generateText: vi.fn().mockResolvedValue(post) }
+    await new TextGenerationExecutor(config, rich, generatorForRich).execute(payload)
+    const richTokens = vi.mocked(generatorForRich.generateText).mock.calls[0]![0]!.maxOutputTokens
+    const richHash = vi.mocked(rich.markReady).mock.calls[0]![4]!.providerParameterHash
+
+    expect(richTokens).toBeGreaterThan(sparseTokens)
+    expect(richHash).not.toBe(sparseHash)
   })
 })

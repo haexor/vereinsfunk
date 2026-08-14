@@ -480,8 +480,16 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     // hier nicht mit -- weder darf ihr Fehlen die Laenge heimlich hochsetzen noch den ausdruecklich
     // gesetzten Wert einer anderen Plattform auf den Fallback herunterziehen, und ihr Fehlen ist
     // ein Betreiberproblem (siehe PUT-Route).
+    // Der Wunsch des Mitglieds ist ein WEITERER Kandidat der Minimumbildung, keine Ueberschreibung
+    // (Plan 039, "Zusaetzlich aus dem Review von PR #76"): wer Instagram angehakt hat, darf dessen
+    // 2200 nicht per Formular aushebeln -- ein Text, der dort nicht erscheinen kann, nuetzt
+    // niemandem. Kuerzer als die Plattform erlaubt darf er sich den Beitrag jederzeit wuenschen.
+    // Bis zum Review dieses PRs stand hier "input.maxCharacters ?? ...", was beide Minimumbildungen
+    // uebersprang; seit die Token-Leine an max_characters haengt (Step 4), war das zugleich ein
+    // Kostenhebel: ein Mitglied konnte den Provideraufruf allein ueber dieses Feld aufblaehen.
     const platformLimits = targetPlatforms.map((platform) => platformAvailability.get(platform)!.maxCharacters).filter((limit): limit is number => limit !== null)
-    const maxCharacters = input.maxCharacters ?? (platformLimits.length > 0 ? Math.min(...platformLimits) : TEXT_GENERATION_DEFAULT_MAX_CHARACTERS)
+    const resolvedPlatformLimit = platformLimits.length > 0 ? Math.min(...platformLimits) : TEXT_GENERATION_DEFAULT_MAX_CHARACTERS
+    const maxCharacters = input.maxCharacters !== undefined ? Math.min(input.maxCharacters, resolvedPlatformLimit) : resolvedPlatformLimit
     const result = await service.rpc('create_text_generation_session', {
       p_organization_id: input.organizationId, p_department_id: input.departmentId, p_team_id: input.teamId ?? null, p_preset_slug: input.presetSlug,
       p_communication_goal: input.communicationGoal, p_requested_formats: input.requestedFormats, p_source_material: sourceMaterial,

@@ -21,8 +21,25 @@ import { channelOwnerScope, createAuditRecorder, isAnyMemberOfOrganization, isDe
 // bereits auf Kleinschreibung und serialisiert einen leeren Pfad immer als "/" -- https://Example.org
 // und https://example.org/ ergeben so denselben gespeicherten Wert. Ohne das umginge der zweite
 // Schreibvorgang den Unique-Index unten unbemerkt.
+//
+// Der Fragmentbezeichner faellt weg: er wird nie an den Server geschickt, "https://verein.de/blog"
+// und "https://verein.de/blog#oben" sind fuer jeden Abruf dieselbe Seite und duerfen keine zwei
+// Kanaele ergeben (Review dieses PRs). Query und "www." bleiben absichtlich stehen -- beide koennen
+// auf eine andere Seite zeigen, die duerfen wir nicht raten.
 function canonicalizeWebsiteUrl(rawUrl: string): string {
-  return new URL(rawUrl).toString()
+  const url = new URL(rawUrl)
+  url.hash = ''
+  return url.toString()
+}
+
+// Zugangsdaten in der Adresse (https://benutzer:geheim@verein.de) ueberleben die Kanonisierung und
+// landen sonst in social_connections.website_url -- einer Spalte, die JEDES Vereinsmitglied lesen
+// darf (grant select in 2026081310) -- und zusaetzlich im Klartext in audit_events.metadata.
+// Zurueckweisen statt still entfernen: wer sie mitschickt, meint sie, und ein stilles Abschneiden
+// speicherte eine Adresse, die der Verein so nie eingegeben hat (Review dieses PRs).
+function hasEmbeddedCredentials(rawUrl: string): boolean {
+  const url = new URL(rawUrl)
+  return url.username !== '' || url.password !== ''
 }
 
 export function registerChannelRoutes(app: FastifyInstance, context: ApiRouteContext): void {
@@ -45,7 +62,7 @@ export function registerChannelRoutes(app: FastifyInstance, context: ApiRouteCon
     // Dieselbe SSRF-Regel wie jede andere vom Verein hinterlegte Adresse (Plan 034): das
     // Folgepaket zur Auslieferung ruft diese Adresse serverseitig ab, eine hier ungeprueft
     // gespeicherte Adresse waere seine Luecke.
-    if (!isAllowedOutboundUrl(input.websiteUrl)) {
+    if (!isAllowedOutboundUrl(input.websiteUrl) || hasEmbeddedCredentials(input.websiteUrl)) {
       return reply.code(400).send({ error: 'website_url_not_allowed', correlationId: request.id })
     }
     const websiteUrl = canonicalizeWebsiteUrl(input.websiteUrl)
@@ -70,7 +87,16 @@ export function registerChannelRoutes(app: FastifyInstance, context: ApiRouteCon
       organization_id: input.organizationId, social_connection_id: insert.data.id, scope: input.ownerScope,
       department_id: input.ownerDepartmentId, team_id: null, can_schedule: true, created_by: request.auth!.userId,
     })
-    if (defaultScope.error) throw defaultScope.error
+    // Kanal ohne Freigabe zuruecknehmen, statt ihn stehen zu lassen (dasselbe Muster wie beim
+    // OAuth-Connect, channelOAuth.ts): resolveAvailableChannels sieht eine Verbindung ohne
+    // channel_scopes-Zeile nie, der Verein haette also einen unbenutzbaren Kanal -- und weil der
+    // Unique-Index auf der Adresse greift, antwortet jeder Wiederholungsversuch dauerhaft mit 409
+    // (Review dieses PRs).
+    if (defaultScope.error) {
+      const rollback = await service.from('social_connections').delete().eq('id', insert.data.id)
+      if (rollback.error) request.log.error({ err: rollback.error, correlationId: request.id }, 'website channel rollback failed')
+      throw defaultScope.error
+    }
     await recordAuditEvent(request, {
       organizationId: input.organizationId, action: 'channel.connected', entityType: 'social_connections', entityId: insert.data.id as string,
       metadata: { platform: 'website', ownerScope: input.ownerScope, websiteUrl },
@@ -335,7 +361,13 @@ export function registerChannelRoutes(app: FastifyInstance, context: ApiRouteCon
     if (!(await requirePermission(request, reply, 'post.publish', { organizationId: post.data.organization_id, departmentId: post.data.department_id }))) return
 
     const [connections, scopeRows, policyRow] = await Promise.all([
-      client.from('social_connections').select('id, status, archived_at, responsible_profile_id').eq('organization_id', post.data.organization_id),
+      // Website-Kanaele sind hier ausgenommen (Plan 039: "Bis zum Folgepaket erzeugt ein Blog-Kanal
+      // keine Veroeffentlichungszeile"). Sie waeren sonst waehlbare Veroeffentlichungsziele, und
+      // schedule_publication() legte eine Zeile an, die niemand ausfuehren kann -- ein Blog-Kanal
+      // hat per Entwurfsentscheidung 2 keinen social_connection_secrets-Eintrag. Die verbindliche
+      // Sperre sitzt im publications_platform_check (die RPC ist direkt aufrufbar); das hier ist
+      // die Anzeige, damit die Oberflaeche gar nicht erst etwas Unmoegliches anbietet.
+      client.from('social_connections').select('id, status, archived_at, responsible_profile_id').eq('organization_id', post.data.organization_id).neq('platform', 'website'),
       client.from('channel_scopes').select('social_connection_id, scope, department_id, team_id, can_schedule').eq('organization_id', post.data.organization_id),
       client.from('policy_settings').select('require_channel_responsible').eq('organization_id', post.data.organization_id).eq('scope', 'organization').maybeSingle(),
     ])

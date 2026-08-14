@@ -25,6 +25,12 @@ export function registerPublishingRoutes(app: FastifyInstance, context: ApiRoute
       if (rpc.error.message.includes('not_found')) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
       if (rpc.error.message.includes('invalid_status')) return reply.code(409).send({ error: 'invalid_status', correlationId: request.id })
       if (rpc.error.message.includes('channel_not_allowed')) return reply.code(422).send({ error: 'channel_not_allowed', correlationId: request.id })
+      // Plan 039: ein Blog-Kanal ist noch kein Veroeffentlichungsziel -- publications_platform_check
+      // laesst 'website' bewusst nicht zu, bis das Auslieferungspaket ihn bespielen kann. Ohne
+      // diese Zeile meldete genau diese absichtliche Absage einen 500 (Review dieses PRs). Die
+      // Constraint bleibt die Sperre; hier wird sie nur uebersetzt, denn schedule_publication ist
+      // per grant execute direkt aufrufbar und darf sich nicht auf einen TS-Riegel verlassen.
+      if (rpc.error.message.includes('publications_platform_check')) return reply.code(422).send({ error: 'channel_not_allowed', correlationId: request.id })
       // Plan 021: beide vor dem bestehenden quota_exceeded-Zweig, weil "content_quota_exceeded"
       // die Teilzeichenkette "quota_exceeded" selbst enthaelt -- in der bisherigen Reihenfolge
       // waere der neue Fehler faelschlich als der alte, vereinsweite channel_quotas-Fehler

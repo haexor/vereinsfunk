@@ -194,6 +194,22 @@ describe('Paket 012: Kanaele und Social-Accounts', () => {
       expect(response.json()).toMatchObject({ error: 'website_url_not_allowed' })
     })
 
+    // Zugangsdaten in der Adresse landeten sonst in einer Spalte, die jedes Vereinsmitglied lesen
+    // darf, und zusaetzlich im Klartext im Audit-Protokoll (Review dieses PRs).
+    it('rejects a website_url that carries embedded credentials', async () => {
+      const clients: SupabaseClientFactory = {
+        forUser: () => ({}) as unknown as SupabaseClient,
+        forService: () => ({ from: () => { throw new Error('forService should not be used once the credential guard rejects the request') } }) as unknown as SupabaseClient,
+      }
+      const app = await startApp({ roleProvider: socialManagerRoleProvider, supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({
+        method: 'POST', url: '/v1/channels', headers: { authorization: `Bearer ${token}` }, payload: { ...basePayload, websiteUrl: 'https://redakteur:geheim@verein.example/blog' },
+      })
+      expect(response.statusCode).toBe(400)
+      expect(response.json()).toMatchObject({ error: 'website_url_not_allowed' })
+    })
+
     it('rejects the request for a caller without social_account.manage', async () => {
       const app = await startApp({ roleProvider: denyingRoleProvider })
       const token = await signAccessToken(USER_ID)
@@ -232,10 +248,12 @@ describe('Paket 012: Kanaele und Social-Accounts', () => {
       const app = await startApp({ roleProvider: socialManagerRoleProvider, supabaseClients: clients })
       const token = await signAccessToken(USER_ID)
       // https:// und der abschliessende "/" auf der reinen Domain duerfen keinen zweiten
-      // gespeicherten Wert ergeben (Entwurfsentscheidung, Step 1) -- hier ueber Grossschreibung im Host.
+      // gespeicherten Wert ergeben (Entwurfsentscheidung, Step 1) -- hier ueber Grossschreibung im
+      // Host, zusammen mit einem Fragmentbezeichner, der nie an den Server geht und deshalb keinen
+      // zweiten Kanal ergeben darf (Review dieses PRs).
       const response = await app.inject({
         method: 'POST', url: '/v1/channels', headers: { authorization: `Bearer ${token}` },
-        payload: { ...basePayload, websiteUrl: 'https://Verein.example/blog' },
+        payload: { ...basePayload, websiteUrl: 'https://Verein.example/blog#oben' },
       })
       expect(response.statusCode).toBe(201)
       expect(socialConnectionsInsertPayload).toMatchObject({ platform: 'website', website_url: 'https://verein.example/blog', owner_scope: 'organization', owner_department_id: null })
