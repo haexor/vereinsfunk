@@ -153,6 +153,22 @@ const selectedDepartmentId = computed(() => {
   return null
 })
 
+// Welche Zielplattform-Vorgabe greift, wenn diese Ebene keine eigene setzt: die effektive Auflösung
+// der ÜBERGEORDNETEN Ebene. `effective` der Ebene selbst taugt dafür nicht — es rechnet ihre eigene
+// Zeile mit und zeigte beim Umschalten auf „geerbt“ deshalb genau den Wert an, den der Betreiber
+// gerade abwählt (Review dieses PRs). Auf Vereinsebene gibt es keine übergeordnete Ebene: dort heißt
+// „geerbt“ immer „keine Vorauswahl“. `undefined` heißt „nicht ableitbar“ — die Komponente behauptet
+// dann keinen Wert, statt „keine Vorauswahl“ zu unterstellen.
+const inheritedTargetPlatforms = computed(() => {
+  const entry = selectedEntry.value
+  if (!entry) return undefined
+  if (entry.scope === 'organization') return []
+  const parent = entry.scope === 'team'
+    ? entries.value.find((item) => item.scope === 'department' && item.scopeId === selectedDepartmentId.value)
+    : entries.value.find((item) => item.scope === 'organization')
+  return parent ? parent.effective.defaultTargetPlatforms ?? [] : undefined
+})
+
 const availableKindsForReviewer = computed(() => {
   const entry = selectedEntry.value
   if (!entry) return []
@@ -314,7 +330,7 @@ function reviewerLabel(reviewer: { kind: string; userId: string | null; role: st
             <DefaultTargetPlatformsPicker
               v-model:own-value="draft.defaultTargetPlatforms"
               :disabled="!selectedEntry.canEdit"
-              :effective-value="selectedEntry.effective.defaultTargetPlatforms ?? []"
+              :inherited-value="inheritedTargetPlatforms"
             />
           </div>
           <p v-if="saveError" class="mt-3 text-xs text-amber-800">{{ saveError }}</p>

@@ -8,13 +8,22 @@ import { SocialPlatformSchema, type SocialPlatform } from '@vereinsfunk/contract
 // mergeEffectiveConfig beheben musste (siehe packages/domain, mergeReplaceableList).
 const props = defineProps<{
   disabled: boolean
-  effectiveValue: readonly SocialPlatform[]
+  // Die Vorgabe, die ohne eigene greift -- NICHT `effective` dieser Ebene, das die eigene Zeile
+  // mitrechnet: wer eine eigene Vorgabe hat, saehe beim Umschalten auf "geerbt" sonst genau den
+  // Wert als den der aeusseren Ebene, den er gerade abwaehlt (Review dieses PRs). `undefined` heisst
+  // deshalb ehrlich "aus der geladenen Antwort nicht ableitbar" -- dann wird kein Wert behauptet.
+  inheritedValue: readonly SocialPlatform[] | undefined
 }>()
 
 const ownValue = defineModel<SocialPlatform[] | null>('ownValue', { required: true })
 
 const PLATFORM_LABELS: Record<SocialPlatform, string> = { instagram: 'Instagram', facebook: 'Facebook', website: 'Eigene Website' }
 const isOwn = computed(() => ownValue.value !== null)
+const inheritedHint = computed(() => {
+  if (props.inheritedValue === undefined) return 'Übernimmt die Vorgabe der übergeordneten Ebene — sie wird nach dem Speichern hier angezeigt.'
+  if (props.inheritedValue.length === 0) return 'Keine Vorauswahl — die Auswahl in der Textwerkstatt startet leer.'
+  return `Übernimmt die Vorgabe der übergeordneten Ebene: ${props.inheritedValue.map((platform) => PLATFORM_LABELS[platform]).join(', ')}.`
+})
 
 function setOwn(own: boolean) {
   ownValue.value = own ? [] : null
@@ -39,9 +48,7 @@ function toggle(platform: SocialPlatform) {
         eigene Vorgabe
       </label>
     </div>
-    <p v-if="!isOwn" class="mt-2 text-xs text-[#9aa096]">
-      Übernimmt die Vorgabe der übergeordneten Ebene: {{ props.effectiveValue.length ? props.effectiveValue.map((platform) => PLATFORM_LABELS[platform]).join(', ') : 'keine Vorauswahl' }}.
-    </p>
+    <p v-if="!isOwn" class="mt-2 text-xs text-[#9aa096]">{{ inheritedHint }}</p>
     <div v-else class="mt-2 flex flex-wrap gap-3">
       <label v-for="platform in SocialPlatformSchema.options" :key="platform" class="flex items-center gap-1.5 text-sm">
         <input type="checkbox" :checked="ownValue?.includes(platform) ?? false" :disabled="props.disabled" @change="toggle(platform)" />

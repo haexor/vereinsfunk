@@ -168,7 +168,15 @@ async function reviseCandidate() {
     await refreshSession()
   } catch { notice.value = 'Die Überarbeitung konnte nicht gestartet werden.' } finally { submitting.value = false }
 }
-await Promise.all([loadProfiles(), loadPlatformAvailability(), loadCapabilities()]); restoreDraft()
+// Dieselbe restoringDraft-Klammer wie im Scope-Wechsel oben, und aus demselben Grund:
+// loadPlatformAvailability() schreibt selectedPlatforms, der persistDraft-Watcher laeuft mit
+// flush: 'sync' also noch VOR restoreDraft() -- und legte den noch leeren Formularzustand ueber den
+// gespeicherten Entwurf. Nach jedem Neuladen war das getippte Quellmaterial damit still verloren
+// (Review von Paket 044 PR 1; bestand schon vorher, faellt hier nur an derselben Zeile auf).
+restoringDraft = true
+await Promise.all([loadProfiles(), loadPlatformAvailability(), loadCapabilities()])
+restoreDraft()
+restoringDraft = false
 </script>
 
 <template>
