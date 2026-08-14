@@ -135,6 +135,8 @@ Die Stufen sind bewusst benannt, nicht als Zahl gezeigt: die Zahl ist ein Anbiet
 
 ### Step 3: Plattform-Auswahl am Beitrag, begrenzt auf das Veröffentlichbare
 
+> **Die automatische Vorauswahl ist überholt.** Aufgehoben durch Betreiberentscheidung vom 2026-08-14, aus derselben Design-Sitzung nach dem Code-Review von PR #76 wie Step 4 — siehe `plans/044-zielplattformen-vorgaben-und-harte-laengengrenze.md`, PR 1. „Beide vorausgewählt“ war die zum Merge-Zeitpunkt umgesetzte und verifizierte Vorgabe (siehe unten), gilt aber nicht mehr als Ziel: keine Plattform ist ab Werk angehakt, Verein/Abteilung setzen stattdessen eigene Vorgaben, sonst startet die Auswahl leer.
+
 **Entschieden (2026-08-14):** Der Ersteller wählt die Ziel-Plattformen direkt im Formular, Mehrfachauswahl, beide vorausgewählt. Angezeigt werden aber **nur Plattformen, auf die dieser Scope überhaupt veröffentlichen kann** — der Verein richtet Kanäle ein, eine Abteilung darf sie (wenn der Vereinsadmin es erlaubt) um eigene erweitern oder weiter einschränken. Eine Plattform anzubieten, für die kein Kanal existiert, erzeugt einen Beitrag, der nie veröffentlicht werden kann.
 
 Das ist die „Plattform-Fähigkeitsprüfung vor Generierung", die Plan 032 als offen markiert hat.
@@ -163,7 +165,7 @@ Wer je Plattform einen eigenen Text will, **erzeugt je Plattform eine eigene Sit
 Damit lösen sich beide Folgefragen des alten Step 4 ersatzlos auf:
 
 - **`GeneratedPostSchema.variants` bleibt leer.** Kein Kandidat mit mehreren Varianten aus einem Provider-Aufruf, keine Abhängigkeit auf Paket 005 an dieser Stelle.
-- **Die Freigabekette bleibt unverändert.** Die offene Frage „eine gemeinsame Freigabe oder je eine eigene, und was gilt bei einer Ablehnung" entfällt — es gibt nie zwei Texte an einer `post_version`.
+- **Die Freigabekette bleibt unverändert.** Die offene Frage „eine gemeinsame Freigabe oder je eine eigene, und was gilt bei einer Ablehnung“ entfällt — es gibt nie zwei Texte an einer `post_version`.
 
 **Was stattdessen gebraucht wird**, ist reine Bequemlichkeit: das erneute Laden der Einstellungen eines früheren Beitrags, damit derselbe Prompt schnell ein zweites Mal mit anderer Plattformauswahl laufen kann. Ausgeplant als **Paket 043**.
 
@@ -207,7 +209,7 @@ Fix: `temperature` nur in den Hash aufnehmen, wenn der gewählte Adapter sie sen
 - **Eine weitere eingefrorene Spalte auf `composition_sessions` landet, ohne in den `input_hash` zu wandern.** Dann wiederholt sich der Fund aus dem Review-Fix von PR 1: der Wiederverwendungszweig des RPC ignoriert die Parameter stumm, und die neue Nutzereingabe ist unerreichbar.
 - **Die vier Stufen werden geändert oder erweitert**, ohne den CHECK in `2026081309` und `TEXT_GENERATION_TEMPERATURE_STEPS` gemeinsam anzufassen — die API akzeptiert sonst einen Wert, den die Datenbank mit 23514 zurückweist.
 - **Eine neue Plattform kommt hinzu** (Twitter/X, LinkedIn und Mastodon sind vorgesehen), ohne dass `SocialPlatformSchema`, der CHECK von `text_generation_platform_defaults`, der CHECK auf `composition_sessions.target_platforms` **und** ein Seed mit deren echter Zeichengrenze mitgezogen werden. Ohne Seed-Zeile lässt sich für sie keine Länge bestimmen, und die Route rechnet sie stillschweigend aus dem Minimum heraus.
-- **Der Vorgabewert von `targetPlatforms` wird aus `SocialPlatformSchema.options` abgeleitet.** Mit einer Kurzform-Plattform in der Menge würde „alles vorausgewählt" jeden Beitrag stillschweigend auf deren Länge kürzen. Die min()-Regel selbst ist erwünscht (Step 4) — eine **Vorauswahl**, die sie unbemerkt auslöst, ist es nicht: der Ersteller muss die kurze Plattform bewusst angehakt haben.
+- **Der Vorgabewert von `targetPlatforms` wird aus `SocialPlatformSchema.options` abgeleitet.** Mit einer Kurzform-Plattform in der Menge würde „alles vorausgewählt“ jeden Beitrag stillschweigend auf deren Länge kürzen. Die min()-Regel selbst ist erwünscht (Step 4) — eine **Vorauswahl**, die sie unbemerkt auslöst, ist es nicht: der Ersteller muss die kurze Plattform bewusst angehakt haben (siehe Plan 044, das die heutige automatische Vorauswahl aus Step 3 dafür ganz zurücknimmt).
 - **PR 3 rendert den Regler, ohne `temperatureSupported` auszuwerten** — das ist genau der irreführende Zustand, den Step 1 verhindert.
 
 ## Maintenance notes
