@@ -12,6 +12,7 @@ const props = defineProps<{
 }>()
 
 const purposeDraft = defineModel<string>('purposeDraft', { required: true })
+const maxCharactersDraft = defineModel<string>('maxCharactersDraft', { required: true })
 const editorialImprintUrlDraft = defineModel<string>('editorialImprintUrlDraft', { required: true })
 const editorialPrivacyUrlDraft = defineModel<string>('editorialPrivacyUrlDraft', { required: true })
 const editorialResponsibleProfileIdDraft = defineModel<string>('editorialResponsibleProfileIdDraft', { required: true })
@@ -21,6 +22,7 @@ const emit = defineEmits<{
   verify: []
   disconnect: []
   savePurpose: []
+  saveMaxCharacters: []
   saveEditorial: []
 }>()
 
@@ -47,6 +49,7 @@ function tokenExpiryLabel(): string | null {
         <div>
           <p class="font-display text-base font-bold">{{ channel.displayName }}</p>
           <p class="text-[11px] text-[#9aa096]">{{ departmentName(channel.ownerDepartmentId) }} · {{ channel.confidential ? 'Vertraulich' : 'Sichtbar' }}</p>
+          <p v-if="channel.websiteUrl"><a :href="channel.websiteUrl" target="_blank" rel="noopener noreferrer" class="focus-ring text-[11px] text-[#7b827d] underline">{{ channel.websiteUrl }}</a></p>
         </div>
       </div>
       <span class="shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold" :class="statusClasses[channel.status]">{{ statusLabels[channel.status] }}</span>
@@ -58,8 +61,13 @@ function tokenExpiryLabel(): string | null {
     <template v-if="canManage">
       <div class="mt-4 flex flex-wrap items-center gap-2">
         <input v-model="purposeDraft" placeholder="Zweck, z. B. Hauptkanal" class="focus-ring flex-1 rounded-lg border border-[#dfe0d9] p-2 text-xs" @blur="emit('savePurpose')" @keyup.enter="emit('savePurpose')" />
-        <button type="button" :disabled="busy" class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-2 text-[11px] font-semibold disabled:opacity-60" @click="emit('verify')">Verbindung prüfen</button>
+        <button v-if="channel.platform !== 'website'" type="button" :disabled="busy" class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-2 text-[11px] font-semibold disabled:opacity-60" @click="emit('verify')">Verbindung prüfen</button>
         <button type="button" :disabled="busy || channel.status === 'disconnected'" class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-2 text-[11px] font-semibold text-amber-800 disabled:opacity-60" @click="emit('disconnect')">Trennen</button>
+      </div>
+      <div v-if="channel.platform === 'website'" class="mt-3 flex items-center gap-2">
+        <label class="flex items-center gap-2 text-[11px] font-semibold text-[#7b827d]">Maximale Länge
+          <input v-model="maxCharactersDraft" type="number" min="100" max="10000" placeholder="Vorgabe der Plattform" class="focus-ring w-32 rounded-lg border border-[#dfe0d9] p-2 text-xs font-normal" @blur="emit('saveMaxCharacters')" @keyup.enter="emit('saveMaxCharacters')" />
+        </label>
       </div>
       <div class="mt-4 border-t border-[#e8e9e2] pt-4">
         <p class="mb-2 text-[11px] font-semibold text-[#7b827d]">Presserechtliche Pflichtangaben</p>

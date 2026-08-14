@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Check, LoaderCircle, RefreshCw, Sparkles } from '@lucide/vue'
-import { SocialPlatformSchema, TEXT_GENERATION_DEFAULT_TEMPERATURE, TEXT_GENERATION_TEMPERATURE_STEPS, TextGenerationCapabilitiesSchema, TextGenerationPlatformAvailabilitySchema, TextGenerationTemperatureSchema, type SocialPlatform, type TextGenerationPlatformAvailability } from '@vereinsfunk/contracts'
+import { MaxCharactersSchema, SocialPlatformSchema, TEXT_GENERATION_DEFAULT_TEMPERATURE, TEXT_GENERATION_TEMPERATURE_STEPS, TextGenerationCapabilitiesSchema, TextGenerationPlatformAvailabilitySchema, TextGenerationTemperatureSchema, type SocialPlatform, type TextGenerationPlatformAvailability } from '@vereinsfunk/contracts'
 import { z } from 'zod'
 
 type Profile = { id: string | null; slug: string; kind: 'system' | 'persona' | 'custom'; name: string; description: string }
@@ -35,6 +35,7 @@ const temperatureSupported = ref<boolean | null>(null)
 const temperature = ref<number>(TEXT_GENERATION_DEFAULT_TEMPERATURE)
 const platforms = ref<TextGenerationPlatformAvailability[]>([])
 const selectedPlatforms = ref<SocialPlatform[]>([])
+const maxCharactersOverride = ref('')
 const PROFILE_GROUP_LABELS = { system: 'Basis-Stile', persona: 'Personas', custom: 'Eigene Profile' } as const
 const profileGroups = computed(() => (['system', 'persona', 'custom'] as const).map((kind) => ({ label: PROFILE_GROUP_LABELS[kind], items: profiles.value.filter((profile) => profile.kind === kind) })).filter((group) => group.items.length))
 const presetSlug = ref('training_insight')
@@ -53,22 +54,22 @@ function sourceMaterial() {
 }
 function persistDraft() {
   if (restoringDraft || !import.meta.client || !draftKey.value) return
-  localStorage.setItem(draftKey.value, JSON.stringify({ presetSlug: presetSlug.value, communicationGoal: communicationGoal.value, factsText: factsText.value, observation: observation.value, quote: quote.value, doNotMention: doNotMention.value, selectedProfile: selectedProfile.value, temperature: temperature.value, selectedPlatforms: selectedPlatforms.value }))
+  localStorage.setItem(draftKey.value, JSON.stringify({ presetSlug: presetSlug.value, communicationGoal: communicationGoal.value, factsText: factsText.value, observation: observation.value, quote: quote.value, doNotMention: doNotMention.value, selectedProfile: selectedProfile.value, temperature: temperature.value, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }))
 }
 function clearDraft() { if (import.meta.client && draftKey.value) localStorage.removeItem(draftKey.value) }
 function restoreDraft() {
   if (!import.meta.client || !draftKey.value) return
   try {
     const raw = localStorage.getItem(draftKey.value); if (!raw) return
-    const draft = z.object({ presetSlug: z.string(), communicationGoal: z.string(), factsText: z.string(), observation: z.string(), quote: z.string(), doNotMention: z.string(), selectedProfile: z.string(), temperature: TextGenerationTemperatureSchema.default(TEXT_GENERATION_DEFAULT_TEMPERATURE), selectedPlatforms: z.array(SocialPlatformSchema).default([]) }).parse(JSON.parse(raw))
-    presetSlug.value = draft.presetSlug; communicationGoal.value = draft.communicationGoal; factsText.value = draft.factsText; observation.value = draft.observation; quote.value = draft.quote; doNotMention.value = draft.doNotMention; selectedProfile.value = draft.selectedProfile; temperature.value = draft.temperature
+    const draft = z.object({ presetSlug: z.string(), communicationGoal: z.string(), factsText: z.string(), observation: z.string(), quote: z.string(), doNotMention: z.string(), selectedProfile: z.string(), temperature: TextGenerationTemperatureSchema.default(TEXT_GENERATION_DEFAULT_TEMPERATURE), selectedPlatforms: z.array(SocialPlatformSchema).default([]), maxCharactersOverride: z.string().default('') }).parse(JSON.parse(raw))
+    presetSlug.value = draft.presetSlug; communicationGoal.value = draft.communicationGoal; factsText.value = draft.factsText; observation.value = draft.observation; quote.value = draft.quote; doNotMention.value = draft.doNotMention; selectedProfile.value = draft.selectedProfile; temperature.value = draft.temperature; maxCharactersOverride.value = draft.maxCharactersOverride
     // Nur uebernehmen, was laut der zuletzt geladenen Verfuegbarkeit noch anhakbar ist -- ein Kanal
     // kann seit dem letzten Entwurf entfernt worden sein.
     if (draft.selectedPlatforms.length) selectedPlatforms.value = draft.selectedPlatforms.filter((platform) => platforms.value.some((entry) => entry.platform === platform && entry.available))
   } catch { clearDraft() }
 }
-watch([presetSlug, communicationGoal, factsText, observation, quote, doNotMention, selectedProfile, temperature, selectedPlatforms], persistDraft, { flush: 'sync', deep: true })
-watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; candidate.value = null; profiles.value = []; presetSlug.value = 'training_insight'; communicationGoal.value = 'inform'; selectedProfile.value = 'klar_erklaerend'; factsText.value = ''; observation.value = ''; quote.value = ''; doNotMention.value = ''; revisionInstruction.value = ''; temperature.value = TEXT_GENERATION_DEFAULT_TEMPERATURE; platforms.value = []; selectedPlatforms.value = []; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
+watch([presetSlug, communicationGoal, factsText, observation, quote, doNotMention, selectedProfile, temperature, selectedPlatforms, maxCharactersOverride], persistDraft, { flush: 'sync', deep: true })
+watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; candidate.value = null; profiles.value = []; presetSlug.value = 'training_insight'; communicationGoal.value = 'inform'; selectedProfile.value = 'klar_erklaerend'; factsText.value = ''; observation.value = ''; quote.value = ''; doNotMention.value = ''; revisionInstruction.value = ''; temperature.value = TEXT_GENERATION_DEFAULT_TEMPERATURE; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
 
 async function loadProfiles() {
   if (!scope.value?.organizationId || !scope.value.departmentId) return
@@ -102,10 +103,18 @@ async function refreshSession() {
   candidate.value = response.candidates[0] ?? null
   if (candidate.value?.status === 'ready') clearDraft()
 }
+function parsedMaxCharactersOverride(): number | undefined | 'invalid' {
+  const trimmed = maxCharactersOverride.value.trim()
+  if (!trimmed) return undefined
+  const parsed = MaxCharactersSchema.safeParse(Number(trimmed))
+  return parsed.success ? parsed.data : 'invalid'
+}
 async function createCandidate() {
   if (!scope.value?.organizationId || !scope.value.departmentId) { notice.value = 'Bitte wähle Verein und Abteilung.'; return }
   if (!Object.keys(sourceMaterial().facts).length && !observation.value.trim() && !quote.value.trim()) { notice.value = 'Gib mindestens eine bestätigte Tatsache, Beobachtung oder ein freigegebenes Zitat an.'; return }
   if (!selectedPlatforms.value.length) { notice.value = 'Bitte wähle mindestens eine Zielplattform.'; return }
+  const maxCharacters = parsedMaxCharactersOverride()
+  if (maxCharacters === 'invalid') { notice.value = 'Die maximale Länge muss zwischen 100 und 10.000 Zeichen liegen.'; return }
   submitting.value = true; notice.value = ''
   try {
     const selected = profiles.value.find((profile) => (profile.id ?? profile.slug) === selectedProfile.value)
@@ -116,6 +125,9 @@ async function createCandidate() {
       body: {
         organizationId: scope.value.organizationId, departmentId: scope.value.departmentId, presetSlug: presetSlug.value, communicationGoal: communicationGoal.value, requestedFormats: ['text_post'],
         ...profileChoice, sourceMaterial: sourceMaterial(), targetPlatforms: selectedPlatforms.value,
+        // Ein weiterer Kandidat der serverseitigen Minimumbildung, keine Ueberschreibung -- die
+        // gewaehlten Plattformen bleiben die verbindliche Obergrenze (routes/content.ts).
+        ...(maxCharacters !== undefined ? { maxCharacters } : {}),
         // Weglassen nur, wenn der Provider sie nachweislich nicht sendet -- bei "unbekannt" die
         // gewaehlte Stufe mitschicken, statt sie stillschweigend auf den Serverdefault fallen zu
         // lassen (ein wiederhergestellter Entwurf kann eine Stufe tragen, Review dieses PRs).
@@ -179,6 +191,11 @@ await Promise.all([loadProfiles(), loadPlatformAvailability(), loadCapabilities(
         </div>
         <p v-else class="text-[11px] font-normal text-[#9aa096]">Die Zielplattformen konnten nicht geladen werden. Bitte lade die Seite neu.</p>
         <p v-for="reason in unavailableReasons" :key="reason" class="mt-1 text-[11px] font-normal text-[#9aa096]">{{ PLATFORM_UNAVAILABLE_EXPLANATIONS[reason] }}</p>
+      </fieldset>
+      <fieldset>
+        <legend class="mb-2 text-xs font-semibold">Maximale Länge (optional)</legend>
+        <input v-model="maxCharactersOverride" type="number" min="100" max="10000" placeholder="z. B. 800" class="w-32 rounded-xl border p-3 text-sm" />
+        <p class="mt-1 text-[11px] font-normal text-[#9aa096]">Kürzer als die gewählten Plattformen erlauben ist möglich, länger nicht.</p>
       </fieldset>
       <fieldset>
         <legend class="mb-2 text-xs font-semibold">Persona-Intensität</legend>

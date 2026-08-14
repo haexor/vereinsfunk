@@ -127,6 +127,14 @@ Die Leine muss deshalb aus `session.max_characters` folgen statt konstant zu sei
 
 **Verifizieren**: Vitest im Worker — eine Sitzung mit `max_characters: 2200` und eine mit `5000` erzeugen unterschiedliche `maxOutputTokens`; zwei Sitzungen mit **derselben** Zeichengrenze, aber unterschiedlich vielen Belegen erzeugen unterschiedliche `maxOutputTokens` **und** unterschiedliche `provider_parameter_hash` (der Vergleich zweier `max_characters`-Werte belegt das nicht — `max_characters` steht schon für sich im Hash, der Test wäre auch ohne die Ableitung grün gewesen). Vitest in den Contracts — das Budget fällt nie unter die alte feste Konstante. Danach einmal am echten Provider gegenprüfen, dass ein 5000-Zeichen-Blogbeitrag **vollständig** zurückkommt und nicht mitten im Satz endet.
 
+## Stand nach der Umsetzung von PR 2
+
+Step 6 brauchte serverseitig kein neues Feld mehr: `maxCharacters` in `CreateCompositionSessionSchema` und dessen Aufnahme in die Minimumbildung (`routes/content.ts`) waren bereits Teil der Review-Korrekturen von PR 1 (Korrektur 2 oben). PR 2 ergänzt nur noch das Eingabefeld in `erstellen.vue` samt Entwurfspersistenz.
+
+**Verifiziert**: `pnpm lint`, `pnpm typecheck`, `pnpm test` (alle 36 Turbo-Aufgaben, inkl. `channels.routes.test.ts` und `content.routes.test.ts` weiterhin grün) und `pnpm build` sind grün. Keine Migrationsänderung in diesem PR, daher kein `db:test` nötig.
+
+**Nicht verifiziert**: Der interaktive Playwright-/Browser-Durchlauf aus den Verifizieren-Abschnitten von Step 5/6 (Kanal anlegen, Länge setzen, Seite neu laden, Wert prüfen) konnte in dieser Sitzung nicht durchgeführt werden — kein Browser-Werkzeug verfügbar. Vor dem Merge einmal manuell im Browser gegenprüfen.
+
 ## PR 2: Oberflächen
 
 ### Step 5 — Kanalverwaltung
