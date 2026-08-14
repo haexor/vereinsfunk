@@ -31,10 +31,11 @@ Der Gewinn dieses Zuschnitts: die Textwerkstatt braucht **keine einzige Sonderbe
 
 | Wo | Was |
 |---|---|
-| `social_connections` | `platform text not null check (platform in ('instagram','facebook'))`, `external_account_id text not null`, `token_ciphertext bytea not null`, `token_key_version text not null`, `unique (organization_id, platform, external_account_id)` |
-| Anlage einer Zeile | **ausschließlich** in `apps/api/src/routes/channelOAuth.ts:198` (OAuth-Callback). Es gibt **keine** `POST /v1/channels`-Route — `channels.ts` kennt nur GET/PATCH/DELETE/verify und die Scope-Routen |
+| `social_connections` | `platform text not null check (platform in ('instagram','facebook'))`, `external_account_id text not null`, `unique (organization_id, platform, external_account_id)`. **Kein Token hier** — `token_ciphertext`/`token_key_version` wurden bereits in Paket 012 (`2026080701_channel_scoping_and_secrets.sql:74-75`) auf eine eigene Tabelle verschoben |
+| `social_connection_secrets` | `social_connection_id uuid primary key references social_connections(...)`, `token_ciphertext bytea not null`, `token_key_version text not null`. Reine 1:1-Zusatztabelle, keine Policy für `authenticated`; eine Zeile ohne Geheimnis ist einfach eine Zeile ohne Eintrag hier — kein Nullable-Umbau nötig |
+| Anlage einer Zeile | **ausschließlich** in `apps/api/src/routes/channelOAuth.ts:198` (`social_connections`) plus `:218-223` (`social_connection_secrets`), beide im OAuth-Callback. Es gibt **keine** `POST /v1/channels`-Route — `channels.ts` kennt nur GET/PATCH/DELETE/verify und die Scope-Routen |
 | `channel_scopes` | Verein/Abteilung/Team mit `can_schedule`; trägt die Zuteilung, die dieses Paket unverändert nutzt |
-| Plattform-CHECK in SQL | `social_connections`, `publications`, `post_targets`, `publish_attempts` (`202608030001`), zwei Tabellen in `2026080701`, `text_generation_platform_defaults` (`2026081308`), `composition_sessions.target_platforms` (`2026081309`) |
+| Plattform-CHECK in SQL | sieben Stellen: `social_connections`, `publications`, `post_variants` (alle `202608030001`), `oauth_states`, `oauth_pending_connections` (beide `2026080701`), `text_generation_platform_defaults` (`2026081308`), `composition_sessions.target_platforms` (`2026081309`) |
 | Längengrenze | global je Plattform in `text_generation_platform_defaults`, gepflegt vom **Plattform-Admin** (Betreiber). Kein Wert je Kanal |
 | `resolveTextGenerationPlatformAvailability` | `apps/api/src/routes/shared.ts` — je Plattform „verfügbar/nicht", Grund `no_channel` oder `restricted_by_policy`, plus Zeichengrenze aus der globalen Vorgabe |
 | `apps/web/app/pages/kanaele.vue` | 55 Zeilen, zwei Knöpfe „Instagram verbinden" / „Facebook verbinden", beide starten den OAuth-Fluss |
@@ -55,8 +56,8 @@ Diese vier sind vor der Umsetzung bewusst getroffen worden und sollten nicht sti
 **1. `website` kommt in `SocialPlatformSchema`, nicht in ein zweites Vokabular.**
 Naheliegend wäre ein getrenntes `TextGenerationTargetSchema`, weil eine Website kein OAuth-Konto ist. Dagegen spricht der Kommentar an `SocialPlatformSchema` selbst: „Bewusst EINE Menge für Kanäle und Textwerkstatt — auf welchen Plattformen ein Beitrag entstehen darf, ist genau die Menge, auf die überhaupt veröffentlicht werden kann." Genau diese Gleichung soll gelten: der Blog **ist** ein Veröffentlichungsziel. Zwei Vokabulare würden bei jedem weiteren Kanal auseinanderlaufen. Was eine Website von Instagram unterscheidet, ist nicht die Zugehörigkeit zur Menge, sondern das Fehlen eines Tokens — und das gehört an die Spalten, nicht an den Enum.
 
-**2. Kein Token, kein `external_account_id` — beide werden nullable.**
-Ein Blog-Kanal hat kein OAuth-Geheimnis. `token_ciphertext`/`token_key_version` werden `null`-fähig, mit einem CHECK, der sie für alle Plattformen **außer** `website` weiterhin erzwingt. Damit bleibt die heutige Zusicherung für Instagram/Facebook wortwörtlich erhalten, statt sie global aufzuweichen. Gleiches für `external_account_id`: der `unique (organization_id, platform, external_account_id)` braucht für Website-Kanäle einen anderen Träger — die Website-URL.
+**2. Kein Token — einfach keine Zeile in `social_connection_secrets`. Nur `external_account_id` wird nullable.**
+`token_ciphertext`/`token_key_version` sitzen seit Paket 012 nicht mehr auf `social_connections`, sondern auf der eigenen Tabelle `social_connection_secrets` (`social_connection_id uuid primary key`, 1:1 per FK, keine Policy für `authenticated`). Ein Blog-Kanal braucht dort schlicht **keinen Eintrag** — nichts an diesem Schema muss dafür angefasst werden, und die heutige Zusicherung für Instagram/Facebook (dort **immer** eine Zeile mit Token) bleibt strukturell erhalten, nicht nur per CHECK. Anfassen muss nur `external_account_id` auf `social_connections`: es wird `null`-fähig, mit `check (platform = 'website' or external_account_id is not null)`. Der `unique (organization_id, platform, external_account_id)` braucht für Website-Kanäle ohnehin einen anderen Träger — die Website-URL (siehe Entscheidung 4).
 
 **3. Die Längengrenze je Kanal ist eine Spalte auf `social_connections`, nicht eine zweite Tabelle.**
 `max_characters integer null check (max_characters between 100 and 10000)`. `null` bedeutet „globale Vorgabe der Plattform gilt" — so bleibt Instagram unverändert vom Betreiber gesteuert, während der Verein für seinen Blog selbst entscheidet. Die harte Obergrenze steht damit im CHECK **und** in `MaxCharactersSchema`, an beiden Enden derselbe Bereich.
@@ -70,15 +71,14 @@ Betreiberentscheidung vom 2026-08-14. Ein Verein hat plausibel eine Hauptseite u
 
 Neue Migration (Nummer nach dem dann höchsten Stand, zum Planungszeitpunkt `2026081310`):
 
-- Alle Plattform-CHECKs auf `('instagram','facebook','website')` erweitern. **Alle sieben Stellen** aus „Current state" abarbeiten — ein übersehener CHECK schlägt erst beim ersten echten Blog-Beitrag zu, nicht beim Anlegen des Kanals.
-- `social_connections`: `token_ciphertext`/`token_key_version`/`external_account_id` auf `null` erlauben, dazu
-  `check (platform = 'website' or (token_ciphertext is not null and token_key_version is not null and external_account_id is not null))`.
+- Alle Plattform-CHECKs auf `('instagram','facebook','website')` erweitern. **Alle sieben Stellen** aus „Current state" abarbeiten (`social_connections`, `publications`, `post_variants`, `oauth_states`, `oauth_pending_connections`, `text_generation_platform_defaults`, `composition_sessions.target_platforms`) — ein übersehener CHECK schlägt erst beim ersten echten Blog-Beitrag zu, nicht beim Anlegen des Kanals.
+- `social_connections.external_account_id` auf `null` erlauben, dazu `check (platform = 'website' or external_account_id is not null)`. **`social_connection_secrets` bleibt unverändert** — ein Website-Kanal bekommt dort schlicht keine Zeile, kein Nullable-Umbau nötig (siehe Entwurfsentscheidung 2).
 - `social_connections.max_characters integer null check (max_characters between 100 and 10000)`.
 - `social_connections.website_url text null` mit URL-Form-CHECK; `check (platform <> 'website' or website_url is not null)`.
 - Partieller Unique-Index für Website-Kanäle: `unique (organization_id, website_url) where platform = 'website'`.
 - `text_generation_platform_defaults`: Zeile für `website` mit **5000** (Betreiberentscheidung vom 2026-08-14), vom Plattform-Admin änderbar. Dieser Wert ist mit der heutigen Token-Leine **nicht erreichbar** — siehe Step 4, der gehört zwingend in denselben PR.
 
-**Verifizieren**: `pnpm db:reset && pnpm db:test` grün. Neuer pgTAP-Fall: ein `insert` eines Website-Kanals ohne Token gelingt, derselbe `insert` mit `platform = 'instagram'` scheitert. Zweiter Fall: `max_characters = 99` und `= 10001` werden beide abgewiesen.
+**Verifizieren**: `pnpm db:reset && pnpm db:test` grün. Neuer pgTAP-Fall: ein `insert` eines Website-Kanals ohne `external_account_id` und ohne begleitende `social_connection_secrets`-Zeile gelingt, derselbe `insert` mit `platform = 'instagram'` und `external_account_id = null` scheitert. Zweiter Fall: `max_characters = 99` und `= 10001` werden beide abgewiesen.
 
 ### Step 2 — `POST /v1/channels` für Website-Kanäle
 
