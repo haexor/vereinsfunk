@@ -17,12 +17,11 @@ const saving = ref(false)
 const errorMessage = ref('')
 const personas = ref<PlatformStylePersona[]>([])
 
-const draft = reactive({ slug: '', ...emptyStyleProfileDraft() })
+const draft = ref({ slug: '', ...emptyStyleProfileDraft() })
 const formError = ref('')
 
 function resetForm() {
-  draft.slug = ''
-  Object.assign(draft, emptyStyleProfileDraft())
+  draft.value = { slug: '', ...emptyStyleProfileDraft() }
 }
 
 async function load() {
@@ -39,17 +38,17 @@ async function load() {
 await load()
 
 async function createPersona() {
-  if (!draft.slug.trim() || !draft.name.trim() || !draft.description.trim()) return
+  if (!draft.value.slug.trim() || !draft.value.name.trim() || !draft.value.description.trim()) return
   saving.value = true
   formError.value = ''
   try {
     const body = CreatePlatformStylePersonaRequestSchema.parse({
-      slug: draft.slug,
-      name: draft.name,
-      description: draft.description,
-      styleRules: styleRulesFromDraft(draft),
-      avoidRules: avoidRulesFromDraft(draft),
-      doRules: doRulesFromDraft(draft),
+      slug: draft.value.slug,
+      name: draft.value.name,
+      description: draft.value.description,
+      styleRules: styleRulesFromDraft(draft.value),
+      avoidRules: avoidRulesFromDraft(draft.value),
+      doRules: doRulesFromDraft(draft.value),
     })
     await api.request('/v1/platform-style-personas', { method: 'POST', body })
     resetForm()
@@ -66,19 +65,19 @@ const previewing = ref(false)
 const previewResult = ref<GeneratedPost | null>(null)
 const previewError = ref('')
 const previewKey = ref(crypto.randomUUID())
-watch(draft, () => { previewKey.value = crypto.randomUUID() })
+watch(draft, () => { previewKey.value = crypto.randomUUID() }, { deep: true })
 
 async function testPersona() {
   previewing.value = true
   previewError.value = ''
   try {
     const body = PreviewPlatformStylePersonaRequestSchema.parse({
-      name: draft.name,
-      description: draft.description,
-      styleRules: styleRulesFromDraft(draft),
-      avoidRules: avoidRulesFromDraft(draft),
-      doRules: doRulesFromDraft(draft),
-      sampleInput: draft.sampleInput,
+      name: draft.value.name,
+      description: draft.value.description,
+      styleRules: styleRulesFromDraft(draft.value),
+      avoidRules: avoidRulesFromDraft(draft.value),
+      doRules: doRulesFromDraft(draft.value),
+      sampleInput: draft.value.sampleInput,
     })
     previewResult.value = await api.request('/v1/platform-style-personas/preview', { method: 'POST', body, headers: { 'idempotency-key': previewKey.value } }, GeneratedPostSchema)
     previewKey.value = crypto.randomUUID()
