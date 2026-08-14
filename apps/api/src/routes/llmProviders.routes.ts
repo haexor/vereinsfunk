@@ -3,8 +3,8 @@ import {
   ListLlmProviderModelsRequestSchema,
   ListLlmProviderModelsResponseSchema,
   LlmProviderConfigurationSchema,
+  SocialPlatformSchema,
   TextGenerationPlatformDefaultSchema,
-  TextGenerationPlatformSchema,
   UpdateLlmProviderConfigurationRequestSchema,
   UpdateTextGenerationPlatformDefaultRequestSchema,
   UuidSchema,
@@ -202,17 +202,17 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
   app.get('/v1/text-generation-platform-defaults', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const client = supabaseClients.forUser(request.auth!.accessToken)
-    const result = await client.from('text_generation_platform_defaults').select('platform, max_output_tokens, updated_at').order('platform')
+    const result = await client.from('text_generation_platform_defaults').select('platform, max_characters, updated_at').order('platform')
     if (result.error) throw result.error
     return reply.code(200).send(
-      result.data.map((row) => TextGenerationPlatformDefaultSchema.parse({ platform: row.platform, maxOutputTokens: row.max_output_tokens, updatedAt: row.updated_at })),
+      result.data.map((row) => TextGenerationPlatformDefaultSchema.parse({ platform: row.platform, maxCharacters: row.max_characters, updatedAt: row.updated_at })),
     )
   })
 
   app.put('/v1/text-generation-platform-defaults/:platform', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     if (!(await requirePlatformAdmin(request, reply))) return
-    const params = z.object({ platform: TextGenerationPlatformSchema }).parse(request.params)
+    const params = z.object({ platform: SocialPlatformSchema }).parse(request.params)
     const body = UpdateTextGenerationPlatformDefaultRequestSchema.parse(request.body)
     const service = supabaseClients.forService()
     // maybeSingle statt single: die Route aendert nur bestehende Zeilen (angelegt vom Seed in
@@ -220,14 +220,14 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
     // Plattform-Menge erweitert, ohne sie zu befuellen -- ist das ein 404, kein 500 aus PGRST116.
     const update = await service
       .from('text_generation_platform_defaults')
-      .update({ max_output_tokens: body.maxOutputTokens, updated_by: request.auth!.userId })
+      .update({ max_characters: body.maxCharacters, updated_by: request.auth!.userId })
       .eq('platform', params.platform)
-      .select('platform, max_output_tokens, updated_at')
+      .select('platform, max_characters, updated_at')
       .maybeSingle()
     if (update.error) throw update.error
     if (!update.data) return reply.code(404).send({ error: 'text_generation_platform_default_not_found' })
     return reply.code(200).send(
-      TextGenerationPlatformDefaultSchema.parse({ platform: update.data.platform, maxOutputTokens: update.data.max_output_tokens, updatedAt: update.data.updated_at }),
+      TextGenerationPlatformDefaultSchema.parse({ platform: update.data.platform, maxCharacters: update.data.max_characters, updatedAt: update.data.updated_at }),
     )
   })
 }

@@ -136,15 +136,21 @@ describe('text workshop contracts', () => {
     expect(CreateCompositionSessionSchema.safeParse({ ...base, temperature: 0.5 }).success).toBe(false)
   })
 
-  it('accepts an optional targetPlatform/maxOutputTokens override used only for max_output_tokens resolution', () => {
+  // Mehrfachauswahl: der Verein postet denselben Text ueblicherweise auf mehreren Plattformen, die
+  // knappste Vorgabe gibt dann die Laenge vor (min() in routes/content.ts). Ohne Angabe sind beide
+  // Plattformen vorausgewaehlt -- leer ist keine gueltige Wahl mehr.
+  it('preselects both platforms and rejects an empty, duplicated or unknown selection', () => {
     const base = {
       organizationId: org, departmentId: department, presetSlug: 'event', communicationGoal: 'invite',
       requestedFormats: ['text_post'] as const, sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [], doNotMention: [] },
     }
-    expect(CreateCompositionSessionSchema.safeParse(base).success).toBe(true)
-    expect(CreateCompositionSessionSchema.safeParse({ ...base, targetPlatform: 'instagram', maxOutputTokens: 500 }).success).toBe(true)
-    expect(CreateCompositionSessionSchema.safeParse({ ...base, targetPlatform: 'threads' }).success).toBe(false)
-    expect(CreateCompositionSessionSchema.safeParse({ ...base, maxOutputTokens: 127 }).success).toBe(false)
+    expect(CreateCompositionSessionSchema.parse(base).targetPlatforms).toEqual(['instagram', 'facebook'])
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, targetPlatforms: ['instagram'], maxCharacters: 500 }).success).toBe(true)
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, targetPlatforms: ['facebook', 'instagram'] }).success).toBe(true)
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, targetPlatforms: [] }).success).toBe(false)
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, targetPlatforms: ['instagram', 'instagram'] }).success).toBe(false)
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, targetPlatforms: ['threads'] }).success).toBe(false)
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, maxCharacters: 99 }).success).toBe(false)
   })
 
   it('validates the platform persona catalogue and reserves system profile slugs', () => {

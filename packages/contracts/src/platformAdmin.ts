@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import { MaxOutputTokensSchema, TextGenerationPlatformSchema, UuidSchema } from './content.js'
-import { CountryCodeSchema } from './primitives.js'
+import { MaxCharactersSchema, UuidSchema } from './content.js'
+import { CountryCodeSchema, SocialPlatformSchema } from './primitives.js'
 
 // Plattform-Administration (Paket 022): der SaaS-Betreiber, orthogonal zu allen
 // vereinsbezogenen Rollen oben. Jede Schreiboperation hier ist requirePlatformAdmin-gated.
@@ -79,18 +79,19 @@ export const UpdateLlmProviderConfigurationRequestSchema = z.object({
 })
 
 // Analog PlatformSettingSchema/UpdatePlatformSettingRequestSchema oben, aber ein eigenes Schema
-// statt eines weiteren PlatformSettingKey-Eintrags: der Wert ist hier pro Social-Media-Plattform
+// statt eines weiteren PlatformSettingKey-Eintrags: der Wert steht hier pro Social-Media-Plattform
 // (nicht global) und die Tabelle ist fuer jedes Mitglied lesbar, nicht nur fuer Plattform-Admins.
-// TextGenerationPlatformSchema, nicht SocialPlatformSchema: die Tabelle kennt genau die Plattformen
-// der Textwerkstatt (CHECK auf instagram/facebook). Ein neuer Kanal in der Kanal-Domaene darf hier
-// nicht automatisch mitgelten, sonst nimmt die Route einen Wert an, fuer den es keine Zeile gibt.
+// Eine Zeile je Plattform, mit deren verbindlicher Zeichengrenze. Dieselbe
+// SocialPlatformSchema wie die Kanal-Domaene: auf welchen Plattformen ein Beitrag entstehen darf,
+// ist genau die Menge, auf die veroeffentlicht werden kann. Jede neue Plattform braucht deshalb
+// zwingend eine Zeile hier -- fehlt sie, kann die Laenge fuer sie nicht bestimmt werden.
 export const TextGenerationPlatformDefaultSchema = z.object({
-  platform: TextGenerationPlatformSchema,
-  maxOutputTokens: MaxOutputTokensSchema,
+  platform: SocialPlatformSchema,
+  maxCharacters: MaxCharactersSchema,
   updatedAt: z.iso.datetime({ offset: true }),
 })
 export const UpdateTextGenerationPlatformDefaultRequestSchema = z.object({
-  maxOutputTokens: MaxOutputTokensSchema,
+  maxCharacters: MaxCharactersSchema,
 })
 
 // Modellauswahl im Formular: statt einer im Frontend gepflegten Liste fragt die API den Provider

@@ -127,6 +127,12 @@ describe('POST /v1/text-workshop/sessions', () => {
         }) as unknown as SupabaseClient,
       forService: () =>
         ({
+          // Seit der Mehrfachauswahl sind beide Plattformen vorausgewaehlt, die Route liest die
+          // Vorgaben also bei jeder Sitzungsanlage ohne expliziten maxCharacters-Wert.
+          from: (table: string) => {
+            if (table !== 'text_generation_platform_defaults') throw new Error(`unexpected table in test fake: ${table}`)
+            return chain({ data: [{ platform: 'instagram', max_characters: 2200 }, { platform: 'facebook', max_characters: 2200 }], error: null })
+          },
           rpc: async (_name: string, params: Record<string, unknown>) => {
             capturedRpcParams = params
             return { data: { sessionId: '3c000000-0000-4000-8000-000000000001', candidateId: '3c000000-0000-4000-8000-000000000002' }, error: null }
@@ -166,10 +172,10 @@ describe('POST /v1/text-workshop/sessions', () => {
     expect(response.json()).toMatchObject({ error: 'persona_not_found' })
   })
 
-  // Paket 042: max_output_tokens wird bei Anlage EINMAL aufgeloest und danach eingefroren --
-  // Sitzungs-Override > Plattform-Vorgabe > generischer Fallback. Ein vertauschter Vorrang waere
-  // ohne diese drei Faelle nirgends sichtbar.
-  function sessionCreatingClients(options: { platformDefault?: number | null; onRpc?: (params: Record<string, unknown>) => void }): SupabaseClientFactory {
+  // Paket 042: max_characters wird bei Anlage EINMAL aufgeloest und danach eingefroren --
+  // Sitzungs-Override > kleinste Vorgabe der gewaehlten Plattformen > generischer Fallback. Ein
+  // vertauschter Vorrang oder ein max() statt min() waere ohne diese Faelle nirgends sichtbar.
+  function sessionCreatingClients(options: { platformDefaults?: Record<string, number>; onRpc?: (params: Record<string, unknown>) => void }): SupabaseClientFactory {
     return {
       forUser: () =>
         ({
@@ -182,7 +188,10 @@ describe('POST /v1/text-workshop/sessions', () => {
         ({
           from: (table: string) => {
             if (table !== 'text_generation_platform_defaults') throw new Error(`unexpected table in test fake: ${table}`)
-            return chain({ data: options.platformDefault == null ? null : { max_output_tokens: options.platformDefault }, error: null })
+            // Der Fake gibt alle bekannten Vorgaben zurueck: die Route filtert per .in() auf die
+            // gewaehlten Plattformen, was chain() nicht nachbildet. Fuer den min()-Nachweis reicht
+            // das, weil jeder Fall seine eigene Vorgabenmenge mitbringt.
+            return chain({ data: Object.entries(options.platformDefaults ?? {}).map(([platform, characters]) => ({ platform, max_characters: characters })), error: null })
           },
           rpc: async (_name: string, params: Record<string, unknown>) => {
             options.onRpc?.(params)
@@ -198,34 +207,48 @@ describe('POST /v1/text-workshop/sessions', () => {
     return app.inject({ method: 'POST', url: '/v1/text-workshop/sessions', headers: { authorization: `Bearer ${token}` }, payload })
   }
 
-  it('resolves max_output_tokens from the request override, then the platform default, then the fallback', async () => {
+  it('resolves max_characters from the request override, then the platform default, then the fallback', async () => {
     let override: Record<string, unknown> | undefined
-    expect((await createSession(sessionCreatingClients({ platformDefault: 800, onRpc: (params) => { override = params } }), { ...basePayload, targetPlatform: 'instagram', maxOutputTokens: 300 })).statusCode).toBe(202)
-    expect(override?.p_max_output_tokens).toBe(300)
+    expect((await createSession(sessionCreatingClients({ platformDefaults: { instagram: 800 }, onRpc: (params) => { override = params } }), { ...basePayload, targetPlatforms: ['instagram'], maxCharacters: 300 })).statusCode).toBe(202)
+    expect(override?.p_max_characters).toBe(300)
 
-    let platform: Record<string, unknown> | undefined
-    expect((await createSession(sessionCreatingClients({ platformDefault: 800, onRpc: (params) => { platform = params } }), { ...basePayload, targetPlatform: 'instagram' })).statusCode).toBe(202)
-    expect(platform?.p_max_output_tokens).toBe(800)
-    expect(platform?.p_target_platform).toBe('instagram')
+    let single: Record<string, unknown> | undefined
+    expect((await createSession(sessionCreatingClients({ platformDefaults: { instagram: 800 }, onRpc: (params) => { single = params } }), { ...basePayload, targetPlatforms: ['instagram'] })).statusCode).toBe(202)
+    expect(single?.p_max_characters).toBe(800)
+    expect(single?.p_target_platforms).toEqual(['instagram'])
 
-    // Ohne Zielplattform wird die Vorgaben-Tabelle gar nicht gelesen -- der Fake wuerde bei einem
-    // Zugriff eine unerwartete Tabelle melden, wenn diese Bedingung je wegfaellt.
+    // Fehlt fuer eine gewaehlte Plattform die Vorgabezeile, faellt die Route auf den generischen
+    // Wert zurueck statt die Laenge unbemerkt hochzusetzen.
     let fallback: Record<string, unknown> | undefined
     expect((await createSession(sessionCreatingClients({ onRpc: (params) => { fallback = params } }), basePayload)).statusCode).toBe(202)
-    expect(fallback?.p_max_output_tokens).toBe(1200)
-    expect(fallback?.p_target_platform).toBeNull()
+    expect(fallback?.p_max_characters).toBe(2200)
     expect(fallback?.p_temperature).toBe(0.6)
+    // Ohne Angabe sind beide Plattformen vorausgewaehlt, sortiert an den RPC uebergeben.
+    expect(fallback?.p_target_platforms).toEqual(['facebook', 'instagram'])
+  })
+
+  // Der Kern der Mehrfachauswahl: ein Text fuer mehrere Plattformen richtet sich nach der
+  // knappsten Vorgabe. Ein max() oder "erste Wahl gewinnt" wuerde einen Text erzeugen, der auf der
+  // engeren Plattform nicht passt.
+  it('takes the most restrictive platform default when several platforms are selected', async () => {
+    let captured: Record<string, unknown> | undefined
+    expect((await createSession(
+      sessionCreatingClients({ platformDefaults: { instagram: 900, facebook: 1600 }, onRpc: (params) => { captured = params } }),
+      { ...basePayload, targetPlatforms: ['facebook', 'instagram'] },
+    )).statusCode).toBe(202)
+    expect(captured?.p_max_characters).toBe(900)
+    expect(captured?.p_target_platforms).toEqual(['facebook', 'instagram'])
   })
 
   // Der RPC gibt fuer einen bereits bekannten input_hash die vorhandene Sitzung samt Kandidat
   // zurueck und ignoriert die uebergebenen Laufzeitwerte. Waeren die Regler-Stufe und die
-  // Zielplattform nicht im Hash, wuerde ein zweites Absenden mit anderer Stufe stillschweigend den
+  // Zielplattformen nicht im Hash, wuerde ein zweites Absenden mit anderer Stufe stillschweigend den
   // alten Kandidaten liefern -- die neue Stufe waere nirgends gespeichert.
-  it('gives a session a distinct input hash per temperature step and target platform', async () => {
+  it('gives a session a distinct input hash per temperature step and platform selection', async () => {
     const hashes = new Set<string>()
-    for (const extra of [{}, { temperature: 1.0 }, { temperature: 0.3 }, { targetPlatform: 'instagram' }, { targetPlatform: 'facebook' }, { targetPlatform: 'facebook', maxOutputTokens: 300 }]) {
+    for (const extra of [{}, { temperature: 1.0 }, { temperature: 0.3 }, { targetPlatforms: ['instagram'] }, { targetPlatforms: ['facebook'] }, { targetPlatforms: ['facebook'], maxCharacters: 300 }]) {
       const response = await createSession(
-        sessionCreatingClients({ platformDefault: 800, onRpc: (params) => { hashes.add(params.p_input_hash as string) } }),
+        sessionCreatingClients({ platformDefaults: { instagram: 800, facebook: 800 }, onRpc: (params) => { hashes.add(params.p_input_hash as string) } }),
         { ...basePayload, ...extra },
       )
       expect(response.statusCode).toBe(202)

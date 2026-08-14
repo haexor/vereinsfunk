@@ -92,21 +92,21 @@ describe('onboarding contracts', () => {
 describe('text generation platform defaults contracts', () => {
   it('accepts a PostgREST-shaped updatedAt timestamp with a numeric UTC offset', () => {
     expect(
-      TextGenerationPlatformDefaultSchema.safeParse({ platform: 'instagram', maxOutputTokens: 1200, updatedAt: '2026-08-05T12:34:56.789+00:00' }).success,
+      TextGenerationPlatformDefaultSchema.safeParse({ platform: 'instagram', maxCharacters: 2200, updatedAt: '2026-08-05T12:34:56.789+00:00' }).success,
     ).toBe(true)
   })
 
   it('rejects a platform the text workshop has no default row for', () => {
     expect(
-      TextGenerationPlatformDefaultSchema.safeParse({ platform: 'threads', maxOutputTokens: 1200, updatedAt: '2026-08-05T12:34:56.789+00:00' }).success,
+      TextGenerationPlatformDefaultSchema.safeParse({ platform: 'threads', maxCharacters: 2200, updatedAt: '2026-08-05T12:34:56.789+00:00' }).success,
     ).toBe(false)
   })
 
-  it('keeps maxOutputTokens within the same 128-4000 bounds as the DB CHECK constraint', () => {
-    expect(UpdateTextGenerationPlatformDefaultRequestSchema.safeParse({ maxOutputTokens: 127 }).success).toBe(false)
-    expect(UpdateTextGenerationPlatformDefaultRequestSchema.safeParse({ maxOutputTokens: 128 }).success).toBe(true)
-    expect(UpdateTextGenerationPlatformDefaultRequestSchema.safeParse({ maxOutputTokens: 4000 }).success).toBe(true)
-    expect(UpdateTextGenerationPlatformDefaultRequestSchema.safeParse({ maxOutputTokens: 4001 }).success).toBe(false)
+  it('keeps maxCharacters within the same 100-10000 bounds as the DB CHECK constraint', () => {
+    expect(UpdateTextGenerationPlatformDefaultRequestSchema.safeParse({ maxCharacters: 99 }).success).toBe(false)
+    expect(UpdateTextGenerationPlatformDefaultRequestSchema.safeParse({ maxCharacters: 100 }).success).toBe(true)
+    expect(UpdateTextGenerationPlatformDefaultRequestSchema.safeParse({ maxCharacters: 10000 }).success).toBe(true)
+    expect(UpdateTextGenerationPlatformDefaultRequestSchema.safeParse({ maxCharacters: 10001 }).success).toBe(false)
   })
 })
 

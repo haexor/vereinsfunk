@@ -18,7 +18,9 @@
 `temperature` und `max_output_tokens` standen in `llm_provider_configurations` — also an derselben Zeile wie Endpunkt, Modell und Schlüssel. Damit galt für jeden Beitrag jedes Vereins derselbe Wert, und ihn zu ändern hieß, die Provider-Zeile des SaaS-Betreibers anzufassen. Beides sind aber keine Zugangsmerkmale:
 
 - **`temperature`** ist eine Gestaltungsentscheidung *am einzelnen Beitrag*: wie stark die gewählte Persona-Stimme durchschlagen soll. Das gehört dem Mitglied, das den Beitrag schreibt, nicht dem Betreiber.
-- **`max_output_tokens`** ist eine Eigenschaft der *Ziel-Plattform*: ein Instagram-Text darf kürzer ausfallen als ein Facebook-Text. Das gehört einer plattformweiten, betreibergepflegten Vorgabe — nicht dem Provider, der für alle Plattformen derselbe ist.
+- **Die Längengrenze** ist eine Eigenschaft der *Ziel-Plattform*: ein Instagram-Text darf höchstens 2200 Zeichen haben, ein Tweet 280. Das gehört einer plattformweiten, betreibergepflegten Vorgabe — nicht dem Provider, der für alle Plattformen derselbe ist. Und es ist eine **Zeichen**-Grenze: die Plattform weist einen zu langen Beitrag ab, ein Token-Budget lässt sich darauf nicht verlässlich umrechnen.
+
+Weil ein Verein denselben Beitrag üblicherweise auf mehreren Plattformen veröffentlicht, wählt der Ersteller **mehrere** Ziel-Plattformen — und nur solche, auf die sein Scope tatsächlich veröffentlichen kann (PR 3, Step 3). Solange die Grenzen ähnlich sind, ergibt das genau einen Text, dessen Länge sich nach der **knappsten** Auswahl richtet. Weichen die Grenzen stark ab, ist das die falsche Antwort und es gehören getrennte Texte je Plattform her — siehe PR 3, Step 4.
 
 Ein Provider bleibt danach reine Zugangs- und Routing-Konfiguration (Protokoll, Endpunkt, Modell, Priorität). Das ist die Voraussetzung dafür, dass ein Wechsel des Anbieters keine inhaltliche Änderung an den Beiträgen bedeutet.
 
@@ -27,14 +29,15 @@ Ein Provider bleibt danach reine Zugangs- und Routing-Konfiguration (Protokoll, 
 | Wo | Was |
 |---|---|
 | `llm_provider_configurations` | ohne `temperature`/`max_output_tokens` (Migration `2026081307`) |
-| `text_generation_platform_defaults` | neue globale Tabelle, PK `platform` (CHECK `instagram`/`facebook`), `max_output_tokens` 128–4000, für jedes eingeloggte Mitglied lesbar, schreibbar nur über den Service-Role-Client hinter `requirePlatformAdmin` (Migration `2026081308`) |
-| `composition_sessions` | neue Spalten `target_platform`, `max_output_tokens`, `temperature` — bei Anlage eingefroren wie `effective_config_snapshot` (Migration `2026081309`) |
+| `text_generation_platform_defaults` | neue globale Tabelle, PK `platform` (CHECK `instagram`/`facebook`), `max_characters` 100–10000 (Seed je 2200), für jedes eingeloggte Mitglied lesbar, schreibbar nur über den Service-Role-Client hinter `requirePlatformAdmin` (Migration `2026081308`) |
+| `composition_sessions` | neue Spalten `target_platforms` (`text[]`, Teilmenge von instagram/facebook, ohne Duplikate), `max_characters`, `temperature` — bei Anlage eingefroren wie `effective_config_snapshot` (Migration `2026081309`) |
 | `create_text_generation_session` | drei neue Parameter, mittig eingefügt vor `p_source_revision`; deshalb `drop function` + `create function` statt `create or replace` |
-| `POST /v1/text-workshop/sessions` | löst `max_output_tokens` einmal auf: Request-Override > Plattform-Vorgabe > `TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS` (1200) |
+| `POST /v1/text-workshop/sessions` | löst `max_characters` einmal auf: Request-Override > **kleinste** Vorgabe der gewählten Plattformen > `TEXT_GENERATION_DEFAULT_MAX_CHARACTERS` (2200). Ohne Angabe sind beide Plattformen vorausgewählt. Prüft noch **nicht**, ob der Scope auf die Plattform veröffentlichen kann (PR 3, Step 3) |
 | `GET`/`PUT /v1/text-generation-platform-defaults` | vorhanden, aber ohne Konsument — die UI dafür ist PR 2 |
 | `TEXT_GENERATION_TEMPERATURE_STEPS` | vier feste Stufen (0.3 Dezent / 0.6 Ausgewogen / 0.8 Ausgeprägt / 1.0 Vollgas) in `packages/contracts/src/content.ts`, Single Source of Truth für DB-CHECK, API-Validierung und den Regler aus PR 3 |
 | `apps/web/app/pages/plattform-admin/llm.vue` | Temperatur-Select und Max.-Tokens-Feld entfernt (rein mechanisch, sonst hätte PR 1 nicht gebaut) |
-| `apps/web/app/pages/erstellen.vue` | **unverändert** — schickt weder `temperature` noch `targetPlatform`, bekommt also überall den Vorgabewert 0.6 und 1200 |
+| `apps/web/app/pages/erstellen.vue` | **unverändert** — schickt weder `temperature` noch `targetPlatforms`, bekommt also die Vorgaben 0.6 und beide Plattformen (Länge = min der beiden Vorgaben) |
+| `buildStructuredTextPrompt` | nennt die Zeichengrenze im System-Prompt (`maxCharacters`, optional — der Preview-Pfad hat keine). Eine harte Prüfung nach der Generierung fehlt noch |
 
 ## Commands you will need
 
@@ -55,12 +58,19 @@ Umfang wie unter „Current state" beschrieben. Vollständig grün verifiziert (
 
 ### Nachträge aus dem Code-Review (Commit `6c932e1d`)
 
-1. **`input_hash` umfasst jetzt `targetPlatform`/`maxOutputTokens`/`temperature`.** Kritischer Fund: `create_text_generation_session` gibt für einen bereits bekannten Hash über den `if found`-Zweig die vorhandene Sitzung **samt Kandidat** zurück und ignoriert die übergebenen Laufzeitwerte. Ohne die drei Felder im Hash lieferte ein zweites Absenden desselben Materials mit anderer Regler-Stufe stillschweigend den alten Kandidaten — die neue Stufe war nirgends gespeichert und, weil die Sitzung ihre Werte einfriert, auch über `revise` nicht mehr erreichbar. Gehasht wird die *Anfrage*, nicht der serverseitig aufgelöste Token-Wert, damit ein echter Wiederholungsversuch idempotent bleibt. Regressionstest: `content.routes.test.ts` → „gives a session a distinct input hash per temperature step and target platform".
+1. **`input_hash` umfasst jetzt `targetPlatforms`/`maxOutputTokens`/`temperature`.** Kritischer Fund: `create_text_generation_session` gibt für einen bereits bekannten Hash über den `if found`-Zweig die vorhandene Sitzung **samt Kandidat** zurück und ignoriert die übergebenen Laufzeitwerte. Ohne die drei Felder im Hash lieferte ein zweites Absenden desselben Materials mit anderer Regler-Stufe stillschweigend den alten Kandidaten — die neue Stufe war nirgends gespeichert und, weil die Sitzung ihre Werte einfriert, auch über `revise` nicht mehr erreichbar. Gehasht wird die *Anfrage*, nicht der serverseitig aufgelöste Token-Wert, damit ein echter Wiederholungsversuch idempotent bleibt. Die Plattformliste geht **sortiert** in den Hash, sonst erzeugte dieselbe Auswahl je nach Reihenfolge der Häkchen zwei Sitzungen. Regressionstest: `content.routes.test.ts` → „gives a session a distinct input hash per temperature step and platform selection".
 2. **`PUT /…/:platform`** nutzt `maybeSingle()` + 404 statt `single()` (das auf einem UPDATE ohne Trefferzeile einen 500 aus PGRST116 erzeugt hätte).
 3. **`TextGenerationPlatformSchema` ist exportiert** und wird in `platformAdmin.ts`, der Route und beiden Worker-Dateien benutzt. Vorher gab es vier Kopien von `instagram`/`facebook`, und das Schema der Plattform-Vorgaben hing an `SocialPlatformSchema` der **Kanal**-Domäne — deren Erweiterung um einen neuen Kanal hätte die Route Werte annehmen lassen, für die es in der Tabelle keine Zeile gibt.
 4. **Token-Spanne (`MaxOutputTokensSchema`) und beide Vorgabewerte** stehen einmal in den Contracts; der Temperatur-Default wird aus der Stufenliste gelesen statt als zweites `0.6`-Literal geschrieben.
 5. **`GET /v1/text-workshop/sessions/:id`** gibt die eingefrorenen Werte mit aus; sie waren sonst nur per direkter DB-Abfrage sichtbar.
 6. **Routentests** für beide neuen Endpunkte und die vollständige `max_output_tokens`-Auflösung (beide Endpunkte hatten null Abdeckung).
+
+### Nachjustierung nach Rückmeldung (2026-08-14, zweite Runde)
+
+Zwei Entscheidungen aus dem Review-Fix wurden nach Rückmeldung des Betreibers korrigiert, noch vor dem Merge — beides an einer unveröffentlichten Migration, also ohne Folge-Migration:
+
+1. **`max_output_tokens` → `max_characters`.** Das Token-Budget war als Plattform-Grenze der falsche Hebel (siehe „Maintenance notes"). `text_generation_platform_defaults` und `composition_sessions` tragen jetzt eine Zeichengrenze (100–10000, Seed 2200 = Instagrams echte Bildtext-Grenze), die Route bildet das Minimum über die gewählten Plattformen, und `buildStructuredTextPrompt` nennt die Grenze im System-Prompt. Das Modell-Budget ist eine globale Konstante geblieben. Nebenwirkung: `GeneratedPostSchema.caption` von 1800 auf 2200 angehoben, damit es nicht unter der Plattform-Vorgabe liegt (und damit zu `PlatformVariantSchema.caption` passt, das schon 2200 hatte).
+2. **Eine Plattform-Menge statt zwei.** `TextGenerationPlatformSchema` wurde wieder entfernt; `SocialPlatformSchema` liegt jetzt in `primitives.ts` und wird von der Kanal-Domäne, den Contracts der Textwerkstatt, der API und dem Worker gemeinsam benutzt. Begründung im Detail unter „Maintenance notes".
 
 ### Bewusste Nicht-Entscheidung: keine Datenmigration der alten Provider-Werte
 
@@ -115,18 +125,37 @@ Die Stufen sind bewusst benannt, nicht als Zahl gezeigt: die Zahl ist ein Anbiet
 
 **Verify**: `cd apps/web && pnpm typecheck && pnpm test` → exit 0. Manuell: zweimal denselben Entwurf mit unterschiedlicher Stufe absenden — es entstehen **zwei** Sitzungen mit unterschiedlichem Text (das ist der Fund aus dem Review-Fix von PR 1; ohne ihn hätte der zweite Versuch stumm den ersten Kandidaten geliefert).
 
-### Step 3: `targetPlatform` am Beitrag
+### Step 3: Plattform-Auswahl am Beitrag, begrenzt auf das Veröffentlichbare
 
-Offen und bewusst noch nicht entschieden: `targetPlatform` dient heute ausschließlich der `max_output_tokens`-Auflösung, echtes Pro-Plattform-Rendering ist Paket 005. Zwei Möglichkeiten:
+**Entschieden (2026-08-14):** Der Ersteller wählt die Ziel-Plattformen direkt im Formular, Mehrfachauswahl, beide vorausgewählt. Angezeigt werden aber **nur Plattformen, auf die dieser Scope überhaupt veröffentlichen kann** — der Verein richtet Kanäle ein, eine Abteilung darf sie (wenn der Vereinsadmin es erlaubt) um eigene erweitern oder weiter einschränken. Eine Plattform anzubieten, für die kein Kanal existiert, erzeugt einen Beitrag, der nie veröffentlicht werden kann.
 
-- **(a) Nicht anzeigen**, `targetPlatform` bleibt `null`, jeder Beitrag läuft auf dem Fallback 1200. Die Plattform-Vorgaben aus PR 2 wären dann bis Paket 005 wirkungslos.
-- **(b) Auswahl anzeigen** („Wofür schreibst du?" Instagram/Facebook), damit die Vorgabe greift. Kostet ein zusätzliches Feld in einem Formular, das bewusst kurz ist, und verspricht mehr Plattform-Spezifik als das System liefert (der Text unterscheidet sich nur in der Länge).
+Das ist die „Plattform-Fähigkeitsprüfung vor Generierung", die Plan 032 als offen markiert hat.
 
-**Empfehlung: (b)**, aber ohne Plattform-Versprechen formuliert — die Auswahl steuert die Textlänge, nicht das Format. Sonst hat PR 2 keinen wirksamen Effekt und niemand merkt, wenn die Vorgabe falsch gepflegt ist. Entscheidung vor Beginn von PR 3 einholen.
+Dafür fehlt eine Leseroute: die Kanäle liegen in `channels` (Paket 012), ihre Delegation/Einschränkung in den `policy_settings` des Scopes (Paket 011/023). Vorschlag, analog zur Fähigkeits-Route aus Step 1:
 
-**Verify**: hängt von der Entscheidung ab. Bei (b): eine Sitzung je Plattform erzeugen und in `composition_sessions.max_output_tokens` prüfen, dass die Vorgabe der jeweiligen Plattform eingefroren wurde.
+```
+GET /v1/text-generation-platforms?organizationId&departmentId&teamId
+  → [{ platform, available: boolean, maxCharacters, reason?: 'no_channel' | 'restricted_by_policy' }]
+```
 
-### Step 4: Provenienz nicht lügen lassen
+Eine Route statt zweier, weil das Formular beides zusammen braucht: was anhakbar ist **und** welche Länge daraus folgt. `available: false` wird ausgegraut angezeigt, nicht versteckt — sonst rätselt ein Mitglied, warum Facebook fehlt, und niemand merkt, dass ein Kanal fehlt.
+
+Serverseitig durchsetzen, nicht nur anzeigen: `POST /v1/text-workshop/sessions` muss `targetPlatforms` gegen dieselbe Auflösung prüfen und mit 422 `platform_not_available` ablehnen. Die Anzeige ist Bequemlichkeit, die Prüfung ist die Regel (vgl. „Berechtigungen aus einer Quelle").
+
+**Verify**: Routentests — ein Scope ohne Facebook-Kanal bekommt `available: false` für Facebook, und ein `POST` mit `targetPlatforms: ['facebook']` wird 422. Manuell in `/erstellen`: Kanal in `/kanaele` entfernen, Formular neu laden, Plattform ist ausgegraut.
+
+### Step 4: Getrennte Texte bei stark abweichender Länge
+
+**Entschieden (2026-08-14):** Bei **deutlich** unterschiedlichen Zeichengrenzen der gewählten Plattformen wird nicht ein gemeinsam gekürzter Text erzeugt, sondern **je Plattform ein eigener Text**, und beide werden angezeigt. Das ist die Antwort auf das Problem der min()-Regel: wer Facebook und X anhakt, bekämpfte sonst einen Tweet als Facebook-Beitrag.
+
+Damit hängen zwei Dinge zusammen, die dieser Plan nicht mehr allein lösen kann:
+
+1. **Erzeugung**: `GeneratedPostSchema.variants` (`PlatformVariantSchema`, max 8, mit eigener `platform`/`caption`) ist dafür vorhanden und heute leer. Ein Kandidat mit mehreren Varianten aus einem Provider-Aufruf ist Paket 005.
+2. **Freigabe**: zwei Texte können zwei Freigaben brauchen. Die Freigaberoute arbeitet heute auf **einer** `post_version` (Paket 011/024). Ob zwei Varianten eine gemeinsame Freigabe erhalten oder je eine eigene — und was gilt, wenn eine freigegeben und eine abgelehnt wird — ist eine fachliche Entscheidung mit Folgen für `post_versions`, die Freigabekette und die Veröffentlichung.
+
+**Nicht Teil von Paket 042.** Gehört als eigenes Paket ausgeplant (Arbeitstitel: „Pro-Plattform-Varianten und ihre Freigabe", Abhängigkeit 005 + 011/024). Bis dahin gilt die min()-Regel, die für Instagram/Facebook (beide großzügig) unschädlich ist. **Schwelle:** sobald eine Plattform mit einer Grenze unter etwa der Hälfte der großzügigsten gewählten hinzukommt, ist min() nicht mehr vertretbar — praktisch also mit der ersten Kurzform-Plattform (X 280, Mastodon 500).
+
+### Step 5: Provenienz nicht lügen lassen
 
 `post_generation_provenance.provider_parameter_hash` soll die „tatsächlich benutzten" Parameter hashen. `parameterHash` in `apps/worker/src/textGeneration.ts` nimmt heute immer `session.temperature` auf — auch beim `anthropic`-Protokoll, das den Wert nie sendet. Das ist eine falsche Provenienz-Angabe.
 
@@ -137,18 +166,23 @@ Fix: `temperature` nur in den Hash aufnehmen, wenn der gewählte Adapter sie sen
 ## Done criteria
 
 - [x] `llm_provider_configurations` trägt keine Laufzeitparameter mehr; ein Provider ist reine Zugangs-/Routing-Konfiguration (PR 1)
-- [x] `composition_sessions` friert `target_platform`/`max_output_tokens`/`temperature` bei Anlage ein, und alle drei sind Teil des `input_hash` (PR 1 + Review-Fix)
+- [x] `composition_sessions` friert `target_platforms`/`max_characters`/`temperature` bei Anlage ein, und alle drei sind Teil des `input_hash` (PR 1 + Review-Fix)
 - [x] `text_generation_platform_defaults` existiert, ist für jedes Mitglied lesbar und nur für Plattform-Admins schreibbar (PR 1)
-- [ ] Ein Plattform-Admin kann die Vorgabe je Plattform in der Oberfläche pflegen (PR 2)
+- [x] Die Plattform-Grenze ist eine **Zeichen**-Grenze, keine Token-Zahl (PR 1, nachgezogen 2026-08-14)
+- [ ] Ein Plattform-Admin kann die Zeichengrenze je Plattform in der Oberfläche pflegen (PR 2)
 - [ ] Ein Mitglied wählt die Persona-Intensität am Beitrag; bei einem `anthropic`-Provider ist die Wahl nicht sichtbar statt wirkungslos bedienbar (PR 3)
+- [ ] Das Formular zeigt nur Plattformen an, auf die der Scope veröffentlichen kann, und die API lehnt andere mit 422 ab (PR 3)
 - [ ] `provider_parameter_hash` enthält `temperature` nur, wenn sie gesendet wurde (PR 3)
+- [ ] Getrennte Texte je Plattform bei stark abweichender Länge — **eigenes Paket**, nicht 042
 - [ ] Voller Gate plus `db:test` grün nach jedem PR
 
 ## STOP conditions
 
 - **Eine weitere eingefrorene Spalte auf `composition_sessions` landet, ohne in den `input_hash` zu wandern.** Dann wiederholt sich der Fund aus dem Review-Fix von PR 1: der Wiederverwendungszweig des RPC ignoriert die Parameter stumm, und die neue Nutzereingabe ist unerreichbar.
 - **Die vier Stufen werden geändert oder erweitert**, ohne den CHECK in `2026081309` und `TEXT_GENERATION_TEMPERATURE_STEPS` gemeinsam anzufassen — die API akzeptiert sonst einen Wert, den die Datenbank mit 23514 zurückweist.
-- **`text_generation_platform_defaults` bekommt eine dritte Plattform**, ohne dass `TextGenerationPlatformSchema`, der CHECK der Tabelle, der CHECK auf `composition_sessions.target_platform` **und** ein Seed für die neue Zeile mitgezogen werden.
+- **Eine neue Plattform kommt hinzu** (Twitter/X, LinkedIn und Mastodon sind vorgesehen), ohne dass `SocialPlatformSchema`, der CHECK von `text_generation_platform_defaults`, der CHECK auf `composition_sessions.target_platforms` **und** ein Seed mit deren echter Zeichengrenze mitgezogen werden. Ohne Seed-Zeile lässt sich für sie keine Länge bestimmen, und die Route rechnet sie stillschweigend aus dem Minimum heraus.
+- **Eine Kurzform-Plattform wird angeboten, während noch die min()-Regel gilt.** Dann ist der Beitrag für jede andere gewählte Plattform auf deren Länge zusammengestaucht — siehe Step 4, ab da braucht es Varianten.
+- **Der Vorgabewert von `targetPlatforms` wird aus `SocialPlatformSchema.options` abgeleitet.** Mit einer Kurzform-Plattform in der Menge würde „alles vorausgewählt" jeden Beitrag auf deren Länge kürzen.
 - **PR 3 rendert den Regler, ohne `temperatureSupported` auszuwerten** — das ist genau der irreführende Zustand, den Step 1 verhindert.
 
 ## Maintenance notes
@@ -159,4 +193,6 @@ Bewusst so belassen, weil die Alternative (nur „Ausgewogen"/„Ausgeprägt" an
 
 **Namenswahl `text_generation_platform_defaults`.** Nicht `platform_...`: dieses Präfix bedeutet im Projekt durchgängig „Plattform-Administration/SaaS-Betreiber" (`platform_admins`, `platform_style_personas`), nie „Social-Media-Plattform".
 
-**`TextGenerationPlatformSchema` vs. `SocialPlatformSchema`.** Zwei identische Wertemengen, absichtlich getrennt: die eine beschreibt, wofür die Textwerkstatt Vorgaben kennt, die andere, welche Kanäle der Verein anbinden kann. Ein neuer Kanal in der Kanal-Domäne darf nicht automatisch eine Vorgabezeile voraussetzen. `channels.ts` importiert `UuidSchema` aus `content.ts`, ein Import in die andere Richtung wäre außerdem ein Zyklus.
+**Eine Plattform-Menge, nicht zwei.** Der Review-Fix von PR 1 hatte zunächst eine eigene `TextGenerationPlatformSchema` neben `SocialPlatformSchema` der Kanal-Domäne eingeführt, mit der Begründung, ein neuer Kanal dürfe nicht automatisch eine Vorgabezeile voraussetzen. Mit der Entscheidung aus Step 3 ist das **umgekehrt richtig**: auf welchen Plattformen ein Beitrag entstehen darf, ist genau die Menge, auf die veröffentlicht werden kann — zwei getrennte Kopien würden bei jedem neuen Kanal auseinanderlaufen. Die Menge liegt deshalb in `packages/contracts/src/primitives.ts` (nicht in `channels.ts`: `channels.ts` importiert `UuidSchema` aus `content.ts`, ein Import in die andere Richtung wäre ein Zyklus), und eine fehlende Vorgabezeile ist ein Betreiberproblem, das die STOP conditions abdecken.
+
+**Zeichen, nicht Tokens.** `max_output_tokens` war als Plattform-Grenze der falsche Hebel: die Plattform weist einen zu langen Beitrag ab, und ein Token-Budget lässt sich darauf nicht verlässlich umrechnen (Tokenisierung ist modell- und sprachabhängig). Die Vorgabe je Plattform ist deshalb `max_characters`; das Token-Budget bleibt als globale Konstante `TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS` bestehen und begrenzt nur den Aufruf. Die Zeichengrenze steht seit PR 1 im System-Prompt (`buildStructuredTextPrompt`) — das ist eine **Bitte an das Modell**, keine Durchsetzung. Eine harte Prüfung nach der Generierung (zu langer Text → Fehlschlag oder Nachkürzung statt stillem Durchlassen) fehlt noch; heute deckelt nur `GeneratedPostSchema.caption` bei 2200 global. Beim Anheben einer Plattform-Grenze über 2200 muss diese Schema-Grenze mitwachsen, sonst wird die Vorgabe wirkungslos.

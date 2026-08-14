@@ -392,8 +392,8 @@ describe('platform administration', () => {
 
 describe('text generation platform defaults', () => {
   const DEFAULT_ROWS = [
-    { platform: 'facebook', max_output_tokens: 1200, updated_at: '2026-08-13T10:00:00+00:00' },
-    { platform: 'instagram', max_output_tokens: 1200, updated_at: '2026-08-13T10:00:00+00:00' },
+    { platform: 'facebook', max_characters: 2200, updated_at: '2026-08-13T10:00:00+00:00' },
+    { platform: 'instagram', max_characters: 2200, updated_at: '2026-08-13T10:00:00+00:00' },
   ]
 
   // Die Leseroute traegt bewusst nur requireAuth: die Textwerkstatt muss die Vorgabe vorbefuellen
@@ -417,8 +417,8 @@ describe('text generation platform defaults', () => {
     })
     expect(response.statusCode).toBe(200)
     expect(response.json()).toEqual([
-      { platform: 'facebook', maxOutputTokens: 1200, updatedAt: '2026-08-13T10:00:00+00:00' },
-      { platform: 'instagram', maxOutputTokens: 1200, updatedAt: '2026-08-13T10:00:00+00:00' },
+      { platform: 'facebook', maxCharacters: 2200, updatedAt: '2026-08-13T10:00:00+00:00' },
+      { platform: 'instagram', maxCharacters: 2200, updatedAt: '2026-08-13T10:00:00+00:00' },
     ])
   })
 
@@ -431,7 +431,7 @@ describe('text generation platform defaults', () => {
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'PUT', url: '/v1/text-generation-platform-defaults/instagram',
-      headers: { authorization: `Bearer ${token}` }, payload: { maxOutputTokens: 2000 },
+      headers: { authorization: `Bearer ${token}` }, payload: { maxCharacters: 2000 },
     })
     expect(response.statusCode).toBe(403)
   })
@@ -447,7 +447,7 @@ describe('text generation platform defaults', () => {
             return {
               update: (payload: Record<string, unknown>) => {
                 updatePayload = payload
-                return chain({ data: { platform: 'instagram', max_output_tokens: 2000, updated_at: '2026-08-14T09:00:00+00:00' }, error: null })
+                return chain({ data: { platform: 'instagram', max_characters: 2000, updated_at: '2026-08-14T09:00:00+00:00' }, error: null })
               },
             }
           },
@@ -457,11 +457,11 @@ describe('text generation platform defaults', () => {
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'PUT', url: '/v1/text-generation-platform-defaults/instagram',
-      headers: { authorization: `Bearer ${token}` }, payload: { maxOutputTokens: 2000 },
+      headers: { authorization: `Bearer ${token}` }, payload: { maxCharacters: 2000 },
     })
     expect(response.statusCode).toBe(200)
-    expect(response.json()).toEqual({ platform: 'instagram', maxOutputTokens: 2000, updatedAt: '2026-08-14T09:00:00+00:00' })
-    expect(updatePayload).toEqual({ max_output_tokens: 2000, updated_by: USER_ID })
+    expect(response.json()).toEqual({ platform: 'instagram', maxCharacters: 2000, updatedAt: '2026-08-14T09:00:00+00:00' })
+    expect(updatePayload).toEqual({ max_characters: 2000, updated_by: USER_ID })
   })
 
   // Die Route aendert nur bestehende Seed-Zeilen. Eine fehlende Zeile ist ein 404 -- vorher lief
@@ -481,7 +481,7 @@ describe('text generation platform defaults', () => {
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'PUT', url: '/v1/text-generation-platform-defaults/facebook',
-      headers: { authorization: `Bearer ${token}` }, payload: { maxOutputTokens: 2000 },
+      headers: { authorization: `Bearer ${token}` }, payload: { maxCharacters: 2000 },
     })
     expect(response.statusCode).toBe(404)
     expect(response.json()).toMatchObject({ error: 'text_generation_platform_default_not_found' })
@@ -496,7 +496,7 @@ describe('text generation platform defaults', () => {
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'PUT', url: '/v1/text-generation-platform-defaults/threads',
-      headers: { authorization: `Bearer ${token}` }, payload: { maxOutputTokens: 2000 },
+      headers: { authorization: `Bearer ${token}` }, payload: { maxCharacters: 2000 },
     })
     expect(response.statusCode).toBe(400)
   })

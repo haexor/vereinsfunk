@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { z } from 'zod'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
-import { CommunicationGoalSchema, SourceMaterialSchema, TextGenerationPlatformSchema, UuidSchema, WorkflowNameSchema, WorkflowPayloadSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
+import { CommunicationGoalSchema, SocialPlatformSchema, SourceMaterialSchema, UuidSchema, WorkflowNameSchema, WorkflowPayloadSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
 import type { WorkflowOutboxRepository } from '@vereinsfunk/orchestration'
 import { WorkflowExecutionError, type WorkflowExecutionRepository, type WorkflowRunAcquireResult } from './workflows.js'
 import type { CandidateRow, ProviderRow, SessionRow, TextGenerationRepository } from './textGeneration.js'
@@ -15,7 +15,7 @@ import type { GenerationRecoveryRepository, RecoverableSessionRow, StalledCandid
 const SessionRowSchema: z.ZodType<SessionRow> = z.object({
   id: UuidSchema, organization_id: UuidSchema, department_id: UuidSchema, team_id: UuidSchema.nullable(), preset_slug: z.string().trim().min(1),
   communication_goal: CommunicationGoalSchema, source_material: SourceMaterialSchema,
-  style_profile_snapshot: z.unknown(), max_output_tokens: z.coerce.number().int().positive(), temperature: z.coerce.number(),
+  style_profile_snapshot: z.unknown(), max_characters: z.coerce.number().int().positive(), temperature: z.coerce.number(),
 })
 const CandidateRowSchema: z.ZodType<CandidateRow> = z.object({ id: UuidSchema, status: z.literal('generating'), revision_instruction: z.string().nullable(), lease_token: UuidSchema })
 const ProviderRowSchema: z.ZodType<ProviderRow> = z.object({
@@ -36,7 +36,7 @@ const RecoverableSessionRowSchema: z.ZodType<RecoverableSessionRow> = z.object({
   organization_id: UuidSchema, department_id: UuidSchema, team_id: UuidSchema.nullable(), preset_slug: z.string().trim().min(1),
   communication_goal: CommunicationGoalSchema, requested_formats: z.unknown().nonoptional(), source_material: z.unknown().nonoptional(), style_profile_id: UuidSchema.nullable(),
   style_profile_snapshot: z.unknown().nonoptional(), effective_config_snapshot: z.unknown().nonoptional(),
-  target_platform: TextGenerationPlatformSchema.nullable(), max_output_tokens: z.coerce.number().int().positive(), temperature: z.coerce.number(),
+  target_platforms: z.array(SocialPlatformSchema), max_characters: z.coerce.number().int().positive(), temperature: z.coerce.number(),
   source_revision: z.coerce.number().int().positive(),
   input_hash: z.string().regex(/^[a-f0-9]{64}$/), created_by: UuidSchema,
 })
@@ -92,7 +92,7 @@ export function createTextGenerationRepository(config: WorkerEnvironment): TextG
   const client = createClient(config.SUPABASE_URL, config.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
   return {
     async loadSession(id, organizationId) {
-      const { data, error } = await client.from('composition_sessions').select('id, organization_id, department_id, team_id, preset_slug, communication_goal, source_material, style_profile_snapshot, max_output_tokens, temperature').eq('id', id).eq('organization_id', organizationId).maybeSingle()
+      const { data, error } = await client.from('composition_sessions').select('id, organization_id, department_id, team_id, preset_slug, communication_goal, source_material, style_profile_snapshot, max_characters, temperature').eq('id', id).eq('organization_id', organizationId).maybeSingle()
       if (error) throw error
       return data === null ? null : SessionRowSchema.parse(data)
     },
@@ -158,7 +158,7 @@ export function createGenerationRecoveryRepository(config: WorkerEnvironment): G
     },
     async loadSessionForRecovery(sessionId, organizationId) {
       const { data, error } = await client.from('composition_sessions')
-        .select('organization_id, department_id, team_id, preset_slug, communication_goal, requested_formats, source_material, style_profile_id, style_profile_snapshot, effective_config_snapshot, target_platform, max_output_tokens, temperature, source_revision, input_hash, created_by')
+        .select('organization_id, department_id, team_id, preset_slug, communication_goal, requested_formats, source_material, style_profile_id, style_profile_snapshot, effective_config_snapshot, target_platforms, max_characters, temperature, source_revision, input_hash, created_by')
         .eq('id', sessionId).eq('organization_id', organizationId).maybeSingle()
       if (error) throw error
       return data === null ? null : RecoverableSessionRowSchema.parse(data)
@@ -169,7 +169,7 @@ export function createGenerationRecoveryRepository(config: WorkerEnvironment): G
         p_preset_slug: session.preset_slug, p_communication_goal: session.communication_goal, p_requested_formats: session.requested_formats,
         p_source_material: session.source_material, p_style_profile_id: session.style_profile_id,
         p_style_profile_snapshot: session.style_profile_snapshot, p_effective_config_snapshot: session.effective_config_snapshot,
-        p_target_platform: session.target_platform, p_max_output_tokens: session.max_output_tokens, p_temperature: session.temperature,
+        p_target_platforms: session.target_platforms, p_max_characters: session.max_characters, p_temperature: session.temperature,
         p_source_revision: session.source_revision, p_input_hash: session.input_hash, p_candidate_input_hash: candidateInputHash,
         p_generation_intent: stale.generation_intent, p_revision_instruction: stale.revision_instruction, p_created_by: session.created_by,
         p_correlation_id: correlationId, p_idempotency_key: idempotencyKey, p_triggered_by: 'automatic_recovery',
