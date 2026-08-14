@@ -7,8 +7,8 @@
 ## Status
 
 - **Priority**: P2
-- **Effort**: M (PR 1 M, PR 2 S)
-- **Risk**: MEDIUM — eine Migration lockert `not null` auf einer Tabelle, die heute ausschließlich über den OAuth-Callback befüllt wird; die Plattform-Prüfung steht an sieben Stellen in SQL
+- **Effort**: M (PR 1 L, PR 2 S)
+- **Risk**: MEDIUM — eine Migration lockert `not null` auf einer Tabelle, die heute ausschließlich über den OAuth-Callback befüllt wird; die Plattform-Prüfung steht an sieben Stellen in SQL; die abgeleitete Token-Leine verändert `provider_parameter_hash`
 - **Depends on**: 012 (Kanäle und Social-Accounts), 025 (Inhalts-Pipeline), 042 (Zielplattformen in der Textwerkstatt)
 - **Category**: product, architecture
 - **Planned at**: 2026-08-14, nach dem Code-Review von PR #76
@@ -50,7 +50,7 @@ Der Gewinn dieses Zuschnitts: die Textwerkstatt braucht **keine einzige Sonderbe
 
 ## Entwurfsentscheidungen
 
-Diese drei sind vor der Umsetzung bewusst getroffen worden und sollten nicht stillschweigend anders gelöst werden.
+Diese vier sind vor der Umsetzung bewusst getroffen worden und sollten nicht stillschweigend anders gelöst werden.
 
 **1. `website` kommt in `SocialPlatformSchema`, nicht in ein zweites Vokabular.**
 Naheliegend wäre ein getrenntes `TextGenerationTargetSchema`, weil eine Website kein OAuth-Konto ist. Dagegen spricht der Kommentar an `SocialPlatformSchema` selbst: „Bewusst EINE Menge für Kanäle und Textwerkstatt — auf welchen Plattformen ein Beitrag entstehen darf, ist genau die Menge, auf die überhaupt veröffentlicht werden kann." Genau diese Gleichung soll gelten: der Blog **ist** ein Veröffentlichungsziel. Zwei Vokabulare würden bei jedem weiteren Kanal auseinanderlaufen. Was eine Website von Instagram unterscheidet, ist nicht die Zugehörigkeit zur Menge, sondern das Fehlen eines Tokens — und das gehört an die Spalten, nicht an den Enum.
@@ -61,7 +61,10 @@ Ein Blog-Kanal hat kein OAuth-Geheimnis. `token_ciphertext`/`token_key_version` 
 **3. Die Längengrenze je Kanal ist eine Spalte auf `social_connections`, nicht eine zweite Tabelle.**
 `max_characters integer null check (max_characters between 100 and 10000)`. `null` bedeutet „globale Vorgabe der Plattform gilt" — so bleibt Instagram unverändert vom Betreiber gesteuert, während der Verein für seinen Blog selbst entscheidet. Die harte Obergrenze steht damit im CHECK **und** in `MaxCharactersSchema`, an beiden Enden derselbe Bereich.
 
-## PR 1: Datenmodell, Kanalanlage und Längenauflösung
+**4. Beliebig viele Website-Kanäle, auf Vereins- wie auf Abteilungsebene.**
+Betreiberentscheidung vom 2026-08-14. Ein Verein hat plausibel eine Hauptseite und daneben Abteilungsblogs; eine Begrenzung auf einen Kanal je Verein wäre eine Vorgabe, die der Betreiber ausdrücklich nicht machen will. Dafür ist **nichts Neues nötig**: `social_connections.owner_scope`/`owner_department_id` tragen die Besitzebene bereits (`channelOwnerScope` in `routes/shared.ts` wertet sie aus), und `channel_scopes` regelt unabhängig davon, wer senden darf. Der Unique-Index greift deshalb auf der **Adresse**, nicht auf der Organisation: `unique (organization_id, website_url) where platform = 'website'` — derselbe Blog nicht zweimal, beliebig viele verschiedene schon.
+
+## PR 1: Datenmodell, Kanalanlage, Längenauflösung und Token-Leine
 
 ### Step 1 — Migration: `website` als Plattform
 
@@ -73,7 +76,7 @@ Neue Migration (Nummer nach dem dann höchsten Stand, zum Planungszeitpunkt `202
 - `social_connections.max_characters integer null check (max_characters between 100 and 10000)`.
 - `social_connections.website_url text null` mit URL-Form-CHECK; `check (platform <> 'website' or website_url is not null)`.
 - Partieller Unique-Index für Website-Kanäle: `unique (organization_id, website_url) where platform = 'website'`.
-- `text_generation_platform_defaults`: Zeile für `website` mit einem Wert, den die Token-Leine auch liefern kann — **nicht 10000**. `TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS` steht bei 1200 und begrenzt den Aufruf auf grob 4000 Zeichen deutschen Text; ein höherer Vorgabewert verspricht eine Länge, die nie entsteht. Empfehlung: **3000**, vom Plattform-Admin änderbar.
+- `text_generation_platform_defaults`: Zeile für `website` mit **5000** (Betreiberentscheidung vom 2026-08-14), vom Plattform-Admin änderbar. Dieser Wert ist mit der heutigen Token-Leine **nicht erreichbar** — siehe Step 4, der gehört zwingend in denselben PR.
 
 **Verifizieren**: `pnpm db:reset && pnpm db:test` grün. Neuer pgTAP-Fall: ein `insert` eines Website-Kanals ohne Token gelingt, derselbe `insert` mit `platform = 'instagram'` scheitert. Zweiter Fall: `max_characters = 99` und `= 10001` werden beide abgewiesen.
 
@@ -96,15 +99,27 @@ Die erste Anlage-Route überhaupt. `requirePermission('social_account.manage', c
 
 **Verifizieren**: Vitest — zwei Website-Kanäle mit 3000 und 1500 im Scope ergeben `maxCharacters: 1500`; ein Kanal ohne eigenen Wert ergibt die globale Vorgabe; die bestehenden Instagram-Fälle bleiben unverändert grün.
 
+### Step 4 — Token-Leine an die Zeichengrenze koppeln
+
+**Ohne diesen Schritt ist die 5000-Zeichen-Vorgabe aus Step 1 ein leeres Versprechen.** `TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS` ist heute eine feste 1200 und geht so in jeden Provideraufruf (`apps/worker/src/textGeneration.ts`). 1200 Ausgabe-Tokens tragen grob 4000 Zeichen deutschen Text, und davon geht die JSON-Struktur der Antwort ab (Headline, Hashtags, Alt-Text, Claims). Ein Beitrag, für den 5000 Zeichen erlaubt sind, käme abgeschnitten zurück — der Prompt nennt die Grenze, der Aufruf gibt sie nicht her.
+
+Die Leine muss deshalb aus `session.max_characters` folgen statt konstant zu sein:
+
+- Aus der eingefrorenen Zeichengrenze der Sitzung einen Token-Bedarf herleiten (Zeichen / ~3 für deutschen Text, plus ein fester Zuschlag für die übrigen JSON-Felder), gedeckelt durch eine harte Obergrenze.
+- **Das ist die kostenschonendere Variante, nicht die teurere**: heute zahlt eine Instagram-Sitzung mit 2200 Zeichen dieselbe Leine wie ein 5000-Zeichen-Blogbeitrag. Danach bekommt jede Sitzung genau so viel Budget, wie ihre Grenze rechtfertigt — der teure Fall ist auf den Fall beschränkt, der ihn braucht. Die harte Obergrenze bleibt und wächst nicht mit der Nutzung.
+- **Achtung `provider_parameter_hash`**: `maxOutputTokens` steckt im Hash (`parameterHash`, siehe Review von PR #76). Wird der Wert abgeleitet statt konstant, ändern sich Hashes — das ist korrekt, weil sich der tatsächlich gesendete Parameter ändert, aber es ist eine bewusste Provenienz-Änderung und gehört so in die Commit-Message.
+
+**Verifizieren**: Vitest im Worker — eine Sitzung mit `max_characters: 2200` und eine mit `5000` erzeugen unterschiedliche `maxOutputTokens` und unterschiedliche `provider_parameter_hash`; die Obergrenze greift bei `max_characters: 10000`. Danach einmal am echten Provider gegenprüfen, dass ein 5000-Zeichen-Blogbeitrag **vollständig** zurückkommt und nicht mitten im Satz endet.
+
 ## PR 2: Oberflächen
 
-### Step 4 — Kanalverwaltung
+### Step 5 — Kanalverwaltung
 
 `apps/web/app/pages/kanaele.vue` bekommt neben den beiden Verbinden-Knöpfen ein kleines Formular „Eigene Website / Blog hinzufügen" (Anzeigename, Adresse, optional maximale Länge). Die Zuteilung an Abteilungen läuft über die vorhandene Scope-Oberfläche — dort ist nichts zu ändern, das ist der Sinn des Zuschnitts. Die Einleitung der Seite nennt heute nur „Instagram- und Facebook-Konten"; sie muss mit.
 
 **Verifizieren**: Playwright-Smoke — Blog-Kanal anlegen, einer Abteilung zuteilen, Länge auf 1500 setzen, Seite neu laden, Wert steht.
 
-### Step 5 — Textwerkstatt
+### Step 6 — Textwerkstatt
 
 `apps/web/app/pages/erstellen.vue`: `PLATFORM_LABELS` um `website: 'Eigene Website'` ergänzen. Sonst nichts — die Verfügbarkeitsliste kommt schon heute generisch aus `SocialPlatformSchema.options`, und die Begründungstexte (`no_channel`/`restricted_by_policy`) passen wörtlich.
 
@@ -116,9 +131,9 @@ Zusätzlich aus dem Review von PR #76, hier fällig statt dort: **eine optionale
 
 - **Die automatische Auslieferung an die Website.** Der Beitrag durchläuft Erzeugung und Freigabe wie jeder andere und liegt danach als freigegebene Version vor — abholbar, kopierbar. Wie er auf die Seite kommt (öffentlicher Feed, Webhook, CMS-Plugin, Einbettcode), ist weiterhin offen und braucht die Ausgangslage-Recherche, die `plans/README.md` für dieses Paket vorgesehen hat. Das gehört in ein Folgepaket **nach** einer Betreiberentscheidung über den Mechanismus.
 - **`publications`/`publish_attempts` für Website-Ziele.** Die CHECKs werden in Step 1 mit erweitert, damit das Datenmodell nicht zweimal angefasst werden muss — ein Adapter entsteht hier aber nicht. Bis zum Folgepaket erzeugt ein Blog-Kanal keine Veröffentlichungszeile.
-- **Mehrere getrennte Texte je Plattform.** Bleibt Paket 042, Step 4 (`GeneratedPostSchema.variants`). Sobald ein Verein Instagram (2200) und einen Blog (3000) zusammen anhakt, greift weiterhin die `min()`-Regel und stutzt auf 2200. Das ist erträglich, solange die Grenzen ähnlich sind, und genau der Fall, für den die getrennten Varianten vorgesehen sind.
+- **Mehrere getrennte Texte je Plattform.** Bleibt Paket 042, Step 4 (`GeneratedPostSchema.variants`). Sobald ein Verein Instagram (2200) und einen Blog (5000) zusammen anhakt, greift weiterhin die `min()`-Regel und stutzt auf 2200 — der Blogbeitrag wird also auf Instagram-Länge gekürzt, obwohl dort mehr erlaubt wäre. Mit 2200 gegen 5000 ist der Abstand deutlich genug, dass dieser Fall in der Praxis auffallen wird; er ist damit der erste echte Anwendungsfall für die getrennten Varianten.
 
 ## Offene Punkte
 
-1. **Darf ein Verein mehrere Website-Kanäle haben?** Der Entwurf lässt es zu (partieller Unique-Index auf der Adresse, nicht auf der Organisation) — ein Verein mit Hauptseite und separatem Abteilungsblog ist plausibel. Falls unerwünscht, ist der Index auf `(organization_id) where platform = 'website'` zu verengen.
-2. **Vorgabewert 3000 für `website`.** Hergeleitet aus der Token-Leine (1200 Tokens ≈ 4000 Zeichen), nicht gemessen. Vor dem Merge einmal mit dem echten Provider gegenprüfen, ob ein 3000-Zeichen-Text zuverlässig vollständig zurückkommt oder abgeschnitten wird.
+1. **Der Umrechnungsfaktor Zeichen → Tokens in Step 4 ist geschätzt, nicht gemessen.** „Zeichen / 3 plus Zuschlag" ist eine Faustregel für deutschen Text; die tatsächliche Rate hängt am Tokenizer des jeweiligen Providers. Vor dem Merge einmal mit einem echten 5000-Zeichen-Blogbeitrag gegenprüfen und den Faktor bei Bedarf nachziehen. Zu knapp bemessen heißt abgeschnittener Text, zu großzügig heißt bezahltes Budget, das niemand nutzt.
+2. **Blog und RSS-Feed sind im Datenmodell dasselbe (`platform = 'website'`).** Für dieses Paket reicht das: es entscheidet nur, dass der Kanal existiert, wem er gehört und wie lang seine Beiträge sein dürfen. Ob die Auslieferung später verschiedene Arten unterscheiden muss (eigener Blog per Webhook vs. abonnierbarer Feed), entscheidet das Folgepaket zum Auslieferungsmechanismus — und darf dann eine Unterart-Spalte nachrüsten, ohne diese Ausplanung zu widerlegen.
