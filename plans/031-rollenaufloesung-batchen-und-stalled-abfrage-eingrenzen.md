@@ -96,10 +96,22 @@ Aktualisiere `plans/README.md` (Tabelle „Vierte Serie“, Status dieses Plans)
 
 ## Done criteria
 
-- [ ] `SupabaseRoleProvider` löst eine Mitgliederliste mit beliebig vielen Abteilungen/Teams in konstant 3 Abfragen auf.
-- [ ] `GET /v1/approval-requests/stalled` lädt serverseitig nur potenziell festhängende Anfragen, nicht mehr die gesamte Organisation.
-- [ ] Alle bestehenden `RoleProvider`-Testdoubles kompilieren und laufen unverändert.
-- [ ] `pnpm check`, `pnpm db:reset` und `pnpm db:test` bestehen.
+- [x] `SupabaseRoleProvider` löst eine Mitgliederliste mit beliebig vielen Abteilungen/Teams in konstant 3 Abfragen auf.
+- [x] `GET /v1/approval-requests/stalled` lädt serverseitig nur potenziell festhängende Anfragen, nicht mehr die gesamte Organisation.
+- [x] Alle bestehenden `RoleProvider`-Testdoubles kompilieren und laufen unverändert.
+- [x] `pnpm check`, `pnpm db:reset` und `pnpm db:test` bestehen.
+
+## Abschluss (2026-08-15)
+
+Beide Punkte wie geplant umgesetzt, keine Abweichungen vom Scope.
+
+**Schritt 1**: `RoleProvider.rolesForScopes` als optionale Methode (`apps/api/src/auth.ts`), `permissionScopeKey` als geteilter Schlüsselbildner. `SupabaseRoleProvider.rolesForScopes` fragt `organization_memberships` immer ab, `department_memberships`/`team_memberships` nur wenn die jeweilige ID-Menge nicht leer ist (nie mehr als 3, oft weniger) — die Rollen kaskadieren wie beim bestehenden `rolesForScope` (eine Team-Ebene trägt Org- und Abteilungs- und Team-Rollen). `resolveRolesForScopes` (`routes/shared.ts`) ist der im Plan vorgesehene Fallback: ruft `rolesForScopes` auf, wenn vorhanden, sonst `Promise.all(rolesForScope)` — alle neun bestehenden `RoleProvider`-Testdoubles brauchten keine Änderung. `routes/members.ts` baut jetzt eine flache Scope-Liste (Organisation + je eindeutiger Abteilung/Team) und ruft `resolveRolesForScopes` einmal auf, statt selbst `Promise.all` zu verketten.
+
+Eine Abweichung von der Plan-Skizze: `SupabaseRoleProvider` bekam einen zusätzlichen optionalen `clientFactory`-Konstruktorparameter (Default `createUserClient`, identisches Injektionsmuster wie `jwksFetch` bei `createAuthGuards`) — nötig, um die geforderte "genau 3 Abfragen"-Zählung direkt an der Klasse zu testen, ohne eine echte Supabase-Instanz zu brauchen und ohne als erste Datei im Projekt `vi.mock` einzuführen (bislang mockt keine API-Testdatei ein ganzes Modul, alle DI-Seams sind Konstruktor-/Funktionsparameter).
+
+**Schritt 2**: Migration `2026081501_stalled_approval_requests_view.sql` legt `public.stalled_approval_requests` als `security_invoker`-View an (erste View im Projekt) — join aus `approval_requests`/`approval_stages`, gefiltert auf Stufen mit Status `open`/`stalled`, `having` auf "invalidiert ODER mindestens eine Stufe überfällig". `GET /v1/approval-requests/stalled` (`routes/approvals.ts`) fragt jetzt direkt diese View ab statt erst alle `approval_requests` zu laden und in TypeScript zu filtern; `isOverdue` kommt direkt aus der View-Spalte `is_overdue`. Neuer pgTAP-Test `supabase/tests/stalled_approval_requests_view.test.sql` (6 Assertions): offene nicht-überfällige Stufe erscheint nicht, überfällige und invalidierte Anfrage erscheinen mit korrekten Flags, ein Mitglied eines fremden Vereins sieht nichts (RLS bleibt über `security_invoker` wirksam).
+
+`pnpm check` (lint/typecheck/test/build aller 21 Pakete) und `pnpm db:reset && pnpm db:test` (775 pgTAP-Assertions über 27 Dateien) bestehen.
 
 ## STOP conditions
 

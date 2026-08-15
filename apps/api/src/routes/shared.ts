@@ -8,7 +8,7 @@ import { mergeEffectiveConfig, resolveAvailableChannels, resolveEffectiveConfig,
 import type { FastifyRequest } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import type { PermissionScope } from '../auth.js'
+import { permissionScopeKey, type PermissionScope, type RoleProvider } from '../auth.js'
 import { byteaToBuffer, createSecretBoxFromEnvironment } from '../secretBox.js'
 import type { SupabaseClientFactory } from './context.js'
 
@@ -81,6 +81,21 @@ export async function resolveMembershipScope(
 // bei Abwesenheit ganz fehlen statt explizit auf undefined gesetzt zu sein.
 export function toPermissionScope(organizationId: string, departmentId?: string | null, teamId?: string | null): PermissionScope {
   return { organizationId, ...(departmentId ? { departmentId } : {}), ...(teamId ? { teamId } : {}) }
+}
+
+// Loest mehrere Scopes derselben Anfrage in einem Rutsch auf -- ueber RoleProvider.rolesForScopes,
+// falls der uebergebene RoleProvider sie implementiert (SupabaseRoleProvider: drei Abfragen statt
+// einer je Scope, Plan 031). Faellt sonst auf Promise.all(rolesForScope) zurueck, damit bestehende
+// RoleProvider-Testdoubles (nur rolesForScope) unveraendert funktionieren, nur ohne den
+// Geschwindigkeitsvorteil. Der Aufrufer indiziert das Ergebnis ueber denselben permissionScopeKey.
+export async function resolveRolesForScopes(
+  roleProvider: RoleProvider,
+  auth: { userId: string; accessToken: string },
+  scopes: readonly PermissionScope[],
+): Promise<ReadonlyMap<string, readonly Role[]>> {
+  if (roleProvider.rolesForScopes) return roleProvider.rolesForScopes(auth, scopes)
+  const entries = await Promise.all(scopes.map(async (scope) => [permissionScopeKey(scope), await roleProvider.rolesForScope(auth, scope)] as const))
+  return new Map(entries)
 }
 
 // Wie resolveInvitationScope (routes/members.ts): departmentId/teamId serverseitig gegen ihre

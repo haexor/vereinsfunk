@@ -20,6 +20,22 @@ export interface PermissionScope {
 
 export interface RoleProvider {
   rolesForScope(auth: { userId: string; accessToken: string }, scope: PermissionScope): Promise<readonly Role[]>
+  // Optional: ein Aufrufer mit mehreren Scopes derselben Anfrage (z. B. GET /v1/organizations/:id/members
+  // ueber alle Abteilungen/Teams) kann damit in konstant drei Abfragen statt einer je Scope aufloesen.
+  // Optional, damit bestehende RoleProvider-Testdoubles, die nur rolesForScope implementieren, gueltig
+  // bleiben -- siehe resolveRolesForScopes (routes/shared.ts) fuer den Fallback ohne diese Methode.
+  rolesForScopes?(
+    auth: { userId: string; accessToken: string },
+    scopes: readonly PermissionScope[],
+  ): Promise<ReadonlyMap<string, readonly Role[]>>
+}
+
+// Stabiler Schluessel je Scope, u. a. fuer rolesByScopeKey (routes/members.ts) und die Map, die
+// rolesForScopes zurueckgibt -- beide muessen denselben Schluessel fuer denselben Scope bilden.
+export function permissionScopeKey(scope: PermissionScope): string {
+  if (scope.teamId) return `team:${scope.teamId}`
+  if (scope.departmentId) return `department:${scope.departmentId}`
+  return 'organization'
 }
 
 // Supabase legt seit 1. Mai 2025 neue Projekte standardmaessig mit asymmetrischen JWT Signing Keys
@@ -46,10 +62,16 @@ function verifyAccessToken(environment: ApiEnvironment, jwks: JWTVerifyGetKey | 
 }
 
 export class SupabaseRoleProvider implements RoleProvider {
-  constructor(private readonly environment: ApiEnvironment) {}
+  // clientFactory: gleiches Injektionsmuster wie jwksFetch in createAuthGuards, hier fuers
+  // Ersetzen des Supabase-Clients in Tests (Zaehlen der .from()-Aufrufe fuer rolesForScopes, ohne
+  // eine echte Supabase-Instanz zu brauchen).
+  constructor(
+    private readonly environment: ApiEnvironment,
+    private readonly clientFactory: (environment: ApiEnvironment, accessToken: string) => SupabaseClient = createUserClient,
+  ) {}
 
   async rolesForScope(auth: { userId: string; accessToken: string }, scope: PermissionScope): Promise<readonly Role[]> {
-    const client = createUserClient(this.environment, auth.accessToken)
+    const client = this.clientFactory(this.environment, auth.accessToken)
     const notExpired = `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`
     const roles: Role[] = []
 
@@ -86,6 +108,60 @@ export class SupabaseRoleProvider implements RoleProvider {
 
     return roles
   }
+
+  // Drei Abfragen statt einer je Scope: SupabaseRoleProvider.rolesForScope fragt bei jedem Aufruf
+  // organization_memberships neu ab (department_memberships/team_memberships je nach gesetztem
+  // Feld dazu) -- bei vielen Scopes derselben Anfrage (GET /v1/organizations/:id/members mit N
+  // Abteilungen/Teams) summiert sich das (Review zu PR #36). department_memberships/
+  // team_memberships werden nur abgefragt, wenn die jeweilige Scope-Menge nicht leer ist.
+  async rolesForScopes(
+    auth: { userId: string; accessToken: string },
+    scopes: readonly PermissionScope[],
+  ): Promise<ReadonlyMap<string, readonly Role[]>> {
+    const client = this.clientFactory(this.environment, auth.accessToken)
+    const notExpired = `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`
+    const organizationIds = Array.from(new Set(scopes.map((scope) => scope.organizationId)))
+    const departmentIds = Array.from(new Set(scopes.flatMap((scope) => (scope.departmentId ? [scope.departmentId] : []))))
+    const teamIds = Array.from(new Set(scopes.flatMap((scope) => (scope.teamId ? [scope.teamId] : []))))
+
+    const [organizationRows, departmentRows, teamRows] = await Promise.all([
+      client.from('organization_memberships').select('organization_id, role').in('organization_id', organizationIds).eq('user_id', auth.userId).or(notExpired),
+      departmentIds.length > 0
+        ? client.from('department_memberships').select('department_id, role').in('department_id', departmentIds).eq('user_id', auth.userId).or(notExpired)
+        : Promise.resolve({ data: [] as { department_id: string; role: string }[], error: null }),
+      teamIds.length > 0
+        ? client.from('team_memberships').select('team_id, role').in('team_id', teamIds).eq('user_id', auth.userId).or(notExpired)
+        : Promise.resolve({ data: [] as { team_id: string; role: string }[], error: null }),
+    ])
+    if (organizationRows.error) throw organizationRows.error
+    if (departmentRows.error) throw departmentRows.error
+    if (teamRows.error) throw teamRows.error
+
+    const rolesByOrganizationId = groupRolesBy(organizationRows.data, (row) => row.organization_id as string)
+    const rolesByDepartmentId = groupRolesBy(departmentRows.data, (row) => row.department_id as string)
+    const rolesByTeamId = groupRolesBy(teamRows.data, (row) => row.team_id as string)
+
+    const result = new Map<string, readonly Role[]>()
+    for (const scope of scopes) {
+      result.set(permissionScopeKey(scope), [
+        ...(rolesByOrganizationId.get(scope.organizationId) ?? []),
+        ...(scope.departmentId ? (rolesByDepartmentId.get(scope.departmentId) ?? []) : []),
+        ...(scope.teamId ? (rolesByTeamId.get(scope.teamId) ?? []) : []),
+      ])
+    }
+    return result
+  }
+}
+
+function groupRolesBy<T extends { role: unknown }>(rows: readonly T[], keyOf: (row: T) => string): Map<string, Role[]> {
+  const grouped = new Map<string, Role[]>()
+  for (const row of rows) {
+    const key = keyOf(row)
+    const list = grouped.get(key)
+    if (list) list.push(row.role as Role)
+    else grouped.set(key, [row.role as Role])
+  }
+  return grouped
 }
 
 // Orthogonal zu RoleProvider/PermissionScope: ein Plattform-Admin ist keiner Organisation

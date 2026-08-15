@@ -1,8 +1,17 @@
 import { describe, expect, it, vi } from 'vitest'
 import { exportJWK, generateKeyPair, SignJWT } from 'jose'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import { parseApiEnvironment } from '@vereinsfunk/config'
-import { createAuthGuards, type PlatformAdminProvider, type RoleProvider } from './auth.js'
+import {
+  createAuthGuards,
+  permissionScopeKey,
+  SupabaseRoleProvider,
+  type PermissionScope,
+  type PlatformAdminProvider,
+  type RoleProvider,
+} from './auth.js'
+import { resolveRolesForScopes } from './routes/shared.js'
 
 const roleProvider: RoleProvider = { async rolesForScope() { return [] } }
 const platformAdminProvider: PlatformAdminProvider = {
@@ -82,5 +91,111 @@ describe('createAuthGuards JWKS verification', () => {
 
     expect(authenticated).toBe(false)
     expect(reply.code).toHaveBeenCalledWith(401)
+  })
+})
+
+// Plan 031: GET /v1/organizations/:id/members loeste vor dieser Aenderung die Capability-Felder
+// je eindeutiger Abteilung/Team einzeln auf (roleProvider.rolesForScope, ein Aufruf je Ebene).
+// SupabaseRoleProvider.rolesForScopes ersetzt das durch drei Abfragen unabhaengig von der Anzahl
+// der Scopes -- clientFactory ist dasselbe Injektionsmuster wie jwksFetch oben, hier fuers
+// Zaehlen der .from()-Aufrufe ohne echte Supabase-Instanz.
+describe('SupabaseRoleProvider.rolesForScopes', () => {
+  it('resolves an organization plus ten department and forty team scopes in exactly three table queries', async () => {
+    const organizationId = 'org-1'
+    const departmentIds = Array.from({ length: 10 }, (_, index) => `dept-${index}`)
+    const teamIds = Array.from({ length: 40 }, (_, index) => `team-${index}`)
+    const departmentIdForTeam = new Map(teamIds.map((teamId, index) => [teamId, departmentIds[index % departmentIds.length]!]))
+
+    const queriedTables: string[] = []
+    function chain(data: readonly Record<string, unknown>[]) {
+      return { in: () => ({ eq: () => ({ or: async () => ({ data, error: null }) }) }) }
+    }
+    const fakeClient = {
+      from: (table: string) => {
+        queriedTables.push(table)
+        if (table === 'organization_memberships') return { select: () => chain([{ organization_id: organizationId, role: 'organization_admin' }]) }
+        if (table === 'department_memberships') return { select: () => chain(departmentIds.map((departmentId) => ({ department_id: departmentId, role: 'department_admin' }))) }
+        if (table === 'team_memberships') return { select: () => chain(teamIds.map((teamId) => ({ team_id: teamId, role: 'team_manager' }))) }
+        throw new Error(`unexpected table in test fake: ${table}`)
+      },
+    } as unknown as SupabaseClient
+
+    const environment = parseApiEnvironment({ SUPABASE_URL })
+    const provider = new SupabaseRoleProvider(environment, () => fakeClient)
+    const scopes: PermissionScope[] = [
+      { organizationId },
+      ...departmentIds.map((departmentId) => ({ organizationId, departmentId })),
+      ...teamIds.map((teamId) => ({ organizationId, departmentId: departmentIdForTeam.get(teamId)!, teamId })),
+    ]
+
+    const rolesByScopeKey = await provider.rolesForScopes({ userId: 'user-1', accessToken: 'token' }, scopes)
+
+    expect(queriedTables).toEqual(['organization_memberships', 'department_memberships', 'team_memberships'])
+    // Wie das bestehende rolesForScope kaskadieren die Rollen: eine Team-Ebene traegt Org- UND
+    // Abteilungs- UND Team-Rollen, nicht nur ihre eigene (canAssignRole/canRemoveRole brauchen die
+    // volle Kette).
+    expect(rolesByScopeKey.get('organization')).toEqual(['organization_admin'])
+    expect(rolesByScopeKey.get(`department:${departmentIds[0]}`)).toEqual(['organization_admin', 'department_admin'])
+    expect(rolesByScopeKey.get(`team:${teamIds[0]}`)).toEqual(['organization_admin', 'department_admin', 'team_manager'])
+  })
+
+  it('skips the department/team queries when no scope carries one', async () => {
+    const queriedTables: string[] = []
+    const fakeClient = {
+      from: (table: string) => {
+        queriedTables.push(table)
+        return { select: () => ({ in: () => ({ eq: () => ({ or: async () => ({ data: [], error: null }) }) }) }) }
+      },
+    } as unknown as SupabaseClient
+    const environment = parseApiEnvironment({ SUPABASE_URL })
+    const provider = new SupabaseRoleProvider(environment, () => fakeClient)
+
+    await provider.rolesForScopes({ userId: 'user-1', accessToken: 'token' }, [{ organizationId: 'org-1' }])
+
+    expect(queriedTables).toEqual(['organization_memberships'])
+  })
+})
+
+describe('resolveRolesForScopes', () => {
+  it('falls back to one rolesForScope call per scope when the provider has no rolesForScopes', async () => {
+    const seenScopes: PermissionScope[] = []
+    const provider: RoleProvider = {
+      async rolesForScope(_auth, scope) {
+        seenScopes.push(scope)
+        return scope.teamId ? ['team_manager'] : scope.departmentId ? ['department_admin'] : ['organization_admin']
+      },
+    }
+    const scopes: PermissionScope[] = [
+      { organizationId: 'org-1' },
+      { organizationId: 'org-1', departmentId: 'dept-1' },
+      { organizationId: 'org-1', departmentId: 'dept-1', teamId: 'team-1' },
+    ]
+
+    const result = await resolveRolesForScopes(provider, { userId: 'user-1', accessToken: 'token' }, scopes)
+
+    expect(seenScopes).toHaveLength(3)
+    expect(result.get('organization')).toEqual(['organization_admin'])
+    expect(result.get('department:dept-1')).toEqual(['department_admin'])
+    expect(result.get('team:team-1')).toEqual(['team_manager'])
+  })
+
+  it('delegates to rolesForScopes in a single call when the provider implements it', async () => {
+    let callCount = 0
+    const provider: RoleProvider = {
+      async rolesForScope() {
+        throw new Error('rolesForScope should not be called when rolesForScopes is available')
+      },
+      async rolesForScopes(_auth, scopes) {
+        callCount += 1
+        return new Map(scopes.map((scope) => [permissionScopeKey(scope), ['organization_admin']]))
+      },
+    }
+    const scopes: PermissionScope[] = [{ organizationId: 'org-1' }, { organizationId: 'org-1', departmentId: 'dept-1' }]
+
+    const result = await resolveRolesForScopes(provider, { userId: 'user-1', accessToken: 'token' }, scopes)
+
+    expect(callCount).toBe(1)
+    expect(result.get('organization')).toEqual(['organization_admin'])
+    expect(result.get('department:dept-1')).toEqual(['organization_admin'])
   })
 })
