@@ -80,6 +80,12 @@ const organizationNav = [
 </script>
 
 <template>
+  <!--
+    Authenticated session and scope data are intentionally only available in the browser.
+    Rendering the shell on the server would therefore produce an empty sidebar and page,
+    which differs from the first client render and causes Vue hydration mismatches.
+  -->
+  <ClientOnly>
   <div class="min-h-screen bg-oat lg:flex lg:h-screen lg:overflow-hidden">
     <header class="sticky top-0 z-40 flex h-16 items-center justify-between bg-forest px-4 lg:hidden">
       <AppLogo />
@@ -156,4 +162,10 @@ const organizationNav = [
       <div class="mx-auto w-full max-w-[1280px] px-5 py-8 sm:px-10"><slot /></div>
     </main>
   </div>
+    <template #fallback>
+      <main class="grid min-h-screen place-items-center bg-oat px-5 text-sm text-[#7b827d]" aria-busy="true">
+        Anwendung wird geladen …
+      </main>
+    </template>
+  </ClientOnly>
 </template>
