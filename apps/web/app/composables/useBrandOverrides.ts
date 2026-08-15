@@ -5,7 +5,6 @@ function emptyOverride(): BrandLevelOverride {
   return {
     primaryColor: null,
     accentColor: null,
-    tone: null,
     logoAssetId: null,
     displayFontAssetId: null,
     bodyFontAssetId: null,

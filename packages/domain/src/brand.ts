@@ -10,7 +10,6 @@ const ORGANIZATION_FIELDS = [
   'backgroundColor',
   'textColor',
   'onPrimaryColor',
-  'tone',
   'displayFontKey',
   'displayFontAssetId',
   'bodyFontKey',
@@ -26,7 +25,6 @@ const ORGANIZATION_FIELDS = [
 export const BRAND_LOCKABLE_FIELDS = [
   'primaryColor',
   'accentColor',
-  'tone',
   'logoAssetId',
   'displayFontAssetId',
   'bodyFontAssetId',
@@ -40,7 +38,6 @@ export interface BrandLevelProfile {
   backgroundColor?: string | null
   textColor?: string | null
   onPrimaryColor?: string | null
-  tone?: string | null
   displayFontKey?: string | null
   displayFontAssetId?: string | null
   bodyFontKey?: string | null
@@ -62,16 +59,15 @@ export interface DepartmentBrandLevel extends BrandOverrideProfile {
   lockedFields: readonly string[]
 }
 
-// Farben und Tonalitaet sind nach der Aufloesung immer gefuellt (DEFAULT_RESOLVED_BRAND traegt
-// einen Wert fuer jedes Feld); nur die Schrift-/Logo-Referenzen bleiben optional, weil "kein
-// Asset gesetzt" ein gueltiger Endzustand ist (kuratierter Schluessel bzw. kein eigenes Logo).
+// Farben sind nach der Aufloesung immer gefuellt (DEFAULT_RESOLVED_BRAND traegt einen Wert fuer
+// jedes Feld); nur die Schrift-/Logo-Referenzen bleiben optional, weil "kein Asset gesetzt" ein
+// gueltiger Endzustand ist (kuratierter Schluessel bzw. kein eigenes Logo).
 export interface ResolvedBrand {
   primaryColor: string
   accentColor: string
   backgroundColor: string
   textColor: string
   onPrimaryColor: string
-  tone: string
   displayFontKey: string | null
   displayFontAssetId: string | null
   bodyFontKey: string | null
@@ -102,7 +98,6 @@ export const DEFAULT_RESOLVED_BRAND: ResolvedBrand = {
   backgroundColor: '#f6f4ec',
   textColor: '#122820',
   onPrimaryColor: '#ffffff',
-  tone: 'nahbar',
   displayFontKey: 'manrope',
   displayFontAssetId: null,
   bodyFontKey: 'dm_sans',

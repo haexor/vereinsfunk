@@ -29,7 +29,6 @@ export const PublicOrganizationImprintSchema = z.object({
 // absichtlich ohne Laufzeitabhaengigkeit auf Domain (siehe packages/contracts/package.json),
 // deshalb dieselbe Duplizierung wie bei den Permission-Listen (TS/SQL).
 export const CuratedFontKeySchema = z.enum(['manrope', 'dm_sans', 'space_grotesk', 'karla'])
-export const BrandToneSchema = z.enum(['nahbar', 'dynamisch', 'sachlich'])
 // Rejects garbage before it ever reaches organizations.timezone -- an invalid IANA zone
 // would otherwise only fail later, as a RangeError inside Intl.DateTimeFormat calls that
 // format every date and scheduling deadline in the organization's timezone.
@@ -85,7 +84,7 @@ export const OrganizationProfileSchema = OrganizationProfileFieldsSchema.extend(
 // sich ein Tippfehler ('primary_colour') speichern, der dann nichts sperrt -- und die Oberflaeche
 // bot Sperren fuer Felder an, die unterhalb des Vereins ohnehin niemand setzen kann.
 export const BrandLockableFieldSchema = z.enum([
-  'primaryColor', 'accentColor', 'tone', 'logoAssetId', 'displayFontAssetId', 'bodyFontAssetId',
+  'primaryColor', 'accentColor', 'logoAssetId', 'displayFontAssetId', 'bodyFontAssetId',
 ])
 const LockedFieldsSchema = z.array(BrandLockableFieldSchema).max(6)
 
@@ -95,7 +94,6 @@ export const OrganizationBrandUpdateSchema = z.object({
   backgroundColor: HexColorSchema,
   textColor: HexColorSchema,
   onPrimaryColor: HexColorSchema,
-  tone: BrandToneSchema,
   displayFontKey: CuratedFontKeySchema,
   bodyFontKey: CuratedFontKeySchema,
   displayFontAssetId: UuidSchema.nullable().optional(),
@@ -110,7 +108,6 @@ export const OrganizationBrandSchema = z.object({
   backgroundColor: HexColorSchema,
   textColor: HexColorSchema,
   onPrimaryColor: HexColorSchema,
-  tone: BrandToneSchema,
   displayFontKey: CuratedFontKeySchema,
   bodyFontKey: CuratedFontKeySchema,
   displayFontAssetId: UuidSchema.nullable(),
@@ -177,7 +174,6 @@ export const ConfirmBrandAssetLicenseRequestSchema = z.object({
 const BrandOverrideFieldsSchema = z.object({
   primaryColor: HexColorSchema.nullable().optional(),
   accentColor: HexColorSchema.nullable().optional(),
-  tone: BrandToneSchema.nullable().optional(),
   logoAssetId: UuidSchema.nullable().optional(),
   displayFontAssetId: UuidSchema.nullable().optional(),
   bodyFontAssetId: UuidSchema.nullable().optional(),

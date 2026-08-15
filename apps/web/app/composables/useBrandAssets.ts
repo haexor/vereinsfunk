@@ -2,7 +2,6 @@ import { findCuratedFont, isBrandAssetSelectable } from '@vereinsfunk/domain'
 import { BrandLogoUploadResponseSchema } from '@vereinsfunk/contracts'
 import type { ComputedRef, Ref } from 'vue'
 
-export type BrandTone = 'nahbar' | 'dynamisch' | 'sachlich'
 export type BrandScopeLevel = 'organization' | 'department' | 'team'
 
 export interface BrandAssetRow {
@@ -22,7 +21,6 @@ export interface BrandAssetRow {
 export interface BrandLevelOverride {
   primaryColor: string | null
   accentColor: string | null
-  tone: BrandTone | null
   logoAssetId: string | null
   displayFontAssetId: string | null
   bodyFontAssetId: string | null
@@ -38,7 +36,6 @@ export interface BrandOrganizationState {
   backgroundColor: string
   textColor: string
   onPrimaryColor: string
-  tone: BrandTone
   displayFontKey: string
   bodyFontKey: string
   displayFontAssetId: string | null

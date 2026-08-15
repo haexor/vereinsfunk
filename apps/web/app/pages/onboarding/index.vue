@@ -138,13 +138,12 @@ async function saveBranding() {
       body: {
         primaryColor: brand.value.primaryColor,
         accentColor: brand.value.accentColor,
-        // Hintergrund-/Text-/Kontrastfarbe und Tonalität werden im Onboarding nicht erhoben
-        // (siehe /marke) -- PUT /brand ersetzt alle Felder, deshalb hier dieselben Defaults
-        // wie das Formular auf /marke, statt den Nutzer danach zu fragen.
+        // Hintergrund-/Text-/Kontrastfarbe werden im Onboarding nicht erhoben (siehe /marke) --
+        // PUT /brand ersetzt alle Felder, deshalb hier dieselben Defaults wie das Formular auf
+        // /marke, statt den Nutzer danach zu fragen.
         backgroundColor: '#f6f4ec',
         textColor: '#122820',
         onPrimaryColor: '#ffffff',
-        tone: 'nahbar',
         displayFontKey: 'manrope',
         bodyFontKey: 'dm_sans',
       },
@@ -250,7 +249,7 @@ const session = await useSession()
 
         <!-- Schritt 3: Erscheinungsbild -->
         <template v-else-if="step === 3">
-          <div class="mb-6"><div class="eyebrow mb-3">Schritt 3 von 4 · überspringbar</div><h1 class="font-display text-2xl font-extrabold tracking-[-.03em]">Euer Erscheinungsbild</h1><p class="mt-2 text-sm text-[#6c756f]">Logo und Farben prägen jede Vorschau. Ihr könnt das jederzeit unter „Marke & Tonalität“ nachholen.</p></div>
+          <div class="mb-6"><div class="eyebrow mb-3">Schritt 3 von 4 · überspringbar</div><h1 class="font-display text-2xl font-extrabold tracking-[-.03em]">Euer Erscheinungsbild</h1><p class="mt-2 text-sm text-[#6c756f]">Logo und Farben prägen jede Vorschau. Ihr könnt das jederzeit unter „Marke“ nachholen.</p></div>
           <div class="grid gap-6 sm:grid-cols-2">
             <div>
               <label class="focus-ring flex cursor-pointer flex-col items-center rounded-2xl border border-dashed border-[#cfd2cb] px-6 py-6 text-center">

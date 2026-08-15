@@ -63,7 +63,7 @@ const draft = reactive<PolicyRuleValues>({
   minorApprovalRequired: null, selfApprovalAllowed: null, allowSameReviewerAcrossStages: null, allowReviewExemptions: null,
   mediaRequiresConsentCheck: null, consentExpiresOnLeave: null, consentValidityMonths: null,
   allowedPresets: null, allowedFormats: null, allowedChannelIds: null, defaultTargetPlatforms: null,
-  forbiddenTopics: [], requiredHashtags: [], tone: null,
+  forbiddenTopics: [], requiredHashtags: [],
 })
 const forbiddenTopicsText = ref('')
 const requiredHashtagsText = ref('')
@@ -84,7 +84,7 @@ function splitList(text: string): string[] {
 }
 
 // Ein geleertes Text- oder Zahlenfeld liefert '' (bei v-model.number auch dort). Ohne diese
-// Normalisierung wäre ein einmal gesetzter Wert nicht mehr auf „geerbt“ zurückzunehmen: tone,
+// Normalisierung wäre ein einmal gesetzter Wert nicht mehr auf „geerbt“ zurückzunehmen:
 // Mindestanzahl und Frist lehnt das Contracts-Schema als '' mit 400 ab, und eine leere
 // Stufenbezeichnung landete in der Datenbank und ließ danach jede Freigabeliste am
 // ApprovalStageSchema scheitern (eigener Review-Fund). '' heißt hier „geerbt“, also null.
@@ -110,7 +110,6 @@ async function save() {
           reviewMinimumApprovals: blankToNull(draft.reviewMinimumApprovals),
           reviewDeadlineHours: blankToNull(draft.reviewDeadlineHours),
           consentValidityMonths: blankToNull(draft.consentValidityMonths),
-          tone: blankToNull(draft.tone),
           forbiddenTopics: splitList(forbiddenTopicsText.value),
           requiredHashtags: splitList(requiredHashtagsText.value),
           allowedPresets: allowedPresetsText.value.trim() ? splitList(allowedPresetsText.value) : null,
@@ -320,9 +319,6 @@ function reviewerLabel(reviewer: { kind: string; userId: string | null; role: st
             </label>
             <label><span class="mb-1 block text-xs font-semibold">Pflicht-Hashtags (kommagetrennt)</span>
               <input v-model="requiredHashtagsText" :disabled="!selectedEntry.canEdit" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-sm" />
-            </label>
-            <label><span class="mb-1 block text-xs font-semibold">Tonalität</span>
-              <input v-model="draft.tone" :disabled="!selectedEntry.canEdit" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-sm" />
             </label>
           </div>
           <div class="mt-4 border-t border-[#e8e9e2] pt-4">

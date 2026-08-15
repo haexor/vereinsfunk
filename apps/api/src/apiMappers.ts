@@ -45,7 +45,7 @@ export function mapBrandRow(row: Record<string, unknown>) {
   return {
     organizationId: row.organization_id, primaryColor: row.primary_color, accentColor: row.accent_color,
     backgroundColor: row.background_color, textColor: row.text_color, onPrimaryColor: row.on_primary_color,
-    tone: row.tone, displayFontKey: row.display_font_key, bodyFontKey: row.body_font_key,
+    displayFontKey: row.display_font_key, bodyFontKey: row.body_font_key,
     displayFontAssetId: row.display_font_asset_id, bodyFontAssetId: row.body_font_asset_id,
     allowDepartmentOverrides: row.allow_department_overrides, lockedFields: row.locked_fields,
     logoPath: row.logo_path, logoDarkPath: row.logo_dark_path,
@@ -66,7 +66,7 @@ export function mapBrandAssetRow(row: Record<string, unknown>) {
 export function mapDepartmentBrandRow(row: Record<string, unknown>) {
   return {
     organizationId: row.organization_id, departmentId: row.department_id, primaryColor: row.primary_color,
-    accentColor: row.accent_color, tone: row.tone, logoAssetId: row.logo_asset_id,
+    accentColor: row.accent_color, logoAssetId: row.logo_asset_id,
     displayFontAssetId: row.display_font_asset_id, bodyFontAssetId: row.body_font_asset_id,
     allowTeamOverrides: row.allow_team_overrides, lockedFields: row.locked_fields,
   }
@@ -75,7 +75,7 @@ export function mapDepartmentBrandRow(row: Record<string, unknown>) {
 export function mapTeamBrandRow(row: Record<string, unknown>) {
   return {
     organizationId: row.organization_id, departmentId: row.department_id, teamId: row.team_id,
-    primaryColor: row.primary_color, accentColor: row.accent_color, tone: row.tone,
+    primaryColor: row.primary_color, accentColor: row.accent_color,
     logoAssetId: row.logo_asset_id, displayFontAssetId: row.display_font_asset_id,
     bodyFontAssetId: row.body_font_asset_id,
   }

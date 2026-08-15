@@ -64,7 +64,7 @@ const navigation: { label: string; to: string; icon: typeof LayoutDashboard; bad
   { label: 'Auswertung', to: '/auswertung', icon: BarChart3 },
 ]
 const organizationNav = [
-  { label: 'Marke & Tonalität', to: '/marke', icon: Palette },
+  { label: 'Marke', to: '/marke', icon: Palette },
   { label: 'Stilprofile', to: '/stilprofile', icon: Feather },
   { label: 'Struktur', to: '/struktur', icon: Building2 },
   { label: 'Mitglieder', to: '/mitglieder', icon: Users },

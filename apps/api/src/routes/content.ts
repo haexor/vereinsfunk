@@ -190,7 +190,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
       // ->'config'->'policies'->'allowedChannelIds'. Da bisher nichts diese Spalte beschrieb, blieb
       // der Mismatch folgenlos -- als erster Schreibzugriff muss dieser Code die gelesene Form
       // treffen, sonst waere die Kanal-Beschraenkung aus 011/012 ab hier stillschweigend wirkungslos.
-      const effectiveConfigSnapshot = { config: { tone: config.tone, goals: config.goals, hashtags: config.hashtags, ...config.policies } }
+      const effectiveConfigSnapshot = { config: { goals: config.goals, hashtags: config.hashtags, ...config.policies } }
 
       // posts/post_versions/post_variants haben keine Insert-Policy fuer authenticated (RLS ohne
       // passende Policy verweigert das grundsaetzlich) -- Schreibzugriff laeuft wie bei
@@ -500,7 +500,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     const result = await service.rpc('create_text_generation_session', {
       p_organization_id: input.organizationId, p_department_id: input.departmentId, p_team_id: input.teamId ?? null, p_preset_slug: input.presetSlug,
       p_communication_goal: input.communicationGoal, p_requested_formats: input.requestedFormats, p_source_material: sourceMaterial,
-      p_style_profile_id: styleProfileId, p_style_profile_snapshot: styleSnapshot, p_effective_config_snapshot: { config: { tone: config.tone, goals: config.goals, hashtags: config.hashtags, ...config.policies } },
+      p_style_profile_id: styleProfileId, p_style_profile_snapshot: styleSnapshot, p_effective_config_snapshot: { config: { goals: config.goals, hashtags: config.hashtags, ...config.policies } },
       p_target_platforms: targetPlatforms, p_max_characters: maxCharacters, p_temperature: input.temperature,
       p_source_revision: input.sourceRevision, p_input_hash: sessionHash, p_candidate_input_hash: candidateHash, p_generation_intent: 'initial', p_revision_instruction: null,
       p_created_by: request.auth!.userId, p_correlation_id: request.id, p_idempotency_key: idempotencyKey,

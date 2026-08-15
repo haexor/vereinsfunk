@@ -41,8 +41,8 @@ insert into public.department_memberships (organization_id, department_id, user_
   ('11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', 'department_admin')
 on conflict do nothing;
 
-insert into public.organization_brand_profiles (organization_id, primary_color, accent_color, tone)
-values ('11111111-1111-4111-8111-111111111111', '#163a2c', '#caff4a', 'nahbar')
+insert into public.organization_brand_profiles (organization_id, primary_color, accent_color)
+values ('11111111-1111-4111-8111-111111111111', '#163a2c', '#caff4a')
 on conflict (organization_id) do nothing;
 
 -- Beide Organisationen sind vor Paket 009 direkt per INSERT entstanden, nicht ueber

@@ -116,7 +116,7 @@ export function emptyPolicyRuleColumns() {
     review_required: null, review_mode: null, review_stage_label: null, review_minimum_approvals: null, review_deadline_hours: null,
     minor_approval_required: null, self_approval_allowed: null, allow_same_reviewer_across_stages: null, allow_review_exemptions: null,
     media_requires_consent_check: null, allowed_presets: null, allowed_formats: null, allowed_channel_ids: null,
-    forbidden_topics: [], required_hashtags: [], tone: null, default_target_platforms: null,
+    forbidden_topics: [], required_hashtags: [], default_target_platforms: null,
   }
 }
 

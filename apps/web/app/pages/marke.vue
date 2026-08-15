@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { AlertTriangle, Check, LoaderCircle, Upload } from '@lucide/vue'
 import { BRAND_LOCKABLE_FIELDS, curatedFontPairings, meetsMinimumContrast, resolveBrand } from '@vereinsfunk/domain'
-import { type BrandOrganizationState, type BrandScopeLevel, type BrandTone, useBrandAssets } from '../composables/useBrandAssets'
+import { type BrandOrganizationState, type BrandScopeLevel, useBrandAssets } from '../composables/useBrandAssets'
 import { useBrandOverrides } from '../composables/useBrandOverrides'
 
 type ScopeLevelName = BrandScopeLevel
@@ -14,7 +14,6 @@ interface TeamRow { id: string, name: string, departmentId: string }
 const LOCKABLE_FIELD_LABELS: Readonly<Record<string, string>> = {
   primaryColor: 'Primärfarbe',
   accentColor: 'Akzentfarbe',
-  tone: 'Tonalität',
   logoAssetId: 'Logo',
   displayFontAssetId: 'Eigene Überschriften-Schrift',
   bodyFontAssetId: 'Eigene Fließtext-Schrift',
@@ -44,7 +43,6 @@ const org = reactive<BrandOrganizationState>({
   backgroundColor: '#f6f4ec',
   textColor: '#122820',
   onPrimaryColor: '#ffffff',
-  tone: 'nahbar' as BrandTone,
   displayFontKey: 'manrope',
   bodyFontKey: 'dm_sans',
   displayFontAssetId: null as string | null,
@@ -98,12 +96,12 @@ async function loadAll() {
   try {
     const [brandResult, departmentsResult, teamsResult, departmentProfilesResult, teamProfilesResult, assetsResult] = await Promise.all([
       supabase.from('organization_brand_profiles')
-        .select('primary_color, accent_color, background_color, text_color, on_primary_color, tone, display_font_key, body_font_key, display_font_asset_id, body_font_asset_id, allow_department_overrides, locked_fields, logo_path, logo_dark_path')
+        .select('primary_color, accent_color, background_color, text_color, on_primary_color, display_font_key, body_font_key, display_font_asset_id, body_font_asset_id, allow_department_overrides, locked_fields, logo_path, logo_dark_path')
         .eq('organization_id', organizationId.value).maybeSingle(),
       supabase.from('departments').select('id, name').eq('organization_id', organizationId.value).is('archived_at', null).order('name'),
       supabase.from('teams').select('id, name, department_id').eq('organization_id', organizationId.value).is('archived_at', null).order('name'),
-      supabase.from('department_brand_profiles').select('department_id, primary_color, accent_color, tone, logo_asset_id, display_font_asset_id, body_font_asset_id, allow_team_overrides, locked_fields').eq('organization_id', organizationId.value),
-      supabase.from('team_brand_profiles').select('team_id, primary_color, accent_color, tone, logo_asset_id, display_font_asset_id, body_font_asset_id').eq('organization_id', organizationId.value),
+      supabase.from('department_brand_profiles').select('department_id, primary_color, accent_color, logo_asset_id, display_font_asset_id, body_font_asset_id, allow_team_overrides, locked_fields').eq('organization_id', organizationId.value),
+      supabase.from('team_brand_profiles').select('team_id, primary_color, accent_color, logo_asset_id, display_font_asset_id, body_font_asset_id').eq('organization_id', organizationId.value),
       supabase.from('brand_assets').select('id, department_id, team_id, kind, object_path, status, font_family, font_weight, font_style, license_holder, created_at').eq('organization_id', organizationId.value).order('created_at', { ascending: false }),
     ])
     if (brandResult.error || departmentsResult.error || teamsResult.error || departmentProfilesResult.error || teamProfilesResult.error || assetsResult.error) {
@@ -116,7 +114,6 @@ async function loadAll() {
       org.backgroundColor = brandResult.data.background_color
       org.textColor = brandResult.data.text_color
       org.onPrimaryColor = brandResult.data.on_primary_color
-      org.tone = brandResult.data.tone
       org.displayFontKey = brandResult.data.display_font_key
       org.bodyFontKey = brandResult.data.body_font_key
       org.displayFontAssetId = brandResult.data.display_font_asset_id
@@ -133,7 +130,7 @@ async function loadAll() {
     departmentOverrides.value = {}
     for (const row of departmentProfilesResult.data) {
       departmentOverrides.value[row.department_id] = {
-        primaryColor: row.primary_color, accentColor: row.accent_color, tone: row.tone,
+        primaryColor: row.primary_color, accentColor: row.accent_color,
         logoAssetId: row.logo_asset_id, displayFontAssetId: row.display_font_asset_id, bodyFontAssetId: row.body_font_asset_id,
         displayFontKey: null, bodyFontKey: null,
         allowTeamOverrides: row.allow_team_overrides, lockedFields: row.locked_fields ?? [],
@@ -142,7 +139,7 @@ async function loadAll() {
     teamOverrides.value = {}
     for (const row of teamProfilesResult.data) {
       teamOverrides.value[row.team_id] = {
-        primaryColor: row.primary_color, accentColor: row.accent_color, tone: row.tone,
+        primaryColor: row.primary_color, accentColor: row.accent_color,
         logoAssetId: row.logo_asset_id, displayFontAssetId: row.display_font_asset_id, bodyFontAssetId: row.body_font_asset_id,
         displayFontKey: null, bodyFontKey: null,
       }
@@ -206,7 +203,7 @@ async function saveOrganization() {
     method: 'PUT',
     body: {
       primaryColor: org.primaryColor, accentColor: org.accentColor, backgroundColor: org.backgroundColor,
-      textColor: org.textColor, onPrimaryColor: org.onPrimaryColor, tone: org.tone,
+      textColor: org.textColor, onPrimaryColor: org.onPrimaryColor,
       displayFontKey: org.displayFontKey, bodyFontKey: org.bodyFontKey,
       displayFontAssetId: org.displayFontAssetId, bodyFontAssetId: org.bodyFontAssetId,
       allowDepartmentOverrides: org.allowDepartmentOverrides, lockedFields: org.lockedFields,
@@ -219,7 +216,7 @@ async function saveDepartment(departmentId: string) {
   await api.request(`/v1/departments/${departmentId}/brand`, {
     method: 'PUT',
     body: {
-      primaryColor: value.primaryColor, accentColor: value.accentColor, tone: value.tone,
+      primaryColor: value.primaryColor, accentColor: value.accentColor,
       logoAssetId: value.logoAssetId, displayFontAssetId: value.displayFontAssetId, bodyFontAssetId: value.bodyFontAssetId,
       allowTeamOverrides: value.allowTeamOverrides, lockedFields: value.lockedFields,
     },
@@ -231,7 +228,7 @@ async function saveTeam(teamId: string) {
   await api.request(`/v1/teams/${teamId}/brand`, {
     method: 'PUT',
     body: {
-      primaryColor: value.primaryColor, accentColor: value.accentColor, tone: value.tone,
+      primaryColor: value.primaryColor, accentColor: value.accentColor,
       logoAssetId: value.logoAssetId, displayFontAssetId: value.displayFontAssetId, bodyFontAssetId: value.bodyFontAssetId,
     },
   })
@@ -270,7 +267,7 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
   <div>
     <header class="mb-8">
       <div class="eyebrow mb-3">Vereinsprofil</div>
-      <h1 class="font-display text-3xl font-extrabold tracking-[-.04em]">Marke & Tonalität</h1>
+      <h1 class="font-display text-3xl font-extrabold tracking-[-.04em]">Marke</h1>
       <p class="mt-2 text-sm text-[#727a75]">So erkennt man euren Verein, seine Abteilungen und Mannschaften in jedem Beitrag wieder.</p>
     </header>
 
@@ -385,18 +382,6 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
                   <AlertTriangle v-if="!check.meetsAA" :size="12" /> {{ check.ratio }}:1
                 </span>
               </div>
-            </div>
-          </section>
-
-          <!-- Tonalität (nur Vereinsebene, Abteilungen/Teams koennen ueber lockedFields NICHT abweichen -->
-          <!-- da tone hier bewusst analog zu Farben ueberschreibbar ist wie oben abgebildet) -->
-          <section v-if="activeLevel === 'organization'" class="card p-6">
-            <h2 class="font-display text-base font-bold">Tonalität</h2>
-            <div class="mt-5 space-y-2">
-              <label v-for="item in [{ id: 'nahbar', label: 'Nahbar & herzlich', text: 'Persönlich, ehrlich und gemeinschaftlich.' }, { id: 'dynamisch', label: 'Dynamisch & motivierend', text: 'Aktiv, emotional und mit viel Energie.' }, { id: 'sachlich', label: 'Klar & informativ', text: 'Präzise, ruhig und auf den Punkt.' }]" :key="item.id" class="focus-ring flex cursor-pointer gap-3 rounded-xl border p-3" :class="org.tone === item.id ? 'border-forest bg-[#f2f6e9]' : 'border-[#e1e2db]'">
-                <input v-model="org.tone" type="radio" :value="item.id" class="mt-1 accent-[#163a2c]" />
-                <span><strong class="block text-xs">{{ item.label }}</strong><span class="mt-1 block text-[10px] text-[#7b827d]">{{ item.text }}</span></span>
-              </label>
             </div>
           </section>
 
