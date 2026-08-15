@@ -181,25 +181,25 @@ await Promise.all([loadDashboard(), loadSuggestions()])
     <section class="grid gap-7 xl:grid-cols-[minmax(0,1.55fr)_minmax(310px,.75fr)]">
       <div class="space-y-7">
         <article class="card overflow-hidden">
-          <div class="flex items-center justify-between border-b border-[#e7e7df] px-5 py-4 sm:px-6">
-            <div><h2 class="font-display text-base font-bold tracking-[-.02em]">Aktuelle Beiträge</h2><p class="mt-0.5 text-[11px] text-[#7a817d]">Eure nächsten Inhalte auf einen Blick</p></div>
-            <NuxtLink to="/beitraege" class="focus-ring flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-forest hover:bg-stone-100">Alle ansehen <ArrowRight :size="13" /></NuxtLink>
+          <div class="flex flex-col items-start gap-3 border-b border-[#e7e7df] px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+            <div class="min-w-0"><h2 class="font-display text-base font-bold tracking-[-.02em]">Aktuelle Beiträge</h2><p class="mt-0.5 text-[11px] text-[#7a817d]">Eure nächsten Inhalte auf einen Blick</p></div>
+            <NuxtLink to="/beitraege" class="focus-ring inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-forest hover:bg-stone-100">Alle ansehen <ArrowRight :size="13" /></NuxtLink>
           </div>
-          <div class="p-8 text-center text-xs text-[#7b827d]">Es liegen noch keine Beiträge vor. Diese Liste befüllt sich, sobald echte Beiträge erstellt werden.</div>
+          <div class="break-words p-8 text-center text-xs text-[#7b827d]">Es liegen noch keine Beiträge vor. Diese Liste befüllt sich, sobald echte Beiträge erstellt werden.</div>
         </article>
 
         <article class="card overflow-hidden">
-          <div class="flex items-center justify-between border-b border-[#e7e7df] px-5 py-4 sm:px-6">
-            <div><h2 class="font-display text-base font-bold tracking-[-.02em]">Redaktionsplan</h2><p class="mt-0.5 text-[11px] text-[#7a817d]">Diese Woche, {{ timezone }}</p></div>
-            <NuxtLink to="/kalender" class="focus-ring flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-forest hover:bg-stone-100">Zum Kalender <CalendarDays :size="13" /></NuxtLink>
+          <div class="flex flex-col items-start gap-3 border-b border-[#e7e7df] px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+            <div class="min-w-0"><h2 class="font-display text-base font-bold tracking-[-.02em]">Redaktionsplan</h2><p class="mt-0.5 text-[11px] text-[#7a817d]">Diese Woche, {{ timezone }}</p></div>
+            <NuxtLink to="/kalender" class="focus-ring inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-forest hover:bg-stone-100">Zum Kalender <CalendarDays :size="13" /></NuxtLink>
           </div>
           <div v-if="dashboardError" class="p-8 text-center text-xs font-semibold text-red-700">Der Redaktionsplan konnte nicht geladen werden.</div>
           <div v-else class="overflow-x-auto">
-            <div class="grid min-w-[620px] grid-cols-7 divide-x divide-[#ecece5]">
-              <div v-for="day in weekDays" :key="day.key" class="min-h-32 p-3">
+            <div class="grid min-w-0 grid-cols-7 divide-x divide-[#ecece5] md:min-w-[620px]">
+              <div v-for="day in weekDays" :key="day.key" class="min-h-28 min-w-0 p-2 sm:min-h-32 sm:p-3">
                 <div class="mb-3 flex items-center justify-between"><span class="text-[10px] font-bold uppercase text-[#929792]">{{ day.label }}</span><span class="grid h-6 w-6 place-items-center rounded-full text-xs font-semibold" :class="day.isToday ? 'bg-forest text-white' : 'text-ink'">{{ day.dayNumber }}</span></div>
                 <div v-if="day.posts.length === 0" class="text-[10px] text-[#c4c8c1]">—</div>
-                <div v-for="post in day.posts" :key="post.id" class="rounded-lg bg-[#eef1e9] p-2 text-[10px] font-semibold leading-tight text-forest">Beitrag geplant</div>
+                <div v-for="post in day.posts" :key="post.id" class="truncate rounded-lg bg-[#eef1e9] p-1 text-[10px] font-semibold leading-tight text-forest sm:p-2">Beitrag geplant</div>
               </div>
             </div>
           </div>
@@ -211,9 +211,9 @@ await Promise.all([loadDashboard(), loadSuggestions()])
           <div class="mb-4 flex items-center justify-between"><h2 class="font-display text-sm font-bold">Nächste Schritte</h2><span class="grid h-8 w-8 place-items-center rounded-xl bg-violet-100 text-violet-700"><ShieldCheck :size="15" /></span></div>
           <ul class="space-y-2">
             <li v-for="item in nextSteps" :key="item.key">
-              <NuxtLink :to="item.href" class="focus-ring flex items-center justify-between gap-2 rounded-xl border border-[#e6e7e0] p-3 text-xs font-semibold text-ink hover:bg-stone-50">
-                <span class="flex items-center gap-2"><Palette v-if="item.key === 'branding'" :size="14" class="text-forest" /><ShieldCheck v-else :size="14" class="text-forest" />{{ item.label }}</span>
-                <ArrowRight :size="13" class="text-[#9aa196]" />
+              <NuxtLink :to="item.href" class="focus-ring flex min-w-0 items-center justify-between gap-2 rounded-xl border border-[#e6e7e0] p-3 text-xs font-semibold text-ink hover:bg-stone-50">
+                <span class="flex min-w-0 items-center gap-2"><Palette v-if="item.key === 'branding'" :size="14" class="shrink-0 text-forest" /><ShieldCheck v-else :size="14" class="shrink-0 text-forest" /><span>{{ item.label }}</span></span>
+                <ArrowRight :size="13" class="shrink-0 text-[#9aa196]" />
               </NuxtLink>
             </li>
           </ul>
