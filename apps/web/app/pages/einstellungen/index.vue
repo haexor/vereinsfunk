@@ -246,7 +246,7 @@ function reviewerLabel(reviewer: { kind: string; userId: string | null; role: st
 </script>
 
 <template>
-  <div class="mx-auto max-w-[900px] px-5 py-8 sm:px-10">
+  <div>
     <div class="eyebrow mb-3">Regelwerk</div>
     <h1 class="font-display text-3xl font-extrabold tracking-[-.04em]">Richtlinien</h1>
     <p class="mt-2 text-sm text-[#727a75]">Wer einreichen darf, ob geprüft wird und von wem — je Verein, Abteilung und Team.</p>

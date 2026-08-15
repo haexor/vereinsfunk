@@ -115,7 +115,7 @@ async function reresolve(item: StalledApprovalRequest) {
 </script>
 
 <template>
-  <div class="mx-auto max-w-[1180px] px-5 py-8 sm:px-10">
+  <div>
     <header class="mb-8">
       <div class="eyebrow mb-3">Qualitätssicherung</div>
       <h1 class="font-display text-3xl font-extrabold tracking-[-.04em]">Offene Freigaben</h1>

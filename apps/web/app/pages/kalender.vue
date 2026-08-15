@@ -122,7 +122,7 @@ const hasAnyItem = computed(() => Object.keys(postsByDay.value).length > 0 || Ob
 </script>
 
 <template>
-  <div class="mx-auto max-w-[1280px] px-5 py-8 sm:px-10">
+  <div>
     <header class="mb-8 flex items-end justify-between">
       <div>
         <div class="eyebrow mb-3">Planung</div>

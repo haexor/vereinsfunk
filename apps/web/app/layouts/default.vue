@@ -152,6 +152,8 @@ const organizationNav = [
       </div>
     </aside>
 
-    <main class="min-w-0 flex-1 lg:h-screen lg:min-h-0 lg:overflow-y-auto"><slot /></main>
+    <main class="min-w-0 flex-1 lg:h-screen lg:min-h-0 lg:overflow-y-auto">
+      <div class="mx-auto w-full max-w-[1280px] px-5 py-8 sm:px-10"><slot /></div>
+    </main>
   </div>
 </template>

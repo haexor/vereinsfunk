@@ -273,7 +273,7 @@ async function updatePolicySetting(scopeLevel: ScopeLevel, scopeId: string, flag
 </script>
 
 <template>
-  <div class="mx-auto max-w-[980px] px-5 py-8 sm:px-10">
+  <div>
     <header class="mb-8">
       <div class="eyebrow mb-3">Vereinsstruktur</div>
       <h1 class="font-display text-3xl font-extrabold tracking-[-.04em]">Struktur</h1>

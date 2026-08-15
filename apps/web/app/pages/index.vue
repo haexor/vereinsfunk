@@ -145,7 +145,7 @@ await Promise.all([loadDashboard(), loadSuggestions()])
 </script>
 
 <template>
-  <div class="mx-auto max-w-[1480px] px-5 py-7 sm:px-8 lg:px-10 lg:py-9 xl:px-12">
+  <div>
     <header class="mb-8 flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
       <div>
         <div class="eyebrow mb-3">{{ department }} · {{ todayLabel }}</div>
