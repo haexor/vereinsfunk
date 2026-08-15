@@ -5,7 +5,6 @@ import { baseFields } from './testFixtures.js'
 describe('effective config', () => {
   it('allows policies to become stricter but not weaker', () => {
     const base = {
-      tone: 'nahbar',
       policies: {
         approvalRequired: true,
         minorApprovalRequired: true,
@@ -15,7 +14,6 @@ describe('effective config', () => {
       },
     }
     const result = mergeEffectiveConfig(base, {
-      tone: 'dynamisch',
       policies: {
         approvalRequired: false,
         minorApprovalRequired: false,
@@ -23,7 +21,6 @@ describe('effective config', () => {
         forbiddenTopics: ['Alkohol'],
       },
     })
-    expect(result.tone).toBe('dynamisch')
     expect(result.policies.approvalRequired).toBe(true)
     expect(result.policies.minimumApprovals).toBe(2)
     expect(result.policies.forbiddenTopics).toEqual(['Politik', 'Alkohol'])

@@ -114,7 +114,7 @@ describe('resolveBrand', () => {
   })
 
   it('exposes exactly the fields a department or team can actually carry', () => {
-    expect([...BRAND_LOCKABLE_FIELDS]).toEqual(['primaryColor', 'accentColor', 'tone', 'logoAssetId', 'displayFontAssetId', 'bodyFontAssetId'])
+    expect([...BRAND_LOCKABLE_FIELDS]).toEqual(['primaryColor', 'accentColor', 'logoAssetId', 'displayFontAssetId', 'bodyFontAssetId'])
   })
 })
 

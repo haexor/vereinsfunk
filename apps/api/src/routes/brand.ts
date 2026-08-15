@@ -78,7 +78,6 @@ app.put('/v1/organizations/:id/brand', async (request, reply) => {
     background_color: input.backgroundColor,
     text_color: input.textColor,
     on_primary_color: input.onPrimaryColor,
-    tone: input.tone,
     display_font_key: input.displayFontKey,
     body_font_key: input.bodyFontKey,
   }
@@ -500,7 +499,6 @@ app.put('/v1/departments/:id/brand', async (request, reply) => {
   const payload: Record<string, unknown> = { organization_id: organizationId, department_id: params.id, updated_by: request.auth!.userId }
   if (input.primaryColor !== undefined) payload.primary_color = input.primaryColor
   if (input.accentColor !== undefined) payload.accent_color = input.accentColor
-  if (input.tone !== undefined) payload.tone = input.tone
   if (input.logoAssetId !== undefined) payload.logo_asset_id = input.logoAssetId
   if (input.displayFontAssetId !== undefined) payload.display_font_asset_id = input.displayFontAssetId
   if (input.bodyFontAssetId !== undefined) payload.body_font_asset_id = input.bodyFontAssetId
@@ -567,7 +565,6 @@ app.put('/v1/teams/:id/brand', async (request, reply) => {
   }
   if (input.primaryColor !== undefined) payload.primary_color = input.primaryColor
   if (input.accentColor !== undefined) payload.accent_color = input.accentColor
-  if (input.tone !== undefined) payload.tone = input.tone
   if (input.logoAssetId !== undefined) payload.logo_asset_id = input.logoAssetId
   if (input.displayFontAssetId !== undefined) payload.display_font_asset_id = input.displayFontAssetId
   if (input.bodyFontAssetId !== undefined) payload.body_font_asset_id = input.bodyFontAssetId

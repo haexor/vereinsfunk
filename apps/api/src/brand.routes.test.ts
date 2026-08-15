@@ -10,7 +10,6 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
     backgroundColor: '#f6f4ec',
     textColor: '#122820',
     onPrimaryColor: '#ffffff',
-    tone: 'nahbar',
     displayFontKey: 'manrope',
     bodyFontKey: 'dm_sans',
   }
@@ -43,7 +42,6 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
                     background_color: '#f6f4ec',
                     text_color: '#122820',
                     on_primary_color: '#ffffff',
-                    tone: 'nahbar',
                     display_font_key: 'manrope',
                     body_font_key: 'dm_sans',
                     display_font_asset_id: null,
@@ -320,7 +318,7 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
           from: (table: string) => {
             if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
             if (table === 'department_brand_profiles') {
-              return { upsert: () => chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, primary_color: '#112233', accent_color: null, tone: null, logo_asset_id: null, display_font_asset_id: null, body_font_asset_id: null, allow_team_overrides: true, locked_fields: [] }, error: null }) }
+              return { upsert: () => chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, primary_color: '#112233', accent_color: null, logo_asset_id: null, display_font_asset_id: null, body_font_asset_id: null, allow_team_overrides: true, locked_fields: [] }, error: null }) }
             }
             throw new Error(`unexpected table in test fake: ${table}`)
           },
@@ -346,7 +344,7 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
           from: (table: string) => {
             if (table === 'teams') return chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID }, error: null })
             if (table === 'team_brand_profiles') {
-              return { upsert: () => chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: TEAM_ID, primary_color: '#445566', accent_color: null, tone: null, logo_asset_id: null, display_font_asset_id: null, body_font_asset_id: null }, error: null }) }
+              return { upsert: () => chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: TEAM_ID, primary_color: '#445566', accent_color: null, logo_asset_id: null, display_font_asset_id: null, body_font_asset_id: null }, error: null }) }
             }
             throw new Error(`unexpected table in test fake: ${table}`)
           },
@@ -421,7 +419,7 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
           from: (table: string) => {
             if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
             if (table === 'department_brand_profiles') {
-              return { upsert: () => chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, primary_color: null, accent_color: null, tone: null, logo_asset_id: null, display_font_asset_id: null, body_font_asset_id: null, allow_team_overrides: true, locked_fields: [] }, error: null }) }
+              return { upsert: () => chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, primary_color: null, accent_color: null, logo_asset_id: null, display_font_asset_id: null, body_font_asset_id: null, allow_team_overrides: true, locked_fields: [] }, error: null }) }
             }
             throw new Error(`unexpected table in test fake: ${table}`)
           },

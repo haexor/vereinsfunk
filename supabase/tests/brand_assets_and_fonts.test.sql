@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(41);
+select plan(40);
 
 set local role postgres;
 
@@ -187,23 +187,16 @@ select throws_ok(
   '42501', null, 'the Team B manager cannot write Team A''s brand profile'
 );
 
--- 31: tone-CHECK gilt auch fuer department_brand_profiles (Ergaenzung gegenueber dem Plan-Entwurf).
-set local role postgres;
-select throws_ok(
-  $$insert into public.department_brand_profiles (organization_id, department_id, tone, updated_by)
-    values ('67000000-1000-4000-8000-000000000001', '67000000-1100-4000-8000-000000000002', 'laut', '67000000-0000-4000-8000-000000000003')$$,
-  '23514', null, 'department_brand_profiles rejects a tone value outside the curated set'
-);
-
--- 32: zusammengesetzter Fremdschluessel verhindert eine Asset-Referenz eines fremden Vereins
+-- 31: zusammengesetzter Fremdschluessel verhindert eine Asset-Referenz eines fremden Vereins
 -- (Ergaenzung gegenueber dem Plan-Entwurf).
+set local role postgres;
 select throws_ok(
   format($$insert into public.department_brand_profiles (organization_id, department_id, logo_asset_id, updated_by)
     values ('67000000-1000-4000-8000-000000000001', '67000000-1100-4000-8000-000000000002', %L, '67000000-0000-4000-8000-000000000003')$$, '67000000-8000-4000-8000-000000000009'),
   '23503', null, 'department_brand_profiles cannot reference a brand asset belonging to another organization'
 );
 
--- 33-35: Fund aus der adversarialen Pruefung -- authz.brand_asset_is_selectable() als zweite
+-- 32-34: Fund aus der adversarialen Pruefung -- authz.brand_asset_is_selectable() als zweite
 -- Grenze in RLS selbst, nicht nur im API-Endpunkt (siehe Migrationskommentar). Ohne sie liesse
 -- sich eine Schwesterabteilungs-Referenz per direktem PostgREST-Zugriff setzen, obwohl die
 -- Berechtigungspruefung (brand.manage in der EIGENEN Abteilung) das nicht verhindert.
@@ -227,14 +220,14 @@ select throws_ok(
   '42501', null, 'the Team A manager cannot set the Handball department''s asset as their own team logo (wrong department)'
 );
 
--- 36: organization_brand_profiles traegt die neuen Farbrollen mit den dokumentierten Defaults.
+-- 35: organization_brand_profiles traegt die neuen Farbrollen mit den dokumentierten Defaults.
 set local role postgres;
 insert into public.organization_brand_profiles (organization_id) values ('67000000-1000-4000-8000-000000000001')
   on conflict (organization_id) do nothing;
 select is((select background_color from public.organization_brand_profiles where organization_id = '67000000-1000-4000-8000-000000000001'), '#f6f4ec',
   'organization_brand_profiles.background_color defaults to the documented value');
 
--- 37-38: locked_fields nimmt nur Feldnamen an, die eine Abteilung/Mannschaft ueberhaupt fuehren
+-- 36-37: locked_fields nimmt nur Feldnamen an, die eine Abteilung/Mannschaft ueberhaupt fuehren
 -- kann. Ohne den CHECK laege ein Tippfehler unbemerkt in der Spalte und sperrte nichts, weil
 -- resolveBrand ausschliesslich die bekannten camelCase-Namen kennt.
 select throws_ok(
@@ -248,7 +241,7 @@ select throws_ok(
   '23514', null, 'department_brand_profiles rejects a locked_fields entry no lower level can carry'
 );
 
--- 39-40: dieselbe Herkunftsgrenze wie bei den unteren Ebenen, jetzt auch auf Vereinsebene. Ohne
+-- 38-39: dieselbe Herkunftsgrenze wie bei den unteren Ebenen, jetzt auch auf Vereinsebene. Ohne
 -- die Erweiterung von brand_profiles_update koennte jemand mit organization.manage die Schrift
 -- EINER Abteilung als vereinsweite Schrift eintragen und sie damit allen Schwesterabteilungen
 -- zugaenglich machen -- per direktem PostgREST-Zugriff, an der API vorbei.
@@ -272,7 +265,7 @@ select is(
   'the organization admin can still set an organization-wide font asset as the club-wide font'
 );
 
--- 41: von diesem Profil erben Abteilung und Mannschaft. Ein Abteilungsadmin hat in aller Regel
+-- 40: von diesem Profil erben Abteilung und Mannschaft. Ein Abteilungsadmin hat in aller Regel
 -- keine organization_memberships-Zeile -- mit der engeren is_organization_member saehe er auf
 -- /marke statt der Vereinsfarben die eingebauten Defaults.
 select set_config('request.jwt.claim.sub', '67000000-0000-4000-8000-000000000002', true);

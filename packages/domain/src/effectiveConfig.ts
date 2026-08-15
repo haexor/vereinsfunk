@@ -1,5 +1,4 @@
 export interface EffectiveConfig {
-  tone?: string
   goals?: readonly string[]
   hashtags?: readonly string[]
   policies: {

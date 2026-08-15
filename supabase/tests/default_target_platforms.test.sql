@@ -40,7 +40,7 @@ update public.policy_settings set default_target_platforms = array['instagram']
 set local role authenticated;
 
 -- 4: ein Patch ohne defaultTargetPlatforms laesst die Spalte unveraendert.
-select public.set_policy_rules('64500000-1000-4000-8000-000000000001', 'organization', null, null, '{"tone": "nahbar"}'::jsonb);
+select public.set_policy_rules('64500000-1000-4000-8000-000000000001', 'organization', null, null, '{"selfApprovalAllowed": true}'::jsonb);
 select is(
   (select default_target_platforms from public.policy_settings where organization_id = '64500000-1000-4000-8000-000000000001' and scope = 'organization'),
   array['instagram']::text[], 'a patch that omits defaultTargetPlatforms leaves the column unchanged'

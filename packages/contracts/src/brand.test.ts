@@ -5,7 +5,7 @@ import { department, org, team } from './testFixtures.js'
 describe('brand contracts (Paket 013)', () => {
   it('requires the full set of color roles, not just the original two', () => {
     expect(
-      OrganizationBrandUpdateSchema.safeParse({ primaryColor: '#163a2c', accentColor: '#caff4a', tone: 'nahbar', displayFontKey: 'manrope', bodyFontKey: 'dm_sans' })
+      OrganizationBrandUpdateSchema.safeParse({ primaryColor: '#163a2c', accentColor: '#caff4a', displayFontKey: 'manrope', bodyFontKey: 'dm_sans' })
         .success,
     ).toBe(false)
   })
@@ -18,7 +18,6 @@ describe('brand contracts (Paket 013)', () => {
         backgroundColor: '#f6f4ec',
         textColor: '#122820',
         onPrimaryColor: '#ffffff',
-        tone: 'nahbar',
         displayFontKey: 'manrope',
         bodyFontKey: 'dm_sans',
       }).success,
@@ -75,7 +74,7 @@ describe('brand contracts (Paket 013)', () => {
   it('accepts the overridable brand fields as lockedFields', () => {
     expect(
       UpdateDepartmentBrandRequestSchema.safeParse({
-        lockedFields: ['primaryColor', 'accentColor', 'tone', 'logoAssetId', 'displayFontAssetId', 'bodyFontAssetId'],
+        lockedFields: ['primaryColor', 'accentColor', 'logoAssetId', 'displayFontAssetId', 'bodyFontAssetId'],
       }).success,
     ).toBe(true)
   })

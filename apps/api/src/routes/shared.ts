@@ -213,7 +213,7 @@ export type ConsentRecordRow = {
 // Oberflaeche, Freigaberouten) UND vom in app.ts verbleibenden POST /v1/submissions
 // (evaluateSubmitPermission vor der ersten Persistenz), deshalb hier statt in einem Route-Modul.
 export const POLICY_RULE_COLUMNS =
-  'id, submit_requires_permission, review_required, review_mode, review_stage_label, review_minimum_approvals, review_deadline_hours, minor_approval_required, self_approval_allowed, allow_same_reviewer_across_stages, allow_review_exemptions, media_requires_consent_check, allowed_presets, allowed_formats, allowed_channel_ids, forbidden_topics, required_hashtags, tone, consent_expires_on_leave, consent_validity_months, default_target_platforms'
+  'id, submit_requires_permission, review_required, review_mode, review_stage_label, review_minimum_approvals, review_deadline_hours, minor_approval_required, self_approval_allowed, allow_same_reviewer_across_stages, allow_review_exemptions, media_requires_consent_check, allowed_presets, allowed_formats, allowed_channel_ids, forbidden_topics, required_hashtags, consent_expires_on_leave, consent_validity_months, default_target_platforms'
 
 export interface PolicyRuleRow {
   id: string
@@ -232,7 +232,6 @@ export interface PolicyRuleRow {
   allowed_channel_ids: string[] | null
   forbidden_topics: string[]
   required_hashtags: string[]
-  tone: string | null
   // Paket 015: consent_expires_on_leave ist Vererbungssemantik (mergeEffectiveConfig), analog zu
   // media_requires_consent_check; consent_validity_months ist knotenlokal wie
   // review_minimum_approvals -- own/effective in mapConfigToRuleValues (routes/policies.ts) sind identisch.

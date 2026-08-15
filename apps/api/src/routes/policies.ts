@@ -91,7 +91,6 @@ function mapOwnRowToRuleValues(row: PolicyRuleRow | null): PolicyRuleValues {
     defaultTargetPlatforms: row?.default_target_platforms ?? null,
     forbiddenTopics: row?.forbidden_topics ?? [],
     requiredHashtags: row?.required_hashtags ?? [],
-    tone: row?.tone ?? null,
   }
 }
 
@@ -118,7 +117,6 @@ function mapConfigToRuleValues(config: ReturnType<typeof resolveEffectiveConfig>
     defaultTargetPlatforms: config.policies.defaultTargetPlatforms ? ([...config.policies.defaultTargetPlatforms] as SocialPlatform[]) : null,
     forbiddenTopics: [...config.policies.forbiddenTopics],
     requiredHashtags: [...config.policies.requiredHashtags],
-    tone: config.tone ?? null,
   }
 }
 
