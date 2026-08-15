@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AnthropicStructuredContentGenerator, assertCaptionLength, countCharactersForPlatform, FakeContentGenerator, OpenAiCompatibleStructuredContentGenerator, createGroundedContentBrief, type ContentGenerationError } from './index.js'
+import { AnthropicStructuredContentGenerator, assertCaptionLength, buildStructuredTextPrompt, countCharactersForPlatform, FakeContentGenerator, OpenAiCompatibleStructuredContentGenerator, createGroundedContentBrief, type ContentGenerationError } from './index.js'
 import type { GeneratedPost } from '@vereinsfunk/contracts'
 
 describe('fake content generator', () => {
@@ -27,6 +27,26 @@ describe('structured content generator', () => {
   }
   const input = { brief: createGroundedContentBrief(source), styleProfile: { name: 'Klar', description: 'Kurz', styleRules: { toneTags: ['klar'], catchphrases: [], examples: [], additionalInstructions: '' }, avoidRules: [], doRules: [] }, model: 'synthetic', baseUrl: 'https://provider.example/v1', apiKey: 'secret', temperature: 0.2, maxOutputTokens: 400 }
   const grounded = { verifiedFacts: ['topic: Passen'], missingFacts: [], headline: 'Passen', caption: 'Passen', shortCaption: 'Passen', callToAction: '', hashtags: [], altText: 'Passen', templateId: 'v1', safetyFlags: [], generatedClaims: [{ sourceId: 'fact:topic', text: 'topic: Passen' }], variants: [] }
+  it('states the complete JSON output contract and keeps few-shot output as a prose style example', () => {
+    const prompt = buildStructuredTextPrompt({
+      ...input,
+      styleProfile: {
+        ...input.styleProfile,
+        styleRules: {
+          ...input.styleProfile.styleRules,
+          examples: [{ input: '3:1 im Derby', output: 'Was für ein Derbytag – drei Punkte für unser Team.' }],
+        },
+      },
+    })
+
+    expect(prompt.system).toContain('Gib ausschließlich ein JSON-Objekt ohne Markdown oder Begleittext zurück.')
+    expect(prompt.system).toContain('"verifiedFacts"')
+    expect(prompt.system).toContain('"generatedClaims"')
+    expect(prompt.system).toContain('"variants"')
+    expect(prompt.system).toContain('Ihr Feld output enthält unformatierten Beispieltext, keinen vollständigen Modell-Output.')
+    expect(prompt.system).toContain('"output":"Was für ein Derbytag – drei Punkte für unser Team."')
+  })
+
   it('parses structured output and never exposes an API key in its error', async () => {
     const generator = new OpenAiCompatibleStructuredContentGenerator(async (_url, init) => {
       expect(new Headers(init.headers).get('authorization')).toBe('Bearer secret')

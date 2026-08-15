@@ -98,7 +98,9 @@ export function assertCaptionLength(post: GeneratedPost, maxCharacters: number |
   if (length > maxCharacters) throw new ContentGenerationError('caption_too_long', false, length - maxCharacters)
 }
 
-export const TEXT_PROMPT_TEMPLATE_VERSION = 'text-workshop-v1'
+// The output contract below is part of the prompt. Bump this whenever its wording or shape
+// changes so accepted post versions retain accurate generation provenance.
+export const TEXT_PROMPT_TEMPLATE_VERSION = 'text-workshop-v2'
 
 export type StructuredTextGeneratorInput = {
   brief: GroundedContentBrief
@@ -129,6 +131,8 @@ export function buildStructuredTextPrompt(input: Pick<StructuredTextGeneratorInp
       'Beachte verbotene Nennungen und Stil-No-Gos. Bei fehlenden Fakten nenne sie in missingFacts statt sie zu erfinden.',
       `Stilprofil: ${input.styleProfile.name}. ${input.styleProfile.description}`,
       `Stilregeln: ${JSON.stringify(input.styleProfile.styleRules)}. Dos: ${JSON.stringify(input.styleProfile.doRules)}. No-Gos: ${JSON.stringify(input.styleProfile.avoidRules)}`,
+      'Die Beispiele in styleRules.examples sind ausschließlich Stilbeispiele: Ihr Feld output enthält unformatierten Beispieltext, keinen vollständigen Modell-Output. Übernimm daraus nur Stilmerkmale, keine Fakten oder Antwortstruktur.',
+      `Gib ausschließlich ein JSON-Objekt ohne Markdown oder Begleittext zurück. Die folgenden Schlüssel und Typen sind verbindlich; jede Antwort muss diesem JSON-Schema entsprechen:\n${JSON.stringify(generatedPostJsonSchema)}`,
       // Die Zielplattform weist einen zu langen Beitrag ab. Die Angabe steht hier, weil das
       // Token-Budget des Aufrufs sie nicht ersetzen kann -- Tokens sind keine Zeichen.
       ...(input.maxCharacters ? [`Der Beitragstext (caption) darf hoechstens ${input.maxCharacters} Zeichen lang sein.`] : []),

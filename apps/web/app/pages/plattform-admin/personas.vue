@@ -4,11 +4,9 @@ import {
   GeneratedPostSchema,
   PlatformStylePersonaSchema,
   PreviewPlatformStylePersonaRequestSchema,
-  StyleProfilePromptPreviewSchema,
   UpdatePlatformStylePersonaRequestSchema,
   type GeneratedPost,
   type PlatformStylePersona,
-  type StyleProfilePromptPreview,
 } from '@vereinsfunk/contracts'
 import { avoidRulesFromDraft, doRulesFromDraft, emptyStyleProfileDraft, previewErrorMessage, styleProfileDraftFrom, styleRulesFromDraft } from '../../utils/styleProfileDraft'
 
@@ -30,7 +28,6 @@ function resetForm() {
   editingPersonaId.value = null
   formError.value = ''
   previewResult.value = null
-  promptPreviewResult.value = null
 }
 
 function editPersona(persona: PlatformStylePersona) {
@@ -38,7 +35,6 @@ function editPersona(persona: PlatformStylePersona) {
   draft.value = { slug: persona.slug, isActive: persona.isActive, ...styleProfileDraftFrom(persona) }
   formError.value = ''
   previewResult.value = null
-  promptPreviewResult.value = null
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
@@ -113,22 +109,6 @@ async function testPersona() {
   }
 }
 
-const promptPreviewing = ref(false)
-const promptPreviewResult = ref<StyleProfilePromptPreview | null>(null)
-const promptPreviewError = ref('')
-
-async function showPrompt() {
-  promptPreviewing.value = true
-  promptPreviewError.value = ''
-  try {
-    promptPreviewResult.value = await api.request('/v1/platform-style-personas/prompt-preview', { method: 'POST', body: previewRequestBody() }, StyleProfilePromptPreviewSchema)
-  } catch {
-    promptPreviewError.value = 'Der System-Prompt konnte nicht angezeigt werden.'
-  } finally {
-    promptPreviewing.value = false
-  }
-}
-
 async function removePersona(persona: PlatformStylePersona) {
   if (!confirm(`"${persona.name}" wirklich löschen? Bereits akzeptierte Textkandidaten bleiben davon unberührt.`)) return
   saving.value = true
@@ -182,13 +162,9 @@ async function removePersona(persona: PlatformStylePersona) {
         :previewing="previewing"
         :preview-result="previewResult"
         :preview-error="previewError"
-        :prompt-previewing="promptPreviewing"
-        :prompt-preview-result="promptPreviewResult"
-        :prompt-preview-error="promptPreviewError"
         :submit-label="isEditing ? 'Änderungen speichern' : 'Anlegen'"
         @save="savePersona"
         @preview="testPersona"
-        @prompt-preview="showPrompt"
       />
 
       <section class="card overflow-x-auto p-6">
