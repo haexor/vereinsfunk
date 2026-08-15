@@ -237,7 +237,7 @@ const maxFunnelCount = computed(() => Math.max(1, ...funnelStages.value.map((sta
 </script>
 
 <template>
-  <div class="mx-auto max-w-[1180px] px-5 py-8 sm:px-10">
+  <div>
     <header class="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
       <div>
         <div class="eyebrow mb-3">Auswertung</div>

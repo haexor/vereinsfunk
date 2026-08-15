@@ -65,7 +65,7 @@ const membershipGroups = computed(() =>
 </script>
 
 <template>
-  <div class="mx-auto max-w-[720px] px-5 py-8 sm:px-10">
+  <div>
     <header class="mb-8">
       <div class="eyebrow mb-3">Mein Konto</div>
       <h1 class="font-display text-3xl font-extrabold tracking-[-.04em]">Profil</h1>

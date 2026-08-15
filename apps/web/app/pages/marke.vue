@@ -267,7 +267,7 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
 </script>
 
 <template>
-  <div class="mx-auto max-w-[1100px] px-5 py-8 sm:px-10">
+  <div>
     <header class="mb-8">
       <div class="eyebrow mb-3">Vereinsprofil</div>
       <h1 class="font-display text-3xl font-extrabold tracking-[-.04em]">Marke & Tonalität</h1>
