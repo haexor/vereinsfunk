@@ -5,11 +5,12 @@ import {
   PlatformStylePersonaSchema,
   PreviewPlatformStylePersonaRequestSchema,
   StyleProfilePromptPreviewSchema,
+  UpdatePlatformStylePersonaRequestSchema,
   type GeneratedPost,
   type PlatformStylePersona,
   type StyleProfilePromptPreview,
 } from '@vereinsfunk/contracts'
-import { avoidRulesFromDraft, doRulesFromDraft, emptyStyleProfileDraft, previewErrorMessage, styleRulesFromDraft } from '../../utils/styleProfileDraft'
+import { avoidRulesFromDraft, doRulesFromDraft, emptyStyleProfileDraft, previewErrorMessage, styleProfileDraftFrom, styleRulesFromDraft } from '../../utils/styleProfileDraft'
 
 definePageMeta({ layout: 'admin' })
 
@@ -19,11 +20,26 @@ const saving = ref(false)
 const errorMessage = ref('')
 const personas = ref<PlatformStylePersona[]>([])
 
-const draft = ref({ slug: '', ...emptyStyleProfileDraft() })
+const draft = ref({ slug: '', isActive: true, ...emptyStyleProfileDraft() })
 const formError = ref('')
+const editingPersonaId = ref<string | null>(null)
+const isEditing = computed(() => editingPersonaId.value !== null)
 
 function resetForm() {
-  draft.value = { slug: '', ...emptyStyleProfileDraft() }
+  draft.value = { slug: '', isActive: true, ...emptyStyleProfileDraft() }
+  editingPersonaId.value = null
+  formError.value = ''
+  previewResult.value = null
+  promptPreviewResult.value = null
+}
+
+function editPersona(persona: PlatformStylePersona) {
+  editingPersonaId.value = persona.id
+  draft.value = { slug: persona.slug, isActive: persona.isActive, ...styleProfileDraftFrom(persona) }
+  formError.value = ''
+  previewResult.value = null
+  promptPreviewResult.value = null
+  window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
 async function load() {
@@ -39,26 +55,29 @@ async function load() {
 }
 await load()
 
-async function createPersona() {
+async function savePersona() {
   if (!draft.value.slug.trim() || !draft.value.name.trim() || !draft.value.description.trim()) return
   saving.value = true
   formError.value = ''
   try {
-    const body = CreatePlatformStylePersonaRequestSchema.parse({
+    const body = {
       slug: draft.value.slug,
       name: draft.value.name,
       description: draft.value.description,
       styleRules: styleRulesFromDraft(draft.value),
       avoidRules: avoidRulesFromDraft(draft.value),
       doRules: doRulesFromDraft(draft.value),
-    })
-    await api.request('/v1/platform-style-personas', { method: 'POST', body })
+      isActive: draft.value.isActive,
+    }
+    if (editingPersonaId.value) {
+      await api.request(`/v1/platform-style-personas/${editingPersonaId.value}`, { method: 'PATCH', body: UpdatePlatformStylePersonaRequestSchema.parse(body) })
+    } else {
+      await api.request('/v1/platform-style-personas', { method: 'POST', body: CreatePlatformStylePersonaRequestSchema.parse(body) })
+    }
     resetForm()
-    previewResult.value = null
-    promptPreviewResult.value = null
     await load()
   } catch {
-    formError.value = 'Persona konnte nicht angelegt werden.'
+    formError.value = isEditing.value ? 'Persona konnte nicht gespeichert werden.' : 'Persona konnte nicht angelegt werden.'
   } finally {
     saving.value = false
   }
@@ -110,19 +129,6 @@ async function showPrompt() {
   }
 }
 
-async function toggleActive(persona: PlatformStylePersona) {
-  saving.value = true
-  errorMessage.value = ''
-  try {
-    await api.request(`/v1/platform-style-personas/${persona.id}`, { method: 'PATCH', body: { isActive: !persona.isActive } })
-    await load()
-  } catch {
-    errorMessage.value = 'Status konnte nicht geändert werden.'
-  } finally {
-    saving.value = false
-  }
-}
-
 async function removePersona(persona: PlatformStylePersona) {
   if (!confirm(`"${persona.name}" wirklich löschen? Bereits akzeptierte Textkandidaten bleiben davon unberührt.`)) return
   saving.value = true
@@ -151,7 +157,10 @@ async function removePersona(persona: PlatformStylePersona) {
     <div v-if="loading" class="p-8 text-center text-xs text-[#7b827d]">Wird geladen …</div>
     <template v-else>
       <section class="card mb-6 p-6">
-        <h2 class="mb-4 font-display text-base font-bold">Persona anlegen</h2>
+        <div class="mb-4 flex items-center justify-between gap-3">
+          <h2 class="font-display text-base font-bold">{{ isEditing ? 'Persona bearbeiten' : 'Persona anlegen' }}</h2>
+          <button v-if="isEditing" type="button" class="focus-ring rounded-lg px-3 py-1.5 text-xs font-semibold text-[#5c655f] hover:bg-[#f4f5f1]" @click="resetForm">Abbrechen</button>
+        </div>
         <label class="mb-4 block text-xs font-semibold text-[#5c655f]">Slug
           <input
             v-model="draft.slug"
@@ -160,6 +169,9 @@ async function removePersona(persona: PlatformStylePersona) {
             placeholder="z.B. kapitaen-klar"
             class="focus-ring mt-1 w-full max-w-sm rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal"
           />
+        </label>
+        <label class="flex items-center gap-2 text-xs font-semibold text-[#5c655f]">
+          <input v-model="draft.isActive" type="checkbox" class="accent-forest" /> Aktiv
         </label>
       </section>
 
@@ -173,8 +185,8 @@ async function removePersona(persona: PlatformStylePersona) {
         :prompt-previewing="promptPreviewing"
         :prompt-preview-result="promptPreviewResult"
         :prompt-preview-error="promptPreviewError"
-        submit-label="Anlegen"
-        @save="createPersona"
+        :submit-label="isEditing ? 'Änderungen speichern' : 'Anlegen'"
+        @save="savePersona"
         @preview="testPersona"
         @prompt-preview="showPrompt"
       />
@@ -197,19 +209,19 @@ async function removePersona(persona: PlatformStylePersona) {
               <td class="py-2 pr-4">{{ persona.slug }}</td>
               <td class="py-2 pr-4">{{ persona.description }}</td>
               <td class="py-2 pr-4">
-                <button
-                  type="button"
-                  class="focus-ring rounded-lg px-2 py-1 text-[11px] font-semibold"
-                  :class="persona.isActive ? 'text-forest' : 'text-[#9aa096]'"
-                  :disabled="saving"
-                  @click="toggleActive(persona)"
-                >
-                  {{ persona.isActive ? 'Aktiv' : 'Inaktiv' }}
-                </button>
+                <span :class="persona.isActive ? 'font-semibold text-forest' : 'text-[#9aa096]'">{{ persona.isActive ? 'Aktiv' : 'Inaktiv' }}</span>
               </td>
               <td class="py-2 text-right">
                 <button
-                  class="focus-ring rounded-lg px-3 py-1.5 text-[11px] font-semibold text-amber-800 hover:bg-amber-50"
+                  type="button"
+                  class="focus-ring rounded-lg px-3 py-1.5 text-[11px] font-semibold text-forest hover:bg-[#f1f6f2]"
+                  :disabled="saving"
+                  @click="editPersona(persona)"
+                >
+                  Bearbeiten
+                </button>
+                <button
+                  class="focus-ring ml-2 rounded-lg px-3 py-1.5 text-[11px] font-semibold text-amber-800 hover:bg-amber-50"
                   :disabled="saving"
                   @click="removePersona(persona)"
                 >
