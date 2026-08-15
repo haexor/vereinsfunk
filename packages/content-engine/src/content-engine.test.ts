@@ -45,6 +45,38 @@ describe('structured content generator', () => {
     expect(prompt.system).toContain('"variants"')
     expect(prompt.system).toContain('Ihr Feld output enthält unformatierten Beispieltext, keinen vollständigen Modell-Output.')
     expect(prompt.system).toContain('"output":"Was für ein Derbytag – drei Punkte für unser Team."')
+
+    const schemaMarker = 'Die folgenden Schlüssel und Typen sind verbindlich; jede Antwort muss diesem JSON-Schema entsprechen:\n'
+    const schemaStart = prompt.system.indexOf(schemaMarker)
+    expect(schemaStart).toBeGreaterThanOrEqual(0)
+    const schema = JSON.parse(prompt.system.slice(schemaStart + schemaMarker.length))
+
+    expect(schema).toMatchObject({
+      type: 'object', additionalProperties: false,
+      required: ['verifiedFacts', 'missingFacts', 'headline', 'caption', 'shortCaption', 'callToAction', 'hashtags', 'altText', 'templateId', 'safetyFlags', 'generatedClaims', 'variants'],
+    })
+    expect(Object.keys(schema.properties)).toEqual(schema.required)
+    expect(schema.properties.safetyFlags.items).toEqual({
+      type: 'string', enum: ['minor', 'missing_consent', 'uncertain_fact', 'sensitive_data'],
+    })
+    expect(schema.properties.generatedClaims.items).toEqual({
+      type: 'object', additionalProperties: false, required: ['sourceId', 'text'],
+      properties: { sourceId: { type: 'string' }, text: { type: 'string' } },
+    })
+    expect(schema.properties.variants.items).toEqual({
+      type: 'object',
+      additionalProperties: false,
+      required: ['platform', 'format', 'headline', 'caption', 'callToAction', 'hashtags', 'altText', 'layoutFamily', 'claimSourceIds', 'slidePlan'],
+      properties: {
+        platform: { type: 'string', enum: ['instagram', 'facebook'] },
+        format: { type: 'string', enum: ['feed_image', 'carousel', 'story', 'reel'] },
+        headline: { type: 'string' }, caption: { type: 'string' }, callToAction: { type: 'string' },
+        hashtags: { type: 'array', items: { type: 'string' } }, altText: { type: 'string' },
+        layoutFamily: { type: 'string', enum: ['photo_moment', 'training', 'quote', 'collage', 'invitation', 'thanks', 'result'] },
+        claimSourceIds: { type: 'array', items: { type: 'string' } },
+        slidePlan: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['role'], properties: { role: { type: 'string' } } } },
+      },
+    })
   })
 
   it('parses structured output and never exposes an API key in its error', async () => {
