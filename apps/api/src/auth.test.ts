@@ -12,6 +12,7 @@ import {
   type RoleProvider,
 } from './auth.js'
 import { resolveRolesForScopes } from './routes/shared.js'
+import { fetchAllRowsForIds } from './supabase.js'
 
 const roleProvider: RoleProvider = { async rolesForScope() { return [] } }
 const platformAdminProvider: PlatformAdminProvider = {
@@ -96,11 +97,11 @@ describe('createAuthGuards JWKS verification', () => {
 
 // Plan 031: GET /v1/organizations/:id/members loeste vor dieser Aenderung die Capability-Felder
 // je eindeutiger Abteilung/Team einzeln auf (roleProvider.rolesForScope, ein Aufruf je Ebene).
-// SupabaseRoleProvider.rolesForScopes ersetzt das durch drei Abfragen unabhaengig von der Anzahl
-// der Scopes -- clientFactory ist dasselbe Injektionsmuster wie jwksFetch oben, hier fuers
-// Zaehlen der .from()-Aufrufe ohne echte Supabase-Instanz.
+// SupabaseRoleProvider.rolesForScopes buendelt diese Zugriffe pro Mitgliedschaftstabelle und
+// begrenzt jede .in()-Liste auf URL-sichere Bloecke. clientFactory ist dasselbe
+// Injektionsmuster wie jwksFetch oben, hier fuer einen Client-Fake ohne echte Supabase-Instanz.
 describe('SupabaseRoleProvider.rolesForScopes', () => {
-  it('resolves an organization plus ten department and forty team scopes in exactly three table queries', async () => {
+  it('reads an organization plus ten department and forty team scopes once per membership table', async () => {
     const organizationId = 'org-1'
     const departmentIds = Array.from({ length: 10 }, (_, index) => `dept-${index}`)
     const teamIds = Array.from({ length: 40 }, (_, index) => `team-${index}`)
@@ -108,7 +109,7 @@ describe('SupabaseRoleProvider.rolesForScopes', () => {
 
     const queriedTables: string[] = []
     function chain(data: readonly Record<string, unknown>[]) {
-      return { in: () => ({ eq: () => ({ or: async () => ({ data, error: null }) }) }) }
+      return { in: () => ({ eq: () => ({ or: () => ({ order: () => ({ range: async (from: number, to: number) => ({ data: data.slice(from, to + 1), error: null }) }) }) }) }) }
     }
     const fakeClient = {
       from: (table: string) => {
@@ -144,7 +145,7 @@ describe('SupabaseRoleProvider.rolesForScopes', () => {
     const fakeClient = {
       from: (table: string) => {
         queriedTables.push(table)
-        return { select: () => ({ in: () => ({ eq: () => ({ or: async () => ({ data: [], error: null }) }) }) }) }
+        return { select: () => ({ in: () => ({ eq: () => ({ or: () => ({ order: () => ({ range: async () => ({ data: [], error: null }) }) }) }) }) }) }
       },
     } as unknown as SupabaseClient
     const environment = parseApiEnvironment({ SUPABASE_URL })
@@ -153,6 +154,59 @@ describe('SupabaseRoleProvider.rolesForScopes', () => {
     await provider.rolesForScopes({ userId: 'user-1', accessToken: 'token' }, [{ organizationId: 'org-1' }])
 
     expect(queriedTables).toEqual(['organization_memberships'])
+  })
+
+  it('chunks large scope sets to URL-safe ID lists without losing the last roles', async () => {
+    const organizationId = 'org-1'
+    const departmentIds = Array.from({ length: 250 }, (_, index) => `dept-${index}`)
+    const teamIds = Array.from({ length: 250 }, (_, index) => `team-${index}`)
+    const batchesByTable = new Map<string, number[]>()
+    const rowsByTable: Record<string, readonly Record<string, unknown>[]> = {
+      organization_memberships: [{ organization_id: organizationId, role: 'organization_admin' }],
+      department_memberships: departmentIds.map((department_id) => ({ department_id, role: 'department_admin' })),
+      team_memberships: teamIds.map((team_id) => ({ team_id, role: 'team_manager' })),
+    }
+    const fakeClient = {
+      from: (table: string) => ({
+        select: () => ({
+          in: (_column: string, ids: readonly string[]) => {
+            batchesByTable.set(table, [...(batchesByTable.get(table) ?? []), ids.length])
+            const rows = rowsByTable[table]!.filter((row) => ids.includes(String(Object.values(row)[0])))
+            return { eq: () => ({ or: () => ({ order: () => ({ range: async (from: number, to: number) => ({ data: rows.slice(from, to + 1), error: null }) }) }) }) }
+          },
+        }),
+      }),
+    } as unknown as SupabaseClient
+    const environment = parseApiEnvironment({ SUPABASE_URL })
+    const provider = new SupabaseRoleProvider(environment, () => fakeClient)
+    const scopes: PermissionScope[] = [
+      { organizationId },
+      ...departmentIds.map((departmentId) => ({ organizationId, departmentId })),
+      ...teamIds.map((teamId, index) => ({ organizationId, departmentId: departmentIds[index]!, teamId })),
+    ]
+
+    const rolesByScopeKey = await provider.rolesForScopes({ userId: 'user-1', accessToken: 'token' }, scopes)
+
+    expect(batchesByTable.get('organization_memberships')).toEqual([1])
+    expect(batchesByTable.get('department_memberships')).toEqual([100, 100, 50])
+    expect(batchesByTable.get('team_memberships')).toEqual([100, 100, 50])
+    expect(rolesByScopeKey.get(`department:${departmentIds.at(-1)}`)).toEqual(['organization_admin', 'department_admin'])
+    expect(rolesByScopeKey.get(`team:${teamIds.at(-1)}`)).toEqual(['organization_admin', 'department_admin', 'team_manager'])
+  })
+})
+
+describe('fetchAllRowsForIds', () => {
+  it('keeps reading a batch after Supabase max_rows has returned its first 1,000 rows', async () => {
+    const rows = Array.from({ length: 1001 }, (_, index) => `role-${index}`)
+    const requestedRanges: [number, number][] = []
+
+    const result = await fetchAllRowsForIds(['scope-1'], (_batch, from, to) => {
+      requestedRanges.push([from, to])
+      return Promise.resolve({ data: rows.slice(from, to + 1), error: null })
+    })
+
+    expect(result).toEqual(rows)
+    expect(requestedRanges).toEqual([[0, 999], [1000, 1999]])
   })
 })
 

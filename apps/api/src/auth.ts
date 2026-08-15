@@ -3,7 +3,7 @@ import type { ApiEnvironment } from '@vereinsfunk/config'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import { createRemoteJWKSet, customFetch, jwtVerify, type FetchImplementation, type JWTVerifyGetKey } from 'jose'
-import { createUserClient } from './supabase.js'
+import { createUserClient, fetchAllRowsForIds } from './supabase.js'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -21,7 +21,8 @@ export interface PermissionScope {
 export interface RoleProvider {
   rolesForScope(auth: { userId: string; accessToken: string }, scope: PermissionScope): Promise<readonly Role[]>
   // Optional: ein Aufrufer mit mehreren Scopes derselben Anfrage (z. B. GET /v1/organizations/:id/members
-  // ueber alle Abteilungen/Teams) kann damit in konstant drei Abfragen statt einer je Scope aufloesen.
+  // ueber alle Abteilungen/Teams) kann damit die drei Mitgliedschaftstabellen gebuendelt statt
+  // einmal je Scope aufloesen.
   // Optional, damit bestehende RoleProvider-Testdoubles, die nur rolesForScope implementieren, gueltig
   // bleiben -- siehe resolveRolesForScopes (routes/shared.ts) fuer den Fallback ohne diese Methode.
   rolesForScopes?(
@@ -109,11 +110,10 @@ export class SupabaseRoleProvider implements RoleProvider {
     return roles
   }
 
-  // Drei Abfragen statt einer je Scope: SupabaseRoleProvider.rolesForScope fragt bei jedem Aufruf
-  // organization_memberships neu ab (department_memberships/team_memberships je nach gesetztem
-  // Feld dazu) -- bei vielen Scopes derselben Anfrage (GET /v1/organizations/:id/members mit N
-  // Abteilungen/Teams) summiert sich das (Review zu PR #36). department_memberships/
-  // team_memberships werden nur abgefragt, wenn die jeweilige Scope-Menge nicht leer ist.
+  // Statt einer Abfrage je Scope werden die drei Mitgliedschaftstabellen nach ID gebuendelt
+  // gelesen. Die ID-Bloecke bleiben bei 100: PostgREST kodiert .in()-Werte in der URL; eine
+  // ungebremste Team-/Abteilungsliste wuerde sonst Gateway-Grenzen ueberschreiten. Jede Gruppe
+  // wird zudem paginiert, damit Supabase' max_rows=1000 keine Rollen still unterschlaegt.
   async rolesForScopes(
     auth: { userId: string; accessToken: string },
     scopes: readonly PermissionScope[],
@@ -125,21 +125,20 @@ export class SupabaseRoleProvider implements RoleProvider {
     const teamIds = Array.from(new Set(scopes.flatMap((scope) => (scope.teamId ? [scope.teamId] : []))))
 
     const [organizationRows, departmentRows, teamRows] = await Promise.all([
-      client.from('organization_memberships').select('organization_id, role').in('organization_id', organizationIds).eq('user_id', auth.userId).or(notExpired),
-      departmentIds.length > 0
-        ? client.from('department_memberships').select('department_id, role').in('department_id', departmentIds).eq('user_id', auth.userId).or(notExpired)
-        : Promise.resolve({ data: [] as { department_id: string; role: string }[], error: null }),
-      teamIds.length > 0
-        ? client.from('team_memberships').select('team_id, role').in('team_id', teamIds).eq('user_id', auth.userId).or(notExpired)
-        : Promise.resolve({ data: [] as { team_id: string; role: string }[], error: null }),
+      fetchAllRowsForIds<{ organization_id: string; role: string }>(organizationIds, (batch, from, to) =>
+        client.from('organization_memberships').select('organization_id, role').in('organization_id', batch).eq('user_id', auth.userId).or(notExpired).order('id', { ascending: true }).range(from, to),
+      ),
+      fetchAllRowsForIds<{ department_id: string; role: string }>(departmentIds, (batch, from, to) =>
+        client.from('department_memberships').select('department_id, role').in('department_id', batch).eq('user_id', auth.userId).or(notExpired).order('id', { ascending: true }).range(from, to),
+      ),
+      fetchAllRowsForIds<{ team_id: string; role: string }>(teamIds, (batch, from, to) =>
+        client.from('team_memberships').select('team_id, role').in('team_id', batch).eq('user_id', auth.userId).or(notExpired).order('id', { ascending: true }).range(from, to),
+      ),
     ])
-    if (organizationRows.error) throw organizationRows.error
-    if (departmentRows.error) throw departmentRows.error
-    if (teamRows.error) throw teamRows.error
 
-    const rolesByOrganizationId = groupRolesBy(organizationRows.data, (row) => row.organization_id as string)
-    const rolesByDepartmentId = groupRolesBy(departmentRows.data, (row) => row.department_id as string)
-    const rolesByTeamId = groupRolesBy(teamRows.data, (row) => row.team_id as string)
+    const rolesByOrganizationId = groupRolesBy(organizationRows, (row) => row.organization_id)
+    const rolesByDepartmentId = groupRolesBy(departmentRows, (row) => row.department_id)
+    const rolesByTeamId = groupRolesBy(teamRows, (row) => row.team_id)
 
     const result = new Map<string, readonly Role[]>()
     for (const scope of scopes) {
