@@ -42,15 +42,15 @@ const ApiEnvironmentBaseSchema = z.object({
   // validiert in apps/api, nicht hier -- packages/config liest nur die Rohwerte.
   SECRET_BOX_KEYS: optionalSecret,
   SECRET_BOX_CURRENT_KEY_VERSION: optionalSecret,
-  // Paket 010: Einladungsversand per SMTP. 'fake' (Standard) protokolliert nur -- passend zum
-  // lokalen Stack, dessen Inbucket-Container keinen vom Host erreichbaren SMTP-Port oeffnet.
+  // SMTP fuer fachliche Mails wie Einwilligungsanfragen. Account-Einladungen laufen dagegen ueber
+  // Supabase Auth und verwenden damit dessen zentral hinterlegten Mail-Provider (z. B. Brevo).
   EMAIL_PROVIDER: z.enum(['fake', 'smtp']).default('fake'),
   SMTP_HOST: optionalSecret,
   SMTP_PORT: z.coerce.number().int().min(1).max(65_535).default(587),
   SMTP_USER: optionalSecret,
   SMTP_PASSWORD: optionalSecret,
   SMTP_FROM: optionalSecret,
-  // Basis-URL des Nuxt-Frontends fuer Links in versendeten E-Mails (Einladungen).
+  // Basis-URL des Nuxt-Frontends fuer Links in versendeten E-Mails und Auth-Redirects.
   WEB_BASE_URL: optionalUrl,
   // Paket 025: von aussen (Meta) erreichbare Basis-URL der Fastify-API selbst, fuer die
   // kurzlebige Medien-Grant-URL (GET /v1/media-grants/:token). WEB_BASE_URL zeigt auf das
