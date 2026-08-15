@@ -169,11 +169,23 @@ describe('structure, memberships and invitations', () => {
         }) as unknown as SupabaseClient,
       forService: () => serviceClientCapturingAudit([]),
     }
-    const capturedMessages: { to: string; subject: string; text: string }[] = []
+    const authRedirects: string[] = []
+    const auditService = serviceClientCapturingAudit([])
+    clients.forService = () => ({
+      auth: {
+        admin: {
+          inviteUserByEmail: async (email: string, options?: { redirectTo?: string }) => {
+            expect(email).toBe('invitee@example.com')
+            authRedirects.push(options?.redirectTo ?? '')
+            return { data: { user: {} }, error: null }
+          },
+        },
+      },
+      from: auditService.from,
+    }) as unknown as SupabaseClient
     const app = await startApp({
       roleProvider: organizationManagerRoleProvider,
       supabaseClients: clients,
-      emailSender: { send: async (message) => { capturedMessages.push(message) } },
     })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
@@ -187,13 +199,50 @@ describe('structure, memberships and invitations', () => {
     expect(Object.keys(body)).not.toContain('rawToken')
     expect(Object.keys(body)).not.toContain('token')
     expect(Object.keys(body)).not.toContain('tokenHash')
-    // The raw token IS present in the captured outgoing email (that's the whole point of sending
-    // it) -- extracting it from there proves it specifically never also leaks into the HTTP
-    // response, rather than just asserting an absence that could be a fixture mistake.
-    expect(capturedMessages).toHaveLength(1)
-    const acceptUrlMatch = capturedMessages[0]!.text.match(/token=([a-f0-9]+)/)
+    // Der Token reist nur als verschachtelter Auth-Redirect zu Supabase, nie als API-Antwort.
+    // Supabase sendet den eigentlichen Invite-Link ueber den zentral konfigurierten Mailer.
+    expect(authRedirects).toHaveLength(1)
+    const passwordRedirect = new URL(authRedirects[0]!).searchParams.get('redirect')
+    const acceptRedirect = new URL(passwordRedirect!, 'http://localhost').searchParams.get('redirect')
+    const acceptUrlMatch = acceptRedirect?.match(/token=([a-f0-9]+)/)
     expect(acceptUrlMatch).not.toBeNull()
     expect(JSON.stringify(body)).not.toContain(acceptUrlMatch![1]!)
+  })
+
+  it('sends an existing account a Supabase magic link that continues to the organization invitation', async () => {
+    const invitationRow = {
+      id: INVITATION_ID, organization_id: ORGANIZATION_ID, department_id: null, team_id: null,
+      email: 'existing@example.com', role: 'organization_viewer', invited_by: USER_ID,
+      expires_at: '2026-08-20T00:00:00+00:00', accepted_at: null, revoked_at: null,
+      last_sent_at: '2026-08-06T00:00:00+00:00', send_count: 1, created_at: '2026-08-06T00:00:00+00:00',
+    }
+    const magicLinkOptions: { shouldCreateUser?: boolean; emailRedirectTo?: string }[] = []
+    const auditService = serviceClientCapturingAudit([])
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({
+        rpc: async (fn: string) => (fn === 'email_has_membership' ? { data: false, error: null } : { data: invitationRow, error: null }),
+      }) as unknown as SupabaseClient,
+      forService: () => ({
+        auth: {
+          admin: { inviteUserByEmail: async () => ({ data: { user: null }, error: { code: 'email_exists', message: 'already registered' } }) },
+          signInWithOtp: async (_input: { email: string; options: { shouldCreateUser?: boolean; emailRedirectTo?: string } }) => {
+            magicLinkOptions.push(_input.options)
+            return { data: {}, error: null }
+          },
+        },
+        from: auditService.from,
+      }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const response = await app.inject({
+      method: 'POST', url: '/v1/invitations', headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+      payload: { organizationId: ORGANIZATION_ID, email: 'existing@example.com', role: 'organization_viewer' },
+    })
+    expect(response.statusCode).toBe(201)
+    expect(response.json()).toMatchObject({ emailDelivered: true })
+    expect(magicLinkOptions).toHaveLength(1)
+    expect(magicLinkOptions[0]).toMatchObject({ shouldCreateUser: false })
+    expect(decodeURIComponent(magicLinkOptions[0]!.emailRedirectTo!)).toContain('/einladung?token=')
   })
 
   it('maps the resend send-count limit to 429 before touching the database', async () => {
@@ -539,7 +588,7 @@ describe('structure, memberships and invitations', () => {
     expect(response.json()).toMatchObject({ error: 'invalid_request' })
   })
 
-  it('accepts a team-scoped invitation that carries the parent department and names the team in the email', async () => {
+  it('sends a team-scoped invitation through Supabase Auth and preserves the acceptance target', async () => {
     const invitationRow = {
       id: INVITATION_ID,
       organization_id: ORGANIZATION_ID,
@@ -575,11 +624,23 @@ describe('structure, memberships and invitations', () => {
         }) as unknown as SupabaseClient,
       forService: () => serviceClientCapturingAudit([]),
     }
-    const capturedMessages: { to: string; subject: string; text: string }[] = []
+    const authRedirects: string[] = []
+    const auditService = serviceClientCapturingAudit([])
+    clients.forService = () => ({
+      auth: {
+        admin: {
+          inviteUserByEmail: async (email: string, options?: { redirectTo?: string }) => {
+            expect(email).toBe('invitee@example.com')
+            authRedirects.push(options?.redirectTo ?? '')
+            return { data: { user: {} }, error: null }
+          },
+        },
+      },
+      from: auditService.from,
+    }) as unknown as SupabaseClient
     const app = await startApp({
       roleProvider: organizationManagerRoleProvider,
       supabaseClients: clients,
-      emailSender: { send: async (message) => { capturedMessages.push(message) } },
     })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
@@ -590,8 +651,11 @@ describe('structure, memberships and invitations', () => {
     })
     expect(response.statusCode).toBe(201)
     expect(response.json()).toMatchObject({ id: INVITATION_ID, teamId: TEAM_ID, emailDelivered: true })
-    // resolveInvitationScope() liefert den echten Team-Namen, nicht den Vereinsnamen.
-    expect(capturedMessages[0]!.text).toContain('Erste Mannschaft')
+    // Das neue Konto landet erst beim Passwortsetzen und danach bei der fachlichen Einladung.
+    const passwordRedirect = new URL(authRedirects[0]!).searchParams.get('redirect')
+    const acceptRedirect = new URL(passwordRedirect!, 'http://localhost').searchParams.get('redirect')
+    expect(passwordRedirect).toContain('/passwort-neu?redirect=')
+    expect(acceptRedirect).toMatch(/^\/einladung\?token=[a-f0-9]+$/)
   })
 
   // Regression: die drei Mitgliedschaftstabellen werden ueber fetchAllRows() geblaettert, der
@@ -744,4 +808,3 @@ describe('structure, memberships and invitations', () => {
     expect(response.json()).toMatchObject({ expiresAt: '2026-09-01T00:00:00+00:00' })
   })
 })
-

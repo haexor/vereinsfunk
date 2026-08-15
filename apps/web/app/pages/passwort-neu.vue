@@ -7,6 +7,8 @@ const password = ref('')
 const loading = ref(false)
 const errorMessage = ref('')
 const done = ref(false)
+const route = useRoute()
+const redirectTarget = computed(() => resolveSafeRedirect(route.query.redirect))
 
 async function submit() {
   errorMessage.value = ''
@@ -28,7 +30,7 @@ async function submit() {
   <div v-if="done" class="text-center">
     <Check :size="28" class="mx-auto mb-3 text-forest" />
     <h1 class="font-display text-xl font-extrabold tracking-[-.03em]">Passwort geändert.</h1>
-    <NuxtLink to="/" class="focus-ring mt-4 inline-flex rounded-xl bg-forest px-4 py-3 text-sm font-bold text-white">Zur Übersicht</NuxtLink>
+    <NuxtLink :to="redirectTarget" class="focus-ring mt-4 inline-flex rounded-xl bg-forest px-4 py-3 text-sm font-bold text-white">Weiter</NuxtLink>
   </div>
   <form v-else class="grid gap-4" @submit.prevent="submit">
     <div>

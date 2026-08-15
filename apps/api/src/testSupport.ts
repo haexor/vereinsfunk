@@ -48,6 +48,13 @@ export const organizationManagerRoleProvider: RoleProvider = {
 // "unexpected table in test fake: audit_events" scheitern.
 export function serviceClientCapturingAudit(captured: Record<string, unknown>[]): SupabaseClient {
   return {
+    // Account-Einladungen werden durch Supabase Auth selbst ueber den dort konfigurierten
+    // Mail-Provider versendet. Der Standard-Fake ist erfolgreich; spezialisierte
+    // Einladungs-Tests ersetzen ihn und pruefen Zieladresse sowie Redirect separat.
+    auth: {
+      admin: { inviteUserByEmail: async () => ({ data: { user: {} }, error: null }) },
+      signInWithOtp: async () => ({ data: {}, error: null }),
+    },
     from: (table: string) => {
       if (table === 'audit_events') {
         return { insert: async (row: Record<string, unknown>) => { captured.push(row); return { error: null } } }
@@ -167,4 +174,3 @@ export async function startApp(options: BuildAppOptions = {}) {
   apps.push(app)
   return app
 }
-

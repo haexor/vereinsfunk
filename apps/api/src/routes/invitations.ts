@@ -4,29 +4,55 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { mapInvitationRow } from '../apiMappers.js'
-import { buildInvitationEmail, generateInvitationToken } from '../invitations.js'
-import type { PermissionScope } from '../auth.js'
+import { generateInvitationToken } from '../invitations.js'
 import type { ApiRouteContext } from './context.js'
 import { createAuditRecorder, resolveInvitationScope, toPermissionScope } from './shared.js'
 
-// Fuer Routen, die den Scope bereits aus einer vertrauenswuerdigen Quelle kennen (z. B. der
-// invitations-Zeile selbst bei /resend) -- reine Namensauskunft, keine erneute Verifikation.
-async function resolveScopeName(client: SupabaseClient, scope: PermissionScope, organizationName: string): Promise<string> {
-  if (scope.teamId) {
-    const team = await client.from('teams').select('name').eq('id', scope.teamId).single()
-    if (team.error) throw team.error
-    return team.data.name as string
+function authCallbackUrl(webBaseUrl: string, redirect: string): string {
+  const callback = new URL('/auth/callback', webBaseUrl)
+  callback.searchParams.set('redirect', redirect)
+  return callback.toString()
+}
+
+function invitationUrls(webBaseUrl: string, rawToken: string): { accept: string; setPassword: string } {
+  const acceptPath = `/einladung?token=${encodeURIComponent(rawToken)}`
+  const passwordSetup = new URL('/passwort-neu', webBaseUrl)
+  passwordSetup.searchParams.set('redirect', acceptPath)
+  return {
+    accept: authCallbackUrl(webBaseUrl, acceptPath),
+    setPassword: authCallbackUrl(webBaseUrl, `${passwordSetup.pathname}${passwordSetup.search}`),
   }
-  if (scope.departmentId) {
-    const department = await client.from('departments').select('name').eq('id', scope.departmentId).single()
-    if (department.error) throw department.error
-    return department.data.name as string
-  }
-  return organizationName
+}
+
+function isExistingAccountError(error: { code?: string | null | undefined; message?: string | undefined } | null): boolean {
+  // GoTrue liefert fuer bereits bestaetigte Accounts aktuell `email_exists`; die
+  // Nachrichtenpruefung ist Rueckwaertskompatibilitaet fuer aeltere GoTrue-Versionen.
+  return error?.code === 'email_exists' || /already (?:been )?registered/i.test(error?.message ?? '')
+}
+
+// Supabase Auth ist der eine Mail-Provider fuer Account-Einladungen. Damit verwendet dieser
+// Pfad dieselbe Brevo-Konfiguration wie Registrierung und Passwort-Reset, ohne SMTP-Secrets in
+// der API zu duplizieren. Ein existierendes Konto kann nicht erneut per `inviteUserByEmail`
+// eingeladen werden; ein Magic Link beweist dort dieselbe E-Mail-Inhaberschaft und leitet zur
+// fachlichen Einladung weiter.
+async function sendInvitationThroughSupabaseAuth(
+  service: SupabaseClient,
+  email: string,
+  urls: { accept: string; setPassword: string },
+): Promise<void> {
+  const invite = await service.auth.admin.inviteUserByEmail(email, { redirectTo: urls.setPassword })
+  if (!invite.error) return
+  if (!isExistingAccountError(invite.error)) throw invite.error
+
+  const magicLink = await service.auth.signInWithOtp({
+    email,
+    options: { shouldCreateUser: false, emailRedirectTo: urls.accept },
+  })
+  if (magicLink.error) throw magicLink.error
 }
 
 export function registerInvitationRoutes(app: FastifyInstance, context: ApiRouteContext): void {
-  const { requireAuth, requirePermission, supabaseClients, roleProvider, emailSender, environment } = context
+  const { requireAuth, requirePermission, supabaseClients, roleProvider, environment } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
 
   app.get('/v1/organizations/:id/invitations', async (request, reply) => {
@@ -114,21 +140,17 @@ export function registerInvitationRoutes(app: FastifyInstance, context: ApiRoute
     }
     const insertData = rpc.data as Record<string, unknown>
 
-    const organization = await client.from('organizations').select('name').eq('id', scope.organizationId).single()
-    if (organization.error) throw organization.error
-    const organizationName = organization.data.name as string
-    const acceptUrl = `${environment.WEB_BASE_URL ?? 'http://localhost:4200'}/einladung?token=${rawToken}`
+    const urls = invitationUrls(environment.WEB_BASE_URL ?? 'http://localhost:4200', rawToken)
     let emailDelivered = true
     try {
-      await emailSender.send(
-        buildInvitationEmail({ to: input.email, organizationName, scopeName: resolved.scopeName || organizationName, acceptUrl }),
-      )
+      await sendInvitationThroughSupabaseAuth(supabaseClients.forService(), input.email, urls)
     } catch (error) {
-      // Die Einladung besteht bereits in der Datenbank -- ein SMTP-Fehler soll den Request nicht
-      // mit 500 scheitern lassen, sondern nur den Versandstatus sichtbar machen (beim
-      // Stabilitaets-Review dieses Pakets gefunden: bisher lief der Versand ungefangen).
+      // Die Einladung besteht bereits in der Datenbank -- ein Fehler bei Supabase Auth/Brevo
+      // soll den Request nicht mit 500 scheitern lassen, sondern nur den Versandstatus sichtbar
+      // machen. Ein erneuter Versand rotiert den fachlichen Token und startet einen neuen
+      // Auth-Link.
       emailDelivered = false
-      request.log.error({ err: error, correlationId: request.id }, 'invitation email delivery failed')
+      request.log.error({ err: error, correlationId: request.id }, 'Supabase invitation email delivery failed')
     }
     await recordAuditEvent(request, {
       organizationId: scope.organizationId,
@@ -170,17 +192,13 @@ export function registerInvitationRoutes(app: FastifyInstance, context: ApiRoute
       throw rpc.error
     }
     const updateData = rpc.data as Record<string, unknown>
-    const organization = await client.from('organizations').select('name').eq('id', scope.organizationId).single()
-    if (organization.error) throw organization.error
-    const organizationName = organization.data.name as string
-    const scopeName = await resolveScopeName(client, scope, organizationName)
-    const acceptUrl = `${environment.WEB_BASE_URL ?? 'http://localhost:4200'}/einladung?token=${rawToken}`
+    const urls = invitationUrls(environment.WEB_BASE_URL ?? 'http://localhost:4200', rawToken)
     let emailDelivered = true
     try {
-      await emailSender.send(buildInvitationEmail({ to: existing.data.email as string, organizationName, scopeName, acceptUrl }))
+      await sendInvitationThroughSupabaseAuth(supabaseClients.forService(), existing.data.email as string, urls)
     } catch (error) {
       emailDelivered = false
-      request.log.error({ err: error, correlationId: request.id }, 'invitation email delivery failed')
+      request.log.error({ err: error, correlationId: request.id }, 'Supabase invitation email delivery failed')
     }
     await recordAuditEvent(request, {
       organizationId: scope.organizationId,
