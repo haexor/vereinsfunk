@@ -17,13 +17,15 @@ begin;
 update public.organization_brand_profiles set locked_fields = array_remove(locked_fields, 'tone');
 update public.department_brand_profiles set locked_fields = array_remove(locked_fields, 'tone');
 
+-- NOT VALID: only the metadata catalog lock is taken here, not a full-table scan. The next
+-- migration validates existing rows under a much weaker lock.
 alter table public.organization_brand_profiles drop constraint organization_brand_profiles_locked_fields_check;
 alter table public.organization_brand_profiles add constraint organization_brand_profiles_locked_fields_check
-  check (locked_fields <@ array['primaryColor','accentColor','logoAssetId','displayFontAssetId','bodyFontAssetId']);
+  check (locked_fields <@ array['primaryColor','accentColor','logoAssetId','displayFontAssetId','bodyFontAssetId']) not valid;
 
 alter table public.department_brand_profiles drop constraint department_brand_profiles_locked_fields_check;
 alter table public.department_brand_profiles add constraint department_brand_profiles_locked_fields_check
-  check (locked_fields <@ array['primaryColor','accentColor','logoAssetId','displayFontAssetId','bodyFontAssetId']);
+  check (locked_fields <@ array['primaryColor','accentColor','logoAssetId','displayFontAssetId','bodyFontAssetId']) not valid;
 
 -- Der tone-CHECK jeder Tabelle referenziert ausschliesslich die tone-Spalte selbst und faellt mit
 -- ihr automatisch weg.
