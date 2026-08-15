@@ -3,7 +3,7 @@ import type { ApiEnvironment } from '@vereinsfunk/config'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import { createRemoteJWKSet, customFetch, jwtVerify, type FetchImplementation, type JWTVerifyGetKey } from 'jose'
-import { createUserClient } from './supabase.js'
+import { createUserClient, fetchAllRowsForIds } from './supabase.js'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -20,6 +20,23 @@ export interface PermissionScope {
 
 export interface RoleProvider {
   rolesForScope(auth: { userId: string; accessToken: string }, scope: PermissionScope): Promise<readonly Role[]>
+  // Optional: ein Aufrufer mit mehreren Scopes derselben Anfrage (z. B. GET /v1/organizations/:id/members
+  // ueber alle Abteilungen/Teams) kann damit die drei Mitgliedschaftstabellen gebuendelt statt
+  // einmal je Scope aufloesen.
+  // Optional, damit bestehende RoleProvider-Testdoubles, die nur rolesForScope implementieren, gueltig
+  // bleiben -- siehe resolveRolesForScopes (routes/shared.ts) fuer den Fallback ohne diese Methode.
+  rolesForScopes?(
+    auth: { userId: string; accessToken: string },
+    scopes: readonly PermissionScope[],
+  ): Promise<ReadonlyMap<string, readonly Role[]>>
+}
+
+// Stabiler Schluessel je Scope, u. a. fuer rolesByScopeKey (routes/members.ts) und die Map, die
+// rolesForScopes zurueckgibt -- beide muessen denselben Schluessel fuer denselben Scope bilden.
+export function permissionScopeKey(scope: PermissionScope): string {
+  if (scope.teamId) return `team:${scope.teamId}`
+  if (scope.departmentId) return `department:${scope.departmentId}`
+  return 'organization'
 }
 
 // Supabase legt seit 1. Mai 2025 neue Projekte standardmaessig mit asymmetrischen JWT Signing Keys
@@ -46,10 +63,16 @@ function verifyAccessToken(environment: ApiEnvironment, jwks: JWTVerifyGetKey | 
 }
 
 export class SupabaseRoleProvider implements RoleProvider {
-  constructor(private readonly environment: ApiEnvironment) {}
+  // clientFactory: gleiches Injektionsmuster wie jwksFetch in createAuthGuards, hier fuers
+  // Ersetzen des Supabase-Clients in Tests (Zaehlen der .from()-Aufrufe fuer rolesForScopes, ohne
+  // eine echte Supabase-Instanz zu brauchen).
+  constructor(
+    private readonly environment: ApiEnvironment,
+    private readonly clientFactory: (environment: ApiEnvironment, accessToken: string) => SupabaseClient = createUserClient,
+  ) {}
 
   async rolesForScope(auth: { userId: string; accessToken: string }, scope: PermissionScope): Promise<readonly Role[]> {
-    const client = createUserClient(this.environment, auth.accessToken)
+    const client = this.clientFactory(this.environment, auth.accessToken)
     const notExpired = `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`
     const roles: Role[] = []
 
@@ -86,6 +109,58 @@ export class SupabaseRoleProvider implements RoleProvider {
 
     return roles
   }
+
+  // Statt einer Abfrage je Scope werden die drei Mitgliedschaftstabellen nach ID gebuendelt
+  // gelesen. Die ID-Bloecke bleiben bei 100: PostgREST kodiert .in()-Werte in der URL; eine
+  // ungebremste Team-/Abteilungsliste wuerde sonst Gateway-Grenzen ueberschreiten. Jede Gruppe
+  // wird zudem paginiert, damit Supabase' max_rows=1000 keine Rollen still unterschlaegt.
+  async rolesForScopes(
+    auth: { userId: string; accessToken: string },
+    scopes: readonly PermissionScope[],
+  ): Promise<ReadonlyMap<string, readonly Role[]>> {
+    const client = this.clientFactory(this.environment, auth.accessToken)
+    const notExpired = `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`
+    const organizationIds = Array.from(new Set(scopes.map((scope) => scope.organizationId)))
+    const departmentIds = Array.from(new Set(scopes.flatMap((scope) => (scope.departmentId ? [scope.departmentId] : []))))
+    const teamIds = Array.from(new Set(scopes.flatMap((scope) => (scope.teamId ? [scope.teamId] : []))))
+
+    const [organizationRows, departmentRows, teamRows] = await Promise.all([
+      fetchAllRowsForIds<{ organization_id: string; role: string }>(organizationIds, (batch, from, to) =>
+        client.from('organization_memberships').select('organization_id, role').in('organization_id', batch).eq('user_id', auth.userId).or(notExpired).order('id', { ascending: true }).range(from, to),
+      ),
+      fetchAllRowsForIds<{ department_id: string; role: string }>(departmentIds, (batch, from, to) =>
+        client.from('department_memberships').select('department_id, role').in('department_id', batch).eq('user_id', auth.userId).or(notExpired).order('id', { ascending: true }).range(from, to),
+      ),
+      fetchAllRowsForIds<{ team_id: string; role: string }>(teamIds, (batch, from, to) =>
+        client.from('team_memberships').select('team_id, role').in('team_id', batch).eq('user_id', auth.userId).or(notExpired).order('id', { ascending: true }).range(from, to),
+      ),
+    ])
+
+    const rolesByOrganizationId = groupRolesBy(organizationRows, (row) => row.organization_id)
+    const rolesByDepartmentId = groupRolesBy(departmentRows, (row) => row.department_id)
+    const rolesByTeamId = groupRolesBy(teamRows, (row) => row.team_id)
+
+    const result = new Map<string, readonly Role[]>()
+    for (const scope of scopes) {
+      result.set(permissionScopeKey(scope), [
+        ...(rolesByOrganizationId.get(scope.organizationId) ?? []),
+        ...(scope.departmentId ? (rolesByDepartmentId.get(scope.departmentId) ?? []) : []),
+        ...(scope.teamId ? (rolesByTeamId.get(scope.teamId) ?? []) : []),
+      ])
+    }
+    return result
+  }
+}
+
+function groupRolesBy<T extends { role: unknown }>(rows: readonly T[], keyOf: (row: T) => string): Map<string, Role[]> {
+  const grouped = new Map<string, Role[]>()
+  for (const row of rows) {
+    const key = keyOf(row)
+    const list = grouped.get(key)
+    if (list) list.push(row.role as Role)
+    else grouped.set(key, [row.role as Role])
+  }
+  return grouped
 }
 
 // Orthogonal zu RoleProvider/PermissionScope: ein Plattform-Admin ist keiner Organisation

@@ -537,36 +537,28 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
     expect(response.statusCode).toBe(status)
   })
 
+  // Plan 031: die stalled_approval_requests-View (Migration 2026081501) wertet "mindestens eine
+  // offene/festhaengende Stufe ist ueberfaellig ODER die Anfrage ist invalidiert" jetzt serverseitig
+  // aus -- eine gesunde (nicht ueberfaellige, nicht invalidierte) Anfrage liefert die View gar nicht
+  // erst zurueck, das deckt der pgTAP-Test der Migration ab (supabase/tests). Der Fake hier bildet
+  // nur noch nach, was die View fuer diese Organisation zurueckgibt, und prueft, dass die Route
+  // beide Zeilen korrekt mit Abteilung/Titel anreichert.
   it('lists only stalled approval requests -- overdue or invalidated, not the merely open one', async () => {
     const OVERDUE_REQUEST_ID = '10000000-4000-4000-8000-000000000010'
     const INVALIDATED_REQUEST_ID = '10000000-4000-4000-8000-000000000011'
-    const HEALTHY_REQUEST_ID = '10000000-4000-4000-8000-000000000012'
     const OVERDUE_POST_ID = '10000000-2000-4000-8000-000000000010'
     const INVALIDATED_POST_ID = '10000000-2000-4000-8000-000000000011'
-    const HEALTHY_POST_ID = '10000000-2000-4000-8000-000000000012'
     const OVERDUE_VERSION_ID = '10000000-3000-4000-8000-000000000010'
     const INVALIDATED_VERSION_ID = '10000000-3000-4000-8000-000000000011'
-    const HEALTHY_VERSION_ID = '10000000-3000-4000-8000-000000000012'
     const clients: SupabaseClientFactory = {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'approval_requests') {
+            if (table === 'stalled_approval_requests') {
               return chain({
                 data: [
-                  { id: OVERDUE_REQUEST_ID, post_id: OVERDUE_POST_ID, post_version_id: OVERDUE_VERSION_ID, invalidated_at: null },
-                  { id: INVALIDATED_REQUEST_ID, post_id: INVALIDATED_POST_ID, post_version_id: INVALIDATED_VERSION_ID, invalidated_at: new Date().toISOString() },
-                  { id: HEALTHY_REQUEST_ID, post_id: HEALTHY_POST_ID, post_version_id: HEALTHY_VERSION_ID, invalidated_at: null },
-                ],
-                error: null,
-              })
-            }
-            if (table === 'approval_stages') {
-              return chain({
-                data: [
-                  { approval_request_id: OVERDUE_REQUEST_ID, deadline_at: new Date(Date.now() - 60_000).toISOString() },
-                  { approval_request_id: INVALIDATED_REQUEST_ID, deadline_at: null },
-                  { approval_request_id: HEALTHY_REQUEST_ID, deadline_at: new Date(Date.now() + 60_000).toISOString() },
+                  { id: OVERDUE_REQUEST_ID, post_id: OVERDUE_POST_ID, post_version_id: OVERDUE_VERSION_ID, invalidated_at: null, is_overdue: true },
+                  { id: INVALIDATED_REQUEST_ID, post_id: INVALIDATED_POST_ID, post_version_id: INVALIDATED_VERSION_ID, invalidated_at: new Date().toISOString(), is_overdue: false },
                 ],
                 error: null,
               })
@@ -576,7 +568,6 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
                 data: [
                   { id: OVERDUE_POST_ID, department_id: DEPARTMENT_ID },
                   { id: INVALIDATED_POST_ID, department_id: DEPARTMENT_ID },
-                  { id: HEALTHY_POST_ID, department_id: DEPARTMENT_ID },
                 ],
                 error: null,
               })

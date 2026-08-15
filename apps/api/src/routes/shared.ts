@@ -8,55 +8,15 @@ import { mergeEffectiveConfig, resolveAvailableChannels, resolveEffectiveConfig,
 import type { FastifyRequest } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import type { PermissionScope } from '../auth.js'
+import { permissionScopeKey, type PermissionScope, type RoleProvider } from '../auth.js'
 import { byteaToBuffer, createSecretBoxFromEnvironment } from '../secretBox.js'
+export { fetchAllRows, fetchAllRowsForIds } from '../supabase.js'
 import type { SupabaseClientFactory } from './context.js'
 
 // Von mehreren Route-Modulen und dem verbleibenden app.ts benoetigt (Richtlinien/Freigaben,
 // Kanaele und Mitglieder/Einladungen loesen alle scope+scopeId oder ein Membership-Tripel auf) --
 // hier zentral statt in jedem Modul dupliziert, damit spaetere Extraktionen (Paket 027) diese
 // Funktionen nicht erneut abschreiben muessen.
-
-// supabase/config.toml caps a single response at max_rows=1000 -- a plain select() on a large
-// organization's membership table would silently truncate the roster. Pages through range()
-// until a page comes back short.
-//
-// Contract: without ORDER BY, Postgres does not guarantee a stable row order between two
-// requests -- concurrent writes or a changed query plan can make page 2 repeat or skip rows from
-// page 1 (gefunden im Code-Review dieses Pakets). Every fetchPage callback MUST add
-// `.order('id', { ascending: true })` (or another column that is both unique and indexed) so
-// pages tile the table exactly once.
-export async function fetchAllRows<T>(
-  fetchPage: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
-): Promise<T[]> {
-  const pageSize = 1000
-  const rows: T[] = []
-  for (let from = 0; ; from += pageSize) {
-    const page = await fetchPage(from, from + pageSize - 1)
-    if (page.error) throw page.error
-    const data = page.data ?? []
-    rows.push(...data)
-    if (data.length < pageSize) break
-  }
-  return rows
-}
-
-// Ein .in() mit unbegrenzt vielen IDs traegt die gesamte Liste in der Anfrage-URL -- dieselbe
-// Grenze wie bei den Profil-Bloecken in GET /members und dem Retention-Lauf. Batcht in Chunks von
-// 100, statt die Ergebnisse einer einzelnen Anfrage zu verwerfen. Derselbe Sortier-Vertrag wie
-// fetchAllRows gilt je Batch.
-export async function fetchAllRowsForIds<T>(
-  ids: readonly string[],
-  fetchPage: (batch: readonly string[], from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
-): Promise<T[]> {
-  const batchSize = 100
-  const rows: T[] = []
-  for (let offset = 0; offset < ids.length; offset += batchSize) {
-    const batch = ids.slice(offset, offset + batchSize)
-    rows.push(...(await fetchAllRows<T>((from, to) => fetchPage(batch, from, to))))
-  }
-  return rows
-}
 
 // Loest scope+scopeId (aus CreateMembershipRequestSchema) in einen PermissionScope auf --
 // organizationId muss fuer department/team erst nachgeschlagen werden, damit requirePermission
@@ -81,6 +41,21 @@ export async function resolveMembershipScope(
 // bei Abwesenheit ganz fehlen statt explizit auf undefined gesetzt zu sein.
 export function toPermissionScope(organizationId: string, departmentId?: string | null, teamId?: string | null): PermissionScope {
   return { organizationId, ...(departmentId ? { departmentId } : {}), ...(teamId ? { teamId } : {}) }
+}
+
+// Loest mehrere Scopes derselben Anfrage in einem Rutsch auf -- ueber RoleProvider.rolesForScopes,
+// falls der uebergebene RoleProvider sie implementiert (SupabaseRoleProvider: drei Abfragen statt
+// einer je Scope, Plan 031). Faellt sonst auf Promise.all(rolesForScope) zurueck, damit bestehende
+// RoleProvider-Testdoubles (nur rolesForScope) unveraendert funktionieren, nur ohne den
+// Geschwindigkeitsvorteil. Der Aufrufer indiziert das Ergebnis ueber denselben permissionScopeKey.
+export async function resolveRolesForScopes(
+  roleProvider: RoleProvider,
+  auth: { userId: string; accessToken: string },
+  scopes: readonly PermissionScope[],
+): Promise<ReadonlyMap<string, readonly Role[]>> {
+  if (roleProvider.rolesForScopes) return roleProvider.rolesForScopes(auth, scopes)
+  const entries = await Promise.all(scopes.map(async (scope) => [permissionScopeKey(scope), await roleProvider.rolesForScope(auth, scope)] as const))
+  return new Map(entries)
 }
 
 // Wie resolveInvitationScope (routes/members.ts): departmentId/teamId serverseitig gegen ihre

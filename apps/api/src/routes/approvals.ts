@@ -147,25 +147,24 @@ export function registerApprovalRoutes(app: FastifyInstance, context: ApiRouteCo
   // erfuellbar" (unresolvableReviewers) fehlt, siehe plans/024, "Umsetzung: Ergebnis und
   // Abweichungen vom Plan" -- das braucht einen Mitgliedschafts-Ablaufabgleich je Snapshot-Eintrag,
   // ein eigener, spaeter nachziehbarer Schritt.
+  //
+  // Plan 031: die Bedingung selbst (mindestens eine offene/festhaengende Stufe, die ueberfaellig
+  // ist oder deren Anfrage invalidiert wurde) lief bis hierher in TypeScript, nachdem ALLE
+  // approval_requests der Organisation geladen waren -- unbegrenzt mit der Historie wachsend. Die
+  // security_invoker-View stalled_approval_requests (Migration 2026081501) wertet dieselbe
+  // Bedingung serverseitig aus, RLS bleibt unveraendert wirksam.
   app.get('/v1/approval-requests/stalled', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const query = z.object({ organizationId: UuidSchema }).parse(request.query)
     const client = supabaseClients.forUser(request.auth!.accessToken)
-    const requestRows = await fetchAllRows<{ id: string; post_id: string; post_version_id: string; invalidated_at: string | null }>((from, to) =>
-      client.from('approval_requests').select('id, post_id, post_version_id, invalidated_at').eq('organization_id', query.organizationId).order('id', { ascending: true }).range(from, to),
+    const stalled = await fetchAllRows<{ id: string; post_id: string; post_version_id: string; invalidated_at: string | null; is_overdue: boolean }>((from, to) =>
+      client
+        .from('stalled_approval_requests')
+        .select('id, post_id, post_version_id, invalidated_at, is_overdue')
+        .eq('organization_id', query.organizationId)
+        .order('id', { ascending: true })
+        .range(from, to),
     )
-    if (requestRows.length === 0) return reply.code(200).send([])
-
-    const requestIds = requestRows.map((row) => row.id)
-    const stageRows = await fetchAllRowsForIds<{ approval_request_id: string; deadline_at: string | null }>(requestIds, (batch, from, to) =>
-      client.from('approval_stages').select('approval_request_id, deadline_at').in('approval_request_id', batch).in('status', ['open', 'stalled']).order('id', { ascending: true }).range(from, to),
-    )
-    const now = Date.now()
-    const openRequestIds = new Set(stageRows.map((row) => row.approval_request_id))
-    const overdueRequestIds = new Set(
-      stageRows.filter((row) => row.deadline_at !== null && new Date(row.deadline_at).getTime() < now).map((row) => row.approval_request_id),
-    )
-    const stalled = requestRows.filter((row) => openRequestIds.has(row.id) && (row.invalidated_at !== null || overdueRequestIds.has(row.id)))
     if (stalled.length === 0) return reply.code(200).send([])
 
     const postIds = Array.from(new Set(stalled.map((row) => row.post_id)))
@@ -185,7 +184,7 @@ export function registerApprovalRoutes(app: FastifyInstance, context: ApiRouteCo
           return StalledApprovalRequestSchema.parse({
             approvalRequestId: row.id, postId: row.post_id, postVersionId: row.post_version_id, departmentId,
             postTitle: titleByVersionId.get(row.post_version_id as string) ?? '',
-            isOverdue: overdueRequestIds.has(row.id as string), invalidated: row.invalidated_at !== null,
+            isOverdue: row.is_overdue, invalidated: row.invalidated_at !== null,
           })
         })
         .filter((row): row is StalledApprovalRequest => row !== null),

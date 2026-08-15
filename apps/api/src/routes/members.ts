@@ -13,8 +13,9 @@ import { canAssignRole, canRemoveRole, type Role } from '@vereinsfunk/authorizat
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { membershipTableFor } from '../apiMappers.js'
+import type { PermissionScope } from '../auth.js'
 import type { ApiRouteContext } from './context.js'
-import { createAuditRecorder, fetchAllRows, membershipCapabilities, resolveMembershipScope, toPermissionScope } from './shared.js'
+import { createAuditRecorder, fetchAllRows, membershipCapabilities, resolveMembershipScope, resolveRolesForScopes, toPermissionScope } from './shared.js'
 
 export function registerMemberRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients, roleProvider } = context
@@ -54,19 +55,16 @@ export function registerMemberRoutes(app: FastifyInstance, context: ApiRouteCont
     // Rollen DES ANFRAGENDEN nachschlagen (nicht die des jeweiligen Mitglieds), dann daraus fuer
     // jede Zeile ableiten, ob er sie aendern/entfernen/befristen darf -- dieselben Funktionen, die
     // PATCH/DELETE /v1/memberships selbst durchsetzen. Eine Ebene wird dabei nur einmal
-    // nachgeschlagen, auch wenn mehrere Mitglieder ihr angehoeren.
-    const rolesByScopeKey = new Map<string, readonly Role[]>()
-    rolesByScopeKey.set('organization', await roleProvider.rolesForScope(request.auth!, { organizationId: params.id }))
+    // nachgeschlagen, auch wenn mehrere Mitglieder ihr angehoeren. resolveRolesForScopes loest alle
+    // Ebenen in konstant drei Abfragen auf (Plan 031) statt einer Abfrage je Abteilung/Team.
     const uniqueDepartmentIds = new Set(deptRows.map((row) => row.department_id))
     const uniqueTeams = new Map(teamRows.map((row) => [row.team_id, row.department_id]))
-    await Promise.all([
-      ...Array.from(uniqueDepartmentIds).map(async (departmentId) => {
-        rolesByScopeKey.set(`department:${departmentId}`, await roleProvider.rolesForScope(request.auth!, { organizationId: params.id, departmentId }))
-      }),
-      ...Array.from(uniqueTeams.entries()).map(async ([teamId, departmentId]) => {
-        rolesByScopeKey.set(`team:${teamId}`, await roleProvider.rolesForScope(request.auth!, { organizationId: params.id, departmentId, teamId }))
-      }),
-    ])
+    const scopes: PermissionScope[] = [
+      { organizationId: params.id },
+      ...Array.from(uniqueDepartmentIds).map((departmentId) => ({ organizationId: params.id, departmentId })),
+      ...Array.from(uniqueTeams.entries()).map(([teamId, departmentId]) => ({ organizationId: params.id, departmentId, teamId })),
+    ]
+    const rolesByScopeKey = await resolveRolesForScopes(roleProvider, request.auth!, scopes)
     function capabilitiesFor(scope: ScopeLevel, scopeId: string, role: string) {
       return membershipCapabilities(rolesByScopeKey.get(scope === 'organization' ? 'organization' : `${scope}:${scopeId}`) ?? [], role as Role)
     }

@@ -65,13 +65,13 @@ Beide Funde sind reale, aber architektonische Änderungen (neue Schnittstellenme
 
 Ergänze `apps/api/src/auth.ts`s `RoleProvider`-Interface um eine **optionale** Methode, z. B. `rolesForScopes?(auth: { userId: string; accessToken: string }, scopes: readonly PermissionScope[]): Promise<ReadonlyMap<string, readonly Role[]>>` (Schlüssel: ein stabiler String pro Scope, z. B. `organization` / `department:<id>` / `team:<id>`, wiederverwendbar für den bestehenden `rolesByScopeKey`-Aufbau in `members.ts`). **Optional**, damit die neun bestehenden `RoleProvider`-Testdoubles in `app.test.ts` (siehe „Current state“) nicht brechen.
 
-Implementiere `SupabaseRoleProvider.rolesForScopes` mit genau drei Abfragen unabhängig von der Anzahl der Scopes: eine `organization_memberships`-Abfrage für den Nutzer (immer), eine `department_memberships`-Abfrage mit `.in('department_id', <eindeutige IDs>)`, eine `team_memberships`-Abfrage mit `.in('team_id', <eindeutige IDs>)` — jeweils zusätzlich nach `user_id`/Ablauf gefiltert wie im bestehenden `rolesForScope`. Gruppiere die Ergebnisse danach in TypeScript in die zurückgegebene Map.
+Implementiere `SupabaseRoleProvider.rolesForScopes` gebündelt pro Mitgliedschaftstabelle: eine `organization_memberships`-Abfrage für den Nutzer, eine `department_memberships`-Abfrage mit `.in('department_id', <eindeutige IDs>)`, eine `team_memberships`-Abfrage mit `.in('team_id', <eindeutige IDs>)` — jeweils zusätzlich nach `user_id`/Ablauf gefiltert wie im bestehenden `rolesForScope`. Jede `.in()`-Liste wird in URL-sichere 100er-Blöcke geteilt und jede Gruppe paginiert; die Anzahl der Requests wächst damit kontrolliert mit der Scope-Menge, statt Gateway-Limits oder `max_rows` zu verletzen. Gruppiere die Ergebnisse danach in TypeScript in die zurückgegebene Map.
 
 Ergänze in `apps/api/src/auth.ts` (oder `routes/shared.ts`, falls das dem bestehenden Muster für domänenübergreifende Helfer besser entspricht) eine kleine Fallback-Funktion, die `rolesForScopes` verwendet, wenn der übergebene `RoleProvider` sie implementiert, und sonst auf `Promise.all(scopes.map(s => roleProvider.rolesForScope(auth, s)))` zurückfällt — damit Testdoubles ohne die neue Methode weiter funktionieren, nur ohne den Geschwindigkeitsvorteil.
 
 Stelle `apps/api/src/routes/members.ts:104-119` auf diese Fallback-Funktion um: ein Aufruf mit der Organisation plus allen eindeutigen Abteilungs- und Team-Scopes statt der bisherigen `Promise.all`-Kette.
 
-**Verify**: `pnpm --filter @vereinsfunk/api typecheck && pnpm --filter @vereinsfunk/api test` → bestehender Test „derives per-role capability fields from the actor's own rank (Paket 023)“ (Zeile 1240) besteht unverändert; neuer Test bestätigt, dass bei einer `SupabaseRoleProvider`-Instanz mit N Abteilungen/Teams genau 3 Tabellenabfragen ausgeführt werden (Zähler im Test-Fake wie beim bereits existierenden `requestedChunkSizes`-Muster in Zeile 1205).
+**Verify**: `pnpm --filter @vereinsfunk/api typecheck && pnpm --filter @vereinsfunk/api test` → bestehender Test „derives per-role capability fields from the actor's own rank (Paket 023)“ (Zeile 1240) besteht unverändert; neue Tests bestätigen, dass die Auflösung kleine Scope-Mengen mit einer Abfrage je Mitgliedschaftstabelle lädt sowie große Mengen in 100er-ID-Blöcken einschließlich aller Seiten verarbeitet.
 
 ### Step 2: `/v1/approval-requests/stalled` serverseitig eingrenzen
 
@@ -96,10 +96,24 @@ Aktualisiere `plans/README.md` (Tabelle „Vierte Serie“, Status dieses Plans)
 
 ## Done criteria
 
-- [ ] `SupabaseRoleProvider` löst eine Mitgliederliste mit beliebig vielen Abteilungen/Teams in konstant 3 Abfragen auf.
-- [ ] `GET /v1/approval-requests/stalled` lädt serverseitig nur potenziell festhängende Anfragen, nicht mehr die gesamte Organisation.
-- [ ] Alle bestehenden `RoleProvider`-Testdoubles kompilieren und laufen unverändert.
-- [ ] `pnpm check`, `pnpm db:reset` und `pnpm db:test` bestehen.
+- [x] `SupabaseRoleProvider` löst eine Mitgliederliste mit beliebig vielen Abteilungen/Teams in begrenzten ID-Blöcken und vollständig paginiert auf.
+- [x] `GET /v1/approval-requests/stalled` lädt serverseitig nur potenziell festhängende Anfragen, nicht mehr die gesamte Organisation.
+- [x] Alle bestehenden `RoleProvider`-Testdoubles kompilieren und laufen unverändert.
+- [x] `pnpm check`, `pnpm db:reset` und `pnpm db:test` bestehen.
+
+## Abschluss (2026-08-15)
+
+Beide Punkte wie geplant umgesetzt, keine Abweichungen vom Scope.
+
+**Schritt 1**: `RoleProvider.rolesForScopes` als optionale Methode (`apps/api/src/auth.ts`), `permissionScopeKey` als geteilter Schlüsselbildner. `SupabaseRoleProvider.rolesForScopes` fragt `organization_memberships` immer ab, `department_memberships`/`team_memberships` nur wenn die jeweilige ID-Menge nicht leer ist — die Rollen kaskadieren wie beim bestehenden `rolesForScope` (eine Team-Ebene trägt Org- und Abteilungs- und Team-Rollen). `resolveRolesForScopes` (`routes/shared.ts`) ist der im Plan vorgesehene Fallback: ruft `rolesForScopes` auf, wenn vorhanden, sonst `Promise.all(rolesForScope)` — alle neun bestehenden `RoleProvider`-Testdoubles brauchten keine Änderung. `routes/members.ts` baut jetzt eine flache Scope-Liste (Organisation + je eindeutiger Abteilung/Team) und ruft `resolveRolesForScopes` einmal auf, statt selbst `Promise.all` zu verketten.
+
+**Review-Fix (2026-08-15)**: Die anfängliche Aussage „konstant bis zu drei Abfragen“ galt nur für kleine Listen und war für den bestehenden PostgREST-Gateway-Vertrag nicht tragfähig: `.in()` kodiert alle IDs in der Request-URL und Antworten werden bei `max_rows=1000` gekappt. `fetchAllRows`/`fetchAllRowsForIds` liegen deshalb jetzt in `supabase.ts` (kein Importzyklus zwischen `auth.ts` und `routes/shared.ts`) und werden von der Rollenauflösung mit 100er-ID-Blöcken plus stabiler `id`-Paginierung genutzt. Neue Regressionstests prüfen 250 Abteilungen/Teams (100/100/50 pro Tabelle) sowie eine zweite Seite nach 1.000 Zeilen.
+
+Eine Abweichung von der Plan-Skizze: `SupabaseRoleProvider` bekam einen zusätzlichen optionalen `clientFactory`-Konstruktorparameter (Default `createUserClient`, identisches Injektionsmuster wie `jwksFetch` bei `createAuthGuards`) — nötig, um die geforderte "genau 3 Abfragen"-Zählung direkt an der Klasse zu testen, ohne eine echte Supabase-Instanz zu brauchen und ohne als erste Datei im Projekt `vi.mock` einzuführen (bislang mockt keine API-Testdatei ein ganzes Modul, alle DI-Seams sind Konstruktor-/Funktionsparameter).
+
+**Schritt 2**: Migration `2026081501_stalled_approval_requests_view.sql` legt `public.stalled_approval_requests` als `security_invoker`-View an (erste View im Projekt) — join aus `approval_requests`/`approval_stages`, gefiltert auf Stufen mit Status `open`/`stalled`, `having` auf "invalidiert ODER mindestens eine Stufe überfällig". `GET /v1/approval-requests/stalled` (`routes/approvals.ts`) fragt jetzt direkt diese View ab statt erst alle `approval_requests` zu laden und in TypeScript zu filtern; `isOverdue` kommt direkt aus der View-Spalte `is_overdue`. Neuer pgTAP-Test `supabase/tests/stalled_approval_requests_view.test.sql` (6 Assertions): offene nicht-überfällige Stufe erscheint nicht, überfällige und invalidierte Anfrage erscheinen mit korrekten Flags, ein Mitglied eines fremden Vereins sieht nichts (RLS bleibt über `security_invoker` wirksam).
+
+`pnpm check` (lint/typecheck/test/build aller 21 Pakete) und `pnpm db:reset && pnpm db:test` (775 pgTAP-Assertions über 27 Dateien) bestehen.
 
 ## STOP conditions
 
