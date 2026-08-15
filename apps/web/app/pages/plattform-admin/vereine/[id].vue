@@ -15,6 +15,7 @@ import {
 definePageMeta({ layout: 'admin' })
 
 const MEDIA_ORIGIN_LABELS: Record<MediaOrigin, string> = { own_upload: 'Eigene Beiträge', ai_image: 'KI-Bilder', ai_video: 'KI-Videos' }
+const BYTES_PER_MB = 1024 * 1024
 
 const config = useRuntimeConfig()
 const route = useRoute()
@@ -28,7 +29,7 @@ const selectedPlanKey = ref('')
 const savingSubscription = ref(false)
 const subscriptionError = ref('')
 
-const structureOverride = reactive({ maxTeams: '', maxDepartments: '', storageBytes: '', reason: '' })
+const structureOverride = reactive({ maxTeams: '', maxDepartments: '', storageMegabytes: '', reason: '' })
 const contentOverride = reactive<Record<MediaOrigin, { maxPerMonth: string; maxDurationSeconds: string; reason: string }>>({
   own_upload: { maxPerMonth: '', maxDurationSeconds: '', reason: '' },
   ai_image: { maxPerMonth: '', maxDurationSeconds: '', reason: '' },
@@ -78,11 +79,11 @@ async function saveStructureOverride() {
       planKey: selectedPlanKey.value,
       maxTeamsOverride: structureOverride.maxTeams.trim() ? Number(structureOverride.maxTeams) : null,
       maxDepartmentsOverride: structureOverride.maxDepartments.trim() ? Number(structureOverride.maxDepartments) : null,
-      storageBytesOverride: structureOverride.storageBytes.trim() ? Number(structureOverride.storageBytes) : null,
+      storageBytesOverride: structureOverride.storageMegabytes.trim() ? Number(structureOverride.storageMegabytes) * BYTES_PER_MB : null,
       overrideReason: structureOverride.reason,
     })
     await $fetch(`${config.public.apiBase}/v1/platform-admin/organizations/${route.params.id}/subscription`, { method: 'PUT', headers, body })
-    structureOverride.maxTeams = ''; structureOverride.maxDepartments = ''; structureOverride.storageBytes = ''; structureOverride.reason = ''
+    structureOverride.maxTeams = ''; structureOverride.maxDepartments = ''; structureOverride.storageMegabytes = ''; structureOverride.reason = ''
     await loadSubscription()
   } catch {
     subscriptionError.value = 'Übersteuerung konnte nicht gespeichert werden.'
@@ -236,8 +237,8 @@ await Promise.all([load(), loadSubscription()])
             Mannschaften {{ subscription.maxTeamsOverride ?? 'Tarifwert' }}, Abteilungen {{ subscription.maxDepartmentsOverride ?? 'Tarifwert' }}.
           </p>
           <form class="grid gap-3 sm:grid-cols-2" @submit.prevent="saveStructureOverride">
-            <label class="text-xs font-semibold text-[#5c655f]">Speicher in Bytes (leer = Tarifwert)
-              <input v-model="structureOverride.storageBytes" type="number" min="1" class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" />
+            <label class="text-xs font-semibold text-[#5c655f]">Speicher in MB (leer = Tarifwert)
+              <input v-model="structureOverride.storageMegabytes" type="number" min="1" step="1" class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" />
             </label>
             <label class="text-xs font-semibold text-[#5c655f]">Mannschaften (leer = Tarifwert)
               <input v-model="structureOverride.maxTeams" type="number" min="1" class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" />

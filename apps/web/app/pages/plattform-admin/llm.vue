@@ -61,6 +61,8 @@ const availableModels = ref<string[]>([])
 const modelsLoading = ref(false)
 const modelsMessage = ref('')
 const useCustomModel = ref(false)
+const editingProviderId = ref<string | null>(null)
+const isEditing = computed(() => editingProviderId.value !== null)
 
 const newProvider = reactive({
   label: '',
@@ -71,6 +73,7 @@ const newProvider = reactive({
   model: '',
   apiKey: '',
   priority: 100,
+  isActive: true,
 })
 
 const usesPreset = computed(() => newProvider.presetLabel !== '')
@@ -85,6 +88,39 @@ function resetModelChoice() {
   useCustomModel.value = false
   modelsMessage.value = ''
   newProvider.model = ''
+}
+
+function resetProviderForm() {
+  editingProviderId.value = null
+  newProvider.label = ''
+  newProvider.protocol = PROVIDER_PRESETS[0].protocol
+  newProvider.taskKind = 'text_generation'
+  newProvider.presetLabel = PROVIDER_PRESETS[0].label
+  newProvider.baseUrl = PROVIDER_PRESETS[0].baseUrl
+  newProvider.model = ''
+  newProvider.apiKey = ''
+  newProvider.priority = 100
+  newProvider.isActive = true
+  resetModelChoice()
+}
+
+function editProvider(provider: LlmProviderConfigurationDto) {
+  editingProviderId.value = provider.id
+  newProvider.label = provider.label
+  newProvider.protocol = provider.protocol
+  newProvider.taskKind = provider.taskKind
+  const preset = PROVIDER_PRESETS.find((entry) => entry.protocol === provider.protocol && entry.baseUrl === provider.baseUrl)
+  newProvider.presetLabel = preset?.label ?? ''
+  newProvider.baseUrl = provider.baseUrl
+  newProvider.model = provider.model
+  newProvider.apiKey = ''
+  newProvider.priority = provider.priority
+  newProvider.isActive = provider.isActive
+  resetModelChoice()
+  newProvider.model = provider.model
+  useCustomModel.value = true
+  errorMessage.value = ''
+  window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
 // Eine geladene Modell-Liste gehoert zu genau einer Basis-URL -- nach einem Wechsel waere sie
@@ -186,54 +222,35 @@ async function loadModels() {
   }
 }
 
-async function createProvider() {
-  if (!newProvider.label.trim() || !newProvider.baseUrl.trim() || !newProvider.model.trim() || !newProvider.apiKey.trim()) return
+async function saveProvider() {
+  if (!newProvider.label.trim() || !newProvider.baseUrl.trim() || !newProvider.model.trim() || (!isEditing.value && !newProvider.apiKey.trim())) return
   saving.value = true
   errorMessage.value = ''
   try {
     const headers = await useAuthHeader()
-    const body = CreateLlmProviderConfigurationRequestSchema.parse({
+    const values = {
       label: newProvider.label,
       protocol: newProvider.protocol,
       baseUrl: newProvider.baseUrl,
       model: newProvider.model,
-      apiKey: newProvider.apiKey,
       taskKind: newProvider.taskKind,
       priority: newProvider.priority,
-    })
-    await $fetch(`${config.public.apiBase}/v1/llm-providers`, { method: 'POST', headers, body })
-    newProvider.label = ''
-    newProvider.protocol = PROVIDER_PRESETS[0].protocol
-    newProvider.presetLabel = PROVIDER_PRESETS[0].label
-    newProvider.baseUrl = PROVIDER_PRESETS[0].baseUrl
-    newProvider.apiKey = ''
-    newProvider.priority = 100
-    resetModelChoice()
+      isActive: newProvider.isActive,
+    }
+    if (editingProviderId.value) {
+      const body = UpdateLlmProviderConfigurationRequestSchema.parse({ ...values, apiKey: newProvider.apiKey.trim() || undefined })
+      await $fetch(`${config.public.apiBase}/v1/llm-providers/${editingProviderId.value}`, { method: 'PATCH', headers, body })
+    } else {
+      const body = CreateLlmProviderConfigurationRequestSchema.parse({ ...values, apiKey: newProvider.apiKey })
+      await $fetch(`${config.public.apiBase}/v1/llm-providers`, { method: 'POST', headers, body })
+    }
+    resetProviderForm()
     await load()
   } catch (error) {
     const code = (error as { data?: { error?: string } })?.data?.error
     errorMessage.value = code === 'priority_already_taken'
       ? 'Diese Priorität ist für die Aufgabenart bereits an einen aktiven Provider vergeben. Bitte eine andere Zahl wählen.'
-      : 'Provider konnte nicht angelegt werden.'
-  } finally {
-    saving.value = false
-  }
-}
-
-async function toggleActive(provider: LlmProviderConfigurationDto) {
-  saving.value = true
-  errorMessage.value = ''
-  try {
-    const headers = await useAuthHeader()
-    const id = UuidSchema.parse(provider.id)
-    const body = UpdateLlmProviderConfigurationRequestSchema.parse({ isActive: !provider.isActive })
-    await $fetch(`${config.public.apiBase}/v1/llm-providers/${id}`, { method: 'PATCH', headers, body })
-    await load()
-  } catch (error) {
-    const code = (error as { data?: { error?: string } })?.data?.error
-    errorMessage.value = code === 'priority_already_taken'
-      ? 'Die Priorität dieses Providers ist bereits an einen aktiven Provider derselben Aufgabenart vergeben. Bitte zuerst die Priorität ändern.'
-      : 'Status konnte nicht geändert werden.'
+      : isEditing.value ? 'Provider konnte nicht gespeichert werden.' : 'Provider konnte nicht angelegt werden.'
   } finally {
     saving.value = false
   }
@@ -268,8 +285,11 @@ async function removeProvider(id: string) {
     <div v-if="loading" class="p-8 text-center text-xs text-[#7b827d]">Wird geladen …</div>
     <template v-else>
       <section class="card mb-6 p-6">
-        <h2 class="mb-4 font-display text-base font-bold">Provider hinzufügen</h2>
-        <form class="grid gap-3 sm:grid-cols-2" @submit.prevent="createProvider">
+        <div class="mb-4 flex items-center justify-between gap-3">
+          <h2 class="font-display text-base font-bold">{{ isEditing ? 'Provider bearbeiten' : 'Provider hinzufügen' }}</h2>
+          <button v-if="isEditing" type="button" class="focus-ring rounded-lg px-3 py-1.5 text-xs font-semibold text-[#5c655f] hover:bg-[#f4f5f1]" @click="resetProviderForm">Abbrechen</button>
+        </div>
+        <form class="grid gap-3 sm:grid-cols-2" @submit.prevent="saveProvider">
           <input
             v-model="newProvider.label"
             type="text"
@@ -317,10 +337,11 @@ async function removeProvider(id: string) {
           <input
             v-model="newProvider.apiKey"
             type="password"
-            required
-            placeholder="API-Key / Bearer-Token"
+            :required="!isEditing"
+            :placeholder="isEditing ? 'Leer lassen, um den hinterlegten Schlüssel zu behalten' : 'API-Key / Bearer-Token'"
             class="focus-ring rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm sm:col-span-2"
           />
+          <p v-if="isEditing" class="-mt-1 text-[11px] text-[#727a75] sm:col-span-2">Der hinterlegte Schlüssel kann aus Sicherheitsgründen nicht angezeigt werden.</p>
 
           <label class="text-xs font-semibold text-[#5c655f] sm:col-span-2">Modell
             <div class="mt-1 flex gap-2">
@@ -364,12 +385,15 @@ async function removeProvider(id: string) {
           <label class="text-xs font-semibold text-[#5c655f] sm:col-span-2">Priorität (kleinere Zahl gewinnt, je Aufgabenart nur einmal aktiv)
             <input v-model.number="newProvider.priority" type="number" step="1" required class="mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" />
           </label>
+          <label class="flex items-center gap-2 text-xs font-semibold text-[#5c655f] sm:col-span-2">
+            <input v-model="newProvider.isActive" type="checkbox" class="accent-forest" /> Aktiv
+          </label>
           <button
             type="submit"
             class="focus-ring rounded-xl bg-forest px-5 py-2.5 text-xs font-bold text-white disabled:opacity-60 sm:col-span-2"
             :disabled="saving"
           >
-            Anlegen
+            {{ isEditing ? 'Änderungen speichern' : 'Anlegen' }}
           </button>
         </form>
       </section>
@@ -398,17 +422,19 @@ async function removeProvider(id: string) {
               <td class="py-2 pr-4">{{ provider.priority }}</td>
               <td class="py-2 pr-4">{{ provider.hasSecret ? 'hinterlegt' : 'fehlt' }}</td>
               <td class="py-2 pr-4">
-                <button
-                  class="focus-ring rounded-lg px-2 py-1 text-[11px] font-semibold"
-                  :class="provider.isActive ? 'text-forest' : 'text-[#9aa096]'"
-                  @click="toggleActive(provider)"
-                >
-                  {{ provider.isActive ? 'Aktiv' : 'Inaktiv' }}
-                </button>
+                <span :class="provider.isActive ? 'font-semibold text-forest' : 'text-[#9aa096]'">{{ provider.isActive ? 'Aktiv' : 'Inaktiv' }}</span>
               </td>
               <td class="py-2 text-right">
                 <button
-                  class="focus-ring rounded-lg px-3 py-1.5 text-[11px] font-semibold text-amber-800 hover:bg-amber-50"
+                  type="button"
+                  class="focus-ring rounded-lg px-3 py-1.5 text-[11px] font-semibold text-forest hover:bg-[#f1f6f2]"
+                  :disabled="saving"
+                  @click="editProvider(provider)"
+                >
+                  Bearbeiten
+                </button>
+                <button
+                  class="focus-ring ml-2 rounded-lg px-3 py-1.5 text-[11px] font-semibold text-amber-800 hover:bg-amber-50"
                   :disabled="saving"
                   @click="removeProvider(provider.id)"
                 >
