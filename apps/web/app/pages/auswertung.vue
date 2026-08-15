@@ -43,6 +43,7 @@ const customTo = ref('')
 const range = computed<{ from: string; to: string }>(() => {
   const todayKey = localDateKey(new Date(), timezone.value)
   if (rangePreset.value === '7d') return { from: addDaysToKey(todayKey, -6), to: todayKey }
+  if (rangePreset.value === '30d') return { from: addDaysToKey(todayKey, -29), to: todayKey }
   if (rangePreset.value === '90d') return { from: addDaysToKey(todayKey, -89), to: todayKey }
   if (rangePreset.value === 'this_month') return { from: `${todayKey.slice(0, 7)}-01`, to: todayKey }
   if (rangePreset.value === 'last_month') {
