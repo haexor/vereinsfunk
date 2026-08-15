@@ -1,14 +1,15 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-
-const PAGES_DIR = join(import.meta.dirname, '.')
+import { resolveAnalyticsRange } from '../utils/analyticsRange'
 
 describe('analytics date range', () => {
-  it('maps the default 30-day preset to a complete inclusive date range', () => {
-    const page = readFileSync(join(PAGES_DIR, 'auswertung.vue'), 'utf8')
+  it.each([
+    ['2026-03-01', '2026-01-31'],
+    ['2026-01-15', '2025-12-17'],
+  ])('maps 30 days from %s to an inclusive range across calendar boundaries', (todayKey, from) => {
+    expect(resolveAnalyticsRange('30d', todayKey, { from: '', to: '' })).toEqual({ from, to: todayKey })
+  })
 
-    expect(page).toContain("const rangePreset = ref<RangePreset>('30d')")
-    expect(page).toContain("if (rangePreset.value === '30d') return { from: addDaysToKey(todayKey, -29), to: todayKey }")
+  it('keeps incomplete custom ranges unchanged for form validation', () => {
+    expect(resolveAnalyticsRange('custom', '2026-01-15', { from: '', to: '' })).toEqual({ from: '', to: '' })
   })
 })

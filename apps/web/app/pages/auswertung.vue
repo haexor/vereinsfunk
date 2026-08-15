@@ -13,6 +13,7 @@ import {
   type AnalyticsTimeseriesMetric,
   type AnalyticsTimeseriesPoint,
 } from '@vereinsfunk/contracts'
+import { resolveAnalyticsRange, type AnalyticsRangePreset } from '../utils/analyticsRange'
 
 // Paket 016: Auswertung: interne Kennzahlen. Alle vier Endpunkte berechnen live aus den
 // Rohtabellen (siehe plans/016-auswertung-interne-kennzahlen.md, "Abweichungen vom Plan" Punkt 4)
@@ -30,31 +31,13 @@ const departmentName = computed(() => activeOrganization.value?.departments.find
 function localDateKey(date: Date, timeZone: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date)
 }
-function addDaysToKey(day: string, delta: number): string {
-  const [year, month, date] = [Number(day.slice(0, 4)), Number(day.slice(5, 7)), Number(day.slice(8, 10))]
-  return new Date(Date.UTC(year, month - 1, date + delta)).toISOString().slice(0, 10)
-}
-
-type RangePreset = '7d' | '30d' | '90d' | 'this_month' | 'last_month' | 'custom'
-const rangePreset = ref<RangePreset>('30d')
+const rangePreset = ref<AnalyticsRangePreset>('30d')
 const customFrom = ref('')
 const customTo = ref('')
 
 const range = computed<{ from: string; to: string }>(() => {
   const todayKey = localDateKey(new Date(), timezone.value)
-  if (rangePreset.value === '7d') return { from: addDaysToKey(todayKey, -6), to: todayKey }
-  if (rangePreset.value === '30d') return { from: addDaysToKey(todayKey, -29), to: todayKey }
-  if (rangePreset.value === '90d') return { from: addDaysToKey(todayKey, -89), to: todayKey }
-  if (rangePreset.value === 'this_month') return { from: `${todayKey.slice(0, 7)}-01`, to: todayKey }
-  if (rangePreset.value === 'last_month') {
-    const firstOfThisMonth = `${todayKey.slice(0, 7)}-01`
-    const lastOfPreviousMonth = addDaysToKey(firstOfThisMonth, -1)
-    return { from: `${lastOfPreviousMonth.slice(0, 7)}-01`, to: lastOfPreviousMonth }
-  }
-  // custom: rohe Eingabe durchreichen, auch unvollstaendig oder ungueltig -- customRangeError
-  // unten haelt load() davon ab, damit einen Request zu schicken, und der angezeigte Zeitraum bleibt
-  // dadurch ehrlich statt still auf die letzten 30 Tage zurueckzufallen.
-  return { from: customFrom.value, to: customTo.value }
+  return resolveAnalyticsRange(rangePreset.value, todayKey, { from: customFrom.value, to: customTo.value })
 })
 
 const ANALYTICS_MAX_RANGE_DAYS = 366 * 2 // muss mit packages/contracts/src/index.ts (AnalyticsScopeQuerySchema) uebereinstimmen.
@@ -67,7 +50,7 @@ const customRangeError = computed<string | null>(() => {
   return null
 })
 
-const RANGE_PRESETS: { value: RangePreset; label: string }[] = [
+const RANGE_PRESETS: { value: AnalyticsRangePreset; label: string }[] = [
   { value: '7d', label: '7 Tage' }, { value: '30d', label: '30 Tage' }, { value: '90d', label: '90 Tage' },
   { value: 'this_month', label: 'Laufender Monat' }, { value: 'last_month', label: 'Vormonat' }, { value: 'custom', label: 'Frei' },
 ]
