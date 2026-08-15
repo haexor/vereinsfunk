@@ -102,6 +102,10 @@ export function resolveReviewRoute(input: {
   // Minderjaehrigenstufe bei einer vollstaendig befreiten Route (keine andere Stufe uebrig)
   // faelschlich einen leeren Pruefkreis erben und selbst blockiert.
   media: { containsMinors: boolean; reviewerUserIds: readonly string[] }
+  // Feste Plattformregel (Nutzerentscheidung 2026-08-16, kein Vereinsschalter): unabhaengig von
+  // media.containsMinors -- betrifft nicht die abgebildete Person, sondern die verfassende Person
+  // selbst. reviewerUserIds ist bereits auf erwachsene Rolleninhaber:innen eingeschraenkt.
+  authorMinor: { isMinor: boolean; reviewerUserIds: readonly string[] }
   selfApprovalAllowed: boolean
   allowReviewExemptions: boolean // nur auf Vereinsebene wirksam (Plan 011)
 }): { stages: ReviewStage[]; blockers: RouteBlocker[] } {
@@ -119,21 +123,25 @@ export function resolveReviewRoute(input: {
     return !waivedByAnyOuterOrEqualLevel
   })
 
+  const minorStageDefs: { label: string; reviewerUserIds: readonly string[] }[] = []
+  if (input.media.containsMinors) minorStageDefs.push({ label: 'Minderjährigenschutz', reviewerUserIds: input.media.reviewerUserIds })
+  if (input.authorMinor.isMinor) minorStageDefs.push({ label: 'Minderjährige:r Verfasser:in', reviewerUserIds: input.authorMinor.reviewerUserIds })
+
   const withMinorStage: StageDefinition[] = [...kept]
-  if (input.media.containsMinors) {
+  if (minorStageDefs.length > 0) {
     // Als aeusserste der inneren Stufen einsortiert: nach allen Abteilungs-/Team-Stufen, vor einer
-    // etwaigen Vereinsstufe, damit sie nie uebersprungen werden kann.
+    // etwaigen Vereinsstufe, damit sie nie uebersprungen werden koennen.
     const firstOrganizationIndex = withMinorStage.findIndex((stage) => stage.scope === 'organization')
-    const minorStage: StageDefinition & { __minor: true } = {
+    const insertAt = firstOrganizationIndex === -1 ? withMinorStage.length : firstOrganizationIndex
+    const newMinorStages: (StageDefinition & { __minor: true })[] = minorStageDefs.map((def) => ({
       scope: 'organization',
-      label: 'Minderjährigenschutz',
+      label: def.label,
       mode: 'any_with_permission',
       minimumApprovals: 1,
-      reviewerUserIds: input.media.reviewerUserIds,
+      reviewerUserIds: def.reviewerUserIds,
       __minor: true,
-    }
-    if (firstOrganizationIndex === -1) withMinorStage.push(minorStage)
-    else withMinorStage.splice(firstOrganizationIndex, 0, minorStage)
+    }))
+    withMinorStage.splice(insertAt, 0, ...newMinorStages)
   }
 
   const blockers: RouteBlocker[] = []

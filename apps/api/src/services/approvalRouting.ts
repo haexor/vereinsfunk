@@ -53,6 +53,31 @@ export async function membersWithApprovePermission(
   return Array.from(userIds)
 }
 
+// Minderjaehrige-Verfasser:in-Stufe (Nutzerentscheidung 2026-08-16, feste Plattformregel): braucht
+// den service-role-Client, nicht den Aufrufer-Client -- directory_people verlangt directory.read
+// (siehe RLS-Policy, 2026080703), das eine einreichende Person mit blosser post.submit-Rolle
+// (z. B. contributor) i.d.R. nicht haelt. Ein RLS-gefilterter leerer Treffer wuerde die
+// Vorschaupruefung faelschlich "nicht minderjaehrig" lesen lassen -- die SQL-seitige
+// authz.resolve_review_route ist ohnehin die massgebliche Quelle, aber die Client-Vorschau soll
+// denselben Befund liefern.
+export async function isAuthorMinor(client: SupabaseClient, organizationId: string, profileId: string): Promise<boolean> {
+  const result = await client.from('directory_people').select('id').eq('organization_id', organizationId).eq('profile_id', profileId).eq('is_minor', true).limit(1)
+  if (result.error) throw result.error
+  return result.data.length > 0
+}
+
+// Schraenkt eine Liste von userIds auf Personen ein, die laut Vereinsverzeichnis NICHT selbst
+// minderjaehrig sind -- "mindestens ein Erwachsener muss freigeben" waere sonst durch eine
+// minderjaehrige Person mit Vereinsrolle unterlaufbar (das Rollenmodell schliesst das
+// organisatorisch nicht aus).
+export async function filterAdultUserIds(client: SupabaseClient, organizationId: string, userIds: readonly string[]): Promise<string[]> {
+  if (userIds.length === 0) return []
+  const minors = await client.from('directory_people').select('profile_id').eq('organization_id', organizationId).eq('is_minor', true).in('profile_id', userIds as string[])
+  if (minors.error) throw minors.error
+  const minorProfileIds = new Set(minors.data.map((row) => row.profile_id).filter((id): id is string => id !== null))
+  return userIds.filter((id) => !minorProfileIds.has(id))
+}
+
 export function mapReviewerRow(row: { kind: string; user_id: string | null; role: string | null; target_department_id: string | null; target_team_id: string | null }): DomainReviewerRef {
   if (row.kind === 'user') return { kind: 'user', userId: row.user_id! }
   if (row.kind === 'organization_role') return { kind: 'organization_role', role: row.role! }

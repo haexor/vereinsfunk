@@ -13,7 +13,7 @@ import {
 import { resolveReviewRoute, type MediaGateBlocker, type resolveEffectiveConfig } from '@vereinsfunk/domain'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { buildStageDefinitions, membersWithApprovePermission } from '../services/approvalRouting.js'
+import { buildStageDefinitions, filterAdultUserIds, isAuthorMinor, membersWithApprovePermission } from '../services/approvalRouting.js'
 import { computeMediaGateBlockersForPostVersion } from '../services/mediaGate.js'
 import type { ApiRouteContext } from './context.js'
 import { computeRuleEntry, fetchAllRows, fetchAllRowsForIds, fetchMemberTrust, fetchPolicyRuleRows } from './shared.js'
@@ -45,12 +45,20 @@ export function registerApprovalRoutes(app: FastifyInstance, context: ApiRouteCo
     const trust = await fetchMemberTrust(client, authorId, post.data.organization_id, departmentId, teamId)
     const containsMinors = ((version.data.safety_flags as string[]) ?? []).includes('minor')
     const minorReviewerUserIds = containsMinors ? await membersWithApprovePermission(client, post.data.organization_id, 'organization', null, null) : []
+    // Service-role-Client: directory_people verlangt directory.read, das eine einreichende Person
+    // mit blosser post.submit-Rolle i.d.R. nicht haelt (siehe Kommentar bei isAuthorMinor).
+    const service = supabaseClients.forService()
+    const authorIsMinor = await isAuthorMinor(service, post.data.organization_id, authorId)
+    const authorMinorReviewerUserIds = authorIsMinor
+      ? await filterAdultUserIds(service, post.data.organization_id, await membersWithApprovePermission(client, post.data.organization_id, 'organization', null, null))
+      : []
 
     const route = resolveReviewRoute({
       stages,
       trust,
       author: { userId: authorId },
       media: { containsMinors, reviewerUserIds: minorReviewerUserIds },
+      authorMinor: { isMinor: authorIsMinor, reviewerUserIds: authorMinorReviewerUserIds },
       selfApprovalAllowed: config.policies.selfApprovalAllowed,
       allowReviewExemptions: orgRow?.allow_review_exemptions ?? true,
     })

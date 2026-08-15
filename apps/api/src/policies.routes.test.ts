@@ -411,7 +411,15 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
           },
           rpc: async () => { throw new Error('request_approval should not be called for an unfulfillable route') },
         }) as unknown as SupabaseClient,
-      forService: () => ({ from: () => { throw new Error('forService should not be used') } }) as unknown as SupabaseClient,
+      // isAuthorMinor liest ueber den Service-Client (siehe Kommentar dort) -- die Autorin ist hier
+      // nicht minderjaehrig, kein directory_people-Treffer.
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'directory_people') return chain({ data: [], error: null })
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
     }
     const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
     const token = await signAccessToken(USER_ID)
@@ -422,6 +430,46 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
     })
     expect(response.statusCode).toBe(422)
     expect(response.json()).toMatchObject({ error: 'unfulfillable_stage', blockers: [{ kind: 'empty_reviewer_pool', stageLabel: 'Abteilung' }] })
+  })
+
+  it('rejects requesting approval with 422 when the author is a minor and no adult can approve', async () => {
+    // Nutzerentscheidung 2026-08-16: feste Plattformregel, keine Vereinseinstellung -- greift auch
+    // wenn keine einzige Ebene review_required setzt.
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'post_versions') return chain({ data: { id: POST_VERSION_ID, post_id: POST_ID, created_by_user_id: USER_ID, safety_flags: [] }, error: null })
+            if (table === 'posts') return chain({ data: { id: POST_ID, organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: null, status: 'draft_ready' }, error: null })
+            if (table === 'policy_settings') {
+              return chain({ data: [{ id: 'p1', scope: 'organization', department_id: null, team_id: null, ...emptyPolicyRuleColumns(), review_required: false }], error: null })
+            }
+            if (table === 'organization_memberships' || table === 'department_memberships' || table === 'team_memberships') return chain({ data: [], error: null })
+            if (table === 'member_review_trust') return chain({ data: [], error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+          rpc: async () => { throw new Error('request_approval should not be called for an unfulfillable route') },
+        }) as unknown as SupabaseClient,
+      // Der Autor ist laut Vereinsverzeichnis minderjaehrig -- kein organization_memberships-Eintrag
+      // bedeutet: kein erwachsener Prueferkreis, also ein Blocker statt einer stillschweigend leeren
+      // Route.
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'directory_people') return chain({ data: [{ id: 'dp1' }], error: null })
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/post-versions/${POST_VERSION_ID}/request-approval`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(422)
+    expect(response.json()).toMatchObject({ error: 'unfulfillable_stage', blockers: [{ kind: 'empty_reviewer_pool', stageLabel: 'Minderjährige:r Verfasser:in' }] })
   })
 
   it('resolves an organization-level approver into the reviewer snapshot of a DEPARTMENT stage', async () => {
@@ -455,7 +503,15 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
             return { data: { postId: POST_ID, status: 'awaiting_approval', approvalRequestId: APPROVAL_REQUEST_ID }, error: null }
           },
         }) as unknown as SupabaseClient,
-      forService: () => ({ from: () => { throw new Error('forService should not be used') } }) as unknown as SupabaseClient,
+      // isAuthorMinor liest ueber den Service-Client (siehe Kommentar dort) -- die Autorin ist hier
+      // nicht minderjaehrig, kein directory_people-Treffer.
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'directory_people') return chain({ data: [], error: null })
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
     }
     const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
     const token = await signAccessToken(USER_ID)

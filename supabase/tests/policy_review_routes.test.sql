@@ -241,7 +241,7 @@ set local role postgres;
 select throws_ok(
   $$select authz.assert_valid_stage_list(
     '64000000-1000-4000-8000-000000000001'::uuid, '64000000-0000-4000-8000-000000000001'::uuid,
-    false, false, true,
+    false, false, false, true,
     jsonb_build_array(jsonb_build_object(
       'position', 1, 'scope', 'organization', 'scopeDepartmentId', null, 'scopeTeamId', null,
       'label', 'Eingeschleust', 'mode', 'named', 'minimumApprovals', 1, 'isMinorStage', false,
@@ -254,7 +254,7 @@ select throws_ok(
 select throws_ok(
   $$select authz.assert_valid_stage_list(
     '64000000-1000-4000-8000-000000000001'::uuid, '64000000-0000-4000-8000-000000000001'::uuid,
-    false, true, true, '[]'::jsonb
+    false, false, true, true, '[]'::jsonb
   )$$,
   'P0001', 'review_required', 'assert_valid_stage_list rejects an empty stage list when review is actually required'
 );
@@ -263,7 +263,7 @@ select set_config('request.jwt.claim.sub', '64000000-0000-4000-8000-000000000001
 select throws_ok(
   $$select authz.assert_valid_stage_list(
     '64000000-1000-4000-8000-000000000001'::uuid, '64000000-0000-4000-8000-000000000001'::uuid,
-    false, false, true, '[]'::jsonb
+    false, false, false, true, '[]'::jsonb
   )$$,
   '42501', null, 'authenticated cannot call authz.assert_valid_stage_list directly -- only request_approval/reresolve_approval_route may'
 );
@@ -366,7 +366,7 @@ set local role postgres;
 select throws_ok(
   $$select authz.assert_valid_stage_list(
     '64000000-1000-4000-8000-000000000001'::uuid, '64000000-0000-4000-8000-000000000001'::uuid,
-    true, false, true,
+    true, false, false, true,
     jsonb_build_array(
       jsonb_build_object('position', 1, 'scope', 'department', 'scopeDepartmentId', '64000000-1100-4000-8000-000000000001', 'scopeTeamId', null,
         'label', 'Abteilung', 'mode', 'named', 'minimumApprovals', 1, 'isMinorStage', false,
@@ -381,7 +381,7 @@ select throws_ok(
 select throws_ok(
   $$select authz.assert_valid_stage_list(
     '64000000-1000-4000-8000-000000000001'::uuid, '64000000-0000-4000-8000-000000000001'::uuid,
-    false, false, true,
+    false, false, false, true,
     jsonb_build_array(jsonb_build_object(
       'position', 1, 'scope', 'department', 'scopeDepartmentId', '64000000-1100-4000-8000-000000000001', 'scopeTeamId', null,
       'label', 'Ohne Pruefer', 'mode', 'named', 'minimumApprovals', 1, 'isMinorStage', false,
