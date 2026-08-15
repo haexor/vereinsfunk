@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AnthropicStructuredContentGenerator, assertCaptionLength, countCharactersForPlatform, FakeContentGenerator, OpenAiCompatibleStructuredContentGenerator, createGroundedContentBrief, type ContentGenerationError } from './index.js'
+import { AnthropicStructuredContentGenerator, assertCaptionLength, buildStructuredTextPrompt, countCharactersForPlatform, FakeContentGenerator, OpenAiCompatibleStructuredContentGenerator, createGroundedContentBrief, type ContentGenerationError } from './index.js'
 import type { GeneratedPost } from '@vereinsfunk/contracts'
 
 describe('fake content generator', () => {
@@ -27,6 +27,58 @@ describe('structured content generator', () => {
   }
   const input = { brief: createGroundedContentBrief(source), styleProfile: { name: 'Klar', description: 'Kurz', styleRules: { toneTags: ['klar'], catchphrases: [], examples: [], additionalInstructions: '' }, avoidRules: [], doRules: [] }, model: 'synthetic', baseUrl: 'https://provider.example/v1', apiKey: 'secret', temperature: 0.2, maxOutputTokens: 400 }
   const grounded = { verifiedFacts: ['topic: Passen'], missingFacts: [], headline: 'Passen', caption: 'Passen', shortCaption: 'Passen', callToAction: '', hashtags: [], altText: 'Passen', templateId: 'v1', safetyFlags: [], generatedClaims: [{ sourceId: 'fact:topic', text: 'topic: Passen' }], variants: [] }
+  it('states the complete JSON output contract and keeps few-shot output as a prose style example', () => {
+    const prompt = buildStructuredTextPrompt({
+      ...input,
+      styleProfile: {
+        ...input.styleProfile,
+        styleRules: {
+          ...input.styleProfile.styleRules,
+          examples: [{ input: '3:1 im Derby', output: 'Was für ein Derbytag – drei Punkte für unser Team.' }],
+        },
+      },
+    })
+
+    expect(prompt.system).toContain('Gib ausschließlich ein JSON-Objekt ohne Markdown oder Begleittext zurück.')
+    expect(prompt.system).toContain('"verifiedFacts"')
+    expect(prompt.system).toContain('"generatedClaims"')
+    expect(prompt.system).toContain('"variants"')
+    expect(prompt.system).toContain('Ihr Feld output enthält unformatierten Beispieltext, keinen vollständigen Modell-Output.')
+    expect(prompt.system).toContain('"output":"Was für ein Derbytag – drei Punkte für unser Team."')
+
+    const schemaMarker = 'Die folgenden Schlüssel und Typen sind verbindlich; jede Antwort muss diesem JSON-Schema entsprechen:\n'
+    const schemaStart = prompt.system.indexOf(schemaMarker)
+    expect(schemaStart).toBeGreaterThanOrEqual(0)
+    const schema = JSON.parse(prompt.system.slice(schemaStart + schemaMarker.length))
+
+    expect(schema).toMatchObject({
+      type: 'object', additionalProperties: false,
+      required: ['verifiedFacts', 'missingFacts', 'headline', 'caption', 'shortCaption', 'callToAction', 'hashtags', 'altText', 'templateId', 'safetyFlags', 'generatedClaims', 'variants'],
+    })
+    expect(Object.keys(schema.properties)).toEqual(schema.required)
+    expect(schema.properties.safetyFlags.items).toEqual({
+      type: 'string', enum: ['minor', 'missing_consent', 'uncertain_fact', 'sensitive_data'],
+    })
+    expect(schema.properties.generatedClaims.items).toEqual({
+      type: 'object', additionalProperties: false, required: ['sourceId', 'text'],
+      properties: { sourceId: { type: 'string' }, text: { type: 'string' } },
+    })
+    expect(schema.properties.variants.items).toEqual({
+      type: 'object',
+      additionalProperties: false,
+      required: ['platform', 'format', 'headline', 'caption', 'callToAction', 'hashtags', 'altText', 'layoutFamily', 'claimSourceIds', 'slidePlan'],
+      properties: {
+        platform: { type: 'string', enum: ['instagram', 'facebook'] },
+        format: { type: 'string', enum: ['feed_image', 'carousel', 'story', 'reel'] },
+        headline: { type: 'string' }, caption: { type: 'string' }, callToAction: { type: 'string' },
+        hashtags: { type: 'array', items: { type: 'string' } }, altText: { type: 'string' },
+        layoutFamily: { type: 'string', enum: ['photo_moment', 'training', 'quote', 'collage', 'invitation', 'thanks', 'result'] },
+        claimSourceIds: { type: 'array', items: { type: 'string' } },
+        slidePlan: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['role'], properties: { role: { type: 'string' } } } },
+      },
+    })
+  })
+
   it('parses structured output and never exposes an API key in its error', async () => {
     const generator = new OpenAiCompatibleStructuredContentGenerator(async (_url, init) => {
       expect(new Headers(init.headers).get('authorization')).toBe('Bearer secret')
