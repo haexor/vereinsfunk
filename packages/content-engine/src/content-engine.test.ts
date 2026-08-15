@@ -33,6 +33,7 @@ describe('structured content generator', () => {
       const schema = JSON.parse(String(init.body)).response_format.json_schema.schema
       expect(schema.properties.generatedClaims.items).toMatchObject({ additionalProperties: false, required: ['sourceId', 'text'] })
       expect(schema.properties.variants.items.properties.slidePlan.items).toMatchObject({ additionalProperties: false, required: ['role'] })
+      expect(schema.properties.variants.items.required).toContain('slidePlan')
       // A provider answer with a plausible-but-not-quite-right value (e.g. format "post") must be
       // rejected by the provider itself instead of silently passing its schema and only failing our
       // own Zod parse afterwards as an opaque provider_schema error.
