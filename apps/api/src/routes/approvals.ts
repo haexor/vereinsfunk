@@ -13,7 +13,7 @@ import {
 import { resolveReviewRoute, type MediaGateBlocker, type resolveEffectiveConfig } from '@vereinsfunk/domain'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { buildStageDefinitions, membersWithApprovePermission } from '../services/approvalRouting.js'
+import { buildStageDefinitions, filterAdultUserIds, isAuthorMinor, membersWithApprovePermission } from '../services/approvalRouting.js'
 import { computeMediaGateBlockersForPostVersion } from '../services/mediaGate.js'
 import type { ApiRouteContext } from './context.js'
 import { computeRuleEntry, fetchAllRows, fetchAllRowsForIds, fetchMemberTrust, fetchPolicyRuleRows } from './shared.js'
@@ -44,13 +44,29 @@ export function registerApprovalRoutes(app: FastifyInstance, context: ApiRouteCo
     const authorId = version.data.created_by_user_id as string
     const trust = await fetchMemberTrust(client, authorId, post.data.organization_id, departmentId, teamId)
     const containsMinors = ((version.data.safety_flags as string[]) ?? []).includes('minor')
-    const minorReviewerUserIds = containsMinors ? await membersWithApprovePermission(client, post.data.organization_id, 'organization', null, null) : []
+    // Service-role-Client: directory_people verlangt directory.read, das eine einreichende Person
+    // mit blosser post.submit-Rolle i.d.R. nicht haelt (siehe Kommentar bei isAuthorMinor).
+    const service = supabaseClients.forService()
+    const authorIsMinor = await isAuthorMinor(service, post.data.organization_id, authorId)
+    // Ueber den Service-Client: organization_memberships_select zeigt einer einreichenden Person
+    // ohne organization.manage per RLS nur die eigene Mitgliedschaftszeile, nicht die anderer
+    // Genehmigender -- mit dem Aufrufer-Client waere der Pruefkreis dieser beiden unbefreibaren
+    // Vereinsstufen fuer die meisten Einreichenden faelschlich leer (422 trotz vorhandener
+    // erwachsener Genehmigender). Einmal geladen, fuer beide Minderjaehrigenstufen wiederverwendet
+    // -- beide fragen denselben vereinsweiten Genehmigungskreis ab, ein zweiter identischer Aufruf
+    // waere nur verschwendet.
+    const orgApproverUserIds = containsMinors || authorIsMinor
+      ? await membersWithApprovePermission(service, post.data.organization_id, 'organization', null, null)
+      : []
+    const minorReviewerUserIds = containsMinors ? orgApproverUserIds : []
+    const authorMinorReviewerUserIds = authorIsMinor ? await filterAdultUserIds(service, post.data.organization_id, orgApproverUserIds) : []
 
     const route = resolveReviewRoute({
       stages,
       trust,
       author: { userId: authorId },
       media: { containsMinors, reviewerUserIds: minorReviewerUserIds },
+      authorMinor: { isMinor: authorIsMinor, reviewerUserIds: authorMinorReviewerUserIds },
       selfApprovalAllowed: config.policies.selfApprovalAllowed,
       allowReviewExemptions: orgRow?.allow_review_exemptions ?? true,
     })

@@ -136,7 +136,7 @@ async function reresolve(item: StalledApprovalRequest) {
             <span v-if="stageItem.isOverdue" class="rounded-full bg-amber-100 px-3 py-1 text-[11px] font-bold text-amber-800">Überfällig</span>
           </div>
           <div v-if="stageItem.isMinorStage" class="my-4 flex items-center gap-2 rounded-xl bg-[#f1f4ed] p-3 text-[10px] font-medium text-[#58635b]">
-            <ShieldCheck :size="15" class="text-emerald-700" /> Minderjährigenschutz — diese Stufe ist unbefreibar.
+            <ShieldCheck :size="15" class="text-emerald-700" /> Diese Stufe ist unbefreibar.
           </div>
           <ul v-if="stageItem.mediaGateBlockers.length" class="my-4 space-y-1.5">
             <li v-for="blocker in stageItem.mediaGateBlockers" :key="blocker" class="flex items-center gap-2 rounded-xl bg-amber-50 p-3 text-[10px] font-medium text-amber-800">

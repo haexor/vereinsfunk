@@ -57,12 +57,24 @@ describe('resolveReviewRoute', () => {
   const author = { userId: 'author' }
   const noMinors = { containsMinors: false }
 
-  function route(stages: readonly StageDefinition[], trust: readonly TrustRecord[], overrides: Partial<{ selfApprovalAllowed: boolean; allowReviewExemptions: boolean; containsMinors: boolean; minorReviewerUserIds: readonly string[] }> = {}) {
+  function route(
+    stages: readonly StageDefinition[],
+    trust: readonly TrustRecord[],
+    overrides: Partial<{
+      selfApprovalAllowed: boolean
+      allowReviewExemptions: boolean
+      containsMinors: boolean
+      minorReviewerUserIds: readonly string[]
+      authorIsMinor: boolean
+      authorMinorReviewerUserIds: readonly string[]
+    }> = {},
+  ) {
     return resolveReviewRoute({
       stages,
       trust,
       author,
       media: { containsMinors: overrides.containsMinors ?? noMinors.containsMinors, reviewerUserIds: overrides.minorReviewerUserIds ?? ['kinderschutz'] },
+      authorMinor: { isMinor: overrides.authorIsMinor ?? false, reviewerUserIds: overrides.authorMinorReviewerUserIds ?? ['erwachsene'] },
       selfApprovalAllowed: overrides.selfApprovalAllowed ?? true,
       allowReviewExemptions: overrides.allowReviewExemptions ?? true,
     })
@@ -116,6 +128,27 @@ describe('resolveReviewRoute', () => {
     const orgIndex = result.stages.findIndex((stage) => stage.scope === 'organization' && !stage.isMinorStage)
     expect(minorIndex).toBeGreaterThan(-1)
     expect(minorIndex).toBeLessThan(orgIndex)
+  })
+
+  // Feste Plattformregel (Nutzerentscheidung 2026-08-16, kein Vereinsschalter): unabhaengig von
+  // media.containsMinors -- die verfassende Person selbst ist minderjaehrig, nicht eine abgebildete.
+  it('inserts an unwaivable author-minor stage even when no scope requires review and the organization-wide waiver is set', () => {
+    const result = route([teamStage, departmentStage, organizationStage], [{ scope: 'organization', submitAllowed: true, reviewRequirement: 'waived' }], { authorIsMinor: true })
+    const minorStage = result.stages.find((stage) => stage.isMinorStage)
+    expect(minorStage).toBeDefined()
+    expect(minorStage?.label).toBe('Minderjährige:r Verfasser:in')
+  })
+
+  it('produces two distinct minor stages when the author is a minor and the media also depicts one', () => {
+    const result = route([], [], { containsMinors: true, authorIsMinor: true })
+    const minorLabels = result.stages.filter((stage) => stage.isMinorStage).map((stage) => stage.label)
+    expect(minorLabels).toEqual(['Minderjährigenschutz', 'Minderjährige:r Verfasser:in'])
+  })
+
+  it('does not include the author in the author-minor reviewer snapshot when self approval is disallowed', () => {
+    const result = route([], [], { selfApprovalAllowed: false, authorIsMinor: true, authorMinorReviewerUserIds: ['author', 'erwachsene'] })
+    expect(result.blockers).toEqual([])
+    expect(result.stages.find((stage) => stage.isMinorStage)?.reviewerUserIds).toEqual(['erwachsene'])
   })
 
   it('removes the author from consideration when selfApprovalAllowed is false, without blocking a stage that has other reviewers', () => {
