@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(12);
+select plan(18);
 
 set local role postgres;
 
@@ -14,7 +14,8 @@ values
   ('00000000-0000-0000-0000-000000000000', '69000000-0000-4000-8000-000000000001', 'authenticated', 'authenticated', 'minderjaehrig@pgtap-minor-author.local', '', '{}', '{}', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '69000000-0000-4000-8000-000000000002', 'authenticated', 'authenticated', 'erwachsen@pgtap-minor-author.local', '', '{}', '{}', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '69000000-0000-4000-8000-000000000003', 'authenticated', 'authenticated', 'minderjaehrig-rolle@pgtap-minor-author.local', '', '{}', '{}', now(), now()),
-  ('00000000-0000-0000-0000-000000000000', '69000000-0000-4000-8000-000000000004', 'authenticated', 'authenticated', 'erwachsener-autor@pgtap-minor-author.local', '', '{}', '{}', now(), now());
+  ('00000000-0000-0000-0000-000000000000', '69000000-0000-4000-8000-000000000004', 'authenticated', 'authenticated', 'erwachsener-autor@pgtap-minor-author.local', '', '{}', '{}', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '69000000-0000-4000-8000-000000000005', 'authenticated', 'authenticated', 'abteilungsleitung@pgtap-minor-author.local', '', '{}', '{}', now(), now());
 
 insert into public.organizations (id, name, slug) values
   ('69000000-1000-4000-8000-000000000001', 'PGTAP Minderjaehrige Verfasser Verein', 'pgtap-minor-author-verein');
@@ -26,7 +27,8 @@ insert into public.organization_memberships (organization_id, user_id, role) val
   ('69000000-1000-4000-8000-000000000001', '69000000-0000-4000-8000-000000000003', 'social_manager');
 insert into public.department_memberships (organization_id, department_id, user_id, role) values
   ('69000000-1000-4000-8000-000000000001', '69000000-1100-4000-8000-000000000001', '69000000-0000-4000-8000-000000000001', 'contributor'),
-  ('69000000-1000-4000-8000-000000000001', '69000000-1100-4000-8000-000000000001', '69000000-0000-4000-8000-000000000004', 'contributor');
+  ('69000000-1000-4000-8000-000000000001', '69000000-1100-4000-8000-000000000001', '69000000-0000-4000-8000-000000000004', 'contributor'),
+  ('69000000-1000-4000-8000-000000000001', '69000000-1100-4000-8000-000000000001', '69000000-0000-4000-8000-000000000005', 'department_admin');
 
 -- Verzeichnis: der Autor UND die Person mit Vereinsrolle sind beide minderjaehrig.
 insert into public.directory_people (organization_id, first_name, last_name, is_minor, guardian_email, profile_id) values
@@ -37,10 +39,14 @@ insert into public.directory_people (organization_id, first_name, last_name, is_
 -- Trotzdem muss die Minderjaehrige-Verfasser:in-Stufe erscheinen (feste Plattformregel).
 insert into public.posts (id, organization_id, department_id, status, created_by) values
   ('69000000-2000-4000-8000-000000000001', '69000000-1000-4000-8000-000000000001', '69000000-1100-4000-8000-000000000001', 'draft_ready', '69000000-0000-4000-8000-000000000001'),
-  ('69000000-2000-4000-8000-000000000002', '69000000-1000-4000-8000-000000000001', '69000000-1100-4000-8000-000000000001', 'draft_ready', '69000000-0000-4000-8000-000000000004');
-insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type, created_by_user_id) values
-  ('69000000-3000-4000-8000-000000000001', '69000000-1000-4000-8000-000000000001', '69000000-2000-4000-8000-000000000001', 1, '{}', '{}', 'user', '69000000-0000-4000-8000-000000000001'),
-  ('69000000-3000-4000-8000-000000000002', '69000000-1000-4000-8000-000000000001', '69000000-2000-4000-8000-000000000002', 1, '{}', '{}', 'user', '69000000-0000-4000-8000-000000000004');
+  ('69000000-2000-4000-8000-000000000002', '69000000-1000-4000-8000-000000000001', '69000000-1100-4000-8000-000000000001', 'draft_ready', '69000000-0000-4000-8000-000000000004'),
+  ('69000000-2000-4000-8000-000000000003', '69000000-1000-4000-8000-000000000001', '69000000-1100-4000-8000-000000000001', 'draft_ready', '69000000-0000-4000-8000-000000000001');
+insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type, created_by_user_id, safety_flags) values
+  ('69000000-3000-4000-8000-000000000001', '69000000-1000-4000-8000-000000000001', '69000000-2000-4000-8000-000000000001', 1, '{}', '{}', 'user', '69000000-0000-4000-8000-000000000001', '{}'),
+  ('69000000-3000-4000-8000-000000000002', '69000000-1000-4000-8000-000000000001', '69000000-2000-4000-8000-000000000002', 1, '{}', '{}', 'user', '69000000-0000-4000-8000-000000000004', '{}'),
+  -- Post C: minderjaehriger Autor UND minderjaehrige Person auf dem Medium gleichzeitig --
+  -- resolve_review_route muss ZWEI unabhaengige is_minor_stage=true-Stufen liefern (Tests 13-18).
+  ('69000000-3000-4000-8000-000000000003', '69000000-1000-4000-8000-000000000001', '69000000-2000-4000-8000-000000000003', 1, '{}', '{}', 'user', '69000000-0000-4000-8000-000000000001', array['minor']);
 
 -- 1-4: authz.resolve_review_route baut fuer den minderjaehrigen Autor genau eine Stufe -- ohne
 -- jede review_required-Einstellung, unwaivable, mit ausschliesslich erwachsenen Pruefer:innen.
@@ -135,6 +141,52 @@ select lives_ok(
     false, false, false, true, '[]'::jsonb
   )$$,
   'assert_valid_stage_list accepts an empty route when neither contains_minors nor author_is_minor nor any_review_required apply'
+);
+
+-- 13-15: beide Minderjaehrigenstufen gleichzeitig -- Medium zeigt eine minderjaehrige Person UND
+-- der Autor ist selbst minderjaehrig. Regressionstest fuer einen im Code-Review gefundenen Fund:
+-- beide Stufen sind scope='organization'/is_minor_stage=true, vor dem Fix ununterscheidbar fuer den
+-- Neuaufloesungs-Abgleich in reresolve_approval_route (Tests 17-18 unten).
+select is(
+  (select count(*)::integer from authz.resolve_review_route('69000000-3000-4000-8000-000000000003')),
+  2, 'resolve_review_route returns two independent stages when both the media and the author trigger minor protection'
+);
+select is(
+  (select count(*)::integer from authz.resolve_review_route('69000000-3000-4000-8000-000000000003') where is_minor_stage),
+  2, 'both stages are flagged is_minor_stage'
+);
+select is(
+  (select array_agg(label order by sort_order) from authz.resolve_review_route('69000000-3000-4000-8000-000000000003')),
+  array['Minderjährigenschutz', 'Minderjährige:r Verfasser:in'], 'the two stages keep their distinct labels'
+);
+
+-- 16: request_approval() legt tatsaechlich zwei getrennte approval_stages-Zeilen an, nicht eine.
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '69000000-0000-4000-8000-000000000001', true);
+select public.request_approval('69000000-3000-4000-8000-000000000003');
+select is(
+  (select count(*)::integer from public.approval_stages
+    where approval_request_id = (select id from public.approval_requests where post_version_id = '69000000-3000-4000-8000-000000000003')
+      and is_minor_stage),
+  2, 'request_approval persists both minor stages as separate rows'
+);
+
+-- 17-18: eine spaetere Neuaufloesung (z. B. durch die Abteilungsleitung) darf nicht an
+-- 'ambiguous_stage_mapping' scheitern und darf die beiden Stufen nicht zu einer verschmelzen --
+-- genau der Fund aus dem Code-Review, den der label-Vergleich im Match-Schluessel behebt.
+select set_config('request.jwt.claim.sub', '69000000-0000-4000-8000-000000000005', true);
+select lives_ok(
+  $$select public.reresolve_approval_route(
+    (select id from public.approval_requests where post_version_id = '69000000-3000-4000-8000-000000000003'),
+    'Testweise Neuaufloesung nach Richtlinienaenderung.'
+  )$$,
+  'reresolve_approval_route does not raise ambiguous_stage_mapping when two minor stages share scope/department/team'
+);
+select is(
+  (select count(*)::integer from public.approval_stages
+    where approval_request_id = (select id from public.approval_requests where post_version_id = '69000000-3000-4000-8000-000000000003')
+      and is_minor_stage),
+  2, 'both minor stages still exist as separate rows after reresolution, not collapsed into one'
 );
 
 select * from finish();

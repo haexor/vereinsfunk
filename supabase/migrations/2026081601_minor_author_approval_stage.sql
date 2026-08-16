@@ -186,18 +186,18 @@ begin
   adult_org_approvers as (
     -- Wie org_approvers, aber ohne Personen, die laut Vereinsverzeichnis selbst minderjaehrig sind
     -- -- "mindestens ein Erwachsener muss freigeben" waere sonst durch eine minderjaehrige Person mit
-    -- Vereinsrolle unterlaufbar (das Rollenmodell schliesst das organisatorisch nicht aus).
-    select array_agg(distinct membership.user_id) as user_ids
-    from public.organization_memberships membership
-    where membership.organization_id = v.organization_id
-      and membership.role in ('organization_owner', 'organization_admin', 'social_manager')
-      and (membership.expires_at is null or membership.expires_at > now())
-      and not exists (
-        select 1 from public.directory_people dp
-        where dp.organization_id = v.organization_id
-          and dp.profile_id = membership.user_id
-          and dp.is_minor = true
-      )
+    -- Vereinsrolle unterlaufbar (das Rollenmodell schliesst das organisatorisch nicht aus). Filtert
+    -- die bereits von org_approvers ermittelte Menge, statt organization_memberships ein zweites Mal
+    -- mit derselben Rollen-/Ablaufbedingung abzufragen -- eine kuenftige Aenderung der Rollenliste
+    -- muss so nur an einer Stelle gepflegt werden.
+    select array_agg(distinct uid) as user_ids
+    from unnest(coalesce((select user_ids from org_approvers), '{}'::uuid[])) uid
+    where not exists (
+      select 1 from public.directory_people dp
+      where dp.organization_id = v.organization_id
+        and dp.profile_id = uid
+        and dp.is_minor = true
+    )
   ),
   candidates as (
     select
@@ -583,7 +583,13 @@ begin
   -- Jede neue Stufe gegen eine noch bestehende Stufe DESSELBEN Schluessels (scope,
   -- scope_department_id, scope_team_id, is_minor_stage) zuordnen -- "position" ist dafuer bewusst
   -- NICHT der Schluessel (Plan, "Fachliches Modell": "Die Zuordnung alt zu neu laeuft nicht ueber
-  -- position").
+  -- position"). Seit dieser Migration koennen zwei is_minor_stage=true-Kandidaten GLEICHZEITIG
+  -- existieren (Medien-Minderjaehrigenschutz UND Minderjaehrige-Verfasser:in-Stufe, beide
+  -- scope='organization', scope_department_id/scope_team_id null) -- ohne weiteres Merkmal waere der
+  -- Schluessel fuer beide identisch. label unterscheidet sie zuverlaessig: fuer beide Minderjaehrigen-
+  -- stufen ist es ein fest verdrahtetes Literal (nicht wie bei regulaeren Stufen aus
+  -- policy_settings.review_stage_label konfigurierbar), fuer regulaere Stufen aendert die
+  -- Zusatzbedingung (not s.is_minor_stage or ...) nichts am bisherigen Verhalten.
   for stage in select * from jsonb_array_elements(new_stages) loop
     loop_index := loop_index + 1;
 
@@ -598,6 +604,7 @@ begin
         and s.scope_department_id is not distinct from (stage->>'scopeDepartmentId')::uuid
         and s.scope_team_id is not distinct from (stage->>'scopeTeamId')::uuid
         and s.is_minor_stage = (stage->>'isMinorStage')::boolean
+        and (not s.is_minor_stage or s.label = stage->>'label')
     ) > 1 then
       raise exception 'ambiguous_stage_mapping';
     end if;
@@ -610,6 +617,7 @@ begin
       and s.scope_department_id is not distinct from (stage->>'scopeDepartmentId')::uuid
       and s.scope_team_id is not distinct from (stage->>'scopeTeamId')::uuid
       and s.is_minor_stage = (stage->>'isMinorStage')::boolean
+      and (not s.is_minor_stage or s.label = stage->>'label')
     limit 1;
 
     if found and matched_status = 'satisfied' then
@@ -672,6 +680,7 @@ begin
         and (ns->>'scopeDepartmentId')::uuid is not distinct from s.scope_department_id
         and (ns->>'scopeTeamId')::uuid is not distinct from s.scope_team_id
         and (ns->>'isMinorStage')::boolean = s.is_minor_stage
+        and (not s.is_minor_stage or (ns->>'label') = s.label)
     );
 
   -- Endgueltige, lueckenlose Nummerierung: erfuellte/uebersprungene/abgelehnte zuerst in ihrer
@@ -725,5 +734,13 @@ begin
   );
 end;
 $$;
+
+-- 5. directory_people.profile_id hatte bisher keinen Index -- der einzige bestehende Index
+--    (directory_people_scope_idx) deckt ihn nicht ab. Diese Migration fuehrt vier neue Abfragen ein,
+--    die auf organization_id + profile_id filtern (resolve_review_route, request_approval,
+--    reresolve_approval_route, sowie isAuthorMinor/filterAdultUserIds in apps/api), alle auf dem
+--    Freigabe-Einreichungspfad -- ohne Index waere das ein Sequential Scan ueber das ganze
+--    Vereinsverzeichnis bei jeder Einreichung/Neuaufloesung.
+create index directory_people_profile_idx on public.directory_people (organization_id, profile_id) where profile_id is not null;
 
 commit;

@@ -44,14 +44,17 @@ export function registerApprovalRoutes(app: FastifyInstance, context: ApiRouteCo
     const authorId = version.data.created_by_user_id as string
     const trust = await fetchMemberTrust(client, authorId, post.data.organization_id, departmentId, teamId)
     const containsMinors = ((version.data.safety_flags as string[]) ?? []).includes('minor')
-    const minorReviewerUserIds = containsMinors ? await membersWithApprovePermission(client, post.data.organization_id, 'organization', null, null) : []
     // Service-role-Client: directory_people verlangt directory.read, das eine einreichende Person
     // mit blosser post.submit-Rolle i.d.R. nicht haelt (siehe Kommentar bei isAuthorMinor).
     const service = supabaseClients.forService()
     const authorIsMinor = await isAuthorMinor(service, post.data.organization_id, authorId)
-    const authorMinorReviewerUserIds = authorIsMinor
-      ? await filterAdultUserIds(service, post.data.organization_id, await membersWithApprovePermission(client, post.data.organization_id, 'organization', null, null))
+    // Einmal geladen, fuer beide Minderjaehrigenstufen wiederverwendet -- beide fragen denselben
+    // vereinsweiten Genehmigungskreis ab, ein zweiter identischer Aufruf waere nur verschwendet.
+    const orgApproverUserIds = containsMinors || authorIsMinor
+      ? await membersWithApprovePermission(client, post.data.organization_id, 'organization', null, null)
       : []
+    const minorReviewerUserIds = containsMinors ? orgApproverUserIds : []
+    const authorMinorReviewerUserIds = authorIsMinor ? await filterAdultUserIds(service, post.data.organization_id, orgApproverUserIds) : []
 
     const route = resolveReviewRoute({
       stages,
