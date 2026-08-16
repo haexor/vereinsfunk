@@ -450,13 +450,16 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
           },
           rpc: async () => { throw new Error('request_approval should not be called for an unfulfillable route') },
         }) as unknown as SupabaseClient,
-      // Der Autor ist laut Vereinsverzeichnis minderjaehrig -- kein organization_memberships-Eintrag
-      // bedeutet: kein erwachsener Prueferkreis, also ein Blocker statt einer stillschweigend leeren
-      // Route.
+      // Der Autor ist laut Vereinsverzeichnis minderjaehrig. Der org-weite Genehmigungskreis fuer die
+      // beiden unbefreibaren Minderjaehrigenstufen laeuft ueber den Service-Client (RLS auf
+      // organization_memberships wuerde einer einreichenden Person ohne organization.manage sonst nur
+      // die eigene Zeile zeigen und faelschlich einen leeren Kreis vorgaukeln) -- hier bewusst leer:
+      // kein erwachsener Prueferkreis, also ein Blocker statt einer stillschweigend leeren Route.
       forService: () =>
         ({
           from: (table: string) => {
-            if (table === 'directory_people') return chain({ data: [{ id: 'dp1' }], error: null })
+            if (table === 'directory_people') return chain({ data: [{ profile_id: USER_ID }], error: null })
+            if (table === 'organization_memberships') return chain({ data: [], error: null })
             throw new Error(`unexpected table in service fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
@@ -470,6 +473,47 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
     })
     expect(response.statusCode).toBe(422)
     expect(response.json()).toMatchObject({ error: 'unfulfillable_stage', blockers: [{ kind: 'empty_reviewer_pool', stageLabel: 'Minderjährige:r Verfasser:in' }] })
+  })
+
+  it('finds the adult org approver for the author-minor stage through the service client even when the submitter cannot see organization_memberships themselves', async () => {
+    // Regression: der Genehmigungskreis dieser unbefreibaren Stufe muss ueber den Service-Client
+    // aufgeloest werden, nicht ueber den Aufrufer-Client -- organization_memberships_select zeigt
+    // einer einreichenden Person ohne organization.manage per RLS nur die eigene Mitgliedschaftszeile.
+    // Das forUser-Fake unten liefert bewusst eine LEERE organization_memberships-Liste (wie es RLS
+    // fuer eine solche Person taete), waehrend das forService-Fake den echten erwachsenen
+    // organization_admin sieht -- die Vorschau darf deshalb NICHT blockieren.
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'post_versions') return chain({ data: { id: POST_VERSION_ID, post_id: POST_ID, created_by_user_id: USER_ID, safety_flags: [] }, error: null })
+            if (table === 'posts') return chain({ data: { id: POST_ID, organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: null, status: 'draft_ready' }, error: null })
+            if (table === 'policy_settings') {
+              return chain({ data: [{ id: 'p1', scope: 'organization', department_id: null, team_id: null, ...emptyPolicyRuleColumns(), review_required: false }], error: null })
+            }
+            if (table === 'organization_memberships' || table === 'department_memberships' || table === 'team_memberships') return chain({ data: [], error: null })
+            if (table === 'member_review_trust') return chain({ data: [], error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+          rpc: async () => ({ data: { postId: POST_ID, status: 'awaiting_approval', approvalRequestId: APPROVAL_REQUEST_ID }, error: null }),
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'directory_people') return chain({ data: [{ profile_id: USER_ID }], error: null })
+            if (table === 'organization_memberships') return chain({ data: [{ user_id: OTHER_USER_ID, role: 'organization_admin' }], error: null })
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/post-versions/${POST_VERSION_ID}/request-approval`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(202)
   })
 
   it('resolves an organization-level approver into the reviewer snapshot of a DEPARTMENT stage', async () => {

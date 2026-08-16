@@ -11,6 +11,27 @@ begin;
 -- sonst koennte eine minderjaehrige Person mit Vereinsrolle (organisatorisch nicht ausgeschlossen)
 -- die eigene Stufe selbst freigeben.
 
+-- 0. authz.is_profile_minor: der Vereinsverzeichnis-Minderjaehrigkeitscheck wird in dieser Migration
+--    an vier Stellen gebraucht (resolve_review_route, adult_org_approvers, request_approval,
+--    reresolve_approval_route) -- ein Helfer statt vier Kopien derselben EXISTS-Abfrage, demselben
+--    Muster wie die uebrigen kleinen authz.is_*-Praedikate (is_organization_member,
+--    is_user_member_of_organization).
+create or replace function authz.is_profile_minor(target_organization_id uuid, target_profile_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select exists (
+    select 1 from public.directory_people dp
+    where dp.organization_id = target_organization_id
+      and dp.profile_id = target_profile_id
+      and dp.is_minor = true
+  );
+$$;
+revoke all on function authz.is_profile_minor(uuid, uuid) from public;
+
 -- 1. authz.resolve_review_route: dritte Kandidatenstufe, sort_order 16 -- direkt nach der
 --    Medien-Minderjaehrigenstufe (15), vor einer etwaigen Vereinsstufe (20).
 create or replace function authz.resolve_review_route(target_post_version_id uuid)
@@ -59,12 +80,7 @@ begin
   -- Verfasserin/Verfasser laut Vereinsverzeichnis minderjaehrig? Kein Zusammenhang mit
   -- contains_minors (das betrifft abgebildete Personen im Medium, nicht die Verfasserin/den
   -- Verfasser der Version).
-  select exists (
-    select 1 from public.directory_people dp
-    where dp.organization_id = v.organization_id
-      and dp.profile_id = v.created_by_user_id
-      and dp.is_minor = true
-  ) into author_is_minor;
+  author_is_minor := authz.is_profile_minor(v.organization_id, v.created_by_user_id);
 
   -- "scope" ist unqualifiziert mehrdeutig: RETURNS TABLE(..., scope, ...) legt eine gleichnamige
   -- PL/pgSQL-Variable an, die die Spalte policy_settings.scope/member_review_trust.scope sonst
@@ -192,12 +208,7 @@ begin
     -- muss so nur an einer Stelle gepflegt werden.
     select array_agg(distinct uid) as user_ids
     from unnest(coalesce((select user_ids from org_approvers), '{}'::uuid[])) uid
-    where not exists (
-      select 1 from public.directory_people dp
-      where dp.organization_id = v.organization_id
-        and dp.profile_id = uid
-        and dp.is_minor = true
-    )
+    where not authz.is_profile_minor(v.organization_id, uid)
   ),
   candidates as (
     select
@@ -300,11 +311,22 @@ as $$
 declare
   stage_row jsonb;
   reviewer_elem jsonb;
-  minor_stage_present boolean;
   only_author_reviewer boolean;
 begin
-  minor_stage_present := exists (select 1 from jsonb_array_elements(stages) s where (s->>'isMinorStage')::boolean);
-  if (contains_minors or author_is_minor) and not minor_stage_present then
+  -- Je Ausloeser einzeln geprueft (nicht nur "irgendeine Minderjaehrigenstufe vorhanden") -- seit
+  -- dieser Migration koennen contains_minors und author_is_minor gleichzeitig gelten und verlangen
+  -- dann ZWEI unabhaengige Stufen. Ein Praesenz-Check ueber beide hinweg wuerde eine Route
+  -- durchlassen, die nur EINE der beiden noetigen Stufen enthaelt.
+  if contains_minors and not exists (
+    select 1 from jsonb_array_elements(stages) s
+    where (s->>'isMinorStage')::boolean and s->>'label' = 'Minderjährigenschutz'
+  ) then
+    raise exception 'minor_stage_required';
+  end if;
+  if author_is_minor and not exists (
+    select 1 from jsonb_array_elements(stages) s
+    where (s->>'isMinorStage')::boolean and s->>'label' = 'Minderjährige:r Verfasser:in'
+  ) then
     raise exception 'minor_stage_required';
   end if;
   if jsonb_array_length(stages) = 0 and (any_review_required or contains_minors or author_is_minor) then
@@ -405,12 +427,7 @@ begin
     );
 
   contains_minors := 'minor' = any(coalesce(version.safety_flags, '{}'));
-  select exists (
-    select 1 from public.directory_people dp
-    where dp.organization_id = post.organization_id
-      and dp.profile_id = version.created_by_user_id
-      and dp.is_minor = true
-  ) into author_is_minor;
+  author_is_minor := authz.is_profile_minor(post.organization_id, version.created_by_user_id);
 
   for route_row in select * from authz.resolve_review_route(target_post_version_id) loop
     position_counter := position_counter + 1;
@@ -537,12 +554,7 @@ begin
       or (scope = 'team' and post.team_id is not null and team_id = post.team_id)
     );
   contains_minors := 'minor' = any(coalesce(version.safety_flags, '{}'));
-  select exists (
-    select 1 from public.directory_people dp
-    where dp.organization_id = post.organization_id
-      and dp.profile_id = version.created_by_user_id
-      and dp.is_minor = true
-  ) into author_is_minor;
+  author_is_minor := authz.is_profile_minor(post.organization_id, version.created_by_user_id);
 
   -- Redigierte Projektion des bisherigen Zustands, VOR jeder Aenderung -- ohne Pruefer-IDs (Plan,
   -- "Datenmodell").

@@ -61,9 +61,8 @@ export async function membersWithApprovePermission(
 // authz.resolve_review_route ist ohnehin die massgebliche Quelle, aber die Client-Vorschau soll
 // denselben Befund liefern.
 export async function isAuthorMinor(client: SupabaseClient, organizationId: string, profileId: string): Promise<boolean> {
-  const result = await client.from('directory_people').select('id').eq('organization_id', organizationId).eq('profile_id', profileId).eq('is_minor', true).limit(1)
-  if (result.error) throw result.error
-  return result.data.length > 0
+  const adults = await filterAdultUserIds(client, organizationId, [profileId])
+  return adults.length === 0
 }
 
 // Schraenkt eine Liste von userIds auf Personen ein, die laut Vereinsverzeichnis NICHT selbst

@@ -372,7 +372,7 @@ select throws_ok(
         'label', 'Abteilung', 'mode', 'named', 'minimumApprovals', 1, 'isMinorStage', false,
         'reviewerSnapshot', jsonb_build_array(jsonb_build_object('userId', '64000000-0000-4000-8000-000000000002')), 'deadlineHours', null),
       jsonb_build_object('position', 3, 'scope', 'organization', 'scopeDepartmentId', null, 'scopeTeamId', null,
-        'label', 'Uebersprungen', 'mode', 'named', 'minimumApprovals', 1, 'isMinorStage', true,
+        'label', 'Minderjährigenschutz', 'mode', 'named', 'minimumApprovals', 1, 'isMinorStage', true,
         'reviewerSnapshot', jsonb_build_array(jsonb_build_object('userId', '64000000-0000-4000-8000-000000000003')), 'deadlineHours', null)
     )
   )$$,

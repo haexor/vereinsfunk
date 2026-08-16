@@ -48,10 +48,15 @@ export function registerApprovalRoutes(app: FastifyInstance, context: ApiRouteCo
     // mit blosser post.submit-Rolle i.d.R. nicht haelt (siehe Kommentar bei isAuthorMinor).
     const service = supabaseClients.forService()
     const authorIsMinor = await isAuthorMinor(service, post.data.organization_id, authorId)
-    // Einmal geladen, fuer beide Minderjaehrigenstufen wiederverwendet -- beide fragen denselben
-    // vereinsweiten Genehmigungskreis ab, ein zweiter identischer Aufruf waere nur verschwendet.
+    // Ueber den Service-Client: organization_memberships_select zeigt einer einreichenden Person
+    // ohne organization.manage per RLS nur die eigene Mitgliedschaftszeile, nicht die anderer
+    // Genehmigender -- mit dem Aufrufer-Client waere der Pruefkreis dieser beiden unbefreibaren
+    // Vereinsstufen fuer die meisten Einreichenden faelschlich leer (422 trotz vorhandener
+    // erwachsener Genehmigender). Einmal geladen, fuer beide Minderjaehrigenstufen wiederverwendet
+    // -- beide fragen denselben vereinsweiten Genehmigungskreis ab, ein zweiter identischer Aufruf
+    // waere nur verschwendet.
     const orgApproverUserIds = containsMinors || authorIsMinor
-      ? await membersWithApprovePermission(client, post.data.organization_id, 'organization', null, null)
+      ? await membersWithApprovePermission(service, post.data.organization_id, 'organization', null, null)
       : []
     const minorReviewerUserIds = containsMinors ? orgApproverUserIds : []
     const authorMinorReviewerUserIds = authorIsMinor ? await filterAdultUserIds(service, post.data.organization_id, orgApproverUserIds) : []
