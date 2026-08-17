@@ -1,36 +1,28 @@
 # Prompt für die nächste Session
 
-Arbeite im Repository-Root dieses Checkouts. Beginne mit `git status --short --branch`, `git fetch origin` und `git log --oneline origin/main..HEAD`. Paket 042 ist vollständig abgeschlossen: PR #74 (PR 1), #75 (PR 2) und #76 (PR 3, samt Review-Fixes) sind alle gemergt.
+Arbeite im Repository-Root dieses Checkouts. Beginne mit `git status --short --branch`, `git fetch origin` und `git log --oneline origin/main..HEAD`.
 
-## Ausgangslage: Paket 042 abgeschlossen, Paket 039 ausgeplant
+## Ausgangslage: Plan 045 ausgeplant, PR 0 ist der nächste Schritt
 
-`plans/042-llm-laufzeitparameter-vom-provider-zur-sitzung.md` ist umgesetzt. `temperature` ist eine Beitrags-Einstellung des Mitglieds (vier feste Stufen), die Längengrenze eine betreibergepflegte **Zeichen**-Vorgabe je Ziel-Plattform, und die Zielplattform-Auswahl ist auf das begrenzt, worauf der Scope tatsächlich veröffentlichen kann (422 `platform_not_available`). Step 4 des Plans — getrennte Texte je Plattform — ist bewusst ein eigenes Folgepaket geblieben.
+`plans/045-bildstil-rahmen-logo-und-filter-fuer-beitragsfotos.md` ist am 2026-08-17 ausgeplant (dieser PR liefert nur die Plandatei + diesen Eintrag, noch keinen Anwendungscode). Auslöser: der Wunsch nach vereinsdefinierten Bildstil-Presets (Rahmen, Vereinslogo als Wasserzeichen in wählbarer Ecke, Fotofilter) für Beitragsbilder.
 
-### Aus dem Code-Review von PR #76 nachgezogen (Commit `4cac8c0c`)
+**Wichtigster Befund der Ausplanung**: die Foto-Pipeline, auf der dieses Feature aufbauen müsste, existiert nicht — sie ist eine Fassade, verifiziert direkt gegen den Code (nicht gegen Plan-Statustexte):
 
-- **`no_channel` verdeckte richtlinienbedingte Ausschlüsse.** Beide Vergleichsauflösungen trugen `require_channel_responsible`, also meldete die Route für einen existierenden Kanal ohne verantwortliche Person „kein Kanal eingerichtet“ — der Verein hätte einen zweiten Kanal angelegt statt die Person einzutragen. Die Vergleichsauflösung lässt jetzt **alle** Richtlinien fallen.
-- **Regression bei der Zeichengrenze.** Eine fehlende `text_generation_platform_defaults`-Zeile zählte über den eingesetzten Fallback in der `min()`-Bildung mit und zog eine höher gesetzte Vorgabe herunter. `resolveTextGenerationPlatformAvailability` gibt `maxCharacters` jetzt als `number | null` zurück; der Fallback sitzt beim Aufrufer, der ihn wirklich braucht (Anzeige), nicht in der geteilten Auflösung.
-- **`GET /v1/text-generation-capabilities`** wählt den Provider mit demselben `llm_provider_secrets!inner`-Join wie `loadActiveTextProvider()` im Worker — ohne ihn meldete die Route das Protokoll einer Zeile, die nie generiert.
-- `providerSendsTemperature()` als **eine** Quelle statt zweier `protocol === 'openai'`-Vergleiche in API und Worker; `toChannelCandidates()` mit `routes/channels.ts` geteilt.
-- Drei Ehrlichkeitsfehler in `erstellen.vue`: pauschaler Erklärtext statt des tatsächlichen Grundes, „Modell unterstützt das nicht“ bei bloß fehlgeschlagener Abfrage (samt stillem Verlust der gewählten Stufe), ausgeblendetes Feld nach Ladefehler.
-- **Test-Fake für `policy_settings`** bildet beide Lesearten ab (Array *und* `maybeSingle`). Vorher lief jeder Test mit `require_channel_responsible = false`, egal was seine Vorrichtung behauptete.
+- `LocalUploadService` (`apps/api/src/app.ts:63-66`) ist ein No-op-Stub — `complete()` schreibt nie in die DB, `upload_status` wird nie `'ready'`.
+- `ImageAnonymizer` (`packages/media-processing/src/index.ts`) hat keine Implementierung; `ManualOnlyFaceDetector` liefert immer `[]`. Keine Route schreibt je in `face_regions`.
+- Kein Code erzeugt je eine `media_derivatives`-Zeile oder verknüpft `post_media` mit einem Beitrag. Die Hatchet-Workflows `render-content`/`anonymize-media` sind nur registrierte Hüllen, der Executor wirft für sie sofort `product_executor_unavailable`.
+- **Sicherheitsrelevanter Nebenfund**: `facesConfirmedComplete` ist in `apps/api/src/services/mediaGate.ts:42,130` hartcodiert `true`; `media_assets.scan_status` wird nirgends auf `'clean'` gesetzt. Beides bislang folgenlos, weil die vorgelagerten Tabellen leer bleiben — wird aber mit dem ersten echten Schreiber (PR 0 dieses Pakets) erstmals wirksam und muss dort behoben sein, bevor echte Fotos fließen.
+
+Damit hängt an Plan 045 auch die seit Paket 032 offene Lücke „Foto-/Video-Anhänge bleiben bis Plan 002 gesperrt" — PR 0 baut Plan 002 pragmatisch verkleinert nach (kein Virenscan, keine automatische Gesichtserkennung, keine Bildverdeckung — das bleibt Plan 003), nicht dessen volle ursprüngliche Ambition.
 
 ## Nächster Schritt
 
-**Paket 039** (`plans/039-vereins-website-als-kanal.md`, am 2026-08-14 ausgeplant) ist der fachlich dringlichste Punkt, weil Paket 042 eine Sackgasse hinterlassen hat: seit PR 3 verlangt `targetPlatforms` mindestens einen Eintrag und die Route lehnt jede Plattform ohne Kanal ab — **ein Verein ohne Instagram- oder Facebook-Kanal kann die Textwerkstatt damit überhaupt nicht mehr benutzen.**
+**Plan 045, PR 0** umsetzen (Abschnitt „Umsetzung" im Plan): echter Upload-Service, `people_reviewed_at`-Prüfsignal + Gate-Verdrahtung in TS **und** SQL, minimale Foto-Markier-UI in `erstellen.vue`, Pass-Through-Derivat, echte `post_media`-Verknüpfung über eine Erweiterung von `accept_text_generation_candidate`. Ergebnis: ein *ungestyltes* Foto ist Ende-zu-Ende veröffentlichbar, bevor PR 1-3 (Bildstil-Presets, Sharp-Compositing, `erstellen.vue`-Integration) darauf aufbauen. Realistisch ein eigener Arbeitsblock — nicht mehr im selben Rutsch wie die Ausplanung.
 
-Betreiberentscheidung vom 2026-08-14: der eigene Blog ist **ein Kanal wie jeder andere**. Vom Vereins-Admin angelegt, über `channel_scopes` den Abteilungen zugeteilt, mit eigener Längengrenze unterhalb der harten Obergrenze (`MaxCharactersSchema`, 100–10000). Damit braucht die Textwerkstatt keinen Sonderfall — `resolveAvailableChannels` beantwortet die Frage für einen Blog wie für Instagram, und die Sackgasse löst sich als Nebenwirkung.
+### Danach
 
-Zwei Dinge sind beim Umsetzen wichtig:
+- **PR 1-3 aus Plan 045**: Bildstil-Datenmodell + `/bildstil`-Seite, Sharp-Compositing-Engine, Preset-Auswahl in `erstellen.vue`. Details im Plan.
+- **Paket 038** (Hatchet produktiv betreiben) bleibt der dringlichste **Betriebs**punkt, unabhängig von 045: `vereinsfunk-worker` crash-loopt in Produktion seit dem Merge von Plan 004 (Stand des letzten Checks — vor Weiterarbeit den aktuellen Betriebsstatus im `ansible`-Repo prüfen, siehe [[feedback_live_zustand_vor_infra_arbeit_pruefen]]).
+- **029**, **031** und **043** sind weiterhin als offen/bereit markiert, unabhängig von 045.
 
-1. **`social_connections` kennt heute keinen Anlageweg ohne OAuth.** Zeilen entstehen ausschließlich in `apps/api/src/routes/channelOAuth.ts:198`; eine `POST /v1/channels`-Route existiert nicht. Das Token selbst liegt seit Paket 012 auf der getrennten Tabelle `social_connection_secrets`, nicht auf `social_connections` — ein Website-Kanal braucht dort einfach keine Zeile. Beides ist Teil von PR 1.
-2. **Der Plattform-CHECK steht an sieben Stellen in SQL.** Ein übersehener schlägt erst beim ersten echten Blog-Beitrag zu, nicht beim Anlegen des Kanals — die Liste steht im Plan unter „Current state“.
-
-Der **Auslieferungsmechanismus** (wie der Beitrag auf die Vereinsseite kommt: Feed, Webhook, CMS-Plugin, Einbettcode) ist bewusst **nicht** Teil von 039 und braucht erst eine Ausgangslage-Recherche und eine Betreiberentscheidung.
-
-### Danach / alternativ
-
-- **Paket 043** (Einstellungen eines früheren Beitrags erneut laden). Ersetzt das früher vorgesehene „Pro-Plattform-Varianten“-Paket: Betreiberentscheidung vom 2026-08-14 ist, dass eine gemeinsame Plattformauswahl **einen** Beitrag mit der Grenze des restriktivsten Mediums ergibt (Blog + X ⇒ 280 Zeichen, auf beiden gleich veröffentlicht) und ein eigener Text je Plattform über je eine eigene Sitzung entsteht. `GeneratedPostSchema.variants` bleibt damit leer, und die offene Frage nach zwei Freigaben an einer `post_version` entfällt ersatzlos. Zu bauen ist nur die Bequemlichkeit: die Einstellungen eines früheren Beitrags zurückholen, Plattformauswahl ändern, erneut erzeugen.
-- **Paket 044** (`plans/044-zielplattformen-vorgaben-und-harte-laengengrenze.md`, ebenfalls am 2026-08-14 ausgeplant). Zwei Betreiberentscheidungen: **keine** Plattform ist ab Werk vorausgewählt (Verein/Abteilung können eigene Vorgaben setzen, sonst startet die Auswahl leer), und die Zeichengrenze wird **hart** durchgesetzt statt nur im System-Prompt erbeten. PR 2 daraus ist P1 — die Zusicherung „höchstens N Zeichen“ ist heute schlicht unwahr, und mit einer 280-Zeichen-Plattform wird daraus ein Beitrag, der erst beim Veröffentlichen scheitert, nachdem Ersteller und Prüfer ihre Arbeit hineingesteckt haben.
-- **Paket 038** (Hatchet produktiv betreiben) bleibt der dringlichste **Betriebs**punkt: `vereinsfunk-worker` crash-loopt in Produktion seit dem Merge von Plan 004.
-- **029** und **031** sind weiterhin als bereit markiert.
+Pakete 039, 042 und 044 sind vollständig abgeschlossen und gemergt — falls diese Datei in einer künftigen Session nicht mehr aktuell aussieht, gilt `plans/README.md` als Quelle der Wahrheit, nicht dieser Prompt (siehe [[feedback_plan_status_vor_umsetzung_gegen_code_pruefen]]).
