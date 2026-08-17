@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(78);
+select plan(82);
 
 set local role postgres;
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -511,6 +511,25 @@ select throws_ok(
   $$insert into public.composition_sessions (organization_id, department_id, preset_slug, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, temperature, created_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'training-update', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, encode(sha256('paket-042-invalid-temperature'::bytea), 'hex'), 0.5, '32000000-0000-4000-8000-000000000002')$$,
   '23514', null, 'negative: temperature only accepts one of the four fixed regler steps'
 );
+
+-- Textwerkstatt-Autosaves are personal, tenant-scoped drafts. They are deliberately not exposed
+-- through a broad department membership policy: another editor can see the eventual post, but
+-- never the unfinished raw input of this member.
+set local role postgres;
+insert into public.posts (id, organization_id, department_id, status, created_by) values
+  ('32000000-5100-4000-8000-000000000099', '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'draft_ready', '32000000-0000-4000-8000-000000000002');
+insert into public.text_workshop_drafts (id, organization_id, department_id, post_id, payload, created_by) values
+  ('32000000-5200-4000-8000-000000000099', '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', '32000000-5100-4000-8000-000000000099', '{"factsText":"Übung: Passen"}', '32000000-0000-4000-8000-000000000002');
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '32000000-0000-4000-8000-000000000002', true);
+select is((select count(*)::integer from public.text_workshop_drafts where id = '32000000-5200-4000-8000-000000000099'), 1, 'positive: a draft creator can read their own text workshop draft');
+select set_config('request.jwt.claim.sub', '31000000-0000-4000-8000-000000000001', true);
+select is((select count(*)::integer from public.text_workshop_drafts where id = '32000000-5200-4000-8000-000000000099'), 0, 'negative: a member of another tenant cannot read a text workshop draft');
+select set_config('request.jwt.claim.sub', '32000000-0000-4000-8000-000000000003', true);
+select is((select count(*)::integer from public.text_workshop_drafts where id = '32000000-5200-4000-8000-000000000099'), 0, 'negative: another member of the same organization cannot read a personal text workshop draft');
+set local role postgres;
+update public.posts set status = 'awaiting_approval' where id = '32000000-5100-4000-8000-000000000099';
+select is((select count(*)::integer from public.text_workshop_drafts where id = '32000000-5200-4000-8000-000000000099'), 0, 'a linked workshop draft is removed once its post is submitted for review');
 
 select * from finish();
 rollback;

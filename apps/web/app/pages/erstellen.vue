@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Check, LoaderCircle, RefreshCw, Sparkles } from '@lucide/vue'
+import { Check, LoaderCircle, RefreshCw, Save, Sparkles } from '@lucide/vue'
 import { MaxCharactersSchema, RequestApprovalResponseSchema, SocialPlatformSchema, SourceMaterialSchema, TEXT_GENERATION_DEFAULT_TEMPERATURE, TEXT_GENERATION_TEMPERATURE_STEPS, TextGenerationCapabilitiesSchema, TextGenerationPlatformAvailabilitySchema, TextGenerationTemperatureSchema, UuidSchema, type SocialPlatform, type TextGenerationPlatformAvailability } from '@vereinsfunk/contracts'
 import { z } from 'zod'
 
@@ -69,8 +69,13 @@ const observation = ref('')
 const quote = ref('')
 const doNotMention = ref('')
 const revisionInstruction = ref('')
+const serverDraftId = ref<string | null>(null)
+const draftSaveState = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
 const draftKey = computed(() => session.value && scope.value?.organizationId && scope.value.departmentId ? `vf:text-draft:${session.value.userId}:${scope.value.organizationId}:${scope.value.departmentId}` : null)
 let restoringDraft = false
+let draftSaveTimer: ReturnType<typeof setTimeout> | undefined
+let serverDraftSaveChain: Promise<void> = Promise.resolve()
+let latestServerDraftSave = 0
 
 function sourceMaterial() {
   const facts = Object.fromEntries(factsText.value.split('\n').map((line) => line.split(':')).filter(([key, value]) => key?.trim() && value?.trim()).map(([key, ...rest]) => [key!.trim(), rest.join(':').trim()]))
@@ -81,6 +86,52 @@ function persistDraft() {
   localStorage.setItem(draftKey.value, JSON.stringify({ presetSlug: presetSlug.value, communicationGoal: communicationGoal.value, factsText: factsText.value, observation: observation.value, quote: quote.value, doNotMention: doNotMention.value, selectedProfile: selectedProfile.value, temperature: temperature.value, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }))
 }
 function clearDraft() { if (import.meta.client && draftKey.value) localStorage.removeItem(draftKey.value) }
+function draftPayload() {
+  return { presetSlug: presetSlug.value, communicationGoal: communicationGoal.value, factsText: factsText.value, observation: observation.value, quote: quote.value, doNotMention: doNotMention.value, selectedProfile: selectedProfile.value, temperature: temperature.value, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }
+}
+function hasDraftContent() {
+  const payload = draftPayload()
+  return Boolean(payload.factsText.trim() || payload.observation.trim() || payload.quote.trim() || payload.doNotMention.trim() || payload.presetSlug !== 'training_insight' || payload.communicationGoal !== 'inform' || payload.selectedProfile !== 'klar_erklaerend' || payload.selectedPlatforms.length || payload.maxCharactersOverride.trim())
+}
+async function saveServerDraft({ explicit = false, required = false }: { explicit?: boolean; required?: boolean } = {}): Promise<boolean> {
+  if (draftSaveTimer) { clearTimeout(draftSaveTimer); draftSaveTimer = undefined }
+  if (restoringDraft || !scope.value?.organizationId || !scope.value.departmentId || (!explicit && !hasDraftContent())) return false
+  if (!hasDraftContent()) { notice.value = 'Gib zuerst etwas für den Entwurf ein.'; return false }
+  if (!serverDraftId.value) serverDraftId.value = crypto.randomUUID()
+  const draftId = serverDraftId.value
+  const organizationId = scope.value.organizationId
+  const departmentId = scope.value.departmentId
+  const payload = draftPayload()
+  const saveNumber = ++latestServerDraftSave
+  draftSaveState.value = 'saving'
+  // Capture ID, scope and payload before queuing. Debounced, manual and candidate-triggered
+  // saves all use this one chain, so an older request can never finish after a newer payload and
+  // overwrite it on the server.
+  const queuedSave = serverDraftSaveChain.then(async () => {
+    try {
+      await api.request(`/v1/text-workshop/drafts/${draftId}`, { method: 'PUT', body: { organizationId, departmentId, payload } }, z.object({ draft: z.object({ id: z.string() }) }))
+      if (serverDraftId.value === draftId && saveNumber === latestServerDraftSave) draftSaveState.value = 'saved'
+      return true
+    } catch {
+      if (serverDraftId.value === draftId && saveNumber === latestServerDraftSave) {
+        draftSaveState.value = 'error'
+      }
+      // A required save aborts the next action even when a newer best-effort save is queued.
+      // Keep its failure visible; otherwise the action would appear to do nothing.
+      if (required || (explicit && serverDraftId.value === draftId && saveNumber === latestServerDraftSave)) notice.value = 'Der Entwurf konnte gerade nicht gespeichert werden. Deine Eingaben bleiben lokal erhalten.'
+      return false
+    }
+  })
+  // Keep the queue usable after a failed best-effort save while returning this request's result
+  // to callers that must not continue without a durable server draft.
+  serverDraftSaveChain = queuedSave.then(() => undefined)
+  return queuedSave
+}
+function queueServerDraftSave() {
+  if (restoringDraft || !hasDraftContent()) return
+  if (draftSaveTimer) clearTimeout(draftSaveTimer)
+  draftSaveTimer = setTimeout(() => { void saveServerDraft() }, 900)
+}
 function restoreDraft() {
   if (!import.meta.client || !draftKey.value) return
   try {
@@ -92,8 +143,8 @@ function restoreDraft() {
     if (draft.selectedPlatforms.length) selectedPlatforms.value = draft.selectedPlatforms.filter((platform) => platforms.value.some((entry) => entry.platform === platform && entry.available))
   } catch { clearDraft() }
 }
-watch([presetSlug, communicationGoal, factsText, observation, quote, doNotMention, selectedProfile, temperature, selectedPlatforms, maxCharactersOverride], persistDraft, { flush: 'sync', deep: true })
-watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; candidate.value = null; profiles.value = []; presetSlug.value = 'training_insight'; communicationGoal.value = 'inform'; selectedProfile.value = 'klar_erklaerend'; factsText.value = ''; observation.value = ''; quote.value = ''; doNotMention.value = ''; revisionInstruction.value = ''; temperature.value = TEXT_GENERATION_DEFAULT_TEMPERATURE; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
+watch([presetSlug, communicationGoal, factsText, observation, quote, doNotMention, selectedProfile, temperature, selectedPlatforms, maxCharactersOverride], () => { persistDraft(); queueServerDraftSave() }, { flush: 'sync', deep: true })
+watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; presetSlug.value = 'training_insight'; communicationGoal.value = 'inform'; selectedProfile.value = 'klar_erklaerend'; factsText.value = ''; observation.value = ''; quote.value = ''; doNotMention.value = ''; revisionInstruction.value = ''; temperature.value = TEXT_GENERATION_DEFAULT_TEMPERATURE; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
 
 async function loadProfiles() {
   if (!scope.value?.organizationId || !scope.value.departmentId) return
@@ -128,7 +179,16 @@ async function refreshSession() {
   if (!sessionId.value) return
   const response = await api.request(`/v1/text-workshop/sessions/${sessionId.value}`, {}, z.object({ candidates: z.array(CandidateSchema) }).passthrough())
   candidate.value = response.candidates[0] ?? null
-  if (candidate.value?.status === 'ready') clearDraft()
+}
+async function loadServerDraft(draftId: string) {
+  try {
+    const response = await api.request(`/v1/text-workshop/drafts/${draftId}`, {}, z.object({ draft: z.object({ id: z.string(), payload: z.object({ presetSlug: z.string(), communicationGoal: z.string(), factsText: z.string(), observation: z.string(), quote: z.string(), doNotMention: z.string(), selectedProfile: z.string(), temperature: TextGenerationTemperatureSchema, selectedPlatforms: z.array(SocialPlatformSchema), maxCharactersOverride: z.string() }) }) }))
+    const draft = response.draft
+    serverDraftId.value = draft.id
+    presetSlug.value = draft.payload.presetSlug; communicationGoal.value = draft.payload.communicationGoal; factsText.value = draft.payload.factsText; observation.value = draft.payload.observation; quote.value = draft.payload.quote; doNotMention.value = draft.payload.doNotMention; selectedProfile.value = draft.payload.selectedProfile; temperature.value = draft.payload.temperature; maxCharactersOverride.value = draft.payload.maxCharactersOverride
+    selectedPlatforms.value = draft.payload.selectedPlatforms.filter((platform) => platforms.value.some((entry) => entry.platform === platform && entry.available))
+    persistDraft()
+  } catch { notice.value = 'Der Entwurf konnte nicht geladen werden.' }
 }
 // Wiedereinstieg aus der Beitraege-Liste (?postId=...): laedt die zum Beitrag gehoerende
 // composition_session inklusive letztem Kandidaten und befuellt das Formular exakt wie im Entwurf
@@ -177,6 +237,7 @@ async function createCandidate() {
   if (maxCharacters === 'invalid') { notice.value = 'Die maximale Länge muss zwischen 100 und 10.000 Zeichen liegen.'; return }
   submitting.value = true; notice.value = ''
   try {
+    if (!(await saveServerDraft({ required: true }))) return
     const selected = profiles.value.find((profile) => (profile.id ?? profile.slug) === selectedProfile.value)
     if (!selected) { selectedProfile.value = 'klar_erklaerend'; notice.value = 'Das gewählte Stilprofil ist nicht mehr verfügbar. Bitte wähle erneut.'; submitting.value = false; return }
     const profileChoice = selected.kind === 'custom' ? { styleProfileId: selected.id } : selected.kind === 'persona' ? { personaSlug: selected.slug } : { systemStyleProfileSlug: selected.slug }
@@ -210,7 +271,8 @@ async function acceptCandidate() {
   if (!candidate.value) return
   submitting.value = true; notice.value = ''
   try {
-    const accepted = await api.request(`/v1/text-workshop/candidates/${candidate.value.id}/accept`, { method: 'POST' }, z.union([
+    if (!(await saveServerDraft({ required: true }))) return
+    const accepted = await api.request(`/v1/text-workshop/candidates/${candidate.value.id}/accept`, { method: 'POST', body: serverDraftId.value ? { draftId: serverDraftId.value } : {} }, z.union([
       z.object({ postId: z.string(), postVersionId: z.string(), alreadyAccepted: z.literal(false) }),
       z.object({ postVersionId: z.string(), alreadyAccepted: z.literal(true) }),
     ]))
@@ -222,6 +284,7 @@ async function acceptCandidate() {
     try {
       await api.request(`/v1/post-versions/${accepted.postVersionId}/request-approval`, { method: 'POST' }, RequestApprovalResponseSchema)
       clearDraft()
+      serverDraftId.value = null
       await navigateTo('/beitraege')
     } catch (error) {
       const code = (error as { data?: { error?: string } })?.data?.error
@@ -256,12 +319,16 @@ async function reviseCandidate() {
 restoringDraft = true
 await Promise.all([loadProfiles(), loadPlatformAvailability(), loadCapabilities()])
 const resumePostId = UuidSchema.safeParse(route.query.postId)
-if (resumePostId.success) await loadDraftFromPost(resumePostId.data)
+const resumeDraftId = UuidSchema.safeParse(route.query.draftId)
+if (resumeDraftId.success) await loadServerDraft(resumeDraftId.data)
+else if (resumePostId.success) await loadDraftFromPost(resumePostId.data)
 else {
-  if (route.query.postId !== undefined) notice.value = 'Der Link zum Entwurf ist ungültig.'
+  if (route.query.postId !== undefined || route.query.draftId !== undefined) notice.value = 'Der Link zum Entwurf ist ungültig.'
   restoreDraft()
 }
 restoringDraft = false
+onBeforeRouteLeave(async () => { await saveServerDraft() })
+onBeforeUnmount(() => { if (hasDraftContent()) void saveServerDraft() })
 </script>
 
 <template>
@@ -313,7 +380,7 @@ restoringDraft = false
       <label><span class="mb-1 block text-xs font-semibold">Bestätigte Fakten (eine Zeile je „Feld: Wert“)</span><textarea v-model="factsText" rows="4" class="w-full rounded-xl border p-3 text-sm" placeholder="Übung: Passen&#10;Gruppe: U12" /></label>
       <label><span class="mb-1 block text-xs font-semibold">Beobachtung oder Rohtext</span><textarea v-model="observation" rows="3" class="w-full rounded-xl border p-3 text-sm" /></label>
       <div class="grid gap-4 sm:grid-cols-2"><label><span class="mb-1 block text-xs font-semibold">Freigegebenes Zitat</span><input v-model="quote" class="w-full rounded-xl border p-3 text-sm" /></label><label><span class="mb-1 block text-xs font-semibold">Nicht erwähnen (je Zeile)</span><input v-model="doNotMention" class="w-full rounded-xl border p-3 text-sm" /></label></div>
-      <button class="inline-flex items-center justify-center gap-2 rounded-xl bg-forest px-5 py-3 text-sm font-bold text-white disabled:opacity-60" :disabled="submitting" @click="createCandidate"><LoaderCircle v-if="submitting" class="animate-spin" :size="16" /><Sparkles v-else :size="16" /> Textkandidaten erzeugen</button>
+      <div class="flex flex-wrap items-center gap-3"><button class="inline-flex items-center justify-center gap-2 rounded-xl border border-forest px-5 py-3 text-sm font-bold text-forest disabled:opacity-60" :disabled="submitting || draftSaveState === 'saving'" @click="saveServerDraft({ explicit: true })"><LoaderCircle v-if="draftSaveState === 'saving'" class="animate-spin" :size="16" /><Save v-else :size="16" /> Als Entwurf speichern</button><button class="inline-flex items-center justify-center gap-2 rounded-xl bg-forest px-5 py-3 text-sm font-bold text-white disabled:opacity-60" :disabled="submitting" @click="createCandidate"><LoaderCircle v-if="submitting" class="animate-spin" :size="16" /><Sparkles v-else :size="16" /> Textkandidaten erzeugen</button><span v-if="draftSaveState === 'saved'" class="text-xs text-[#727a75]">Entwurf gespeichert</span><span v-else-if="draftSaveState === 'error'" class="text-xs text-amber-800">Lokale Sicherung aktiv</span></div>
     </section>
     <section v-else class="card p-5 sm:p-7"><div class="flex items-center justify-between"><h2 class="font-display text-xl font-bold">{{ candidateFinished ? 'Textkandidat bereit' : 'Text wird erzeugt' }}</h2><button class="rounded-lg border px-3 py-2 text-xs" @click="refreshSession"><RefreshCw :size="14" /> Aktualisieren</button></div><p v-if="candidate && !candidateFinished" class="mt-4 text-sm text-[#727a75]">Der Worker verarbeitet die Anfrage im Hintergrund. Diese Seite enthält keinen Prompt und keine Providerdaten.</p><p v-if="candidate?.triggered_by === 'automatic_recovery'" class="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-900">Diese Version wurde nach einem technischen Fehler automatisch neu erzeugt.</p><template v-if="candidate?.generated_content"><textarea :value="candidate.generated_content.caption" readonly rows="10" class="mt-5 w-full rounded-xl border p-3 text-sm" /><div class="mt-3 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-900">{{ candidate.generated_content.verifiedFacts.length }} belegte Angaben · {{ candidate.generated_content.missingFacts.length }} offene Angaben</div><label class="mt-5 block"><span class="mb-1 block text-xs font-semibold">Überarbeitungswunsch</span><textarea v-model="revisionInstruction" rows="2" maxlength="500" class="w-full rounded-xl border p-3 text-sm" placeholder="z. B. kürzer und mit direkter Einladung" /></label><button class="mt-3 rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-60" :disabled="submitting || !revisionInstruction.trim()" @click="reviseCandidate"><RefreshCw :size="15" class="mr-1 inline" /> Überarbeiten</button><button class="mt-5 inline-flex items-center gap-2 rounded-xl bg-forest px-5 py-3 text-sm font-bold text-white disabled:opacity-60" :disabled="submitting" @click="acceptCandidate"><LoaderCircle v-if="submitting" class="animate-spin" :size="16" /><Check v-else :size="16" /> Übernehmen und zur Freigabe</button></template><p v-if="candidate?.status === 'failed'" class="mt-4 text-sm text-red-700">Die Anfrage konnte nicht verarbeitet werden. Bitte prüfe die bestätigten Angaben und starte eine neue Sitzung.</p></section>
     <p v-if="notice" class="mt-4 text-sm text-amber-800">{{ notice }}</p>

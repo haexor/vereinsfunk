@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CompressionProvenanceSchema, CreateCompositionSessionSchema, CreateCustomStyleProfileRequestSchema, CreateGenerationCommandSchema, CreatePlatformStylePersonaRequestSchema, CreateSubmissionSchema, CustomStyleProfileSchema, deriveTextGenerationMaxOutputTokens, GeneratedPostSchema, MaxCharactersSchema, PlatformStylePersonaSchema, TEXT_GENERATION_TEMPERATURE_STEPS, TextGenerationPlatformAvailabilitySchema, UpdatePlatformStylePersonaRequestSchema, VideoUploadMetadataSchema, WorkflowPayloadSchema } from './index.js'
+import { CompressionProvenanceSchema, CreateCompositionSessionSchema, CreateCustomStyleProfileRequestSchema, CreateGenerationCommandSchema, CreatePlatformStylePersonaRequestSchema, CreateSubmissionSchema, CustomStyleProfileSchema, deriveTextGenerationMaxOutputTokens, GeneratedPostSchema, MaxCharactersSchema, PlatformStylePersonaSchema, SaveTextWorkshopDraftSchema, TEXT_GENERATION_TEMPERATURE_STEPS, TextGenerationPlatformAvailabilitySchema, UpdatePlatformStylePersonaRequestSchema, VideoUploadMetadataSchema, WorkflowPayloadSchema } from './index.js'
 import { department, org, team } from './testFixtures.js'
 
 describe('contracts', () => {
@@ -69,6 +69,16 @@ describe('text workshop contracts', () => {
     examples: [{ input: 'Sommerfest am Samstag', output: 'Am Samstag feiern wir gemeinsam.' }],
     additionalInstructions: 'Konkrete Details zuerst.',
   }
+
+  it('accepts incomplete autosave input but keeps its scope and platform choices bounded', () => {
+    const draft = {
+      organizationId: org, departmentId: department,
+      payload: { presetSlug: 'event', communicationGoal: 'inform', factsText: '', observation: 'Erste Notiz', quote: '', doNotMention: '', selectedProfile: 'klar_erklaerend', temperature: 0.6, selectedPlatforms: [], maxCharactersOverride: '' },
+    }
+    expect(SaveTextWorkshopDraftSchema.safeParse(draft).success).toBe(true)
+    expect(SaveTextWorkshopDraftSchema.safeParse({ ...draft, payload: { ...draft.payload, selectedPlatforms: ['instagram', 'instagram'] } }).success).toBe(false)
+    expect(SaveTextWorkshopDraftSchema.safeParse({ ...draft, departmentId: 'not-an-id' }).success).toBe(false)
+  })
 
   it('accepts text/photo/video composition choices but keeps historical reels outside new commands', () => {
     const input = CreateCompositionSessionSchema.parse({
@@ -227,4 +237,3 @@ describe('text workshop contracts', () => {
     expect(deriveTextGenerationMaxOutputTokens(2200, 9)).not.toBe(withClaims)
   })
 })
-

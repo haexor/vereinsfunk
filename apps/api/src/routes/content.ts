@@ -13,6 +13,7 @@ import {
   PreviewCustomStyleProfileRequestSchema,
   SocialPlatformSchema,
   SourceMaterialSchema,
+  SaveTextWorkshopDraftSchema,
   StyleProfileSnapshotSchema,
   StyleProfileRulesSchema,
   SubmissionAcceptedSchema,
@@ -20,6 +21,7 @@ import {
   TEXT_GENERATION_DEFAULT_MAX_CHARACTERS,
   TextGenerationPlatformAvailabilitySchema,
   TextGenerationTemperatureSchema,
+  TextWorkshopDraftPayloadSchema,
   UpdateCustomStyleProfileRequestSchema,
   UuidSchema,
   type StyleProfileRules,
@@ -518,6 +520,74 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     return reply.code(202).send({ ...z.object({ sessionId: UuidSchema, candidateId: UuidSchema }).parse(result.data), correlationId: request.id })
   })
 
+  const TextWorkshopDraftRowSchema = z.object({
+    id: UuidSchema, organization_id: UuidSchema, department_id: UuidSchema, team_id: UuidSchema.nullable(),
+    post_id: UuidSchema.nullable(), payload: TextWorkshopDraftPayloadSchema, created_at: z.iso.datetime({ offset: true }), updated_at: z.iso.datetime({ offset: true }),
+  })
+  const TEXT_WORKSHOP_DRAFT_COLUMNS = 'id, organization_id, department_id, team_id, post_id, payload, created_at, updated_at'
+
+  // Autosave is deliberately an API write: browser roles cannot write the table directly and the
+  // permission/scope check remains the same as for starting a text generation.
+  app.put('/v1/text-workshop/drafts/:id', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const id = z.object({ id: UuidSchema }).parse(request.params).id
+    const input = SaveTextWorkshopDraftSchema.parse(request.body)
+    const requestedScope = toPermissionScope(input.organizationId, input.departmentId, input.teamId ?? null)
+    if (!(await requirePermission(request, reply, 'post.create', requestedScope))) return
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const existing = await client.from('text_workshop_drafts').select('id, organization_id, department_id, team_id').eq('id', id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (existing.data && (existing.data.organization_id !== input.organizationId || existing.data.department_id !== input.departmentId || existing.data.team_id !== (input.teamId ?? null))) {
+      return reply.code(404).send({ error: 'draft_not_found', correlationId: request.id })
+    }
+    const service = supabaseClients.forService()
+    // RLS deliberately hides other members' raw drafts. Without this service-side existence
+    // check, a guessed UUID would look like a missing row to the user client and upsert could
+    // overwrite it under the service role.
+    if (!existing.data) {
+      const hidden = await service.from('text_workshop_drafts').select('id').eq('id', id).maybeSingle()
+      if (hidden.error) throw hidden.error
+      if (hidden.data) return reply.code(404).send({ error: 'draft_not_found', correlationId: request.id })
+    }
+    const saved = await service.from('text_workshop_drafts').upsert({
+      id, organization_id: input.organizationId, department_id: input.departmentId, team_id: input.teamId ?? null,
+      payload: input.payload, created_by: request.auth!.userId,
+    }, { onConflict: 'id' }).select(TEXT_WORKSHOP_DRAFT_COLUMNS).single()
+    if (saved.error) throw saved.error
+    await recordAuditEvent(request, {
+      organizationId: input.organizationId,
+      action: 'text_workshop_draft.saved',
+      entityType: 'text_workshop_drafts',
+      entityId: saved.data.id,
+      metadata: { departmentId: input.departmentId, teamId: input.teamId ?? null },
+    })
+    return reply.send({ draft: TextWorkshopDraftRowSchema.parse(saved.data), correlationId: request.id })
+  })
+
+  app.get('/v1/text-workshop/drafts', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const query = z.object({ organizationId: UuidSchema, departmentId: UuidSchema, teamId: UuidSchema.nullable().optional() }).parse(request.query)
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(query.organizationId, query.departmentId, query.teamId ?? null)))) return
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    let drafts = client.from('text_workshop_drafts').select(TEXT_WORKSHOP_DRAFT_COLUMNS).eq('organization_id', query.organizationId).eq('department_id', query.departmentId)
+    drafts = (query.teamId ? drafts.eq('team_id', query.teamId) : drafts.is('team_id', null)) as typeof drafts
+    const result = await drafts.order('updated_at', { ascending: false })
+    if (result.error) throw result.error
+    return reply.send({ drafts: z.array(TextWorkshopDraftRowSchema).parse(result.data) })
+  })
+
+  app.get('/v1/text-workshop/drafts/:id', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const id = z.object({ id: UuidSchema }).parse(request.params).id
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const result = await client.from('text_workshop_drafts').select(TEXT_WORKSHOP_DRAFT_COLUMNS).eq('id', id).maybeSingle()
+    if (result.error) throw result.error
+    if (!result.data) return reply.code(404).send({ error: 'draft_not_found', correlationId: request.id })
+    const draft = TextWorkshopDraftRowSchema.parse(result.data)
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(draft.organization_id, draft.department_id, draft.team_id)))) return
+    return reply.send({ draft })
+  })
+
   const TextWorkshopCandidateSchema = z.object({
     id: UuidSchema, status: GenerationCandidateStatusSchema, generated_content: GeneratedPostSchema.nullable(),
     quality_flags: z.array(z.string()), failure_code: z.string().nullable(), triggered_by: z.enum(['member', 'automatic_recovery']),
@@ -614,16 +684,34 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
   app.post('/v1/text-workshop/candidates/:id/accept', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const id = z.object({ id: UuidSchema }).parse(request.params).id
+    const draftId = z.object({ draftId: UuidSchema.optional() }).parse(request.body ?? {}).draftId
     const client = supabaseClients.forUser(request.auth!.accessToken)
     const candidate = await client.from('generation_candidates').select('organization_id, composition_session_id').eq('id', id).maybeSingle()
     if (candidate.error) throw candidate.error
     if (!candidate.data) return reply.code(404).send({ error: 'candidate_not_found' })
-    const session = await client.from('composition_sessions').select('department_id, team_id').eq('id', candidate.data.composition_session_id).single()
+    const session = await client.from('composition_sessions').select('department_id, team_id, post_id').eq('id', candidate.data.composition_session_id).single()
     if (session.error) throw session.error
     if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(candidate.data.organization_id, session.data.department_id, session.data.team_id)))) return
     const service = supabaseClients.forService()
     const accepted = await service.rpc('accept_text_generation_candidate', { p_candidate_id: id, p_actor_user_id: request.auth!.userId })
     if (accepted.error) throw accepted.error
+    if (draftId) {
+      // An idempotent re-accept only returns the version ID; composition_sessions.post_id is the
+      // stable fallback once any candidate of the session has been accepted.
+      const postId = z.object({ postId: UuidSchema.optional() }).parse(accepted.data).postId ?? session.data.post_id
+      if (postId) {
+        let update = service.from('text_workshop_drafts').update({ post_id: postId })
+          .eq('id', draftId)
+          .eq('organization_id', candidate.data.organization_id)
+          .eq('department_id', session.data.department_id)
+          .eq('created_by', request.auth!.userId)
+        update = session.data.team_id
+          ? update.eq('team_id', session.data.team_id)
+          : update.is('team_id', null)
+        const linked = await update
+        if (linked.error) throw linked.error
+      }
+    }
     return reply.send(accepted.data)
   })
 

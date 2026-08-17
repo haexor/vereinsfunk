@@ -880,3 +880,75 @@ describe('POST /v1/content-style-profiles/prompt-preview', () => {
     expect(response.statusCode).toBe(403)
   })
 })
+
+describe('text workshop drafts', () => {
+  const DRAFT_ID = '3f000000-0000-4000-8000-000000000001'
+  const POST_ID = '3f000000-0000-4000-8000-000000000002'
+  const SESSION_ID = '3f000000-0000-4000-8000-000000000003'
+  const CANDIDATE_ID = '3f000000-0000-4000-8000-000000000004'
+  const draftPayload = { presetSlug: 'training_insight', communicationGoal: 'inform', factsText: 'Übung: Passen', observation: '', quote: '', doNotMention: '', selectedProfile: 'klar_erklaerend', temperature: 0.6, selectedPlatforms: [], maxCharactersOverride: '' }
+
+  it('audits a successfully saved draft without its raw input', async () => {
+    const auditRows: Record<string, unknown>[] = []
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ from: (table: string) => {
+        if (table === 'text_workshop_drafts') return chain({ data: null, error: null })
+        throw new Error(`unexpected user table: ${table}`)
+      } }) as unknown as SupabaseClient,
+      forService: () => ({ from: (table: string) => {
+        if (table === 'text_workshop_drafts') return {
+          select: () => chain({ data: null, error: null }),
+          upsert: () => ({ select: () => ({ single: async () => ({
+            data: { id: DRAFT_ID, organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: null, post_id: null, payload: draftPayload, created_at: '2026-08-17T10:00:00+00:00', updated_at: '2026-08-17T10:00:00+00:00' }, error: null,
+          }) }) }),
+        }
+        if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { auditRows.push(row); return { error: null } } }
+        throw new Error(`unexpected service table: ${table}`)
+      } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const response = await app.inject({
+      method: 'PUT', url: `/v1/text-workshop/drafts/${DRAFT_ID}`, headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+      payload: { organizationId: ORGANIZATION_ID, departmentId: DEPARTMENT_ID, payload: draftPayload },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(auditRows).toEqual([expect.objectContaining({
+      organization_id: ORGANIZATION_ID, action: 'text_workshop_draft.saved', entity_type: 'text_workshop_drafts', entity_id: DRAFT_ID,
+      metadata: { departmentId: DEPARTMENT_ID, teamId: null },
+    })])
+    const auditEvent = auditRows[0]!
+    expect(auditEvent).not.toHaveProperty('payload')
+    expect((auditEvent.metadata as Record<string, unknown>)).not.toHaveProperty('payload')
+  })
+
+  it('links a draft only when it has the accepted candidate’s complete scope', async () => {
+    const filters: Array<[string, string, string | null]> = []
+    const update = {
+      eq: (field: string, value: string) => { filters.push(['eq', field, value]); return update },
+      is: (field: string, value: null) => { filters.push(['is', field, value]); return update },
+      then: (resolve: (result: { data: null; error: null }) => unknown) => resolve({ data: null, error: null }),
+    }
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ from: (table: string) => {
+        if (table === 'generation_candidates') return chain({ data: { organization_id: ORGANIZATION_ID, composition_session_id: SESSION_ID }, error: null })
+        if (table === 'composition_sessions') return chain({ data: { department_id: DEPARTMENT_ID, team_id: null, post_id: null }, error: null })
+        throw new Error(`unexpected user table: ${table}`)
+      } }) as unknown as SupabaseClient,
+      forService: () => ({
+        rpc: async () => ({ data: { postId: POST_ID, postVersionId: '3f000000-0000-4000-8000-000000000005' }, error: null }),
+        from: (table: string) => {
+          if (table === 'text_workshop_drafts') return { update: () => update }
+          throw new Error(`unexpected service table: ${table}`)
+        },
+      }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const response = await app.inject({
+      method: 'POST', url: `/v1/text-workshop/candidates/${CANDIDATE_ID}/accept`, headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` }, payload: { draftId: DRAFT_ID },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(filters).toEqual(expect.arrayContaining([
+      ['eq', 'id', DRAFT_ID], ['eq', 'organization_id', ORGANIZATION_ID], ['eq', 'department_id', DEPARTMENT_ID], ['is', 'team_id', null], ['eq', 'created_by', USER_ID],
+    ]))
+  })
+})
