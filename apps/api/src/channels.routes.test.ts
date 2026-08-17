@@ -4,6 +4,18 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
 import type { RoleProvider } from './auth.js'
 
+const META_ENVIRONMENT_KEYS = ['PUBLISHING_PROVIDER', 'META_APP_ID', 'META_APP_SECRET', 'META_OAUTH_REDIRECT_URL', 'API_PUBLIC_BASE_URL'] as const
+
+function preserveEnvironment(keys: readonly string[]): () => void {
+  const originalValues = new Map(keys.map((key) => [key, process.env[key]]))
+  return () => {
+    for (const [key, value] of originalValues) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
+}
+
 describe('Paket 012: Kanaele und Social-Accounts', () => {
   const CONNECTION_ID = '10000000-8000-4000-8000-000000000099'
 
@@ -59,6 +71,7 @@ describe('Paket 012: Kanaele und Social-Accounts', () => {
   })
 
   it('returns a Meta authorization URL from the connect/start endpoint for an authorized caller', async () => {
+    const restoreEnvironment = preserveEnvironment(META_ENVIRONMENT_KEYS)
     process.env.PUBLISHING_PROVIDER = 'meta'
     process.env.META_APP_ID = 'meta-app-id'
     process.env.META_APP_SECRET = 'meta-app-secret'
@@ -88,15 +101,12 @@ describe('Paket 012: Kanaele und Social-Accounts', () => {
       const authorizationUrl = new URL(body.authorizationUrl)
       expect(authorizationUrl.searchParams.get('redirect_uri')).toBe('https://api.example.test/v1/channels/connect/instagram/callback')
     } finally {
-      delete process.env.PUBLISHING_PROVIDER
-      delete process.env.META_APP_ID
-      delete process.env.META_APP_SECRET
-      delete process.env.META_OAUTH_REDIRECT_URL
-      delete process.env.API_PUBLIC_BASE_URL
+      restoreEnvironment()
     }
   })
 
   it('rejects OAuth start while the fake publisher is active, even with a callback URL', async () => {
+    const restoreEnvironment = preserveEnvironment(['PUBLISHING_PROVIDER', 'META_OAUTH_REDIRECT_URL'])
     process.env.PUBLISHING_PROVIDER = 'fake'
     process.env.META_OAUTH_REDIRECT_URL = 'https://api.example.test'
     const socialManagerRoleProvider: RoleProvider = { async rolesForScope() { return ['social_manager'] } }
@@ -111,8 +121,7 @@ describe('Paket 012: Kanaele und Social-Accounts', () => {
       expect(response.statusCode).toBe(503)
       expect(response.json()).toMatchObject({ error: 'meta_not_configured' })
     } finally {
-      delete process.env.PUBLISHING_PROVIDER
-      delete process.env.META_OAUTH_REDIRECT_URL
+      restoreEnvironment()
     }
   })
 
@@ -120,6 +129,7 @@ describe('Paket 012: Kanaele und Social-Accounts', () => {
   // einen null-Wert als schluessellosen Query-Parameter an, Fastify liest ihn als leeren String --
   // vor der Normalisierung scheiterte damit jeder vereinseigene Verbindungsstart an der UUID-Pruefung.
   it('accepts an empty ownerDepartmentId query parameter for an organization-owned channel', async () => {
+    const restoreEnvironment = preserveEnvironment(META_ENVIRONMENT_KEYS)
     process.env.PUBLISHING_PROVIDER = 'meta'
     process.env.META_APP_ID = 'meta-app-id'
     process.env.META_APP_SECRET = 'meta-app-secret'
@@ -146,11 +156,7 @@ describe('Paket 012: Kanaele und Social-Accounts', () => {
       })
       expect(response.statusCode).toBe(200)
     } finally {
-      delete process.env.PUBLISHING_PROVIDER
-      delete process.env.META_APP_ID
-      delete process.env.META_APP_SECRET
-      delete process.env.META_OAUTH_REDIRECT_URL
-      delete process.env.API_PUBLIC_BASE_URL
+      restoreEnvironment()
     }
   })
 
