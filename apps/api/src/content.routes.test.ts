@@ -334,12 +334,23 @@ describe('GET /v1/text-workshop/sessions', () => {
   }
 
   it('resumes a draft by post id, returning its session and latest candidate', async () => {
+    const olderCandidate = { ...CANDIDATE_ROW, id: '3c000000-0000-4000-8000-000000000004', status: 'ready', created_at: '2026-08-09T10:04:00+00:00' }
+    let candidateLimit: number | undefined
+    const candidateQuery = {
+      select: () => candidateQuery,
+      eq: () => candidateQuery,
+      order: () => candidateQuery,
+      limit: async (value: number) => {
+        candidateLimit = value
+        return { data: [CANDIDATE_ROW, olderCandidate].slice(0, value), error: null }
+      },
+    }
     const clients: SupabaseClientFactory = {
       forUser: () =>
         ({
           from: (table: string) => {
             if (table === 'composition_sessions') return chain({ data: SESSION_ROW, error: null })
-            if (table === 'generation_candidates') return chain({ data: [CANDIDATE_ROW], error: null })
+            if (table === 'generation_candidates') return candidateQuery
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
@@ -353,6 +364,7 @@ describe('GET /v1/text-workshop/sessions', () => {
     expect(body.session).toMatchObject({ id: SESSION_ROW.id, preset_slug: 'training_insight', target_platforms: ['instagram'] })
     expect(body.candidates).toHaveLength(1)
     expect(body.candidates[0]).toMatchObject({ id: CANDIDATE_ROW.id, status: 'accepted' })
+    expect(candidateLimit).toBe(1)
   })
 
   it('returns 404 when no composition session is linked to the post', async () => {

@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(34);
+select plan(37);
 
 set local role postgres;
 
@@ -84,7 +84,24 @@ select is(
   'the created stage names exactly the configured reviewer, not one the submitter could have chosen'
 );
 
--- 7: die Stufe entscheiden, damit unten eine 'satisfied'-Stufe fuer die Neuaufloesung existiert.
+-- 7-9: Ein verlorenes HTTP-Response darf eine identische Einreichung nicht in invalid_status
+-- laufen lassen oder eine zweite Freigabe anlegen. Die gesperrte posts-Zeile serialisiert auch
+-- parallele Aufrufe; der Wiederholungsfall liefert die bestehende Request-ID.
+select is(
+  (select rpc.result->>'approvalRequestId' from (select public.request_approval('65000000-3000-4000-8000-000000000001') as result) rpc),
+  (select id::text from public.approval_requests where post_version_id = '65000000-3000-4000-8000-000000000001'),
+  'a repeated request_approval returns the existing approval request ID'
+);
+select is(
+  (select rpc.result->>'alreadyRequested' from (select public.request_approval('65000000-3000-4000-8000-000000000001') as result) rpc),
+  'true', 'a repeated request_approval is marked as an idempotent replay'
+);
+select is(
+  (select count(*)::integer from public.approval_requests where post_version_id = '65000000-3000-4000-8000-000000000001'),
+  1, 'a repeated request_approval creates no duplicate approval request'
+);
+
+-- 10: die Stufe entscheiden, damit unten eine 'satisfied'-Stufe fuer die Neuaufloesung existiert.
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '65000000-0000-4000-8000-000000000002', true);
 select public.decide_approval_stage(

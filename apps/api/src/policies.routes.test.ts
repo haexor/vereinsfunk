@@ -568,6 +568,50 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
     expect(rpcCalls[0]).toMatchObject({ fn: 'request_approval', args: { target_post_version_id: POST_VERSION_ID } })
   })
 
+  it('returns the existing approval request when submission is retried and audits only its creation', async () => {
+    const auditRows: Record<string, unknown>[] = []
+    let requestCount = 0
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'post_versions') return chain({ data: { id: POST_VERSION_ID, post_id: POST_ID, created_by_user_id: USER_ID, safety_flags: [] }, error: null })
+            if (table === 'posts') return chain({ data: { id: POST_ID, organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: null, status: 'draft_ready' }, error: null })
+            if (table === 'policy_settings') return chain({ data: [{ id: 'p1', scope: 'department', department_id: DEPARTMENT_ID, team_id: null, ...emptyPolicyRuleColumns(), review_required: true }], error: null })
+            if (table === 'organization_memberships') return chain({ data: [{ user_id: OTHER_USER_ID, role: 'organization_admin' }], error: null })
+            if (table === 'department_memberships' || table === 'team_memberships' || table === 'member_review_trust') return chain({ data: [], error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+          rpc: async () => {
+            requestCount += 1
+            return {
+              data: { postId: POST_ID, status: 'awaiting_approval', approvalRequestId: APPROVAL_REQUEST_ID, alreadyRequested: requestCount > 1 },
+              error: null,
+            }
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'directory_people') return chain({ data: [], error: null })
+            if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { auditRows.push(row); return { error: null } } }
+            throw new Error(`unexpected table in service test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const first = await app.inject({ method: 'POST', url: `/v1/post-versions/${POST_VERSION_ID}/request-approval`, headers: { authorization: `Bearer ${token}` } })
+    const retry = await app.inject({ method: 'POST', url: `/v1/post-versions/${POST_VERSION_ID}/request-approval`, headers: { authorization: `Bearer ${token}` } })
+
+    expect(first.statusCode).toBe(202)
+    expect(retry.statusCode).toBe(202)
+    expect(first.json()).toMatchObject({ approvalRequestId: APPROVAL_REQUEST_ID, status: 'awaiting_approval' })
+    expect(retry.json()).toMatchObject({ approvalRequestId: APPROVAL_REQUEST_ID, status: 'awaiting_approval' })
+    expect(auditRows).toHaveLength(1)
+    expect(auditRows[0]).toMatchObject({ action: 'approval.requested', entity_id: APPROVAL_REQUEST_ID, organization_id: ORGANIZATION_ID })
+  })
+
   it('reresolves an approval route and returns the newly opened stage', async () => {
     const rpcCalls: Record<string, unknown>[] = []
     const clients: SupabaseClientFactory = {
@@ -861,4 +905,3 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
     expect(response.json()).toMatchObject({ error: 'media_gate_blocked', blockers: ['scan_pending', 'consent_invalid'] })
   })
 })
-

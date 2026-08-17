@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Check, LoaderCircle, RefreshCw, Sparkles } from '@lucide/vue'
-import { MaxCharactersSchema, RequestApprovalResponseSchema, SocialPlatformSchema, SourceMaterialSchema, TEXT_GENERATION_DEFAULT_TEMPERATURE, TEXT_GENERATION_TEMPERATURE_STEPS, TextGenerationCapabilitiesSchema, TextGenerationPlatformAvailabilitySchema, TextGenerationTemperatureSchema, type SocialPlatform, type TextGenerationPlatformAvailability } from '@vereinsfunk/contracts'
+import { MaxCharactersSchema, RequestApprovalResponseSchema, SocialPlatformSchema, SourceMaterialSchema, TEXT_GENERATION_DEFAULT_TEMPERATURE, TEXT_GENERATION_TEMPERATURE_STEPS, TextGenerationCapabilitiesSchema, TextGenerationPlatformAvailabilitySchema, TextGenerationTemperatureSchema, UuidSchema, type SocialPlatform, type TextGenerationPlatformAvailability } from '@vereinsfunk/contracts'
 import { z } from 'zod'
 
 type Profile = { id: string | null; slug: string; kind: 'system' | 'persona' | 'custom'; name: string; description: string }
@@ -255,9 +255,12 @@ async function reviseCandidate() {
 // (Review von Paket 044 PR 1; bestand schon vorher, faellt hier nur an derselben Zeile auf).
 restoringDraft = true
 await Promise.all([loadProfiles(), loadPlatformAvailability(), loadCapabilities()])
-const resumePostId = typeof route.query.postId === 'string' ? route.query.postId : null
-if (resumePostId) await loadDraftFromPost(resumePostId)
-else restoreDraft()
+const resumePostId = UuidSchema.safeParse(route.query.postId)
+if (resumePostId.success) await loadDraftFromPost(resumePostId.data)
+else {
+  if (route.query.postId !== undefined) notice.value = 'Der Link zum Entwurf ist ungültig.'
+  restoreDraft()
+}
 restoringDraft = false
 </script>
 
