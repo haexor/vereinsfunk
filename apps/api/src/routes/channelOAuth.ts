@@ -39,7 +39,15 @@ export function registerChannelOAuthRoutes(app: FastifyInstance, context: ApiRou
     if (start.ownerScope === 'department' && !(await isDepartmentOwnedChannelAllowed(supabaseClients.forUser(request.auth!.accessToken), query.organizationId))) {
       return reply.code(403).send({ error: 'department_owned_channels_not_allowed', correlationId: request.id })
     }
-    if (!environment.META_OAUTH_REDIRECT_URL) return reply.code(503).send({ error: 'meta_not_configured', correlationId: request.id })
+    // Die Redirect-URL allein reicht nicht: sie wird im Deployment auch fuer
+    // den inaktiven Fake-Provider gerendert, damit die Callback-Adresse nicht
+    // an mehreren Stellen gepflegt wird. OAuth darf aber ausschliesslich mit
+    // dem vollstaendig validierten Meta-Adapter starten -- sonst wuerde ein
+    // leerer client_id-Wert den Browser zu einer irrefuehrenden Meta-Fehlerseite
+    // schicken.
+    if (environment.PUBLISHING_PROVIDER !== 'meta' || !environment.META_OAUTH_REDIRECT_URL) {
+      return reply.code(503).send({ error: 'meta_not_configured', correlationId: request.id })
+    }
     const nonce = randomUUID()
     const insert = await supabaseClients.forService().from('oauth_states').insert({
       organization_id: query.organizationId,
@@ -88,7 +96,9 @@ export function registerChannelOAuthRoutes(app: FastifyInstance, context: ApiRou
     if (consume.error) throw consume.error
     if (consume.data.length === 0) return reply.redirect(`${webBaseUrl}/kanaele?oauthError=invalid_state`, 302)
 
-    if (!environment.META_OAUTH_REDIRECT_URL) return reply.redirect(`${webBaseUrl}/kanaele?oauthError=meta_not_configured`, 302)
+    if (environment.PUBLISHING_PROVIDER !== 'meta' || !environment.META_OAUTH_REDIRECT_URL) {
+      return reply.redirect(`${webBaseUrl}/kanaele?oauthError=meta_not_configured`, 302)
+    }
     const redirectUri = metaRedirectUri(environment.META_OAUTH_REDIRECT_URL, params.platform)
 
     let availableAccounts: readonly { externalAccountId: string; displayName: string; pageAccessToken: string }[]

@@ -69,3 +69,27 @@ Kompromittierung von `vereinsfunk-api` oder `vereinsfunk-worker`:
 4. `docker logs vereinsfunk-api`/`-worker` prüfen: "applying pending database migrations" ->
    "database migrations applied" bestätigt, dass der Boot-Hook mit dem neuen Credential
    durchläuft.
+
+## Meta OAuth aktivieren
+
+Die Verbindung von Instagram-Professional-Konten und Facebook-Seiten wird von der
+API über eine zentrale Meta-App hergestellt, nicht durch Zugangsdaten eines Vereins.
+Die Ansible-Rolle `vereinsfunk` reicht die App-Zugangsdaten nur an den API-Container
+weiter; weder Nuxt noch der Worker erhalten sie.
+
+1. In `~/Projekte/ansible/secrets/haex.space.yml` unter `secrets.vereinsfunk`
+   `meta_app_id` und `meta_app_secret` aus *Meta for Developers → App settings →
+   Basic* eintragen. Diese Datei ist ein Secret-Store und darf nicht ins App-Repository.
+2. In `inventory/haex.space.yml` `vereinsfunk.publishing.provider` auf `meta`
+   setzen und `meta_graph_version` auf eine von Meta aktuell unterstützte Graph-API-Version
+   festlegen.
+3. In der Meta-App beide **Valid OAuth Redirect URIs** eintragen:
+   `https://vereinsfunk-api.haex.space/v1/channels/connect/instagram/callback`
+   und
+   `https://vereinsfunk-api.haex.space/v1/channels/connect/facebook/callback`.
+4. Die Rolle ausrollen:
+   `ansible-playbook -i inventory/haex.space.yml haex.space.play.yml --tags vereinsfunk`.
+
+Die API startet fail-closed, falls bei `PUBLISHING_PROVIDER=meta` eine dieser
+Pflichtangaben fehlt. Der Meta-App-Secret gehört ausschließlich in den Secret-Store,
+nie in `.env.example`, Inventories oder Browser-Konfiguration.
