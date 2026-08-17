@@ -17,12 +17,11 @@ const props = defineProps<{
 
 const ownValue = defineModel<SocialPlatform[] | null>('ownValue', { required: true })
 
-const PLATFORM_LABELS: Record<SocialPlatform, string> = { instagram: 'Instagram', facebook: 'Facebook', website: 'Eigene Website' }
 const isOwn = computed(() => ownValue.value !== null)
 const inheritedHint = computed(() => {
   if (props.inheritedValue === undefined) return 'Übernimmt die Vorgabe der übergeordneten Ebene — sie wird nach dem Speichern hier angezeigt.'
   if (props.inheritedValue.length === 0) return 'Keine Vorauswahl — die Auswahl in der Textwerkstatt startet leer.'
-  return `Übernimmt die Vorgabe der übergeordneten Ebene: ${props.inheritedValue.map((platform) => PLATFORM_LABELS[platform]).join(', ')}.`
+  return `Übernimmt die Vorgabe der übergeordneten Ebene: ${props.inheritedValue.map((platform) => platformLabels[platform]).join(', ')}.`
 })
 
 function setOwn(own: boolean) {
@@ -52,7 +51,7 @@ function toggle(platform: SocialPlatform) {
     <div v-else class="mt-2 flex flex-wrap gap-3">
       <label v-for="platform in SocialPlatformSchema.options" :key="platform" class="flex items-center gap-1.5 text-sm">
         <input type="checkbox" :checked="ownValue?.includes(platform) ?? false" :disabled="props.disabled" @change="toggle(platform)" />
-        {{ PLATFORM_LABELS[platform] }}
+        {{ platformLabels[platform] }}
       </label>
       <p v-if="ownValue?.length === 0" class="w-full text-xs text-[#9aa096]">Ausdrücklich keine Vorauswahl — die Auswahl in der Textwerkstatt startet leer.</p>
     </div>

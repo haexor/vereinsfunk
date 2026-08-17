@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { ContentPresetSlugSchema, MediaGateBlockerSchema, OutputFormatSchema, UuidSchema } from './content.js'
-import { SocialPlatformSchema } from './primitives.js'
+import { OAuthPlatformSchema, SocialPlatformSchema } from './primitives.js'
 import { AssignableRoleSchema, ScopeLevelSchema } from './structure.js'
 
 // Richtlinien mit Vererbung (Paket 023): zwei boolesche Felder je Ebene, `null` heisst "von oben
@@ -254,7 +254,7 @@ export const PublicationSchema = z.object({
   id: UuidSchema,
   postVersionId: UuidSchema,
   socialConnectionId: UuidSchema,
-  platform: z.enum(['instagram', 'facebook']),
+  platform: OAuthPlatformSchema,
   status: z.string(),
   scheduledFor: z.iso.datetime({ offset: true }).nullable(),
 })

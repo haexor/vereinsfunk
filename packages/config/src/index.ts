@@ -30,11 +30,24 @@ const ApiEnvironmentBaseSchema = z.object({
   OPENAI_API_KEY: optionalSecret,
   // 'mixpost' widersprach der getroffenen Architekturentscheidung (plans/README.md: Mixpost wird im
   // MVP nicht betrieben, Meta wird direkt angebunden) und wurde in Paket 012 durch 'meta' ersetzt.
-  PUBLISHING_PROVIDER: z.enum(['fake', 'meta']).default('fake'),
+  // Paket 045: kommagetrennte Menge statt eines einzelnen Werts -- Meta/Twitter/LinkedIn koennen
+  // gleichzeitig echt sein ("meta,twitter,linkedin"), jeder Provider bleibt unabhaengig davon fake,
+  // solange sein Name nicht in der Menge steht. Keine Ruecksicht auf den alten Einzelwert noetig
+  // (Betreiberentscheidung: keine Rueckwaertskompatibilitaet).
+  PUBLISHING_PROVIDER: z.preprocess(
+    (value) => (typeof value === 'string' ? value.split(',').map((entry) => entry.trim()).filter(Boolean) : value),
+    z.array(z.enum(['fake', 'meta', 'twitter', 'linkedin'])).default(['fake']),
+  ),
   META_APP_ID: optionalSecret,
   META_APP_SECRET: optionalSecret,
   META_GRAPH_VERSION: z.string().default('v21.0'),
   META_OAUTH_REDIRECT_URL: optionalUrl,
+  TWITTER_CLIENT_ID: optionalSecret,
+  TWITTER_CLIENT_SECRET: optionalSecret,
+  TWITTER_OAUTH_REDIRECT_URL: optionalUrl,
+  LINKEDIN_CLIENT_ID: optionalSecret,
+  LINKEDIN_CLIENT_SECRET: optionalSecret,
+  LINKEDIN_OAUTH_REDIRECT_URL: optionalUrl,
   // Paket 022: bootstrappt genau einen Default-Plattform-Admin beim Serverstart, wenn
   // gesetzt. Unset ist ein gueltiger Zustand (noch kein Bootstrap gewuenscht).
   PLATFORM_ADMIN_DEFAULT_EMAIL: optionalSecret,
@@ -77,11 +90,24 @@ export const ApiEnvironmentSchema = ApiEnvironmentBaseSchema.superRefine((enviro
 
   // Dieselbe field-scoped-statt-generic-crash-Begruendung wie bei EMAIL_PROVIDER=smtp: der
   // OAuth-Callback wuerde sonst erst beim ersten Verbindungsversuch mit einer unklaren Exception
-  // scheitern, statt beim Start klar zu benennen, welche Meta-Variable fehlt.
-  if (environment.PUBLISHING_PROVIDER === 'meta') {
+  // scheitern, statt beim Start klar zu benennen, welche Provider-Variable fehlt. Ein Block je
+  // Provider, weil jeder unabhaengig von den anderen aktiviert sein kann (Paket 045).
+  if (environment.PUBLISHING_PROVIDER.includes('meta')) {
     const requiredMetaFields = ['META_APP_ID', 'META_APP_SECRET', 'META_OAUTH_REDIRECT_URL', 'API_PUBLIC_BASE_URL'] as const
     for (const key of requiredMetaFields) {
-      if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required when PUBLISHING_PROVIDER=meta` })
+      if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required when PUBLISHING_PROVIDER includes meta` })
+    }
+  }
+  if (environment.PUBLISHING_PROVIDER.includes('twitter')) {
+    const requiredTwitterFields = ['TWITTER_CLIENT_ID', 'TWITTER_CLIENT_SECRET', 'TWITTER_OAUTH_REDIRECT_URL', 'API_PUBLIC_BASE_URL'] as const
+    for (const key of requiredTwitterFields) {
+      if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required when PUBLISHING_PROVIDER includes twitter` })
+    }
+  }
+  if (environment.PUBLISHING_PROVIDER.includes('linkedin')) {
+    const requiredLinkedInFields = ['LINKEDIN_CLIENT_ID', 'LINKEDIN_CLIENT_SECRET', 'LINKEDIN_OAUTH_REDIRECT_URL', 'API_PUBLIC_BASE_URL'] as const
+    for (const key of requiredLinkedInFields) {
+      if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required when PUBLISHING_PROVIDER includes linkedin` })
     }
   }
 

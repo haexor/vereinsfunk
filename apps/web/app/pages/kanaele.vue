@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { OAuthPlatformSchema } from '@vereinsfunk/contracts'
+
 const channelsState = reactive(await useChannels())
 </script>
 
@@ -7,7 +9,7 @@ const channelsState = reactive(await useChannels())
     <header class="mb-8">
       <div class="eyebrow mb-3">Verein</div>
       <h1 class="font-display text-3xl font-extrabold tracking-[-.04em]">Kanäle</h1>
-      <p class="mt-2 text-sm text-[#727a75]">Instagram- und Facebook-Konten sowie die eigene Website/den Blog verbinden und festlegen, welche Abteilung sie bespielen darf.</p>
+      <p class="mt-2 text-sm text-[#727a75]">Instagram-, Facebook-, X- und LinkedIn-Konten sowie die eigene Website/den Blog verbinden und festlegen, welche Abteilung sie bespielen darf.</p>
     </header>
 
     <div v-if="channelsState.loading" class="p-8 text-center text-xs text-[#7b827d]">Wird geladen …</div>
@@ -29,12 +31,11 @@ const channelsState = reactive(await useChannels())
       <section v-if="channelsState.canManageOrganizationChannels" class="card mb-6 p-6">
         <h2 class="mb-3 font-display text-base font-bold">Kanal verbinden</h2>
         <div class="flex flex-wrap items-center gap-2">
-          <button type="button" :disabled="channelsState.connecting !== null" class="focus-ring rounded-xl bg-forest px-4 py-2.5 text-xs font-bold text-white disabled:opacity-60" @click="channelsState.connect('instagram', 'organization', null)">Instagram verbinden (Verein)</button>
-          <button type="button" :disabled="channelsState.connecting !== null" class="focus-ring rounded-xl bg-forest px-4 py-2.5 text-xs font-bold text-white disabled:opacity-60" @click="channelsState.connect('facebook', 'organization', null)">Facebook verbinden (Verein)</button>
+          <button v-for="platform in OAuthPlatformSchema.options" :key="platform" type="button" :disabled="channelsState.connecting !== null" class="focus-ring rounded-xl bg-forest px-4 py-2.5 text-xs font-bold text-white disabled:opacity-60" @click="channelsState.connect(platform, 'organization', null)">{{ platformLabels[platform] }} verbinden (Verein)</button>
         </div>
         <div v-if="channelsState.channelPolicy?.allowDepartmentOwnedChannels" class="mt-4 border-t border-[#e8e9e2] pt-4">
           <p class="mb-2 text-[11px] font-semibold text-[#7b827d]">Eigener Abteilungskanal</p>
-          <div class="flex flex-wrap items-center gap-2"><select v-model="channelsState.connectDepartmentId" class="focus-ring rounded-lg border border-[#dfe0d9] p-2 text-xs"><option value="">Abteilung wählen …</option><option v-for="department in channelsState.departments" :key="department.id" :value="department.id">{{ department.name }}</option></select><button type="button" :disabled="!channelsState.connectDepartmentId || channelsState.connecting !== null" class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-2 text-[11px] font-semibold disabled:opacity-60" @click="channelsState.connect('instagram', 'department', channelsState.connectDepartmentId)">Instagram</button><button type="button" :disabled="!channelsState.connectDepartmentId || channelsState.connecting !== null" class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-2 text-[11px] font-semibold disabled:opacity-60" @click="channelsState.connect('facebook', 'department', channelsState.connectDepartmentId)">Facebook</button></div>
+          <div class="flex flex-wrap items-center gap-2"><select v-model="channelsState.connectDepartmentId" class="focus-ring rounded-lg border border-[#dfe0d9] p-2 text-xs"><option value="">Abteilung wählen …</option><option v-for="department in channelsState.departments" :key="department.id" :value="department.id">{{ department.name }}</option></select><button v-for="platform in OAuthPlatformSchema.options" :key="platform" type="button" :disabled="!channelsState.connectDepartmentId || channelsState.connecting !== null" class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-2 text-[11px] font-semibold disabled:opacity-60" @click="channelsState.connect(platform, 'department', channelsState.connectDepartmentId)">{{ platformLabels[platform] }}</button></div>
         </div>
         <div class="mt-4 border-t border-[#e8e9e2] pt-4">
           <p class="mb-2 text-[11px] font-semibold text-[#7b827d]">Eigene Website / Blog hinzufügen</p>

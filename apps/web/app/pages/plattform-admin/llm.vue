@@ -44,7 +44,6 @@ const TASK_KIND_OPTIONS = [
   { value: 'image_generation', label: 'Bildgenerierung', available: false },
   { value: 'video_generation', label: 'Videogenerierung', available: false },
 ] as const
-const PLATFORM_LABELS: Record<SocialPlatform, string> = { instagram: 'Instagram', facebook: 'Facebook', website: 'Eigene Website' }
 const config = useRuntimeConfig()
 const loading = ref(true)
 const saving = ref(false)
@@ -464,7 +463,7 @@ async function removeProvider(id: string) {
           </thead>
           <tbody>
             <tr v-for="platform in SocialPlatformSchema.options" :key="platform" class="border-t border-[#e9ebe4]">
-              <td class="py-2 pr-4 font-medium">{{ PLATFORM_LABELS[platform] }}</td>
+              <td class="py-2 pr-4 font-medium">{{ platformLabels[platform] }}</td>
               <td class="py-2 pr-4">
                 <input
                   v-if="platformDefaultDrafts[platform] !== undefined"
@@ -492,7 +491,7 @@ async function removeProvider(id: string) {
           </tbody>
         </table>
         <p v-for="platform in SocialPlatformSchema.options" :key="`error-${platform}`" v-show="platformDefaultErrors[platform]" class="mt-2 text-[11px] font-normal text-amber-800">
-          {{ PLATFORM_LABELS[platform] }}: {{ platformDefaultErrors[platform] }}
+          {{ platformLabels[platform] }}: {{ platformDefaultErrors[platform] }}
         </p>
       </section>
       <p v-if="errorMessage" class="mt-4 text-sm text-amber-800">{{ errorMessage }}</p>

@@ -1,13 +1,15 @@
 import { z } from 'zod'
 import { MaxCharactersSchema, UuidSchema } from './content.js'
-import { SocialPlatformSchema } from './primitives.js'
+import { OAuthPlatformSchema, SocialPlatformSchema } from './primitives.js'
 import { AssignableRoleSchema, ScopeLevelSchema, rolesForScopeLevel } from './structure.js'
 
 // Paket 012: Kanaele und Social-Accounts --------------------------------------------------------
 
 // Paket 042: die Plattform-Menge lebt in primitives.ts, damit content.ts (Ziel-Plattformen eines
 // Beitrags) sie ohne Zyklus mitbenutzt. Re-Export, damit bestehende Importe aus channels.js bleiben.
-export { SocialPlatformSchema }
+// Paket 045: OAuthPlatformSchema (policy.ts braucht sie ebenfalls fuer PublicationSchema.platform)
+// liegt aus demselben Grund in primitives.ts.
+export { OAuthPlatformSchema, SocialPlatformSchema }
 // Plan 039: enger gefasst als SocialPlatformSchema -- ein Website-Kanal entsteht nie ueber OAuth
 // (siehe CreateWebsiteChannelRequestSchema unten), diese beiden Routen kennen ihn deshalb nicht.
 export const MetaOAuthPlatformSchema = z.enum(['instagram', 'facebook'])
@@ -126,7 +128,7 @@ export const CreateMembershipRequestSchema = z.object({
 })
 export const UpdateMembershipRequestSchema = z.object({ role: AssignableRoleSchema })
 
-export type { SocialPlatform } from './primitives.js'
+export type { OAuthPlatform, SocialPlatform } from './primitives.js'
 export type SocialConnectionStatus = z.infer<typeof SocialConnectionStatusSchema>
 export type ChannelOwnerScope = z.infer<typeof ChannelOwnerScopeSchema>
 export type ChannelScopeAssignment = z.infer<typeof ChannelScopeAssignmentSchema>

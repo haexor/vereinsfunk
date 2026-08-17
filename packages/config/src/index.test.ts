@@ -145,6 +145,59 @@ describe('ApiEnvironmentSchema', () => {
     ).toBe(true)
   })
 
+  // Paket 045: PUBLISHING_PROVIDER ist eine Menge -- mehrere echte Provider koennen gleichzeitig
+  // aktiv sein, unabhaengig von den anderen. Bewusst keine Ruecksicht auf ein einzelnes altes
+  // Enum-Format (Betreiberentscheidung: keine Rueckwaertskompatibilitaet).
+  it('defaults PUBLISHING_PROVIDER to ["fake"] when unset', () => {
+    expect(ApiEnvironmentSchema.parse({ NODE_ENV: 'development' }).PUBLISHING_PROVIDER).toEqual(['fake'])
+  })
+
+  it('parses a comma-separated PUBLISHING_PROVIDER into a set of active providers', () => {
+    const parsed = ApiEnvironmentSchema.parse({
+      NODE_ENV: 'development',
+      PUBLISHING_PROVIDER: 'meta,twitter,linkedin',
+      META_APP_ID: 'app-id', META_APP_SECRET: 'app-secret', META_OAUTH_REDIRECT_URL: 'https://example.org/oauth/callback/meta',
+      TWITTER_CLIENT_ID: 'client-id', TWITTER_CLIENT_SECRET: 'client-secret', TWITTER_OAUTH_REDIRECT_URL: 'https://example.org/oauth/callback/twitter',
+      LINKEDIN_CLIENT_ID: 'client-id', LINKEDIN_CLIENT_SECRET: 'client-secret', LINKEDIN_OAUTH_REDIRECT_URL: 'https://example.org/oauth/callback/linkedin',
+      API_PUBLIC_BASE_URL: 'https://api.example.org',
+    })
+    expect(parsed.PUBLISHING_PROVIDER).toEqual(['meta', 'twitter', 'linkedin'])
+  })
+
+  it('rejects an unknown PUBLISHING_PROVIDER entry', () => {
+    expect(ApiEnvironmentSchema.safeParse({ NODE_ENV: 'development', PUBLISHING_PROVIDER: 'mixpost' }).success).toBe(false)
+  })
+
+  it.each([
+    ['twitter', 'TWITTER_CLIENT_ID'],
+    ['twitter', 'TWITTER_CLIENT_SECRET'],
+    ['twitter', 'TWITTER_OAUTH_REDIRECT_URL'],
+    ['linkedin', 'LINKEDIN_CLIENT_ID'],
+    ['linkedin', 'LINKEDIN_CLIENT_SECRET'],
+    ['linkedin', 'LINKEDIN_OAUTH_REDIRECT_URL'],
+  ])('rejects PUBLISHING_PROVIDER=%s missing %s', (provider, missingField) => {
+    const fields: Record<string, string> = {
+      TWITTER_CLIENT_ID: 'client-id', TWITTER_CLIENT_SECRET: 'client-secret', TWITTER_OAUTH_REDIRECT_URL: 'https://example.org/oauth/callback/twitter',
+      LINKEDIN_CLIENT_ID: 'client-id', LINKEDIN_CLIENT_SECRET: 'client-secret', LINKEDIN_OAUTH_REDIRECT_URL: 'https://example.org/oauth/callback/linkedin',
+    }
+    delete fields[missingField]
+    expect(
+      ApiEnvironmentSchema.safeParse({ NODE_ENV: 'development', PUBLISHING_PROVIDER: provider, API_PUBLIC_BASE_URL: 'https://api.example.org', ...fields }).success,
+    ).toBe(false)
+  })
+
+  it('accepts PUBLISHING_PROVIDER=twitter,linkedin without Meta fields (each provider is independent)', () => {
+    expect(
+      ApiEnvironmentSchema.safeParse({
+        NODE_ENV: 'development',
+        PUBLISHING_PROVIDER: 'twitter,linkedin',
+        TWITTER_CLIENT_ID: 'client-id', TWITTER_CLIENT_SECRET: 'client-secret', TWITTER_OAUTH_REDIRECT_URL: 'https://example.org/oauth/callback/twitter',
+        LINKEDIN_CLIENT_ID: 'client-id', LINKEDIN_CLIENT_SECRET: 'client-secret', LINKEDIN_OAUTH_REDIRECT_URL: 'https://example.org/oauth/callback/linkedin',
+        API_PUBLIC_BASE_URL: 'https://api.example.org',
+      }).success,
+    ).toBe(true)
+  })
+
   it('rejects EMAIL_PROVIDER=smtp missing SMTP_FROM', () => {
     expect(
       ApiEnvironmentSchema.safeParse({

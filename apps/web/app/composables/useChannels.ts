@@ -28,11 +28,15 @@ export async function useChannels() {
   const busyChannelId = ref<string | null>(null)
 
   const oauthErrorMessages: Record<string, string> = {
-    denied: 'Die Verbindung wurde bei Meta abgebrochen.',
+    denied: 'Die Verbindung wurde beim Anbieter abgebrochen.',
     invalid_state: 'Der Verbindungsversuch ist abgelaufen oder ungültig. Bitte erneut starten.',
+    no_accounts: 'Für dieses Konto wurde keine verbindbare Seite bzw. kein Konto gefunden.',
     meta_exchange_failed: 'Meta hat die Anfrage abgelehnt. Bitte erneut versuchen.',
-    no_accounts: 'Für dieses Meta-Konto wurde keine verbindbare Seite bzw. kein Instagram-Business-Konto gefunden.',
     meta_not_configured: 'Meta ist auf diesem Server noch nicht eingerichtet.',
+    twitter_exchange_failed: 'X hat die Anfrage abgelehnt. Bitte erneut versuchen.',
+    twitter_not_configured: 'X ist auf diesem Server noch nicht eingerichtet.',
+    linkedin_exchange_failed: 'LinkedIn hat die Anfrage abgelehnt. Bitte erneut versuchen.',
+    linkedin_not_configured: 'LinkedIn ist auf diesem Server noch nicht eingerichtet.',
   }
   const oauthError = computed(() => {
     const code = route.query.oauthError

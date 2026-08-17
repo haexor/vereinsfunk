@@ -3,7 +3,18 @@ import cors from '@fastify/cors'
 import { parseApiEnvironment } from '@vereinsfunk/config'
 import type { StructuredContentGenerator } from '@vereinsfunk/content-engine'
 import { HealthSchema } from '@vereinsfunk/contracts'
-import { FakePublisher, MetaPublisher, RealMetaOAuthClient, type MetaOAuthClient, type SocialPublisher } from '@vereinsfunk/publishing'
+import {
+  FakeLinkedInOAuthClient,
+  FakePublisher,
+  FakeTwitterOAuthClient,
+  MetaPublisher,
+  RealMetaOAuthClient,
+  type LinkedInOAuthClient,
+  type MetaOAuthClient,
+  type Platform,
+  type SocialPublisher,
+  type TwitterOAuthClient,
+} from '@vereinsfunk/publishing'
 import Fastify, { LogController, type FastifyInstance, type FastifyServerOptions } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { createAuthGuards, SupabasePlatformAdminProvider, SupabaseRoleProvider, type PlatformAdminProvider, type RoleProvider } from './auth.js'
@@ -50,6 +61,8 @@ export interface BuildAppOptions {
   platformAdminProvider?: PlatformAdminProvider
   emailSender?: EmailSender
   metaOAuthClient?: MetaOAuthClient
+  twitterOAuthClient?: TwitterOAuthClient
+  linkedinOAuthClient?: LinkedInOAuthClient
   // Paket 025: Ueberschreibung fuer Tests. Ausserhalb von Tests entscheidet PUBLISHING_PROVIDER,
   // welcher echte Adapter je Social-Connection gebaut wird (siehe createPublisherForConnection) --
   // ein MetaPublisher braucht das entschluesselte Connection-Token, kann also nicht einmalig beim
@@ -97,6 +110,10 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       appSecret: environment.META_APP_SECRET ?? '',
       graphVersion: environment.META_GRAPH_VERSION,
     })
+  // Paket 045 PR 1: noch keine RealTwitterOAuthClient/RealLinkedInOAuthClient (folgen in PR 2/3,
+  // sobald echte Entwickler-Zugaenge vorliegen) -- ohne Testueberschreibung bleibt es bei Fake.
+  const twitterOAuthClient: TwitterOAuthClient = options.twitterOAuthClient ?? new FakeTwitterOAuthClient()
+  const linkedinOAuthClient: LinkedInOAuthClient = options.linkedinOAuthClient ?? new FakeLinkedInOAuthClient()
   const emailSender =
     options.emailSender ??
     // Ohne echten Versand ist der Log die einzige Stelle, an der der Einladungslink (inkl.
@@ -108,14 +125,23 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   // Paket 025: ein MetaPublisher braucht das entschluesselte Token GENAU dieser Social-Connection
   // (anders als metaOAuthClient oben, das appId/appSecret-Ebene bleibt) -- deshalb keine einmalige
   // Instanz, sondern eine Fabrik je Aufruf. options.publisher ueberschreibt vollstaendig (Tests).
-  function createPublisherForConnection(platform: 'instagram' | 'facebook', accessToken: string, externalAccountId: string): SocialPublisher {
+  function createPublisherForConnection(platform: Platform, accessToken: string, externalAccountId: string): SocialPublisher {
     if (options.publisher) return options.publisher
-    if (environment.PUBLISHING_PROVIDER !== 'meta') return new FakePublisher()
-    return new MetaPublisher({
-      graphVersion: environment.META_GRAPH_VERSION,
-      accessToken,
-      ...(platform === 'instagram' ? { instagramAccountId: externalAccountId } : { facebookPageId: externalAccountId }),
-    })
+    switch (platform) {
+      case 'instagram':
+      case 'facebook':
+        if (!environment.PUBLISHING_PROVIDER.includes('meta')) return new FakePublisher()
+        return new MetaPublisher({
+          graphVersion: environment.META_GRAPH_VERSION,
+          accessToken,
+          ...(platform === 'instagram' ? { instagramAccountId: externalAccountId } : { facebookPageId: externalAccountId }),
+        })
+      // Paket 045 PR 1: noch kein TwitterPublisher/LinkedInPublisher (folgen in PR 2/3) -- beide
+      // Plattformen bleiben bis dahin immer Fake, unabhaengig von PUBLISHING_PROVIDER.
+      case 'twitter':
+      case 'linkedin':
+        return new FakePublisher()
+    }
   }
   const context: ApiRouteContext = {
     environment,
@@ -125,6 +151,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     platformAdminProvider,
     emailSender,
     metaOAuthClient,
+    twitterOAuthClient,
+    linkedinOAuthClient,
     requireAuth,
     requirePermission,
     requirePlatformAdmin,

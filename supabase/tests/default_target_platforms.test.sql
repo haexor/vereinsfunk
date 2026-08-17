@@ -24,8 +24,10 @@ select lives_ok(
     values ('64500000-1000-4000-8000-000000000001', 'organization', array['instagram', 'website'], '64500000-0000-4000-8000-000000000001')$$,
   'a valid subset of the known platforms is accepted'
 );
+-- 'mastodon' statt 'twitter': seit Paket 045 ist twitter eine gueltige Plattform, dieser Test
+-- braucht deshalb einen weiterhin nicht implementierten Wert.
 select throws_ok(
-  $$update public.policy_settings set default_target_platforms = array['twitter']
+  $$update public.policy_settings set default_target_platforms = array['mastodon']
     where organization_id = '64500000-1000-4000-8000-000000000001' and scope = 'organization'$$,
   '23514', null, 'an unknown platform is rejected'
 );
