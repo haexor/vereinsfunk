@@ -16,10 +16,11 @@ import { z } from 'zod'
 import { buildStageDefinitions, filterAdultUserIds, isAuthorMinor, membersWithApprovePermission } from '../services/approvalRouting.js'
 import { computeMediaGateBlockersForPostVersion } from '../services/mediaGate.js'
 import type { ApiRouteContext } from './context.js'
-import { computeRuleEntry, fetchAllRows, fetchAllRowsForIds, fetchMemberTrust, fetchPolicyRuleRows } from './shared.js'
+import { computeRuleEntry, createAuditRecorder, fetchAllRows, fetchAllRowsForIds, fetchMemberTrust, fetchPolicyRuleRows } from './shared.js'
 
 export function registerApprovalRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients } = context
+  const recordAuditEvent = createAuditRecorder(supabaseClients)
 
   app.post('/v1/post-versions/:id/request-approval', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
@@ -95,8 +96,23 @@ export function registerApprovalRoutes(app: FastifyInstance, context: ApiRouteCo
       if (rpc.error.message.includes('only_author_as_reviewer')) return reply.code(403).send({ error: 'only_author_as_reviewer', correlationId: request.id })
       throw rpc.error
     }
+    const approval = z.object({
+      postId: UuidSchema,
+      status: z.string(),
+      approvalRequestId: UuidSchema.nullable().optional(),
+      alreadyRequested: z.boolean().optional(),
+    }).parse(rpc.data)
+    if (approval.alreadyRequested === false && approval.approvalRequestId) {
+      await recordAuditEvent(request, {
+        organizationId: post.data.organization_id,
+        action: 'approval.requested',
+        entityType: 'approval_requests',
+        entityId: approval.approvalRequestId,
+        metadata: { postId: approval.postId, postVersionId: params.id },
+      })
+    }
     return reply.code(202).send(
-      RequestApprovalResponseSchema.parse({ postId: rpc.data.postId, status: rpc.data.status, approvalRequestId: rpc.data.approvalRequestId ?? null }),
+      RequestApprovalResponseSchema.parse({ postId: approval.postId, status: approval.status, approvalRequestId: approval.approvalRequestId ?? null }),
     )
   })
 

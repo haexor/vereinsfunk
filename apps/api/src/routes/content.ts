@@ -1,4 +1,7 @@
 import {
+  CommunicationGoalSchema,
+  CompositionSessionStatusSchema,
+  ContentPresetSlugSchema,
   CreateCompositionSessionSchema,
   CreateCustomStyleProfileRequestSchema,
   CreateGenerationCommandSchema,
@@ -6,12 +9,17 @@ import {
   CustomStyleProfileSchema,
   GeneratedPostSchema,
   GenerationCandidateStatusSchema,
+  MaxCharactersSchema,
   PreviewCustomStyleProfileRequestSchema,
+  SocialPlatformSchema,
+  SourceMaterialSchema,
+  StyleProfileSnapshotSchema,
   StyleProfileRulesSchema,
   SubmissionAcceptedSchema,
   TeamSchema,
   TEXT_GENERATION_DEFAULT_MAX_CHARACTERS,
   TextGenerationPlatformAvailabilitySchema,
+  TextGenerationTemperatureSchema,
   UpdateCustomStyleProfileRequestSchema,
   UuidSchema,
   type StyleProfileRules,
@@ -19,7 +27,8 @@ import {
 } from '@vereinsfunk/contracts'
 import { assertGroundedPost, createGroundedContentBrief, FakeContentGenerator, factsFromClubEvent, factsFromFixture } from '@vereinsfunk/content-engine'
 import { createIdempotencyKey, evaluateMediaGate, evaluateSubmitPermission } from '@vereinsfunk/domain'
-import type { FastifyInstance } from 'fastify'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import type { FastifyInstance, FastifyReply } from 'fastify'
 import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { CLUB_EVENT_COLUMNS, FIXTURE_COLUMNS, mapClubEventRow, mapFixtureRow, mapTeamRow } from '../apiMappers.js'
@@ -514,6 +523,49 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     quality_flags: z.array(z.string()), failure_code: z.string().nullable(), triggered_by: z.enum(['member', 'automatic_recovery']),
     accepted_post_version_id: UuidSchema.nullable(), created_at: z.string(),
   })
+  const CompositionSessionRowSchema = z.object({
+    id: UuidSchema,
+    organization_id: UuidSchema,
+    department_id: UuidSchema,
+    team_id: UuidSchema.nullable(),
+    status: CompositionSessionStatusSchema,
+    preset_slug: ContentPresetSlugSchema,
+    communication_goal: CommunicationGoalSchema,
+    source_material: SourceMaterialSchema,
+    style_profile_id: UuidSchema.nullable(),
+    // System- und Persona-Profile tragen ihren eingefrorenen Slug zusaetzlich zum Vertrag.
+    style_profile_snapshot: StyleProfileSnapshotSchema.passthrough(),
+    target_platforms: z.array(SocialPlatformSchema),
+    max_characters: MaxCharactersSchema,
+    temperature: TextGenerationTemperatureSchema,
+    created_at: z.iso.datetime({ offset: true }),
+  })
+  // source_material/style_profile_id/style_profile_snapshot zusaetzlich zu den bisherigen Spalten:
+  // beide Routen unten teilen sich diese Liste, damit erstellen.vue eine bestehende Sitzung
+  // vollstaendig als Formular-Vorbefuellung lesen kann (Beitraege-Liste -> Textwerkstatt
+  // wiedereroeffnen), nicht nur ihre Regler-Werte.
+  const COMPOSITION_SESSION_COLUMNS = 'id, organization_id, department_id, team_id, status, preset_slug, communication_goal, source_material, style_profile_id, style_profile_snapshot, target_platforms, max_characters, temperature, created_at'
+  async function respondWithCompositionSession(client: SupabaseClient, reply: FastifyReply, sessionRow: z.infer<typeof CompositionSessionRowSchema>) {
+    const candidates = await client.from('generation_candidates').select('id, status, generated_content, quality_flags, failure_code, triggered_by, accepted_post_version_id, created_at').eq('composition_session_id', sessionRow.id).order('created_at', { ascending: false }).limit(1)
+    if (candidates.error) throw candidates.error
+    return reply.send({ session: sessionRow, candidates: z.array(TextWorkshopCandidateSchema).parse(candidates.data) })
+  }
+  // Wiedereinstieg aus der Beitraege-Liste: dort ist nur die posts-Zeile bekannt, nicht die
+  // composition_session-ID. composition_sessions.post_id wird erst beim ersten
+  // accept_text_generation_candidate gesetzt, ist ab dann aber stabil (siehe
+  // 2026081103_text_generation_routing.sql) -- fuer den hier relevanten draft_ready/
+  // changes_requested-Fall ist er also immer vorhanden.
+  app.get('/v1/text-workshop/sessions', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const query = z.object({ postId: UuidSchema }).parse(request.query)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const session = await client.from('composition_sessions').select(COMPOSITION_SESSION_COLUMNS).eq('post_id', query.postId).order('created_at', { ascending: false }).limit(1).maybeSingle()
+    if (session.error) throw session.error
+    if (!session.data) return reply.code(404).send({ error: 'session_not_found' })
+    const sessionRow = CompositionSessionRowSchema.parse(session.data)
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(sessionRow.organization_id, sessionRow.department_id, sessionRow.team_id)))) return
+    return respondWithCompositionSession(client, reply, sessionRow)
+  })
   app.get('/v1/text-workshop/sessions/:id', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const id = z.object({ id: UuidSchema }).parse(request.params).id
@@ -521,13 +573,12 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     // target_platforms/max_characters/temperature mitlesen: sie sind bei Anlage eingefroren, also
     // kann nur diese Antwort zeigen, mit welcher Regler-Stufe die Sitzung laeuft -- sonst waeren die
     // Werte fuer die UI und den Support nur per direkter DB-Abfrage sichtbar.
-    const session = await client.from('composition_sessions').select('id, organization_id, department_id, team_id, status, preset_slug, communication_goal, target_platforms, max_characters, temperature, created_at').eq('id', id).maybeSingle()
+    const session = await client.from('composition_sessions').select(COMPOSITION_SESSION_COLUMNS).eq('id', id).maybeSingle()
     if (session.error) throw session.error
     if (!session.data) return reply.code(404).send({ error: 'session_not_found' })
-    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(session.data.organization_id, session.data.department_id, session.data.team_id)))) return
-    const candidates = await client.from('generation_candidates').select('id, status, generated_content, quality_flags, failure_code, triggered_by, accepted_post_version_id, created_at').eq('composition_session_id', id).order('created_at', { ascending: false })
-    if (candidates.error) throw candidates.error
-    return reply.send({ session: session.data, candidates: z.array(TextWorkshopCandidateSchema).parse(candidates.data) })
+    const sessionRow = CompositionSessionRowSchema.parse(session.data)
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(sessionRow.organization_id, sessionRow.department_id, sessionRow.team_id)))) return
+    return respondWithCompositionSession(client, reply, sessionRow)
   })
 
   app.post('/v1/text-workshop/sessions/:id/generations', async (request, reply) => {
