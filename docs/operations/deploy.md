@@ -69,3 +69,41 @@ Kompromittierung von `vereinsfunk-api` oder `vereinsfunk-worker`:
 4. `docker logs vereinsfunk-api`/`-worker` prüfen: "applying pending database migrations" ->
    "database migrations applied" bestätigt, dass der Boot-Hook mit dem neuen Credential
    durchläuft.
+
+## Meta OAuth aktivieren
+
+Die Verbindung von Instagram-Professional-Konten und Facebook-Seiten wird von der
+API über eine zentrale Meta-App hergestellt, nicht durch Zugangsdaten eines Vereins.
+Die Ansible-Rolle `vereinsfunk` reicht die App-Zugangsdaten nur an den API-Container
+weiter; weder Nuxt noch der Worker erhalten sie.
+
+1. In `~/Projekte/ansible/secrets/haex.space.yml` unter `secrets.vereinsfunk`
+   `meta_app_id` und `meta_app_secret` aus *Meta for Developers → App settings →
+   Basic* eintragen. Diese Datei ist ein Secret-Store und darf nicht ins App-Repository.
+2. In `inventory/haex.space.yml` diese Werte setzen. Die Rolle erzeugt daraus beide
+   API-Variablen und reicht sie zusammen mit `META_APP_ID`, `META_APP_SECRET` und
+   `META_GRAPH_VERSION` ausschließlich an den API-Container weiter:
+
+   ```yaml
+   domain_name: haex.space
+   vereinsfunk:
+     api:
+       sub_domain_name: vereinsfunk-api
+     publishing:
+       provider: meta
+       meta_graph_version: v21.0
+   ```
+
+   Das ergibt `META_OAUTH_REDIRECT_URL=https://vereinsfunk-api.haex.space` und
+   `API_PUBLIC_BASE_URL=https://vereinsfunk-api.haex.space`. `META_GRAPH_VERSION`
+   kann weggelassen werden; die API verwendet dann `v21.0` als Standard.
+3. In der Meta-App beide **Valid OAuth Redirect URIs** eintragen:
+   `https://vereinsfunk-api.haex.space/v1/channels/connect/instagram/callback`
+   und
+   `https://vereinsfunk-api.haex.space/v1/channels/connect/facebook/callback`.
+4. Die Rolle ausrollen:
+   `ansible-playbook -i inventory/haex.space.yml haex.space.play.yml --tags vereinsfunk`.
+
+Die API startet fail-closed, falls bei `PUBLISHING_PROVIDER=meta` eine dieser
+Pflichtangaben fehlt. Der Meta-App-Secret gehört ausschließlich in den Secret-Store,
+nie in `.env.example`, Inventories oder Browser-Konfiguration.
