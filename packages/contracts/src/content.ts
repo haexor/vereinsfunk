@@ -366,6 +366,30 @@ export const CreateCompositionSessionSchema = z.object({
   const chosen = [value.styleProfileId, value.systemStyleProfileSlug, value.personaSlug].filter((field) => field !== undefined && field !== null)
   if (chosen.length > 1) context.addIssue({ code: 'custom', message: 'Choose at most one of styleProfileId, systemStyleProfileSlug, or personaSlug' })
 })
+
+// Ein Werkstatt-Entwurf ist bewusst noch keine composition_session: Er darf unvollständig sein
+// und löst weder eine Generation noch Kosten aus. Die eigentliche Fachversion entsteht weiterhin
+// erst beim ausdrücklichen Übernehmen eines Kandidaten.
+export const TextWorkshopDraftPayloadSchema = z.object({
+  presetSlug: ContentPresetSlugSchema,
+  communicationGoal: CommunicationGoalSchema,
+  factsText: z.string().max(10_000),
+  observation: z.string().max(5_000),
+  quote: z.string().max(500),
+  doNotMention: z.string().max(5_000),
+  selectedProfile: z.string().trim().min(1).max(80),
+  temperature: TextGenerationTemperatureSchema,
+  selectedPlatforms: z.array(SocialPlatformSchema).max(SocialPlatformSchema.options.length).superRefine((platforms, context) => {
+    if (new Set(platforms).size !== platforms.length) context.addIssue({ code: 'custom', message: 'selectedPlatforms must not contain duplicates' })
+  }),
+  maxCharactersOverride: z.string().max(5),
+})
+export const SaveTextWorkshopDraftSchema = z.object({
+  organizationId: UuidSchema,
+  departmentId: UuidSchema,
+  teamId: UuidSchema.nullable().optional(),
+  payload: TextWorkshopDraftPayloadSchema,
+})
 export const CreateGenerationCommandSchema = z.object({
   sessionId: UuidSchema,
   generationIntent: GenerationIntentSchema,
