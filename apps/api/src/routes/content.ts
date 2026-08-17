@@ -21,6 +21,7 @@ import {
   TEXT_GENERATION_DEFAULT_MAX_CHARACTERS,
   TextGenerationPlatformAvailabilitySchema,
   TextGenerationTemperatureSchema,
+  TextWorkshopDraftPayloadSchema,
   UpdateCustomStyleProfileRequestSchema,
   UuidSchema,
   type StyleProfileRules,
@@ -521,7 +522,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
 
   const TextWorkshopDraftRowSchema = z.object({
     id: UuidSchema, organization_id: UuidSchema, department_id: UuidSchema, team_id: UuidSchema.nullable(),
-    post_id: UuidSchema.nullable(), payload: z.object({}).passthrough(), created_at: z.iso.datetime({ offset: true }), updated_at: z.iso.datetime({ offset: true }),
+    post_id: UuidSchema.nullable(), payload: TextWorkshopDraftPayloadSchema, created_at: z.iso.datetime({ offset: true }), updated_at: z.iso.datetime({ offset: true }),
   })
   const TEXT_WORKSHOP_DRAFT_COLUMNS = 'id, organization_id, department_id, team_id, post_id, payload, created_at, updated_at'
 
@@ -553,6 +554,13 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
       payload: input.payload, created_by: request.auth!.userId,
     }, { onConflict: 'id' }).select(TEXT_WORKSHOP_DRAFT_COLUMNS).single()
     if (saved.error) throw saved.error
+    await recordAuditEvent(request, {
+      organizationId: input.organizationId,
+      action: 'text_workshop_draft.saved',
+      entityType: 'text_workshop_drafts',
+      entityId: saved.data.id,
+      metadata: { departmentId: input.departmentId, teamId: input.teamId ?? null },
+    })
     return reply.send({ draft: TextWorkshopDraftRowSchema.parse(saved.data), correlationId: request.id })
   })
 
@@ -692,7 +700,15 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
       // stable fallback once any candidate of the session has been accepted.
       const postId = z.object({ postId: UuidSchema.optional() }).parse(accepted.data).postId ?? session.data.post_id
       if (postId) {
-        const linked = await service.from('text_workshop_drafts').update({ post_id: postId }).eq('id', draftId).eq('organization_id', candidate.data.organization_id).eq('created_by', request.auth!.userId)
+        let update = service.from('text_workshop_drafts').update({ post_id: postId })
+          .eq('id', draftId)
+          .eq('organization_id', candidate.data.organization_id)
+          .eq('department_id', session.data.department_id)
+          .eq('created_by', request.auth!.userId)
+        update = session.data.team_id
+          ? update.eq('team_id', session.data.team_id)
+          : update.is('team_id', null)
+        const linked = await update
         if (linked.error) throw linked.error
       }
     }

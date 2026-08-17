@@ -34,4 +34,13 @@ describe('Zielplattform-Vorgaben', () => {
       "restoringDraft = true await Promise.all([loadProfiles(), loadPlatformAvailability(), loadCapabilities()]) const resumePostId = UuidSchema.safeParse(route.query.postId) const resumeDraftId = UuidSchema.safeParse(route.query.draftId) if (resumeDraftId.success) await loadServerDraft(resumeDraftId.data) else if (resumePostId.success) await loadDraftFromPost(resumePostId.data) else { if (route.query.postId !== undefined || route.query.draftId !== undefined) notice.value = 'Der Link zum Entwurf ist ungültig.' restoreDraft() } restoringDraft = false",
     )
   })
+
+  it('serialisiert serverseitige Entwurfs-Speicherungen mit eingefrorener Nutzlast', () => {
+    const page = readFileSync(join(PAGES_DIR, 'erstellen.vue'), 'utf8')
+
+    expect(page).toContain('let serverDraftSaveChain: Promise<void> = Promise.resolve()')
+    expect(page).toContain('const payload = draftPayload()')
+    expect(page).toContain('serverDraftSaveChain = serverDraftSaveChain.then(async () =>')
+    expect(page).toContain('saveNumber === latestServerDraftSave')
+  })
 })

@@ -15,7 +15,7 @@ create table public.text_workshop_drafts (
   unique (organization_id, id),
   foreign key (organization_id, department_id) references public.departments(organization_id, id) on delete cascade,
   foreign key (organization_id, department_id, team_id) references public.teams(organization_id, department_id, id) on delete cascade,
-  foreign key (organization_id, post_id) references public.posts(organization_id, id) on delete set null,
+  foreign key (organization_id, post_id) references public.posts(organization_id, id) on delete set null (post_id),
   check (team_id is null or department_id is not null)
 );
 create index text_workshop_drafts_owner_scope_idx on public.text_workshop_drafts (organization_id, department_id, created_by, updated_at desc);

@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(81);
+select plan(82);
 
 set local role postgres;
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -525,6 +525,8 @@ select set_config('request.jwt.claim.sub', '32000000-0000-4000-8000-000000000002
 select is((select count(*)::integer from public.text_workshop_drafts where id = '32000000-5200-4000-8000-000000000099'), 1, 'positive: a draft creator can read their own text workshop draft');
 select set_config('request.jwt.claim.sub', '31000000-0000-4000-8000-000000000001', true);
 select is((select count(*)::integer from public.text_workshop_drafts where id = '32000000-5200-4000-8000-000000000099'), 0, 'negative: a member of another tenant cannot read a text workshop draft');
+select set_config('request.jwt.claim.sub', '32000000-0000-4000-8000-000000000003', true);
+select is((select count(*)::integer from public.text_workshop_drafts where id = '32000000-5200-4000-8000-000000000099'), 0, 'negative: another member of the same organization cannot read a personal text workshop draft');
 set local role postgres;
 update public.posts set status = 'awaiting_approval' where id = '32000000-5100-4000-8000-000000000099';
 select is((select count(*)::integer from public.text_workshop_drafts where id = '32000000-5200-4000-8000-000000000099'), 0, 'a linked workshop draft is removed once its post is submitted for review');

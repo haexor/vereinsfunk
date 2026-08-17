@@ -74,6 +74,8 @@ const draftSaveState = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
 const draftKey = computed(() => session.value && scope.value?.organizationId && scope.value.departmentId ? `vf:text-draft:${session.value.userId}:${scope.value.organizationId}:${scope.value.departmentId}` : null)
 let restoringDraft = false
 let draftSaveTimer: ReturnType<typeof setTimeout> | undefined
+let serverDraftSaveChain: Promise<void> = Promise.resolve()
+let latestServerDraftSave = 0
 
 function sourceMaterial() {
   const facts = Object.fromEntries(factsText.value.split('\n').map((line) => line.split(':')).filter(([key, value]) => key?.trim() && value?.trim()).map(([key, ...rest]) => [key!.trim(), rest.join(':').trim()]))
@@ -96,14 +98,27 @@ async function saveServerDraft(explicit = false) {
   if (restoringDraft || !scope.value?.organizationId || !scope.value.departmentId || (!explicit && !hasDraftContent())) return
   if (!hasDraftContent()) { notice.value = 'Gib zuerst etwas für den Entwurf ein.'; return }
   if (!serverDraftId.value) serverDraftId.value = crypto.randomUUID()
+  const draftId = serverDraftId.value
+  const organizationId = scope.value.organizationId
+  const departmentId = scope.value.departmentId
+  const payload = draftPayload()
+  const saveNumber = ++latestServerDraftSave
   draftSaveState.value = 'saving'
-  try {
-    await api.request(`/v1/text-workshop/drafts/${serverDraftId.value}`, { method: 'PUT', body: { organizationId: scope.value.organizationId, departmentId: scope.value.departmentId, payload: draftPayload() } }, z.object({ draft: z.object({ id: z.string() }) }))
-    draftSaveState.value = 'saved'
-  } catch {
-    draftSaveState.value = 'error'
-    if (explicit) notice.value = 'Der Entwurf konnte gerade nicht gespeichert werden. Deine Eingaben bleiben lokal erhalten.'
-  }
+  // Capture ID, scope and payload before queuing. Debounced, manual and candidate-triggered
+  // saves all use this one chain, so an older request can never finish after a newer payload and
+  // overwrite it on the server.
+  serverDraftSaveChain = serverDraftSaveChain.then(async () => {
+    try {
+      await api.request(`/v1/text-workshop/drafts/${draftId}`, { method: 'PUT', body: { organizationId, departmentId, payload } }, z.object({ draft: z.object({ id: z.string() }) }))
+      if (serverDraftId.value === draftId && saveNumber === latestServerDraftSave) draftSaveState.value = 'saved'
+    } catch {
+      if (serverDraftId.value === draftId && saveNumber === latestServerDraftSave) {
+        draftSaveState.value = 'error'
+        if (explicit) notice.value = 'Der Entwurf konnte gerade nicht gespeichert werden. Deine Eingaben bleiben lokal erhalten.'
+      }
+    }
+  })
+  await serverDraftSaveChain
 }
 function queueServerDraftSave() {
   if (restoringDraft || !hasDraftContent()) return
