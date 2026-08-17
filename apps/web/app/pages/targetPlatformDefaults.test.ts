@@ -40,7 +40,16 @@ describe('Zielplattform-Vorgaben', () => {
 
     expect(page).toContain('let serverDraftSaveChain: Promise<void> = Promise.resolve()')
     expect(page).toContain('const payload = draftPayload()')
-    expect(page).toContain('serverDraftSaveChain = serverDraftSaveChain.then(async () =>')
+    expect(page).toContain('const queuedSave = serverDraftSaveChain.then(async () =>')
+    expect(page).toContain('serverDraftSaveChain = queuedSave.then(() => undefined)')
     expect(page).toContain('saveNumber === latestServerDraftSave')
+  })
+
+  it('bricht Kandidatenaktionen ab, wenn ihr verpflichtendes Speichern fehlschlägt', () => {
+    const page = readFileSync(join(PAGES_DIR, 'erstellen.vue'), 'utf8')
+
+    expect(page).toContain('required = false')
+    expect(page).toContain('return queuedSave')
+    expect(page.match(/if \(!\(await saveServerDraft\(\{ required: true \}\)\)\) return/g) ?? []).toHaveLength(2)
   })
 })

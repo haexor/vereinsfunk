@@ -93,10 +93,10 @@ function hasDraftContent() {
   const payload = draftPayload()
   return Boolean(payload.factsText.trim() || payload.observation.trim() || payload.quote.trim() || payload.doNotMention.trim() || payload.presetSlug !== 'training_insight' || payload.communicationGoal !== 'inform' || payload.selectedProfile !== 'klar_erklaerend' || payload.selectedPlatforms.length || payload.maxCharactersOverride.trim())
 }
-async function saveServerDraft(explicit = false) {
+async function saveServerDraft({ explicit = false, required = false }: { explicit?: boolean; required?: boolean } = {}): Promise<boolean> {
   if (draftSaveTimer) { clearTimeout(draftSaveTimer); draftSaveTimer = undefined }
-  if (restoringDraft || !scope.value?.organizationId || !scope.value.departmentId || (!explicit && !hasDraftContent())) return
-  if (!hasDraftContent()) { notice.value = 'Gib zuerst etwas für den Entwurf ein.'; return }
+  if (restoringDraft || !scope.value?.organizationId || !scope.value.departmentId || (!explicit && !hasDraftContent())) return false
+  if (!hasDraftContent()) { notice.value = 'Gib zuerst etwas für den Entwurf ein.'; return false }
   if (!serverDraftId.value) serverDraftId.value = crypto.randomUUID()
   const draftId = serverDraftId.value
   const organizationId = scope.value.organizationId
@@ -107,18 +107,25 @@ async function saveServerDraft(explicit = false) {
   // Capture ID, scope and payload before queuing. Debounced, manual and candidate-triggered
   // saves all use this one chain, so an older request can never finish after a newer payload and
   // overwrite it on the server.
-  serverDraftSaveChain = serverDraftSaveChain.then(async () => {
+  const queuedSave = serverDraftSaveChain.then(async () => {
     try {
       await api.request(`/v1/text-workshop/drafts/${draftId}`, { method: 'PUT', body: { organizationId, departmentId, payload } }, z.object({ draft: z.object({ id: z.string() }) }))
       if (serverDraftId.value === draftId && saveNumber === latestServerDraftSave) draftSaveState.value = 'saved'
+      return true
     } catch {
       if (serverDraftId.value === draftId && saveNumber === latestServerDraftSave) {
         draftSaveState.value = 'error'
-        if (explicit) notice.value = 'Der Entwurf konnte gerade nicht gespeichert werden. Deine Eingaben bleiben lokal erhalten.'
       }
+      // A required save aborts the next action even when a newer best-effort save is queued.
+      // Keep its failure visible; otherwise the action would appear to do nothing.
+      if (required || (explicit && serverDraftId.value === draftId && saveNumber === latestServerDraftSave)) notice.value = 'Der Entwurf konnte gerade nicht gespeichert werden. Deine Eingaben bleiben lokal erhalten.'
+      return false
     }
   })
-  await serverDraftSaveChain
+  // Keep the queue usable after a failed best-effort save while returning this request's result
+  // to callers that must not continue without a durable server draft.
+  serverDraftSaveChain = queuedSave.then(() => undefined)
+  return queuedSave
 }
 function queueServerDraftSave() {
   if (restoringDraft || !hasDraftContent()) return
@@ -230,7 +237,7 @@ async function createCandidate() {
   if (maxCharacters === 'invalid') { notice.value = 'Die maximale Länge muss zwischen 100 und 10.000 Zeichen liegen.'; return }
   submitting.value = true; notice.value = ''
   try {
-    await saveServerDraft()
+    if (!(await saveServerDraft({ required: true }))) return
     const selected = profiles.value.find((profile) => (profile.id ?? profile.slug) === selectedProfile.value)
     if (!selected) { selectedProfile.value = 'klar_erklaerend'; notice.value = 'Das gewählte Stilprofil ist nicht mehr verfügbar. Bitte wähle erneut.'; submitting.value = false; return }
     const profileChoice = selected.kind === 'custom' ? { styleProfileId: selected.id } : selected.kind === 'persona' ? { personaSlug: selected.slug } : { systemStyleProfileSlug: selected.slug }
@@ -264,7 +271,7 @@ async function acceptCandidate() {
   if (!candidate.value) return
   submitting.value = true; notice.value = ''
   try {
-    await saveServerDraft()
+    if (!(await saveServerDraft({ required: true }))) return
     const accepted = await api.request(`/v1/text-workshop/candidates/${candidate.value.id}/accept`, { method: 'POST', body: serverDraftId.value ? { draftId: serverDraftId.value } : {} }, z.union([
       z.object({ postId: z.string(), postVersionId: z.string(), alreadyAccepted: z.literal(false) }),
       z.object({ postVersionId: z.string(), alreadyAccepted: z.literal(true) }),
@@ -373,7 +380,7 @@ onBeforeUnmount(() => { if (hasDraftContent()) void saveServerDraft() })
       <label><span class="mb-1 block text-xs font-semibold">Bestätigte Fakten (eine Zeile je „Feld: Wert“)</span><textarea v-model="factsText" rows="4" class="w-full rounded-xl border p-3 text-sm" placeholder="Übung: Passen&#10;Gruppe: U12" /></label>
       <label><span class="mb-1 block text-xs font-semibold">Beobachtung oder Rohtext</span><textarea v-model="observation" rows="3" class="w-full rounded-xl border p-3 text-sm" /></label>
       <div class="grid gap-4 sm:grid-cols-2"><label><span class="mb-1 block text-xs font-semibold">Freigegebenes Zitat</span><input v-model="quote" class="w-full rounded-xl border p-3 text-sm" /></label><label><span class="mb-1 block text-xs font-semibold">Nicht erwähnen (je Zeile)</span><input v-model="doNotMention" class="w-full rounded-xl border p-3 text-sm" /></label></div>
-      <div class="flex flex-wrap items-center gap-3"><button class="inline-flex items-center justify-center gap-2 rounded-xl border border-forest px-5 py-3 text-sm font-bold text-forest disabled:opacity-60" :disabled="submitting || draftSaveState === 'saving'" @click="saveServerDraft(true)"><LoaderCircle v-if="draftSaveState === 'saving'" class="animate-spin" :size="16" /><Save v-else :size="16" /> Als Entwurf speichern</button><button class="inline-flex items-center justify-center gap-2 rounded-xl bg-forest px-5 py-3 text-sm font-bold text-white disabled:opacity-60" :disabled="submitting" @click="createCandidate"><LoaderCircle v-if="submitting" class="animate-spin" :size="16" /><Sparkles v-else :size="16" /> Textkandidaten erzeugen</button><span v-if="draftSaveState === 'saved'" class="text-xs text-[#727a75]">Entwurf gespeichert</span><span v-else-if="draftSaveState === 'error'" class="text-xs text-amber-800">Lokale Sicherung aktiv</span></div>
+      <div class="flex flex-wrap items-center gap-3"><button class="inline-flex items-center justify-center gap-2 rounded-xl border border-forest px-5 py-3 text-sm font-bold text-forest disabled:opacity-60" :disabled="submitting || draftSaveState === 'saving'" @click="saveServerDraft({ explicit: true })"><LoaderCircle v-if="draftSaveState === 'saving'" class="animate-spin" :size="16" /><Save v-else :size="16" /> Als Entwurf speichern</button><button class="inline-flex items-center justify-center gap-2 rounded-xl bg-forest px-5 py-3 text-sm font-bold text-white disabled:opacity-60" :disabled="submitting" @click="createCandidate"><LoaderCircle v-if="submitting" class="animate-spin" :size="16" /><Sparkles v-else :size="16" /> Textkandidaten erzeugen</button><span v-if="draftSaveState === 'saved'" class="text-xs text-[#727a75]">Entwurf gespeichert</span><span v-else-if="draftSaveState === 'error'" class="text-xs text-amber-800">Lokale Sicherung aktiv</span></div>
     </section>
     <section v-else class="card p-5 sm:p-7"><div class="flex items-center justify-between"><h2 class="font-display text-xl font-bold">{{ candidateFinished ? 'Textkandidat bereit' : 'Text wird erzeugt' }}</h2><button class="rounded-lg border px-3 py-2 text-xs" @click="refreshSession"><RefreshCw :size="14" /> Aktualisieren</button></div><p v-if="candidate && !candidateFinished" class="mt-4 text-sm text-[#727a75]">Der Worker verarbeitet die Anfrage im Hintergrund. Diese Seite enthält keinen Prompt und keine Providerdaten.</p><p v-if="candidate?.triggered_by === 'automatic_recovery'" class="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-900">Diese Version wurde nach einem technischen Fehler automatisch neu erzeugt.</p><template v-if="candidate?.generated_content"><textarea :value="candidate.generated_content.caption" readonly rows="10" class="mt-5 w-full rounded-xl border p-3 text-sm" /><div class="mt-3 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-900">{{ candidate.generated_content.verifiedFacts.length }} belegte Angaben · {{ candidate.generated_content.missingFacts.length }} offene Angaben</div><label class="mt-5 block"><span class="mb-1 block text-xs font-semibold">Überarbeitungswunsch</span><textarea v-model="revisionInstruction" rows="2" maxlength="500" class="w-full rounded-xl border p-3 text-sm" placeholder="z. B. kürzer und mit direkter Einladung" /></label><button class="mt-3 rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-60" :disabled="submitting || !revisionInstruction.trim()" @click="reviseCandidate"><RefreshCw :size="15" class="mr-1 inline" /> Überarbeiten</button><button class="mt-5 inline-flex items-center gap-2 rounded-xl bg-forest px-5 py-3 text-sm font-bold text-white disabled:opacity-60" :disabled="submitting" @click="acceptCandidate"><LoaderCircle v-if="submitting" class="animate-spin" :size="16" /><Check v-else :size="16" /> Übernehmen und zur Freigabe</button></template><p v-if="candidate?.status === 'failed'" class="mt-4 text-sm text-red-700">Die Anfrage konnte nicht verarbeitet werden. Bitte prüfe die bestätigten Angaben und starte eine neue Sitzung.</p></section>
     <p v-if="notice" class="mt-4 text-sm text-amber-800">{{ notice }}</p>
