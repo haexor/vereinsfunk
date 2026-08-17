@@ -27,11 +27,11 @@ describe('Zielplattform-Vorgaben', () => {
 
     // persistDraft hängt an einem Watcher mit flush: 'sync'. loadPlatformAvailability() schreibt
     // selectedPlatforms (seit diesem Paket die Vorgabe der Ebene, vorher alle verfügbaren) -- ohne
-    // die Klammer lief persistDraft damit noch VOR restoreDraft() und legte den leeren
-    // Formularzustand über den gespeicherten Entwurf: nach jedem Neuladen war das getippte
-    // Quellmaterial still verloren.
+    // die Klammer lief persistDraft damit noch VOR restoreDraft()/loadDraftFromPost() und legte den
+    // leeren Formularzustand über den gespeicherten bzw. wiedereroeffneten Entwurf: nach jedem
+    // Neuladen war das getippte Quellmaterial still verloren.
     expect(page.replace(/\s+/g, ' ')).toContain(
-      'restoringDraft = true await Promise.all([loadProfiles(), loadPlatformAvailability(), loadCapabilities()]) restoreDraft() restoringDraft = false',
+      "restoringDraft = true await Promise.all([loadProfiles(), loadPlatformAvailability(), loadCapabilities()]) const resumePostId = typeof route.query.postId === 'string' ? route.query.postId : null if (resumePostId) await loadDraftFromPost(resumePostId) else restoreDraft() restoringDraft = false",
     )
   })
 })

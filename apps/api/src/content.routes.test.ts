@@ -314,6 +314,83 @@ describe('POST /v1/text-workshop/sessions', () => {
   })
 })
 
+// Wiedereinstieg aus der Beitraege-Liste (Textwerkstatt fuer einen draft_ready/changes_requested-
+// Beitrag erneut oeffnen): anders als /v1/text-workshop/sessions/:id ist hier nur die posts-Zeile
+// bekannt, nicht die composition_session-ID.
+describe('GET /v1/text-workshop/sessions', () => {
+  const POST_ID = '3d000000-0000-4000-8000-000000000001'
+  const SESSION_ROW = {
+    id: '3c000000-0000-4000-8000-000000000001', organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: null,
+    status: 'accepted', preset_slug: 'training_insight', communication_goal: 'inform',
+    source_material: { facts: { title: 'Training' }, observations: [], quotes: [], doNotMention: [] },
+    style_profile_id: null,
+    style_profile_snapshot: { name: 'Klar erklärend', description: 'Sachlich.', styleRules: STYLE_RULES, avoidRules: [], doRules: [], slug: 'klar_erklaerend' },
+    target_platforms: ['instagram'], max_characters: 2200, temperature: 0.6, created_at: '2026-08-09T10:00:00+00:00',
+  }
+  const CANDIDATE_ROW = {
+    id: '3c000000-0000-4000-8000-000000000002', status: 'accepted', generated_content: FAKE_GENERATED_POST,
+    quality_flags: [], failure_code: null, triggered_by: 'member', accepted_post_version_id: '3c000000-0000-4000-8000-000000000003',
+    created_at: '2026-08-09T10:05:00+00:00',
+  }
+
+  it('resumes a draft by post id, returning its session and latest candidate', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'composition_sessions') return chain({ data: SESSION_ROW, error: null })
+            if (table === 'generation_candidates') return chain({ data: [CANDIDATE_ROW], error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => { throw new Error('forService should not be called by this route') },
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: '/v1/text-workshop/sessions', headers: { authorization: `Bearer ${token}` }, query: { postId: POST_ID } })
+    expect(response.statusCode).toBe(200)
+    const body = response.json()
+    expect(body.session).toMatchObject({ id: SESSION_ROW.id, preset_slug: 'training_insight', target_platforms: ['instagram'] })
+    expect(body.candidates).toHaveLength(1)
+    expect(body.candidates[0]).toMatchObject({ id: CANDIDATE_ROW.id, status: 'accepted' })
+  })
+
+  it('returns 404 when no composition session is linked to the post', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'composition_sessions') return chain({ data: null, error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => { throw new Error('forService should not be called by this route') },
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: '/v1/text-workshop/sessions', headers: { authorization: `Bearer ${token}` }, query: { postId: POST_ID } })
+    expect(response.statusCode).toBe(404)
+    expect(response.json()).toMatchObject({ error: 'session_not_found' })
+  })
+
+  it('rejects a member without post.create in the session scope', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'composition_sessions') return chain({ data: SESSION_ROW, error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => { throw new Error('forService should not be called by this route') },
+    }
+    const app = await startApp({ roleProvider: denyingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: '/v1/text-workshop/sessions', headers: { authorization: `Bearer ${token}` }, query: { postId: POST_ID } })
+    expect(response.statusCode).toBe(403)
+  })
+})
+
 describe('GET /v1/text-generation-platforms', () => {
   const query = { organizationId: ORGANIZATION_ID, departmentId: DEPARTMENT_ID }
 

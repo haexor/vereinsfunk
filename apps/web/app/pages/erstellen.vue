@@ -1,10 +1,33 @@
 <script setup lang="ts">
 import { Check, LoaderCircle, RefreshCw, Sparkles } from '@lucide/vue'
-import { MaxCharactersSchema, SocialPlatformSchema, TEXT_GENERATION_DEFAULT_TEMPERATURE, TEXT_GENERATION_TEMPERATURE_STEPS, TextGenerationCapabilitiesSchema, TextGenerationPlatformAvailabilitySchema, TextGenerationTemperatureSchema, type SocialPlatform, type TextGenerationPlatformAvailability } from '@vereinsfunk/contracts'
+import { MaxCharactersSchema, RequestApprovalResponseSchema, SocialPlatformSchema, SourceMaterialSchema, TEXT_GENERATION_DEFAULT_TEMPERATURE, TEXT_GENERATION_TEMPERATURE_STEPS, TextGenerationCapabilitiesSchema, TextGenerationPlatformAvailabilitySchema, TextGenerationTemperatureSchema, type SocialPlatform, type TextGenerationPlatformAvailability } from '@vereinsfunk/contracts'
 import { z } from 'zod'
 
 type Profile = { id: string | null; slug: string; kind: 'system' | 'persona' | 'custom'; name: string; description: string }
 type Candidate = { id: string; status: string; generated_content: { headline: string; caption: string; hashtags: string[]; verifiedFacts: string[]; missingFacts: string[] } | null; failure_code: string | null; triggered_by: 'member' | 'automatic_recovery' }
+// Geteilt von refreshSession() und loadDraftFromPost() (Wiedereinstieg aus der Beitraege-Liste) --
+// dieselbe Kandidaten-Antwortform, einmal benannt statt zweimal inline dupliziert.
+const CandidateSchema = z.object({ id: z.string(), status: z.string(), generated_content: z.object({ headline: z.string(), caption: z.string(), hashtags: z.array(z.string()), verifiedFacts: z.array(z.string()), missingFacts: z.array(z.string()) }).nullable(), failure_code: z.string().nullable(), triggered_by: z.enum(['member', 'automatic_recovery']) })
+// Fuer den Wiedereinstieg per postId (GET /v1/text-workshop/sessions?postId=): style_profile_snapshot
+// traegt bei Personas/Systemprofilen zusaetzlich zu StyleProfileSnapshotSchema ein "slug"-Feld
+// (routes/content.ts), das der exportierte Vertrag nicht kennt -- deshalb hier lose statt importiert.
+const CompositionSessionDraftSchema = z.object({
+  id: z.string(), preset_slug: z.string(), communication_goal: z.string(), source_material: SourceMaterialSchema,
+  style_profile_id: z.string().nullable(), style_profile_snapshot: z.object({ slug: z.string().optional() }).passthrough(),
+  target_platforms: z.array(SocialPlatformSchema), temperature: TextGenerationTemperatureSchema,
+})
+// Nur die drei Faelle, die auf diesem Weg realistisch auftreten (routes/approvals.ts,
+// request_approval-RPC-Fehlermeldungen); die uebrigen (invalid_reviewer_snapshot,
+// invalid_stage_positions, empty_reviewer_snapshot) sind laut deren eigenen Kommentaren ueber
+// diese Route nicht erreichbar und fallen auf die generische Meldung unten zurueck.
+const REQUEST_APPROVAL_ERROR_MESSAGES: Record<string, string> = {
+  forbidden: 'Du hast keine Berechtigung, diesen Beitrag zur Freigabe einzureichen.',
+  invalid_status: 'Dieser Beitrag wurde bereits zur Freigabe eingereicht oder befindet sich nicht mehr im Entwurf.',
+  minor_stage_required: 'Für diesen Beitrag ist eine besondere Freigabestufe für minderjährige Verfasser:innen nötig, die sich aktuell nicht auflösen lässt. Bitte an eine Vereinsverwaltung wenden.',
+  review_required: 'Laut Richtlinie ist für diesen Beitrag eine Prüfung nötig, es ist aber niemand zum Prüfen hinterlegt. Bitte an eine Vereinsverwaltung wenden.',
+  unfulfillable_stage: 'Für diesen Beitrag lässt sich aktuell keine gültige Freigaberoute bilden. Bitte an eine Vereinsverwaltung wenden.',
+  only_author_as_reviewer: 'Du bist die einzige mögliche Prüfperson für diesen Beitrag. Bitte an eine Vereinsverwaltung wenden.',
+}
 const PLATFORM_LABELS: Record<SocialPlatform, string> = { instagram: 'Instagram', facebook: 'Facebook', website: 'Eigene Website' }
 type PlatformUnavailableReason = 'no_channel' | 'restricted_by_policy'
 const PLATFORM_UNAVAILABLE_REASONS: Record<PlatformUnavailableReason, string> = {
@@ -19,6 +42,7 @@ const PLATFORM_UNAVAILABLE_EXPLANATIONS: Record<PlatformUnavailableReason, strin
   restricted_by_policy: 'Ausgegraut: für diese Plattform gibt es einen Kanal, eine Richtlinie schließt ihn hier aber aus.',
 }
 const api = useApiClient()
+const route = useRoute()
 const session = await useSession()
 const scope = await useScope()
 const notice = ref('')
@@ -102,9 +126,42 @@ async function loadPlatformAvailability() {
 }
 async function refreshSession() {
   if (!sessionId.value) return
-  const response = await api.request(`/v1/text-workshop/sessions/${sessionId.value}`, {}, z.object({ candidates: z.array(z.object({ id: z.string(), status: z.string(), generated_content: z.object({ headline: z.string(), caption: z.string(), hashtags: z.array(z.string()), verifiedFacts: z.array(z.string()), missingFacts: z.array(z.string()) }).nullable(), failure_code: z.string().nullable(), triggered_by: z.enum(['member', 'automatic_recovery']) })) }).passthrough())
+  const response = await api.request(`/v1/text-workshop/sessions/${sessionId.value}`, {}, z.object({ candidates: z.array(CandidateSchema) }).passthrough())
   candidate.value = response.candidates[0] ?? null
   if (candidate.value?.status === 'ready') clearDraft()
+}
+// Wiedereinstieg aus der Beitraege-Liste (?postId=...): laedt die zum Beitrag gehoerende
+// composition_session inklusive letztem Kandidaten und befuellt das Formular exakt wie im Entwurf
+// gespeichert. Derselbe restoringDraft-Schutz wie bei restoreDraft()/dem Scope-Wechsel oben und aus
+// demselben Grund -- der persistDraft-Watcher laeuft mit flush: 'sync' vor jeder einzelnen der
+// folgenden Zuweisungen.
+async function loadDraftFromPost(postId: string) {
+  try {
+    const response = await api.request('/v1/text-workshop/sessions', { query: { postId } }, z.object({ session: CompositionSessionDraftSchema, candidates: z.array(CandidateSchema) }))
+    const { session: draftSession, candidates } = response
+    presetSlug.value = draftSession.preset_slug
+    communicationGoal.value = draftSession.communication_goal
+    factsText.value = Object.entries(draftSession.source_material.facts).map(([key, value]) => `${key}: ${value}`).join('\n')
+    observation.value = draftSession.source_material.observations[0] ?? ''
+    quote.value = draftSession.source_material.quotes[0]?.text ?? ''
+    // doNotMention traegt seit der Anlage bereits die Verbotsliste des Vereins/der Abteilung
+    // eingemischt (routes/content.ts) -- ein Herauskuerzen hier haette beim erneuten Absenden
+    // ohnehin keine Wirkung, die Route mischt sie wieder ein. Bewusst nicht getrennt angezeigt.
+    doNotMention.value = draftSession.source_material.doNotMention.join('\n')
+    selectedProfile.value = draftSession.style_profile_id ?? draftSession.style_profile_snapshot.slug ?? 'klar_erklaerend'
+    // Nur uebernehmen, was laut der zuletzt geladenen Verfuegbarkeit noch anhakbar ist -- derselbe
+    // Filter wie in restoreDraft(), ein Kanal kann seither entfernt worden sein.
+    selectedPlatforms.value = draftSession.target_platforms.filter((platform) => platforms.value.some((entry) => entry.platform === platform && entry.available))
+    temperature.value = draftSession.temperature
+    // max_characters bewusst NICHT vorbefuellt: die Spalte traegt den nach Minimumbildung mit den
+    // gewaehlten Plattformen aufgeloesten Wert (routes/content.ts), nicht zwingend eine eigene
+    // Obergrenze, die die Person tatsaechlich eingetragen hatte -- eine Vorbefuellung wuerde hier
+    // faelschlich eine eigene Grenze vortaeuschen, die nie gesetzt wurde.
+    sessionId.value = draftSession.id
+    candidate.value = candidates[0] ?? null
+  } catch {
+    notice.value = 'Der bisherige Bearbeitungsstand konnte nicht geladen werden. Du kannst hier einen neuen Entwurf beginnen.'
+  }
 }
 function parsedMaxCharactersOverride(): number | undefined | 'invalid' {
   const trimmed = maxCharactersOverride.value.trim()
@@ -151,9 +208,32 @@ async function createCandidate() {
 }
 async function acceptCandidate() {
   if (!candidate.value) return
-  try { const accepted = await api.request(`/v1/text-workshop/candidates/${candidate.value.id}/accept`, { method: 'POST' }, z.union([z.object({ postId: z.string(), postVersionId: z.string(), alreadyAccepted: z.literal(false) }), z.object({ postVersionId: z.string(), alreadyAccepted: z.literal(true) })])); await navigateTo(`/freigaben?postVersionId=${accepted.postVersionId}`) } catch { notice.value = 'Der Kandidat konnte nicht übernommen werden.' }
+  submitting.value = true; notice.value = ''
+  try {
+    const accepted = await api.request(`/v1/text-workshop/candidates/${candidate.value.id}/accept`, { method: 'POST' }, z.union([
+      z.object({ postId: z.string(), postVersionId: z.string(), alreadyAccepted: z.literal(false) }),
+      z.object({ postVersionId: z.string(), alreadyAccepted: z.literal(true) }),
+    ]))
+    candidate.value = { ...candidate.value, status: 'accepted' }
+    // Uebernehmen und Einreichen sind zwei getrennte, je fuer sich wiederholbare Schritte: der
+    // post_version-Datensatz existiert ab hier auch dann, wenn das Einreichen unten scheitert --
+    // die Person bleibt auf dieser Seite und kann den Button erneut anklicken (accept liefert dann
+    // ueber alreadyAccepted denselben postVersionId zurueck).
+    try {
+      await api.request(`/v1/post-versions/${accepted.postVersionId}/request-approval`, { method: 'POST' }, RequestApprovalResponseSchema)
+      clearDraft()
+      await navigateTo('/beitraege')
+    } catch (error) {
+      const code = (error as { data?: { error?: string } })?.data?.error
+      notice.value = REQUEST_APPROVAL_ERROR_MESSAGES[code ?? ''] ?? 'Der Entwurf wurde gespeichert, konnte aber nicht zur Freigabe eingereicht werden.'
+    }
+  } catch { notice.value = 'Der Kandidat konnte nicht übernommen werden.' } finally { submitting.value = false }
 }
 const selectedTemperatureStep = computed(() => TEXT_GENERATION_TEMPERATURE_STEPS.find((step) => step.value === temperature.value) ?? TEXT_GENERATION_TEMPERATURE_STEPS[1])
+// 'accepted' wird seit dem Wiedereinstieg per postId erreichbar: der zuletzt uebernommene
+// Kandidat einer wiedereroeffneten Sitzung traegt diesen Status, zeigt aber denselben fertigen
+// Text wie 'ready'. Ohne diese Erweiterung behauptete die Ueberschrift faelschlich "wird erzeugt".
+const candidateFinished = computed(() => candidate.value?.status === 'ready' || candidate.value?.status === 'accepted')
 const unavailableReasons = computed(() => [...new Set(platforms.value.filter((entry) => !entry.available).map((entry) => entry.reason))].filter((reason): reason is PlatformUnavailableReason => reason !== undefined))
 function togglePlatform(platform: SocialPlatform) {
   selectedPlatforms.value = selectedPlatforms.value.includes(platform) ? selectedPlatforms.value.filter((entry) => entry !== platform) : [...selectedPlatforms.value, platform]
@@ -175,7 +255,9 @@ async function reviseCandidate() {
 // (Review von Paket 044 PR 1; bestand schon vorher, faellt hier nur an derselben Zeile auf).
 restoringDraft = true
 await Promise.all([loadProfiles(), loadPlatformAvailability(), loadCapabilities()])
-restoreDraft()
+const resumePostId = typeof route.query.postId === 'string' ? route.query.postId : null
+if (resumePostId) await loadDraftFromPost(resumePostId)
+else restoreDraft()
 restoringDraft = false
 </script>
 
@@ -230,7 +312,7 @@ restoringDraft = false
       <div class="grid gap-4 sm:grid-cols-2"><label><span class="mb-1 block text-xs font-semibold">Freigegebenes Zitat</span><input v-model="quote" class="w-full rounded-xl border p-3 text-sm" /></label><label><span class="mb-1 block text-xs font-semibold">Nicht erwähnen (je Zeile)</span><input v-model="doNotMention" class="w-full rounded-xl border p-3 text-sm" /></label></div>
       <button class="inline-flex items-center justify-center gap-2 rounded-xl bg-forest px-5 py-3 text-sm font-bold text-white disabled:opacity-60" :disabled="submitting" @click="createCandidate"><LoaderCircle v-if="submitting" class="animate-spin" :size="16" /><Sparkles v-else :size="16" /> Textkandidaten erzeugen</button>
     </section>
-    <section v-else class="card p-5 sm:p-7"><div class="flex items-center justify-between"><h2 class="font-display text-xl font-bold">{{ candidate?.status === 'ready' ? 'Textkandidat bereit' : 'Text wird erzeugt' }}</h2><button class="rounded-lg border px-3 py-2 text-xs" @click="refreshSession"><RefreshCw :size="14" /> Aktualisieren</button></div><p v-if="candidate && candidate.status !== 'ready'" class="mt-4 text-sm text-[#727a75]">Der Worker verarbeitet die Anfrage im Hintergrund. Diese Seite enthält keinen Prompt und keine Providerdaten.</p><p v-if="candidate?.triggered_by === 'automatic_recovery'" class="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-900">Diese Version wurde nach einem technischen Fehler automatisch neu erzeugt.</p><template v-if="candidate?.generated_content"><textarea :value="candidate.generated_content.caption" readonly rows="10" class="mt-5 w-full rounded-xl border p-3 text-sm" /><div class="mt-3 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-900">{{ candidate.generated_content.verifiedFacts.length }} belegte Angaben · {{ candidate.generated_content.missingFacts.length }} offene Angaben</div><label class="mt-5 block"><span class="mb-1 block text-xs font-semibold">Überarbeitungswunsch</span><textarea v-model="revisionInstruction" rows="2" maxlength="500" class="w-full rounded-xl border p-3 text-sm" placeholder="z. B. kürzer und mit direkter Einladung" /></label><button class="mt-3 rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-60" :disabled="submitting || !revisionInstruction.trim()" @click="reviseCandidate"><RefreshCw :size="15" class="mr-1 inline" /> Überarbeiten</button><button class="mt-5 inline-flex items-center gap-2 rounded-xl bg-forest px-5 py-3 text-sm font-bold text-white" @click="acceptCandidate"><Check :size="16" /> Übernehmen und zur Freigabe</button></template><p v-if="candidate?.status === 'failed'" class="mt-4 text-sm text-red-700">Die Anfrage konnte nicht verarbeitet werden. Bitte prüfe die bestätigten Angaben und starte eine neue Sitzung.</p></section>
+    <section v-else class="card p-5 sm:p-7"><div class="flex items-center justify-between"><h2 class="font-display text-xl font-bold">{{ candidateFinished ? 'Textkandidat bereit' : 'Text wird erzeugt' }}</h2><button class="rounded-lg border px-3 py-2 text-xs" @click="refreshSession"><RefreshCw :size="14" /> Aktualisieren</button></div><p v-if="candidate && !candidateFinished" class="mt-4 text-sm text-[#727a75]">Der Worker verarbeitet die Anfrage im Hintergrund. Diese Seite enthält keinen Prompt und keine Providerdaten.</p><p v-if="candidate?.triggered_by === 'automatic_recovery'" class="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-900">Diese Version wurde nach einem technischen Fehler automatisch neu erzeugt.</p><template v-if="candidate?.generated_content"><textarea :value="candidate.generated_content.caption" readonly rows="10" class="mt-5 w-full rounded-xl border p-3 text-sm" /><div class="mt-3 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-900">{{ candidate.generated_content.verifiedFacts.length }} belegte Angaben · {{ candidate.generated_content.missingFacts.length }} offene Angaben</div><label class="mt-5 block"><span class="mb-1 block text-xs font-semibold">Überarbeitungswunsch</span><textarea v-model="revisionInstruction" rows="2" maxlength="500" class="w-full rounded-xl border p-3 text-sm" placeholder="z. B. kürzer und mit direkter Einladung" /></label><button class="mt-3 rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-60" :disabled="submitting || !revisionInstruction.trim()" @click="reviseCandidate"><RefreshCw :size="15" class="mr-1 inline" /> Überarbeiten</button><button class="mt-5 inline-flex items-center gap-2 rounded-xl bg-forest px-5 py-3 text-sm font-bold text-white disabled:opacity-60" :disabled="submitting" @click="acceptCandidate"><LoaderCircle v-if="submitting" class="animate-spin" :size="16" /><Check v-else :size="16" /> Übernehmen und zur Freigabe</button></template><p v-if="candidate?.status === 'failed'" class="mt-4 text-sm text-red-700">Die Anfrage konnte nicht verarbeitet werden. Bitte prüfe die bestätigten Angaben und starte eine neue Sitzung.</p></section>
     <p v-if="notice" class="mt-4 text-sm text-amber-800">{{ notice }}</p>
   </div>
 </template>
