@@ -33,13 +33,13 @@ export interface ApiRouteContext extends ApiRouteGuards {
   roleProvider: RoleProvider
   platformAdminProvider: PlatformAdminProvider
   emailSender: EmailSender
-  metaOAuthClient: MetaOAuthClient
+  getMetaOAuthClient(): Promise<MetaOAuthClient>
   // Paket 045: Twitter/LinkedIn haben strukturell andere OAuth-Flows als der gemeinsame
   // Meta-Adapter (PKCE bei Twitter, Organisations-Listing bei LinkedIn) -- eigene Client-Felder statt
   // eines vereinheitlichten Interface, das die Unterschiede nur verstecken wuerde.
   twitterOAuthClient: TwitterOAuthClient
   linkedinOAuthClient: LinkedInOAuthClient
-  createPublisherForConnection(platform: Platform, accessToken: string, externalAccountId: string): SocialPublisher
+  createPublisherForConnection(platform: Platform, accessToken: string, externalAccountId: string): Promise<SocialPublisher>
   // Plan 040: "Persona/Stilprofil testen" ueberschreibt die Protokollauswahl vollstaendig, genau
   // wie TextGenerationExecutor.generator im Worker (apps/worker/src/textGeneration.ts) -- ein Test
   // kann so eine echte Provider-Zeile faken (fuer model/baseUrl/apiKey), ohne einen echten

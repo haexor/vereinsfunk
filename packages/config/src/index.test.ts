@@ -182,6 +182,17 @@ describe('ApiEnvironmentSchema', () => {
     expect(ApiEnvironmentSchema.safeParse({ ...requiredProductionEnv, PUBLISHING_MODE: 'fake', EMAIL_PROVIDER: 'smtp', ...requiredSmtpEnv }).success).toBe(false)
   })
 
+  it('accepts disabled publishing in production without provider credentials', () => {
+    expect(
+      ApiEnvironmentSchema.safeParse({
+        ...requiredProductionEnv,
+        PUBLISHING_MODE: 'disabled',
+        EMAIL_PROVIDER: 'smtp',
+        ...requiredSmtpEnv,
+      }).success,
+    ).toBe(true)
+  })
+
   it.each([
     ['twitter', 'TWITTER_CLIENT_ID'],
     ['twitter', 'TWITTER_CLIENT_SECRET'],

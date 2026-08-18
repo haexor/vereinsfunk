@@ -11,12 +11,15 @@ import {
   PlatformSettingKeySchema,
   PlatformSettingSchema,
   PlatformSettingValueSchemas,
+  PublishingProviderConfigurationSchema,
+  PublishingProviderSchema,
   SetContentLimitOverrideRequestSchema,
   SetOrganizationSubscriptionRequestSchema,
   SetSubscriptionPlanContentLimitsRequestSchema,
   SubscriptionPlanContentLimitSchema,
   SubscriptionPlanSchema,
   UpdatePlatformSettingRequestSchema,
+  UpdatePublishingProviderConfigurationRequestSchema,
   UpdateSubscriptionPlanRequestSchema,
   UsageMetricsQuerySchema,
   UsageMetricsResponseSchema,
@@ -26,6 +29,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ApiRouteContext } from './context.js'
 import { createAuditRecorder, fetchAllRows } from './shared.js'
+import { ciphertextToBytea, createSecretBoxFromEnvironment } from '../secretBox.js'
 
 // Dieselben zwoelf Felder wurden bislang an drei Stellen (Liste, Anlegen, Aendern) einzeln
 // zusammengebaut -- ein neues Tariffeld haette an einer der drei Stellen vergessen werden koennen,
@@ -103,7 +107,7 @@ function currentPeriodStarts(timeZone: string): Record<'day' | 'week' | 'month' 
 
 
 export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRouteContext): void {
-  const { requireAuth, requirePlatformAdmin, supabaseClients, platformAdminProvider } = context
+  const { requireAuth, requirePlatformAdmin, supabaseClients, platformAdminProvider, environment } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
 
   // --- Plattform-Administration (Paket 022) -------------------------------------------
@@ -177,6 +181,12 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
     const params = z.object({ key: PlatformSettingKeySchema }).parse(request.params)
     const body = UpdatePlatformSettingRequestSchema.parse(request.body)
     const value = PlatformSettingValueSchemas[params.key].parse(body.value)
+    // Der Datenbank-Schalter ist absichtlich nur der Laufzeit-Not-Aus. Aktivieren darf er
+    // niemanden, solange der API-Container selbst keine echte Provider-Konfiguration besitzt;
+    // das waere sonst eine UI, die "aktiv" meldet, obwohl jeder Publish sicher scheitert.
+    if (params.key === 'publishing_enabled' && value === true && environment.PUBLISHING_MODE !== 'live') {
+      return reply.code(409).send({ error: 'publishing_not_configured', correlationId: request.id })
+    }
     const service = supabaseClients.forService()
     const update = await service
       .from('platform_settings')
@@ -188,6 +198,40 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
     return reply.code(200).send(
       PlatformSettingSchema.parse({ key: update.data.key, value: update.data.value, updatedAt: update.data.updated_at }),
     )
+  })
+
+  app.get('/v1/publishing-providers', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    if (!(await requirePlatformAdmin(request, reply))) return
+    const service = supabaseClients.forService()
+    const result = await service.from('publishing_provider_configurations').select('provider, client_id, graph_version, updated_at, publishing_provider_secrets(key_version)').order('provider')
+    if (result.error) throw result.error
+    return reply.code(200).send(result.data.map((row) => PublishingProviderConfigurationSchema.parse({
+      provider: row.provider, clientId: row.client_id, graphVersion: row.graph_version,
+      hasSecret: Boolean(row.publishing_provider_secrets), updatedAt: row.updated_at,
+    })))
+  })
+
+  app.put('/v1/publishing-providers/:provider', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    if (!(await requirePlatformAdmin(request, reply))) return
+    const params = z.object({ provider: PublishingProviderSchema }).parse(request.params)
+    const input = UpdatePublishingProviderConfigurationRequestSchema.parse(request.body)
+    const secretBox = createSecretBoxFromEnvironment(environment)
+    const sealed = secretBox.seal(input.clientSecret, `publishing-provider:${params.provider}`)
+    const service = supabaseClients.forService()
+    const configuration = await service.from('publishing_provider_configurations').upsert({
+      provider: params.provider, client_id: input.clientId, graph_version: input.graphVersion ?? null, updated_by: request.auth!.userId,
+    }, { onConflict: 'provider' }).select('provider, client_id, graph_version, updated_at').single()
+    if (configuration.error) throw configuration.error
+    const secret = await service.from('publishing_provider_secrets').upsert({
+      provider: params.provider, client_secret_ciphertext: ciphertextToBytea(sealed.ciphertext), key_version: sealed.keyVersion,
+    }, { onConflict: 'provider' })
+    if (secret.error) throw secret.error
+    return reply.code(200).send(PublishingProviderConfigurationSchema.parse({
+      provider: configuration.data.provider, clientId: configuration.data.client_id, graphVersion: configuration.data.graph_version,
+      hasSecret: true, updatedAt: configuration.data.updated_at,
+    }))
   })
 
   app.get('/v1/platform-admin/organizations', async (request, reply) => {

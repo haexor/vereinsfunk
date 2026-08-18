@@ -115,6 +115,19 @@ describe('platform administration', () => {
     expect(response.json()).toMatchObject({ error: 'invalid_request' })
   })
 
+  it('does not let the UI enable publishing when this deployment has no live provider', async () => {
+    const app = await startApp({ platformAdminProvider: adminProvider })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/v1/platform-settings/publishing_enabled',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { value: true },
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'publishing_not_configured' })
+  })
+
   it('maps the separation trigger when promoting an existing club member to 409', async () => {
     const rejectingClients: SupabaseClientFactory = {
       forUser: () => ({}) as unknown as SupabaseClient,
@@ -555,4 +568,3 @@ describe('text generation capabilities', () => {
     expect(response.json()).toEqual({ temperatureSupported: false })
   })
 })
-

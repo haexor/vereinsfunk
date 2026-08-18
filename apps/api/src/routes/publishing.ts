@@ -12,8 +12,20 @@ export function registerPublishingRoutes(app: FastifyInstance, context: ApiRoute
   const { requireAuth, requirePermission, supabaseClients, environment, createPublisherForConnection } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
 
+  // Zwei bewusst getrennte Sperren: der Deployment-Modus stellt sicher, dass dieser Container
+  // überhaupt keine externen Provider ansprechen kann; die persistierte Einstellung ist der
+  // sofort wirksame SaaS-Admin-Not-Aus. Fehlt die Zeile (z.B. vor einer Migration), fail closed.
+  async function publishingIsAvailable(): Promise<boolean> {
+    if (environment.NODE_ENV !== 'production') return environment.PUBLISHING_MODE !== 'disabled'
+    if (environment.PUBLISHING_MODE !== 'live') return false
+    const setting = await supabaseClients.forService().from('platform_settings').select('value').eq('key', 'publishing_enabled').maybeSingle()
+    if (setting.error) throw setting.error
+    return setting.data?.value === true
+  }
+
   app.post('/v1/post-versions/:id/schedule', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
+    if (!(await publishingIsAvailable())) return reply.code(503).send({ error: 'publishing_disabled', correlationId: request.id })
     const params = z.object({ id: UuidSchema }).parse(request.params)
     const input = SchedulePublicationRequestSchema.parse(request.body)
     const client = supabaseClients.forUser(request.auth!.accessToken)
@@ -67,6 +79,7 @@ export function registerPublishingRoutes(app: FastifyInstance, context: ApiRoute
   // Zeitpunkt (dasselbe Muster wie POST /v1/integration-sources/:id/sync).
   app.post('/v1/publications/:id/execute', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
+    if (!(await publishingIsAvailable())) return reply.code(503).send({ error: 'publishing_disabled', correlationId: request.id })
     const params = z.object({ id: UuidSchema }).parse(request.params)
     const client = supabaseClients.forUser(request.auth!.accessToken)
     const publication = await client
@@ -198,7 +211,7 @@ export function registerPublishingRoutes(app: FastifyInstance, context: ApiRoute
         platform: OAuthPlatformSchema.parse(publication.data.platform) as Platform, caption: version.data.caption as string, media,
         idempotencyKey: publication.data.idempotency_key as string,
       }
-      publisher = createPublisherForConnection(publicationInput.platform, accessToken, connection.data.external_account_id as string)
+      publisher = await createPublisherForConnection(publicationInput.platform, accessToken, connection.data.external_account_id as string)
       validation = await publisher.validate(publicationInput)
 
       // unique(publication_id, attempt_number) auf publication_attempts -- ein hartkodierter Wert 1

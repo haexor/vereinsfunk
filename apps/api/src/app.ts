@@ -18,6 +18,7 @@ import {
 } from '@vereinsfunk/publishing'
 import Fastify, { LogController, type FastifyInstance, type FastifyServerOptions } from 'fastify'
 import { randomUUID } from 'node:crypto'
+import { byteaToBuffer, createSecretBoxFromEnvironment } from './secretBox.js'
 import { createAuthGuards, SupabasePlatformAdminProvider, SupabaseRoleProvider, type PlatformAdminProvider, type RoleProvider } from './auth.js'
 import { createEmailSender, type EmailSender } from './email.js'
 import { createServiceClient, createUserClient } from './supabase.js'
@@ -105,15 +106,26 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   }
   const platformAdminProvider = options.platformAdminProvider ?? new SupabasePlatformAdminProvider(() => supabaseClients.forService())
   const useFakePublishing = environment.PUBLISHING_MODE === 'fake'
-  const metaOAuthClient: MetaOAuthClient =
-    options.metaOAuthClient ??
-    (useFakePublishing
-      ? new FakeMetaOAuthClient()
-      : new RealMetaOAuthClient({
-          appId: environment.META_APP_ID ?? '',
-          appSecret: environment.META_APP_SECRET ?? '',
-          graphVersion: environment.META_GRAPH_VERSION,
-        }))
+  async function loadMetaConfiguration(): Promise<{ clientId: string; clientSecret: string; graphVersion: string }> {
+    if (environment.PUBLISHING_MODE !== 'live') return { clientId: '', clientSecret: '', graphVersion: environment.META_GRAPH_VERSION }
+    const service = supabaseClients.forService()
+    const configuration = await service.from('publishing_provider_configurations').select('client_id, graph_version').eq('provider', 'meta').maybeSingle()
+    if (configuration.error) throw configuration.error
+    const secret = await service.from('publishing_provider_secrets').select('client_secret_ciphertext, key_version').eq('provider', 'meta').maybeSingle()
+    if (secret.error) throw secret.error
+    if (!configuration.data || !secret.data) throw new Error('meta provider is not configured')
+    return {
+      clientId: configuration.data.client_id as string,
+      clientSecret: createSecretBoxFromEnvironment(environment).open(byteaToBuffer(secret.data.client_secret_ciphertext as string), secret.data.key_version as string, 'publishing-provider:meta'),
+      graphVersion: (configuration.data.graph_version as string | null) ?? environment.META_GRAPH_VERSION,
+    }
+  }
+  async function getMetaOAuthClient(): Promise<MetaOAuthClient> {
+    if (options.metaOAuthClient) return options.metaOAuthClient
+    if (environment.PUBLISHING_MODE !== 'live') return new FakeMetaOAuthClient()
+    const configuration = await loadMetaConfiguration()
+    return new RealMetaOAuthClient({ appId: configuration.clientId, appSecret: configuration.clientSecret, graphVersion: configuration.graphVersion })
+  }
   // Twitter/LinkedIn koennen ausschliesslich im expliziten Fake-Modus konstruiert werden. Die
   // Konfiguration lehnt ihre Live-Aktivierung ab, solange die echten Adapter noch fehlen.
   const twitterOAuthClient: TwitterOAuthClient = options.twitterOAuthClient ?? new FakeTwitterOAuthClient()
@@ -129,14 +141,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   // Paket 025: ein MetaPublisher braucht das entschluesselte Token GENAU dieser Social-Connection
   // (anders als metaOAuthClient oben, das appId/appSecret-Ebene bleibt) -- deshalb keine einmalige
   // Instanz, sondern eine Fabrik je Aufruf. options.publisher ueberschreibt vollstaendig (Tests).
-  function createPublisherForConnection(platform: Platform, accessToken: string, externalAccountId: string): SocialPublisher {
+  async function createPublisherForConnection(platform: Platform, accessToken: string, externalAccountId: string): Promise<SocialPublisher> {
     if (options.publisher) return options.publisher
     switch (platform) {
       case 'instagram':
       case 'facebook':
-        if (useFakePublishing) return new FakePublisher()
+        if (environment.PUBLISHING_MODE !== 'live') return new FakePublisher()
         return new MetaPublisher({
-          graphVersion: environment.META_GRAPH_VERSION,
+          graphVersion: (await loadMetaConfiguration()).graphVersion,
           accessToken,
           ...(platform === 'instagram' ? { instagramAccountId: externalAccountId } : { facebookPageId: externalAccountId }),
         })
@@ -153,7 +165,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     roleProvider,
     platformAdminProvider,
     emailSender,
-    metaOAuthClient,
+    getMetaOAuthClient,
     twitterOAuthClient,
     linkedinOAuthClient,
     requireAuth,
