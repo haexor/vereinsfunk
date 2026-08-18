@@ -6,16 +6,25 @@ export { factsFromFixture, factsFromClubEvent } from './schedule.js'
 export type { FactsFromScheduleResult } from './schedule.js'
 
 export interface GroundedContentBrief { allowedClaims: readonly { sourceId: string; text: string }[]; approvedQuotes: readonly { sourceId: string; text: string; attribution?: string }[]; missingFacts: readonly string[]; prohibitedClaims: readonly string[]; goal: CreateSubmission['communicationGoal']; requestedFormats: CreateSubmission['requestedFormats']; presetSlug: string }
-export interface TextGroundedContentBrief { allowedClaims: readonly { sourceId: string; text: string }[]; approvedQuotes: readonly { sourceId: string; text: string; attribution?: string }[]; prohibitedClaims: readonly string[]; goal: CreateSubmission['communicationGoal'] }
+// Text-workshop-Sitzungen kennen keinen Anlass (presetSlug) mehr und damit auch keine daran
+// haengende Pflichtfakten-Pruefung (missingFacts) oder Formatvarianten (requestedFormats) -- ein
+// Omit statt einer zweiten, von Hand parallel gepflegten Feldliste.
+export type TextGroundedContentBrief = Omit<GroundedContentBrief, 'missingFacts' | 'requestedFormats' | 'presetSlug'>
 export interface ContentGenerator { generate(input: CreateSubmission): Promise<GeneratedPost> }
+
+/** Claims/Zitate sind fuer Foto- und Text-Briefs identisch aus dem Quellmaterial abgeleitet. */
+function claimsFromSourceMaterial(sourceMaterial: CreateSubmission['sourceMaterial']) {
+  const allowedClaims = [
+    ...Object.entries(sourceMaterial.facts).map(([key, value]) => ({ sourceId: `fact:${key}`, text: `${key}: ${value}` })),
+    ...sourceMaterial.observations.map((text, index) => ({ sourceId: `observation:${index + 1}`, text })),
+  ]
+  const approvedQuotes = sourceMaterial.quotes.filter((quote) => quote.approved).map((quote, index) => quote.attribution ? ({ sourceId: `quote:${index + 1}`, text: quote.text, attribution: quote.attribution }) : ({ sourceId: `quote:${index + 1}`, text: quote.text }))
+  return { allowedClaims, approvedQuotes }
+}
 
 export function createGroundedContentBrief(input: CreateSubmission): GroundedContentBrief {
   const preset = getPreset(input.presetSlug)
-  const allowedClaims = [
-    ...Object.entries(input.sourceMaterial.facts).map(([key, value]) => ({ sourceId: `fact:${key}`, text: `${key}: ${value}` })),
-    ...input.sourceMaterial.observations.map((text, index) => ({ sourceId: `observation:${index + 1}`, text })),
-  ]
-  const approvedQuotes = input.sourceMaterial.quotes.filter((quote) => quote.approved).map((quote, index) => quote.attribution ? ({ sourceId: `quote:${index + 1}`, text: quote.text, attribution: quote.attribution }) : ({ sourceId: `quote:${index + 1}`, text: quote.text }))
+  const { allowedClaims, approvedQuotes } = claimsFromSourceMaterial(input.sourceMaterial)
   return { allowedClaims, approvedQuotes, missingFacts: validateSourceMaterial(preset, input.sourceMaterial), prohibitedClaims: input.sourceMaterial.doNotMention, goal: input.communicationGoal, requestedFormats: input.requestedFormats, presetSlug: input.presetSlug }
 }
 
@@ -27,11 +36,7 @@ export function createGroundedContentBrief(input: CreateSubmission): GroundedCon
  * und assertGroundedPost() gegen die bestaetigten Quellen.
  */
 export function createTextGroundedContentBrief(input: Pick<CreateSubmission, 'communicationGoal' | 'sourceMaterial'>): TextGroundedContentBrief {
-  const allowedClaims = [
-    ...Object.entries(input.sourceMaterial.facts).map(([key, value]) => ({ sourceId: `fact:${key}`, text: `${key}: ${value}` })),
-    ...input.sourceMaterial.observations.map((text, index) => ({ sourceId: `observation:${index + 1}`, text })),
-  ]
-  const approvedQuotes = input.sourceMaterial.quotes.filter((quote) => quote.approved).map((quote, index) => quote.attribution ? ({ sourceId: `quote:${index + 1}`, text: quote.text, attribution: quote.attribution }) : ({ sourceId: `quote:${index + 1}`, text: quote.text }))
+  const { allowedClaims, approvedQuotes } = claimsFromSourceMaterial(input.sourceMaterial)
   return { allowedClaims, approvedQuotes, prohibitedClaims: input.sourceMaterial.doNotMention, goal: input.communicationGoal }
 }
 
@@ -106,7 +111,9 @@ export function assertCaptionLength(post: GeneratedPost, maxCharacters: number |
 
 // The output contract below is part of the prompt. Bump this whenever its wording or shape
 // changes so accepted post versions retain accurate generation provenance.
-export const TEXT_PROMPT_TEMPLATE_VERSION = 'text-workshop-v2'
+// v3: missingFacts/presetSlug dropped from the user JSON alongside the Anlass removal -- the
+// shape sent to the model changed even though the output contract below did not.
+export const TEXT_PROMPT_TEMPLATE_VERSION = 'text-workshop-v3'
 
 export type StructuredTextGeneratorInput = {
   brief: TextGroundedContentBrief

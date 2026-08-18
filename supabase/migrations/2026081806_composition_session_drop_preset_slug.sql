@@ -1,15 +1,19 @@
 begin;
 
 -- "Anlass" (preset_slug) faellt aus der Textwerkstatt komplett weg: die daran haengende
--- Pflichtfakten-Pruefung je Anlasstyp (getPreset/validateSourceMaterial, content-engine) war nie
--- mehr als ein weiches Signal im Prompt und hat nie eine Generierung blockiert -- die harte
--- Grundlage ist seit jeher die source_material-CHECK unten (mindestens ein Fakt, eine Beobachtung
--- oder ein Zitat) und assertGroundedPost() gegen die bestaetigten Quellen, beides unabhaengig vom
--- Anlass. Zusaetzlich war das UI-Feld Freitext -- ein Tippfehler gegenueber einem bekannten Preset-
--- Slug schaltete die Pruefung lautlos ab, ohne dass es auffiel.
+-- Pflichtfakten-Pruefung je Anlasstyp (getPreset/validateSourceMaterial, content-engine) war HIER,
+-- im Textwerkstatt-Pfad (createTextGroundedContentBrief), nie mehr als ein weiches Signal im
+-- Prompt und hat nie eine Generierung blockiert -- die harte Grundlage ist seit jeher die
+-- source_material-CHECK unten (mindestens ein Fakt, eine Beobachtung oder ein Zitat) und
+-- assertGroundedPost() gegen die bestaetigten Quellen, beides unabhaengig vom Anlass. Zusaetzlich
+-- war das UI-Feld Freitext -- ein Tippfehler gegenueber einem bekannten Preset-Slug schaltete die
+-- Pruefung lautlos ab, ohne dass es auffiel.
 --
--- Die Foto-Pipeline (public.submissions, /v1/submissions) behaelt ihren eigenen preset_slug: dort
--- bestimmt er tatsaechlich die Layout-Familie (content-engine layoutFor()) und ist Teil der
+-- Die Foto-Pipeline (public.submissions, /v1/submissions) behaelt ihren eigenen preset_slug und
+-- ist von dieser Migration nicht betroffen -- dort ist dieselbe Pruefung (missingFacts ueber
+-- createGroundedContentBrief) weiterhin eine echte Sperre: fehlende Pflichtfakten lassen die
+-- Route den Beitrag nur als "facts_required" anlegen, nie einen Post/Post_version. preset_slug
+-- bestimmt dort ausserdem die Layout-Familie (content-engine layoutFor()) und ist Teil der
 -- "Erlaubte Anlaesse"-Policy (policies.allowedPresets, evaluateSubmitPermission). Diese Migration
 -- fasst nur composition_sessions/create_text_generation_session an.
 
