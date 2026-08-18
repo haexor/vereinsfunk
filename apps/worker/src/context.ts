@@ -12,11 +12,14 @@ import type { GenerationRecoveryRepository, RecoverableSessionRow, StalledCandid
 // candidate could never be reclaimed by recovery (which only reclaims 'generating' rows).
 // textGeneration.ts's execute() is the single place that parses it, inside its try/catch, where
 // a schema mismatch is properly classified and the candidate is marked failed.
-const SessionRowSchema: z.ZodType<SessionRow> = z.object({
+const SessionRowSchema = z.object({
   id: UuidSchema, organization_id: UuidSchema, department_id: UuidSchema, team_id: UuidSchema.nullable(),
   communication_goal: CommunicationGoalSchema, source_material: SourceMaterialSchema,
   style_profile_snapshot: z.unknown(), max_characters: z.coerce.number().pipe(MaxCharactersSchema), temperature: z.coerce.number().pipe(TextGenerationTemperatureSchema),
-})
+}) satisfies z.ZodType<SessionRow>
+// Aus dem Schema abgeleitet statt als zweiter, von Hand parallel gepflegter String: composition_sessions.preset_slug
+// musste zuvor an beiden Stellen einzeln entfernt werden, ohne dass ein Auseinanderlaufen compile-time aufgefallen waere.
+const SESSION_ROW_COLUMNS = Object.keys(SessionRowSchema.shape).join(', ')
 const CandidateRowSchema: z.ZodType<CandidateRow> = z.object({ id: UuidSchema, status: z.literal('generating'), revision_instruction: z.string().nullable(), lease_token: UuidSchema })
 const ProviderRowSchema: z.ZodType<ProviderRow> = z.object({
   id: UuidSchema, protocol: z.string(), base_url: z.url(), model: z.string().trim().min(1),
@@ -32,14 +35,18 @@ const StalledCandidateRowSchema: z.ZodType<StalledCandidateRow> = z.object({
 // actually reads, so it needs the stricter shape. Still .nonoptional(): a missing key must be
 // rejected at this boundary rather than silently passed through create_text_generation_session
 // as a JSON null.
-const RecoverableSessionRowSchema: z.ZodType<RecoverableSessionRow> = z.object({
+const RecoverableSessionRowSchema = z.object({
   organization_id: UuidSchema, department_id: UuidSchema, team_id: UuidSchema.nullable(),
   communication_goal: CommunicationGoalSchema, requested_formats: z.unknown().nonoptional(), source_material: z.unknown().nonoptional(), style_profile_id: UuidSchema.nullable(),
   style_profile_snapshot: z.unknown().nonoptional(), effective_config_snapshot: z.unknown().nonoptional(),
   target_platforms: z.array(SocialPlatformSchema), max_characters: z.coerce.number().pipe(MaxCharactersSchema), temperature: z.coerce.number().pipe(TextGenerationTemperatureSchema),
   source_revision: z.coerce.number().int().positive(),
   input_hash: z.string().regex(/^[a-f0-9]{64}$/), created_by: UuidSchema,
-})
+}) satisfies z.ZodType<RecoverableSessionRow>
+// Selbe Begruendung wie bei SESSION_ROW_COLUMNS oben -- eine andere Spaltenauswahl, weil diese
+// Funktion die urspruengliche Anfrage komplett an create_text_generation_session zurueckreicht,
+// waehrend loadSession nur genug fuer eine direkte Generierung braucht.
+const RECOVERABLE_SESSION_ROW_COLUMNS = Object.keys(RecoverableSessionRowSchema.shape).join(', ')
 
 /** Creates the worker-only service-role repository from validated configuration. */
 export function createWorkflowOutboxRepository(config: WorkerEnvironment): WorkflowOutboxRepository {
@@ -92,7 +99,7 @@ export function createTextGenerationRepository(config: WorkerEnvironment): TextG
   const client = createClient(config.SUPABASE_URL, config.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
   return {
     async loadSession(id, organizationId) {
-      const { data, error } = await client.from('composition_sessions').select('id, organization_id, department_id, team_id, communication_goal, source_material, style_profile_snapshot, max_characters, temperature').eq('id', id).eq('organization_id', organizationId).maybeSingle()
+      const { data, error } = await client.from('composition_sessions').select(SESSION_ROW_COLUMNS).eq('id', id).eq('organization_id', organizationId).maybeSingle()
       if (error) throw error
       return data === null ? null : SessionRowSchema.parse(data)
     },
@@ -158,7 +165,7 @@ export function createGenerationRecoveryRepository(config: WorkerEnvironment): G
     },
     async loadSessionForRecovery(sessionId, organizationId) {
       const { data, error } = await client.from('composition_sessions')
-        .select('organization_id, department_id, team_id, communication_goal, requested_formats, source_material, style_profile_id, style_profile_snapshot, effective_config_snapshot, target_platforms, max_characters, temperature, source_revision, input_hash, created_by')
+        .select(RECOVERABLE_SESSION_ROW_COLUMNS)
         .eq('id', sessionId).eq('organization_id', organizationId).maybeSingle()
       if (error) throw error
       return data === null ? null : RecoverableSessionRowSchema.parse(data)
