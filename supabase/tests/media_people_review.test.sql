@@ -1,21 +1,25 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(18);
+select plan(22);
 
 set local role postgres;
 
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
 values
   ('00000000-0000-0000-0000-000000000000', '45000000-0000-4000-8000-000000000001', 'authenticated', 'authenticated', 'admin@pgtap-people-review.local', '', '{}', '{}', now(), now()),
-  ('00000000-0000-0000-0000-000000000000', '45000000-0000-4000-8000-000000000002', 'authenticated', 'authenticated', 'viewer@pgtap-people-review.local', '', '{}', '{}', now(), now());
+  ('00000000-0000-4000-8000-000000000000', '45000000-0000-4000-8000-000000000002', 'authenticated', 'authenticated', 'viewer@pgtap-people-review.local', '', '{}', '{}', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '45000000-0000-4000-8000-000000000003', 'authenticated', 'authenticated', 'foreign-admin@pgtap-people-review.local', '', '{}', '{}', now(), now());
 
 insert into public.organizations (id, name, slug) values
-  ('45000000-1000-4000-8000-000000000001', 'PGTAP People Review Verein', 'pgtap-people-review-verein');
+  ('45000000-1000-4000-8000-000000000001', 'PGTAP People Review Verein', 'pgtap-people-review-verein'),
+  ('45000000-1000-4000-8000-000000000002', 'PGTAP People Review Fremdverein', 'pgtap-people-review-fremdverein');
 insert into public.departments (id, organization_id, name, slug) values
-  ('45000000-1100-4000-8000-000000000001', '45000000-1000-4000-8000-000000000001', 'Fußball', 'fussball');
+  ('45000000-1100-4000-8000-000000000001', '45000000-1000-4000-8000-000000000001', 'Fußball', 'fussball'),
+  ('45000000-1100-4000-8000-000000000002', '45000000-1000-4000-8000-000000000002', 'Fremdverein', 'fremdverein');
 insert into public.department_memberships (organization_id, department_id, user_id, role) values
   ('45000000-1000-4000-8000-000000000001', '45000000-1100-4000-8000-000000000001', '45000000-0000-4000-8000-000000000001', 'department_admin'),
-  ('45000000-1000-4000-8000-000000000001', '45000000-1100-4000-8000-000000000001', '45000000-0000-4000-8000-000000000002', 'viewer');
+  ('45000000-1000-4000-8000-000000000001', '45000000-1100-4000-8000-000000000001', '45000000-0000-4000-8000-000000000002', 'viewer'),
+  ('45000000-1000-4000-8000-000000000002', '45000000-1100-4000-8000-000000000002', '45000000-0000-4000-8000-000000000003', 'department_admin');
 
 insert into public.media_assets (
   id, organization_id, department_id, bucket_id, object_path, mime_type, byte_size,
@@ -23,6 +27,10 @@ insert into public.media_assets (
 ) values (
   '45000000-2000-4000-8000-000000000001', '45000000-1000-4000-8000-000000000001', '45000000-1100-4000-8000-000000000001',
   'raw-media', 'organizations/x/departments/y/assets/1/a.jpg', 'image/jpeg', 1000,
+  'clean', 'ready', 'valid', '45000000-0000-4000-8000-000000000001'
+), (
+  '45000000-2000-4000-8000-000000000002', '45000000-1000-4000-8000-000000000001', '45000000-1100-4000-8000-000000000001',
+  'raw-media', 'organizations/x/departments/y/assets/2/b.jpg', 'image/jpeg', 1000,
   'clean', 'ready', 'valid', '45000000-0000-4000-8000-000000000001'
 );
 
@@ -33,6 +41,12 @@ select set_config('request.jwt.claim.sub', '45000000-0000-4000-8000-000000000002
 select throws_ok(
   $$select public.confirm_media_people_review('45000000-2000-4000-8000-000000000001', false)$$,
   'P0001', 'insufficient_permission', 'a department viewer without post.edit cannot confirm the people-review signal'
+);
+
+select set_config('request.jwt.claim.sub', '45000000-0000-4000-8000-000000000003', true);
+select throws_ok(
+  $$select public.confirm_media_people_review('45000000-2000-4000-8000-000000000001', false)$$,
+  'P0001', 'insufficient_permission', 'negative tenant isolation: a foreign organization admin cannot confirm this asset'
 );
 
 select set_config('request.jwt.claim.sub', '45000000-0000-4000-8000-000000000001', true);
@@ -46,6 +60,24 @@ select set_config('request.jwt.claim.sub', '45000000-0000-4000-8000-000000000001
 -- privileges and would have stayed green despite the bug.
 insert into public.face_regions (id, organization_id, media_asset_id, x, y, width, height, source, subject_kind, decision) values
   ('45000000-3000-4000-8000-000000000001', '45000000-1000-4000-8000-000000000001', '45000000-2000-4000-8000-000000000001', 0.1, 0.1, 0.2, 0.2, 'manual', 'adult', 'pending');
+-- Moving a region invalidates both the old and new asset: otherwise the old asset could retain
+-- a review that no longer covers its current regions.
+set local role postgres;
+update public.media_assets set people_reviewed_at = now() where id in ('45000000-2000-4000-8000-000000000001', '45000000-2000-4000-8000-000000000002');
+update public.face_regions set media_asset_id = '45000000-2000-4000-8000-000000000002' where id = '45000000-3000-4000-8000-000000000001';
+select is((select people_reviewed_at from public.media_assets where id = '45000000-2000-4000-8000-000000000001'), null, 'moving a face region invalidates the old asset review');
+select is((select people_reviewed_at from public.media_assets where id = '45000000-2000-4000-8000-000000000002'), null, 'moving a face region invalidates the new asset review');
+update public.face_regions set media_asset_id = '45000000-2000-4000-8000-000000000001' where id = '45000000-3000-4000-8000-000000000001';
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '45000000-0000-4000-8000-000000000003', true);
+delete from public.face_regions where id = '45000000-3000-4000-8000-000000000001';
+set local role postgres;
+select is(
+  (select count(*)::integer from public.face_regions where id = '45000000-3000-4000-8000-000000000001'),
+  1, 'negative tenant isolation: a foreign organization member cannot delete this face region'
+);
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '45000000-0000-4000-8000-000000000001', true);
 select throws_ok(
   $$select public.confirm_media_people_review('45000000-2000-4000-8000-000000000001', false)$$,
   'P0001', 'faces_present_mismatch', '"no people" is rejected while a face region already exists for this asset'

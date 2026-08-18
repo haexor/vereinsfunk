@@ -13,6 +13,8 @@ const mediaAssetId = defineModel<string | null>({ required: true })
 type Phase = 'idle' | 'uploading' | 'processing' | 'failed' | 'marking' | 'reviewed'
 type FaceBox = { id: string; x: number; y: number; width: number; height: number; subjectKind: 'adult' | 'minor' | 'unknown'; decision: 'pending' | 'consented'; consentRecordId: string | null }
 type ConsentOption = { id: string; label: string }
+const FaceRegionInsertSchema = z.object({ id: z.string().uuid() })
+const PeopleReviewSchema = z.object({ id: z.string().uuid() })
 
 const api = useApiClient()
 const supabase = useSupabaseClient()
@@ -27,6 +29,10 @@ const drag = ref<{ startX: number; startY: number; x: number; y: number } | null
 // Getrennt von mediaAssetId (dem Modelwert): das Model wird erst gesetzt, wenn die
 // Personen-Pruefung abgeschlossen ist -- bis dahin braucht die Markier-UI die Asset-ID trotzdem.
 const currentAssetId = ref<string | null>(null)
+
+watch(mediaAssetId, (assetId) => {
+  if (assetId === null && phase.value === 'reviewed') phase.value = 'marking'
+})
 
 const hasUndecidedBox = computed(() => boxes.value.some((box) => box.decision === 'pending'))
 
@@ -81,23 +87,29 @@ async function loadConsents() {
   try {
     const rows = await api.request('/v1/consents', { query: { organizationId: props.organizationId, departmentId: props.departmentId } }, z.array(z.object({ id: z.string(), signerName: z.string().nullable(), scope: z.string(), status: z.string() })))
     consents.value = rows.map((row) => ({ id: row.id, label: `${row.signerName ?? 'Unbenannt'} — ${row.scope} (${row.status})` }))
-  } catch { consents.value = [] }
+  } catch {
+    consents.value = []
+    errorMessage.value = 'Einwilligungen konnten nicht geladen werden. Bitte die Seite neu laden.'
+  }
 }
 
-function relativePosition(event: MouseEvent) {
+function relativePosition(event: PointerEvent) {
   const rect = imageEl.value!.getBoundingClientRect()
   return { x: Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1), y: Math.min(Math.max((event.clientY - rect.top) / rect.height, 0), 1) }
 }
-function startDrag(event: MouseEvent) {
+function startDrag(event: PointerEvent) {
+  if (!imageEl.value) return
+  imageEl.value.setPointerCapture(event.pointerId)
   const point = relativePosition(event)
   drag.value = { startX: point.x, startY: point.y, x: point.x, y: point.y }
 }
-function updateDrag(event: MouseEvent) {
+function updateDrag(event: PointerEvent) {
   if (!drag.value) return
   const point = relativePosition(event)
   drag.value = { ...drag.value, x: point.x, y: point.y }
 }
-async function endDrag() {
+async function endDrag(event?: PointerEvent) {
+  if (event && imageEl.value?.hasPointerCapture(event.pointerId)) imageEl.value.releasePointerCapture(event.pointerId)
   if (!drag.value || !currentAssetId.value) { drag.value = null; return }
   const x = Math.min(drag.value.startX, drag.value.x)
   const y = Math.min(drag.value.startY, drag.value.y)
@@ -110,7 +122,25 @@ async function endDrag() {
     organization_id: props.organizationId, media_asset_id: currentAssetId.value, x, y, width, height, source: 'manual', subject_kind: 'adult', decision: 'pending',
   }).select('id').single()
   if (inserted.error) { errorMessage.value = 'Die Markierung konnte nicht gespeichert werden.'; return }
-  boxes.value = [...boxes.value, { id: inserted.data.id as string, x, y, width, height, subjectKind: 'adult', decision: 'pending', consentRecordId: null }]
+  const parsedInserted = FaceRegionInsertSchema.safeParse(inserted.data)
+  if (!parsedInserted.success) { errorMessage.value = 'Die Markierung konnte nicht gespeichert werden.'; return }
+  boxes.value = [...boxes.value, { id: parsedInserted.data.id, x, y, width, height, subjectKind: 'adult', decision: 'pending', consentRecordId: null }]
+}
+async function addPersonBox() {
+  if (!currentAssetId.value) return
+  drag.value = { startX: 0.35, startY: 0.35, x: 0.65, y: 0.65 }
+  await endDrag()
+}
+async function updateBoxGeometry(box: FaceBox, field: 'x' | 'y' | 'width' | 'height', value: string) {
+  const number = Number(value)
+  const next = { ...box, [field]: number }
+  if (!Number.isFinite(number) || next.x < 0 || next.y < 0 || next.width <= 0 || next.height <= 0 || next.x + next.width > 1 || next.y + next.height > 1) {
+    errorMessage.value = 'Die Markierung muss vollständig innerhalb des Fotos liegen.'
+    return
+  }
+  const update = await supabase.from('face_regions').update({ [field]: number }).eq('id', box.id)
+  if (update.error) { errorMessage.value = 'Die Markierung konnte nicht angepasst werden.'; return }
+  box[field] = number
 }
 async function setSubjectKind(box: FaceBox, subjectKind: FaceBox['subjectKind']) {
   const update = await supabase.from('face_regions').update({ subject_kind: subjectKind }).eq('id', box.id)
@@ -132,10 +162,11 @@ async function confirmReview(facesPresent: boolean) {
   if (!currentAssetId.value) return
   const result = await supabase.rpc('confirm_media_people_review', { target_asset_id: currentAssetId.value, faces_present: facesPresent })
   if (result.error) { errorMessage.value = 'Die Personen-Prüfung konnte nicht bestätigt werden.'; return }
+  if (!PeopleReviewSchema.safeParse(result.data).success) { errorMessage.value = 'Die Personen-Prüfung konnte nicht bestätigt werden.'; return }
   mediaAssetId.value = currentAssetId.value
   phase.value = 'reviewed'
 }
-function editAgain() { phase.value = 'marking' }
+function editAgain() { mediaAssetId.value = null; phase.value = 'marking' }
 </script>
 
 <template>
@@ -147,7 +178,7 @@ function editAgain() { phase.value = 'marking' }
 
     <div v-if="phase === 'marking'" class="mt-3">
       <p class="mb-2 text-xs text-[#727a75]">Ziehe ein Rechteck über jede abgebildete Person. Ohne Markierung kann das Foto nicht veröffentlicht werden.</p>
-      <div class="relative inline-block max-w-full select-none" @mousedown="startDrag" @mousemove="updateDrag" @mouseup="endDrag" @mouseleave="drag = null" @dragstart.prevent>
+      <div class="relative inline-block max-w-full select-none" @pointerdown="startDrag" @pointermove="updateDrag" @pointerup="endDrag" @pointercancel="drag = null" @pointerleave="drag = null" @dragstart.prevent>
         <img ref="imageEl" :src="previewUrl" class="max-h-96 max-w-full rounded-xl border" style="-webkit-user-drag: none" draggable="false" alt="Angehängtes Foto" />
         <div
           v-for="box in boxes" :key="box.id"
@@ -158,6 +189,8 @@ function editAgain() { phase.value = 'marking' }
         <div v-if="drag" class="absolute border-2 border-dashed border-forest" :style="{ left: `${Math.min(drag.startX, drag.x) * 100}%`, top: `${Math.min(drag.startY, drag.y) * 100}%`, width: `${Math.abs(drag.x - drag.startX) * 100}%`, height: `${Math.abs(drag.y - drag.startY) * 100}%` }" />
       </div>
 
+      <button type="button" class="mt-2 rounded-xl border px-3 py-2 text-sm font-semibold" @click="addPersonBox">Person hinzufügen</button>
+
       <ul v-if="boxes.length" class="mt-3 grid gap-2">
         <li v-for="(box, index) in boxes" :key="box.id" class="flex flex-wrap items-center gap-2 rounded-lg border p-2 text-xs">
           <span class="font-semibold">Person {{ index + 1 }}</span>
@@ -166,6 +199,9 @@ function editAgain() { phase.value = 'marking' }
             <option value="minor">Minderjährig</option>
             <option value="unknown">Unbekannt</option>
           </select>
+          <label v-for="field in ['x', 'y', 'width', 'height'] as const" :key="field" class="flex items-center gap-1">{{ field }}
+            <input class="w-16 rounded border p-1" type="number" min="0" max="1" step="0.01" :value="box[field]" :aria-label="`Person ${index + 1}: ${field}`" @change="updateBoxGeometry(box, field, ($event.target as HTMLInputElement).value)" />
+          </label>
           <template v-if="box.decision === 'consented'">
             <span class="inline-flex items-center gap-1 text-emerald-700"><Check :size="14" /> Einwilligung verknüpft</span>
           </template>

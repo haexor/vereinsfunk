@@ -12,4 +12,16 @@ begin;
 -- Migrationsreihe, Kommentar in 2026081802).
 grant delete on public.face_regions to authenticated;
 
+-- DELETE evaluates the existing face_regions_write USING clause (202608030001), which checks
+-- the owning asset's organization and post.edit permission. The grant adds no broader access.
+do $$ begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'face_regions'
+      and policyname = 'face_regions_write' and qual is not null
+  ) then
+    raise exception 'face_regions_write must retain a USING clause before granting DELETE';
+  end if;
+end $$;
+
 commit;

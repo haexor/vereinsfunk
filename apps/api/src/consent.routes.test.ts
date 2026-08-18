@@ -429,5 +429,20 @@ describe('GET /v1/consents -- post.edit access (Plan 045)', () => {
     const response = await app.inject({ method: 'GET', url: `/v1/consents?organizationId=${ORGANIZATION_ID}`, headers: { authorization: `Bearer ${token}` } })
     expect(response.statusCode).toBe(200)
   })
-})
 
+  it('rejects a post.edit caller scoped to another department before reading that person\'s consents', async () => {
+    const otherDepartmentId = '15000000-1100-4000-8000-000000000099'
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ from: (table: string) => {
+        if (table === 'directory_people') return chain({ data: { organization_id: ORGANIZATION_ID, department_id: otherDepartmentId }, error: null })
+        throw new Error(`unexpected user table: ${table}`)
+      } }) as unknown as SupabaseClient,
+      forService: () => { throw new Error('forService must not read cross-department consents') },
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: `/v1/consents?organizationId=${ORGANIZATION_ID}&departmentId=${DEPARTMENT_ID}&directoryPersonId=15000000-3000-4000-8000-000000000001`, headers: { authorization: `Bearer ${token}` } })
+    expect(response.statusCode).toBe(404)
+    expect(response.json()).toMatchObject({ error: 'directory_person_not_found' })
+  })
+})

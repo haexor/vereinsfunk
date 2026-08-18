@@ -8,7 +8,7 @@ const ASSET_ID = '10000000-9000-4000-8000-000000000001'
 function fakeClient(options: {
   existingDerivatives?: { id: string; recipe: unknown; status: string }[]
   asset?: { bucket_id: string; object_path: string; mime_type: string; byte_size: number; sha256: string; width: number | null; height: number | null; upload_status: string }
-  captured?: { downloaded?: string; uploaded?: { bucket: string; path: string; buffer: Buffer; contentType: string }; inserted?: Record<string, unknown> }
+  captured?: { downloaded?: string; uploaded?: { bucket: string; path: string; buffer: Buffer; contentType: string }; inserted?: Record<string, unknown>; filters?: [string, unknown][]; upsertOptions?: Record<string, unknown> }
 }): SupabaseClient {
   const captured = options.captured ?? {}
   const asset = options.asset ?? { bucket_id: 'raw-media', object_path: 'organizations/x/departments/y/assets/1/a.jpg', mime_type: 'image/jpeg', byte_size: 10, sha256: 'a'.repeat(64), width: 2, height: 2, upload_status: 'ready' }
@@ -19,13 +19,24 @@ function fakeClient(options: {
           select: () => ({
             eq: () => ({ eq: async () => ({ data: options.existingDerivatives ?? [], error: null }) }),
           }),
-          insert: (row: Record<string, unknown>) => {
+          upsert: (row: Record<string, unknown>, upsertOptions: Record<string, unknown>) => {
             captured.inserted = row
+            captured.upsertOptions = upsertOptions
             return { select: () => ({ single: async () => ({ data: { id: '10000000-8000-4000-8000-000000000001' }, error: null }) }) }
           },
         }
       }
-      if (table === 'media_assets') return { select: () => ({ eq: () => ({ single: async () => ({ data: asset, error: null }) }) }) }
+      if (table === 'media_assets') {
+        const query = {
+          eq: (column: string, value: unknown) => {
+            captured.filters ??= []
+            captured.filters.push([column, value])
+            return query
+          },
+          single: async () => ({ data: asset, error: null }),
+        }
+        return { select: () => query }
+      }
       throw new Error(`unexpected table in test fake: ${table}`)
     },
     storage: {
@@ -48,11 +59,11 @@ describe('ensurePassThroughDerivative', () => {
   })
 
   it('ignores a derivative of a different recipe kind or non-ready status, and creates a fresh pass-through', async () => {
-    const captured: { uploaded?: { bucket: string; path: string; buffer: Buffer; contentType: string }; inserted?: Record<string, unknown> } = {}
+    const captured: { uploaded?: { bucket: string; path: string; buffer: Buffer; contentType: string }; inserted?: Record<string, unknown>; filters?: [string, unknown][]; upsertOptions?: Record<string, unknown> } = {}
     const client = fakeClient({
       existingDerivatives: [
-        { id: 'irrelevant-1', recipe: { kind: 'styled_v1' }, status: 'ready' },
-        { id: 'irrelevant-2', recipe: { kind: 'pass_through_v1' }, status: 'processing' },
+        { id: '10000000-7000-4000-8000-000000000002', recipe: { kind: 'styled_v1' }, status: 'ready' },
+        { id: '10000000-7000-4000-8000-000000000003', recipe: { kind: 'pass_through_v1' }, status: 'processing' },
       ],
       captured,
     })
@@ -64,6 +75,8 @@ describe('ensurePassThroughDerivative', () => {
       organization_id: ORGANIZATION_ID, media_asset_id: ASSET_ID, recipe: { kind: 'pass_through_v1' },
       recipe_version: 'pass-through-v1', status: 'ready', sha256: 'a'.repeat(64), width: 2, height: 2,
     })
+    expect(captured.filters).toEqual([['id', ASSET_ID], ['organization_id', ORGANIZATION_ID]])
+    expect(captured.upsertOptions).toEqual({ onConflict: 'bucket_id,object_path' })
   })
 
   it('copies the normalized bytes byte-for-byte into rendered-media and records the same sha256', async () => {

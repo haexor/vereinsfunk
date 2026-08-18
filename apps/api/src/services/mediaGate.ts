@@ -126,7 +126,7 @@ export async function computeMediaGateBlockersForPostVersion(
       : 'pending'
   const derivativeCurrent = derivatives.data.every((row) => row.status === 'ready')
   // Plan 045, PR 0 Schritt 2: people_reviewed_at is null statt der vorherigen Konstante true.
-  const peopleReviewPending = assets.data.some((row) => row.people_reviewed_at === null)
+  const peopleReviewPending = assets.data.some((row) => row.people_reviewed_at == null)
 
   return evaluateMediaGate({
     scanStatus, peopleReviewPending, hasOriginalSelected: false, derivativeCurrent,
@@ -143,4 +143,3 @@ export async function computeMediaGateBlockersForPostVersion(
 // sich der Medien-/Consent-Zustand zwischen Einplanung und tatsaechlicher Ausfuehrung aendert
 // (Plan 002, Pflichtszenario 5: Widerruf nach Freigabe).
 export const HARD_PUBLISH_BLOCKERS: readonly MediaGateBlocker[] = ['scan_pending', 'people_review_pending', 'face_pending', 'consent_invalid', 'derivative_stale']
-

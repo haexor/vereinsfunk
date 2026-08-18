@@ -49,6 +49,18 @@ const systemStyleProfiles: Record<string, { name: string; description: string; s
 }
 
 const CUSTOM_STYLE_PROFILE_COLUMNS = 'id, organization_id, department_id, team_id, slug, name, description, style_rules, avoid_rules, do_rules, is_active, created_by, created_at, updated_at'
+const SessionMediaAssetSchema = z.object({ organization_id: UuidSchema, department_id: UuidSchema, upload_status: z.string(), people_reviewed_at: z.string().nullable() })
+const SessionAttachmentSchema = z.object({ media_asset_id: UuidSchema })
+const CompletionAssetScopeSchema = z.object({ organization_id: UuidSchema, department_id: UuidSchema })
+
+function parseSupabaseData<T>(schema: z.ZodType<T>, data: unknown): T {
+  const parsed = schema.safeParse(data)
+  if (parsed.success) return parsed.data
+  const error = new Error('Unexpected Supabase response')
+  error.name = 'SupabaseResponseError'
+  throw error
+}
+
 function mapCustomStyleProfileRow(row: Record<string, unknown>) {
   return {
     id: row.id, organizationId: row.organization_id, departmentId: row.department_id, teamId: row.team_id,
@@ -490,7 +502,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     // wenn ein Plattform-Admin die Vorgabe zwischenzeitlich geaendert hat.
     const sessionHash = createHash('sha256').update(JSON.stringify({
       presetSlug: input.presetSlug, goal: input.communicationGoal, sourceMaterial, styleSnapshot, sourceRevision: input.sourceRevision,
-      targetPlatforms, maxCharacters: input.maxCharacters ?? null, temperature: input.temperature,
+      targetPlatforms, maxCharacters: input.maxCharacters ?? null, temperature: input.temperature, mediaAssetId,
     })).digest('hex')
     const candidateHash = createHash('sha256').update(`${sessionHash}:initial`).digest('hex')
     const idempotencyKey = `generate-text:${sessionHash}:${input.sourceRevision}`
@@ -502,11 +514,12 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
       // frueheren Fehlschlag"-Reihenfolge wie der Rest dieser Route.
       const asset = await service.from('media_assets').select('organization_id, department_id, upload_status, people_reviewed_at').eq('id', mediaAssetId).maybeSingle()
       if (asset.error) throw asset.error
-      if (!asset.data || asset.data.organization_id !== input.organizationId || asset.data.department_id !== input.departmentId) {
+      const parsedAsset = asset.data === null ? null : parseSupabaseData(SessionMediaAssetSchema, asset.data)
+      if (!parsedAsset || parsedAsset.organization_id !== input.organizationId || parsedAsset.department_id !== input.departmentId) {
         return reply.code(404).send({ error: 'media_asset_not_found', correlationId: request.id })
       }
-      if (asset.data.upload_status !== 'ready') return reply.code(422).send({ error: 'media_asset_not_ready', correlationId: request.id })
-      if (asset.data.people_reviewed_at === null) return reply.code(422).send({ error: 'media_asset_not_reviewed', correlationId: request.id })
+      if (parsedAsset.upload_status !== 'ready') return reply.code(422).send({ error: 'media_asset_not_ready', correlationId: request.id })
+      if (parsedAsset.people_reviewed_at === null) return reply.code(422).send({ error: 'media_asset_not_reviewed', correlationId: request.id })
     }
     // Aufgeloest bei Anlage, danach eingefroren (siehe composition_sessions.max_characters):
     // expliziter Request-Wert > kleinste Vorgabe der gewaehlten Plattformen (aus derselben
@@ -728,7 +741,8 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (attachment.error) throw attachment.error
     let mediaDerivativeId: string | null = null
     if (attachment.data) {
-      const derivative = await ensurePassThroughDerivative(service, candidate.data.organization_id, attachment.data.media_asset_id as string)
+      const parsedAttachment = parseSupabaseData(SessionAttachmentSchema, attachment.data)
+      const derivative = await ensurePassThroughDerivative(service, candidate.data.organization_id, parsedAttachment.media_asset_id)
       if ('error' in derivative) return reply.code(422).send({ error: derivative.error, correlationId: request.id })
       mediaDerivativeId = derivative.id
     }
@@ -792,7 +806,8 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     const asset = await service.from('media_assets').select('organization_id, department_id').eq('id', params.assetId).maybeSingle()
     if (asset.error) throw asset.error
     if (!asset.data) return reply.code(404).send({ error: 'media_asset_not_found', correlationId: request.id })
-    if (!(await requirePermission(request, reply, 'post.edit', { organizationId: asset.data.organization_id, departmentId: asset.data.department_id }))) return
+    const parsedAsset = parseSupabaseData(CompletionAssetScopeSchema, asset.data)
+    if (!(await requirePermission(request, reply, 'post.edit', { organizationId: parsedAsset.organization_id, departmentId: parsedAsset.department_id }))) return
     return reply.code(202).send(await uploads.complete({ ...params, ...body }))
   })
   app.post('/v1/media/gate', async (request, reply) => {

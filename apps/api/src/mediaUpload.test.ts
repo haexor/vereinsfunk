@@ -13,6 +13,7 @@ function fakeClient(options: {
   downloadBuffer?: Buffer
   downloadError?: { message: string } | null
   uploadError?: { message: string } | null
+  updateErrors?: ({ message: string } | null)[]
   createSignedUploadUrlResult?: { data: { signedUrl: string; token: string; path: string } | null; error: { message: string } | null }
   captured?: { updates: Record<string, unknown>[]; uploaded?: { path: string; buffer: Buffer; contentType: string } }
 }): SupabaseClient {
@@ -27,7 +28,7 @@ function fakeClient(options: {
           }),
         }),
         update: (payload: Record<string, unknown>) => ({
-          eq: async () => { captured.updates.push(payload); return { error: null } },
+          eq: async () => { captured.updates.push(payload); return { error: options.updateErrors?.shift() ?? null } },
         }),
       }
     },
@@ -96,7 +97,7 @@ describe('SupabaseUploadService.complete', () => {
     const service = new SupabaseUploadService(() => client)
     const result = await service.complete({ assetId: ASSET_ID, sha256: 'f'.repeat(64) })
     expect(result).toEqual({ accepted: true })
-    expect(captured.updates).toEqual([{ structural_validation_status: 'failed', upload_status: 'failed' }])
+    expect(captured.updates).toEqual([{ structural_validation_status: 'failed', scan_status: 'failed', upload_status: 'failed' }])
   })
 
   it('marks the asset failed when the byte-sniffed content does not match any allowed media type', async () => {
@@ -106,7 +107,7 @@ describe('SupabaseUploadService.complete', () => {
     const service = new SupabaseUploadService(() => client)
     const result = await service.complete({ assetId: ASSET_ID, sha256: createHash('sha256').update(buffer).digest('hex') })
     expect(result).toEqual({ accepted: true })
-    expect(captured.updates).toEqual([{ structural_validation_status: 'failed', upload_status: 'failed' }])
+    expect(captured.updates).toEqual([{ structural_validation_status: 'failed', scan_status: 'failed', upload_status: 'failed' }])
   })
 
   it('marks the asset failed when the PNG magic bytes are present but the file cannot actually be decoded', async () => {
@@ -117,7 +118,7 @@ describe('SupabaseUploadService.complete', () => {
     const service = new SupabaseUploadService(() => client)
     const result = await service.complete({ assetId: ASSET_ID, sha256: createHash('sha256').update(buffer).digest('hex') })
     expect(result).toEqual({ accepted: true })
-    expect(captured.updates).toEqual([{ structural_validation_status: 'failed', upload_status: 'failed' }])
+    expect(captured.updates).toEqual([{ structural_validation_status: 'failed', scan_status: 'failed', upload_status: 'failed' }])
   })
 
   it('accepts an mp4 by magic bytes alone, without any sharp re-encode', async () => {
@@ -142,5 +143,20 @@ describe('SupabaseUploadService.complete', () => {
     const result = await service.complete({ assetId: ASSET_ID, sha256: 'f'.repeat(64) })
     expect(result).toEqual({ accepted: true })
     expect(downloadCalled).toBe(false)
+  })
+
+  it('retries successfully after storage has received normalized bytes but the durable update failed', async () => {
+    const original = await sharp({ create: { width: 2, height: 2, channels: 3, background: { r: 0, g: 0, b: 255 } } }).jpeg().toBuffer()
+    const captured: { updates: Record<string, unknown>[]; uploaded?: { path: string; buffer: Buffer; contentType: string } } = { updates: [] }
+    const client = fakeClient({ downloadBuffer: original, updateErrors: [{ message: 'temporary database outage' }, null], captured })
+    const service = new SupabaseUploadService(() => client)
+    const input = { assetId: ASSET_ID, sha256: createHash('sha256').update(original).digest('hex') }
+
+    await expect(service.complete(input)).rejects.toMatchObject({ message: 'temporary database outage' })
+    await expect(service.complete(input)).resolves.toEqual({ accepted: true })
+
+    expect(captured.updates).toHaveLength(2)
+    expect(captured.updates[0]).toMatchObject({ object_path: 'organizations/x/departments/y/assets/z/foto.jpg.normalized', upload_status: 'ready' })
+    expect(captured.updates[1]).toMatchObject({ object_path: 'organizations/x/departments/y/assets/z/foto.jpg.normalized', upload_status: 'ready' })
   })
 })

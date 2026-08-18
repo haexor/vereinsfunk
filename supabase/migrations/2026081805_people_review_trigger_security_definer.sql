@@ -12,8 +12,19 @@ begin;
 create or replace function public.invalidate_people_review_on_face_change() returns trigger
 language plpgsql security definer set search_path = public, pg_temp as $$
 begin
-  update public.media_assets set people_reviewed_at = null, people_reviewed_by = null
-    where id = coalesce(new.media_asset_id, old.media_asset_id);
+  if tg_op = 'UPDATE' then
+    update public.media_assets set people_reviewed_at = null, people_reviewed_by = null
+      where (organization_id, id) in (
+        (old.organization_id, old.media_asset_id),
+        (new.organization_id, new.media_asset_id)
+      );
+  elsif tg_op = 'DELETE' then
+    update public.media_assets set people_reviewed_at = null, people_reviewed_by = null
+      where organization_id = old.organization_id and id = old.media_asset_id;
+  else
+    update public.media_assets set people_reviewed_at = null, people_reviewed_by = null
+      where organization_id = new.organization_id and id = new.media_asset_id;
+  end if;
   return coalesce(new, old);
 end; $$;
 

@@ -324,7 +324,7 @@ describe('POST /v1/text-workshop/sessions', () => {
       expect(response.json()).toMatchObject({ error: 'text_only_pilot' })
     })
 
-    function clientsWithAsset(asset: Record<string, unknown> | null, capturedAttach?: Record<string, unknown>[]): SupabaseClientFactory {
+    function clientsWithAsset(asset: Record<string, unknown> | null, capturedAttach?: Record<string, unknown>[], onRpc?: (params: Record<string, unknown>) => void): SupabaseClientFactory {
       return {
         forUser: () => ({
           from: (table: string) => {
@@ -341,7 +341,7 @@ describe('POST /v1/text-workshop/sessions', () => {
             if (table === 'composition_session_post_media') return { upsert: (row: Record<string, unknown>) => { capturedAttach?.push(row); return { then: (resolve: (result: { data: null; error: null }) => unknown) => resolve({ data: null, error: null }) } } }
             throw new Error(`unexpected service table: ${table}`)
           },
-          rpc: async () => ({ data: { sessionId: SESSION_ID, candidateId: '3c000000-0000-4000-8000-000000000013' }, error: null }),
+          rpc: async (_fn: string, params: Record<string, unknown>) => { onRpc?.(params); return { data: { sessionId: SESSION_ID, candidateId: '3c000000-0000-4000-8000-000000000013' }, error: null } },
         }) as unknown as SupabaseClient,
       }
     }
@@ -352,6 +352,15 @@ describe('POST /v1/text-workshop/sessions', () => {
       const response = await createSession(clients, { ...basePayload, mediaAssetIds: [MEDIA_ASSET_ID] })
       expect(response.statusCode).toBe(202)
       expect(captured).toEqual([{ organization_id: ORGANIZATION_ID, composition_session_id: SESSION_ID, media_asset_id: MEDIA_ASSET_ID, created_by: USER_ID }])
+    })
+
+    it('gives otherwise identical sessions distinct hashes for no photo and each attached photo', async () => {
+      const hashes: string[] = []
+      const readyAsset = { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, upload_status: 'ready', people_reviewed_at: '2026-08-18T00:00:00+00:00' }
+      await createSession(clientsWithAsset(readyAsset, undefined, (params) => hashes.push(params.p_input_hash as string)), { ...basePayload, mediaAssetIds: [] })
+      await createSession(clientsWithAsset(readyAsset, undefined, (params) => hashes.push(params.p_input_hash as string)), { ...basePayload, mediaAssetIds: [MEDIA_ASSET_ID] })
+      await createSession(clientsWithAsset(readyAsset, undefined, (params) => hashes.push(params.p_input_hash as string)), { ...basePayload, mediaAssetIds: ['3c000000-0000-4000-8000-000000000014'] })
+      expect([...new Set(hashes)]).toHaveLength(3)
     })
 
     it('rejects a photo that has not finished upload processing yet', async () => {
@@ -1066,7 +1075,13 @@ describe('POST /v1/text-workshop/candidates/:id/accept -- photo attachment (Plan
         from: (table: string) => {
           if (table === 'composition_session_post_media') return chain({ data: { media_asset_id: MEDIA_ASSET_ID }, error: null })
           if (table === 'media_derivatives') return { select: () => ({ eq: () => ({ eq: async () => ({ data: [], error: null }) }) }) }
-          if (table === 'media_assets') return { select: () => ({ eq: () => ({ single: async () => ({ data: { bucket_id: 'raw-media', object_path: 'x', mime_type: 'image/jpeg', byte_size: 10, sha256: 'a'.repeat(64), width: null, height: null, upload_status: 'initiated' }, error: null }) }) }) }
+          if (table === 'media_assets') {
+            const query = {
+              eq: () => query,
+              single: async () => ({ data: { bucket_id: 'raw-media', object_path: 'x', mime_type: 'image/jpeg', byte_size: 10, sha256: 'a'.repeat(64), width: null, height: null, upload_status: 'initiated' }, error: null }),
+            }
+            return { select: () => query }
+          }
           throw new Error(`unexpected service table: ${table}`)
         },
       }) as unknown as SupabaseClient,

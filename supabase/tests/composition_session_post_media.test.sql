@@ -74,6 +74,8 @@ select throws_ok(
 select set_config('request.jwt.claim.sub', '46000000-0000-4000-8000-000000000099', true);
 select is((select count(*)::integer from public.composition_session_post_media), 0, 'negative: an unrelated tenant member cannot read this session''s photo attachment');
 
+-- The remaining constraint and cascading-deletion checks deliberately run as postgres, without
+-- RLS. Keep any future authorization assertions above this boundary or restore authenticated.
 -- 8-11: accept_text_generation_candidate wires the resolved derivative into a real post_media row,
 -- exactly once, even across a retried accept call.
 set local role postgres;
