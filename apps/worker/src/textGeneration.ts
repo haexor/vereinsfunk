@@ -5,7 +5,7 @@ import { deriveTextGenerationMaxOutputTokens, providerSendsTemperature, SourceMa
 import type { WorkerEnvironment } from '@vereinsfunk/config'
 import { WorkflowExecutionError } from './workflows.js'
 
-export type SessionRow = { id: string; organization_id: string; department_id: string; team_id: string | null; preset_slug: string; communication_goal: 'inform' | 'inspire' | 'thank' | 'invite' | 'recruit' | 'educate' | 'strengthen_community'; source_material: unknown; style_profile_snapshot: unknown; max_characters: number; temperature: number }
+export type SessionRow = { id: string; organization_id: string; department_id: string; team_id: string | null; communication_goal: 'inform' | 'inspire' | 'thank' | 'invite' | 'recruit' | 'educate' | 'strengthen_community'; source_material: unknown; style_profile_snapshot: unknown; max_characters: number; temperature: number }
 export type CandidateRow = { id: string; status: string; revision_instruction: string | null; lease_token: string }
 export type ProviderRow = { id: string; protocol: string; base_url: string; model: string; structured_output_required: boolean; api_key_ciphertext: string; key_version: string }
 
@@ -81,7 +81,7 @@ export class TextGenerationExecutor {
       const generator = this.generator ?? GENERATORS[provider.protocol]
       if (!generator || !provider.structured_output_required) throw new WorkflowExecutionError('unsupported_provider_configuration', false)
       const style = StyleProfileSnapshotSchema.parse(session.style_profile_snapshot)
-      const brief = createTextGroundedContentBrief({ presetSlug: session.preset_slug, communicationGoal: session.communication_goal, sourceMaterial: SourceMaterialSchema.parse(session.source_material) })
+      const brief = createTextGroundedContentBrief({ communicationGoal: session.communication_goal, sourceMaterial: SourceMaterialSchema.parse(session.source_material) })
       const apiKey = parseSecretBox(this.config).open(ciphertextBuffer(provider.api_key_ciphertext), provider.key_version, provider.id)
       // Belegzahl aus dem Brief, nicht aus dem Rohmaterial: assertGroundedPost prueft gegen genau
       // diese Menge, und sie ist es, die die Antwort ueber verifiedFacts/generatedClaims verlaengert.

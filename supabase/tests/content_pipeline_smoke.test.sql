@@ -56,7 +56,7 @@ insert into public.policy_reviewers (organization_id, policy_settings_id, kind, 
 select lives_ok(
   $$select public.create_text_generation_session(
     '90000000-1000-4000-8000-000000000001', '90000000-1100-4000-8000-000000000001', null,
-    'training-update', 'inform', '["text_post"]'::jsonb,
+    'inform', '["text_post"]'::jsonb,
     '{"facts":{"title":"Training A"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
     null, '{"name":"System","description":"","styleRules":{"toneTags":["klar"],"catchphrases":[],"examples":[],"additionalInstructions":""},"avoidRules":[],"doRules":[]}'::jsonb,
     '{}'::jsonb, array['instagram']::text[], 2200, 0.6, 1,
@@ -108,7 +108,7 @@ set local role postgres;
 select lives_ok(
   $$select public.create_text_generation_session(
     '90000000-1000-4000-8000-000000000001', '90000000-1100-4000-8000-000000000002', null,
-    'training-update', 'inform', '["text_post"]'::jsonb,
+    'inform', '["text_post"]'::jsonb,
     '{"facts":{"title":"Training B"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
     null, '{"name":"System","description":"","styleRules":{"toneTags":["klar"],"catchphrases":[],"examples":[],"additionalInstructions":""},"avoidRules":[],"doRules":[]}'::jsonb,
     '{}'::jsonb, array['instagram']::text[], 2200, 0.6, 1,
@@ -164,7 +164,7 @@ set local role postgres;
 select lives_ok(
   $$select public.create_text_generation_session(
     '90000000-1000-4000-8000-000000000001', '90000000-1100-4000-8000-000000000002', null,
-    'training-update', 'inform', '["text_post"]'::jsonb,
+    'inform', '["text_post"]'::jsonb,
     '{"facts":{"title":"Training C"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
     null, '{"name":"System","description":"","styleRules":{"toneTags":["klar"],"catchphrases":[],"examples":[],"additionalInstructions":""},"avoidRules":[],"doRules":[]}'::jsonb,
     '{}'::jsonb, array['instagram']::text[], 2200, 0.6, 1,

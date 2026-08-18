@@ -1,7 +1,6 @@
 import {
   CommunicationGoalSchema,
   CompositionSessionStatusSchema,
-  ContentPresetSlugSchema,
   CreateCompositionSessionSchema,
   CreateCustomStyleProfileRequestSchema,
   CreateGenerationCommandSchema,
@@ -460,8 +459,9 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (!(await requirePermission(request, reply, 'post.create', scope))) return
     const client = supabaseClients.forUser(request.auth!.accessToken)
     const mediaAssetId = input.mediaAssetIds[0] ?? null
+    // allowedPresets bleibt eine Photo-Pipeline-Policy (/v1/submissions oben): die Textwerkstatt
+    // kennt seit dem Wegfall von "Anlass" keinen presetSlug mehr, den sie dagegen pruefen koennte.
     const config = await resolveScopedEffectiveConfig(client, input.organizationId, input.departmentId, input.teamId ?? null)
-    if (config.policies.allowedPresets?.length && !config.policies.allowedPresets.includes(input.presetSlug)) return reply.code(422).send({ error: 'preset_not_allowed' })
     let styleSnapshot: Record<string, unknown>
     const styleProfileId: string | null = input.styleProfileId ?? null
     if (styleProfileId) {
@@ -501,7 +501,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     // Token-Wert: ein echter Wiederholungsversuch derselben Anfrage bleibt damit idempotent, auch
     // wenn ein Plattform-Admin die Vorgabe zwischenzeitlich geaendert hat.
     const sessionHash = createHash('sha256').update(JSON.stringify({
-      presetSlug: input.presetSlug, goal: input.communicationGoal, sourceMaterial, styleSnapshot, sourceRevision: input.sourceRevision,
+      goal: input.communicationGoal, sourceMaterial, styleSnapshot, sourceRevision: input.sourceRevision,
       targetPlatforms, maxCharacters: input.maxCharacters ?? null, temperature: input.temperature, mediaAssetId,
     })).digest('hex')
     const candidateHash = createHash('sha256').update(`${sessionHash}:initial`).digest('hex')
@@ -540,7 +540,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     const resolvedPlatformLimit = platformLimits.length > 0 ? Math.min(...platformLimits) : TEXT_GENERATION_DEFAULT_MAX_CHARACTERS
     const maxCharacters = input.maxCharacters !== undefined ? Math.min(input.maxCharacters, resolvedPlatformLimit) : resolvedPlatformLimit
     const result = await service.rpc('create_text_generation_session', {
-      p_organization_id: input.organizationId, p_department_id: input.departmentId, p_team_id: input.teamId ?? null, p_preset_slug: input.presetSlug,
+      p_organization_id: input.organizationId, p_department_id: input.departmentId, p_team_id: input.teamId ?? null,
       p_communication_goal: input.communicationGoal, p_requested_formats: input.requestedFormats, p_source_material: sourceMaterial,
       p_style_profile_id: styleProfileId, p_style_profile_snapshot: styleSnapshot, p_effective_config_snapshot: { config: { goals: config.goals, hashtags: config.hashtags, ...config.policies } },
       p_target_platforms: targetPlatforms, p_max_characters: maxCharacters, p_temperature: input.temperature,
@@ -640,7 +640,6 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     department_id: UuidSchema,
     team_id: UuidSchema.nullable(),
     status: CompositionSessionStatusSchema,
-    preset_slug: ContentPresetSlugSchema,
     communication_goal: CommunicationGoalSchema,
     source_material: SourceMaterialSchema,
     style_profile_id: UuidSchema.nullable(),
@@ -655,7 +654,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
   // beide Routen unten teilen sich diese Liste, damit erstellen.vue eine bestehende Sitzung
   // vollstaendig als Formular-Vorbefuellung lesen kann (Beitraege-Liste -> Textwerkstatt
   // wiedereroeffnen), nicht nur ihre Regler-Werte.
-  const COMPOSITION_SESSION_COLUMNS = 'id, organization_id, department_id, team_id, status, preset_slug, communication_goal, source_material, style_profile_id, style_profile_snapshot, target_platforms, max_characters, temperature, created_at'
+  const COMPOSITION_SESSION_COLUMNS = 'id, organization_id, department_id, team_id, status, communication_goal, source_material, style_profile_id, style_profile_snapshot, target_platforms, max_characters, temperature, created_at'
   async function respondWithCompositionSession(client: SupabaseClient, reply: FastifyReply, sessionRow: z.infer<typeof CompositionSessionRowSchema>) {
     const candidates = await client.from('generation_candidates').select('id, status, generated_content, quality_flags, failure_code, triggered_by, accepted_post_version_id, created_at').eq('composition_session_id', sessionRow.id).order('created_at', { ascending: false }).limit(1)
     if (candidates.error) throw candidates.error
@@ -699,7 +698,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     const client = supabaseClients.forUser(request.auth!.accessToken)
     const session = await client
       .from('composition_sessions')
-      .select('id, organization_id, department_id, team_id, preset_slug, communication_goal, requested_formats, source_material, style_profile_id, style_profile_snapshot, effective_config_snapshot, target_platforms, max_characters, temperature, source_revision, input_hash, created_by')
+      .select('id, organization_id, department_id, team_id, communication_goal, requested_formats, source_material, style_profile_id, style_profile_snapshot, effective_config_snapshot, target_platforms, max_characters, temperature, source_revision, input_hash, created_by')
       .eq('id', sessionId)
       .maybeSingle()
     if (session.error) throw session.error
@@ -710,7 +709,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     const service = supabaseClients.forService()
     const result = await service.rpc('create_text_generation_session', {
       p_organization_id: session.data.organization_id, p_department_id: session.data.department_id, p_team_id: session.data.team_id,
-      p_preset_slug: session.data.preset_slug, p_communication_goal: session.data.communication_goal, p_requested_formats: session.data.requested_formats,
+      p_communication_goal: session.data.communication_goal, p_requested_formats: session.data.requested_formats,
       p_source_material: session.data.source_material, p_style_profile_id: session.data.style_profile_id,
       p_style_profile_snapshot: session.data.style_profile_snapshot, p_effective_config_snapshot: session.data.effective_config_snapshot,
       p_target_platforms: session.data.target_platforms, p_max_characters: session.data.max_characters, p_temperature: session.data.temperature,

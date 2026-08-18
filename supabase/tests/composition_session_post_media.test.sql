@@ -25,8 +25,8 @@ insert into public.media_assets (id, organization_id, department_id, bucket_id, 
   ('46000000-2000-4000-8000-000000000001', '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', 'raw-media', 'organizations/x/departments/y/assets/1/a.jpg', 'image/jpeg', 1000, 'clean', 'ready', 'valid', now(), '46000000-0000-4000-8000-000000000001'),
   ('46000000-2000-4000-8000-000000000002', '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000002', 'raw-media', 'organizations/x/departments/z/assets/2/b.jpg', 'image/jpeg', 1000, 'clean', 'ready', 'valid', now(), '46000000-0000-4000-8000-000000000001');
 
-insert into public.composition_sessions (id, organization_id, department_id, preset_slug, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values
-  ('46000000-3000-4000-8000-000000000001', '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', 'training-update', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('a', 64), '46000000-0000-4000-8000-000000000001');
+insert into public.composition_sessions (id, organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values
+  ('46000000-3000-4000-8000-000000000001', '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('a', 64), '46000000-0000-4000-8000-000000000001');
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '46000000-0000-4000-8000-000000000002', true);
@@ -136,8 +136,8 @@ select lives_ok(
 -- 14: cascading deletion -- removing the composition session removes its attachment row too. A
 -- FRESH session/attachment, never accepted: the main session above now has post_generation_provenance
 -- rows, and those are immutable even under an ON DELETE SET NULL cascade from composition_sessions.
-insert into public.composition_sessions (id, organization_id, department_id, preset_slug, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values
-  ('46000000-3000-4000-8000-000000000002', '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', 'training-update', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('2', 64), '46000000-0000-4000-8000-000000000001');
+insert into public.composition_sessions (id, organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values
+  ('46000000-3000-4000-8000-000000000002', '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('2', 64), '46000000-0000-4000-8000-000000000001');
 insert into public.composition_session_post_media (organization_id, composition_session_id, media_asset_id, created_by) values
   ('46000000-1000-4000-8000-000000000001', '46000000-3000-4000-8000-000000000002', '46000000-2000-4000-8000-000000000001', '46000000-0000-4000-8000-000000000001');
 select is((select count(*)::integer from public.composition_session_post_media where composition_session_id = '46000000-3000-4000-8000-000000000002'), 1, 'the attachment row still exists before the session is deleted');

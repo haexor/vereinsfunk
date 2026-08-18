@@ -13,7 +13,7 @@ import type { GenerationRecoveryRepository, RecoverableSessionRow, StalledCandid
 // textGeneration.ts's execute() is the single place that parses it, inside its try/catch, where
 // a schema mismatch is properly classified and the candidate is marked failed.
 const SessionRowSchema: z.ZodType<SessionRow> = z.object({
-  id: UuidSchema, organization_id: UuidSchema, department_id: UuidSchema, team_id: UuidSchema.nullable(), preset_slug: z.string().trim().min(1),
+  id: UuidSchema, organization_id: UuidSchema, department_id: UuidSchema, team_id: UuidSchema.nullable(),
   communication_goal: CommunicationGoalSchema, source_material: SourceMaterialSchema,
   style_profile_snapshot: z.unknown(), max_characters: z.coerce.number().pipe(MaxCharactersSchema), temperature: z.coerce.number().pipe(TextGenerationTemperatureSchema),
 })
@@ -33,7 +33,7 @@ const StalledCandidateRowSchema: z.ZodType<StalledCandidateRow> = z.object({
 // rejected at this boundary rather than silently passed through create_text_generation_session
 // as a JSON null.
 const RecoverableSessionRowSchema: z.ZodType<RecoverableSessionRow> = z.object({
-  organization_id: UuidSchema, department_id: UuidSchema, team_id: UuidSchema.nullable(), preset_slug: z.string().trim().min(1),
+  organization_id: UuidSchema, department_id: UuidSchema, team_id: UuidSchema.nullable(),
   communication_goal: CommunicationGoalSchema, requested_formats: z.unknown().nonoptional(), source_material: z.unknown().nonoptional(), style_profile_id: UuidSchema.nullable(),
   style_profile_snapshot: z.unknown().nonoptional(), effective_config_snapshot: z.unknown().nonoptional(),
   target_platforms: z.array(SocialPlatformSchema), max_characters: z.coerce.number().pipe(MaxCharactersSchema), temperature: z.coerce.number().pipe(TextGenerationTemperatureSchema),
@@ -92,7 +92,7 @@ export function createTextGenerationRepository(config: WorkerEnvironment): TextG
   const client = createClient(config.SUPABASE_URL, config.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
   return {
     async loadSession(id, organizationId) {
-      const { data, error } = await client.from('composition_sessions').select('id, organization_id, department_id, team_id, preset_slug, communication_goal, source_material, style_profile_snapshot, max_characters, temperature').eq('id', id).eq('organization_id', organizationId).maybeSingle()
+      const { data, error } = await client.from('composition_sessions').select('id, organization_id, department_id, team_id, communication_goal, source_material, style_profile_snapshot, max_characters, temperature').eq('id', id).eq('organization_id', organizationId).maybeSingle()
       if (error) throw error
       return data === null ? null : SessionRowSchema.parse(data)
     },
@@ -158,7 +158,7 @@ export function createGenerationRecoveryRepository(config: WorkerEnvironment): G
     },
     async loadSessionForRecovery(sessionId, organizationId) {
       const { data, error } = await client.from('composition_sessions')
-        .select('organization_id, department_id, team_id, preset_slug, communication_goal, requested_formats, source_material, style_profile_id, style_profile_snapshot, effective_config_snapshot, target_platforms, max_characters, temperature, source_revision, input_hash, created_by')
+        .select('organization_id, department_id, team_id, communication_goal, requested_formats, source_material, style_profile_id, style_profile_snapshot, effective_config_snapshot, target_platforms, max_characters, temperature, source_revision, input_hash, created_by')
         .eq('id', sessionId).eq('organization_id', organizationId).maybeSingle()
       if (error) throw error
       return data === null ? null : RecoverableSessionRowSchema.parse(data)
@@ -166,7 +166,7 @@ export function createGenerationRecoveryRepository(config: WorkerEnvironment): G
     async createRecoveryAttempt(session, stale, candidateInputHash, correlationId, idempotencyKey) {
       const { error } = await client.rpc('create_text_generation_session', {
         p_organization_id: session.organization_id, p_department_id: session.department_id, p_team_id: session.team_id,
-        p_preset_slug: session.preset_slug, p_communication_goal: session.communication_goal, p_requested_formats: session.requested_formats,
+        p_communication_goal: session.communication_goal, p_requested_formats: session.requested_formats,
         p_source_material: session.source_material, p_style_profile_id: session.style_profile_id,
         p_style_profile_snapshot: session.style_profile_snapshot, p_effective_config_snapshot: session.effective_config_snapshot,
         p_target_platforms: session.target_platforms, p_max_characters: session.max_characters, p_temperature: session.temperature,

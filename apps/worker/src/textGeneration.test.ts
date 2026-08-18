@@ -13,7 +13,7 @@ const post = { verifiedFacts: ['topic: Passen'], missingFacts: [], headline: 'Pa
 function repository(): TextGenerationRepository {
   const sealed = createSecretBox({ v1: Buffer.alloc(32, 1).toString('base64') }, 'v1').seal('provider-key', 'provider-1')
   return {
-    loadSession: vi.fn().mockResolvedValue({ id: payload.entityId, organization_id: payload.organizationId, department_id: payload.departmentId, team_id: null, preset_slug: 'training', communication_goal: 'inform', source_material: { facts: { topic: 'Passen' }, observations: [], quotes: [], doNotMention: [] }, style_profile_snapshot: { name: 'Klar', description: 'klar', styleRules: { toneTags: ['klar'], catchphrases: [], examples: [], additionalInstructions: '' }, avoidRules: [], doRules: [] }, max_characters: 2200, temperature: 0.6 }),
+    loadSession: vi.fn().mockResolvedValue({ id: payload.entityId, organization_id: payload.organizationId, department_id: payload.departmentId, team_id: null, communication_goal: 'inform', source_material: { facts: { topic: 'Passen' }, observations: [], quotes: [], doNotMention: [] }, style_profile_snapshot: { name: 'Klar', description: 'klar', styleRules: { toneTags: ['klar'], catchphrases: [], examples: [], additionalInstructions: '' }, avoidRules: [], doRules: [] }, max_characters: 2200, temperature: 0.6 }),
     acquirePendingCandidate: vi.fn().mockResolvedValue({ id: payload.candidateId, status: 'generating', lease_token: '10000000-1300-4000-8000-000000000099' }),
     loadActiveTextProvider: vi.fn().mockResolvedValue({ id: 'provider-1', protocol: 'openai', base_url: 'https://provider.example/v1', model: 'synthetic', structured_output_required: true, api_key_ciphertext: `\\x${sealed.ciphertext.toString('hex')}`, key_version: 'v1' }), markReady: vi.fn().mockResolvedValue(undefined), markFailed: vi.fn().mockResolvedValue(undefined), releaseCandidate: vi.fn().mockResolvedValue(undefined),
   }
@@ -21,7 +21,7 @@ function repository(): TextGenerationRepository {
 
 function repositoryWithProtocolAndTemperature(protocol: string, temperature: number): TextGenerationRepository {
   const repo = repository()
-  repo.loadSession = vi.fn().mockResolvedValue({ id: payload.entityId, organization_id: payload.organizationId, department_id: payload.departmentId, team_id: null, preset_slug: 'training', communication_goal: 'inform', source_material: { facts: { topic: 'Passen' }, observations: [], quotes: [], doNotMention: [] }, style_profile_snapshot: { name: 'Klar', description: 'klar', styleRules: { toneTags: ['klar'], catchphrases: [], examples: [], additionalInstructions: '' }, avoidRules: [], doRules: [] }, max_characters: 2200, temperature })
+  repo.loadSession = vi.fn().mockResolvedValue({ id: payload.entityId, organization_id: payload.organizationId, department_id: payload.departmentId, team_id: null, communication_goal: 'inform', source_material: { facts: { topic: 'Passen' }, observations: [], quotes: [], doNotMention: [] }, style_profile_snapshot: { name: 'Klar', description: 'klar', styleRules: { toneTags: ['klar'], catchphrases: [], examples: [], additionalInstructions: '' }, avoidRules: [], doRules: [] }, max_characters: 2200, temperature })
   const sealed = createSecretBox({ v1: Buffer.alloc(32, 1).toString('base64') }, 'v1').seal('provider-key', 'provider-1')
   repo.loadActiveTextProvider = vi.fn().mockResolvedValue({ id: 'provider-1', protocol, base_url: 'https://provider.example/v1', model: 'synthetic', structured_output_required: true, api_key_ciphertext: `\\x${sealed.ciphertext.toString('hex')}`, key_version: 'v1' })
   return repo
@@ -35,7 +35,7 @@ function repositoryWithRevisionInstruction(instruction: string): TextGenerationR
 
 function repositoryWithMaxCharacters(maxCharacters: number, observations: string[] = []): TextGenerationRepository {
   const repo = repository()
-  repo.loadSession = vi.fn().mockResolvedValue({ id: payload.entityId, organization_id: payload.organizationId, department_id: payload.departmentId, team_id: null, preset_slug: 'training', communication_goal: 'inform', source_material: { facts: { topic: 'Passen' }, observations, quotes: [], doNotMention: [] }, style_profile_snapshot: { name: 'Klar', description: 'klar', styleRules: { toneTags: ['klar'], catchphrases: [], examples: [], additionalInstructions: '' }, avoidRules: [], doRules: [] }, max_characters: maxCharacters, temperature: 0.6 })
+  repo.loadSession = vi.fn().mockResolvedValue({ id: payload.entityId, organization_id: payload.organizationId, department_id: payload.departmentId, team_id: null, communication_goal: 'inform', source_material: { facts: { topic: 'Passen' }, observations, quotes: [], doNotMention: [] }, style_profile_snapshot: { name: 'Klar', description: 'klar', styleRules: { toneTags: ['klar'], catchphrases: [], examples: [], additionalInstructions: '' }, avoidRules: [], doRules: [] }, max_characters: maxCharacters, temperature: 0.6 })
   return repo
 }
 
@@ -76,7 +76,7 @@ describe('TextGenerationExecutor', () => {
   })
   it('marks a candidate failed instead of crashing when a pre-migration snapshot has the old dial shape', async () => {
     const repo = repository()
-    repo.loadSession = vi.fn().mockResolvedValue({ id: payload.entityId, organization_id: payload.organizationId, department_id: payload.departmentId, team_id: null, preset_slug: 'training', communication_goal: 'inform', source_material: { facts: { topic: 'Passen' }, observations: [], quotes: [], doNotMention: [] }, style_profile_snapshot: { name: 'Klar', description: 'klar', styleRules: { sentenceLength: 'short', energy: 3, humour: 'none', formality: 'balanced', perspective: 'we', bannedPhrases: [], additionalInstructions: '' }, avoidRules: [] }, max_characters: 2200, temperature: 0.6 })
+    repo.loadSession = vi.fn().mockResolvedValue({ id: payload.entityId, organization_id: payload.organizationId, department_id: payload.departmentId, team_id: null, communication_goal: 'inform', source_material: { facts: { topic: 'Passen' }, observations: [], quotes: [], doNotMention: [] }, style_profile_snapshot: { name: 'Klar', description: 'klar', styleRules: { sentenceLength: 'short', energy: 3, humour: 'none', formality: 'balanced', perspective: 'we', bannedPhrases: [], additionalInstructions: '' }, avoidRules: [] }, max_characters: 2200, temperature: 0.6 })
     const generator = { generateText: vi.fn() }
     await expect(new TextGenerationExecutor(config, repo, generator).execute(payload)).rejects.toMatchObject({ errorClass: 'generation_validation', retryable: false })
     expect(repo.markFailed).toHaveBeenCalledWith(payload.candidateId, payload.entityId, '10000000-1300-4000-8000-000000000099', 'generation_validation')
