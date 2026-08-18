@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(11);
+select plan(12);
 
 set local role postgres;
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -64,6 +64,11 @@ select lives_ok(
   $$insert into public.publications (organization_id, post_version_id, social_connection_id, platform, scheduled_for, idempotency_key)
     values ('78000000-1000-4000-8000-000000000001', '78000000-3000-4000-8000-000000000001', '78000000-8000-4000-8000-000000000001', 'twitter', now(), 'publish:twitter:pgtap-045')$$,
   'publications accepts platform=twitter'
+);
+select lives_ok(
+  $$insert into public.publications (organization_id, post_version_id, social_connection_id, platform, scheduled_for, idempotency_key)
+    values ('78000000-1000-4000-8000-000000000001', '78000000-3000-4000-8000-000000000001', '78000000-8000-4000-8000-000000000002', 'linkedin', now(), 'publish:linkedin:pgtap-045')$$,
+  'publications accepts platform=linkedin'
 );
 select throws_ok(
   $$insert into public.publications (organization_id, post_version_id, social_connection_id, platform, scheduled_for, idempotency_key)

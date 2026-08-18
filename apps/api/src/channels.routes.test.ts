@@ -106,9 +106,9 @@ describe('Paket 012: Kanaele und Social-Accounts', () => {
     }
   })
 
-  it('rejects OAuth start while the fake publisher is active, even with a callback URL', async () => {
+  it('rejects OAuth start when Meta is not enabled, even with a callback URL', async () => {
     const restoreEnvironment = preserveEnvironment(['PUBLISHING_PROVIDER', 'META_OAUTH_REDIRECT_URL'])
-    process.env.PUBLISHING_PROVIDER = 'fake'
+    process.env.PUBLISHING_PROVIDER = 'twitter'
     process.env.META_OAUTH_REDIRECT_URL = 'https://api.example.test'
     const socialManagerRoleProvider: RoleProvider = { async rolesForScope() { return ['social_manager'] } }
     try {
@@ -213,7 +213,7 @@ describe('Paket 012: Kanaele und Social-Accounts', () => {
 
     it('rejects Twitter OAuth start while it is not in PUBLISHING_PROVIDER', async () => {
       const restoreEnvironment = preserveEnvironment(['PUBLISHING_PROVIDER', 'TWITTER_OAUTH_REDIRECT_URL'])
-      process.env.PUBLISHING_PROVIDER = 'fake'
+      process.env.PUBLISHING_PROVIDER = 'meta'
       process.env.TWITTER_OAUTH_REDIRECT_URL = 'https://api.example.test'
       try {
         const app = await startApp({ roleProvider: socialManagerRoleProvider })
@@ -232,7 +232,7 @@ describe('Paket 012: Kanaele und Social-Accounts', () => {
 
     it('rejects LinkedIn OAuth start while it is not in PUBLISHING_PROVIDER', async () => {
       const restoreEnvironment = preserveEnvironment(['PUBLISHING_PROVIDER', 'LINKEDIN_OAUTH_REDIRECT_URL'])
-      process.env.PUBLISHING_PROVIDER = 'fake'
+      process.env.PUBLISHING_PROVIDER = 'twitter'
       process.env.LINKEDIN_OAUTH_REDIRECT_URL = 'https://api.example.test'
       try {
         const app = await startApp({ roleProvider: socialManagerRoleProvider })
@@ -339,6 +339,7 @@ describe('Paket 012: Kanaele und Social-Accounts', () => {
         created_by: USER_ID, expires_at: new Date(Date.now() + 60_000).toISOString(), consumed_at: null, code_verifier: 'a'.repeat(43),
       }
       const pendingInserts: Record<string, unknown>[] = []
+      const auditInserts: Record<string, unknown>[] = []
       const clients: SupabaseClientFactory = {
         forUser: () => ({ from: () => { throw new Error('forUser should not be used by the unauthenticated callback') } }) as unknown as SupabaseClient,
         forService: () =>
@@ -351,6 +352,7 @@ describe('Paket 012: Kanaele und Social-Accounts', () => {
                 }
               }
               if (table === 'oauth_pending_connections') return { insert: async (row: Record<string, unknown>) => { pendingInserts.push(row); return { error: null } } }
+              if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { auditInserts.push(row); return { error: null } } }
               throw new Error(`unexpected table in test fake: ${table}`)
             },
           }) as unknown as SupabaseClient,
@@ -362,6 +364,7 @@ describe('Paket 012: Kanaele und Social-Accounts', () => {
         expect(response.statusCode).toBe(302)
         expect(response.headers.location).toContain('pending=')
         expect(pendingInserts).toHaveLength(1)
+        expect(auditInserts).toEqual([expect.objectContaining({ actor_user_id: USER_ID, action: 'channel.oauth_exchange', metadata: { provider: 'twitter', outcome: 'succeeded', availableAccountCount: 1 } })])
         expect(pendingInserts[0]).toMatchObject({ platform: 'twitter', organization_id: ORGANIZATION_ID })
         const sealedAccounts = pendingInserts[0]?.available_accounts as { externalAccountId: string; displayName: string }[]
         expect(sealedAccounts).toEqual([{ externalAccountId: 'x-1', displayName: 'sv_nordstadt', pageAccessTokenCiphertext: expect.any(String), pageAccessTokenKeyVersion: 'v1' }])

@@ -24,12 +24,11 @@ zurückgestellt wurde).
    Text-only-Posts). Facebooks bestehender Foto-Zwang (`MetaPublisher` postete unconditional über
    `/photos`) wurde im selben Zug behoben — Facebook postet jetzt über `/feed`, wenn keine Medien
    vorhanden sind. Instagram bleibt zwingend medienpflichtig (technisch nicht anders möglich).
-4. **`PUBLISHING_PROVIDER` wird eine Menge**: vorher ein einzelner Wert (`'fake' | 'meta'`) — für
-   eine Produktivumgebung, die alle vier Plattformen gleichzeitig live schalten will, ist das jetzt
-   eine kommagetrennte Menge (`meta,twitter,linkedin`). **Bewusst ohne Rückwärtskompatibilität**
-   (Betreiberentscheidung) — alte Deployments mit `PUBLISHING_PROVIDER=meta` bleiben zwar gültig
-   (ein einzelner Wert ist eine Menge der Größe 1), eine feste Erwartung an das alte Enum-Format gibt
-   es aber nicht mehr.
+4. **`PUBLISHING_PROVIDER` wird eine Menge**: der bisherige Einzelwert `meta` bleibt gültige
+   Env-Syntax und aktiviert nur Meta. Zusätzlich können mehrere Provider kommagetrennt angegeben
+   werden (`meta,twitter,linkedin`). Die Wahl zwischen echten und Fake-Adaptern ist davon getrennt:
+   `PUBLISHING_MODE=fake` ist ausschliesslich für nichtproduktive Umgebungen; in `live` darf nur ein
+   implementierter echter Adapter aktiviert werden.
 
 ## Architektur
 

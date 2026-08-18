@@ -10,6 +10,8 @@ const requiredProductionEnv = {
   WEB_BASE_URL: 'https://example.org',
   CONSENT_RESPONSE_HASH_PEPPER: 'pepper-at-least-32-characters-long',
   DATABASE_URL: 'postgresql://postgres:secret@db.example.supabase.co:5432/postgres',
+  PUBLISHING_PROVIDER: '',
+  PUBLISHING_MODE: 'live',
 }
 
 const requiredSmtpEnv = {
@@ -124,7 +126,7 @@ describe('ApiEnvironmentSchema', () => {
     expect(
       ApiEnvironmentSchema.safeParse({
         NODE_ENV: 'development',
-        PUBLISHING_PROVIDER: 'meta',
+        PUBLISHING_PROVIDER: 'meta', PUBLISHING_MODE: 'live',
         META_APP_ID: 'app-id',
         META_APP_SECRET: 'app-secret',
         META_OAUTH_REDIRECT_URL: 'https://example.org/oauth/callback',
@@ -136,7 +138,7 @@ describe('ApiEnvironmentSchema', () => {
     expect(
       ApiEnvironmentSchema.safeParse({
         NODE_ENV: 'development',
-        PUBLISHING_PROVIDER: 'meta',
+        PUBLISHING_PROVIDER: 'meta', PUBLISHING_MODE: 'live',
         META_APP_ID: 'app-id',
         META_APP_SECRET: 'app-secret',
         META_OAUTH_REDIRECT_URL: 'https://example.org/oauth/callback',
@@ -145,17 +147,16 @@ describe('ApiEnvironmentSchema', () => {
     ).toBe(true)
   })
 
-  // Paket 045: PUBLISHING_PROVIDER ist eine Menge -- mehrere echte Provider koennen gleichzeitig
-  // aktiv sein, unabhaengig von den anderen. Bewusst keine Ruecksicht auf ein einzelnes altes
-  // Enum-Format (Betreiberentscheidung: keine Rueckwaertskompatibilitaet).
-  it('defaults PUBLISHING_PROVIDER to ["fake"] when unset', () => {
-    expect(ApiEnvironmentSchema.parse({ NODE_ENV: 'development' }).PUBLISHING_PROVIDER).toEqual(['fake'])
+  it('uses an explicit fake mode with all supported providers when unset', () => {
+    const parsed = ApiEnvironmentSchema.parse({ NODE_ENV: 'development' })
+    expect(parsed.PUBLISHING_MODE).toBe('fake')
+    expect(parsed.PUBLISHING_PROVIDER).toEqual(['meta', 'twitter', 'linkedin'])
   })
 
   it('parses a comma-separated PUBLISHING_PROVIDER into a set of active providers', () => {
     const parsed = ApiEnvironmentSchema.parse({
       NODE_ENV: 'development',
-      PUBLISHING_PROVIDER: 'meta,twitter,linkedin',
+      PUBLISHING_PROVIDER: 'meta,twitter,linkedin', PUBLISHING_MODE: 'fake',
       META_APP_ID: 'app-id', META_APP_SECRET: 'app-secret', META_OAUTH_REDIRECT_URL: 'https://example.org/oauth/callback/meta',
       TWITTER_CLIENT_ID: 'client-id', TWITTER_CLIENT_SECRET: 'client-secret', TWITTER_OAUTH_REDIRECT_URL: 'https://example.org/oauth/callback/twitter',
       LINKEDIN_CLIENT_ID: 'client-id', LINKEDIN_CLIENT_SECRET: 'client-secret', LINKEDIN_OAUTH_REDIRECT_URL: 'https://example.org/oauth/callback/linkedin',
@@ -166,6 +167,19 @@ describe('ApiEnvironmentSchema', () => {
 
   it('rejects an unknown PUBLISHING_PROVIDER entry', () => {
     expect(ApiEnvironmentSchema.safeParse({ NODE_ENV: 'development', PUBLISHING_PROVIDER: 'mixpost' }).success).toBe(false)
+  })
+
+  it('rejects fake as a provider because the adapter mode is configured separately', () => {
+    expect(ApiEnvironmentSchema.safeParse({ NODE_ENV: 'development', PUBLISHING_PROVIDER: 'fake' }).success).toBe(false)
+  })
+
+  it('rejects Twitter and LinkedIn in live mode until their real adapters exist', () => {
+    expect(ApiEnvironmentSchema.safeParse({ NODE_ENV: 'development', PUBLISHING_MODE: 'live', PUBLISHING_PROVIDER: 'twitter' }).success).toBe(false)
+    expect(ApiEnvironmentSchema.safeParse({ NODE_ENV: 'development', PUBLISHING_MODE: 'live', PUBLISHING_PROVIDER: 'linkedin' }).success).toBe(false)
+  })
+
+  it('rejects fake publishing in production', () => {
+    expect(ApiEnvironmentSchema.safeParse({ ...requiredProductionEnv, PUBLISHING_MODE: 'fake', EMAIL_PROVIDER: 'smtp', ...requiredSmtpEnv }).success).toBe(false)
   })
 
   it.each([
@@ -182,20 +196,12 @@ describe('ApiEnvironmentSchema', () => {
     }
     delete fields[missingField]
     expect(
-      ApiEnvironmentSchema.safeParse({ NODE_ENV: 'development', PUBLISHING_PROVIDER: provider, API_PUBLIC_BASE_URL: 'https://api.example.org', ...fields }).success,
+      ApiEnvironmentSchema.safeParse({ NODE_ENV: 'development', PUBLISHING_MODE: 'live', PUBLISHING_PROVIDER: provider, API_PUBLIC_BASE_URL: 'https://api.example.org', ...fields }).success,
     ).toBe(false)
   })
 
-  it('accepts PUBLISHING_PROVIDER=twitter,linkedin without Meta fields (each provider is independent)', () => {
-    expect(
-      ApiEnvironmentSchema.safeParse({
-        NODE_ENV: 'development',
-        PUBLISHING_PROVIDER: 'twitter,linkedin',
-        TWITTER_CLIENT_ID: 'client-id', TWITTER_CLIENT_SECRET: 'client-secret', TWITTER_OAUTH_REDIRECT_URL: 'https://example.org/oauth/callback/twitter',
-        LINKEDIN_CLIENT_ID: 'client-id', LINKEDIN_CLIENT_SECRET: 'client-secret', LINKEDIN_OAUTH_REDIRECT_URL: 'https://example.org/oauth/callback/linkedin',
-        API_PUBLIC_BASE_URL: 'https://api.example.org',
-      }).success,
-    ).toBe(true)
+  it('accepts fake Twitter and LinkedIn without live credentials', () => {
+    expect(ApiEnvironmentSchema.safeParse({ NODE_ENV: 'development', PUBLISHING_PROVIDER: 'twitter,linkedin', PUBLISHING_MODE: 'fake' }).success).toBe(true)
   })
 
   it('rejects EMAIL_PROVIDER=smtp missing SMTP_FROM', () => {

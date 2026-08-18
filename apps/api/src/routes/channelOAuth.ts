@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { mapChannelScopeRow, mapSocialConnectionRow, oauthRedirectUri } from '../apiMappers.js'
 import { ciphertextToBytea, createSecretBoxFromEnvironment } from '../secretBox.js'
 import type { ApiRouteContext } from './context.js'
-import { channelOwnerScope, createAuditRecorder, isDepartmentOwnedChannelAllowed, SOCIAL_CONNECTION_COLUMNS, toPermissionScope } from './shared.js'
+import { channelOwnerScope, createAuditRecorder, createExternalActionAuditRecorder, isDepartmentOwnedChannelAllowed, SOCIAL_CONNECTION_COLUMNS, toPermissionScope } from './shared.js'
 
 // Paket 045: welcher OAuth-Adapter eine Plattform bedient. Instagram/Facebook teilen sich weiterhin
 // den Meta-Graph-API-Adapter (Paket 012); Twitter/LinkedIn haben je einen eigenen, strukturell
@@ -30,6 +30,7 @@ function derivePkceCodeChallenge(codeVerifier: string): string {
 export function registerChannelOAuthRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients, environment, metaOAuthClient, twitterOAuthClient, linkedinOAuthClient } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
+  const recordExternalActionAuditEvent = createExternalActionAuditRecorder(supabaseClients)
 
   function redirectBaseUrlFor(provider: OAuthProvider): string | undefined {
     if (provider === 'meta') return environment.META_OAUTH_REDIRECT_URL
@@ -159,8 +160,22 @@ export function registerChannelOAuthRoutes(app: FastifyInstance, context: ApiRou
       }
     } catch (error) {
       request.log.warn({ err: error, correlationId: request.id }, `${provider} oauth exchange failed`)
+      await recordExternalActionAuditEvent(request, stateRow.data.created_by as string, {
+        organizationId: stateRow.data.organization_id as string,
+        action: 'channel.oauth_exchange',
+        entityType: 'oauth_states',
+        entityId: stateRow.data.id as string,
+        metadata: { provider, outcome: 'failed' },
+      })
       return reply.redirect(`${webBaseUrl}/kanaele?oauthError=${provider}_exchange_failed`, 302)
     }
+    await recordExternalActionAuditEvent(request, stateRow.data.created_by as string, {
+      organizationId: stateRow.data.organization_id as string,
+      action: 'channel.oauth_exchange',
+      entityType: 'oauth_states',
+      entityId: stateRow.data.id as string,
+      metadata: { provider, outcome: 'succeeded', availableAccountCount: availableAccounts.length },
+    })
     if (availableAccounts.length === 0) return reply.redirect(`${webBaseUrl}/kanaele?oauthError=no_accounts`, 302)
 
     const pendingId = randomUUID()

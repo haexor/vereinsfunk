@@ -1,4 +1,4 @@
-import { PublicationExecuteResultSchema, PublicationSchema, SchedulePublicationRequestSchema, UuidSchema } from '@vereinsfunk/contracts'
+import { OAuthPlatformSchema, PublicationExecuteResultSchema, PublicationSchema, SchedulePublicationRequestSchema, UuidSchema } from '@vereinsfunk/contracts'
 import type { Platform, PublicationInput, PublicationMedia, SocialPublisher, ValidationResult } from '@vereinsfunk/publishing'
 import type { FastifyInstance } from 'fastify'
 import { createHash, randomBytes } from 'node:crypto'
@@ -195,7 +195,7 @@ export function registerPublishingRoutes(app: FastifyInstance, context: ApiRoute
 
       publicationInput = {
         publicationId: params.id, postVersionId: version.data.id as string, socialConnectionId: publication.data.social_connection_id as string,
-        platform: publication.data.platform as Platform, caption: version.data.caption as string, media,
+        platform: OAuthPlatformSchema.parse(publication.data.platform) as Platform, caption: version.data.caption as string, media,
         idempotencyKey: publication.data.idempotency_key as string,
       }
       publisher = createPublisherForConnection(publicationInput.platform, accessToken, connection.data.external_account_id as string)
@@ -259,6 +259,13 @@ export function registerPublishingRoutes(app: FastifyInstance, context: ApiRoute
         status: 'failed', error_class: classification.errorClass, response_summary: { message: err instanceof Error ? err.message : 'unknown_error' },
       })
       if (attemptInsert.error) request.log.error({ err: attemptInsert.error, correlationId: request.id }, 'publication_attempts insert failed')
+      await recordAuditEvent(request, {
+        organizationId: publication.data.organization_id as string,
+        action: 'post.publish_failed',
+        entityType: 'publications',
+        entityId: params.id,
+        metadata: { platform: publicationInput.platform, outcome: classification.errorClass, status: classification.status },
+      })
       await revokeGrants()
       return reply.code(502).send({ error: 'publish_failed', correlationId: request.id })
     }

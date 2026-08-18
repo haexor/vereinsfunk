@@ -5,6 +5,7 @@ import type { StructuredContentGenerator } from '@vereinsfunk/content-engine'
 import { HealthSchema } from '@vereinsfunk/contracts'
 import {
   FakeLinkedInOAuthClient,
+  FakeMetaOAuthClient,
   FakePublisher,
   FakeTwitterOAuthClient,
   MetaPublisher,
@@ -103,15 +104,18 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     forService: () => createServiceClient(environment),
   }
   const platformAdminProvider = options.platformAdminProvider ?? new SupabasePlatformAdminProvider(() => supabaseClients.forService())
+  const useFakePublishing = environment.PUBLISHING_MODE === 'fake'
   const metaOAuthClient: MetaOAuthClient =
     options.metaOAuthClient ??
-    new RealMetaOAuthClient({
-      appId: environment.META_APP_ID ?? '',
-      appSecret: environment.META_APP_SECRET ?? '',
-      graphVersion: environment.META_GRAPH_VERSION,
-    })
-  // Paket 045 PR 1: noch keine RealTwitterOAuthClient/RealLinkedInOAuthClient (folgen in PR 2/3,
-  // sobald echte Entwickler-Zugaenge vorliegen) -- ohne Testueberschreibung bleibt es bei Fake.
+    (useFakePublishing
+      ? new FakeMetaOAuthClient()
+      : new RealMetaOAuthClient({
+          appId: environment.META_APP_ID ?? '',
+          appSecret: environment.META_APP_SECRET ?? '',
+          graphVersion: environment.META_GRAPH_VERSION,
+        }))
+  // Twitter/LinkedIn koennen ausschliesslich im expliziten Fake-Modus konstruiert werden. Die
+  // Konfiguration lehnt ihre Live-Aktivierung ab, solange die echten Adapter noch fehlen.
   const twitterOAuthClient: TwitterOAuthClient = options.twitterOAuthClient ?? new FakeTwitterOAuthClient()
   const linkedinOAuthClient: LinkedInOAuthClient = options.linkedinOAuthClient ?? new FakeLinkedInOAuthClient()
   const emailSender =
@@ -130,16 +134,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     switch (platform) {
       case 'instagram':
       case 'facebook':
-        if (!environment.PUBLISHING_PROVIDER.includes('meta')) return new FakePublisher()
+        if (useFakePublishing) return new FakePublisher()
         return new MetaPublisher({
           graphVersion: environment.META_GRAPH_VERSION,
           accessToken,
           ...(platform === 'instagram' ? { instagramAccountId: externalAccountId } : { facebookPageId: externalAccountId }),
         })
-      // Paket 045 PR 1: noch kein TwitterPublisher/LinkedInPublisher (folgen in PR 2/3) -- beide
-      // Plattformen bleiben bis dahin immer Fake, unabhaengig von PUBLISHING_PROVIDER.
       case 'twitter':
       case 'linkedin':
+        if (!useFakePublishing) throw new Error(`${platform} publisher is not available in live mode`)
         return new FakePublisher()
     }
   }

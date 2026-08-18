@@ -30,14 +30,15 @@ const ApiEnvironmentBaseSchema = z.object({
   OPENAI_API_KEY: optionalSecret,
   // 'mixpost' widersprach der getroffenen Architekturentscheidung (plans/README.md: Mixpost wird im
   // MVP nicht betrieben, Meta wird direkt angebunden) und wurde in Paket 012 durch 'meta' ersetzt.
-  // Paket 045: kommagetrennte Menge statt eines einzelnen Werts -- Meta/Twitter/LinkedIn koennen
-  // gleichzeitig echt sein ("meta,twitter,linkedin"), jeder Provider bleibt unabhaengig davon fake,
-  // solange sein Name nicht in der Menge steht. Keine Ruecksicht auf den alten Einzelwert noetig
-  // (Betreiberentscheidung: keine Rueckwaertskompatibilitaet).
+  // Ein Einzelwert bleibt gueltig; mehrere aktivierte Provider werden kommagetrennt angegeben.
+  // Ob diese Provider echt oder als lokale Testdoubles laufen, ist bewusst eine separate Einstellung.
   PUBLISHING_PROVIDER: z.preprocess(
     (value) => (typeof value === 'string' ? value.split(',').map((entry) => entry.trim()).filter(Boolean) : value),
-    z.array(z.enum(['fake', 'meta', 'twitter', 'linkedin'])).default(['fake']),
+    z.array(z.enum(['meta', 'twitter', 'linkedin'])).default(['meta', 'twitter', 'linkedin']),
   ),
+  // Fake ist nur ein expliziter, nichtproduktiver Adapter-Modus. PUBLISHING_PROVIDER beschreibt
+  // ausschliesslich, welche Provider aktiviert sind, nie welche Implementierung verwendet wird.
+  PUBLISHING_MODE: z.enum(['fake', 'live']).default('fake'),
   META_APP_ID: optionalSecret,
   META_APP_SECRET: optionalSecret,
   META_GRAPH_VERSION: z.string().default('v21.0'),
@@ -78,6 +79,19 @@ const ApiEnvironmentBaseSchema = z.object({
 
 // In production the API cannot start without a real database and token-verification secret.
 export const ApiEnvironmentSchema = ApiEnvironmentBaseSchema.superRefine((environment, context) => {
+  if (environment.NODE_ENV === 'production' && environment.PUBLISHING_MODE === 'fake') {
+    context.addIssue({ code: 'custom', path: ['PUBLISHING_MODE'], message: 'PUBLISHING_MODE must not be "fake" in production' })
+  }
+  // Die echten Adapter folgen erst in den naechsten beiden Paketen. Ihre Aktivierung im Live-Modus
+  // muss daher beim Start fehlschlagen, statt spaeter unbemerkt einen Fake-Erfolg zu melden.
+  if (environment.PUBLISHING_MODE === 'live') {
+    for (const provider of ['twitter', 'linkedin'] as const) {
+      if (environment.PUBLISHING_PROVIDER.includes(provider)) {
+        context.addIssue({ code: 'custom', path: ['PUBLISHING_PROVIDER'], message: `${provider} is not available in PUBLISHING_MODE=live until its real adapter is implemented` })
+      }
+    }
+  }
+
   // SmtpEmailSender's constructor already throws on a missing field, but that surfaces as a
   // generic startup crash instead of a clear, field-scoped config validation error -- checked
   // here regardless of NODE_ENV, since EMAIL_PROVIDER=smtp can be used outside production too.
@@ -92,19 +106,19 @@ export const ApiEnvironmentSchema = ApiEnvironmentBaseSchema.superRefine((enviro
   // OAuth-Callback wuerde sonst erst beim ersten Verbindungsversuch mit einer unklaren Exception
   // scheitern, statt beim Start klar zu benennen, welche Provider-Variable fehlt. Ein Block je
   // Provider, weil jeder unabhaengig von den anderen aktiviert sein kann (Paket 045).
-  if (environment.PUBLISHING_PROVIDER.includes('meta')) {
+  if (environment.PUBLISHING_MODE === 'live' && environment.PUBLISHING_PROVIDER.includes('meta')) {
     const requiredMetaFields = ['META_APP_ID', 'META_APP_SECRET', 'META_OAUTH_REDIRECT_URL', 'API_PUBLIC_BASE_URL'] as const
     for (const key of requiredMetaFields) {
       if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required when PUBLISHING_PROVIDER includes meta` })
     }
   }
-  if (environment.PUBLISHING_PROVIDER.includes('twitter')) {
+  if (environment.PUBLISHING_MODE === 'live' && environment.PUBLISHING_PROVIDER.includes('twitter')) {
     const requiredTwitterFields = ['TWITTER_CLIENT_ID', 'TWITTER_CLIENT_SECRET', 'TWITTER_OAUTH_REDIRECT_URL', 'API_PUBLIC_BASE_URL'] as const
     for (const key of requiredTwitterFields) {
       if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required when PUBLISHING_PROVIDER includes twitter` })
     }
   }
-  if (environment.PUBLISHING_PROVIDER.includes('linkedin')) {
+  if (environment.PUBLISHING_MODE === 'live' && environment.PUBLISHING_PROVIDER.includes('linkedin')) {
     const requiredLinkedInFields = ['LINKEDIN_CLIENT_ID', 'LINKEDIN_CLIENT_SECRET', 'LINKEDIN_OAUTH_REDIRECT_URL', 'API_PUBLIC_BASE_URL'] as const
     for (const key of requiredLinkedInFields) {
       if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required when PUBLISHING_PROVIDER includes linkedin` })

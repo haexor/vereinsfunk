@@ -286,6 +286,7 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
       // getroffen werden -- das ist der dokumentierte 'unknown'-Fall aus der Klassifikation.
       const publicationUpdates: Record<string, unknown>[] = []
       const attemptsCaptured: Record<string, unknown>[] = []
+      const auditCaptured: Record<string, unknown>[] = []
       const clients: SupabaseClientFactory = {
         ...readOnlyClients(),
         forService: () =>
@@ -301,6 +302,7 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
               }
               if (table === 'publication_attempts') return { ...chain({ data: null, error: null }), insert: async (row: Record<string, unknown>) => { attemptsCaptured.push(row); return { error: null } } }
               if (table === 'publication_media_grants') return { update: () => ({ eq: () => ({ is: async () => ({ error: null }) }) }) }
+              if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { auditCaptured.push(row); return { error: null } } }
               throw new Error(`unexpected table in service fake: ${table}`)
             },
           }) as unknown as SupabaseClient,
@@ -317,6 +319,7 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
       expect(response.json()).toMatchObject({ error: 'publish_failed' })
       expect(publicationUpdates.at(-1)).toMatchObject({ status: 'action_required' })
       expect(attemptsCaptured.at(-1)).toMatchObject({ status: 'failed', error_class: 'unknown' })
+      expect(auditCaptured).toMatchObject([{ action: 'post.publish_failed', entity_id: PUBLICATION_ID, metadata: { platform: 'facebook', outcome: 'unknown', status: 'action_required' } }])
     })
   })
 
@@ -391,4 +394,3 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
     })
   })
 })
-

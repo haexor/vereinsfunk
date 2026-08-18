@@ -181,6 +181,28 @@ export function createAuditRecorder(supabaseClients: SupabaseClientFactory) {
   }
 }
 
+// OAuth-Callbacks kommen vom Provider und haben daher keinen request.auth-Kontext. Der beim Start
+// gespeicherte Nutzer ist dennoch der fachliche Akteur der externen Aktion; diese getrennte Factory
+// verhindert, dass Callback-Routen einen nicht vorhandenen Authorization-Kontext erzwingen.
+export function createExternalActionAuditRecorder(supabaseClients: SupabaseClientFactory) {
+  return async function recordExternalActionAuditEvent(
+    request: FastifyRequest,
+    actorUserId: string,
+    event: { organizationId: string; action: string; entityType: string; entityId: string | null; metadata?: Record<string, unknown> },
+  ): Promise<void> {
+    const audit = await supabaseClients.forService().from('audit_events').insert({
+      organization_id: event.organizationId,
+      actor_user_id: actorUserId,
+      action: event.action,
+      entity_type: event.entityType,
+      entity_id: event.entityId,
+      correlation_id: request.id,
+      metadata: event.metadata ?? {},
+    })
+    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+  }
+}
+
 // Gemeinsame Zeilenform fuer consent_records (Paket 015) -- gebraucht sowohl von den noch nicht
 // extrahierten Datenschutz-Routen als auch von computeMediaGateBlockersForPostVersion in
 // routes/policies.ts (Freigabe-Medien-Gate liest bestehende Einwilligungen).

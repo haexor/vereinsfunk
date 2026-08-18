@@ -22,7 +22,7 @@ const channelsState = reactive(await useChannels())
         <h2 class="mb-3 font-display text-base font-bold">Konto auswählen</h2>
         <p v-if="channelsState.pendingLoading" class="text-xs text-[#7b827d]">Wird geladen …</p>
         <template v-else-if="channelsState.pendingConnection">
-          <p class="mb-3 text-[13px] text-[#727a75]">Welche Seite bzw. welches Instagram-Business-Konto soll verbunden werden?</p>
+          <p class="mb-3 text-[13px] text-[#727a75]">Welches Konto soll verbunden werden?</p>
           <ul class="space-y-2"><li v-for="account in channelsState.pendingConnection.availableAccounts" :key="account.externalAccountId"><button type="button" :disabled="channelsState.pendingSelecting !== null" class="focus-ring flex w-full items-center gap-3 rounded-xl border border-[#dfe0d9] p-3 text-left text-sm hover:border-forest disabled:opacity-60" @click="channelsState.selectPendingAccount(account.externalAccountId)"><PlatformIcon :platform="channelsState.pendingConnection.platform" /><span class="flex-1 font-medium">{{ account.displayName }}</span><span v-if="channelsState.pendingSelecting === account.externalAccountId" class="text-[10px] text-[#9aa096]">Wird verbunden …</span></button></li></ul>
         </template>
         <p v-else class="text-xs text-amber-800">Diese Auswahl ist nicht mehr verfügbar.</p>

@@ -10,33 +10,40 @@ begin;
 -- Instagram/Facebook, deshalb hier erstmals erweitert.
 alter table public.social_connections drop constraint social_connections_platform_check;
 alter table public.social_connections add constraint social_connections_platform_check
-  check (platform in ('instagram', 'facebook', 'twitter', 'linkedin', 'website'));
+  check (platform in ('instagram', 'facebook', 'twitter', 'linkedin', 'website')) not valid;
+alter table public.social_connections validate constraint social_connections_platform_check;
 
 alter table public.oauth_states drop constraint oauth_states_platform_check;
 alter table public.oauth_states add constraint oauth_states_platform_check
-  check (platform in ('instagram', 'facebook', 'twitter', 'linkedin'));
+  check (platform in ('instagram', 'facebook', 'twitter', 'linkedin')) not valid;
+alter table public.oauth_states validate constraint oauth_states_platform_check;
 
 alter table public.oauth_pending_connections drop constraint oauth_pending_connections_platform_check;
 alter table public.oauth_pending_connections add constraint oauth_pending_connections_platform_check
-  check (platform in ('instagram', 'facebook', 'twitter', 'linkedin'));
+  check (platform in ('instagram', 'facebook', 'twitter', 'linkedin')) not valid;
+alter table public.oauth_pending_connections validate constraint oauth_pending_connections_platform_check;
 
 alter table public.publications drop constraint publications_platform_check;
 alter table public.publications add constraint publications_platform_check
-  check (platform in ('instagram', 'facebook', 'twitter', 'linkedin'));
+  check (platform in ('instagram', 'facebook', 'twitter', 'linkedin')) not valid;
+alter table public.publications validate constraint publications_platform_check;
 
 alter table public.text_generation_platform_defaults drop constraint text_generation_platform_defaults_platform_check;
 alter table public.text_generation_platform_defaults add constraint text_generation_platform_defaults_platform_check
-  check (platform in ('instagram', 'facebook', 'twitter', 'linkedin', 'website'));
+  check (platform in ('instagram', 'facebook', 'twitter', 'linkedin', 'website')) not valid;
+alter table public.text_generation_platform_defaults validate constraint text_generation_platform_defaults_platform_check;
 
 alter table public.composition_sessions drop constraint composition_sessions_target_platforms_check;
 alter table public.composition_sessions add constraint composition_sessions_target_platforms_check
   check (target_platforms <@ array['instagram', 'facebook', 'twitter', 'linkedin', 'website']::text[]
-    and public.text_array_is_distinct(target_platforms));
+    and public.text_array_is_distinct(target_platforms)) not valid;
+alter table public.composition_sessions validate constraint composition_sessions_target_platforms_check;
 
 alter table public.policy_settings drop constraint policy_settings_default_target_platforms_check;
 alter table public.policy_settings add constraint policy_settings_default_target_platforms_check
   check (default_target_platforms <@ array['instagram', 'facebook', 'twitter', 'linkedin', 'website']::text[]
-    and public.text_array_is_distinct(default_target_platforms));
+    and public.text_array_is_distinct(default_target_platforms)) not valid;
+alter table public.policy_settings validate constraint policy_settings_default_target_platforms_check;
 
 -- 2. PKCE-Verifier fuer den Twitter/X-OAuth2-Flow: muss zwischen /connect/twitter/start und
 -- /connect/twitter/callback ueberleben (bei Instagram/Facebook/LinkedIn bleibt die Spalte null, kein
