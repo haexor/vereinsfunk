@@ -34,6 +34,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify'
 import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { CLUB_EVENT_COLUMNS, FIXTURE_COLUMNS, mapClubEventRow, mapFixtureRow, mapTeamRow } from '../apiMappers.js'
+import { ensurePassThroughDerivative } from '../passThroughDerivative.js'
 import type { ApiRouteContext } from './context.js'
 import { buildStyleProfilePromptPreview, checkRateLimit, createAuditRecorder, fetchMemberTrust, previewStyleProfile, resolveDirectoryScope, resolvePreviewIdempotencyKey, resolveScopedEffectiveConfig, resolveTextGenerationPlatformAvailability, toPermissionScope } from './shared.js'
 
@@ -693,7 +694,18 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (session.error) throw session.error
     if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(candidate.data.organization_id, session.data.department_id, session.data.team_id)))) return
     const service = supabaseClients.forService()
-    const accepted = await service.rpc('accept_text_generation_candidate', { p_candidate_id: id, p_actor_user_id: request.auth!.userId })
+    // Plan 045, PR 0 Schritt 4: die Sitzung traegt hoechstens einen Foto-Anhang
+    // (composition_session_post_media). Die Sharp/Storage-Arbeit dahinter kann keine reine
+    // SQL-Funktion leisten, deshalb wird sie hier, vor dem RPC-Aufruf, aufgeloest.
+    const attachment = await service.from('composition_session_post_media').select('media_asset_id').eq('composition_session_id', candidate.data.composition_session_id).maybeSingle()
+    if (attachment.error) throw attachment.error
+    let mediaDerivativeId: string | null = null
+    if (attachment.data) {
+      const derivative = await ensurePassThroughDerivative(service, candidate.data.organization_id, attachment.data.media_asset_id as string)
+      if ('error' in derivative) return reply.code(422).send({ error: derivative.error, correlationId: request.id })
+      mediaDerivativeId = derivative.id
+    }
+    const accepted = await service.rpc('accept_text_generation_candidate', { p_candidate_id: id, p_actor_user_id: request.auth!.userId, p_media_derivative_id: mediaDerivativeId })
     if (accepted.error) throw accepted.error
     if (draftId) {
       // An idempotent re-accept only returns the version ID; composition_sessions.post_id is the

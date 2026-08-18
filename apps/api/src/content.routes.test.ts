@@ -938,6 +938,8 @@ describe('text workshop drafts', () => {
         rpc: async () => ({ data: { postId: POST_ID, postVersionId: '3f000000-0000-4000-8000-000000000005' }, error: null }),
         from: (table: string) => {
           if (table === 'text_workshop_drafts') return { update: () => update }
+          // No photo attached to this session -- accept proceeds text-only, exactly as before Plan 045.
+          if (table === 'composition_session_post_media') return chain({ data: null, error: null })
           throw new Error(`unexpected service table: ${table}`)
         },
       }) as unknown as SupabaseClient,
@@ -950,6 +952,69 @@ describe('text workshop drafts', () => {
     expect(filters).toEqual(expect.arrayContaining([
       ['eq', 'id', DRAFT_ID], ['eq', 'organization_id', ORGANIZATION_ID], ['eq', 'department_id', DEPARTMENT_ID], ['is', 'team_id', null], ['eq', 'created_by', USER_ID],
     ]))
+  })
+})
+
+describe('POST /v1/text-workshop/candidates/:id/accept -- photo attachment (Plan 045, PR 0 Schritt 4)', () => {
+  const CANDIDATE_ID = '3f000000-0000-4000-8000-000000000010'
+  const SESSION_ID = '3f000000-0000-4000-8000-000000000011'
+  const MEDIA_ASSET_ID = '3f000000-0000-4000-8000-000000000012'
+  const DERIVATIVE_ID = '3f000000-0000-4000-8000-000000000013'
+
+  it('resolves the session’s photo attachment to a derivative and passes it to the RPC', async () => {
+    let rpcParams: Record<string, unknown> | undefined
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ from: (table: string) => {
+        if (table === 'generation_candidates') return chain({ data: { organization_id: ORGANIZATION_ID, composition_session_id: SESSION_ID }, error: null })
+        if (table === 'composition_sessions') return chain({ data: { department_id: DEPARTMENT_ID, team_id: null, post_id: null }, error: null })
+        throw new Error(`unexpected user table: ${table}`)
+      } }) as unknown as SupabaseClient,
+      forService: () => ({
+        rpc: async (fn: string, params: Record<string, unknown>) => { rpcParams = params; return { data: { postId: '3f000000-0000-4000-8000-000000000014', postVersionId: '3f000000-0000-4000-8000-000000000015' }, error: null } },
+        from: (table: string) => {
+          if (table === 'composition_session_post_media') return chain({ data: { media_asset_id: MEDIA_ASSET_ID }, error: null })
+          if (table === 'media_derivatives') {
+            return {
+              select: () => ({ eq: () => ({ eq: async () => ({ data: [{ id: DERIVATIVE_ID, recipe: { kind: 'pass_through_v1' }, status: 'ready' }], error: null }) }) }),
+            }
+          }
+          throw new Error(`unexpected service table: ${table}`)
+        },
+      }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const response = await app.inject({
+      method: 'POST', url: `/v1/text-workshop/candidates/${CANDIDATE_ID}/accept`, headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(rpcParams).toMatchObject({ p_candidate_id: CANDIDATE_ID, p_media_derivative_id: DERIVATIVE_ID })
+  })
+
+  it('rejects with 422 and never calls the RPC when the attached photo is not yet ready', async () => {
+    let rpcCalled = false
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ from: (table: string) => {
+        if (table === 'generation_candidates') return chain({ data: { organization_id: ORGANIZATION_ID, composition_session_id: SESSION_ID }, error: null })
+        if (table === 'composition_sessions') return chain({ data: { department_id: DEPARTMENT_ID, team_id: null, post_id: null }, error: null })
+        throw new Error(`unexpected user table: ${table}`)
+      } }) as unknown as SupabaseClient,
+      forService: () => ({
+        rpc: async () => { rpcCalled = true; throw new Error('the RPC must not be reached once the attached photo turns out not ready') },
+        from: (table: string) => {
+          if (table === 'composition_session_post_media') return chain({ data: { media_asset_id: MEDIA_ASSET_ID }, error: null })
+          if (table === 'media_derivatives') return { select: () => ({ eq: () => ({ eq: async () => ({ data: [], error: null }) }) }) }
+          if (table === 'media_assets') return { select: () => ({ eq: () => ({ single: async () => ({ data: { bucket_id: 'raw-media', object_path: 'x', mime_type: 'image/jpeg', byte_size: 10, sha256: 'a'.repeat(64), width: null, height: null, upload_status: 'initiated' }, error: null }) }) }) }
+          throw new Error(`unexpected service table: ${table}`)
+        },
+      }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const response = await app.inject({
+      method: 'POST', url: `/v1/text-workshop/candidates/${CANDIDATE_ID}/accept`, headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+    })
+    expect(response.statusCode).toBe(422)
+    expect(response.json()).toMatchObject({ error: 'media_asset_not_ready' })
+    expect(rpcCalled).toBe(false)
   })
 })
 
