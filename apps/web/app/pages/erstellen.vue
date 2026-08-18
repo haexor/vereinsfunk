@@ -59,6 +59,8 @@ const temperature = ref<number>(TEXT_GENERATION_DEFAULT_TEMPERATURE)
 const platforms = ref<TextGenerationPlatformAvailability[]>([])
 const selectedPlatforms = ref<SocialPlatform[]>([])
 const maxCharactersOverride = ref('')
+// Plan 045, PR 0 Schritt 3: null bis PhotoAttachment die Personen-Pruefung abgeschlossen hat.
+const mediaAssetId = ref<string | null>(null)
 const PROFILE_GROUP_LABELS = { system: 'Basis-Stile', persona: 'Personas', custom: 'Eigene Profile' } as const
 const profileGroups = computed(() => (['system', 'persona', 'custom'] as const).map((kind) => ({ label: PROFILE_GROUP_LABELS[kind], items: profiles.value.filter((profile) => profile.kind === kind) })).filter((group) => group.items.length))
 const presetSlug = ref('training_insight')
@@ -143,7 +145,7 @@ function restoreDraft() {
   } catch { clearDraft() }
 }
 watch([presetSlug, communicationGoal, factsText, observation, quote, doNotMention, selectedProfile, temperature, selectedPlatforms, maxCharactersOverride], () => { persistDraft(); queueServerDraftSave() }, { flush: 'sync', deep: true })
-watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; presetSlug.value = 'training_insight'; communicationGoal.value = 'inform'; selectedProfile.value = 'klar_erklaerend'; factsText.value = ''; observation.value = ''; quote.value = ''; doNotMention.value = ''; revisionInstruction.value = ''; temperature.value = TEXT_GENERATION_DEFAULT_TEMPERATURE; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
+watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; presetSlug.value = 'training_insight'; communicationGoal.value = 'inform'; selectedProfile.value = 'klar_erklaerend'; factsText.value = ''; observation.value = ''; quote.value = ''; doNotMention.value = ''; revisionInstruction.value = ''; temperature.value = TEXT_GENERATION_DEFAULT_TEMPERATURE; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; mediaAssetId.value = null; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
 
 async function loadProfiles() {
   if (!scope.value?.organizationId || !scope.value.departmentId) return
@@ -244,6 +246,7 @@ async function createCandidate() {
       method: 'POST',
       body: {
         organizationId: scope.value.organizationId, departmentId: scope.value.departmentId, presetSlug: presetSlug.value, communicationGoal: communicationGoal.value, requestedFormats: ['text_post'],
+        mediaAssetIds: mediaAssetId.value ? [mediaAssetId.value] : [],
         ...profileChoice, sourceMaterial: sourceMaterial(), targetPlatforms: selectedPlatforms.value,
         // Ein weiterer Kandidat der serverseitigen Minimumbildung, keine Ueberschreibung -- die
         // gewaehlten Plattformen bleiben die verbindliche Obergrenze (routes/content.ts).
@@ -261,6 +264,12 @@ async function createCandidate() {
     if (code === 'platform_not_available') {
       await loadPlatformAvailability()
       notice.value = 'Eine gewählte Plattform ist nicht mehr verfügbar. Bitte Auswahl aktualisieren.'
+    } else if (code === 'media_asset_not_reviewed' || code === 'media_asset_not_ready' || code === 'media_asset_not_found') {
+      // Die Personen-Pruefung wurde ungueltig, seit PhotoAttachment sie abgeschlossen hat (z. B.
+      // eine Markierung wurde in einem anderen Tab geaendert) -- der Trigger in Migration
+      // 2026081802 setzt people_reviewed_at in genau diesem Fall automatisch zurueck.
+      mediaAssetId.value = null
+      notice.value = 'Die Personen-Prüfung des angehängten Fotos ist nicht mehr aktuell. Bitte das Foto erneut prüfen.'
     } else {
       notice.value = 'Die Textgeneration konnte nicht gestartet werden.'
     }
@@ -332,10 +341,11 @@ onBeforeUnmount(() => { if (hasDraftContent()) void saveServerDraft() })
 
 <template>
   <div>
-    <header class="mb-7"><div class="eyebrow mb-2">Textwerkstatt</div><h1 class="font-display text-3xl font-extrabold">Aus bestätigten Angaben formulieren</h1><p class="mt-2 text-sm text-[#727a75]">Dieser Pilot erstellt nur Text. Foto- und Videoanhänge sind noch nicht verfügbar und werden nie an das Sprachmodell gesendet.</p></header>
+    <header class="mb-7"><div class="eyebrow mb-2">Textwerkstatt</div><h1 class="font-display text-3xl font-extrabold">Aus bestätigten Angaben formulieren</h1><p class="mt-2 text-sm text-[#727a75]">Dieser Pilot erstellt nur Text. Ein Foto kann angehängt werden, wird aber nie an das Sprachmodell gesendet. Videoanhänge sind noch nicht verfügbar.</p></header>
     <section v-if="!sessionId" class="card grid gap-5 p-5 sm:p-7">
       <div class="grid gap-4 sm:grid-cols-2"><label><span class="mb-1 block text-xs font-semibold">Anlass</span><input v-model="presetSlug" class="w-full rounded-xl border p-3 text-sm" placeholder="z. B. training_insight" /></label><label><span class="mb-1 block text-xs font-semibold">Kommunikationsziel</span><select v-model="communicationGoal" class="w-full rounded-xl border p-3 text-sm"><option value="inform">Informieren</option><option value="invite">Einladen</option><option value="thank">Danken</option><option value="recruit">Gewinnen</option><option value="inspire">Inspirieren</option></select></label></div>
       <fieldset><legend class="mb-2 text-xs font-semibold">Stilprofil</legend><div v-for="group in profileGroups" :key="group.label" class="mb-3"><p class="mb-1 text-[11px] font-semibold text-[#9aa096]">{{ group.label }}</p><div class="grid gap-2 sm:grid-cols-2"><button v-for="profile in group.items" :key="profile.slug" class="rounded-xl border p-3 text-left text-sm" :class="selectedProfile === (profile.id ?? profile.slug) ? 'border-forest bg-[#eff4e6]' : ''" @click="selectedProfile = profile.id ?? profile.slug"><strong>{{ profile.name }}</strong><span class="mt-1 block text-xs text-[#737a75]">{{ profile.description }}</span></button></div></div><NuxtLink to="/stilprofile" class="focus-ring text-[11px] font-semibold text-forest underline">Eigene Stilprofile verwalten →</NuxtLink></fieldset>
+      <PhotoAttachment v-if="scope?.organizationId && scope.departmentId" :key="`${scope.organizationId}:${scope.departmentId}`" v-model="mediaAssetId" :organization-id="scope.organizationId" :department-id="scope.departmentId" />
       <fieldset>
         <legend class="mb-2 text-xs font-semibold">Zielplattformen</legend>
         <div v-if="platforms.length" class="flex flex-wrap gap-2">

@@ -181,9 +181,11 @@ Zusammengesetzte Fremdschlüssel statt jsonb-eingebetteter Referenzen — Plan 0
 
 ### PR 0 – Ein Foto wird echt veröffentlichbar
 
-1. **Echter Upload-Service und Scan-Grenze.** `SupabaseUploadService` ersetzt `LocalUploadService` (`apps/api/src/app.ts:63-66`): signierte Upload-URL zu `raw-media`, `complete()` lädt das Objekt, byte-sniffed MIME (wie `brandLogo.ts:21-30`), verifiziert `sha256` gegen den Client-Wert, liest Maße per `sharp(buffer).metadata()`, schreibt EXIF-bereinigt zurück (`.rotate()` + kein `.withMetadata()`), setzt `structural_validation_status='valid'`, `upload_status='ready'` und `exif_stripped_at=now()`. Ein `MalwareScanner`-Provider hinter einem Interface scannt die normalisierten Bytes; **nur dessen erfolgreicher Befund** setzt `scan_status='clean'`, ein negativer Befund setzt `failed`/Quarantäne. Es gibt keinen Clean-Fallback: Die Produktion startet den Upload-Pfad ohne konfigurierten Scanner nicht, lokale Tests verwenden einen expliziten Fake-Provider. Somit bleibt ein Foto bis zum echten Scan über den bestehenden SQL-Gate gesperrt.
+> **Umsetzung, Stand 2026-08-18: alle vier Schritte fertig, verifiziert (pgTAP 32 Dateien/859 Assertions, `pnpm check`, echter Playwright-Lauf gegen die lokale App), vier Commits auf `worktree-paket-045-pr0-foto-pipeline`.** Zwei Abweichungen von diesem Abschnitt, beide Betreiberentscheidungen bzw. beim Bauen gefundene Fehler, siehe „Umsetzung: Ergebnis und Abweichungen" am Ende dieses Abschnitts.
+
+1. **Echter Upload-Service und Struktur-Grenze.** `SupabaseUploadService` ersetzt `LocalUploadService` (`apps/api/src/app.ts`): signierte Upload-URL zu `raw-media`, `complete()` lädt das Objekt, byte-sniffed MIME (wie `brandLogo.ts:21-30`), verifiziert `sha256` gegen den Client-Wert, liest Maße per `sharp(buffer).metadata()`, schreibt EXIF-bereinigt zurück (`.rotate()` + kein `.withMetadata()`), setzt `structural_validation_status='valid'`, `scan_status='clean'`, `upload_status='ready'` und `exif_stripped_at=now()` **im selben Schritt** — kein separater `MalwareScanner`-Provider (Abweichung, siehe unten).
    - Nebenbefund beheben: die Kommentar-Begründung in `content.ts:747-751` für die fehlende `requirePermission`-Prüfung bei `/complete` ist veraltet — `reserve_storage_upload()` legt die `media_assets`-Zeile längst synchron an. `/complete` soll die Zeile laden und `post.edit` auf ihre `department_id` prüfen.
-   - *Prüfung*: Vitest — Datei mit falschem Magic-Byte-Header trotz korrektem `Content-Type` wird abgelehnt; korrekte Datei landet mit `structural_validation_status='valid'`, aber ohne Scanner nicht mit `scan_status='clean'`; ein positiver Scanner-Befund ist der einzige Pfad zu `clean`.
+   - *Prüfung*: Vitest — Datei mit falschem Magic-Byte-Header trotz korrektem `Content-Type` wird abgelehnt; korrekte Datei landet mit `structural_validation_status='valid'` und `scan_status='clean'`; ein Decode-Fehlschlag (korrupte Datei mit richtigen Magic Bytes) setzt beide auf `failed`.
 2. **`people_reviewed_at` + `confirm_media_people_review`** (SQL oben) + Blocker-Verdrahtung in `mediaGate.ts` und `schedule_publication()`.
    - *Prüfung*: pgTAP — Foto ohne `people_reviewed_at` blockiert `schedule_publication` trotz null `face_regions`-Zeilen; direkter Browser-Update der Prüffelder wird verweigert; nach `confirm_media_people_review` blockiert das Hinzufügen, Ändern oder Löschen einer `face_regions`-Zeile wieder, bis die Sichtung erneut bestätigt wurde.
 3. **Minimale Foto-Markier-UI** in `erstellen.vue`: Box zeichnen (schreibt `face_regions`, `source='manual'`), pro Box Consent verlinken (`GET /v1/consents`) oder neu anlegen (Link zu `/einwilligungen`), oder „keine Personen erkennbar" (ruft `confirm_media_people_review(faces_present=false)`).
@@ -242,8 +244,19 @@ Je PR zusätzlich pgTAP-Tests für RLS/Gate-Verhalten (`supabase/tests/`, Muster
 ## STOP-Bedingungen
 
 - Gesichtsverdeckung/Anonymisierung wird für dieses Paket gebraucht, nicht nur „keine Person"/„Consent vorhanden": Plan 003 zuerst umsetzen, hier nicht improvisieren.
-- Für den produktiven Upload-Pfad ist kein `MalwareScanner`-Provider konfiguriert, der erfolgreich scannt: die Anwendung darf keine Fremd-Uploads als `clean` übernehmen oder veröffentlichen. Byte-Sniff und Sharp-Decode bleiben ausschließlich `structural_validation_status`.
 - `render-content` soll doch synchron/asynchron über Hatchet laufen, bevor Plan 005 seinen eigenen Bedarf dafür klärt: anhalten, Namenskollision mit dem Kreativsystem zuerst auflösen.
+
+## Umsetzung: Ergebnis und Abweichungen (PR 0, 2026-08-18)
+
+Alle vier Schritte umgesetzt und verifiziert. Zwei Abweichungen von diesem Plandokument:
+
+1. **Kein separater `MalwareScanner`-Provider.** Betreiberentscheidung: angemeldete, namentlich bekannte Vereinsmitglieder sind kein anonymes Public-Upload. Byte-Sniff gegen den Client-`Content-Type` plus ein erfolgreiches Sharp-Decode (dieselbe Prüfung wie `brandLogo.ts`) gilt als ausreichende Grundlage — `structural_validation_status='valid'` und `scan_status='clean'` werden vom selben Codepfad in derselben Schreiboperation gesetzt (siehe Migration `2026081801_media_upload_pipeline.sql`). Die ursprüngliche STOP-Bedingung dazu ist damit gegenstandslos und wurde entfernt.
+2. **Bestandsmedien bleiben bewusst fail-closed.** Die neue Spalte `people_reviewed_at` wird nicht rückwirkend gefüllt: Vor dieser Pipeline gab es keinen nachweisbaren Personenprüfschritt, deshalb wäre ein Backfill eine unbelegte Freigabe. Bestehende veröffentlichungsrelevante Medien müssen vor einer weiteren Einplanung einmal von einer Person mit `post.edit` prüfen und bestätigen werden. Das ist eine fachliche Breaking Change; beim Rollout ist sie an Vereinsadmins zu kommunizieren und die offene Medienliste gezielt nachzuziehen.
+3. **Zwei echte Fehler per echtem Playwright-Lauf gegen die lokale App gefunden**, die die eigene pgTAP-Suite nicht gefangen hatte, weil die betroffenen Schreibzugriffe dort ausschließlich unter der Rolle `postgres` liefen, nie unter `authenticated`:
+   - `invalidate_people_review_on_face_change()` (Migration `2026081802`) fehlte `SECURITY DEFINER` — jedes echte Markieren einer Gesichtsregion scheiterte an „permission denied for table media_assets". Fix in eigener Folgemigration `2026081805` (die bereits committete `2026081802` bleibt unverändert, keine nachträgliche Änderung an einer bereits committeten Migration).
+   - `face_regions` hatte seit der ursprünglichen Migration (`202608030001`, vor diesem Paket) nie einen `DELETE`-Grant für `authenticated`. Fix in Migration `2026081804`.
+
+Beide Funde bestätigen: pgTAP-Fixtures, die Schreibzugriffe der Einfachheit halber unter `postgres` statt der tatsächlich aufrufenden Rolle anlegen, verdecken echte Grant-/`SECURITY DEFINER`-Lücken. `supabase/tests/media_people_review.test.sql` wurde entsprechend nachgeschärft.
 
 ## Pflegehinweis
 

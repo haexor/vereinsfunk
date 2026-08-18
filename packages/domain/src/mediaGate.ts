@@ -10,7 +10,12 @@ export function createIdempotencyKey(
 
 export type MediaGateInput = {
   scanStatus: 'pending' | 'clean' | 'failed'
-  facesConfirmedComplete: boolean
+  // Plan 045, PR 0 Schritt 2: ob der Foto-Anhang ueberhaupt schon auf abgebildete Personen
+  // gesichtet wurde (media_assets.people_reviewed_at). Ersetzt das vorherige facesConfirmedComplete,
+  // das mit "keine face_regions-Zeile ist noch pending" zu einem einzigen face_pending-Blocker
+  // verschmolzen war -- fuer die anzeigende Person ist "Foto ueberhaupt erst sichten" ein anderer
+  // naechster Schritt als "eine bereits markierte Box entscheiden", deshalb ein eigener Blocker.
+  peopleReviewPending: boolean
   hasOriginalSelected: boolean
   derivativeCurrent: boolean
   faces: readonly {
@@ -31,6 +36,7 @@ export type MediaGateInput = {
 
 export type MediaGateBlocker =
   | 'scan_pending'
+  | 'people_review_pending'
   | 'face_pending'
   | 'consent_invalid'
   | 'derivative_stale'
@@ -43,7 +49,8 @@ export type MediaGateBlocker =
 export function evaluateMediaGate(input: MediaGateInput): { publishable: boolean; blockers: MediaGateBlocker[] } {
   const blockers: MediaGateBlocker[] = []
   if (input.scanStatus !== 'clean') blockers.push('scan_pending')
-  if (!input.facesConfirmedComplete || input.faces.some((face) => face.decision === 'pending')) blockers.push('face_pending')
+  if (input.peopleReviewPending) blockers.push('people_review_pending')
+  if (input.faces.some((face) => face.decision === 'pending')) blockers.push('face_pending')
   if (input.faces.some((face) => face.decision === 'consented' && !face.consentValid)) blockers.push('consent_invalid')
   if (input.faces.some((face) => face.decision === 'consented' && face.consentScopeMismatch === true)) blockers.push('consent_scope_mismatch')
   if (!input.derivativeCurrent) blockers.push('derivative_stale')
