@@ -22,9 +22,13 @@ export const AddPlatformAdminRequestSchema = z.object({
 
 // Nur ein Schluessel existiert heute (loest 009s hartkodierte Konstante ab). Ein unbekannter
 // Schluessel wird von der API abgelehnt statt stillschweigend ungeprueft gespeichert zu werden.
-export const PlatformSettingKeySchema = z.enum(['max_organizations_per_owner'])
+export const PlatformSettingKeySchema = z.enum(['max_organizations_per_owner', 'publishing_enabled'])
 export const PlatformSettingValueSchemas = {
   max_organizations_per_owner: z.int().positive().max(1000),
+  // Globaler Not-Aus fuer externe Veroeffentlichungen. Er ist bewusst keine
+  // organisationsbezogene Einstellung: ein Plattform-Admin muss im Incident-Fall alle
+  // Vereine gleichzeitig und ohne deren Berechtigungen erreichen koennen.
+  publishing_enabled: z.boolean(),
 } as const satisfies Record<z.infer<typeof PlatformSettingKeySchema>, z.ZodType<unknown>>
 export const PlatformSettingSchema = z.object({
   key: PlatformSettingKeySchema,
@@ -32,6 +36,21 @@ export const PlatformSettingSchema = z.object({
   updatedAt: z.iso.datetime({ offset: true }),
 })
 export const UpdatePlatformSettingRequestSchema = z.object({ value: JsonValueSchema })
+
+export const PublishingProviderSchema = z.enum(['meta', 'twitter', 'linkedin'])
+export const PublishingProviderConfigurationSchema = z.object({
+  provider: PublishingProviderSchema,
+  clientId: z.string().trim().min(1).max(500),
+  graphVersion: z.string().trim().min(1).max(80).nullable(),
+  hasSecret: z.boolean(),
+  updatedAt: z.iso.datetime({ offset: true }),
+})
+// The secret is write-only. A platform admin can rotate it, never retrieve it.
+export const UpdatePublishingProviderConfigurationRequestSchema = z.object({
+  clientId: z.string().trim().min(1).max(500),
+  clientSecret: z.string().trim().min(1).max(4000),
+  graphVersion: z.string().trim().min(1).max(80).nullable().optional(),
+})
 
 export const LlmProviderProtocolSchema = z.enum(['anthropic', 'openai'])
 // The vocabulary deliberately describes future tasks, but only text_generation has an adapter.
@@ -193,6 +212,9 @@ export type AddPlatformAdminRequest = z.infer<typeof AddPlatformAdminRequestSche
 export type PlatformSettingKey = z.infer<typeof PlatformSettingKeySchema>
 export type PlatformSetting = z.infer<typeof PlatformSettingSchema>
 export type UpdatePlatformSettingRequest = z.infer<typeof UpdatePlatformSettingRequestSchema>
+export type PublishingProvider = z.infer<typeof PublishingProviderSchema>
+export type PublishingProviderConfiguration = z.infer<typeof PublishingProviderConfigurationSchema>
+export type UpdatePublishingProviderConfigurationRequest = z.infer<typeof UpdatePublishingProviderConfigurationRequestSchema>
 export type LlmProviderProtocol = z.infer<typeof LlmProviderProtocolSchema>
 export type LlmTaskKind = z.infer<typeof LlmTaskKindSchema>
 export type LlmProviderConfigurationDto = z.infer<typeof LlmProviderConfigurationSchema>

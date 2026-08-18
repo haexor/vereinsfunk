@@ -36,9 +36,11 @@ const ApiEnvironmentBaseSchema = z.object({
     (value) => (typeof value === 'string' ? value.split(',').map((entry) => entry.trim()).filter(Boolean) : value),
     z.array(z.enum(['meta', 'twitter', 'linkedin'])).default(['meta', 'twitter', 'linkedin']),
   ),
-  // Fake ist nur ein expliziter, nichtproduktiver Adapter-Modus. PUBLISHING_PROVIDER beschreibt
-  // ausschliesslich, welche Provider aktiviert sind, nie welche Implementierung verwendet wird.
-  PUBLISHING_MODE: z.enum(['fake', 'live']).default('fake'),
+  // Fake ist nur ein expliziter, nichtproduktiver Adapter-Modus. `disabled` ist der sichere
+  // Produktions-Grundzustand: keine Provider-Credentials erforderlich und kein externer I/O.
+  // PUBLISHING_PROVIDER beschreibt ausschliesslich, welche Provider aktiviert sind, nie welche
+  // Implementierung verwendet wird.
+  PUBLISHING_MODE: z.enum(['disabled', 'fake', 'live']).default('fake'),
   META_APP_ID: optionalSecret,
   META_APP_SECRET: optionalSecret,
   META_GRAPH_VERSION: z.string().default('v21.0'),
@@ -80,7 +82,7 @@ const ApiEnvironmentBaseSchema = z.object({
 // In production the API cannot start without a real database and token-verification secret.
 export const ApiEnvironmentSchema = ApiEnvironmentBaseSchema.superRefine((environment, context) => {
   if (environment.NODE_ENV === 'production' && environment.PUBLISHING_MODE === 'fake') {
-    context.addIssue({ code: 'custom', path: ['PUBLISHING_MODE'], message: 'PUBLISHING_MODE must not be "fake" in production' })
+    context.addIssue({ code: 'custom', path: ['PUBLISHING_MODE'], message: 'PUBLISHING_MODE must be "disabled" or "live" in production' })
   }
   // Die echten Adapter folgen erst in den naechsten beiden Paketen. Ihre Aktivierung im Live-Modus
   // muss daher beim Start fehlschlagen, statt spaeter unbemerkt einen Fake-Erfolg zu melden.
@@ -107,21 +109,33 @@ export const ApiEnvironmentSchema = ApiEnvironmentBaseSchema.superRefine((enviro
   // scheitern, statt beim Start klar zu benennen, welche Provider-Variable fehlt. Ein Block je
   // Provider, weil jeder unabhaengig von den anderen aktiviert sein kann (Paket 045).
   if (environment.PUBLISHING_MODE === 'live' && environment.PUBLISHING_PROVIDER.includes('meta')) {
-    const requiredMetaFields = ['META_APP_ID', 'META_APP_SECRET', 'META_OAUTH_REDIRECT_URL', 'API_PUBLIC_BASE_URL'] as const
+    // Client ID/secret are runtime-managed, encrypted provider configuration. Only callback/base
+    // URLs stay in deployment configuration because they describe this API's public address.
+    const requiredMetaFields = ['META_OAUTH_REDIRECT_URL', 'API_PUBLIC_BASE_URL'] as const
     for (const key of requiredMetaFields) {
       if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required when PUBLISHING_PROVIDER includes meta` })
     }
   }
   if (environment.PUBLISHING_MODE === 'live' && environment.PUBLISHING_PROVIDER.includes('twitter')) {
-    const requiredTwitterFields = ['TWITTER_CLIENT_ID', 'TWITTER_CLIENT_SECRET', 'TWITTER_OAUTH_REDIRECT_URL', 'API_PUBLIC_BASE_URL'] as const
+    const requiredTwitterFields = ['TWITTER_OAUTH_REDIRECT_URL', 'API_PUBLIC_BASE_URL'] as const
     for (const key of requiredTwitterFields) {
       if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required when PUBLISHING_PROVIDER includes twitter` })
     }
   }
   if (environment.PUBLISHING_MODE === 'live' && environment.PUBLISHING_PROVIDER.includes('linkedin')) {
-    const requiredLinkedInFields = ['LINKEDIN_CLIENT_ID', 'LINKEDIN_CLIENT_SECRET', 'LINKEDIN_OAUTH_REDIRECT_URL', 'API_PUBLIC_BASE_URL'] as const
+    const requiredLinkedInFields = ['LINKEDIN_OAUTH_REDIRECT_URL', 'API_PUBLIC_BASE_URL'] as const
     for (const key of requiredLinkedInFields) {
       if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required when PUBLISHING_PROVIDER includes linkedin` })
+    }
+  }
+  // Provider-Secrets liegen verschluesselt in Supabase; ohne den Schluesselring kann
+  // loadMetaConfiguration() ein gespeichertes Secret nicht entschluesseln. Ohne diese Pruefung
+  // startet ein Live-Container scheinbar erfolgreich und OAuth/Publishing scheitern erst beim
+  // ersten Aufruf mit einer unklaren Exception.
+  if (environment.PUBLISHING_MODE === 'live') {
+    const requiredSecretBoxFields = ['SECRET_BOX_KEYS', 'SECRET_BOX_CURRENT_KEY_VERSION'] as const
+    for (const key of requiredSecretBoxFields) {
+      if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required when PUBLISHING_MODE=live` })
     }
   }
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { DEPARTMENT_ID, ORGANIZATION_ID, USER_ID, chain, denyingRoleProvider, organizationManagerRoleProvider, signAccessToken, startApp } from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SocialPublisher } from '@vereinsfunk/publishing'
@@ -65,6 +65,19 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
   }
 
   describe('POST /v1/publications/:id/execute', () => {
+    it('fails closed before loading a publication when publishing is disabled', async () => {
+      vi.stubEnv('PUBLISHING_MODE', 'disabled')
+      try {
+        const app = await startApp()
+        const token = await signAccessToken(USER_ID)
+        const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
+        expect(response.statusCode).toBe(503)
+        expect(response.json()).toMatchObject({ error: 'publishing_disabled' })
+      } finally {
+        vi.unstubAllEnvs()
+      }
+    })
+
     it('reports a non-existent publication as not_found', async () => {
       const clients: SupabaseClientFactory = {
         forUser: () => ({ from: (table: string) => { if (table === 'publications') return chain({ data: null, error: null }); throw new Error(`unexpected table: ${table}`) } }) as unknown as SupabaseClient,

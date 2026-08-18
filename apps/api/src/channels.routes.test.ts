@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { DEPARTMENT_ID, ORGANIZATION_ID, USER_ID, chain, denyingRoleProvider, organizationManagerRoleProvider, signAccessToken, startApp } from './testSupport.js'
 import { FakeLinkedInOAuthClient, FakeTwitterOAuthClient } from '@vereinsfunk/publishing'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -123,6 +123,24 @@ describe('Paket 012: Kanaele und Social-Accounts', () => {
       expect(response.json()).toMatchObject({ error: 'meta_not_configured' })
     } finally {
       restoreEnvironment()
+    }
+  })
+
+  it('does not begin an OAuth flow while the deployment publishing mode is disabled', async () => {
+    vi.stubEnv('PUBLISHING_MODE', 'disabled')
+    const socialManagerRoleProvider: RoleProvider = { async rolesForScope() { return ['social_manager'] } }
+    try {
+      const app = await startApp({ roleProvider: socialManagerRoleProvider })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({
+        method: 'GET',
+        url: `/v1/channels/connect/instagram/start?organizationId=${ORGANIZATION_ID}&ownerScope=organization`,
+        headers: { authorization: `Bearer ${token}` },
+      })
+      expect(response.statusCode).toBe(503)
+      expect(response.json()).toMatchObject({ error: 'publishing_disabled' })
+    } finally {
+      vi.unstubAllEnvs()
     }
   })
 

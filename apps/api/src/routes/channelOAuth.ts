@@ -28,7 +28,7 @@ function derivePkceCodeChallenge(codeVerifier: string): string {
 }
 
 export function registerChannelOAuthRoutes(app: FastifyInstance, context: ApiRouteContext): void {
-  const { requireAuth, requirePermission, supabaseClients, environment, metaOAuthClient, twitterOAuthClient, linkedinOAuthClient } = context
+  const { requireAuth, requirePermission, supabaseClients, environment, getMetaOAuthClient, twitterOAuthClient, linkedinOAuthClient } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
   const recordExternalActionAuditEvent = createExternalActionAuditRecorder(supabaseClients)
 
@@ -66,6 +66,12 @@ export function registerChannelOAuthRoutes(app: FastifyInstance, context: ApiRou
     }
     const provider = OAUTH_PROVIDER_BY_PLATFORM[params.platform]
     const redirectBaseUrl = redirectBaseUrlFor(provider)
+    // Im deaktivierten Produktionsmodus darf auch kein OAuth-Vorgang einen neuen
+    // Providerzugriff vorbereiten. Bereits verbundene Konten und ihre verschlüsselten Tokens
+    // bleiben unangetastet; sie werden erst nach einer bewussten Reaktivierung wieder genutzt.
+    if (environment.PUBLISHING_MODE === 'disabled') {
+      return reply.code(503).send({ error: 'publishing_disabled', correlationId: request.id })
+    }
     // Die Redirect-URL allein reicht nicht: sie wird im Deployment auch fuer den inaktiven
     // Fake-Provider gerendert, damit die Callback-Adresse nicht an mehreren Stellen gepflegt wird.
     // OAuth darf aber ausschliesslich mit dem vollstaendig validierten Adapter starten -- sonst
@@ -78,12 +84,16 @@ export function registerChannelOAuthRoutes(app: FastifyInstance, context: ApiRou
     // PKCE ausschliesslich fuer Twitter (RFC 7636) -- Meta/LinkedIn kennen den Verifier nicht, die
     // Spalte bleibt fuer sie null.
     const codeVerifier = provider === 'twitter' ? generatePkceCodeVerifier() : null
-    const authorizationUrl =
-      provider === 'meta'
-        ? metaOAuthClient.authorizationUrl({ state: nonce, redirectUri, platform: params.platform as MetaPlatform })
+    let authorizationUrl: string
+    try {
+      authorizationUrl = provider === 'meta'
+        ? (await getMetaOAuthClient()).authorizationUrl({ state: nonce, redirectUri, platform: params.platform as MetaPlatform })
         : provider === 'twitter'
           ? twitterOAuthClient.authorizationUrl({ state: nonce, redirectUri, codeChallenge: derivePkceCodeChallenge(codeVerifier!) })
           : linkedinOAuthClient.authorizationUrl({ state: nonce, redirectUri })
+    } catch {
+      return reply.code(503).send({ error: `${provider}_not_configured`, correlationId: request.id })
+    }
     const insert = await supabaseClients.forService().from('oauth_states').insert({
       organization_id: query.organizationId,
       platform: params.platform,
@@ -132,6 +142,9 @@ export function registerChannelOAuthRoutes(app: FastifyInstance, context: ApiRou
 
     const provider = OAUTH_PROVIDER_BY_PLATFORM[params.platform]
     const redirectBaseUrl = redirectBaseUrlFor(provider)
+    if (environment.PUBLISHING_MODE === 'disabled') {
+      return reply.redirect(`${webBaseUrl}/kanaele?oauthError=publishing_disabled`, 302)
+    }
     if (!environment.PUBLISHING_PROVIDER.includes(provider) || !redirectBaseUrl) {
       return reply.redirect(`${webBaseUrl}/kanaele?oauthError=${provider}_not_configured`, 302)
     }
@@ -143,6 +156,7 @@ export function registerChannelOAuthRoutes(app: FastifyInstance, context: ApiRou
     let availableAccounts: readonly { externalAccountId: string; displayName: string; secretToken: string }[]
     try {
       if (provider === 'meta') {
+        const metaOAuthClient = await getMetaOAuthClient()
         const shortLived = await metaOAuthClient.exchangeCode(query.code, redirectUri)
         const longLived = await metaOAuthClient.exchangeForLongLivedToken(shortLived.accessToken)
         const accounts = await metaOAuthClient.listAvailableAccounts(longLived.accessToken, params.platform as MetaPlatform)

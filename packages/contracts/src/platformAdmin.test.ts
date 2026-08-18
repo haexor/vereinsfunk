@@ -15,6 +15,9 @@ describe('platform administration contracts', () => {
     expect(PlatformSettingValueSchemas.max_organizations_per_owner.safeParse(1000).success).toBe(true)
     expect(PlatformSettingValueSchemas.max_organizations_per_owner.safeParse(1001).success).toBe(false)
     expect(PlatformSettingValueSchemas.max_organizations_per_owner.safeParse(1.5).success).toBe(false)
+    expect(PlatformSettingKeySchema.safeParse('publishing_enabled').success).toBe(true)
+    expect(PlatformSettingValueSchemas.publishing_enabled.safeParse(true).success).toBe(true)
+    expect(PlatformSettingValueSchemas.publishing_enabled.safeParse('true').success).toBe(false)
   })
 
   // Regression: PostgREST serializes timestamptz with a numeric UTC offset (+00:00), not the
@@ -24,6 +27,7 @@ describe('platform administration contracts', () => {
     const offsetTimestamp = '2026-08-05T12:34:56.789+00:00'
     expect(PlatformAdminSchema.safeParse({ userId: org, isDefaultAdmin: true, createdAt: offsetTimestamp }).success).toBe(true)
     expect(PlatformSettingSchema.safeParse({ key: 'max_organizations_per_owner', value: 3, updatedAt: offsetTimestamp }).success).toBe(true)
+    expect(PlatformSettingSchema.safeParse({ key: 'publishing_enabled', value: false, updatedAt: offsetTimestamp }).success).toBe(true)
     expect(
       PlatformAdminOrganizationSummarySchema.safeParse({
         organizationId: org,
@@ -116,4 +120,3 @@ describe('text generation capabilities contract', () => {
     expect(Object.keys(parsed)).toEqual(['temperatureSupported'])
   })
 })
-

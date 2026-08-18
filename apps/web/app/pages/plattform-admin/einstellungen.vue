@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { PlatformSettingSchema, PlatformSettingValueSchemas } from '@vereinsfunk/contracts'
+import { PlatformSettingSchema, PlatformSettingValueSchemas, PublishingProviderConfigurationSchema, PublishingProviderSchema, UpdatePublishingProviderConfigurationRequestSchema, type PublishingProvider, type PublishingProviderConfiguration } from '@vereinsfunk/contracts'
 
 definePageMeta({ layout: 'admin' })
 
@@ -9,21 +9,79 @@ const saving = ref(false)
 const errorMessage = ref('')
 
 const maxOrganizationsPerOwner = ref(3)
+const publishingEnabled = ref(false)
+const providerConfigurations = ref<PublishingProviderConfiguration[]>([])
+const providerDraft = reactive({ provider: 'meta' as PublishingProvider, clientId: '', clientSecret: '', graphVersion: 'v21.0' })
 
 async function load() {
   loading.value = true
   errorMessage.value = ''
   try {
     const headers = await useAuthHeader()
-    const response = await $fetch(`${config.public.apiBase}/v1/platform-settings`, { headers })
+    const [response, providerResponse] = await Promise.all([
+      $fetch(`${config.public.apiBase}/v1/platform-settings`, { headers }),
+      $fetch(`${config.public.apiBase}/v1/publishing-providers`, { headers }),
+    ])
     const settings = PlatformSettingSchema.array().parse(response)
     const limitSetting = settings.find((setting) => setting.key === 'max_organizations_per_owner')
     const limitValue = PlatformSettingValueSchemas.max_organizations_per_owner.safeParse(limitSetting?.value)
     if (limitValue.success) maxOrganizationsPerOwner.value = limitValue.data
+    const publishingSetting = settings.find((setting) => setting.key === 'publishing_enabled')
+    const publishingValue = PlatformSettingValueSchemas.publishing_enabled.safeParse(publishingSetting?.value)
+    if (publishingValue.success) publishingEnabled.value = publishingValue.data
+    providerConfigurations.value = PublishingProviderConfigurationSchema.array().parse(providerResponse)
   } catch {
     errorMessage.value = 'Einstellungen konnten nicht geladen werden.'
   } finally {
     loading.value = false
+  }
+}
+
+function selectProvider(provider: PublishingProvider) {
+  providerDraft.provider = PublishingProviderSchema.parse(provider)
+  const current = providerConfigurations.value.find((entry) => entry.provider === provider)
+  providerDraft.clientId = current?.clientId ?? ''
+  providerDraft.clientSecret = ''
+  providerDraft.graphVersion = current?.graphVersion ?? (provider === 'meta' ? 'v21.0' : '')
+}
+
+async function saveProviderConfiguration() {
+  saving.value = true
+  errorMessage.value = ''
+  try {
+    const headers = await useAuthHeader()
+    const body = UpdatePublishingProviderConfigurationRequestSchema.parse({
+      clientId: providerDraft.clientId,
+      clientSecret: providerDraft.clientSecret,
+      graphVersion: providerDraft.provider === 'meta' ? providerDraft.graphVersion : null,
+    })
+    await $fetch(`${config.public.apiBase}/v1/publishing-providers/${providerDraft.provider}`, { method: 'PUT', headers, body })
+    providerDraft.clientSecret = ''
+    await load()
+  } catch {
+    errorMessage.value = 'Provider-Zugangsdaten konnten nicht gespeichert werden.'
+  } finally {
+    saving.value = false
+  }
+}
+
+async function savePublishingEnabled() {
+  saving.value = true
+  errorMessage.value = ''
+  try {
+    const headers = await useAuthHeader()
+    const value = PlatformSettingValueSchemas.publishing_enabled.parse(publishingEnabled.value)
+    await $fetch(`${config.public.apiBase}/v1/platform-settings/publishing_enabled`, {
+      method: 'PUT', headers, body: { value },
+    })
+  } catch (error) {
+    const status = (error as { statusCode?: number })?.statusCode
+    errorMessage.value = status === 409
+      ? 'Aktivieren ist erst möglich, wenn das Deployment im Live-Modus läuft, mindestens ein Provider aktiv ist und dessen Zugangsdaten gespeichert sind.'
+      : 'Publishing-Status konnte nicht gespeichert werden.'
+    await load()
+  } finally {
+    saving.value = false
   }
 }
 await load()
@@ -74,6 +132,40 @@ async function saveLimit() {
             Speichern
           </button>
         </div>
+      </section>
+      <section class="card mt-6 p-6">
+        <h2 class="font-display text-base font-bold">Veröffentlichungen</h2>
+        <p class="mt-2 text-sm text-[#727a75]">
+          Deaktiviert verhindert sofort das Einplanen und Ausführen aller externen Veröffentlichungen. Bereits wartende Beiträge bleiben unverändert in der Warteschlange.
+        </p>
+        <label class="mt-4 flex items-center gap-3 text-sm font-semibold">
+          <input v-model="publishingEnabled" type="checkbox" class="h-4 w-4" :disabled="saving" />
+          Externe Veröffentlichungen aktivieren
+        </label>
+        <button class="focus-ring mt-4 rounded-xl bg-forest px-5 py-2.5 text-xs font-bold text-white disabled:opacity-60" :disabled="saving" @click="savePublishingEnabled">
+          Publishing-Status speichern
+        </button>
+      </section>
+      <section class="card mt-6 p-6">
+        <h2 class="font-display text-base font-bold">Social-Media-Provider</h2>
+        <p class="mt-2 text-sm text-[#727a75]">Client-ID und Secret werden verschlüsselt gespeichert. Das Secret wird nie wieder angezeigt. Meta ist derzeit der einzige Live-Adapter; LinkedIn und X lassen sich vorbereiten, aber noch nicht aktivieren.</p>
+        <form class="mt-4 grid gap-3 sm:grid-cols-2" @submit.prevent="saveProviderConfiguration">
+          <label class="text-xs font-semibold text-[#5c655f]">Provider
+            <select v-model="providerDraft.provider" class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" @change="selectProvider(providerDraft.provider)">
+              <option value="meta">Meta (Instagram/Facebook)</option><option value="linkedin">LinkedIn</option><option value="twitter">X / Twitter</option>
+            </select>
+          </label>
+          <label class="text-xs font-semibold text-[#5c655f]">Client-ID
+            <input v-model="providerDraft.clientId" required class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" />
+          </label>
+          <label class="text-xs font-semibold text-[#5c655f] sm:col-span-2">Client-Secret
+            <input v-model="providerDraft.clientSecret" type="password" required placeholder="Bei jeder Änderung erneut eingeben" class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" />
+          </label>
+          <label v-if="providerDraft.provider === 'meta'" class="text-xs font-semibold text-[#5c655f]">Graph-Version
+            <input v-model="providerDraft.graphVersion" required class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" />
+          </label>
+          <div class="sm:col-span-2"><button class="focus-ring rounded-xl bg-forest px-5 py-2.5 text-xs font-bold text-white disabled:opacity-60" :disabled="saving">Provider speichern</button></div>
+        </form>
       </section>
       <p v-if="errorMessage" class="mt-4 text-sm text-amber-800">{{ errorMessage }}</p>
     </template>

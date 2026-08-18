@@ -43,7 +43,7 @@ function hasEmbeddedCredentials(rawUrl: string): boolean {
 }
 
 export function registerChannelRoutes(app: FastifyInstance, context: ApiRouteContext): void {
-  const { requireAuth, requirePermission, supabaseClients, environment, metaOAuthClient } = context
+  const { requireAuth, requirePermission, supabaseClients, environment, getMetaOAuthClient } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
 
   // Plan 039: die erste Kanal-Anlage ohne OAuth. Instagram/Facebook entstehen weiterhin
@@ -232,7 +232,7 @@ export function registerChannelRoutes(app: FastifyInstance, context: ApiRouteCon
     if (secretRow.error) throw secretRow.error
     if (!secretRow.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     const token = createSecretBoxFromEnvironment(environment).open(byteaToBuffer(secretRow.data.token_ciphertext as string), secretRow.data.token_key_version as string, params.id)
-    const verification = await metaOAuthClient.verifyToken(token)
+    const verification = await (await getMetaOAuthClient()).verifyToken(token)
     const update = await service
       .from('social_connections')
       .update({ status: verification.valid ? 'active' : 'action_required', last_verified_at: new Date().toISOString() })

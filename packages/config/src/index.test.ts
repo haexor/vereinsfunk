@@ -12,6 +12,8 @@ const requiredProductionEnv = {
   DATABASE_URL: 'postgresql://postgres:secret@db.example.supabase.co:5432/postgres',
   PUBLISHING_PROVIDER: '',
   PUBLISHING_MODE: 'live',
+  SECRET_BOX_KEYS: JSON.stringify({ v1: Buffer.alloc(32).toString('base64') }),
+  SECRET_BOX_CURRENT_KEY_VERSION: 'v1',
 }
 
 const requiredSmtpEnv = {
@@ -143,8 +145,28 @@ describe('ApiEnvironmentSchema', () => {
         META_APP_SECRET: 'app-secret',
         META_OAUTH_REDIRECT_URL: 'https://example.org/oauth/callback',
         API_PUBLIC_BASE_URL: 'https://api.example.org',
+        SECRET_BOX_KEYS: JSON.stringify({ v1: Buffer.alloc(32).toString('base64') }),
+        SECRET_BOX_CURRENT_KEY_VERSION: 'v1',
       }).success,
     ).toBe(true)
+  })
+
+  // loadMetaConfiguration (apps/api/src/app.ts) entschluesselt das gespeicherte Provider-Secret
+  // mit diesem Schluesselring -- ohne ihn wuerde ein Live-Container scheinbar erfolgreich starten
+  // und OAuth/Publishing erst beim ersten Aufruf mit einer unklaren Exception scheitern.
+  it.each(['SECRET_BOX_KEYS', 'SECRET_BOX_CURRENT_KEY_VERSION'])('rejects PUBLISHING_MODE=live missing %s', (missingField) => {
+    const fields: Record<string, string> = {
+      SECRET_BOX_KEYS: JSON.stringify({ v1: Buffer.alloc(32).toString('base64') }),
+      SECRET_BOX_CURRENT_KEY_VERSION: 'v1',
+    }
+    delete fields[missingField]
+    expect(
+      ApiEnvironmentSchema.safeParse({ NODE_ENV: 'development', PUBLISHING_MODE: 'live', PUBLISHING_PROVIDER: '', ...fields }).success,
+    ).toBe(false)
+  })
+
+  it('accepts PUBLISHING_MODE=fake without a secret-box key ring', () => {
+    expect(ApiEnvironmentSchema.safeParse({ NODE_ENV: 'development', PUBLISHING_MODE: 'fake' }).success).toBe(true)
   })
 
   it('uses an explicit fake mode with all supported providers when unset', () => {
@@ -180,6 +202,17 @@ describe('ApiEnvironmentSchema', () => {
 
   it('rejects fake publishing in production', () => {
     expect(ApiEnvironmentSchema.safeParse({ ...requiredProductionEnv, PUBLISHING_MODE: 'fake', EMAIL_PROVIDER: 'smtp', ...requiredSmtpEnv }).success).toBe(false)
+  })
+
+  it('accepts disabled publishing in production without provider credentials', () => {
+    expect(
+      ApiEnvironmentSchema.safeParse({
+        ...requiredProductionEnv,
+        PUBLISHING_MODE: 'disabled',
+        EMAIL_PROVIDER: 'smtp',
+        ...requiredSmtpEnv,
+      }).success,
+    ).toBe(true)
   })
 
   it.each([
