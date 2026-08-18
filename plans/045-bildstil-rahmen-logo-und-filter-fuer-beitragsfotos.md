@@ -1,6 +1,6 @@
 # 045 – Bildstil: Rahmen, Logo-Wasserzeichen und Filter für Beitragsfotos
 
-> **Executor instructions**: Vier PRs. **PR 0 ist Voraussetzung für PR 1-3** (ohne echte Medien-Pipeline gibt es nichts, worauf Styling angewendet wird). PR 1, 2 und 3 sind untereinander weitgehend unabhängig, empfohlene Reihenfolge ist keine harte Abhängigkeit. Nach jedem Schritt die angegebene Prüfung ausführen. Bei einer STOP-Bedingung anhalten und berichten, nicht improvisieren.
+> **Executor instructions**: Vier PRs. **PR 0 ist Voraussetzung für PR 1**, **PR 1 für PR 2** und **PR 2 für PR 3**; die zwingende Merge-Reihenfolge lautet damit **PR 0 → PR 1 → PR 2 → PR 3**. Parallele Entwicklung auf getrennten Branches ist möglich, aber PR 2 und PR 3 werden erst nach ihren jeweiligen Vorgängern rebased, integriert und gemergt. Nach jedem Schritt die angegebene Prüfung ausführen. Bei einer STOP-Bedingung anhalten und berichten, nicht improvisieren.
 >
 > **Drift check (run first)**: `git log --oneline -8 -- apps/api/src/routes/content.ts apps/api/src/services/mediaGate.ts apps/api/src/app.ts supabase/migrations packages/media-processing/src apps/worker/src` — falls sich `LocalUploadService`, `facesConfirmedComplete` oder die `face_pending`/`scan_pending`-Blocker-Logik in `schedule_publication()` seit Planung geändert haben, Abschnitt „Ausgangslage" neu verifizieren, bevor begonnen wird.
 
@@ -26,9 +26,9 @@ Geplant auf `main` am 2026-08-17, verifiziert direkt gegen den Code (nicht gegen
 
 - `facesConfirmedComplete` ist in `apps/api/src/services/mediaGate.ts:42` und `:130` **hartcodiert auf `true`** — verifiziert per `grep`, kein Tippfehler, betrifft beide Aufrufpfade der Funktion.
 - Der SQL-Gate in `schedule_publication()` (`supabase/migrations/2026081302_subscriptions_and_content_quotas.sql:514-522`) prüft ausschließlich „existiert eine `face_regions`-Zeile mit `decision='pending'` für dieses Medium" — bei **null** Zeilen (weil niemand je eine anlegt) ist die EXISTS-Prüfung leer, also kein Blocker. Ein Foto mit einer nicht geprüften/nicht eingewilligten Person ist damit heute strukturell veröffentlichbar, sobald `post_media`/`media_derivatives` überhaupt existieren würden — es blockiert nur zufällig, weil die vorgelagerten Tabellen ebenfalls leer bleiben.
-- `media_assets.scan_status` hat Default `'pending'` (`202608030001_content_media_workflows_publishing.sql:27`); **nichts im Repo setzt ihn je auf `'clean'`**. Ohne einen expliziten Schreiber würde jedes Foto für immer am `scan_pending`-Blocker hängen.
+- `media_assets.scan_status` hat Default `'pending'` (`202608030001_content_media_workflows_publishing.sql:27`); **nichts im Repo setzt ihn je auf `'clean'`**. Ohne einen expliziten Schreiber würde jedes Foto für immer am `scan_pending`-Blocker hängen. Byte-Sniff und ein erfolgreiches Sharp-Decode sind ausschließlich strukturelle Validierung, niemals ein Malware-Scan und dürfen deshalb diesen Status nicht setzen.
 
-Beide Funde werden in PR 0 behoben (echte `people_reviewed_at`-Prüfung, `scan_status`-Vergabe im echten Upload-Pfad) — nicht als Nebenkriegsschauplatz, sondern weil PR 0 der erste Code ist, der diese Tabellen überhaupt mit echten Daten befüllt und die Lücke damit erstmals wirksam würde.
+Beide Funde werden in PR 0 behoben (echte `people_reviewed_at`-Prüfung, separater Struktur-Status und ein verpflichtender Malware-Scan im echten Upload-Pfad) — nicht als Nebenkriegsschauplatz, sondern weil PR 0 der erste Code ist, der diese Tabellen überhaupt mit echten Daten befüllt und die Lücke damit erstmals wirksam würde.
 
 **Was solide ist und wiederverwendet wird:**
 
@@ -52,7 +52,6 @@ Beide Funde werden in PR 0 behoben (echte `people_reviewed_at`-Prüfung, `scan_s
 - Mehrere Fotos/Karussell pro Beitrag (nur `role='primary'`, `position=0`)
 - Separate Logo-Deckkraft-Regelung (nur die im PNG hinterlegte Alphatransparenz)
 - Asynchrones Rendering über den `render-content`-Hatchet-Workflow — der Name bleibt für Plan 005s größeres, noch unrealisiertes Remotion-Vorhaben reserviert; dieses Paket dispatcht dorthin nichts, um spätere Namenskollisionen zu vermeiden
-- Echter Malware-/Virenscan (`scan_status='clean'` bedeutet hier „Byte-Sniff + erfolgreiches sharp-Decode bestanden", nicht AV-geprüft — offene Frage vor Produktivbetrieb mit echten Fremd-Uploads, siehe STOP-Bedingungen)
 
 ## Datenmodell
 
@@ -61,10 +60,12 @@ Beide Funde werden in PR 0 behoben (echte `people_reviewed_at`-Prüfung, `scan_s
 ```sql
 alter table public.media_assets
   add column people_reviewed_at timestamptz,
-  add column people_reviewed_by uuid references public.profiles(id);
+  add column people_reviewed_by uuid references public.profiles(id),
+  add column structural_validation_status text not null default 'pending'
+    check (structural_validation_status in ('pending', 'valid', 'failed'));
 
 create or replace function public.confirm_media_people_review(
-  target_asset_id uuid, faces_present boolean, target_actor uuid
+  target_asset_id uuid, faces_present boolean
 ) returns public.media_assets
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare
@@ -72,6 +73,7 @@ declare
   region_count integer;
   pending_count integer;
 begin
+  if auth.uid() is null then raise exception 'unauthenticated'; end if;
   select * into asset from public.media_assets where id = target_asset_id for update;
   if not found then raise exception 'not_found'; end if;
   if not authz.has_department_permission(asset.department_id, 'post.edit') then
@@ -85,15 +87,17 @@ begin
   -- Rubberstamp, den mediaGate.ts:42/130 heute schon ist (facesConfirmedComplete hartcodiert true).
   if not faces_present and region_count > 0 then raise exception 'faces_present_mismatch'; end if;
   if faces_present and (region_count = 0 or pending_count > 0) then raise exception 'faces_incomplete'; end if;
-  update public.media_assets set people_reviewed_at = now(), people_reviewed_by = target_actor
+  update public.media_assets set people_reviewed_at = now(), people_reviewed_by = auth.uid()
     where id = target_asset_id returning * into asset;
   return asset;
 end; $$;
-revoke all on function public.confirm_media_people_review(uuid, boolean, uuid) from public;
-grant execute on function public.confirm_media_people_review(uuid, boolean, uuid) to authenticated;
+revoke all on function public.confirm_media_people_review(uuid, boolean) from public;
+grant execute on function public.confirm_media_people_review(uuid, boolean) to authenticated;
 ```
 
-`face_regions_write`-RLS (`202608030001_content_media_workflows_publishing.sql:119`) erlaubt bereits jedem `authenticated`-Nutzer mit `post.edit` auf die Abteilung des Mediums, Zeilen einzufügen — die Markier-UI kommt ohne neue API-Route für das Zeichnen selbst aus, nur `confirm_media_people_review` ist neu.
+`people_reviewed_at` und `people_reviewed_by` sind keine normalen Browser-editierbaren Metadaten: PR 0 entzieht `authenticated` den pauschalen `UPDATE`-Grant auf `media_assets` und vergibt allenfalls explizite, nicht sensible Spaltenrechte. Die Upload- und Normalisierungslogik schreibt mit Service Role; der Browser kann das Prüfsignal ausschließlich über die obige `SECURITY DEFINER`-Funktion setzen. `auth.uid()` wird dort vor dem Update auf einen nicht-null Aufrufer geprüft und ist die alleinige Quelle für `people_reviewed_by`; ein frei übergebener Akteur existiert nicht.
+
+Ein `SECURITY DEFINER`-Trigger auf `face_regions` setzt für **INSERT, UPDATE und DELETE** beiderseits betroffener Assets `people_reviewed_at` und `people_reviewed_by` auf `NULL`. Ein weiterer `BEFORE UPDATE OF object_path, sha256, mime_type, byte_size, width, height, duration_ms, upload_status`-Trigger auf `media_assets` invalidiert dasselbe Signal, wenn der Medieninhalt erneut geändert wird. Damit kann weder eine nachträglich markierte Person noch ein anderer Dateiinhalt eine frühere Sichtung weiterverwenden. `face_regions_write`-RLS (`202608030001_content_media_workflows_publishing.sql:119`) bleibt für die Markier-UI erhalten; sie bekommt keine Schreibrechte auf das Prüfsignal.
 
 Blocker-Erweiterung: `MediaGateBlockerSchema` (`packages/contracts/src/content.ts:483-487`) bekommt einen **neuen** Wert `people_review_pending` statt den bestehenden `face_pending` zu überladen — beide Ursachen sind für die anzeigende Person unterschiedlich handlungsrelevant (Gesicht markieren vs. Foto überhaupt erst sichten). `schedule_publication()` bekommt eine fünfte EXISTS-Klausel nach dem bestehenden Muster (`2026081302_subscriptions_and_content_quotas.sql:514-522`ff.), die auf `media_assets.people_reviewed_at is null` statt auf `face_regions` prüft. `apps/api/src/services/mediaGate.ts:42,130` liest `people_reviewed_at is not null` statt der Konstante `true`.
 
@@ -109,6 +113,10 @@ alter type public.brand_asset_kind add value 'frame';
 create type public.image_style_frame_type as enum ('none', 'parametric', 'custom');
 create type public.image_style_filter as enum ('original', 'schwarz_weiss', 'kontrastreich', 'warm', 'vereinsfarben_duoton');
 create type public.image_style_logo_position as enum ('bottom_right', 'bottom_left', 'top_right', 'top_left', 'center');
+
+-- Der Zielschluessel der typisierten Fremdschluessel muss explizit eindeutig sein.
+alter table public.brand_assets
+  add constraint brand_assets_organization_id_id_kind_key unique (organization_id, id, kind);
 
 create table public.image_style_presets (
   id uuid primary key default gen_random_uuid(),
@@ -136,6 +144,8 @@ create table public.image_style_presets (
   created_by uuid not null references public.profiles(id),
   created_at timestamptz not null default now(), updated_at timestamptz not null default now(),
 
+  frame_brand_asset_kind public.brand_asset_kind generated always as ('frame'::public.brand_asset_kind) stored,
+  logo_brand_asset_kind public.brand_asset_kind generated always as ('watermark'::public.brand_asset_kind) stored,
   unique (organization_id, id),
   check (department_id is not null or team_id is null),
   check (frame_type <> 'parametric' or (frame_color is not null and frame_width_px is not null)),
@@ -144,12 +154,14 @@ create table public.image_style_presets (
 
   foreign key (organization_id, department_id) references public.departments(organization_id, id) on delete cascade,
   foreign key (organization_id, department_id, team_id) references public.teams(organization_id, department_id, id) on delete cascade,
-  foreign key (organization_id, frame_brand_asset_id) references public.brand_assets(organization_id, id),
-  foreign key (organization_id, logo_brand_asset_id) references public.brand_assets(organization_id, id)
+  foreign key (organization_id, frame_brand_asset_id, frame_brand_asset_kind)
+    references public.brand_assets(organization_id, id, kind),
+  foreign key (organization_id, logo_brand_asset_id, logo_brand_asset_kind)
+    references public.brand_assets(organization_id, id, kind)
 );
 ```
 
-Zusammengesetzte Fremdschlüssel statt jsonb-eingebetteter Referenzen — Plan 013 hat genau diesen Fehler im eigenen Datenmodell gefunden und nachgebessert (`plans/013-marke-branding-assets-und-schriften.md`, Abschnitt „Ergänzungen zum Datenmodell beim Bauen"). RLS: SELECT über `authz.is_organization_member`-Muster wie `brand_assets`, Schreiben über `brand.manage` (dieselbe Berechtigung wie Marke, keine neue). `WITH CHECK` auf `frame_brand_asset_id`/`logo_brand_asset_id` über `authz.brand_asset_is_selectable()` von Anfang an einbauen — Plan 013 musste das für `department_brand_profiles`/`team_brand_profiles` nachträglich per Review-Fix ergänzen (Cross-Department-Leck), hier von Anfang an.
+Zusammengesetzte Fremdschlüssel statt jsonb-eingebetteter Referenzen — Plan 013 hat genau diesen Fehler im eigenen Datenmodell gefunden und nachgebessert (`plans/013-marke-branding-assets-und-schriften.md`, Abschnitt „Ergänzungen zum Datenmodell beim Bauen"). Die typisierten Fremdschlüssel sind bewusst zusätzlich zur Organisationsbindung: `frame_brand_asset_id` kann nur `kind='frame'`, `logo_brand_asset_id` nur `kind='watermark'` referenzieren; eine UI-Auswahl ist dafür keine Sicherheitsgrenze. RLS: SELECT über `authz.is_organization_member`-Muster wie `brand_assets`, Schreiben über `brand.manage` (dieselbe Berechtigung wie Marke, keine neue). `WITH CHECK` auf `frame_brand_asset_id`/`logo_brand_asset_id` über `authz.brand_asset_is_selectable()` von Anfang an einbauen — Plan 013 musste das für `department_brand_profiles`/`team_brand_profiles` nachträglich per Review-Fix ergänzen (Cross-Department-Leck), hier von Anfang an.
 
 ### Recipe-Serialisierung (PR 2)
 
@@ -169,19 +181,21 @@ Zusammengesetzte Fremdschlüssel statt jsonb-eingebetteter Referenzen — Plan 0
 
 ### PR 0 – Ein Foto wird echt veröffentlichbar
 
-1. **Echter Upload-Service.** `SupabaseUploadService` ersetzt `LocalUploadService` (`apps/api/src/app.ts:63-66`): signierte Upload-URL zu `raw-media`, `complete()` lädt das Objekt, byte-sniffed MIME (wie `brandLogo.ts:21-30`), verifiziert `sha256` gegen den Client-Wert, liest Maße per `sharp(buffer).metadata()`, schreibt EXIF-bereinigt zurück (`.rotate()` + kein `.withMetadata()`), setzt `upload_status='ready'`, `scan_status='clean'` (siehe Scope-Abschnitt zur Bedeutung), `exif_stripped_at=now()`.
+1. **Echter Upload-Service und Scan-Grenze.** `SupabaseUploadService` ersetzt `LocalUploadService` (`apps/api/src/app.ts:63-66`): signierte Upload-URL zu `raw-media`, `complete()` lädt das Objekt, byte-sniffed MIME (wie `brandLogo.ts:21-30`), verifiziert `sha256` gegen den Client-Wert, liest Maße per `sharp(buffer).metadata()`, schreibt EXIF-bereinigt zurück (`.rotate()` + kein `.withMetadata()`), setzt `structural_validation_status='valid'`, `upload_status='ready'` und `exif_stripped_at=now()`. Ein `MalwareScanner`-Provider hinter einem Interface scannt die normalisierten Bytes; **nur dessen erfolgreicher Befund** setzt `scan_status='clean'`, ein negativer Befund setzt `failed`/Quarantäne. Es gibt keinen Clean-Fallback: Die Produktion startet den Upload-Pfad ohne konfigurierten Scanner nicht, lokale Tests verwenden einen expliziten Fake-Provider. Somit bleibt ein Foto bis zum echten Scan über den bestehenden SQL-Gate gesperrt.
    - Nebenbefund beheben: die Kommentar-Begründung in `content.ts:747-751` für die fehlende `requirePermission`-Prüfung bei `/complete` ist veraltet — `reserve_storage_upload()` legt die `media_assets`-Zeile längst synchron an. `/complete` soll die Zeile laden und `post.edit` auf ihre `department_id` prüfen.
-   - *Prüfung*: Vitest — Datei mit falschem Magic-Byte-Header trotz korrektem `Content-Type` wird abgelehnt; korrekte Datei landet mit `upload_status='ready'`.
+   - *Prüfung*: Vitest — Datei mit falschem Magic-Byte-Header trotz korrektem `Content-Type` wird abgelehnt; korrekte Datei landet mit `structural_validation_status='valid'`, aber ohne Scanner nicht mit `scan_status='clean'`; ein positiver Scanner-Befund ist der einzige Pfad zu `clean`.
 2. **`people_reviewed_at` + `confirm_media_people_review`** (SQL oben) + Blocker-Verdrahtung in `mediaGate.ts` und `schedule_publication()`.
-   - *Prüfung*: pgTAP — Foto ohne `people_reviewed_at` blockiert `schedule_publication` trotz null `face_regions`-Zeilen (reproduziert den gefundenen Fehler als Regressionstest, dann behoben).
+   - *Prüfung*: pgTAP — Foto ohne `people_reviewed_at` blockiert `schedule_publication` trotz null `face_regions`-Zeilen; direkter Browser-Update der Prüffelder wird verweigert; nach `confirm_media_people_review` blockiert das Hinzufügen, Ändern oder Löschen einer `face_regions`-Zeile wieder, bis die Sichtung erneut bestätigt wurde.
 3. **Minimale Foto-Markier-UI** in `erstellen.vue`: Box zeichnen (schreibt `face_regions`, `source='manual'`), pro Box Consent verlinken (`GET /v1/consents`) oder neu anlegen (Link zu `/einwilligungen`), oder „keine Personen erkennbar" (ruft `confirm_media_people_review(faces_present=false)`).
    - *Prüfung*: Component-/Playwright-Test — Foto mit markierter, nicht eingewilligter Person bleibt gesperrt; „keine Personen" + leere Markierung gibt frei.
-4. **Pass-Through-Derivat + `post_media`-Verknüpfung.** Aus einem `ready`-`media_asset` entsteht eine `media_derivatives`-Zeile (`recipe={"kind":"pass_through_v1"}`, Bytes = normalisiertes Original, Ziel-Bucket `rendered-media`). Verknüpfung mit dem Beitrag über eine neue `composition_session_post_media`-Tabelle (analog `composition_session_media`, aber für das zu veröffentlichende Bild statt LLM-Kontext) und eine Erweiterung von `accept_text_generation_candidate` (`supabase/migrations/2026081702_content_pipeline_rpc_fixes.sql:18-84`), die in derselben Transaktion, in der sie `source_material`/`style_profile_snapshot` kopiert, auch die ausgewählte(n) Foto-Zeile(n) in echte `post_media`-Zeilen überführt.
-   - *Prüfung*: DB-Test — kompletter Fluss Upload → Personen-Prüfung → Session → Accept → `post_media`-Zeile → `schedule_publication` erfolgreich (vorher 409 `media_gate_blocked`).
+4. **Pass-Through-Derivat + `post_media`-Verknüpfung.** Aus einem `ready`-`media_asset` entsteht eine `media_derivatives`-Zeile (`recipe={"kind":"pass_through_v1"}`, Bytes = normalisiertes Original, Ziel-Bucket `rendered-media`). Die neue Tabelle `composition_session_post_media` enthält `organization_id`, `composition_session_id`, `media_asset_id`, `role` und `position`, mit zusammengesetzten FKs zu Sitzung und Asset. Für den jetzt bewusst einzelnen Anhang erzwingen `check (role = 'primary')`, `check (position = 0)` und eindeutige Session-Indizes höchstens einen Eintrag — sofern ein Anhang existiert, ist er damit genau `primary` auf Position `0`.
+   - SELECT sowie INSERT, UPDATE und DELETE erhalten eigene RLS-Policies. Jede Schreib-Policy prüft über die Sitzung Organisations- **und** Abteilungsbindung, `post.edit` und dass das Asset derselben Organisation und Abteilung wie die Sitzung angehört; zusammengesetzte FKs verhindern zusätzlich Cross-Tenant-Referenzen. Die nötigen `authenticated`-Grants werden gezielt nur für diese Tabelle vergeben.
+   - `accept_text_generation_candidate` sperrt weiterhin den Kandidaten, erzeugt `post_media` aus dieser Session-Anlage in **derselben** Transaktion und verwendet `ON CONFLICT (post_version_id, position) DO NOTHING`. Sein vorhandener `accepted`-Kurzschluss gibt dieselbe Version zurück; Retries erzeugen daher weder eine zweite Version noch eine zweite `post_media`-Zeile.
+   - *Prüfung*: pgTAP — Cross-Tenant- und Cross-Department-Attachments werden durch RLS/FKs abgewiesen; zwei Accept-Aufrufe haben genau eine `post_media`-Zeile. Der End-to-End-Test Upload → Scan → Personen-Prüfung → Session → Accept → `post_media` → `schedule_publication` ist erfolgreich (vorher 409 `media_gate_blocked`).
 
 ### PR 1 – Datenmodell + `/bildstil`
 
-1. Migration wie oben (zwei Schritte: `ALTER TYPE` zuerst, `image_style_presets` danach).
+1. Migration wie oben (zwei Schritte: `ALTER TYPE` zuerst, `image_style_presets` danach). Im selben PR `BrandAssetKindSchema`, `BrandAssetSchema` und `CreateBrandAssetRequestSchema` um `frame` ergänzen; `POST /v1/brand/assets` verarbeitet ihn wie `watermark`. Contract- und Route-Tests decken beide positiven Fälle `frame` und `watermark` ab.
 2. CRUD-Routen `apps/api/src/routes/imageStyle.ts` (neue Datei, Modulgrenze wie Plan 027): `GET/POST/PATCH/DELETE /v1/image-style-presets`, Rahmen-/Logo-Asset-Upload über die bestehende `POST /v1/brand/assets`-Route (kind `frame`/`watermark`, keine neue Upload-Route nötig).
 3. Neue Seite `apps/web/app/pages/bildstil.vue`, 1:1-Architekturübernahme von `marke.vue` (Scope-Umschalter, `loadAll()`, Formular, Live-Vorschau-Komponente `ImageStyleLivePreview.vue` analog `BrandLivePreview.vue`). Nav-Eintrag in `layouts/default.vue`s `organizationNav`-Array direkt nach „Marke".
    - *Prüfung*: Vitest für die Routen, Component-Test für Scope-Vererbung (Abteilung erbt Vereins-Preset, bis sie eigenes anlegt).
@@ -198,8 +212,8 @@ Zusammengesetzte Fremdschlüssel statt jsonb-eingebetteter Referenzen — Plan 0
    | `warm` | wärmere Farbstimmung | kanalgewichtetes `.tint()` Richtung Amber |
    | `vereinsfarben_duoton` | Duoton aus den eigenen Vereinsfarben | Graustufen → Neueinfärbung zwischen `organization_brand_profiles.primary_color`/`accent_color` |
 
-2. `POST /v1/media/:assetId/style-render` (Body: `stylePresetId`) ersetzt das Pass-Through-Derivat durch ein gestyltes — gleiches Ablösen-dann-Einfügen-Muster wie `brand.ts:363-373`.
-   - *Prüfung*: Pixelprobe-Tests je Filter/Rahmen/Logo-Kombination (feste Fixture-Bilder, Hash- oder Stichproben-Farbwert-Vergleich); Snapshot-Test für `recipe`-Inhalt.
+2. `POST /v1/post-media/:postMediaId/style-render` (Body: `stylePresetId`) nimmt die konkrete Attachment-Identität an, nicht nur ein global wiederverwendbares `media_asset`. Der Handler autorisiert über die zugehörige Beitragsversion, sperrt genau diese `post_media`-Zeile und erzeugt in derselben Transaktion ein **neues**, sofort unveränderliches gestyltes Derivat mit Rezept-Snapshot. Er aktualisiert ausschließlich diese noch bearbeitbare Attachment-Zeile auf die neue Derivat-ID; weder das Original noch ein Pass-Through- oder Styling-Derivat eines anderen Beitrags wird ersetzt oder gelöscht. Ist die Version bereits zur Freigabe eingereicht, wird der Aufruf abgewiesen, statt eine freigegebene Version zu verändern.
+   - *Prüfung*: Pixelprobe-Tests je Filter/Rahmen/Logo-Kombination (feste Fixture-Bilder, Hash- oder Stichproben-Farbwert-Vergleich); Snapshot-Test für `recipe`-Inhalt. Ein Integrationstest hängt dasselbe Original an zwei Beiträge, rendert mit zwei verschiedenen Presets und beweist getrennte Derivate sowie unveränderte jeweils andere `post_media`-Zeile.
 
 ### PR 3 – `erstellen.vue`-Integration
 
@@ -220,7 +234,7 @@ Je PR zusätzlich pgTAP-Tests für RLS/Gate-Verhalten (`supabase/tests/`, Muster
 ## Done-Kriterien
 
 - Ein Foto ohne Styling ist Ende-zu-Ende veröffentlichbar (PR 0 allein beweisbar).
-- `facesConfirmedComplete`/`scan_status`-Lücke ist geschlossen — ein Foto mit ungeprüfter Person blockiert nachweislich (Regressionstest vorhanden).
+- `facesConfirmedComplete`/`scan_status`-Lücke ist geschlossen — ein Foto mit ungeprüfter Person oder ohne erfolgreichen Malware-Scan blockiert nachweislich (Regressionstests vorhanden); strukturelle Validierung allein kann nie `clean` setzen.
 - Ein Verein kann mindestens zwei Bildstil-Presets anlegen (Rahmen parametrisch + eigene Grafik, Logo, Filter) und beim Beitragserstellen zwischen ihnen wählen.
 - Gerendertes Bild entspricht dem gewählten Preset (Pixelprobe grün) und ist in der Vorschau identisch mit dem später veröffentlichten Bild (keine Web/Render-Divergenz).
 - `brand_asset_kind='watermark'` ist erstmals tatsächlich angewendet, nicht mehr toter Code.
@@ -228,7 +242,7 @@ Je PR zusätzlich pgTAP-Tests für RLS/Gate-Verhalten (`supabase/tests/`, Muster
 ## STOP-Bedingungen
 
 - Gesichtsverdeckung/Anonymisierung wird für dieses Paket gebraucht, nicht nur „keine Person"/„Consent vorhanden": Plan 003 zuerst umsetzen, hier nicht improvisieren.
-- Echter Malware-/Virenscan wird vor Produktivbetrieb mit echten Fremd-Uploads verlangt: `scan_status='clean'` bedeutet in diesem Paket ausdrücklich nur strukturelle Validierung (Byte-Sniff + erfolgreiches Decode), kein AV-Scan — vor Launch mit echten Vereinen klären, nicht stillschweigend als „geprüft" kommunizieren.
+- Für den produktiven Upload-Pfad ist kein `MalwareScanner`-Provider konfiguriert, der erfolgreich scannt: die Anwendung darf keine Fremd-Uploads als `clean` übernehmen oder veröffentlichen. Byte-Sniff und Sharp-Decode bleiben ausschließlich `structural_validation_status`.
 - `render-content` soll doch synchron/asynchron über Hatchet laufen, bevor Plan 005 seinen eigenen Bedarf dafür klärt: anhalten, Namenskollision mit dem Kreativsystem zuerst auflösen.
 
 ## Pflegehinweis
