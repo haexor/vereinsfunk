@@ -327,7 +327,6 @@ export const CreateCompositionSessionSchema = z.object({
   organizationId: UuidSchema,
   departmentId: UuidSchema,
   teamId: UuidSchema.nullable().optional(),
-  presetSlug: ContentPresetSlugSchema,
   communicationGoal: CommunicationGoalSchema,
   requestedFormats: z.array(CompositionFormatSchema).min(1).max(3).superRefine((formats, context) => {
     if (formats.includes('video_post') && formats.length > 1) context.addIssue({ code: 'custom', message: 'video_post cannot be combined with another presentation type' })
@@ -371,7 +370,6 @@ export const CreateCompositionSessionSchema = z.object({
 // und löst weder eine Generation noch Kosten aus. Die eigentliche Fachversion entsteht weiterhin
 // erst beim ausdrücklichen Übernehmen eines Kandidaten.
 export const TextWorkshopDraftPayloadSchema = z.object({
-  presetSlug: ContentPresetSlugSchema,
   communicationGoal: CommunicationGoalSchema,
   factsText: z.string().max(10_000),
   observation: z.string().max(5_000),
@@ -480,9 +478,12 @@ export const FaceDecisionSchema = z.discriminatedUnion('kind', [
 // angefragten Umfang), naming_not_allowed und sensitive_text_data (beide textbasiert, siehe
 // scanTextForSensitiveData in packages/domain -- wirken unabhaengig davon, ob ueberhaupt ein Foto
 // existiert).
+// Plan 045, PR 0 Schritt 2: people_review_pending ist ein eigener Wert statt einer Ueberladung
+// von face_pending -- "das Foto wurde noch nie gesichtet" und "eine markierte Box wartet noch auf
+// eine Entscheidung" sind fuer die anzeigende Person unterschiedliche naechste Schritte.
 export const MediaGateBlockerSchema = z.enum([
-  'scan_pending', 'face_pending', 'consent_invalid', 'derivative_stale', 'minor_review_required', 'original_selected',
-  'consent_scope_mismatch', 'naming_not_allowed', 'sensitive_text_data',
+  'scan_pending', 'people_review_pending', 'face_pending', 'consent_invalid', 'derivative_stale', 'minor_review_required',
+  'original_selected', 'consent_scope_mismatch', 'naming_not_allowed', 'sensitive_text_data',
 ])
 export const MediaGateResultSchema = z.object({ publishable: z.boolean(), blockers: z.array(MediaGateBlockerSchema) })
 

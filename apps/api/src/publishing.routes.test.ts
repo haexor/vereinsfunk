@@ -117,13 +117,28 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
         supabaseClients: readOnlyClients({}, {
           postMedia: [{ media_derivative_id: '25000000-5000-4000-8000-000000000009' }],
           derivatives: [{ id: '25000000-5000-4000-8000-000000000009', media_asset_id: '25000000-5000-4000-8000-000000000010', status: 'ready' }],
-          assets: [{ id: '25000000-5000-4000-8000-000000000010', mime_type: 'image/png', scan_status: 'pending' }],
+          assets: [{ id: '25000000-5000-4000-8000-000000000010', mime_type: 'image/png', scan_status: 'pending', people_reviewed_at: '2026-08-01T00:00:00+00:00' }],
         }),
       })
       const token = await signAccessToken(USER_ID)
       const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
       expect(response.statusCode).toBe(409)
       expect(response.json()).toMatchObject({ error: 'media_gate_blocked', blockers: ['scan_pending'] })
+    })
+
+    it('rejects with 409 media_gate_blocked when a linked media asset was never reviewed for people, distinct from scan_pending', async () => {
+      const app = await startApp({
+        roleProvider: organizationManagerRoleProvider,
+        supabaseClients: readOnlyClients({}, {
+          postMedia: [{ media_derivative_id: '25000000-5000-4000-8000-000000000015' }],
+          derivatives: [{ id: '25000000-5000-4000-8000-000000000015', media_asset_id: '25000000-5000-4000-8000-000000000016', status: 'ready' }],
+          assets: [{ id: '25000000-5000-4000-8000-000000000016', mime_type: 'image/png', scan_status: 'clean', people_reviewed_at: null }],
+        }),
+      })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
+      expect(response.statusCode).toBe(409)
+      expect(response.json()).toMatchObject({ error: 'media_gate_blocked', blockers: ['people_review_pending'] })
     })
 
     it('blocks a minor consent without a guardian signature even though directory_people is unreadable for the publisher', async () => {
@@ -138,7 +153,7 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
         supabaseClients: readOnlyClients({}, {
           postMedia: [{ media_derivative_id: '25000000-5000-4000-8000-000000000011' }],
           derivatives: [{ id: '25000000-5000-4000-8000-000000000011', media_asset_id: '25000000-5000-4000-8000-000000000012', status: 'ready' }],
-          assets: [{ id: '25000000-5000-4000-8000-000000000012', mime_type: 'image/png', scan_status: 'clean' }],
+          assets: [{ id: '25000000-5000-4000-8000-000000000012', mime_type: 'image/png', scan_status: 'clean', people_reviewed_at: '2026-08-01T00:00:00+00:00' }],
           faces: [{ media_asset_id: '25000000-5000-4000-8000-000000000012', subject_kind: 'minor', decision: 'consented', consent_record_id: '25000000-5000-4000-8000-000000000013' }],
           consents: [{
             id: '25000000-5000-4000-8000-000000000013', guardian_confirmed: false, signer_role: 'self', superseded_by: null,
@@ -252,7 +267,7 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
                 const gate = mediaGateTables(table, {
                   postMedia: [{ position: 0, media_derivative_id: '25000000-5000-4000-8000-000000000001' }],
                   derivatives: [{ id: '25000000-5000-4000-8000-000000000001', media_asset_id: '25000000-5000-4000-8000-000000000002', sha256: 'a'.repeat(64), mime_type: 'image/png', status: 'ready' }],
-                  assets: [{ id: '25000000-5000-4000-8000-000000000002', mime_type: 'image/png', scan_status: 'clean' }],
+                  assets: [{ id: '25000000-5000-4000-8000-000000000002', mime_type: 'image/png', scan_status: 'clean', people_reviewed_at: '2026-08-01T00:00:00+00:00' }],
                 })
                 if (gate) return gate
                 if (table === 'publications') return { update: () => chain({ data: { id: PUBLICATION_ID }, error: null }) }

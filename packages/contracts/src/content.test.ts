@@ -73,7 +73,7 @@ describe('text workshop contracts', () => {
   it('accepts incomplete autosave input but keeps its scope and platform choices bounded', () => {
     const draft = {
       organizationId: org, departmentId: department,
-      payload: { presetSlug: 'event', communicationGoal: 'inform', factsText: '', observation: 'Erste Notiz', quote: '', doNotMention: '', selectedProfile: 'klar_erklaerend', temperature: 0.6, selectedPlatforms: [], maxCharactersOverride: '' },
+      payload: { communicationGoal: 'inform', factsText: '', observation: 'Erste Notiz', quote: '', doNotMention: '', selectedProfile: 'klar_erklaerend', temperature: 0.6, selectedPlatforms: [], maxCharactersOverride: '' },
     }
     expect(SaveTextWorkshopDraftSchema.safeParse(draft).success).toBe(true)
     expect(SaveTextWorkshopDraftSchema.safeParse({ ...draft, payload: { ...draft.payload, selectedPlatforms: ['instagram', 'instagram'] } }).success).toBe(false)
@@ -82,13 +82,15 @@ describe('text workshop contracts', () => {
 
   it('accepts text/photo/video composition choices but keeps historical reels outside new commands', () => {
     const input = CreateCompositionSessionSchema.parse({
-      organizationId: org, departmentId: department, presetSlug: 'event', communicationGoal: 'invite',
+      organizationId: org, departmentId: department, communicationGoal: 'invite',
       requestedFormats: ['video_post'], sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [], doNotMention: [] },
       targetPlatforms: ['instagram'],
     })
     expect(input.requestedFormats).toEqual(['video_post'])
     expect(CreateCompositionSessionSchema.safeParse({ ...input, requestedFormats: ['reel'] }).success).toBe(false)
-    expect(CreateSubmissionSchema.safeParse({ ...input, requestedFormats: ['reel'] }).success).toBe(true)
+    // CreateSubmissionSchema (Foto-Pipeline) verlangt weiterhin presetSlug, anders als
+    // CreateCompositionSessionSchema seit dem Wegfall von "Anlass" -- input allein liefert keines mehr.
+    expect(CreateSubmissionSchema.safeParse({ ...input, presetSlug: 'event', requestedFormats: ['reel'] }).success).toBe(true)
     expect(CreateCompositionSessionSchema.safeParse({ ...input, requestedFormats: ['text_post', 'text_post'] }).success).toBe(false)
   })
 
@@ -130,7 +132,7 @@ describe('text workshop contracts', () => {
 
   it('allows at most one of styleProfileId, systemStyleProfileSlug, or personaSlug', () => {
     const base = {
-      organizationId: org, departmentId: department, presetSlug: 'event', communicationGoal: 'invite',
+      organizationId: org, departmentId: department, communicationGoal: 'invite',
       requestedFormats: ['text_post'] as const, sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [], doNotMention: [] },
       targetPlatforms: ['instagram'] as const,
     }
@@ -148,7 +150,7 @@ describe('text workshop contracts', () => {
   // steps -- not a free number, and not inherited from the persona/style profile.
   it('defaults temperature to the "Ausgewogen" step and rejects any value off the four fixed steps', () => {
     const base = {
-      organizationId: org, departmentId: department, presetSlug: 'event', communicationGoal: 'invite',
+      organizationId: org, departmentId: department, communicationGoal: 'invite',
       requestedFormats: ['text_post'] as const, sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [], doNotMention: [] },
       targetPlatforms: ['instagram'] as const,
     }
@@ -166,7 +168,7 @@ describe('text workshop contracts', () => {
   // 422 gewesen). min(1) bleibt: leer ist der Zustand vor dem Absenden, keine gueltige Wahl.
   it('requires an explicit, non-empty targetPlatforms selection, rejects duplicates or an unknown platform', () => {
     const base = {
-      organizationId: org, departmentId: department, presetSlug: 'event', communicationGoal: 'invite',
+      organizationId: org, departmentId: department, communicationGoal: 'invite',
       requestedFormats: ['text_post'] as const, sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [], doNotMention: [] },
     }
     expect(CreateCompositionSessionSchema.safeParse(base).success).toBe(false)

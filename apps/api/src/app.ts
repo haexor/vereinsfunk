@@ -22,6 +22,7 @@ import { z } from 'zod'
 import { byteaToBuffer, createSecretBoxFromEnvironment } from './secretBox.js'
 import { createAuthGuards, SupabasePlatformAdminProvider, SupabaseRoleProvider, type PlatformAdminProvider, type RoleProvider } from './auth.js'
 import { createEmailSender, type EmailSender } from './email.js'
+import { SupabaseUploadService } from './mediaUpload.js'
 import { createServiceClient, createUserClient } from './supabase.js'
 import { registerAnalyticsRoutes } from './routes/analytics.js'
 import { registerApprovalRoutes } from './routes/approvals.js'
@@ -84,11 +85,6 @@ const MetaProviderConfigurationRowSchema = z.object({
   publishing_provider_secrets: z.object({ client_secret_ciphertext: z.string(), key_version: z.string() }).nullable(),
 })
 
-class LocalUploadService implements MediaUploadService {
-  async create(input: { organizationId: string; departmentId: string; assetId: string; filename: string; mimeType: string; byteSize: number }) { return { uploadUrl: `https://storage.invalid/upload/${input.assetId}`, objectPath: `organizations/${input.organizationId}/departments/${input.departmentId}/assets/${input.assetId}/${input.filename}`, expiresAt: new Date(Date.now() + 10 * 60_000).toISOString() } }
-  async complete(): Promise<{ accepted: true }> { return { accepted: true } }
-}
-
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
   const environment = parseApiEnvironment()
   const fastifyOptions: FastifyServerOptions = {
@@ -107,12 +103,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
           },
   }
   const app = Fastify(fastifyOptions)
-  const uploads = options.uploads ?? new LocalUploadService()
   const roleProvider = options.roleProvider ?? new SupabaseRoleProvider(environment)
   const supabaseClients: SupabaseClientFactory = options.supabaseClients ?? {
     forUser: (accessToken) => createUserClient(environment, accessToken),
     forService: () => createServiceClient(environment),
   }
+  const uploads = options.uploads ?? new SupabaseUploadService(() => supabaseClients.forService())
   const platformAdminProvider = options.platformAdminProvider ?? new SupabasePlatformAdminProvider(() => supabaseClients.forService())
   const useFakePublishing = environment.PUBLISHING_MODE === 'fake'
   async function loadMetaConfiguration(): Promise<{ clientId: string; clientSecret: string; graphVersion: string }> {
@@ -157,7 +153,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     // Rohtoken) ueberhaupt sichtbar wird -- ohne message.text waere die Einladung lokal nicht
     // einloesbar, obwohl sie serverseitig korrekt erzeugt wurde.
     createEmailSender(environment, (message) => app.log.info({ to: message.to, subject: message.subject, text: message.text }, 'invitation email (fake provider)'))
-  const { requireAuth, requirePermission, requirePlatformAdmin } = createAuthGuards(environment, roleProvider, platformAdminProvider)
+  const { requireAuth, requirePermission, requirePermissionAnyOf, requirePlatformAdmin } = createAuthGuards(environment, roleProvider, platformAdminProvider)
 
   // Paket 025: ein MetaPublisher braucht das entschluesselte Token GENAU dieser Social-Connection
   // (anders als metaOAuthClient oben, das appId/appSecret-Ebene bleibt) -- deshalb keine einmalige
@@ -191,6 +187,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     linkedinOAuthClient,
     requireAuth,
     requirePermission,
+    requirePermissionAnyOf,
     requirePlatformAdmin,
     createPublisherForConnection,
     ...(options.textGenerator ? { textGenerator: options.textGenerator } : {}),

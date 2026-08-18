@@ -12,7 +12,7 @@ const CandidateSchema = z.object({ id: z.string(), status: z.string(), generated
 // traegt bei Personas/Systemprofilen zusaetzlich zu StyleProfileSnapshotSchema ein "slug"-Feld
 // (routes/content.ts), das der exportierte Vertrag nicht kennt -- deshalb hier lose statt importiert.
 const CompositionSessionDraftSchema = z.object({
-  id: z.string(), preset_slug: z.string(), communication_goal: z.string(), source_material: SourceMaterialSchema,
+  id: z.string(), communication_goal: z.string(), source_material: SourceMaterialSchema,
   style_profile_id: z.string().nullable(), style_profile_snapshot: z.object({ slug: z.string().optional() }).passthrough(),
   target_platforms: z.array(SocialPlatformSchema), temperature: TextGenerationTemperatureSchema,
 })
@@ -59,9 +59,10 @@ const temperature = ref<number>(TEXT_GENERATION_DEFAULT_TEMPERATURE)
 const platforms = ref<TextGenerationPlatformAvailability[]>([])
 const selectedPlatforms = ref<SocialPlatform[]>([])
 const maxCharactersOverride = ref('')
+// Plan 045, PR 0 Schritt 3: null bis PhotoAttachment die Personen-Pruefung abgeschlossen hat.
+const mediaAssetId = ref<string | null>(null)
 const PROFILE_GROUP_LABELS = { system: 'Basis-Stile', persona: 'Personas', custom: 'Eigene Profile' } as const
 const profileGroups = computed(() => (['system', 'persona', 'custom'] as const).map((kind) => ({ label: PROFILE_GROUP_LABELS[kind], items: profiles.value.filter((profile) => profile.kind === kind) })).filter((group) => group.items.length))
-const presetSlug = ref('training_insight')
 const communicationGoal = ref('inform')
 const factsText = ref('')
 const observation = ref('')
@@ -82,15 +83,15 @@ function sourceMaterial() {
 }
 function persistDraft() {
   if (restoringDraft || !import.meta.client || !draftKey.value) return
-  localStorage.setItem(draftKey.value, JSON.stringify({ presetSlug: presetSlug.value, communicationGoal: communicationGoal.value, factsText: factsText.value, observation: observation.value, quote: quote.value, doNotMention: doNotMention.value, selectedProfile: selectedProfile.value, temperature: temperature.value, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }))
+  localStorage.setItem(draftKey.value, JSON.stringify({ communicationGoal: communicationGoal.value, factsText: factsText.value, observation: observation.value, quote: quote.value, doNotMention: doNotMention.value, selectedProfile: selectedProfile.value, temperature: temperature.value, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }))
 }
 function clearDraft() { if (import.meta.client && draftKey.value) localStorage.removeItem(draftKey.value) }
 function draftPayload() {
-  return { presetSlug: presetSlug.value, communicationGoal: communicationGoal.value, factsText: factsText.value, observation: observation.value, quote: quote.value, doNotMention: doNotMention.value, selectedProfile: selectedProfile.value, temperature: temperature.value, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }
+  return { communicationGoal: communicationGoal.value, factsText: factsText.value, observation: observation.value, quote: quote.value, doNotMention: doNotMention.value, selectedProfile: selectedProfile.value, temperature: temperature.value, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }
 }
 function hasDraftContent() {
   const payload = draftPayload()
-  return Boolean(payload.factsText.trim() || payload.observation.trim() || payload.quote.trim() || payload.doNotMention.trim() || payload.presetSlug !== 'training_insight' || payload.communicationGoal !== 'inform' || payload.selectedProfile !== 'klar_erklaerend' || payload.selectedPlatforms.length || payload.maxCharactersOverride.trim())
+  return Boolean(payload.factsText.trim() || payload.observation.trim() || payload.quote.trim() || payload.doNotMention.trim() || payload.communicationGoal !== 'inform' || payload.selectedProfile !== 'klar_erklaerend' || payload.selectedPlatforms.length || payload.maxCharactersOverride.trim())
 }
 async function saveServerDraft({ explicit = false, required = false }: { explicit?: boolean; required?: boolean } = {}): Promise<boolean> {
   if (draftSaveTimer) { clearTimeout(draftSaveTimer); draftSaveTimer = undefined }
@@ -135,15 +136,15 @@ function restoreDraft() {
   if (!import.meta.client || !draftKey.value) return
   try {
     const raw = localStorage.getItem(draftKey.value); if (!raw) return
-    const draft = z.object({ presetSlug: z.string(), communicationGoal: z.string(), factsText: z.string(), observation: z.string(), quote: z.string(), doNotMention: z.string(), selectedProfile: z.string(), temperature: TextGenerationTemperatureSchema.default(TEXT_GENERATION_DEFAULT_TEMPERATURE), selectedPlatforms: z.array(SocialPlatformSchema).default([]), maxCharactersOverride: z.string().default('') }).parse(JSON.parse(raw))
-    presetSlug.value = draft.presetSlug; communicationGoal.value = draft.communicationGoal; factsText.value = draft.factsText; observation.value = draft.observation; quote.value = draft.quote; doNotMention.value = draft.doNotMention; selectedProfile.value = draft.selectedProfile; temperature.value = draft.temperature; maxCharactersOverride.value = draft.maxCharactersOverride
+    const draft = z.object({ communicationGoal: z.string(), factsText: z.string(), observation: z.string(), quote: z.string(), doNotMention: z.string(), selectedProfile: z.string(), temperature: TextGenerationTemperatureSchema.default(TEXT_GENERATION_DEFAULT_TEMPERATURE), selectedPlatforms: z.array(SocialPlatformSchema).default([]), maxCharactersOverride: z.string().default('') }).parse(JSON.parse(raw))
+    communicationGoal.value = draft.communicationGoal; factsText.value = draft.factsText; observation.value = draft.observation; quote.value = draft.quote; doNotMention.value = draft.doNotMention; selectedProfile.value = draft.selectedProfile; temperature.value = draft.temperature; maxCharactersOverride.value = draft.maxCharactersOverride
     // Nur uebernehmen, was laut der zuletzt geladenen Verfuegbarkeit noch anhakbar ist -- ein Kanal
     // kann seit dem letzten Entwurf entfernt worden sein.
     if (draft.selectedPlatforms.length) selectedPlatforms.value = draft.selectedPlatforms.filter((platform) => platforms.value.some((entry) => entry.platform === platform && entry.available))
   } catch { clearDraft() }
 }
-watch([presetSlug, communicationGoal, factsText, observation, quote, doNotMention, selectedProfile, temperature, selectedPlatforms, maxCharactersOverride], () => { persistDraft(); queueServerDraftSave() }, { flush: 'sync', deep: true })
-watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; presetSlug.value = 'training_insight'; communicationGoal.value = 'inform'; selectedProfile.value = 'klar_erklaerend'; factsText.value = ''; observation.value = ''; quote.value = ''; doNotMention.value = ''; revisionInstruction.value = ''; temperature.value = TEXT_GENERATION_DEFAULT_TEMPERATURE; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
+watch([communicationGoal, factsText, observation, quote, doNotMention, selectedProfile, temperature, selectedPlatforms, maxCharactersOverride], () => { persistDraft(); queueServerDraftSave() }, { flush: 'sync', deep: true })
+watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; communicationGoal.value = 'inform'; selectedProfile.value = 'klar_erklaerend'; factsText.value = ''; observation.value = ''; quote.value = ''; doNotMention.value = ''; revisionInstruction.value = ''; temperature.value = TEXT_GENERATION_DEFAULT_TEMPERATURE; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; mediaAssetId.value = null; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
 
 async function loadProfiles() {
   if (!scope.value?.organizationId || !scope.value.departmentId) return
@@ -181,10 +182,10 @@ async function refreshSession() {
 }
 async function loadServerDraft(draftId: string) {
   try {
-    const response = await api.request(`/v1/text-workshop/drafts/${draftId}`, {}, z.object({ draft: z.object({ id: z.string(), payload: z.object({ presetSlug: z.string(), communicationGoal: z.string(), factsText: z.string(), observation: z.string(), quote: z.string(), doNotMention: z.string(), selectedProfile: z.string(), temperature: TextGenerationTemperatureSchema, selectedPlatforms: z.array(SocialPlatformSchema), maxCharactersOverride: z.string() }) }) }))
+    const response = await api.request(`/v1/text-workshop/drafts/${draftId}`, {}, z.object({ draft: z.object({ id: z.string(), payload: z.object({ communicationGoal: z.string(), factsText: z.string(), observation: z.string(), quote: z.string(), doNotMention: z.string(), selectedProfile: z.string(), temperature: TextGenerationTemperatureSchema, selectedPlatforms: z.array(SocialPlatformSchema), maxCharactersOverride: z.string() }) }) }))
     const draft = response.draft
     serverDraftId.value = draft.id
-    presetSlug.value = draft.payload.presetSlug; communicationGoal.value = draft.payload.communicationGoal; factsText.value = draft.payload.factsText; observation.value = draft.payload.observation; quote.value = draft.payload.quote; doNotMention.value = draft.payload.doNotMention; selectedProfile.value = draft.payload.selectedProfile; temperature.value = draft.payload.temperature; maxCharactersOverride.value = draft.payload.maxCharactersOverride
+    communicationGoal.value = draft.payload.communicationGoal; factsText.value = draft.payload.factsText; observation.value = draft.payload.observation; quote.value = draft.payload.quote; doNotMention.value = draft.payload.doNotMention; selectedProfile.value = draft.payload.selectedProfile; temperature.value = draft.payload.temperature; maxCharactersOverride.value = draft.payload.maxCharactersOverride
     selectedPlatforms.value = draft.payload.selectedPlatforms.filter((platform) => platforms.value.some((entry) => entry.platform === platform && entry.available))
     persistDraft()
   } catch { notice.value = 'Der Entwurf konnte nicht geladen werden.' }
@@ -198,7 +199,6 @@ async function loadDraftFromPost(postId: string) {
   try {
     const response = await api.request('/v1/text-workshop/sessions', { query: { postId } }, z.object({ session: CompositionSessionDraftSchema, candidates: z.array(CandidateSchema) }))
     const { session: draftSession, candidates } = response
-    presetSlug.value = draftSession.preset_slug
     communicationGoal.value = draftSession.communication_goal
     factsText.value = Object.entries(draftSession.source_material.facts).map(([key, value]) => `${key}: ${value}`).join('\n')
     observation.value = draftSession.source_material.observations[0] ?? ''
@@ -243,7 +243,8 @@ async function createCandidate() {
     const created = await api.request('/v1/text-workshop/sessions', {
       method: 'POST',
       body: {
-        organizationId: scope.value.organizationId, departmentId: scope.value.departmentId, presetSlug: presetSlug.value, communicationGoal: communicationGoal.value, requestedFormats: ['text_post'],
+        organizationId: scope.value.organizationId, departmentId: scope.value.departmentId, communicationGoal: communicationGoal.value, requestedFormats: ['text_post'],
+        mediaAssetIds: mediaAssetId.value ? [mediaAssetId.value] : [],
         ...profileChoice, sourceMaterial: sourceMaterial(), targetPlatforms: selectedPlatforms.value,
         // Ein weiterer Kandidat der serverseitigen Minimumbildung, keine Ueberschreibung -- die
         // gewaehlten Plattformen bleiben die verbindliche Obergrenze (routes/content.ts).
@@ -261,6 +262,12 @@ async function createCandidate() {
     if (code === 'platform_not_available') {
       await loadPlatformAvailability()
       notice.value = 'Eine gewählte Plattform ist nicht mehr verfügbar. Bitte Auswahl aktualisieren.'
+    } else if (code === 'media_asset_not_reviewed' || code === 'media_asset_not_ready' || code === 'media_asset_not_found') {
+      // Die Personen-Pruefung wurde ungueltig, seit PhotoAttachment sie abgeschlossen hat (z. B.
+      // eine Markierung wurde in einem anderen Tab geaendert) -- der Trigger in Migration
+      // 2026081802 setzt people_reviewed_at in genau diesem Fall automatisch zurueck.
+      mediaAssetId.value = null
+      notice.value = 'Die Personen-Prüfung des angehängten Fotos ist nicht mehr aktuell. Bitte das Foto erneut prüfen.'
     } else {
       notice.value = 'Die Textgeneration konnte nicht gestartet werden.'
     }
@@ -332,10 +339,11 @@ onBeforeUnmount(() => { if (hasDraftContent()) void saveServerDraft() })
 
 <template>
   <div>
-    <header class="mb-7"><div class="eyebrow mb-2">Textwerkstatt</div><h1 class="font-display text-3xl font-extrabold">Aus bestätigten Angaben formulieren</h1><p class="mt-2 text-sm text-[#727a75]">Dieser Pilot erstellt nur Text. Foto- und Videoanhänge sind noch nicht verfügbar und werden nie an das Sprachmodell gesendet.</p></header>
+    <header class="mb-7"><div class="eyebrow mb-2">Textwerkstatt</div><h1 class="font-display text-3xl font-extrabold">Aus bestätigten Angaben formulieren</h1><p class="mt-2 text-sm text-[#727a75]">Dieser Pilot erstellt nur Text. Ein Foto kann angehängt werden, wird aber nie an das Sprachmodell gesendet. Videoanhänge sind noch nicht verfügbar.</p></header>
     <section v-if="!sessionId" class="card grid gap-5 p-5 sm:p-7">
-      <div class="grid gap-4 sm:grid-cols-2"><label><span class="mb-1 block text-xs font-semibold">Anlass</span><input v-model="presetSlug" class="w-full rounded-xl border p-3 text-sm" placeholder="z. B. training_insight" /></label><label><span class="mb-1 block text-xs font-semibold">Kommunikationsziel</span><select v-model="communicationGoal" class="w-full rounded-xl border p-3 text-sm"><option value="inform">Informieren</option><option value="invite">Einladen</option><option value="thank">Danken</option><option value="recruit">Gewinnen</option><option value="inspire">Inspirieren</option></select></label></div>
+      <label><span class="mb-1 block text-xs font-semibold">Kommunikationsziel</span><select v-model="communicationGoal" class="w-full rounded-xl border p-3 text-sm sm:max-w-xs"><option value="inform">Informieren</option><option value="invite">Einladen</option><option value="thank">Danken</option><option value="recruit">Gewinnen</option><option value="inspire">Inspirieren</option></select></label>
       <fieldset><legend class="mb-2 text-xs font-semibold">Stilprofil</legend><div v-for="group in profileGroups" :key="group.label" class="mb-3"><p class="mb-1 text-[11px] font-semibold text-[#9aa096]">{{ group.label }}</p><div class="grid gap-2 sm:grid-cols-2"><button v-for="profile in group.items" :key="profile.slug" class="rounded-xl border p-3 text-left text-sm" :class="selectedProfile === (profile.id ?? profile.slug) ? 'border-forest bg-[#eff4e6]' : ''" @click="selectedProfile = profile.id ?? profile.slug"><strong>{{ profile.name }}</strong><span class="mt-1 block text-xs text-[#737a75]">{{ profile.description }}</span></button></div></div><NuxtLink to="/stilprofile" class="focus-ring text-[11px] font-semibold text-forest underline">Eigene Stilprofile verwalten →</NuxtLink></fieldset>
+      <PhotoAttachment v-if="scope?.organizationId && scope.departmentId" :key="`${scope.organizationId}:${scope.departmentId}`" v-model="mediaAssetId" :organization-id="scope.organizationId" :department-id="scope.departmentId" />
       <fieldset>
         <legend class="mb-2 text-xs font-semibold">Zielplattformen</legend>
         <div v-if="platforms.length" class="flex flex-wrap gap-2">

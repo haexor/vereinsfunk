@@ -837,7 +837,7 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
             if (table === 'post_versions') return chain({ data: { title: '', caption: 'Hallo Welt' }, error: null })
             if (table === 'post_media') return chain({ data: [{ media_derivative_id: '11000000-6000-4000-8000-000000000001' }], error: null })
             if (table === 'media_derivatives') return chain({ data: [{ id: '11000000-6000-4000-8000-000000000001', media_asset_id: '11000000-6100-4000-8000-000000000001', status: 'ready' }], error: null })
-            if (table === 'media_assets') return chain({ data: [{ id: '11000000-6100-4000-8000-000000000001', mime_type: 'image/png', scan_status: 'pending' }], error: null })
+            if (table === 'media_assets') return chain({ data: [{ id: '11000000-6100-4000-8000-000000000001', mime_type: 'image/png', scan_status: 'pending', people_reviewed_at: '2026-08-01T00:00:00+00:00' }], error: null })
             if (table === 'face_regions') return chain({ data: [], error: null })
             throw new Error(`unexpected table in service fake: ${table}`)
           },

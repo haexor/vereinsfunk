@@ -5,7 +5,8 @@ import { ApprovalStageSchema, StalledApprovalRequestSchema, type ApprovalStage, 
 // Paket 015: Medien-Gate-Blocker (evaluateMediaGate) je Stufe -- eine fehlende oder nicht
 // passende Einwilligung ist jetzt sichtbar, statt nur beim Freigeben selbst zu scheitern.
 const BLOCKER_LABELS: Record<MediaGateBlocker, string> = {
-  scan_pending: 'Medien-Scan nicht abgeschlossen', face_pending: 'Gesichter noch nicht entschieden',
+  scan_pending: 'Medien-Scan nicht abgeschlossen', people_review_pending: 'Foto noch nicht auf Personen geprüft',
+  face_pending: 'Gesichter noch nicht entschieden',
   consent_invalid: 'Einwilligung ungültig (widerrufen, abgelaufen oder abgelöst)',
   consent_scope_mismatch: 'Einwilligung deckt diese Verwendung nicht ab',
   derivative_stale: 'Medien-Derivat nicht aktuell', minor_review_required: 'Minderjährigenprüfung fehlt noch',

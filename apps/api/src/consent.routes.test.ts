@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEPARTMENT_ID, ORGANIZATION_ID, USER_ID, chain, denyingRoleProvider, organizationManagerRoleProvider, signAccessToken, startApp } from './testSupport.js'
+import { DEPARTMENT_ID, ORGANIZATION_ID, USER_ID, chain, denyingRoleProvider, grantingRoleProvider, organizationManagerRoleProvider, signAccessToken, startApp } from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
 
@@ -408,3 +408,41 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
   })
 })
 
+// Plan 045, PR 0 Schritt 3: die Foto-Markier-UI braucht dieselbe Einwilligungsliste, die bisher nur
+// consent.manage (Vereinsverwaltung) einsehen durfte -- wer eine Box markieren darf (post.edit),
+// muss verknuepfen koennen, ohne eine Vereinsverwaltung zu bemuehen. Betreiberentscheidung, 2026-08-18.
+describe('GET /v1/consents -- post.edit access (Plan 045)', () => {
+  it('rejects a caller with neither consent.manage nor post.edit', async () => {
+    const app = await startApp({ roleProvider: denyingRoleProvider, supabaseClients: { forUser: () => ({}) as unknown as SupabaseClient, forService: () => { throw new Error('forService should not be reached') } } as unknown as SupabaseClientFactory })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: `/v1/consents?organizationId=${ORGANIZATION_ID}`, headers: { authorization: `Bearer ${token}` } })
+    expect(response.statusCode).toBe(403)
+  })
+
+  it('allows a plain editor (post.edit, no consent.manage) to list consents', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({ from: (table: string) => { if (table === 'consent_records') return chain({ data: [], error: null }); throw new Error(`unexpected table: ${table}`) } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: `/v1/consents?organizationId=${ORGANIZATION_ID}`, headers: { authorization: `Bearer ${token}` } })
+    expect(response.statusCode).toBe(200)
+  })
+
+  it('rejects a post.edit caller scoped to another department before reading that person\'s consents', async () => {
+    const otherDepartmentId = '15000000-1100-4000-8000-000000000099'
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ from: (table: string) => {
+        if (table === 'directory_people') return chain({ data: { organization_id: ORGANIZATION_ID, department_id: otherDepartmentId }, error: null })
+        throw new Error(`unexpected user table: ${table}`)
+      } }) as unknown as SupabaseClient,
+      forService: () => { throw new Error('forService must not read cross-department consents') },
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: `/v1/consents?organizationId=${ORGANIZATION_ID}&departmentId=${DEPARTMENT_ID}&directoryPersonId=15000000-3000-4000-8000-000000000001`, headers: { authorization: `Bearer ${token}` } })
+    expect(response.statusCode).toBe(404)
+    expect(response.json()).toMatchObject({ error: 'directory_person_not_found' })
+  })
+})

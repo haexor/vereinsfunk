@@ -37,7 +37,7 @@ import {
 } from './shared.js'
 
 export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteContext): void {
-  const { requireAuth, requirePermission, supabaseClients, emailSender, environment } = context
+  const { requireAuth, requirePermission, requirePermissionAnyOf, supabaseClients, emailSender, environment } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
 
   app.get('/v1/organizations/:id/consent-text', async (request, reply) => {
@@ -169,8 +169,24 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
   app.get('/v1/consents', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const query = z.object({ organizationId: UuidSchema, departmentId: UuidSchema.optional(), directoryPersonId: UuidSchema.optional() }).parse(request.query)
-    const scope = toPermissionScope(query.organizationId, query.departmentId)
-    if (!(await requirePermission(request, reply, 'consent.manage', scope))) return
+    // Resolve an explicitly requested person before authorizing. Otherwise a caller with post.edit
+    // in department A could authorize against A while reading consents for a person in department B.
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    let effectiveDepartmentId = query.departmentId
+    if (query.directoryPersonId) {
+      const person = await client.from('directory_people').select('organization_id, department_id').eq('id', query.directoryPersonId).maybeSingle()
+      if (person.error) throw person.error
+      if (!person.data || person.data.organization_id !== query.organizationId || (query.departmentId !== undefined && person.data.department_id !== query.departmentId)) {
+        return reply.code(404).send({ error: 'directory_person_not_found', correlationId: request.id })
+      }
+      effectiveDepartmentId = person.data.department_id
+    }
+    const scope = toPermissionScope(query.organizationId, effectiveDepartmentId)
+    // Plan 045, PR 0 Schritt 3: zusaetzlich zu consent.manage (Vereinsverwaltung) auch post.edit --
+    // wer beim Markieren einer Gesichtsregion eine bestehende Einwilligung verknuepfen darf
+    // (foto-anhaengende Autor:innen), muss dieselbe Liste einsehen koennen, nicht nur eine
+    // Vereinsverwaltung. Betreiberentscheidung, 2026-08-18.
+    if (!(await requirePermissionAnyOf(request, reply, ['consent.manage', 'post.edit'], scope))) return
 
     const service = supabaseClients.forService()
     let directoryPersonIds: string[] | null = null

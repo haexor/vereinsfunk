@@ -23,6 +23,7 @@ export interface MediaUploadService {
 export interface ApiRouteGuards {
   requireAuth(request: FastifyRequest, reply: FastifyReply): Promise<boolean>
   requirePermission(request: FastifyRequest, reply: FastifyReply, permission: Permission, scope: PermissionScope): Promise<boolean>
+  requirePermissionAnyOf(request: FastifyRequest, reply: FastifyReply, permissions: readonly Permission[], scope: PermissionScope): Promise<boolean>
   requirePlatformAdmin(request: FastifyRequest, reply: FastifyReply): Promise<boolean>
 }
 

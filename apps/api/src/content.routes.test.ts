@@ -139,7 +139,7 @@ describe('POST /v1/text-workshop/sessions', () => {
   // Plan 044, PR 1 Step 1: targetPlatforms hat keinen Schema-Vorgabewert mehr -- das Fixture setzt
   // beide Plattformen deshalb explizit, damit die uebrigen Faelle unten unveraendert bleiben.
   const basePayload = {
-    organizationId: ORGANIZATION_ID, departmentId: DEPARTMENT_ID, presetSlug: 'training_insight', communicationGoal: 'inform',
+    organizationId: ORGANIZATION_ID, departmentId: DEPARTMENT_ID, communicationGoal: 'inform',
     requestedFormats: ['text_post'], sourceMaterial: { facts: { title: 'Training' }, observations: [], quotes: [], doNotMention: [] },
     targetPlatforms: ['instagram', 'facebook'],
   }
@@ -312,6 +312,78 @@ describe('POST /v1/text-workshop/sessions', () => {
     expect(response.statusCode).toBe(422)
     expect(response.json()).toMatchObject({ error: 'platform_not_available', platform: 'facebook' })
   })
+
+  // Plan 045, PR 0 Schritt 3: hoechstens ein Foto-Anhang, geprueft und angehaengt in derselben Route.
+  describe('mediaAssetIds (photo attachment)', () => {
+    const MEDIA_ASSET_ID = '3c000000-0000-4000-8000-000000000010'
+    const SESSION_ID = '3c000000-0000-4000-8000-000000000011'
+
+    it('rejects more than one attached photo with the same text_only_pilot gate as any other format', async () => {
+      const response = await createSession({ forUser: () => ({}) as unknown as SupabaseClient, forService: () => { throw new Error('forService should not be reached') } }, { ...basePayload, mediaAssetIds: [MEDIA_ASSET_ID, '3c000000-0000-4000-8000-000000000012'] })
+      expect(response.statusCode).toBe(422)
+      expect(response.json()).toMatchObject({ error: 'text_only_pilot' })
+    })
+
+    function clientsWithAsset(asset: Record<string, unknown> | null, capturedAttach?: Record<string, unknown>[], onRpc?: (params: Record<string, unknown>) => void): SupabaseClientFactory {
+      return {
+        forUser: () => ({
+          from: (table: string) => {
+            if (table === 'policy_settings') return policySettingsFake()
+            if (table === 'social_connections') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.socialConnections, error: null })
+            if (table === 'channel_scopes') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.channelScopes, error: null })
+            if (table === 'text_generation_platform_defaults') return chain({ data: [{ platform: 'instagram', max_characters: 2200 }, { platform: 'facebook', max_characters: 2200 }], error: null })
+            throw new Error(`unexpected user table: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+        forService: () => ({
+          from: (table: string) => {
+            if (table === 'media_assets') return chain({ data: asset, error: null })
+            if (table === 'composition_session_post_media') return { upsert: (row: Record<string, unknown>) => { capturedAttach?.push(row); return { then: (resolve: (result: { data: null; error: null }) => unknown) => resolve({ data: null, error: null }) } } }
+            throw new Error(`unexpected service table: ${table}`)
+          },
+          rpc: async (_fn: string, params: Record<string, unknown>) => { onRpc?.(params); return { data: { sessionId: SESSION_ID, candidateId: '3c000000-0000-4000-8000-000000000013' }, error: null } },
+        }) as unknown as SupabaseClient,
+      }
+    }
+
+    it('attaches a ready, people-reviewed photo to the newly created session', async () => {
+      const captured: Record<string, unknown>[] = []
+      const clients = clientsWithAsset({ organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, upload_status: 'ready', people_reviewed_at: '2026-08-18T00:00:00+00:00' }, captured)
+      const response = await createSession(clients, { ...basePayload, mediaAssetIds: [MEDIA_ASSET_ID] })
+      expect(response.statusCode).toBe(202)
+      expect(captured).toEqual([{ organization_id: ORGANIZATION_ID, composition_session_id: SESSION_ID, media_asset_id: MEDIA_ASSET_ID, created_by: USER_ID }])
+    })
+
+    it('gives otherwise identical sessions distinct hashes for no photo and each attached photo', async () => {
+      const hashes: string[] = []
+      const readyAsset = { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, upload_status: 'ready', people_reviewed_at: '2026-08-18T00:00:00+00:00' }
+      await createSession(clientsWithAsset(readyAsset, undefined, (params) => hashes.push(params.p_input_hash as string)), { ...basePayload, mediaAssetIds: [] })
+      await createSession(clientsWithAsset(readyAsset, undefined, (params) => hashes.push(params.p_input_hash as string)), { ...basePayload, mediaAssetIds: [MEDIA_ASSET_ID] })
+      await createSession(clientsWithAsset(readyAsset, undefined, (params) => hashes.push(params.p_input_hash as string)), { ...basePayload, mediaAssetIds: ['3c000000-0000-4000-8000-000000000014'] })
+      expect([...new Set(hashes)]).toHaveLength(3)
+    })
+
+    it('rejects a photo that has not finished upload processing yet', async () => {
+      const clients = clientsWithAsset({ organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, upload_status: 'initiated', people_reviewed_at: null })
+      const response = await createSession(clients, { ...basePayload, mediaAssetIds: [MEDIA_ASSET_ID] })
+      expect(response.statusCode).toBe(422)
+      expect(response.json()).toMatchObject({ error: 'media_asset_not_ready' })
+    })
+
+    it('rejects a ready photo that has not been reviewed for people yet', async () => {
+      const clients = clientsWithAsset({ organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, upload_status: 'ready', people_reviewed_at: null })
+      const response = await createSession(clients, { ...basePayload, mediaAssetIds: [MEDIA_ASSET_ID] })
+      expect(response.statusCode).toBe(422)
+      expect(response.json()).toMatchObject({ error: 'media_asset_not_reviewed' })
+    })
+
+    it('rejects a photo belonging to a different department, even within the same organization', async () => {
+      const clients = clientsWithAsset({ organization_id: ORGANIZATION_ID, department_id: '30000000-0000-4000-8000-000000000099', upload_status: 'ready', people_reviewed_at: '2026-08-18T00:00:00+00:00' })
+      const response = await createSession(clients, { ...basePayload, mediaAssetIds: [MEDIA_ASSET_ID] })
+      expect(response.statusCode).toBe(404)
+      expect(response.json()).toMatchObject({ error: 'media_asset_not_found' })
+    })
+  })
 })
 
 // Wiedereinstieg aus der Beitraege-Liste (Textwerkstatt fuer einen draft_ready/changes_requested-
@@ -321,7 +393,7 @@ describe('GET /v1/text-workshop/sessions', () => {
   const POST_ID = '3d000000-0000-4000-8000-000000000001'
   const SESSION_ROW = {
     id: '3c000000-0000-4000-8000-000000000001', organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: null,
-    status: 'accepted', preset_slug: 'training_insight', communication_goal: 'inform',
+    status: 'accepted', communication_goal: 'inform',
     source_material: { facts: { title: 'Training' }, observations: [], quotes: [], doNotMention: [] },
     style_profile_id: null,
     style_profile_snapshot: { name: 'Klar erklärend', description: 'Sachlich.', styleRules: STYLE_RULES, avoidRules: [], doRules: [], slug: 'klar_erklaerend' },
@@ -361,7 +433,7 @@ describe('GET /v1/text-workshop/sessions', () => {
     const response = await app.inject({ method: 'GET', url: '/v1/text-workshop/sessions', headers: { authorization: `Bearer ${token}` }, query: { postId: POST_ID } })
     expect(response.statusCode).toBe(200)
     const body = response.json()
-    expect(body.session).toMatchObject({ id: SESSION_ROW.id, preset_slug: 'training_insight', target_platforms: ['instagram'] })
+    expect(body.session).toMatchObject({ id: SESSION_ROW.id, target_platforms: ['instagram'] })
     expect(body.candidates).toHaveLength(1)
     expect(body.candidates[0]).toMatchObject({ id: CANDIDATE_ROW.id, status: 'accepted' })
     expect(candidateLimit).toBe(1)
@@ -886,7 +958,7 @@ describe('text workshop drafts', () => {
   const POST_ID = '3f000000-0000-4000-8000-000000000002'
   const SESSION_ID = '3f000000-0000-4000-8000-000000000003'
   const CANDIDATE_ID = '3f000000-0000-4000-8000-000000000004'
-  const draftPayload = { presetSlug: 'training_insight', communicationGoal: 'inform', factsText: 'Übung: Passen', observation: '', quote: '', doNotMention: '', selectedProfile: 'klar_erklaerend', temperature: 0.6, selectedPlatforms: [], maxCharactersOverride: '' }
+  const draftPayload = { communicationGoal: 'inform', factsText: 'Übung: Passen', observation: '', quote: '', doNotMention: '', selectedProfile: 'klar_erklaerend', temperature: 0.6, selectedPlatforms: [], maxCharactersOverride: '' }
 
   it('audits a successfully saved draft without its raw input', async () => {
     const auditRows: Record<string, unknown>[] = []
@@ -938,6 +1010,8 @@ describe('text workshop drafts', () => {
         rpc: async () => ({ data: { postId: POST_ID, postVersionId: '3f000000-0000-4000-8000-000000000005' }, error: null }),
         from: (table: string) => {
           if (table === 'text_workshop_drafts') return { update: () => update }
+          // No photo attached to this session -- accept proceeds text-only, exactly as before Plan 045.
+          if (table === 'composition_session_post_media') return chain({ data: null, error: null })
           throw new Error(`unexpected service table: ${table}`)
         },
       }) as unknown as SupabaseClient,
@@ -950,5 +1024,142 @@ describe('text workshop drafts', () => {
     expect(filters).toEqual(expect.arrayContaining([
       ['eq', 'id', DRAFT_ID], ['eq', 'organization_id', ORGANIZATION_ID], ['eq', 'department_id', DEPARTMENT_ID], ['is', 'team_id', null], ['eq', 'created_by', USER_ID],
     ]))
+  })
+})
+
+describe('POST /v1/text-workshop/candidates/:id/accept -- photo attachment (Plan 045, PR 0 Schritt 4)', () => {
+  const CANDIDATE_ID = '3f000000-0000-4000-8000-000000000010'
+  const SESSION_ID = '3f000000-0000-4000-8000-000000000011'
+  const MEDIA_ASSET_ID = '3f000000-0000-4000-8000-000000000012'
+  const DERIVATIVE_ID = '3f000000-0000-4000-8000-000000000013'
+
+  it('resolves the session’s photo attachment to a derivative and passes it to the RPC', async () => {
+    let rpcParams: Record<string, unknown> | undefined
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ from: (table: string) => {
+        if (table === 'generation_candidates') return chain({ data: { organization_id: ORGANIZATION_ID, composition_session_id: SESSION_ID }, error: null })
+        if (table === 'composition_sessions') return chain({ data: { department_id: DEPARTMENT_ID, team_id: null, post_id: null }, error: null })
+        throw new Error(`unexpected user table: ${table}`)
+      } }) as unknown as SupabaseClient,
+      forService: () => ({
+        rpc: async (fn: string, params: Record<string, unknown>) => { rpcParams = params; return { data: { postId: '3f000000-0000-4000-8000-000000000014', postVersionId: '3f000000-0000-4000-8000-000000000015' }, error: null } },
+        from: (table: string) => {
+          if (table === 'composition_session_post_media') return chain({ data: { media_asset_id: MEDIA_ASSET_ID }, error: null })
+          if (table === 'media_derivatives') {
+            return {
+              select: () => ({ eq: () => ({ eq: async () => ({ data: [{ id: DERIVATIVE_ID, recipe: { kind: 'pass_through_v1' }, status: 'ready' }], error: null }) }) }),
+            }
+          }
+          throw new Error(`unexpected service table: ${table}`)
+        },
+      }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const response = await app.inject({
+      method: 'POST', url: `/v1/text-workshop/candidates/${CANDIDATE_ID}/accept`, headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(rpcParams).toMatchObject({ p_candidate_id: CANDIDATE_ID, p_media_derivative_id: DERIVATIVE_ID })
+  })
+
+  it('rejects with 422 and never calls the RPC when the attached photo is not yet ready', async () => {
+    let rpcCalled = false
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ from: (table: string) => {
+        if (table === 'generation_candidates') return chain({ data: { organization_id: ORGANIZATION_ID, composition_session_id: SESSION_ID }, error: null })
+        if (table === 'composition_sessions') return chain({ data: { department_id: DEPARTMENT_ID, team_id: null, post_id: null }, error: null })
+        throw new Error(`unexpected user table: ${table}`)
+      } }) as unknown as SupabaseClient,
+      forService: () => ({
+        rpc: async () => { rpcCalled = true; throw new Error('the RPC must not be reached once the attached photo turns out not ready') },
+        from: (table: string) => {
+          if (table === 'composition_session_post_media') return chain({ data: { media_asset_id: MEDIA_ASSET_ID }, error: null })
+          if (table === 'media_derivatives') return { select: () => ({ eq: () => ({ eq: async () => ({ data: [], error: null }) }) }) }
+          if (table === 'media_assets') {
+            const query = {
+              eq: () => query,
+              single: async () => ({ data: { bucket_id: 'raw-media', object_path: 'x', mime_type: 'image/jpeg', byte_size: 10, sha256: 'a'.repeat(64), width: null, height: null, upload_status: 'initiated' }, error: null }),
+            }
+            return { select: () => query }
+          }
+          throw new Error(`unexpected service table: ${table}`)
+        },
+      }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const response = await app.inject({
+      method: 'POST', url: `/v1/text-workshop/candidates/${CANDIDATE_ID}/accept`, headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+    })
+    expect(response.statusCode).toBe(422)
+    expect(response.json()).toMatchObject({ error: 'media_asset_not_ready' })
+    expect(rpcCalled).toBe(false)
+  })
+})
+
+describe('POST /v1/media/:assetId/complete', () => {
+  const ASSET_ID = '3f000000-0000-4000-8000-000000000006'
+
+  // Plan 045, PR 0 Step 1: welchem Verein/welcher Abteilung ein assetId gehoert, wird ab jetzt
+  // per Service Client nachgeschlagen und gegen 'post.edit' geprueft, statt (wie vorher) gar
+  // nicht -- jeder authentifizierte Nutzer konnte sonst ein fremdes assetId abschliessen.
+  it('returns 404 for an unknown assetId without ever calling uploads.complete', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({ from: (table: string) => {
+        if (table === 'media_assets') return chain({ data: null, error: null })
+        throw new Error(`unexpected service table: ${table}`)
+      } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({
+      roleProvider: grantingRoleProvider, supabaseClients: clients,
+      uploads: { create: async () => { throw new Error('create should not be reached') }, complete: async () => { throw new Error('complete should not be reached for an unknown asset') } },
+    })
+    const response = await app.inject({
+      method: 'POST', url: `/v1/media/${ASSET_ID}/complete`, headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+      payload: { sha256: 'a'.repeat(64) },
+    })
+    expect(response.statusCode).toBe(404)
+    expect(response.json()).toMatchObject({ error: 'media_asset_not_found' })
+  })
+
+  it('rejects completion without post.edit in the asset’s own department', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({ from: (table: string) => {
+        if (table === 'media_assets') return chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID }, error: null })
+        throw new Error(`unexpected service table: ${table}`)
+      } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({
+      roleProvider: denyingRoleProvider, supabaseClients: clients,
+      uploads: { create: async () => { throw new Error('create should not be reached') }, complete: async () => { throw new Error('complete should not be reached without permission') } },
+    })
+    const response = await app.inject({
+      method: 'POST', url: `/v1/media/${ASSET_ID}/complete`, headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+      payload: { sha256: 'a'.repeat(64) },
+    })
+    expect(response.statusCode).toBe(403)
+  })
+
+  it('delegates to uploads.complete once the asset’s own department grants post.edit', async () => {
+    let completeCalledWith: unknown
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({ from: (table: string) => {
+        if (table === 'media_assets') return chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID }, error: null })
+        throw new Error(`unexpected service table: ${table}`)
+      } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({
+      roleProvider: grantingRoleProvider, supabaseClients: clients,
+      uploads: { create: async () => { throw new Error('create should not be reached') }, complete: async (input) => { completeCalledWith = input; return { accepted: true } } },
+    })
+    const response = await app.inject({
+      method: 'POST', url: `/v1/media/${ASSET_ID}/complete`, headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+      payload: { sha256: 'a'.repeat(64) },
+    })
+    expect(response.statusCode).toBe(202)
+    expect(response.json()).toEqual({ accepted: true })
+    expect(completeCalledWith).toEqual({ assetId: ASSET_ID, sha256: 'a'.repeat(64) })
   })
 })

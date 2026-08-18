@@ -1,7 +1,6 @@
 import {
   CommunicationGoalSchema,
   CompositionSessionStatusSchema,
-  ContentPresetSlugSchema,
   CreateCompositionSessionSchema,
   CreateCustomStyleProfileRequestSchema,
   CreateGenerationCommandSchema,
@@ -34,6 +33,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify'
 import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { CLUB_EVENT_COLUMNS, FIXTURE_COLUMNS, mapClubEventRow, mapFixtureRow, mapTeamRow } from '../apiMappers.js'
+import { ensurePassThroughDerivative } from '../passThroughDerivative.js'
 import type { ApiRouteContext } from './context.js'
 import { buildStyleProfilePromptPreview, checkRateLimit, createAuditRecorder, fetchMemberTrust, previewStyleProfile, resolveDirectoryScope, resolvePreviewIdempotencyKey, resolveScopedEffectiveConfig, resolveTextGenerationPlatformAvailability, toPermissionScope } from './shared.js'
 
@@ -48,6 +48,18 @@ const systemStyleProfiles: Record<string, { name: string; description: string; s
 }
 
 const CUSTOM_STYLE_PROFILE_COLUMNS = 'id, organization_id, department_id, team_id, slug, name, description, style_rules, avoid_rules, do_rules, is_active, created_by, created_at, updated_at'
+const SessionMediaAssetSchema = z.object({ organization_id: UuidSchema, department_id: UuidSchema, upload_status: z.string(), people_reviewed_at: z.string().nullable() })
+const SessionAttachmentSchema = z.object({ media_asset_id: UuidSchema })
+const CompletionAssetScopeSchema = z.object({ organization_id: UuidSchema, department_id: UuidSchema })
+
+function parseSupabaseData<T>(schema: z.ZodType<T>, data: unknown): T {
+  const parsed = schema.safeParse(data)
+  if (parsed.success) return parsed.data
+  const error = new Error('Unexpected Supabase response')
+  error.name = 'SupabaseResponseError'
+  throw error
+}
+
 function mapCustomStyleProfileRow(row: Record<string, unknown>) {
   return {
     id: row.id, organizationId: row.organization_id, departmentId: row.department_id, teamId: row.team_id,
@@ -439,12 +451,17 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
   app.post('/v1/text-workshop/sessions', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const input = CreateCompositionSessionSchema.parse(request.body)
-    if (input.mediaAssetIds.length > 0 || input.requestedFormats.some((format) => format !== 'text_post')) return reply.code(422).send({ error: 'text_only_pilot' })
+    // Plan 045, PR 0 Schritt 3: hoechstens ein Foto (kein Karussell, siehe plans/045). requestedFormats
+    // bleibt weiterhin ausschliesslich text_post -- ein angehaengtes Foto ist ein Zusatz zum Text,
+    // keine eigene Formatvariante des noch nicht existierenden Kreativsystems (Plan 005).
+    if (input.mediaAssetIds.length > 1 || input.requestedFormats.some((format) => format !== 'text_post')) return reply.code(422).send({ error: 'text_only_pilot' })
     const scope = toPermissionScope(input.organizationId, input.departmentId, input.teamId ?? null)
     if (!(await requirePermission(request, reply, 'post.create', scope))) return
     const client = supabaseClients.forUser(request.auth!.accessToken)
+    const mediaAssetId = input.mediaAssetIds[0] ?? null
+    // allowedPresets bleibt eine Photo-Pipeline-Policy (/v1/submissions oben): die Textwerkstatt
+    // kennt seit dem Wegfall von "Anlass" keinen presetSlug mehr, den sie dagegen pruefen koennte.
     const config = await resolveScopedEffectiveConfig(client, input.organizationId, input.departmentId, input.teamId ?? null)
-    if (config.policies.allowedPresets?.length && !config.policies.allowedPresets.includes(input.presetSlug)) return reply.code(422).send({ error: 'preset_not_allowed' })
     let styleSnapshot: Record<string, unknown>
     const styleProfileId: string | null = input.styleProfileId ?? null
     if (styleProfileId) {
@@ -484,12 +501,26 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     // Token-Wert: ein echter Wiederholungsversuch derselben Anfrage bleibt damit idempotent, auch
     // wenn ein Plattform-Admin die Vorgabe zwischenzeitlich geaendert hat.
     const sessionHash = createHash('sha256').update(JSON.stringify({
-      presetSlug: input.presetSlug, goal: input.communicationGoal, sourceMaterial, styleSnapshot, sourceRevision: input.sourceRevision,
-      targetPlatforms, maxCharacters: input.maxCharacters ?? null, temperature: input.temperature,
+      goal: input.communicationGoal, sourceMaterial, styleSnapshot, sourceRevision: input.sourceRevision,
+      targetPlatforms, maxCharacters: input.maxCharacters ?? null, temperature: input.temperature, mediaAssetId,
     })).digest('hex')
     const candidateHash = createHash('sha256').update(`${sessionHash}:initial`).digest('hex')
     const idempotencyKey = `generate-text:${sessionHash}:${input.sourceRevision}`
     const service = supabaseClients.forService()
+    if (mediaAssetId) {
+      // Service Client, nicht Nutzer-Client: media_assets_select gewaehrt nur is_department_member,
+      // hier zaehlt aber dieselbe Zugehoerigkeits- und Bereitschaftspruefung wie beim Anhaengen selbst.
+      // Erst hier, nach Persona-/Plattform-Aufloesung: dieselbe "kein Service-Client vor jedem
+      // frueheren Fehlschlag"-Reihenfolge wie der Rest dieser Route.
+      const asset = await service.from('media_assets').select('organization_id, department_id, upload_status, people_reviewed_at').eq('id', mediaAssetId).maybeSingle()
+      if (asset.error) throw asset.error
+      const parsedAsset = asset.data === null ? null : parseSupabaseData(SessionMediaAssetSchema, asset.data)
+      if (!parsedAsset || parsedAsset.organization_id !== input.organizationId || parsedAsset.department_id !== input.departmentId) {
+        return reply.code(404).send({ error: 'media_asset_not_found', correlationId: request.id })
+      }
+      if (parsedAsset.upload_status !== 'ready') return reply.code(422).send({ error: 'media_asset_not_ready', correlationId: request.id })
+      if (parsedAsset.people_reviewed_at === null) return reply.code(422).send({ error: 'media_asset_not_reviewed', correlationId: request.id })
+    }
     // Aufgeloest bei Anlage, danach eingefroren (siehe composition_sessions.max_characters):
     // expliziter Request-Wert > kleinste Vorgabe der gewaehlten Plattformen (aus derselben
     // Verfuegbarkeitspruefung oben) > generischer Fallback. Das Minimum, nicht der Durchschnitt
@@ -509,7 +540,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     const resolvedPlatformLimit = platformLimits.length > 0 ? Math.min(...platformLimits) : TEXT_GENERATION_DEFAULT_MAX_CHARACTERS
     const maxCharacters = input.maxCharacters !== undefined ? Math.min(input.maxCharacters, resolvedPlatformLimit) : resolvedPlatformLimit
     const result = await service.rpc('create_text_generation_session', {
-      p_organization_id: input.organizationId, p_department_id: input.departmentId, p_team_id: input.teamId ?? null, p_preset_slug: input.presetSlug,
+      p_organization_id: input.organizationId, p_department_id: input.departmentId, p_team_id: input.teamId ?? null,
       p_communication_goal: input.communicationGoal, p_requested_formats: input.requestedFormats, p_source_material: sourceMaterial,
       p_style_profile_id: styleProfileId, p_style_profile_snapshot: styleSnapshot, p_effective_config_snapshot: { config: { goals: config.goals, hashtags: config.hashtags, ...config.policies } },
       p_target_platforms: targetPlatforms, p_max_characters: maxCharacters, p_temperature: input.temperature,
@@ -517,7 +548,17 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
       p_created_by: request.auth!.userId, p_correlation_id: request.id, p_idempotency_key: idempotencyKey,
     })
     if (result.error) throw result.error
-    return reply.code(202).send({ ...z.object({ sessionId: UuidSchema, candidateId: UuidSchema }).parse(result.data), correlationId: request.id })
+    const created = z.object({ sessionId: UuidSchema, candidateId: UuidSchema }).parse(result.data)
+    if (mediaAssetId) {
+      // upsert statt insert: create_text_generation_session ist selbst idempotent (derselbe
+      // sessionHash liefert dieselbe Sitzung zurueck) -- ein Retry darf hier nicht an der
+      // unique(composition_session_id)-Bedingung scheitern.
+      const attach = await service
+        .from('composition_session_post_media')
+        .upsert({ organization_id: input.organizationId, composition_session_id: created.sessionId, media_asset_id: mediaAssetId, created_by: request.auth!.userId }, { onConflict: 'composition_session_id' })
+      if (attach.error) throw attach.error
+    }
+    return reply.code(202).send({ ...created, correlationId: request.id })
   })
 
   const TextWorkshopDraftRowSchema = z.object({
@@ -599,7 +640,6 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     department_id: UuidSchema,
     team_id: UuidSchema.nullable(),
     status: CompositionSessionStatusSchema,
-    preset_slug: ContentPresetSlugSchema,
     communication_goal: CommunicationGoalSchema,
     source_material: SourceMaterialSchema,
     style_profile_id: UuidSchema.nullable(),
@@ -614,7 +654,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
   // beide Routen unten teilen sich diese Liste, damit erstellen.vue eine bestehende Sitzung
   // vollstaendig als Formular-Vorbefuellung lesen kann (Beitraege-Liste -> Textwerkstatt
   // wiedereroeffnen), nicht nur ihre Regler-Werte.
-  const COMPOSITION_SESSION_COLUMNS = 'id, organization_id, department_id, team_id, status, preset_slug, communication_goal, source_material, style_profile_id, style_profile_snapshot, target_platforms, max_characters, temperature, created_at'
+  const COMPOSITION_SESSION_COLUMNS = 'id, organization_id, department_id, team_id, status, communication_goal, source_material, style_profile_id, style_profile_snapshot, target_platforms, max_characters, temperature, created_at'
   async function respondWithCompositionSession(client: SupabaseClient, reply: FastifyReply, sessionRow: z.infer<typeof CompositionSessionRowSchema>) {
     const candidates = await client.from('generation_candidates').select('id, status, generated_content, quality_flags, failure_code, triggered_by, accepted_post_version_id, created_at').eq('composition_session_id', sessionRow.id).order('created_at', { ascending: false }).limit(1)
     if (candidates.error) throw candidates.error
@@ -658,7 +698,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     const client = supabaseClients.forUser(request.auth!.accessToken)
     const session = await client
       .from('composition_sessions')
-      .select('id, organization_id, department_id, team_id, preset_slug, communication_goal, requested_formats, source_material, style_profile_id, style_profile_snapshot, effective_config_snapshot, target_platforms, max_characters, temperature, source_revision, input_hash, created_by')
+      .select('id, organization_id, department_id, team_id, communication_goal, requested_formats, source_material, style_profile_id, style_profile_snapshot, effective_config_snapshot, target_platforms, max_characters, temperature, source_revision, input_hash, created_by')
       .eq('id', sessionId)
       .maybeSingle()
     if (session.error) throw session.error
@@ -669,7 +709,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     const service = supabaseClients.forService()
     const result = await service.rpc('create_text_generation_session', {
       p_organization_id: session.data.organization_id, p_department_id: session.data.department_id, p_team_id: session.data.team_id,
-      p_preset_slug: session.data.preset_slug, p_communication_goal: session.data.communication_goal, p_requested_formats: session.data.requested_formats,
+      p_communication_goal: session.data.communication_goal, p_requested_formats: session.data.requested_formats,
       p_source_material: session.data.source_material, p_style_profile_id: session.data.style_profile_id,
       p_style_profile_snapshot: session.data.style_profile_snapshot, p_effective_config_snapshot: session.data.effective_config_snapshot,
       p_target_platforms: session.data.target_platforms, p_max_characters: session.data.max_characters, p_temperature: session.data.temperature,
@@ -693,7 +733,19 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (session.error) throw session.error
     if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(candidate.data.organization_id, session.data.department_id, session.data.team_id)))) return
     const service = supabaseClients.forService()
-    const accepted = await service.rpc('accept_text_generation_candidate', { p_candidate_id: id, p_actor_user_id: request.auth!.userId })
+    // Plan 045, PR 0 Schritt 4: die Sitzung traegt hoechstens einen Foto-Anhang
+    // (composition_session_post_media). Die Sharp/Storage-Arbeit dahinter kann keine reine
+    // SQL-Funktion leisten, deshalb wird sie hier, vor dem RPC-Aufruf, aufgeloest.
+    const attachment = await service.from('composition_session_post_media').select('media_asset_id').eq('composition_session_id', candidate.data.composition_session_id).maybeSingle()
+    if (attachment.error) throw attachment.error
+    let mediaDerivativeId: string | null = null
+    if (attachment.data) {
+      const parsedAttachment = parseSupabaseData(SessionAttachmentSchema, attachment.data)
+      const derivative = await ensurePassThroughDerivative(service, candidate.data.organization_id, parsedAttachment.media_asset_id)
+      if ('error' in derivative) return reply.code(422).send({ error: derivative.error, correlationId: request.id })
+      mediaDerivativeId = derivative.id
+    }
+    const accepted = await service.rpc('accept_text_generation_candidate', { p_candidate_id: id, p_actor_user_id: request.auth!.userId, p_media_derivative_id: mediaDerivativeId })
     if (accepted.error) throw accepted.error
     if (draftId) {
       // An idempotent re-accept only returns the version ID; composition_sessions.post_id is the
@@ -744,12 +796,17 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
   })
   app.post('/v1/media/:assetId/complete', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
-    // Keine requirePermission-Pruefung: welchem Verein/Abteilung ein assetId gehoert, ist
-    // erst bekannt, wenn media_assets echt persistiert wird (LocalUploadService ist noch
-    // ein Stub). Sobald das der Fall ist, muss hier die Zugehoerigkeit nachgeschlagen und
-    // gegen 'post.edit' geprueft werden -- sonst kann jeder authentifizierte Nutzer ein
-    // fremdes assetId abschliessen.
     const params = z.object({ assetId: UuidSchema }).parse(request.params); const body = z.object({ sha256: z.string().regex(/^[a-f0-9]{64}$/i) }).parse(request.body)
+    // Zugehoerigkeit ausschliesslich per Service Client nachschlagen, nie per Nutzer-Client:
+    // media_assets_select gewaehrt nur is_department_member, waehrend das Abschliessen 'post.edit'
+    // verlangt -- reserve_storage_upload() legt die Zeile synchron an (Paket 021), assetId ist ab
+    // dann immer bekannt.
+    const service = supabaseClients.forService()
+    const asset = await service.from('media_assets').select('organization_id, department_id').eq('id', params.assetId).maybeSingle()
+    if (asset.error) throw asset.error
+    if (!asset.data) return reply.code(404).send({ error: 'media_asset_not_found', correlationId: request.id })
+    const parsedAsset = parseSupabaseData(CompletionAssetScopeSchema, asset.data)
+    if (!(await requirePermission(request, reply, 'post.edit', { organizationId: parsedAsset.organization_id, departmentId: parsedAsset.department_id }))) return
     return reply.code(202).send(await uploads.complete({ ...params, ...body }))
   })
   app.post('/v1/media/gate', async (request, reply) => {
@@ -757,7 +814,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     // Keine requirePermission-Pruefung: reine, zustandslose Regelauswertung ohne Scope-Bezug
     // und ohne Datenzugriff -- es gibt nichts scope-Gebundenes, gegen das zu pruefen waere.
     const input = z.object({
-      scanStatus: z.enum(['pending', 'clean', 'failed']), facesConfirmedComplete: z.boolean(), hasOriginalSelected: z.boolean(),
+      scanStatus: z.enum(['pending', 'clean', 'failed']), peopleReviewPending: z.boolean(), hasOriginalSelected: z.boolean(),
       derivativeCurrent: z.boolean(), minorReviewConfirmed: z.boolean(),
       faces: z.array(z.object({
         subjectKind: z.enum(['adult', 'minor', 'unknown']), decision: z.enum(['pending', 'consented', 'obscure', 'exclude']),
