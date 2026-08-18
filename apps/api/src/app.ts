@@ -18,6 +18,7 @@ import {
 } from '@vereinsfunk/publishing'
 import Fastify, { LogController, type FastifyInstance, type FastifyServerOptions } from 'fastify'
 import { randomUUID } from 'node:crypto'
+import { z } from 'zod'
 import { byteaToBuffer, createSecretBoxFromEnvironment } from './secretBox.js'
 import { createAuthGuards, SupabasePlatformAdminProvider, SupabaseRoleProvider, type PlatformAdminProvider, type RoleProvider } from './auth.js'
 import { createEmailSender, type EmailSender } from './email.js'
@@ -75,6 +76,14 @@ export interface BuildAppOptions {
   textGenerator?: StructuredContentGenerator
 }
 
+// Form der embedded PostgREST-Abfrage in loadMetaConfiguration -- publishing_provider_secrets ist
+// null, solange fuer den Provider noch kein Secret hinterlegt wurde.
+const MetaProviderConfigurationRowSchema = z.object({
+  client_id: z.string(),
+  graph_version: z.string().nullable(),
+  publishing_provider_secrets: z.object({ client_secret_ciphertext: z.string(), key_version: z.string() }).nullable(),
+})
+
 class LocalUploadService implements MediaUploadService {
   async create(input: { organizationId: string; departmentId: string; assetId: string; filename: string; mimeType: string; byteSize: number }) { return { uploadUrl: `https://storage.invalid/upload/${input.assetId}`, objectPath: `organizations/${input.organizationId}/departments/${input.departmentId}/assets/${input.assetId}/${input.filename}`, expiresAt: new Date(Date.now() + 10 * 60_000).toISOString() } }
   async complete(): Promise<{ accepted: true }> { return { accepted: true } }
@@ -109,15 +118,27 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   async function loadMetaConfiguration(): Promise<{ clientId: string; clientSecret: string; graphVersion: string }> {
     if (environment.PUBLISHING_MODE !== 'live') return { clientId: '', clientSecret: '', graphVersion: environment.META_GRAPH_VERSION }
     const service = supabaseClients.forService()
-    const configuration = await service.from('publishing_provider_configurations').select('client_id, graph_version').eq('provider', 'meta').maybeSingle()
-    if (configuration.error) throw configuration.error
-    const secret = await service.from('publishing_provider_secrets').select('client_secret_ciphertext, key_version').eq('provider', 'meta').maybeSingle()
-    if (secret.error) throw secret.error
-    if (!configuration.data || !secret.data) throw new Error('meta provider is not configured')
+    // Konfiguration und Secret in EINER Abfrage (PostgREST-Embedding ueber die FK auf provider) --
+    // zwei getrennte maybeSingle()-Aufrufe liefen in getrennten Snapshots und konnten bei einer
+    // Rotation zwischen beiden eine alte Client-ID mit einem neuen Secret kombinieren, obwohl das
+    // Update selbst atomar war (upsert_publishing_provider_configuration).
+    const result = await service
+      .from('publishing_provider_configurations')
+      .select('client_id, graph_version, publishing_provider_secrets(client_secret_ciphertext, key_version)')
+      .eq('provider', 'meta')
+      .maybeSingle()
+    if (result.error) throw result.error
+    if (!result.data) throw new Error('meta provider is not configured')
+    const row = MetaProviderConfigurationRowSchema.parse(result.data)
+    if (!row.publishing_provider_secrets) throw new Error('meta provider is not configured')
     return {
-      clientId: configuration.data.client_id as string,
-      clientSecret: createSecretBoxFromEnvironment(environment).open(byteaToBuffer(secret.data.client_secret_ciphertext as string), secret.data.key_version as string, 'publishing-provider:meta'),
-      graphVersion: (configuration.data.graph_version as string | null) ?? environment.META_GRAPH_VERSION,
+      clientId: row.client_id,
+      clientSecret: createSecretBoxFromEnvironment(environment).open(
+        byteaToBuffer(row.publishing_provider_secrets.client_secret_ciphertext),
+        row.publishing_provider_secrets.key_version,
+        'publishing-provider:meta',
+      ),
+      graphVersion: row.graph_version ?? environment.META_GRAPH_VERSION,
     }
   }
   async function getMetaOAuthClient(): Promise<MetaOAuthClient> {

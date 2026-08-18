@@ -128,6 +128,16 @@ export const ApiEnvironmentSchema = ApiEnvironmentBaseSchema.superRefine((enviro
       if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required when PUBLISHING_PROVIDER includes linkedin` })
     }
   }
+  // Provider-Secrets liegen verschluesselt in Supabase; ohne den Schluesselring kann
+  // loadMetaConfiguration() ein gespeichertes Secret nicht entschluesseln. Ohne diese Pruefung
+  // startet ein Live-Container scheinbar erfolgreich und OAuth/Publishing scheitern erst beim
+  // ersten Aufruf mit einer unklaren Exception.
+  if (environment.PUBLISHING_MODE === 'live') {
+    const requiredSecretBoxFields = ['SECRET_BOX_KEYS', 'SECRET_BOX_CURRENT_KEY_VERSION'] as const
+    for (const key of requiredSecretBoxFields) {
+      if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required when PUBLISHING_MODE=live` })
+    }
+  }
 
   if (environment.NODE_ENV !== 'production') return
   const required = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'WEB_BASE_URL', 'CONSENT_RESPONSE_HASH_PEPPER', 'DATABASE_URL'] as const

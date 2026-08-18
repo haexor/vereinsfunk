@@ -77,7 +77,7 @@ async function savePublishingEnabled() {
   } catch (error) {
     const status = (error as { statusCode?: number })?.statusCode
     errorMessage.value = status === 409
-      ? 'Aktivieren ist erst möglich, nachdem ein echter Publishing-Provider per Deployment konfiguriert wurde.'
+      ? 'Aktivieren ist erst möglich, wenn das Deployment im Live-Modus läuft, mindestens ein Provider aktiv ist und dessen Zugangsdaten gespeichert sind.'
       : 'Publishing-Status konnte nicht gespeichert werden.'
     await load()
   } finally {

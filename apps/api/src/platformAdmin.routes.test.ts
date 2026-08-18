@@ -194,6 +194,12 @@ describe('platform administration', () => {
     expect(rpcName).toBe('upsert_publishing_provider_configuration')
     expect(rpcPayload?.target_client_secret_ciphertext).toBeTruthy()
     expect(JSON.stringify(rpcPayload)).not.toContain('never-return-this-secret')
+    // JSON.stringify allein liesse einen Bug durchrutschen, der das Secret unverschluesselt als
+    // Byte-Array statt als String serialisiert -- deshalb zusaetzlich die entschluesselten Bytes
+    // gegen den Klartext vergleichen und die verwendete Schluesselversion pruefen.
+    const ciphertext = Buffer.from((rpcPayload?.target_client_secret_ciphertext as string).slice(2), 'hex')
+    expect(ciphertext.equals(Buffer.from('never-return-this-secret', 'utf8'))).toBe(false)
+    expect(rpcPayload?.target_key_version).toBe('v1')
   })
 
   it('maps the separation trigger when promoting an existing club member to 409', async () => {

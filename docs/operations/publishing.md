@@ -4,9 +4,10 @@
 
 Vereinsfunk besitzt eine Meta-Entwickler-App als OAuth-Client, aber keine Social-Media-Konten
 der Vereine. Ein berechtigter Vereinsadministrator verbindet jeweils sein eigenes Instagram-
-Professional-Konto, seine Facebook-Seite oder künftig eine LinkedIn-Unternehmensseite. Die
-Zugriffstokens bleiben verschlüsselt in Supabase; Client-Secret und Tokens erreichen weder den
-Browser noch Workflow-Payloads.
+Professional-Konto, seine Facebook-Seite oder künftig eine LinkedIn-Unternehmensseite.
+Ein Plattform-Admin gibt das Client-Secret im Browser ein und übermittelt es an die API.
+Gespeicherte Client-Secrets und Zugriffstokens werden anschließend weder aus Supabase noch in
+einer API-Antwort an den Browser zurückgegeben, und erreichen auch keine Workflow-Payloads.
 
 Es gibt zwei unabhängige Schutzschichten:
 
@@ -48,8 +49,9 @@ OAuth und Publishing fail-closed. So lassen sich Credentials ohne erneutes Deplo
 
 ## Weitere Provider
 
-Die Ansible-Rolle reicht auch `TWITTER_*` und `LINKEDIN_*` ausschließlich an den API-Container
-weiter. Das ist Vorbereitung für die spätere Implementierung. Aktuell sind echte Twitter/X- und
-LinkedIn-Adapter nicht implementiert; `PUBLISHING_MODE=live` verweigert diese Provider daher beim
-Start. Die entsprechenden Credentials oder ein `providers: meta,linkedin`-Eintrag dürfen erst mit
-einem getesteten Adapter-Release aktiviert werden.
+Twitter/X und LinkedIn nutzen dieselbe Laufzeitkonfiguration wie Meta -- Client-ID und Secret
+werden ebenfalls unter **Plattform-Administration → Einstellungen → Social-Media-Provider**
+hinterlegt, nicht per Deployment injiziert. Aktuell sind echte Twitter/X- und LinkedIn-Adapter
+nicht implementiert; `PUBLISHING_MODE=live` verweigert diese Provider daher beim Start. Ein
+`providers: meta,twitter,linkedin`-Eintrag für diese beiden darf erst mit einem getesteten
+Adapter-Release aktiviert werden.
