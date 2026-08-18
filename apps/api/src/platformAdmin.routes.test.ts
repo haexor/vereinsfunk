@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { ORGANIZATION_ID, USER_ID, adminProvider, chain, defaultAdminProvider, nonAdminProvider, signAccessToken, startApp } from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
@@ -116,7 +116,14 @@ describe('platform administration', () => {
   })
 
   it('does not let the UI enable publishing when this deployment has no live provider', async () => {
-    const app = await startApp({ platformAdminProvider: adminProvider })
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({ from: (table: string) => {
+        if (table === 'publishing_provider_configurations' || table === 'publishing_provider_secrets') return chain({ data: [], error: null })
+        throw new Error(`unexpected table in publishing configuration test: ${table}`)
+      } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'PUT',
@@ -126,6 +133,67 @@ describe('platform administration', () => {
     })
     expect(response.statusCode).toBe(409)
     expect(response.json()).toMatchObject({ error: 'publishing_not_configured' })
+  })
+
+  it('does not enable live publishing until every active provider has both runtime records', async () => {
+    vi.stubEnv('PUBLISHING_MODE', 'live')
+    vi.stubEnv('PUBLISHING_PROVIDER', 'meta')
+    vi.stubEnv('META_OAUTH_REDIRECT_URL', 'https://api.example.test/v1/channels/connect')
+    vi.stubEnv('API_PUBLIC_BASE_URL', 'https://api.example.test')
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({ from: (table: string) => {
+        if (table === 'publishing_provider_configurations' || table === 'publishing_provider_secrets') return chain({ data: [], error: null })
+        throw new Error(`unexpected table in publishing configuration test: ${table}`)
+      } }) as unknown as SupabaseClient,
+    }
+    try {
+      const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'PUT', url: '/v1/platform-settings/publishing_enabled', headers: { authorization: `Bearer ${token}` }, payload: { value: true } })
+      expect(response.statusCode).toBe(409)
+      expect(response.json()).toMatchObject({ error: 'publishing_not_configured' })
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('reports a publishing provider secret only when a separate secret record exists', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({ from: (table: string) => {
+        if (table === 'publishing_provider_configurations') return chain({ data: [{ provider: 'meta', client_id: 'meta-client', graph_version: 'v21.0', updated_at: '2026-08-18T10:00:00+00:00' }], error: null })
+        if (table === 'publishing_provider_secrets') return chain({ data: [], error: null })
+        throw new Error(`unexpected table in publishing provider list test: ${table}`)
+      } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: '/v1/publishing-providers', headers: { authorization: `Bearer ${token}` } })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual([{ provider: 'meta', clientId: 'meta-client', graphVersion: 'v21.0', hasSecret: false, updatedAt: '2026-08-18T10:00:00+00:00' }])
+  })
+
+  it('stores publishing provider metadata and encrypted secret through one atomic RPC', async () => {
+    let rpcName: string | undefined
+    let rpcPayload: Record<string, unknown> | undefined
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({ rpc: (name: string, payload: Record<string, unknown>) => {
+        rpcName = name
+        rpcPayload = payload
+        return { single: async () => ({ data: { provider: 'meta', client_id: 'meta-client', graph_version: 'v21.0', updated_at: '2026-08-18T10:00:00+00:00' }, error: null }) }
+      } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'PUT', url: '/v1/publishing-providers/meta', headers: { authorization: `Bearer ${token}` }, payload: { clientId: 'meta-client', clientSecret: 'never-return-this-secret', graphVersion: 'v21.0' } })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ provider: 'meta', clientId: 'meta-client', hasSecret: true })
+    expect(JSON.stringify(response.json())).not.toContain('never-return-this-secret')
+    expect(rpcName).toBe('upsert_publishing_provider_configuration')
+    expect(rpcPayload?.target_client_secret_ciphertext).toBeTruthy()
+    expect(JSON.stringify(rpcPayload)).not.toContain('never-return-this-secret')
   })
 
   it('maps the separation trigger when promoting an existing club member to 409', async () => {

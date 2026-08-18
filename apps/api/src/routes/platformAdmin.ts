@@ -184,10 +184,26 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
     // Der Datenbank-Schalter ist absichtlich nur der Laufzeit-Not-Aus. Aktivieren darf er
     // niemanden, solange der API-Container selbst keine echte Provider-Konfiguration besitzt;
     // das waere sonst eine UI, die "aktiv" meldet, obwohl jeder Publish sicher scheitert.
-    if (params.key === 'publishing_enabled' && value === true && environment.PUBLISHING_MODE !== 'live') {
-      return reply.code(409).send({ error: 'publishing_not_configured', correlationId: request.id })
-    }
     const service = supabaseClients.forService()
+    if (params.key === 'publishing_enabled' && value === true) {
+      if (environment.PUBLISHING_MODE !== 'live') return reply.code(409).send({ error: 'publishing_not_configured', correlationId: request.id })
+      // Der Deployment-Modus allein sagt nur, dass dieser API-Container einen echten Adapter
+      // verwenden darf. Fuer jeden aktivierten Provider muessen Metadaten UND das separat
+      // gespeicherte Secret vorhanden sein, sonst scheitert jeder Publish erst zur Laufzeit.
+      const activeProviders = environment.PUBLISHING_PROVIDER
+      if (activeProviders.length === 0) return reply.code(409).send({ error: 'publishing_not_configured', correlationId: request.id })
+      const [configurations, secrets] = await Promise.all([
+        service.from('publishing_provider_configurations').select('provider').in('provider', activeProviders),
+        service.from('publishing_provider_secrets').select('provider').in('provider', activeProviders),
+      ])
+      if (configurations.error) throw configurations.error
+      if (secrets.error) throw secrets.error
+      const configuredProviders = new Set(configurations.data.map((row) => row.provider as string))
+      const secretProviders = new Set(secrets.data.map((row) => row.provider as string))
+      if (activeProviders.some((provider) => !configuredProviders.has(provider) || !secretProviders.has(provider))) {
+        return reply.code(409).send({ error: 'publishing_not_configured', correlationId: request.id })
+      }
+    }
     const update = await service
       .from('platform_settings')
       .update({ value, updated_by: request.auth!.userId })
@@ -204,11 +220,16 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
     if (!(await requireAuth(request, reply))) return
     if (!(await requirePlatformAdmin(request, reply))) return
     const service = supabaseClients.forService()
-    const result = await service.from('publishing_provider_configurations').select('provider, client_id, graph_version, updated_at, publishing_provider_secrets(key_version)').order('provider')
-    if (result.error) throw result.error
-    return reply.code(200).send(result.data.map((row) => PublishingProviderConfigurationSchema.parse({
+    const [configurations, secrets] = await Promise.all([
+      service.from('publishing_provider_configurations').select('provider, client_id, graph_version, updated_at').order('provider'),
+      service.from('publishing_provider_secrets').select('provider'),
+    ])
+    if (configurations.error) throw configurations.error
+    if (secrets.error) throw secrets.error
+    const secretProviders = new Set(secrets.data.map((row) => row.provider as string))
+    return reply.code(200).send(configurations.data.map((row) => PublishingProviderConfigurationSchema.parse({
       provider: row.provider, clientId: row.client_id, graphVersion: row.graph_version,
-      hasSecret: Boolean(row.publishing_provider_secrets), updatedAt: row.updated_at,
+      hasSecret: secretProviders.has(row.provider as string), updatedAt: row.updated_at,
     })))
   })
 
@@ -220,17 +241,21 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
     const secretBox = createSecretBoxFromEnvironment(environment)
     const sealed = secretBox.seal(input.clientSecret, `publishing-provider:${params.provider}`)
     const service = supabaseClients.forService()
-    const configuration = await service.from('publishing_provider_configurations').upsert({
-      provider: params.provider, client_id: input.clientId, graph_version: input.graphVersion ?? null, updated_by: request.auth!.userId,
-    }, { onConflict: 'provider' }).select('provider, client_id, graph_version, updated_at').single()
+    // Die beiden Tabellen muessen gemeinsam wechseln. Zwei PostgREST-Aufrufe könnten bei einem
+    // Fehler Client-ID und Secret aus unterschiedlichen Versionen hinterlassen.
+    const configuration = await service.rpc('upsert_publishing_provider_configuration', {
+      target_provider: params.provider,
+      target_client_id: input.clientId,
+      target_graph_version: input.graphVersion ?? null,
+      target_client_secret_ciphertext: ciphertextToBytea(sealed.ciphertext),
+      target_key_version: sealed.keyVersion,
+      actor_user_id: request.auth!.userId,
+    }).single()
     if (configuration.error) throw configuration.error
-    const secret = await service.from('publishing_provider_secrets').upsert({
-      provider: params.provider, client_secret_ciphertext: ciphertextToBytea(sealed.ciphertext), key_version: sealed.keyVersion,
-    }, { onConflict: 'provider' })
-    if (secret.error) throw secret.error
+    const configurationRow = z.object({ provider: PublishingProviderSchema, client_id: z.string(), graph_version: z.string().nullable(), updated_at: z.string() }).parse(configuration.data)
     return reply.code(200).send(PublishingProviderConfigurationSchema.parse({
-      provider: configuration.data.provider, clientId: configuration.data.client_id, graphVersion: configuration.data.graph_version,
-      hasSecret: true, updatedAt: configuration.data.updated_at,
+      provider: configurationRow.provider, clientId: configurationRow.client_id, graphVersion: configurationRow.graph_version,
+      hasSecret: true, updatedAt: configurationRow.updated_at,
     }))
   })
 
