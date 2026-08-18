@@ -39,10 +39,13 @@ select set_config('request.jwt.claim.sub', '45000000-0000-4000-8000-000000000001
 
 -- 2-3: "no people" contradicts an already marked face region -- this is the check that keeps
 -- confirm_media_people_review from being the rubberstamp mediaGate.ts:42/130 used to be.
-set local role postgres;
+-- Inserted AS authenticated (department_admin), not postgres: this is what the browser's own
+-- Foto-Markier-UI does directly, and it is what caught the missing SECURITY DEFINER on
+-- invalidate_people_review_on_face_change() (real Playwright run, "permission denied for table
+-- media_assets") -- a postgres-role fixture insert would never have exercised that trigger's own
+-- privileges and would have stayed green despite the bug.
 insert into public.face_regions (id, organization_id, media_asset_id, x, y, width, height, source, subject_kind, decision) values
   ('45000000-3000-4000-8000-000000000001', '45000000-1000-4000-8000-000000000001', '45000000-2000-4000-8000-000000000001', 0.1, 0.1, 0.2, 0.2, 'manual', 'adult', 'pending');
-set local role authenticated;
 select throws_ok(
   $$select public.confirm_media_people_review('45000000-2000-4000-8000-000000000001', false)$$,
   'P0001', 'faces_present_mismatch', '"no people" is rejected while a face region already exists for this asset'
@@ -87,13 +90,14 @@ select is(
   null, 'updating an existing face region resets the people-review signal'
 );
 
--- 7: re-confirm, then DELETE-ing a region invalidates it again too.
-set local role authenticated;
+-- 7: re-confirm, then DELETE-ing a region invalidates it again too. Deleted AS authenticated, not
+-- postgres: the browser's own "Markierung entfernen" button does exactly this and needs a real
+-- DELETE grant on face_regions, which the original 202608030001 migration never issued (found via
+-- the same Playwright run as the SECURITY DEFINER gap above).
 select ok(
   (select people_reviewed_at from public.confirm_media_people_review('45000000-2000-4000-8000-000000000001', true)) is not null,
   're-confirming succeeds a second time'
 );
-set local role postgres;
 delete from public.face_regions where id = '45000000-3000-4000-8000-000000000002';
 select is(
   (select people_reviewed_at from public.media_assets where id = '45000000-2000-4000-8000-000000000001'),
