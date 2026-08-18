@@ -744,12 +744,16 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
   })
   app.post('/v1/media/:assetId/complete', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
-    // Keine requirePermission-Pruefung: welchem Verein/Abteilung ein assetId gehoert, ist
-    // erst bekannt, wenn media_assets echt persistiert wird (LocalUploadService ist noch
-    // ein Stub). Sobald das der Fall ist, muss hier die Zugehoerigkeit nachgeschlagen und
-    // gegen 'post.edit' geprueft werden -- sonst kann jeder authentifizierte Nutzer ein
-    // fremdes assetId abschliessen.
     const params = z.object({ assetId: UuidSchema }).parse(request.params); const body = z.object({ sha256: z.string().regex(/^[a-f0-9]{64}$/i) }).parse(request.body)
+    // Zugehoerigkeit ausschliesslich per Service Client nachschlagen, nie per Nutzer-Client:
+    // media_assets_select gewaehrt nur is_department_member, waehrend das Abschliessen 'post.edit'
+    // verlangt -- reserve_storage_upload() legt die Zeile synchron an (Paket 021), assetId ist ab
+    // dann immer bekannt.
+    const service = supabaseClients.forService()
+    const asset = await service.from('media_assets').select('organization_id, department_id').eq('id', params.assetId).maybeSingle()
+    if (asset.error) throw asset.error
+    if (!asset.data) return reply.code(404).send({ error: 'media_asset_not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'post.edit', { organizationId: asset.data.organization_id, departmentId: asset.data.department_id }))) return
     return reply.code(202).send(await uploads.complete({ ...params, ...body }))
   })
   app.post('/v1/media/gate', async (request, reply) => {

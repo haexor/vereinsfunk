@@ -952,3 +952,71 @@ describe('text workshop drafts', () => {
     ]))
   })
 })
+
+describe('POST /v1/media/:assetId/complete', () => {
+  const ASSET_ID = '3f000000-0000-4000-8000-000000000006'
+
+  // Plan 045, PR 0 Step 1: welchem Verein/welcher Abteilung ein assetId gehoert, wird ab jetzt
+  // per Service Client nachgeschlagen und gegen 'post.edit' geprueft, statt (wie vorher) gar
+  // nicht -- jeder authentifizierte Nutzer konnte sonst ein fremdes assetId abschliessen.
+  it('returns 404 for an unknown assetId without ever calling uploads.complete', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({ from: (table: string) => {
+        if (table === 'media_assets') return chain({ data: null, error: null })
+        throw new Error(`unexpected service table: ${table}`)
+      } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({
+      roleProvider: grantingRoleProvider, supabaseClients: clients,
+      uploads: { create: async () => { throw new Error('create should not be reached') }, complete: async () => { throw new Error('complete should not be reached for an unknown asset') } },
+    })
+    const response = await app.inject({
+      method: 'POST', url: `/v1/media/${ASSET_ID}/complete`, headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+      payload: { sha256: 'a'.repeat(64) },
+    })
+    expect(response.statusCode).toBe(404)
+    expect(response.json()).toMatchObject({ error: 'media_asset_not_found' })
+  })
+
+  it('rejects completion without post.edit in the asset’s own department', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({ from: (table: string) => {
+        if (table === 'media_assets') return chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID }, error: null })
+        throw new Error(`unexpected service table: ${table}`)
+      } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({
+      roleProvider: denyingRoleProvider, supabaseClients: clients,
+      uploads: { create: async () => { throw new Error('create should not be reached') }, complete: async () => { throw new Error('complete should not be reached without permission') } },
+    })
+    const response = await app.inject({
+      method: 'POST', url: `/v1/media/${ASSET_ID}/complete`, headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+      payload: { sha256: 'a'.repeat(64) },
+    })
+    expect(response.statusCode).toBe(403)
+  })
+
+  it('delegates to uploads.complete once the asset’s own department grants post.edit', async () => {
+    let completeCalledWith: unknown
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({ from: (table: string) => {
+        if (table === 'media_assets') return chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID }, error: null })
+        throw new Error(`unexpected service table: ${table}`)
+      } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({
+      roleProvider: grantingRoleProvider, supabaseClients: clients,
+      uploads: { create: async () => { throw new Error('create should not be reached') }, complete: async (input) => { completeCalledWith = input; return { accepted: true } } },
+    })
+    const response = await app.inject({
+      method: 'POST', url: `/v1/media/${ASSET_ID}/complete`, headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+      payload: { sha256: 'a'.repeat(64) },
+    })
+    expect(response.statusCode).toBe(202)
+    expect(response.json()).toEqual({ accepted: true })
+    expect(completeCalledWith).toEqual({ assetId: ASSET_ID, sha256: 'a'.repeat(64) })
+  })
+})
