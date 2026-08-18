@@ -120,7 +120,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     // Rohtoken) ueberhaupt sichtbar wird -- ohne message.text waere die Einladung lokal nicht
     // einloesbar, obwohl sie serverseitig korrekt erzeugt wurde.
     createEmailSender(environment, (message) => app.log.info({ to: message.to, subject: message.subject, text: message.text }, 'invitation email (fake provider)'))
-  const { requireAuth, requirePermission, requirePlatformAdmin } = createAuthGuards(environment, roleProvider, platformAdminProvider)
+  const { requireAuth, requirePermission, requirePermissionAnyOf, requirePlatformAdmin } = createAuthGuards(environment, roleProvider, platformAdminProvider)
 
   // Paket 025: ein MetaPublisher braucht das entschluesselte Token GENAU dieser Social-Connection
   // (anders als metaOAuthClient oben, das appId/appSecret-Ebene bleibt) -- deshalb keine einmalige
@@ -154,6 +154,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     linkedinOAuthClient,
     requireAuth,
     requirePermission,
+    requirePermissionAnyOf,
     requirePlatformAdmin,
     createPublisherForConnection,
     ...(options.textGenerator ? { textGenerator: options.textGenerator } : {}),

@@ -237,6 +237,28 @@ export function createAuthGuards(
     return true
   }
 
+  // Plan 045, PR 0 Schritt 3: GET /v1/consents braucht ein zweites, aehnlich strenges Tor --
+  // wer ein Foto anhaengen und eine Box markieren darf (post.edit), muss beim Verknuepfen auch
+  // sehen koennen, welche Einwilligungen fuer diese Abteilung ueberhaupt existieren, nicht nur
+  // eine Vereinsverwaltung (consent.manage). Betreiberentscheidung, siehe Migrationskommentar.
+  const requirePermissionAnyOf = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+    permissions: readonly Permission[],
+    scope: PermissionScope,
+  ): Promise<boolean> => {
+    if (!request.auth) {
+      reply.code(401).send({ error: 'unauthorized', correlationId: request.id })
+      return false
+    }
+    const roles = await roleProvider.rolesForScope(request.auth, scope)
+    if (!permissions.some((permission) => hasPermission(roles, permission))) {
+      reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+      return false
+    }
+    return true
+  }
+
   const requirePlatformAdmin = async (request: FastifyRequest, reply: FastifyReply): Promise<boolean> => {
     if (!request.auth) {
       reply.code(401).send({ error: 'unauthorized', correlationId: request.id })
@@ -251,5 +273,5 @@ export function createAuthGuards(
     return true
   }
 
-  return { requireAuth, requirePermission, requirePlatformAdmin }
+  return { requireAuth, requirePermission, requirePermissionAnyOf, requirePlatformAdmin }
 }

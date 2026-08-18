@@ -312,6 +312,69 @@ describe('POST /v1/text-workshop/sessions', () => {
     expect(response.statusCode).toBe(422)
     expect(response.json()).toMatchObject({ error: 'platform_not_available', platform: 'facebook' })
   })
+
+  // Plan 045, PR 0 Schritt 3: hoechstens ein Foto-Anhang, geprueft und angehaengt in derselben Route.
+  describe('mediaAssetIds (photo attachment)', () => {
+    const MEDIA_ASSET_ID = '3c000000-0000-4000-8000-000000000010'
+    const SESSION_ID = '3c000000-0000-4000-8000-000000000011'
+
+    it('rejects more than one attached photo with the same text_only_pilot gate as any other format', async () => {
+      const response = await createSession({ forUser: () => ({}) as unknown as SupabaseClient, forService: () => { throw new Error('forService should not be reached') } }, { ...basePayload, mediaAssetIds: [MEDIA_ASSET_ID, '3c000000-0000-4000-8000-000000000012'] })
+      expect(response.statusCode).toBe(422)
+      expect(response.json()).toMatchObject({ error: 'text_only_pilot' })
+    })
+
+    function clientsWithAsset(asset: Record<string, unknown> | null, capturedAttach?: Record<string, unknown>[]): SupabaseClientFactory {
+      return {
+        forUser: () => ({
+          from: (table: string) => {
+            if (table === 'policy_settings') return policySettingsFake()
+            if (table === 'social_connections') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.socialConnections, error: null })
+            if (table === 'channel_scopes') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.channelScopes, error: null })
+            if (table === 'text_generation_platform_defaults') return chain({ data: [{ platform: 'instagram', max_characters: 2200 }, { platform: 'facebook', max_characters: 2200 }], error: null })
+            throw new Error(`unexpected user table: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+        forService: () => ({
+          from: (table: string) => {
+            if (table === 'media_assets') return chain({ data: asset, error: null })
+            if (table === 'composition_session_post_media') return { upsert: (row: Record<string, unknown>) => { capturedAttach?.push(row); return { then: (resolve: (result: { data: null; error: null }) => unknown) => resolve({ data: null, error: null }) } } }
+            throw new Error(`unexpected service table: ${table}`)
+          },
+          rpc: async () => ({ data: { sessionId: SESSION_ID, candidateId: '3c000000-0000-4000-8000-000000000013' }, error: null }),
+        }) as unknown as SupabaseClient,
+      }
+    }
+
+    it('attaches a ready, people-reviewed photo to the newly created session', async () => {
+      const captured: Record<string, unknown>[] = []
+      const clients = clientsWithAsset({ organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, upload_status: 'ready', people_reviewed_at: '2026-08-18T00:00:00+00:00' }, captured)
+      const response = await createSession(clients, { ...basePayload, mediaAssetIds: [MEDIA_ASSET_ID] })
+      expect(response.statusCode).toBe(202)
+      expect(captured).toEqual([{ organization_id: ORGANIZATION_ID, composition_session_id: SESSION_ID, media_asset_id: MEDIA_ASSET_ID, created_by: USER_ID }])
+    })
+
+    it('rejects a photo that has not finished upload processing yet', async () => {
+      const clients = clientsWithAsset({ organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, upload_status: 'initiated', people_reviewed_at: null })
+      const response = await createSession(clients, { ...basePayload, mediaAssetIds: [MEDIA_ASSET_ID] })
+      expect(response.statusCode).toBe(422)
+      expect(response.json()).toMatchObject({ error: 'media_asset_not_ready' })
+    })
+
+    it('rejects a ready photo that has not been reviewed for people yet', async () => {
+      const clients = clientsWithAsset({ organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, upload_status: 'ready', people_reviewed_at: null })
+      const response = await createSession(clients, { ...basePayload, mediaAssetIds: [MEDIA_ASSET_ID] })
+      expect(response.statusCode).toBe(422)
+      expect(response.json()).toMatchObject({ error: 'media_asset_not_reviewed' })
+    })
+
+    it('rejects a photo belonging to a different department, even within the same organization', async () => {
+      const clients = clientsWithAsset({ organization_id: ORGANIZATION_ID, department_id: '30000000-0000-4000-8000-000000000099', upload_status: 'ready', people_reviewed_at: '2026-08-18T00:00:00+00:00' })
+      const response = await createSession(clients, { ...basePayload, mediaAssetIds: [MEDIA_ASSET_ID] })
+      expect(response.statusCode).toBe(404)
+      expect(response.json()).toMatchObject({ error: 'media_asset_not_found' })
+    })
+  })
 })
 
 // Wiedereinstieg aus der Beitraege-Liste (Textwerkstatt fuer einen draft_ready/changes_requested-

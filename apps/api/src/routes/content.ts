@@ -440,10 +440,14 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
   app.post('/v1/text-workshop/sessions', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const input = CreateCompositionSessionSchema.parse(request.body)
-    if (input.mediaAssetIds.length > 0 || input.requestedFormats.some((format) => format !== 'text_post')) return reply.code(422).send({ error: 'text_only_pilot' })
+    // Plan 045, PR 0 Schritt 3: hoechstens ein Foto (kein Karussell, siehe plans/045). requestedFormats
+    // bleibt weiterhin ausschliesslich text_post -- ein angehaengtes Foto ist ein Zusatz zum Text,
+    // keine eigene Formatvariante des noch nicht existierenden Kreativsystems (Plan 005).
+    if (input.mediaAssetIds.length > 1 || input.requestedFormats.some((format) => format !== 'text_post')) return reply.code(422).send({ error: 'text_only_pilot' })
     const scope = toPermissionScope(input.organizationId, input.departmentId, input.teamId ?? null)
     if (!(await requirePermission(request, reply, 'post.create', scope))) return
     const client = supabaseClients.forUser(request.auth!.accessToken)
+    const mediaAssetId = input.mediaAssetIds[0] ?? null
     const config = await resolveScopedEffectiveConfig(client, input.organizationId, input.departmentId, input.teamId ?? null)
     if (config.policies.allowedPresets?.length && !config.policies.allowedPresets.includes(input.presetSlug)) return reply.code(422).send({ error: 'preset_not_allowed' })
     let styleSnapshot: Record<string, unknown>
@@ -491,6 +495,19 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     const candidateHash = createHash('sha256').update(`${sessionHash}:initial`).digest('hex')
     const idempotencyKey = `generate-text:${sessionHash}:${input.sourceRevision}`
     const service = supabaseClients.forService()
+    if (mediaAssetId) {
+      // Service Client, nicht Nutzer-Client: media_assets_select gewaehrt nur is_department_member,
+      // hier zaehlt aber dieselbe Zugehoerigkeits- und Bereitschaftspruefung wie beim Anhaengen selbst.
+      // Erst hier, nach Persona-/Plattform-Aufloesung: dieselbe "kein Service-Client vor jedem
+      // frueheren Fehlschlag"-Reihenfolge wie der Rest dieser Route.
+      const asset = await service.from('media_assets').select('organization_id, department_id, upload_status, people_reviewed_at').eq('id', mediaAssetId).maybeSingle()
+      if (asset.error) throw asset.error
+      if (!asset.data || asset.data.organization_id !== input.organizationId || asset.data.department_id !== input.departmentId) {
+        return reply.code(404).send({ error: 'media_asset_not_found', correlationId: request.id })
+      }
+      if (asset.data.upload_status !== 'ready') return reply.code(422).send({ error: 'media_asset_not_ready', correlationId: request.id })
+      if (asset.data.people_reviewed_at === null) return reply.code(422).send({ error: 'media_asset_not_reviewed', correlationId: request.id })
+    }
     // Aufgeloest bei Anlage, danach eingefroren (siehe composition_sessions.max_characters):
     // expliziter Request-Wert > kleinste Vorgabe der gewaehlten Plattformen (aus derselben
     // Verfuegbarkeitspruefung oben) > generischer Fallback. Das Minimum, nicht der Durchschnitt
@@ -518,7 +535,17 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
       p_created_by: request.auth!.userId, p_correlation_id: request.id, p_idempotency_key: idempotencyKey,
     })
     if (result.error) throw result.error
-    return reply.code(202).send({ ...z.object({ sessionId: UuidSchema, candidateId: UuidSchema }).parse(result.data), correlationId: request.id })
+    const created = z.object({ sessionId: UuidSchema, candidateId: UuidSchema }).parse(result.data)
+    if (mediaAssetId) {
+      // upsert statt insert: create_text_generation_session ist selbst idempotent (derselbe
+      // sessionHash liefert dieselbe Sitzung zurueck) -- ein Retry darf hier nicht an der
+      // unique(composition_session_id)-Bedingung scheitern.
+      const attach = await service
+        .from('composition_session_post_media')
+        .upsert({ organization_id: input.organizationId, composition_session_id: created.sessionId, media_asset_id: mediaAssetId, created_by: request.auth!.userId }, { onConflict: 'composition_session_id' })
+      if (attach.error) throw attach.error
+    }
+    return reply.code(202).send({ ...created, correlationId: request.id })
   })
 
   const TextWorkshopDraftRowSchema = z.object({

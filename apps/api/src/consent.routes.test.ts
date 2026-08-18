@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEPARTMENT_ID, ORGANIZATION_ID, USER_ID, chain, denyingRoleProvider, organizationManagerRoleProvider, signAccessToken, startApp } from './testSupport.js'
+import { DEPARTMENT_ID, ORGANIZATION_ID, USER_ID, chain, denyingRoleProvider, grantingRoleProvider, organizationManagerRoleProvider, signAccessToken, startApp } from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
 
@@ -405,6 +405,29 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
       lastStatus = response.statusCode
     }
     expect(lastStatus).toBe(429)
+  })
+})
+
+// Plan 045, PR 0 Schritt 3: die Foto-Markier-UI braucht dieselbe Einwilligungsliste, die bisher nur
+// consent.manage (Vereinsverwaltung) einsehen durfte -- wer eine Box markieren darf (post.edit),
+// muss verknuepfen koennen, ohne eine Vereinsverwaltung zu bemuehen. Betreiberentscheidung, 2026-08-18.
+describe('GET /v1/consents -- post.edit access (Plan 045)', () => {
+  it('rejects a caller with neither consent.manage nor post.edit', async () => {
+    const app = await startApp({ roleProvider: denyingRoleProvider, supabaseClients: { forUser: () => ({}) as unknown as SupabaseClient, forService: () => { throw new Error('forService should not be reached') } } as unknown as SupabaseClientFactory })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: `/v1/consents?organizationId=${ORGANIZATION_ID}`, headers: { authorization: `Bearer ${token}` } })
+    expect(response.statusCode).toBe(403)
+  })
+
+  it('allows a plain editor (post.edit, no consent.manage) to list consents', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({ from: (table: string) => { if (table === 'consent_records') return chain({ data: [], error: null }); throw new Error(`unexpected table: ${table}`) } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: `/v1/consents?organizationId=${ORGANIZATION_ID}`, headers: { authorization: `Bearer ${token}` } })
+    expect(response.statusCode).toBe(200)
   })
 })
 
