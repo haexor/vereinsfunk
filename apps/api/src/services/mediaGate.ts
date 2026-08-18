@@ -39,7 +39,7 @@ export async function computeMediaGateBlockersForPostVersion(
   if (derivativeIds.length === 0) {
     const scan = scanTextForSensitiveData(`${postVersion.data.title as string} ${postVersion.data.caption as string}`, [])
     return evaluateMediaGate({
-      scanStatus: 'clean', facesConfirmedComplete: true, hasOriginalSelected: false, derivativeCurrent: true,
+      scanStatus: 'clean', peopleReviewPending: false, hasOriginalSelected: false, derivativeCurrent: true,
       faces: [], minorReviewConfirmed: false, namingNotAllowed: scan.namingNotAllowed, sensitiveTextData: scan.sensitiveTextData,
     }).blockers
   }
@@ -48,7 +48,7 @@ export async function computeMediaGateBlockersForPostVersion(
   if (derivatives.error) throw derivatives.error
   const assetIds = Array.from(new Set(derivatives.data.map((row) => row.media_asset_id as string)))
   const [assets, faces] = await Promise.all([
-    client.from('media_assets').select('id, mime_type, scan_status').in('id', assetIds),
+    client.from('media_assets').select('id, mime_type, scan_status, people_reviewed_at').in('id', assetIds),
     client.from('face_regions').select('media_asset_id, subject_kind, decision, consent_record_id').in('media_asset_id', assetIds),
   ])
   if (assets.error) throw assets.error
@@ -125,9 +125,11 @@ export async function computeMediaGateBlockersForPostVersion(
       ? 'clean'
       : 'pending'
   const derivativeCurrent = derivatives.data.every((row) => row.status === 'ready')
+  // Plan 045, PR 0 Schritt 2: people_reviewed_at is null statt der vorherigen Konstante true.
+  const peopleReviewPending = assets.data.some((row) => row.people_reviewed_at === null)
 
   return evaluateMediaGate({
-    scanStatus, facesConfirmedComplete: true, hasOriginalSelected: false, derivativeCurrent,
+    scanStatus, peopleReviewPending, hasOriginalSelected: false, derivativeCurrent,
     faces: faceInputs, minorReviewConfirmed: false, namingNotAllowed: scan.namingNotAllowed, sensitiveTextData: scan.sensitiveTextData,
   }).blockers
 }
@@ -140,5 +142,5 @@ export async function computeMediaGateBlockersForPostVersion(
 // Kommentar in der Migration). Diese Wiederholung hier ist Tiefenverteidigung fuer den Fall, dass
 // sich der Medien-/Consent-Zustand zwischen Einplanung und tatsaechlicher Ausfuehrung aendert
 // (Plan 002, Pflichtszenario 5: Widerruf nach Freigabe).
-export const HARD_PUBLISH_BLOCKERS: readonly MediaGateBlocker[] = ['scan_pending', 'face_pending', 'consent_invalid', 'derivative_stale']
+export const HARD_PUBLISH_BLOCKERS: readonly MediaGateBlocker[] = ['scan_pending', 'people_review_pending', 'face_pending', 'consent_invalid', 'derivative_stale']
 

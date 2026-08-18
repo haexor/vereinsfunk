@@ -761,7 +761,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     // Keine requirePermission-Pruefung: reine, zustandslose Regelauswertung ohne Scope-Bezug
     // und ohne Datenzugriff -- es gibt nichts scope-Gebundenes, gegen das zu pruefen waere.
     const input = z.object({
-      scanStatus: z.enum(['pending', 'clean', 'failed']), facesConfirmedComplete: z.boolean(), hasOriginalSelected: z.boolean(),
+      scanStatus: z.enum(['pending', 'clean', 'failed']), peopleReviewPending: z.boolean(), hasOriginalSelected: z.boolean(),
       derivativeCurrent: z.boolean(), minorReviewConfirmed: z.boolean(),
       faces: z.array(z.object({
         subjectKind: z.enum(['adult', 'minor', 'unknown']), decision: z.enum(['pending', 'consented', 'obscure', 'exclude']),

@@ -324,6 +324,17 @@ insert into public.face_regions (id, organization_id, media_asset_id, x, y, widt
   ('65000000-6200-4000-8000-000000000003', '65000000-1000-4000-8000-000000000001', '65000000-6100-4000-8000-000000000005', 0.1, 0.1, 0.2, 0.2, 'manual', 'minor', 'consented', '65000000-6500-4000-8000-000000000002', '65000000-0000-4000-8000-000000000001'),
   ('65000000-6200-4000-8000-000000000004', '65000000-1000-4000-8000-000000000001', '65000000-6100-4000-8000-000000000006', 0.1, 0.1, 0.2, 0.2, 'manual', 'adult', 'consented', '65000000-6500-4000-8000-000000000003', '65000000-0000-4000-8000-000000000001');
 
+-- After, not before, the face_regions inserts above -- each of those fires the new
+-- invalidate_people_review_on_face_change trigger (Plan 045, PR 0 Schritt 2) and would otherwise
+-- immediately null this back out. These six fixtures each isolate one OTHER media-gate blocker
+-- (scan/derivative/face/consent); the people_review_pending blocker itself is covered by
+-- supabase/tests/media_people_review.test.sql.
+update public.media_assets set people_reviewed_at = now()
+  where id in (
+    '65000000-6100-4000-8000-000000000001', '65000000-6100-4000-8000-000000000002', '65000000-6100-4000-8000-000000000003',
+    '65000000-6100-4000-8000-000000000004', '65000000-6100-4000-8000-000000000005', '65000000-6100-4000-8000-000000000006'
+  );
+
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '65000000-0000-4000-8000-000000000002', true);
 
