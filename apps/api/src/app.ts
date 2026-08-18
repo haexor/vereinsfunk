@@ -3,7 +3,19 @@ import cors from '@fastify/cors'
 import { parseApiEnvironment } from '@vereinsfunk/config'
 import type { StructuredContentGenerator } from '@vereinsfunk/content-engine'
 import { HealthSchema } from '@vereinsfunk/contracts'
-import { FakePublisher, MetaPublisher, RealMetaOAuthClient, type MetaOAuthClient, type SocialPublisher } from '@vereinsfunk/publishing'
+import {
+  FakeLinkedInOAuthClient,
+  FakeMetaOAuthClient,
+  FakePublisher,
+  FakeTwitterOAuthClient,
+  MetaPublisher,
+  RealMetaOAuthClient,
+  type LinkedInOAuthClient,
+  type MetaOAuthClient,
+  type Platform,
+  type SocialPublisher,
+  type TwitterOAuthClient,
+} from '@vereinsfunk/publishing'
 import Fastify, { LogController, type FastifyInstance, type FastifyServerOptions } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { createAuthGuards, SupabasePlatformAdminProvider, SupabaseRoleProvider, type PlatformAdminProvider, type RoleProvider } from './auth.js'
@@ -50,6 +62,8 @@ export interface BuildAppOptions {
   platformAdminProvider?: PlatformAdminProvider
   emailSender?: EmailSender
   metaOAuthClient?: MetaOAuthClient
+  twitterOAuthClient?: TwitterOAuthClient
+  linkedinOAuthClient?: LinkedInOAuthClient
   // Paket 025: Ueberschreibung fuer Tests. Ausserhalb von Tests entscheidet PUBLISHING_PROVIDER,
   // welcher echte Adapter je Social-Connection gebaut wird (siehe createPublisherForConnection) --
   // ein MetaPublisher braucht das entschluesselte Connection-Token, kann also nicht einmalig beim
@@ -90,13 +104,20 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     forService: () => createServiceClient(environment),
   }
   const platformAdminProvider = options.platformAdminProvider ?? new SupabasePlatformAdminProvider(() => supabaseClients.forService())
+  const useFakePublishing = environment.PUBLISHING_MODE === 'fake'
   const metaOAuthClient: MetaOAuthClient =
     options.metaOAuthClient ??
-    new RealMetaOAuthClient({
-      appId: environment.META_APP_ID ?? '',
-      appSecret: environment.META_APP_SECRET ?? '',
-      graphVersion: environment.META_GRAPH_VERSION,
-    })
+    (useFakePublishing
+      ? new FakeMetaOAuthClient()
+      : new RealMetaOAuthClient({
+          appId: environment.META_APP_ID ?? '',
+          appSecret: environment.META_APP_SECRET ?? '',
+          graphVersion: environment.META_GRAPH_VERSION,
+        }))
+  // Twitter/LinkedIn koennen ausschliesslich im expliziten Fake-Modus konstruiert werden. Die
+  // Konfiguration lehnt ihre Live-Aktivierung ab, solange die echten Adapter noch fehlen.
+  const twitterOAuthClient: TwitterOAuthClient = options.twitterOAuthClient ?? new FakeTwitterOAuthClient()
+  const linkedinOAuthClient: LinkedInOAuthClient = options.linkedinOAuthClient ?? new FakeLinkedInOAuthClient()
   const emailSender =
     options.emailSender ??
     // Ohne echten Versand ist der Log die einzige Stelle, an der der Einladungslink (inkl.
@@ -108,14 +129,22 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   // Paket 025: ein MetaPublisher braucht das entschluesselte Token GENAU dieser Social-Connection
   // (anders als metaOAuthClient oben, das appId/appSecret-Ebene bleibt) -- deshalb keine einmalige
   // Instanz, sondern eine Fabrik je Aufruf. options.publisher ueberschreibt vollstaendig (Tests).
-  function createPublisherForConnection(platform: 'instagram' | 'facebook', accessToken: string, externalAccountId: string): SocialPublisher {
+  function createPublisherForConnection(platform: Platform, accessToken: string, externalAccountId: string): SocialPublisher {
     if (options.publisher) return options.publisher
-    if (environment.PUBLISHING_PROVIDER !== 'meta') return new FakePublisher()
-    return new MetaPublisher({
-      graphVersion: environment.META_GRAPH_VERSION,
-      accessToken,
-      ...(platform === 'instagram' ? { instagramAccountId: externalAccountId } : { facebookPageId: externalAccountId }),
-    })
+    switch (platform) {
+      case 'instagram':
+      case 'facebook':
+        if (useFakePublishing) return new FakePublisher()
+        return new MetaPublisher({
+          graphVersion: environment.META_GRAPH_VERSION,
+          accessToken,
+          ...(platform === 'instagram' ? { instagramAccountId: externalAccountId } : { facebookPageId: externalAccountId }),
+        })
+      case 'twitter':
+      case 'linkedin':
+        if (!useFakePublishing) throw new Error(`${platform} publisher is not available in live mode`)
+        return new FakePublisher()
+    }
   }
   const context: ApiRouteContext = {
     environment,
@@ -125,6 +154,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     platformAdminProvider,
     emailSender,
     metaOAuthClient,
+    twitterOAuthClient,
+    linkedinOAuthClient,
     requireAuth,
     requirePermission,
     requirePlatformAdmin,

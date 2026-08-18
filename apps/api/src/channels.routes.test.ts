@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DEPARTMENT_ID, ORGANIZATION_ID, USER_ID, chain, denyingRoleProvider, organizationManagerRoleProvider, signAccessToken, startApp } from './testSupport.js'
+import { FakeLinkedInOAuthClient, FakeTwitterOAuthClient } from '@vereinsfunk/publishing'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
 import type { RoleProvider } from './auth.js'
@@ -105,9 +106,9 @@ describe('Paket 012: Kanaele und Social-Accounts', () => {
     }
   })
 
-  it('rejects OAuth start while the fake publisher is active, even with a callback URL', async () => {
+  it('rejects OAuth start when Meta is not enabled, even with a callback URL', async () => {
     const restoreEnvironment = preserveEnvironment(['PUBLISHING_PROVIDER', 'META_OAUTH_REDIRECT_URL'])
-    process.env.PUBLISHING_PROVIDER = 'fake'
+    process.env.PUBLISHING_PROVIDER = 'twitter'
     process.env.META_OAUTH_REDIRECT_URL = 'https://api.example.test'
     const socialManagerRoleProvider: RoleProvider = { async rolesForScope() { return ['social_manager'] } }
     try {
@@ -205,6 +206,172 @@ describe('Paket 012: Kanaele und Social-Accounts', () => {
     })
     expect(response.statusCode).toBe(422)
     expect(response.json()).toMatchObject({ error: 'responsible_not_a_member' })
+  })
+
+  describe('Paket 045: Twitter/X und LinkedIn OAuth', () => {
+    const socialManagerRoleProvider: RoleProvider = { async rolesForScope() { return ['social_manager'] } }
+
+    it('rejects Twitter OAuth start while it is not in PUBLISHING_PROVIDER', async () => {
+      const restoreEnvironment = preserveEnvironment(['PUBLISHING_PROVIDER', 'TWITTER_OAUTH_REDIRECT_URL'])
+      process.env.PUBLISHING_PROVIDER = 'meta'
+      process.env.TWITTER_OAUTH_REDIRECT_URL = 'https://api.example.test'
+      try {
+        const app = await startApp({ roleProvider: socialManagerRoleProvider })
+        const token = await signAccessToken(USER_ID)
+        const response = await app.inject({
+          method: 'GET',
+          url: `/v1/channels/connect/twitter/start?organizationId=${ORGANIZATION_ID}&ownerScope=organization`,
+          headers: { authorization: `Bearer ${token}` },
+        })
+        expect(response.statusCode).toBe(503)
+        expect(response.json()).toMatchObject({ error: 'twitter_not_configured' })
+      } finally {
+        restoreEnvironment()
+      }
+    })
+
+    it('rejects LinkedIn OAuth start while it is not in PUBLISHING_PROVIDER', async () => {
+      const restoreEnvironment = preserveEnvironment(['PUBLISHING_PROVIDER', 'LINKEDIN_OAUTH_REDIRECT_URL'])
+      process.env.PUBLISHING_PROVIDER = 'twitter'
+      process.env.LINKEDIN_OAUTH_REDIRECT_URL = 'https://api.example.test'
+      try {
+        const app = await startApp({ roleProvider: socialManagerRoleProvider })
+        const token = await signAccessToken(USER_ID)
+        const response = await app.inject({
+          method: 'GET',
+          url: `/v1/channels/connect/linkedin/start?organizationId=${ORGANIZATION_ID}&ownerScope=organization`,
+          headers: { authorization: `Bearer ${token}` },
+        })
+        expect(response.statusCode).toBe(503)
+        expect(response.json()).toMatchObject({ error: 'linkedin_not_configured' })
+      } finally {
+        restoreEnvironment()
+      }
+    })
+
+    // PKCE (RFC 7636): der Verifier muss den Weg von /start bis /callback ueberleben --
+    // oauth_states.code_verifier ist der einzige Ort dafuer. LinkedIn/Meta kennen kein PKCE, die
+    // Spalte bleibt fuer sie null (zweiter Test unten).
+    it('stores a PKCE code_verifier in oauth_states for a Twitter connect/start call', async () => {
+      const restoreEnvironment = preserveEnvironment(['PUBLISHING_PROVIDER', 'TWITTER_OAUTH_REDIRECT_URL', 'TWITTER_CLIENT_ID', 'TWITTER_CLIENT_SECRET', 'API_PUBLIC_BASE_URL'])
+      process.env.PUBLISHING_PROVIDER = 'twitter'
+      process.env.TWITTER_OAUTH_REDIRECT_URL = 'https://api.example.test'
+      process.env.TWITTER_CLIENT_ID = 'twitter-client-id'
+      process.env.TWITTER_CLIENT_SECRET = 'twitter-client-secret'
+      process.env.API_PUBLIC_BASE_URL = 'https://api.example.test'
+      const insertedRows: Record<string, unknown>[] = []
+      const clients: SupabaseClientFactory = {
+        forUser: () => ({ from: () => { throw new Error('forUser should not be used by connect/start') } }) as unknown as SupabaseClient,
+        forService: () =>
+          ({
+            from: (table: string) => {
+              if (table === 'oauth_states') return { insert: async (row: Record<string, unknown>) => { insertedRows.push(row); return { error: null } } }
+              throw new Error(`unexpected table in test fake: ${table}`)
+            },
+          }) as unknown as SupabaseClient,
+      }
+      try {
+        const app = await startApp({ roleProvider: socialManagerRoleProvider, supabaseClients: clients, twitterOAuthClient: new FakeTwitterOAuthClient() })
+        const token = await signAccessToken(USER_ID)
+        const response = await app.inject({
+          method: 'GET',
+          url: `/v1/channels/connect/twitter/start?organizationId=${ORGANIZATION_ID}&ownerScope=organization`,
+          headers: { authorization: `Bearer ${token}` },
+        })
+        expect(response.statusCode).toBe(200)
+        expect(insertedRows).toHaveLength(1)
+        const codeVerifier = insertedRows[0]?.code_verifier
+        expect(typeof codeVerifier).toBe('string')
+        expect((codeVerifier as string).length).toBeGreaterThanOrEqual(43)
+      } finally {
+        restoreEnvironment()
+      }
+    })
+
+    it('leaves code_verifier null in oauth_states for a LinkedIn connect/start call (no PKCE)', async () => {
+      const restoreEnvironment = preserveEnvironment(['PUBLISHING_PROVIDER', 'LINKEDIN_OAUTH_REDIRECT_URL', 'LINKEDIN_CLIENT_ID', 'LINKEDIN_CLIENT_SECRET', 'API_PUBLIC_BASE_URL'])
+      process.env.PUBLISHING_PROVIDER = 'linkedin'
+      process.env.LINKEDIN_OAUTH_REDIRECT_URL = 'https://api.example.test'
+      process.env.LINKEDIN_CLIENT_ID = 'linkedin-client-id'
+      process.env.LINKEDIN_CLIENT_SECRET = 'linkedin-client-secret'
+      process.env.API_PUBLIC_BASE_URL = 'https://api.example.test'
+      const insertedRows: Record<string, unknown>[] = []
+      const clients: SupabaseClientFactory = {
+        forUser: () => ({ from: () => { throw new Error('forUser should not be used by connect/start') } }) as unknown as SupabaseClient,
+        forService: () =>
+          ({
+            from: (table: string) => {
+              if (table === 'oauth_states') return { insert: async (row: Record<string, unknown>) => { insertedRows.push(row); return { error: null } } }
+              throw new Error(`unexpected table in test fake: ${table}`)
+            },
+          }) as unknown as SupabaseClient,
+      }
+      try {
+        const app = await startApp({ roleProvider: socialManagerRoleProvider, supabaseClients: clients, linkedinOAuthClient: new FakeLinkedInOAuthClient() })
+        const token = await signAccessToken(USER_ID)
+        const response = await app.inject({
+          method: 'GET',
+          url: `/v1/channels/connect/linkedin/start?organizationId=${ORGANIZATION_ID}&ownerScope=organization`,
+          headers: { authorization: `Bearer ${token}` },
+        })
+        expect(response.statusCode).toBe(200)
+        expect(insertedRows[0]?.code_verifier).toBeNull()
+      } finally {
+        restoreEnvironment()
+      }
+    })
+
+    // Rundlauf durch den vollstaendigen Callback: State pruefen/verbrauchen, Code gegen die
+    // Fake-Implementierung tauschen, das genau eine X-Konto (kein Seiten-Konzept) normalisieren und
+    // versiegelt in oauth_pending_connections ablegen -- dieselbe generische Auswahl-Route wie fuer
+    // Meta (unveraendert), hier ueber den neuen Twitter-Zweig erreicht.
+    it('completes the Twitter OAuth callback and creates a pending connection with the exchanged account', async () => {
+      // SECRET_BOX_KEYS/SECRET_BOX_CURRENT_KEY_VERSION sind bereits global in testSupport.ts
+      // gesetzt (beforeAll) -- kein eigener Override noetig.
+      const restoreEnvironment = preserveEnvironment(['PUBLISHING_PROVIDER', 'TWITTER_OAUTH_REDIRECT_URL', 'TWITTER_CLIENT_ID', 'TWITTER_CLIENT_SECRET', 'API_PUBLIC_BASE_URL'])
+      process.env.PUBLISHING_PROVIDER = 'twitter'
+      process.env.TWITTER_OAUTH_REDIRECT_URL = 'https://api.example.test'
+      process.env.TWITTER_CLIENT_ID = 'twitter-client-id'
+      process.env.TWITTER_CLIENT_SECRET = 'twitter-client-secret'
+      process.env.API_PUBLIC_BASE_URL = 'https://api.example.test'
+      const stateRow = {
+        id: 'state-1', organization_id: ORGANIZATION_ID, platform: 'twitter', owner_scope: 'organization', owner_department_id: null,
+        created_by: USER_ID, expires_at: new Date(Date.now() + 60_000).toISOString(), consumed_at: null, code_verifier: 'a'.repeat(43),
+      }
+      const pendingInserts: Record<string, unknown>[] = []
+      const auditInserts: Record<string, unknown>[] = []
+      const clients: SupabaseClientFactory = {
+        forUser: () => ({ from: () => { throw new Error('forUser should not be used by the unauthenticated callback') } }) as unknown as SupabaseClient,
+        forService: () =>
+          ({
+            from: (table: string) => {
+              if (table === 'oauth_states') {
+                return {
+                  ...chain({ data: stateRow, error: null }),
+                  update: () => ({ eq: () => ({ is: () => chain({ data: [{ id: stateRow.id }], error: null }) }) }),
+                }
+              }
+              if (table === 'oauth_pending_connections') return { insert: async (row: Record<string, unknown>) => { pendingInserts.push(row); return { error: null } } }
+              if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { auditInserts.push(row); return { error: null } } }
+              throw new Error(`unexpected table in test fake: ${table}`)
+            },
+          }) as unknown as SupabaseClient,
+      }
+      const twitterOAuthClient = new FakeTwitterOAuthClient([{ externalAccountId: 'x-1', displayName: 'sv_nordstadt', accessToken: 'x-access-token' }])
+      try {
+        const app = await startApp({ supabaseClients: clients, twitterOAuthClient })
+        const response = await app.inject({ method: 'GET', url: '/v1/channels/connect/twitter/callback?code=abc&state=nonce-1' })
+        expect(response.statusCode).toBe(302)
+        expect(response.headers.location).toContain('pending=')
+        expect(pendingInserts).toHaveLength(1)
+        expect(auditInserts).toEqual([expect.objectContaining({ actor_user_id: USER_ID, action: 'channel.oauth_exchange', metadata: { provider: 'twitter', outcome: 'succeeded', availableAccountCount: 1 } })])
+        expect(pendingInserts[0]).toMatchObject({ platform: 'twitter', organization_id: ORGANIZATION_ID })
+        const sealedAccounts = pendingInserts[0]?.available_accounts as { externalAccountId: string; displayName: string }[]
+        expect(sealedAccounts).toEqual([{ externalAccountId: 'x-1', displayName: 'sv_nordstadt', pageAccessTokenCiphertext: expect.any(String), pageAccessTokenKeyVersion: 'v1' }])
+      } finally {
+        restoreEnvironment()
+      }
+    })
   })
 
   // Plan 039: die einzige Kanal-Anlage ohne OAuth.

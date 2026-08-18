@@ -6,6 +6,7 @@ import {
   IntegrationSourceSchema,
   IntegrationSyncConflictSchema,
   IntegrationSyncRunSchema,
+  type OAuthPlatform,
   type ScopeLevel,
 } from '@vereinsfunk/contracts'
 
@@ -125,7 +126,10 @@ export function mapSocialConnectionRow(row: Record<string, unknown>) {
   }
 }
 
-export function metaRedirectUri(redirectBaseUrl: string, platform: 'instagram' | 'facebook'): string {
+// Paket 045: war metaRedirectUri, aber trotz des Namens schon immer provider-neutral -- baut nur
+// den Callback-Pfad, den jede Plattform (Meta, Twitter, LinkedIn) unter ihrer eigenen konfigurierten
+// Basis-URL registriert. Ein Aufruf fuer alle drei Provider statt einer Kopie je Provider.
+export function oauthRedirectUri(redirectBaseUrl: string, platform: OAuthPlatform): string {
   return new URL(`/v1/channels/connect/${platform}/callback`, redirectBaseUrl).toString()
 }
 

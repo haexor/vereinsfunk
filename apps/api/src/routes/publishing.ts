@@ -1,5 +1,5 @@
-import { PublicationExecuteResultSchema, PublicationSchema, SchedulePublicationRequestSchema, UuidSchema } from '@vereinsfunk/contracts'
-import type { PublicationInput, PublicationMedia, SocialPublisher, ValidationResult } from '@vereinsfunk/publishing'
+import { OAuthPlatformSchema, PublicationExecuteResultSchema, PublicationSchema, SchedulePublicationRequestSchema, UuidSchema } from '@vereinsfunk/contracts'
+import type { Platform, PublicationInput, PublicationMedia, SocialPublisher, ValidationResult } from '@vereinsfunk/publishing'
 import type { FastifyInstance } from 'fastify'
 import { createHash, randomBytes } from 'node:crypto'
 import { z } from 'zod'
@@ -151,9 +151,9 @@ export function registerPublishingRoutes(app: FastifyInstance, context: ApiRoute
       )
 
       // Ohne die Upload-/Freigabepipeline (Plaene 002/003) hat jede aus Plan 025 entstehende
-      // post_version keine post_media-Zeilen -- media bleibt dann [], und validate() unten lehnt das
-      // unconditional ab (FakePublisher/MetaPublisher, packages/publishing). Das ist korrektes,
-      // erwartetes Verhalten, kein Fehler dieses Endpunkts (siehe plans/025, Ausgangslage).
+      // post_version keine post_media-Zeilen -- media bleibt dann []. Nur Instagram lehnt das in
+      // validate() unten unconditional ab (technische Plattformgrenze); Facebook/Twitter/LinkedIn
+      // erlauben seit Paket 045 einen Text-only-Beitrag (FakePublisher/MetaPublisher, packages/publishing).
       const mediaRows = await service.from('post_media').select('position, media_derivative_id').eq('post_version_id', version.data.id as string).order('position')
       if (mediaRows.error) throw mediaRows.error
       // Ohne diese Basis-URL entstuende eine unbrauchbare Grant-URL (`undefined/v1/media-grants/...`);
@@ -195,7 +195,7 @@ export function registerPublishingRoutes(app: FastifyInstance, context: ApiRoute
 
       publicationInput = {
         publicationId: params.id, postVersionId: version.data.id as string, socialConnectionId: publication.data.social_connection_id as string,
-        platform: publication.data.platform as 'instagram' | 'facebook', caption: version.data.caption as string, media,
+        platform: OAuthPlatformSchema.parse(publication.data.platform) as Platform, caption: version.data.caption as string, media,
         idempotencyKey: publication.data.idempotency_key as string,
       }
       publisher = createPublisherForConnection(publicationInput.platform, accessToken, connection.data.external_account_id as string)
@@ -259,6 +259,13 @@ export function registerPublishingRoutes(app: FastifyInstance, context: ApiRoute
         status: 'failed', error_class: classification.errorClass, response_summary: { message: err instanceof Error ? err.message : 'unknown_error' },
       })
       if (attemptInsert.error) request.log.error({ err: attemptInsert.error, correlationId: request.id }, 'publication_attempts insert failed')
+      await recordAuditEvent(request, {
+        organizationId: publication.data.organization_id as string,
+        action: 'post.publish_failed',
+        entityType: 'publications',
+        entityId: params.id,
+        metadata: { platform: publicationInput.platform, outcome: classification.errorClass, status: classification.status },
+      })
       await revokeGrants()
       return reply.code(502).send({ error: 'publish_failed', correlationId: request.id })
     }

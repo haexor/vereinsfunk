@@ -28,7 +28,6 @@ const REQUEST_APPROVAL_ERROR_MESSAGES: Record<string, string> = {
   unfulfillable_stage: 'Für diesen Beitrag lässt sich aktuell keine gültige Freigaberoute bilden. Bitte an eine Vereinsverwaltung wenden.',
   only_author_as_reviewer: 'Du bist die einzige mögliche Prüfperson für diesen Beitrag. Bitte an eine Vereinsverwaltung wenden.',
 }
-const PLATFORM_LABELS: Record<SocialPlatform, string> = { instagram: 'Instagram', facebook: 'Facebook', website: 'Eigene Website' }
 type PlatformUnavailableReason = 'no_channel' | 'restricted_by_policy'
 const PLATFORM_UNAVAILABLE_REASONS: Record<PlatformUnavailableReason, string> = {
   no_channel: 'Kein Kanal eingerichtet.',
@@ -349,7 +348,7 @@ onBeforeUnmount(() => { if (hasDraftContent()) void saveServerDraft() })
             :title="entry.reason ? PLATFORM_UNAVAILABLE_REASONS[entry.reason] : undefined"
             @click="togglePlatform(entry.platform)"
           >
-            {{ PLATFORM_LABELS[entry.platform] }}
+            {{ platformLabels[entry.platform] }}
           </button>
         </div>
         <p v-else class="text-[11px] font-normal text-[#9aa096]">Die Zielplattformen konnten nicht geladen werden. Bitte lade die Seite neu.</p>

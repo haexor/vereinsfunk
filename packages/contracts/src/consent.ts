@@ -4,7 +4,7 @@ import { UuidSchema } from './content.js'
 // --- Paket 015: Einwilligungsverwaltung ---------------------------------------------------------
 
 export const ConsentPurposeSchema = z.enum(['social_media', 'website', 'print', 'internal'])
-export const ConsentPlatformSchema = z.enum(['instagram', 'facebook'])
+export const ConsentPlatformSchema = z.enum(['instagram', 'facebook', 'twitter', 'linkedin'])
 export const ConsentMediaKindSchema = z.enum(['photo', 'video'])
 export const ConsentContextSchema = z.enum(['team_photo', 'match', 'training', 'event', 'portrait'])
 

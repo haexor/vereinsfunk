@@ -1,7 +1,7 @@
 export const consentPurposes = ['social_media', 'website', 'print', 'internal'] as const
 export type ConsentPurpose = (typeof consentPurposes)[number]
 
-export const consentPlatforms = ['instagram', 'facebook'] as const
+export const consentPlatforms = ['instagram', 'facebook', 'twitter', 'linkedin'] as const
 export type ConsentPlatform = (typeof consentPlatforms)[number]
 
 export const consentMediaKinds = ['photo', 'video'] as const

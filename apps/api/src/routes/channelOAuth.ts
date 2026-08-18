@@ -1,24 +1,49 @@
-import { ChannelConnectStartRequestSchema, ChannelOwnerScopeSchema, MetaOAuthPlatformSchema, OAuthPendingConnectionSchema, SelectOAuthAccountRequestSchema, SocialConnectionSchema, UuidSchema } from '@vereinsfunk/contracts'
+import { ChannelConnectStartRequestSchema, ChannelOwnerScopeSchema, OAuthPlatformSchema, OAuthPendingConnectionSchema, SelectOAuthAccountRequestSchema, SocialConnectionSchema, UuidSchema, type OAuthPlatform } from '@vereinsfunk/contracts'
+import type { MetaPlatform } from '@vereinsfunk/publishing'
 import type { FastifyInstance } from 'fastify'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import { mapChannelScopeRow, mapSocialConnectionRow, metaRedirectUri } from '../apiMappers.js'
+import { mapChannelScopeRow, mapSocialConnectionRow, oauthRedirectUri } from '../apiMappers.js'
 import { ciphertextToBytea, createSecretBoxFromEnvironment } from '../secretBox.js'
 import type { ApiRouteContext } from './context.js'
-import { channelOwnerScope, createAuditRecorder, isDepartmentOwnedChannelAllowed, SOCIAL_CONNECTION_COLUMNS, toPermissionScope } from './shared.js'
+import { channelOwnerScope, createAuditRecorder, createExternalActionAuditRecorder, isDepartmentOwnedChannelAllowed, SOCIAL_CONNECTION_COLUMNS, toPermissionScope } from './shared.js'
+
+// Paket 045: welcher OAuth-Adapter eine Plattform bedient. Instagram/Facebook teilen sich weiterhin
+// den Meta-Graph-API-Adapter (Paket 012); Twitter/LinkedIn haben je einen eigenen, strukturell
+// anderen Flow (PKCE bei Twitter, Organisations-Listing bei LinkedIn, siehe packages/publishing).
+type OAuthProvider = 'meta' | 'twitter' | 'linkedin'
+const OAUTH_PROVIDER_BY_PLATFORM: Record<OAuthPlatform, OAuthProvider> = {
+  instagram: 'meta', facebook: 'meta', twitter: 'twitter', linkedin: 'linkedin',
+}
+
+// PKCE (Paket 045, X OAuth2): der Verifier muss zwischen /start und /callback ueberleben (siehe
+// oauth_states.code_verifier), der Challenge-Wert geht in die Autorisierungs-URL. RFC 7636 verlangt
+// S256 als Hash-Verfahren, 43-128 Zeichen fuer den Verifier -- 32 Zufallsbytes base64url-kodiert
+// ergeben 43 Zeichen.
+function generatePkceCodeVerifier(): string {
+  return randomBytes(32).toString('base64url')
+}
+function derivePkceCodeChallenge(codeVerifier: string): string {
+  return createHash('sha256').update(codeVerifier).digest('base64url')
+}
 
 export function registerChannelOAuthRoutes(app: FastifyInstance, context: ApiRouteContext): void {
-  const { requireAuth, requirePermission, supabaseClients, environment, metaOAuthClient } = context
+  const { requireAuth, requirePermission, supabaseClients, environment, metaOAuthClient, twitterOAuthClient, linkedinOAuthClient } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
+  const recordExternalActionAuditEvent = createExternalActionAuditRecorder(supabaseClients)
+
+  function redirectBaseUrlFor(provider: OAuthProvider): string | undefined {
+    if (provider === 'meta') return environment.META_OAUTH_REDIRECT_URL
+    if (provider === 'twitter') return environment.TWITTER_OAUTH_REDIRECT_URL
+    return environment.LINKEDIN_OAUTH_REDIRECT_URL
+  }
 
   // Aufgerufen per fetch (nicht per Browser-Navigation): eine vollstaendige Seitennavigation traegt
   // keinen Authorization-Header, deshalb liefert dieser Endpunkt die Autorisierungs-URL als JSON
   // zurueck und die Oberflaeche navigiert selbst dorthin (window.location.href).
   app.get('/v1/channels/connect/:platform/start', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
-    // MetaOAuthPlatformSchema statt SocialPlatformSchema: ein Website-Kanal entsteht nie ueber
-    // OAuth (Plan 039, POST /v1/channels), 'website' waere hier immer ein Fehleingang.
-    const params = z.object({ platform: MetaOAuthPlatformSchema }).parse(request.params)
+    const params = z.object({ platform: OAuthPlatformSchema }).parse(request.params)
     // ownerDepartmentId kommt hier als Query-Parameter statt im Body (GET) -- der leere String ist
     // deshalb ein gueltiger Eingangswert und bedeutet "nicht gesetzt": ein null-Wert wird von der
     // Query-Serialisierung des Browsers (ufo/withQuery hinter $fetch) als schluessellosen Parameter
@@ -39,36 +64,45 @@ export function registerChannelOAuthRoutes(app: FastifyInstance, context: ApiRou
     if (start.ownerScope === 'department' && !(await isDepartmentOwnedChannelAllowed(supabaseClients.forUser(request.auth!.accessToken), query.organizationId))) {
       return reply.code(403).send({ error: 'department_owned_channels_not_allowed', correlationId: request.id })
     }
-    // Die Redirect-URL allein reicht nicht: sie wird im Deployment auch fuer
-    // den inaktiven Fake-Provider gerendert, damit die Callback-Adresse nicht
-    // an mehreren Stellen gepflegt wird. OAuth darf aber ausschliesslich mit
-    // dem vollstaendig validierten Meta-Adapter starten -- sonst wuerde ein
-    // leerer client_id-Wert den Browser zu einer irrefuehrenden Meta-Fehlerseite
-    // schicken.
-    if (environment.PUBLISHING_PROVIDER !== 'meta' || !environment.META_OAUTH_REDIRECT_URL) {
-      return reply.code(503).send({ error: 'meta_not_configured', correlationId: request.id })
+    const provider = OAUTH_PROVIDER_BY_PLATFORM[params.platform]
+    const redirectBaseUrl = redirectBaseUrlFor(provider)
+    // Die Redirect-URL allein reicht nicht: sie wird im Deployment auch fuer den inaktiven
+    // Fake-Provider gerendert, damit die Callback-Adresse nicht an mehreren Stellen gepflegt wird.
+    // OAuth darf aber ausschliesslich mit dem vollstaendig validierten Adapter starten -- sonst
+    // wuerde eine leere client_id den Browser zu einer irrefuehrenden Anbieter-Fehlerseite schicken.
+    if (!environment.PUBLISHING_PROVIDER.includes(provider) || !redirectBaseUrl) {
+      return reply.code(503).send({ error: `${provider}_not_configured`, correlationId: request.id })
     }
     const nonce = randomUUID()
+    const redirectUri = oauthRedirectUri(redirectBaseUrl, params.platform)
+    // PKCE ausschliesslich fuer Twitter (RFC 7636) -- Meta/LinkedIn kennen den Verifier nicht, die
+    // Spalte bleibt fuer sie null.
+    const codeVerifier = provider === 'twitter' ? generatePkceCodeVerifier() : null
+    const authorizationUrl =
+      provider === 'meta'
+        ? metaOAuthClient.authorizationUrl({ state: nonce, redirectUri, platform: params.platform as MetaPlatform })
+        : provider === 'twitter'
+          ? twitterOAuthClient.authorizationUrl({ state: nonce, redirectUri, codeChallenge: derivePkceCodeChallenge(codeVerifier!) })
+          : linkedinOAuthClient.authorizationUrl({ state: nonce, redirectUri })
     const insert = await supabaseClients.forService().from('oauth_states').insert({
       organization_id: query.organizationId,
       platform: params.platform,
       owner_scope: start.ownerScope,
       owner_department_id: ownerDepartmentId,
       nonce,
+      code_verifier: codeVerifier,
       created_by: request.auth!.userId,
       expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
     })
     if (insert.error) throw insert.error
-    const redirectUri = metaRedirectUri(environment.META_OAUTH_REDIRECT_URL, params.platform)
-    const authorizationUrl = metaOAuthClient.authorizationUrl({ state: nonce, redirectUri, platform: params.platform })
     return reply.code(200).send({ authorizationUrl })
   })
 
-  // Meta leitet den Browser hierher um -- kein Authorization-Header, keine requireAuth. Die
+  // Der Anbieter leitet den Browser hierher um -- kein Authorization-Header, keine requireAuth. Die
   // Vertrauensgrenze ist state: unerraten, einmalig, kurzlebig, an Organisation/Besitzebene
   // gebunden (Plan 012: "state niemals ungeprueft zurueckvertrauen").
   app.get('/v1/channels/connect/:platform/callback', async (request, reply) => {
-    const params = z.object({ platform: MetaOAuthPlatformSchema }).parse(request.params)
+    const params = z.object({ platform: OAuthPlatformSchema }).parse(request.params)
     const query = z.object({ code: z.string().optional(), state: z.string().optional(), error: z.string().optional() }).parse(request.query)
     const webBaseUrl = environment.WEB_BASE_URL ?? 'http://localhost:4200'
 
@@ -78,7 +112,7 @@ export function registerChannelOAuthRoutes(app: FastifyInstance, context: ApiRou
     const service = supabaseClients.forService()
     const stateRow = await service
       .from('oauth_states')
-      .select('id, organization_id, platform, owner_scope, owner_department_id, created_by, expires_at, consumed_at')
+      .select('id, organization_id, platform, owner_scope, owner_department_id, created_by, expires_at, consumed_at, code_verifier')
       .eq('nonce', query.state)
       .maybeSingle()
     if (stateRow.error) throw stateRow.error
@@ -96,28 +130,60 @@ export function registerChannelOAuthRoutes(app: FastifyInstance, context: ApiRou
     if (consume.error) throw consume.error
     if (consume.data.length === 0) return reply.redirect(`${webBaseUrl}/kanaele?oauthError=invalid_state`, 302)
 
-    if (environment.PUBLISHING_PROVIDER !== 'meta' || !environment.META_OAUTH_REDIRECT_URL) {
-      return reply.redirect(`${webBaseUrl}/kanaele?oauthError=meta_not_configured`, 302)
+    const provider = OAUTH_PROVIDER_BY_PLATFORM[params.platform]
+    const redirectBaseUrl = redirectBaseUrlFor(provider)
+    if (!environment.PUBLISHING_PROVIDER.includes(provider) || !redirectBaseUrl) {
+      return reply.redirect(`${webBaseUrl}/kanaele?oauthError=${provider}_not_configured`, 302)
     }
-    const redirectUri = metaRedirectUri(environment.META_OAUTH_REDIRECT_URL, params.platform)
+    const redirectUri = oauthRedirectUri(redirectBaseUrl, params.platform)
 
-    let availableAccounts: readonly { externalAccountId: string; displayName: string; pageAccessToken: string }[]
+    // Normalisiert auf eine gemeinsame Form, bevor die Konten unten versiegelt werden -- Meta,
+    // Twitter und LinkedIn haben je ein anderes "Konto"-Shape (Seiten-Token, Nutzer-Token,
+    // Organisations-Token), aber ab hier zaehlt nur noch externalAccountId/displayName/secretToken.
+    let availableAccounts: readonly { externalAccountId: string; displayName: string; secretToken: string }[]
     try {
-      const shortLived = await metaOAuthClient.exchangeCode(query.code, redirectUri)
-      const longLived = await metaOAuthClient.exchangeForLongLivedToken(shortLived.accessToken)
-      availableAccounts = await metaOAuthClient.listAvailableAccounts(longLived.accessToken, params.platform)
+      if (provider === 'meta') {
+        const shortLived = await metaOAuthClient.exchangeCode(query.code, redirectUri)
+        const longLived = await metaOAuthClient.exchangeForLongLivedToken(shortLived.accessToken)
+        const accounts = await metaOAuthClient.listAvailableAccounts(longLived.accessToken, params.platform as MetaPlatform)
+        availableAccounts = accounts.map((account) => ({ externalAccountId: account.externalAccountId, displayName: account.displayName, secretToken: account.pageAccessToken }))
+      } else if (provider === 'twitter') {
+        const codeVerifier = stateRow.data.code_verifier as string | null
+        if (!codeVerifier) throw new Error('oauth_states row is missing the PKCE code verifier')
+        const exchanged = await twitterOAuthClient.exchangeCode(query.code, redirectUri, codeVerifier)
+        const accounts = await twitterOAuthClient.listAvailableAccounts(exchanged.accessToken)
+        availableAccounts = accounts.map((account) => ({ externalAccountId: account.externalAccountId, displayName: account.displayName, secretToken: account.accessToken }))
+      } else {
+        const exchanged = await linkedinOAuthClient.exchangeCode(query.code, redirectUri)
+        const accounts = await linkedinOAuthClient.listAvailableAccounts(exchanged.accessToken)
+        availableAccounts = accounts.map((account) => ({ externalAccountId: account.externalAccountId, displayName: account.displayName, secretToken: account.accessToken }))
+      }
     } catch (error) {
-      request.log.warn({ err: error, correlationId: request.id }, 'meta oauth exchange failed')
-      return reply.redirect(`${webBaseUrl}/kanaele?oauthError=meta_exchange_failed`, 302)
+      request.log.warn({ err: error, correlationId: request.id }, `${provider} oauth exchange failed`)
+      await recordExternalActionAuditEvent(request, stateRow.data.created_by as string, {
+        organizationId: stateRow.data.organization_id as string,
+        action: 'channel.oauth_exchange',
+        entityType: 'oauth_states',
+        entityId: stateRow.data.id as string,
+        metadata: { provider, outcome: 'failed' },
+      })
+      return reply.redirect(`${webBaseUrl}/kanaele?oauthError=${provider}_exchange_failed`, 302)
     }
+    await recordExternalActionAuditEvent(request, stateRow.data.created_by as string, {
+      organizationId: stateRow.data.organization_id as string,
+      action: 'channel.oauth_exchange',
+      entityType: 'oauth_states',
+      entityId: stateRow.data.id as string,
+      metadata: { provider, outcome: 'succeeded', availableAccountCount: availableAccounts.length },
+    })
     if (availableAccounts.length === 0) return reply.redirect(`${webBaseUrl}/kanaele?oauthError=no_accounts`, 302)
 
     const pendingId = randomUUID()
     const secretBox = createSecretBoxFromEnvironment(environment)
-    // Jeder Seiten-Token einzeln versiegelt (AAD = pendingId + externalAccountId) -- die Auswahl
+    // Jeder Konto-Token einzeln versiegelt (AAD = pendingId + externalAccountId) -- die Auswahl
     // entschluesselt spaeter nur den EINEN gewaehlten Token, nie die ganze Liste auf einmal.
     const sealedAccounts = availableAccounts.map((account) => {
-      const sealed = secretBox.seal(account.pageAccessToken, `${pendingId}:${account.externalAccountId}`)
+      const sealed = secretBox.seal(account.secretToken, `${pendingId}:${account.externalAccountId}`)
       return {
         externalAccountId: account.externalAccountId,
         displayName: account.displayName,

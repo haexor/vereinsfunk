@@ -155,12 +155,15 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
       expect(response.json()).toMatchObject({ error: 'invalid_status' })
     })
 
-    it('rejects with 422 when the post version has no approved media derivative yet', async () => {
+    it('rejects with 422 when the post version has no approved media derivative yet (Instagram)', async () => {
       // Ausgangslage (plans/025): ohne die Upload-/Freigabepipeline (002/003) hat jede aus Paket
-      // 025 entstehende post_version keine post_media-Zeilen. FakePublisher/MetaPublisher lehnen
-      // eine Veroeffentlichung ohne Medium unconditional ab -- erwartetes Verhalten, kein Bug.
+      // 025 entstehende post_version keine post_media-Zeilen. Instagram verlangt weiterhin
+      // zwingend ein Bild (technische Grenze der Plattform); FakePublisher/MetaPublisher lehnen das
+      // fuer Instagram unconditional ab -- erwartetes Verhalten, kein Bug. Facebook/Twitter/LinkedIn
+      // erlauben seit Paket 045 auch ohne Medium (eigener Test unten), deshalb hier ausdruecklich
+      // Instagram statt der Datei-Default-Plattform 'facebook'.
       const clients: SupabaseClientFactory = {
-        ...readOnlyClients(),
+        ...readOnlyClients({ platform: 'instagram' }),
         forService: () =>
           ({
             from: (table: string) => {
@@ -169,7 +172,7 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
               const gate = mediaGateTables(table)
               if (gate) return gate
               if (table === 'publications') return { update: () => chain({ data: { id: PUBLICATION_ID }, error: null }) }
-              if (table === 'social_connections') return chain({ data: { external_account_id: 'page-123' }, error: null })
+              if (table === 'social_connections') return chain({ data: { external_account_id: 'ig-123' }, error: null })
               if (table === 'social_connection_secrets') {
                 const sealed = createSecretBox({ v1: Buffer.alloc(32, 7).toString('base64') }, 'v1').seal('fake-access-token', PUB_SOCIAL_CONNECTION_ID)
                 return chain({ data: { token_ciphertext: ciphertextToBytea(sealed.ciphertext), token_key_version: 'v1' }, error: null })
@@ -188,6 +191,36 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
       const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
       expect(response.statusCode).toBe(422)
       expect(response.json()).toMatchObject({ error: 'validation_failed' })
+    })
+
+    it('publishes a Facebook post without media (Paket 045: media is optional for Facebook/Twitter/LinkedIn)', async () => {
+      const auditCaptured: Record<string, unknown>[] = []
+      const clients: SupabaseClientFactory = {
+        ...readOnlyClients(),
+        forService: () =>
+          ({
+            from: (table: string) => {
+              const gate = mediaGateTables(table)
+              if (gate) return gate
+              if (table === 'publications') return { update: () => chain({ data: { id: PUBLICATION_ID }, error: null }) }
+              if (table === 'social_connections') return chain({ data: { external_account_id: 'page-123' }, error: null })
+              if (table === 'social_connection_secrets') {
+                const sealed = createSecretBox({ v1: Buffer.alloc(32, 7).toString('base64') }, 'v1').seal('fake-access-token', PUB_SOCIAL_CONNECTION_ID)
+                return chain({ data: { token_ciphertext: ciphertextToBytea(sealed.ciphertext), token_key_version: 'v1' }, error: null })
+              }
+              if (table === 'publication_attempts') return { ...chain({ data: null, error: null }), insert: async () => ({ error: null }) }
+              if (table === 'publication_media_grants') return { update: () => ({ eq: () => ({ is: async () => ({ error: null }) }) }) }
+              if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { auditCaptured.push(row); return { error: null } } }
+              throw new Error(`unexpected table in service fake: ${table}`)
+            },
+          }) as unknown as SupabaseClient,
+      }
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toMatchObject({ id: PUBLICATION_ID, status: 'published' })
+      expect(auditCaptured).toMatchObject([{ action: 'post.published', entity_id: PUBLICATION_ID }])
     })
 
     it('publishes successfully once an approved media derivative exists, records the attempt and audits it', async () => {
@@ -253,6 +286,7 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
       // getroffen werden -- das ist der dokumentierte 'unknown'-Fall aus der Klassifikation.
       const publicationUpdates: Record<string, unknown>[] = []
       const attemptsCaptured: Record<string, unknown>[] = []
+      const auditCaptured: Record<string, unknown>[] = []
       const clients: SupabaseClientFactory = {
         ...readOnlyClients(),
         forService: () =>
@@ -268,6 +302,7 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
               }
               if (table === 'publication_attempts') return { ...chain({ data: null, error: null }), insert: async (row: Record<string, unknown>) => { attemptsCaptured.push(row); return { error: null } } }
               if (table === 'publication_media_grants') return { update: () => ({ eq: () => ({ is: async () => ({ error: null }) }) }) }
+              if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { auditCaptured.push(row); return { error: null } } }
               throw new Error(`unexpected table in service fake: ${table}`)
             },
           }) as unknown as SupabaseClient,
@@ -284,6 +319,7 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
       expect(response.json()).toMatchObject({ error: 'publish_failed' })
       expect(publicationUpdates.at(-1)).toMatchObject({ status: 'action_required' })
       expect(attemptsCaptured.at(-1)).toMatchObject({ status: 'failed', error_class: 'unknown' })
+      expect(auditCaptured).toMatchObject([{ action: 'post.publish_failed', entity_id: PUBLICATION_ID, metadata: { platform: 'facebook', outcome: 'unknown', status: 'action_required' } }])
     })
   })
 
@@ -358,4 +394,3 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
     })
   })
 })
-

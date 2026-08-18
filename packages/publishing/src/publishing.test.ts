@@ -1,19 +1,77 @@
 import { describe, expect, it, vi } from 'vitest'
-import { FakeMetaOAuthClient, FakePublisher, RealMetaOAuthClient } from './index.js'
+import { FakeLinkedInOAuthClient, FakeMetaOAuthClient, FakePublisher, FakeTwitterOAuthClient, MetaPublisher, RealMetaOAuthClient, type Platform, type PublicationInput } from './index.js'
+
+function publicationInput(overrides: Partial<PublicationInput> = {}): PublicationInput {
+  return {
+    publicationId: 'pub-1',
+    postVersionId: 'version-1',
+    socialConnectionId: 'connection-1',
+    platform: 'instagram',
+    caption: 'Ein Test',
+    media: [{ derivativeId: 'derivative-1', sha256: 'a'.repeat(64), mimeType: 'image/jpeg', grantUrl: 'https://example.invalid/grant', role: 'primary' }],
+    idempotencyKey: 'publish:pub-1:instagram:version-1',
+    ...overrides,
+  }
+}
 
 describe('fake publisher', () => {
   it('returns the same publication for a retry', async () => {
     const publisher = new FakePublisher()
-    const input = {
-      publicationId: 'pub-1',
-      postVersionId: 'version-1',
-      socialConnectionId: 'connection-1',
-      platform: 'instagram' as const,
-      caption: 'Ein Test',
-      media: [{ derivativeId: 'derivative-1', sha256: 'a'.repeat(64), mimeType: 'image/jpeg', grantUrl: 'https://example.invalid/grant', role: 'primary' as const }],
-      idempotencyKey: 'publish:pub-1:instagram:version-1',
-    }
+    const input = publicationInput()
     expect(await publisher.publish(input)).toEqual(await publisher.publish(input))
+  })
+
+  // Paket 045: X (280) und LinkedIn (3000) sind die echten Plattform-Maxima -- vorher gab es nur
+  // die Zweiteilung Instagram (2200) / "alles andere" (63206, Facebooks Grenze).
+  it.each([
+    ['instagram', 2_200],
+    ['facebook', 63_206],
+    ['twitter', 280],
+    ['linkedin', 3_000],
+  ] as const)('enforces the %s caption limit (%d characters)', async (platform, limit) => {
+    const publisher = new FakePublisher()
+    const tooLong = publicationInput({ platform, caption: 'x'.repeat(limit + 1), media: [] })
+    const result = await publisher.validate(tooLong)
+    expect(result.valid).toBe(false)
+    expect(result.errors[0]).toContain(`${limit} characters`)
+  })
+
+  // Paket 045: nur Instagram verlangt technisch zwingend ein Bild -- Facebooks bisheriger
+  // unconditional-Foto-Zwang war eine Einschraenkung dieses Adapters, keine echte API-Grenze.
+  it('requires media only for instagram', async () => {
+    const publisher = new FakePublisher()
+    expect((await publisher.validate(publicationInput({ platform: 'instagram', media: [] }))).valid).toBe(false)
+    for (const platform of ['facebook', 'twitter', 'linkedin'] as const) {
+      expect((await publisher.validate(publicationInput({ platform, media: [] }))).valid).toBe(true)
+    }
+  })
+})
+
+describe('MetaPublisher', () => {
+  function publisher(fetchImpl: typeof fetch) {
+    return new MetaPublisher({ graphVersion: 'v21.0', accessToken: 'token', instagramAccountId: 'ig-1', facebookPageId: 'page-1', fetch: fetchImpl })
+  }
+
+  it('posts a Facebook page update without media to /feed using the message field', async () => {
+    const fetchImpl = vi.fn(async () => Response.json({ id: 'post-1' })) as unknown as typeof fetch
+    await publisher(fetchImpl).publish(publicationInput({ platform: 'facebook', media: [] }))
+    const [url, init] = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/page-1/feed')
+    expect(String(init.body)).toContain('message=')
+    expect(String(init.body)).not.toContain('url=')
+  })
+
+  it('posts a Facebook page update with media to /photos using the caption field', async () => {
+    const fetchImpl = vi.fn(async () => Response.json({ id: 'post-1' })) as unknown as typeof fetch
+    await publisher(fetchImpl).publish(publicationInput({ platform: 'facebook' }))
+    const [url, init] = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/page-1/photos')
+    expect(String(init.body)).toContain('caption=')
+  })
+
+  it('rejects a platform it does not implement (Twitter/LinkedIn are separate adapters)', async () => {
+    const result = await publisher(vi.fn()).validate(publicationInput({ platform: 'twitter' as Platform }))
+    expect(result.valid).toBe(false)
   })
 })
 
@@ -102,5 +160,21 @@ describe('FakeMetaOAuthClient', () => {
     })
     expect(await fake.listAvailableAccounts('token', 'instagram')).toHaveLength(1)
     expect(await fake.listAvailableAccounts('token', 'facebook')).toHaveLength(0)
+  })
+})
+
+// Paket 045: nur die Fake-Implementierungen sind Teil dieses Pakets -- Real*/Publisher folgen in
+// eigenen PRs (plans/045), sobald echte Entwickler-Zugaenge vorliegen.
+describe('FakeTwitterOAuthClient', () => {
+  it('returns exactly the configured account (X hat kein Seiten-Konzept)', async () => {
+    const fake = new FakeTwitterOAuthClient([{ externalAccountId: 'x-1', displayName: 'sv_nordstadt', accessToken: 'token' }])
+    expect(await fake.listAvailableAccounts()).toEqual([{ externalAccountId: 'x-1', displayName: 'sv_nordstadt', accessToken: 'token' }])
+  })
+})
+
+describe('FakeLinkedInOAuthClient', () => {
+  it('returns the configured organization pages', async () => {
+    const fake = new FakeLinkedInOAuthClient([{ externalAccountId: 'org-1', displayName: 'SV Nordstadt', accessToken: 'token' }])
+    expect(await fake.listAvailableAccounts()).toEqual([{ externalAccountId: 'org-1', displayName: 'SV Nordstadt', accessToken: 'token' }])
   })
 })

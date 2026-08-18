@@ -1,7 +1,7 @@
 import type { Permission } from '@vereinsfunk/authorization'
 import type { ApiEnvironment } from '@vereinsfunk/config'
 import type { StructuredContentGenerator } from '@vereinsfunk/content-engine'
-import type { MetaOAuthClient, SocialPublisher } from '@vereinsfunk/publishing'
+import type { LinkedInOAuthClient, MetaOAuthClient, Platform, SocialPublisher, TwitterOAuthClient } from '@vereinsfunk/publishing'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { EmailSender } from '../email.js'
@@ -34,7 +34,12 @@ export interface ApiRouteContext extends ApiRouteGuards {
   platformAdminProvider: PlatformAdminProvider
   emailSender: EmailSender
   metaOAuthClient: MetaOAuthClient
-  createPublisherForConnection(platform: 'instagram' | 'facebook', accessToken: string, externalAccountId: string): SocialPublisher
+  // Paket 045: Twitter/LinkedIn haben strukturell andere OAuth-Flows als der gemeinsame
+  // Meta-Adapter (PKCE bei Twitter, Organisations-Listing bei LinkedIn) -- eigene Client-Felder statt
+  // eines vereinheitlichten Interface, das die Unterschiede nur verstecken wuerde.
+  twitterOAuthClient: TwitterOAuthClient
+  linkedinOAuthClient: LinkedInOAuthClient
+  createPublisherForConnection(platform: Platform, accessToken: string, externalAccountId: string): SocialPublisher
   // Plan 040: "Persona/Stilprofil testen" ueberschreibt die Protokollauswahl vollstaendig, genau
   // wie TextGenerationExecutor.generator im Worker (apps/worker/src/textGeneration.ts) -- ein Test
   // kann so eine echte Provider-Zeile faken (fuer model/baseUrl/apiKey), ohne einen echten
