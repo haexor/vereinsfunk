@@ -139,7 +139,7 @@ describe('POST /v1/text-workshop/sessions', () => {
   // Plan 044, PR 1 Step 1: targetPlatforms hat keinen Schema-Vorgabewert mehr -- das Fixture setzt
   // beide Plattformen deshalb explizit, damit die uebrigen Faelle unten unveraendert bleiben.
   const basePayload = {
-    organizationId: ORGANIZATION_ID, departmentId: DEPARTMENT_ID, presetSlug: 'training_insight', communicationGoal: 'inform',
+    organizationId: ORGANIZATION_ID, departmentId: DEPARTMENT_ID, communicationGoal: 'inform',
     requestedFormats: ['text_post'], sourceMaterial: { facts: { title: 'Training' }, observations: [], quotes: [], doNotMention: [] },
     targetPlatforms: ['instagram', 'facebook'],
   }
@@ -393,7 +393,7 @@ describe('GET /v1/text-workshop/sessions', () => {
   const POST_ID = '3d000000-0000-4000-8000-000000000001'
   const SESSION_ROW = {
     id: '3c000000-0000-4000-8000-000000000001', organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: null,
-    status: 'accepted', preset_slug: 'training_insight', communication_goal: 'inform',
+    status: 'accepted', communication_goal: 'inform',
     source_material: { facts: { title: 'Training' }, observations: [], quotes: [], doNotMention: [] },
     style_profile_id: null,
     style_profile_snapshot: { name: 'Klar erklärend', description: 'Sachlich.', styleRules: STYLE_RULES, avoidRules: [], doRules: [], slug: 'klar_erklaerend' },
@@ -433,7 +433,7 @@ describe('GET /v1/text-workshop/sessions', () => {
     const response = await app.inject({ method: 'GET', url: '/v1/text-workshop/sessions', headers: { authorization: `Bearer ${token}` }, query: { postId: POST_ID } })
     expect(response.statusCode).toBe(200)
     const body = response.json()
-    expect(body.session).toMatchObject({ id: SESSION_ROW.id, preset_slug: 'training_insight', target_platforms: ['instagram'] })
+    expect(body.session).toMatchObject({ id: SESSION_ROW.id, target_platforms: ['instagram'] })
     expect(body.candidates).toHaveLength(1)
     expect(body.candidates[0]).toMatchObject({ id: CANDIDATE_ROW.id, status: 'accepted' })
     expect(candidateLimit).toBe(1)
@@ -958,7 +958,7 @@ describe('text workshop drafts', () => {
   const POST_ID = '3f000000-0000-4000-8000-000000000002'
   const SESSION_ID = '3f000000-0000-4000-8000-000000000003'
   const CANDIDATE_ID = '3f000000-0000-4000-8000-000000000004'
-  const draftPayload = { presetSlug: 'training_insight', communicationGoal: 'inform', factsText: 'Übung: Passen', observation: '', quote: '', doNotMention: '', selectedProfile: 'klar_erklaerend', temperature: 0.6, selectedPlatforms: [], maxCharactersOverride: '' }
+  const draftPayload = { communicationGoal: 'inform', factsText: 'Übung: Passen', observation: '', quote: '', doNotMention: '', selectedProfile: 'klar_erklaerend', temperature: 0.6, selectedPlatforms: [], maxCharactersOverride: '' }
 
   it('audits a successfully saved draft without its raw input', async () => {
     const auditRows: Record<string, unknown>[] = []

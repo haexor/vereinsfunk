@@ -327,7 +327,6 @@ export const CreateCompositionSessionSchema = z.object({
   organizationId: UuidSchema,
   departmentId: UuidSchema,
   teamId: UuidSchema.nullable().optional(),
-  presetSlug: ContentPresetSlugSchema,
   communicationGoal: CommunicationGoalSchema,
   requestedFormats: z.array(CompositionFormatSchema).min(1).max(3).superRefine((formats, context) => {
     if (formats.includes('video_post') && formats.length > 1) context.addIssue({ code: 'custom', message: 'video_post cannot be combined with another presentation type' })
@@ -371,7 +370,6 @@ export const CreateCompositionSessionSchema = z.object({
 // und löst weder eine Generation noch Kosten aus. Die eigentliche Fachversion entsteht weiterhin
 // erst beim ausdrücklichen Übernehmen eines Kandidaten.
 export const TextWorkshopDraftPayloadSchema = z.object({
-  presetSlug: ContentPresetSlugSchema,
   communicationGoal: CommunicationGoalSchema,
   factsText: z.string().max(10_000),
   observation: z.string().max(5_000),

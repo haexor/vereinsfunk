@@ -88,8 +88,8 @@ select is((select count(*)::integer from public.social_connections where platfor
 
 -- 12: composition_sessions.target_platforms now accepts website (Plan 039 closes the dead end from
 -- Plan 042 PR 3 for a club without an Instagram/Facebook channel).
-insert into public.composition_sessions (id, organization_id, department_id, preset_slug, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, target_platforms, created_by) values
-  ('76000000-4000-4000-8000-000000000001', '76000000-1000-4000-8000-000000000001', '76000000-1100-4000-8000-000000000001', 'training-update', 'inform', '["text_post"]', '{"facts":{"title":"Blog"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('a', 64), array['website']::text[], '76000000-0000-4000-8000-000000000001');
+insert into public.composition_sessions (id, organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, target_platforms, created_by) values
+  ('76000000-4000-4000-8000-000000000001', '76000000-1000-4000-8000-000000000001', '76000000-1100-4000-8000-000000000001', 'inform', '["text_post"]', '{"facts":{"title":"Blog"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('a', 64), array['website']::text[], '76000000-0000-4000-8000-000000000001');
 select is((select target_platforms from public.composition_sessions where id = '76000000-4000-4000-8000-000000000001'), array['website']::text[],
   'a composition session may target website alone, with no Instagram/Facebook channel required');
 

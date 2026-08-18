@@ -311,7 +311,7 @@ function reviewerLabel(reviewer: { kind: string; userId: string | null; role: st
         <section class="card mt-4 p-6">
           <h2 class="mb-4 font-display text-base font-bold">Inhalt und Kanäle</h2>
           <div class="grid gap-4 sm:grid-cols-2">
-            <label><span class="mb-1 block text-xs font-semibold">Erlaubte Anlässe (Presets, kommagetrennt, leer = keine Einschränkung)</span>
+            <label><span class="mb-1 block text-xs font-semibold">Erlaubte Anlässe für Fotobeiträge (Presets, kommagetrennt, leer = keine Einschränkung)</span>
               <input v-model="allowedPresetsText" :disabled="!selectedEntry.canEdit" placeholder="z. B. match_result, training" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-sm" />
             </label>
             <label><span class="mb-1 block text-xs font-semibold">Verbotene Themen (kommagetrennt)</span>

@@ -6,6 +6,7 @@ export { factsFromFixture, factsFromClubEvent } from './schedule.js'
 export type { FactsFromScheduleResult } from './schedule.js'
 
 export interface GroundedContentBrief { allowedClaims: readonly { sourceId: string; text: string }[]; approvedQuotes: readonly { sourceId: string; text: string; attribution?: string }[]; missingFacts: readonly string[]; prohibitedClaims: readonly string[]; goal: CreateSubmission['communicationGoal']; requestedFormats: CreateSubmission['requestedFormats']; presetSlug: string }
+export interface TextGroundedContentBrief { allowedClaims: readonly { sourceId: string; text: string }[]; approvedQuotes: readonly { sourceId: string; text: string; attribution?: string }[]; prohibitedClaims: readonly string[]; goal: CreateSubmission['communicationGoal'] }
 export interface ContentGenerator { generate(input: CreateSubmission): Promise<GeneratedPost> }
 
 export function createGroundedContentBrief(input: CreateSubmission): GroundedContentBrief {
@@ -18,15 +19,20 @@ export function createGroundedContentBrief(input: CreateSubmission): GroundedCon
   return { allowedClaims, approvedQuotes, missingFacts: validateSourceMaterial(preset, input.sourceMaterial), prohibitedClaims: input.sourceMaterial.doNotMention, goal: input.communicationGoal, requestedFormats: input.requestedFormats, presetSlug: input.presetSlug }
 }
 
-/** Text-workshop equivalent which intentionally has no visual output or media input. */
-export function createTextGroundedContentBrief(input: Pick<CreateSubmission, 'presetSlug' | 'communicationGoal' | 'sourceMaterial'>): GroundedContentBrief {
-  const preset = getPreset(input.presetSlug)
+/**
+ * Text-workshop equivalent which intentionally has no visual output or media input, and -- anders
+ * als createGroundedContentBrief -- keinen Anlass (presetSlug): die daran haengende Pflichtfakten-
+ * Pruefung je Anlasstyp war nur ein weiches Signal im Prompt, nie eine Sperre. Die harte Grundlage
+ * bleibt unveraendert die source_material-CHECK (mindestens ein Fakt/eine Beobachtung/ein Zitat)
+ * und assertGroundedPost() gegen die bestaetigten Quellen.
+ */
+export function createTextGroundedContentBrief(input: Pick<CreateSubmission, 'communicationGoal' | 'sourceMaterial'>): TextGroundedContentBrief {
   const allowedClaims = [
     ...Object.entries(input.sourceMaterial.facts).map(([key, value]) => ({ sourceId: `fact:${key}`, text: `${key}: ${value}` })),
     ...input.sourceMaterial.observations.map((text, index) => ({ sourceId: `observation:${index + 1}`, text })),
   ]
   const approvedQuotes = input.sourceMaterial.quotes.filter((quote) => quote.approved).map((quote, index) => quote.attribution ? ({ sourceId: `quote:${index + 1}`, text: quote.text, attribution: quote.attribution }) : ({ sourceId: `quote:${index + 1}`, text: quote.text }))
-  return { allowedClaims, approvedQuotes, missingFacts: validateSourceMaterial(preset, input.sourceMaterial), prohibitedClaims: input.sourceMaterial.doNotMention, goal: input.communicationGoal, requestedFormats: [], presetSlug: input.presetSlug }
+  return { allowedClaims, approvedQuotes, prohibitedClaims: input.sourceMaterial.doNotMention, goal: input.communicationGoal }
 }
 
 function layoutFor(slug: string): PlatformVariant['layoutFamily'] { if (slug.includes('training') || slug.includes('children')) return 'training'; if (slug === 'volunteering') return 'thanks'; if (slug === 'event' || slug === 'new_offer') return 'invitation'; if (slug.includes('match')) return 'result'; return 'photo_moment' }
@@ -68,7 +74,7 @@ export class ContentGenerationError extends Error {
   }
 }
 
-export function assertGroundedPost(post: GeneratedPost, brief: GroundedContentBrief): void {
+export function assertGroundedPost(post: GeneratedPost, brief: Pick<GroundedContentBrief, 'allowedClaims' | 'approvedQuotes' | 'prohibitedClaims'>): void {
   const allowed = new Set([...brief.allowedClaims, ...brief.approvedQuotes].map((claim) => claim.sourceId))
   if (post.generatedClaims.some((claim) => !allowed.has(claim.sourceId)) || post.variants.some((variant) => variant.claimSourceIds.some((id) => !allowed.has(id)))) throw new ContentGenerationError('ungrounded', false)
   const rendered = [post.headline, post.caption, post.shortCaption, post.callToAction, post.altText, ...post.hashtags, ...post.verifiedFacts].join('\n').toLocaleLowerCase('de')
@@ -103,7 +109,7 @@ export function assertCaptionLength(post: GeneratedPost, maxCharacters: number |
 export const TEXT_PROMPT_TEMPLATE_VERSION = 'text-workshop-v2'
 
 export type StructuredTextGeneratorInput = {
-  brief: GroundedContentBrief
+  brief: TextGroundedContentBrief
   styleProfile: StyleProfileSnapshot
   revisionInstruction?: string
   model: string
@@ -139,10 +145,8 @@ export function buildStructuredTextPrompt(input: Pick<StructuredTextGeneratorInp
     ].join('\n'),
     user: JSON.stringify({
       confirmedSources: { claims: input.brief.allowedClaims, approvedQuotes: input.brief.approvedQuotes },
-      missingFacts: input.brief.missingFacts,
       prohibitedClaims: input.brief.prohibitedClaims,
       goal: input.brief.goal,
-      presetSlug: input.brief.presetSlug,
       revisionInstruction: instruction,
     }),
   }
