@@ -127,8 +127,8 @@ export const BrandLogoUploadResponseSchema = z.object({
 })
 
 // Paket 013: Branding-Assets (Logovarianten, Wasserzeichen, eigene Schriften) auf Vereins-,
-// Abteilungs- und Mannschaftsebene.
-export const BrandAssetKindSchema = z.enum(['logo_primary', 'logo_light', 'logo_dark', 'logo_mark', 'wordmark', 'watermark', 'font'])
+// Abteilungs- und Mannschaftsebene. 'frame' (Plan 045): eigene Rahmengrafik fuer Bildstil-Presets.
+export const BrandAssetKindSchema = z.enum(['logo_primary', 'logo_light', 'logo_dark', 'logo_mark', 'wordmark', 'watermark', 'font', 'frame'])
 export const BrandAssetStatusSchema = z.enum(['processing', 'ready', 'rejected', 'replaced'])
 export const FontStyleSchema = z.enum(['normal', 'italic'])
 

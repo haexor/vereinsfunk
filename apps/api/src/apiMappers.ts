@@ -64,6 +64,18 @@ export function mapBrandAssetRow(row: Record<string, unknown>) {
   }
 }
 
+export function mapImageStylePresetRow(row: Record<string, unknown>) {
+  return {
+    id: row.id, organizationId: row.organization_id, departmentId: row.department_id, teamId: row.team_id,
+    name: row.name, isActive: row.is_active,
+    frameType: row.frame_type, frameColor: row.frame_color, frameWidthPx: row.frame_width_px,
+    frameCornerRadiusPx: row.frame_corner_radius_px, frameBrandAssetId: row.frame_brand_asset_id,
+    logoEnabled: row.logo_enabled, logoBrandAssetId: row.logo_brand_asset_id, logoPosition: row.logo_position,
+    logoSizePercent: row.logo_size_percent, logoMarginPercent: row.logo_margin_percent,
+    filter: row.filter, createdBy: row.created_by, createdAt: row.created_at, updatedAt: row.updated_at,
+  }
+}
+
 export function mapDepartmentBrandRow(row: Record<string, unknown>) {
   return {
     organizationId: row.organization_id, departmentId: row.department_id, primaryColor: row.primary_color,

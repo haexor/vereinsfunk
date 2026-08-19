@@ -23,7 +23,12 @@ import { hashLogoBuffer, LogoDimensionsError, processBrandLogoUpload, Unsupporte
 import type { ApiRouteContext } from './context.js'
 import { toPermissionScope } from './shared.js'
 
-async function loadSelectableBrandAsset(
+// Exportiert, weil apps/api/src/routes/imageStyle.ts (Plan 045, PR 1) dieselbe Waehlbarkeits-
+// Vorabpruefung fuer frame_brand_asset_id/logo_brand_asset_id braucht -- die DB-CHECK
+// (authz.brand_asset_is_selectable in der RLS-Policy) bleibt die eigentliche Sicherheitsgrenze,
+// dieser Aufruf liefert nur die fruehere, freundlichere 400-Antwort (wie hier fuer
+// logoAssetId/displayFontAssetId/bodyFontAssetId bereits Praxis).
+export async function loadSelectableBrandAsset(
   client: SupabaseClient,
   organizationId: string,
   assetId: string,

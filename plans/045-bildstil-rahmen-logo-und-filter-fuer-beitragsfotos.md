@@ -197,6 +197,8 @@ Zusammengesetzte Fremdschlüssel statt jsonb-eingebetteter Referenzen — Plan 0
 
 ### PR 1 – Datenmodell + `/bildstil`
 
+> **Umsetzung, Stand 2026-08-19: alle drei Schritte fertig, verifiziert (pgTAP 34 Dateien/892 Assertions, `pnpm check`, echter Playwright-Lauf gegen die lokale App).** Drei Abweichungen/Ergänzungen gegenüber diesem Abschnitt, siehe „Umsetzung: Ergebnis und Abweichungen (PR 1, 2026-08-19)" am Ende dieses Abschnitts.
+
 1. Migration wie oben (zwei Schritte: `ALTER TYPE` zuerst, `image_style_presets` danach). Im selben PR `BrandAssetKindSchema`, `BrandAssetSchema` und `CreateBrandAssetRequestSchema` um `frame` ergänzen; `POST /v1/brand/assets` verarbeitet ihn wie `watermark`. Contract- und Route-Tests decken beide positiven Fälle `frame` und `watermark` ab.
 2. CRUD-Routen `apps/api/src/routes/imageStyle.ts` (neue Datei, Modulgrenze wie Plan 027): `GET/POST/PATCH/DELETE /v1/image-style-presets`, Rahmen-/Logo-Asset-Upload über die bestehende `POST /v1/brand/assets`-Route (kind `frame`/`watermark`, keine neue Upload-Route nötig).
 3. Neue Seite `apps/web/app/pages/bildstil.vue`, 1:1-Architekturübernahme von `marke.vue` (Scope-Umschalter, `loadAll()`, Formular, Live-Vorschau-Komponente `ImageStyleLivePreview.vue` analog `BrandLivePreview.vue`). Nav-Eintrag in `layouts/default.vue`s `organizationNav`-Array direkt nach „Marke".
@@ -257,6 +259,14 @@ Alle vier Schritte umgesetzt und verifiziert. Zwei Abweichungen von diesem Pland
    - `face_regions` hatte seit der ursprünglichen Migration (`202608030001`, vor diesem Paket) nie einen `DELETE`-Grant für `authenticated`. Fix in Migration `2026081804`.
 
 Beide Funde bestätigen: pgTAP-Fixtures, die Schreibzugriffe der Einfachheit halber unter `postgres` statt der tatsächlich aufrufenden Rolle anlegen, verdecken echte Grant-/`SECURITY DEFINER`-Lücken. `supabase/tests/media_people_review.test.sql` wurde entsprechend nachgeschärft.
+
+## Umsetzung: Ergebnis und Abweichungen (PR 1, 2026-08-19)
+
+Datenmodell, CRUD-Routen und `/bildstil`-Seite vollständig umgesetzt und verifiziert (pgTAP 34 Dateien/892 Assertions nach frischem `supabase db reset`, `pnpm check`, echter Playwright-Lauf gegen die lokale App: Preset anlegen/bearbeiten/löschen auf Vereins- und Abteilungsebene, Vererbung geprüft, keine Konsolenfehler). Drei Abweichungen bzw. Ergänzungen gegenüber diesem Plandokument:
+
+1. **PATCH ersetzt den gesamten Bildstil-Anteil, statt einzelne Felder partiell zu patchen.** Die CHECK-Constraints der Migration verknüpfen mehrere Spalten (`frame_type`↔`frame_color`/`frame_width_px`, `logo_enabled`↔die drei Logo-Felder) — ein echtes Feld-für-Feld-PATCH könnte eine Kombination erzeugen, die die API-seitige Prüfung nie sieht, aber an der DB-Constraint scheitert. `UpdateImageStylePresetRequestSchema` verlangt deshalb dieselben Pflichtfelder wie beim Anlegen (nur `isActive` bleibt echt optional) — passend zum Formular auf `/bildstil`, das ohnehin immer den ganzen Preset-Zustand hält.
+2. **Rahmengrafik-/Wasserzeichen-Upload sitzt auf `/bildstil` selbst, nicht auf `marke.vue`.** Der Plan verlangte nur, dass die bestehende `POST /v1/brand/assets`-Route `kind='frame'` verarbeitet — wo der Upload-Trigger in der UI sitzt, blieb offen. `marke.vue`s „Weitere Logovarianten" kennt nur `logo_mark`/`wordmark`/`watermark`; ohne einen eigenen Upload-Einstieg auf `/bildstil` wäre `frameType='custom'` nie nutzbar gewesen (kein Asset zum Wählen). Ergänzt als eigener Abschnitt „Bausteine für diese Ebene" mit Upload für `frame` und `watermark`, dieselbe Route, dieselbe Verarbeitung.
+3. **RLS-Bug per pgTAP-Regressionstest schon beim Bauen gefangen, nicht erst per Playwright danach** (siehe [[feedback_pgtap_fixtures_als_postgres_verdecken_grant_luecken]]): eine fehlende Klammerung in `image_style_presets_update`s `WITH CHECK` hätte `A or B or (C and D and E)` statt `(A or B or C) and D and E` ausgewertet — die Waehlbarkeits-Prüfung (`authz.brand_asset_is_selectable`) wäre dadurch nur auf dem Organisations-Zweig durchgesetzt worden, nicht auf Abteilungs-/Mannschaftsebene. Ein gezielter pgTAP-Fall (Abteilungsadmin versucht, den Rahmen auf ein Asset einer Schwesterabteilung umzustellen) deckte das noch vor dem ersten Commit auf; der Test bleibt als Regressionsschutz in `supabase/tests/image_style_presets.test.sql` erhalten.
 
 ## Pflegehinweis
 
