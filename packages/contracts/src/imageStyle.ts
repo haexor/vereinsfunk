@@ -76,9 +76,22 @@ export const UpdateImageStylePresetRequestSchema = ImageStylePresetFieldsSchema.
   isActive: z.boolean().optional(),
 }).superRefine(checkImageStylePresetFields)
 
+// Plan 045, PR 2: POST /v1/post-media/:postMediaId/style-render. Antwort trägt objectPath
+// zusätzlich zur signedUrl mit -- dieselbe Signatur wie marke.vue/bildstil.vue sie sich später
+// selbst über supabase.storage...createSignedUrl(objectPath, 600) neu holen können, ohne die
+// (nur 600s gültige) URL dieser Antwort zwischenspeichern zu müssen.
+export const ApplyImageStyleRenderRequestSchema = z.object({ stylePresetId: UuidSchema })
+export const ApplyImageStyleRenderResponseSchema = z.object({
+  mediaDerivativeId: UuidSchema,
+  objectPath: z.string().min(1),
+  signedUrl: z.url(),
+})
+
 export type ImageStyleFrameType = z.infer<typeof ImageStyleFrameTypeSchema>
 export type ImageStyleFilter = z.infer<typeof ImageStyleFilterSchema>
 export type ImageStyleLogoPosition = z.infer<typeof ImageStyleLogoPositionSchema>
 export type ImageStylePreset = z.infer<typeof ImageStylePresetSchema>
 export type CreateImageStylePresetRequest = z.infer<typeof CreateImageStylePresetRequestSchema>
 export type UpdateImageStylePresetRequest = z.infer<typeof UpdateImageStylePresetRequestSchema>
+export type ApplyImageStyleRenderRequest = z.infer<typeof ApplyImageStyleRenderRequestSchema>
+export type ApplyImageStyleRenderResponse = z.infer<typeof ApplyImageStyleRenderResponseSchema>
