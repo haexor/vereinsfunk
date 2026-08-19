@@ -2,7 +2,7 @@ import type { ConsentScope, GeneratedPost, OutputFormat, ScopeLevel, SocialPlatf
 import { canRemoveRole, hasPermission, type Permission, type Role } from '@vereinsfunk/authorization'
 import type { ApiEnvironment } from '@vereinsfunk/config'
 import { AnthropicStructuredContentGenerator, buildStructuredTextPrompt, ContentGenerationError, OpenAiCompatibleStructuredContentGenerator, type StructuredContentGenerator, type TextGroundedContentBrief } from '@vereinsfunk/content-engine'
-import { SocialPlatformSchema, TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS, TEXT_GENERATION_DEFAULT_TEMPERATURE, UuidSchema } from '@vereinsfunk/contracts'
+import { PlatformSettingValueSchemas, SocialPlatformSchema, TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS, TEXT_GENERATION_DEFAULT_TEMPERATURE, UuidSchema } from '@vereinsfunk/contracts'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { mergeEffectiveConfig, resolveAvailableChannels, resolveEffectiveConfig, type ChannelCandidate, type ConfigOverride, type ScopeLevelName, type TrustRecord } from '@vereinsfunk/domain'
 import type { FastifyRequest } from 'fastify'
@@ -431,6 +431,22 @@ export async function resolveTextGenerationPlatformAvailability(
       : { available: false, maxCharacters, reason: withoutPolicies.length > 0 ? 'restricted_by_policy' : 'no_channel' })
   }
   return result
+}
+
+// Paket 046: welche und wie viele LLM-Provider gleichzeitig einen Textvorschlag liefern. Die
+// Ensemble-Groesse ist eine globale Betreiber-Einstellung (platform_settings), die Auswahl selbst
+// folgt derselben Prioritaets-Reihenfolge wie die bisherige Einzelauswahl (vormals
+// apps/worker/src/context.ts loadActiveTextProvider, jetzt hier, weil create_text_generation_session
+// die Zuweisung braucht, bevor irgendein Worker die Sitzung ueberhaupt sieht -- siehe Migration
+// 2026081912). Liefert nur IDs: Modellname/Anbieter bleiben Mitgliedern verborgen (siehe
+// post_generation_provenance, "enthaelt nie Rohprompt/Providerdaten").
+export async function resolveTextGenerationProviderConfigurationIds(service: SupabaseClient): Promise<string[]> {
+  const setting = await service.from('platform_settings').select('value').eq('key', 'text_generation_ensemble_size').maybeSingle()
+  if (setting.error) throw setting.error
+  const ensembleSize = setting.data ? PlatformSettingValueSchemas.text_generation_ensemble_size.parse(setting.data.value) : 1
+  const providers = await service.from('llm_provider_configurations').select('id').eq('task_kind', 'text_generation').eq('is_active', true).order('priority').limit(ensembleSize)
+  if (providers.error) throw providers.error
+  return z.array(z.object({ id: UuidSchema })).parse(providers.data).map((row) => row.id)
 }
 
 export async function fetchMemberTrust(

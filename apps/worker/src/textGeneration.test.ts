@@ -14,8 +14,8 @@ function repository(): TextGenerationRepository {
   const sealed = createSecretBox({ v1: Buffer.alloc(32, 1).toString('base64') }, 'v1').seal('provider-key', 'provider-1')
   return {
     loadSession: vi.fn().mockResolvedValue({ id: payload.entityId, organization_id: payload.organizationId, department_id: payload.departmentId, team_id: null, communication_goal: 'inform', source_material: { facts: { topic: 'Passen' }, observations: [], quotes: [], doNotMention: [] }, style_profile_snapshot: { name: 'Klar', description: 'klar', styleRules: { toneTags: ['klar'], catchphrases: [], examples: [], additionalInstructions: '' }, avoidRules: [], doRules: [] }, max_characters: 2200, temperature: 0.6 }),
-    acquirePendingCandidate: vi.fn().mockResolvedValue({ id: payload.candidateId, status: 'generating', lease_token: '10000000-1300-4000-8000-000000000099' }),
-    loadActiveTextProvider: vi.fn().mockResolvedValue({ id: 'provider-1', protocol: 'openai', base_url: 'https://provider.example/v1', model: 'synthetic', structured_output_required: true, api_key_ciphertext: `\\x${sealed.ciphertext.toString('hex')}`, key_version: 'v1' }), markReady: vi.fn().mockResolvedValue(undefined), markFailed: vi.fn().mockResolvedValue(undefined), releaseCandidate: vi.fn().mockResolvedValue(undefined),
+    acquirePendingCandidate: vi.fn().mockResolvedValue({ id: payload.candidateId, status: 'generating', lease_token: '10000000-1300-4000-8000-000000000099', provider_configuration_id: 'provider-1' }),
+    loadProvider: vi.fn().mockResolvedValue({ id: 'provider-1', protocol: 'openai', base_url: 'https://provider.example/v1', model: 'synthetic', structured_output_required: true, api_key_ciphertext: `\\x${sealed.ciphertext.toString('hex')}`, key_version: 'v1' }), markReady: vi.fn().mockResolvedValue(undefined), markFailed: vi.fn().mockResolvedValue(undefined), releaseCandidate: vi.fn().mockResolvedValue(undefined),
   }
 }
 
@@ -23,13 +23,13 @@ function repositoryWithProtocolAndTemperature(protocol: string, temperature: num
   const repo = repository()
   repo.loadSession = vi.fn().mockResolvedValue({ id: payload.entityId, organization_id: payload.organizationId, department_id: payload.departmentId, team_id: null, communication_goal: 'inform', source_material: { facts: { topic: 'Passen' }, observations: [], quotes: [], doNotMention: [] }, style_profile_snapshot: { name: 'Klar', description: 'klar', styleRules: { toneTags: ['klar'], catchphrases: [], examples: [], additionalInstructions: '' }, avoidRules: [], doRules: [] }, max_characters: 2200, temperature })
   const sealed = createSecretBox({ v1: Buffer.alloc(32, 1).toString('base64') }, 'v1').seal('provider-key', 'provider-1')
-  repo.loadActiveTextProvider = vi.fn().mockResolvedValue({ id: 'provider-1', protocol, base_url: 'https://provider.example/v1', model: 'synthetic', structured_output_required: true, api_key_ciphertext: `\\x${sealed.ciphertext.toString('hex')}`, key_version: 'v1' })
+  repo.loadProvider = vi.fn().mockResolvedValue({ id: 'provider-1', protocol, base_url: 'https://provider.example/v1', model: 'synthetic', structured_output_required: true, api_key_ciphertext: `\\x${sealed.ciphertext.toString('hex')}`, key_version: 'v1' })
   return repo
 }
 
 function repositoryWithRevisionInstruction(instruction: string): TextGenerationRepository {
   const repo = repository()
-  repo.acquirePendingCandidate = vi.fn().mockResolvedValue({ id: payload.candidateId, status: 'generating', lease_token: '10000000-1300-4000-8000-000000000099', revision_instruction: instruction })
+  repo.acquirePendingCandidate = vi.fn().mockResolvedValue({ id: payload.candidateId, status: 'generating', lease_token: '10000000-1300-4000-8000-000000000099', provider_configuration_id: 'provider-1', revision_instruction: instruction })
   return repo
 }
 

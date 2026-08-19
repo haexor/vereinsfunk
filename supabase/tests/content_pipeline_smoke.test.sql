@@ -61,7 +61,8 @@ select lives_ok(
     null, '{"name":"System","description":"","styleRules":{"toneTags":["klar"],"catchphrases":[],"examples":[],"additionalInstructions":""},"avoidRules":[],"doRules":[]}'::jsonb,
     '{}'::jsonb, array['instagram']::text[], 2200, 0.6, 1,
     encode(sha256('pipeline-smoke-a'::bytea), 'hex'), encode(sha256('pipeline-smoke-a-candidate'::bytea), 'hex'), 'initial', null,
-    '90000000-0000-4000-8000-000000000001', gen_random_uuid(), 'pipeline-smoke-a'
+    '90000000-0000-4000-8000-000000000001', gen_random_uuid(), 'pipeline-smoke-a',
+    array['90000000-4000-4000-8000-000000000001']::uuid[]
   )$$,
   'creating a text-workshop session for a post without a review policy succeeds'
 );
@@ -113,7 +114,8 @@ select lives_ok(
     null, '{"name":"System","description":"","styleRules":{"toneTags":["klar"],"catchphrases":[],"examples":[],"additionalInstructions":""},"avoidRules":[],"doRules":[]}'::jsonb,
     '{}'::jsonb, array['instagram']::text[], 2200, 0.6, 1,
     encode(sha256('pipeline-smoke-b'::bytea), 'hex'), encode(sha256('pipeline-smoke-b-candidate'::bytea), 'hex'), 'initial', null,
-    '90000000-0000-4000-8000-000000000001', gen_random_uuid(), 'pipeline-smoke-b'
+    '90000000-0000-4000-8000-000000000001', gen_random_uuid(), 'pipeline-smoke-b',
+    array['90000000-4000-4000-8000-000000000001']::uuid[]
   )$$,
   'creating a text-workshop session for a post with a review policy succeeds'
 );
@@ -169,7 +171,8 @@ select lives_ok(
     null, '{"name":"System","description":"","styleRules":{"toneTags":["klar"],"catchphrases":[],"examples":[],"additionalInstructions":""},"avoidRules":[],"doRules":[]}'::jsonb,
     '{}'::jsonb, array['instagram']::text[], 2200, 0.6, 1,
     encode(sha256('pipeline-smoke-c'::bytea), 'hex'), encode(sha256('pipeline-smoke-c-candidate'::bytea), 'hex'), 'initial', null,
-    '90000000-0000-4000-8000-000000000001', gen_random_uuid(), 'pipeline-smoke-c'
+    '90000000-0000-4000-8000-000000000001', gen_random_uuid(), 'pipeline-smoke-c',
+    array['90000000-4000-4000-8000-000000000001']::uuid[]
   )$$,
   'creating a third text-workshop session for the rejection scenario succeeds'
 );

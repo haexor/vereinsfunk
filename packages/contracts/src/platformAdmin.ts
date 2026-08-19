@@ -20,15 +20,35 @@ export const AddPlatformAdminRequestSchema = z.object({
   email: z.string().trim().toLowerCase().pipe(z.email()),
 })
 
+// Einladungsflow (loest den frueheren synchronen POST /v1/platform-admins ab): eine eingeladene
+// Person muss noch kein auth.users-Konto haben, siehe create_platform_admin_invitation() in
+// 2026081901_platform_admin_invitations.sql.
+export const PlatformAdminInvitationSchema = z.object({
+  id: UuidSchema,
+  email: z.string().trim().toLowerCase().pipe(z.email()),
+  invitedBy: UuidSchema,
+  expiresAt: z.iso.datetime({ offset: true }),
+  acceptedAt: z.iso.datetime({ offset: true }).nullable(),
+  revokedAt: z.iso.datetime({ offset: true }).nullable(),
+  lastSentAt: z.iso.datetime({ offset: true }),
+  sendCount: z.int().min(1).max(10),
+  createdAt: z.iso.datetime({ offset: true }),
+})
+export const AcceptPlatformAdminInvitationRequestSchema = z.object({ token: z.string().min(1) })
+
 // Nur ein Schluessel existiert heute (loest 009s hartkodierte Konstante ab). Ein unbekannter
 // Schluessel wird von der API abgelehnt statt stillschweigend ungeprueft gespeichert zu werden.
-export const PlatformSettingKeySchema = z.enum(['max_organizations_per_owner', 'publishing_enabled'])
+export const PlatformSettingKeySchema = z.enum(['max_organizations_per_owner', 'publishing_enabled', 'text_generation_ensemble_size'])
 export const PlatformSettingValueSchemas = {
   max_organizations_per_owner: z.int().positive().max(1000),
   // Globaler Not-Aus fuer externe Veroeffentlichungen. Er ist bewusst keine
   // organisationsbezogene Einstellung: ein Plattform-Admin muss im Incident-Fall alle
   // Vereine gleichzeitig und ohne deren Berechtigungen erreichen koennen.
   publishing_enabled: z.boolean(),
+  // Paket 046: wie viele aktive Textgenerierungs-Provider gleichzeitig einen Vorschlag liefern.
+  // Obergrenze 5 orientiert sich an der Hatchet-Nebenlaeufigkeitsgrenze je Abteilung (concurrency.llm
+  // in apps/worker/src/workflows.ts) -- deutlich mehr Modelle wuerden ohnehin nur nacheinander laufen.
+  text_generation_ensemble_size: z.int().positive().max(5),
 } as const satisfies Record<z.infer<typeof PlatformSettingKeySchema>, z.ZodType<unknown>>
 export const PlatformSettingSchema = z.object({
   key: PlatformSettingKeySchema,
@@ -209,6 +229,8 @@ export const UsageMetricsResponseSchema = z.object({ buckets: z.array(UsageMetri
 export type PlatformAdminStatus = z.infer<typeof PlatformAdminStatusSchema>
 export type PlatformAdmin = z.infer<typeof PlatformAdminSchema>
 export type AddPlatformAdminRequest = z.infer<typeof AddPlatformAdminRequestSchema>
+export type PlatformAdminInvitation = z.infer<typeof PlatformAdminInvitationSchema>
+export type AcceptPlatformAdminInvitationRequest = z.infer<typeof AcceptPlatformAdminInvitationRequestSchema>
 export type PlatformSettingKey = z.infer<typeof PlatformSettingKeySchema>
 export type PlatformSetting = z.infer<typeof PlatformSettingSchema>
 export type UpdatePlatformSettingRequest = z.infer<typeof UpdatePlatformSettingRequestSchema>

@@ -154,6 +154,14 @@ export function mapInvitationRow(row: Record<string, unknown>) {
   }
 }
 
+export function mapPlatformAdminInvitationRow(row: Record<string, unknown>) {
+  return {
+    id: row.id, email: row.email, invitedBy: row.invited_by, expiresAt: row.expires_at,
+    acceptedAt: row.accepted_at, revokedAt: row.revoked_at, lastSentAt: row.last_sent_at,
+    sendCount: row.send_count, createdAt: row.created_at,
+  }
+}
+
 export function membershipTableFor(scope: ScopeLevel): 'organization_memberships' | 'department_memberships' | 'team_memberships' {
   return scope === 'organization' ? 'organization_memberships' : scope === 'department' ? 'department_memberships' : 'team_memberships'
 }

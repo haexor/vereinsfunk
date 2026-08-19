@@ -6,13 +6,16 @@ import type { WorkerEnvironment } from '@vereinsfunk/config'
 import { WorkflowExecutionError } from './workflows.js'
 
 export type SessionRow = { id: string; organization_id: string; department_id: string; team_id: string | null; communication_goal: 'inform' | 'inspire' | 'thank' | 'invite' | 'recruit' | 'educate' | 'strengthen_community'; source_material: unknown; style_profile_snapshot: unknown; max_characters: number; temperature: number }
-export type CandidateRow = { id: string; status: string; revision_instruction: string | null; lease_token: string }
+// provider_configuration_id ist ab Paket 046 fest zugewiesen (create_text_generation_session
+// weist die Zeile beim Anlegen einem bestimmten Provider zu, siehe Migration 2026081912) --
+// execute() unten laedt genau diesen statt "den gerade aktiven".
+export type CandidateRow = { id: string; status: string; revision_instruction: string | null; lease_token: string; provider_configuration_id: string }
 export type ProviderRow = { id: string; protocol: string; base_url: string; model: string; structured_output_required: boolean; api_key_ciphertext: string; key_version: string }
 
 export interface TextGenerationRepository {
   loadSession(id: string, organizationId: string): Promise<SessionRow | null>
   acquirePendingCandidate(candidateId: string, sessionId: string, organizationId: string): Promise<CandidateRow | null>
-  loadActiveTextProvider(): Promise<ProviderRow>
+  loadProvider(providerConfigurationId: string): Promise<ProviderRow>
   markReady(candidateId: string, sessionId: string, leaseToken: string, generatedContent: unknown, metadata: { providerConfigurationId: string; providerModelId: string; providerParameterHash: string; promptTemplateVersion: string }): Promise<void>
   markFailed(candidateId: string, sessionId: string, leaseToken: string, errorClass: string): Promise<void>
   releaseCandidate(candidateId: string, sessionId: string, leaseToken: string): Promise<void>
@@ -77,7 +80,7 @@ export class TextGenerationExecutor {
     const candidate = await this.repository.acquirePendingCandidate(payload.candidateId, session.id, session.organization_id)
     if (!candidate) return // duplicate delivery or a terminal candidate; never create a second one
     try {
-      const provider = await this.repository.loadActiveTextProvider()
+      const provider = await this.repository.loadProvider(candidate.provider_configuration_id)
       const generator = this.generator ?? GENERATORS[provider.protocol]
       if (!generator || !provider.structured_output_required) throw new WorkflowExecutionError('unsupported_provider_configuration', false)
       const style = StyleProfileSnapshotSchema.parse(session.style_profile_snapshot)

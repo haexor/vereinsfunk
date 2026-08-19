@@ -4,10 +4,13 @@ import {
   ListLlmProviderModelsRequestSchema,
   ListLlmProviderModelsResponseSchema,
   LlmProviderConfigurationSchema,
+  PlatformSettingSchema,
+  PlatformSettingValueSchemas,
   SocialPlatformSchema,
   TextGenerationPlatformDefaultSchema,
   UpdateLlmProviderConfigurationRequestSchema,
   UpdateTextGenerationPlatformDefaultRequestSchema,
+  UpdatePlatformSettingRequestSchema,
   UuidSchema,
   type LlmProviderConfigurationDto,
   type LlmProviderProtocol,
@@ -49,6 +52,16 @@ const loading = ref(true)
 const saving = ref(false)
 const errorMessage = ref('')
 const providers = ref<LlmProviderConfigurationDto[]>([])
+
+// Paket 046: wie viele der unten konfigurierten aktiven Provider gleichzeitig einen Vorschlag
+// liefern -- eine globale platform_settings-Einstellung, kein weiteres Feld je Provider. Es
+// duerfen mehr Provider aktiv sein, als hier eingetragen: es zaehlen dann nur die obersten nach
+// Prioritaet.
+const ensembleSize = ref<number | null>(null)
+const ensembleSizeUpdatedAt = ref<string | null>(null)
+const ensembleSizeLoading = ref(true)
+const ensembleSizeSaving = ref(false)
+const ensembleSizeError = ref('')
 
 const platformDefaults = ref<TextGenerationPlatformDefault[]>([])
 const platformDefaultsLoading = ref(true)
@@ -151,6 +164,42 @@ async function load() {
   }
 }
 await load()
+
+async function loadEnsembleSize() {
+  ensembleSizeLoading.value = true
+  ensembleSizeError.value = ''
+  try {
+    const headers = await useAuthHeader()
+    const response = await $fetch(`${config.public.apiBase}/v1/platform-settings`, { headers })
+    const settings = PlatformSettingSchema.array().parse(response)
+    const setting = settings.find((entry) => entry.key === 'text_generation_ensemble_size')
+    ensembleSize.value = setting ? PlatformSettingValueSchemas.text_generation_ensemble_size.parse(setting.value) : 1
+    ensembleSizeUpdatedAt.value = setting?.updatedAt ?? null
+  } catch {
+    ensembleSizeError.value = 'Die Ensemble-Größe konnte nicht geladen werden.'
+  } finally {
+    ensembleSizeLoading.value = false
+  }
+}
+await loadEnsembleSize()
+
+async function saveEnsembleSize() {
+  if (ensembleSize.value === null) return
+  ensembleSizeSaving.value = true
+  ensembleSizeError.value = ''
+  try {
+    const headers = await useAuthHeader()
+    const body = UpdatePlatformSettingRequestSchema.parse({ value: PlatformSettingValueSchemas.text_generation_ensemble_size.parse(ensembleSize.value) })
+    const response = await $fetch(`${config.public.apiBase}/v1/platform-settings/text_generation_ensemble_size`, { method: 'PUT', headers, body })
+    const updated = PlatformSettingSchema.parse(response)
+    ensembleSize.value = PlatformSettingValueSchemas.text_generation_ensemble_size.parse(updated.value)
+    ensembleSizeUpdatedAt.value = updated.updatedAt
+  } catch {
+    ensembleSizeError.value = 'Die Ensemble-Größe konnte nicht gespeichert werden.'
+  } finally {
+    ensembleSizeSaving.value = false
+  }
+}
 
 function platformDefaultUpdatedAt(platform: SocialPlatform): string {
   const row = platformDefaults.value.find((entry) => entry.platform === platform)
@@ -444,6 +493,34 @@ async function removeProvider(id: string) {
           </tbody>
         </table>
         <p v-if="!providers.length" class="py-4 text-center text-xs text-[#9aa096]">Noch kein Provider konfiguriert.</p>
+      </section>
+
+      <section class="card p-6">
+        <h2 class="mb-1 font-display text-base font-bold">Gleichzeitige Modelle</h2>
+        <p class="mb-4 text-xs text-[#727a75]">
+          Wie viele der oben aktiven Textgenerierungs-Provider gleichzeitig einen Vorschlag liefern. Es zählen die aktiven Provider mit der höchsten Priorität (kleinste Zahl); überzählige aktive Provider bleiben als Ersatz vorbereitet, ohne mitzugenerieren.
+        </p>
+        <div v-if="ensembleSizeLoading" class="p-4 text-center text-xs text-[#7b827d]">Wird geladen …</div>
+        <div v-else class="flex items-center gap-3">
+          <input
+            v-model.number="ensembleSize"
+            type="number"
+            min="1"
+            max="5"
+            step="1"
+            class="focus-ring w-24 rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-xs font-normal"
+          />
+          <button
+            type="button"
+            class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-[11px] font-semibold disabled:opacity-60"
+            :disabled="ensembleSizeSaving || ensembleSize === null"
+            @click="saveEnsembleSize"
+          >
+            {{ ensembleSizeSaving ? 'Speichert …' : 'Speichern' }}
+          </button>
+          <span v-if="ensembleSizeUpdatedAt" class="text-[11px] text-[#7b827d]">Aktualisiert am {{ new Date(ensembleSizeUpdatedAt).toLocaleString('de-DE') }}</span>
+        </div>
+        <p v-if="ensembleSizeError" class="mt-2 text-[11px] font-normal text-amber-800">{{ ensembleSizeError }}</p>
       </section>
 
       <section class="card overflow-x-auto p-6">
