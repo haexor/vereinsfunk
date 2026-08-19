@@ -132,9 +132,12 @@ function formatPrice(cents: number | null, currency: string): string {
         <h2 class="mb-4 font-display text-base font-bold">Tarif wechseln</h2>
         <form class="flex flex-wrap items-end gap-3" @submit.prevent="changePlan">
           <label class="text-xs font-semibold text-[#5c655f]">Neuer Tarif
-            <select v-model="selectedPlanKey" class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal">
-              <option v-for="plan in plans" :key="plan.key" :value="plan.key">{{ plan.displayName }} · {{ formatPrice(plan.monthlyPriceCents, plan.currency) }}</option>
-            </select>
+            <Select v-model="selectedPlanKey">
+              <SelectTrigger class="mt-1 rounded-xl px-4 py-2.5 text-sm font-normal"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="plan in plans" :key="plan.key" :value="plan.key">{{ plan.displayName }} · {{ formatPrice(plan.monthlyPriceCents, plan.currency) }}</SelectItem>
+              </SelectContent>
+            </Select>
           </label>
           <button type="submit" :disabled="saving || selectedPlanKey === summary.plan.key" class="focus-ring rounded-xl bg-forest px-5 py-2.5 text-xs font-bold text-white disabled:opacity-60">
             Wechseln

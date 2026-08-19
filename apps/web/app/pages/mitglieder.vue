@@ -397,25 +397,36 @@ const canInviteHere = computed(() => availableInviteScopes.value.length > 0)
             <input v-model="inviteEmail" type="email" required class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm" />
           </label>
           <label><span class="mb-1 block text-xs font-semibold">Ebene</span>
-            <select v-model="inviteScope" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm" @change="inviteScopeId = ''; inviteRole = ''">
-              <option v-for="scopeOption in availableInviteScopes" :key="scopeOption.value" :value="scopeOption.value">{{ scopeOption.label }}</option>
-            </select>
+            <Select :model-value="inviteScope" @update:model-value="(value: unknown) => { inviteScope = value as ScopeLevel; inviteScopeId = ''; inviteRole = '' }">
+              <SelectTrigger class="p-2.5 text-sm"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="scopeOption in availableInviteScopes" :key="scopeOption.value" :value="scopeOption.value">{{ scopeOption.label }}</SelectItem>
+              </SelectContent>
+            </Select>
           </label>
           <label v-if="inviteScope === 'department'"><span class="mb-1 block text-xs font-semibold">Abteilung</span>
-            <select v-model="inviteScopeId" required class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm">
-              <option v-for="dept in invitableDepartments" :key="dept.id" :value="dept.id">{{ dept.name }}</option>
-            </select>
+            <Select v-model="inviteScopeId" required>
+              <SelectTrigger class="p-2.5 text-sm"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="dept in invitableDepartments" :key="dept.id" :value="dept.id">{{ dept.name }}</SelectItem>
+              </SelectContent>
+            </Select>
           </label>
           <label v-if="inviteScope === 'team'"><span class="mb-1 block text-xs font-semibold">Team</span>
-            <select v-model="inviteScopeId" required class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm">
-              <option v-for="team in invitableTeams" :key="team.id" :value="team.id">{{ team.label }}</option>
-            </select>
+            <Select v-model="inviteScopeId" required>
+              <SelectTrigger class="p-2.5 text-sm"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="team in invitableTeams" :key="team.id" :value="team.id">{{ team.label }}</SelectItem>
+              </SelectContent>
+            </Select>
           </label>
           <label><span class="mb-1 block text-xs font-semibold">Rolle</span>
-            <select v-model="inviteRole" required class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm">
-              <option value="" disabled>Rolle wählen</option>
-              <option v-for="role in availableRolesForInvite" :key="role" :value="role">{{ roleLabels[role] ?? role }}</option>
-            </select>
+            <Select v-model="inviteRole" required>
+              <SelectTrigger class="p-2.5 text-sm"><SelectValue placeholder="Rolle wählen" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="role in availableRolesForInvite" :key="role" :value="role">{{ roleLabels[role] ?? role }}</SelectItem>
+              </SelectContent>
+            </Select>
           </label>
           <div class="sm:col-span-2">
             <p v-if="inviteError" class="mb-2 text-xs text-amber-800">{{ inviteError }}</p>

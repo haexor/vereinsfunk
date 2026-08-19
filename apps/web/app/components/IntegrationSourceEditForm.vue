@@ -15,6 +15,13 @@ const form = defineModel<{ displayName: string; endpointUrl: string; lossThresho
 const mappingRows = defineModel<MappingRow[]>('mappingRows', { required: true })
 
 const emit = defineEmits<{ save: []; cancel: []; addRow: []; removeRow: [index: number] }>()
+
+function fieldModel(row: MappingRow) {
+  return computed({
+    get: () => row.field || '__none__',
+    set: (v: string) => { row.field = v === '__none__' ? '' : v },
+  })
+}
 </script>
 
 <template>
@@ -26,7 +33,7 @@ const emit = defineEmits<{ save: []; cancel: []; addRow: []; removeRow: [index: 
       <label><span class="mb-1 block text-xs font-semibold">Verlustschwelle (%)</span><input v-model="form.lossThresholdPercent" type="number" min="1" max="100" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" /></label>
     </div>
     <div class="mt-3"><p class="mb-2 text-xs font-semibold">Feldzuordnung</p>
-      <div v-for="(row, index) in mappingRows" :key="index" class="mb-2 flex flex-wrap items-center gap-2"><input v-model="row.column" placeholder="Spalte in der Datei" class="focus-ring w-44 rounded-lg border border-[#dfe0d9] p-2 text-xs" /><span class="text-xs text-[#9aa096]">→</span><select v-model="row.field" class="focus-ring rounded-lg border border-[#dfe0d9] p-2 text-xs"><option value="">Internes Feld wählen …</option><option v-for="target in mappingTargetsFor(source.departmentId)" :key="target.value" :value="target.value">{{ target.label }}</option></select><button type="button" class="focus-ring text-xs text-[#8a9186] hover:text-amber-800" @click="emit('removeRow', index)">Entfernen</button></div>
+      <div v-for="(row, index) in mappingRows" :key="index" class="mb-2 flex flex-wrap items-center gap-2"><input v-model="row.column" placeholder="Spalte in der Datei" class="focus-ring w-44 rounded-lg border border-[#dfe0d9] p-2 text-xs" /><span class="text-xs text-[#9aa096]">→</span><Select v-model="fieldModel(row).value"><SelectTrigger class="w-auto rounded-lg p-2 text-xs"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="__none__">Internes Feld wählen …</SelectItem><SelectItem v-for="target in mappingTargetsFor(source.departmentId)" :key="target.value" :value="target.value">{{ target.label }}</SelectItem></SelectContent></Select><button type="button" class="focus-ring text-xs text-[#8a9186] hover:text-amber-800" @click="emit('removeRow', index)">Entfernen</button></div>
       <button type="button" class="focus-ring text-xs font-semibold text-forest" @click="emit('addRow')">+ Zeile hinzufügen</button>
     </div>
     <p v-if="error" class="mt-2 text-xs text-amber-800">{{ error }}</p>

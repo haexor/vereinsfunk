@@ -151,9 +151,14 @@ async function saveLimit() {
         <p class="mt-2 text-sm text-[#727a75]">Client-ID und Secret werden verschlüsselt gespeichert. Das Secret wird nie wieder angezeigt. Meta ist derzeit der einzige Live-Adapter; LinkedIn und X lassen sich vorbereiten, aber noch nicht aktivieren.</p>
         <form class="mt-4 grid gap-3 sm:grid-cols-2" @submit.prevent="saveProviderConfiguration">
           <label class="text-xs font-semibold text-[#5c655f]">Provider
-            <select v-model="providerDraft.provider" class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" @change="selectProvider(providerDraft.provider)">
-              <option value="meta">Meta (Instagram/Facebook)</option><option value="linkedin">LinkedIn</option><option value="twitter">X / Twitter</option>
-            </select>
+            <Select :model-value="providerDraft.provider" @update:model-value="(value: unknown) => { providerDraft.provider = value as PublishingProvider; selectProvider(value as PublishingProvider) }">
+              <SelectTrigger class="mt-1 px-4 py-2.5 text-sm font-normal"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="meta">Meta (Instagram/Facebook)</SelectItem>
+                <SelectItem value="linkedin">LinkedIn</SelectItem>
+                <SelectItem value="twitter">X / Twitter</SelectItem>
+              </SelectContent>
+            </Select>
           </label>
           <label class="text-xs font-semibold text-[#5c655f]">Client-ID
             <input v-model="providerDraft.clientId" required class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" />

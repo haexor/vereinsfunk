@@ -2,6 +2,11 @@
 import { OAuthPlatformSchema } from '@vereinsfunk/contracts'
 
 const channelsState = reactive(await useChannels())
+
+const connectDepartmentIdModel = computed({
+  get: () => channelsState.connectDepartmentId || '__none__',
+  set: (value: string) => { channelsState.connectDepartmentId = value === '__none__' ? '' : value },
+})
 </script>
 
 <template>
@@ -35,7 +40,7 @@ const channelsState = reactive(await useChannels())
         </div>
         <div v-if="channelsState.channelPolicy?.allowDepartmentOwnedChannels" class="mt-4 border-t border-[#e8e9e2] pt-4">
           <p class="mb-2 text-[11px] font-semibold text-[#7b827d]">Eigener Abteilungskanal</p>
-          <div class="flex flex-wrap items-center gap-2"><select v-model="channelsState.connectDepartmentId" class="focus-ring rounded-lg border border-[#dfe0d9] p-2 text-xs"><option value="">Abteilung wählen …</option><option v-for="department in channelsState.departments" :key="department.id" :value="department.id">{{ department.name }}</option></select><button v-for="platform in OAuthPlatformSchema.options" :key="platform" type="button" :disabled="!channelsState.connectDepartmentId || channelsState.connecting !== null" class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-2 text-[11px] font-semibold disabled:opacity-60" @click="channelsState.connect(platform, 'department', channelsState.connectDepartmentId)">{{ platformLabels[platform] }}</button></div>
+          <div class="flex flex-wrap items-center gap-2"><Select v-model="connectDepartmentIdModel"><SelectTrigger class="w-auto rounded-lg p-2 text-xs"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="__none__">Abteilung wählen …</SelectItem><SelectItem v-for="department in channelsState.departments" :key="department.id" :value="department.id">{{ department.name }}</SelectItem></SelectContent></Select><button v-for="platform in OAuthPlatformSchema.options" :key="platform" type="button" :disabled="!channelsState.connectDepartmentId || channelsState.connecting !== null" class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-2 text-[11px] font-semibold disabled:opacity-60" @click="channelsState.connect(platform, 'department', channelsState.connectDepartmentId)">{{ platformLabels[platform] }}</button></div>
         </div>
         <div class="mt-4 border-t border-[#e8e9e2] pt-4">
           <p class="mb-2 text-[11px] font-semibold text-[#7b827d]">Eigene Website / Blog hinzufügen</p>

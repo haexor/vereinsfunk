@@ -32,6 +32,10 @@ watch(
   },
   { immediate: true },
 )
+const filterDepartmentIdModel = computed({
+  get: () => filterDepartmentId.value || '__none__',
+  set: (v: string) => { filterDepartmentId.value = v === '__none__' ? '' : v },
+})
 
 const loading = ref(true)
 const errorMessage = ref('')
@@ -239,10 +243,13 @@ async function resendRequest(request: ConsentRequest) {
     <p v-else-if="errorMessage" class="text-sm text-amber-800">{{ errorMessage }}</p>
     <template v-else>
       <section class="card mb-6 p-6">
-        <select v-model="filterDepartmentId" class="focus-ring rounded-lg border border-[#dfe0d9] p-2 text-xs">
-          <option v-if="canManageOrgWide" value="">Alle Abteilungen</option>
-          <option v-for="department in manageableDepartments" :key="department.id" :value="department.id">{{ department.name }}</option>
-        </select>
+        <Select v-model="filterDepartmentIdModel">
+          <SelectTrigger class="w-auto rounded-lg p-2 text-xs"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem v-if="canManageOrgWide" value="__none__">Alle Abteilungen</SelectItem>
+            <SelectItem v-for="department in manageableDepartments" :key="department.id" :value="department.id">{{ department.name }}</SelectItem>
+          </SelectContent>
+        </Select>
       </section>
 
       <section v-if="showMinorsWithoutConsent && minorsWithoutValidConsent.length" class="card mb-6 border-amber-200 bg-amber-50 p-5">
@@ -306,10 +313,12 @@ async function resendRequest(request: ConsentRequest) {
           <h2 class="mb-4 font-display text-base font-bold">Papiererklärung hinterlegen</h2>
           <form class="grid gap-3" @submit.prevent="registerConsent">
             <label><span class="mb-1 block text-xs font-semibold">Person</span>
-              <select v-model="registerForm.directoryPersonId" required class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm">
-                <option value="" disabled>Auswählen</option>
-                <option v-for="person in people" :key="person.id" :value="person.id">{{ person.firstName }} {{ person.lastName }}</option>
-              </select>
+              <Select v-model="registerForm.directoryPersonId" required>
+                <SelectTrigger class="rounded-xl p-2.5 text-sm"><SelectValue placeholder="Auswählen" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem v-for="person in people" :key="person.id" :value="person.id">{{ person.firstName }} {{ person.lastName }}</SelectItem>
+                </SelectContent>
+              </Select>
             </label>
             <label><span class="mb-1 block text-xs font-semibold">Wiedergabe der Erklärung</span>
               <textarea v-model="registerForm.scope" required maxlength="500" rows="2" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm" />
@@ -346,10 +355,12 @@ async function resendRequest(request: ConsentRequest) {
           <h2 class="mb-4 font-display text-base font-bold">Digital anfragen</h2>
           <form class="grid gap-3" @submit.prevent="sendConsentRequest">
             <label><span class="mb-1 block text-xs font-semibold">Person</span>
-              <select v-model="requestForm.directoryPersonId" required class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm">
-                <option value="" disabled>Auswählen</option>
-                <option v-for="person in people" :key="person.id" :value="person.id">{{ person.firstName }} {{ person.lastName }}</option>
-              </select>
+              <Select v-model="requestForm.directoryPersonId" required>
+                <SelectTrigger class="rounded-xl p-2.5 text-sm"><SelectValue placeholder="Auswählen" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem v-for="person in people" :key="person.id" :value="person.id">{{ person.firstName }} {{ person.lastName }}</SelectItem>
+                </SelectContent>
+              </Select>
             </label>
             <label><span class="mb-1 block text-xs font-semibold">E-Mail-Adresse</span>
               <input v-model="requestForm.recipientEmail" type="email" required class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm" />

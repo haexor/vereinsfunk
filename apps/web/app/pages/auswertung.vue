@@ -303,9 +303,12 @@ const maxFunnelCount = computed(() => Math.max(1, ...funnelStages.value.map((sta
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
           <h2 class="font-display text-base font-bold tracking-[-.02em]">Zeitreihe</h2>
           <div class="flex flex-wrap gap-2">
-            <select v-model="timeseriesMetric" class="focus-ring rounded-lg border border-[#dfe0d9] bg-white px-2 py-1 text-xs font-semibold">
-              <option v-for="metric in TIMESERIES_METRICS" :key="metric.value" :value="metric.value">{{ metric.label }}</option>
-            </select>
+            <Select v-model="timeseriesMetric">
+              <SelectTrigger class="w-auto rounded-lg bg-white px-2 py-1 text-xs font-semibold"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="metric in TIMESERIES_METRICS" :key="metric.value" :value="metric.value">{{ metric.label }}</SelectItem>
+              </SelectContent>
+            </Select>
             <div class="flex overflow-hidden rounded-lg border border-[#dfe0d9]">
               <button
                 v-for="granularity in (['day', 'week', 'month'] as const)" :key="granularity" type="button"

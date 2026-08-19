@@ -265,9 +265,12 @@ async function deleteProfile(profile: CustomStyleProfile) {
       <section class="card mb-6 p-6">
         <h2 class="mb-4 font-display text-base font-bold">Stilprofil anlegen</h2>
         <label class="mb-4 block text-xs font-semibold text-[#5c655f]">Bereich
-          <select v-model="selectedScopeKey" class="focus-ring mt-1 w-full max-w-sm rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal">
-            <option v-for="choice in scopeChoices" :key="choice.key" :value="choice.key">{{ choice.label }}</option>
-          </select>
+          <Select v-model="selectedScopeKey">
+            <SelectTrigger class="mt-1 w-full max-w-sm rounded-xl px-4 py-2.5 text-sm font-normal"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem v-for="choice in scopeChoices" :key="choice.key" :value="choice.key">{{ choice.label }}</SelectItem>
+            </SelectContent>
+          </Select>
         </label>
       </section>
 

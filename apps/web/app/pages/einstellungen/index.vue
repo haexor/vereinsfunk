@@ -256,11 +256,14 @@ function reviewerLabel(reviewer: { kind: string; userId: string | null; role: st
       <p v-if="actionError" class="mt-6 text-sm text-amber-800">{{ actionError }}</p>
 
       <label class="mt-8 block"><span class="mb-1 block text-xs font-semibold">Ebene</span>
-        <select v-model="selectedKey" class="focus-ring w-full max-w-sm rounded-xl border border-[#dfe0d9] p-2.5 text-sm">
-          <option v-for="entry in entries" :key="entryKey(entry)" :value="entryKey(entry)">
-            {{ entry.name }} ({{ entry.scope === 'organization' ? 'Verein' : entry.scope === 'department' ? 'Abteilung' : 'Team' }})
-          </option>
-        </select>
+        <Select v-model="selectedKey">
+          <SelectTrigger class="max-w-sm rounded-xl p-2.5 text-sm"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem v-for="entry in entries" :key="entryKey(entry)" :value="entryKey(entry)">
+              {{ entry.name }} ({{ entry.scope === 'organization' ? 'Verein' : entry.scope === 'department' ? 'Abteilung' : 'Team' }})
+            </SelectItem>
+          </SelectContent>
+        </Select>
       </label>
 
       <template v-if="selectedEntry">
@@ -272,11 +275,14 @@ function reviewerLabel(reviewer: { kind: string; userId: string | null; role: st
           <div class="grid gap-4 sm:grid-cols-2">
             <label class="flex items-center gap-2"><input v-model="draft.reviewRequired" type="checkbox" :disabled="!selectedEntry.canEdit" /> <span class="text-sm">Prüfung auf dieser Ebene erforderlich</span></label>
             <label v-if="draft.reviewRequired"><span class="mb-1 block text-xs font-semibold">Modus</span>
-              <select v-model="draft.reviewMode" :disabled="!selectedEntry.canEdit" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-sm">
-                <option :value="null">geerbt</option>
-                <option value="any_with_permission">jede Person mit Freigaberecht im Scope</option>
-                <option value="named">nur benannte Prüfer</option>
-              </select>
+              <Select v-model="draft.reviewMode" :disabled="!selectedEntry.canEdit">
+                <SelectTrigger class="rounded-lg p-2 text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem :value="null">geerbt</SelectItem>
+                  <SelectItem value="any_with_permission">jede Person mit Freigaberecht im Scope</SelectItem>
+                  <SelectItem value="named">nur benannte Prüfer</SelectItem>
+                </SelectContent>
+              </Select>
             </label>
             <label v-if="draft.reviewRequired"><span class="mb-1 block text-xs font-semibold">Bezeichnung der Stufe</span>
               <input v-model="draft.reviewStageLabel" :disabled="!selectedEntry.canEdit" placeholder="z. B. Medienverantwortliche" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-sm" />
@@ -347,21 +353,28 @@ function reviewerLabel(reviewer: { kind: string; userId: string | null; role: st
           </ul>
           <form v-if="selectedEntry.canEdit" class="grid gap-3 sm:grid-cols-3" @submit.prevent="addReviewer">
             <label><span class="mb-1 block text-xs font-semibold">Art</span>
-              <select v-model="reviewerKind" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-sm">
-                <option v-for="option in availableKindsForReviewer" :key="option.value" :value="option.value">{{ option.label }}</option>
-              </select>
+              <Select v-model="reviewerKind">
+                <SelectTrigger class="rounded-lg p-2 text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem v-for="option in availableKindsForReviewer" :key="option.value" :value="option.value">{{ option.label }}</SelectItem>
+                </SelectContent>
+              </Select>
             </label>
             <label v-if="reviewerKind === 'user'" class="sm:col-span-2"><span class="mb-1 block text-xs font-semibold">Person</span>
-              <select v-model="reviewerUserId" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-sm">
-                <option value="" disabled>Person wählen</option>
-                <option v-for="member in members" :key="member.userId" :value="member.userId">{{ member.displayName }}</option>
-              </select>
+              <Select v-model="reviewerUserId">
+                <SelectTrigger class="rounded-lg p-2 text-sm"><SelectValue placeholder="Person wählen" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem v-for="member in members" :key="member.userId" :value="member.userId">{{ member.displayName }}</SelectItem>
+                </SelectContent>
+              </Select>
             </label>
             <label v-else class="sm:col-span-2"><span class="mb-1 block text-xs font-semibold">Rolle</span>
-              <select v-model="reviewerRole" required class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-sm">
-                <option value="" disabled>Rolle wählen</option>
-                <option v-for="role in availableRolesForReviewer" :key="role" :value="role">{{ roleLabels[role] ?? role }}</option>
-              </select>
+              <Select v-model="reviewerRole" required>
+                <SelectTrigger class="rounded-lg p-2 text-sm"><SelectValue placeholder="Rolle wählen" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem v-for="role in availableRolesForReviewer" :key="role" :value="role">{{ roleLabels[role] ?? role }}</SelectItem>
+                </SelectContent>
+              </Select>
             </label>
             <div class="sm:col-span-3">
               <p v-if="reviewerError" class="mb-2 text-xs text-amber-800">{{ reviewerError }}</p>

@@ -91,6 +91,10 @@ watch(() => createForm.directoryPersonId, (id) => {
   const person = people.value.find((item) => item.id === id)
   if (person) createForm.subjectLabel = `${person.firstName} ${person.lastName}`
 })
+const createFormDirectoryPersonIdModel = computed({
+  get: () => createForm.directoryPersonId || '__none__',
+  set: (v: string) => { createForm.directoryPersonId = v === '__none__' ? '' : v },
+})
 const creating = ref(false)
 const createError = ref('')
 
@@ -252,20 +256,29 @@ async function erasePerson(request: DataSubjectRequest) {
         <h2 class="mb-4 font-display text-base font-bold">Neue Anfrage erfassen</h2>
         <form class="grid gap-3 sm:grid-cols-2" @submit.prevent="createRequest">
           <label><span class="mb-1 block text-xs font-semibold">Art</span>
-            <select v-model="createForm.kind" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-sm">
-              <option v-for="(label, kind) in KIND_LABELS" :key="kind" :value="kind">{{ label }}</option>
-            </select>
+            <Select v-model="createForm.kind">
+              <SelectTrigger class="rounded-lg p-2 text-sm"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="(label, kind) in KIND_LABELS" :key="kind" :value="kind">{{ label }}</SelectItem>
+              </SelectContent>
+            </Select>
           </label>
           <label><span class="mb-1 block text-xs font-semibold">Betroffene Person, Art</span>
-            <select v-model="createForm.subjectKind" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-sm">
-              <option v-for="(label, kind) in SUBJECT_KIND_LABELS" :key="kind" :value="kind">{{ label }}</option>
-            </select>
+            <Select v-model="createForm.subjectKind">
+              <SelectTrigger class="rounded-lg p-2 text-sm"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="(label, kind) in SUBJECT_KIND_LABELS" :key="kind" :value="kind">{{ label }}</SelectItem>
+              </SelectContent>
+            </Select>
           </label>
           <label v-if="createForm.subjectKind === 'directory_person'" class="sm:col-span-2"><span class="mb-1 block text-xs font-semibold">Verzeichnisperson (optional, für Auskunft/Löschung nötig)</span>
-            <select v-model="createForm.directoryPersonId" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-sm">
-              <option value="">Keine Verknüpfung</option>
-              <option v-for="person in people" :key="person.id" :value="person.id">{{ person.firstName }} {{ person.lastName }}</option>
-            </select>
+            <Select v-model="createFormDirectoryPersonIdModel">
+              <SelectTrigger class="rounded-lg p-2 text-sm"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">Keine Verknüpfung</SelectItem>
+                <SelectItem v-for="person in people" :key="person.id" :value="person.id">{{ person.firstName }} {{ person.lastName }}</SelectItem>
+              </SelectContent>
+            </Select>
           </label>
           <label class="sm:col-span-2"><span class="mb-1 block text-xs font-semibold">Bezeichnung der Person</span>
             <input v-model="createForm.subjectLabel" required maxlength="200" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-sm" />
@@ -297,14 +310,16 @@ async function erasePerson(request: DataSubjectRequest) {
               </p>
             </div>
             <label class="shrink-0 text-[11px]">
-              <select
-                :value="request.status"
+              <Select
+                :model-value="request.status"
                 :disabled="statusUpdatingId === request.id"
-                class="focus-ring rounded-lg border border-[#dfe0d9] p-1.5 text-[11px]"
-                @change="updateStatus(request, ($event.target as HTMLSelectElement).value as typeof request.status)"
+                @update:model-value="(value: unknown) => updateStatus(request, value as typeof request.status)"
               >
-                <option v-for="option in STATUS_OPTIONS" :key="option" :value="option">{{ STATUS_LABELS[option] }}</option>
-              </select>
+                <SelectTrigger class="w-auto rounded-lg p-1.5 text-[11px]"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem v-for="option in STATUS_OPTIONS" :key="option" :value="option">{{ STATUS_LABELS[option] }}</SelectItem>
+                </SelectContent>
+              </Select>
             </label>
           </div>
 

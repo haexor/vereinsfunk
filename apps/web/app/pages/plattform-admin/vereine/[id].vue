@@ -221,9 +221,12 @@ await Promise.all([load(), loadSubscription()])
 
         <form class="mb-6 flex flex-wrap items-end gap-3" @submit.prevent="changePlan">
           <label class="text-xs font-semibold text-[#5c655f]">Tarif wechseln
-            <select v-model="selectedPlanKey" class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal">
-              <option v-for="plan in plans" :key="plan.key" :value="plan.key">{{ plan.displayName }}</option>
-            </select>
+            <Select v-model="selectedPlanKey">
+              <SelectTrigger class="mt-1 px-4 py-2.5 text-sm font-normal"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="plan in plans" :key="plan.key" :value="plan.key">{{ plan.displayName }}</SelectItem>
+              </SelectContent>
+            </Select>
           </label>
           <button type="submit" :disabled="savingSubscription || selectedPlanKey === subscription.planKey" class="focus-ring rounded-xl bg-forest px-5 py-2.5 text-xs font-bold text-white disabled:opacity-60">
             Wechseln

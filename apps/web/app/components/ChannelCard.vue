@@ -18,6 +18,11 @@ const editorialPrivacyUrlDraft = defineModel<string>('editorialPrivacyUrlDraft',
 const editorialResponsibleProfileIdDraft = defineModel<string>('editorialResponsibleProfileIdDraft', { required: true })
 const editorialResponsibleNoteDraft = defineModel<string>('editorialResponsibleNoteDraft', { required: true })
 
+const editorialResponsibleProfileIdModel = computed({
+  get: () => editorialResponsibleProfileIdDraft.value || '__none__',
+  set: (v: string) => { editorialResponsibleProfileIdDraft.value = v === '__none__' ? '' : v },
+})
+
 const emit = defineEmits<{
   verify: []
   disconnect: []
@@ -74,7 +79,7 @@ function tokenExpiryLabel(): string | null {
         <div class="grid gap-2 sm:grid-cols-2">
           <label><span class="mb-1 block text-[11px] font-semibold">Impressum-URL</span><input v-model="editorialImprintUrlDraft" type="url" placeholder="https://…" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" /></label>
           <label><span class="mb-1 block text-[11px] font-semibold">Datenschutz-URL</span><input v-model="editorialPrivacyUrlDraft" type="url" placeholder="https://…" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" /></label>
-          <label><span class="mb-1 block text-[11px] font-semibold">Redaktionell verantwortliche Person (§ 18 MStV)</span><select v-model="editorialResponsibleProfileIdDraft" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs"><option value="">Keine benannt</option><option v-for="member in members" :key="member.userId" :value="member.userId">{{ member.displayName }}</option></select></label>
+          <label><span class="mb-1 block text-[11px] font-semibold">Redaktionell verantwortliche Person (§ 18 MStV)</span><Select v-model="editorialResponsibleProfileIdModel"><SelectTrigger class="rounded-lg p-2 text-xs"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="__none__">Keine benannt</SelectItem><SelectItem v-for="member in members" :key="member.userId" :value="member.userId">{{ member.displayName }}</SelectItem></SelectContent></Select></label>
           <label><span class="mb-1 block text-[11px] font-semibold">Notiz</span><input v-model="editorialResponsibleNoteDraft" maxlength="500" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" /></label>
         </div>
         <p v-if="editorialError" class="mt-2 text-[11px] text-amber-800">{{ editorialError }}</p>
