@@ -55,6 +55,14 @@ export async function loadSelectableBrandAsset(
 
 const LOGO_ASSET_KINDS = new Set(['logo_primary', 'logo_light', 'logo_dark', 'logo_mark', 'wordmark', 'watermark'])
 
+// Nur diese Kinds sind ein Ein-Asset-pro-Ebene-Platz (das Icon, die Wortmarke): ein erneuter
+// Upload darf das Vorgaenger-Asset dort abloesen. 'frame' und 'watermark' pflegt Plan 045 als
+// gezielt referenzierbare, potenziell zahlreiche Assets -- image_style_presets zeigt per fester
+// ID auf eines davon. Ein Supersede wuerde jedes bestehende Preset, das noch auf das abgeloeste
+// Asset zeigt, beim naechsten Speichern an loadSelectableBrandAsset (status='ready' verlangt)
+// mit invalid_asset_reference scheitern lassen, ohne dass die UI einen Ausweg zeigt.
+const SINGLETON_PER_SCOPE_ASSET_KINDS = new Set(['logo_mark', 'wordmark'])
+
 export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients } = context
 
@@ -365,7 +373,7 @@ app.post('/v1/brand/assets', async (request, reply) => {
     })
   }
 
-  if (insertPayload.status === 'ready') {
+  if (insertPayload.status === 'ready' && SINGLETON_PER_SCOPE_ASSET_KINDS.has(fields.kind)) {
     const supersede = await service
       .from('brand_assets')
       .update({ status: 'replaced' })

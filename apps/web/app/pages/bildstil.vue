@@ -36,6 +36,12 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
   activeLevel.value = level
   activeDepartmentId.value = departmentId
   activeTeamId.value = teamId
+  // selectableFrameAssets/selectableLogoAssets sind von der aktiven Ebene abhaengig -- ein
+  // Rahmen-/Logo-Asset, das in der alten Ebene waehlbar war, kann in der neuen fehlen. Ohne
+  // Reset bliebe die veraltete Asset-ID im Entwurf stehen und faellt erst beim Speichern als
+  // invalid_asset_reference auf.
+  draft.value = emptyImageStylePresetDraft()
+  editingId.value = null
 }
 
 const canManageActiveLevel = computed(() => {

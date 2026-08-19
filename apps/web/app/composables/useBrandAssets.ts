@@ -98,6 +98,7 @@ export function useBrandAssets({
       (asset) =>
         asset.status === 'ready' &&
         asset.kind !== 'font' &&
+        asset.kind !== 'frame' &&
         isBrandAssetSelectable(
           { scope: asset.teamId ? 'team' : asset.departmentId ? 'department' : 'organization', departmentId: asset.departmentId ?? undefined, teamId: asset.teamId ?? undefined },
           activeLevel.value,
@@ -130,7 +131,7 @@ export function useBrandAssets({
   const pendingLicenseAssets = computed(() => ownFontAssets.value.filter((asset) => asset.status === 'processing'))
   const ownLogoAssets = computed(() =>
     assets.value.filter((asset) => {
-      if (asset.kind === 'font' || asset.kind === 'logo_primary' || asset.kind === 'logo_dark' || asset.status === 'replaced') return false
+      if (asset.kind === 'font' || asset.kind === 'logo_primary' || asset.kind === 'logo_dark' || asset.kind === 'frame' || asset.status === 'replaced') return false
       if (activeLevel.value === 'organization') return asset.departmentId === null && asset.teamId === null
       if (activeLevel.value === 'department') return asset.departmentId === activeDepartmentId.value && asset.teamId === null
       return asset.teamId === activeTeamId.value
