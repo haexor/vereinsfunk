@@ -1,9 +1,10 @@
 <script setup lang="ts">
+import { TextWorkshopDraftRowSchema } from '@vereinsfunk/contracts'
 import { z } from 'zod'
 const scope = await useScope()
 const api = useApiClient()
 const posts = ref<{ id: string; status: string; created_at: string; current_version_id: string | null }[]>([])
-const workshopDrafts = ref<{ id: string; created_at: string; updated_at: string; payload: { factsText: string; observation: string } }[]>([])
+const workshopDrafts = ref<z.infer<typeof TextWorkshopDraftRowSchema>[]>([])
 const postsLoading = ref(true)
 const workshopDraftsLoading = ref(false)
 const postsError = ref<string | null>(null)
@@ -17,7 +18,7 @@ function postHref(post: { id: string; status: string; current_version_id: string
   if (RESUMABLE_IN_TEXTWORKSHOP.has(post.status)) return `/erstellen?postId=${post.id}`
   return post.current_version_id ? `/freigaben?postVersionId=${post.current_version_id}` : '/erstellen'
 }
-function draftLabel(draft: { payload: { factsText: string; observation: string } }) {
+function draftLabel(draft: z.infer<typeof TextWorkshopDraftRowSchema>) {
   const firstFact = draft.payload.factsText.split('\n').find((line) => line.trim())
   return firstFact?.split(':').slice(1).join(':').trim() || draft.payload.observation.trim() || 'Textwerkstatt-Entwurf'
 }
@@ -31,7 +32,7 @@ if (scope.value?.organizationId) {
   if (scope.value.departmentId) {
     workshopDraftsLoading.value = true
     try {
-      const result = await api.request('/v1/text-workshop/drafts', { query: { organizationId: scope.value.organizationId, departmentId: scope.value.departmentId } }, z.object({ drafts: z.array(z.object({ id: z.string(), created_at: z.string(), updated_at: z.string(), payload: z.object({ factsText: z.string(), observation: z.string() }) })) }))
+      const result = await api.request('/v1/text-workshop/drafts', { query: { organizationId: scope.value.organizationId, departmentId: scope.value.departmentId } }, z.object({ drafts: z.array(TextWorkshopDraftRowSchema) }))
       workshopDrafts.value = result.drafts
     } catch { workshopDraftsError.value = 'Entwürfe konnten nicht geladen werden. Bitte versuche es erneut.' }
     finally { workshopDraftsLoading.value = false }

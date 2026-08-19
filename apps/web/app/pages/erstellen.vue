@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Check, LoaderCircle, RefreshCw, Save, Sparkles } from '@lucide/vue'
-import { MaxCharactersSchema, RequestApprovalResponseSchema, SocialPlatformSchema, SourceMaterialSchema, TEXT_GENERATION_DEFAULT_TEMPERATURE, TextGenerationPlatformAvailabilitySchema, UuidSchema, type SocialPlatform, type TextGenerationPlatformAvailability } from '@vereinsfunk/contracts'
+import { MaxCharactersSchema, RequestApprovalResponseSchema, SocialPlatformSchema, SourceMaterialSchema, TEXT_GENERATION_DEFAULT_TEMPERATURE, TextGenerationPlatformAvailabilitySchema, TextWorkshopDraftRowSchema, UuidSchema, type SocialPlatform, type TextGenerationPlatformAvailability } from '@vereinsfunk/contracts'
 import { z } from 'zod'
 
 type Profile = { id: string | null; slug: string; kind: 'system' | 'persona' | 'custom'; name: string; description: string }
@@ -171,7 +171,7 @@ async function refreshSession() {
 }
 async function loadServerDraft(draftId: string) {
   try {
-    const response = await api.request(`/v1/text-workshop/drafts/${draftId}`, {}, z.object({ draft: z.object({ id: z.string(), payload: z.object({ communicationGoal: z.string(), factsText: z.string(), observation: z.string(), doNotMention: z.string(), selectedProfile: z.string(), selectedPlatforms: z.array(SocialPlatformSchema), maxCharactersOverride: z.string() }) }) }))
+    const response = await api.request(`/v1/text-workshop/drafts/${draftId}`, {}, z.object({ draft: TextWorkshopDraftRowSchema }))
     const draft = response.draft
     serverDraftId.value = draft.id
     communicationGoal.value = draft.payload.communicationGoal; factsText.value = draft.payload.factsText; observation.value = draft.payload.observation; doNotMention.value = draft.payload.doNotMention; selectedProfile.value = draft.payload.selectedProfile; maxCharactersOverride.value = draft.payload.maxCharactersOverride

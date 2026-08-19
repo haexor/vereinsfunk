@@ -387,6 +387,10 @@ export const SaveTextWorkshopDraftSchema = z.object({
   teamId: UuidSchema.nullable().optional(),
   payload: TextWorkshopDraftPayloadSchema,
 })
+export const TextWorkshopDraftRowSchema = z.object({
+  id: UuidSchema, organization_id: UuidSchema, department_id: UuidSchema, team_id: UuidSchema.nullable(),
+  post_id: UuidSchema.nullable(), payload: TextWorkshopDraftPayloadSchema, created_at: z.iso.datetime({ offset: true }), updated_at: z.iso.datetime({ offset: true }),
+})
 export const CreateGenerationCommandSchema = z.object({
   sessionId: UuidSchema,
   generationIntent: GenerationIntentSchema,
