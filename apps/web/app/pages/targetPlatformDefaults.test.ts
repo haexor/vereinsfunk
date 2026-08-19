@@ -31,7 +31,7 @@ describe('Zielplattform-Vorgaben', () => {
     // leeren Formularzustand über den gespeicherten bzw. wiedereroeffneten Entwurf: nach jedem
     // Neuladen war das getippte Quellmaterial still verloren.
     expect(page.replace(/\s+/g, ' ')).toContain(
-      "restoringDraft = true await Promise.all([loadProfiles(), loadPlatformAvailability(), loadCapabilities()]) const resumePostId = UuidSchema.safeParse(route.query.postId) const resumeDraftId = UuidSchema.safeParse(route.query.draftId) if (resumeDraftId.success) await loadServerDraft(resumeDraftId.data) else if (resumePostId.success) await loadDraftFromPost(resumePostId.data) else { if (route.query.postId !== undefined || route.query.draftId !== undefined) notice.value = 'Der Link zum Entwurf ist ungültig.' restoreDraft() } restoringDraft = false",
+      "restoringDraft = true await Promise.all([loadProfiles(), loadPlatformAvailability()]) const resumePostId = UuidSchema.safeParse(route.query.postId) const resumeDraftId = UuidSchema.safeParse(route.query.draftId) if (resumeDraftId.success) await loadServerDraft(resumeDraftId.data) else if (resumePostId.success) await loadDraftFromPost(resumePostId.data) else { if (route.query.postId !== undefined || route.query.draftId !== undefined) notice.value = 'Der Link zum Entwurf ist ungültig.' restoreDraft() } restoringDraft = false",
     )
   })
 

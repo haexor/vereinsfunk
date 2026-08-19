@@ -290,13 +290,13 @@ export function deriveTextGenerationMaxOutputTokens(maxCharacters: number, claim
 
 // Paket 042: wie stark die Persona-Stimme im jeweiligen Beitrag durchschlaegt -- nicht der Ton
 // selbst (der kommt von der Persona). Single Source of Truth fuer die DB-CHECK-Constraint
-// (composition_sessions.temperature), die API-Validierung und den Frontend-Regler.
+// (composition_sessions.temperature) und die API-Validierung.
 //
-// Achtung fuer die Regler-UI (PR 3): der Anthropic-Adapter sendet temperature bewusst nicht
-// (aktuelle Claude-Modelle lehnen den Parameter mit 400 ab, siehe
-// AnthropicStructuredContentGenerator in packages/content-engine/src/index.ts). Laeuft der aktive
-// Text-Provider auf diesem Protokoll, bleibt die Stufenwahl ohne Wirkung -- die entfernte
-// Provider-UI hatte dafuer einen eigenen Hinweis, die Beitrags-UI braucht ihn wieder.
+// Die Beitrags-UI (erstellen.vue) bietet keine eigene Stufenwahl mehr an -- CreateCompositionSessionSchema
+// laesst den Wert auf TEXT_GENERATION_DEFAULT_TEMPERATURE fallen. Die Stufen bleiben als Vertrag fuer
+// die DB-CHECK-Constraint und moegliche kuenftige Verwendung bestehen. Der Anthropic-Adapter sendet
+// temperature ohnehin bewusst nicht (aktuelle Claude-Modelle lehnen den Parameter mit 400 ab, siehe
+// AnthropicStructuredContentGenerator in packages/content-engine/src/index.ts).
 export const TEXT_GENERATION_TEMPERATURE_STEPS = [
   { value: 0.3, label: 'Dezent', hint: 'Die Persona schimmert nur leicht durch.' },
   { value: 0.6, label: 'Ausgewogen', hint: 'Gute Mischung aus Fakten und Persona-Stil.' },
