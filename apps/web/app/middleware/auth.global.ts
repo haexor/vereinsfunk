@@ -1,9 +1,13 @@
 // /einladung ist bewusst oeffentlich: die Seite selbst entscheidet je nach Session, ob sie
 // sofort annimmt oder zu /registrieren bzw. /anmelden weiterleitet (siehe pages/einladung.vue).
+// /plattform-admin-einladung ist aus demselben Grund oeffentlich (siehe
+// pages/plattform-admin-einladung.vue): die eingeladene Person ist vor der Annahme weder
+// Vereinsmitglied noch Plattform-Admin und muss die Seite erreichen, bevor der
+// Onboarding-Redirect unten oder die Plattform-Admin-Weiche (Zeile 34) greift.
 // Paket 020: /impressum und /datenschutz sind die Rechtstexte von Vereinsfunk als Produkt --
 // exakter Pfad, damit /datenschutz/anfragen (die authentifizierte Betroffenenanfragen-Seite)
 // weiterhin geschuetzt bleibt.
-const publicPaths = new Set(['/anmelden', '/registrieren', '/passwort-vergessen', '/passwort-neu', '/auth/callback', '/einladung', '/impressum', '/datenschutz'])
+const publicPaths = new Set(['/anmelden', '/registrieren', '/passwort-vergessen', '/passwort-neu', '/auth/callback', '/einladung', '/plattform-admin-einladung', '/impressum', '/datenschutz'])
 // Paket 015: /einwilligung/[token] und /einwilligung/widerruf/[token] haben kein Vereinskonto als
 // Zielgruppe (Erziehungsberechtigte) -- Praefix statt exaktem Pfad, weil das Token Teil der Route ist.
 // Mit Schraegstrich, sonst trifft das Praefix auch /einwilligungen (die authentifizierte
