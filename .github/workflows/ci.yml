@@ -24,10 +24,14 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
-      # Eigener Schritt, nicht Teil von `pnpm db:test`: die pgTAP-Suite selbst braucht Docker und
-      # laeuft hier nicht, diese Pruefung liest nur Dateien. Ohne sie waere der Waechter genau da
-      # blind, wo der Fehler zweimal hereinkam -- im Pull Request.
+      # Eigene Schritte, nicht Teil von `pnpm db:test`: die pgTAP-Suite selbst braucht Docker und
+      # laeuft hier nicht, diese Pruefungen lesen nur Dateien.
       - run: pnpm db:test:isolation
+      # Faengt zwei Migrationen mit demselben Zeitstempel-Praefix ab, wie sie parallele Branches
+      # unabhaengig voneinander vergeben koennen. Lief bei diesem Wert erst hier auf `main` zusammen
+      # (siehe scripts/check-migration-timestamps.mjs) -- die zwei betroffenen PRs waren einzeln
+      # jeweils in sich konsistent.
+      - run: pnpm db:test:timestamps
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build

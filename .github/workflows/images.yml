@@ -19,7 +19,23 @@ on:
 # arch now builds natively on its own runner instead, pushed by digest and merged into one
 # multi-arch manifest below -- no QEMU involved anywhere.
 jobs:
+  # Gates `build` below: this workflow pushes `latest`, which Watchtower/podman-auto-update pull
+  # into production automatically, independently of the CI workflow's own result -- pushing to main
+  # with a migration timestamp collision (scripts/check-migration-timestamps.mjs) previously reached
+  # production this way even though nothing here re-checked it.
+  check-migrations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - run: node scripts/check-migration-timestamps.mjs
+
   build:
+    needs: check-migrations
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
