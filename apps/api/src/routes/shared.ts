@@ -438,7 +438,7 @@ export async function resolveTextGenerationPlatformAvailability(
 // folgt derselben Prioritaets-Reihenfolge wie die bisherige Einzelauswahl (vormals
 // apps/worker/src/context.ts loadActiveTextProvider, jetzt hier, weil create_text_generation_session
 // die Zuweisung braucht, bevor irgendein Worker die Sitzung ueberhaupt sieht -- siehe Migration
-// 2026081903). Liefert nur IDs: Modellname/Anbieter bleiben Mitgliedern verborgen (siehe
+// 2026081912). Liefert nur IDs: Modellname/Anbieter bleiben Mitgliedern verborgen (siehe
 // post_generation_provenance, "enthaelt nie Rohprompt/Providerdaten").
 export async function resolveTextGenerationProviderConfigurationIds(service: SupabaseClient): Promise<string[]> {
   const setting = await service.from('platform_settings').select('value').eq('key', 'text_generation_ensemble_size').maybeSingle()
@@ -446,7 +446,7 @@ export async function resolveTextGenerationProviderConfigurationIds(service: Sup
   const ensembleSize = setting.data ? PlatformSettingValueSchemas.text_generation_ensemble_size.parse(setting.data.value) : 1
   const providers = await service.from('llm_provider_configurations').select('id').eq('task_kind', 'text_generation').eq('is_active', true).order('priority').limit(ensembleSize)
   if (providers.error) throw providers.error
-  return providers.data.map((row) => row.id as string)
+  return z.array(z.object({ id: UuidSchema })).parse(providers.data).map((row) => row.id)
 }
 
 export async function fetchMemberTrust(

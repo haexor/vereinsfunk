@@ -101,6 +101,12 @@ select is((select count(*)::integer from public.generation_candidates where comp
 -- ===========================================================================================
 -- Status-Aggregat: zwei gleichzeitig fertigwerdende Geschwister-Kandidaten duerfen sich nicht
 -- gegenseitig mit "..._update_lost" aus dem Tritt bringen (der urspruengliche Fund dieses Pakets).
+-- Sequenzielle Aufrufe wie unten pruefen den Aggregat-Vertrag selbst, nicht die zusaetzliche
+-- Zeilensperre in recompute_composition_session_status (Review dieses PRs), die zwei tatsaechlich
+-- ueberlappende Transaktionen braucht, um etwas anderes zu zeigen als die sequenzielle Version schon
+-- zeigt -- ein echter Zwei-Transaktionen-Test bräuchte dblink o.ä., ein Muster, das anderswo in
+-- dieser Suite bewusst vermieden wird (siehe text_workshop_foundation.test.sql, Kommentar bei
+-- claim_stalled_generation_candidates).
 -- ===========================================================================================
 -- Sekundaer nach id sortiert, nicht weil die Reihenfolge fachlich etwas bedeutet, sondern weil
 -- alle drei Zeilen derselben Transaktion denselben now() tragen (Postgres friert now() je

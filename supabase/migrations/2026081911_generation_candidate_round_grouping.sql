@@ -14,8 +14,11 @@ begin;
 -- den Wert fuer eine echte Mehrfach-Runde stattdessen explizit und ueberschreibt den Trigger damit.
 alter table public.generation_candidates add column round_input_hash text;
 update public.generation_candidates set round_input_hash = input_hash where round_input_hash is null;
-alter table public.generation_candidates alter column round_input_hash set not null;
-alter table public.generation_candidates add constraint generation_candidates_round_input_hash_check check (round_input_hash ~ '^[a-f0-9]{64}$');
+-- NOT VALID statt "alter column set not null": Letzteres scannt die Tabelle unter ACCESS EXCLUSIVE.
+-- Die naechste Migration validiert die Konstante unter dem schwaecheren SHARE UPDATE EXCLUSIVE,
+-- dasselbe Muster wie 2026081502/2026081503 und 2026081105/2026081106.
+alter table public.generation_candidates add constraint generation_candidates_round_input_hash_check
+  check (round_input_hash is not null and round_input_hash ~ '^[a-f0-9]{64}$') not valid;
 
 create function public.set_generation_candidate_round_input_hash() returns trigger
 language plpgsql as $$
@@ -27,8 +30,14 @@ $$;
 create trigger set_generation_candidate_round_input_hash before insert on public.generation_candidates
   for each row execute function public.set_generation_candidate_round_input_hash();
 
+commit;
+
+-- Supabase wendet Migrationsdateien im PostgreSQL-Pipeline-Modus an, in dem CREATE INDEX
+-- CONCURRENTLY auch ausserhalb von BEGIN/COMMIT abgelehnt wird (siehe
+-- 2026081101_workflow_outbox_dispatch.sql). Ein gewoehnlicher CREATE INDEX blockiert waehrend des
+-- Baus weiterhin Schreibvorgaenge; bei MVP-Groesse hinnehmbar, braucht aber ein Wartungsfenster,
+-- sobald generation_candidates deutlich waechst.
+--
 -- Fuer den Lesepfad (apps/api/src/routes/content.ts): "die juengste Runde einer Sitzung" wird ab
 -- jetzt ueber round_input_hash statt ueber eine einzelne Kandidatenzeile aufgeloest.
 create index generation_candidates_session_round_idx on public.generation_candidates (composition_session_id, round_input_hash);
-
-commit;

@@ -323,7 +323,7 @@ describe('POST /v1/text-workshop/sessions', () => {
         ({
           from: (table: string) => {
             if (table === 'platform_settings') return chain({ data: { value: 2 }, error: null })
-            if (table === 'llm_provider_configurations') return chain({ data: [{ id: 'provider-a' }, { id: 'provider-b' }], error: null })
+            if (table === 'llm_provider_configurations') return chain({ data: [{ id: '3e100000-0000-4000-8000-000000000001' }, { id: '3e100000-0000-4000-8000-000000000002' }], error: null })
             throw new Error(`unexpected service table: ${table}`)
           },
           rpc: async (_name: string, params: Record<string, unknown>) => { captured = params; return { data: { sessionId: '3c000000-0000-4000-8000-000000000001', candidateIds: ['3c000000-0000-4000-8000-000000000002', '3c000000-0000-4000-8000-000000000003'] }, error: null } },
@@ -332,7 +332,7 @@ describe('POST /v1/text-workshop/sessions', () => {
     const response = await createSession(clients, basePayload)
     expect(response.statusCode).toBe(202)
     expect(response.json().candidateIds).toEqual(['3c000000-0000-4000-8000-000000000002', '3c000000-0000-4000-8000-000000000003'])
-    expect(captured?.p_provider_configuration_ids).toEqual(['provider-a', 'provider-b'])
+    expect(captured?.p_provider_configuration_ids).toEqual(['3e100000-0000-4000-8000-000000000001', '3e100000-0000-4000-8000-000000000002'])
   })
 
   it('rejects with 422 instead of calling the RPC when no active text provider is configured', async () => {
@@ -480,6 +480,10 @@ describe('GET /v1/text-workshop/sessions', () => {
   // wuerde der round_input_hash-Filter in einer echten Datenbank auch leisten.
   it("resumes a draft by post id, returning only the latest round's candidates", async () => {
     let candidateCallCount = 0
+    // Faengt den Filterwert der zweiten Abfrage ab: chain() ignoriert .eq() sonst (Review dieses
+    // PRs) -- ohne diese Erfassung wuerde der Test weiterhin bestehen, selbst wenn der
+    // round_input_hash-Filter entfernt oder auf den falschen Wert gesetzt wuerde.
+    let roundInputHashFilter: unknown
     const clients: SupabaseClientFactory = {
       forUser: () =>
         ({
@@ -487,9 +491,14 @@ describe('GET /v1/text-workshop/sessions', () => {
             if (table === 'composition_sessions') return chain({ data: SESSION_ROW, error: null })
             if (table === 'generation_candidates') {
               candidateCallCount += 1
-              return candidateCallCount === 1
-                ? chain({ data: { round_input_hash: 'a'.repeat(64) }, error: null })
-                : chain({ data: [CANDIDATE_ROW], error: null })
+              if (candidateCallCount === 1) return chain({ data: { round_input_hash: 'a'.repeat(64) }, error: null })
+              const builder = chain({ data: [CANDIDATE_ROW], error: null })
+              const baseEq = builder.eq as (...args: unknown[]) => unknown
+              builder.eq = (column: string, value: unknown) => {
+                if (column === 'round_input_hash') roundInputHashFilter = value
+                return baseEq(column, value)
+              }
+              return builder
             }
             throw new Error(`unexpected table in test fake: ${table}`)
           },
@@ -505,6 +514,7 @@ describe('GET /v1/text-workshop/sessions', () => {
     expect(body.candidates).toHaveLength(1)
     expect(body.candidates[0]).toMatchObject({ id: CANDIDATE_ROW.id, status: 'accepted' })
     expect(candidateCallCount).toBe(2)
+    expect(roundInputHashFilter).toBe('a'.repeat(64))
   })
 
   it('returns an empty candidate list when the session has no candidates at all', async () => {

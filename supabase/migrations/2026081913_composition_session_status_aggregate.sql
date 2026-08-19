@@ -17,6 +17,13 @@ begin;
 -- derselben Runde (round_input_hash) hergeleitet statt aus einer Einzelvorbedingung. Das Ergebnis
 -- ist unabhaengig von der Reihenfolge, in der die Kandidaten fertig werden (kein Race mehr), und
 -- deckt bei einer Ensemble-Groesse von 1 exakt dieselben Uebergaenge ab wie zuvor.
+--
+-- Die Zeilensperre unten serialisiert wiederum gleichzeitige Aufrufe fuer dieselbe Sitzung: ohne sie
+-- kann ein zweiter, ueberlappender Aufruf den noch nicht committeten Geschwister-Kandidaten des
+-- ersten als 'generating' zaehlen und beide Aufrufe setzen den Status faelschlich auf 'generating',
+-- obwohl inzwischen alle Kandidaten terminal sind (Review dieses PRs). Unter READ COMMITTED holt sich
+-- jedes Statement ein frisches Snapshot -- der wartende Aufruf zaehlt nach dem Commit des ersten
+-- also mit dessen bereits sichtbarem Ergebnis.
 create function public.recompute_composition_session_status(p_session_id uuid, p_round_input_hash text)
 returns void language plpgsql security definer set search_path = public, pg_temp as $$
 declare
@@ -24,6 +31,7 @@ declare
   pending_count integer;
   ready_count integer;
 begin
+  perform 1 from public.composition_sessions where id = p_session_id for update;
   select count(*) filter (where status = 'generating'), count(*) filter (where status = 'pending'), count(*) filter (where status = 'ready')
     into generating_count, pending_count, ready_count
     from public.generation_candidates
@@ -109,7 +117,7 @@ $$;
 -- claim_stalled_generation_candidates gibt round_input_hash mit zurueck: die Recovery
 -- (apps/worker/src/generationRecovery.ts) braucht ihn, um den Ersatzkandidaten in dieselbe Runde
 -- wie den festgefahrenen einzureihen (siehe Erlaeuterung in
--- 2026081903_generation_candidate_ensemble_fan_out.sql) statt eine eigene Ein-Kandidat-Runde
+-- 2026081912_generation_candidate_ensemble_fan_out.sql) statt eine eigene Ein-Kandidat-Runde
 -- anzulegen, die die bereits erfolgreichen Geschwister-Kandidaten aus der Anzeige verlieren wuerde.
 -- Der Ausgabespaltensatz aendert sich (returns table), create or replace kann das nicht -- erst
 -- droppen.

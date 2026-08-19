@@ -351,7 +351,7 @@ select lives_ok(
 -- Paket 046: die Kandidatenzeile traegt nicht mehr repeat('f', 64) als eigenen input_hash --
 -- dieser wird jetzt je Provider abgeleitet (sha256(round_hash || provider_id)). round_input_hash
 -- bleibt aber exakt der uebergebene p_candidate_input_hash, solange p_round_input_hash weggelassen
--- wird (der Regelfall fuer jede Mitglieder-Anfrage, siehe Migration 2026081903).
+-- wird (der Regelfall fuer jede Mitglieder-Anfrage, siehe Migration 2026081912).
 select is(
   (select triggered_by from public.generation_candidates where composition_session_id = (select id from public.composition_sessions where organization_id = '32000000-2000-4000-8000-000000000002' and input_hash = repeat('e', 64)) and round_input_hash = repeat('f', 64)),
   'member',

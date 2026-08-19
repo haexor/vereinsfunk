@@ -117,7 +117,7 @@ export function createTextGenerationRepository(config: WorkerEnvironment): TextG
       return data === null ? null : CandidateRowSchema.parse(data)
     },
     // Paket 046: welcher Provider eine Zeile bedient, steht seit create_text_generation_session
-    // (Migration 2026081903) schon beim Anlegen der Zeile fest (candidate.provider_configuration_id)
+    // (Migration 2026081912) schon beim Anlegen der Zeile fest (candidate.provider_configuration_id)
     // -- hier wird nur noch genau dieser eine geladen, nicht mehr "der gerade aktive". Bewusst ohne
     // is_active/task_kind-Filter: eine zwischenzeitliche Deaktivierung durch einen Betreiber soll
     // eine bereits zugewiesene, laufende Generierung nicht abbrechen (dieselbe Haltung wie beim
@@ -200,7 +200,7 @@ export function createGenerationRecoveryRepository(config: WorkerEnvironment): G
         p_correlation_id: correlationId, p_idempotency_key: idempotencyKey, p_triggered_by: 'automatic_recovery',
         p_provider_configuration_ids: [providerId],
         // Der Ersatzkandidat reiht sich in dieselbe Runde wie der festgefahrene ein, statt eine
-        // eigene Ein-Kandidat-Runde zu bilden -- siehe Migration 2026081903.
+        // eigene Ein-Kandidat-Runde zu bilden -- siehe Migration 2026081912.
         p_round_input_hash: stale.round_input_hash,
       })
       if (error) {

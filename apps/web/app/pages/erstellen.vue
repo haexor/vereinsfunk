@@ -254,7 +254,7 @@ async function createCandidate() {
         // lassen (ein wiederhergestellter Entwurf kann eine Stufe tragen, Review dieses PRs).
         ...(temperatureSupported.value !== false ? { temperature: temperature.value } : {}),
       },
-    }, z.object({ sessionId: z.string(), candidateIds: z.array(z.string()) }))
+    }, z.object({ sessionId: UuidSchema, candidateIds: z.array(UuidSchema).min(1) }))
     // Paket 046: eine Anfrage kann mehrere Kandidaten gleichzeitig erzeugen (Ensemble-Groesse, vom
     // Plattform-Admin konfiguriert). Diese Seite zeigt bis zur eigenen Mehrfachauswahl-UI weiterhin
     // nur den ersten -- refreshSession() unten holt ohnehin die ganze Runde nach.
@@ -316,7 +316,7 @@ async function reviseCandidate() {
   if (!sessionId.value || !revisionInstruction.value.trim()) return
   submitting.value = true; notice.value = ''
   try {
-    const created = await api.request(`/v1/text-workshop/sessions/${sessionId.value}/generations`, { method: 'POST', body: { generationIntent: 'revise', revisionInstruction: revisionInstruction.value.trim() } }, z.object({ sessionId: z.string(), candidateIds: z.array(z.string()) }))
+    const created = await api.request(`/v1/text-workshop/sessions/${sessionId.value}/generations`, { method: 'POST', body: { generationIntent: 'revise', revisionInstruction: revisionInstruction.value.trim() } }, z.object({ sessionId: UuidSchema, candidateIds: z.array(UuidSchema).min(1) }))
     candidate.value = { id: created.candidateIds[0]!, status: 'pending', generated_content: null, failure_code: null, triggered_by: 'member' }
     revisionInstruction.value = ''
     await refreshSession()

@@ -553,7 +553,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
       p_provider_configuration_ids: providerConfigurationIds,
     })
     if (result.error) throw result.error
-    const created = z.object({ sessionId: UuidSchema, candidateIds: z.array(UuidSchema) }).parse(result.data)
+    const created = z.object({ sessionId: UuidSchema, candidateIds: z.array(UuidSchema).min(1) }).parse(result.data)
     if (mediaAssetId) {
       // upsert statt insert: create_text_generation_session ist selbst idempotent (derselbe
       // sessionHash liefert dieselbe Sitzung zurueck) -- ein Retry darf hier nicht an der
@@ -667,7 +667,8 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     const latestRound = await client.from('generation_candidates').select('round_input_hash').eq('composition_session_id', sessionRow.id).order('created_at', { ascending: false }).limit(1).maybeSingle()
     if (latestRound.error) throw latestRound.error
     if (!latestRound.data) return reply.send({ session: sessionRow, candidates: [] })
-    const candidates = await client.from('generation_candidates').select('id, status, generated_content, quality_flags, failure_code, triggered_by, accepted_post_version_id, created_at').eq('composition_session_id', sessionRow.id).eq('round_input_hash', latestRound.data.round_input_hash).order('created_at', { ascending: true })
+    const roundInputHash = z.object({ round_input_hash: z.string().regex(/^[a-f0-9]{64}$/) }).parse(latestRound.data).round_input_hash
+    const candidates = await client.from('generation_candidates').select('id, status, generated_content, quality_flags, failure_code, triggered_by, accepted_post_version_id, created_at').eq('composition_session_id', sessionRow.id).eq('round_input_hash', roundInputHash).order('created_at', { ascending: true })
     if (candidates.error) throw candidates.error
     return reply.send({ session: sessionRow, candidates: z.array(TextWorkshopCandidateSchema).parse(candidates.data) })
   }
@@ -732,7 +733,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
       p_provider_configuration_ids: providerConfigurationIds,
     })
     if (result.error) throw result.error
-    return reply.code(202).send({ ...z.object({ sessionId: UuidSchema, candidateIds: z.array(UuidSchema) }).parse(result.data), correlationId: request.id })
+    return reply.code(202).send({ ...z.object({ sessionId: UuidSchema, candidateIds: z.array(UuidSchema).min(1) }).parse(result.data), correlationId: request.id })
   })
 
   app.post('/v1/text-workshop/candidates/:id/accept', async (request, reply) => {

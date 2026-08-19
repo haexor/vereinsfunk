@@ -167,6 +167,7 @@ await load()
 
 async function loadEnsembleSize() {
   ensembleSizeLoading.value = true
+  ensembleSizeError.value = ''
   try {
     const headers = await useAuthHeader()
     const response = await $fetch(`${config.public.apiBase}/v1/platform-settings`, { headers })
@@ -175,7 +176,7 @@ async function loadEnsembleSize() {
     ensembleSize.value = setting ? PlatformSettingValueSchemas.text_generation_ensemble_size.parse(setting.value) : 1
     ensembleSizeUpdatedAt.value = setting?.updatedAt ?? null
   } catch {
-    errorMessage.value = 'Die Ensemble-Größe konnte nicht geladen werden.'
+    ensembleSizeError.value = 'Die Ensemble-Größe konnte nicht geladen werden.'
   } finally {
     ensembleSizeLoading.value = false
   }
