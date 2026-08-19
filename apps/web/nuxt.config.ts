@@ -8,9 +8,8 @@ export default defineNuxtConfig({
   css: ['~/assets/css/main.css'],
   // components/ui haelt die shadcn-vue-Bausteine; ohne pathPrefix: false hiesse
   // <SelectTrigger> sonst <UiSelectSelectTrigger> (Ordnerpfad wird sonst zum Praefix).
-  // extensions: ['vue'] haelt die *.ts-Barrel-Dateien (z.B. select/index.ts) aus dem
-  // Component-Scan raus -- sonst versucht Nuxt, index.ts selbst als Komponente mit
-  // Default-Export zu laden und bricht mit "does not provide an export named 'default'" ab.
+  // extensions: ['vue'] haelt *.ts-Dateien aus dem Component-Scan raus -- Nuxt wuerde sonst
+  // versuchen, sie als Komponente mit Default-Export zu laden.
   components: [
     { path: '~/components/ui', pathPrefix: false, extensions: ['vue'] },
     '~/components',

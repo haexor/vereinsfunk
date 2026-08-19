@@ -195,7 +195,7 @@ function editAgain() { mediaAssetId.value = null; phase.value = 'marking' }
         <li v-for="(box, index) in boxes" :key="box.id" class="flex flex-wrap items-center gap-2 rounded-lg border p-2 text-xs">
           <span class="font-semibold">Person {{ index + 1 }}</span>
           <Select :model-value="box.subjectKind" @update:model-value="(value: unknown) => setSubjectKind(box, value as FaceBox['subjectKind'])">
-            <SelectTrigger class="rounded p-1"><SelectValue /></SelectTrigger>
+            <SelectTrigger class="w-auto rounded p-1"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="adult">Erwachsen</SelectItem>
               <SelectItem value="minor">Minderjährig</SelectItem>

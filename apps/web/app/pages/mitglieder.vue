@@ -183,7 +183,15 @@ watch(organizationId, () => {
 })
 
 async function sendInvitation() {
-  if (!organizationId.value || !inviteRole.value) return
+  if (!organizationId.value) return
+  // Ohne natives required (die shadcn-Select-Komponente rendert kein validierendes <select>)
+  // waere ein Klick auf "Einladen" mit leerer Auswahl sonst wirkungslos und unkommentiert.
+  inviteSuccess.value = false
+  if (inviteScope.value !== 'organization' && !inviteScopeId.value) {
+    inviteError.value = inviteScope.value === 'department' ? 'Bitte eine Abteilung wählen.' : 'Bitte ein Team wählen.'
+    return
+  }
+  if (!inviteRole.value) { inviteError.value = 'Bitte eine Rolle wählen.'; return }
   inviteSubmitting.value = true
   inviteError.value = ''
   inviteSuccess.value = false

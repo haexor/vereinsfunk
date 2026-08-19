@@ -6,7 +6,11 @@ import { cn } from '~/utils/cn'
 
 const props = defineProps<SelectScrollDownButtonProps & { class?: HTMLAttributes['class'] }>()
 
-const forwardedProps = useForwardProps(props)
+// class steckt schon in cn(...) unten -- ohne dieses Aussortieren binden die Forward-Props es
+// ein zweites Mal an die reka-ui-Komponente (undefined-Werte laesst useForwardProps weg).
+const delegatedProps = computed(() => ({ ...props, class: undefined }))
+
+const forwardedProps = useForwardProps(delegatedProps)
 </script>
 
 <template>

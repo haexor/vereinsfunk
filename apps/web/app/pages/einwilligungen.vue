@@ -147,6 +147,10 @@ function errorCodeOf(error: unknown): string | undefined {
 
 async function registerConsent() {
   if (!organizationId.value || !registerForm.file) return
+  // Die Person ist Pflicht: seit der Umstellung auf die shadcn-Select-Komponente gibt es kein
+  // natives required mehr (reka-ui rendert das versteckte <select> nur mit name-Prop), und die
+  // API nimmt eine Erklaerung ohne directoryPersonId klaglos an.
+  if (!registerForm.directoryPersonId) { registerError.value = 'Bitte eine Person wählen.'; return }
   registerSubmitting.value = true
   registerError.value = ''
   try {
@@ -189,7 +193,8 @@ const requestSubmitting = ref(false)
 const requestError = ref('')
 
 async function sendConsentRequest() {
-  if (!organizationId.value || !requestForm.directoryPersonId) return
+  if (!organizationId.value) return
+  if (!requestForm.directoryPersonId) { requestError.value = 'Bitte eine Person wählen.'; return }
   requestSubmitting.value = true
   requestError.value = ''
   try {
