@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Check, LoaderCircle, RefreshCw, Save, Sparkles } from '@lucide/vue'
-import { MaxCharactersSchema, RequestApprovalResponseSchema, SocialPlatformSchema, SourceMaterialSchema, TEXT_GENERATION_DEFAULT_TEMPERATURE, TextGenerationPlatformAvailabilitySchema, UuidSchema, type SocialPlatform, type TextGenerationPlatformAvailability } from '@vereinsfunk/contracts'
+import { MaxCharactersSchema, RequestApprovalResponseSchema, SocialPlatformSchema, SourceMaterialSchema, TEXT_GENERATION_DEFAULT_TEMPERATURE, TextGenerationPlatformAvailabilitySchema, TextWorkshopDraftRowSchema, UuidSchema, type SocialPlatform, type TextGenerationPlatformAvailability } from '@vereinsfunk/contracts'
 import { z } from 'zod'
 
 type Profile = { id: string | null; slug: string; kind: 'system' | 'persona' | 'custom'; name: string; description: string }
@@ -66,7 +66,6 @@ const profileSelectGroups = computed(() => profileGroups.value.map((group) => ({
 const communicationGoal = ref('inform')
 const factsText = ref('')
 const observation = ref('')
-const quote = ref('')
 const doNotMention = ref('')
 const revisionInstruction = ref('')
 const serverDraftId = ref<string | null>(null)
@@ -79,19 +78,19 @@ let latestServerDraftSave = 0
 
 function sourceMaterial() {
   const facts = Object.fromEntries(factsText.value.split('\n').map((line) => line.split(':')).filter(([key, value]) => key?.trim() && value?.trim()).map(([key, ...rest]) => [key!.trim(), rest.join(':').trim()]))
-  return { facts, observations: observation.value.trim() ? [observation.value.trim()] : [], quotes: quote.value.trim() ? [{ text: quote.value.trim(), approved: true }] : [], doNotMention: doNotMention.value.trim() ? doNotMention.value.split('\n').map((value) => value.trim()).filter(Boolean) : [] }
+  return { facts, observations: observation.value.trim() ? [observation.value.trim()] : [], quotes: [], doNotMention: doNotMention.value.trim() ? doNotMention.value.split('\n').map((value) => value.trim()).filter(Boolean) : [] }
 }
 function persistDraft() {
   if (restoringDraft || !import.meta.client || !draftKey.value) return
-  localStorage.setItem(draftKey.value, JSON.stringify({ communicationGoal: communicationGoal.value, factsText: factsText.value, observation: observation.value, quote: quote.value, doNotMention: doNotMention.value, selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }))
+  localStorage.setItem(draftKey.value, JSON.stringify({ communicationGoal: communicationGoal.value, factsText: factsText.value, observation: observation.value, doNotMention: doNotMention.value, selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }))
 }
 function clearDraft() { if (import.meta.client && draftKey.value) localStorage.removeItem(draftKey.value) }
 function draftPayload() {
-  return { communicationGoal: communicationGoal.value, factsText: factsText.value, observation: observation.value, quote: quote.value, doNotMention: doNotMention.value, selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }
+  return { communicationGoal: communicationGoal.value, factsText: factsText.value, observation: observation.value, doNotMention: doNotMention.value, selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }
 }
 function hasDraftContent() {
   const payload = draftPayload()
-  return Boolean(payload.factsText.trim() || payload.observation.trim() || payload.quote.trim() || payload.doNotMention.trim() || payload.communicationGoal !== 'inform' || payload.selectedProfile !== 'klar_erklaerend' || payload.selectedPlatforms.length || payload.maxCharactersOverride.trim())
+  return Boolean(payload.factsText.trim() || payload.observation.trim() || payload.doNotMention.trim() || payload.communicationGoal !== 'inform' || payload.selectedProfile !== 'klar_erklaerend' || payload.selectedPlatforms.length || payload.maxCharactersOverride.trim())
 }
 async function saveServerDraft({ explicit = false, required = false }: { explicit?: boolean; required?: boolean } = {}): Promise<boolean> {
   if (draftSaveTimer) { clearTimeout(draftSaveTimer); draftSaveTimer = undefined }
@@ -136,15 +135,15 @@ function restoreDraft() {
   if (!import.meta.client || !draftKey.value) return
   try {
     const raw = localStorage.getItem(draftKey.value); if (!raw) return
-    const draft = z.object({ communicationGoal: z.string(), factsText: z.string(), observation: z.string(), quote: z.string(), doNotMention: z.string(), selectedProfile: z.string(), selectedPlatforms: z.array(SocialPlatformSchema).default([]), maxCharactersOverride: z.string().default('') }).parse(JSON.parse(raw))
-    communicationGoal.value = draft.communicationGoal; factsText.value = draft.factsText; observation.value = draft.observation; quote.value = draft.quote; doNotMention.value = draft.doNotMention; selectedProfile.value = draft.selectedProfile; maxCharactersOverride.value = draft.maxCharactersOverride
+    const draft = z.object({ communicationGoal: z.string(), factsText: z.string(), observation: z.string(), doNotMention: z.string(), selectedProfile: z.string(), selectedPlatforms: z.array(SocialPlatformSchema).default([]), maxCharactersOverride: z.string().default('') }).parse(JSON.parse(raw))
+    communicationGoal.value = draft.communicationGoal; factsText.value = draft.factsText; observation.value = draft.observation; doNotMention.value = draft.doNotMention; selectedProfile.value = draft.selectedProfile; maxCharactersOverride.value = draft.maxCharactersOverride
     // Nur uebernehmen, was laut der zuletzt geladenen Verfuegbarkeit noch anhakbar ist -- ein Kanal
     // kann seit dem letzten Entwurf entfernt worden sein.
     if (draft.selectedPlatforms.length) selectedPlatforms.value = draft.selectedPlatforms.filter((platform) => platforms.value.some((entry) => entry.platform === platform && entry.available))
   } catch { clearDraft() }
 }
-watch([communicationGoal, factsText, observation, quote, doNotMention, selectedProfile, selectedPlatforms, maxCharactersOverride], () => { persistDraft(); queueServerDraftSave() }, { flush: 'sync', deep: true })
-watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; communicationGoal.value = 'inform'; selectedProfile.value = 'klar_erklaerend'; factsText.value = ''; observation.value = ''; quote.value = ''; doNotMention.value = ''; revisionInstruction.value = ''; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; mediaAssetId.value = null; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
+watch([communicationGoal, factsText, observation, doNotMention, selectedProfile, selectedPlatforms, maxCharactersOverride], () => { persistDraft(); queueServerDraftSave() }, { flush: 'sync', deep: true })
+watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; communicationGoal.value = 'inform'; selectedProfile.value = 'klar_erklaerend'; factsText.value = ''; observation.value = ''; doNotMention.value = ''; revisionInstruction.value = ''; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; mediaAssetId.value = null; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
 
 async function loadProfiles() {
   if (!scope.value?.organizationId || !scope.value.departmentId) return
@@ -172,10 +171,10 @@ async function refreshSession() {
 }
 async function loadServerDraft(draftId: string) {
   try {
-    const response = await api.request(`/v1/text-workshop/drafts/${draftId}`, {}, z.object({ draft: z.object({ id: z.string(), payload: z.object({ communicationGoal: z.string(), factsText: z.string(), observation: z.string(), quote: z.string(), doNotMention: z.string(), selectedProfile: z.string(), selectedPlatforms: z.array(SocialPlatformSchema), maxCharactersOverride: z.string() }) }) }))
+    const response = await api.request(`/v1/text-workshop/drafts/${draftId}`, {}, z.object({ draft: TextWorkshopDraftRowSchema }))
     const draft = response.draft
     serverDraftId.value = draft.id
-    communicationGoal.value = draft.payload.communicationGoal; factsText.value = draft.payload.factsText; observation.value = draft.payload.observation; quote.value = draft.payload.quote; doNotMention.value = draft.payload.doNotMention; selectedProfile.value = draft.payload.selectedProfile; maxCharactersOverride.value = draft.payload.maxCharactersOverride
+    communicationGoal.value = draft.payload.communicationGoal; factsText.value = draft.payload.factsText; observation.value = draft.payload.observation; doNotMention.value = draft.payload.doNotMention; selectedProfile.value = draft.payload.selectedProfile; maxCharactersOverride.value = draft.payload.maxCharactersOverride
     selectedPlatforms.value = draft.payload.selectedPlatforms.filter((platform) => platforms.value.some((entry) => entry.platform === platform && entry.available))
     persistDraft()
   } catch { notice.value = 'Der Entwurf konnte nicht geladen werden.' }
@@ -192,7 +191,6 @@ async function loadDraftFromPost(postId: string) {
     communicationGoal.value = draftSession.communication_goal
     factsText.value = Object.entries(draftSession.source_material.facts).map(([key, value]) => `${key}: ${value}`).join('\n')
     observation.value = draftSession.source_material.observations[0] ?? ''
-    quote.value = draftSession.source_material.quotes[0]?.text ?? ''
     // doNotMention traegt seit der Anlage bereits die Verbotsliste des Vereins/der Abteilung
     // eingemischt (routes/content.ts) -- ein Herauskuerzen hier haette beim erneuten Absenden
     // ohnehin keine Wirkung, die Route mischt sie wieder ein. Bewusst nicht getrennt angezeigt.
@@ -219,7 +217,7 @@ function parsedMaxCharactersOverride(): number | undefined | 'invalid' {
 }
 async function createCandidate() {
   if (!scope.value?.organizationId || !scope.value.departmentId) { notice.value = 'Bitte wähle Verein und Abteilung.'; return }
-  if (!Object.keys(sourceMaterial().facts).length && !observation.value.trim() && !quote.value.trim()) { notice.value = 'Gib mindestens eine bestätigte Tatsache, Beobachtung oder ein freigegebenes Zitat an.'; return }
+  if (!Object.keys(sourceMaterial().facts).length && !observation.value.trim()) { notice.value = 'Gib mindestens eine bestätigte Tatsache oder Beobachtung an.'; return }
   if (!selectedPlatforms.value.length) { notice.value = 'Bitte wähle mindestens eine Zielplattform.'; return }
   const maxCharacters = parsedMaxCharactersOverride()
   if (maxCharacters === 'invalid') { notice.value = 'Die maximale Länge muss zwischen 100 und 10.000 Zeichen liegen.'; return }
@@ -359,7 +357,7 @@ onBeforeUnmount(() => { if (hasDraftContent()) void saveServerDraft() })
       </fieldset>
       <label><span class="mb-1 block text-xs font-semibold">Bestätigte Fakten (eine Zeile je „Feld: Wert“)</span><textarea v-model="factsText" rows="4" class="w-full rounded-xl border p-3 text-sm" placeholder="Übung: Passen&#10;Gruppe: U12" /></label>
       <label><span class="mb-1 block text-xs font-semibold">Beobachtung oder Rohtext</span><textarea v-model="observation" rows="3" class="w-full rounded-xl border p-3 text-sm" /></label>
-      <div class="grid gap-4 sm:grid-cols-2"><label><span class="mb-1 block text-xs font-semibold">Freigegebenes Zitat</span><input v-model="quote" class="w-full rounded-xl border p-3 text-sm" /></label><label><span class="mb-1 block text-xs font-semibold">Nicht erwähnen (je Zeile)</span><input v-model="doNotMention" class="w-full rounded-xl border p-3 text-sm" /></label></div>
+      <label><span class="mb-1 block text-xs font-semibold">Nicht erwähnen (je Zeile)</span><input v-model="doNotMention" class="w-full rounded-xl border p-3 text-sm" /></label>
       <div class="flex flex-wrap items-center gap-3"><button class="inline-flex items-center justify-center gap-2 rounded-xl border border-forest px-5 py-3 text-sm font-bold text-forest disabled:opacity-60" :disabled="submitting || draftSaveState === 'saving'" @click="saveServerDraft({ explicit: true })"><LoaderCircle v-if="draftSaveState === 'saving'" class="animate-spin" :size="16" /><Save v-else :size="16" /> Als Entwurf speichern</button><button class="inline-flex items-center justify-center gap-2 rounded-xl bg-forest px-5 py-3 text-sm font-bold text-white disabled:opacity-60" :disabled="submitting" @click="createCandidate"><LoaderCircle v-if="submitting" class="animate-spin" :size="16" /><Sparkles v-else :size="16" /> Textkandidaten erzeugen</button><span v-if="draftSaveState === 'saved'" class="text-xs text-[#727a75]">Entwurf gespeichert</span><span v-else-if="draftSaveState === 'error'" class="text-xs text-amber-800">Lokale Sicherung aktiv</span></div>
     </section>
     <section v-else class="card p-5 sm:p-7"><div class="flex items-center justify-between"><h2 class="font-display text-xl font-bold">{{ candidateFinished ? 'Textkandidat bereit' : 'Text wird erzeugt' }}</h2><button class="rounded-lg border px-3 py-2 text-xs" @click="refreshSession"><RefreshCw :size="14" /> Aktualisieren</button></div><p v-if="candidate && !candidateFinished" class="mt-4 text-sm text-[#727a75]">Der Worker verarbeitet die Anfrage im Hintergrund. Diese Seite enthält keinen Prompt und keine Providerdaten.</p><p v-if="candidate?.triggered_by === 'automatic_recovery'" class="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-900">Diese Version wurde nach einem technischen Fehler automatisch neu erzeugt.</p><template v-if="candidate?.generated_content"><textarea :value="candidate.generated_content.caption" readonly rows="10" class="mt-5 w-full rounded-xl border p-3 text-sm" /><div class="mt-3 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-900">{{ candidate.generated_content.verifiedFacts.length }} belegte Angaben · {{ candidate.generated_content.missingFacts.length }} offene Angaben</div><label class="mt-5 block"><span class="mb-1 block text-xs font-semibold">Überarbeitungswunsch</span><textarea v-model="revisionInstruction" rows="2" maxlength="500" class="w-full rounded-xl border p-3 text-sm" placeholder="z. B. kürzer und mit direkter Einladung" /></label><button class="mt-3 rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-60" :disabled="submitting || !revisionInstruction.trim()" @click="reviseCandidate"><RefreshCw :size="15" class="mr-1 inline" /> Überarbeiten</button><button class="mt-5 inline-flex items-center gap-2 rounded-xl bg-forest px-5 py-3 text-sm font-bold text-white disabled:opacity-60" :disabled="submitting" @click="acceptCandidate"><LoaderCircle v-if="submitting" class="animate-spin" :size="16" /><Check v-else :size="16" /> Übernehmen und zur Freigabe</button></template><p v-if="candidate?.status === 'failed'" class="mt-4 text-sm text-red-700">Die Anfrage konnte nicht verarbeitet werden. Bitte prüfe die bestätigten Angaben und starte eine neue Sitzung.</p></section>

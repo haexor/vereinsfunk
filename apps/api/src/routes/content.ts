@@ -20,7 +20,7 @@ import {
   TEXT_GENERATION_DEFAULT_MAX_CHARACTERS,
   TextGenerationPlatformAvailabilitySchema,
   TextGenerationTemperatureSchema,
-  TextWorkshopDraftPayloadSchema,
+  TextWorkshopDraftRowSchema,
   UpdateCustomStyleProfileRequestSchema,
   UuidSchema,
   type StyleProfileRules,
@@ -566,10 +566,6 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     return reply.code(202).send({ ...created, correlationId: request.id })
   })
 
-  const TextWorkshopDraftRowSchema = z.object({
-    id: UuidSchema, organization_id: UuidSchema, department_id: UuidSchema, team_id: UuidSchema.nullable(),
-    post_id: UuidSchema.nullable(), payload: TextWorkshopDraftPayloadSchema, created_at: z.iso.datetime({ offset: true }), updated_at: z.iso.datetime({ offset: true }),
-  })
   const TEXT_WORKSHOP_DRAFT_COLUMNS = 'id, organization_id, department_id, team_id, post_id, payload, created_at, updated_at'
 
   // Autosave is deliberately an API write: browser roles cannot write the table directly and the

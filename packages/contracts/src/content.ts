@@ -373,7 +373,6 @@ export const TextWorkshopDraftPayloadSchema = z.object({
   communicationGoal: CommunicationGoalSchema,
   factsText: z.string().max(10_000),
   observation: z.string().max(5_000),
-  quote: z.string().max(500),
   doNotMention: z.string().max(5_000),
   selectedProfile: z.string().trim().min(1).max(80),
   temperature: TextGenerationTemperatureSchema,
@@ -387,6 +386,10 @@ export const SaveTextWorkshopDraftSchema = z.object({
   departmentId: UuidSchema,
   teamId: UuidSchema.nullable().optional(),
   payload: TextWorkshopDraftPayloadSchema,
+})
+export const TextWorkshopDraftRowSchema = z.object({
+  id: UuidSchema, organization_id: UuidSchema, department_id: UuidSchema, team_id: UuidSchema.nullable(),
+  post_id: UuidSchema.nullable(), payload: TextWorkshopDraftPayloadSchema, created_at: z.iso.datetime({ offset: true }), updated_at: z.iso.datetime({ offset: true }),
 })
 export const CreateGenerationCommandSchema = z.object({
   sessionId: UuidSchema,
