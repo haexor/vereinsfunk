@@ -3,7 +3,7 @@ import { UuidSchema } from './content.js'
 
 // Plan 045, PR 1: Bildstil-Presets (Rahmen, Logo-Wasserzeichen, Filter) fuer Beitragsfotos --
 // mehrschichtig wie Marke (Verein/Abteilung/Mannschaft), aber ein eigener Datensatz je Preset
-// statt eines Singleton-Profils je Ebene, siehe supabase/migrations/2026081903_image_style_presets.sql.
+// statt eines Singleton-Profils je Ebene, siehe supabase/migrations/2026081916_image_style_presets.sql.
 export const ImageStyleFrameTypeSchema = z.enum(['none', 'parametric', 'custom'])
 export const ImageStyleFilterSchema = z.enum(['original', 'schwarz_weiss', 'kontrastreich', 'warm', 'vereinsfarben_duoton'])
 export const ImageStyleLogoPositionSchema = z.enum(['bottom_right', 'bottom_left', 'top_right', 'top_left', 'center'])
