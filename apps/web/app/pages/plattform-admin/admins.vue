@@ -18,6 +18,12 @@ const INVITE_ERROR_MESSAGES: Record<string, string> = {
   invitation_already_open: 'Für diese Adresse ist bereits eine Einladung offen.',
 }
 
+const RESEND_ERROR_MESSAGES: Record<string, string> = {
+  resend_rate_limited: 'Diese Einladung wurde vor weniger als einer Stunde versendet. Bitte später erneut versuchen.',
+  resend_limit_reached: 'Diese Einladung wurde bereits zehnmal versendet. Bitte die Einladung widerrufen und neu einladen.',
+  not_found: 'Diese Einladung ist nicht mehr offen.',
+}
+
 async function load() {
   loading.value = true
   errorMessage.value = ''
@@ -62,8 +68,9 @@ async function resendInvitation(id: string) {
     const headers = await useAuthHeader()
     await $fetch(`${config.public.apiBase}/v1/platform-admin-invitations/${id}/resend`, { method: 'POST', headers })
     await load()
-  } catch {
-    errorMessage.value = 'Einladung konnte nicht erneut versendet werden.'
+  } catch (error) {
+    const code = (error as { data?: { error?: string } })?.data?.error
+    errorMessage.value = RESEND_ERROR_MESSAGES[code ?? ''] ?? 'Einladung konnte nicht erneut versendet werden.'
   } finally {
     saving.value = false
   }
@@ -109,7 +116,7 @@ async function removeAdmin(userId: string) {
     <div v-if="loading" class="p-8 text-center text-xs text-[#7b827d]">Wird geladen …</div>
     <template v-else>
       <section class="card mb-6 p-6">
-        <h2 class="mb-4 font-display text-base font-bold">Admin hinzufügen</h2>
+        <h2 class="mb-4 font-display text-base font-bold">Admin einladen</h2>
         <form class="flex flex-wrap gap-3" @submit.prevent="addAdmin">
           <input
             v-model="newEmail"

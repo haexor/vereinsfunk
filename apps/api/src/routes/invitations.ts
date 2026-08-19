@@ -3,18 +3,12 @@ import { canAssignRole } from '@vereinsfunk/authorization'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { mapInvitationRow } from '../apiMappers.js'
-import { authCallbackUrl, generateInvitationToken, sendInvitationThroughSupabaseAuth } from '../invitations.js'
+import { generateInvitationToken, invitationCallbackUrls, sendInvitationThroughSupabaseAuth } from '../invitations.js'
 import type { ApiRouteContext } from './context.js'
 import { createAuditRecorder, resolveInvitationScope, toPermissionScope } from './shared.js'
 
 function invitationUrls(webBaseUrl: string, rawToken: string): { accept: string; setPassword: string } {
-  const acceptPath = `/einladung?token=${encodeURIComponent(rawToken)}`
-  const passwordSetup = new URL('/passwort-neu', webBaseUrl)
-  passwordSetup.searchParams.set('redirect', acceptPath)
-  return {
-    accept: authCallbackUrl(webBaseUrl, acceptPath),
-    setPassword: authCallbackUrl(webBaseUrl, `${passwordSetup.pathname}${passwordSetup.search}`),
-  }
+  return invitationCallbackUrls(webBaseUrl, `/einladung?token=${encodeURIComponent(rawToken)}`)
 }
 
 export function registerInvitationRoutes(app: FastifyInstance, context: ApiRouteContext): void {

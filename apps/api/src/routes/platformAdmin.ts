@@ -30,7 +30,7 @@ import {
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { mapPlatformAdminInvitationRow } from '../apiMappers.js'
-import { authCallbackUrl, generateInvitationToken, sendInvitationThroughSupabaseAuth } from '../invitations.js'
+import { generateInvitationToken, invitationCallbackUrls, sendInvitationThroughSupabaseAuth } from '../invitations.js'
 import type { ApiRouteContext } from './context.js'
 import { createAuditRecorder, fetchAllRows } from './shared.js'
 import { ciphertextToBytea, createSecretBoxFromEnvironment } from '../secretBox.js'
@@ -38,13 +38,7 @@ import { ciphertextToBytea, createSecretBoxFromEnvironment } from '../secretBox.
 // Analog invitationUrls() in routes/invitations.ts, aber mit dem Annahme-Pfad fuer
 // Plattform-Admins statt fuer Vereinsmitglieder.
 function platformAdminInvitationUrls(webBaseUrl: string, rawToken: string): { accept: string; setPassword: string } {
-  const acceptPath = `/plattform-admin-einladung?token=${encodeURIComponent(rawToken)}`
-  const passwordSetup = new URL('/passwort-neu', webBaseUrl)
-  passwordSetup.searchParams.set('redirect', acceptPath)
-  return {
-    accept: authCallbackUrl(webBaseUrl, acceptPath),
-    setPassword: authCallbackUrl(webBaseUrl, `${passwordSetup.pathname}${passwordSetup.search}`),
-  }
+  return invitationCallbackUrls(webBaseUrl, `/plattform-admin-einladung?token=${encodeURIComponent(rawToken)}`)
 }
 
 // Dieselben zwoelf Felder wurden bislang an drei Stellen (Liste, Anlegen, Aendern) einzeln
@@ -141,6 +135,12 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
   // verlangte ein bereits existierendes auth.users-Konto, es gab keinen Weg, eine noch nie
   // registrierte Person als Plattform-Admin einzuladen. Siehe
   // 2026081901_platform_admin_invitations.sql.
+  //
+  // Bewusst ohne Audit-Trail (im Code-Review dieses PRs angemerkt): audit_events.organization_id
+  // ist NOT NULL und traegt eine pro-Verein manipulationssichere Hash-Kette (Paket 020) -- laesst
+  // sich nicht ohne Eingriff in diese Kette um organisationslose Zeilen erweitern. Die gesamte
+  // Plattform-Administration (platform_admins, platform_settings) hat laut Plan 022 ohnehin noch
+  // keinen eigenen Audit-Trail; dieselbe Zurueckstellung wie beim LLM-Provider-CRUD (PR #53).
   app.post('/v1/platform-admin-invitations', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     if (!(await requirePlatformAdmin(request, reply))) return
@@ -221,13 +221,19 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
     const existing = await service.from('platform_admin_invitations').select('accepted_at, revoked_at').eq('id', params.id).maybeSingle()
     if (existing.error) throw existing.error
     if (!existing.data || existing.data.accepted_at || existing.data.revoked_at) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    // Bedingung im update() selbst statt nur in der vorigen Pruefung: sonst kann die eingeladene
+    // Person zwischen dem select() oben und diesem update() annehmen, und der Widerruf setzt
+    // revoked_at auf einer bereits angenommenen Zeile (im Code-Review gefunden).
     const update = await service
       .from('platform_admin_invitations')
       .update({ revoked_at: new Date().toISOString() })
       .eq('id', params.id)
+      .is('accepted_at', null)
+      .is('revoked_at', null)
       .select('id, email, invited_by, expires_at, accepted_at, revoked_at, last_sent_at, send_count, created_at')
-      .single()
+      .maybeSingle()
     if (update.error) throw update.error
+    if (!update.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     return reply.code(200).send(PlatformAdminInvitationSchema.parse(mapPlatformAdminInvitationRow(update.data)))
   })
 
@@ -245,7 +251,11 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
       if (rpc.error.message.includes('member_cannot_become_platform_admin')) return reply.code(409).send({ error: 'member_cannot_become_platform_admin', correlationId: request.id })
       throw rpc.error
     }
-    return reply.code(200).send(PlatformAdminStatusSchema.parse({ isPlatformAdmin: true, isDefaultAdmin: false }))
+    // Nicht hartkodiert: accept_platform_admin_invitation() insertiert mit "on conflict (user_id)
+    // do nothing" -- ist die annehmende Person zwischendurch bereits Default-Admin geworden,
+    // meldete eine hartkodierte Antwort einen falschen Status (im Code-Review gefunden).
+    const status = await platformAdminProvider.statusFor(request.auth!.userId)
+    return reply.code(200).send(PlatformAdminStatusSchema.parse(status))
   })
 
   app.get('/v1/platform-admins', async (request, reply) => {

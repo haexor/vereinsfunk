@@ -49,7 +49,7 @@ if (import.meta.client) {
 </script>
 
 <template>
-  <div class="text-center">
+  <div class="text-center" role="status" aria-live="polite">
     <template v-if="status === 'checking' || status === 'accepting'">
       <LoaderCircle :size="24" class="mx-auto mb-3 animate-spin text-forest" />
       <p class="text-sm text-[#6c756f]">Einladung wird geprüft …</p>

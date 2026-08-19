@@ -42,25 +42,34 @@ set search_path = public, pg_temp
 as $$
 declare
   normalized_email text := lower(trim(target_email));
-  target_user_id uuid;
   existing record;
   result public.platform_admin_invitations;
 begin
-  select id into target_user_id from auth.users where email = normalized_email;
-
-  if target_user_id is not null then
-    if exists (select 1 from public.platform_admins where user_id = target_user_id) then
-      raise exception 'already_platform_admin';
-    end if;
-    -- Gleiche Ausschlussregel wie reject_platform_admin_with_membership (2026080602), hier
-    -- vorab geprueft, damit eine zum Scheitern bestimmte Einladung nicht erst beim
-    -- Annahmeversuch der eingeladenen Person auffaellt.
-    if exists (select 1 from public.organization_memberships where user_id = target_user_id)
-      or exists (select 1 from public.department_memberships where user_id = target_user_id)
-      or exists (select 1 from public.team_memberships where user_id = target_user_id)
-    then
-      raise exception 'member_cannot_become_platform_admin';
-    end if;
+  -- Kein SELECT ... INTO auf einer einzelnen auth.users-Zeile: Supabase erlaubt dieselbe
+  -- E-Mail-Adresse fuer mehrere Konten (insbesondere SSO), und ohne STRICT uebernaehme das eine
+  -- nicht deterministisch bestimmte Zeile -- ein anderes passendes Konto koennte bereits Admin
+  -- oder Mitglied sein, ohne dass diese Vorabpruefung das bemerkt (im Code-Review gefunden).
+  -- EXISTS prueft stattdessen jede passende Zeile.
+  if exists (
+    select 1 from auth.users u
+    join public.platform_admins pa on pa.user_id = u.id
+    where u.email = normalized_email
+  ) then
+    raise exception 'already_platform_admin';
+  end if;
+  -- Gleiche Ausschlussregel wie reject_platform_admin_with_membership (2026080602), hier
+  -- vorab geprueft, damit eine zum Scheitern bestimmte Einladung nicht erst beim
+  -- Annahmeversuch der eingeladenen Person auffaellt.
+  if exists (
+    select 1 from auth.users u
+    where u.email = normalized_email
+      and (
+        exists (select 1 from public.organization_memberships om where om.user_id = u.id)
+        or exists (select 1 from public.department_memberships dm where dm.user_id = u.id)
+        or exists (select 1 from public.team_memberships tm where tm.user_id = u.id)
+      )
+  ) then
+    raise exception 'member_cannot_become_platform_admin';
   end if;
 
   select * into existing from public.platform_admin_invitations
@@ -110,8 +119,11 @@ begin
   if invitation.send_count >= 10 then
     raise exception 'resend_limit_reached';
   end if;
+  -- expires_at wird mit erneuert, genau wie resend_invitation() (2026080601): ohne das blieb eine
+  -- bereits abgelaufene Einladung erfolgreich "erneut versendbar", aber der neue Link war ab dem
+  -- ersten Klick sofort ungueltig (im Code-Review gefunden).
   update public.platform_admin_invitations
-    set token_hash = target_token_hash, last_sent_at = now(), send_count = send_count + 1
+    set token_hash = target_token_hash, last_sent_at = now(), send_count = send_count + 1, expires_at = now() + interval '14 days'
     where id = target_invitation_id
     returning * into result;
   return result;

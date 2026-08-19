@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(56);
+select plan(60);
 
 set local role postgres;
 
@@ -14,7 +14,8 @@ values
   ('00000000-0000-0000-0000-000000000000', '50000000-0000-4000-8000-000000000003', 'authenticated', 'authenticated', 'quotaowner@pgtap-platform.local', '', '{}', '{}', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '50000000-0000-4000-8000-000000000004', 'authenticated', 'authenticated', 'operator@pgtap-platform.local', '', '{}', '{}', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '50000000-0000-4000-8000-000000000005', 'authenticated', 'authenticated', 'clubmember@pgtap-platform.local', '', '{}', '{}', now(), now()),
-  ('00000000-0000-0000-0000-000000000000', '50000000-0000-4000-8000-000000000006', 'authenticated', 'authenticated', 'deptadmin@pgtap-platform.local', '', '{}', '{}', now(), now());
+  ('00000000-0000-0000-0000-000000000000', '50000000-0000-4000-8000-000000000006', 'authenticated', 'authenticated', 'deptadmin@pgtap-platform.local', '', '{}', '{}', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '50000000-0000-4000-8000-000000000007', 'authenticated', 'authenticated', 'expiredresend@pgtap-platform.local', '', '{}', '{}', now(), now());
 
 -- 1-2: authenticated has no privilege at all on platform_admins -- denied before RLS is even
 -- evaluated (no GRANT was issued to authenticated/anon anywhere in the migration).
@@ -384,6 +385,38 @@ select throws_ok(
     (select id from public.platform_admin_invitations where email = 'secondadmin@pgtap-platform.local'), encode(digest('ignored-token', 'sha256'), 'hex')
   )$$,
   'P0001', 'not_found', 'resending an already-accepted invitation fails'
+);
+
+-- 57-60: resend_platform_admin_invitation() renews expires_at instead of leaving a stale, already
+-- past expiry in place (Review-Fix zu 2026081901) -- ohne diese Zeile war eine abgelaufene
+-- Einladung erfolgreich "erneut versendbar", der neue Link aber ab dem ersten Klick sofort
+-- ungueltig. expiredresend (...007) ist eine dedizierte Fixtur ohne Mitgliedschaft/Admin-Status,
+-- damit der anschliessende Annahmeversuch unten nicht mit einer der obigen Verkettungen kollidiert.
+insert into public.platform_admin_invitations (email, token_hash, invited_by, expires_at, send_count, last_sent_at)
+  values (
+    'expiredresend@pgtap-platform.local', encode(digest('expired-before-resend', 'sha256'), 'hex'),
+    '50000000-0000-4000-8000-000000000001', now() - interval '1 day', 1, now() - interval '2 hours'
+  );
+select lives_ok(
+  $$select public.resend_platform_admin_invitation(
+    (select id from public.platform_admin_invitations where email = 'expiredresend@pgtap-platform.local'), encode(digest('resent-after-expiry', 'sha256'), 'hex')
+  )$$,
+  'resending an already-expired invitation succeeds'
+);
+select ok(
+  (select expires_at > now() + interval '13 days' from public.platform_admin_invitations where email = 'expiredresend@pgtap-platform.local'),
+  'resending an expired invitation renews expires_at to a fresh 14-day window'
+);
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '50000000-0000-4000-8000-000000000007', true);
+select lives_ok(
+  $$select public.accept_platform_admin_invitation('resent-after-expiry')$$,
+  'accepting after a renewing resend succeeds, proving the renewed expiry actually took effect'
+);
+set local role postgres;
+select is(
+  (select count(*)::integer from public.platform_admins where user_id = '50000000-0000-4000-8000-000000000007'),
+  1, 'the account from the renewed invitation is now a platform admin'
 );
 
 -- authenticated has no privilege at all on platform_admin_invitations directly -- same

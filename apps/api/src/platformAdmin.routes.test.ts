@@ -359,6 +359,99 @@ describe('platform administration', () => {
     }])
   })
 
+  it('maps a resend of a missing invitation to 404 not_found', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table !== 'platform_admin_invitations') throw new Error(`unexpected table: ${table}`)
+            return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }) }
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/platform-admin-invitations/${INVITATION_ID}/resend`,
+      headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+    })
+    expect(response.statusCode).toBe(404)
+    expect(response.json()).toMatchObject({ error: 'not_found' })
+  })
+
+  it('maps a resend within the cooldown to 429 resend_rate_limited', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table !== 'platform_admin_invitations') throw new Error(`unexpected table: ${table}`)
+            return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { email: 'invitee@example.com', accepted_at: null, revoked_at: null }, error: null }) }) }) }
+          },
+          rpc: async () => ({ data: null, error: { message: 'resent at most once per hour' } }),
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/platform-admin-invitations/${INVITATION_ID}/resend`,
+      headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+    })
+    expect(response.statusCode).toBe(429)
+    expect(response.json()).toMatchObject({ error: 'resend_rate_limited' })
+  })
+
+  it('maps a resend past the send limit to 429 resend_limit_reached', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table !== 'platform_admin_invitations') throw new Error(`unexpected table: ${table}`)
+            return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { email: 'invitee@example.com', accepted_at: null, revoked_at: null }, error: null }) }) }) }
+          },
+          rpc: async () => ({ data: null, error: { message: 'resend_limit_reached' } }),
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/platform-admin-invitations/${INVITATION_ID}/resend`,
+      headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+    })
+    expect(response.statusCode).toBe(429)
+    expect(response.json()).toMatchObject({ error: 'resend_limit_reached' })
+  })
+
+  it('reports emailDelivered: false without failing the request when resend email delivery fails', async () => {
+    const invitationRow = {
+      id: INVITATION_ID, email: 'invitee@example.com', invited_by: USER_ID,
+      expires_at: '2026-09-02T00:00:00+00:00', accepted_at: null, revoked_at: null,
+      last_sent_at: '2026-08-19T00:00:00+00:00', send_count: 2, created_at: '2026-08-19T00:00:00+00:00',
+    }
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table !== 'platform_admin_invitations') throw new Error(`unexpected table: ${table}`)
+            return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { email: 'invitee@example.com', accepted_at: null, revoked_at: null }, error: null }) }) }) }
+          },
+          rpc: async () => ({ data: invitationRow, error: null }),
+          auth: { admin: { inviteUserByEmail: async () => ({ data: null, error: { message: 'smtp unavailable' } }) } },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/platform-admin-invitations/${INVITATION_ID}/resend`,
+      headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ emailDelivered: false })
+  })
+
   it('revokes an open platform admin invitation', async () => {
     const clients: SupabaseClientFactory = {
       forUser: () => ({}) as unknown as SupabaseClient,
@@ -370,14 +463,18 @@ describe('platform administration', () => {
               select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { accepted_at: null, revoked_at: null }, error: null }) }) }),
               update: () => ({
                 eq: () => ({
-                  select: () => ({
-                    single: async () => ({
-                      data: {
-                        id: INVITATION_ID, email: 'invitee@example.com', invited_by: USER_ID,
-                        expires_at: '2026-09-02T00:00:00+00:00', accepted_at: null, revoked_at: '2026-08-19T12:00:00+00:00',
-                        last_sent_at: '2026-08-19T00:00:00+00:00', send_count: 1, created_at: '2026-08-19T00:00:00+00:00',
-                      },
-                      error: null,
+                  is: () => ({
+                    is: () => ({
+                      select: () => ({
+                        maybeSingle: async () => ({
+                          data: {
+                            id: INVITATION_ID, email: 'invitee@example.com', invited_by: USER_ID,
+                            expires_at: '2026-09-02T00:00:00+00:00', accepted_at: null, revoked_at: '2026-08-19T12:00:00+00:00',
+                            last_sent_at: '2026-08-19T00:00:00+00:00', send_count: 1, created_at: '2026-08-19T00:00:00+00:00',
+                          },
+                          error: null,
+                        }),
+                      }),
                     }),
                   }),
                 }),
@@ -394,6 +491,43 @@ describe('platform administration', () => {
     })
     expect(response.statusCode).toBe(200)
     expect(response.json()).toMatchObject({ revokedAt: '2026-08-19T12:00:00+00:00' })
+  })
+
+  it('answers 404 when the invitation is accepted between the read and the atomic revoke (Review-Fix)', async () => {
+    // Der vorige select() sieht noch eine offene Einladung, aber das update() selbst trifft dank
+    // is('accepted_at', null)/is('revoked_at', null) keine Zeile mehr -- genau das Race, das die
+    // fruehere zweistufige Pruefung uebersehen haette (im Code-Review gefunden).
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table !== 'platform_admin_invitations') throw new Error(`unexpected table: ${table}`)
+            return {
+              select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { accepted_at: null, revoked_at: null }, error: null }) }) }),
+              update: () => ({
+                eq: () => ({
+                  is: () => ({
+                    is: () => ({
+                      select: () => ({
+                        maybeSingle: async () => ({ data: null, error: null }),
+                      }),
+                    }),
+                  }),
+                }),
+              }),
+            }
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/platform-admin-invitations/${INVITATION_ID}/revoke`,
+      headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+    })
+    expect(response.statusCode).toBe(404)
+    expect(response.json()).toMatchObject({ error: 'not_found' })
   })
 
   it('maps an email/token mismatch on platform admin invitation accept to 403', async () => {
@@ -417,7 +551,7 @@ describe('platform administration', () => {
       forUser: () => ({ rpc: async () => ({ data: USER_ID, error: null }) }) as unknown as SupabaseClient,
       forService: () => ({}) as unknown as SupabaseClient,
     }
-    const app = await startApp({ platformAdminProvider: nonAdminProvider, supabaseClients: clients })
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
     const response = await app.inject({
       method: 'POST',
       url: '/v1/platform-admin-invitations/accept',
@@ -426,6 +560,25 @@ describe('platform administration', () => {
     })
     expect(response.statusCode).toBe(200)
     expect(response.json()).toEqual({ isPlatformAdmin: true, isDefaultAdmin: false })
+  })
+
+  it('reports the accepting account`s real status instead of a hardcoded one (Review-Fix)', async () => {
+    // accept_platform_admin_invitation() inserts with "on conflict (user_id) do nothing" -- a
+    // hardcoded { isPlatformAdmin: true, isDefaultAdmin: false } response could never reflect an
+    // account that was already the default admin by the time it accepted.
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ rpc: async () => ({ data: USER_ID, error: null }) }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: defaultAdminProvider, supabaseClients: clients })
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/platform-admin-invitations/accept',
+      headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+      payload: { token: 'raw-token' },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ isPlatformAdmin: true, isDefaultAdmin: true })
   })
 
   it('rejects a non-default admin deleting another admin', async () => {
