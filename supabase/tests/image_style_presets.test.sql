@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(22);
+select plan(23);
 
 set local role postgres;
 
@@ -156,18 +156,25 @@ select throws_ok(
   '42501', null, 'updating the frame reference to a sibling department''s asset is rejected even though the caller has brand.manage on their own department'
 );
 
--- 16: ein Abteilungsadmin darf kein vereinsweites Preset bearbeiten (fehlt organization.manage).
+-- 16: created_by ist unveraenderlich -- selbst der berechtigte Abteilungsadmin kann es nicht auf
+-- eine andere Person umbiegen (Migration 2026081917).
+select throws_ok(
+  $$update public.image_style_presets set created_by = '48000000-0000-4000-8000-000000000004' where id = '48000000-9000-4000-8000-000000000001'$$,
+  'P0001', 'image style preset created_by is immutable', 'created_by cannot be changed by any update, even by someone with brand.manage'
+);
+
+-- 17: ein Abteilungsadmin darf kein vereinsweites Preset bearbeiten (fehlt organization.manage).
 select set_config('request.jwt.claim.sub', '48000000-0000-4000-8000-000000000002', true);
 select throws_ok(
   $$insert into public.image_style_presets (organization_id, name, created_by) values ('48000000-1000-4000-8000-000000000001', 'Vereinsweit', '48000000-0000-4000-8000-000000000002')$$,
   '42501', null, 'a department_admin cannot create an organization-wide preset'
 );
 
--- 17: Cross-Tenant -- derselbe Nutzer sieht als Fremdverein-Admin nichts von diesem Verein.
+-- 18: Cross-Tenant -- derselbe Nutzer sieht als Fremdverein-Admin nichts von diesem Verein.
 select set_config('request.jwt.claim.sub', '48000000-0000-4000-8000-000000000001', true);
 select is((select count(*)::integer from public.image_style_presets where organization_id = '48000000-1000-4000-8000-000000000002'), 0, 'no image_style_presets row exists for the foreign organization');
 
--- 18: der Fussball-Abteilungsadmin kann das eigene Preset loeschen.
+-- 19: der Fussball-Abteilungsadmin kann das eigene Preset loeschen.
 select set_config('request.jwt.claim.sub', '48000000-0000-4000-8000-000000000002', true);
 select lives_ok(
   $$delete from public.image_style_presets where id = '48000000-9000-4000-8000-000000000001'$$,
@@ -175,7 +182,7 @@ select lives_ok(
 );
 select is((select count(*)::integer from public.image_style_presets where id = '48000000-9000-4000-8000-000000000001'), 0, 'the deleted preset is gone');
 
--- 19-20: die Ebene der Loeschsperre (kaskadierend ueber die Abteilung) -- unter postgres, um die
+-- 20-21: die Ebene der Loeschsperre (kaskadierend ueber die Abteilung) -- unter postgres, um die
 -- Kaskade selbst zu pruefen, unabhaengig von RLS.
 set local role postgres;
 select is((select count(*)::integer from public.image_style_presets where id = '48000000-9000-4000-8000-000000000002'), 1, 'the team-scoped preset still exists before its department is deleted');
