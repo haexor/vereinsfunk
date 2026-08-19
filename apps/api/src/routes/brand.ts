@@ -23,7 +23,12 @@ import { hashLogoBuffer, LogoDimensionsError, processBrandLogoUpload, Unsupporte
 import type { ApiRouteContext } from './context.js'
 import { toPermissionScope } from './shared.js'
 
-async function loadSelectableBrandAsset(
+// Exportiert, weil apps/api/src/routes/imageStyle.ts (Plan 045, PR 1) dieselbe Waehlbarkeits-
+// Vorabpruefung fuer frame_brand_asset_id/logo_brand_asset_id braucht -- die DB-CHECK
+// (authz.brand_asset_is_selectable in der RLS-Policy) bleibt die eigentliche Sicherheitsgrenze,
+// dieser Aufruf liefert nur die fruehere, freundlichere 400-Antwort (wie hier fuer
+// logoAssetId/displayFontAssetId/bodyFontAssetId bereits Praxis).
+export async function loadSelectableBrandAsset(
   client: SupabaseClient,
   organizationId: string,
   assetId: string,
@@ -360,17 +365,16 @@ app.post('/v1/brand/assets', async (request, reply) => {
     })
   }
 
-  if (insertPayload.status === 'ready') {
-    const supersede = await service
-      .from('brand_assets')
-      .update({ status: 'replaced' })
-      .eq('organization_id', fields.organizationId)
-      .eq('kind', fields.kind)
-      .eq('status', 'ready')
-      .filter('department_id', fields.departmentId ? 'eq' : 'is', fields.departmentId ?? null)
-      .filter('team_id', fields.teamId ? 'eq' : 'is', fields.teamId ?? null)
-    if (supersede.error) throw supersede.error
-  }
+  // Kein Supersede des Vorgaenger-Assets hier (anders als beim dedizierten Logo-Endpunkt oben):
+  // jedes ueber diese generische Route erreichbare Kind -- logo_mark, wordmark, watermark, frame,
+  // sowie logo_primary/logo_dark/logo_light auf Abteilungs-/Mannschaftsebene -- kann per fester ID
+  // referenziert werden, entweder von department_brand_profiles.logo_asset_id/team_brand_profiles.
+  // logo_asset_id (gegen LOGO_ASSET_KINDS geprueft) oder von image_style_presets.
+  // frame_brand_asset_id/logo_brand_asset_id. loadSelectableBrandAsset verlangt dort status=
+  // 'ready'; ein Supersede wuerde jede bereits getroffene Auswahl beim naechsten unabhaengigen
+  // Speichern mit invalid_asset_reference scheitern lassen, ohne dass die UI einen Ausweg zeigt.
+  // Alte Zeilen bleiben deshalb 'ready' liegen -- ein Aufraeumen ungenutzter Assets ist bewusst
+  // keine automatische Nebenwirkung des Uploads.
 
   // Wie beim Logo-Endpunkt: derselbe Dateiinhalt ergibt denselben object_path, und
   // unique(bucket_id, object_path) liesse ein reines insert beim zweiten Hochladen scheitern.

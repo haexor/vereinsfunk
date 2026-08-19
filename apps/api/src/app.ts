@@ -37,6 +37,7 @@ import { registerConsentPublicRoutes } from './routes/consentPublic.js'
 import { registerContentRoutes } from './routes/content.js'
 import { registerDataSubjectRoutes } from './routes/dataSubjects.js'
 import { registerDirectoryRoutes } from './routes/directory.js'
+import { registerImageStyleRoutes } from './routes/imageStyle.js'
 import { registerIntegrationRoutes } from './routes/integrations.js'
 import { registerLlmProviderRoutes } from './routes/llmProviders.routes.js'
 import { registerInvitationRoutes } from './routes/invitations.js'
@@ -226,6 +227,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   registerOrganizationRoutes(app, context)
   registerBrandRoutes(app, context)
+  registerImageStyleRoutes(app, context)
 
   // --- Abteilungen, Teams, Mitgliedschaften und Einladungen (Paket 010) ----------------
 

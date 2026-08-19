@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { BarChart3, BookUser, Building2, CalendarDays, CheckCircle2, ChevronDown, CreditCard, Feather, FileText, LayoutDashboard, LogOut, Menu, Palette, Plug, Plus, Scale, Settings, Share2, ShieldCheck, Users, UserRound, UserSearch, X } from '@lucide/vue'
+import { BarChart3, BookUser, Building2, CalendarDays, CheckCircle2, ChevronDown, CreditCard, Feather, FileText, Frame, LayoutDashboard, LogOut, Menu, Palette, Plug, Plus, Scale, Settings, Share2, ShieldCheck, Users, UserRound, UserSearch, X } from '@lucide/vue'
 
 const mobileOpen = ref(false)
 const route = useRoute()
@@ -65,6 +65,7 @@ const navigation: { label: string; to: string; icon: typeof LayoutDashboard; bad
 ]
 const organizationNav = [
   { label: 'Marke', to: '/marke', icon: Palette },
+  { label: 'Bildstil', to: '/bildstil', icon: Frame },
   { label: 'Stilprofile', to: '/stilprofile', icon: Feather },
   { label: 'Struktur', to: '/struktur', icon: Building2 },
   { label: 'Mitglieder', to: '/mitglieder', icon: Users },
