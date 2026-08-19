@@ -73,7 +73,7 @@ describe('text workshop contracts', () => {
   it('accepts incomplete autosave input but keeps its scope and platform choices bounded', () => {
     const draft = {
       organizationId: org, departmentId: department,
-      payload: { communicationGoal: 'inform', factsText: '', observation: 'Erste Notiz', quote: '', doNotMention: '', selectedProfile: 'klar_erklaerend', temperature: 0.6, selectedPlatforms: [], maxCharactersOverride: '' },
+      payload: { communicationGoal: 'inform', factsText: '', observation: 'Erste Notiz', doNotMention: '', selectedProfile: 'klar_erklaerend', temperature: 0.6, selectedPlatforms: [], maxCharactersOverride: '' },
     }
     expect(SaveTextWorkshopDraftSchema.safeParse(draft).success).toBe(true)
     expect(SaveTextWorkshopDraftSchema.safeParse({ ...draft, payload: { ...draft.payload, selectedPlatforms: ['instagram', 'instagram'] } }).success).toBe(false)

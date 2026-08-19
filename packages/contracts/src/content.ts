@@ -373,7 +373,6 @@ export const TextWorkshopDraftPayloadSchema = z.object({
   communicationGoal: CommunicationGoalSchema,
   factsText: z.string().max(10_000),
   observation: z.string().max(5_000),
-  quote: z.string().max(500),
   doNotMention: z.string().max(5_000),
   selectedProfile: z.string().trim().min(1).max(80),
   temperature: TextGenerationTemperatureSchema,

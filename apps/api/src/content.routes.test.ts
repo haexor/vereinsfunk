@@ -1055,7 +1055,7 @@ describe('text workshop drafts', () => {
   const POST_ID = '3f000000-0000-4000-8000-000000000002'
   const SESSION_ID = '3f000000-0000-4000-8000-000000000003'
   const CANDIDATE_ID = '3f000000-0000-4000-8000-000000000004'
-  const draftPayload = { communicationGoal: 'inform', factsText: 'Übung: Passen', observation: '', quote: '', doNotMention: '', selectedProfile: 'klar_erklaerend', temperature: 0.6, selectedPlatforms: [], maxCharactersOverride: '' }
+  const draftPayload = { communicationGoal: 'inform', factsText: 'Übung: Passen', observation: '', doNotMention: '', selectedProfile: 'klar_erklaerend', temperature: 0.6, selectedPlatforms: [], maxCharactersOverride: '' }
 
   it('audits a successfully saved draft without its raw input', async () => {
     const auditRows: Record<string, unknown>[] = []
