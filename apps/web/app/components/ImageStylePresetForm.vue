@@ -61,6 +61,12 @@ function setFrameType(type: ImageStyleFrameType) {
     draft.value.frameBrandAssetId = null
   }
 }
+// v-model.number liefert bei leerem Feld einen leeren String statt null (Vue-looseToNumber-
+// Fallback) -- isValid erkennt das nicht und der Speichern-Knopf bliebe faelschlich aktiv.
+function nullableNumberFromInput(event: Event): number | null {
+  const value = (event.target as HTMLInputElement).value
+  return value ? Number(value) : null
+}
 function setLogoEnabled(enabled: boolean) {
   draft.value.logoEnabled = enabled
   if (enabled) {
@@ -108,10 +114,10 @@ const isValid = computed(() => {
           <input v-if="frameColorMode === 'custom'" :value="draft.frameColor" type="color" class="h-8 w-8 rounded border-0" @input="draft.frameColor = ($event.target as HTMLInputElement).value" />
         </div>
         <label class="block text-xs font-semibold text-[#5c655f]">Breite (px)
-          <input :value="draft.frameWidthPx ?? ''" type="number" min="1" max="200" class="focus-ring mt-1 w-32 rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" @input="draft.frameWidthPx = ($event.target as HTMLInputElement).value ? Number(($event.target as HTMLInputElement).value) : null" />
+          <input :value="draft.frameWidthPx ?? ''" type="number" min="1" max="200" class="focus-ring mt-1 w-32 rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" @input="draft.frameWidthPx = nullableNumberFromInput($event)" />
         </label>
         <label class="block text-xs font-semibold text-[#5c655f]">Eckenradius (px, optional)
-          <input :value="draft.frameCornerRadiusPx ?? ''" type="number" min="0" max="200" placeholder="0" class="focus-ring mt-1 w-32 rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" @input="draft.frameCornerRadiusPx = ($event.target as HTMLInputElement).value ? Number(($event.target as HTMLInputElement).value) : null" />
+          <input :value="draft.frameCornerRadiusPx ?? ''" type="number" min="0" max="200" placeholder="0" class="focus-ring mt-1 w-32 rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" @input="draft.frameCornerRadiusPx = nullableNumberFromInput($event)" />
         </label>
       </div>
 
@@ -145,10 +151,10 @@ const isValid = computed(() => {
         </label>
         <div class="flex gap-4">
           <label class="block text-xs font-semibold text-[#5c655f]">Größe (% der Bildbreite)
-            <input :value="draft.logoSizePercent ?? ''" type="number" min="4" max="30" class="focus-ring mt-1 w-24 rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" @input="draft.logoSizePercent = ($event.target as HTMLInputElement).value ? Number(($event.target as HTMLInputElement).value) : null" />
+            <input :value="draft.logoSizePercent ?? ''" type="number" min="4" max="30" class="focus-ring mt-1 w-24 rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" @input="draft.logoSizePercent = nullableNumberFromInput($event)" />
           </label>
           <label class="block text-xs font-semibold text-[#5c655f]">Abstand zum Rand (%)
-            <input :value="draft.logoMarginPercent ?? ''" type="number" min="0" max="15" class="focus-ring mt-1 w-24 rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" @input="draft.logoMarginPercent = ($event.target as HTMLInputElement).value ? Number(($event.target as HTMLInputElement).value) : null" />
+            <input :value="draft.logoMarginPercent ?? ''" type="number" min="0" max="15" class="focus-ring mt-1 w-24 rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" @input="draft.logoMarginPercent = nullableNumberFromInput($event)" />
           </label>
         </div>
       </div>
