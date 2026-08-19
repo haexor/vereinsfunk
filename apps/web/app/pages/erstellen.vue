@@ -55,8 +55,13 @@ const selectedPlatforms = ref<SocialPlatform[]>([])
 const maxCharactersOverride = ref('')
 // Plan 045, PR 0 Schritt 3: null bis PhotoAttachment die Personen-Pruefung abgeschlossen hat.
 const mediaAssetId = ref<string | null>(null)
-const PROFILE_GROUP_LABELS = { system: 'Basis-Stile', persona: 'Personas', custom: 'Eigene Profile' } as const
-const profileGroups = computed(() => (['system', 'persona', 'custom'] as const).map((kind) => ({ label: PROFILE_GROUP_LABELS[kind], items: profiles.value.filter((profile) => profile.kind === kind) })).filter((group) => group.items.length))
+// Nur zwei Gruppen in der Dropdown-Liste: System- und eigene Profile sind beides "Stil" (der
+// Unterschied ist fuer die Auswahl selbst nicht relevant), Personas bleiben separat.
+const PROFILE_GROUPS = [
+  { label: 'Stil', kinds: ['system', 'custom'] as const },
+  { label: 'Personas', kinds: ['persona'] as const },
+] as const
+const profileGroups = computed(() => PROFILE_GROUPS.map((group) => ({ label: group.label, items: group.kinds.flatMap((kind) => profiles.value.filter((profile) => profile.kind === kind)) })).filter((group) => group.items.length))
 const profileSelectGroups = computed(() => profileGroups.value.map((group) => ({ label: group.label, items: group.items.map((profile) => ({ value: profile.id ?? profile.slug, label: profile.name, description: profile.description })) })))
 const communicationGoal = ref('inform')
 const factsText = ref('')

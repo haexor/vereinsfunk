@@ -19,7 +19,7 @@ export const platformColors: Record<SocialPlatform, string> = {
   website: '#163a2c',
 }
 
-// Pfade aus Bootstrap Icons (CC-BY 4.0, https://icons.getbootstrap.com), viewBox 0 0 16 16.
+// Pfade aus Bootstrap Icons (MIT, https://icons.getbootstrap.com), viewBox 0 0 16 16.
 // Fuer "website" gibt es keine Marke -- PlatformIcon zeigt dort stattdessen ein Globe-Symbol.
 export const platformIconPaths: Partial<Record<SocialPlatform, string>> = {
   instagram:
