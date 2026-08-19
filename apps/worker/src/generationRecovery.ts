@@ -4,14 +4,18 @@ import { createLogger } from '@vereinsfunk/observability'
 
 const logger = createLogger({ name: 'worker' })
 
-export type StalledCandidateRow = { id: string; composition_session_id: string; organization_id: string; generation_intent: 'initial' | 'revise'; revision_instruction: string | null; generation_lease_token: string }
+export type StalledCandidateRow = { id: string; composition_session_id: string; organization_id: string; generation_intent: 'initial' | 'revise'; revision_instruction: string | null; generation_lease_token: string; round_input_hash: string }
 export type RecoverableSessionRow = {
   organization_id: string; department_id: string; team_id: string | null; communication_goal: string
   requested_formats: unknown; source_material: unknown; style_profile_id: string | null; style_profile_snapshot: unknown
   effective_config_snapshot: unknown; target_platforms: SocialPlatform[]; max_characters: number; temperature: number
   source_revision: number; input_hash: string; created_by: string
 }
-export type RecoveryOutcome = 'created' | 'limit_reached'
+// 'no_provider': keine aktive Provider-Konfiguration fuer text_generation vorhanden. Anders als
+// 'limit_reached' ist das kein Kontingent-, sondern ein Konfigurationsproblem -- ein erneuter
+// Versuch beim naechsten Scan wuerde ohne Betreiber-Eingriff genauso scheitern, deshalb wird auch
+// hier trotzdem finalisiert statt endlos alle 5 Minuten neu zu versuchen (mirrors 'limit_reached').
+export type RecoveryOutcome = 'created' | 'limit_reached' | 'no_provider'
 
 export interface GenerationRecoveryRepository {
   claimStalledCandidates(limit: number): Promise<StalledCandidateRow[]>
@@ -48,6 +52,7 @@ export async function scanAndRecoverStaleCandidates(repository: GenerationRecove
         const candidateInputHash = createHash('sha256').update(`${candidate.id}:recovery`).digest('hex')
         const outcome = await repository.createRecoveryAttempt(session, candidate, candidateInputHash, randomUUID(), `generate-text:recovery:${randomUUID()}`)
         if (outcome === 'limit_reached') logger.warn({ candidateId: candidate.id, sessionId: candidate.composition_session_id }, 'automatic recovery skipped: composition session candidate limit reached')
+        if (outcome === 'no_provider') logger.warn({ candidateId: candidate.id, sessionId: candidate.composition_session_id }, 'automatic recovery skipped: no active text provider is configured')
         await repository.finalizeRecovery(candidate, 'stalled_after_crash')
       } catch (error) {
         logger.error({ err: error, candidateId: candidate.id }, 'automatic recovery attempt failed')

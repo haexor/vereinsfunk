@@ -254,8 +254,11 @@ async function createCandidate() {
         // lassen (ein wiederhergestellter Entwurf kann eine Stufe tragen, Review dieses PRs).
         ...(temperatureSupported.value !== false ? { temperature: temperature.value } : {}),
       },
-    }, z.object({ sessionId: z.string(), candidateId: z.string() }))
-    sessionId.value = created.sessionId; candidate.value = { id: created.candidateId, status: 'pending', generated_content: null, failure_code: null, triggered_by: 'member' }
+    }, z.object({ sessionId: UuidSchema, candidateIds: z.array(UuidSchema).min(1) }))
+    // Paket 046: eine Anfrage kann mehrere Kandidaten gleichzeitig erzeugen (Ensemble-Groesse, vom
+    // Plattform-Admin konfiguriert). Diese Seite zeigt bis zur eigenen Mehrfachauswahl-UI weiterhin
+    // nur den ersten -- refreshSession() unten holt ohnehin die ganze Runde nach.
+    sessionId.value = created.sessionId; candidate.value = { id: created.candidateIds[0]!, status: 'pending', generated_content: null, failure_code: null, triggered_by: 'member' }
     await refreshSession()
   } catch (error) {
     const code = (error as { data?: { error?: string } })?.data?.error
@@ -268,6 +271,8 @@ async function createCandidate() {
       // 2026081802 setzt people_reviewed_at in genau diesem Fall automatisch zurueck.
       mediaAssetId.value = null
       notice.value = 'Die Personen-Prüfung des angehängten Fotos ist nicht mehr aktuell. Bitte das Foto erneut prüfen.'
+    } else if (code === 'no_active_text_provider') {
+      notice.value = 'Aktuell ist kein Sprachmodell für die Textgenerierung hinterlegt. Bitte an eine Vereinsverwaltung wenden.'
     } else {
       notice.value = 'Die Textgeneration konnte nicht gestartet werden.'
     }
@@ -311,8 +316,8 @@ async function reviseCandidate() {
   if (!sessionId.value || !revisionInstruction.value.trim()) return
   submitting.value = true; notice.value = ''
   try {
-    const created = await api.request(`/v1/text-workshop/sessions/${sessionId.value}/generations`, { method: 'POST', body: { generationIntent: 'revise', revisionInstruction: revisionInstruction.value.trim() } }, z.object({ sessionId: z.string(), candidateId: z.string() }))
-    candidate.value = { id: created.candidateId, status: 'pending', generated_content: null, failure_code: null, triggered_by: 'member' }
+    const created = await api.request(`/v1/text-workshop/sessions/${sessionId.value}/generations`, { method: 'POST', body: { generationIntent: 'revise', revisionInstruction: revisionInstruction.value.trim() } }, z.object({ sessionId: UuidSchema, candidateIds: z.array(UuidSchema).min(1) }))
+    candidate.value = { id: created.candidateIds[0]!, status: 'pending', generated_content: null, failure_code: null, triggered_by: 'member' }
     revisionInstruction.value = ''
     await refreshSession()
   } catch { notice.value = 'Die Überarbeitung konnte nicht gestartet werden.' } finally { submitting.value = false }

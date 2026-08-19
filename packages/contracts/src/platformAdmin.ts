@@ -38,13 +38,17 @@ export const AcceptPlatformAdminInvitationRequestSchema = z.object({ token: z.st
 
 // Nur ein Schluessel existiert heute (loest 009s hartkodierte Konstante ab). Ein unbekannter
 // Schluessel wird von der API abgelehnt statt stillschweigend ungeprueft gespeichert zu werden.
-export const PlatformSettingKeySchema = z.enum(['max_organizations_per_owner', 'publishing_enabled'])
+export const PlatformSettingKeySchema = z.enum(['max_organizations_per_owner', 'publishing_enabled', 'text_generation_ensemble_size'])
 export const PlatformSettingValueSchemas = {
   max_organizations_per_owner: z.int().positive().max(1000),
   // Globaler Not-Aus fuer externe Veroeffentlichungen. Er ist bewusst keine
   // organisationsbezogene Einstellung: ein Plattform-Admin muss im Incident-Fall alle
   // Vereine gleichzeitig und ohne deren Berechtigungen erreichen koennen.
   publishing_enabled: z.boolean(),
+  // Paket 046: wie viele aktive Textgenerierungs-Provider gleichzeitig einen Vorschlag liefern.
+  // Obergrenze 5 orientiert sich an der Hatchet-Nebenlaeufigkeitsgrenze je Abteilung (concurrency.llm
+  // in apps/worker/src/workflows.ts) -- deutlich mehr Modelle wuerden ohnehin nur nacheinander laufen.
+  text_generation_ensemble_size: z.int().positive().max(5),
 } as const satisfies Record<z.infer<typeof PlatformSettingKeySchema>, z.ZodType<unknown>>
 export const PlatformSettingSchema = z.object({
   key: PlatformSettingKeySchema,

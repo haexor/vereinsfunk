@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { z } from 'zod'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
 import { CommunicationGoalSchema, MaxCharactersSchema, SocialPlatformSchema, SourceMaterialSchema, TextGenerationTemperatureSchema, UuidSchema, WorkflowNameSchema, WorkflowPayloadSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
@@ -20,14 +20,14 @@ const SessionRowSchema = z.object({
 // Aus dem Schema abgeleitet statt als zweiter, von Hand parallel gepflegter String: composition_sessions.preset_slug
 // musste zuvor an beiden Stellen einzeln entfernt werden, ohne dass ein Auseinanderlaufen compile-time aufgefallen waere.
 const SESSION_ROW_COLUMNS = Object.keys(SessionRowSchema.shape).join(', ')
-const CandidateRowSchema: z.ZodType<CandidateRow> = z.object({ id: UuidSchema, status: z.literal('generating'), revision_instruction: z.string().nullable(), lease_token: UuidSchema })
+const CandidateRowSchema: z.ZodType<CandidateRow> = z.object({ id: UuidSchema, status: z.literal('generating'), revision_instruction: z.string().nullable(), lease_token: UuidSchema, provider_configuration_id: UuidSchema })
 const ProviderRowSchema: z.ZodType<ProviderRow> = z.object({
   id: UuidSchema, protocol: z.string(), base_url: z.url(), model: z.string().trim().min(1),
   structured_output_required: z.boolean(), api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1),
 })
 const StalledCandidateRowSchema: z.ZodType<StalledCandidateRow> = z.object({
   id: UuidSchema, composition_session_id: UuidSchema, organization_id: UuidSchema, generation_intent: z.enum(['initial', 'revise']), revision_instruction: z.string().nullable(),
-  generation_lease_token: UuidSchema,
+  generation_lease_token: UuidSchema, round_input_hash: z.string().regex(/^[a-f0-9]{64}$/),
 })
 // Opaque passthrough fields (requested_formats/source_material/style_profile_snapshot/
 // effective_config_snapshot) are only ever handed back to create_text_generation_session
@@ -116,16 +116,18 @@ export function createTextGenerationRepository(config: WorkerEnvironment): TextG
       }
       return data === null ? null : CandidateRowSchema.parse(data)
     },
-    // Seit 2026081305 vergibt eine aktive Aufgabenart jede Prioritaet nur einmal -- die vorderste
-    // Zeile ist damit eindeutig. Die frueher hier noetige Gleichstandspruefung (zwei Zeilen laden,
-    // bei gleicher Prioritaet abbrechen) haette den Konflikt erst hier gemeldet, wo ihn niemand
-    // mehr aufloesen kann; er scheitert jetzt schon beim Speichern in der Provider-Verwaltung.
-    async loadActiveTextProvider() {
+    // Paket 046: welcher Provider eine Zeile bedient, steht seit create_text_generation_session
+    // (Migration 2026081912) schon beim Anlegen der Zeile fest (candidate.provider_configuration_id)
+    // -- hier wird nur noch genau dieser eine geladen, nicht mehr "der gerade aktive". Bewusst ohne
+    // is_active/task_kind-Filter: eine zwischenzeitliche Deaktivierung durch einen Betreiber soll
+    // eine bereits zugewiesene, laufende Generierung nicht abbrechen (dieselbe Haltung wie beim
+    // Einfrieren von target_platforms/max_characters/temperature auf der Sitzung).
+    async loadProvider(providerConfigurationId) {
       const { data, error } = await client.from('llm_provider_configurations')
         .select('id, protocol, base_url, model, structured_output_required, llm_provider_secrets!inner(api_key_ciphertext, key_version)')
-        .eq('task_kind', 'text_generation').eq('is_active', true).order('priority').limit(1)
+        .eq('id', providerConfigurationId).limit(1)
       if (error) throw error
-      if (data.length === 0) throw new Error('no active text provider is configured')
+      if (data.length === 0) throw new Error('assigned text provider is missing')
       const row = z.object({
         id: UuidSchema, protocol: z.string(), base_url: z.url(), model: z.string().trim().min(1),
         structured_output_required: z.boolean(), llm_provider_secrets: z.union([z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) }), z.array(z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) })).min(1)]),
@@ -154,6 +156,16 @@ export function createTextGenerationRepository(config: WorkerEnvironment): TextG
   }
 }
 
+/** Same priority-ordered top-1 selection create_text_generation_session's caller normally does for a
+ * fresh request (apps/api/src/routes/shared.ts, resolveTextGenerationProviderConfigurationIds) --
+ * recovery deliberately ignores the ensemble-size setting, see createRecoveryAttempt above. */
+async function resolveDefaultTextProviderId(client: SupabaseClient): Promise<string | null> {
+  const { data, error } = await client.from('llm_provider_configurations').select('id')
+    .eq('task_kind', 'text_generation').eq('is_active', true).order('priority').limit(1)
+  if (error) throw error
+  return data.length === 0 ? null : UuidSchema.parse(data[0]!.id)
+}
+
 /** Worker-only data access for the recovery-scan cron workflow. Never called from a product workflow. */
 export function createGenerationRecoveryRepository(config: WorkerEnvironment): GenerationRecoveryRepository {
   const client = createClient(config.SUPABASE_URL, config.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
@@ -171,6 +183,12 @@ export function createGenerationRecoveryRepository(config: WorkerEnvironment): G
       return data === null ? null : RecoverableSessionRowSchema.parse(data)
     },
     async createRecoveryAttempt(session, stale, candidateInputHash, correlationId, idempotencyKey) {
+      // Recovery ersetzt genau EINEN festgefahrenen Kandidaten -- immer mit dem einzelnen,
+      // regulaer aktiven Top-1-Provider, unabhaengig von der Ensemble-Groesse (platform_settings
+      // text_generation_ensemble_size). Ein haengender Kandidat soll nicht ploetzlich N neue
+      // erzeugen; das waere weder das Ziel noch mit dem 8er-Rundenlimit vertraeglich.
+      const providerId = await resolveDefaultTextProviderId(client)
+      if (!providerId) return 'no_provider'
       const { error } = await client.rpc('create_text_generation_session', {
         p_organization_id: session.organization_id, p_department_id: session.department_id, p_team_id: session.team_id,
         p_communication_goal: session.communication_goal, p_requested_formats: session.requested_formats,
@@ -180,6 +198,10 @@ export function createGenerationRecoveryRepository(config: WorkerEnvironment): G
         p_source_revision: session.source_revision, p_input_hash: session.input_hash, p_candidate_input_hash: candidateInputHash,
         p_generation_intent: stale.generation_intent, p_revision_instruction: stale.revision_instruction, p_created_by: session.created_by,
         p_correlation_id: correlationId, p_idempotency_key: idempotencyKey, p_triggered_by: 'automatic_recovery',
+        p_provider_configuration_ids: [providerId],
+        // Der Ersatzkandidat reiht sich in dieselbe Runde wie der festgefahrene ein, statt eine
+        // eigene Ein-Kandidat-Runde zu bilden -- siehe Migration 2026081912.
+        p_round_input_hash: stale.round_input_hash,
       })
       if (error) {
         if (error.message === 'composition_session_candidate_limit_reached') return 'limit_reached'
