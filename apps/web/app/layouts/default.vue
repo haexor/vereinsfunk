@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { BarChart3, BookUser, Building2, CalendarDays, CheckCircle2, ChevronDown, CreditCard, Feather, FileText, Frame, LayoutDashboard, LogOut, Menu, Palette, Plug, Plus, Scale, Settings, Share2, ShieldCheck, Users, UserRound, UserSearch, X } from '@lucide/vue'
+import { BarChart3, BookUser, Building2, CalendarDays, CheckCircle2, CreditCard, Feather, FileText, Frame, LayoutDashboard, LogOut, Menu, Palette, Plug, Plus, Scale, Settings, Share2, ShieldCheck, Users, UserRound, UserSearch, X } from '@lucide/vue'
 
 const mobileOpen = ref(false)
 const route = useRoute()
@@ -113,10 +113,14 @@ const organizationNav = [
           </span>
           <label v-else class="relative block min-w-0 flex-1">
             <span class="sr-only">Verein auswählen</span>
-            <select :value="scope?.organizationId" class="focus-ring w-full appearance-none rounded-lg bg-transparent py-1 pl-0 pr-6 text-sm font-semibold text-white" @change="selectOrganization(($event.target as HTMLSelectElement).value)">
-              <option v-for="item in session?.scopes" :key="item.organizationId" :value="item.organizationId" class="text-ink">{{ item.organizationName }}</option>
-            </select>
-            <ChevronDown :size="14" class="pointer-events-none absolute right-1 top-1.5 text-white/50" />
+            <Select :model-value="scope?.organizationId" @update:model-value="(value: unknown) => selectOrganization(value as string)">
+              <SelectTrigger class="border-0 py-1 pr-6 pl-0 text-sm font-semibold text-white [&_svg]:text-white/50">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="item in session?.scopes" :key="item.organizationId" :value="item.organizationId">{{ item.organizationName }}</SelectItem>
+              </SelectContent>
+            </Select>
             <span class="block text-[11px] text-white/55">Vereinskonto</span>
           </label>
         </div>
@@ -124,10 +128,14 @@ const organizationNav = [
           <div class="mx-2 my-1 h-px bg-white/10" />
           <label class="relative block">
             <span class="sr-only">Abteilung auswählen</span>
-            <select :value="scope?.departmentId" class="focus-ring w-full appearance-none rounded-lg bg-transparent py-2 pl-2 pr-8 text-xs font-medium text-white/80" @change="selectDepartment(($event.target as HTMLSelectElement).value)">
-              <option v-for="item in activeOrganization.departments" :key="item.id" :value="item.id" class="text-ink">{{ item.name }}</option>
-            </select>
-            <ChevronDown :size="14" class="pointer-events-none absolute right-2 top-2.5 text-white/50" />
+            <Select :model-value="scope?.departmentId" @update:model-value="(value: unknown) => selectDepartment(value as string)">
+              <SelectTrigger class="border-0 py-2 pr-8 pl-2 text-xs font-medium text-white/80 [&_svg]:text-white/50">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="item in activeOrganization.departments" :key="item.id" :value="item.id">{{ item.name }}</SelectItem>
+              </SelectContent>
+            </Select>
           </label>
         </template>
       </div>

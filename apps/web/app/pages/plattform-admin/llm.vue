@@ -89,6 +89,13 @@ const newProvider = reactive({
 })
 
 const usesPreset = computed(() => newProvider.presetLabel !== '')
+const presetLabelModel = computed({
+  get: () => newProvider.presetLabel || '__none__',
+  set: (value: string) => {
+    newProvider.presetLabel = value === '__none__' ? '' : value
+    applyPreset()
+  },
+})
 const showModelSelect = computed(() => availableModels.value.length > 0 && !useCustomModel.value)
 const canLoadModels = computed(() => newProvider.baseUrl.trim().length > 0 && newProvider.apiKey.trim().length > 0)
 // Ein Preset gehoert zu genau einem Protokoll -- ein OpenAI-Endpunkt unter "Anthropic (nativ)"
@@ -347,29 +354,34 @@ async function removeProvider(id: string) {
           />
 
           <label class="text-xs font-semibold text-[#5c655f]">Protokoll
-            <select v-model="newProvider.protocol" class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal">
-              <option v-for="option in PROTOCOL_OPTIONS" :key="option.value" :value="option.value" :disabled="!option.available">
-                {{ option.available ? option.label : `${option.label} · noch nicht verfügbar` }}
-              </option>
-            </select>
+            <Select v-model="newProvider.protocol">
+              <SelectTrigger class="mt-1 px-4 py-2.5 text-sm font-normal"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="option in PROTOCOL_OPTIONS" :key="option.value" :value="option.value" :disabled="!option.available">
+                  {{ option.available ? option.label : `${option.label} · noch nicht verfügbar` }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
           </label>
           <label class="text-xs font-semibold text-[#5c655f]">Aufgabe
-            <select v-model="newProvider.taskKind" class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal">
-              <option v-for="option in TASK_KIND_OPTIONS" :key="option.value" :value="option.value" :disabled="!option.available">
-                {{ option.available ? option.label : `${option.label} · noch nicht verfügbar` }}
-              </option>
-            </select>
+            <Select v-model="newProvider.taskKind">
+              <SelectTrigger class="mt-1 px-4 py-2.5 text-sm font-normal"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="option in TASK_KIND_OPTIONS" :key="option.value" :value="option.value" :disabled="!option.available">
+                  {{ option.available ? option.label : `${option.label} · noch nicht verfügbar` }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
           </label>
 
           <label class="text-xs font-semibold text-[#5c655f] sm:col-span-2">Anbieter
-            <select
-              v-model="newProvider.presetLabel"
-              class="focus-ring mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal"
-              @change="applyPreset"
-            >
-              <option v-for="preset in visiblePresets" :key="preset.label" :value="preset.label">{{ preset.label }}</option>
-              <option value="">Eigene URL …</option>
-            </select>
+            <Select v-model="presetLabelModel">
+              <SelectTrigger class="mt-1 px-4 py-2.5 text-sm font-normal"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="preset in visiblePresets" :key="preset.label" :value="preset.label">{{ preset.label }}</SelectItem>
+                <SelectItem value="__none__">Eigene URL …</SelectItem>
+              </SelectContent>
+            </Select>
           </label>
           <label class="text-xs font-semibold text-[#5c655f] sm:col-span-2">Basis-URL
             <input
@@ -393,14 +405,12 @@ async function removeProvider(id: string) {
 
           <label class="text-xs font-semibold text-[#5c655f] sm:col-span-2">Modell
             <div class="mt-1 flex gap-2">
-              <select
-                v-if="showModelSelect"
-                v-model="newProvider.model"
-                required
-                class="focus-ring w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal"
-              >
-                <option v-for="model in availableModels" :key="model" :value="model">{{ model }}</option>
-              </select>
+              <Select v-if="showModelSelect" v-model="newProvider.model" required>
+                <SelectTrigger class="px-4 py-2.5 text-sm font-normal"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem v-for="model in availableModels" :key="model" :value="model">{{ model }}</SelectItem>
+                </SelectContent>
+              </Select>
               <input
                 v-else
                 v-model="newProvider.model"

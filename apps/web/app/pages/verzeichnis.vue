@@ -74,6 +74,15 @@ const teamOptionsForFilter = computed(() => {
   return department.teams.filter((team) => canReadTeam(department.id, team.id))
 })
 
+const filterDepartmentIdModel = computed({
+  get: () => filterDepartmentId.value || '__none__',
+  set: (value: string) => { filterDepartmentId.value = value === '__none__' ? '' : value },
+})
+const filterTeamIdModel = computed({
+  get: () => filterTeamId.value || '__none__',
+  set: (value: string) => { filterTeamId.value = value === '__none__' ? '' : value },
+})
+
 async function loadPeople() {
   if (!organizationId.value) { loading.value = false; return }
   loading.value = true
@@ -142,6 +151,15 @@ const teamOptionsForCreate = computed(() => {
 watch(() => createForm.departmentId, () => { createForm.teamId = '' })
 const canEditGuardianOnCreate = computed(() => canManageGuardianContact({ departmentId: createForm.departmentId || null }))
 
+const createFormDepartmentIdModel = computed({
+  get: () => createForm.departmentId || '__none__',
+  set: (value: string) => { createForm.departmentId = value === '__none__' ? '' : value },
+})
+const createFormTeamIdModel = computed({
+  get: () => createForm.teamId || '__none__',
+  set: (value: string) => { createForm.teamId = value === '__none__' ? '' : value },
+})
+
 async function createPerson() {
   if (!organizationId.value) return
   createSubmitting.value = true
@@ -207,6 +225,15 @@ const teamOptionsForEdit = computed(() => {
   return canReadDepartment(department.id) ? department.teams : department.teams.filter((team) => canReadTeam(department.id, team.id))
 })
 
+const editFormDepartmentIdModel = computed({
+  get: () => editForm.departmentId || '__none__',
+  set: (value: string) => { editForm.departmentId = value === '__none__' ? '' : value },
+})
+const editFormTeamIdModel = computed({
+  get: () => editForm.teamId || '__none__',
+  set: (value: string) => { editForm.teamId = value === '__none__' ? '' : value },
+})
+
 async function saveEdit(person: DirectoryPerson) {
   editSubmitting.value = true
   editError.value = ''
@@ -260,14 +287,20 @@ async function saveEdit(person: DirectoryPerson) {
       <section class="card mb-6 p-6">
         <h2 class="mb-3 font-display text-base font-bold">Filter</h2>
         <div class="flex flex-wrap items-center gap-3">
-          <select v-model="filterDepartmentId" class="focus-ring rounded-lg border border-[#dfe0d9] p-2 text-xs">
-            <option v-if="canReadOrgWide" value="">Alle Abteilungen</option>
-            <option v-for="department in readableDepartments" :key="department.id" :value="department.id">{{ department.name }}</option>
-          </select>
-          <select v-if="filterDepartmentId && teamOptionsForFilter.length" v-model="filterTeamId" class="focus-ring rounded-lg border border-[#dfe0d9] p-2 text-xs">
-            <option value="">Alle Mannschaften</option>
-            <option v-for="team in teamOptionsForFilter" :key="team.id" :value="team.id">{{ team.name }}</option>
-          </select>
+          <Select v-model="filterDepartmentIdModel">
+            <SelectTrigger class="w-auto rounded-lg p-2 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem v-if="canReadOrgWide" value="__none__">Alle Abteilungen</SelectItem>
+              <SelectItem v-for="department in readableDepartments" :key="department.id" :value="department.id">{{ department.name }}</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select v-if="filterDepartmentId && teamOptionsForFilter.length" v-model="filterTeamIdModel">
+            <SelectTrigger class="w-auto rounded-lg p-2 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">Alle Mannschaften</SelectItem>
+              <SelectItem v-for="team in teamOptionsForFilter" :key="team.id" :value="team.id">{{ team.name }}</SelectItem>
+            </SelectContent>
+          </Select>
           <label class="flex items-center gap-1.5 text-xs"><input v-model="filterMinor" type="checkbox" /> Minderjährig</label>
           <label class="flex items-center gap-1.5 text-xs"><input v-model="filterMissingGuardian" type="checkbox" /> Ohne Elternkontakt</label>
           <label class="flex items-center gap-1.5 text-xs"><input v-model="filterLeft" type="checkbox" /> Ausgetreten</label>
@@ -320,27 +353,36 @@ async function saveEdit(person: DirectoryPerson) {
                    darf keine Person auf departmentId null setzen (die API antwortet darauf mit
                    403, weil directory.read auf Vereinsebene fehlt) -- die Auswahl anzubieten
                    erzeugt nur eine Fehlermeldung. -->
-              <select v-model="editForm.departmentId" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs">
-                <option v-if="canReadOrgWide" value="">Keine</option>
-                <option v-for="department in readableDepartments" :key="department.id" :value="department.id">{{ department.name }}</option>
-              </select>
+              <Select v-model="editFormDepartmentIdModel">
+                <SelectTrigger class="rounded-lg p-2 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem v-if="canReadOrgWide" value="__none__">Keine</SelectItem>
+                  <SelectItem v-for="department in readableDepartments" :key="department.id" :value="department.id">{{ department.name }}</SelectItem>
+                </SelectContent>
+              </Select>
             </label>
             <label><span class="mb-1 block text-xs font-semibold">Mannschaft</span>
-              <select v-model="editForm.teamId" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs">
-                <option value="">Keine</option>
-                <option v-for="team in teamOptionsForEdit" :key="team.id" :value="team.id">{{ team.name }}</option>
-              </select>
+              <Select v-model="editFormTeamIdModel">
+                <SelectTrigger class="rounded-lg p-2 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Keine</SelectItem>
+                  <SelectItem v-for="team in teamOptionsForEdit" :key="team.id" :value="team.id">{{ team.name }}</SelectItem>
+                </SelectContent>
+              </Select>
             </label>
             <label><span class="mb-1 block text-xs font-semibold">Geburtsjahr</span>
               <input v-model="editForm.birthYear" type="number" min="1900" max="2100" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" />
             </label>
             <label><span class="mb-1 block text-xs font-semibold">Status</span>
-              <select v-model="editForm.status" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs">
-                <option value="active">Aktiv</option>
-                <option value="inactive">Inaktiv</option>
-                <option value="left">Ausgetreten</option>
-                <option value="unknown">Unbekannt</option>
-              </select>
+              <Select v-model="editForm.status">
+                <SelectTrigger class="rounded-lg p-2 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">Aktiv</SelectItem>
+                  <SelectItem value="inactive">Inaktiv</SelectItem>
+                  <SelectItem value="left">Ausgetreten</SelectItem>
+                  <SelectItem value="unknown">Unbekannt</SelectItem>
+                </SelectContent>
+              </Select>
             </label>
             <label><span class="mb-1 block text-xs font-semibold">Dabei seit</span>
               <input v-model="editForm.joinedAt" type="date" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" />
@@ -378,27 +420,36 @@ async function saveEdit(person: DirectoryPerson) {
             <input v-model="createForm.lastName" required maxlength="80" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm" />
           </label>
           <label><span class="mb-1 block text-xs font-semibold">Abteilung</span>
-            <select v-model="createForm.departmentId" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm">
-              <option v-if="canReadOrgWide" value="">Keine</option>
-              <option v-for="department in readableDepartments" :key="department.id" :value="department.id">{{ department.name }}</option>
-            </select>
+            <Select v-model="createFormDepartmentIdModel">
+              <SelectTrigger class="rounded-xl p-2.5 text-sm"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem v-if="canReadOrgWide" value="__none__">Keine</SelectItem>
+                <SelectItem v-for="department in readableDepartments" :key="department.id" :value="department.id">{{ department.name }}</SelectItem>
+              </SelectContent>
+            </Select>
           </label>
           <label><span class="mb-1 block text-xs font-semibold">Mannschaft</span>
-            <select v-model="createForm.teamId" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm">
-              <option value="">Keine</option>
-              <option v-for="team in teamOptionsForCreate" :key="team.id" :value="team.id">{{ team.name }}</option>
-            </select>
+            <Select v-model="createFormTeamIdModel">
+              <SelectTrigger class="rounded-xl p-2.5 text-sm"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">Keine</SelectItem>
+                <SelectItem v-for="team in teamOptionsForCreate" :key="team.id" :value="team.id">{{ team.name }}</SelectItem>
+              </SelectContent>
+            </Select>
           </label>
           <label><span class="mb-1 block text-xs font-semibold">Geburtsjahr</span>
             <input v-model="createForm.birthYear" type="number" min="1900" max="2100" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm" />
           </label>
           <label><span class="mb-1 block text-xs font-semibold">Status</span>
-            <select v-model="createForm.status" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm">
-              <option value="active">Aktiv</option>
-              <option value="inactive">Inaktiv</option>
-              <option value="left">Ausgetreten</option>
-              <option value="unknown">Unbekannt</option>
-            </select>
+            <Select v-model="createForm.status">
+              <SelectTrigger class="rounded-xl p-2.5 text-sm"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active">Aktiv</SelectItem>
+                <SelectItem value="inactive">Inaktiv</SelectItem>
+                <SelectItem value="left">Ausgetreten</SelectItem>
+                <SelectItem value="unknown">Unbekannt</SelectItem>
+              </SelectContent>
+            </Select>
           </label>
           <label><span class="mb-1 block text-xs font-semibold">Dabei seit</span>
             <input v-model="createForm.joinedAt" type="date" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm" />

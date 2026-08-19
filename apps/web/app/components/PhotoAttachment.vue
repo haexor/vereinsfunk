@@ -194,11 +194,14 @@ function editAgain() { mediaAssetId.value = null; phase.value = 'marking' }
       <ul v-if="boxes.length" class="mt-3 grid gap-2">
         <li v-for="(box, index) in boxes" :key="box.id" class="flex flex-wrap items-center gap-2 rounded-lg border p-2 text-xs">
           <span class="font-semibold">Person {{ index + 1 }}</span>
-          <select class="rounded border p-1" :value="box.subjectKind" @change="setSubjectKind(box, ($event.target as HTMLSelectElement).value as FaceBox['subjectKind'])">
-            <option value="adult">Erwachsen</option>
-            <option value="minor">Minderjährig</option>
-            <option value="unknown">Unbekannt</option>
-          </select>
+          <Select :model-value="box.subjectKind" @update:model-value="(value: unknown) => setSubjectKind(box, value as FaceBox['subjectKind'])">
+            <SelectTrigger class="rounded p-1"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="adult">Erwachsen</SelectItem>
+              <SelectItem value="minor">Minderjährig</SelectItem>
+              <SelectItem value="unknown">Unbekannt</SelectItem>
+            </SelectContent>
+          </Select>
           <label v-for="field in ['x', 'y', 'width', 'height'] as const" :key="field" class="flex items-center gap-1">{{ field }}
             <input class="w-16 rounded border p-1" type="number" min="0" max="1" step="0.01" :value="box[field]" :aria-label="`Person ${index + 1}: ${field}`" @change="updateBoxGeometry(box, field, ($event.target as HTMLInputElement).value)" />
           </label>
@@ -206,10 +209,12 @@ function editAgain() { mediaAssetId.value = null; phase.value = 'marking' }
             <span class="inline-flex items-center gap-1 text-emerald-700"><Check :size="14" /> Einwilligung verknüpft</span>
           </template>
           <template v-else>
-            <select class="min-w-0 flex-1 rounded border p-1" @change="linkConsent(box, ($event.target as HTMLSelectElement).value)">
-              <option value="">Einwilligung verknüpfen …</option>
-              <option v-for="consent in consents" :key="consent.id" :value="consent.id">{{ consent.label }}</option>
-            </select>
+            <Select @update:model-value="(value: unknown) => linkConsent(box, value as string)">
+              <SelectTrigger class="min-w-0 flex-1 rounded p-1"><SelectValue placeholder="Einwilligung verknüpfen …" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="consent in consents" :key="consent.id" :value="consent.id">{{ consent.label }}</SelectItem>
+              </SelectContent>
+            </Select>
             <NuxtLink to="/einwilligungen" target="_blank" class="focus-ring text-forest underline">Neu anlegen →</NuxtLink>
           </template>
           <button type="button" class="ml-auto text-red-700" title="Markierung entfernen" @click="removeBox(box)"><Trash2 :size="14" /></button>

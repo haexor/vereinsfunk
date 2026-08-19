@@ -32,6 +32,10 @@ const legalForms: { id: string; label: string }[] = [
 ]
 const slugPreview = computed(() => trim(org.value.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'verein')
 function trim(value: string) { return value.trim() }
+const legalFormModel = computed({
+  get: () => org.value.legalForm || '__none__',
+  set: (value: string) => { org.value.legalForm = value === '__none__' ? '' : value },
+})
 
 const departmentName = useState('onboarding-department-name', () => '')
 const departmentSuggestions = ['Fußball', 'Handball', 'Turnen', 'Leichtathletik', 'Schwimmen', 'Tennis', 'Volleyball', 'Basketball', 'Tischtennis', 'Gesamtverein']
@@ -207,10 +211,13 @@ const session = await useSession()
             <label><span class="mb-1.5 block text-xs font-semibold">Vereinsname *</span><input v-model="org.name" required class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-3 text-sm" /></label>
             <p class="text-[11px] text-[#8a9086]">Adresse: vereinsfunk.app/{{ slugPreview }}</p>
             <label><span class="mb-1.5 block text-xs font-semibold">Rechtsform</span>
-              <select v-model="org.legalForm" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-3 text-sm">
-                <option value="">Keine Angabe</option>
-                <option v-for="item in legalForms" :key="item.id" :value="item.id">{{ item.label }}</option>
-              </select>
+              <Select v-model="legalFormModel">
+                <SelectTrigger class="p-3 text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Keine Angabe</SelectItem>
+                  <SelectItem v-for="item in legalForms" :key="item.id" :value="item.id">{{ item.label }}</SelectItem>
+                </SelectContent>
+              </Select>
             </label>
             <div class="grid grid-cols-3 gap-3">
               <label class="col-span-2"><span class="mb-1.5 block text-xs font-semibold">Straße</span><input v-model="org.street" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-3 text-sm" /></label>

@@ -123,10 +123,12 @@ const isValid = computed(() => {
 
       <div v-else-if="draft.frameType === 'custom'" class="mt-4">
         <label class="block text-xs font-semibold text-[#5c655f]">Rahmengrafik
-          <select v-model="draft.frameBrandAssetId" class="focus-ring mt-1 w-full max-w-sm rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal">
-            <option :value="null" disabled>Bitte wählen</option>
-            <option v-for="asset in frameAssets" :key="asset.id" :value="asset.id">{{ asset.label }}</option>
-          </select>
+          <Select v-model="draft.frameBrandAssetId">
+            <SelectTrigger class="mt-1 w-full max-w-sm rounded-xl px-4 py-2.5 text-sm font-normal"><SelectValue placeholder="Bitte wählen" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem v-for="asset in frameAssets" :key="asset.id" :value="asset.id">{{ asset.label }}</SelectItem>
+            </SelectContent>
+          </Select>
         </label>
         <p v-if="!frameAssets.length" class="mt-2 text-[11px] text-[#9aa096]">Noch keine Rahmengrafik hochgeladen. Das geht über die Marke-Seite (Asset-Art „Rahmen“).</p>
       </div>
@@ -138,16 +140,21 @@ const isValid = computed(() => {
       </label>
       <div v-if="draft.logoEnabled" class="mt-3 space-y-3">
         <label class="block text-xs font-semibold text-[#5c655f]">Logo-Asset
-          <select v-model="draft.logoBrandAssetId" class="focus-ring mt-1 w-full max-w-sm rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal">
-            <option :value="null" disabled>Bitte wählen</option>
-            <option v-for="asset in logoAssets" :key="asset.id" :value="asset.id">{{ asset.label }}</option>
-          </select>
+          <Select v-model="draft.logoBrandAssetId">
+            <SelectTrigger class="mt-1 w-full max-w-sm rounded-xl px-4 py-2.5 text-sm font-normal"><SelectValue placeholder="Bitte wählen" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem v-for="asset in logoAssets" :key="asset.id" :value="asset.id">{{ asset.label }}</SelectItem>
+            </SelectContent>
+          </Select>
         </label>
         <p v-if="!logoAssets.length" class="text-[11px] text-[#9aa096]">Noch kein Wasserzeichen hochgeladen. Das geht über die Marke-Seite (Asset-Art „Wasserzeichen“).</p>
         <label class="block text-xs font-semibold text-[#5c655f]">Position
-          <select v-model="draft.logoPosition" class="focus-ring mt-1 w-full max-w-sm rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal">
-            <option v-for="option in LOGO_POSITION_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
-          </select>
+          <Select v-model="draft.logoPosition">
+            <SelectTrigger class="mt-1 w-full max-w-sm rounded-xl px-4 py-2.5 text-sm font-normal"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem v-for="option in LOGO_POSITION_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</SelectItem>
+            </SelectContent>
+          </Select>
         </label>
         <div class="flex gap-4">
           <label class="block text-xs font-semibold text-[#5c655f]">Größe (% der Bildbreite)
