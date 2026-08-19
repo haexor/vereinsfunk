@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { ORGANIZATION_ID, USER_ID, adminProvider, chain, defaultAdminProvider, nonAdminProvider, signAccessToken, startApp } from './testSupport.js'
+import { INVITATION_ID, ORGANIZATION_ID, USER_ID, adminProvider, chain, defaultAdminProvider, nonAdminProvider, signAccessToken, startApp } from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
 
@@ -202,24 +202,230 @@ describe('platform administration', () => {
     expect(rpcPayload?.target_key_version).toBe('v1')
   })
 
-  it('maps the separation trigger when promoting an existing club member to 409', async () => {
+  it('maps the separation trigger when inviting an existing club member to 409, before any email is sent', async () => {
     const rejectingClients: SupabaseClientFactory = {
       forUser: () => ({}) as unknown as SupabaseClient,
       forService: () =>
         ({
           rpc: async () => ({ data: null, error: { message: 'member_cannot_become_platform_admin' } }),
+          auth: { admin: { inviteUserByEmail: async () => { throw new Error('must not send an email for a rejected invitation') } } },
         }) as unknown as SupabaseClient,
     }
     const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: rejectingClients })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'POST',
-      url: '/v1/platform-admins',
+      url: '/v1/platform-admin-invitations',
       headers: { authorization: `Bearer ${token}` },
       payload: { email: 'lena@example.local' },
     })
     expect(response.statusCode).toBe(409)
     expect(response.json()).toMatchObject({ error: 'member_cannot_become_platform_admin' })
+  })
+
+  it('maps an already-admin email to 409 already_platform_admin', async () => {
+    const rejectingClients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({ rpc: async () => ({ data: null, error: { message: 'already_platform_admin' } }) }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: rejectingClients })
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/platform-admin-invitations',
+      headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+      payload: { email: 'other-admin@example.local' },
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'already_platform_admin' })
+  })
+
+  it('maps a still-open invitation for the same address to 409 invitation_already_open', async () => {
+    const rejectingClients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({ rpc: async () => ({ data: null, error: { message: 'invitation_already_open' } }) }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: rejectingClients })
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/platform-admin-invitations',
+      headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+      payload: { email: 'pending@example.local' },
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'invitation_already_open' })
+  })
+
+  it('creates a platform admin invitation and emails a never-before-registered address, without leaking the raw token', async () => {
+    const invitationRow = {
+      id: INVITATION_ID, email: 'invitee@example.com', invited_by: USER_ID,
+      expires_at: '2026-09-02T00:00:00+00:00', accepted_at: null, revoked_at: null,
+      last_sent_at: '2026-08-19T00:00:00+00:00', send_count: 1, created_at: '2026-08-19T00:00:00+00:00',
+    }
+    const authRedirects: string[] = []
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          rpc: async () => ({ data: invitationRow, error: null }),
+          auth: {
+            admin: {
+              inviteUserByEmail: async (email: string, options?: { redirectTo?: string }) => {
+                expect(email).toBe('invitee@example.com')
+                authRedirects.push(options?.redirectTo ?? '')
+                return { data: { user: {} }, error: null }
+              },
+            },
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/platform-admin-invitations',
+      headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+      payload: { email: 'invitee@example.com' },
+    })
+    expect(response.statusCode).toBe(201)
+    const body = response.json()
+    expect(body).toMatchObject({ email: 'invitee@example.com', emailDelivered: true })
+    expect(Object.keys(body)).not.toContain('rawToken')
+    expect(Object.keys(body)).not.toContain('token')
+    expect(Object.keys(body)).not.toContain('tokenHash')
+    expect(authRedirects).toHaveLength(1)
+    const passwordRedirect = new URL(authRedirects[0]!).searchParams.get('redirect')
+    const acceptRedirect = new URL(passwordRedirect!, 'http://localhost').searchParams.get('redirect')
+    expect(acceptRedirect).toContain('/plattform-admin-einladung?token=')
+    const acceptUrlMatch = acceptRedirect?.match(/token=([a-f0-9]+)/)
+    expect(acceptUrlMatch).not.toBeNull()
+    expect(JSON.stringify(body)).not.toContain(acceptUrlMatch![1]!)
+  })
+
+  it('sends an existing account a magic link continuing to the platform admin invitation', async () => {
+    const invitationRow = {
+      id: INVITATION_ID, email: 'existing@example.com', invited_by: USER_ID,
+      expires_at: '2026-09-02T00:00:00+00:00', accepted_at: null, revoked_at: null,
+      last_sent_at: '2026-08-19T00:00:00+00:00', send_count: 1, created_at: '2026-08-19T00:00:00+00:00',
+    }
+    const magicLinkOptions: { shouldCreateUser?: boolean; emailRedirectTo?: string }[] = []
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          rpc: async () => ({ data: invitationRow, error: null }),
+          auth: {
+            admin: { inviteUserByEmail: async () => ({ data: { user: null }, error: { code: 'email_exists', message: 'already registered' } }) },
+            signInWithOtp: async (input: { email: string; options: { shouldCreateUser?: boolean; emailRedirectTo?: string } }) => {
+              magicLinkOptions.push(input.options)
+              return { data: {}, error: null }
+            },
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/platform-admin-invitations',
+      headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+      payload: { email: 'existing@example.com' },
+    })
+    expect(response.statusCode).toBe(201)
+    expect(response.json()).toMatchObject({ emailDelivered: true })
+    expect(magicLinkOptions).toHaveLength(1)
+    expect(magicLinkOptions[0]).toMatchObject({ shouldCreateUser: false })
+    expect(decodeURIComponent(magicLinkOptions[0]!.emailRedirectTo!)).toContain('/plattform-admin-einladung?token=')
+  })
+
+  it('lists open platform admin invitations', async () => {
+    const rows = [{
+      id: INVITATION_ID, email: 'invitee@example.com', invited_by: USER_ID,
+      expires_at: '2026-09-02T00:00:00+00:00', accepted_at: null, revoked_at: null,
+      last_sent_at: '2026-08-19T00:00:00+00:00', send_count: 1, created_at: '2026-08-19T00:00:00+00:00',
+    }]
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({ from: () => chain({ data: rows, error: null }) }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/platform-admin-invitations',
+      headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual([{
+      id: INVITATION_ID, email: 'invitee@example.com', invitedBy: USER_ID,
+      expiresAt: '2026-09-02T00:00:00+00:00', acceptedAt: null, revokedAt: null,
+      lastSentAt: '2026-08-19T00:00:00+00:00', sendCount: 1, createdAt: '2026-08-19T00:00:00+00:00',
+    }])
+  })
+
+  it('revokes an open platform admin invitation', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table !== 'platform_admin_invitations') throw new Error(`unexpected table: ${table}`)
+            return {
+              select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { accepted_at: null, revoked_at: null }, error: null }) }) }),
+              update: () => ({
+                eq: () => ({
+                  select: () => ({
+                    single: async () => ({
+                      data: {
+                        id: INVITATION_ID, email: 'invitee@example.com', invited_by: USER_ID,
+                        expires_at: '2026-09-02T00:00:00+00:00', accepted_at: null, revoked_at: '2026-08-19T12:00:00+00:00',
+                        last_sent_at: '2026-08-19T00:00:00+00:00', send_count: 1, created_at: '2026-08-19T00:00:00+00:00',
+                      },
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            }
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/platform-admin-invitations/${INVITATION_ID}/revoke`,
+      headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ revokedAt: '2026-08-19T12:00:00+00:00' })
+  })
+
+  it('maps an email/token mismatch on platform admin invitation accept to 403', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ rpc: async () => ({ data: null, error: { message: 'invitation_email_mismatch' } }) }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: nonAdminProvider, supabaseClients: clients })
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/platform-admin-invitations/accept',
+      headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+      payload: { token: 'raw-token' },
+    })
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toMatchObject({ error: 'invitation_email_mismatch' })
+  })
+
+  it('accepts a platform admin invitation without requiring platform-admin rights beforehand', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ rpc: async () => ({ data: USER_ID, error: null }) }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: nonAdminProvider, supabaseClients: clients })
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/platform-admin-invitations/accept',
+      headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+      payload: { token: 'raw-token' },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ isPlatformAdmin: true, isDefaultAdmin: false })
   })
 
   it('rejects a non-default admin deleting another admin', async () => {

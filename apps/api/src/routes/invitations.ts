@@ -1,18 +1,11 @@
 import { AcceptInvitationRequestSchema, AcceptInvitationResponseSchema, CreateInvitationRequestSchema, InvitationSchema, UuidSchema } from '@vereinsfunk/contracts'
 import { canAssignRole } from '@vereinsfunk/authorization'
-import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { mapInvitationRow } from '../apiMappers.js'
-import { generateInvitationToken } from '../invitations.js'
+import { authCallbackUrl, generateInvitationToken, sendInvitationThroughSupabaseAuth } from '../invitations.js'
 import type { ApiRouteContext } from './context.js'
 import { createAuditRecorder, resolveInvitationScope, toPermissionScope } from './shared.js'
-
-function authCallbackUrl(webBaseUrl: string, redirect: string): string {
-  const callback = new URL('/auth/callback', webBaseUrl)
-  callback.searchParams.set('redirect', redirect)
-  return callback.toString()
-}
 
 function invitationUrls(webBaseUrl: string, rawToken: string): { accept: string; setPassword: string } {
   const acceptPath = `/einladung?token=${encodeURIComponent(rawToken)}`
@@ -22,33 +15,6 @@ function invitationUrls(webBaseUrl: string, rawToken: string): { accept: string;
     accept: authCallbackUrl(webBaseUrl, acceptPath),
     setPassword: authCallbackUrl(webBaseUrl, `${passwordSetup.pathname}${passwordSetup.search}`),
   }
-}
-
-function isExistingAccountError(error: { code?: string | null | undefined; message?: string | undefined } | null): boolean {
-  // GoTrue liefert fuer bereits bestaetigte Accounts aktuell `email_exists`; die
-  // Nachrichtenpruefung ist Rueckwaertskompatibilitaet fuer aeltere GoTrue-Versionen.
-  return error?.code === 'email_exists' || /already (?:been )?registered/i.test(error?.message ?? '')
-}
-
-// Supabase Auth ist der eine Mail-Provider fuer Account-Einladungen. Damit verwendet dieser
-// Pfad dieselbe Brevo-Konfiguration wie Registrierung und Passwort-Reset, ohne SMTP-Secrets in
-// der API zu duplizieren. Ein existierendes Konto kann nicht erneut per `inviteUserByEmail`
-// eingeladen werden; ein Magic Link beweist dort dieselbe E-Mail-Inhaberschaft und leitet zur
-// fachlichen Einladung weiter.
-async function sendInvitationThroughSupabaseAuth(
-  service: SupabaseClient,
-  email: string,
-  urls: { accept: string; setPassword: string },
-): Promise<void> {
-  const invite = await service.auth.admin.inviteUserByEmail(email, { redirectTo: urls.setPassword })
-  if (!invite.error) return
-  if (!isExistingAccountError(invite.error)) throw invite.error
-
-  const magicLink = await service.auth.signInWithOtp({
-    email,
-    options: { shouldCreateUser: false, emailRedirectTo: urls.accept },
-  })
-  if (magicLink.error) throw magicLink.error
 }
 
 export function registerInvitationRoutes(app: FastifyInstance, context: ApiRouteContext): void {

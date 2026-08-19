@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(40);
+select plan(56);
 
 set local role postgres;
 
@@ -291,6 +291,109 @@ select throws_ok(
   $$update public.llm_provider_configurations set is_active = true where label = 'PGTAP Standby'$$,
   '23505', null, 'activating a standby onto an occupied priority is rejected'
 );
+
+-- 41-56: Plattform-Admin-Einladungsflow (2026081901_platform_admin_invitations.sql). operator
+-- (...004) ist seit Test 195-198 oben Plattform-Admin, clubmember (...005) seit dort Vereinsmitglied,
+-- secondadmin (...002) wurde bei Test 11-12 wieder geloescht und hat seither keine Mitgliedschaft
+-- und keinen Admin-Status mehr -- ein sauberer Kandidat fuer den Annahme-Gluecksweg unten.
+select lives_ok(
+  $$select public.create_platform_admin_invitation('neveradmin@pgtap-platform.local', encode(digest('never-registered-token', 'sha256'), 'hex'), '50000000-0000-4000-8000-000000000001')$$,
+  'create_platform_admin_invitation succeeds for a never-registered address'
+);
+select throws_ok(
+  $$select public.create_platform_admin_invitation('neveradmin@pgtap-platform.local', encode(digest('another-token', 'sha256'), 'hex'), '50000000-0000-4000-8000-000000000001')$$,
+  'P0001', 'invitation_already_open', 'a second open invitation for the same address is rejected'
+);
+select throws_ok(
+  $$select public.create_platform_admin_invitation('operator@pgtap-platform.local', encode(digest('operator-token', 'sha256'), 'hex'), '50000000-0000-4000-8000-000000000001')$$,
+  'P0001', 'already_platform_admin', 'inviting an already-registered platform admin is rejected'
+);
+select throws_ok(
+  $$select public.create_platform_admin_invitation('clubmember@pgtap-platform.local', encode(digest('clubmember-token', 'sha256'), 'hex'), '50000000-0000-4000-8000-000000000001')$$,
+  'P0001', 'member_cannot_become_platform_admin', 'inviting an existing club member is rejected up front, not only on accept'
+);
+select lives_ok(
+  $$select public.create_platform_admin_invitation('secondadmin@pgtap-platform.local', encode(digest('secondadmin-token', 'sha256'), 'hex'), '50000000-0000-4000-8000-000000000001')$$,
+  'create_platform_admin_invitation succeeds for a previously-removed admin with no remaining membership'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '50000000-0000-4000-8000-000000000002', true);
+select throws_ok(
+  $$select public.accept_platform_admin_invitation('wrong-token')$$,
+  'P0001', 'invitation_not_found_or_expired', 'accepting with the wrong raw token fails'
+);
+set local role postgres;
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '50000000-0000-4000-8000-000000000004', true);
+select throws_ok(
+  $$select public.accept_platform_admin_invitation('secondadmin-token')$$,
+  'P0001', 'invitation_email_mismatch', 'accepting an invitation with a different account fails'
+);
+set local role postgres;
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '50000000-0000-4000-8000-000000000002', true);
+select lives_ok(
+  $$select public.accept_platform_admin_invitation('secondadmin-token')$$,
+  'the invited account accepts the invitation successfully'
+);
+set local role postgres;
+select is(
+  (select count(*)::integer from public.platform_admins where user_id = '50000000-0000-4000-8000-000000000002'),
+  1, 'the accepting account is now a platform admin'
+);
+select is(
+  (select accepted_at is not null from public.platform_admin_invitations where email = 'secondadmin@pgtap-platform.local'),
+  true, 'the invitation row is marked accepted'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '50000000-0000-4000-8000-000000000002', true);
+select throws_ok(
+  $$select public.accept_platform_admin_invitation('secondadmin-token')$$,
+  'P0001', 'invitation_not_found_or_expired', 'accepting an already-accepted invitation again fails'
+);
+set local role postgres;
+
+select throws_ok(
+  $$select public.resend_platform_admin_invitation(
+    (select id from public.platform_admin_invitations where email = 'neveradmin@pgtap-platform.local'), encode(digest('resend-too-soon', 'sha256'), 'hex')
+  )$$,
+  'P0001', 'resent at most once per hour', 'resending within the first hour is rejected'
+);
+update public.platform_admin_invitations set last_sent_at = now() - interval '2 hours'
+  where email = 'neveradmin@pgtap-platform.local';
+select lives_ok(
+  $$select public.resend_platform_admin_invitation(
+    (select id from public.platform_admin_invitations where email = 'neveradmin@pgtap-platform.local'), encode(digest('resent-token', 'sha256'), 'hex')
+  )$$,
+  'resending after the cooldown succeeds and rotates the token'
+);
+update public.platform_admin_invitations set send_count = 10, last_sent_at = now() - interval '2 hours'
+  where email = 'neveradmin@pgtap-platform.local';
+select throws_ok(
+  $$select public.resend_platform_admin_invitation(
+    (select id from public.platform_admin_invitations where email = 'neveradmin@pgtap-platform.local'), encode(digest('yet-another-token', 'sha256'), 'hex')
+  )$$,
+  'P0001', 'resend_limit_reached', 'resending after ten sends is rejected'
+);
+select throws_ok(
+  $$select public.resend_platform_admin_invitation(
+    (select id from public.platform_admin_invitations where email = 'secondadmin@pgtap-platform.local'), encode(digest('ignored-token', 'sha256'), 'hex')
+  )$$,
+  'P0001', 'not_found', 'resending an already-accepted invitation fails'
+);
+
+-- authenticated has no privilege at all on platform_admin_invitations directly -- same
+-- service-role-only posture as platform_admins itself (2026080502_platform_administration.sql).
+set local role authenticated;
+select throws_ok(
+  $$select * from public.platform_admin_invitations$$,
+  '42501', null, 'authenticated cannot select from platform_admin_invitations'
+);
+set local role postgres;
 
 select * from finish();
 rollback;
