@@ -36,12 +36,18 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
   activeLevel.value = level
   activeDepartmentId.value = departmentId
   activeTeamId.value = teamId
-  // selectableFrameAssets/selectableLogoAssets sind von der aktiven Ebene abhaengig -- ein
-  // Rahmen-/Logo-Asset, das in der alten Ebene waehlbar war, kann in der neuen fehlen. Ohne
-  // Reset bliebe die veraltete Asset-ID im Entwurf stehen und faellt erst beim Speichern als
-  // invalid_asset_reference auf.
-  draft.value = emptyImageStylePresetDraft()
-  editingId.value = null
+  // selectableFrameAssets/selectableLogoAssets sind von der aktiven Ebene abhaengig -- ein im
+  // Anlage-Entwurf gewaehltes Rahmen-/Logo-Asset der alten Ebene kann in der neuen fehlen und
+  // faellt sonst erst beim Speichern als invalid_asset_reference auf. Nur die betroffenen
+  // Entwurfsfelder zuruecksetzen, nicht den ganzen Entwurf -- unabhaengige Eingaben (Name,
+  // Filter, ...) sollen einen bloßen Ebenenwechsel ueberleben. Eine laufende Bearbeitung
+  // (editingId/editDraft) bleibt unberuehrt: sie gehoert zu einem Preset der bisherigen Ebene
+  // und blendet sich ueber ownPresets ohnehin aus, sobald diese Ebene nicht mehr aktiv ist.
+  if (!selectableFrameAssets.value.some((asset) => asset.id === draft.value.frameBrandAssetId)) draft.value.frameBrandAssetId = null
+  if (!selectableLogoAssets.value.some((asset) => asset.id === draft.value.logoBrandAssetId)) draft.value.logoBrandAssetId = null
+  createError.value = ''
+  uploadError.value = ''
+  deleteError.value = ''
 }
 
 const canManageActiveLevel = computed(() => {
