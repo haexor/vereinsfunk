@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(9);
+select plan(11);
 
 set local role postgres;
 
@@ -44,7 +44,7 @@ insert into public.post_media (id, organization_id, post_version_id, media_deriv
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '48000000-0000-4000-8000-000000000001', true);
 select throws_ok(
-  $$select public.apply_image_style_render('48000000-5000-4000-8000-000000000001', '48000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000000', '48000000-2000-4000-8000-000000000001', 'organizations/x/derivatives/1/styled-1.png', repeat('d', 64), 'image/png', 1000, 100, 100, '{"kind":"image_style_v1"}')$$,
+  $$select public.apply_image_style_render('48000000-5000-4000-8000-000000000001', '48000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000000', '48000000-4000-4000-8000-000000000001', '48000000-2000-4000-8000-000000000001', 'organizations/x/derivatives/1/styled-1.png', repeat('d', 64), 'image/png', 1000, 100, 100, '{"kind":"image_style_v1"}')$$,
   '42501', null, 'authenticated darf apply_image_style_render nicht direkt aufrufen'
 );
 
@@ -53,7 +53,7 @@ set local role postgres;
 -- 2-4: Post 1 (draft_ready) -- der Aufruf legt ein neues 'ready'-Derivat an und aktualisiert
 -- post_media auf dessen ID.
 select lives_ok(
-  $$select public.apply_image_style_render('48000000-5000-4000-8000-000000000001', '48000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000000', '48000000-2000-4000-8000-000000000001', 'organizations/x/derivatives/1/styled-1.png', repeat('d', 64), 'image/png', 1000, 100, 100, '{"kind":"image_style_v1","stylePresetId":"00000000-0000-4000-8000-000000000000"}')$$,
+  $$select public.apply_image_style_render('48000000-5000-4000-8000-000000000001', '48000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000000', '48000000-4000-4000-8000-000000000001', '48000000-2000-4000-8000-000000000001', 'organizations/x/derivatives/1/styled-1.png', repeat('d', 64), 'image/png', 1000, 100, 100, '{"kind":"image_style_v1","stylePresetId":"00000000-0000-4000-8000-000000000000"}')$$,
   'ein bearbeitbarer Post (draft_ready) laesst apply_image_style_render erfolgreich durchlaufen'
 );
 select is(
@@ -69,8 +69,10 @@ select is(
 
 -- 5: ein Retry mit demselben object_path (deterministisches Sharp-Ergebnis) liefert dieselbe
 -- Derivat-ID zurueck, statt an der Immutability-Sperre eines bereits 'ready'-Derivats zu scheitern.
+-- Als Erwartung geht der inzwischen gestylte Stand mit -- genau so, wie die Route den Zeiger bei
+-- jedem Aufruf frisch liest, statt den des ersten Versuchs wiederzuverwenden.
 select is(
-  (select public.apply_image_style_render('48000000-5000-4000-8000-000000000001', '48000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000000', '48000000-2000-4000-8000-000000000001', 'organizations/x/derivatives/1/styled-1.png', repeat('d', 64), 'image/png', 1000, 100, 100, '{"kind":"image_style_v1"}')),
+  (select public.apply_image_style_render('48000000-5000-4000-8000-000000000001', '48000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000000', (select media_derivative_id from public.post_media where id = '48000000-5000-4000-8000-000000000001'), '48000000-2000-4000-8000-000000000001', 'organizations/x/derivatives/1/styled-1.png', repeat('d', 64), 'image/png', 1000, 100, 100, '{"kind":"image_style_v1"}')),
   (select id from public.media_derivatives where object_path = 'organizations/x/derivatives/1/styled-1.png'),
   'ein Retry mit demselben object_path liefert dieselbe Derivat-ID zurueck statt ein zweites Mal zu schreiben'
 );
@@ -81,7 +83,7 @@ select is(
 
 -- 6: Post 2 (awaiting_approval) -- bereits eingereicht, der Aufruf muss abgewiesen werden.
 select throws_ok(
-  $$select public.apply_image_style_render('48000000-5000-4000-8000-000000000002', '48000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000000', '48000000-2000-4000-8000-000000000001', 'organizations/x/derivatives/1/styled-2.png', repeat('e', 64), 'image/png', 1000, 100, 100, '{"kind":"image_style_v1"}')$$,
+  $$select public.apply_image_style_render('48000000-5000-4000-8000-000000000002', '48000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000000', '48000000-4000-4000-8000-000000000002', '48000000-2000-4000-8000-000000000001', 'organizations/x/derivatives/1/styled-2.png', repeat('e', 64), 'image/png', 1000, 100, 100, '{"kind":"image_style_v1"}')$$,
   'P0001', 'post_not_editable', 'ein bereits zur Freigabe eingereichter Post (awaiting_approval) lehnt den Aufruf ab'
 );
 
@@ -96,6 +98,20 @@ select is(
   (select media_derivative_id from public.post_media where id = '48000000-5000-4000-8000-000000000001'),
   (select id from public.media_derivatives where object_path = 'organizations/x/derivatives/1/styled-1.png'),
   'Post 1s Derivat-Zeiger ist von der abgewiesenen Anfrage fuer Post 2 unberuehrt'
+);
+
+-- 10-11: Compare-and-Set auf den Derivat-Zeiger. Post 1 zeigt nach Assertion 2 nicht mehr auf den
+-- Pass-Through; ein Lauf, der noch mit diesem veralteten Stand kommt (zweites Preset parallel
+-- gestartet, oder Zeiger zwischen Lesen und Schreiben verschoben), muss abgewiesen werden statt
+-- den frischeren Stand zu ueberschreiben.
+select throws_ok(
+  $$select public.apply_image_style_render('48000000-5000-4000-8000-000000000001', '48000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000000', '48000000-4000-4000-8000-000000000001', '48000000-2000-4000-8000-000000000001', 'organizations/x/derivatives/1/styled-3.png', repeat('f', 64), 'image/png', 1000, 100, 100, '{"kind":"image_style_v1"}')$$,
+  'P0001', 'post_media_changed', 'ein Lauf mit veraltetem Derivat-Zeiger wird abgewiesen statt den neueren Stand zu ueberschreiben'
+);
+select is(
+  (select media_derivative_id from public.post_media where id = '48000000-5000-4000-8000-000000000001'),
+  (select id from public.media_derivatives where object_path = 'organizations/x/derivatives/1/styled-1.png'),
+  'der abgewiesene Lauf hat den Zeiger nicht veraendert'
 );
 
 select * from finish();

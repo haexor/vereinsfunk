@@ -51,8 +51,13 @@ async function applyHighContrast(buffer: Buffer): Promise<Buffer> {
   return sharp(buffer).linear(1.15, -(128 * 0.15)).modulate({ saturation: 1.15 }).toBuffer()
 }
 
+// Bewusst NICHT .tint(): das koloriert (ersetzt die Chroma) statt zu waermen -- ein Mannschafts-
+// foto kaeme einfarbig sepia zurueck, praktisch ein zweites schwarz_weiss, und die CSS-Vorschau
+// (ImageStyleLivePreview.vue, "sepia(.35) saturate(1.15)") verspricht das Gegenteil. Stattdessen
+// eine Verschiebung je Kanal: Rot leicht anheben, Gruen halten, Blau absenken -- Farben bleiben
+// erhalten, das Gesamtbild kippt Richtung Amber.
 async function applyWarm(buffer: Buffer): Promise<Buffer> {
-  return sharp(buffer).tint({ r: 255, g: 200, b: 150 }).toBuffer()
+  return sharp(buffer).linear([1.06, 1.0, 0.94], [10, 2, -8]).toBuffer()
 }
 
 // sharp kennt keinen Gradient-Map-Filter: Graustufen-Luminanz je Pixel wird hier von Hand
@@ -97,14 +102,12 @@ async function applyRoundedCorners(buffer: Buffer, radiusPx: number): Promise<Bu
   return sharp(buffer).composite([{ input: mask, blend: 'dest-in' }]).png().toBuffer()
 }
 
-async function applyParametricFrame(buffer: Buffer, colorHex: string, widthPx: number, cornerRadiusPx: number | null): Promise<Buffer> {
+async function applyParametricFrame(buffer: Buffer, colorHex: string, widthPx: number): Promise<Buffer> {
   const color = hexToRgb(colorHex)
-  const framed = await sharp(buffer)
+  return sharp(buffer)
     .extend({ top: widthPx, bottom: widthPx, left: widthPx, right: widthPx, background: { r: color.r, g: color.g, b: color.b, alpha: 1 } })
     .png()
     .toBuffer()
-  if (cornerRadiusPx && cornerRadiusPx > 0) return applyRoundedCorners(framed, cornerRadiusPx)
-  return framed
 }
 
 // Die Rahmengrafik wird auf die Fotomasse gestreckt (fit: 'fill') statt umgekehrt das Foto an die
@@ -123,9 +126,14 @@ async function applyCustomFrame(buffer: Buffer, frameAssetBuffer: Buffer): Promi
 const LOGO_TOP_ALIGNED: ReadonlySet<ImageStyleLogoPosition> = new Set(['top_left', 'top_right'])
 const LOGO_LEFT_ALIGNED: ReadonlySet<ImageStyleLogoPosition> = new Set(['top_left', 'bottom_left'])
 
-// Groesse UND Randabstand sind relativ zur Bildbreite (nicht zur Hoehe) -- die einzige im Plan
-// explizit benannte Referenzgroesse ("Größe relativ zur Bildbreite"); der Randabstand folgt
-// derselben Referenz, weil das Plandokument dafuer keine eigene Basis nennt.
+// Die Logogroesse ist relativ zur Bildbreite -- die einzige im Plan explizit benannte
+// Referenzgroesse ("Größe relativ zur Bildbreite"). Der Randabstand nimmt die KUERZERE Kante als
+// Basis: an der Bildbreite gemessen waere er bei einem Panorama (2000x300) hoeher als das Bild
+// selbst. Beides zusammen ist mehr als Kosmetik -- sharp' composite verweigert jedes Overlay, das
+// groesser als das Grundbild ist oder ausserhalb liegt, und die Route hat kein try/catch: ein
+// legales Preset (30 % Groesse, 15 % Rand -- beides innerhalb der DB-CHECKs) wurde auf einem
+// Panorama zu einem 500. Die Logo-Box wird deshalb zusaetzlich auf den verbleibenden Platz
+// begrenzt, wodurch die Offsets nie negativ werden koennen.
 async function applyLogoWatermark(
   buffer: Buffer,
   logoAssetBuffer: Buffer,
@@ -137,35 +145,70 @@ async function applyLogoWatermark(
   const width = metadata.width
   const height = metadata.height
   if (!width || !height) throw new Error('cannot determine image dimensions for logo placement')
-  const logoWidth = Math.round((width * sizePercent) / 100)
-  const resizedLogo = await sharp(logoAssetBuffer).resize({ width: logoWidth, fit: 'inside' }).toBuffer()
-  const logoMetadata = await sharp(resizedLogo).metadata()
-  const logoActualWidth = logoMetadata.width ?? logoWidth
-  const logoActualHeight = logoMetadata.height ?? logoWidth
+  const margin = Math.round((Math.min(width, height) * marginPercent) / 100)
+  const boxWidth = Math.max(1, Math.min(Math.round((width * sizePercent) / 100), width - 2 * margin))
+  const boxHeight = Math.max(1, height - 2 * margin)
+  const resizedLogo = await sharp(logoAssetBuffer).resize({ width: boxWidth, height: boxHeight, fit: 'inside' }).toBuffer()
 
   if (position === 'center') {
     return sharp(buffer).composite([{ input: resizedLogo, gravity: 'center' }]).png().toBuffer()
   }
 
-  const margin = Math.round((width * marginPercent) / 100)
+  const logoMetadata = await sharp(resizedLogo).metadata()
+  const logoActualWidth = logoMetadata.width ?? boxWidth
+  const logoActualHeight = logoMetadata.height ?? boxHeight
   const top = LOGO_TOP_ALIGNED.has(position) ? margin : height - logoActualHeight - margin
   const left = LOGO_LEFT_ALIGNED.has(position) ? margin : width - logoActualWidth - margin
   return sharp(buffer).composite([{ input: resizedLogo, top, left }]).png().toBuffer()
 }
 
-const CONTENT_TYPE_BY_FORMAT: Record<string, string> = { png: 'image/png', jpeg: 'image/jpeg', webp: 'image/webp' }
+// Zwischenschritte kodieren nach PNG, weil sie Transparenz brauchen oder aus rohen Pixeln
+// entstehen. Als ENDformat waere das falsch: ein 3000x2000-JPEG-Foto kommt als verlustfreies PNG
+// rund zwoelfmal so gross zurueck (gemessen), und die Veroeffentlichungsziele deckeln Bilder bei
+// wenigen MB -- ausgerechnet die gestylten Fotos wuerden dort scheitern. Deshalb am Ende einmal
+// bewusst kodieren:
+//   - Alpha im Ergebnis (abgerundete Ecken, durchscheinende Rahmengrafik) -> PNG, alternativlos.
+//   - PNG-Quelle -> PNG, damit ein grafiknahes Original nicht in JPEG-Artefakte laeuft.
+//   - sonst JPEG.
+// Das macht das Ergebnis zugleich immer bucket-tauglich: 'rendered-media' laesst nur image/jpeg
+// und image/png zu, eine WebP-Quelle haette bis hierher ein image/webp-Upload und damit einen
+// Storage-Fehler ergeben. Liegt das Ergebnis schon im Zielformat vor, bleibt der Puffer wie er
+// ist -- ein unveraendertes Foto ('original', kein Rahmen, kein Logo) wird so nicht neu kodiert.
+async function encodeResult(buffer: Buffer, sourceFormat: string | undefined): Promise<ImageStyleRenderResult> {
+  const metadata = await sharp(buffer).metadata()
+  const lossless = metadata.hasAlpha === true || sourceFormat === 'png'
+  const targetFormat = lossless ? 'png' : 'jpeg'
+  const encoded = metadata.format === targetFormat
+    ? buffer
+    : await (lossless ? sharp(buffer).png() : sharp(buffer).jpeg({ quality: 90 })).toBuffer()
+  return {
+    buffer: encoded,
+    contentType: lossless ? 'image/png' : 'image/jpeg',
+    width: metadata.width ?? 0,
+    height: metadata.height ?? 0,
+  }
+}
 
 export async function renderImageStyle(input: ImageStyleRenderInput): Promise<ImageStyleRenderResult> {
   const { preset } = input
+  const sourceFormat = (await sharp(input.sourceBuffer).metadata()).format
   let current = await applyFilter(input.sourceBuffer, preset.filter, input.brandColors)
 
   if (preset.frameType === 'parametric') {
     if (preset.frameWidthPx === null) throw new Error('parametric frame requires frameWidthPx')
     const colorHex = resolveFrameColorHex(preset.frameColor, input.brandColors)
-    current = await applyParametricFrame(current, colorHex, preset.frameWidthPx, preset.frameCornerRadiusPx)
+    current = await applyParametricFrame(current, colorHex, preset.frameWidthPx)
   } else if (preset.frameType === 'custom') {
     if (!input.frameAssetBuffer) throw new Error('missing frame asset buffer for custom frame')
     current = await applyCustomFrame(current, input.frameAssetBuffer)
+  }
+
+  // Nach dem Rahmen, aber unabhaengig von dessen Art: frame_corner_radius_px ist weder im Contract
+  // noch in den DB-CHECKs an frameType 'parametric' gebunden, und ImageStyleLivePreview.vue setzt
+  // borderRadius ebenfalls fuer jeden Rahmentyp. Solange die Rundung nur im parametrischen Zweig
+  // lief, zeigte die Vorschau bei frameType 'none'/'custom' runde Ecken, die im Ergebnis fehlten.
+  if (preset.frameCornerRadiusPx && preset.frameCornerRadiusPx > 0) {
+    current = await applyRoundedCorners(current, preset.frameCornerRadiusPx)
   }
 
   if (preset.logoEnabled) {
@@ -174,12 +217,5 @@ export async function renderImageStyle(input: ImageStyleRenderInput): Promise<Im
     current = await applyLogoWatermark(current, input.logoAssetBuffer, preset.logoPosition, preset.logoSizePercent, preset.logoMarginPercent)
   }
 
-  const finalMetadata = await sharp(current).metadata()
-  const format = finalMetadata.format ?? 'png'
-  return {
-    buffer: current,
-    contentType: CONTENT_TYPE_BY_FORMAT[format] ?? 'application/octet-stream',
-    width: finalMetadata.width ?? 0,
-    height: finalMetadata.height ?? 0,
-  }
+  return encodeResult(current, sourceFormat)
 }

@@ -17,6 +17,8 @@ export {
   type BrandLevelProfile,
   type BrandLockableField,
   type BrandOverrideProfile,
+  type DepartmentBrandLevel,
+  type OrganizationBrandLevel,
   type ResolvedBrand,
 } from './brand.js'
 export {

@@ -19,6 +19,7 @@ create or replace function public.apply_image_style_render(
   p_post_media_id uuid,
   p_actor_user_id uuid,
   p_style_preset_id uuid,
+  p_expected_media_derivative_id uuid,
   p_media_asset_id uuid,
   p_object_path text,
   p_sha256 text,
@@ -51,6 +52,20 @@ begin
     raise exception 'post_not_editable';
   end if;
 
+  -- Compare-and-Set auf den Derivat-Zeiger: das 'for update' oben reiht zwei gleichzeitige
+  -- Renderlaeufe zwar hintereinander, ohne diesen Vergleich entschiede aber die Commit-Reihenfolge
+  -- statt der Anfragereihenfolge, welches Preset am Ende haengt. Wer Preset A anklickt und
+  -- waehrenddessen Preset B, saehe in der Oberflaeche B (beide Antworten sind 201 mit der jeweils
+  -- eigenen Derivat-ID), gespeichert waere aber A. Der Verlierer bekommt stattdessen
+  -- 'post_media_changed' und die Route daraus einen 409. Deckt zugleich den Fall ab, dass sich der
+  -- Zeiger zwischen dem Lesen in der Route und diesem Schreibvorgang ueberhaupt geaendert hat.
+  -- Der Vergleich nimmt der Wiederholung unten nichts: die Route liest den Zeiger bei JEDEM
+  -- Aufruf frisch, ein wiederholter Aufruf traegt also den inzwischen gestylten Stand als
+  -- Erwartung -- und nicht mehr den, den der erste Aufruf vorfand.
+  if media.media_derivative_id is distinct from p_expected_media_derivative_id then
+    raise exception 'post_media_changed';
+  end if;
+
   -- on conflict do nothing statt eines gewoehnlichen insert: object_path traegt den Hash des
   -- Rendering-Ergebnisses (Preset + Quellbild sind fuer Sharp deterministisch), ein Retry nach
   -- einem Netzwerkfehler erzeugt also denselben Pfad. Ein echtes upsert waere hier falsch --
@@ -77,7 +92,7 @@ begin
 end;
 $$;
 
-revoke all on function public.apply_image_style_render(uuid, uuid, uuid, uuid, text, text, text, bigint, integer, integer, jsonb) from public, anon, authenticated;
-grant execute on function public.apply_image_style_render(uuid, uuid, uuid, uuid, text, text, text, bigint, integer, integer, jsonb) to service_role;
+revoke all on function public.apply_image_style_render(uuid, uuid, uuid, uuid, uuid, text, text, text, bigint, integer, integer, jsonb) from public, anon, authenticated;
+grant execute on function public.apply_image_style_render(uuid, uuid, uuid, uuid, uuid, text, text, text, bigint, integer, integer, jsonb) to service_role;
 
 commit;

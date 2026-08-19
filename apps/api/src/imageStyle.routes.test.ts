@@ -195,135 +195,57 @@ describe('POST /v1/post-media/:postMediaId/style-render', () => {
   const CURRENT_DERIVATIVE_ID = '47000000-1000-4000-8000-000000000005'
   const LOGO_ASSET_ID = '47000000-1000-4000-8000-000000000006'
   const NEW_DERIVATIVE_ID = '47000000-1000-4000-8000-000000000007'
+  const OTHER_VERSION_ID = '47000000-1000-4000-8000-000000000008'
 
-  const MEDIA_ROW = { id: POST_MEDIA_ID, organization_id: ORGANIZATION_ID, post_version_id: POST_VERSION_ID, media_derivative_id: CURRENT_DERIVATIVE_ID }
+  const MEDIA_ROW = { organization_id: ORGANIZATION_ID, post_version_id: POST_VERSION_ID, media_derivative_id: CURRENT_DERIVATIVE_ID }
   const VERSION_ROW = { post_id: POST_ID }
-  const EDITABLE_POST_ROW = { department_id: null, team_id: null, status: 'draft_ready' }
+  // posts.department_id ist NOT NULL -- ein Beitrag ohne Abteilung existiert nicht, und nur mit
+  // gesetzter Abteilung laeuft ueberhaupt der Zweig, der department_brand_profiles aufloest.
+  const EDITABLE_POST_ROW = { department_id: DEPARTMENT_ID, team_id: null, status: 'draft_ready', current_version_id: POST_VERSION_ID }
+  const SOURCE_ASSET_ROW = { bucket_id: 'raw-media', object_path: 'organizations/x/raw/original.png', mime_type: 'image/png', sha256: 'a'.repeat(64) }
 
   const LOGO_PRESET_ROW = {
     ...PRESET_ROW,
     id: PRESET_ID, logo_enabled: true, logo_brand_asset_id: LOGO_ASSET_ID, logo_position: 'bottom_right', logo_size_percent: 15, logo_margin_percent: 5,
   }
 
-  it('returns 404 when the post_media row does not exist', async () => {
-    const clients: SupabaseClientFactory = {
-      forUser: () => userClient({ post_media: chain({ data: null, error: null }) }),
-      forService: () => { throw new Error('forService should not be called before post_media is found') },
-    }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
-    const token = await signAccessToken(USER_ID)
-    const response = await app.inject({
-      method: 'POST', url: `/v1/post-media/${POST_MEDIA_ID}/style-render`, headers: { authorization: `Bearer ${token}` }, payload: { stylePresetId: PRESET_ID },
-    })
-    expect(response.statusCode).toBe(404)
-    expect(response.json()).toMatchObject({ error: 'post_media_not_found' })
-  })
-
-  it('rejects without post.edit on the post\'s own department scope', async () => {
-    const clients: SupabaseClientFactory = {
+  // post_media/post_versions/media_derivatives laufen ueber die Service Role (ihre SELECT-Policies
+  // kennen nur is_organization_member), posts und image_style_presets ueber den Nutzer-Client.
+  function styleRenderClients(options: {
+    postMedia?: unknown
+    post?: unknown
+    preset?: unknown
+    mediaDerivative?: unknown
+    sourceAsset?: unknown
+    rpc?: { data: unknown; error: unknown }
+    captured?: { uploadedPath?: string; rpcArgs?: Record<string, unknown> }
+    sourcePhoto?: Buffer<ArrayBuffer>
+    logoAsset?: Buffer<ArrayBuffer>
+  }): SupabaseClientFactory {
+    const captured = options.captured ?? {}
+    return {
       forUser: () =>
         userClient({
-          post_media: chain({ data: MEDIA_ROW, error: null }),
-          post_versions: chain({ data: VERSION_ROW, error: null }),
-          posts: chain({ data: EDITABLE_POST_ROW, error: null }),
-        }),
-      forService: () => { throw new Error('forService should not be called before permission is granted') },
-    }
-    const app = await startApp({ roleProvider: denyingRoleProvider, supabaseClients: clients })
-    const token = await signAccessToken(USER_ID)
-    const response = await app.inject({
-      method: 'POST', url: `/v1/post-media/${POST_MEDIA_ID}/style-render`, headers: { authorization: `Bearer ${token}` }, payload: { stylePresetId: PRESET_ID },
-    })
-    expect(response.statusCode).toBe(403)
-  })
-
-  it('rejects once the post has been submitted for approval', async () => {
-    const clients: SupabaseClientFactory = {
-      forUser: () =>
-        userClient({
-          post_media: chain({ data: MEDIA_ROW, error: null }),
-          post_versions: chain({ data: VERSION_ROW, error: null }),
-          posts: chain({ data: { ...EDITABLE_POST_ROW, status: 'awaiting_approval' }, error: null }),
-        }),
-      forService: () => { throw new Error('forService should not be called once the post is not editable') },
-    }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
-    const token = await signAccessToken(USER_ID)
-    const response = await app.inject({
-      method: 'POST', url: `/v1/post-media/${POST_MEDIA_ID}/style-render`, headers: { authorization: `Bearer ${token}` }, payload: { stylePresetId: PRESET_ID },
-    })
-    expect(response.statusCode).toBe(409)
-    expect(response.json()).toMatchObject({ error: 'post_not_editable' })
-  })
-
-  it('rejects a preset that does not exist for this organization', async () => {
-    const clients: SupabaseClientFactory = {
-      forUser: () =>
-        userClient({
-          post_media: chain({ data: MEDIA_ROW, error: null }),
-          post_versions: chain({ data: VERSION_ROW, error: null }),
-          posts: chain({ data: EDITABLE_POST_ROW, error: null }),
-          image_style_presets: chain({ data: null, error: null }),
-        }),
-      forService: () => { throw new Error('forService should not be called before the preset is resolved') },
-    }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
-    const token = await signAccessToken(USER_ID)
-    const response = await app.inject({
-      method: 'POST', url: `/v1/post-media/${POST_MEDIA_ID}/style-render`, headers: { authorization: `Bearer ${token}` }, payload: { stylePresetId: PRESET_ID },
-    })
-    expect(response.statusCode).toBe(404)
-    expect(response.json()).toMatchObject({ error: 'image_style_preset_not_found' })
-  })
-
-  it('rejects a preset that belongs to a different, non-inherited department', async () => {
-    const foreignDepartmentPreset = { ...PRESET_ROW, department_id: DEPARTMENT_ID }
-    const clients: SupabaseClientFactory = {
-      forUser: () =>
-        userClient({
-          post_media: chain({ data: MEDIA_ROW, error: null }),
-          post_versions: chain({ data: VERSION_ROW, error: null }),
-          posts: chain({ data: EDITABLE_POST_ROW, error: null }), // organisationsweiter Beitrag, kein departmentId
-          image_style_presets: chain({ data: foreignDepartmentPreset, error: null }),
-        }),
-      forService: () => { throw new Error('forService should not be called for a non-selectable preset') },
-    }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
-    const token = await signAccessToken(USER_ID)
-    const response = await app.inject({
-      method: 'POST', url: `/v1/post-media/${POST_MEDIA_ID}/style-render`, headers: { authorization: `Bearer ${token}` }, payload: { stylePresetId: PRESET_ID },
-    })
-    expect(response.statusCode).toBe(400)
-    expect(response.json()).toMatchObject({ error: 'image_style_preset_not_selectable' })
-  })
-
-  it('renders the preset onto the source photo and applies the new derivative to post_media', async () => {
-    const sourcePhoto = await sharp({ create: { width: 40, height: 20, channels: 3, background: { r: 10, g: 20, b: 30 } } }).png().toBuffer()
-    const logoAsset = await sharp({ create: { width: 10, height: 10, channels: 3, background: { r: 255, g: 0, b: 0 } } }).png().toBuffer()
-
-    const captured: { uploadedPath?: string; rpcArgs?: Record<string, unknown> } = {}
-    const clients: SupabaseClientFactory = {
-      forUser: () =>
-        userClient({
-          post_media: chain({ data: MEDIA_ROW, error: null }),
-          post_versions: chain({ data: VERSION_ROW, error: null }),
-          posts: chain({ data: EDITABLE_POST_ROW, error: null }),
-          image_style_presets: chain({ data: LOGO_PRESET_ROW, error: null }),
-          media_derivatives: chain({ data: { media_asset_id: SOURCE_ASSET_ID }, error: null }),
+          posts: chain({ data: options.post === undefined ? EDITABLE_POST_ROW : options.post, error: null }),
+          image_style_presets: chain({ data: options.preset === undefined ? PRESET_ROW : options.preset, error: null }),
         }),
       forService: () =>
         ({
           from: (table: string) => {
-            if (table === 'media_assets') return chain({ data: { bucket_id: 'raw-media', object_path: 'organizations/x/raw/original.png', sha256: 'a'.repeat(64) }, error: null })
+            if (table === 'post_media') return chain({ data: options.postMedia === undefined ? MEDIA_ROW : options.postMedia, error: null })
+            if (table === 'post_versions') return chain({ data: VERSION_ROW, error: null })
+            if (table === 'media_derivatives') return chain({ data: options.mediaDerivative === undefined ? { media_asset_id: SOURCE_ASSET_ID } : options.mediaDerivative, error: null })
+            if (table === 'media_assets') return chain({ data: options.sourceAsset === undefined ? SOURCE_ASSET_ROW : options.sourceAsset, error: null })
             if (table === 'brand_assets') return chain({ data: { object_path: 'organizations/x/brand/logo.png' }, error: null })
             if (table === 'organization_brand_profiles') return chain({ data: null, error: null })
+            if (table === 'department_brand_profiles') return chain({ data: null, error: null })
             throw new Error(`unexpected table in service test fake: ${table}`)
           },
           storage: {
             from: (bucket: string) => ({
               download: async (path: string) => {
-                if (bucket === 'raw-media' && path === 'organizations/x/raw/original.png') return { data: new Blob([sourcePhoto]), error: null }
-                if (bucket === 'brand-assets' && path === 'organizations/x/brand/logo.png') return { data: new Blob([logoAsset]), error: null }
+                if (bucket === 'raw-media') return { data: new Blob([options.sourcePhoto ?? Buffer.alloc(0)]), error: null }
+                if (bucket === 'brand-assets' && path === 'organizations/x/brand/logo.png') return { data: new Blob([options.logoAsset ?? Buffer.alloc(0)]), error: null }
                 throw new Error(`unexpected download: ${bucket}/${path}`)
               },
               upload: async (path: string) => {
@@ -336,15 +258,83 @@ describe('POST /v1/post-media/:postMediaId/style-render', () => {
           rpc: async (name: string, args: Record<string, unknown>) => {
             if (name !== 'apply_image_style_render') throw new Error(`unexpected rpc: ${name}`)
             captured.rpcArgs = args
-            return { data: NEW_DERIVATIVE_ID, error: null }
+            return options.rpc ?? { data: NEW_DERIVATIVE_ID, error: null }
           },
         }) as unknown as SupabaseClient,
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+  }
+
+  async function styleRender(clients: SupabaseClientFactory, roleProvider = organizationManagerRoleProvider) {
+    const app = await startApp({ roleProvider, supabaseClients: clients })
     const token = await signAccessToken(USER_ID)
-    const response = await app.inject({
+    return app.inject({
       method: 'POST', url: `/v1/post-media/${POST_MEDIA_ID}/style-render`, headers: { authorization: `Bearer ${token}` }, payload: { stylePresetId: PRESET_ID },
     })
+  }
+
+  it('returns 404 when the post_media row does not exist', async () => {
+    const response = await styleRender(styleRenderClients({ postMedia: null }))
+    expect(response.statusCode).toBe(404)
+    expect(response.json()).toMatchObject({ error: 'post_media_not_found' })
+  })
+
+  it('rejects without post.edit on the post\'s own department scope', async () => {
+    const response = await styleRender(styleRenderClients({}), denyingRoleProvider)
+    expect(response.statusCode).toBe(403)
+  })
+
+  it('rejects once the post has been submitted for approval', async () => {
+    const response = await styleRender(styleRenderClients({ post: { ...EDITABLE_POST_ROW, status: 'awaiting_approval' } }))
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'post_not_editable' })
+  })
+
+  // Eine archivierte Fassung behaelt ihre post_media-Zeile, waehrend der Beitrag laengst wieder
+  // 'draft_ready' ist -- ohne diese Sperre liesse sich der freigegebene Bildstand nachtraeglich
+  // umschreiben.
+  it('rejects a post_media row that belongs to an older, no longer current post version', async () => {
+    const response = await styleRender(styleRenderClients({ post: { ...EDITABLE_POST_ROW, current_version_id: OTHER_VERSION_ID } }))
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'post_version_not_current' })
+  })
+
+  it('rejects a preset that does not exist for this organization', async () => {
+    const response = await styleRender(styleRenderClients({ preset: null }))
+    expect(response.statusCode).toBe(404)
+    expect(response.json()).toMatchObject({ error: 'image_style_preset_not_found' })
+  })
+
+  it('rejects a preset that belongs to a different, non-inherited department', async () => {
+    // Beitrag in DEPARTMENT_ID, Preset in einer anderen Abteilung -- nicht vererbt, also nicht waehlbar.
+    const foreignDepartmentPreset = { ...PRESET_ROW, department_id: '47000000-9000-4000-8000-000000000001' }
+    const response = await styleRender(styleRenderClients({ preset: foreignDepartmentPreset }))
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ error: 'image_style_preset_not_selectable' })
+  })
+
+  // media_assets nimmt auch video/mp4 auf und ensurePassThroughDerivative legt dafuer ein Derivat
+  // an -- ungebremst liefe der MP4-Puffer in sharp und die Route antwortete mit 500.
+  it('rejects a source media asset that is not an image', async () => {
+    const response = await styleRender(styleRenderClients({ sourceAsset: { ...SOURCE_ASSET_ROW, mime_type: 'video/mp4' } }))
+    expect(response.statusCode).toBe(422)
+    expect(response.json()).toMatchObject({ error: 'source_media_asset_not_an_image' })
+  })
+
+  it('maps a race lost inside apply_image_style_render to 409 instead of 500', async () => {
+    const sourcePhoto = await sharp({ create: { width: 40, height: 20, channels: 3, background: { r: 10, g: 20, b: 30 } } }).png().toBuffer()
+    const clients = styleRenderClients({ sourcePhoto, rpc: { data: null, error: { message: 'post_media_changed', code: 'P0001' } } })
+    const response = await styleRender(clients)
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'post_media_changed' })
+  })
+
+  it('renders the preset onto the source photo and applies the new derivative to post_media', async () => {
+    const sourcePhoto = await sharp({ create: { width: 40, height: 20, channels: 3, background: { r: 10, g: 20, b: 30 } } }).png().toBuffer()
+    const logoAsset = await sharp({ create: { width: 10, height: 10, channels: 3, background: { r: 255, g: 0, b: 0 } } }).png().toBuffer()
+    const captured: { uploadedPath?: string; rpcArgs?: Record<string, unknown> } = {}
+    const clients = styleRenderClients({ preset: LOGO_PRESET_ROW, sourcePhoto, logoAsset, captured })
+
+    const response = await styleRender(clients)
     expect(response.statusCode).toBe(201)
     expect(response.json()).toMatchObject({ mediaDerivativeId: NEW_DERIVATIVE_ID, signedUrl: 'https://signed.example/rendered.png' })
     expect(captured.uploadedPath).toEqual(response.json().objectPath)
@@ -352,6 +342,7 @@ describe('POST /v1/post-media/:postMediaId/style-render', () => {
       p_post_media_id: POST_MEDIA_ID,
       p_actor_user_id: USER_ID,
       p_style_preset_id: PRESET_ID,
+      p_expected_media_derivative_id: CURRENT_DERIVATIVE_ID,
       p_media_asset_id: SOURCE_ASSET_ID,
       p_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
       p_mime_type: 'image/png',

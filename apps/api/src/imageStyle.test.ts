@@ -32,6 +32,24 @@ async function splitImage(width: number, height: number, left: { r: number; g: n
     .toBuffer()
 }
 
+// Eine Rahmengrafik, wie sie gemeint ist: opaker Rand, durchsichtige Mitte. Genau diese Annahme
+// macht applyCustomFrame -- ein rundum deckendes Overlay wuerde das Foto vollstaendig verdecken
+// und liesse jede Implementierung durchgehen, die das Foto einfach wegwirft.
+async function frameWithTransparentCenter(width: number, height: number, border: number, color: { r: number; g: number; b: number }): Promise<Buffer> {
+  const pixels = Buffer.alloc(width * height * 4)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const index = (y * width + x) * 4
+      const onBorder = x < border || y < border || x >= width - border || y >= height - border
+      pixels[index] = color.r
+      pixels[index + 1] = color.g
+      pixels[index + 2] = color.b
+      pixels[index + 3] = onBorder ? 255 : 0
+    }
+  }
+  return sharp(pixels, { raw: { width, height, channels: 4 } }).png().toBuffer()
+}
+
 async function pixelAt(buffer: Buffer, x: number, y: number): Promise<{ r: number; g: number; b: number; a: number | null }> {
   const { data, info } = await sharp(buffer).raw().toBuffer({ resolveWithObject: true })
   const index = (y * info.width + x) * info.channels
@@ -70,6 +88,20 @@ describe('renderImageStyle: Filter', () => {
     const result = await renderImageStyle({ sourceBuffer: source, preset: { ...NO_STYLE_PRESET, filter: 'warm' }, brandColors: BRAND_COLORS })
     const pixel = await pixelAt(result.buffer, 10, 10)
     expect(pixel.r).toBeGreaterThan(pixel.b)
+  })
+
+  // Die Probe auf Grau oben besteht auch eine vollstaendige Sepia-Umfaerbung -- der eigentliche
+  // Unterschied zu schwarz_weiss zeigt sich erst an Buntwerten: ein gruenes Trikot muss gruen
+  // bleiben. Genau das ging mit sharp' .tint() verloren.
+  it('warm laesst Buntfarben bunt (kein verkapptes schwarz_weiss)', async () => {
+    const source = await splitImage(20, 20, { r: 20, g: 220, b: 20 }, { r: 20, g: 20, b: 220 })
+    const result = await renderImageStyle({ sourceBuffer: source, preset: { ...NO_STYLE_PRESET, filter: 'warm' }, brandColors: BRAND_COLORS })
+    const green = await pixelAt(result.buffer, 4, 10)
+    expect(green.g).toBeGreaterThan(green.r)
+    expect(green.g).toBeGreaterThan(green.b)
+    const blue = await pixelAt(result.buffer, 16, 10)
+    expect(blue.b).toBeGreaterThan(blue.r)
+    expect(blue.b).toBeGreaterThan(blue.g)
   })
 
   it('vereinsfarben_duoton bildet Schatten auf primaryColor, Lichter auf accentColor ab', async () => {
@@ -131,9 +163,9 @@ describe('renderImageStyle: Rahmen', () => {
     expect(center.a).toBe(255)
   })
 
-  it('eigene Rahmengrafik wird auf Fotogroesse gestreckt und darueber gelegt', async () => {
+  it('eigene Rahmengrafik wird auf Fotogroesse gestreckt, verdeckt den Rand und laesst das Foto in der Mitte durch', async () => {
     const source = await solidColorImage(30, 20, { r: 0, g: 0, b: 255 })
-    const frameOverlay = await splitImage(30, 20, { r: 255, g: 255, b: 0 }, { r: 255, g: 255, b: 0 })
+    const frameOverlay = await frameWithTransparentCenter(30, 20, 4, { r: 255, g: 255, b: 0 })
     const result = await renderImageStyle({
       sourceBuffer: source,
       preset: { ...NO_STYLE_PRESET, frameType: 'custom', frameColor: null, frameWidthPx: null, frameCornerRadiusPx: null },
@@ -142,10 +174,30 @@ describe('renderImageStyle: Rahmen', () => {
     })
     expect(result.width).toBe(30)
     expect(result.height).toBe(20)
-    const pixel = await pixelAt(result.buffer, 10, 10)
-    expect(pixel.r).toBe(255)
-    expect(pixel.g).toBe(255)
-    expect(pixel.b).toBe(0)
+    const border = await pixelAt(result.buffer, 1, 1)
+    expect(border.r).toBe(255)
+    expect(border.g).toBe(255)
+    expect(border.b).toBe(0)
+    const center = await pixelAt(result.buffer, 15, 10)
+    expect(center.r).toBe(0)
+    expect(center.g).toBe(0)
+    expect(center.b).toBe(255)
+  })
+
+  // frame_corner_radius_px ist weder im Contract noch in den DB-CHECKs an frameType 'parametric'
+  // gebunden, und die CSS-Vorschau rundet ebenfalls unabhaengig davon.
+  it('rundet die Ecken auch ohne parametrischen Rahmen', async () => {
+    const source = await solidColorImage(40, 40, { r: 10, g: 10, b: 10 })
+    const result = await renderImageStyle({
+      sourceBuffer: source,
+      preset: { ...NO_STYLE_PRESET, frameType: 'none', frameCornerRadiusPx: 15 },
+      brandColors: BRAND_COLORS,
+    })
+    const corner = await pixelAt(result.buffer, 0, 0)
+    expect(corner.a).not.toBeNull()
+    expect(corner.a!).toBeLessThan(50)
+    const center = await pixelAt(result.buffer, 20, 20)
+    expect(center.a).toBe(255)
   })
 })
 
@@ -168,6 +220,27 @@ describe('renderImageStyle: Logo-Wasserzeichen', () => {
     expect(oppositeCorner.r).toBe(0)
     expect(oppositeCorner.g).toBe(0)
     expect(oppositeCorner.b).toBe(0)
+  })
+
+  // Groesse und Rand stammen aus den DB-CHECK-Grenzen (30 % / 15 %). Waeren beide an der
+  // Bildbreite gemessen, laege das Logo hoeher als das Panorama -- sharp' composite verweigert
+  // ein zu grosses Overlay und die Route haette daraus einen 500 gemacht.
+  it('bleibt bei einem Panorama innerhalb des Bildes statt zu scheitern', async () => {
+    const source = await solidColorImage(200, 30, { r: 0, g: 0, b: 0 })
+    const logo = await solidColorImage(50, 50, { r: 255, g: 0, b: 255 })
+    const result = await renderImageStyle({
+      sourceBuffer: source,
+      preset: { ...NO_STYLE_PRESET, logoEnabled: true, logoPosition: 'bottom_right', logoSizePercent: 30, logoMarginPercent: 15 },
+      logoAssetBuffer: logo,
+      brandColors: BRAND_COLORS,
+    })
+    expect(result.width).toBe(200)
+    expect(result.height).toBe(30)
+    const withinLogo = await pixelAt(result.buffer, 185, 15)
+    expect(withinLogo.r).toBe(255)
+    expect(withinLogo.b).toBe(255)
+    const oppositeCorner = await pixelAt(result.buffer, 5, 5)
+    expect(oppositeCorner.r).toBe(0)
   })
 
   it('platziert das Logo mittig bei logoPosition "center"', async () => {
@@ -213,5 +286,46 @@ describe('renderImageStyle: Kombinationen', () => {
     expect(logoPixel.r).toBe(0)
     expect(logoPixel.g).toBe(0)
     expect(logoPixel.b).toBe(255)
+  })
+})
+
+// Zwischenschritte muessen nach PNG kodieren (Transparenz, rohe Pixel) -- als Endformat waere das
+// eine Groessenfalle und, bei einer WebP-Quelle, ausserdem ein Typ, den der 'rendered-media'-Bucket
+// gar nicht annimmt.
+describe('renderImageStyle: Ausgabeformat', () => {
+  async function photoJpeg(width: number, height: number): Promise<Buffer> {
+    const circles = Array.from({ length: 200 }, (_, i) => `<circle cx="${(i * 97) % width}" cy="${(i * 61) % height}" r="20" fill="hsl(${i * 7}, 70%, 50%)"/>`).join('')
+    return sharp({ create: { width, height, channels: 3, background: { r: 60, g: 120, b: 190 } } })
+      .composite([{ input: Buffer.from(`<svg width="${width}" height="${height}">${circles}</svg>`) }])
+      .jpeg({ quality: 82 })
+      .toBuffer()
+  }
+
+  it('gibt ein JPEG-Foto mit parametrischem Rahmen wieder als JPEG aus statt es als PNG aufzublaehen', async () => {
+    const source = await photoJpeg(600, 400)
+    const result = await renderImageStyle({
+      sourceBuffer: source,
+      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameColor: '#ff0000', frameWidthPx: 10 },
+      brandColors: BRAND_COLORS,
+    })
+    expect(result.contentType).toBe('image/jpeg')
+    expect((await sharp(result.buffer).metadata()).format).toBe('jpeg')
+    expect(result.buffer.length).toBeLessThan(source.length * 3)
+  })
+
+  it('behaelt PNG, sobald das Ergebnis Transparenz traegt', async () => {
+    const source = await photoJpeg(200, 200)
+    const result = await renderImageStyle({
+      sourceBuffer: source,
+      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameColor: '#ff0000', frameWidthPx: 5, frameCornerRadiusPx: 20 },
+      brandColors: BRAND_COLORS,
+    })
+    expect(result.contentType).toBe('image/png')
+  })
+
+  it('gibt eine WebP-Quelle als JPEG aus -- der rendered-media-Bucket laesst kein image/webp zu', async () => {
+    const source = await sharp({ create: { width: 40, height: 40, channels: 3, background: { r: 10, g: 20, b: 30 } } }).webp().toBuffer()
+    const result = await renderImageStyle({ sourceBuffer: source, preset: NO_STYLE_PRESET, brandColors: BRAND_COLORS })
+    expect(result.contentType).toBe('image/jpeg')
   })
 })
