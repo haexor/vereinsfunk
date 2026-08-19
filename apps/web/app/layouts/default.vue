@@ -111,10 +111,9 @@ const organizationNav = [
             <span class="block truncate text-sm font-semibold">{{ activeOrganization.organizationName }}</span>
             <span class="block text-[11px] text-white/55">Vereinskonto</span>
           </span>
-          <label v-else class="relative block min-w-0 flex-1">
-            <span class="sr-only">Verein auswählen</span>
-            <Select :model-value="scope?.organizationId" @update:model-value="(value: unknown) => selectOrganization(value as string)">
-              <SelectTrigger class="border-0 py-1 pr-6 pl-0 text-sm font-semibold text-white [&_svg]:text-white/50">
+          <div v-else class="relative block min-w-0 flex-1">
+            <Select :model-value="scope?.organizationId ?? ''" @update:model-value="(value: unknown) => selectOrganization(value as string)">
+              <SelectTrigger aria-label="Verein auswählen" class="border-0 py-1 pr-6 pl-0 text-sm font-semibold text-white [&_svg]:text-white/50">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -122,21 +121,20 @@ const organizationNav = [
               </SelectContent>
             </Select>
             <span class="block text-[11px] text-white/55">Vereinskonto</span>
-          </label>
+          </div>
         </div>
         <template v-if="activeOrganization.departments.length">
           <div class="mx-2 my-1 h-px bg-white/10" />
-          <label class="relative block">
-            <span class="sr-only">Abteilung auswählen</span>
-            <Select :model-value="scope?.departmentId" @update:model-value="(value: unknown) => selectDepartment(value as string)">
-              <SelectTrigger class="border-0 py-2 pr-8 pl-2 text-xs font-medium text-white/80 [&_svg]:text-white/50">
+          <div class="relative block">
+            <Select :model-value="scope?.departmentId ?? ''" @update:model-value="(value: unknown) => selectDepartment(value as string)">
+              <SelectTrigger aria-label="Abteilung auswählen" class="border-0 py-2 pr-8 pl-2 text-xs font-medium text-white/80 [&_svg]:text-white/50">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem v-for="item in activeOrganization.departments" :key="item.id" :value="item.id">{{ item.name }}</SelectItem>
               </SelectContent>
             </Select>
-          </label>
+          </div>
         </template>
       </div>
 

@@ -199,6 +199,9 @@ async function addReviewer() {
     if (reviewerKind.value === 'user') {
       if (!reviewerUserId.value) { reviewerError.value = 'Bitte eine Person wählen.'; return }
       reviewerRef = { kind: 'user', userId: reviewerUserId.value }
+    } else if (!reviewerRole.value) {
+      reviewerError.value = 'Bitte eine Rolle wählen.'
+      return
     } else if (reviewerKind.value === 'organization_role') {
       reviewerRef = { kind: 'organization_role', role: reviewerRole.value as never }
     } else if (reviewerKind.value === 'department_role') {

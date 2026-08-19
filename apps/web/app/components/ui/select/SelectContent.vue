@@ -12,7 +12,11 @@ const props = withDefaults(defineProps<SelectContentProps & { class?: HTMLAttrib
 })
 const emits = defineEmits<SelectContentEmits>()
 
-const forwarded = useForwardPropsEmits(props, emits)
+// class steckt schon in cn(...) unten -- ohne dieses Aussortieren binden die Forward-Props es
+// ein zweites Mal an die reka-ui-Komponente (undefined-Werte laesst useForwardProps weg).
+const delegatedProps = computed(() => ({ ...props, class: undefined }))
+
+const forwarded = useForwardPropsEmits(delegatedProps, emits)
 </script>
 
 <template>
