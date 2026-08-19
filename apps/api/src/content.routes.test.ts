@@ -106,6 +106,18 @@ function activeTextProviderService(rows: Record<string, unknown>[] | null = null
   } as unknown as SupabaseClient
 }
 
+// Paket 046: jede Sitzungs-/Revisionsanlage loest jetzt zusaetzlich
+// resolveTextGenerationProviderConfigurationIds auf (platform_settings + llm_provider_configurations),
+// bevor die RPC ueberhaupt aufgerufen wird. Kein platform_settings-Eintrag laesst die Ensemble-
+// Groesse dort auf 1 zurueckfallen -- ein einzelner aktiver Provider reicht deshalb, damit jeder
+// bestehende Test hier weiterhin genau einen Kandidaten erwarten kann. Gibt null zurueck, wenn table
+// keine der beiden Tabellen ist, damit Aufrufer ihre eigenen from()-Zweige unveraendert daneben behalten.
+function ensembleProviderFakeFrom(table: string, providerIds: string[] = [PROVIDER_ID]) {
+  if (table === 'platform_settings') return chain({ data: null, error: null })
+  if (table === 'llm_provider_configurations') return chain({ data: providerIds.map((id) => ({ id })), error: null })
+  return null
+}
+
 describe('GET /v1/content-style-profiles', () => {
   it('merges hardcoded system modes, platform personas, and custom club profiles with the correct kind', async () => {
     const clients: SupabaseClientFactory = {
@@ -162,9 +174,10 @@ describe('POST /v1/text-workshop/sessions', () => {
         }) as unknown as SupabaseClient,
       forService: () =>
         ({
+          from: (table: string) => ensembleProviderFakeFrom(table) ?? (() => { throw new Error(`unexpected service table: ${table}`) })(),
           rpc: async (_name: string, params: Record<string, unknown>) => {
             capturedRpcParams = params
-            return { data: { sessionId: '3c000000-0000-4000-8000-000000000001', candidateId: '3c000000-0000-4000-8000-000000000002' }, error: null }
+            return { data: { sessionId: '3c000000-0000-4000-8000-000000000001', candidateIds: ['3c000000-0000-4000-8000-000000000002'] }, error: null }
           },
         }) as unknown as SupabaseClient,
     }
@@ -221,9 +234,10 @@ describe('POST /v1/text-workshop/sessions', () => {
         }) as unknown as SupabaseClient,
       forService: () =>
         ({
+          from: (table: string) => ensembleProviderFakeFrom(table) ?? (() => { throw new Error(`unexpected service table: ${table}`) })(),
           rpc: async (_name: string, params: Record<string, unknown>) => {
             options.onRpc?.(params)
-            return { data: { sessionId: '3c000000-0000-4000-8000-000000000001', candidateId: '3c000000-0000-4000-8000-000000000002' }, error: null }
+            return { data: { sessionId: '3c000000-0000-4000-8000-000000000001', candidateIds: ['3c000000-0000-4000-8000-000000000002'] }, error: null }
           },
         }) as unknown as SupabaseClient,
     }
@@ -290,6 +304,60 @@ describe('POST /v1/text-workshop/sessions', () => {
     expect(hashes.size).toBe(6)
   })
 
+  // Paket 046: die Ensemble-Groesse (platform_settings) bestimmt, wie viele der aktiven Provider
+  // die RPC bekommt -- nicht bloss ob ueberhaupt einer existiert.
+  it('resolves the configured ensemble size into as many provider IDs for the RPC', async () => {
+    let captured: Record<string, unknown> | undefined
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'policy_settings') return policySettingsFake()
+            if (table === 'social_connections') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.socialConnections, error: null })
+            if (table === 'channel_scopes') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.channelScopes, error: null })
+            if (table === 'text_generation_platform_defaults') return chain({ data: [{ platform: 'instagram', max_characters: 2200 }, { platform: 'facebook', max_characters: 2200 }], error: null })
+            throw new Error(`unexpected user table: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'platform_settings') return chain({ data: { value: 2 }, error: null })
+            if (table === 'llm_provider_configurations') return chain({ data: [{ id: 'provider-a' }, { id: 'provider-b' }], error: null })
+            throw new Error(`unexpected service table: ${table}`)
+          },
+          rpc: async (_name: string, params: Record<string, unknown>) => { captured = params; return { data: { sessionId: '3c000000-0000-4000-8000-000000000001', candidateIds: ['3c000000-0000-4000-8000-000000000002', '3c000000-0000-4000-8000-000000000003'] }, error: null } },
+        }) as unknown as SupabaseClient,
+    }
+    const response = await createSession(clients, basePayload)
+    expect(response.statusCode).toBe(202)
+    expect(response.json().candidateIds).toEqual(['3c000000-0000-4000-8000-000000000002', '3c000000-0000-4000-8000-000000000003'])
+    expect(captured?.p_provider_configuration_ids).toEqual(['provider-a', 'provider-b'])
+  })
+
+  it('rejects with 422 instead of calling the RPC when no active text provider is configured', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'policy_settings') return policySettingsFake()
+            if (table === 'social_connections') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.socialConnections, error: null })
+            if (table === 'channel_scopes') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.channelScopes, error: null })
+            if (table === 'text_generation_platform_defaults') return chain({ data: [{ platform: 'instagram', max_characters: 2200 }, { platform: 'facebook', max_characters: 2200 }], error: null })
+            throw new Error(`unexpected user table: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => ensembleProviderFakeFrom(table, []) ?? (() => { throw new Error(`unexpected service table: ${table}`) })(),
+          rpc: () => { throw new Error('the RPC must not be called once no active provider is configured') },
+        }) as unknown as SupabaseClient,
+    }
+    const response = await createSession(clients, basePayload)
+    expect(response.statusCode).toBe(422)
+    expect(response.json()).toMatchObject({ error: 'no_active_text_provider' })
+  })
+
   // Plan 042, PR 3 Step 3: die Anzeige in erstellen.vue ist Bequemlichkeit, diese Pruefung ist die
   // Regel -- ein Beitrag darf nicht fuer eine Plattform entstehen, auf die der Scope gar nicht
   // veroeffentlichen kann.
@@ -339,9 +407,9 @@ describe('POST /v1/text-workshop/sessions', () => {
           from: (table: string) => {
             if (table === 'media_assets') return chain({ data: asset, error: null })
             if (table === 'composition_session_post_media') return { upsert: (row: Record<string, unknown>) => { capturedAttach?.push(row); return { then: (resolve: (result: { data: null; error: null }) => unknown) => resolve({ data: null, error: null }) } } }
-            throw new Error(`unexpected service table: ${table}`)
+            return ensembleProviderFakeFrom(table) ?? (() => { throw new Error(`unexpected service table: ${table}`) })()
           },
-          rpc: async (_fn: string, params: Record<string, unknown>) => { onRpc?.(params); return { data: { sessionId: SESSION_ID, candidateId: '3c000000-0000-4000-8000-000000000013' }, error: null } },
+          rpc: async (_fn: string, params: Record<string, unknown>) => { onRpc?.(params); return { data: { sessionId: SESSION_ID, candidateIds: ['3c000000-0000-4000-8000-000000000013'] }, error: null } },
         }) as unknown as SupabaseClient,
       }
     }
@@ -405,24 +473,24 @@ describe('GET /v1/text-workshop/sessions', () => {
     created_at: '2026-08-09T10:05:00+00:00',
   }
 
-  it('resumes a draft by post id, returning its session and latest candidate', async () => {
-    const olderCandidate = { ...CANDIDATE_ROW, id: '3c000000-0000-4000-8000-000000000004', status: 'ready', created_at: '2026-08-09T10:04:00+00:00' }
-    let candidateLimit: number | undefined
-    const candidateQuery = {
-      select: () => candidateQuery,
-      eq: () => candidateQuery,
-      order: () => candidateQuery,
-      limit: async (value: number) => {
-        candidateLimit = value
-        return { data: [CANDIDATE_ROW, olderCandidate].slice(0, value), error: null }
-      },
-    }
+  // Paket 046: respondWithCompositionSession fragt generation_candidates jetzt zweimal ab -- zuerst
+  // nur round_input_hash der juengsten Zeile (um die Runde zu bestimmen), dann alle Kandidaten
+  // dieser Runde. olderCandidate steht hier fuer eine AELTERE Runde (z. B. eine laengst verworfene
+  // Revision) und wird von der zweiten, gefaketen Abfrage bewusst nicht zurueckgegeben -- genau das
+  // wuerde der round_input_hash-Filter in einer echten Datenbank auch leisten.
+  it("resumes a draft by post id, returning only the latest round's candidates", async () => {
+    let candidateCallCount = 0
     const clients: SupabaseClientFactory = {
       forUser: () =>
         ({
           from: (table: string) => {
             if (table === 'composition_sessions') return chain({ data: SESSION_ROW, error: null })
-            if (table === 'generation_candidates') return candidateQuery
+            if (table === 'generation_candidates') {
+              candidateCallCount += 1
+              return candidateCallCount === 1
+                ? chain({ data: { round_input_hash: 'a'.repeat(64) }, error: null })
+                : chain({ data: [CANDIDATE_ROW], error: null })
+            }
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
@@ -436,7 +504,26 @@ describe('GET /v1/text-workshop/sessions', () => {
     expect(body.session).toMatchObject({ id: SESSION_ROW.id, target_platforms: ['instagram'] })
     expect(body.candidates).toHaveLength(1)
     expect(body.candidates[0]).toMatchObject({ id: CANDIDATE_ROW.id, status: 'accepted' })
-    expect(candidateLimit).toBe(1)
+    expect(candidateCallCount).toBe(2)
+  })
+
+  it('returns an empty candidate list when the session has no candidates at all', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'composition_sessions') return chain({ data: SESSION_ROW, error: null })
+            if (table === 'generation_candidates') return chain({ data: null, error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => { throw new Error('forService should not be called by this route') },
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: '/v1/text-workshop/sessions', headers: { authorization: `Bearer ${token}` }, query: { postId: POST_ID } })
+    expect(response.statusCode).toBe(200)
+    expect(response.json().candidates).toEqual([])
   })
 
   it('returns 404 when no composition session is linked to the post', async () => {

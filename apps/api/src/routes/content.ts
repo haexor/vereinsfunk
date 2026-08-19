@@ -35,7 +35,7 @@ import { z } from 'zod'
 import { CLUB_EVENT_COLUMNS, FIXTURE_COLUMNS, mapClubEventRow, mapFixtureRow, mapTeamRow } from '../apiMappers.js'
 import { ensurePassThroughDerivative } from '../passThroughDerivative.js'
 import type { ApiRouteContext } from './context.js'
-import { buildStyleProfilePromptPreview, checkRateLimit, createAuditRecorder, fetchMemberTrust, previewStyleProfile, resolveDirectoryScope, resolvePreviewIdempotencyKey, resolveScopedEffectiveConfig, resolveTextGenerationPlatformAvailability, toPermissionScope } from './shared.js'
+import { buildStyleProfilePromptPreview, checkRateLimit, createAuditRecorder, fetchMemberTrust, previewStyleProfile, resolveDirectoryScope, resolvePreviewIdempotencyKey, resolveScopedEffectiveConfig, resolveTextGenerationPlatformAvailability, resolveTextGenerationProviderConfigurationIds, toPermissionScope } from './shared.js'
 
 // Plan 033 text-only workshop. Diese Routen rufen kein LLM auf: sie schreiben Sitzung und einen
 // reinen ID-Umschlag ueber eine service-only RPC, die der Worker spaeter ausfuehrt.
@@ -539,6 +539,10 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     const platformLimits = targetPlatforms.map((platform) => platformAvailability.get(platform)!.maxCharacters).filter((limit): limit is number => limit !== null)
     const resolvedPlatformLimit = platformLimits.length > 0 ? Math.min(...platformLimits) : TEXT_GENERATION_DEFAULT_MAX_CHARACTERS
     const maxCharacters = input.maxCharacters !== undefined ? Math.min(input.maxCharacters, resolvedPlatformLimit) : resolvedPlatformLimit
+    // Paket 046: wie viele und welche LLM-Provider diese Runde beantworten, steht schon hier fest
+    // (nicht erst beim Ausfuehren im Worker) -- siehe resolveTextGenerationProviderConfigurationIds.
+    const providerConfigurationIds = await resolveTextGenerationProviderConfigurationIds(service)
+    if (providerConfigurationIds.length === 0) return reply.code(422).send({ error: 'no_active_text_provider', correlationId: request.id })
     const result = await service.rpc('create_text_generation_session', {
       p_organization_id: input.organizationId, p_department_id: input.departmentId, p_team_id: input.teamId ?? null,
       p_communication_goal: input.communicationGoal, p_requested_formats: input.requestedFormats, p_source_material: sourceMaterial,
@@ -546,9 +550,10 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
       p_target_platforms: targetPlatforms, p_max_characters: maxCharacters, p_temperature: input.temperature,
       p_source_revision: input.sourceRevision, p_input_hash: sessionHash, p_candidate_input_hash: candidateHash, p_generation_intent: 'initial', p_revision_instruction: null,
       p_created_by: request.auth!.userId, p_correlation_id: request.id, p_idempotency_key: idempotencyKey,
+      p_provider_configuration_ids: providerConfigurationIds,
     })
     if (result.error) throw result.error
-    const created = z.object({ sessionId: UuidSchema, candidateId: UuidSchema }).parse(result.data)
+    const created = z.object({ sessionId: UuidSchema, candidateIds: z.array(UuidSchema) }).parse(result.data)
     if (mediaAssetId) {
       // upsert statt insert: create_text_generation_session ist selbst idempotent (derselbe
       // sessionHash liefert dieselbe Sitzung zurueck) -- ein Retry darf hier nicht an der
@@ -656,7 +661,13 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
   // wiedereroeffnen), nicht nur ihre Regler-Werte.
   const COMPOSITION_SESSION_COLUMNS = 'id, organization_id, department_id, team_id, status, communication_goal, source_material, style_profile_id, style_profile_snapshot, target_platforms, max_characters, temperature, created_at'
   async function respondWithCompositionSession(client: SupabaseClient, reply: FastifyReply, sessionRow: z.infer<typeof CompositionSessionRowSchema>) {
-    const candidates = await client.from('generation_candidates').select('id, status, generated_content, quality_flags, failure_code, triggered_by, accepted_post_version_id, created_at').eq('composition_session_id', sessionRow.id).order('created_at', { ascending: false }).limit(1)
+    // Paket 046: ein Klick auf Generieren/Ueberarbeiten kann mehrere Kandidaten gleichzeitig
+    // anlegen (eine "Runde", gruppiert ueber round_input_hash). Erst die juengste Runde ermitteln,
+    // dann alle ihre Kandidaten laden -- vor Paket 046 war das immer genau einer, .limit(1) reichte.
+    const latestRound = await client.from('generation_candidates').select('round_input_hash').eq('composition_session_id', sessionRow.id).order('created_at', { ascending: false }).limit(1).maybeSingle()
+    if (latestRound.error) throw latestRound.error
+    if (!latestRound.data) return reply.send({ session: sessionRow, candidates: [] })
+    const candidates = await client.from('generation_candidates').select('id, status, generated_content, quality_flags, failure_code, triggered_by, accepted_post_version_id, created_at').eq('composition_session_id', sessionRow.id).eq('round_input_hash', latestRound.data.round_input_hash).order('created_at', { ascending: true })
     if (candidates.error) throw candidates.error
     return reply.send({ session: sessionRow, candidates: z.array(TextWorkshopCandidateSchema).parse(candidates.data) })
   }
@@ -707,6 +718,8 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     const revisionInstruction = command.revisionInstruction!
     const candidateHash = createHash('sha256').update(`${session.data.input_hash}:revise:${revisionInstruction}`).digest('hex')
     const service = supabaseClients.forService()
+    const providerConfigurationIds = await resolveTextGenerationProviderConfigurationIds(service)
+    if (providerConfigurationIds.length === 0) return reply.code(422).send({ error: 'no_active_text_provider', correlationId: request.id })
     const result = await service.rpc('create_text_generation_session', {
       p_organization_id: session.data.organization_id, p_department_id: session.data.department_id, p_team_id: session.data.team_id,
       p_communication_goal: session.data.communication_goal, p_requested_formats: session.data.requested_formats,
@@ -716,9 +729,10 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
       p_source_revision: session.data.source_revision, p_input_hash: session.data.input_hash, p_candidate_input_hash: candidateHash,
       p_generation_intent: 'revise', p_revision_instruction: revisionInstruction, p_created_by: request.auth!.userId,
       p_correlation_id: request.id, p_idempotency_key: `generate-text:${candidateHash}`,
+      p_provider_configuration_ids: providerConfigurationIds,
     })
     if (result.error) throw result.error
-    return reply.code(202).send({ ...z.object({ sessionId: UuidSchema, candidateId: UuidSchema }).parse(result.data), correlationId: request.id })
+    return reply.code(202).send({ ...z.object({ sessionId: UuidSchema, candidateIds: z.array(UuidSchema) }).parse(result.data), correlationId: request.id })
   })
 
   app.post('/v1/text-workshop/candidates/:id/accept', async (request, reply) => {

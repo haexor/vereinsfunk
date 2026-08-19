@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { scanAndRecoverStaleCandidates, type GenerationRecoveryRepository, type RecoverableSessionRow, type StalledCandidateRow } from './generationRecovery.js'
 
-const stale: StalledCandidateRow = { id: '10000000-3010-4000-8000-000000000001', composition_session_id: '10000000-3000-4000-8000-000000000001', organization_id: '10000000-1000-4000-8000-000000000001', generation_intent: 'revise', revision_instruction: 'kuerzer bitte', generation_lease_token: '10000000-9010-4000-8000-000000000001' }
+const stale: StalledCandidateRow = { id: '10000000-3010-4000-8000-000000000001', composition_session_id: '10000000-3000-4000-8000-000000000001', organization_id: '10000000-1000-4000-8000-000000000001', generation_intent: 'revise', revision_instruction: 'kuerzer bitte', generation_lease_token: '10000000-9010-4000-8000-000000000001', round_input_hash: 'a'.repeat(64) }
 const session: RecoverableSessionRow = { organization_id: stale.organization_id, department_id: '10000000-1100-4000-8000-000000000001', team_id: null, communication_goal: 'inform', requested_formats: ['text_post'], source_material: {}, style_profile_id: null, style_profile_snapshot: {}, effective_config_snapshot: {}, target_platforms: ['instagram', 'facebook'], max_characters: 2200, temperature: 0.6, source_revision: 1, input_hash: 'a'.repeat(64), created_by: '10000000-0000-4000-8000-000000000001' }
 
 function repository(overrides: Partial<GenerationRecoveryRepository> = {}): GenerationRecoveryRepository {
@@ -27,6 +27,11 @@ describe('scanAndRecoverStaleCandidates', () => {
   })
   it('does not throw when the composition session candidate limit is already reached, and still finalizes the stale candidate', async () => {
     const repo = repository({ createRecoveryAttempt: vi.fn().mockResolvedValue('limit_reached') })
+    await expect(scanAndRecoverStaleCandidates(repo)).resolves.toBeUndefined()
+    expect(repo.finalizeRecovery).toHaveBeenCalledWith(stale, 'stalled_after_crash')
+  })
+  it('does not throw when no active text provider is configured, and still finalizes the stale candidate', async () => {
+    const repo = repository({ createRecoveryAttempt: vi.fn().mockResolvedValue('no_provider') })
     await expect(scanAndRecoverStaleCandidates(repo)).resolves.toBeUndefined()
     expect(repo.finalizeRecovery).toHaveBeenCalledWith(stale, 'stalled_after_crash')
   })

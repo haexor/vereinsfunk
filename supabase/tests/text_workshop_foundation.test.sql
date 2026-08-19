@@ -243,7 +243,8 @@ select lives_ok(
     '{"facts":{"title":"Revisionstraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
     null, '{"name":"System","description":"","styleRules":{"toneTags":["klar"],"catchphrases":[],"exampleInput":"","exampleOutput":"","additionalInstructions":""},"avoidRules":[]}'::jsonb,
     '{}'::jsonb, array['instagram', 'facebook']::text[], 2200, 0.6, 1, repeat('e', 64), repeat('f', 64), 'initial', null,
-    '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-initial'
+    '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-initial',
+    array['31000000-4000-4000-8000-000000000001']::uuid[]
   )$$,
   'initial text generation creates a durable session and candidate'
 );
@@ -254,7 +255,8 @@ select lives_ok(
     '{"facts":{"title":"Revisionstraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
     null, '{"name":"System","description":"","styleRules":{"toneTags":["klar"],"catchphrases":[],"exampleInput":"","exampleOutput":"","additionalInstructions":""},"avoidRules":[]}'::jsonb,
     '{}'::jsonb, array['instagram', 'facebook']::text[], 2200, 0.6, 1, repeat('e', 64), repeat('0', 64), 'revise', 'Bitte kürzer formulieren',
-    '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-revision'
+    '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-revision',
+    array['31000000-4000-4000-8000-000000000001']::uuid[]
   )$$,
   'revision creates a separate durable candidate in the existing session'
 );
@@ -266,7 +268,8 @@ select lives_ok(
     '{"facts":{"title":"Revisionstraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
     null, '{"name":"System","description":"","styleRules":{"toneTags":["klar"],"catchphrases":[],"exampleInput":"","exampleOutput":"","additionalInstructions":""},"avoidRules":[]}'::jsonb,
     '{}'::jsonb, array['instagram', 'facebook']::text[], 2200, 0.6, 1, repeat('e', 64), repeat('1', 64), 'revise', 'Bitte mit mehr Energie formulieren',
-    '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-revision-2'
+    '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-revision-2',
+    array['31000000-4000-4000-8000-000000000001']::uuid[]
   )$$,
   'a second revision receives its own durable outbox entry'
 );
@@ -345,8 +348,12 @@ select lives_ok(
 -- Plan 035: triggered_by defaults to 'member' for the existing create_text_generation_session
 -- callers (member-initiated generation/revision) and is independently settable, so a member can
 -- tell an automatically retried result apart from one they themselves asked for.
+-- Paket 046: die Kandidatenzeile traegt nicht mehr repeat('f', 64) als eigenen input_hash --
+-- dieser wird jetzt je Provider abgeleitet (sha256(round_hash || provider_id)). round_input_hash
+-- bleibt aber exakt der uebergebene p_candidate_input_hash, solange p_round_input_hash weggelassen
+-- wird (der Regelfall fuer jede Mitglieder-Anfrage, siehe Migration 2026081903).
 select is(
-  (select triggered_by from public.generation_candidates where composition_session_id = (select id from public.composition_sessions where organization_id = '32000000-2000-4000-8000-000000000002' and input_hash = repeat('e', 64)) and input_hash = repeat('f', 64)),
+  (select triggered_by from public.generation_candidates where composition_session_id = (select id from public.composition_sessions where organization_id = '32000000-2000-4000-8000-000000000002' and input_hash = repeat('e', 64)) and round_input_hash = repeat('f', 64)),
   'member',
   'create_text_generation_session defaults triggered_by to member for an existing caller'
 );
@@ -375,7 +382,8 @@ begin
       'inform', '["text_post"]'::jsonb,
       '{"facts":{"title":"Limittraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
       null, '{}'::jsonb, '{}'::jsonb, array['instagram']::text[], 2200, 0.6, 1, repeat('2', 64), encode(sha256(('limit-revision-' || i::text)::bytea), 'hex'), 'revise', 'Bitte kuerzer',
-      '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-limit-revise-' || i::text
+      '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-limit-revise-' || i::text,
+      array['31000000-4000-4000-8000-000000000001']::uuid[]
     );
   end loop;
 end;
@@ -396,7 +404,8 @@ select throws_ok(
     'inform', '["text_post"]'::jsonb,
     '{"facts":{"title":"Limittraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
     null, '{}'::jsonb, '{}'::jsonb, array['instagram']::text[], 2200, 0.6, 1, repeat('2', 64), encode(sha256('limit-revision-overflow'::bytea), 'hex'), 'revise', 'Zu viel',
-    '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-limit-overflow'
+    '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-limit-overflow',
+    array['31000000-4000-4000-8000-000000000001']::uuid[]
   )$$,
   'P0001', 'composition_session_candidate_limit_reached',
   'negative: a ninth candidate attempt on one session is rejected once the placeholder ceiling is reached'
