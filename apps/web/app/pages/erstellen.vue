@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Check, LoaderCircle, RefreshCw, Save, Sparkles } from '@lucide/vue'
-import { MaxCharactersSchema, RequestApprovalResponseSchema, SocialPlatformSchema, SourceMaterialSchema, TEXT_GENERATION_DEFAULT_TEMPERATURE, TEXT_GENERATION_TEMPERATURE_STEPS, TextGenerationCapabilitiesSchema, TextGenerationPlatformAvailabilitySchema, TextGenerationTemperatureSchema, UuidSchema, type SocialPlatform, type TextGenerationPlatformAvailability } from '@vereinsfunk/contracts'
+import { MaxCharactersSchema, RequestApprovalResponseSchema, SocialPlatformSchema, SourceMaterialSchema, TEXT_GENERATION_DEFAULT_TEMPERATURE, TextGenerationPlatformAvailabilitySchema, UuidSchema, type SocialPlatform, type TextGenerationPlatformAvailability } from '@vereinsfunk/contracts'
 import { z } from 'zod'
 
 type Profile = { id: string | null; slug: string; kind: 'system' | 'persona' | 'custom'; name: string; description: string }
@@ -14,7 +14,7 @@ const CandidateSchema = z.object({ id: z.string(), status: z.string(), generated
 const CompositionSessionDraftSchema = z.object({
   id: z.string(), communication_goal: z.string(), source_material: SourceMaterialSchema,
   style_profile_id: z.string().nullable(), style_profile_snapshot: z.object({ slug: z.string().optional() }).passthrough(),
-  target_platforms: z.array(SocialPlatformSchema), temperature: TextGenerationTemperatureSchema,
+  target_platforms: z.array(SocialPlatformSchema),
 })
 // Nur die drei Faelle, die auf diesem Weg realistisch auftreten (routes/approvals.ts,
 // request_approval-RPC-Fehlermeldungen); die uebrigen (invalid_reviewer_snapshot,
@@ -50,12 +50,6 @@ const sessionId = ref<string | null>(null)
 const candidate = ref<Candidate | null>(null)
 const profiles = ref<Profile[]>([])
 const selectedProfile = ref<string>('klar_erklaerend')
-// Drei Zustaende, nicht zwei: null heisst "noch nicht bekannt oder nicht ladbar". Bis die Antwort
-// da ist, bleibt der Regler verborgen statt einen womoeglich wirkungslosen anzuzeigen (Plan 042,
-// PR 3 Step 1) -- aber "wir wissen es nicht" darf nicht als "das Modell kann das nicht" behauptet
-// werden, das waere schlicht falsch, wenn nur die Abfrage scheiterte (Review dieses PRs).
-const temperatureSupported = ref<boolean | null>(null)
-const temperature = ref<number>(TEXT_GENERATION_DEFAULT_TEMPERATURE)
 const platforms = ref<TextGenerationPlatformAvailability[]>([])
 const selectedPlatforms = ref<SocialPlatform[]>([])
 const maxCharactersOverride = ref('')
@@ -63,6 +57,7 @@ const maxCharactersOverride = ref('')
 const mediaAssetId = ref<string | null>(null)
 const PROFILE_GROUP_LABELS = { system: 'Basis-Stile', persona: 'Personas', custom: 'Eigene Profile' } as const
 const profileGroups = computed(() => (['system', 'persona', 'custom'] as const).map((kind) => ({ label: PROFILE_GROUP_LABELS[kind], items: profiles.value.filter((profile) => profile.kind === kind) })).filter((group) => group.items.length))
+const profileSelectGroups = computed(() => profileGroups.value.map((group) => ({ label: group.label, items: group.items.map((profile) => ({ value: profile.id ?? profile.slug, label: profile.name, description: profile.description })) })))
 const communicationGoal = ref('inform')
 const factsText = ref('')
 const observation = ref('')
@@ -83,11 +78,11 @@ function sourceMaterial() {
 }
 function persistDraft() {
   if (restoringDraft || !import.meta.client || !draftKey.value) return
-  localStorage.setItem(draftKey.value, JSON.stringify({ communicationGoal: communicationGoal.value, factsText: factsText.value, observation: observation.value, quote: quote.value, doNotMention: doNotMention.value, selectedProfile: selectedProfile.value, temperature: temperature.value, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }))
+  localStorage.setItem(draftKey.value, JSON.stringify({ communicationGoal: communicationGoal.value, factsText: factsText.value, observation: observation.value, quote: quote.value, doNotMention: doNotMention.value, selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }))
 }
 function clearDraft() { if (import.meta.client && draftKey.value) localStorage.removeItem(draftKey.value) }
 function draftPayload() {
-  return { communicationGoal: communicationGoal.value, factsText: factsText.value, observation: observation.value, quote: quote.value, doNotMention: doNotMention.value, selectedProfile: selectedProfile.value, temperature: temperature.value, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }
+  return { communicationGoal: communicationGoal.value, factsText: factsText.value, observation: observation.value, quote: quote.value, doNotMention: doNotMention.value, selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }
 }
 function hasDraftContent() {
   const payload = draftPayload()
@@ -136,15 +131,15 @@ function restoreDraft() {
   if (!import.meta.client || !draftKey.value) return
   try {
     const raw = localStorage.getItem(draftKey.value); if (!raw) return
-    const draft = z.object({ communicationGoal: z.string(), factsText: z.string(), observation: z.string(), quote: z.string(), doNotMention: z.string(), selectedProfile: z.string(), temperature: TextGenerationTemperatureSchema.default(TEXT_GENERATION_DEFAULT_TEMPERATURE), selectedPlatforms: z.array(SocialPlatformSchema).default([]), maxCharactersOverride: z.string().default('') }).parse(JSON.parse(raw))
-    communicationGoal.value = draft.communicationGoal; factsText.value = draft.factsText; observation.value = draft.observation; quote.value = draft.quote; doNotMention.value = draft.doNotMention; selectedProfile.value = draft.selectedProfile; temperature.value = draft.temperature; maxCharactersOverride.value = draft.maxCharactersOverride
+    const draft = z.object({ communicationGoal: z.string(), factsText: z.string(), observation: z.string(), quote: z.string(), doNotMention: z.string(), selectedProfile: z.string(), selectedPlatforms: z.array(SocialPlatformSchema).default([]), maxCharactersOverride: z.string().default('') }).parse(JSON.parse(raw))
+    communicationGoal.value = draft.communicationGoal; factsText.value = draft.factsText; observation.value = draft.observation; quote.value = draft.quote; doNotMention.value = draft.doNotMention; selectedProfile.value = draft.selectedProfile; maxCharactersOverride.value = draft.maxCharactersOverride
     // Nur uebernehmen, was laut der zuletzt geladenen Verfuegbarkeit noch anhakbar ist -- ein Kanal
     // kann seit dem letzten Entwurf entfernt worden sein.
     if (draft.selectedPlatforms.length) selectedPlatforms.value = draft.selectedPlatforms.filter((platform) => platforms.value.some((entry) => entry.platform === platform && entry.available))
   } catch { clearDraft() }
 }
-watch([communicationGoal, factsText, observation, quote, doNotMention, selectedProfile, temperature, selectedPlatforms, maxCharactersOverride], () => { persistDraft(); queueServerDraftSave() }, { flush: 'sync', deep: true })
-watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; communicationGoal.value = 'inform'; selectedProfile.value = 'klar_erklaerend'; factsText.value = ''; observation.value = ''; quote.value = ''; doNotMention.value = ''; revisionInstruction.value = ''; temperature.value = TEXT_GENERATION_DEFAULT_TEMPERATURE; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; mediaAssetId.value = null; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
+watch([communicationGoal, factsText, observation, quote, doNotMention, selectedProfile, selectedPlatforms, maxCharactersOverride], () => { persistDraft(); queueServerDraftSave() }, { flush: 'sync', deep: true })
+watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; communicationGoal.value = 'inform'; selectedProfile.value = 'klar_erklaerend'; factsText.value = ''; observation.value = ''; quote.value = ''; doNotMention.value = ''; revisionInstruction.value = ''; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; mediaAssetId.value = null; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
 
 async function loadProfiles() {
   if (!scope.value?.organizationId || !scope.value.departmentId) return
@@ -152,16 +147,6 @@ async function loadProfiles() {
     const response = await api.request('/v1/content-style-profiles', { query: { organizationId: scope.value.organizationId, departmentId: scope.value.departmentId } }, z.object({ profiles: z.array(z.object({ id: z.string().nullable(), slug: z.string(), kind: z.enum(['system', 'persona', 'custom']), name: z.string(), description: z.string() }).passthrough()) }))
     profiles.value = response.profiles
   } catch { notice.value = 'Stilprofile konnten nicht geladen werden.' }
-}
-
-async function loadCapabilities() {
-  // Dieselbe Zurueckhaltung wie bei den Geschwistern oben: serverseitig gibt es kein Zugriffstoken,
-  // die Anfrage koennte dort nur scheitern.
-  if (!import.meta.client) return
-  try {
-    const response = await api.request('/v1/text-generation-capabilities', {}, TextGenerationCapabilitiesSchema)
-    temperatureSupported.value = response.temperatureSupported
-  } catch { temperatureSupported.value = null }
 }
 
 async function loadPlatformAvailability() {
@@ -182,10 +167,10 @@ async function refreshSession() {
 }
 async function loadServerDraft(draftId: string) {
   try {
-    const response = await api.request(`/v1/text-workshop/drafts/${draftId}`, {}, z.object({ draft: z.object({ id: z.string(), payload: z.object({ communicationGoal: z.string(), factsText: z.string(), observation: z.string(), quote: z.string(), doNotMention: z.string(), selectedProfile: z.string(), temperature: TextGenerationTemperatureSchema, selectedPlatforms: z.array(SocialPlatformSchema), maxCharactersOverride: z.string() }) }) }))
+    const response = await api.request(`/v1/text-workshop/drafts/${draftId}`, {}, z.object({ draft: z.object({ id: z.string(), payload: z.object({ communicationGoal: z.string(), factsText: z.string(), observation: z.string(), quote: z.string(), doNotMention: z.string(), selectedProfile: z.string(), selectedPlatforms: z.array(SocialPlatformSchema), maxCharactersOverride: z.string() }) }) }))
     const draft = response.draft
     serverDraftId.value = draft.id
-    communicationGoal.value = draft.payload.communicationGoal; factsText.value = draft.payload.factsText; observation.value = draft.payload.observation; quote.value = draft.payload.quote; doNotMention.value = draft.payload.doNotMention; selectedProfile.value = draft.payload.selectedProfile; temperature.value = draft.payload.temperature; maxCharactersOverride.value = draft.payload.maxCharactersOverride
+    communicationGoal.value = draft.payload.communicationGoal; factsText.value = draft.payload.factsText; observation.value = draft.payload.observation; quote.value = draft.payload.quote; doNotMention.value = draft.payload.doNotMention; selectedProfile.value = draft.payload.selectedProfile; maxCharactersOverride.value = draft.payload.maxCharactersOverride
     selectedPlatforms.value = draft.payload.selectedPlatforms.filter((platform) => platforms.value.some((entry) => entry.platform === platform && entry.available))
     persistDraft()
   } catch { notice.value = 'Der Entwurf konnte nicht geladen werden.' }
@@ -211,7 +196,6 @@ async function loadDraftFromPost(postId: string) {
     // Nur uebernehmen, was laut der zuletzt geladenen Verfuegbarkeit noch anhakbar ist -- derselbe
     // Filter wie in restoreDraft(), ein Kanal kann seither entfernt worden sein.
     selectedPlatforms.value = draftSession.target_platforms.filter((platform) => platforms.value.some((entry) => entry.platform === platform && entry.available))
-    temperature.value = draftSession.temperature
     // max_characters bewusst NICHT vorbefuellt: die Spalte traegt den nach Minimumbildung mit den
     // gewaehlten Plattformen aufgeloesten Wert (routes/content.ts), nicht zwingend eine eigene
     // Obergrenze, die die Person tatsaechlich eingetragen hatte -- eine Vorbefuellung wuerde hier
@@ -249,10 +233,6 @@ async function createCandidate() {
         // Ein weiterer Kandidat der serverseitigen Minimumbildung, keine Ueberschreibung -- die
         // gewaehlten Plattformen bleiben die verbindliche Obergrenze (routes/content.ts).
         ...(maxCharacters !== undefined ? { maxCharacters } : {}),
-        // Weglassen nur, wenn der Provider sie nachweislich nicht sendet -- bei "unbekannt" die
-        // gewaehlte Stufe mitschicken, statt sie stillschweigend auf den Serverdefault fallen zu
-        // lassen (ein wiederhergestellter Entwurf kann eine Stufe tragen, Review dieses PRs).
-        ...(temperatureSupported.value !== false ? { temperature: temperature.value } : {}),
       },
     }, z.object({ sessionId: UuidSchema, candidateIds: z.array(UuidSchema).min(1) }))
     // Paket 046: eine Anfrage kann mehrere Kandidaten gleichzeitig erzeugen (Ensemble-Groesse, vom
@@ -303,7 +283,6 @@ async function acceptCandidate() {
     }
   } catch { notice.value = 'Der Kandidat konnte nicht übernommen werden.' } finally { submitting.value = false }
 }
-const selectedTemperatureStep = computed(() => TEXT_GENERATION_TEMPERATURE_STEPS.find((step) => step.value === temperature.value) ?? TEXT_GENERATION_TEMPERATURE_STEPS[1])
 // 'accepted' wird seit dem Wiedereinstieg per postId erreichbar: der zuletzt uebernommene
 // Kandidat einer wiedereroeffneten Sitzung traegt diesen Status, zeigt aber denselben fertigen
 // Text wie 'ready'. Ohne diese Erweiterung behauptete die Ueberschrift faelschlich "wird erzeugt".
@@ -328,7 +307,7 @@ async function reviseCandidate() {
 // gespeicherten Entwurf. Nach jedem Neuladen war das getippte Quellmaterial damit still verloren
 // (Review von Paket 044 PR 1; bestand schon vorher, faellt hier nur an derselben Zeile auf).
 restoringDraft = true
-await Promise.all([loadProfiles(), loadPlatformAvailability(), loadCapabilities()])
+await Promise.all([loadProfiles(), loadPlatformAvailability()])
 const resumePostId = UuidSchema.safeParse(route.query.postId)
 const resumeDraftId = UuidSchema.safeParse(route.query.draftId)
 if (resumeDraftId.success) await loadServerDraft(resumeDraftId.data)
@@ -347,20 +326,21 @@ onBeforeUnmount(() => { if (hasDraftContent()) void saveServerDraft() })
     <header class="mb-7"><div class="eyebrow mb-2">Textwerkstatt</div><h1 class="font-display text-3xl font-extrabold">Aus bestätigten Angaben formulieren</h1><p class="mt-2 text-sm text-[#727a75]">Dieser Pilot erstellt nur Text. Ein Foto kann angehängt werden, wird aber nie an das Sprachmodell gesendet. Videoanhänge sind noch nicht verfügbar.</p></header>
     <section v-if="!sessionId" class="card grid gap-5 p-5 sm:p-7">
       <label><span class="mb-1 block text-xs font-semibold">Kommunikationsziel</span><select v-model="communicationGoal" class="w-full rounded-xl border p-3 text-sm sm:max-w-xs"><option value="inform">Informieren</option><option value="invite">Einladen</option><option value="thank">Danken</option><option value="recruit">Gewinnen</option><option value="inspire">Inspirieren</option></select></label>
-      <fieldset><legend class="mb-2 text-xs font-semibold">Stilprofil</legend><div v-for="group in profileGroups" :key="group.label" class="mb-3"><p class="mb-1 text-[11px] font-semibold text-[#9aa096]">{{ group.label }}</p><div class="grid gap-2 sm:grid-cols-2"><button v-for="profile in group.items" :key="profile.slug" class="rounded-xl border p-3 text-left text-sm" :class="selectedProfile === (profile.id ?? profile.slug) ? 'border-forest bg-[#eff4e6]' : ''" @click="selectedProfile = profile.id ?? profile.slug"><strong>{{ profile.name }}</strong><span class="mt-1 block text-xs text-[#737a75]">{{ profile.description }}</span></button></div></div><NuxtLink to="/stilprofile" class="focus-ring text-[11px] font-semibold text-forest underline">Eigene Stilprofile verwalten →</NuxtLink></fieldset>
+      <fieldset><legend class="mb-2 text-xs font-semibold">Stilprofil</legend><SearchableSelect v-model="selectedProfile" :groups="profileSelectGroups" placeholder="Stilprofil wählen…" /><NuxtLink to="/stilprofile" class="focus-ring mt-2 inline-block text-[11px] font-semibold text-forest underline">Eigene Stilprofile verwalten →</NuxtLink></fieldset>
       <PhotoAttachment v-if="scope?.organizationId && scope.departmentId" :key="`${scope.organizationId}:${scope.departmentId}`" v-model="mediaAssetId" :organization-id="scope.organizationId" :department-id="scope.departmentId" />
       <fieldset>
         <legend class="mb-2 text-xs font-semibold">Zielplattformen</legend>
         <div v-if="platforms.length" class="flex flex-wrap gap-2">
           <button
             v-for="entry in platforms" :key="entry.platform" type="button"
-            class="rounded-xl border px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
-            :class="selectedPlatforms.includes(entry.platform) ? 'border-forest bg-[#eff4e6]' : ''"
+            class="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+            :style="selectedPlatforms.includes(entry.platform) ? { borderColor: platformColors[entry.platform], backgroundColor: `${platformColors[entry.platform]}1a` } : {}"
             :aria-pressed="selectedPlatforms.includes(entry.platform)"
             :disabled="!entry.available"
             :title="entry.reason ? PLATFORM_UNAVAILABLE_REASONS[entry.reason] : undefined"
             @click="togglePlatform(entry.platform)"
           >
+            <PlatformIcon :platform="entry.platform" />
             {{ platformLabels[entry.platform] }}
           </button>
         </div>
@@ -371,23 +351,6 @@ onBeforeUnmount(() => { if (hasDraftContent()) void saveServerDraft() })
         <legend class="mb-2 text-xs font-semibold">Maximale Länge (optional)</legend>
         <input v-model="maxCharactersOverride" type="number" min="100" max="10000" placeholder="z. B. 800" class="w-32 rounded-xl border p-3 text-sm" />
         <p class="mt-1 text-[11px] font-normal text-[#9aa096]">Kürzer als die gewählten Plattformen erlauben ist möglich, länger nicht.</p>
-      </fieldset>
-      <fieldset>
-        <legend class="mb-2 text-xs font-semibold">Persona-Intensität</legend>
-        <div v-if="temperatureSupported" class="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <button
-            v-for="step in TEXT_GENERATION_TEMPERATURE_STEPS" :key="step.value" type="button"
-            class="rounded-xl border p-2 text-center text-xs font-semibold"
-            :class="temperature === step.value ? 'border-forest bg-[#eff4e6]' : ''"
-            :aria-pressed="temperature === step.value"
-            @click="temperature = step.value"
-          >
-            {{ step.label }}
-          </button>
-        </div>
-        <p v-if="temperatureSupported" class="mt-1 text-[11px] font-normal text-[#9aa096]">{{ selectedTemperatureStep.hint }}</p>
-        <p v-else-if="temperatureSupported === false" class="text-[11px] font-normal text-[#9aa096]">Das aktive Sprachmodell unterstützt diese Einstellung nicht.</p>
-        <p v-else class="text-[11px] font-normal text-[#9aa096]">Ob das aktive Sprachmodell diese Einstellung unterstützt, konnte nicht geladen werden.</p>
       </fieldset>
       <label><span class="mb-1 block text-xs font-semibold">Bestätigte Fakten (eine Zeile je „Feld: Wert“)</span><textarea v-model="factsText" rows="4" class="w-full rounded-xl border p-3 text-sm" placeholder="Übung: Passen&#10;Gruppe: U12" /></label>
       <label><span class="mb-1 block text-xs font-semibold">Beobachtung oder Rohtext</span><textarea v-model="observation" rows="3" class="w-full rounded-xl border p-3 text-sm" /></label>
