@@ -23,16 +23,27 @@ jobs:
   # into production automatically, independently of the CI workflow's own result -- pushing to main
   # with a migration timestamp collision (scripts/check-migration-timestamps.mjs) previously reached
   # production this way even though nothing here re-checked it.
+  #
+  # On a push to main, this checkout's HEAD *is* origin/main by the time the job starts -- the
+  # script's default comparison ends up checking that ref against itself and can never find an
+  # out-of-order migration (confirmed against the run for 3e64de23, the commit that shipped exactly
+  # that bug to production: it reported success). MIGRATION_CHECK_BASE_REF below points the
+  # comparison at the commit main pointed to right before this push instead, which is what actually
+  # catches two independently-consistent PRs merging into an inconsistent main. fetch-depth: 0 makes
+  # that commit's tree available locally; the default shallow checkout wouldn't have it.
   check-migrations:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
       - run: node scripts/check-migration-timestamps.mjs
+        env:
+          MIGRATION_CHECK_BASE_REF: ${{ github.ref == 'refs/heads/main' && github.event.before || '' }}
 
   build:
     needs: check-migrations
