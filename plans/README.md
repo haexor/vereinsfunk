@@ -103,7 +103,7 @@ Hinweis zu 020: macht Paket 009/012/015 produktivreif — sechs Aufbewahrungsreg
 
 ## Fünfte Serie: Textwerkstatt als Kern-UX
 
-Stand: 2026-08-10, geplant auf `5fccd6fa`. Dieser vertikale Ausbau macht die Erstellung von Beiträgen zum primären Produktfluss. Er generiert ausschließlich Texte und unterstützt optional eigene Fotos oder Videos. Videos werden bevorzugt auf dem Endgerät komprimiert; falls das Gerät den Zielcodec nicht zuverlässig erstellen kann, erfolgt nur nach transparenter Nutzerentscheidung ein privater Quarantäne-Upload mit serverseitiger Komprimierung. KI-Videoerzeugung und multimodales Bild-/Videoverstehen sind nicht Teil der Serie.
+Stand: 2026-08-10, geplant auf `5fccd6fa`. Dieser vertikale Ausbau macht die Erstellung von Beiträgen zum primären Produktfluss. Er generiert ausschließlich Texte und unterstützt optional eigene Fotos oder Videos. Videos werden bevorzugt auf dem Endgerät komprimiert; falls das Gerät den Zielcodec nicht zuverlässig erstellen kann, erfolgt nur nach transparenter Nutzerentscheidung ein privater Quarantäne-Upload mit serverseitiger Komprimierung. KI-Videoerzeugung und multimodales Bild-/Videoverstehen sind nicht Teil der Serie — mit Ausnahme der in 048 geplanten Vision-Analyse eines Homepage-Screenshots zur Markenerkennung.
 
 | Nr. | Arbeitspaket | Abhängigkeiten | Status |
 |---|---|---|---|

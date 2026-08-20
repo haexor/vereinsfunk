@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(15);
+select plan(16);
 
 set local role postgres;
 
@@ -26,7 +26,14 @@ insert into public.organization_memberships (organization_id, user_id, role) val
 select is((select relforcerowsecurity from pg_class where oid = 'public.brand_website_analysis_jobs'::regclass), true,
   'brand_website_analysis_jobs has FORCE ROW LEVEL SECURITY enabled');
 
--- 2: die RPC leitet die Abteilung her und legt Job + Outbox-Eintrag an.
+-- 2: requested_by muss Mitglied des Zielvereins sein -- ein Profil eines fremden Vereins wird
+-- abgelehnt, statt die Analyse dieser Zeile zuzuordnen.
+select throws_ok(
+  $$select public.start_brand_website_analysis('68000000-1000-4000-8000-000000000001', 'https://verein.example.org', '68000000-0000-4000-8000-000000000003')$$,
+  'P0001', 'requested_by_not_organization_member', 'a profile without membership in the target organization is rejected as requested_by'
+);
+
+-- 3: die RPC leitet die Abteilung her und legt Job + Outbox-Eintrag an.
 select is(
   (public.start_brand_website_analysis('68000000-1000-4000-8000-000000000001', 'https://verein.example.org', '68000000-0000-4000-8000-000000000001') ->> 'jobId') is not null,
   true, 'start_brand_website_analysis returns a jobId'
@@ -40,13 +47,17 @@ select is((select count(*)::integer from public.workflow_outbox where workflow_n
 select is((select department_id from public.workflow_outbox where workflow_name = 'analyze-website-branding' and organization_id = '68000000-1000-4000-8000-000000000001'),
   '68000000-1100-4000-8000-000000000001', 'the outbox row carries the organization''s (only) department as its technical carrier');
 
--- 3: ein zweiter Aufruf, waehrend der Job noch laeuft, wird abgelehnt statt ihn zu duplizieren.
+-- 4: ein zweiter, sequenzieller Aufruf, waehrend der Job noch laeuft, wird abgelehnt statt ihn zu
+-- duplizieren. Das ist kein Test der Race selbst (zwei tatsaechlich ueberlappende Transaktionen
+-- braeuchten dblink o.ae., ein Muster, das diese Suite bewusst vermeidet, siehe
+-- text_workshop_foundation.test.sql beim Kommentar zu claim_stalled_generation_candidates) --
+-- die schliesst stattdessen der Advisory-Lock in start_brand_website_analysis selbst.
 select throws_ok(
   $$select public.start_brand_website_analysis('68000000-1000-4000-8000-000000000001', 'https://verein.example.org', '68000000-0000-4000-8000-000000000001')$$,
   'P0001', 'analysis_in_progress', 'a second trigger while the job is still pending is rejected'
 );
 
--- 4: nach Abschluss ueberschreibt ein neuer Lauf denselben Job (keine Historie) und erhoeht die Revision.
+-- 5: nach Abschluss ueberschreibt ein neuer Lauf denselben Job (keine Historie) und erhoeht die Revision.
 update public.brand_website_analysis_jobs set status = 'succeeded' where organization_id = '68000000-1000-4000-8000-000000000001';
 select public.start_brand_website_analysis('68000000-1000-4000-8000-000000000001', 'https://verein.example.org/neu', '68000000-0000-4000-8000-000000000001');
 select is((select count(*)::integer from public.brand_website_analysis_jobs where organization_id = '68000000-1000-4000-8000-000000000001'), 1,
@@ -56,7 +67,7 @@ select is((select revision from public.brand_website_analysis_jobs where organiz
 select is((select count(*)::integer from public.workflow_outbox where workflow_name = 'analyze-website-branding' and organization_id = '68000000-1000-4000-8000-000000000001'), 2,
   'the second run inserts its own outbox row (distinct source_revision keeps the unique constraint satisfied)');
 
--- 5-6: keine Schreibrechte fuer authenticated -- nur der Weg ueber die RPC/den Worker.
+-- 6-7: keine Schreibrechte fuer authenticated -- nur der Weg ueber die RPC/den Worker.
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '68000000-0000-4000-8000-000000000001', true);
 select throws_ok(
@@ -69,7 +80,7 @@ select throws_ok(
   '42501', null, 'authenticated cannot call start_brand_website_analysis directly -- only service_role may'
 );
 
--- 7-9: Sichtbarkeit -- nur wer organization.manage hat, sieht den Job; kein Fremdverein.
+-- 8-10: Sichtbarkeit -- nur wer organization.manage hat, sieht den Job; kein Fremdverein.
 select is((select count(*)::integer from public.brand_website_analysis_jobs where organization_id = '68000000-1000-4000-8000-000000000001'), 1,
   'the organization admin sees their own club''s analysis job');
 select set_config('request.jwt.claim.sub', '68000000-0000-4000-8000-000000000002', true);

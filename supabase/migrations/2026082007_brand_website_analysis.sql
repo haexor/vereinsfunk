@@ -7,7 +7,17 @@ begin;
 -- apps/api/src/routes/llmProviders.routes.ts), bis der Worker-Adapter tatsaechlich existiert.
 alter table public.llm_provider_configurations drop constraint llm_provider_configurations_task_kind_check;
 alter table public.llm_provider_configurations add constraint llm_provider_configurations_task_kind_check
-  check (task_kind in ('text_generation', 'image_generation', 'video_generation', 'vision_analysis'));
+  check (task_kind in ('text_generation', 'image_generation', 'video_generation', 'vision_analysis')) not valid;
+
+commit;
+
+-- NOT VALID oben haelt die Ersetzung des CHECK-Constraints selbst kurz; die anschliessende
+-- VALIDATE (vollstaendiger Tabellenscan) braucht nur eine SHARE UPDATE EXCLUSIVE-Sperre und
+-- blockiert damit -- anders als ein direkt validierter CHECK -- keine gleichzeitigen Schreibzugriffe
+-- auf llm_provider_configurations (gleiches Muster wie 2026081101_workflow_outbox_dispatch.sql).
+alter table public.llm_provider_configurations validate constraint llm_provider_configurations_task_kind_check;
+
+begin;
 
 -- Ein Job pro Verein (kein Verlauf): jeder neue "Analyse starten"-Klick ueberschreibt den letzten.
 -- requested_by referenziert profiles(id) wie an anderer Stelle (z.B. brand_assets.created_by).
@@ -53,6 +63,31 @@ declare
   next_revision integer;
   v_correlation_id uuid := gen_random_uuid();
 begin
+  -- p_requested_by kommt vom Aufrufer (der service_role-Route), nicht aus auth.uid() -- die
+  -- Fremdschluessel-Referenz auf profiles(id) allein wuerde nicht verhindern, dass ein Profil eines
+  -- fremden Vereins hier als Ausloeser eingetragen wird. Dieselbe Pruefung wie in
+  -- accept_text_generation_candidate (organization_/department_/team_memberships statt eines
+  -- zusammengesetzten Fremdschluessels, weil Mitgliedschaft ablaufen kann).
+  if not exists (
+    select 1 from public.organization_memberships membership
+      where membership.organization_id = p_organization_id and membership.user_id = p_requested_by
+        and (membership.expires_at is null or membership.expires_at > now())
+    union all
+    select 1 from public.department_memberships membership
+      where membership.organization_id = p_organization_id and membership.user_id = p_requested_by
+        and (membership.expires_at is null or membership.expires_at > now())
+    union all
+    select 1 from public.team_memberships membership
+      where membership.organization_id = p_organization_id and membership.user_id = p_requested_by
+        and (membership.expires_at is null or membership.expires_at > now())
+  ) then raise exception 'requested_by_not_organization_member'; end if;
+
+  -- Beim allerersten Lauf fuer diesen Verein gibt es noch keine Zeile, auf die "for update" unten
+  -- eine Sperre legen koennte -- zwei gleichzeitige Erst-Trigger wuerden sonst beide "found = false"
+  -- sehen und beide eine eigene workflow_outbox-Zeile anlegen. Der Advisory-Lock serialisiert das,
+  -- unabhaengig davon, ob die Jobzeile schon existiert (gleiches Muster wie
+  -- create_text_generation_session, 2026081912_generation_candidate_ensemble_fan_out.sql).
+  perform pg_advisory_xact_lock(hashtextextended(p_organization_id::text, 0));
   select * into job_row from public.brand_website_analysis_jobs where organization_id = p_organization_id for update;
   if found and job_row.status in ('pending', 'running') then raise exception 'analysis_in_progress'; end if;
 
