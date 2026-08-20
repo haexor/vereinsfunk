@@ -52,7 +52,10 @@ if (collisions.length > 0) {
   process.exit(1)
 }
 
-const baseRef = process.env.MIGRATION_CHECK_BASE_REF ?? 'origin/main'
+// '||' statt '??': images.yml setzt die Variable in Faellen, wo sie nicht gilt (Tag-Push,
+// workflow_dispatch), auf einen leeren String statt sie wegzulassen -- der soll denselben
+// Fallback wie "gar nicht gesetzt" nehmen.
+const baseRef = process.env.MIGRATION_CHECK_BASE_REF || 'origin/main'
 
 function migrationsAtRef(ref) {
   try {
