@@ -42,6 +42,7 @@ const FRAME_STYLE_OPTIONS: { value: ImageStyleFrameStyle; label: string }[] = [
   { value: 'double', label: 'Doppelrand' },
   { value: 'corner_marks', label: 'Eckmarken' },
   { value: 'bottom_bar', label: 'Farbbalken' },
+  { value: 'festlich', label: 'Festlich (Gold)' },
 ]
 // Feste, kleine Breite fuer die Galerie-Kacheln statt des tatsaechlich eingestellten
 // frameWidthPx (der bis zu 200px reichen kann) -- die Kacheln sollen die RahmenFORM
@@ -142,18 +143,19 @@ const isValid = computed(() => {
       </div>
 
       <div v-if="draft.frameType === 'parametric'" class="mt-4 space-y-3">
-        <div class="grid grid-cols-4 gap-2">
+        <div class="grid grid-cols-3 gap-2">
           <button v-for="option in FRAME_STYLE_OPTIONS" :key="option.value" type="button" class="focus-ring space-y-1 rounded-lg p-1.5" :class="draft.frameStyle === option.value ? 'bg-forest' : 'bg-[#eef1ea]'" @click="setFrameStyle(option.value)">
             <ImageStyleFramePreview :frame-style="option.value" :width-px="GALLERY_PREVIEW_WIDTH_PX" :color-hex="resolvedFrameColorHex" class="rounded-md" />
             <span class="block text-center text-[10px] font-semibold" :class="draft.frameStyle === option.value ? 'text-white' : 'text-[#5b625d]'">{{ option.label }}</span>
           </button>
         </div>
-        <div class="flex flex-wrap items-center gap-2">
+        <div v-if="draft.frameStyle !== 'festlich'" class="flex flex-wrap items-center gap-2">
           <button type="button" class="focus-ring rounded-lg px-3 py-1.5 text-[11px] font-semibold" :class="frameColorMode === 'primary' ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'" @click="setFrameColorMode('primary')">Vereinsfarbe</button>
           <button type="button" class="focus-ring rounded-lg px-3 py-1.5 text-[11px] font-semibold" :class="frameColorMode === 'accent' ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'" @click="setFrameColorMode('accent')">Akzentfarbe</button>
           <button type="button" class="focus-ring rounded-lg px-3 py-1.5 text-[11px] font-semibold" :class="frameColorMode === 'custom' ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'" @click="setFrameColorMode('custom')">Eigene Farbe</button>
           <input v-if="frameColorMode === 'custom'" :value="draft.frameColor" type="color" class="h-8 w-8 rounded border-0" @input="draft.frameColor = ($event.target as HTMLInputElement).value" />
         </div>
+        <p v-else class="text-[11px] text-[#9aa096]">Der festliche Rahmen ist immer golden, unabhängig von der Vereinsfarbe.</p>
         <label class="block text-xs font-semibold text-[#5c655f]">Breite (px)
           <input :value="draft.frameWidthPx ?? ''" type="number" min="1" max="200" class="focus-ring mt-1 w-32 rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" @input="draft.frameWidthPx = nullableNumberFromInput($event)" />
         </label>

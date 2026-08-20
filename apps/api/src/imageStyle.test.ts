@@ -243,6 +243,26 @@ describe('renderImageStyle: Rahmenstile', () => {
     expect(untouched.b).toBe(255)
   })
 
+  it('festlich zeichnet einen goldenen Rahmen unabhaengig von frameColor und laesst das Foto in der Mitte unberuehrt', async () => {
+    const source = await solidColorImage(60, 60, { r: 0, g: 0, b: 255 })
+    const result = await renderImageStyle({
+      sourceBuffer: source,
+      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameStyle: 'festlich', frameColor: '#00ff00', frameWidthPx: 6, frameCornerRadiusPx: null },
+      brandColors: BRAND_COLORS,
+    })
+    expect(result.width).toBe(72)
+    expect(result.height).toBe(72)
+    const border = await pixelAt(result.buffer, 2, 2)
+    expect(border.a).toBe(255)
+    // golden statt frameColor (gruen) oder eine der Markenfarben -- warmer Farbton (Rot/Gruen ueber Blau).
+    expect(border.r).toBeGreaterThan(border.b)
+    expect(border.g).toBeGreaterThan(border.b)
+    expect(border.g).not.toBe(255)
+    const center = await pixelAt(result.buffer, 36, 36)
+    expect(center.r).toBe(0)
+    expect(center.b).toBe(255)
+  })
+
   it('bottom_bar setzt einen deutlich dickeren Balken unten als oben/links/rechts', async () => {
     const source = await solidColorImage(20, 20, { r: 0, g: 0, b: 255 })
     const result = await renderImageStyle({

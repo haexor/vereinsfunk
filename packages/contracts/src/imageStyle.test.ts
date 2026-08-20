@@ -66,7 +66,7 @@ describe('image style preset contracts (Plan 045, PR 1)', () => {
   })
 
   it('accepts every frame style with frameColor and frameWidthPx', () => {
-    for (const frameStyle of ['solid', 'double', 'corner_marks', 'bottom_bar'] as const) {
+    for (const frameStyle of ['solid', 'double', 'corner_marks', 'bottom_bar', 'festlich'] as const) {
       expect(
         CreateImageStylePresetRequestSchema.safeParse({
           ...baseFields, organizationId: org, frameType: 'parametric', frameStyle, frameColor: 'primary', frameWidthPx: 8,

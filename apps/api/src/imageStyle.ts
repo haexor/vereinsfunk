@@ -166,6 +166,49 @@ async function applyBottomBarFrameStyle(buffer: Buffer, colorHex: string, widthP
     .toBuffer()
 }
 
+// Gleichmaessig verteilte Mittelpunkte entlang einer Kante der Laenge `length`, mit `spacing`
+// zwischen den Mittelpunkten und einem halben Abstand Rand links/rechts.
+function beadOffsets(length: number, spacing: number): number[] {
+  const count = Math.max(0, Math.floor(length / spacing))
+  return Array.from({ length: count }, (_, index) => spacing / 2 + index * spacing)
+}
+
+// "Festlich": bewusst fest golden statt frameColor -- ein Vereinsfoto in Vereinsfarbe waere kein
+// Goldrahmen mehr. Goldverlauf per SVG-Gradient (sharp kennt keinen eigenen Metallic-Filter) plus
+// ein umlaufendes Perlband als Verzierung, je Kante einzeln platziert statt per SVG-<pattern> --
+// ein achsengebundenes Pattern wuerde auf den senkrechten Kanten falsch orientiert kacheln.
+async function applyFestlichFrameStyle(buffer: Buffer, widthPx: number): Promise<Buffer> {
+  const extended = await sharp(buffer)
+    .extend({ top: widthPx, bottom: widthPx, left: widthPx, right: widthPx, background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .toBuffer()
+  const metadata = await sharp(extended).metadata()
+  const width = metadata.width
+  const height = metadata.height
+  if (!width || !height) throw new Error('cannot determine image dimensions for festlich frame')
+
+  const ringPath = `M0,0 H${width} V${height} H0 Z M${widthPx},${widthPx} H${width - widthPx} V${height - widthPx} H${widthPx} Z`
+  const beadRadius = Math.max(1, widthPx * 0.28)
+  const beadSpacing = beadRadius * 3.2
+  const centerline = widthPx / 2
+  const beads = [
+    ...beadOffsets(width, beadSpacing).flatMap((x) => [
+      `<circle cx="${x}" cy="${centerline}" r="${beadRadius}" fill="#5c4413"/>`,
+      `<circle cx="${x}" cy="${height - centerline}" r="${beadRadius}" fill="#5c4413"/>`,
+    ]),
+    ...beadOffsets(height, beadSpacing).flatMap((y) => [
+      `<circle cx="${centerline}" cy="${y}" r="${beadRadius}" fill="#5c4413"/>`,
+      `<circle cx="${width - centerline}" cy="${y}" r="${beadRadius}" fill="#5c4413"/>`,
+    ]),
+  ].join('')
+  const svg = `<svg width="${width}" height="${height}">` +
+    `<defs><linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">` +
+    `<stop offset="0%" stop-color="#7a5c1e"/><stop offset="20%" stop-color="#d4af37"/>` +
+    `<stop offset="45%" stop-color="#fbe8a6"/><stop offset="65%" stop-color="#d4af37"/>` +
+    `<stop offset="100%" stop-color="#7a5c1e"/></linearGradient></defs>` +
+    `<path fill-rule="evenodd" fill="url(#gold)" d="${ringPath}"/>${beads}</svg>`
+  return sharp(extended).composite([{ input: Buffer.from(svg), blend: 'over' }]).png().toBuffer()
+}
+
 async function applyParametricFrame(buffer: Buffer, style: ImageStyleFrameStyle, colorHex: string, widthPx: number): Promise<Buffer> {
   switch (style) {
     case 'solid':
@@ -176,6 +219,8 @@ async function applyParametricFrame(buffer: Buffer, style: ImageStyleFrameStyle,
       return applyCornerMarksFrameStyle(buffer, colorHex, widthPx)
     case 'bottom_bar':
       return applyBottomBarFrameStyle(buffer, colorHex, widthPx)
+    case 'festlich':
+      return applyFestlichFrameStyle(buffer, widthPx)
   }
 }
 

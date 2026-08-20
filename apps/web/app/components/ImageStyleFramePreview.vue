@@ -30,6 +30,11 @@ const frameStyleObject = computed(() => {
       return { borderStyle: 'double', borderWidth: `${Math.max(w, 3) * 3}px`, borderColor: color }
     case 'bottom_bar':
       return { borderStyle: 'solid', borderWidth: `${w}px ${w}px ${w * 4}px ${w}px`, borderColor: color }
+    // Ignoriert bewusst colorHex, wie die serverseitige Rendering-Logik (applyFestlichFrameStyle) --
+    // border-image statt border-color, weil CSS keinen Gradient als borderColor kennt. Das Perlband
+    // selbst wird hier nicht nachgebildet, die Naeherung beschraenkt sich auf den Goldverlauf.
+    case 'festlich':
+      return { borderStyle: 'solid', borderWidth: `${w}px`, borderImage: 'linear-gradient(135deg, #7a5c1e, #d4af37 20%, #fbe8a6 45%, #d4af37 65%, #7a5c1e) 1' }
     case 'corner_marks':
     case null:
       return {}

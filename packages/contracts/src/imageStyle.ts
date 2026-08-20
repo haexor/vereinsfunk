@@ -6,9 +6,10 @@ import { UuidSchema } from './content.js'
 // statt eines Singleton-Profils je Ebene, siehe supabase/migrations/2026081916_image_style_presets.sql.
 export const ImageStyleFrameTypeSchema = z.enum(['none', 'parametric', 'custom'])
 // Bildstil-Nachbesserung: mehrere fertige visuelle Stile fuer den parametrischen Rahmen statt nur
-// eines Vollrands -- weiterhin ausschliesslich ueber frameColor/frameWidthPx parametrisiert, siehe
-// supabase/migrations/2026082001_image_style_presets_frame_style.sql.
-export const ImageStyleFrameStyleSchema = z.enum(['solid', 'double', 'corner_marks', 'bottom_bar'])
+// eines Vollrands -- ueber frameColor/frameWidthPx parametrisiert, siehe
+// supabase/migrations/2026082001_image_style_presets_frame_style.sql. 'festlich' ist die
+// Ausnahme: bewusst fest golden, ignoriert frameColor (supabase/migrations/2026082003_...).
+export const ImageStyleFrameStyleSchema = z.enum(['solid', 'double', 'corner_marks', 'bottom_bar', 'festlich'])
 export const ImageStyleFilterSchema = z.enum(['original', 'schwarz_weiss', 'kontrastreich', 'warm', 'vereinsfarben_duoton'])
 export const ImageStyleLogoPositionSchema = z.enum(['bottom_right', 'bottom_left', 'top_right', 'top_left', 'center'])
 
