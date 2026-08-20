@@ -6,6 +6,7 @@ const BRAND_COLORS = { primaryColor: '#163a2c', accentColor: '#caff4a' }
 
 const NO_STYLE_PRESET = {
   frameType: 'none' as const,
+  frameStyle: null,
   frameColor: null,
   frameWidthPx: null,
   frameCornerRadiusPx: null,
@@ -123,7 +124,7 @@ describe('renderImageStyle: Rahmen', () => {
     const source = await solidColorImage(20, 20, { r: 0, g: 255, b: 0 })
     const result = await renderImageStyle({
       sourceBuffer: source,
-      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameColor: '#ff0000', frameWidthPx: 10, frameCornerRadiusPx: null },
+      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameStyle: 'solid', frameColor: '#ff0000', frameWidthPx: 10, frameCornerRadiusPx: null },
       brandColors: BRAND_COLORS,
     })
     expect(result.width).toBe(40)
@@ -140,7 +141,7 @@ describe('renderImageStyle: Rahmen', () => {
     const source = await solidColorImage(10, 10, { r: 0, g: 0, b: 0 })
     const result = await renderImageStyle({
       sourceBuffer: source,
-      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameColor: 'accent', frameWidthPx: 4, frameCornerRadiusPx: null },
+      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameStyle: 'solid', frameColor: 'accent', frameWidthPx: 4, frameCornerRadiusPx: null },
       brandColors: BRAND_COLORS,
     })
     const border = await pixelAt(result.buffer, 1, 1)
@@ -153,7 +154,7 @@ describe('renderImageStyle: Rahmen', () => {
     const source = await solidColorImage(40, 40, { r: 10, g: 10, b: 10 })
     const result = await renderImageStyle({
       sourceBuffer: source,
-      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameColor: '#000000', frameWidthPx: 5, frameCornerRadiusPx: 15 },
+      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameStyle: 'solid', frameColor: '#000000', frameWidthPx: 5, frameCornerRadiusPx: 15 },
       brandColors: BRAND_COLORS,
     })
     const corner = await pixelAt(result.buffer, 0, 0)
@@ -198,6 +199,104 @@ describe('renderImageStyle: Rahmen', () => {
     expect(corner.a!).toBeLessThan(50)
     const center = await pixelAt(result.buffer, 20, 20)
     expect(center.a).toBe(255)
+  })
+})
+
+describe('renderImageStyle: Rahmenstile', () => {
+  it('double zeichnet zwei Ringe mit sichtbarer Luecke, ohne das Foto zu beruehren', async () => {
+    const source = await solidColorImage(60, 60, { r: 0, g: 255, b: 0 })
+    const result = await renderImageStyle({
+      sourceBuffer: source,
+      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameStyle: 'double', frameColor: '#ff0000', frameWidthPx: 9, frameCornerRadiusPx: null },
+      brandColors: BRAND_COLORS,
+    })
+    expect(result.width).toBe(78)
+    expect(result.height).toBe(78)
+    const outerRing = await pixelAt(result.buffer, 1, 1)
+    expect(outerRing.r).toBe(255)
+    expect(outerRing.g).toBe(0)
+    const gap = await pixelAt(result.buffer, 4, 4)
+    expect(gap.a).not.toBeNull()
+    expect(gap.a!).toBeLessThan(50)
+    const innerRing = await pixelAt(result.buffer, 7, 7)
+    expect(innerRing.r).toBe(255)
+    expect(innerRing.g).toBe(0)
+    const center = await pixelAt(result.buffer, 39, 39)
+    expect(center.r).toBe(0)
+    expect(center.g).toBe(255)
+  })
+
+  it('corner_marks setzt Eckklammern, laesst die Bildmitte und den Rand dazwischen unberuehrt', async () => {
+    const source = await solidColorImage(40, 40, { r: 0, g: 0, b: 255 })
+    const result = await renderImageStyle({
+      sourceBuffer: source,
+      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameStyle: 'corner_marks', frameColor: '#ff0000', frameWidthPx: 5, frameCornerRadiusPx: null },
+      brandColors: BRAND_COLORS,
+    })
+    expect(result.width).toBe(40)
+    expect(result.height).toBe(40)
+    const mark = await pixelAt(result.buffer, 2, 2)
+    expect(mark.r).toBe(255)
+    expect(mark.g).toBe(0)
+    const untouched = await pixelAt(result.buffer, 20, 20)
+    expect(untouched.r).toBe(0)
+    expect(untouched.b).toBe(255)
+  })
+
+  // Regression: frameWidthPx darf laut Contract bis 200 reichen. Ohne Obergrenze relativ zur
+  // Bildgroesse wuerde das die Marken auf einem kleinen Foto ueber die Mitte hinaus wachsen lassen.
+  it('corner_marks begrenzt Dicke und Laenge auf ein kleines Foto, statt es vollstaendig zu bedecken', async () => {
+    const source = await solidColorImage(40, 40, { r: 0, g: 0, b: 255 })
+    const result = await renderImageStyle({
+      sourceBuffer: source,
+      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameStyle: 'corner_marks', frameColor: '#ff0000', frameWidthPx: 200, frameCornerRadiusPx: null },
+      brandColors: BRAND_COLORS,
+    })
+    expect(result.width).toBe(40)
+    expect(result.height).toBe(40)
+    const center = await pixelAt(result.buffer, 20, 20)
+    expect(center.r).toBe(0)
+    expect(center.b).toBe(255)
+  })
+
+  it('festlich zeichnet einen goldenen Rahmen unabhaengig von frameColor und laesst das Foto in der Mitte unberuehrt', async () => {
+    const source = await solidColorImage(60, 60, { r: 0, g: 0, b: 255 })
+    const result = await renderImageStyle({
+      sourceBuffer: source,
+      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameStyle: 'festlich', frameColor: '#00ff00', frameWidthPx: 6, frameCornerRadiusPx: null },
+      brandColors: BRAND_COLORS,
+    })
+    expect(result.width).toBe(72)
+    expect(result.height).toBe(72)
+    const border = await pixelAt(result.buffer, 2, 2)
+    expect(border.a).toBe(255)
+    // golden statt frameColor (gruen) oder eine der Markenfarben -- warmer Farbton (Rot/Gruen ueber Blau).
+    expect(border.r).toBeGreaterThan(border.b)
+    expect(border.g).toBeGreaterThan(border.b)
+    expect(border.g).not.toBe(255)
+    const center = await pixelAt(result.buffer, 36, 36)
+    expect(center.r).toBe(0)
+    expect(center.b).toBe(255)
+  })
+
+  it('bottom_bar setzt einen deutlich dickeren Balken unten als oben/links/rechts', async () => {
+    const source = await solidColorImage(20, 20, { r: 0, g: 0, b: 255 })
+    const result = await renderImageStyle({
+      sourceBuffer: source,
+      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameStyle: 'bottom_bar', frameColor: '#ff0000', frameWidthPx: 4, frameCornerRadiusPx: null },
+      brandColors: BRAND_COLORS,
+    })
+    expect(result.width).toBe(28)
+    expect(result.height).toBe(40)
+    const top = await pixelAt(result.buffer, 14, 1)
+    expect(top.r).toBe(255)
+    expect(top.g).toBe(0)
+    const bottom = await pixelAt(result.buffer, 14, 30)
+    expect(bottom.r).toBe(255)
+    expect(bottom.g).toBe(0)
+    const center = await pixelAt(result.buffer, 14, 14)
+    expect(center.r).toBe(0)
+    expect(center.b).toBe(255)
   })
 })
 
@@ -266,7 +365,7 @@ describe('renderImageStyle: Kombinationen', () => {
     const result = await renderImageStyle({
       sourceBuffer: source,
       preset: {
-        frameType: 'parametric', frameColor: '#00ff00', frameWidthPx: 5, frameCornerRadiusPx: null,
+        frameType: 'parametric', frameStyle: 'solid', frameColor: '#00ff00', frameWidthPx: 5, frameCornerRadiusPx: null,
         logoEnabled: true, logoPosition: 'top_left', logoSizePercent: 20, logoMarginPercent: 0,
         filter: 'schwarz_weiss',
       },
@@ -305,7 +404,7 @@ describe('renderImageStyle: Ausgabeformat', () => {
     const source = await photoJpeg(600, 400)
     const result = await renderImageStyle({
       sourceBuffer: source,
-      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameColor: '#ff0000', frameWidthPx: 10 },
+      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameStyle: 'solid', frameColor: '#ff0000', frameWidthPx: 10 },
       brandColors: BRAND_COLORS,
     })
     expect(result.contentType).toBe('image/jpeg')
@@ -317,7 +416,7 @@ describe('renderImageStyle: Ausgabeformat', () => {
     const source = await photoJpeg(200, 200)
     const result = await renderImageStyle({
       sourceBuffer: source,
-      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameColor: '#ff0000', frameWidthPx: 5, frameCornerRadiusPx: 20 },
+      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameStyle: 'solid', frameColor: '#ff0000', frameWidthPx: 5, frameCornerRadiusPx: 20 },
       brandColors: BRAND_COLORS,
     })
     expect(result.contentType).toBe('image/png')

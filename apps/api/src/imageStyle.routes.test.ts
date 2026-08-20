@@ -6,10 +6,12 @@ import type { SupabaseClientFactory } from './app.js'
 
 const PRESET_ID = '47000000-0000-4000-8000-000000000001'
 const FRAME_ASSET_ID = '47000000-0000-4000-8000-000000000002'
+const LOGO_ASSET_ID = '47000000-0000-4000-8000-000000000003'
 
 const BASE_FIELDS = {
   name: 'Standard',
   frameType: 'none' as const,
+  frameStyle: null,
   frameColor: null,
   frameWidthPx: null,
   frameCornerRadiusPx: null,
@@ -25,7 +27,7 @@ const BASE_FIELDS = {
 const PRESET_ROW = {
   id: PRESET_ID, organization_id: ORGANIZATION_ID, department_id: null, team_id: null,
   name: 'Standard', is_active: true,
-  frame_type: 'none', frame_color: null, frame_width_px: null, frame_corner_radius_px: null, frame_brand_asset_id: null,
+  frame_type: 'none', frame_style: null, frame_color: null, frame_width_px: null, frame_corner_radius_px: null, frame_brand_asset_id: null,
   logo_enabled: false, logo_brand_asset_id: null, logo_position: 'bottom_right', logo_size_percent: null, logo_margin_percent: null,
   filter: 'original', created_by: USER_ID, created_at: '2026-08-19T10:00:00+00:00', updated_at: '2026-08-19T10:00:00+00:00',
 }
@@ -115,6 +117,30 @@ describe('POST /v1/image-style-presets', () => {
     })
     expect(response.statusCode).toBe(400)
     expect(response.json()).toMatchObject({ error: 'invalid_asset_reference' })
+  })
+
+  // logo_brand_asset_id ist nicht mehr auf kind='watermark' gepinnt (2026082002) -- jede
+  // Logovariante aus LOGO_ASSET_KINDS ist waehlbar, u.a. das ueber die Marke-Seite hochgeladene
+  // Hauptlogo (kind='logo_primary'/'logo_dark').
+  it('accepts a logoBrandAssetId that references the main logo instead of a dedicated watermark upload', async () => {
+    const updatedRow = { ...PRESET_ROW, logo_enabled: true, logo_brand_asset_id: LOGO_ASSET_ID, logo_size_percent: 12, logo_margin_percent: 4 }
+    let insertedPayload: Record<string, unknown> | undefined
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        userClient({
+          brand_assets: chain({ data: { id: LOGO_ASSET_ID, kind: 'logo_primary', department_id: null, team_id: null, status: 'ready' }, error: null }),
+          image_style_presets: { insert: (payload: Record<string, unknown>) => { insertedPayload = payload; return chain({ data: updatedRow, error: null }) } },
+        }),
+      forService: () => ({ from: () => ({ insert: async () => ({ error: null }) }) }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST', url: '/v1/image-style-presets', headers: { authorization: `Bearer ${token}` },
+      payload: { ...BASE_FIELDS, organizationId: ORGANIZATION_ID, logoEnabled: true, logoBrandAssetId: LOGO_ASSET_ID, logoSizePercent: 12, logoMarginPercent: 4 },
+    })
+    expect(response.statusCode).toBe(201)
+    expect(insertedPayload).toMatchObject({ logo_brand_asset_id: LOGO_ASSET_ID })
   })
 })
 

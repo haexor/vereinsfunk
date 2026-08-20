@@ -53,7 +53,10 @@ export async function loadSelectableBrandAsset(
   return { id: result.data.id as string, kind: result.data.kind as string }
 }
 
-const LOGO_ASSET_KINDS = new Set(['logo_primary', 'logo_light', 'logo_dark', 'logo_mark', 'wordmark', 'watermark'])
+// Exportiert, weil apps/api/src/routes/imageStyle.ts (Bildstil-Nachbesserung) dieselbe Menge
+// braucht: logo_brand_asset_id ist seit der Lockerung des Fremdschluessels (2026082002) nicht mehr
+// auf kind='watermark' gepinnt, sondern akzeptiert jede hier gelistete Logovariante.
+export const LOGO_ASSET_KINDS = new Set(['logo_primary', 'logo_light', 'logo_dark', 'logo_mark', 'wordmark', 'watermark'])
 
 export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients } = context

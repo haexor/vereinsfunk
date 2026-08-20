@@ -5,6 +5,7 @@ import { department, org, team } from './testFixtures.js'
 const baseFields = {
   name: 'Standard',
   frameType: 'none' as const,
+  frameStyle: null,
   frameColor: null,
   frameWidthPx: null,
   frameCornerRadiusPx: null,
@@ -31,21 +32,47 @@ describe('image style preset contracts (Plan 045, PR 1)', () => {
   })
 
   it('rejects a parametric frame without frameColor and frameWidthPx', () => {
-    expect(CreateImageStylePresetRequestSchema.safeParse({ ...baseFields, organizationId: org, frameType: 'parametric' }).success).toBe(false)
+    expect(
+      CreateImageStylePresetRequestSchema.safeParse({ ...baseFields, organizationId: org, frameType: 'parametric', frameStyle: 'solid' }).success,
+    ).toBe(false)
   })
 
-  it('accepts a parametric frame with frameColor and frameWidthPx', () => {
+  it('accepts a parametric frame with frameColor, frameWidthPx and frameStyle', () => {
     expect(
-      CreateImageStylePresetRequestSchema.safeParse({ ...baseFields, organizationId: org, frameType: 'parametric', frameColor: '#163a2c', frameWidthPx: 8 })
-        .success,
+      CreateImageStylePresetRequestSchema.safeParse({
+        ...baseFields, organizationId: org, frameType: 'parametric', frameStyle: 'solid', frameColor: '#163a2c', frameWidthPx: 8,
+      }).success,
     ).toBe(true)
   })
 
   it('accepts a role-based frame color', () => {
     expect(
-      CreateImageStylePresetRequestSchema.safeParse({ ...baseFields, organizationId: org, frameType: 'parametric', frameColor: 'primary', frameWidthPx: 8 })
-        .success,
+      CreateImageStylePresetRequestSchema.safeParse({
+        ...baseFields, organizationId: org, frameType: 'parametric', frameStyle: 'solid', frameColor: 'primary', frameWidthPx: 8,
+      }).success,
     ).toBe(true)
+  })
+
+  it('rejects a parametric frame without frameStyle', () => {
+    expect(
+      CreateImageStylePresetRequestSchema.safeParse({
+        ...baseFields, organizationId: org, frameType: 'parametric', frameColor: 'primary', frameWidthPx: 8,
+      }).success,
+    ).toBe(false)
+  })
+
+  it('rejects frameStyle set while frameType is not parametric', () => {
+    expect(CreateImageStylePresetRequestSchema.safeParse({ ...baseFields, organizationId: org, frameStyle: 'double' }).success).toBe(false)
+  })
+
+  it('accepts every frame style with frameColor and frameWidthPx', () => {
+    for (const frameStyle of ['solid', 'double', 'corner_marks', 'bottom_bar', 'festlich'] as const) {
+      expect(
+        CreateImageStylePresetRequestSchema.safeParse({
+          ...baseFields, organizationId: org, frameType: 'parametric', frameStyle, frameColor: 'primary', frameWidthPx: 8,
+        }).success,
+      ).toBe(true)
+    }
   })
 
   it('rejects a custom frame without frameBrandAssetId', () => {

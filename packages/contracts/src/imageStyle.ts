@@ -5,6 +5,11 @@ import { UuidSchema } from './content.js'
 // mehrschichtig wie Marke (Verein/Abteilung/Mannschaft), aber ein eigener Datensatz je Preset
 // statt eines Singleton-Profils je Ebene, siehe supabase/migrations/2026081916_image_style_presets.sql.
 export const ImageStyleFrameTypeSchema = z.enum(['none', 'parametric', 'custom'])
+// Bildstil-Nachbesserung: mehrere fertige visuelle Stile fuer den parametrischen Rahmen statt nur
+// eines Vollrands -- ueber frameColor/frameWidthPx parametrisiert, siehe
+// supabase/migrations/2026082001_image_style_presets_frame_style.sql. 'festlich' ist die
+// Ausnahme: bewusst fest golden, ignoriert frameColor (supabase/migrations/2026082003_...).
+export const ImageStyleFrameStyleSchema = z.enum(['solid', 'double', 'corner_marks', 'bottom_bar', 'festlich'])
 export const ImageStyleFilterSchema = z.enum(['original', 'schwarz_weiss', 'kontrastreich', 'warm', 'vereinsfarben_duoton'])
 export const ImageStyleLogoPositionSchema = z.enum(['bottom_right', 'bottom_left', 'top_right', 'top_left', 'center'])
 
@@ -17,6 +22,7 @@ const HexOrRoleColorSchema = z.union([z.string().regex(/^#[0-9a-fA-F]{6}$/), z.e
 const ImageStylePresetFieldsSchema = z.object({
   name: z.string().trim().min(1).max(80),
   frameType: ImageStyleFrameTypeSchema,
+  frameStyle: ImageStyleFrameStyleSchema.nullable(),
   frameColor: HexOrRoleColorSchema.nullable(),
   frameWidthPx: z.int().min(1).max(200).nullable(),
   frameCornerRadiusPx: z.int().min(0).max(200).nullable(),
@@ -38,6 +44,9 @@ const ImageStylePresetFieldsSchema = z.object({
 function checkImageStylePresetFields(preset: z.infer<typeof ImageStylePresetFieldsSchema>, context: z.RefinementCtx): void {
   if (preset.frameType === 'parametric' && (preset.frameColor === null || preset.frameWidthPx === null)) {
     context.addIssue({ code: 'custom', path: ['frameColor'], message: 'parametric frame requires frameColor and frameWidthPx' })
+  }
+  if ((preset.frameType === 'parametric') !== (preset.frameStyle !== null)) {
+    context.addIssue({ code: 'custom', path: ['frameStyle'], message: 'parametric frame requires frameStyle, other frame types must not set it' })
   }
   if ((preset.frameType === 'custom') !== (preset.frameBrandAssetId !== null)) {
     context.addIssue({ code: 'custom', path: ['frameBrandAssetId'], message: 'custom frame requires frameBrandAssetId, other frame types must not set it' })
@@ -88,6 +97,7 @@ export const ApplyImageStyleRenderResponseSchema = z.object({
 })
 
 export type ImageStyleFrameType = z.infer<typeof ImageStyleFrameTypeSchema>
+export type ImageStyleFrameStyle = z.infer<typeof ImageStyleFrameStyleSchema>
 export type ImageStyleFilter = z.infer<typeof ImageStyleFilterSchema>
 export type ImageStyleLogoPosition = z.infer<typeof ImageStyleLogoPositionSchema>
 export type ImageStylePreset = z.infer<typeof ImageStylePresetSchema>

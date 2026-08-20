@@ -4,7 +4,7 @@ import { selectableImageStylePresets } from './imageStylePresets'
 
 const BASE = {
   id: 'p', organizationId: 'org', isActive: true,
-  frameType: 'none' as const, frameColor: null, frameWidthPx: null, frameCornerRadiusPx: null, frameBrandAssetId: null,
+  frameType: 'none' as const, frameStyle: null, frameColor: null, frameWidthPx: null, frameCornerRadiusPx: null, frameBrandAssetId: null,
   logoEnabled: false, logoBrandAssetId: null, logoPosition: 'bottom_right' as const, logoSizePercent: null, logoMarginPercent: null,
   filter: 'original' as const, createdBy: 'user', createdAt: '2026-08-19T00:00:00.000+00:00', updatedAt: '2026-08-19T00:00:00.000+00:00',
 }
