@@ -68,7 +68,7 @@ export function mapImageStylePresetRow(row: Record<string, unknown>) {
   return {
     id: row.id, organizationId: row.organization_id, departmentId: row.department_id, teamId: row.team_id,
     name: row.name, isActive: row.is_active,
-    frameType: row.frame_type, frameColor: row.frame_color, frameWidthPx: row.frame_width_px,
+    frameType: row.frame_type, frameStyle: row.frame_style, frameColor: row.frame_color, frameWidthPx: row.frame_width_px,
     frameCornerRadiusPx: row.frame_corner_radius_px, frameBrandAssetId: row.frame_brand_asset_id,
     logoEnabled: row.logo_enabled, logoBrandAssetId: row.logo_brand_asset_id, logoPosition: row.logo_position,
     logoSizePercent: row.logo_size_percent, logoMarginPercent: row.logo_margin_percent,
