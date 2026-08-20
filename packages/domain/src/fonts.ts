@@ -30,9 +30,19 @@ export interface CuratedFontPairing {
   displayFontKey: string
   bodyFontKey: string
   label: string
+  // Paket 048: Text zur Wahl zwischen den beiden Paaren, wenn keine Person entscheidet -- etwa
+  // wenn die KI-Markenerkennung aus einer Homepage anhand des Stils der dort erkannten Schrift
+  // eines der beiden Paare vorschlagen soll, ohne selbst eine Fremdschrift laden zu duerfen.
+  styleDescription: string
 }
 
 export const curatedFontPairings: readonly CuratedFontPairing[] = [
-  { key: 'manrope_dm_sans', displayFontKey: 'manrope', bodyFontKey: 'dm_sans', label: 'Manrope / DM Sans' },
-  { key: 'space_grotesk_karla', displayFontKey: 'space_grotesk', bodyFontKey: 'karla', label: 'Space Grotesk / Karla' },
+  {
+    key: 'manrope_dm_sans', displayFontKey: 'manrope', bodyFontKey: 'dm_sans', label: 'Manrope / DM Sans',
+    styleDescription: 'klare, geometrische Sans-Serif, vielseitig und zurueckhaltend',
+  },
+  {
+    key: 'space_grotesk_karla', displayFontKey: 'space_grotesk', bodyFontKey: 'karla', label: 'Space Grotesk / Karla',
+    styleDescription: 'markante, geometrische Ueberschrift mit warmer, humanistischer Fliesstext-Schrift',
+  },
 ]
