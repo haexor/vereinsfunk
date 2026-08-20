@@ -16,7 +16,9 @@ export interface ProcessedLogo {
 }
 
 const MIN_DIMENSION_PX = 32
-const MAX_DIMENSION_PX = 4096
+// War 4096: ein aus einem Vektorprogramm exportiertes Logo bleibt bei grosser Pixelzahl haeufig
+// unter 1 MB Dateigroesse (viel transparente Flaeche), wurde hier aber schon abgelehnt.
+const MAX_DIMENSION_PX = 8192
 
 function looksLikeSvg(buffer: Buffer): boolean {
   const head = buffer.subarray(0, 512).toString('utf8').trimStart()
@@ -59,10 +61,10 @@ export async function processBrandLogoUpload(buffer: Buffer): Promise<ProcessedL
   const width = metadata.width ?? 0
   const height = metadata.height ?? 0
   if (width < MIN_DIMENSION_PX || height < MIN_DIMENSION_PX) {
-    throw new LogoDimensionsError('logo is smaller than the minimum required size')
+    throw new LogoDimensionsError(`logo is ${width}×${height}px, below the minimum of ${MIN_DIMENSION_PX}px per side`)
   }
   if (width > MAX_DIMENSION_PX || height > MAX_DIMENSION_PX) {
-    throw new LogoDimensionsError('logo exceeds the maximum allowed size')
+    throw new LogoDimensionsError(`logo is ${width}×${height}px, exceeding the maximum of ${MAX_DIMENSION_PX}px per side`)
   }
 
   // .rotate() bakes in the EXIF orientation; omitting .withMetadata() during re-encode

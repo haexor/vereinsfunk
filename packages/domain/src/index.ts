@@ -8,7 +8,7 @@ export * from './mediaGate.js'
 export * from './llmProviders.js'
 
 export { curatedFonts, curatedFontPairings, findCuratedFont, type CuratedFont, type CuratedFontPairing } from './fonts.js'
-export { contrastRatio, meetsMinimumContrast, type ContrastCheck } from './contrast.js'
+export { contrastRatio, meetsMinimumContrast, MINIMUM_AA_CONTRAST, type ContrastCheck } from './contrast.js'
 export {
   BRAND_LOCKABLE_FIELDS,
   resolveBrand,

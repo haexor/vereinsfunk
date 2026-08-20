@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { AlertTriangle, Check, LoaderCircle, Upload } from '@lucide/vue'
-import { BRAND_LOCKABLE_FIELDS, curatedFontPairings, meetsMinimumContrast, resolveBrand } from '@vereinsfunk/domain'
+import { BRAND_LOCKABLE_FIELDS, curatedFontPairings, meetsMinimumContrast, MINIMUM_AA_CONTRAST, resolveBrand } from '@vereinsfunk/domain'
 import { type BrandOrganizationState, type BrandScopeLevel, useBrandAssets } from '../composables/useBrandAssets'
 import { useBrandOverrides } from '../composables/useBrandOverrides'
+import { ApiRequestError } from '../utils/apiClient'
 
 type ScopeLevelName = BrandScopeLevel
 
@@ -162,8 +163,8 @@ const {
   assetSignedUrls,
   logoUrl,
   logoDarkUrl,
-  logoPreviewUrl,
-  logoVariant,
+  logoPreviewUrlLight,
+  logoPreviewUrlDark,
   sanitizedNotice,
   selectableLogoAssets,
   selectableFontAssets,
@@ -244,8 +245,10 @@ async function save() {
     else if (activeLevel.value === 'department' && activeDepartmentId.value) await saveDepartment(activeDepartmentId.value)
     else if (activeLevel.value === 'team' && activeTeamId.value) await saveTeam(activeTeamId.value)
     await loadAll()
-  } catch {
-    errorMessage.value = 'Die Marke konnte nicht gespeichert werden. Bitte erneut versuchen.'
+  } catch (error) {
+    errorMessage.value = error instanceof ApiRequestError && error.code === 'invalid_logo' && error.data.message
+      ? `Logo konnte nicht gespeichert werden: ${error.data.message}`
+      : 'Die Marke konnte nicht gespeichert werden. Bitte erneut versuchen.'
   } finally {
     saving.value = false
   }
@@ -292,7 +295,7 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
             <h2 class="font-display text-base font-bold">Logo</h2>
             <div class="mt-5 grid grid-cols-2 gap-4">
               <div class="rounded-2xl bg-white p-4 text-center">
-                <img v-if="logoPreviewUrl && logoVariant === 'light' || (!logoPreviewUrl && logoUrl)" :src="logoVariant === 'light' && logoPreviewUrl ? logoPreviewUrl : logoUrl" alt="Logo hell" class="mx-auto h-16 w-16 object-contain" />
+                <img v-if="logoPreviewUrlLight || logoUrl" :src="logoPreviewUrlLight || logoUrl" alt="Logo hell" class="mx-auto h-16 w-16 object-contain" />
                 <span v-else class="grid h-16 w-16 place-items-center rounded-xl bg-[#eef1ea] font-display text-lg font-extrabold text-[#5b625d] mx-auto">?</span>
                 <p class="mt-2 text-[10px] text-[#7b827d]">Auf hellem Grund</p>
                 <label class="focus-ring mt-2 flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-[#dfe0d9] px-2 py-1.5 text-[11px] font-semibold">
@@ -301,7 +304,7 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
                 </label>
               </div>
               <div class="rounded-2xl bg-ink p-4 text-center">
-                <img v-if="logoPreviewUrl && logoVariant === 'dark' || (!logoPreviewUrl && logoDarkUrl)" :src="logoVariant === 'dark' && logoPreviewUrl ? logoPreviewUrl : logoDarkUrl" alt="Logo dunkel" class="mx-auto h-16 w-16 object-contain" />
+                <img v-if="logoPreviewUrlDark || logoDarkUrl" :src="logoPreviewUrlDark || logoDarkUrl" alt="Logo dunkel" class="mx-auto h-16 w-16 object-contain" />
                 <span v-else class="grid h-16 w-16 place-items-center rounded-xl bg-white/10 font-display text-lg font-extrabold text-white mx-auto">?</span>
                 <p class="mt-2 text-[10px] text-white/60">Auf dunklem Grund</p>
                 <label class="focus-ring mt-2 flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-white/30 px-2 py-1.5 text-[11px] font-semibold text-white">
@@ -330,12 +333,12 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
                 </label>
               </div>
               <label class="mt-4 flex items-center gap-2 text-xs">
-                <input v-model="org.allowDepartmentOverrides" type="checkbox" class="accent-[#163a2c]" /> Abteilungen dürfen eigenes Branding führen
+                <input v-model="org.allowDepartmentOverrides" type="checkbox" class="h-4 w-4 accent-[#163a2c]" /> Abteilungen dürfen eigenes Branding führen
               </label>
               <div v-if="org.allowDepartmentOverrides" class="mt-3">
                 <p class="mb-2 text-[11px] font-semibold text-[#7b827d]">Felder für Abteilungen sperren:</p>
                 <label v-for="field in LOCKABLE_FIELDS" :key="field.key" class="mr-3 inline-flex items-center gap-1.5 text-[11px]">
-                  <input type="checkbox" class="accent-[#163a2c]" :checked="org.lockedFields.includes(field.key)" @change="($event.target as HTMLInputElement).checked ? org.lockedFields.push(field.key) : (org.lockedFields = org.lockedFields.filter((f) => f !== field.key))" />
+                  <input type="checkbox" class="h-4 w-4 accent-[#163a2c]" :checked="org.lockedFields.includes(field.key)" @change="($event.target as HTMLInputElement).checked ? org.lockedFields.push(field.key) : (org.lockedFields = org.lockedFields.filter((f) => f !== field.key))" />
                   {{ field.label }}
                 </label>
               </div>
@@ -356,7 +359,7 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
                 </label>
               </div>
               <label class="mt-4 flex items-center gap-2 text-xs">
-                <input v-model="activeDepartmentOverride.allowTeamOverrides" type="checkbox" class="accent-[#163a2c]" /> Mannschaften dürfen eigenes Branding führen
+                <input v-model="activeDepartmentOverride.allowTeamOverrides" type="checkbox" class="h-4 w-4 accent-[#163a2c]" /> Mannschaften dürfen eigenes Branding führen
               </label>
             </template>
             <template v-else-if="activeTeamOverride && activeLevel === 'team'">
@@ -376,10 +379,11 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
               </div>
             </template>
             <div class="mt-5 space-y-1.5 border-t border-[#eceee7] pt-4">
-              <div v-for="check in contrastChecks" :key="check.label" class="flex items-center justify-between text-[11px]">
+              <p class="mb-1 text-[11px] font-semibold text-[#7b827d]">Lesbarkeit (WCAG-AA-Kontrast, mind. {{ MINIMUM_AA_CONTRAST }}:1)</p>
+              <div v-for="check in contrastChecks" :key="check.label" class="flex items-center justify-between text-[11px]" :title="`Kontrastverhältnis ${check.ratio}:1 — WCAG AA verlangt mindestens ${MINIMUM_AA_CONTRAST}:1`">
                 <span class="text-[#7b827d]">{{ check.label }}</span>
                 <span class="flex items-center gap-1 font-semibold" :class="check.meetsAA ? 'text-emerald-700' : 'text-amber-800'">
-                  <AlertTriangle v-if="!check.meetsAA" :size="12" /> {{ check.ratio }}:1
+                  <AlertTriangle v-if="!check.meetsAA" :size="12" /> {{ check.ratio }}:1 · {{ check.meetsAA ? 'gut lesbar' : 'schwer lesbar' }}
                 </span>
               </div>
             </div>
@@ -414,7 +418,7 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
                 <input v-model="licenseDraftFor(asset.id).licenseHolder" type="text" placeholder="Rechteinhaber" class="mt-2 w-full rounded-lg border border-[#dfe0d9] px-2 py-1.5 text-xs" />
                 <input v-model="licenseDraftFor(asset.id).licenseNote" type="text" placeholder="Notiz (optional)" class="mt-2 w-full rounded-lg border border-[#dfe0d9] px-2 py-1.5 text-xs" />
                 <label class="mt-2 flex items-center gap-1.5 text-[11px]">
-                  <input v-model="licenseDraftFor(asset.id).confirmed" type="checkbox" class="accent-[#163a2c]" />
+                  <input v-model="licenseDraftFor(asset.id).confirmed" type="checkbox" class="h-4 w-4 accent-[#163a2c]" />
                   Wir besitzen eine Lizenz, die die Nutzung in unseren Social-Media-Beiträgen erlaubt.
                 </label>
                 <button class="focus-ring mt-2 rounded-lg bg-forest px-3 py-1.5 text-[11px] font-bold text-white disabled:opacity-50" :disabled="!licenseDraftFor(asset.id).confirmed || !licenseDraftFor(asset.id).licenseHolder.trim() || confirmingLicense === asset.id" @click="confirmLicense(asset.id)">
