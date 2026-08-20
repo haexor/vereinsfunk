@@ -14,7 +14,7 @@ import { mapBrandRow, mapDepartmentBrandRow, mapImageStylePresetRow, mapTeamBran
 import { hashLogoBuffer } from '../brandLogo.js'
 import { renderImageStyle } from '../imageStyle.js'
 import type { ApiRouteContext } from './context.js'
-import { loadSelectableBrandAsset } from './brand.js'
+import { loadSelectableBrandAsset, LOGO_ASSET_KINDS } from './brand.js'
 import { createAuditRecorder, resolveDirectoryScope, toPermissionScope } from './shared.js'
 
 // Zod an der DB-Grenze statt roher `as string`-Zusicherungen: media_assets.sha256 ist nullable und
@@ -129,14 +129,16 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
     if (resolvedScope === null) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     if (!(await requirePermission(request, reply, 'brand.manage', resolvedScope))) return
 
-    for (const [assetId, expectedKind] of [
-      [input.frameBrandAssetId, 'frame'],
-      [input.logoBrandAssetId, 'watermark'],
+    // logoBrandAssetId ist nicht mehr auf kind='watermark' gepinnt (2026082002) -- jede Logovariante
+    // aus LOGO_ASSET_KINDS ist zulaessig, u.a. das ueber die Marke-Seite hochgeladene Hauptlogo.
+    for (const [assetId, isExpectedKind] of [
+      [input.frameBrandAssetId, (kind: string) => kind === 'frame'],
+      [input.logoBrandAssetId, (kind: string) => LOGO_ASSET_KINDS.has(kind)],
     ] as const) {
       if (!assetId) continue
       const targetScope = resolvedScope.teamId ? 'team' : resolvedScope.departmentId ? 'department' : 'organization'
       const asset = await loadSelectableBrandAsset(client, input.organizationId, assetId, targetScope, resolvedScope.departmentId, resolvedScope.teamId)
-      if (!asset || asset.kind !== expectedKind) return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
+      if (!asset || !isExpectedKind(asset.kind)) return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
     }
 
     const insert = await client
@@ -147,6 +149,7 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
         team_id: input.teamId ?? null,
         name: input.name,
         frame_type: input.frameType,
+        frame_style: input.frameStyle,
         frame_color: input.frameColor,
         frame_width_px: input.frameWidthPx,
         frame_corner_radius_px: input.frameCornerRadiusPx,
@@ -187,19 +190,20 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
     if (!(await requirePermission(request, reply, 'brand.manage', scope))) return
     const input = UpdateImageStylePresetRequestSchema.parse(request.body)
 
-    for (const [assetId, expectedKind] of [
-      [input.frameBrandAssetId, 'frame'],
-      [input.logoBrandAssetId, 'watermark'],
+    for (const [assetId, isExpectedKind] of [
+      [input.frameBrandAssetId, (kind: string) => kind === 'frame'],
+      [input.logoBrandAssetId, (kind: string) => LOGO_ASSET_KINDS.has(kind)],
     ] as const) {
       if (!assetId) continue
       const targetScope = scope.teamId ? 'team' : scope.departmentId ? 'department' : 'organization'
       const asset = await loadSelectableBrandAsset(client, scope.organizationId, assetId, targetScope, scope.departmentId, scope.teamId)
-      if (!asset || asset.kind !== expectedKind) return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
+      if (!asset || !isExpectedKind(asset.kind)) return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
     }
 
     const payload: Record<string, unknown> = {
       name: input.name,
       frame_type: input.frameType,
+      frame_style: input.frameStyle,
       frame_color: input.frameColor,
       frame_width_px: input.frameWidthPx,
       frame_corner_radius_px: input.frameCornerRadiusPx,
@@ -357,7 +361,7 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
     if (upload.error) throw upload.error
 
     const stylePresetSnapshot = {
-      name: preset.name, frameType: preset.frameType, frameColor: preset.frameColor, frameWidthPx: preset.frameWidthPx,
+      name: preset.name, frameType: preset.frameType, frameStyle: preset.frameStyle, frameColor: preset.frameColor, frameWidthPx: preset.frameWidthPx,
       frameCornerRadiusPx: preset.frameCornerRadiusPx, frameBrandAssetId: preset.frameBrandAssetId,
       logoEnabled: preset.logoEnabled, logoBrandAssetId: preset.logoBrandAssetId, logoPosition: preset.logoPosition,
       logoSizePercent: preset.logoSizePercent, logoMarginPercent: preset.logoMarginPercent, filter: preset.filter,

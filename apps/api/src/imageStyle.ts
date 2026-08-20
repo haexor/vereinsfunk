@@ -1,4 +1,4 @@
-import type { ImageStyleFilter, ImageStyleLogoPosition, ImageStylePreset } from '@vereinsfunk/contracts'
+import type { ImageStyleFilter, ImageStyleFrameStyle, ImageStyleLogoPosition, ImageStylePreset } from '@vereinsfunk/contracts'
 import sharp from 'sharp'
 
 export interface BrandColors {
@@ -11,6 +11,7 @@ export interface ImageStyleRenderInput {
   preset: Pick<
     ImageStylePreset,
     | 'frameType'
+    | 'frameStyle'
     | 'frameColor'
     | 'frameWidthPx'
     | 'frameCornerRadiusPx'
@@ -102,12 +103,80 @@ async function applyRoundedCorners(buffer: Buffer, radiusPx: number): Promise<Bu
   return sharp(buffer).composite([{ input: mask, blend: 'dest-in' }]).png().toBuffer()
 }
 
-async function applyParametricFrame(buffer: Buffer, colorHex: string, widthPx: number): Promise<Buffer> {
+async function applySolidFrameStyle(buffer: Buffer, colorHex: string, widthPx: number): Promise<Buffer> {
   const color = hexToRgb(colorHex)
   return sharp(buffer)
     .extend({ top: widthPx, bottom: widthPx, left: widthPx, right: widthPx, background: { r: color.r, g: color.g, b: color.b, alpha: 1 } })
     .png()
     .toBuffer()
+}
+
+// Rahmenzone (widthPx) gedrittelt in aeusseren Ring / Luecke / inneren Ring -- der innere Ring
+// endet exakt dort, wo das Foto beginnt (ringThickness + gap + ringThickness = widthPx), die
+// Luecke bleibt also immer im transparent erweiterten Rand, nie auf dem Foto selbst.
+async function applyDoubleFrameStyle(buffer: Buffer, colorHex: string, widthPx: number): Promise<Buffer> {
+  const extended = await sharp(buffer)
+    .extend({ top: widthPx, bottom: widthPx, left: widthPx, right: widthPx, background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .toBuffer()
+  const metadata = await sharp(extended).metadata()
+  const width = metadata.width
+  const height = metadata.height
+  if (!width || !height) throw new Error('cannot determine image dimensions for double frame')
+
+  const ringThickness = Math.max(1, Math.round(widthPx / 3))
+  const gap = Math.max(0, widthPx - 2 * ringThickness)
+  const ringPath = (inset: number, thickness: number): string =>
+    thickness <= 0
+      ? ''
+      : `M${inset},${inset} H${width - inset} V${height - inset} H${inset} Z ` +
+        `M${inset + thickness},${inset + thickness} H${width - inset - thickness} V${height - inset - thickness} H${inset + thickness} Z`
+  const svg = `<svg width="${width}" height="${height}">` +
+    `<path fill-rule="evenodd" fill="${colorHex}" d="${ringPath(0, ringThickness)}"/>` +
+    `<path fill-rule="evenodd" fill="${colorHex}" d="${ringPath(ringThickness + gap, widthPx - ringThickness - gap)}"/>` +
+    `</svg>`
+  return sharp(extended).composite([{ input: Buffer.from(svg), blend: 'over' }]).png().toBuffer()
+}
+
+// Vier L-foermige Eckklammern (Sucher-/Cropmark-Optik), direkt auf dem Foto -- kein Canvas-Extend
+// noetig, die Marken liegen innerhalb der bestehenden Bildflaeche.
+async function applyCornerMarksFrameStyle(buffer: Buffer, colorHex: string, widthPx: number): Promise<Buffer> {
+  const metadata = await sharp(buffer).metadata()
+  const width = metadata.width
+  const height = metadata.height
+  if (!width || !height) throw new Error('cannot determine image dimensions for corner-marks frame')
+
+  const thickness = Math.max(1, widthPx)
+  const legLength = Math.max(thickness, Math.min(widthPx * 4, Math.floor(Math.min(width, height) / 2)))
+  const rect = (x: number, y: number, w: number, h: number): string => `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${colorHex}"/>`
+  const svg = `<svg width="${width}" height="${height}">` +
+    rect(0, 0, legLength, thickness) + rect(0, 0, thickness, legLength) +
+    rect(width - legLength, 0, legLength, thickness) + rect(width - thickness, 0, thickness, legLength) +
+    rect(0, height - thickness, legLength, thickness) + rect(0, height - legLength, thickness, legLength) +
+    rect(width - legLength, height - thickness, legLength, thickness) + rect(width - thickness, height - legLength, thickness, legLength) +
+    `</svg>`
+  return sharp(buffer).composite([{ input: Buffer.from(svg), blend: 'over' }]).png().toBuffer()
+}
+
+// Polaroid-Optik: duenner gleicher Rand oben/links/rechts, deutlich dickerer Balken unten.
+async function applyBottomBarFrameStyle(buffer: Buffer, colorHex: string, widthPx: number): Promise<Buffer> {
+  const color = hexToRgb(colorHex)
+  return sharp(buffer)
+    .extend({ top: widthPx, bottom: widthPx * 4, left: widthPx, right: widthPx, background: { r: color.r, g: color.g, b: color.b, alpha: 1 } })
+    .png()
+    .toBuffer()
+}
+
+async function applyParametricFrame(buffer: Buffer, style: ImageStyleFrameStyle, colorHex: string, widthPx: number): Promise<Buffer> {
+  switch (style) {
+    case 'solid':
+      return applySolidFrameStyle(buffer, colorHex, widthPx)
+    case 'double':
+      return applyDoubleFrameStyle(buffer, colorHex, widthPx)
+    case 'corner_marks':
+      return applyCornerMarksFrameStyle(buffer, colorHex, widthPx)
+    case 'bottom_bar':
+      return applyBottomBarFrameStyle(buffer, colorHex, widthPx)
+  }
 }
 
 // Die Rahmengrafik wird auf die Fotomasse gestreckt (fit: 'fill') statt umgekehrt das Foto an die
@@ -196,8 +265,9 @@ export async function renderImageStyle(input: ImageStyleRenderInput): Promise<Im
 
   if (preset.frameType === 'parametric') {
     if (preset.frameWidthPx === null) throw new Error('parametric frame requires frameWidthPx')
+    if (preset.frameStyle === null) throw new Error('parametric frame requires frameStyle')
     const colorHex = resolveFrameColorHex(preset.frameColor, input.brandColors)
-    current = await applyParametricFrame(current, colorHex, preset.frameWidthPx)
+    current = await applyParametricFrame(current, preset.frameStyle, colorHex, preset.frameWidthPx)
   } else if (preset.frameType === 'custom') {
     if (!input.frameAssetBuffer) throw new Error('missing frame asset buffer for custom frame')
     current = await applyCustomFrame(current, input.frameAssetBuffer)

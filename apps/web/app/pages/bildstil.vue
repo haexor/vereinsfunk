@@ -8,7 +8,7 @@ import { selectableImageStylePresets } from '../utils/imageStylePresets'
 
 interface DepartmentRow { id: string; name: string }
 interface TeamRow { id: string; name: string; departmentId: string }
-interface BrandAssetOption { id: string; departmentId: string | null; teamId: string | null; objectPath: string; signedUrl: string }
+interface BrandAssetOption { id: string; departmentId: string | null; teamId: string | null; objectPath: string; signedUrl: string; kind: string }
 
 const api = useApiClient()
 const session = await useSession()
@@ -27,6 +27,13 @@ const presets = ref<ImageStylePreset[]>([])
 const frameAssets = ref<BrandAssetOption[]>([])
 const logoAssets = ref<BrandAssetOption[]>([])
 const orgColors = reactive({ primaryColor: '#163a2c', accentColor: '#caff4a' })
+
+// Logovarianten, die als Wasserzeichen waehlbar sind -- deckungsgleich mit LOGO_ASSET_KINDS in
+// apps/api/src/routes/brand.ts (dort die tatsaechliche Durchsetzung, hier nur die Anzeige-Filterung).
+// Seit der Lockerung des Fremdschluessels (2026082002) ist nicht mehr nur ein eigens als
+// "Wasserzeichen" hochgeladenes Bild waehlbar, sondern jede bereits vorhandene Logovariante --
+// inklusive des ueber die Marke-Seite hinterlegten Hauptlogos (kind='logo_primary'/'logo_dark').
+const LOGO_ASSET_KINDS = ['logo_primary', 'logo_light', 'logo_dark', 'logo_mark', 'wordmark', 'watermark']
 
 const activeLevel = ref<ScopeLevelName>('organization')
 const activeDepartmentId = ref<string | null>(null)
@@ -75,9 +82,9 @@ function scopeLabel(preset: ImageStylePreset): string {
   return 'Verein'
 }
 
-function assetOption(asset: BrandAssetOption): { id: string; signedUrl: string; label: string } {
+function assetOption(asset: BrandAssetOption): { id: string; signedUrl: string; label: string; kind: string } {
   const label = asset.teamId ? 'aus dieser Mannschaft' : asset.departmentId ? 'aus dieser Abteilung' : 'vom Verein'
-  return { id: asset.id, signedUrl: asset.signedUrl, label }
+  return { id: asset.id, signedUrl: asset.signedUrl, label, kind: asset.kind }
 }
 const selectableFrameAssets = computed(() =>
   frameAssets.value
@@ -107,7 +114,7 @@ async function loadAll() {
     const [departmentsResult, teamsResult, brandAssetsResult, orgBrandResult, presetsResponse] = await Promise.all([
       supabase.from('departments').select('id, name').eq('organization_id', organizationId.value).is('archived_at', null).order('name'),
       supabase.from('teams').select('id, name, department_id').eq('organization_id', organizationId.value).is('archived_at', null).order('name'),
-      supabase.from('brand_assets').select('id, department_id, team_id, kind, object_path').eq('organization_id', organizationId.value).eq('status', 'ready').in('kind', ['frame', 'watermark']),
+      supabase.from('brand_assets').select('id, department_id, team_id, kind, object_path').eq('organization_id', organizationId.value).eq('status', 'ready').in('kind', ['frame', ...LOGO_ASSET_KINDS]),
       supabase.from('organization_brand_profiles').select('primary_color, accent_color').eq('organization_id', organizationId.value).maybeSingle(),
       api.request('/v1/image-style-presets', { query: { organizationId: organizationId.value } }, z.object({ presets: z.array(ImageStylePresetSchema) })),
     ])
@@ -122,8 +129,8 @@ async function loadAll() {
       brandAssetsResult.data.map(async (row) => [row.id, (await supabase.storage.from('brand-assets').createSignedUrl(row.object_path, 600)).data?.signedUrl ?? ''] as const),
     )
     const urlById = Object.fromEntries(signedUrls)
-    frameAssets.value = brandAssetsResult.data.filter((row) => row.kind === 'frame').map((row) => ({ id: row.id, departmentId: row.department_id, teamId: row.team_id, objectPath: row.object_path, signedUrl: urlById[row.id] ?? '' }))
-    logoAssets.value = brandAssetsResult.data.filter((row) => row.kind === 'watermark').map((row) => ({ id: row.id, departmentId: row.department_id, teamId: row.team_id, objectPath: row.object_path, signedUrl: urlById[row.id] ?? '' }))
+    frameAssets.value = brandAssetsResult.data.filter((row) => row.kind === 'frame').map((row) => ({ id: row.id, departmentId: row.department_id, teamId: row.team_id, objectPath: row.object_path, signedUrl: urlById[row.id] ?? '', kind: row.kind }))
+    logoAssets.value = brandAssetsResult.data.filter((row) => row.kind !== 'frame').map((row) => ({ id: row.id, departmentId: row.department_id, teamId: row.team_id, objectPath: row.object_path, signedUrl: urlById[row.id] ?? '', kind: row.kind }))
     presets.value = presetsResponse.presets
   } catch {
     loadError.value = true
@@ -197,7 +204,7 @@ const editError = ref('')
 function startEdit(preset: ImageStylePreset) {
   editingId.value = preset.id
   editDraft.value = {
-    name: preset.name, frameType: preset.frameType, frameColor: preset.frameColor, frameWidthPx: preset.frameWidthPx,
+    name: preset.name, frameType: preset.frameType, frameStyle: preset.frameStyle, frameColor: preset.frameColor, frameWidthPx: preset.frameWidthPx,
     frameCornerRadiusPx: preset.frameCornerRadiusPx, frameBrandAssetId: preset.frameBrandAssetId,
     logoEnabled: preset.logoEnabled, logoBrandAssetId: preset.logoBrandAssetId, logoPosition: preset.logoPosition,
     logoSizePercent: preset.logoSizePercent, logoMarginPercent: preset.logoMarginPercent, filter: preset.filter,
@@ -268,6 +275,17 @@ async function deletePreset(preset: ImageStylePreset) {
             Du hast auf dieser Ebene keine Berechtigung, Bildstil-Presets zu verwalten.
           </section>
           <template v-else>
+            <ImageStylePresetForm
+              v-model:draft="draft"
+              :saving="saving"
+              :error="createError"
+              :frame-assets="selectableFrameAssets"
+              :logo-assets="selectableLogoAssets"
+              :primary-color="orgColors.primaryColor"
+              :accent-color="orgColors.accentColor"
+              submit-label="Preset anlegen"
+              @save="createPreset"
+            />
             <section class="card p-6">
               <h2 class="font-display text-base font-bold">Bausteine für diese Ebene</h2>
               <p class="mt-1 text-xs text-[#7a817c]">Rahmengrafiken und Wasserzeichen, die ein Preset dieser Ebene referenzieren kann.</p>
@@ -283,15 +301,6 @@ async function deletePreset(preset: ImageStylePreset) {
               </div>
               <p v-if="uploadError" class="mt-2 text-[11px] text-amber-800">{{ uploadError }}</p>
             </section>
-            <ImageStylePresetForm
-              v-model:draft="draft"
-              :saving="saving"
-              :error="createError"
-              :frame-assets="selectableFrameAssets"
-              :logo-assets="selectableLogoAssets"
-              submit-label="Preset anlegen"
-              @save="createPreset"
-            />
           </template>
 
           <section class="card p-6">
@@ -304,6 +313,8 @@ async function deletePreset(preset: ImageStylePreset) {
                   :error="editError"
                   :frame-assets="selectableFrameAssets"
                   :logo-assets="selectableLogoAssets"
+                  :primary-color="orgColors.primaryColor"
+                  :accent-color="orgColors.accentColor"
                   submit-label="Speichern"
                   cancellable
                   @save="saveEdit"
@@ -341,6 +352,8 @@ async function deletePreset(preset: ImageStylePreset) {
 
         <div class="lg:sticky lg:top-6 lg:self-start">
           <ImageStyleLivePreview
+            :frame-type="(editingId ? editDraft : draft).frameType"
+            :frame-style="(editingId ? editDraft : draft).frameStyle"
             :frame-width-px="(editingId ? editDraft : draft).frameWidthPx"
             :frame-corner-radius-px="(editingId ? editDraft : draft).frameCornerRadiusPx"
             :frame-color-hex="resolveFrameColor((editingId ? editDraft : draft).frameColor)"
