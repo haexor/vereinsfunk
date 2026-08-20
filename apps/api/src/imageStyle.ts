@@ -145,8 +145,12 @@ async function applyCornerMarksFrameStyle(buffer: Buffer, colorHex: string, widt
   const height = metadata.height
   if (!width || !height) throw new Error('cannot determine image dimensions for corner-marks frame')
 
-  const thickness = Math.max(1, widthPx)
-  const legLength = Math.max(thickness, Math.min(widthPx * 4, Math.floor(Math.min(width, height) / 2)))
+  // Ohne Obergrenze wuerde ein grosses frameWidthPx (bis 200 laut Contract) auf einem kleinen Foto
+  // die Marken ueber die Bildmitte hinaus wachsen lassen -- ein Drittel der kuerzeren Kante haelt
+  // selbst im Extremfall (frameWidthPx=200 auf einem 40x40-Foto) einen unberuehrten Kern in der Mitte.
+  const maxMarkSize = Math.max(1, Math.floor(Math.min(width, height) / 3))
+  const thickness = Math.min(Math.max(1, widthPx), maxMarkSize)
+  const legLength = Math.max(thickness, Math.min(widthPx * 4, maxMarkSize))
   const rect = (x: number, y: number, w: number, h: number): string => `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${colorHex}"/>`
   const svg = `<svg width="${width}" height="${height}">` +
     rect(0, 0, legLength, thickness) + rect(0, 0, thickness, legLength) +

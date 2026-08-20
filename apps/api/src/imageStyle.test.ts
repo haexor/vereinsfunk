@@ -243,6 +243,22 @@ describe('renderImageStyle: Rahmenstile', () => {
     expect(untouched.b).toBe(255)
   })
 
+  // Regression: frameWidthPx darf laut Contract bis 200 reichen. Ohne Obergrenze relativ zur
+  // Bildgroesse wuerde das die Marken auf einem kleinen Foto ueber die Mitte hinaus wachsen lassen.
+  it('corner_marks begrenzt Dicke und Laenge auf ein kleines Foto, statt es vollstaendig zu bedecken', async () => {
+    const source = await solidColorImage(40, 40, { r: 0, g: 0, b: 255 })
+    const result = await renderImageStyle({
+      sourceBuffer: source,
+      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameStyle: 'corner_marks', frameColor: '#ff0000', frameWidthPx: 200, frameCornerRadiusPx: null },
+      brandColors: BRAND_COLORS,
+    })
+    expect(result.width).toBe(40)
+    expect(result.height).toBe(40)
+    const center = await pixelAt(result.buffer, 20, 20)
+    expect(center.r).toBe(0)
+    expect(center.b).toBe(255)
+  })
+
   it('festlich zeichnet einen goldenen Rahmen unabhaengig von frameColor und laesst das Foto in der Mitte unberuehrt', async () => {
     const source = await solidColorImage(60, 60, { r: 0, g: 0, b: 255 })
     const result = await renderImageStyle({

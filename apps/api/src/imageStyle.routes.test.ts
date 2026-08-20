@@ -124,11 +124,12 @@ describe('POST /v1/image-style-presets', () => {
   // Hauptlogo (kind='logo_primary'/'logo_dark').
   it('accepts a logoBrandAssetId that references the main logo instead of a dedicated watermark upload', async () => {
     const updatedRow = { ...PRESET_ROW, logo_enabled: true, logo_brand_asset_id: LOGO_ASSET_ID, logo_size_percent: 12, logo_margin_percent: 4 }
+    let insertedPayload: Record<string, unknown> | undefined
     const clients: SupabaseClientFactory = {
       forUser: () =>
         userClient({
           brand_assets: chain({ data: { id: LOGO_ASSET_ID, kind: 'logo_primary', department_id: null, team_id: null, status: 'ready' }, error: null }),
-          image_style_presets: { insert: () => chain({ data: updatedRow, error: null }) },
+          image_style_presets: { insert: (payload: Record<string, unknown>) => { insertedPayload = payload; return chain({ data: updatedRow, error: null }) } },
         }),
       forService: () => ({ from: () => ({ insert: async () => ({ error: null }) }) }) as unknown as SupabaseClient,
     }
@@ -139,6 +140,7 @@ describe('POST /v1/image-style-presets', () => {
       payload: { ...BASE_FIELDS, organizationId: ORGANIZATION_ID, logoEnabled: true, logoBrandAssetId: LOGO_ASSET_ID, logoSizePercent: 12, logoMarginPercent: 4 },
     })
     expect(response.statusCode).toBe(201)
+    expect(insertedPayload).toMatchObject({ logo_brand_asset_id: LOGO_ASSET_ID })
   })
 })
 
