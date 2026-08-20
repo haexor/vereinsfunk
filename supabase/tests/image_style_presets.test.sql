@@ -157,7 +157,7 @@ select throws_ok(
 );
 
 -- 16: created_by ist unveraenderlich -- selbst der berechtigte Abteilungsadmin kann es nicht auf
--- eine andere Person umbiegen (Migration 2026081917).
+-- eine andere Person umbiegen (Migration 2026081919).
 select throws_ok(
   $$update public.image_style_presets set created_by = '48000000-0000-4000-8000-000000000004' where id = '48000000-9000-4000-8000-000000000001'$$,
   'P0001', 'image style preset created_by is immutable', 'created_by cannot be changed by any update, even by someone with brand.manage'
