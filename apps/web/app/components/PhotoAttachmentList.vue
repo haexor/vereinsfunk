@@ -7,6 +7,10 @@
 const props = withDefaults(defineProps<{ organizationId: string; departmentId: string; max?: number }>(), { max: 10 })
 const mediaAssetIds = defineModel<string[]>('mediaAssetIds', { required: true })
 
+// Deckelt jeden Aufrufwert auf die Contract-Obergrenze (CreateCompositionSessionSchema.mediaAssetIds,
+// max(10)) -- ein hoeherer max-Wert liesse hier mehr Slots entstehen, als die API je annehmen wuerde.
+const effectiveMax = computed(() => Math.min(props.max, 10))
+
 interface Slot { id: number; value: string | null }
 let nextSlotId = 1
 const slots = ref<Slot[]>([{ id: 0, value: null }])
@@ -27,7 +31,7 @@ watch(mediaAssetIds, (ids) => {
 })
 
 function addSlot() {
-  if (slots.value.length >= props.max) return
+  if (slots.value.length >= effectiveMax.value) return
   slots.value = [...slots.value, { id: nextSlotId++, value: null }]
 }
 function removeSlot(id: number) {
@@ -47,6 +51,6 @@ function removeSlot(id: number) {
       </div>
       <PhotoAttachment v-model="slot.value" :organization-id="organizationId" :department-id="departmentId" />
     </div>
-    <button v-if="slots.length < max" type="button" class="rounded-xl border px-4 py-2 text-sm font-semibold" @click="addSlot">+ Weiteres Foto</button>
+    <button v-if="slots.length < effectiveMax" type="button" class="rounded-xl border px-4 py-2 text-sm font-semibold" @click="addSlot">+ Weiteres Foto</button>
   </div>
 </template>
