@@ -83,9 +83,12 @@ export function useBrandAssets({
   const assetSignedUrls = ref<Record<string, string>>({})
   const logoUrl = ref('')
   const logoDarkUrl = ref('')
-  const logoFile = ref<File | null>(null)
-  const logoPreviewUrl = ref('')
-  const logoVariant = ref<'light' | 'dark'>('light')
+  // Getrennte Refs pro Variante: ein gemeinsames Feld hier hiess vorher, dass die Auswahl des
+  // hellen Logos verworfen wurde, sobald danach das dunkle Logo gewaehlt wurde (und umgekehrt).
+  const logoFileLight = ref<File | null>(null)
+  const logoFileDark = ref<File | null>(null)
+  const logoPreviewUrlLight = ref('')
+  const logoPreviewUrlDark = ref('')
 
   function assetOrigin(asset: BrandAssetRow): string {
     if (asset.teamId) return 'aus dieser Mannschaft'
@@ -187,29 +190,37 @@ export function useBrandAssets({
 
   function onLogoSelected(event: Event, variant: 'light' | 'dark') {
     const file = (event.target as HTMLInputElement).files?.[0] ?? null
-    if (logoPreviewUrl.value) URL.revokeObjectURL(logoPreviewUrl.value)
-    logoFile.value = file
-    logoVariant.value = variant
-    logoPreviewUrl.value = file ? URL.createObjectURL(file) : ''
+    const fileRef = variant === 'light' ? logoFileLight : logoFileDark
+    const previewRef = variant === 'light' ? logoPreviewUrlLight : logoPreviewUrlDark
+    if (previewRef.value) URL.revokeObjectURL(previewRef.value)
+    fileRef.value = file
+    previewRef.value = file ? URL.createObjectURL(file) : ''
   }
 
   const sanitizedNotice = ref(false)
   async function saveOrgLogoIfSelected() {
-    if (!logoFile.value || !organizationId.value) return
-    const formData = new FormData()
-    formData.append('variant', logoVariant.value)
-    formData.append('file', logoFile.value)
-    const uploaded = await api.request(
-      `/v1/organizations/${organizationId.value}/brand/logo`,
-      { method: 'POST', body: formData },
-      BrandLogoUploadResponseSchema,
-    )
-    if (logoVariant.value === 'light') logoUrl.value = uploaded.signedUrl
-    else logoDarkUrl.value = uploaded.signedUrl
-    sanitizedNotice.value = uploaded.sanitized
-    logoFile.value = null
-    URL.revokeObjectURL(logoPreviewUrl.value)
-    logoPreviewUrl.value = ''
+    if (!organizationId.value) return
+    const pending = (['light', 'dark'] as const)
+      .map((variant) => ({ variant, file: variant === 'light' ? logoFileLight.value : logoFileDark.value }))
+      .filter((entry): entry is { variant: 'light' | 'dark', file: File } => entry.file !== null)
+    for (const { variant, file } of pending) {
+      const formData = new FormData()
+      formData.append('variant', variant)
+      formData.append('file', file)
+      const uploaded = await api.request(
+        `/v1/organizations/${organizationId.value}/brand/logo`,
+        { method: 'POST', body: formData },
+        BrandLogoUploadResponseSchema,
+      )
+      const fileRef = variant === 'light' ? logoFileLight : logoFileDark
+      const previewRef = variant === 'light' ? logoPreviewUrlLight : logoPreviewUrlDark
+      if (variant === 'light') logoUrl.value = uploaded.signedUrl
+      else logoDarkUrl.value = uploaded.signedUrl
+      if (uploaded.sanitized) sanitizedNotice.value = true
+      fileRef.value = null
+      URL.revokeObjectURL(previewRef.value)
+      previewRef.value = ''
+    }
   }
 
   function assignFontAsset(role: 'display' | 'body', assetId: string | null) {
@@ -277,11 +288,12 @@ export function useBrandAssets({
   }
 
   onBeforeUnmount(() => {
-    if (logoPreviewUrl.value) URL.revokeObjectURL(logoPreviewUrl.value)
+    if (logoPreviewUrlLight.value) URL.revokeObjectURL(logoPreviewUrlLight.value)
+    if (logoPreviewUrlDark.value) URL.revokeObjectURL(logoPreviewUrlDark.value)
   })
 
   return {
-    assets, assetSignedUrls, logoUrl, logoDarkUrl, logoPreviewUrl, logoVariant,
+    assets, assetSignedUrls, logoUrl, logoDarkUrl, logoPreviewUrlLight, logoPreviewUrlDark,
     sanitizedNotice, selectableLogoAssets, selectableFontAssets, ownFontAssets,
     pendingLicenseAssets, ownLogoAssets, previewDisplayFamily, previewBodyFamily,
     previewFontFaceCss, previewLogoUrl, uploadingAsset, uploadError, licenseDrafts,

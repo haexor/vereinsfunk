@@ -14,7 +14,7 @@ export class ApiRequestError extends Error {
   constructor(
     readonly code: string,
     readonly statusCode?: number,
-    readonly data: { error: string } = { error: code },
+    readonly data: { error: string, message?: string } = { error: code },
   ) {
     super(code)
   }
@@ -22,8 +22,9 @@ export class ApiRequestError extends Error {
 
 function apiError(error: unknown): ApiRequestError {
   if (error instanceof ApiRequestError) return error
-  const response = error as { data?: { error?: string }; statusCode?: number; status?: number }
-  return new ApiRequestError(response.data?.error ?? 'api_request_failed', response.statusCode ?? response.status)
+  const response = error as { data?: { error?: string, message?: string }; statusCode?: number; status?: number }
+  const code = response.data?.error ?? 'api_request_failed'
+  return new ApiRequestError(code, response.statusCode ?? response.status, { ...response.data, error: code })
 }
 
 // Framework-unabhängiger Kern: hält die Browser-Grenze testbar und sorgt dafür, dass alle

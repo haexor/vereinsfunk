@@ -26,7 +26,7 @@ export function contrastRatio(foregroundHex: string, backgroundHex: string): num
   return (lighter + 0.05) / (darker + 0.05)
 }
 
-const MINIMUM_AA_CONTRAST = 4.5
+export const MINIMUM_AA_CONTRAST = 4.5
 
 export interface ContrastCheck {
   ratio: number
