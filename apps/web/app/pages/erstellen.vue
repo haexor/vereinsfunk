@@ -53,8 +53,9 @@ const selectedProfile = ref<string>('klar_erklaerend')
 const platforms = ref<TextGenerationPlatformAvailability[]>([])
 const selectedPlatforms = ref<SocialPlatform[]>([])
 const maxCharactersOverride = ref('')
-// Plan 045, PR 0 Schritt 3: null bis PhotoAttachment die Personen-Pruefung abgeschlossen hat.
-const mediaAssetId = ref<string | null>(null)
+// Plan 047, PR 0: mehrere Fotos moeglich (frueher hoechstens eines, Plan 045 PR 0 Schritt 3) --
+// nur reihum von PhotoAttachmentList befuellte Eintraege, die ihre Personen-Pruefung abgeschlossen haben.
+const mediaAssetIds = ref<string[]>([])
 // Nur zwei Gruppen in der Dropdown-Liste: System- und eigene Profile sind beides "Stil" (der
 // Unterschied ist fuer die Auswahl selbst nicht relevant), Personas bleiben separat.
 const PROFILE_GROUPS = [
@@ -143,7 +144,7 @@ function restoreDraft() {
   } catch { clearDraft() }
 }
 watch([communicationGoal, factsText, observation, doNotMention, selectedProfile, selectedPlatforms, maxCharactersOverride], () => { persistDraft(); queueServerDraftSave() }, { flush: 'sync', deep: true })
-watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; communicationGoal.value = 'inform'; selectedProfile.value = 'klar_erklaerend'; factsText.value = ''; observation.value = ''; doNotMention.value = ''; revisionInstruction.value = ''; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; mediaAssetId.value = null; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
+watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; communicationGoal.value = 'inform'; selectedProfile.value = 'klar_erklaerend'; factsText.value = ''; observation.value = ''; doNotMention.value = ''; revisionInstruction.value = ''; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; mediaAssetIds.value = []; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
 
 async function loadProfiles() {
   if (!scope.value?.organizationId || !scope.value.departmentId) return
@@ -231,7 +232,7 @@ async function createCandidate() {
       method: 'POST',
       body: {
         organizationId: scope.value.organizationId, departmentId: scope.value.departmentId, communicationGoal: communicationGoal.value, requestedFormats: ['text_post'],
-        mediaAssetIds: mediaAssetId.value ? [mediaAssetId.value] : [],
+        mediaAssetIds: mediaAssetIds.value,
         ...profileChoice, sourceMaterial: sourceMaterial(), targetPlatforms: selectedPlatforms.value,
         // Ein weiterer Kandidat der serverseitigen Minimumbildung, keine Ueberschreibung -- die
         // gewaehlten Plattformen bleiben die verbindliche Obergrenze (routes/content.ts).
@@ -251,9 +252,10 @@ async function createCandidate() {
     } else if (code === 'media_asset_not_reviewed' || code === 'media_asset_not_ready' || code === 'media_asset_not_found') {
       // Die Personen-Pruefung wurde ungueltig, seit PhotoAttachment sie abgeschlossen hat (z. B.
       // eine Markierung wurde in einem anderen Tab geaendert) -- der Trigger in Migration
-      // 2026081802 setzt people_reviewed_at in genau diesem Fall automatisch zurueck.
-      mediaAssetId.value = null
-      notice.value = 'Die Personen-Prüfung des angehängten Fotos ist nicht mehr aktuell. Bitte das Foto erneut prüfen.'
+      // 2026081802 setzt people_reviewed_at in genau diesem Fall automatisch zurueck. Die Antwort
+      // nennt nicht, welches der angehaengten Fotos betroffen ist, deshalb werden alle zurueckgesetzt.
+      mediaAssetIds.value = []
+      notice.value = 'Die Personen-Prüfung eines angehängten Fotos ist nicht mehr aktuell. Bitte die Fotos erneut prüfen.'
     } else if (code === 'no_active_text_provider') {
       notice.value = 'Aktuell ist kein Sprachmodell für die Textgenerierung hinterlegt. Bitte an eine Vereinsverwaltung wenden.'
     } else {
@@ -326,11 +328,11 @@ onBeforeUnmount(() => { if (hasDraftContent()) void saveServerDraft() })
 
 <template>
   <div>
-    <header class="mb-7"><div class="eyebrow mb-2">Textwerkstatt</div><h1 class="font-display text-3xl font-extrabold">Aus bestätigten Angaben formulieren</h1><p class="mt-2 text-sm text-[#727a75]">Dieser Pilot erstellt nur Text. Ein Foto kann angehängt werden, wird aber nie an das Sprachmodell gesendet. Videoanhänge sind noch nicht verfügbar.</p></header>
+    <header class="mb-7"><div class="eyebrow mb-2">Textwerkstatt</div><h1 class="font-display text-3xl font-extrabold">Aus bestätigten Angaben formulieren</h1><p class="mt-2 text-sm text-[#727a75]">Dieser Pilot erstellt nur Text. Fotos können angehängt werden, werden aber nie an das Sprachmodell gesendet. Videoanhänge sind noch nicht verfügbar.</p></header>
     <section v-if="!sessionId" class="card grid gap-5 p-5 sm:p-7">
       <label><span class="mb-1 block text-xs font-semibold">Kommunikationsziel</span><Select v-model="communicationGoal"><SelectTrigger class="sm:max-w-xs"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="inform">Informieren</SelectItem><SelectItem value="invite">Einladen</SelectItem><SelectItem value="thank">Danken</SelectItem><SelectItem value="recruit">Gewinnen</SelectItem><SelectItem value="inspire">Inspirieren</SelectItem></SelectContent></Select></label>
       <fieldset><legend class="mb-2 text-xs font-semibold">Stilprofil</legend><SearchableSelect v-model="selectedProfile" :groups="profileSelectGroups" placeholder="Stilprofil wählen…" /><NuxtLink to="/stilprofile" class="focus-ring mt-2 inline-block text-[11px] font-semibold text-forest underline">Eigene Stilprofile verwalten →</NuxtLink></fieldset>
-      <PhotoAttachment v-if="scope?.organizationId && scope.departmentId" :key="`${scope.organizationId}:${scope.departmentId}`" v-model="mediaAssetId" :organization-id="scope.organizationId" :department-id="scope.departmentId" />
+      <PhotoAttachmentList v-if="scope?.organizationId && scope.departmentId" :key="`${scope.organizationId}:${scope.departmentId}`" v-model:media-asset-ids="mediaAssetIds" :organization-id="scope.organizationId" :department-id="scope.departmentId" />
       <fieldset>
         <legend class="mb-2 text-xs font-semibold">Zielplattformen</legend>
         <div v-if="platforms.length" class="flex flex-wrap gap-2">

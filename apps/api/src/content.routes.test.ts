@@ -381,18 +381,15 @@ describe('POST /v1/text-workshop/sessions', () => {
     expect(response.json()).toMatchObject({ error: 'platform_not_available', platform: 'facebook' })
   })
 
-  // Plan 045, PR 0 Schritt 3: hoechstens ein Foto-Anhang, geprueft und angehaengt in derselben Route.
+  // Plan 047, PR 0: mehrere Foto-Anhaenge moeglich (frueher hoechstens einer, Plan 045 PR 0
+  // Schritt 3), geprueft und angehaengt in derselben Route.
   describe('mediaAssetIds (photo attachment)', () => {
     const MEDIA_ASSET_ID = '3c000000-0000-4000-8000-000000000010'
+    const SECOND_MEDIA_ASSET_ID = '3c000000-0000-4000-8000-000000000012'
     const SESSION_ID = '3c000000-0000-4000-8000-000000000011'
+    const READY_ASSET = { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, upload_status: 'ready', people_reviewed_at: '2026-08-18T00:00:00+00:00' }
 
-    it('rejects more than one attached photo with the same text_only_pilot gate as any other format', async () => {
-      const response = await createSession({ forUser: () => ({}) as unknown as SupabaseClient, forService: () => { throw new Error('forService should not be reached') } }, { ...basePayload, mediaAssetIds: [MEDIA_ASSET_ID, '3c000000-0000-4000-8000-000000000012'] })
-      expect(response.statusCode).toBe(422)
-      expect(response.json()).toMatchObject({ error: 'text_only_pilot' })
-    })
-
-    function clientsWithAsset(asset: Record<string, unknown> | null, capturedAttach?: Record<string, unknown>[], onRpc?: (params: Record<string, unknown>) => void): SupabaseClientFactory {
+    function clientsWithAssets(assetsById: Record<string, Record<string, unknown> | null>, capturedAttach?: Record<string, unknown>[], onRpc?: (params: Record<string, unknown>) => void): SupabaseClientFactory {
       return {
         forUser: () => ({
           from: (table: string) => {
@@ -405,30 +402,61 @@ describe('POST /v1/text-workshop/sessions', () => {
         }) as unknown as SupabaseClient,
         forService: () => ({
           from: (table: string) => {
-            if (table === 'media_assets') return chain({ data: asset, error: null })
-            if (table === 'composition_session_post_media') return { upsert: (row: Record<string, unknown>) => { capturedAttach?.push(row); return { then: (resolve: (result: { data: null; error: null }) => unknown) => resolve({ data: null, error: null }) } } }
+            if (table === 'media_assets') {
+              // eq('id', ...) ist die einzige Filterung, die diese Route auf media_assets anwendet --
+              // die Fake-Kette liest die zuletzt uebergebene ID aus, um pro Foto ein eigenes Ergebnis zu liefern.
+              let requestedId: string | undefined
+              const query = {
+                eq: (field: string, value: string) => { if (field === 'id') requestedId = value; return query },
+                maybeSingle: async () => ({ data: requestedId ? assetsById[requestedId] ?? null : null, error: null }),
+              }
+              return { select: () => query }
+            }
+            if (table === 'composition_session_post_media') return { upsert: (rows: Record<string, unknown>[]) => { capturedAttach?.push(...rows); return { then: (resolve: (result: { data: null; error: null }) => unknown) => resolve({ data: null, error: null }) } } }
             return ensembleProviderFakeFrom(table) ?? (() => { throw new Error(`unexpected service table: ${table}`) })()
           },
           rpc: async (_fn: string, params: Record<string, unknown>) => { onRpc?.(params); return { data: { sessionId: SESSION_ID, candidateIds: ['3c000000-0000-4000-8000-000000000013'] }, error: null } },
         }) as unknown as SupabaseClient,
       }
     }
+    function clientsWithAsset(asset: Record<string, unknown> | null, capturedAttach?: Record<string, unknown>[], onRpc?: (params: Record<string, unknown>) => void): SupabaseClientFactory {
+      return clientsWithAssets({ [MEDIA_ASSET_ID]: asset }, capturedAttach, onRpc)
+    }
 
     it('attaches a ready, people-reviewed photo to the newly created session', async () => {
       const captured: Record<string, unknown>[] = []
-      const clients = clientsWithAsset({ organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, upload_status: 'ready', people_reviewed_at: '2026-08-18T00:00:00+00:00' }, captured)
+      const clients = clientsWithAsset(READY_ASSET, captured)
       const response = await createSession(clients, { ...basePayload, mediaAssetIds: [MEDIA_ASSET_ID] })
       expect(response.statusCode).toBe(202)
-      expect(captured).toEqual([{ organization_id: ORGANIZATION_ID, composition_session_id: SESSION_ID, media_asset_id: MEDIA_ASSET_ID, created_by: USER_ID }])
+      expect(captured).toEqual([{ organization_id: ORGANIZATION_ID, composition_session_id: SESSION_ID, media_asset_id: MEDIA_ASSET_ID, position: 0, role: 'primary', created_by: USER_ID }])
     })
 
-    it('gives otherwise identical sessions distinct hashes for no photo and each attached photo', async () => {
+    it('attaches several photos in submitted order, position 0 primary and the rest slide', async () => {
+      const captured: Record<string, unknown>[] = []
+      const clients = clientsWithAssets({ [MEDIA_ASSET_ID]: READY_ASSET, [SECOND_MEDIA_ASSET_ID]: READY_ASSET }, captured)
+      const response = await createSession(clients, { ...basePayload, mediaAssetIds: [MEDIA_ASSET_ID, SECOND_MEDIA_ASSET_ID] })
+      expect(response.statusCode).toBe(202)
+      expect(captured).toEqual([
+        { organization_id: ORGANIZATION_ID, composition_session_id: SESSION_ID, media_asset_id: MEDIA_ASSET_ID, position: 0, role: 'primary', created_by: USER_ID },
+        { organization_id: ORGANIZATION_ID, composition_session_id: SESSION_ID, media_asset_id: SECOND_MEDIA_ASSET_ID, position: 1, role: 'slide', created_by: USER_ID },
+      ])
+    })
+
+    it('rejects the whole request when the second of several photos fails validation, not only the first', async () => {
+      const clients = clientsWithAssets({ [MEDIA_ASSET_ID]: READY_ASSET, [SECOND_MEDIA_ASSET_ID]: { ...READY_ASSET, people_reviewed_at: null } })
+      const response = await createSession(clients, { ...basePayload, mediaAssetIds: [MEDIA_ASSET_ID, SECOND_MEDIA_ASSET_ID] })
+      expect(response.statusCode).toBe(422)
+      expect(response.json()).toMatchObject({ error: 'media_asset_not_reviewed' })
+    })
+
+    it('gives otherwise identical sessions distinct hashes for no photo, one photo, and several photos', async () => {
       const hashes: string[] = []
-      const readyAsset = { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, upload_status: 'ready', people_reviewed_at: '2026-08-18T00:00:00+00:00' }
-      await createSession(clientsWithAsset(readyAsset, undefined, (params) => hashes.push(params.p_input_hash as string)), { ...basePayload, mediaAssetIds: [] })
-      await createSession(clientsWithAsset(readyAsset, undefined, (params) => hashes.push(params.p_input_hash as string)), { ...basePayload, mediaAssetIds: [MEDIA_ASSET_ID] })
-      await createSession(clientsWithAsset(readyAsset, undefined, (params) => hashes.push(params.p_input_hash as string)), { ...basePayload, mediaAssetIds: ['3c000000-0000-4000-8000-000000000014'] })
-      expect([...new Set(hashes)]).toHaveLength(3)
+      const clientsForBoth = () => clientsWithAssets({ [MEDIA_ASSET_ID]: READY_ASSET, [SECOND_MEDIA_ASSET_ID]: READY_ASSET }, undefined, (params) => hashes.push(params.p_input_hash as string))
+      await createSession(clientsForBoth(), { ...basePayload, mediaAssetIds: [] })
+      await createSession(clientsForBoth(), { ...basePayload, mediaAssetIds: [MEDIA_ASSET_ID] })
+      await createSession(clientsForBoth(), { ...basePayload, mediaAssetIds: [MEDIA_ASSET_ID, SECOND_MEDIA_ASSET_ID] })
+      await createSession(clientsForBoth(), { ...basePayload, mediaAssetIds: [SECOND_MEDIA_ASSET_ID, MEDIA_ASSET_ID] })
+      expect([...new Set(hashes)]).toHaveLength(4)
     })
 
     it('rejects a photo that has not finished upload processing yet', async () => {
@@ -1108,7 +1136,7 @@ describe('text workshop drafts', () => {
         from: (table: string) => {
           if (table === 'text_workshop_drafts') return { update: () => update }
           // No photo attached to this session -- accept proceeds text-only, exactly as before Plan 045.
-          if (table === 'composition_session_post_media') return chain({ data: null, error: null })
+          if (table === 'composition_session_post_media') return chain({ data: [], error: null })
           throw new Error(`unexpected service table: ${table}`)
         },
       }) as unknown as SupabaseClient,
@@ -1124,11 +1152,13 @@ describe('text workshop drafts', () => {
   })
 })
 
-describe('POST /v1/text-workshop/candidates/:id/accept -- photo attachment (Plan 045, PR 0 Schritt 4)', () => {
+describe('POST /v1/text-workshop/candidates/:id/accept -- photo attachment (Plan 047, PR 0)', () => {
   const CANDIDATE_ID = '3f000000-0000-4000-8000-000000000010'
   const SESSION_ID = '3f000000-0000-4000-8000-000000000011'
   const MEDIA_ASSET_ID = '3f000000-0000-4000-8000-000000000012'
+  const SECOND_MEDIA_ASSET_ID = '3f000000-0000-4000-8000-000000000016'
   const DERIVATIVE_ID = '3f000000-0000-4000-8000-000000000013'
+  const SECOND_DERIVATIVE_ID = '3f000000-0000-4000-8000-000000000017'
 
   it('resolves the session’s photo attachment to a derivative and passes it to the RPC', async () => {
     let rpcParams: Record<string, unknown> | undefined
@@ -1141,7 +1171,7 @@ describe('POST /v1/text-workshop/candidates/:id/accept -- photo attachment (Plan
       forService: () => ({
         rpc: async (fn: string, params: Record<string, unknown>) => { rpcParams = params; return { data: { postId: '3f000000-0000-4000-8000-000000000014', postVersionId: '3f000000-0000-4000-8000-000000000015' }, error: null } },
         from: (table: string) => {
-          if (table === 'composition_session_post_media') return chain({ data: { media_asset_id: MEDIA_ASSET_ID }, error: null })
+          if (table === 'composition_session_post_media') return chain({ data: [{ media_asset_id: MEDIA_ASSET_ID }], error: null })
           if (table === 'media_derivatives') {
             return {
               select: () => ({ eq: () => ({ eq: async () => ({ data: [{ id: DERIVATIVE_ID, recipe: { kind: 'pass_through_v1' }, status: 'ready' }], error: null }) }) }),
@@ -1156,7 +1186,48 @@ describe('POST /v1/text-workshop/candidates/:id/accept -- photo attachment (Plan
       method: 'POST', url: `/v1/text-workshop/candidates/${CANDIDATE_ID}/accept`, headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
     })
     expect(response.statusCode).toBe(200)
-    expect(rpcParams).toMatchObject({ p_candidate_id: CANDIDATE_ID, p_media_derivative_id: DERIVATIVE_ID })
+    expect(rpcParams).toMatchObject({ p_candidate_id: CANDIDATE_ID, p_media_derivative_ids: [DERIVATIVE_ID] })
+  })
+
+  it('resolves several photo attachments in position order and passes all derivatives to the RPC', async () => {
+    let rpcParams: Record<string, unknown> | undefined
+    // chain() ignoriert .order() ohnehin (siehe testSupport.ts) -- die Reihenfolge hier IST die
+    // erwartete position-Reihenfolge, die Route sortiert selbst per .order('position').
+    const orderedSelect = () => chain({ data: [{ media_asset_id: MEDIA_ASSET_ID }, { media_asset_id: SECOND_MEDIA_ASSET_ID }], error: null })
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ from: (table: string) => {
+        if (table === 'generation_candidates') return chain({ data: { organization_id: ORGANIZATION_ID, composition_session_id: SESSION_ID }, error: null })
+        if (table === 'composition_sessions') return chain({ data: { department_id: DEPARTMENT_ID, team_id: null, post_id: null }, error: null })
+        throw new Error(`unexpected user table: ${table}`)
+      } }) as unknown as SupabaseClient,
+      forService: () => ({
+        rpc: async (fn: string, params: Record<string, unknown>) => { rpcParams = params; return { data: { postId: '3f000000-0000-4000-8000-000000000014', postVersionId: '3f000000-0000-4000-8000-000000000015' }, error: null } },
+        from: (table: string) => {
+          if (table === 'composition_session_post_media') return orderedSelect()
+          if (table === 'media_derivatives') {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: async (_field: string, mediaAssetId: string) => ({
+                    data: mediaAssetId === MEDIA_ASSET_ID
+                      ? [{ id: DERIVATIVE_ID, recipe: { kind: 'pass_through_v1' }, status: 'ready' }]
+                      : [{ id: SECOND_DERIVATIVE_ID, recipe: { kind: 'pass_through_v1' }, status: 'ready' }],
+                    error: null,
+                  }),
+                }),
+              }),
+            }
+          }
+          throw new Error(`unexpected service table: ${table}`)
+        },
+      }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const response = await app.inject({
+      method: 'POST', url: `/v1/text-workshop/candidates/${CANDIDATE_ID}/accept`, headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(rpcParams).toMatchObject({ p_candidate_id: CANDIDATE_ID, p_media_derivative_ids: [DERIVATIVE_ID, SECOND_DERIVATIVE_ID] })
   })
 
   it('rejects with 422 and never calls the RPC when the attached photo is not yet ready', async () => {
@@ -1170,7 +1241,7 @@ describe('POST /v1/text-workshop/candidates/:id/accept -- photo attachment (Plan
       forService: () => ({
         rpc: async () => { rpcCalled = true; throw new Error('the RPC must not be reached once the attached photo turns out not ready') },
         from: (table: string) => {
-          if (table === 'composition_session_post_media') return chain({ data: { media_asset_id: MEDIA_ASSET_ID }, error: null })
+          if (table === 'composition_session_post_media') return chain({ data: [{ media_asset_id: MEDIA_ASSET_ID }], error: null })
           if (table === 'media_derivatives') return { select: () => ({ eq: () => ({ eq: async () => ({ data: [], error: null }) }) }) }
           if (table === 'media_assets') {
             const query = {

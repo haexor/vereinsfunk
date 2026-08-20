@@ -451,14 +451,16 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
   app.post('/v1/text-workshop/sessions', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const input = CreateCompositionSessionSchema.parse(request.body)
-    // Plan 045, PR 0 Schritt 3: hoechstens ein Foto (kein Karussell, siehe plans/045). requestedFormats
-    // bleibt weiterhin ausschliesslich text_post -- ein angehaengtes Foto ist ein Zusatz zum Text,
-    // keine eigene Formatvariante des noch nicht existierenden Kreativsystems (Plan 005).
-    if (input.mediaAssetIds.length > 1 || input.requestedFormats.some((format) => format !== 'text_post')) return reply.code(422).send({ error: 'text_only_pilot' })
+    // Plan 047, PR 0: die fruehere Grenze "hoechstens ein Foto" (Plan 045, PR 0 Schritt 3) ist
+    // aufgehoben -- mehrere Fotos koennen jetzt angehaengt werden (Grundlage fuer Bildkomposition
+    // und Karussell, siehe plans/047). requestedFormats bleibt weiterhin ausschliesslich text_post
+    // -- angehaengte Fotos sind ein Zusatz zum Text, keine eigene Formatvariante des noch nicht
+    // existierenden Kreativsystems (Plan 005).
+    if (input.requestedFormats.some((format) => format !== 'text_post')) return reply.code(422).send({ error: 'text_only_pilot' })
     const scope = toPermissionScope(input.organizationId, input.departmentId, input.teamId ?? null)
     if (!(await requirePermission(request, reply, 'post.create', scope))) return
     const client = supabaseClients.forUser(request.auth!.accessToken)
-    const mediaAssetId = input.mediaAssetIds[0] ?? null
+    const mediaAssetIds = input.mediaAssetIds
     // allowedPresets bleibt eine Photo-Pipeline-Policy (/v1/submissions oben): die Textwerkstatt
     // kennt seit dem Wegfall von "Anlass" keinen presetSlug mehr, den sie dagegen pruefen koennte.
     const config = await resolveScopedEffectiveConfig(client, input.organizationId, input.departmentId, input.teamId ?? null)
@@ -502,16 +504,17 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     // wenn ein Plattform-Admin die Vorgabe zwischenzeitlich geaendert hat.
     const sessionHash = createHash('sha256').update(JSON.stringify({
       goal: input.communicationGoal, sourceMaterial, styleSnapshot, sourceRevision: input.sourceRevision,
-      targetPlatforms, maxCharacters: input.maxCharacters ?? null, temperature: input.temperature, mediaAssetId,
+      targetPlatforms, maxCharacters: input.maxCharacters ?? null, temperature: input.temperature, mediaAssetIds,
     })).digest('hex')
     const candidateHash = createHash('sha256').update(`${sessionHash}:initial`).digest('hex')
     const idempotencyKey = `generate-text:${sessionHash}:${input.sourceRevision}`
     const service = supabaseClients.forService()
-    if (mediaAssetId) {
-      // Service Client, nicht Nutzer-Client: media_assets_select gewaehrt nur is_department_member,
-      // hier zaehlt aber dieselbe Zugehoerigkeits- und Bereitschaftspruefung wie beim Anhaengen selbst.
-      // Erst hier, nach Persona-/Plattform-Aufloesung: dieselbe "kein Service-Client vor jedem
-      // frueheren Fehlschlag"-Reihenfolge wie der Rest dieser Route.
+    // Service Client, nicht Nutzer-Client: media_assets_select gewaehrt nur is_department_member,
+    // hier zaehlt aber dieselbe Zugehoerigkeits- und Bereitschaftspruefung wie beim Anhaengen selbst.
+    // Erst hier, nach Persona-/Plattform-Aufloesung: dieselbe "kein Service-Client vor jedem
+    // frueheren Fehlschlag"-Reihenfolge wie der Rest dieser Route. Jedes Foto einzeln pruefen --
+    // die Reihenfolge in mediaAssetIds bestimmt spaeter die position der post_media-Zeilen.
+    for (const mediaAssetId of mediaAssetIds) {
       const asset = await service.from('media_assets').select('organization_id, department_id, upload_status, people_reviewed_at').eq('id', mediaAssetId).maybeSingle()
       if (asset.error) throw asset.error
       const parsedAsset = asset.data === null ? null : parseSupabaseData(SessionMediaAssetSchema, asset.data)
@@ -554,13 +557,21 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     })
     if (result.error) throw result.error
     const created = z.object({ sessionId: UuidSchema, candidateIds: z.array(UuidSchema).min(1) }).parse(result.data)
-    if (mediaAssetId) {
+    if (mediaAssetIds.length > 0) {
       // upsert statt insert: create_text_generation_session ist selbst idempotent (derselbe
       // sessionHash liefert dieselbe Sitzung zurueck) -- ein Retry darf hier nicht an der
-      // unique(composition_session_id)-Bedingung scheitern.
+      // unique(composition_session_id, position)-Bedingung scheitern. Position spiegelt die
+      // Reihenfolge in mediaAssetIds; role folgt derselben Konvention wie routes/publishing.ts
+      // (Position 0 = 'primary', alles danach 'slide').
       const attach = await service
         .from('composition_session_post_media')
-        .upsert({ organization_id: input.organizationId, composition_session_id: created.sessionId, media_asset_id: mediaAssetId, created_by: request.auth!.userId }, { onConflict: 'composition_session_id' })
+        .upsert(
+          mediaAssetIds.map((mediaAssetId, position) => ({
+            organization_id: input.organizationId, composition_session_id: created.sessionId, media_asset_id: mediaAssetId,
+            position, role: position === 0 ? 'primary' : 'slide', created_by: request.auth!.userId,
+          })),
+          { onConflict: 'composition_session_id,position' },
+        )
       if (attach.error) throw attach.error
     }
     return reply.code(202).send({ ...created, correlationId: request.id })
@@ -744,19 +755,23 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (session.error) throw session.error
     if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(candidate.data.organization_id, session.data.department_id, session.data.team_id)))) return
     const service = supabaseClients.forService()
-    // Plan 045, PR 0 Schritt 4: die Sitzung traegt hoechstens einen Foto-Anhang
-    // (composition_session_post_media). Die Sharp/Storage-Arbeit dahinter kann keine reine
-    // SQL-Funktion leisten, deshalb wird sie hier, vor dem RPC-Aufruf, aufgeloest.
-    const attachment = await service.from('composition_session_post_media').select('media_asset_id').eq('composition_session_id', candidate.data.composition_session_id).maybeSingle()
-    if (attachment.error) throw attachment.error
-    let mediaDerivativeId: string | null = null
-    if (attachment.data) {
-      const parsedAttachment = parseSupabaseData(SessionAttachmentSchema, attachment.data)
+    // Plan 047, PR 0: die Sitzung kann jetzt mehrere Foto-Anhaenge tragen
+    // (composition_session_post_media), in der Reihenfolge ihrer position. Die Sharp/Storage-Arbeit
+    // dahinter kann keine reine SQL-Funktion leisten, deshalb wird sie hier, vor dem RPC-Aufruf,
+    // je Anhang aufgeloest.
+    const attachments = await service.from('composition_session_post_media').select('media_asset_id').eq('composition_session_id', candidate.data.composition_session_id).order('position', { ascending: true })
+    if (attachments.error) throw attachments.error
+    const mediaDerivativeIds: string[] = []
+    for (const row of attachments.data) {
+      const parsedAttachment = parseSupabaseData(SessionAttachmentSchema, row)
       const derivative = await ensurePassThroughDerivative(service, candidate.data.organization_id, parsedAttachment.media_asset_id)
       if ('error' in derivative) return reply.code(422).send({ error: derivative.error, correlationId: request.id })
-      mediaDerivativeId = derivative.id
+      mediaDerivativeIds.push(derivative.id)
     }
-    const accepted = await service.rpc('accept_text_generation_candidate', { p_candidate_id: id, p_actor_user_id: request.auth!.userId, p_media_derivative_id: mediaDerivativeId })
+    const accepted = await service.rpc('accept_text_generation_candidate', {
+      p_candidate_id: id, p_actor_user_id: request.auth!.userId,
+      p_media_derivative_ids: mediaDerivativeIds.length > 0 ? mediaDerivativeIds : null,
+    })
     if (accepted.error) throw accepted.error
     if (draftId) {
       // An idempotent re-accept only returns the version ID; composition_sessions.post_id is the

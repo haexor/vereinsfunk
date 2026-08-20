@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(14);
+select plan(21);
 
 set local role postgres;
 
@@ -23,7 +23,9 @@ insert into public.department_memberships (organization_id, department_id, user_
 
 insert into public.media_assets (id, organization_id, department_id, bucket_id, object_path, mime_type, byte_size, scan_status, upload_status, structural_validation_status, people_reviewed_at, created_by) values
   ('46000000-2000-4000-8000-000000000001', '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', 'raw-media', 'organizations/x/departments/y/assets/1/a.jpg', 'image/jpeg', 1000, 'clean', 'ready', 'valid', now(), '46000000-0000-4000-8000-000000000001'),
-  ('46000000-2000-4000-8000-000000000002', '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000002', 'raw-media', 'organizations/x/departments/z/assets/2/b.jpg', 'image/jpeg', 1000, 'clean', 'ready', 'valid', now(), '46000000-0000-4000-8000-000000000001');
+  ('46000000-2000-4000-8000-000000000002', '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000002', 'raw-media', 'organizations/x/departments/z/assets/2/b.jpg', 'image/jpeg', 1000, 'clean', 'ready', 'valid', now(), '46000000-0000-4000-8000-000000000001'),
+  -- Zweites Fussball-Foto -- Plan 047, PR 0: mehrere Anhaenge je Sitzung.
+  ('46000000-2000-4000-8000-000000000003', '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', 'raw-media', 'organizations/x/departments/y/assets/3/c.jpg', 'image/jpeg', 1000, 'clean', 'ready', 'valid', now(), '46000000-0000-4000-8000-000000000001');
 
 insert into public.composition_sessions (id, organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values
   ('46000000-3000-4000-8000-000000000001', '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('a', 64), '46000000-0000-4000-8000-000000000001');
@@ -63,12 +65,28 @@ select lives_ok(
 );
 select is((select count(*)::integer from public.composition_session_post_media where composition_session_id = '46000000-3000-4000-8000-000000000001'), 1, 'exactly one attachment row exists for the session');
 
--- 6: at most one attachment per session -- a second insert for the same session violates the
--- unique(composition_session_id) constraint.
+-- 6-8: Plan 047, PR 0 hebt "hoechstens ein Anhang je Sitzung" auf -- ein zweiter Anhang derselben
+-- Sitzung auf einer ANDEREN Position gelingt jetzt, ein zweiter Anhang auf DERSELBEN Position
+-- verletzt weiterhin die (jetzt zusammengesetzte) unique(composition_session_id, position).
+select lives_ok(
+  $$insert into public.composition_session_post_media (organization_id, composition_session_id, media_asset_id, position, role, created_by) values ('46000000-1000-4000-8000-000000000001', '46000000-3000-4000-8000-000000000001', '46000000-2000-4000-8000-000000000003', 1, 'slide', '46000000-0000-4000-8000-000000000001')$$,
+  'a second attachment for the same session on a different position now succeeds'
+);
+select is((select count(*)::integer from public.composition_session_post_media where composition_session_id = '46000000-3000-4000-8000-000000000001'), 2, 'both attachments now exist for the session');
 select throws_ok(
   $$insert into public.composition_session_post_media (organization_id, composition_session_id, media_asset_id, created_by) values ('46000000-1000-4000-8000-000000000001', '46000000-3000-4000-8000-000000000001', '46000000-2000-4000-8000-000000000001', '46000000-0000-4000-8000-000000000001')$$,
-  '23505', null, 'a second attachment for the same session violates the one-per-session uniqueness constraint'
+  '23505', null, 'a second attachment for the same session on the SAME (default) position still violates the uniqueness constraint'
 );
+
+-- Review-Nachbesserung (2026082006): position hat jetzt eine Obergrenze -- ein direkter
+-- Service-Role-Aufruf (an der Zod-Grenze mediaAssetIds.max(10) vorbei) darf keinen elften Anhang
+-- erzeugen. Unter postgres, weil es hier nur um die CHECK-Constraint selbst geht, nicht um RLS.
+set local role postgres;
+select throws_ok(
+  $$insert into public.composition_session_post_media (organization_id, composition_session_id, media_asset_id, position, role, created_by) values ('46000000-1000-4000-8000-000000000001', '46000000-3000-4000-8000-000000000001', '46000000-2000-4000-8000-000000000003', 10, 'slide', '46000000-0000-4000-8000-000000000001')$$,
+  '23514', null, 'position 10 violates the upper-bound CHECK constraint (at most 10 attachments, positions 0-9)'
+);
+set local role authenticated;
 
 -- 7: negative read -- an unrelated tenant member cannot see this attachment at all.
 select set_config('request.jwt.claim.sub', '46000000-0000-4000-8000-000000000099', true);
@@ -91,7 +109,7 @@ insert into public.generation_candidates (id, organization_id, composition_sessi
 -- Simulates apps/api/src/routes/content.ts resolving composition_session_post_media to a ready
 -- derivative BEFORE calling this RPC -- a plain SQL function cannot copy storage bytes itself.
 select (result->>'postVersionId')::uuid as version_id
-  from (select public.accept_text_generation_candidate('46000000-6000-4000-8000-000000000001', '46000000-0000-4000-8000-000000000001', '46000000-5000-4000-8000-000000000001') as result) rpc \gset
+  from (select public.accept_text_generation_candidate('46000000-6000-4000-8000-000000000001', '46000000-0000-4000-8000-000000000001', array['46000000-5000-4000-8000-000000000001']::uuid[]) as result) rpc \gset
 select is(
   (select count(*)::integer from public.post_media where post_version_id = :'version_id'),
   1, 'accepting the candidate creates exactly one post_media row from the session attachment'
@@ -103,10 +121,52 @@ select is(
 );
 
 -- A retried accept (idempotent re-delivery) must not create a second post_media row.
-select public.accept_text_generation_candidate('46000000-6000-4000-8000-000000000001', '46000000-0000-4000-8000-000000000001', '46000000-5000-4000-8000-000000000001');
+select public.accept_text_generation_candidate('46000000-6000-4000-8000-000000000001', '46000000-0000-4000-8000-000000000001', array['46000000-5000-4000-8000-000000000001']::uuid[]);
 select is(
   (select count(*)::integer from public.post_media where post_version_id = :'version_id'),
   1, 'a retried accept call for the same candidate does not create a second post_media row'
+);
+
+-- Plan 047, PR 0: mehrere Medien-Derivate in EINEM Accept-Aufruf ergeben mehrere post_media-Zeilen,
+-- in Array-Reihenfolge positioniert, Index 0 'primary' und alles danach 'slide'.
+insert into public.media_derivatives (id, organization_id, media_asset_id, recipe, recipe_version, object_path, sha256, mime_type, byte_size, status) values
+  ('46000000-5000-4000-8000-000000000004', '46000000-1000-4000-8000-000000000001', '46000000-2000-4000-8000-000000000003', '{"kind":"pass_through_v1"}', 'pass-through-v1', 'organizations/x/derivatives/3/pass-through.jpg', repeat('9', 64), 'image/jpeg', 1000, 'ready');
+insert into public.generation_candidates (id, organization_id, composition_session_id, generation_intent, status, input_hash, generated_content, provider_configuration_id, provider_model_id, provider_parameter_hash, prompt_template_version) values
+  ('46000000-6000-4000-8000-000000000004', '46000000-1000-4000-8000-000000000001', '46000000-3000-4000-8000-000000000001', 'initial', 'ready', repeat('4', 64),
+   '{"headline":"Training","caption":"Heute Training.","callToAction":"Kommt vorbei","hashtags":["#training"],"altText":"Foto","safetyFlags":[]}'::jsonb,
+   '46000000-4000-4000-8000-000000000001', 'smoke-test-model', repeat('d', 64), 'v1');
+select (result->>'postVersionId')::uuid as multi_version_id
+  from (select public.accept_text_generation_candidate('46000000-6000-4000-8000-000000000004', '46000000-0000-4000-8000-000000000001', array['46000000-5000-4000-8000-000000000001', '46000000-5000-4000-8000-000000000004']::uuid[]) as result) rpc \gset
+select is(
+  (select count(*)::integer from public.post_media where post_version_id = :'multi_version_id'),
+  2, 'accepting with two derivative ids creates two post_media rows'
+);
+select is(
+  (select (media_derivative_id, position, role) from public.post_media where post_version_id = :'multi_version_id' and position = 0),
+  ('46000000-5000-4000-8000-000000000001'::uuid, 0, 'primary'::text),
+  'position 0 points at the first derivative id and is role primary'
+);
+select is(
+  (select (media_derivative_id, position, role) from public.post_media where post_version_id = :'multi_version_id' and position = 1),
+  ('46000000-5000-4000-8000-000000000004'::uuid, 1, 'slide'::text),
+  'position 1 points at the second derivative id and is role slide'
+);
+
+-- Review-Nachbesserung (2026082006): mehr als zehn Derivat-IDs werden abgelehnt, bevor auch nur
+-- eines einzeln geprueft wird -- Tiefenverteidigung gegen einen Service-Role-Aufruf an der
+-- Zod-Grenze vorbei. Die IDs muessen dafuer nicht real sein, die Laengenpruefung greift zuerst.
+insert into public.generation_candidates (id, organization_id, composition_session_id, generation_intent, status, input_hash, generated_content, provider_configuration_id, provider_model_id, provider_parameter_hash, prompt_template_version) values
+  ('46000000-6000-4000-8000-000000000005', '46000000-1000-4000-8000-000000000001', '46000000-3000-4000-8000-000000000001', 'initial', 'ready', repeat('5', 64),
+   '{"headline":"Training","caption":"Heute Training.","callToAction":"Kommt vorbei","hashtags":["#training"],"altText":"Foto","safetyFlags":[]}'::jsonb,
+   '46000000-4000-4000-8000-000000000001', 'smoke-test-model', repeat('d', 64), 'v1');
+select throws_ok(
+  $$select public.accept_text_generation_candidate('46000000-6000-4000-8000-000000000005', '46000000-0000-4000-8000-000000000001', array[
+    '46000000-7000-4000-8000-000000000001', '46000000-7000-4000-8000-000000000002', '46000000-7000-4000-8000-000000000003',
+    '46000000-7000-4000-8000-000000000004', '46000000-7000-4000-8000-000000000005', '46000000-7000-4000-8000-000000000006',
+    '46000000-7000-4000-8000-000000000007', '46000000-7000-4000-8000-000000000008', '46000000-7000-4000-8000-000000000009',
+    '46000000-7000-4000-8000-000000000010', '46000000-7000-4000-8000-000000000011'
+  ]::uuid[])$$,
+  'P0001', 'too_many_media_derivatives', 'eleven derivative ids are rejected outright, before any per-item validation'
 );
 
 -- 12: an invalid (non-'ready') derivative id is rejected outright -- the RPC is trusted, but this
@@ -118,7 +178,7 @@ insert into public.generation_candidates (id, organization_id, composition_sessi
 insert into public.media_derivatives (id, organization_id, media_asset_id, recipe, recipe_version, object_path, sha256, mime_type, byte_size, status) values
   ('46000000-5000-4000-8000-000000000002', '46000000-1000-4000-8000-000000000001', '46000000-2000-4000-8000-000000000001', '{"kind":"pass_through_v1"}', 'pass-through-v1', 'organizations/x/derivatives/1/pass-through-2.jpg', repeat('f', 64), 'image/jpeg', 1000, 'processing');
 select throws_ok(
-  $$select public.accept_text_generation_candidate('46000000-6000-4000-8000-000000000002', '46000000-0000-4000-8000-000000000001', '46000000-5000-4000-8000-000000000002')$$,
+  $$select public.accept_text_generation_candidate('46000000-6000-4000-8000-000000000002', '46000000-0000-4000-8000-000000000001', array['46000000-5000-4000-8000-000000000002']::uuid[])$$,
   'P0001', 'invalid_media_derivative', 'a not-yet-ready derivative id is rejected instead of being linked into post_media'
 );
 
