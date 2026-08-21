@@ -1,4 +1,4 @@
-import type { PhotoLayoutKind, PhotoLayoutPreset } from '@vereinsfunk/contracts'
+import { PHOTO_LAYOUT_PHOTO_COUNTS, type PhotoLayoutKind, type PhotoLayoutPreset } from '@vereinsfunk/contracts'
 import sharp from 'sharp'
 import { hexToRgb } from './imageStyle.js'
 
@@ -281,6 +281,10 @@ async function encodePhotoLayoutResult(buffer: Buffer, hasTransparency: boolean)
 // diagonal_split zusaetzlich per SVG-Polygon-Maske (dest-in) geclippt.
 export async function renderPhotoLayout(input: PhotoLayoutRenderInput): Promise<PhotoLayoutRenderResult> {
   const { preset, sourceBuffers } = input
+  const photoCountRange = PHOTO_LAYOUT_PHOTO_COUNTS[preset.kind]
+  if (sourceBuffers.length < photoCountRange.min || sourceBuffers.length > photoCountRange.max) {
+    throw new Error(`photo layout ${preset.kind} requires ${photoCountRange.min}..${photoCountRange.max} photos, got ${sourceBuffers.length}`)
+  }
   const canvasSize = PHOTO_LAYOUT_CANVAS_SIZE_PX
   const dividerColorHex = resolveDividerColorHex(preset.dividerColor, input.brandColors)
   const placements = computeTilePlacements(preset.kind, sourceBuffers.length, preset.dividerWidthPx, canvasSize)

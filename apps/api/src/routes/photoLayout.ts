@@ -40,6 +40,9 @@ const FaceRegionRowSchema = z.object({
   subject_kind: z.enum(['adult', 'minor', 'unknown']), decision: z.string(),
   consent_record_id: UuidSchema.nullable(), obscuring_style: z.string().nullable(),
 })
+const PresetScopeRowSchema = z.object({
+  organization_id: UuidSchema, department_id: UuidSchema.nullable(), team_id: UuidSchema.nullable(),
+})
 
 async function loadSourcePhoto(
   service: SupabaseClient, organizationId: string, departmentId: string, mediaAssetId: string,
@@ -111,7 +114,8 @@ export function registerPhotoLayoutRoutes(app: FastifyInstance, context: ApiRout
     const existing = await client.from('photo_layout_presets').select('organization_id, department_id, team_id').eq('id', params.id).maybeSingle()
     if (existing.error) throw existing.error
     if (!existing.data) return reply.code(404).send({ error: 'photo_layout_preset_not_found', correlationId: request.id })
-    const scope = toPermissionScope(existing.data.organization_id as string, existing.data.department_id as string | null, existing.data.team_id as string | null)
+    const existingScope = parseSupabaseData(PresetScopeRowSchema, existing.data)
+    const scope = toPermissionScope(existingScope.organization_id, existingScope.department_id, existingScope.team_id)
     if (!(await requirePermission(request, reply, 'brand.manage', scope))) return
     const input = UpdatePhotoLayoutPresetRequestSchema.parse(request.body)
 
@@ -132,7 +136,8 @@ export function registerPhotoLayoutRoutes(app: FastifyInstance, context: ApiRout
     const existing = await client.from('photo_layout_presets').select('organization_id, department_id, team_id').eq('id', params.id).maybeSingle()
     if (existing.error) throw existing.error
     if (!existing.data) return reply.code(404).send({ error: 'photo_layout_preset_not_found', correlationId: request.id })
-    const scope = toPermissionScope(existing.data.organization_id as string, existing.data.department_id as string | null, existing.data.team_id as string | null)
+    const existingScope = parseSupabaseData(PresetScopeRowSchema, existing.data)
+    const scope = toPermissionScope(existingScope.organization_id, existingScope.department_id, existingScope.team_id)
     if (!(await requirePermission(request, reply, 'brand.manage', scope))) return
     const del = await client.from('photo_layout_presets').delete().eq('id', params.id)
     if (del.error) throw del.error

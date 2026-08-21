@@ -44,7 +44,17 @@ function nullableNumberFromInput(event: Event): number | null {
   return value ? Number(value) : null
 }
 
-const isValid = computed(() => draft.value.name.trim().length > 0)
+// Spiegelt PhotoLayoutPresetFieldsSchema (packages/contracts/src/photoLayout.ts) 1:1 -- der
+// Speichern-Knopf bleibt deaktiviert, statt eine Anfrage zu schicken, die die API ohnehin
+// ablehnen wuerde. Number.isInteger liefert bei einem leeren Zahlenfeld (v-model.number laesst
+// dann den rohen leeren String stehen, siehe ImageStylePresetForm.vue) korrekt false.
+const isValid = computed(() => {
+  const value = draft.value
+  if (!value.name.trim()) return false
+  if (!Number.isInteger(value.dividerWidthPx) || value.dividerWidthPx < 0 || value.dividerWidthPx > 100) return false
+  if (value.cornerRadiusPx !== null && (!Number.isInteger(value.cornerRadiusPx) || value.cornerRadiusPx < 0 || value.cornerRadiusPx > 200)) return false
+  return true
+})
 </script>
 
 <template>
@@ -56,7 +66,7 @@ const isValid = computed(() => draft.value.name.trim().length > 0)
     <div class="mt-5 border-t border-[#e9ebe4] pt-4">
       <p class="mb-2 text-xs font-semibold text-[#5c655f]">Layout</p>
       <div class="grid grid-cols-3 gap-2">
-        <button v-for="option in KIND_OPTIONS" :key="option.value" type="button" class="focus-ring space-y-1 rounded-lg p-1.5" :class="draft.kind === option.value ? 'bg-forest' : 'bg-[#eef1ea]'" @click="draft.kind = option.value">
+        <button v-for="option in KIND_OPTIONS" :key="option.value" type="button" :aria-pressed="draft.kind === option.value" class="focus-ring space-y-1 rounded-lg p-1.5" :class="draft.kind === option.value ? 'bg-forest' : 'bg-[#eef1ea]'" @click="draft.kind = option.value">
           <PhotoLayoutPreview :kind="option.value" :divider-color-hex="resolvedDividerColorHex" :divider-width-px="GALLERY_PREVIEW_WIDTH_PX" class="rounded-md" />
           <span class="block text-center text-[10px] font-semibold" :class="draft.kind === option.value ? 'text-white' : 'text-[#5b625d]'">{{ option.label }}</span>
           <span class="block text-center text-[9px]" :class="draft.kind === option.value ? 'text-white/80' : 'text-[#9aa096]'">{{ option.hint }}</span>
@@ -67,9 +77,9 @@ const isValid = computed(() => draft.value.name.trim().length > 0)
     <div class="mt-5 border-t border-[#e9ebe4] pt-4">
       <p class="mb-2 text-xs font-semibold text-[#5c655f]">Trennlinie / Zwischenraum</p>
       <div class="flex flex-wrap items-center gap-2">
-        <button type="button" class="focus-ring rounded-lg px-3 py-1.5 text-[11px] font-semibold" :class="dividerColorMode === 'primary' ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'" @click="setDividerColorMode('primary')">Vereinsfarbe</button>
-        <button type="button" class="focus-ring rounded-lg px-3 py-1.5 text-[11px] font-semibold" :class="dividerColorMode === 'accent' ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'" @click="setDividerColorMode('accent')">Akzentfarbe</button>
-        <button type="button" class="focus-ring rounded-lg px-3 py-1.5 text-[11px] font-semibold" :class="dividerColorMode === 'custom' ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'" @click="setDividerColorMode('custom')">Eigene Farbe</button>
+        <button type="button" :aria-pressed="dividerColorMode === 'primary'" class="focus-ring rounded-lg px-3 py-1.5 text-[11px] font-semibold" :class="dividerColorMode === 'primary' ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'" @click="setDividerColorMode('primary')">Vereinsfarbe</button>
+        <button type="button" :aria-pressed="dividerColorMode === 'accent'" class="focus-ring rounded-lg px-3 py-1.5 text-[11px] font-semibold" :class="dividerColorMode === 'accent' ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'" @click="setDividerColorMode('accent')">Akzentfarbe</button>
+        <button type="button" :aria-pressed="dividerColorMode === 'custom'" class="focus-ring rounded-lg px-3 py-1.5 text-[11px] font-semibold" :class="dividerColorMode === 'custom' ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'" @click="setDividerColorMode('custom')">Eigene Farbe</button>
         <input v-if="dividerColorMode === 'custom'" :value="draft.dividerColor" type="color" class="h-8 w-8 rounded border-0" @input="draft.dividerColor = ($event.target as HTMLInputElement).value" />
       </div>
       <label class="mt-3 block text-xs font-semibold text-[#5c655f]">Breite (px)

@@ -61,6 +61,11 @@ const mediaAssetIds = ref<string[]>([])
 // Template), statt zu versuchen, PhotoAttachmentList von aussen auf das komponierte Foto
 // umzubiegen (deren Slots kennen nur den eigenen Upload-Ablauf).
 const composedPhotoPreview = ref<{ mediaAssetId: string; signedUrl: string } | null>(null)
+// signedUrl ist zeitlich begrenzt gueltig, diese Seite kann waehrend Entwurfsspeicherung und
+// Kandidatenerzeugung aber lange offen bleiben -- composedPreviewFailed faengt das kaputte Bild
+// ab, ohne mediaAssetIds anzutasten (das komponierte Foto bleibt weiterhin angehaengt).
+const composedPreviewFailed = ref(false)
+watch(composedPhotoPreview, () => { composedPreviewFailed.value = false })
 // Nur zwei Gruppen in der Dropdown-Liste: System- und eigene Profile sind beides "Stil" (der
 // Unterschied ist fuer die Auswahl selbst nicht relevant), Personas bleiben separat.
 const PROFILE_GROUPS = [
@@ -342,7 +347,8 @@ onBeforeUnmount(() => { if (hasDraftContent()) void saveServerDraft() })
         <template v-if="composedPhotoPreview">
           <div class="rounded-xl border border-[#e1e2db] p-3">
             <p class="mb-2 text-xs font-semibold text-[#727a75]">Zusammengefügtes Foto</p>
-            <img :src="composedPhotoPreview.signedUrl" alt="Zusammengefügtes Foto" class="max-h-64 w-auto rounded-lg" />
+            <img v-if="!composedPreviewFailed" :src="composedPhotoPreview.signedUrl" alt="Zusammengefügtes Foto" class="max-h-64 w-auto rounded-lg" @error="composedPreviewFailed = true" />
+            <p v-else class="text-xs text-[#727a75]">Die Vorschau ist abgelaufen. Das zusammengefügte Foto bleibt angehängt.</p>
             <button type="button" class="mt-2 text-xs text-red-700 underline" @click="composedPhotoPreview = null; mediaAssetIds = []">Andere Fotos wählen</button>
           </div>
         </template>

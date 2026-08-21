@@ -102,13 +102,24 @@ async function createPreset() {
   if (!organizationId.value) return
   saving.value = true
   createError.value = ''
+  let body: z.infer<typeof CreatePhotoLayoutPresetRequestSchema>
   try {
-    const body = CreatePhotoLayoutPresetRequestSchema.parse({
+    body = CreatePhotoLayoutPresetRequestSchema.parse({
       ...draft.value,
       organizationId: organizationId.value,
       departmentId: activeDepartmentId.value ?? undefined,
       teamId: activeTeamId.value ?? undefined,
     })
+  } catch (error) {
+    // Ein Schema-Fehler hier bedeutet, dass isValid im Formular etwas durchgelassen hat, das die
+    // API ohnehin ablehnen wuerde -- ein Programmierfehler, keine behebbare Nutzeraktion, deshalb
+    // eine andere Meldung als bei einem echten Transportfehler unten.
+    console.error('CreatePhotoLayoutPresetRequestSchema rejected form draft', error)
+    createError.value = 'Unerwarteter Eingabefehler. Bitte lade die Seite neu.'
+    saving.value = false
+    return
+  }
+  try {
     await api.request('/v1/photo-layout-presets', { method: 'POST', body })
     draft.value = emptyPhotoLayoutPresetDraft()
     await loadAll()
@@ -138,8 +149,16 @@ async function saveEdit() {
   if (!editingId.value) return
   editSaving.value = true
   editError.value = ''
+  let body: z.infer<typeof UpdatePhotoLayoutPresetRequestSchema>
   try {
-    const body = UpdatePhotoLayoutPresetRequestSchema.parse(editDraft.value)
+    body = UpdatePhotoLayoutPresetRequestSchema.parse(editDraft.value)
+  } catch (error) {
+    console.error('UpdatePhotoLayoutPresetRequestSchema rejected form draft', error)
+    editError.value = 'Unerwarteter Eingabefehler. Bitte lade die Seite neu.'
+    editSaving.value = false
+    return
+  }
+  try {
     await api.request(`/v1/photo-layout-presets/${editingId.value}`, { method: 'PATCH', body })
     editingId.value = null
     await loadAll()

@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(19);
+select plan(20);
 
 set local role postgres;
 
@@ -130,7 +130,19 @@ select throws_ok(
 select set_config('request.jwt.claim.sub', '49000000-0000-4000-8000-000000000001', true);
 select is((select count(*)::integer from public.photo_layout_presets where organization_id = '49000000-1000-4000-8000-000000000002'), 0, 'no photo_layout_presets row exists for the foreign organization');
 
--- 16-17: der Fussball-Abteilungsadmin kann das eigene Preset loeschen.
+-- 16: dieselbe Pruefung, aber mit tatsaechlich vorhandener Fremdverein-Zeile -- Test 15 allein
+-- beweist nur "keine Daten", nicht "RLS blockiert". Zeile per postgres angelegt (kein Mitglied
+-- des Fremdvereins unter den Testnutzern faellt fuer created_by aus, also der Fremdverein-Admin
+-- selbst), Sichtprobe unter dem Fussball-Abteilungsadmin, der im Fremdverein keine Mitgliedschaft
+-- hat (anders als Nutzer 1, der dort bewusst organization_admin ist).
+set local role postgres;
+insert into public.photo_layout_presets (id, organization_id, name, kind, created_by)
+  values ('49000000-9000-4000-8000-000000000099', '49000000-1000-4000-8000-000000000002', 'Fremdverein Preset', 'grid_2x2', '49000000-0000-4000-8000-000000000001');
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '49000000-0000-4000-8000-000000000002', true);
+select is((select count(*)::integer from public.photo_layout_presets where organization_id = '49000000-1000-4000-8000-000000000002'), 0, 'an existing foreign-organization preset stays invisible to a non-member');
+
+-- 17-18: der Fussball-Abteilungsadmin kann das eigene Preset loeschen.
 select set_config('request.jwt.claim.sub', '49000000-0000-4000-8000-000000000002', true);
 select lives_ok(
   $$delete from public.photo_layout_presets where id = '49000000-9000-4000-8000-000000000001'$$,
@@ -138,7 +150,7 @@ select lives_ok(
 );
 select is((select count(*)::integer from public.photo_layout_presets where id = '49000000-9000-4000-8000-000000000001'), 0, 'the deleted preset is gone');
 
--- 18-19: die Ebene der Loeschsperre kaskadiert ueber die Abteilung.
+-- 19-20: die Ebene der Loeschsperre kaskadiert ueber die Abteilung.
 set local role postgres;
 select is((select count(*)::integer from public.photo_layout_presets where id = '49000000-9000-4000-8000-000000000002'), 1, 'the team-scoped preset still exists before its department is deleted');
 delete from public.departments where id = '49000000-1100-4000-8000-000000000001';

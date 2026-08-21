@@ -21,16 +21,26 @@ const presets = ref<PhotoLayoutPreset[]>([])
 const loading = ref(true)
 const composingId = ref<string | null>(null)
 const error = ref('')
+const loadError = ref(false)
+
+// Sichert die Antworten gegen Ueberholen ab -- wenn organizationId schnell wechselt (Watch unten),
+// soll nicht eine aeltere Antwort eine bereits neuere ueberschreiben.
+let loadToken = 0
 
 async function loadPresets() {
+  const token = ++loadToken
   loading.value = true
+  loadError.value = false
   try {
     const response = await api.request('/v1/photo-layout-presets', { query: { organizationId: props.organizationId } }, z.object({ presets: z.array(PhotoLayoutPresetSchema) }))
+    if (token !== loadToken) return
     presets.value = response.presets.filter((preset) => preset.isActive)
   } catch {
+    if (token !== loadToken) return
     presets.value = []
+    loadError.value = true
   } finally {
-    loading.value = false
+    if (token === loadToken) loading.value = false
   }
 }
 await loadPresets()
@@ -97,4 +107,5 @@ async function composeLayout(preset: PhotoLayoutPreset) {
     </div>
     <p v-if="error" class="mt-2 text-[11px] text-amber-800">{{ error }}</p>
   </div>
+  <p v-else-if="!loading && loadError" class="mt-3 text-[11px] text-amber-800">Die Layouts konnten nicht geladen werden.</p>
 </template>

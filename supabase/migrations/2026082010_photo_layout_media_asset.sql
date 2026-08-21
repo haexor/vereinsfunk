@@ -55,7 +55,8 @@ begin
   -- haette die Zeile nie sichtbar gemacht) -- face_regions/people_reviewed_at also bereits gesetzt,
   -- ein zweiter Durchlauf wuerde sie nur doppeln.
   if new_asset_id is null then
-    select id into new_asset_id from public.media_assets where bucket_id = 'rendered-media' and object_path = p_object_path;
+    select id into new_asset_id from public.media_assets
+      where bucket_id = 'rendered-media' and object_path = p_object_path and organization_id = p_organization_id;
     return new_asset_id;
   end if;
 
