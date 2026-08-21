@@ -188,13 +188,24 @@ export function useBrandAssets({
     return assetSignedUrls.value[assetId] ?? ''
   })
 
-  function onLogoSelected(event: Event, variant: 'light' | 'dark') {
-    const file = (event.target as HTMLInputElement).files?.[0] ?? null
+  // Aus onLogoSelected herausgezogen (Paket 048), damit ein KI-vorgeschlagenes Logo denselben
+  // Vorschau-/Speicherpfad wie ein manueller Upload durchlaeuft, statt einen zweiten zu bauen.
+  function applyLogoFile(file: File, variant: 'light' | 'dark') {
     const fileRef = variant === 'light' ? logoFileLight : logoFileDark
     const previewRef = variant === 'light' ? logoPreviewUrlLight : logoPreviewUrlDark
     if (previewRef.value) URL.revokeObjectURL(previewRef.value)
     fileRef.value = file
-    previewRef.value = file ? URL.createObjectURL(file) : ''
+    previewRef.value = URL.createObjectURL(file)
+  }
+
+  function onLogoSelected(event: Event, variant: 'light' | 'dark') {
+    const file = (event.target as HTMLInputElement).files?.[0] ?? null
+    if (file) { applyLogoFile(file, variant); return }
+    const fileRef = variant === 'light' ? logoFileLight : logoFileDark
+    const previewRef = variant === 'light' ? logoPreviewUrlLight : logoPreviewUrlDark
+    if (previewRef.value) URL.revokeObjectURL(previewRef.value)
+    fileRef.value = null
+    previewRef.value = ''
   }
 
   const sanitizedNotice = ref(false)
@@ -297,7 +308,7 @@ export function useBrandAssets({
     sanitizedNotice, selectableLogoAssets, selectableFontAssets, ownFontAssets,
     pendingLicenseAssets, ownLogoAssets, previewDisplayFamily, previewBodyFamily,
     previewFontFaceCss, previewLogoUrl, uploadingAsset, uploadError, licenseDrafts,
-    confirmingLicense, assetOrigin, onLogoSelected, saveOrgLogoIfSelected,
+    confirmingLicense, assetOrigin, onLogoSelected, applyLogoFile, saveOrgLogoIfSelected,
     activeFontAssetId, toggleFontAsset, uploadAsset, licenseDraftFor, confirmLicense,
   }
 }

@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { AlertTriangle, Check, LoaderCircle, Upload } from '@lucide/vue'
+import { AlertTriangle, Check, LoaderCircle, Sparkles, Upload } from '@lucide/vue'
 import { BRAND_LOCKABLE_FIELDS, curatedFontPairings, meetsMinimumContrast, MINIMUM_AA_CONTRAST, resolveBrand } from '@vereinsfunk/domain'
+import type { BrandWebsiteAnalysisResult } from '@vereinsfunk/contracts'
 import { type BrandOrganizationState, type BrandScopeLevel, useBrandAssets } from '../composables/useBrandAssets'
 import { useBrandOverrides } from '../composables/useBrandOverrides'
+import { useBrandWebsiteAnalysis } from '../composables/useBrandWebsiteAnalysis'
 import { ApiRequestError } from '../utils/apiClient'
 
 type ScopeLevelName = BrandScopeLevel
@@ -95,7 +97,7 @@ async function loadAll() {
   loading.value = true
   loadError.value = false
   try {
-    const [brandResult, departmentsResult, teamsResult, departmentProfilesResult, teamProfilesResult, assetsResult] = await Promise.all([
+    const [brandResult, departmentsResult, teamsResult, departmentProfilesResult, teamProfilesResult, assetsResult, organizationProfileResult] = await Promise.all([
       supabase.from('organization_brand_profiles')
         .select('primary_color, accent_color, background_color, text_color, on_primary_color, display_font_key, body_font_key, display_font_asset_id, body_font_asset_id, allow_department_overrides, locked_fields, logo_path, logo_dark_path')
         .eq('organization_id', organizationId.value).maybeSingle(),
@@ -104,10 +106,17 @@ async function loadAll() {
       supabase.from('department_brand_profiles').select('department_id, primary_color, accent_color, logo_asset_id, display_font_asset_id, body_font_asset_id, allow_team_overrides, locked_fields').eq('organization_id', organizationId.value),
       supabase.from('team_brand_profiles').select('team_id, primary_color, accent_color, logo_asset_id, display_font_asset_id, body_font_asset_id').eq('organization_id', organizationId.value),
       supabase.from('brand_assets').select('id, department_id, team_id, kind, object_path, status, font_family, font_weight, font_style, license_holder, created_at').eq('organization_id', organizationId.value).order('created_at', { ascending: false }),
+      supabase.from('organization_profiles').select('website_url').eq('organization_id', organizationId.value).maybeSingle(),
     ])
     if (brandResult.error || departmentsResult.error || teamsResult.error || departmentProfilesResult.error || teamProfilesResult.error || assetsResult.error) {
       loadError.value = true
       return
+    }
+    // Nur vorausfuellen, wenn das Feld noch leer ist -- ein erneutes loadAll() (z.B. nach dem
+    // Speichern) darf eine bereits vom Verein eingegebene, vom Impressum abweichende Adresse
+    // nicht ueberschreiben.
+    if (!websiteAnalysisUrl.value && organizationProfileResult.data?.website_url) {
+      websiteAnalysisUrl.value = organizationProfileResult.data.website_url
     }
     if (brandResult.data) {
       org.primaryColor = brandResult.data.primary_color
@@ -178,6 +187,7 @@ const {
   confirmingLicense,
   assetOrigin,
   onLogoSelected,
+  applyLogoFile,
   saveOrgLogoIfSelected,
   activeFontAssetId,
   toggleFontAsset,
@@ -197,6 +207,64 @@ const {
   resolved,
   reload: loadAll,
 })
+
+// Paket 048: KI-gestuetzte Markenerkennung aus der Vereins-Homepage -- fuellt nur Formularfelder
+// vor, speichert nichts selbst (siehe Plandokument 048).
+const websiteAnalysisUrl = ref('')
+const {
+  status: websiteAnalysisStatus,
+  result: websiteAnalysisResult,
+  errorReason: websiteAnalysisErrorReason,
+  startError: websiteAnalysisStartError,
+  starting: websiteAnalysisStarting,
+  startAnalysis: requestWebsiteAnalysis,
+} = useBrandWebsiteAnalysis({ api, organizationId })
+const websiteAnalysisRunning = computed(() => websiteAnalysisStatus.value === 'pending' || websiteAnalysisStatus.value === 'running')
+const detectedFontNotice = computed(() => {
+  const detected = websiteAnalysisResult.value?.detectedFontFamily
+  return detected
+    ? `Auf der Webseite erkannt: „${detected}“ — kann aus Datenschutzgründen nicht automatisch übernommen werden; bei Bedarf oben als eigene Schriftdatei mit Lizenzbestätigung hochladen.`
+    : ''
+})
+// Bildet die technischen error_reason-Werte des Workers (z.B. "provider_rate_limit",
+// "secret_configuration") auf wenige verständliche Gründe ab, statt sie roh anzuzeigen --
+// siehe Plandokument 048, Abschnitt "Abweichungen".
+const websiteAnalysisFailureMessage = computed(() => {
+  if (websiteAnalysisStatus.value !== 'failed') return ''
+  const reason = websiteAnalysisErrorReason.value
+  if (reason === 'timeout') return 'Die Analyse hat zu lange gedauert. Bitte erneut versuchen.'
+  if (reason === 'website_unreachable' || reason === 'blocked_url') return 'Die Webseite konnte nicht geladen werden. Bitte die Adresse prüfen und erneut versuchen.'
+  return 'Die Analyse ist fehlgeschlagen. Bitte später erneut versuchen.'
+})
+
+async function applyWebsiteAnalysisResult(result: BrandWebsiteAnalysisResult) {
+  org.primaryColor = result.primaryColor
+  org.accentColor = result.accentColor
+  org.backgroundColor = result.backgroundColor
+  org.textColor = result.textColor
+  org.onPrimaryColor = result.onPrimaryColor
+  const pairing = curatedFontPairings.find((entry) => entry.key === result.suggestedFontPairingKey)
+  if (pairing) { org.displayFontKey = pairing.displayFontKey; org.bodyFontKey = pairing.bodyFontKey }
+  if (!result.logoCandidate) return
+  try {
+    const downloaded = await fetch(result.logoCandidate.signedUrl)
+    const blob = await downloaded.blob()
+    const extension = result.logoCandidate.mimeType.split('/')[1]?.split('+')[0] || 'png'
+    applyLogoFile(new File([blob], `homepage-logo.${extension}`, { type: result.logoCandidate.mimeType }), 'light')
+  } catch {
+    // Farb-/Font-Vorschlag bleibt uebernommen, auch wenn der Logo-Download im Browser scheitert.
+  }
+}
+watch(websiteAnalysisStatus, (value) => {
+  if (value === 'succeeded' && websiteAnalysisResult.value) void applyWebsiteAnalysisResult(websiteAnalysisResult.value)
+})
+
+async function startWebsiteAnalysis() {
+  const url = websiteAnalysisUrl.value.trim()
+  if (!url) return
+  await requestWebsiteAnalysis(url)
+}
+
 await loadAll()
 
 async function saveOrganization() {
@@ -290,6 +358,23 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
 
       <div class="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
         <div class="space-y-6">
+          <!-- KI-Markenerkennung aus der Homepage (nur Vereinsebene, füllt nur vor) -->
+          <section v-if="activeLevel === 'organization'" class="card p-6">
+            <h2 class="font-display flex items-center gap-2 text-base font-bold"><Sparkles :size="16" /> Automatisch aus der Homepage übernehmen</h2>
+            <p class="mt-2 text-xs text-[#7a817c]">Farben, Logo und eine Schriftempfehlung aus eurer Vereins-Homepage vorschlagen lassen. Übernommen wird erst mit „Änderungen speichern“ unten.</p>
+            <div class="mt-4 flex flex-wrap items-center gap-2">
+              <input v-model="websiteAnalysisUrl" type="url" placeholder="https://euer-verein.de" class="focus-ring min-w-0 flex-1 rounded-lg border border-[#dfe0d9] px-3 py-2 text-xs" :disabled="websiteAnalysisRunning || websiteAnalysisStarting" />
+              <button type="button" class="focus-ring flex items-center gap-1.5 rounded-lg bg-forest px-3 py-2 text-xs font-bold text-white disabled:opacity-60" :disabled="websiteAnalysisRunning || websiteAnalysisStarting || !websiteAnalysisUrl.trim()" @click="startWebsiteAnalysis">
+                <LoaderCircle v-if="websiteAnalysisRunning || websiteAnalysisStarting" :size="14" class="animate-spin" /><Sparkles v-else :size="14" />
+                {{ websiteAnalysisRunning ? 'Analyse läuft …' : 'Analyse starten' }}
+              </button>
+            </div>
+            <p v-if="websiteAnalysisStartError" class="mt-2 text-[11px] text-amber-800">{{ websiteAnalysisStartError }}</p>
+            <p v-else-if="websiteAnalysisFailureMessage" class="mt-2 text-[11px] text-amber-800">{{ websiteAnalysisFailureMessage }}</p>
+            <p v-if="websiteAnalysisStatus === 'succeeded'" class="mt-2 flex items-center gap-1.5 text-[11px] text-emerald-700"><Check :size="12" /> Vorschlag übernommen — bitte prüfen und unten speichern.</p>
+            <p v-if="detectedFontNotice" class="mt-2 text-[11px] text-[#7a817c]">{{ detectedFontNotice }}</p>
+          </section>
+
           <!-- Logo (nur Vereinsebene: Primär/Dunkel-Upload bleibt hier, weitere Varianten unten je Ebene) -->
           <section v-if="activeLevel === 'organization'" class="card p-6">
             <h2 class="font-display text-base font-bold">Logo</h2>
