@@ -42,6 +42,7 @@ import { registerIntegrationRoutes } from './routes/integrations.js'
 import { registerLlmProviderRoutes } from './routes/llmProviders.routes.js'
 import { registerInvitationRoutes } from './routes/invitations.js'
 import { registerMemberRoutes } from './routes/members.js'
+import { registerPhotoLayoutRoutes } from './routes/photoLayout.js'
 import { registerOrganizationRoutes } from './routes/organization.js'
 import { registerPlatformAdminRoutes } from './routes/platformAdmin.js'
 import { registerPlatformPersonaRoutes } from './routes/platformPersonas.routes.js'
@@ -228,6 +229,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   registerOrganizationRoutes(app, context)
   registerBrandRoutes(app, context)
   registerImageStyleRoutes(app, context)
+  registerPhotoLayoutRoutes(app, context)
 
   // --- Abteilungen, Teams, Mitgliedschaften und Einladungen (Paket 010) ----------------
 

@@ -56,6 +56,16 @@ const maxCharactersOverride = ref('')
 // Plan 047, PR 0: mehrere Fotos moeglich (frueher hoechstens eines, Plan 045 PR 0 Schritt 3) --
 // nur reihum von PhotoAttachmentList befuellte Eintraege, die ihre Personen-Pruefung abgeschlossen haben.
 const mediaAssetIds = ref<string[]>([])
+// Plan 047, PR 1: gesetzt, sobald PhotoLayoutGallery mehrere Fotos zu einem zusammengefuegt hat --
+// blendet PhotoAttachmentList/PhotoLayoutGallery gegen eine einfache Ergebnisvorschau aus (siehe
+// Template), statt zu versuchen, PhotoAttachmentList von aussen auf das komponierte Foto
+// umzubiegen (deren Slots kennen nur den eigenen Upload-Ablauf).
+const composedPhotoPreview = ref<{ mediaAssetId: string; signedUrl: string } | null>(null)
+// signedUrl ist zeitlich begrenzt gueltig, diese Seite kann waehrend Entwurfsspeicherung und
+// Kandidatenerzeugung aber lange offen bleiben -- composedPreviewFailed faengt das kaputte Bild
+// ab, ohne mediaAssetIds anzutasten (das komponierte Foto bleibt weiterhin angehaengt).
+const composedPreviewFailed = ref(false)
+watch(composedPhotoPreview, () => { composedPreviewFailed.value = false })
 // Nur zwei Gruppen in der Dropdown-Liste: System- und eigene Profile sind beides "Stil" (der
 // Unterschied ist fuer die Auswahl selbst nicht relevant), Personas bleiben separat.
 const PROFILE_GROUPS = [
@@ -144,7 +154,7 @@ function restoreDraft() {
   } catch { clearDraft() }
 }
 watch([communicationGoal, factsText, observation, doNotMention, selectedProfile, selectedPlatforms, maxCharactersOverride], () => { persistDraft(); queueServerDraftSave() }, { flush: 'sync', deep: true })
-watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; communicationGoal.value = 'inform'; selectedProfile.value = 'klar_erklaerend'; factsText.value = ''; observation.value = ''; doNotMention.value = ''; revisionInstruction.value = ''; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; mediaAssetIds.value = []; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
+watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; communicationGoal.value = 'inform'; selectedProfile.value = 'klar_erklaerend'; factsText.value = ''; observation.value = ''; doNotMention.value = ''; revisionInstruction.value = ''; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; mediaAssetIds.value = []; composedPhotoPreview.value = null; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
 
 async function loadProfiles() {
   if (!scope.value?.organizationId || !scope.value.departmentId) return
@@ -255,6 +265,7 @@ async function createCandidate() {
       // 2026081802 setzt people_reviewed_at in genau diesem Fall automatisch zurueck. Die Antwort
       // nennt nicht, welches der angehaengten Fotos betroffen ist, deshalb werden alle zurueckgesetzt.
       mediaAssetIds.value = []
+      composedPhotoPreview.value = null
       notice.value = 'Die Personen-Prüfung eines angehängten Fotos ist nicht mehr aktuell. Bitte die Fotos erneut prüfen.'
     } else if (code === 'no_active_text_provider') {
       notice.value = 'Aktuell ist kein Sprachmodell für die Textgenerierung hinterlegt. Bitte an eine Vereinsverwaltung wenden.'
@@ -332,7 +343,20 @@ onBeforeUnmount(() => { if (hasDraftContent()) void saveServerDraft() })
     <section v-if="!sessionId" class="card grid gap-5 p-5 sm:p-7">
       <label><span class="mb-1 block text-xs font-semibold">Kommunikationsziel</span><Select v-model="communicationGoal"><SelectTrigger class="sm:max-w-xs"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="inform">Informieren</SelectItem><SelectItem value="invite">Einladen</SelectItem><SelectItem value="thank">Danken</SelectItem><SelectItem value="recruit">Gewinnen</SelectItem><SelectItem value="inspire">Inspirieren</SelectItem></SelectContent></Select></label>
       <fieldset><legend class="mb-2 text-xs font-semibold">Stilprofil</legend><SearchableSelect v-model="selectedProfile" :groups="profileSelectGroups" placeholder="Stilprofil wählen…" /><NuxtLink to="/stilprofile" class="focus-ring mt-2 inline-block text-[11px] font-semibold text-forest underline">Eigene Stilprofile verwalten →</NuxtLink></fieldset>
-      <PhotoAttachmentList v-if="scope?.organizationId && scope.departmentId" :key="`${scope.organizationId}:${scope.departmentId}`" v-model:media-asset-ids="mediaAssetIds" :organization-id="scope.organizationId" :department-id="scope.departmentId" />
+      <template v-if="scope?.organizationId && scope.departmentId">
+        <template v-if="composedPhotoPreview">
+          <div class="rounded-xl border border-[#e1e2db] p-3">
+            <p class="mb-2 text-xs font-semibold text-[#727a75]">Zusammengefügtes Foto</p>
+            <img v-if="!composedPreviewFailed" :src="composedPhotoPreview.signedUrl" alt="Zusammengefügtes Foto" class="max-h-64 w-auto rounded-lg" @error="composedPreviewFailed = true" />
+            <p v-else class="text-xs text-[#727a75]">Die Vorschau ist abgelaufen. Das zusammengefügte Foto bleibt angehängt.</p>
+            <button type="button" class="mt-2 text-xs text-red-700 underline" @click="composedPhotoPreview = null; mediaAssetIds = []">Andere Fotos wählen</button>
+          </div>
+        </template>
+        <template v-else>
+          <PhotoAttachmentList :key="`${scope.organizationId}:${scope.departmentId}`" v-model:media-asset-ids="mediaAssetIds" :organization-id="scope.organizationId" :department-id="scope.departmentId" />
+          <PhotoLayoutGallery :key="`layout:${scope.organizationId}:${scope.departmentId}`" v-model:media-asset-ids="mediaAssetIds" v-model:composed-preview="composedPhotoPreview" :organization-id="scope.organizationId" :department-id="scope.departmentId" />
+        </template>
+      </template>
       <fieldset>
         <legend class="mb-2 text-xs font-semibold">Zielplattformen</legend>
         <div v-if="platforms.length" class="flex flex-wrap gap-2">

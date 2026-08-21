@@ -76,7 +76,10 @@ async function downloadBrandAssetBuffer(service: SupabaseClient, organizationId:
 // dieselbe Vererbungskette (Verein -> Abteilung -> Mannschaft) wie packages/domain's resolveBrand
 // sie fuer die Marke-Seite schon aufloest, hier fuer die Zielebene des Beitrags statt fuer eine
 // gerade aktive UI-Ebene.
-async function loadResolvedBrandColors(
+// Exportiert, weil routes/photoLayout.ts (Plan 047, PR 1) dieselbe Vereinsfarben-Aufloesung fuer
+// die Trennlinien-/Gutter-Farbe der Bildkomposition braucht -- kein zweiter Aufruf derselben drei
+// Abfragen.
+export async function loadResolvedBrandColors(
   service: SupabaseClient, organizationId: string, departmentId: string | null, teamId: string | null,
 ): Promise<{ primaryColor: string; accentColor: string }> {
   const [orgRow, deptRow, teamRow] = await Promise.all([

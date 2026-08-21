@@ -76,6 +76,15 @@ export function mapImageStylePresetRow(row: Record<string, unknown>) {
   }
 }
 
+export function mapPhotoLayoutPresetRow(row: Record<string, unknown>) {
+  return {
+    id: row.id, organizationId: row.organization_id, departmentId: row.department_id, teamId: row.team_id,
+    name: row.name, isActive: row.is_active,
+    kind: row.kind, dividerColor: row.divider_color, dividerWidthPx: row.divider_width_px, cornerRadiusPx: row.corner_radius_px,
+    createdBy: row.created_by, createdAt: row.created_at, updatedAt: row.updated_at,
+  }
+}
+
 export function mapDepartmentBrandRow(row: Record<string, unknown>) {
   return {
     organizationId: row.organization_id, departmentId: row.department_id, primaryColor: row.primary_color,
