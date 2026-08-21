@@ -280,11 +280,10 @@ select lives_ok(
     values ('PGTAP Standby', 'openai', 'https://example.invalid', 'openai-test', 100, false)$$,
   'an inactive provider may keep a priority an active one already uses'
 );
--- Dass eine andere Aufgabenart dieselbe Prioritaet belegen darf, laesst sich hier nicht pruefen:
--- llm_provider_configurations_active_implemented_adapter_check (2026081201) verbietet jede aktive
--- Zeile ausser text_generation, und inaktive Zeilen faellt der partielle Index ohnehin nicht an.
--- Die Spalte task_kind steht im Index fuer die Aufgabenarten, die es noch nicht gibt (siehe
--- 2026081103: das Vokabular ist absichtlich breiter als die Umsetzung).
+-- Dass eine andere Aufgabenart dieselbe Prioritaet belegen darf, ist seit Paket 048 (vision_analysis
+-- hat jetzt ebenfalls einen Adapter) tatsaechlich pruefbar -- siehe
+-- llm_provider_vision_analysis_adapter.test.sql. Die uebrigen, weiterhin unimplementierten
+-- Aufgabenarten (image_generation, video_generation) bleiben von der Aktivierung ausgeschlossen.
 
 -- Der vorbereitete Ersatz aus dem Fall davor darf erst aktiv werden, wenn seine Prioritaet frei
 -- ist -- genau der Moment, in dem die Verwaltung den Konflikt anzeigen soll.

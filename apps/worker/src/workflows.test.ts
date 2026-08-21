@@ -36,6 +36,12 @@ describe('worker workflow registration', () => {
       expect.objectContaining({ expression: "'global'", maxRuns: 20 }),
     ])
     expect(concurrency.llm).toEqual({ global: 20, organization: 4, department: 2 })
+    // Die Browser-Analyse laeuft bewusst nicht unter den llm-Grenzen, siehe concurrency.browser.
+    expect(definitions.find((definition) => definition.name === 'analyze-website-branding')?.definition._tasks[0]?.concurrency).toEqual([
+      expect.objectContaining({ expression: "input.organizationId + ':' + input.departmentId", maxRuns: 1 }),
+      expect.objectContaining({ expression: 'input.organizationId', maxRuns: 1 }),
+      expect.objectContaining({ expression: "'global'", maxRuns: 2 }),
+    ])
     await expect(task({ ...payload, entityId: 'not-a-uuid' }, {} as never)).rejects.toMatchObject({ name: 'ZodError' })
   })
 

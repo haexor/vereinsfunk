@@ -171,6 +171,33 @@ export const ConfirmBrandAssetLicenseRequestSchema = z.object({
   confirmed: z.literal(true),
 })
 
+// Paket 048: KI-gestuetzte Markenerkennung aus der Vereins-Homepage. websiteUrl ist bewusst ein
+// eigenes, ad-hoc uebergebenes Feld -- unabhaengig vom Impressum-websiteUrl in
+// OrganizationProfileFieldsSchema, damit diese Funktion ohne einen Umweg ueber die
+// Rechtseinstellungen benutzbar ist.
+export const StartBrandWebsiteAnalysisRequestSchema = z.object({ websiteUrl: z.url() })
+export const BrandWebsiteAnalysisStatusSchema = z.enum(['pending', 'running', 'succeeded', 'failed'])
+// suggestedFontPairingKey bewusst ein loses string statt eines Enums der beiden kuratierten Paare:
+// die eigentliche Pruefung "ist das ueberhaupt eines der beiden kuratierten Paare" passiert bereits
+// serverseitig im Vision-Adapter (packages/content-engine/visionAnalysis.ts, parsePairingKey) --
+// ein zweites, hier dupliziertes Enum wuerde nur auseinanderlaufen koennen, ohne einen eigenen
+// Sicherheitsgewinn zu haben.
+export const BrandWebsiteAnalysisResultSchema = z.object({
+  primaryColor: HexColorSchema,
+  accentColor: HexColorSchema,
+  backgroundColor: HexColorSchema,
+  textColor: HexColorSchema,
+  onPrimaryColor: HexColorSchema,
+  suggestedFontPairingKey: z.string().nullable(),
+  detectedFontFamily: z.string().nullable(),
+  logoCandidate: z.object({ signedUrl: z.url(), mimeType: z.string().min(1) }).nullable(),
+})
+export const BrandWebsiteAnalysisStatusResponseSchema = z.object({
+  status: BrandWebsiteAnalysisStatusSchema,
+  result: BrandWebsiteAnalysisResultSchema.nullable(),
+  errorReason: z.string().nullable(),
+})
+
 const BrandOverrideFieldsSchema = z.object({
   primaryColor: HexColorSchema.nullable().optional(),
   accentColor: HexColorSchema.nullable().optional(),
@@ -212,6 +239,10 @@ export type BrandAssetStatus = z.infer<typeof BrandAssetStatusSchema>
 export type BrandAsset = z.infer<typeof BrandAssetSchema>
 export type CreateBrandAssetRequest = z.infer<typeof CreateBrandAssetRequestSchema>
 export type ConfirmBrandAssetLicenseRequest = z.infer<typeof ConfirmBrandAssetLicenseRequestSchema>
+export type StartBrandWebsiteAnalysisRequest = z.infer<typeof StartBrandWebsiteAnalysisRequestSchema>
+export type BrandWebsiteAnalysisStatus = z.infer<typeof BrandWebsiteAnalysisStatusSchema>
+export type BrandWebsiteAnalysisResult = z.infer<typeof BrandWebsiteAnalysisResultSchema>
+export type BrandWebsiteAnalysisStatusResponse = z.infer<typeof BrandWebsiteAnalysisStatusResponseSchema>
 export type UpdateDepartmentBrandRequest = z.infer<typeof UpdateDepartmentBrandRequestSchema>
 export type DepartmentBrand = z.infer<typeof DepartmentBrandSchema>
 export type UpdateTeamBrandRequest = z.infer<typeof UpdateTeamBrandRequestSchema>

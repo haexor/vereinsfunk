@@ -13,18 +13,23 @@
   "dependencies": {
     "@hatchet-dev/typescript-sdk": "1.28.1",
     "@supabase/supabase-js": "^2.55.0",
+    "@vereinsfunk/brand-assets": "workspace:*",
     "@vereinsfunk/config": "workspace:*",
     "@vereinsfunk/content-engine": "workspace:*",
     "@vereinsfunk/contracts": "workspace:*",
     "@vereinsfunk/db-migrate": "workspace:*",
+    "@vereinsfunk/domain": "workspace:*",
     "@vereinsfunk/media-processing": "workspace:*",
     "@vereinsfunk/observability": "workspace:*",
     "@vereinsfunk/orchestration": "workspace:*",
+    "@vereinsfunk/outbound-fetch": "workspace:*",
     "@vereinsfunk/secrets": "workspace:*",
+    "playwright": "^1.55.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^24.1.0",
+    "sharp": "^0.35.3",
     "tsup": "^8.5.0",
     "tsx": "^4.20.3",
     "typescript": "^6.0.3",

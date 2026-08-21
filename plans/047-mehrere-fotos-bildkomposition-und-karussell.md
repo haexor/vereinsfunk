@@ -64,7 +64,7 @@ Recherche-Befund vor dem Bauen: die meisten umliegenden Systeme sind bereits pro
 ## Verifikation (PR 2)
 
 - `pnpm --filter @vereinsfunk/publishing test` (23 Tests) — Instagram-Karussell (drei Item-Container, ein übergeordneter Container, ein `media_publish`, inkl. Fehlerpfad bei fehlschlagendem Item-Container), Facebook-Mehrfoto-Post (zwei unveröffentlichte Fotos, ein `attached_media`-Feed-Post), bestehende Einzelfoto-Tests unverändert grün.
-- `pnpm --filter @vereinsfunk/api test` (486 Tests) — neuer Test in `publishing.routes.test.ts`: alle `post_media`-Zeilen einer Fassung erreichen den Publisher positionsgetreu (primary/slide) als ein `media`-Array.
+- `pnpm --filter @vereinsfunk/api test` (497 Tests) — neuer Test in `publishing.routes.test.ts`: alle `post_media`-Zeilen einer Fassung erreichen den Publisher positionsgetreu (primary/slide) als ein `media`-Array.
 - `pnpm --filter web typecheck` — `erstellen.vue` (Karussell/Bildkomposition-Umschaltfläche).
 - `pnpm lint`, `node scripts/check-migration-timestamps.mjs`, `node scripts/check-pgtap-isolation.mjs` — alle grün (PR 2 selbst ohne neue Migration).
 - Browser-Smoke-Test (Playwright, lokal): `/erstellen`, zwei Testfotos anhängen (Personen-Prüfung je Foto durchlaufen) — Umschaltfläche erscheint erst ab zwei Fotos, „Karussell“ voreingestellt und Layout-Galerie dabei ausgeblendet, „Bildkomposition“ blendet sie ein, zurück zu „Karussell“ blendet sie wieder aus, beide Fotos bleiben dabei angehängt. Keine Konsolenfehler. Der eigentliche Meta-Graph-API-Fluss ist mangels echter Zugangsdaten nur durch die gemockten Fetch-Tests oben abgedeckt, nicht durch einen echten Veröffentlichungsversuch.
