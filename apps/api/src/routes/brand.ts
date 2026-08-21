@@ -2,11 +2,13 @@ import {
   BrandAssetSchema,
   BrandLogoUploadResponseSchema,
   BrandLogoVariantSchema,
+  BrandWebsiteAnalysisStatusResponseSchema,
   ConfirmBrandAssetLicenseRequestSchema,
   CreateBrandAssetRequestSchema,
   DepartmentBrandSchema,
   OrganizationBrandSchema,
   OrganizationBrandUpdateSchema,
+  StartBrandWebsiteAnalysisRequestSchema,
   TeamBrandSchema,
   UpdateDepartmentBrandRequestSchema,
   UpdateTeamBrandRequestSchema,
@@ -19,7 +21,7 @@ import { z } from 'zod'
 import { firstBlockedBrandField, mapBrandAssetRow, mapBrandRow, mapDepartmentBrandRow, mapTeamBrandRow, setsAnyBrandField } from '../apiMappers.js'
 import { generateSvgRasterDerivatives, SvgRasterizationError } from '../brandAssetDerivatives.js'
 import { FontEmbeddingRestrictedError, processBrandFontUpload, UnsupportedFontFormatError } from '../brandFont.js'
-import { hashLogoBuffer, LogoDimensionsError, processBrandLogoUpload, UnsupportedLogoFormatError } from '../brandLogo.js'
+import { hashLogoBuffer, LogoDimensionsError, processBrandLogoUpload, UnsupportedLogoFormatError } from '@vereinsfunk/brand-assets'
 import type { ApiRouteContext } from './context.js'
 import { toPermissionScope } from './shared.js'
 
@@ -201,6 +203,57 @@ app.post('/v1/organizations/:id/brand/logo', async (request, reply) => {
   return reply.code(201).send(
     BrandLogoUploadResponseSchema.parse({ variant, path: objectPath, signedUrl: signed.data.signedUrl, sanitized: processed.sanitized }),
   )
+})
+
+// Paket 048: der Verein gibt seine Homepage-URL an, ein Worker-Job leitet daraus per Screenshot
+// + Vision-KI einen Farb-/Font-/Logo-Vorschlag ab. Die RPC ist die einzige Schreibstelle (siehe
+// start_brand_website_analysis, Migration 2026082007) -- diese Route prueft nur die Berechtigung
+// und bildet deren Fehlermeldungen auf HTTP-Antworten ab.
+app.post('/v1/organizations/:id/brand/website-analysis', async (request, reply) => {
+  if (!(await requireAuth(request, reply))) return
+  const params = z.object({ id: UuidSchema }).parse(request.params)
+  if (!(await requirePermission(request, reply, 'brand.manage', { organizationId: params.id }))) return
+  const input = StartBrandWebsiteAnalysisRequestSchema.parse(request.body)
+  const service = supabaseClients.forService()
+  const result = await service.rpc('start_brand_website_analysis', {
+    p_organization_id: params.id, p_website_url: input.websiteUrl, p_requested_by: request.auth!.userId,
+  })
+  if (result.error) {
+    if (result.error.message === 'analysis_in_progress') return reply.code(409).send({ error: 'analysis_in_progress', correlationId: request.id })
+    if (result.error.message === 'organization_has_no_department') return reply.code(422).send({ error: 'organization_has_no_department', correlationId: request.id })
+    throw result.error
+  }
+  return reply.code(202).send({ jobId: (result.data as { jobId: string }).jobId })
+})
+
+app.get('/v1/organizations/:id/brand/website-analysis', async (request, reply) => {
+  if (!(await requireAuth(request, reply))) return
+  const params = z.object({ id: UuidSchema }).parse(request.params)
+  if (!(await requirePermission(request, reply, 'brand.manage', { organizationId: params.id }))) return
+  const service = supabaseClients.forService()
+  const row = await service.from('brand_website_analysis_jobs').select('status, result, error_reason').eq('organization_id', params.id).maybeSingle()
+  if (row.error) throw row.error
+  if (!row.data) return reply.code(404).send({ error: 'no_analysis_yet', correlationId: request.id })
+
+  let result: unknown = null
+  if (row.data.result) {
+    const stored = row.data.result as Record<string, unknown>
+    // Bei jedem Abruf frisch erzeugt statt gespeichert: eine Signed URL kann waehrend eines
+    // langen Polls verfallen, siehe Plandokument.
+    let logoCandidate: { signedUrl: string; mimeType: string } | null = null
+    if (stored.logoObjectPath) {
+      const signed = await service.storage.from('brand-assets').createSignedUrl(stored.logoObjectPath as string, 600)
+      if (signed.error) throw signed.error
+      logoCandidate = { signedUrl: signed.data.signedUrl, mimeType: stored.logoMimeType as string }
+    }
+    result = {
+      primaryColor: stored.primaryColor, accentColor: stored.accentColor, backgroundColor: stored.backgroundColor,
+      textColor: stored.textColor, onPrimaryColor: stored.onPrimaryColor,
+      suggestedFontPairingKey: stored.suggestedFontPairingKey, detectedFontFamily: stored.detectedFontFamily,
+      logoCandidate,
+    }
+  }
+  return reply.code(200).send(BrandWebsiteAnalysisStatusResponseSchema.parse({ status: row.data.status, result, errorReason: row.data.error_reason }))
 })
 
 app.post('/v1/brand/assets', async (request, reply) => {

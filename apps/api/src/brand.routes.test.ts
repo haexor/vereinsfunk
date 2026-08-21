@@ -507,3 +507,154 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
   })
 })
 
+describe('Paket 048: KI-gestuetzte Markenerkennung aus der Vereins-Homepage', () => {
+  it('rejects starting an analysis without brand.manage', async () => {
+    const app = await startApp({ roleProvider: denyingRoleProvider })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${ORGANIZATION_ID}/brand/website-analysis`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { websiteUrl: 'https://verein.example.org' },
+    })
+    expect(response.statusCode).toBe(403)
+  })
+
+  it('starts an analysis and returns the job id from the RPC', async () => {
+    let capturedArgs: Record<string, unknown> | undefined
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          rpc: async (name: string, args: Record<string, unknown>) => {
+            if (name !== 'start_brand_website_analysis') throw new Error(`unexpected rpc: ${name}`)
+            capturedArgs = args
+            return { data: { jobId: '48000000-9000-4000-8000-000000000001' }, error: null }
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${ORGANIZATION_ID}/brand/website-analysis`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { websiteUrl: 'https://verein.example.org' },
+    })
+    expect(response.statusCode).toBe(202)
+    expect(response.json()).toEqual({ jobId: '48000000-9000-4000-8000-000000000001' })
+    // requested_by kommt aus der authentifizierten Session, nicht vom Client-Body (RPC traut Client nicht).
+    expect(capturedArgs).toMatchObject({ p_organization_id: ORGANIZATION_ID, p_website_url: 'https://verein.example.org', p_requested_by: USER_ID })
+  })
+
+  it('maps a running analysis to 409 instead of silently duplicating it', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({ rpc: async () => ({ data: null, error: { message: 'analysis_in_progress' } }) }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${ORGANIZATION_ID}/brand/website-analysis`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { websiteUrl: 'https://verein.example.org' },
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json().error).toBe('analysis_in_progress')
+  })
+
+  it('rejects reading the analysis status without brand.manage', async () => {
+    const app = await startApp({ roleProvider: denyingRoleProvider })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${ORGANIZATION_ID}/brand/website-analysis`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(403)
+  })
+
+  it('reports 404 when no analysis has ever run for this club', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({ from: () => chain({ data: null, error: null }) }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${ORGANIZATION_ID}/brand/website-analysis`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(404)
+  })
+
+  it('reports a pending job without a result', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({ from: () => chain({ data: { status: 'pending', result: null, error_reason: null }, error: null }) }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${ORGANIZATION_ID}/brand/website-analysis`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ status: 'pending', result: null, errorReason: null })
+  })
+
+  it('mints a fresh signed url for the staged logo candidate on every read instead of a stored, possibly expired one', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: () =>
+            chain({
+              data: {
+                status: 'succeeded',
+                result: {
+                  primaryColor: '#163a2c', accentColor: '#caff4a', backgroundColor: '#f6f4ec', textColor: '#122820', onPrimaryColor: '#ffffff',
+                  suggestedFontPairingKey: 'manrope_dm_sans', detectedFontFamily: 'Roboto, sans-serif',
+                  logoObjectPath: 'organizations/x/brand/analysis-staging/abc.png', logoMimeType: 'image/png',
+                },
+                error_reason: null,
+              },
+              error: null,
+            }),
+          storage: { from: (bucket: string) => ({ createSignedUrl: async (path: string) => { expect(bucket).toBe('brand-assets'); expect(path).toBe('organizations/x/brand/analysis-staging/abc.png'); return { data: { signedUrl: 'https://signed.example/logo-candidate.png' }, error: null } } }) },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${ORGANIZATION_ID}/brand/website-analysis`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({
+      status: 'succeeded',
+      result: { suggestedFontPairingKey: 'manrope_dm_sans', logoCandidate: { signedUrl: 'https://signed.example/logo-candidate.png', mimeType: 'image/png' } },
+    })
+  })
+
+  it('reports a failed analysis with its error reason and no result', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({ from: () => chain({ data: { status: 'failed', result: null, error_reason: 'website_unreachable' }, error: null }) }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${ORGANIZATION_ID}/brand/website-analysis`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ status: 'failed', result: null, errorReason: 'website_unreachable' })
+  })
+})
+

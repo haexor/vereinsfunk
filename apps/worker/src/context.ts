@@ -1,8 +1,10 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { z } from 'zod'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
+import { hashLogoBuffer } from '@vereinsfunk/brand-assets'
 import { CommunicationGoalSchema, MaxCharactersSchema, SocialPlatformSchema, SourceMaterialSchema, TextGenerationTemperatureSchema, UuidSchema, WorkflowNameSchema, WorkflowPayloadSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
 import type { WorkflowOutboxRepository } from '@vereinsfunk/orchestration'
+import type { BrandAnalysisJobRow, BrandWebsiteAnalysisRepository, VisionProviderRow } from './brandWebsiteAnalysis.js'
 import { WorkflowExecutionError, type WorkflowExecutionRepository, type WorkflowRunAcquireResult } from './workflows.js'
 import type { CandidateRow, ProviderRow, SessionRow, TextGenerationRepository } from './textGeneration.js'
 import type { GenerationRecoveryRepository, RecoverableSessionRow, StalledCandidateRow } from './generationRecovery.js'
@@ -152,6 +154,69 @@ export function createTextGenerationRepository(config: WorkerEnvironment): TextG
     async releaseCandidate(candidateId, sessionId, leaseToken) {
       const { error } = await client.rpc('release_generation_candidate', { p_candidate_id: candidateId, p_session_id: sessionId, p_lease_token: leaseToken })
       if (error) throw error
+    },
+  }
+}
+
+const BrandAnalysisJobRowSchema: z.ZodType<BrandAnalysisJobRow> = z.object({
+  id: UuidSchema, organization_id: UuidSchema, website_url: z.url(), revision: z.coerce.number().int().positive(),
+})
+const VisionProviderRowSchema: z.ZodType<VisionProviderRow> = z.object({
+  id: UuidSchema, protocol: z.string(), base_url: z.url(), model: z.string().trim().min(1),
+  api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1),
+})
+
+/** Worker-only data access for the website-branding analysis job (Paket 048). */
+export function createBrandWebsiteAnalysisRepository(config: WorkerEnvironment): BrandWebsiteAnalysisRepository {
+  const client = createClient(config.SUPABASE_URL, config.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  return {
+    async loadJob(id, organizationId) {
+      const { data, error } = await client.from('brand_website_analysis_jobs').select('id, organization_id, website_url, revision')
+        .eq('id', id).eq('organization_id', organizationId).maybeSingle()
+      if (error) throw error
+      return data === null ? null : BrandAnalysisJobRowSchema.parse(data)
+    },
+    // expectedRevision ist die Compare-and-Set-Bedingung: eine ueberholte Auslieferung (der
+    // Verein hat laengst einen neuen Lauf gestartet, siehe start_brand_website_analysis) darf den
+    // aktuellen Job nicht mehr ueberschreiben.
+    async markRunning(jobId, expectedRevision) {
+      const { error } = await client.from('brand_website_analysis_jobs').update({ status: 'running' }).eq('id', jobId).eq('revision', expectedRevision)
+      if (error) throw error
+    },
+    async markSucceeded(jobId, expectedRevision, result) {
+      const { error } = await client.from('brand_website_analysis_jobs')
+        .update({ status: 'succeeded', result, error_reason: null }).eq('id', jobId).eq('revision', expectedRevision)
+      if (error) throw error
+    },
+    async markFailed(jobId, expectedRevision, errorReason) {
+      const { error } = await client.from('brand_website_analysis_jobs')
+        .update({ status: 'failed', error_reason: errorReason }).eq('id', jobId).eq('revision', expectedRevision)
+      if (error) throw error
+    },
+    // Top-1 nach Prioritaet, kein Ensemble (anders als Textgenerierung): eine einzelne Analyse
+    // braucht keine mehreren gleichzeitigen Vorschlaege.
+    async resolveVisionProvider() {
+      const { data, error } = await client.from('llm_provider_configurations')
+        .select('id, protocol, base_url, model, llm_provider_secrets!inner(api_key_ciphertext, key_version)')
+        .eq('task_kind', 'vision_analysis').eq('is_active', true).order('priority').limit(1)
+      if (error) throw error
+      if (data.length === 0) return null
+      const row = z.object({
+        id: UuidSchema, protocol: z.string(), base_url: z.url(), model: z.string().trim().min(1),
+        llm_provider_secrets: z.union([z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) }), z.array(z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) })).min(1)]),
+      }).parse(data[0])
+      const secret = row.llm_provider_secrets
+      const value = Array.isArray(secret) ? secret[0] : secret
+      if (!value) throw new Error('vision provider secret missing')
+      return VisionProviderRowSchema.parse({ ...row, api_key_ciphertext: value.api_key_ciphertext, key_version: value.key_version })
+    },
+    // Staging-Pfad, kein brand_assets-Datenbankeintrag: der entsteht erst, wenn der Verein den
+    // KI-Vorschlag tatsaechlich uebernimmt und auf marke.vue speichert (siehe Plandokument).
+    async uploadStagedLogo(organizationId, logo) {
+      const objectPath = `organizations/${organizationId}/brand/analysis-staging/${hashLogoBuffer(logo.buffer)}.${logo.extension}`
+      const { error } = await client.storage.from('brand-assets').upload(objectPath, logo.buffer, { contentType: logo.contentType, upsert: true })
+      if (error) throw error
+      return objectPath
     },
   }
 }

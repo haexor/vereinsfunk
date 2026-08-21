@@ -10,6 +10,15 @@
 export const IMPLEMENTED_LLM_PROTOCOLS = new Set(['openai', 'anthropic'])
 
 /**
+ * Aufgabenarten, fuer die es im Worker einen Adapter gibt (siehe GENERATORS in
+ * apps/worker/src/textGeneration.ts und VISION_GENERATORS in apps/worker/src/brandWebsiteAnalysis.ts).
+ * Eine Konfiguration mit einer anderen Aufgabenart darf nicht aktiviert werden -- Vokabular, das
+ * schon existiert, aber noch keinen Adapter hat (image_generation, video_generation), bleibt hier
+ * bewusst aussen vor.
+ */
+export const IMPLEMENTED_LLM_TASK_KINDS = new Set(['text_generation', 'vision_analysis'])
+
+/**
  * Haengt `path` ueber `URL.pathname` an, nicht per String-Konkatenation: eine Basis-URL mit
  * Query-String (z.B. "…/v1?key=abc") wuerde sonst den Schlussteil des Pfads verschlucken, weil ein
  * angehaengter "/" hinter dem "?" landet statt davor.
