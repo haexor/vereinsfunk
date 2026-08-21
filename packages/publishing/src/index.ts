@@ -1,3 +1,5 @@
+import { z } from 'zod'
+
 export type Platform = 'instagram' | 'facebook' | 'twitter' | 'linkedin'
 export type PublicationStatus = 'queued' | 'uploading' | 'processing' | 'published' | 'failed' | 'unknown' | 'action_required' | 'cancelled'
 export interface PublicationMedia { derivativeId: string; sha256: string; mimeType: string; grantUrl: string; role: 'primary' | 'slide' }
@@ -31,6 +33,25 @@ export interface MetaPublisherOptions { graphVersion: string; accessToken: strin
 // Meta antwortet auf einen Publish-Aufruf normalerweise deutlich schneller -- ohne Abbruch haengt
 // der aufrufende API-Request bis zum Socket-Timeout (dieselbe Lehre wie bei RealMetaOAuthClient).
 const META_PUBLISH_TIMEOUT_MS = 15_000
+// Systemgrenze zum Meta-Provider (AGENTS.md: "Alle Systemgrenzen werden mit Zod validiert") --
+// jeder schreibende Graph-Aufruf antwortet mit derselben Huelle: genau einer nichtleeren id.
+const MetaWriteResponseSchema = z.object({ id: z.string().min(1) })
+
+/** Ein bereits ausgefuehrter, externer Graph-Schreibaufruf und die ID, die er erzeugt hat. */
+export interface MetaCompletedStep { label: string; externalId: string }
+// Der Karussell-Fluss (Plan 047, PR 2) macht pro Beitrag N+2 statt einem einzigen Schreibaufruf.
+// Meta kennt fuer die Content-Publishing-Endpunkte keine Idempotenzkennung -- input.idempotencyKey
+// laesst sich hier also nicht durchreichen. Was bleibt, ist Buchfuehrung: schlaegt Schritt k fehl,
+// existieren die k-1 Objekte davor trotzdem bei Meta. Ohne ihre IDs im Fehlerfall waere nicht mehr
+// feststellbar, was dort liegt -- genau das, was der Hinweis "reconcile before retrying" in post()
+// verlangt (AGENTS.md: "Externe Aktionen sind idempotent und werden auditiert").
+export class MetaPublishError extends Error {
+  constructor(message: string, readonly completedSteps: readonly MetaCompletedStep[]) {
+    super(message)
+    this.name = 'MetaPublishError'
+  }
+}
+
 /** Direct Graph API adapter. Tokens and media grants are created server-side and never accepted from a browser. */
 export class MetaPublisher implements SocialPublisher {
   private readonly request: typeof fetch
@@ -50,10 +71,9 @@ export class MetaPublisher implements SocialPublisher {
   private async post(url: string, body: URLSearchParams, headers: Record<string, string>, label: string): Promise<string> {
     const response = await this.request(url, { method: 'POST', headers, body, signal: AbortSignal.timeout(this.timeoutMs) })
     if (!response.ok) throw new Error(`Meta ${label} failed (${response.status})`)
-    const data: unknown = await response.json()
-    const id = typeof data === 'object' && data !== null && 'id' in data && typeof data.id === 'string' ? data.id : undefined
-    if (!id) throw new Error(`Meta ${label} response did not contain an ID; reconcile before retrying`)
-    return id
+    const parsed = MetaWriteResponseSchema.safeParse(await response.json())
+    if (!parsed.success) throw new Error(`Meta ${label} response did not contain an ID; reconcile before retrying`)
+    return parsed.data.id
   }
   async publish(input: PublicationInput): Promise<PublicationResult> {
     const validation = await this.validate(input); if (!validation.valid) throw new Error(validation.errors.join(', '))
@@ -65,22 +85,38 @@ export class MetaPublisher implements SocialPublisher {
     // unveroeffentlichten Medien-Container, danach einen uebergeordneten Container/Post, der alle
     // referenziert. Bei genau einem Foto bleibt der bisherige, einstufige Fluss unveraendert.
     if (input.media.length > 1) {
-      if (input.platform === 'instagram') {
-        const childIds: string[] = []
-        for (const item of input.media) childIds.push(await this.post(`${base}/${target}/media`, new URLSearchParams({ image_url: item.grantUrl, is_carousel_item: 'true' }), headers, 'carousel item creation'))
-        const containerId = await this.post(`${base}/${target}/media`, new URLSearchParams({ media_type: 'CAROUSEL', caption: input.caption, children: childIds.join(',') }), headers, 'carousel container creation')
-        const externalId = await this.post(`${base}/${target}/media_publish`, new URLSearchParams({ creation_id: containerId }), headers, 'carousel publish')
-        return { externalId, status: 'published' }
+      // Buchfuehrung ueber die bereits ausgefuehrten Schritte: erst nach der Rueckmeldung von Meta
+      // verbucht, damit ein Fehlschlag mitten im Ablauf nach aussen traegt, welche Objekte dort
+      // wirklich entstanden sind (siehe MetaPublishError).
+      const completed: MetaCompletedStep[] = []
+      const step = async (url: string, body: URLSearchParams, label: string): Promise<string> => {
+        const externalId = await this.post(url, body, headers, label)
+        completed.push({ label, externalId })
+        return externalId
       }
-      // Facebook kennt keinen eigenen Karussell-Typ -- ein Mehrfoto-Beitrag ist ein normaler
-      // Feed-Post mit mehreren zuvor unveroeffentlichten Fotos (attached_media). Der Feed-Aufruf
-      // selbst liefert bereits die endgueltige Post-ID; anders als bei Instagram gibt es hier keinen
-      // zweiten Publish-Schritt.
-      const photoIds: string[] = []
-      for (const item of input.media) photoIds.push(await this.post(`${base}/${target}/photos`, new URLSearchParams({ url: item.grantUrl, published: 'false' }), headers, 'unpublished photo upload'))
-      const attachedMedia = Object.fromEntries(photoIds.map((id, index) => [`attached_media[${index}]`, JSON.stringify({ media_fbid: id })]))
-      const externalId = await this.post(`${base}/${target}/feed`, new URLSearchParams({ message: input.caption, ...attachedMedia }), headers, 'multi-photo feed post')
-      return { externalId, status: 'published' }
+      try {
+        if (input.platform === 'instagram') {
+          const childIds: string[] = []
+          for (const item of input.media) childIds.push(await step(`${base}/${target}/media`, new URLSearchParams({ image_url: item.grantUrl, is_carousel_item: 'true' }), 'carousel item creation'))
+          const containerId = await step(`${base}/${target}/media`, new URLSearchParams({ media_type: 'CAROUSEL', caption: input.caption, children: childIds.join(',') }), 'carousel container creation')
+          const externalId = await step(`${base}/${target}/media_publish`, new URLSearchParams({ creation_id: containerId }), 'carousel publish')
+          return { externalId, status: 'published' }
+        }
+        // Facebook kennt keinen eigenen Karussell-Typ -- ein Mehrfoto-Beitrag ist ein normaler
+        // Feed-Post mit mehreren zuvor unveroeffentlichten Fotos (attached_media). Der Feed-Aufruf
+        // selbst liefert bereits die endgueltige Post-ID; anders als bei Instagram gibt es hier keinen
+        // zweiten Publish-Schritt.
+        const photoIds: string[] = []
+        for (const item of input.media) photoIds.push(await step(`${base}/${target}/photos`, new URLSearchParams({ url: item.grantUrl, published: 'false' }), 'unpublished photo upload'))
+        const attachedMedia = Object.fromEntries(photoIds.map((id, index) => [`attached_media[${index}]`, JSON.stringify({ media_fbid: id })]))
+        const externalId = await step(`${base}/${target}/feed`, new URLSearchParams({ message: input.caption, ...attachedMedia }), 'multi-photo feed post')
+        return { externalId, status: 'published' }
+      } catch (err) {
+        // Botschaft unveraendert weiterreichen: die Route klassifiziert retry-faehig/nicht
+        // retry-faehig anhand des HTTP-Status im Fehlertext (routes/publishing.ts, "Klassifikation
+        // nach Plan 004") -- ein eigener Text wuerde jeden Mehrfoto-Fehlschlag zu 'unknown' machen.
+        throw new MetaPublishError(err instanceof Error ? err.message : 'Meta multi-photo publish failed', completed)
+      }
     }
     const media = input.media[0]
     // Instagram braucht immer ein Bild (media-Endpunkt). Facebook postet mit Bild ueber /photos

@@ -354,7 +354,7 @@ onBeforeUnmount(() => { if (hasDraftContent()) void saveServerDraft() })
             <p class="mb-2 text-xs font-semibold text-[#727a75]">Zusammengefügtes Foto</p>
             <img v-if="!composedPreviewFailed" :src="composedPhotoPreview.signedUrl" alt="Zusammengefügtes Foto" class="max-h-64 w-auto rounded-lg" @error="composedPreviewFailed = true" />
             <p v-else class="text-xs text-[#727a75]">Die Vorschau ist abgelaufen. Das zusammengefügte Foto bleibt angehängt.</p>
-            <button type="button" class="mt-2 text-xs text-red-700 underline" @click="composedPhotoPreview = null; mediaAssetIds = []">Andere Fotos wählen</button>
+            <button type="button" class="mt-2 text-xs text-red-700 underline" @click="composedPhotoPreview = null; mediaAssetIds = []; photoMode = 'carousel'">Andere Fotos wählen</button>
           </div>
         </template>
         <template v-else>

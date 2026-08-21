@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { FakeLinkedInOAuthClient, FakeMetaOAuthClient, FakePublisher, FakeTwitterOAuthClient, MetaPublisher, RealMetaOAuthClient, type Platform, type PublicationInput } from './index.js'
+import { FakeLinkedInOAuthClient, FakeMetaOAuthClient, FakePublisher, FakeTwitterOAuthClient, MetaPublishError, MetaPublisher, RealMetaOAuthClient, type Platform, type PublicationInput } from './index.js'
 
 function publicationInput(overrides: Partial<PublicationInput> = {}): PublicationInput {
   return {
@@ -116,6 +116,57 @@ describe('MetaPublisher', () => {
     ]
     await expect(publisher(fetchImpl).publish(publicationInput({ media }))).rejects.toThrow(/carousel item creation failed \(400\)/)
     expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  // Code-Review zu diesem PR: Meta bietet fuer die Content-Publishing-Endpunkte keine
+  // Idempotenzkennung, input.idempotencyKey laesst sich also nicht durchreichen. Bricht der Ablauf
+  // nach den ersten Schritten ab, existieren deren Objekte bei Meta trotzdem -- der Fehler muss
+  // ihre IDs nach aussen tragen, sonst ist nicht mehr feststellbar, was dort liegt.
+  it('carries the already created external IDs when a later carousel step fails', async () => {
+    let calls = 0
+    const fetchImpl = vi.fn(async () => {
+      calls += 1
+      // Beide Item-Container entstehen, erst der uebergeordnete CAROUSEL-Container scheitert.
+      return calls <= 2 ? Response.json({ id: `item-${calls}` }) : new Response('', { status: 500 })
+    }) as unknown as typeof fetch
+    const media = [
+      { derivativeId: 'd1', sha256: 'a'.repeat(64), mimeType: 'image/jpeg', grantUrl: 'https://example.invalid/1', role: 'primary' as const },
+      { derivativeId: 'd2', sha256: 'b'.repeat(64), mimeType: 'image/jpeg', grantUrl: 'https://example.invalid/2', role: 'slide' as const },
+    ]
+    const error = await publisher(fetchImpl).publish(publicationInput({ media })).catch((err: unknown) => err)
+    expect(error).toBeInstanceOf(MetaPublishError)
+    expect((error as MetaPublishError).completedSteps).toEqual([
+      { label: 'carousel item creation', externalId: 'item-1' },
+      { label: 'carousel item creation', externalId: 'item-2' },
+    ])
+    // Die Botschaft bleibt unveraendert -- die Route liest den HTTP-Status daraus, um
+    // retry-faehig (5xx) von nicht retry-faehig (4xx) zu unterscheiden.
+    expect((error as MetaPublishError).message).toMatch(/carousel container creation failed \(500\)/)
+  })
+
+  it('carries the already uploaded Facebook photo IDs when the feed post fails', async () => {
+    let calls = 0
+    const fetchImpl = vi.fn(async () => {
+      calls += 1
+      return calls <= 2 ? Response.json({ id: `photo-${calls}` }) : new Response('', { status: 500 })
+    }) as unknown as typeof fetch
+    const media = [
+      { derivativeId: 'd1', sha256: 'a'.repeat(64), mimeType: 'image/jpeg', grantUrl: 'https://example.invalid/1', role: 'primary' as const },
+      { derivativeId: 'd2', sha256: 'b'.repeat(64), mimeType: 'image/jpeg', grantUrl: 'https://example.invalid/2', role: 'slide' as const },
+    ]
+    const error = await publisher(fetchImpl).publish(publicationInput({ platform: 'facebook', media })).catch((err: unknown) => err)
+    expect((error as MetaPublishError).completedSteps.map((step) => step.externalId)).toEqual(['photo-1', 'photo-2'])
+  })
+
+  // Systemgrenze zum Provider: eine 200-Antwort ohne brauchbare id darf nicht als Erfolg
+  // durchgehen -- sonst landete `undefined` als provider_publication_id in der Datenbank.
+  it.each([
+    ['ein fehlendes id-Feld', {}],
+    ['eine leere id', { id: '' }],
+    ['eine id, die keine Zeichenkette ist', { id: 12_345 }],
+  ])('rejects a Graph API response with %s', async (_name, payload) => {
+    const fetchImpl = vi.fn(async () => Response.json(payload)) as unknown as typeof fetch
+    await expect(publisher(fetchImpl).publish(publicationInput())).rejects.toThrow(/did not contain an ID; reconcile before retrying/)
   })
 
   // Facebook kennt keinen eigenen Karussell-Typ -- ein Mehrfoto-Beitrag laeuft ueber mehrere

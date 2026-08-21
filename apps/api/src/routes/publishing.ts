@@ -1,4 +1,5 @@
 import { OAuthPlatformSchema, PublicationExecuteResultSchema, PublicationSchema, SchedulePublicationRequestSchema, UuidSchema } from '@vereinsfunk/contracts'
+import { MetaPublishError } from '@vereinsfunk/publishing'
 import type { Platform, PublicationInput, PublicationMedia, SocialPublisher, ValidationResult } from '@vereinsfunk/publishing'
 import type { FastifyInstance } from 'fastify'
 import { createHash, randomBytes } from 'node:crypto'
@@ -261,6 +262,13 @@ export function registerPublishingRoutes(app: FastifyInstance, context: ApiRoute
       // Nachrichtenformat von MetaPublisher, kein strukturierter Fehlertyp ueber SocialPublisher
       // (siehe plans/025, Abschnitt "Umsetzung: Ergebnis und Abweichungen vom Plan").
       const httpStatus = err instanceof Error ? /\((\d{3})\)/.exec(err.message)?.[1] : undefined
+      // Der Mehrfoto-Fluss (Plan 047, PR 2) macht N+2 Graph-Aufrufe statt einem. Scheitert einer
+      // davon, existieren die Objekte der Schritte davor trotzdem bei Meta -- ihre IDs stehen nur
+      // in diesem Fehler und waeren danach unwiederbringlich weg. Sie gehoeren in den
+      // Versuchsdatensatz, sonst ist nach einem Abbruch nicht mehr feststellbar, was drueben liegt
+      // (AGENTS.md: "Externe Aktionen sind idempotent und werden auditiert"). Ein automatischer
+      // Retry entsteht dadurch nicht -- der CAS oben laesst nur eine bewusste Neuveroeffentlichung zu.
+      const completedSteps = err instanceof MetaPublishError ? err.completedSteps : []
       const classification: { errorClass: 'non_retryable' | 'retryable' | 'unknown'; status: 'failed' | 'action_required' } =
         httpStatus && Number(httpStatus) >= 400 && Number(httpStatus) < 500 ? { errorClass: 'non_retryable', status: 'failed' }
         : httpStatus && Number(httpStatus) >= 500 ? { errorClass: 'retryable', status: 'action_required' }
@@ -269,7 +277,8 @@ export function registerPublishingRoutes(app: FastifyInstance, context: ApiRoute
       if (markStatus.error) request.log.error({ err: markStatus.error, correlationId: request.id }, 'publications status update failed')
       const attemptInsert = await service.from('publication_attempts').insert({
         organization_id: publication.data.organization_id, publication_id: params.id, attempt_number: nextAttemptNumber,
-        status: 'failed', error_class: classification.errorClass, response_summary: { message: err instanceof Error ? err.message : 'unknown_error' },
+        status: 'failed', error_class: classification.errorClass,
+        response_summary: { message: err instanceof Error ? err.message : 'unknown_error', ...(completedSteps.length > 0 ? { completedSteps } : {}) },
       })
       if (attemptInsert.error) request.log.error({ err: attemptInsert.error, correlationId: request.id }, 'publication_attempts insert failed')
       await recordAuditEvent(request, {
@@ -277,7 +286,10 @@ export function registerPublishingRoutes(app: FastifyInstance, context: ApiRoute
         action: 'post.publish_failed',
         entityType: 'publications',
         entityId: params.id,
-        metadata: { platform: publicationInput.platform, outcome: classification.errorClass, status: classification.status },
+        metadata: {
+          platform: publicationInput.platform, outcome: classification.errorClass, status: classification.status,
+          ...(completedSteps.length > 0 ? { completedExternalIds: completedSteps.map((step) => step.externalId) } : {}),
+        },
       })
       await revokeGrants()
       return reply.code(502).send({ error: 'publish_failed', correlationId: request.id })

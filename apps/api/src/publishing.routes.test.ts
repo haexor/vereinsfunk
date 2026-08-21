@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { DEPARTMENT_ID, ORGANIZATION_ID, USER_ID, chain, denyingRoleProvider, organizationManagerRoleProvider, signAccessToken, startApp } from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { MetaPublishError } from '@vereinsfunk/publishing'
 import type { PublicationInput, SocialPublisher } from '@vereinsfunk/publishing'
 import type { SupabaseClientFactory } from './app.js'
 import { ciphertextToBytea } from './secretBox.js'
@@ -406,6 +407,54 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
       expect(publicationUpdates.at(-1)).toMatchObject({ status: 'action_required' })
       expect(attemptsCaptured.at(-1)).toMatchObject({ status: 'failed', error_class: 'unknown' })
       expect(auditCaptured).toMatchObject([{ action: 'post.publish_failed', entity_id: PUBLICATION_ID, metadata: { platform: 'facebook', outcome: 'unknown', status: 'action_required' } }])
+    })
+
+    // Code-Review zu diesem PR: bricht der Mehrfoto-Fluss nach den ersten Graph-Aufrufen ab, sind
+    // deren Objekte bei Meta schon entstanden. Ihre IDs stehen nur im Fehler -- landen sie nicht im
+    // Versuchsdatensatz, ist danach nicht mehr feststellbar, was drueben liegt.
+    it('records the external IDs a failed multi-photo publish already created at Meta', async () => {
+      const attemptsCaptured: Record<string, unknown>[] = []
+      const auditCaptured: Record<string, unknown>[] = []
+      const clients: SupabaseClientFactory = {
+        ...readOnlyClients(),
+        forService: () =>
+          ({
+            from: (table: string) => {
+              const gate = mediaGateTables(table)
+              if (gate) return gate
+              if (table === 'publications') return { update: () => chain({ data: { id: PUBLICATION_ID }, error: null }) }
+              if (table === 'social_connections') return chain({ data: { external_account_id: 'page-123' }, error: null })
+              if (table === 'social_connection_secrets') {
+                const sealed = createSecretBox({ v1: Buffer.alloc(32, 7).toString('base64') }, 'v1').seal('fake-access-token', PUB_SOCIAL_CONNECTION_ID)
+                return chain({ data: { token_ciphertext: ciphertextToBytea(sealed.ciphertext), token_key_version: 'v1' }, error: null })
+              }
+              if (table === 'publication_attempts') return { ...chain({ data: null, error: null }), insert: async (row: Record<string, unknown>) => { attemptsCaptured.push(row); return { error: null } } }
+              if (table === 'publication_media_grants') return { update: () => ({ eq: () => ({ is: async () => ({ error: null }) }) }) }
+              if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { auditCaptured.push(row); return { error: null } } }
+              throw new Error(`unexpected table in service fake: ${table}`)
+            },
+          }) as unknown as SupabaseClient,
+      }
+      const publisher: SocialPublisher = {
+        async validate() { return { valid: true, errors: [] } },
+        async publish() {
+          throw new MetaPublishError('Meta multi-photo feed post failed (500)', [
+            { label: 'unpublished photo upload', externalId: 'photo-1' },
+            { label: 'unpublished photo upload', externalId: 'photo-2' },
+          ])
+        },
+        async reconcile() { return { externalId: 'x', status: 'unknown' } },
+      }
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients, publisher })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
+      expect(response.statusCode).toBe(502)
+      // 500 im Fehlertext bleibt lesbar, obwohl der Fehler jetzt ein MetaPublishError ist.
+      expect(attemptsCaptured.at(-1)).toMatchObject({
+        status: 'failed', error_class: 'retryable',
+        response_summary: { completedSteps: [{ label: 'unpublished photo upload', externalId: 'photo-1' }, { label: 'unpublished photo upload', externalId: 'photo-2' }] },
+      })
+      expect(auditCaptured.at(-1)).toMatchObject({ metadata: { completedExternalIds: ['photo-1', 'photo-2'] } })
     })
   })
 
