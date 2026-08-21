@@ -66,6 +66,10 @@ const composedPhotoPreview = ref<{ mediaAssetId: string; signedUrl: string } | n
 // ab, ohne mediaAssetIds anzutasten (das komponierte Foto bleibt weiterhin angehaengt).
 const composedPreviewFailed = ref(false)
 watch(composedPhotoPreview, () => { composedPreviewFailed.value = false })
+// Plan 047, PR 2: bei mehreren angehaengten Fotos eine bewusste Wahl statt eines stillschweigenden
+// Vorgehens -- 'carousel' entspricht dem seit PR 0 bereits funktionierenden Weg (jedes Foto bleibt
+// eine eigene post_media-Zeile), 'layout' blendet PhotoLayoutGallery (PR 1) ein.
+const photoMode = ref<'carousel' | 'layout'>('carousel')
 // Nur zwei Gruppen in der Dropdown-Liste: System- und eigene Profile sind beides "Stil" (der
 // Unterschied ist fuer die Auswahl selbst nicht relevant), Personas bleiben separat.
 const PROFILE_GROUPS = [
@@ -154,7 +158,7 @@ function restoreDraft() {
   } catch { clearDraft() }
 }
 watch([communicationGoal, factsText, observation, doNotMention, selectedProfile, selectedPlatforms, maxCharactersOverride], () => { persistDraft(); queueServerDraftSave() }, { flush: 'sync', deep: true })
-watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; communicationGoal.value = 'inform'; selectedProfile.value = 'klar_erklaerend'; factsText.value = ''; observation.value = ''; doNotMention.value = ''; revisionInstruction.value = ''; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; mediaAssetIds.value = []; composedPhotoPreview.value = null; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
+watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; communicationGoal.value = 'inform'; selectedProfile.value = 'klar_erklaerend'; factsText.value = ''; observation.value = ''; doNotMention.value = ''; revisionInstruction.value = ''; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; mediaAssetIds.value = []; composedPhotoPreview.value = null; photoMode.value = 'carousel'; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
 
 async function loadProfiles() {
   if (!scope.value?.organizationId || !scope.value.departmentId) return
@@ -266,6 +270,7 @@ async function createCandidate() {
       // nennt nicht, welches der angehaengten Fotos betroffen ist, deshalb werden alle zurueckgesetzt.
       mediaAssetIds.value = []
       composedPhotoPreview.value = null
+      photoMode.value = 'carousel'
       notice.value = 'Die Personen-Prüfung eines angehängten Fotos ist nicht mehr aktuell. Bitte die Fotos erneut prüfen.'
     } else if (code === 'no_active_text_provider') {
       notice.value = 'Aktuell ist kein Sprachmodell für die Textgenerierung hinterlegt. Bitte an eine Vereinsverwaltung wenden.'
@@ -349,12 +354,20 @@ onBeforeUnmount(() => { if (hasDraftContent()) void saveServerDraft() })
             <p class="mb-2 text-xs font-semibold text-[#727a75]">Zusammengefügtes Foto</p>
             <img v-if="!composedPreviewFailed" :src="composedPhotoPreview.signedUrl" alt="Zusammengefügtes Foto" class="max-h-64 w-auto rounded-lg" @error="composedPreviewFailed = true" />
             <p v-else class="text-xs text-[#727a75]">Die Vorschau ist abgelaufen. Das zusammengefügte Foto bleibt angehängt.</p>
-            <button type="button" class="mt-2 text-xs text-red-700 underline" @click="composedPhotoPreview = null; mediaAssetIds = []">Andere Fotos wählen</button>
+            <button type="button" class="mt-2 text-xs text-red-700 underline" @click="composedPhotoPreview = null; mediaAssetIds = []; photoMode = 'carousel'">Andere Fotos wählen</button>
           </div>
         </template>
         <template v-else>
           <PhotoAttachmentList :key="`${scope.organizationId}:${scope.departmentId}`" v-model:media-asset-ids="mediaAssetIds" :organization-id="scope.organizationId" :department-id="scope.departmentId" />
-          <PhotoLayoutGallery :key="`layout:${scope.organizationId}:${scope.departmentId}`" v-model:media-asset-ids="mediaAssetIds" v-model:composed-preview="composedPhotoPreview" :organization-id="scope.organizationId" :department-id="scope.departmentId" />
+          <div v-if="mediaAssetIds.length >= 2" class="mt-3">
+            <p class="mb-1 text-xs font-semibold text-[#5c655f]">Mehrere Fotos verwenden als</p>
+            <div class="flex gap-2" role="group" aria-label="Mehrere Fotos verwenden als">
+              <button type="button" class="focus-ring rounded-xl border px-3 py-2 text-xs font-semibold" :class="photoMode === 'carousel' ? 'border-forest bg-forest/10 text-forest' : 'border-[#e1e2db]'" :aria-pressed="photoMode === 'carousel'" @click="photoMode = 'carousel'">Karussell</button>
+              <button type="button" class="focus-ring rounded-xl border px-3 py-2 text-xs font-semibold" :class="photoMode === 'layout' ? 'border-forest bg-forest/10 text-forest' : 'border-[#e1e2db]'" :aria-pressed="photoMode === 'layout'" @click="photoMode = 'layout'">Bildkomposition</button>
+            </div>
+            <p class="mt-1 text-[11px] font-normal text-[#9aa096]">{{ photoMode === 'carousel' ? 'Jedes Foto erscheint einzeln, wie mehrere Bilder zum Durchblättern.' : 'Die Fotos werden zu einem einzigen Bild zusammengefügt.' }}</p>
+          </div>
+          <PhotoLayoutGallery v-if="photoMode === 'layout'" :key="`layout:${scope.organizationId}:${scope.departmentId}`" v-model:media-asset-ids="mediaAssetIds" v-model:composed-preview="composedPhotoPreview" :organization-id="scope.organizationId" :department-id="scope.departmentId" />
         </template>
       </template>
       <fieldset>
