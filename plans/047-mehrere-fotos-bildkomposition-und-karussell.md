@@ -1,6 +1,6 @@
 # Paket 047: Mehrere Fotos je Beitrag — Bildkomposition und Karussell
 
-Stand: 2026-08-20. PR 0 (Mehrfach-Foto-Grundlage) und PR 1 (Bildkomposition per Sharp) umgesetzt. PR 2 (echtes Meta-Karussell) noch nicht begonnen.
+Stand: 2026-08-21. Alle drei PRs umgesetzt: PR 0 (Mehrfach-Foto-Grundlage), PR 1 (Bildkomposition per Sharp), PR 2 (echtes Meta-Karussell).
 
 ## Ausgangslage
 
@@ -35,11 +35,12 @@ Recherche-Befund vor dem Bauen: die meisten umliegenden Systeme sind bereits pro
 - **Neue Seite** `/bildkomposition`: CRUD für Layout-Presets nach demselben Muster wie `/bildstil` (`PhotoLayoutPresetForm.vue`, `PhotoLayoutPreview.vue` als CSS-Näherung für Galerie-Kachel und Live-Vorschau); Nav-Eintrag neben „Bildstil“.
 - **Migrations-Zeitstempel-Kollision** (wieder einmal, siehe `feedback_git_fetch_vor_lokalem_log_vertrauen`/frühere PRs): die ursprünglich vergebenen Zeitstempel `2026082007`/`2026082008` kollidierten mit einer parallel laufenden, noch nicht auf `main` gemergten Session (`brand_website_analysis`) auf der geteilten lokalen Supabase-Instanz — auf `2026082009`/`2026082010` verschoben, bevor `origin/main` das je gesehen hat.
 
-## PR 2 — Echtes Karussell (Meta-Publishing, offen)
+## PR 2 — Echtes Karussell (Meta-Publishing, umgesetzt)
 
-- `MetaPublisher.publish()` (`packages/publishing/src/index.ts`) auf die Graph-API-Karussell-Flow umstellen: je Foto einen Medien-Container erzeugen (`is_carousel_item=true`), danach einen übergeordneten Container, der alle referenziert.
-- **Vor PR 2 zu bestätigen**: Plan 021 hat "kein Karussell-Begriff" bei Kontingenten bewusst abgelehnt — Beitragskontingente zählen je `post_versions`, nicht je Foto. Ein Karussell mit N Fotos zählt nach heutiger Regel weiterhin als 1 Beitrag; vermutlich weiterhin richtig, verdient aber eine bewusste Bestätigung statt eines stillschweigenden Fortlaufens der alten Entscheidung.
-- `erstellen.vue`: bei mehreren angehängten Fotos eine Wahl zwischen "Komposition" (PR 1) und "Karussell" (PR 2).
+- **Kontingent-Frage bestätigt statt stillschweigend fortgeschrieben**: `content_quota_exceeded` in `schedule_publication()` (`2026081302_subscriptions_and_content_quotas.sql`) zählt ausschließlich `post_versions` je `media_origin` — nirgends fließt die Anzahl der `post_media`-Zeilen einer Fassung in die Kontingentprüfung ein. Ein Karussell mit N Fotos bleibt also, wie in Plan 021 entschieden, exakt 1 Beitrag fürs Kontingent; keine Code-Änderung nötig, hier nur als bewusst geprüfter Punkt festgehalten statt implizit vorausgesetzt.
+- **`MetaPublisher.publish()`** (`packages/publishing/src/index.ts`): bei mehr als einem Foto (`input.media.length > 1`) läuft ein zweistufiger Graph-API-Fluss statt des bisherigen Einzelfoto-Pfads (der bei genau einem Foto unverändert bleibt). Instagram: je Foto ein Karussell-Item-Container (`is_carousel_item=true`), danach ein übergeordneter `media_type=CAROUSEL`-Container mit `children=<id1,id2,...>`, erst dessen `media_publish` liefert die endgültige ID. Facebook kennt keinen eigenen Karussell-Typ — je Foto ein unveröffentlichtes Foto (`POST .../photos?published=false`), alle referenziert über `attached_media[n]` an einem einzigen `POST .../feed`; der Feed-Aufruf selbst liefert bereits die fertige Post-ID, anders als bei Instagram ohne zweiten Publish-Schritt. Die gemeinsame `post()`-Hilfsfunktion (Vorbild: `RealMetaOAuthClient.post()`) trägt ein `label` in die Fehlermeldung, damit ein Fehlschlag mitten im mehrstufigen Aufbau erkennen lässt, welcher Graph-Aufruf betroffen war. `POST /v1/publications/:id/execute` (`apps/api/src/routes/publishing.ts`) brauchte keine Änderung — sie reicht bereits seit PR 0 alle `post_media`-Zeilen einer Fassung positionsgetreu als `media`-Array durch.
+- **`erstellen.vue`**: bei 2+ angehängten Fotos erscheint eine Umschaltfläche „Mehrere Fotos verwenden als: Karussell / Bildkomposition“ direkt nach `PhotoAttachmentList`. „Karussell“ ist voreingestellt (entspricht dem seit PR 0 bereits funktionierenden Weg — jedes Foto bleibt eine eigene `post_media`-Zeile, keine Interaktion nötig) und blendet `PhotoLayoutGallery` (PR 1) aus; „Bildkomposition“ blendet sie ein. Eine bewusste Wahl statt des bisherigen stillschweigenden Verhaltens (die Layout-Galerie war bislang immer sichtbar, sobald genug Fotos angehängt waren).
+- **Nicht angefasst**: Twitter/LinkedIn (weiterhin nur Fake-Implementierungen, Karussell-Semantik für diese Plattformen laut „Nicht Teil dieses Pakets" unten explizit ausgeschlossen) und die Kontingent-Logik selbst (siehe oben, nur geprüft, nicht geändert).
 
 ## Nicht Teil dieses Pakets
 
@@ -59,3 +60,11 @@ Recherche-Befund vor dem Bauen: die meisten umliegenden Systeme sind bereits pro
 - `pnpm --filter web typecheck` — `PhotoLayoutGallery.vue`/`PhotoLayoutPresetForm.vue`/`bildkomposition.vue`/`erstellen.vue`.
 - `pnpm exec supabase test db` (alle 38 Dateien, 984 Assertions) — `photo_layout_presets.test.sql` (19, RLS wie `image_style_presets`), `photo_layout_media_asset.test.sql` (11, inkl. Consent-Übertragung und Idempotenz).
 - Browser-Smoke-Test (Playwright, lokal): `/bildkomposition` Preset anlegen/bearbeiten/löschen; `/erstellen` zwei Testfotos anhängen (Personen-Prüfung je Foto durchlaufen), Diagonal-Split-Kachel anklicken, komponiertes Ergebnis (rot/blau exakt diagonal geteilt) sehen, per „Andere Fotos wählen“ zurücksetzen. Keine Konsolenfehler außer dem vorbestehenden, bekannten SSR-Hydration-Mismatch (`project_ssr_hydration_mismatch_appweit`).
+
+## Verifikation (PR 2)
+
+- `pnpm --filter @vereinsfunk/publishing test` (23 Tests) — Instagram-Karussell (drei Item-Container, ein übergeordneter Container, ein `media_publish`, inkl. Fehlerpfad bei fehlschlagendem Item-Container), Facebook-Mehrfoto-Post (zwei unveröffentlichte Fotos, ein `attached_media`-Feed-Post), bestehende Einzelfoto-Tests unverändert grün.
+- `pnpm --filter @vereinsfunk/api test` (486 Tests) — neuer Test in `publishing.routes.test.ts`: alle `post_media`-Zeilen einer Fassung erreichen den Publisher positionsgetreu (primary/slide) als ein `media`-Array.
+- `pnpm --filter web typecheck` — `erstellen.vue` (Karussell/Bildkomposition-Umschaltfläche).
+- `pnpm lint`, `node scripts/check-migration-timestamps.mjs`, `node scripts/check-pgtap-isolation.mjs` — alle grün (PR 2 selbst ohne neue Migration).
+- Browser-Smoke-Test (Playwright, lokal): `/erstellen`, zwei Testfotos anhängen (Personen-Prüfung je Foto durchlaufen) — Umschaltfläche erscheint erst ab zwei Fotos, „Karussell“ voreingestellt und Layout-Galerie dabei ausgeblendet, „Bildkomposition“ blendet sie ein, zurück zu „Karussell“ blendet sie wieder aus, beide Fotos bleiben dabei angehängt. Keine Konsolenfehler. Der eigentliche Meta-Graph-API-Fluss ist mangels echter Zugangsdaten nur durch die gemockten Fetch-Tests oben abgedeckt, nicht durch einen echten Veröffentlichungsversuch.

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { DEPARTMENT_ID, ORGANIZATION_ID, USER_ID, chain, denyingRoleProvider, organizationManagerRoleProvider, signAccessToken, startApp } from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { SocialPublisher } from '@vereinsfunk/publishing'
+import type { PublicationInput, SocialPublisher } from '@vereinsfunk/publishing'
 import type { SupabaseClientFactory } from './app.js'
 import { ciphertextToBytea } from './secretBox.js'
 import { createSecretBox } from '@vereinsfunk/secrets'
@@ -303,6 +303,64 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
         // sonst bleibt das Medium die volle TTL unauthentifiziert abrufbar.
         expect(grantsRevoked).toHaveLength(1)
         expect(grantsRevoked[0]).toHaveProperty('revoked_at')
+      } finally {
+        delete process.env.API_PUBLIC_BASE_URL
+      }
+    })
+
+    // Plan 047, PR 2: die eigentliche Karussell-Logik (mehrstufiger Graph-API-Fluss) sitzt in
+    // MetaPublisher.publish() und ist dort fuer sich getestet (packages/publishing) -- diese Route
+    // muss dafuer nur alle post_media-Zeilen einer Fassung in Positions-Reihenfolge an den Publisher
+    // reichen, nicht bloss die erste (PR 0 hat das bereits vorgesehen, siehe media.push() oben).
+    it('passes every post_media row to the publisher in position order for a multi-photo post', async () => {
+      process.env.API_PUBLIC_BASE_URL = 'https://api.example.test'
+      try {
+        const publishCalls: PublicationInput[] = []
+        const clients: SupabaseClientFactory = {
+          ...readOnlyClients(),
+          forService: () =>
+            ({
+              from: (table: string) => {
+                const gate = mediaGateTables(table, {
+                  postMedia: [
+                    { position: 0, media_derivative_id: '25000000-5000-4000-8000-000000000001' },
+                    { position: 1, media_derivative_id: '25000000-5000-4000-8000-000000000003' },
+                  ],
+                  derivatives: [
+                    { id: '25000000-5000-4000-8000-000000000001', media_asset_id: '25000000-5000-4000-8000-000000000002', sha256: 'a'.repeat(64), mime_type: 'image/png', status: 'ready' },
+                    { id: '25000000-5000-4000-8000-000000000003', media_asset_id: '25000000-5000-4000-8000-000000000004', sha256: 'b'.repeat(64), mime_type: 'image/png', status: 'ready' },
+                  ],
+                  assets: [
+                    { id: '25000000-5000-4000-8000-000000000002', mime_type: 'image/png', scan_status: 'clean', people_reviewed_at: '2026-08-01T00:00:00+00:00' },
+                    { id: '25000000-5000-4000-8000-000000000004', mime_type: 'image/png', scan_status: 'clean', people_reviewed_at: '2026-08-01T00:00:00+00:00' },
+                  ],
+                })
+                if (gate) return gate
+                if (table === 'publications') return { update: () => chain({ data: { id: PUBLICATION_ID }, error: null }) }
+                if (table === 'social_connections') return chain({ data: { external_account_id: 'page-123' }, error: null })
+                if (table === 'social_connection_secrets') {
+                  const sealed = createSecretBox({ v1: Buffer.alloc(32, 7).toString('base64') }, 'v1').seal('fake-access-token', PUB_SOCIAL_CONNECTION_ID)
+                  return chain({ data: { token_ciphertext: ciphertextToBytea(sealed.ciphertext), token_key_version: 'v1' }, error: null })
+                }
+                if (table === 'publication_media_grants') return { insert: async () => ({ error: null }), update: () => ({ eq: () => ({ is: async () => ({ error: null }) }) }) }
+                if (table === 'publication_attempts') return { ...chain({ data: null, error: null }), insert: async () => ({ error: null }) }
+                if (table === 'audit_events') return { insert: async () => ({ error: null }) }
+                throw new Error(`unexpected table in service fake: ${table}`)
+              },
+            }) as unknown as SupabaseClient,
+        }
+        const publisher: SocialPublisher = {
+          async validate() { return { valid: true, errors: [] } },
+          async publish(input) { publishCalls.push(input); return { externalId: 'ig_carousel_1', status: 'published' } },
+          async reconcile() { return { externalId: 'ig_carousel_1', status: 'published' } },
+        }
+        const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients, publisher })
+        const token = await signAccessToken(USER_ID)
+        const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
+        expect(response.statusCode).toBe(200)
+        expect(publishCalls).toHaveLength(1)
+        expect(publishCalls[0]!.media.map((entry) => entry.role)).toEqual(['primary', 'slide'])
+        expect(publishCalls[0]!.media.map((entry) => entry.sha256)).toEqual(['a'.repeat(64), 'b'.repeat(64)])
       } finally {
         delete process.env.API_PUBLIC_BASE_URL
       }
