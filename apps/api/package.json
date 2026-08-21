@@ -15,6 +15,7 @@
     "@fastify/multipart": "^10.1.0",
     "@supabase/supabase-js": "^2.55.0",
     "@vereinsfunk/authorization": "workspace:*",
+    "@vereinsfunk/brand-assets": "workspace:*",
     "@vereinsfunk/club-schedule": "workspace:*",
     "@vereinsfunk/config": "workspace:*",
     "@vereinsfunk/content-engine": "workspace:*",

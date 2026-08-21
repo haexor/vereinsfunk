@@ -9,6 +9,12 @@ import { scanAndRecoverStaleCandidates, type GenerationRecoveryRepository } from
 export const concurrency = {
   llm: { global: 20, organization: 4, department: 2 }, image: { global: 12, organization: 3, department: 1 },
   video: { global: 4, organization: 1, department: 1 }, publishing: { global: 20, organization: 4, department: 2 },
+  // Paket 048: eine Website-Analyse startet ein echtes, headless Chromium (siehe
+  // websiteRenderer.ts) -- ein voellig anderes Ressourcenprofil als ein HTTP-Aufruf an einen
+  // LLM-Endpunkt. Mehrere hundert MB Speicher je Lauf: gaebe man ihr die llm-Grenzen, koennten
+  // allein diese Jobs alle Slots des Workers mit Browsern belegen und ihn per OOM mitsamt aller
+  // laufenden Textgenerierungen beenden.
+  browser: { global: 2, organization: 1, department: 1 },
 } as const
 
 export type WorkflowRunAcquireResult =
@@ -39,7 +45,8 @@ export function classifyWorkflowError(error: unknown): WorkflowExecutionError {
 function concurrencyFor(workflow: WorkflowName) {
   const limits = workflow === 'render-content' ? concurrency.image
     : workflow === 'publish-content' ? concurrency.publishing
-      : workflow === 'anonymize-media' ? concurrency.image : concurrency.llm
+      : workflow === 'anonymize-media' ? concurrency.image
+        : workflow === 'analyze-website-branding' ? concurrency.browser : concurrency.llm
   return [
     { expression: "input.organizationId + ':' + input.departmentId", maxRuns: limits.department, limitStrategy: ConcurrencyLimitStrategy.GROUP_ROUND_ROBIN },
     { expression: 'input.organizationId', maxRuns: limits.organization, limitStrategy: ConcurrencyLimitStrategy.GROUP_ROUND_ROBIN },

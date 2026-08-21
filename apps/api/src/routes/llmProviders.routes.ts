@@ -14,7 +14,7 @@ import {
 import { fetchPublicUrl, OutboundFetchError } from '@vereinsfunk/outbound-fetch'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { IMPLEMENTED_LLM_PROTOCOLS, joinUrlPath, mapLlmProviderConfigurationRow, parseModelListingIds } from '../llmProviders.js'
+import { IMPLEMENTED_LLM_PROTOCOLS, IMPLEMENTED_LLM_TASK_KINDS, joinUrlPath, mapLlmProviderConfigurationRow, parseModelListingIds } from '../llmProviders.js'
 import { ciphertextToBytea, createSecretBoxFromEnvironment } from '../secretBox.js'
 import type { ApiRouteContext } from './context.js'
 
@@ -48,9 +48,9 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
     if (!(await requireAuth(request, reply))) return
     if (!(await requirePlatformAdmin(request, reply))) return
     const input = CreateLlmProviderConfigurationRequestSchema.parse(request.body)
-    // Beide Protokolle haben inzwischen einen Adapter im Worker; nur die uebrigen Aufgabenarten
-    // (Bild, Video) sind weiterhin unimplementiert.
-    if (input.taskKind !== 'text_generation') return reply.code(422).send({ error: 'task_kind_not_implemented', taskKind: input.taskKind })
+    // text_generation und vision_analysis haben inzwischen einen Adapter im Worker; nur die
+    // uebrigen Aufgabenarten (Bild, Video) sind weiterhin unimplementiert.
+    if (!IMPLEMENTED_LLM_TASK_KINDS.has(input.taskKind)) return reply.code(422).send({ error: 'task_kind_not_implemented', taskKind: input.taskKind })
     // Vor dem Insert erzeugt, damit eine fehlende oder ungueltige SECRET_BOX_KEYS-Konfiguration
     // wirft, bevor ueberhaupt eine Konfigurationszeile entsteht.
     const secretBox = createSecretBoxFromEnvironment(environment)
@@ -104,7 +104,7 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
     if (!(await requirePlatformAdmin(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
     const input = UpdateLlmProviderConfigurationRequestSchema.parse(request.body)
-    if (input.taskKind && input.taskKind !== 'text_generation') return reply.code(422).send({ error: 'task_kind_not_implemented', taskKind: input.taskKind ?? 'text_generation' })
+    if (input.taskKind && !IMPLEMENTED_LLM_TASK_KINDS.has(input.taskKind)) return reply.code(422).send({ error: 'task_kind_not_implemented', taskKind: input.taskKind })
     const service = supabaseClients.forService()
     const current = await service.from('llm_provider_configurations').select('protocol, task_kind, is_active').eq('id', params.id).maybeSingle()
     if (current.error) throw current.error
@@ -114,7 +114,7 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
     const effectiveIsActive = input.isActive ?? current.data.is_active
     // Nicht nur bei explizitem isActive:true pruefen: ein Protokollwechsel auf einer bereits
     // aktiven Zeile darf die Konfiguration ebenso wenig unimplementiert zurueckliessen.
-    if (effectiveIsActive && (!IMPLEMENTED_LLM_PROTOCOLS.has(effectiveProtocol as string) || effectiveTaskKind !== 'text_generation')) {
+    if (effectiveIsActive && (!IMPLEMENTED_LLM_PROTOCOLS.has(effectiveProtocol as string) || !IMPLEMENTED_LLM_TASK_KINDS.has(effectiveTaskKind as string))) {
       return reply.code(422).send({ error: 'unsupported_provider_configuration' })
     }
     const payload: Record<string, unknown> = {}

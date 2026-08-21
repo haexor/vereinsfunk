@@ -44,6 +44,10 @@ const PROTOCOL_OPTIONS = [
 ] as const
 const TASK_KIND_OPTIONS = [
   { value: 'text_generation', label: 'Textgenerierung', available: true },
+  // Paket 048: seit dem Vision-Adapter im Worker aktivierbar (siehe IMPLEMENTED_LLM_TASK_KINDS in
+  // apps/api). Ohne einen so angelegten Provider findet die Markenerkennung aus der Vereins-
+  // Homepage keinen und scheitert mit 'no_vision_provider_configured'.
+  { value: 'vision_analysis', label: 'Bildanalyse (Markenerkennung)', available: true },
   { value: 'image_generation', label: 'Bildgenerierung', available: false },
   { value: 'video_generation', label: 'Videogenerierung', available: false },
 ] as const

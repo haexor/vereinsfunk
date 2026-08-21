@@ -4,6 +4,8 @@ import { getPreset, validateSourceMaterial } from './presets.js'
 
 export { factsFromFixture, factsFromClubEvent } from './schedule.js'
 export type { FactsFromScheduleResult } from './schedule.js'
+export { AnthropicVisionAnalysisGenerator, OpenAiCompatibleVisionAnalysisGenerator, VisionAnalysisError } from './visionAnalysis.js'
+export type { FontPairingOption, VisionAnalysisGenerator, VisionAnalysisInput, VisionAnalysisResult } from './visionAnalysis.js'
 
 export interface GroundedContentBrief { allowedClaims: readonly { sourceId: string; text: string }[]; approvedQuotes: readonly { sourceId: string; text: string; attribution?: string }[]; missingFacts: readonly string[]; prohibitedClaims: readonly string[]; goal: CreateSubmission['communicationGoal']; requestedFormats: CreateSubmission['requestedFormats']; presetSlug: string }
 // Text-workshop-Sitzungen kennen keinen Anlass (presetSlug) mehr und damit auch keine daran

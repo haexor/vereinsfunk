@@ -34,6 +34,9 @@ function detectRasterFormat(buffer: Buffer): 'png' | 'jpg' | null {
 /**
  * Determines the file kind from its bytes (never from a client-supplied Content-Type),
  * sanitizes SVGs via packages/svg-safe, and re-encodes raster images without EXIF metadata.
+ * Shared by apps/api (manual uploads) and apps/worker (Paket 048, AI-suggested logo candidates
+ * downloaded from a club's homepage) -- moved out of apps/api because apps/worker cannot import
+ * from another app's src.
  */
 export async function processBrandLogoUpload(buffer: Buffer): Promise<ProcessedLogo> {
   if (looksLikeSvg(buffer)) {

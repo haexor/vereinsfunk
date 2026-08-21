@@ -82,9 +82,18 @@ export function isAllowedOutboundUrl(rawUrl: string): boolean {
 
 export type AddressLookup = (hostname: string) => Promise<readonly string[]>
 
-const systemLookup: AddressLookup = async (hostname) => (await lookup(hostname, { all: true })).map((entry) => entry.address)
+// Exportiert, damit ein Aufrufer von assertResolvesPublicly() (die selbst keinen Default kapselt)
+// nicht dieselbe node:dns/promises-Aufloesung ein zweites Mal nachbauen muss (siehe apps/worker,
+// browserGuard.ts).
+export const systemLookup: AddressLookup = async (hostname) => (await lookup(hostname, { all: true })).map((entry) => entry.address)
 
-async function assertResolvesPublicly(hostname: string, resolve: AddressLookup): Promise<void> {
+/**
+ * Exportiert (nicht nur intern in fetchPublicUrl/createGuardedFetch genutzt), weil Paket 048
+ * (Playwright-Navigation fuer die KI-Markenerkennung) dieselbe DNS-Rebinding-Pruefung fuer jeden
+ * einzelnen von Chromium selbst ausgeloesten Request braucht -- Playwrights eigenes Networking
+ * laeuft nicht durch fetch()/fetchPublicUrl().
+ */
+export async function assertResolvesPublicly(hostname: string, resolve: AddressLookup): Promise<void> {
   const bare = hostname.replace(/^\[|]$/g, '')
   if (isIP(bare) !== 0) {
     if (isBlockedAddress(bare)) throw new OutboundFetchError('blocked_url', `blocked address ${bare}`)

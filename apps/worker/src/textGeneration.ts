@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto'
-import { createSecretBox } from '@vereinsfunk/secrets'
 import { AnthropicStructuredContentGenerator, ContentGenerationError, OpenAiCompatibleStructuredContentGenerator, TEXT_PROMPT_TEMPLATE_VERSION, createTextGroundedContentBrief, type StructuredContentGenerator } from '@vereinsfunk/content-engine'
 import { deriveTextGenerationMaxOutputTokens, providerSendsTemperature, SourceMaterialSchema, StyleProfileSnapshotSchema, UuidSchema, type GeneratedPost, type WorkflowPayload } from '@vereinsfunk/contracts'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
+import { openProviderSecret } from './providerSecrets.js'
 import { WorkflowExecutionError } from './workflows.js'
 
 export type SessionRow = { id: string; organization_id: string; department_id: string; team_id: string | null; communication_goal: 'inform' | 'inspire' | 'thank' | 'invite' | 'recruit' | 'educate' | 'strengthen_community'; source_material: unknown; style_profile_snapshot: unknown; max_characters: number; temperature: number }
@@ -19,18 +19,6 @@ export interface TextGenerationRepository {
   markReady(candidateId: string, sessionId: string, leaseToken: string, generatedContent: unknown, metadata: { providerConfigurationId: string; providerModelId: string; providerParameterHash: string; promptTemplateVersion: string }): Promise<void>
   markFailed(candidateId: string, sessionId: string, leaseToken: string, errorClass: string): Promise<void>
   releaseCandidate(candidateId: string, sessionId: string, leaseToken: string): Promise<void>
-}
-
-function parseSecretBox(config: WorkerEnvironment) {
-  let keys: unknown
-  try { keys = JSON.parse(config.SECRET_BOX_KEYS) } catch { throw new WorkflowExecutionError('secret_configuration', false) }
-  if (typeof keys !== 'object' || !keys || Array.isArray(keys)) throw new WorkflowExecutionError('secret_configuration', false)
-  return createSecretBox(keys as Record<string, string>, config.SECRET_BOX_CURRENT_KEY_VERSION)
-}
-
-function ciphertextBuffer(value: string) {
-  if (!value.startsWith('\\x')) throw new WorkflowExecutionError('provider_secret_encoding', false)
-  return Buffer.from(value.slice(2), 'hex')
 }
 
 // Plan 042, PR 3 Step 5: provider_parameter_hash muss die tatsaechlich benutzten Parameter
@@ -85,7 +73,7 @@ export class TextGenerationExecutor {
       if (!generator || !provider.structured_output_required) throw new WorkflowExecutionError('unsupported_provider_configuration', false)
       const style = StyleProfileSnapshotSchema.parse(session.style_profile_snapshot)
       const brief = createTextGroundedContentBrief({ communicationGoal: session.communication_goal, sourceMaterial: SourceMaterialSchema.parse(session.source_material) })
-      const apiKey = parseSecretBox(this.config).open(ciphertextBuffer(provider.api_key_ciphertext), provider.key_version, provider.id)
+      const apiKey = openProviderSecret(this.config, provider.api_key_ciphertext, provider.key_version, provider.id)
       // Belegzahl aus dem Brief, nicht aus dem Rohmaterial: assertGroundedPost prueft gegen genau
       // diese Menge, und sie ist es, die die Antwort ueber verifiedFacts/generatedClaims verlaengert.
       const maxOutputTokens = deriveTextGenerationMaxOutputTokens(session.max_characters, brief.allowedClaims.length + brief.approvedQuotes.length)

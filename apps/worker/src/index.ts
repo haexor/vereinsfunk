@@ -2,10 +2,12 @@ import { parseWorkerEnvironment } from '@vereinsfunk/config'
 import { runPendingMigrations } from '@vereinsfunk/db-migrate'
 import { createLogger } from '@vereinsfunk/observability'
 import { WorkflowOutboxDispatcher } from '@vereinsfunk/orchestration'
-import { createGenerationRecoveryRepository, createTextGenerationRepository, createWorkflowExecutionRepository, createWorkflowOutboxRepository } from './context.js'
+import { createBrandWebsiteAnalysisRepository, createGenerationRecoveryRepository, createTextGenerationRepository, createWorkflowExecutionRepository, createWorkflowOutboxRepository } from './context.js'
 import { createHatchetClient, HatchetOrchestrator } from './hatchet.js'
 import { concurrency, createHatchetWorker, WorkflowExecutionError, type ProductWorkflowExecutor } from './workflows.js'
 import { TextGenerationExecutor } from './textGeneration.js'
+import { BrandWebsiteAnalysisExecutor } from './brandWebsiteAnalysis.js'
+import { PlaywrightWebsiteRenderer } from './websiteRenderer.js'
 
 const logger = createLogger({ name: 'worker' })
 const WORKER_READY_TIMEOUT_MS = 30_000
@@ -63,9 +65,11 @@ async function main(): Promise<void> {
   await runPendingMigrations(config.DATABASE_URL, { log: (message) => logger.info(message) })
   const runs = createWorkflowExecutionRepository(config)
   const textGeneration = new TextGenerationExecutor(config, createTextGenerationRepository(config))
+  const brandWebsiteAnalysis = new BrandWebsiteAnalysisExecutor(config, createBrandWebsiteAnalysisRepository(config), new PlaywrightWebsiteRenderer())
   const executor: ProductWorkflowExecutor = {
     async execute(workflow, payload) {
       if (workflow === 'generate-text-post') return textGeneration.execute(payload)
+      if (workflow === 'analyze-website-branding') return brandWebsiteAnalysis.execute(payload)
       throw new WorkflowExecutionError('product_executor_unavailable', false, `no product executor is configured for ${workflow}`)
     },
   }
