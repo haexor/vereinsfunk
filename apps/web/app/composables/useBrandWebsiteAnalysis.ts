@@ -3,8 +3,10 @@ import {
   StartBrandWebsiteAnalysisRequestSchema,
   type BrandWebsiteAnalysisResult,
 } from '@vereinsfunk/contracts'
-import { onBeforeUnmount, onMounted, ref, type ComputedRef } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch, type ComputedRef } from 'vue'
 import { ApiRequestError } from '../utils/apiClient'
+
+export type BrandWebsiteAnalysisScope = { organizationId: string; departmentId: string | null }
 
 // Paket 048: erster Auto-Poll-Loop in apps/web (Textwerkstatt nutzt bisher einen manuellen
 // "Aktualisieren"-Button). Bewusst ein lokaler setTimeout-Loop statt einer generischen
@@ -23,12 +25,18 @@ const MAX_CONSECUTIVE_POLL_FAILURES = 3
 
 export type BrandWebsiteAnalysisUiStatus = 'idle' | 'pending' | 'running' | 'succeeded' | 'failed'
 
-function startErrorMessage(error: unknown): string {
+function startErrorMessage(error: unknown, isDepartment: boolean): string {
   const code = error instanceof ApiRequestError ? error.code : null
   if (code === 'website_url_not_allowed') return 'Diese Adresse kann nicht abgerufen werden.'
-  if (code === 'analysis_in_progress') return 'Es läuft bereits eine Analyse für diesen Verein.'
+  if (code === 'analysis_in_progress') return `Es läuft bereits eine Analyse für ${isDepartment ? 'diese Abteilung' : 'diesen Verein'}.`
   if (code === 'organization_has_no_department') return 'Dafür braucht der Verein mindestens eine Abteilung.'
   return 'Die Analyse konnte nicht gestartet werden.'
+}
+
+function endpointPath(scope: BrandWebsiteAnalysisScope): string {
+  return scope.departmentId
+    ? `/v1/departments/${scope.departmentId}/brand/website-analysis`
+    : `/v1/organizations/${scope.organizationId}/brand/website-analysis`
 }
 
 // Der Verein tippt "verein.de" oder bekommt aus dem Impressum ein "http://..." vorbelegt
@@ -42,10 +50,10 @@ function normalizeWebsiteUrl(raw: string): string {
 
 export function useBrandWebsiteAnalysis({
   api,
-  organizationId,
+  scope,
 }: {
   api: ReturnType<typeof useApiClient>
-  organizationId: ComputedRef<string | null>
+  scope: ComputedRef<BrandWebsiteAnalysisScope | null>
 }) {
   const status = ref<BrandWebsiteAnalysisUiStatus>('idle')
   const result = ref<BrandWebsiteAnalysisResult | null>(null)
@@ -86,10 +94,10 @@ export function useBrandWebsiteAnalysis({
     // Der Scope kann waehrend eines Laufs kurz leer sein (Session-Neuaufloesung). Das beendet die
     // Schleife nicht -- sonst blieb die Anzeige dauerhaft in "Analyse laeuft" haengen, ohne dass
     // je ein Timeout gegriffen haette.
-    if (!organizationId.value) { schedulePoll(generation); return }
+    if (!scope.value) { schedulePoll(generation); return }
     try {
       const response = await api.request(
-        `/v1/organizations/${organizationId.value}/brand/website-analysis`,
+        endpointPath(scope.value),
         {},
         BrandWebsiteAnalysisStatusResponseSchema,
       )
@@ -120,8 +128,13 @@ export function useBrandWebsiteAnalysis({
     status.value = 'idle'
     result.value = null
     errorReason.value = null
+    // Beide vor dem ersten await eingefroren: scope.value kann sich waehrend des POST aendern
+    // (Tab-Wechsel), ohne dass der weitere Ablauf hier den falschen Scope beschreibt oder
+    // schreibt -- dieselbe Generation-Absicherung wie in pollOnce/resumeRunningAnalysis.
+    const currentScope = scope.value
+    const generation = pollGeneration
     try {
-      if (!organizationId.value) {
+      if (!currentScope) {
         startError.value = 'Der Verein ist noch nicht vollständig geladen. Bitte die Seite neu laden.'
         return
       }
@@ -138,17 +151,27 @@ export function useBrandWebsiteAnalysis({
         startError.value = 'Bitte eine Adresse angeben, die mit https:// beginnt.'
         return
       }
-      await api.request(`/v1/organizations/${organizationId.value}/brand/website-analysis`, {
+      await api.request(endpointPath(currentScope), {
         method: 'POST',
         body: websiteUrlInput.data,
       })
+      // Der Scope kann sich waehrend des Requests geaendert haben (stopPolling() in der
+      // scopeKey-Watch unten hat dann bereits eine neue Generation begonnen und ggf. den
+      // laufenden Job des NEUEN Scopes aufgegriffen) -- ohne diese Pruefung ueberschriebe der
+      // hier gestartete Lauf dessen frisch geladenen Status mit 'pending' und plante einen nicht
+      // gefencten Poll gegen den falschen Endpunkt.
+      if (generation !== pollGeneration) return
       status.value = 'pending'
       pollDeadline = Date.now() + POLL_TIMEOUT_MS
-      schedulePoll(pollGeneration)
+      schedulePoll(generation)
     } catch (error) {
-      startError.value = startErrorMessage(error)
+      if (generation !== pollGeneration) return
+      startError.value = startErrorMessage(error, !!currentScope?.departmentId)
     } finally {
-      starting.value = false
+      // Gefenct wie der Rest: ohne die Pruefung koennte ein ueberholter Aufruf, dessen Request
+      // erst nach einem Scope-Wechsel abschliesst, `starting` faelschlich zurueck auf false
+      // setzen, waehrend der neue Scope laengst seinen eigenen Start laufen hat.
+      if (generation === pollGeneration) starting.value = false
     }
   }
 
@@ -158,11 +181,12 @@ export function useBrandWebsiteAnalysis({
   // wieder aufgegriffen -- sonst uebernaehme jeder Seitenaufruf einen alten Vorschlag ungefragt
   // in das Formular.
   async function resumeRunningAnalysis() {
-    if (!organizationId.value) return
+    const currentScope = scope.value
+    if (!currentScope) return
     const generation = pollGeneration
     try {
       const response = await api.request(
-        `/v1/organizations/${organizationId.value}/brand/website-analysis`,
+        endpointPath(currentScope),
         {},
         BrandWebsiteAnalysisStatusResponseSchema,
       )
@@ -178,8 +202,33 @@ export function useBrandWebsiteAnalysis({
     }
   }
 
+  // Ein Wechsel des Scopes (Verein <-> Abteilung, oder zwischen zwei Abteilungen, Paket 049) ist
+  // kein Unmount -- die Seite bleibt dieselbe Komponenteninstanz. Ohne diesen Watcher zeigte die
+  // Karte nach dem Tab-Wechsel weiter den Status/Poll-Loop des vorigen Scopes. scopeKey statt des
+  // scope-Objekts selbst: computed() liefert bei jedem Neulauf ein frisches Objekt, ein Watch auf
+  // das Objekt würde also bei jeder unveränderten Neuberechnung erneut auslösen.
+  const scopeKey = computed(() => {
+    const current = scope.value
+    return current ? `${current.organizationId}:${current.departmentId ?? 'org'}` : null
+  })
+  watch(scopeKey, () => {
+    stopPolling()
+    status.value = 'idle'
+    result.value = null
+    errorReason.value = null
+    startError.value = ''
+    // Ein Start, der beim Scope-Wechsel noch offen war, gehoert nicht mehr zum neuen Scope --
+    // dessen eigener Status kommt gleich per resumeRunningAnalysis(). Ohne diesen Reset bliebe der
+    // "Analyse starten"-Button des neuen Scopes bis zum Abschluss des alten Requests deaktiviert.
+    starting.value = false
+    void resumeRunningAnalysis()
+  })
+
   onMounted(() => { void resumeRunningAnalysis() })
   onBeforeUnmount(stopPolling)
 
-  return { status, result, errorReason, startError, starting, startAnalysis, resumeRunningAnalysis }
+  // scopeKey exportiert, statt sie den Aufrufer erneut im selben Format nachbauen zu lassen (marke.vue
+  // brauchte bislang eine eigene, identisch formatierte Kopie fuer ihren eigenen "Vorschlag
+  // uebernommen"-Reset -- zwei Stellen, die exakt synchron bleiben mussten).
+  return { status, result, errorReason, startError, starting, startAnalysis, resumeRunningAnalysis, scopeKey }
 }
