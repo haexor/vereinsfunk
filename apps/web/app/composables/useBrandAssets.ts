@@ -198,14 +198,20 @@ export function useBrandAssets({
     previewRef.value = URL.createObjectURL(file)
   }
 
-  function onLogoSelected(event: Event, variant: 'light' | 'dark') {
-    const file = (event.target as HTMLInputElement).files?.[0] ?? null
-    if (file) { applyLogoFile(file, variant); return }
+  // Verwirft ein vorgemerktes, noch nicht gespeichertes Logo. Ohne diesen Weg liess sich ein
+  // KI-vorgeschlagenes Logo (Paket 048) nicht mehr ablehnen: jedes spaetere Speichern haette es
+  // hochgeladen und das bisherige Asset auf 'replaced' gesetzt.
+  function clearLogoFile(variant: 'light' | 'dark') {
     const fileRef = variant === 'light' ? logoFileLight : logoFileDark
     const previewRef = variant === 'light' ? logoPreviewUrlLight : logoPreviewUrlDark
     if (previewRef.value) URL.revokeObjectURL(previewRef.value)
     fileRef.value = null
     previewRef.value = ''
+  }
+
+  function onLogoSelected(event: Event, variant: 'light' | 'dark') {
+    const file = (event.target as HTMLInputElement).files?.[0]
+    if (file) applyLogoFile(file, variant)
   }
 
   const sanitizedNotice = ref(false)
@@ -308,7 +314,8 @@ export function useBrandAssets({
     sanitizedNotice, selectableLogoAssets, selectableFontAssets, ownFontAssets,
     pendingLicenseAssets, ownLogoAssets, previewDisplayFamily, previewBodyFamily,
     previewFontFaceCss, previewLogoUrl, uploadingAsset, uploadError, licenseDrafts,
-    confirmingLicense, assetOrigin, onLogoSelected, applyLogoFile, saveOrgLogoIfSelected,
+    confirmingLicense, assetOrigin, onLogoSelected, applyLogoFile, clearLogoFile,
+    logoFileLight, logoFileDark, saveOrgLogoIfSelected,
     activeFontAssetId, toggleFontAsset, uploadAsset, licenseDraftFor, confirmLicense,
   }
 }

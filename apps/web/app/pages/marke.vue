@@ -108,7 +108,7 @@ async function loadAll() {
       supabase.from('brand_assets').select('id, department_id, team_id, kind, object_path, status, font_family, font_weight, font_style, license_holder, created_at').eq('organization_id', organizationId.value).order('created_at', { ascending: false }),
       supabase.from('organization_profiles').select('website_url').eq('organization_id', organizationId.value).maybeSingle(),
     ])
-    if (brandResult.error || departmentsResult.error || teamsResult.error || departmentProfilesResult.error || teamProfilesResult.error || assetsResult.error) {
+    if (brandResult.error || departmentsResult.error || teamsResult.error || departmentProfilesResult.error || teamProfilesResult.error || assetsResult.error || organizationProfileResult.error) {
       loadError.value = true
       return
     }
@@ -188,6 +188,9 @@ const {
   assetOrigin,
   onLogoSelected,
   applyLogoFile,
+  clearLogoFile,
+  logoFileLight,
+  logoFileDark,
   saveOrgLogoIfSelected,
   activeFontAssetId,
   toggleFontAsset,
@@ -237,6 +240,12 @@ const websiteAnalysisFailureMessage = computed(() => {
   return 'Die Analyse ist fehlgeschlagen. Bitte später erneut versuchen.'
 })
 
+// Genau die Formate, die der Logo-Upload akzeptiert, und das multipart-Limit der API
+// (apps/api/src/app.ts, fileSize 8 MiB): ein Vorschlag, den der Speicherpfad ohnehin ablehnen
+// wuerde, wird gar nicht erst vorgemerkt.
+const ANALYSIS_LOGO_MIME_TYPES = ['image/png', 'image/jpeg', 'image/svg+xml']
+const ANALYSIS_LOGO_MAX_BYTES = 8 * 1024 * 1024
+
 async function applyWebsiteAnalysisResult(result: BrandWebsiteAnalysisResult) {
   org.primaryColor = result.primaryColor
   org.accentColor = result.accentColor
@@ -244,25 +253,51 @@ async function applyWebsiteAnalysisResult(result: BrandWebsiteAnalysisResult) {
   org.textColor = result.textColor
   org.onPrimaryColor = result.onPrimaryColor
   const pairing = curatedFontPairings.find((entry) => entry.key === result.suggestedFontPairingKey)
-  if (pairing) { org.displayFontKey = pairing.displayFontKey; org.bodyFontKey = pairing.bodyFontKey }
+  if (pairing) {
+    org.displayFontKey = pairing.displayFontKey
+    org.bodyFontKey = pairing.bodyFontKey
+    // Eine eigene Schriftdatei gewinnt in der Vorschau und beim Aufloesen ueber den Font-Key
+    // (useBrandAssets.fontFamilyForPreview). Blieb sie gesetzt, war der uebernommene Vorschlag
+    // unsichtbar und wurde trotzdem gespeichert -- wirksam erst, wenn das Asset irgendwann
+    // entfernt wird.
+    org.displayFontAssetId = null
+    org.bodyFontAssetId = null
+  }
   if (!result.logoCandidate) return
   try {
     const downloaded = await fetch(result.logoCandidate.signedUrl)
+    // fetch lehnt bei 4xx/5xx nicht ab. Ohne diese Pruefung wuerde der Fehlerbody als Logo
+    // vorgemerkt -- und weil save() das Logo vor der Marke speichert, scheiterte danach das
+    // gesamte Speichern, Farben und Schriften eingeschlossen.
+    if (!downloaded.ok) return
     const blob = await downloaded.blob()
-    const extension = result.logoCandidate.mimeType.split('/')[1]?.split('+')[0] || 'png'
-    applyLogoFile(new File([blob], `homepage-logo.${extension}`, { type: result.logoCandidate.mimeType }), 'light')
+    const mimeType = blob.type.split(';')[0]!.trim().toLowerCase()
+    if (!ANALYSIS_LOGO_MIME_TYPES.includes(mimeType)) return
+    if (blob.size === 0 || blob.size > ANALYSIS_LOGO_MAX_BYTES) return
+    const extension = mimeType.split('/')[1]!.split('+')[0]
+    applyLogoFile(new File([blob], `homepage-logo.${extension}`, { type: mimeType }), 'light')
   } catch {
     // Farb-/Font-Vorschlag bleibt uebernommen, auch wenn der Logo-Download im Browser scheitert.
   }
 }
-watch(websiteAnalysisStatus, (value) => {
-  if (value === 'succeeded' && websiteAnalysisResult.value) void applyWebsiteAnalysisResult(websiteAnalysisResult.value)
+// Uebernommen wird nur auf der Vereinsebene: das Polling laeuft weiter, auch wenn der Nutzer
+// inzwischen auf einen Abteilungs-Tab gewechselt hat. Dort waere die Uebernahme unsichtbar (der
+// Block ist ausgeblendet), veraenderte aber org.* und merkte ein Logo vor, das das naechste
+// Speichern zum neuen Vereinslogo gemacht haette. Wechselt der Nutzer zurueck, greift derselbe
+// Watcher -- das Flag verhindert, dass ein spaeterer Ebenenwechsel eigene Aenderungen ueberschreibt.
+const websiteAnalysisApplied = ref(false)
+watch([websiteAnalysisStatus, activeLevel], () => {
+  if (websiteAnalysisApplied.value) return
+  if (websiteAnalysisStatus.value !== 'succeeded' || activeLevel.value !== 'organization') return
+  const suggestion = websiteAnalysisResult.value
+  if (!suggestion) return
+  websiteAnalysisApplied.value = true
+  void applyWebsiteAnalysisResult(suggestion)
 })
 
 async function startWebsiteAnalysis() {
-  const url = websiteAnalysisUrl.value.trim()
-  if (!url) return
-  await requestWebsiteAnalysis(url)
+  websiteAnalysisApplied.value = false
+  await requestWebsiteAnalysis(websiteAnalysisUrl.value)
 }
 
 await loadAll()
@@ -308,8 +343,10 @@ async function save() {
   saving.value = true
   errorMessage.value = ''
   try {
-    await saveOrgLogoIfSelected()
-    if (activeLevel.value === 'organization') await saveOrganization()
+    // Das vorgemerkte Logo gehoert der Vereinsebene: ungefiltert aufgerufen haette ein Speichern
+    // auf einem Abteilungs-Tab das Vereinslogo ersetzt (POST .../brand/logo setzt das bisherige
+    // logo_primary-Asset auf 'replaced'), obwohl der Nutzer dort eine Abteilung bearbeitet.
+    if (activeLevel.value === 'organization') { await saveOrgLogoIfSelected(); await saveOrganization() }
     else if (activeLevel.value === 'department' && activeDepartmentId.value) await saveDepartment(activeDepartmentId.value)
     else if (activeLevel.value === 'team' && activeTeamId.value) await saveTeam(activeTeamId.value)
     await loadAll()
@@ -371,7 +408,7 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
             </div>
             <p v-if="websiteAnalysisStartError" class="mt-2 text-[11px] text-amber-800">{{ websiteAnalysisStartError }}</p>
             <p v-else-if="websiteAnalysisFailureMessage" class="mt-2 text-[11px] text-amber-800">{{ websiteAnalysisFailureMessage }}</p>
-            <p v-if="websiteAnalysisStatus === 'succeeded'" class="mt-2 flex items-center gap-1.5 text-[11px] text-emerald-700"><Check :size="12" /> Vorschlag übernommen — bitte prüfen und unten speichern.</p>
+            <p v-if="websiteAnalysisApplied" class="mt-2 flex items-center gap-1.5 text-[11px] text-emerald-700"><Check :size="12" /> Vorschlag übernommen — bitte prüfen und unten speichern.</p>
             <p v-if="detectedFontNotice" class="mt-2 text-[11px] text-[#7a817c]">{{ detectedFontNotice }}</p>
           </section>
 
@@ -387,6 +424,7 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
                   <input type="file" accept="image/png,image/jpeg,image/svg+xml" class="sr-only" @change="onLogoSelected($event, 'light')" />
                   <Upload :size="12" /> Ersetzen
                 </label>
+                <button v-if="logoFileLight" type="button" class="focus-ring mt-1.5 w-full rounded-lg px-2 py-1 text-[11px] font-semibold text-[#7b827d] underline" @click="clearLogoFile('light')">Vorgemerktes Logo verwerfen</button>
               </div>
               <div class="rounded-2xl bg-ink p-4 text-center">
                 <img v-if="logoPreviewUrlDark || logoDarkUrl" :src="logoPreviewUrlDark || logoDarkUrl" alt="Logo dunkel" class="mx-auto h-16 w-16 object-contain" />
@@ -396,6 +434,7 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
                   <input type="file" accept="image/png,image/jpeg,image/svg+xml" class="sr-only" @change="onLogoSelected($event, 'dark')" />
                   <Upload :size="12" /> Ersetzen
                 </label>
+                <button v-if="logoFileDark" type="button" class="focus-ring mt-1.5 w-full rounded-lg px-2 py-1 text-[11px] font-semibold text-white/70 underline" @click="clearLogoFile('dark')">Vorgemerktes Logo verwerfen</button>
               </div>
             </div>
             <p v-if="sanitizedNotice" class="mt-2 flex items-center gap-1.5 text-[11px] text-amber-800"><AlertTriangle :size="13" /> Das SVG enthielt nicht unterstützte Elemente, die entfernt wurden.</p>
