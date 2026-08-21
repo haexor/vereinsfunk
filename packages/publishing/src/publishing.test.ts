@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { FakeLinkedInOAuthClient, FakeMetaOAuthClient, FakePublisher, FakeTwitterOAuthClient, MetaPublisher, RealMetaOAuthClient, type Platform, type PublicationInput } from './index.js'
+import { FakeLinkedInOAuthClient, FakeMetaOAuthClient, FakePublisher, FakeTwitterOAuthClient, MetaPublishError, MetaPublisher, RealMetaOAuthClient, type Platform, type PublicationInput } from './index.js'
 
 function publicationInput(overrides: Partial<PublicationInput> = {}): PublicationInput {
   return {
@@ -72,6 +72,143 @@ describe('MetaPublisher', () => {
   it('rejects a platform it does not implement (Twitter/LinkedIn are separate adapters)', async () => {
     const result = await publisher(vi.fn()).validate(publicationInput({ platform: 'twitter' as Platform }))
     expect(result.valid).toBe(false)
+  })
+
+  // Plan 047, PR 2: mehrere Fotos brauchen bei Instagram einen zweistufigen Graph-API-Fluss --
+  // je Foto ein eigener Karussell-Item-Container, danach ein uebergeordneter CAROUSEL-Container,
+  // der alle referenziert, erst dessen media_publish liefert die endgueltige, veroeffentlichte ID.
+  it('builds an Instagram carousel from multiple photos before publishing the parent container', async () => {
+    const calls: [string, RequestInit][] = []
+    const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
+      calls.push([url, init])
+      if (calls.length <= 3) return Response.json({ id: `item-${calls.length}` })
+      if (calls.length === 4) return Response.json({ id: 'container-1' })
+      return Response.json({ id: 'published-1' })
+    }) as unknown as typeof fetch
+    const media = [
+      { derivativeId: 'd1', sha256: 'a'.repeat(64), mimeType: 'image/jpeg', grantUrl: 'https://example.invalid/1', role: 'primary' as const },
+      { derivativeId: 'd2', sha256: 'b'.repeat(64), mimeType: 'image/jpeg', grantUrl: 'https://example.invalid/2', role: 'slide' as const },
+      { derivativeId: 'd3', sha256: 'c'.repeat(64), mimeType: 'image/jpeg', grantUrl: 'https://example.invalid/3', role: 'slide' as const },
+    ]
+    const result = await publisher(fetchImpl).publish(publicationInput({ media }))
+    // 3 Item-Container + 1 uebergeordneter CAROUSEL-Container + 1 media_publish.
+    expect(calls).toHaveLength(5)
+    for (const [index, [url, init]] of calls.slice(0, 3).entries()) {
+      expect(url).toContain('/ig-1/media')
+      expect(String(init.body)).toContain(`image_url=${encodeURIComponent(media[index]!.grantUrl)}`)
+      expect(String(init.body)).toContain('is_carousel_item=true')
+    }
+    const [containerUrl, containerInit] = calls[3]!
+    expect(containerUrl).toContain('/ig-1/media')
+    expect(String(containerInit.body)).toContain('media_type=CAROUSEL')
+    expect(String(containerInit.body)).toContain('children=item-1%2Citem-2%2Citem-3')
+    const [publishUrl, publishInit] = calls[4]!
+    expect(publishUrl).toContain('/ig-1/media_publish')
+    expect(String(publishInit.body)).toContain('creation_id=container-1')
+    // Die ausgefuehrten Schritte gehoeren zum Ergebnis, damit die Route sie auditieren kann.
+    expect(result).toEqual({
+      externalId: 'published-1', status: 'published',
+      completedSteps: [
+        { label: 'carousel item creation', externalId: 'item-1' },
+        { label: 'carousel item creation', externalId: 'item-2' },
+        { label: 'carousel item creation', externalId: 'item-3' },
+        { label: 'carousel container creation', externalId: 'container-1' },
+        { label: 'carousel publish', externalId: 'published-1' },
+      ],
+    })
+  })
+
+  it('stops an Instagram carousel build if a single item container fails, without publishing anything', async () => {
+    const fetchImpl = vi.fn(async () => new Response('', { status: 400 })) as unknown as typeof fetch
+    const media = [
+      { derivativeId: 'd1', sha256: 'a'.repeat(64), mimeType: 'image/jpeg', grantUrl: 'https://example.invalid/1', role: 'primary' as const },
+      { derivativeId: 'd2', sha256: 'b'.repeat(64), mimeType: 'image/jpeg', grantUrl: 'https://example.invalid/2', role: 'slide' as const },
+    ]
+    await expect(publisher(fetchImpl).publish(publicationInput({ media }))).rejects.toThrow(/carousel item creation failed \(400\)/)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  // Code-Review zu diesem PR: Meta bietet fuer die Content-Publishing-Endpunkte keine
+  // Idempotenzkennung, input.idempotencyKey laesst sich also nicht durchreichen. Bricht der Ablauf
+  // nach den ersten Schritten ab, existieren deren Objekte bei Meta trotzdem -- der Fehler muss
+  // ihre IDs nach aussen tragen, sonst ist nicht mehr feststellbar, was dort liegt.
+  it('carries the already created external IDs when a later carousel step fails', async () => {
+    let calls = 0
+    const fetchImpl = vi.fn(async () => {
+      calls += 1
+      // Beide Item-Container entstehen, erst der uebergeordnete CAROUSEL-Container scheitert.
+      return calls <= 2 ? Response.json({ id: `item-${calls}` }) : new Response('', { status: 500 })
+    }) as unknown as typeof fetch
+    const media = [
+      { derivativeId: 'd1', sha256: 'a'.repeat(64), mimeType: 'image/jpeg', grantUrl: 'https://example.invalid/1', role: 'primary' as const },
+      { derivativeId: 'd2', sha256: 'b'.repeat(64), mimeType: 'image/jpeg', grantUrl: 'https://example.invalid/2', role: 'slide' as const },
+    ]
+    const error = await publisher(fetchImpl).publish(publicationInput({ media })).catch((err: unknown) => err)
+    expect(error).toBeInstanceOf(MetaPublishError)
+    expect((error as MetaPublishError).completedSteps).toEqual([
+      { label: 'carousel item creation', externalId: 'item-1' },
+      { label: 'carousel item creation', externalId: 'item-2' },
+    ])
+    // Die Botschaft bleibt unveraendert -- die Route liest den HTTP-Status daraus, um
+    // retry-faehig (5xx) von nicht retry-faehig (4xx) zu unterscheiden.
+    expect((error as MetaPublishError).message).toMatch(/carousel container creation failed \(500\)/)
+  })
+
+  it('carries the already uploaded Facebook photo IDs when the feed post fails', async () => {
+    let calls = 0
+    const fetchImpl = vi.fn(async () => {
+      calls += 1
+      return calls <= 2 ? Response.json({ id: `photo-${calls}` }) : new Response('', { status: 500 })
+    }) as unknown as typeof fetch
+    const media = [
+      { derivativeId: 'd1', sha256: 'a'.repeat(64), mimeType: 'image/jpeg', grantUrl: 'https://example.invalid/1', role: 'primary' as const },
+      { derivativeId: 'd2', sha256: 'b'.repeat(64), mimeType: 'image/jpeg', grantUrl: 'https://example.invalid/2', role: 'slide' as const },
+    ]
+    const error = await publisher(fetchImpl).publish(publicationInput({ platform: 'facebook', media })).catch((err: unknown) => err)
+    expect((error as MetaPublishError).completedSteps.map((step) => step.externalId)).toEqual(['photo-1', 'photo-2'])
+  })
+
+  // Systemgrenze zum Provider: eine 200-Antwort ohne brauchbare id darf nicht als Erfolg
+  // durchgehen -- sonst landete `undefined` als provider_publication_id in der Datenbank.
+  it.each([
+    ['ein fehlendes id-Feld', {}],
+    ['eine leere id', { id: '' }],
+    ['eine id, die keine Zeichenkette ist', { id: 12_345 }],
+  ])('rejects a Graph API response with %s', async (_name, payload) => {
+    const fetchImpl = vi.fn(async () => Response.json(payload)) as unknown as typeof fetch
+    await expect(publisher(fetchImpl).publish(publicationInput())).rejects.toThrow(/did not contain an ID; reconcile before retrying/)
+  })
+
+  // Facebook kennt keinen eigenen Karussell-Typ -- ein Mehrfoto-Beitrag laeuft ueber mehrere
+  // unveroeffentlichte Fotos (POST .../photos?published=false), die per attached_media an einen
+  // einzigen Feed-Post gehaengt werden. Der Feed-Aufruf liefert direkt die endgueltige Post-ID.
+  it('builds a Facebook multi-photo post from unpublished photos attached to one feed post', async () => {
+    const calls: [string, RequestInit][] = []
+    const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
+      calls.push([url, init])
+      if (calls.length <= 2) return Response.json({ id: `photo-${calls.length}` })
+      return Response.json({ id: 'post-1' })
+    }) as unknown as typeof fetch
+    const media = [
+      { derivativeId: 'd1', sha256: 'a'.repeat(64), mimeType: 'image/jpeg', grantUrl: 'https://example.invalid/1', role: 'primary' as const },
+      { derivativeId: 'd2', sha256: 'b'.repeat(64), mimeType: 'image/jpeg', grantUrl: 'https://example.invalid/2', role: 'slide' as const },
+    ]
+    const result = await publisher(fetchImpl).publish(publicationInput({ platform: 'facebook', media }))
+    expect(calls).toHaveLength(3)
+    expect(calls[0]![0]).toContain('/page-1/photos'); expect(String(calls[0]![1].body)).toContain('published=false')
+    expect(calls[1]![0]).toContain('/page-1/photos')
+    const [feedUrl, feedInit] = calls[2]!
+    expect(feedUrl).toContain('/page-1/feed')
+    expect(String(feedInit.body)).toContain(`attached_media%5B0%5D=${encodeURIComponent(JSON.stringify({ media_fbid: 'photo-1' }))}`)
+    expect(String(feedInit.body)).toContain(`attached_media%5B1%5D=${encodeURIComponent(JSON.stringify({ media_fbid: 'photo-2' }))}`)
+    expect(result).toEqual({
+      externalId: 'post-1', status: 'published',
+      completedSteps: [
+        { label: 'unpublished photo upload', externalId: 'photo-1' },
+        { label: 'unpublished photo upload', externalId: 'photo-2' },
+        { label: 'multi-photo feed post', externalId: 'post-1' },
+      ],
+    })
   })
 })
 

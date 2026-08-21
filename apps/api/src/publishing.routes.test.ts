@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { DEPARTMENT_ID, ORGANIZATION_ID, USER_ID, chain, denyingRoleProvider, organizationManagerRoleProvider, signAccessToken, startApp } from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { SocialPublisher } from '@vereinsfunk/publishing'
+import { MetaPublishError } from '@vereinsfunk/publishing'
+import type { PublicationInput, SocialPublisher } from '@vereinsfunk/publishing'
 import type { SupabaseClientFactory } from './app.js'
 import { ciphertextToBytea } from './secretBox.js'
 import { createSecretBox } from '@vereinsfunk/secrets'
@@ -308,6 +309,76 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
       }
     })
 
+    // Plan 047, PR 2: die eigentliche Karussell-Logik (mehrstufiger Graph-API-Fluss) sitzt in
+    // MetaPublisher.publish() und ist dort fuer sich getestet (packages/publishing) -- diese Route
+    // muss dafuer nur alle post_media-Zeilen einer Fassung in Positions-Reihenfolge an den Publisher
+    // reichen, nicht bloss die erste (PR 0 hat das bereits vorgesehen, siehe media.push() oben).
+    it('passes every post_media row to the publisher in position order for a multi-photo post', async () => {
+      process.env.API_PUBLIC_BASE_URL = 'https://api.example.test'
+      try {
+        const publishCalls: PublicationInput[] = []
+        const attemptsCaptured: Record<string, unknown>[] = []
+        const auditCaptured: Record<string, unknown>[] = []
+        const clients: SupabaseClientFactory = {
+          ...readOnlyClients(),
+          forService: () =>
+            ({
+              from: (table: string) => {
+                const gate = mediaGateTables(table, {
+                  postMedia: [
+                    { position: 0, media_derivative_id: '25000000-5000-4000-8000-000000000001' },
+                    { position: 1, media_derivative_id: '25000000-5000-4000-8000-000000000003' },
+                  ],
+                  derivatives: [
+                    { id: '25000000-5000-4000-8000-000000000001', media_asset_id: '25000000-5000-4000-8000-000000000002', sha256: 'a'.repeat(64), mime_type: 'image/png', status: 'ready' },
+                    { id: '25000000-5000-4000-8000-000000000003', media_asset_id: '25000000-5000-4000-8000-000000000004', sha256: 'b'.repeat(64), mime_type: 'image/png', status: 'ready' },
+                  ],
+                  assets: [
+                    { id: '25000000-5000-4000-8000-000000000002', mime_type: 'image/png', scan_status: 'clean', people_reviewed_at: '2026-08-01T00:00:00+00:00' },
+                    { id: '25000000-5000-4000-8000-000000000004', mime_type: 'image/png', scan_status: 'clean', people_reviewed_at: '2026-08-01T00:00:00+00:00' },
+                  ],
+                })
+                if (gate) return gate
+                if (table === 'publications') return { update: () => chain({ data: { id: PUBLICATION_ID }, error: null }) }
+                if (table === 'social_connections') return chain({ data: { external_account_id: 'page-123' }, error: null })
+                if (table === 'social_connection_secrets') {
+                  const sealed = createSecretBox({ v1: Buffer.alloc(32, 7).toString('base64') }, 'v1').seal('fake-access-token', PUB_SOCIAL_CONNECTION_ID)
+                  return chain({ data: { token_ciphertext: ciphertextToBytea(sealed.ciphertext), token_key_version: 'v1' }, error: null })
+                }
+                if (table === 'publication_media_grants') return { insert: async () => ({ error: null }), update: () => ({ eq: () => ({ is: async () => ({ error: null }) }) }) }
+                if (table === 'publication_attempts') return { ...chain({ data: null, error: null }), insert: async (row: Record<string, unknown>) => { attemptsCaptured.push(row); return { error: null } } }
+                if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { auditCaptured.push(row); return { error: null } } }
+                throw new Error(`unexpected table in service fake: ${table}`)
+              },
+            }) as unknown as SupabaseClient,
+        }
+        const carouselSteps = [
+          { label: 'carousel item creation', externalId: 'ig_item_1' },
+          { label: 'carousel item creation', externalId: 'ig_item_2' },
+          { label: 'carousel container creation', externalId: 'ig_container_1' },
+          { label: 'carousel publish', externalId: 'ig_carousel_1' },
+        ]
+        const publisher: SocialPublisher = {
+          async validate() { return { valid: true, errors: [] } },
+          async publish(input) { publishCalls.push(input); return { externalId: 'ig_carousel_1', status: 'published', completedSteps: carouselSteps } },
+          async reconcile() { return { externalId: 'ig_carousel_1', status: 'published' } },
+        }
+        const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients, publisher })
+        const token = await signAccessToken(USER_ID)
+        const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
+        expect(response.statusCode).toBe(200)
+        expect(publishCalls).toHaveLength(1)
+        expect(publishCalls[0]!.media.map((entry) => entry.role)).toEqual(['primary', 'slide'])
+        expect(publishCalls[0]!.media.map((entry) => entry.sha256)).toEqual(['a'.repeat(64), 'b'.repeat(64)])
+        // Code-Review zu diesem PR: ein geglueckter Mehrfoto-Ablauf hat mehr erzeugt als die eine
+        // externalId -- die Zwischen-IDs muessen im Versuchsdatensatz und in der Auditspur landen.
+        expect(attemptsCaptured.at(-1)).toMatchObject({ provider_container_id: 'ig_carousel_1', response_summary: { completedSteps: carouselSteps } })
+        expect(auditCaptured.at(-1)).toMatchObject({ action: 'post.published', metadata: { completedExternalIds: ['ig_item_1', 'ig_item_2', 'ig_container_1', 'ig_carousel_1'] } })
+      } finally {
+        delete process.env.API_PUBLIC_BASE_URL
+      }
+    })
+
     it('classifies an unrecognizable publish() failure as unknown/action_required and returns 502', async () => {
       // Code-Review zu PR #25: der catch-Zweig blieb bisher ungetestet. Ohne Status-Code im
       // Fehlertext (anders als MetaPublishers "... (404)") kann keine 4xx/5xx-Unterscheidung
@@ -348,6 +419,54 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
       expect(publicationUpdates.at(-1)).toMatchObject({ status: 'action_required' })
       expect(attemptsCaptured.at(-1)).toMatchObject({ status: 'failed', error_class: 'unknown' })
       expect(auditCaptured).toMatchObject([{ action: 'post.publish_failed', entity_id: PUBLICATION_ID, metadata: { platform: 'facebook', outcome: 'unknown', status: 'action_required' } }])
+    })
+
+    // Code-Review zu diesem PR: bricht der Mehrfoto-Fluss nach den ersten Graph-Aufrufen ab, sind
+    // deren Objekte bei Meta schon entstanden. Ihre IDs stehen nur im Fehler -- landen sie nicht im
+    // Versuchsdatensatz, ist danach nicht mehr feststellbar, was drueben liegt.
+    it('records the external IDs a failed multi-photo publish already created at Meta', async () => {
+      const attemptsCaptured: Record<string, unknown>[] = []
+      const auditCaptured: Record<string, unknown>[] = []
+      const clients: SupabaseClientFactory = {
+        ...readOnlyClients(),
+        forService: () =>
+          ({
+            from: (table: string) => {
+              const gate = mediaGateTables(table)
+              if (gate) return gate
+              if (table === 'publications') return { update: () => chain({ data: { id: PUBLICATION_ID }, error: null }) }
+              if (table === 'social_connections') return chain({ data: { external_account_id: 'page-123' }, error: null })
+              if (table === 'social_connection_secrets') {
+                const sealed = createSecretBox({ v1: Buffer.alloc(32, 7).toString('base64') }, 'v1').seal('fake-access-token', PUB_SOCIAL_CONNECTION_ID)
+                return chain({ data: { token_ciphertext: ciphertextToBytea(sealed.ciphertext), token_key_version: 'v1' }, error: null })
+              }
+              if (table === 'publication_attempts') return { ...chain({ data: null, error: null }), insert: async (row: Record<string, unknown>) => { attemptsCaptured.push(row); return { error: null } } }
+              if (table === 'publication_media_grants') return { update: () => ({ eq: () => ({ is: async () => ({ error: null }) }) }) }
+              if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { auditCaptured.push(row); return { error: null } } }
+              throw new Error(`unexpected table in service fake: ${table}`)
+            },
+          }) as unknown as SupabaseClient,
+      }
+      const publisher: SocialPublisher = {
+        async validate() { return { valid: true, errors: [] } },
+        async publish() {
+          throw new MetaPublishError('Meta multi-photo feed post failed (500)', [
+            { label: 'unpublished photo upload', externalId: 'photo-1' },
+            { label: 'unpublished photo upload', externalId: 'photo-2' },
+          ])
+        },
+        async reconcile() { return { externalId: 'x', status: 'unknown' } },
+      }
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients, publisher })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
+      expect(response.statusCode).toBe(502)
+      // 500 im Fehlertext bleibt lesbar, obwohl der Fehler jetzt ein MetaPublishError ist.
+      expect(attemptsCaptured.at(-1)).toMatchObject({
+        status: 'failed', error_class: 'retryable',
+        response_summary: { completedSteps: [{ label: 'unpublished photo upload', externalId: 'photo-1' }, { label: 'unpublished photo upload', externalId: 'photo-2' }] },
+      })
+      expect(auditCaptured.at(-1)).toMatchObject({ metadata: { completedExternalIds: ['photo-1', 'photo-2'] } })
     })
   })
 
