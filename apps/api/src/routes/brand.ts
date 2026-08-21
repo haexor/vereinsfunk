@@ -206,10 +206,38 @@ app.post('/v1/organizations/:id/brand/logo', async (request, reply) => {
   )
 })
 
+// Von der Vereins- und der Abteilungs-GET-Route geteilt (Paket 049): baut die HTTP-Antwort aus
+// einer brand_website_analysis_jobs-Zeile, unabhaengig vom Scope.
+async function mapBrandWebsiteAnalysisRow(
+  service: SupabaseClient,
+  row: { status: string; result: unknown; error_reason: string | null },
+): Promise<unknown> {
+  let result: unknown = null
+  if (row.result) {
+    const stored = row.result as Record<string, unknown>
+    // Bei jedem Abruf frisch erzeugt statt gespeichert: eine Signed URL kann waehrend eines
+    // langen Polls verfallen, siehe Plandokument.
+    let logoCandidate: { signedUrl: string; mimeType: string } | null = null
+    if (stored.logoObjectPath) {
+      const signed = await service.storage.from('brand-assets').createSignedUrl(stored.logoObjectPath as string, 600)
+      if (signed.error) throw signed.error
+      logoCandidate = { signedUrl: signed.data.signedUrl, mimeType: stored.logoMimeType as string }
+    }
+    result = {
+      primaryColor: stored.primaryColor, accentColor: stored.accentColor, backgroundColor: stored.backgroundColor,
+      textColor: stored.textColor, onPrimaryColor: stored.onPrimaryColor,
+      suggestedFontPairingKey: stored.suggestedFontPairingKey, detectedFontFamily: stored.detectedFontFamily,
+      logoCandidate,
+    }
+  }
+  return BrandWebsiteAnalysisStatusResponseSchema.parse({ status: row.status, result, errorReason: row.error_reason })
+}
+
 // Paket 048: der Verein gibt seine Homepage-URL an, ein Worker-Job leitet daraus per Screenshot
 // + Vision-KI einen Farb-/Font-/Logo-Vorschlag ab. Die RPC ist die einzige Schreibstelle (siehe
 // start_brand_website_analysis, Migration 2026082007) -- diese Route prueft nur die Berechtigung
-// und bildet deren Fehlermeldungen auf HTTP-Antworten ab.
+// und bildet deren Fehlermeldungen auf HTTP-Antworten ab. Seit Paket 049 gilt dasselbe fuer eine
+// Abteilung (siehe die beiden /v1/departments/:id/brand/website-analysis-Routen unten).
 app.post('/v1/organizations/:id/brand/website-analysis', async (request, reply) => {
   if (!(await requireAuth(request, reply))) return
   const params = z.object({ id: UuidSchema }).parse(request.params)
@@ -240,29 +268,50 @@ app.get('/v1/organizations/:id/brand/website-analysis', async (request, reply) =
   const params = z.object({ id: UuidSchema }).parse(request.params)
   if (!(await requirePermission(request, reply, 'brand.manage', { organizationId: params.id }))) return
   const service = supabaseClients.forService()
-  const row = await service.from('brand_website_analysis_jobs').select('status, result, error_reason').eq('organization_id', params.id).maybeSingle()
+  // is('department_id', null) ist seit Paket 049 notwendig: derselbe organization_id-Wert steht
+  // jetzt auch auf jeder Abteilungs-Job-Zeile, maybeSingle() wuerde sonst bei mehr als einer
+  // Zeile fuer den Verein einen Fehler werfen.
+  const row = await service.from('brand_website_analysis_jobs').select('status, result, error_reason').eq('organization_id', params.id).is('department_id', null).maybeSingle()
   if (row.error) throw row.error
   if (!row.data) return reply.code(404).send({ error: 'no_analysis_yet', correlationId: request.id })
+  return reply.code(200).send(await mapBrandWebsiteAnalysisRow(service, row.data))
+})
 
-  let result: unknown = null
-  if (row.data.result) {
-    const stored = row.data.result as Record<string, unknown>
-    // Bei jedem Abruf frisch erzeugt statt gespeichert: eine Signed URL kann waehrend eines
-    // langen Polls verfallen, siehe Plandokument.
-    let logoCandidate: { signedUrl: string; mimeType: string } | null = null
-    if (stored.logoObjectPath) {
-      const signed = await service.storage.from('brand-assets').createSignedUrl(stored.logoObjectPath as string, 600)
-      if (signed.error) throw signed.error
-      logoCandidate = { signedUrl: signed.data.signedUrl, mimeType: stored.logoMimeType as string }
-    }
-    result = {
-      primaryColor: stored.primaryColor, accentColor: stored.accentColor, backgroundColor: stored.backgroundColor,
-      textColor: stored.textColor, onPrimaryColor: stored.onPrimaryColor,
-      suggestedFontPairingKey: stored.suggestedFontPairingKey, detectedFontFamily: stored.detectedFontFamily,
-      logoCandidate,
-    }
+app.post('/v1/departments/:id/brand/website-analysis', async (request, reply) => {
+  if (!(await requireAuth(request, reply))) return
+  const params = z.object({ id: UuidSchema }).parse(request.params)
+  const department = await supabaseClients.forUser(request.auth!.accessToken).from('departments').select('organization_id').eq('id', params.id).maybeSingle()
+  if (department.error) throw department.error
+  if (!department.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+  const organizationId = department.data.organization_id as string
+  if (!(await requirePermission(request, reply, 'brand.manage', toPermissionScope(organizationId, params.id)))) return
+  const input = StartBrandWebsiteAnalysisRequestSchema.parse(request.body)
+  if (!isAllowedOutboundUrl(input.websiteUrl)) {
+    return reply.code(400).send({ error: 'website_url_not_allowed', correlationId: request.id })
   }
-  return reply.code(200).send(BrandWebsiteAnalysisStatusResponseSchema.parse({ status: row.data.status, result, errorReason: row.data.error_reason }))
+  const service = supabaseClients.forService()
+  const result = await service.rpc('start_brand_website_analysis', {
+    p_organization_id: organizationId, p_website_url: input.websiteUrl, p_requested_by: request.auth!.userId, p_department_id: params.id,
+  })
+  if (result.error) {
+    if (result.error.message === 'analysis_in_progress') return reply.code(409).send({ error: 'analysis_in_progress', correlationId: request.id })
+    throw result.error
+  }
+  return reply.code(202).send({ jobId: (result.data as { jobId: string }).jobId })
+})
+
+app.get('/v1/departments/:id/brand/website-analysis', async (request, reply) => {
+  if (!(await requireAuth(request, reply))) return
+  const params = z.object({ id: UuidSchema }).parse(request.params)
+  const department = await supabaseClients.forUser(request.auth!.accessToken).from('departments').select('organization_id').eq('id', params.id).maybeSingle()
+  if (department.error) throw department.error
+  if (!department.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+  if (!(await requirePermission(request, reply, 'brand.manage', toPermissionScope(department.data.organization_id as string, params.id)))) return
+  const service = supabaseClients.forService()
+  const row = await service.from('brand_website_analysis_jobs').select('status, result, error_reason').eq('department_id', params.id).maybeSingle()
+  if (row.error) throw row.error
+  if (!row.data) return reply.code(404).send({ error: 'no_analysis_yet', correlationId: request.id })
+  return reply.code(200).send(await mapBrandWebsiteAnalysisRow(service, row.data))
 })
 
 app.post('/v1/brand/assets', async (request, reply) => {

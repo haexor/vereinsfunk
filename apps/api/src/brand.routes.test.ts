@@ -684,3 +684,169 @@ describe('Paket 048: KI-gestuetzte Markenerkennung aus der Vereins-Homepage', ()
   })
 })
 
+describe('Paket 049: KI-gestuetzte Markenerkennung auf Abteilungsebene', () => {
+  it('rejects starting a department analysis without brand.manage in that department', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: denyingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/departments/${DEPARTMENT_ID}/brand/website-analysis`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { websiteUrl: 'https://abteilung.example.org' },
+    })
+    expect(response.statusCode).toBe(403)
+  })
+
+  it('returns 404 for a department analysis when the department does not exist', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'departments') return chain({ data: null, error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/departments/${DEPARTMENT_ID}/brand/website-analysis`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { websiteUrl: 'https://abteilung.example.org' },
+    })
+    expect(response.statusCode).toBe(404)
+  })
+
+  it('starts a department analysis and passes p_department_id (not the organization fallback) to the RPC', async () => {
+    let capturedArgs: Record<string, unknown> | undefined
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          rpc: async (name: string, args: Record<string, unknown>) => {
+            if (name !== 'start_brand_website_analysis') throw new Error(`unexpected rpc: ${name}`)
+            capturedArgs = args
+            return { data: { jobId: '49000000-9000-4000-8000-000000000001' }, error: null }
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/departments/${DEPARTMENT_ID}/brand/website-analysis`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { websiteUrl: 'https://abteilung.example.org' },
+    })
+    expect(response.statusCode).toBe(202)
+    expect(response.json()).toEqual({ jobId: '49000000-9000-4000-8000-000000000001' })
+    expect(capturedArgs).toMatchObject({
+      p_organization_id: ORGANIZATION_ID, p_website_url: 'https://abteilung.example.org', p_requested_by: USER_ID, p_department_id: DEPARTMENT_ID,
+    })
+  })
+
+  it('maps a running department analysis to 409 instead of silently duplicating it', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({ rpc: async () => ({ data: null, error: { message: 'analysis_in_progress' } }) }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/departments/${DEPARTMENT_ID}/brand/website-analysis`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { websiteUrl: 'https://abteilung.example.org' },
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json().error).toBe('analysis_in_progress')
+  })
+
+  it('rejects reading a department analysis status without brand.manage in that department', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: denyingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/departments/${DEPARTMENT_ID}/brand/website-analysis`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(403)
+  })
+
+  it('reports a succeeded department analysis, filtered by department_id rather than organization_id', async () => {
+    let filteredBy: Record<string, unknown> = {}
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: () => {
+            const builder = chain({
+              data: {
+                status: 'succeeded',
+                result: {
+                  primaryColor: '#163a2c', accentColor: '#caff4a', backgroundColor: '#f6f4ec', textColor: '#122820', onPrimaryColor: '#ffffff',
+                  suggestedFontPairingKey: null, detectedFontFamily: null, logoObjectPath: null, logoMimeType: null,
+                },
+                error_reason: null,
+              },
+              error: null,
+            }) as unknown as Record<string, unknown>
+            const originalEq = builder.eq as (...args: unknown[]) => unknown
+            builder.eq = (...args: unknown[]) => { filteredBy = { column: args[0], value: args[1] }; return originalEq(...args) }
+            return builder
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/departments/${DEPARTMENT_ID}/brand/website-analysis`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ status: 'succeeded', result: { primaryColor: '#163a2c' } })
+    expect(filteredBy).toEqual({ column: 'department_id', value: DEPARTMENT_ID })
+  })
+})
+

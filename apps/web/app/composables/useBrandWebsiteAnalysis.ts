@@ -3,8 +3,10 @@ import {
   StartBrandWebsiteAnalysisRequestSchema,
   type BrandWebsiteAnalysisResult,
 } from '@vereinsfunk/contracts'
-import { onBeforeUnmount, onMounted, ref, type ComputedRef } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch, type ComputedRef } from 'vue'
 import { ApiRequestError } from '../utils/apiClient'
+
+export type BrandWebsiteAnalysisScope = { organizationId: string; departmentId: string | null }
 
 // Paket 048: erster Auto-Poll-Loop in apps/web (Textwerkstatt nutzt bisher einen manuellen
 // "Aktualisieren"-Button). Bewusst ein lokaler setTimeout-Loop statt einer generischen
@@ -23,12 +25,18 @@ const MAX_CONSECUTIVE_POLL_FAILURES = 3
 
 export type BrandWebsiteAnalysisUiStatus = 'idle' | 'pending' | 'running' | 'succeeded' | 'failed'
 
-function startErrorMessage(error: unknown): string {
+function startErrorMessage(error: unknown, isDepartment: boolean): string {
   const code = error instanceof ApiRequestError ? error.code : null
   if (code === 'website_url_not_allowed') return 'Diese Adresse kann nicht abgerufen werden.'
-  if (code === 'analysis_in_progress') return 'Es läuft bereits eine Analyse für diesen Verein.'
+  if (code === 'analysis_in_progress') return `Es läuft bereits eine Analyse für ${isDepartment ? 'diese Abteilung' : 'diesen Verein'}.`
   if (code === 'organization_has_no_department') return 'Dafür braucht der Verein mindestens eine Abteilung.'
   return 'Die Analyse konnte nicht gestartet werden.'
+}
+
+function endpointPath(scope: BrandWebsiteAnalysisScope): string {
+  return scope.departmentId
+    ? `/v1/departments/${scope.departmentId}/brand/website-analysis`
+    : `/v1/organizations/${scope.organizationId}/brand/website-analysis`
 }
 
 // Der Verein tippt "verein.de" oder bekommt aus dem Impressum ein "http://..." vorbelegt
@@ -42,10 +50,10 @@ function normalizeWebsiteUrl(raw: string): string {
 
 export function useBrandWebsiteAnalysis({
   api,
-  organizationId,
+  scope,
 }: {
   api: ReturnType<typeof useApiClient>
-  organizationId: ComputedRef<string | null>
+  scope: ComputedRef<BrandWebsiteAnalysisScope | null>
 }) {
   const status = ref<BrandWebsiteAnalysisUiStatus>('idle')
   const result = ref<BrandWebsiteAnalysisResult | null>(null)
@@ -86,10 +94,10 @@ export function useBrandWebsiteAnalysis({
     // Der Scope kann waehrend eines Laufs kurz leer sein (Session-Neuaufloesung). Das beendet die
     // Schleife nicht -- sonst blieb die Anzeige dauerhaft in "Analyse laeuft" haengen, ohne dass
     // je ein Timeout gegriffen haette.
-    if (!organizationId.value) { schedulePoll(generation); return }
+    if (!scope.value) { schedulePoll(generation); return }
     try {
       const response = await api.request(
-        `/v1/organizations/${organizationId.value}/brand/website-analysis`,
+        endpointPath(scope.value),
         {},
         BrandWebsiteAnalysisStatusResponseSchema,
       )
@@ -121,7 +129,8 @@ export function useBrandWebsiteAnalysis({
     result.value = null
     errorReason.value = null
     try {
-      if (!organizationId.value) {
+      const currentScope = scope.value
+      if (!currentScope) {
         startError.value = 'Der Verein ist noch nicht vollständig geladen. Bitte die Seite neu laden.'
         return
       }
@@ -138,7 +147,7 @@ export function useBrandWebsiteAnalysis({
         startError.value = 'Bitte eine Adresse angeben, die mit https:// beginnt.'
         return
       }
-      await api.request(`/v1/organizations/${organizationId.value}/brand/website-analysis`, {
+      await api.request(endpointPath(currentScope), {
         method: 'POST',
         body: websiteUrlInput.data,
       })
@@ -146,7 +155,7 @@ export function useBrandWebsiteAnalysis({
       pollDeadline = Date.now() + POLL_TIMEOUT_MS
       schedulePoll(pollGeneration)
     } catch (error) {
-      startError.value = startErrorMessage(error)
+      startError.value = startErrorMessage(error, !!scope.value?.departmentId)
     } finally {
       starting.value = false
     }
@@ -158,11 +167,12 @@ export function useBrandWebsiteAnalysis({
   // wieder aufgegriffen -- sonst uebernaehme jeder Seitenaufruf einen alten Vorschlag ungefragt
   // in das Formular.
   async function resumeRunningAnalysis() {
-    if (!organizationId.value) return
+    const currentScope = scope.value
+    if (!currentScope) return
     const generation = pollGeneration
     try {
       const response = await api.request(
-        `/v1/organizations/${organizationId.value}/brand/website-analysis`,
+        endpointPath(currentScope),
         {},
         BrandWebsiteAnalysisStatusResponseSchema,
       )
@@ -177,6 +187,24 @@ export function useBrandWebsiteAnalysis({
       // Kein Job (404 no_analysis_yet) oder ein Abrufproblem: es gibt nichts anzuzeigen.
     }
   }
+
+  // Ein Wechsel des Scopes (Verein <-> Abteilung, oder zwischen zwei Abteilungen, Paket 049) ist
+  // kein Unmount -- die Seite bleibt dieselbe Komponenteninstanz. Ohne diesen Watcher zeigte die
+  // Karte nach dem Tab-Wechsel weiter den Status/Poll-Loop des vorigen Scopes. scopeKey statt des
+  // scope-Objekts selbst: computed() liefert bei jedem Neulauf ein frisches Objekt, ein Watch auf
+  // das Objekt würde also bei jeder unveränderten Neuberechnung erneut auslösen.
+  const scopeKey = computed(() => {
+    const current = scope.value
+    return current ? `${current.organizationId}:${current.departmentId ?? 'org'}` : null
+  })
+  watch(scopeKey, () => {
+    stopPolling()
+    status.value = 'idle'
+    result.value = null
+    errorReason.value = null
+    startError.value = ''
+    void resumeRunningAnalysis()
+  })
 
   onMounted(() => { void resumeRunningAnalysis() })
   onBeforeUnmount(stopPolling)

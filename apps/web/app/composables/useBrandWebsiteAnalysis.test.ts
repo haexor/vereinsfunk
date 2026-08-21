@@ -1,23 +1,27 @@
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiRequestError } from '../utils/apiClient'
 import type { useApiClient } from './useApiClient'
-import { useBrandWebsiteAnalysis } from './useBrandWebsiteAnalysis'
+import { useBrandWebsiteAnalysis, type BrandWebsiteAnalysisScope } from './useBrandWebsiteAnalysis'
 
 const RESULT = {
   primaryColor: '#123456', accentColor: '#654321', backgroundColor: '#ffffff', textColor: '#000000',
   onPrimaryColor: '#ffffff', suggestedFontPairingKey: 'manrope_dm_sans', detectedFontFamily: null, logoCandidate: null,
 }
 
+const ORG_SCOPE: BrandWebsiteAnalysisScope = { organizationId: 'org-1', departmentId: null }
+const DEPARTMENT_SCOPE: BrandWebsiteAnalysisScope = { organizationId: 'org-1', departmentId: 'dept-1' }
+
 function isPost(options: unknown) {
   return (options as { method?: string })?.method === 'POST'
 }
 
-function setup(request: (path: string, options?: unknown) => Promise<unknown>) {
+function setup(request: (path: string, options?: unknown) => Promise<unknown>, initialScope: BrandWebsiteAnalysisScope = ORG_SCOPE) {
   const requestMock = vi.fn(request)
   const api = { request: requestMock } as unknown as ReturnType<typeof useApiClient>
-  const organizationId = computed(() => 'org-1')
-  return { requestMock, ...useBrandWebsiteAnalysis({ api, organizationId }) }
+  const scopeRef = ref<BrandWebsiteAnalysisScope | null>(initialScope)
+  const scope = computed(() => scopeRef.value)
+  return { requestMock, scope: scopeRef, ...useBrandWebsiteAnalysis({ api, scope }) }
 }
 
 function pollCount(requestMock: { mock: { calls: unknown[][] } }) {
@@ -192,5 +196,49 @@ describe('useBrandWebsiteAnalysis', () => {
     await resumeRunningAnalysis()
 
     expect(status.value).toBe('idle')
+  })
+
+  it('posts to the department endpoint and maps its analysis_in_progress message when scoped to a department', async () => {
+    const { requestMock, startAnalysis, startError } = setup(async (path, options: unknown) => {
+      if (isPost(options)) throw new ApiRequestError('analysis_in_progress', 409)
+      return undefined
+    }, DEPARTMENT_SCOPE)
+
+    await startAnalysis('https://abteilung.example.org')
+
+    expect(requestMock).toHaveBeenCalledWith(
+      '/v1/departments/dept-1/brand/website-analysis',
+      { method: 'POST', body: { websiteUrl: 'https://abteilung.example.org' } },
+    )
+    expect(startError.value).toBe('Es läuft bereits eine Analyse für diese Abteilung.')
+  })
+
+  it('stops polling the previous scope and resumes for the new one when the scope changes', async () => {
+    let departmentStatus: 'running' | 'succeeded' = 'running'
+    const { scope, status, result, startAnalysis } = setup(async (path, options: unknown) => {
+      if (isPost(options)) return undefined
+      // Der Verein liefert dauerhaft "running" -- ueberlebte sein Poll-Loop den Scope-Wechsel
+      // trotzdem, wuerde er den Abteilungs-Erfolg unten wieder ueberschreiben.
+      if (path.includes('/departments/')) {
+        return { status: departmentStatus, result: departmentStatus === 'succeeded' ? RESULT : null, errorReason: null }
+      }
+      return { status: 'running', result: null, errorReason: null }
+    })
+
+    await startAnalysis('https://verein.example.org')
+    expect(status.value).toBe('pending')
+
+    scope.value = DEPARTMENT_SCOPE
+    await vi.advanceTimersByTimeAsync(0)
+    expect(status.value).toBe('running')
+
+    departmentStatus = 'succeeded'
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(status.value).toBe('succeeded')
+    expect(result.value).toEqual(RESULT)
+
+    // Der urspruengliche Vereins-Poll darf nicht mehr nachtraeglich ueber die Abteilung schreiben.
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(status.value).toBe('succeeded')
   })
 })
