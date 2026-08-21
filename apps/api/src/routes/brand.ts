@@ -295,6 +295,10 @@ app.post('/v1/departments/:id/brand/website-analysis', async (request, reply) =>
   })
   if (result.error) {
     if (result.error.message === 'analysis_in_progress') return reply.code(409).send({ error: 'analysis_in_progress', correlationId: request.id })
+    // In der Praxis unerreichbar (organizationId stammt oben aus der Abteilung selbst), aber die
+    // RPC prueft es trotzdem als eigene Schutzschicht (siehe Migration) -- dieselbe Abbildung wie
+    // 'organization_has_no_department' bei der Vereinsroute statt eines unspezifischen 500.
+    if (result.error.message === 'department_not_in_organization') return reply.code(422).send({ error: 'department_not_in_organization', correlationId: request.id })
     throw result.error
   }
   return reply.code(202).send({ jobId: (result.data as { jobId: string }).jobId })

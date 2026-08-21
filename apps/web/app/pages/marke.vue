@@ -240,6 +240,7 @@ const {
   startError: websiteAnalysisStartError,
   starting: websiteAnalysisStarting,
   startAnalysis: requestWebsiteAnalysis,
+  scopeKey: websiteAnalysisScopeKey,
 } = useBrandWebsiteAnalysis({ api, scope: websiteAnalysisScope })
 const websiteAnalysisRunning = computed(() => websiteAnalysisStatus.value === 'pending' || websiteAnalysisStatus.value === 'running')
 const detectedFontNotice = computed(() => {
@@ -301,13 +302,18 @@ async function applyDepartmentLogoCandidate(departmentId: string, logoCandidate:
     const uploaded = await api.request('/v1/brand/assets', { method: 'POST', body: formData }, BrandAssetSchema)
     // loadAll() wuerde hier ungespeicherte Farb-Uebernahmen aus derselben Funktion sofort wieder
     // verwerfen (es ersetzt departmentOverrides komplett durch den DB-Stand) -- die neue Asset-
-    // Zeile wird deshalb lokal angehaengt statt per vollem Reload nachgeladen.
-    assets.value = [...assets.value, {
-      id: uploaded.id, departmentId: uploaded.departmentId, teamId: uploaded.teamId, kind: uploaded.kind,
-      objectPath: uploaded.objectPath, status: uploaded.status, fontFamily: uploaded.fontFamily,
-      fontWeight: uploaded.fontWeight, fontStyle: uploaded.fontStyle, licenseHolder: uploaded.licenseHolder,
-      createdAt: uploaded.createdAt,
-    }]
+    // Zeile wird deshalb lokal angehaengt statt per vollem Reload nachgeladen. Der Upload ist
+    // inhalts-adressiert (gleicher Dateiinhalt -> gleicher object_path -> derselbe upsert-Treffer);
+    // ein zweiter Analyse-Lauf mit unveraendertem Logo lieferte sonst dieselbe id ein zweites Mal
+    // und verletzte die :key-Eindeutigkeit in der Asset-Liste unten.
+    if (!assets.value.some((asset) => asset.id === uploaded.id)) {
+      assets.value = [...assets.value, {
+        id: uploaded.id, departmentId: uploaded.departmentId, teamId: uploaded.teamId, kind: uploaded.kind,
+        objectPath: uploaded.objectPath, status: uploaded.status, fontFamily: uploaded.fontFamily,
+        fontWeight: uploaded.fontWeight, fontStyle: uploaded.fontStyle, licenseHolder: uploaded.licenseHolder,
+        createdAt: uploaded.createdAt,
+      }]
+    }
     overrideFor(departmentId).logoAssetId = uploaded.id
   } catch {
     // Farbvorschlag bleibt uebernommen, auch wenn der Logo-Upload scheitert.
@@ -319,10 +325,15 @@ async function applyWebsiteAnalysisResult(result: BrandWebsiteAnalysisResult) {
     // Nur Primaer-/Akzentfarbe und Logo: Hintergrund-/Text-/Auf-Primaer-Farbe und das kuratierte
     // Schriftpaar bleiben bewusst Vereinssache (packages/domain/src/brand.ts) -- eine Abteilung
     // kann sie technisch gar nicht setzen, unabhaengig von dieser Funktion.
+    // Vom Verein gesperrte Felder respektieren, genau wie die manuellen Farbfelder oben
+    // (:disabled="lockedForActiveLevel.has(...)") -- sonst schriebe ein automatisch uebernommener
+    // Vorschlag einen Wert in ein gesperrtes Feld, den "Aenderungen speichern" anschliessend mit
+    // 400 field_locked fuer die GESAMTE Abteilung ablehnt, ohne dass die UI den Grund zeigt.
+    const locked = lockedForActiveLevel.value
     const override = overrideFor(activeDepartmentId.value)
-    override.primaryColor = result.primaryColor
-    override.accentColor = result.accentColor
-    if (result.logoCandidate) await applyDepartmentLogoCandidate(activeDepartmentId.value, result.logoCandidate)
+    if (!locked.has('primaryColor')) override.primaryColor = result.primaryColor
+    if (!locked.has('accentColor')) override.accentColor = result.accentColor
+    if (result.logoCandidate && !locked.has('logoAssetId')) await applyDepartmentLogoCandidate(activeDepartmentId.value, result.logoCandidate)
     return
   }
   org.primaryColor = result.primaryColor
@@ -352,11 +363,9 @@ async function applyWebsiteAnalysisResult(result: BrandWebsiteAnalysisResult) {
 const websiteAnalysisApplied = ref(false)
 // Jeder Scope-Wechsel (nicht nur das Betreten einer Abteilung) setzt das Flag zurueck -- sonst
 // zeigte ein Wechsel zurueck zum Verein weiter "Vorschlag uebernommen" von der zuletzt
-// betrachteten Abteilung, obwohl der Verein selbst nichts uebernommen hat.
-const websiteAnalysisScopeKey = computed(() => {
-  const scope = websiteAnalysisScope.value
-  return scope ? `${scope.organizationId}:${scope.departmentId ?? 'org'}` : null
-})
+// betrachteten Abteilung, obwohl der Verein selbst nichts uebernommen hat. scopeKey kommt aus dem
+// Composable selbst (nicht hier neu gebaut) -- sonst muessten zwei identisch formatierte Kopien
+// synchron gehalten werden.
 watch(websiteAnalysisScopeKey, () => { websiteAnalysisApplied.value = false })
 watch([websiteAnalysisStatus, websiteAnalysisScope], () => {
   if (websiteAnalysisApplied.value) return
@@ -437,9 +446,12 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
   if (level === 'department' && departmentId) overrideFor(departmentId)
   if (level === 'team' && teamId) teamOverrideFor(teamId)
   // Anders als beim Verein gibt es fuer eine Abteilung keine gespeicherte Homepage-Adresse, aus
-  // der vorbelegt werden koennte -- das Feld startet bei jedem Wechsel auf eine (andere)
-  // Abteilung leer, statt die zuletzt betrachtete Abteilungs-URL weiterzuzeigen.
-  if (level === 'department') departmentWebsiteUrl.value = ''
+  // der vorbelegt werden koennte -- das Feld startet bei jedem Wechsel auf eine ANDERE Abteilung
+  // leer, statt die zuletzt betrachtete Abteilungs-URL weiterzuzeigen. Nur bei tatsaechlichem
+  // Departmentwechsel: sonst loeschte ein erneuter Klick auf den bereits aktiven Abteilungs-Tab
+  // (z.B. ueber eine Mannschafts-Schaltflaeche derselben Abteilung) eine bereits eingetippte,
+  // noch nicht gestartete Adresse.
+  if (level === 'department' && departmentId !== activeDepartmentId.value) departmentWebsiteUrl.value = ''
   activeLevel.value = level
   activeDepartmentId.value = departmentId
   activeTeamId.value = teamId
@@ -472,7 +484,11 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
       <div class="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
         <div class="space-y-6">
           <!-- KI-Markenerkennung aus der Homepage (Verein oder Abteilung, füllt nur vor) -->
-          <section v-if="activeLevel === 'organization' || activeLevel === 'department'" class="card p-6">
+          <!-- Ohne allowDepartmentOverrides kann eine Abteilung ohnehin kein eigenes Branding
+               speichern (PUT .../brand lehnt mit 400 overrides_not_allowed ab) -- die Karte bliebe
+               sonst sichtbar und würde einen echten, kostenpflichtigen Analyse-Lauf anstoßen, dessen
+               Ergebnis garantiert nicht gespeichert werden kann. -->
+          <section v-if="activeLevel === 'organization' || (activeLevel === 'department' && org.allowDepartmentOverrides)" class="card p-6">
             <h2 class="font-display flex items-center gap-2 text-base font-bold"><Sparkles :size="16" /> Automatisch aus der Homepage übernehmen</h2>
             <p class="mt-2 text-xs text-[#7a817c]">
               {{ activeLevel === 'department'

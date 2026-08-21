@@ -128,8 +128,12 @@ export function useBrandWebsiteAnalysis({
     status.value = 'idle'
     result.value = null
     errorReason.value = null
+    // Beide vor dem ersten await eingefroren: scope.value kann sich waehrend des POST aendern
+    // (Tab-Wechsel), ohne dass der weitere Ablauf hier den falschen Scope beschreibt oder
+    // schreibt -- dieselbe Generation-Absicherung wie in pollOnce/resumeRunningAnalysis.
+    const currentScope = scope.value
+    const generation = pollGeneration
     try {
-      const currentScope = scope.value
       if (!currentScope) {
         startError.value = 'Der Verein ist noch nicht vollständig geladen. Bitte die Seite neu laden.'
         return
@@ -151,13 +155,23 @@ export function useBrandWebsiteAnalysis({
         method: 'POST',
         body: websiteUrlInput.data,
       })
+      // Der Scope kann sich waehrend des Requests geaendert haben (stopPolling() in der
+      // scopeKey-Watch unten hat dann bereits eine neue Generation begonnen und ggf. den
+      // laufenden Job des NEUEN Scopes aufgegriffen) -- ohne diese Pruefung ueberschriebe der
+      // hier gestartete Lauf dessen frisch geladenen Status mit 'pending' und plante einen nicht
+      // gefencten Poll gegen den falschen Endpunkt.
+      if (generation !== pollGeneration) return
       status.value = 'pending'
       pollDeadline = Date.now() + POLL_TIMEOUT_MS
-      schedulePoll(pollGeneration)
+      schedulePoll(generation)
     } catch (error) {
-      startError.value = startErrorMessage(error, !!scope.value?.departmentId)
+      if (generation !== pollGeneration) return
+      startError.value = startErrorMessage(error, !!currentScope?.departmentId)
     } finally {
-      starting.value = false
+      // Gefenct wie der Rest: ohne die Pruefung koennte ein ueberholter Aufruf, dessen Request
+      // erst nach einem Scope-Wechsel abschliesst, `starting` faelschlich zurueck auf false
+      // setzen, waehrend der neue Scope laengst seinen eigenen Start laufen hat.
+      if (generation === pollGeneration) starting.value = false
     }
   }
 
@@ -203,11 +217,18 @@ export function useBrandWebsiteAnalysis({
     result.value = null
     errorReason.value = null
     startError.value = ''
+    // Ein Start, der beim Scope-Wechsel noch offen war, gehoert nicht mehr zum neuen Scope --
+    // dessen eigener Status kommt gleich per resumeRunningAnalysis(). Ohne diesen Reset bliebe der
+    // "Analyse starten"-Button des neuen Scopes bis zum Abschluss des alten Requests deaktiviert.
+    starting.value = false
     void resumeRunningAnalysis()
   })
 
   onMounted(() => { void resumeRunningAnalysis() })
   onBeforeUnmount(stopPolling)
 
-  return { status, result, errorReason, startError, starting, startAnalysis, resumeRunningAnalysis }
+  // scopeKey exportiert, statt sie den Aufrufer erneut im selben Format nachbauen zu lassen (marke.vue
+  // brauchte bislang eine eigene, identisch formatierte Kopie fuer ihren eigenen "Vorschlag
+  // uebernommen"-Reset -- zwei Stellen, die exakt synchron bleiben mussten).
+  return { status, result, errorReason, startError, starting, startAnalysis, resumeRunningAnalysis, scopeKey }
 }
