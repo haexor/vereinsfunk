@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { X } from '@lucide/vue'
+import { hasPermission } from '@vereinsfunk/authorization'
 import {
   MemberSchema,
   PolicyRuleSettingSchema,
@@ -183,9 +184,9 @@ watch(availableKindsForReviewer, (options) => {
 
 const availableRolesForReviewer = computed(() => {
   if (!selectedEntry.value) return []
-  if (reviewerKind.value === 'organization_role') return rolesForScopeLevel('organization')
-  if (reviewerKind.value === 'department_role') return rolesForScopeLevel('department')
-  if (reviewerKind.value === 'team_role') return rolesForScopeLevel('team')
+  if (reviewerKind.value === 'organization_role') return rolesForScopeLevel('organization').filter((role) => hasPermission([role], 'post.approve'))
+  if (reviewerKind.value === 'department_role') return rolesForScopeLevel('department').filter((role) => hasPermission([role], 'post.approve'))
+  if (reviewerKind.value === 'team_role') return rolesForScopeLevel('team').filter((role) => hasPermission([role], 'post.approve'))
   return []
 })
 
