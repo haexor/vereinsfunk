@@ -12,7 +12,7 @@ import { UuidSchema } from './content.js'
 // Product workflows are deliberately named here, rather than accepting arbitrary strings from
 // an outbox row. This is the first boundary that keeps an accidentally persisted task name from
 // becoming executable code in Hatchet.
-export const WorkflowNameSchema = z.enum(['process-submission', 'generate-text-post', 'anonymize-media', 'render-content', 'apply-revision', 'publish-content', 'collect-analytics', 'cleanup-expired-invitations', 'sync-integration-source', 'enforce-retention', 'aggregate-metrics'])
+export const WorkflowNameSchema = z.enum(['process-submission', 'generate-text-post', 'anonymize-media', 'render-content', 'apply-revision', 'publish-content', 'collect-analytics', 'cleanup-expired-invitations', 'sync-integration-source', 'enforce-retention', 'aggregate-metrics', 'analyze-website-branding'])
 export const WorkflowPayloadSchema = z.object({
   submissionId: UuidSchema.optional(), candidateId: UuidSchema.optional(), entityId: UuidSchema, organizationId: UuidSchema, departmentId: UuidSchema, teamId: UuidSchema.optional(),
   correlationId: UuidSchema, sourceRevision: z.int().positive(), purpose: z.string().trim().min(1).max(80), idempotencyKey: z.string().min(1).max(240),

@@ -74,8 +74,10 @@ export const UpdatePublishingProviderConfigurationRequestSchema = z.object({
 
 export const LlmProviderProtocolSchema = z.enum(['anthropic', 'openai'])
 // The vocabulary deliberately describes future tasks, but only text_generation has an adapter.
-// APIs must reject activating every other task until its own adapter spike exists.
-export const LlmTaskKindSchema = z.enum(['text_generation', 'image_generation', 'video_generation'])
+// APIs must reject activating every other task until its own adapter spike exists. vision_analysis
+// (Paket 048, website branding extraction) follows the same rule -- its worker adapter lands in a
+// later PR, until then the API keeps rejecting activation exactly like image/video_generation.
+export const LlmTaskKindSchema = z.enum(['text_generation', 'image_generation', 'video_generation', 'vision_analysis'])
 // Breaking: systemPromptOverride was removed. Paket 042 moved temperature/maxOutputTokens off
 // the provider entirely (see TEXT_GENERATION_TEMPERATURE_STEPS/text-generation-platform-defaults
 // in content.ts) -- a provider is now purely access/routing configuration.
