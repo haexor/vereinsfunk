@@ -15,6 +15,7 @@ import {
   UuidSchema,
 } from '@vereinsfunk/contracts'
 import { isBrandAssetSelectable, type BrandAssetRef, type ScopeLevelName } from '@vereinsfunk/domain'
+import { isAllowedOutboundUrl } from '@vereinsfunk/outbound-fetch'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
@@ -214,6 +215,14 @@ app.post('/v1/organizations/:id/brand/website-analysis', async (request, reply) 
   const params = z.object({ id: UuidSchema }).parse(request.params)
   if (!(await requirePermission(request, reply, 'brand.manage', { organizationId: params.id }))) return
   const input = StartBrandWebsiteAnalysisRequestSchema.parse(request.body)
+  // Dieselbe Vorabpruefung wie fuer jede andere vom Verein hinterlegte Adresse, die der Server
+  // spaeter selbst abruft (Plan 034, siehe channels.ts/integrations.ts): der Worker rendert genau
+  // diese URL mit einem echten Browser. Ohne sie waere die Antwort auf eine gewoehnliche Eingabe
+  // ausserdem eine 500 -- brand_website_analysis_jobs.website_url hat ein CHECK auf '^https://',
+  // an dem die RPC sonst mit einem nicht abgebildeten Fehler scheitert (z.B. bei "http://...").
+  if (!isAllowedOutboundUrl(input.websiteUrl)) {
+    return reply.code(400).send({ error: 'website_url_not_allowed', correlationId: request.id })
+  }
   const service = supabaseClients.forService()
   const result = await service.rpc('start_brand_website_analysis', {
     p_organization_id: params.id, p_website_url: input.websiteUrl, p_requested_by: request.auth!.userId,

@@ -63,12 +63,18 @@ describe('BrandWebsiteAnalysisExecutor', () => {
     expect(repo.markFailed).toHaveBeenCalledWith(payload.entityId, 1, 'provider_rate_limit')
   })
 
-  it('fails without ever calling the vision provider when no active vision provider is configured', async () => {
+  it('fails without rendering anything when no active vision provider is configured', async () => {
     const repo = repository()
     repo.resolveVisionProvider = vi.fn().mockResolvedValue(null)
     const generator = { analyzeBrand: vi.fn() }
-    await expect(new BrandWebsiteAnalysisExecutor(config, repo, renderer(), generator).execute(payload)).rejects.toMatchObject({ errorClass: 'no_vision_provider_configured', retryable: false })
+    const websiteRenderer = renderer()
+    await expect(new BrandWebsiteAnalysisExecutor(config, repo, websiteRenderer, generator).execute(payload)).rejects.toMatchObject({ errorClass: 'no_vision_provider_configured', retryable: false })
     expect(generator.analyzeBrand).not.toHaveBeenCalled()
+    // Der Ausgangszustand jeder Installation: dann darf der Job weder einen Browser starten noch
+    // eine fremde Seite abrufen oder einen Logo-Kandidaten ablegen, den danach nichts referenziert.
+    expect(websiteRenderer.render).not.toHaveBeenCalled()
+    expect(repo.uploadStagedLogo).not.toHaveBeenCalled()
+    expect(repo.markFailed).toHaveBeenCalledWith(payload.entityId, 1, 'no_vision_provider_configured')
   })
 
   it('classifies a blocked/redirected renderer target as a non-retryable failure', async () => {
@@ -89,6 +95,28 @@ describe('BrandWebsiteAnalysisExecutor', () => {
     await new BrandWebsiteAnalysisExecutor(config, repo, withLogo, generator, logoFetcher).execute(payload)
     expect(repo.uploadStagedLogo).toHaveBeenCalledTimes(1)
     expect(repo.markSucceeded).toHaveBeenCalledWith(payload.entityId, 1, expect.objectContaining({ logoObjectPath: 'organizations/x/brand/analysis-staging/abc.png', logoMimeType: 'image/png' }))
+  })
+
+  it('bounds every logo download with a deadline -- the url comes from a foreign page', async () => {
+    const repo = repository()
+    const withLogo = renderer({ ...renderResult, logoCandidateUrls: ['https://verein.example.org/logo.png'] })
+    const generator = { analyzeBrand: vi.fn().mockResolvedValue(analysis) }
+    const logoFetcher = vi.fn().mockResolvedValue(new Response('not an image', { status: 200 }))
+    await new BrandWebsiteAnalysisExecutor(config, repo, withLogo, generator, logoFetcher).execute(payload)
+    expect(logoFetcher).toHaveBeenCalledWith('https://verein.example.org/logo.png', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+  })
+
+  it('moves on to the next candidate instead of giving up on the first unusable one', async () => {
+    const repo = repository()
+    const withLogos = renderer({ ...renderResult, logoCandidateUrls: ['https://verein.example.org/broken.svg', 'https://verein.example.org/logo.png'] })
+    const generator = { analyzeBrand: vi.fn().mockResolvedValue(analysis) }
+    const pngBytes = await sharp({ create: { width: 40, height: 40, channels: 4, background: { r: 22, g: 58, b: 44, alpha: 1 } } }).png().toBuffer()
+    const logoFetcher = vi.fn()
+      .mockRejectedValueOnce(new Error('socket hang up'))
+      .mockResolvedValueOnce(new Response(pngBytes, { status: 200, headers: { 'content-type': 'image/png' } }))
+    await new BrandWebsiteAnalysisExecutor(config, repo, withLogos, generator, logoFetcher).execute(payload)
+    expect(logoFetcher).toHaveBeenCalledTimes(2)
+    expect(repo.markSucceeded).toHaveBeenCalledWith(payload.entityId, 1, expect.objectContaining({ logoObjectPath: 'organizations/x/brand/analysis-staging/abc.png' }))
   })
 
   it('does not fail the whole analysis when the only logo candidate cannot be downloaded', async () => {

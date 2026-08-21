@@ -1,5 +1,5 @@
 import { curatedFontPairings } from '@vereinsfunk/domain'
-import { LogoDimensionsError, processBrandLogoUpload, UnsupportedLogoFormatError, type ProcessedLogo } from '@vereinsfunk/brand-assets'
+import { processBrandLogoUpload, type ProcessedLogo } from '@vereinsfunk/brand-assets'
 import { AnthropicVisionAnalysisGenerator, OpenAiCompatibleVisionAnalysisGenerator, VisionAnalysisError, type VisionAnalysisGenerator } from '@vereinsfunk/content-engine'
 import { createGuardedFetch, OutboundFetchError } from '@vereinsfunk/outbound-fetch'
 import type { WorkflowPayload } from '@vereinsfunk/contracts'
@@ -42,17 +42,27 @@ const FONT_PAIRING_OPTIONS = curatedFontPairings.map((pairing) => ({ key: pairin
 
 type LogoFetcher = (input: string, init: RequestInit) => Promise<Response>
 
-/** Versucht der Reihe nach jeden Kandidaten und nimmt den ersten, der sich als Logo verarbeiten laesst. */
+// createGuardedFetch() bringt eine Groessengrenze mit, aber keine Zeitgrenze (anders als
+// fetchPublicUrl): ohne diese haelt eine Adresse, die die Verbindung offen laesst, den ganzen Job
+// bis zum 10-Minuten-Timeout des Hatchet-Schritts auf -- und die Adresse stammt aus dem HTML einer
+// fremden Seite, ist also nichts, worauf man sich verlassen kann.
+const LOGO_DOWNLOAD_TIMEOUT_MS = 10_000
+
+/**
+ * Versucht der Reihe nach jeden Kandidaten und nimmt den ersten, der sich als Logo verarbeiten
+ * laesst. Wirft nie: ein Kandidat, der nicht laedt oder kein brauchbares Bild ist, darf weder die
+ * uebrigen Kandidaten noch die Farb-/Font-Analyse verhindern -- ohne Logo-Vorschlag ist das
+ * Ergebnis unvollstaendig, aber nicht falsch.
+ */
 async function downloadFirstValidLogo(candidateUrls: readonly string[], fetcher: LogoFetcher): Promise<ProcessedLogo | null> {
   for (const url of candidateUrls) {
     try {
-      const response = await fetcher(url, { method: 'GET' })
+      const response = await fetcher(url, { method: 'GET', signal: AbortSignal.timeout(LOGO_DOWNLOAD_TIMEOUT_MS) })
       if (!response.ok) continue
       const buffer = Buffer.from(await response.arrayBuffer())
       return await processBrandLogoUpload(buffer)
-    } catch (error) {
-      if (error instanceof OutboundFetchError || error instanceof UnsupportedLogoFormatError || error instanceof LogoDimensionsError) continue
-      throw error
+    } catch {
+      continue // blockierte/zu grosse/abgelaufene Antwort, kein Bildformat, zu kleines Bild, ...
     }
   }
   return null
@@ -74,21 +84,19 @@ export class BrandWebsiteAnalysisExecutor {
     if (!job || job.revision !== payload.sourceRevision) return // duplicate delivery or a superseded job
     await this.repository.markRunning(job.id, job.revision)
     try {
-      const render = await this.renderer.render(job.website_url)
-
-      let logo: ProcessedLogo | null = null
-      try {
-        logo = await downloadFirstValidLogo(render.logoCandidateUrls, this.logoFetcher)
-      } catch {
-        logo = null // ein fehlgeschlagener Logo-Download darf die Farb-/Font-Analyse nicht scheitern lassen
-      }
-      const logoObjectPath = logo ? await this.repository.uploadStagedLogo(job.organization_id, logo) : null
-
+      // Provider und Schluessel zuerst, vor dem Browserstart: ohne konfigurierten
+      // vision_analysis-Provider (der Ausgangszustand jeder Installation) scheitert der Job
+      // ohnehin -- dann sind ein Chromium-Start, ein fremder Seitenabruf und ein hochgeladener
+      // Logo-Kandidat, den danach nichts mehr referenziert, reine Verschwendung.
       const provider = await this.repository.resolveVisionProvider()
       if (!provider) throw new WorkflowExecutionError('no_vision_provider_configured', false)
       const generator = this.visionGenerator ?? VISION_GENERATORS[provider.protocol]
       if (!generator) throw new WorkflowExecutionError('unsupported_provider_configuration', false)
       const apiKey = openProviderSecret(this.config, provider.api_key_ciphertext, provider.key_version, provider.id)
+
+      const render = await this.renderer.render(job.website_url)
+      const logo = await downloadFirstValidLogo(render.logoCandidateUrls, this.logoFetcher)
+      const logoObjectPath = logo ? await this.repository.uploadStagedLogo(job.organization_id, logo) : null
 
       const analysis = await generator.analyzeBrand({
         imageBase64: render.screenshotBase64, imageMediaType: render.screenshotMediaType,

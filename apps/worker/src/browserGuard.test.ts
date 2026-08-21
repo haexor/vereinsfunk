@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { assertNavigableUrl, guardPageNavigation } from './browserGuard.js'
+import { assertNavigableUrl, guardOutboundRequests } from './browserGuard.js'
 
 const publicLookup = async (hostname: string) => (hostname === 'verein.example.org' ? ['203.0.113.10'] : ['203.0.113.11'])
 const privateLookup = async () => ['169.254.169.254']
@@ -22,65 +22,86 @@ describe('assertNavigableUrl', () => {
   })
 })
 
-function fakePage() {
-  let handler: ((route: FakeRoute) => void) | undefined
+class FakeRoute {
+  continued = false
+  aborted = false
+  /** `failWith` steht fuer den Normalfall "Seite/Browser inzwischen geschlossen": Playwright wirft dann. */
+  constructor(private readonly url: string, private readonly failWith?: Error) {}
+  request() {
+    return { url: () => this.url }
+  }
+  async continue() { this.continued = true; if (this.failWith) throw this.failWith }
+  async abort() { this.aborted = true; if (this.failWith) throw this.failWith }
+}
+
+function fakeRouter() {
+  let handler: ((route: FakeRoute) => Promise<void>) | undefined
   return {
-    route: vi.fn((_pattern: string, fn: (route: FakeRoute) => void) => { handler = fn }),
-    async dispatch(url: string) {
-      const route = new FakeRoute(url)
-      handler!(route)
-      await route.settled
+    route: vi.fn(async (_pattern: string, fn: (route: FakeRoute) => Promise<void>) => { handler = fn }),
+    async dispatch(url: string, failWith?: Error) {
+      const route = new FakeRoute(url, failWith)
+      await handler!(route)
       return route
     },
   }
 }
 
-class FakeRoute {
-  continued = false
-  aborted = false
-  settled: Promise<void>
-  private resolveSettled!: () => void
-  constructor(private readonly url: string) {
-    this.settled = new Promise((resolve) => { this.resolveSettled = resolve })
-  }
-  request() {
-    return { url: () => this.url }
-  }
-  async continue() { this.continued = true; this.resolveSettled() }
-  async abort() { this.aborted = true; this.resolveSettled() }
-}
-
-describe('guardPageNavigation', () => {
+describe('guardOutboundRequests', () => {
   it('continues a request to a public host', async () => {
-    const page = fakePage()
-    guardPageNavigation(page as never, publicLookup)
-    const route = await page.dispatch('https://verein.example.org/logo.png')
+    const router = fakeRouter()
+    await guardOutboundRequests(router as never, publicLookup)
+    const route = await router.dispatch('https://verein.example.org/logo.png')
     expect(route.continued).toBe(true)
     expect(route.aborted).toBe(false)
   })
 
   it('aborts a sub-request that resolves to a blocked address, even mid-page-load', async () => {
-    const page = fakePage()
-    guardPageNavigation(page as never, privateLookup)
-    const route = await page.dispatch('https://cdn.example.org/script.js')
+    const router = fakeRouter()
+    await guardOutboundRequests(router as never, privateLookup)
+    const route = await router.dispatch('https://cdn.example.org/script.js')
     expect(route.aborted).toBe(true)
     expect(route.continued).toBe(false)
   })
 
   it('aborts a request whose url cannot be parsed', async () => {
-    const page = fakePage()
-    guardPageNavigation(page as never, publicLookup)
-    const route = await page.dispatch('not-a-url')
+    const router = fakeRouter()
+    await guardOutboundRequests(router as never, publicLookup)
+    const route = await router.dispatch('not-a-url')
     expect(route.aborted).toBe(true)
   })
 
   it('resolves each distinct hostname only once (cache), but every hostname is still checked', async () => {
     const lookup = vi.fn(publicLookup)
-    const page = fakePage()
-    guardPageNavigation(page as never, lookup)
-    await page.dispatch('https://verein.example.org/a.png')
-    await page.dispatch('https://verein.example.org/b.png')
-    await page.dispatch('https://andere-domain.example.org/c.png')
+    const router = fakeRouter()
+    await guardOutboundRequests(router as never, lookup)
+    await router.dispatch('https://verein.example.org/a.png')
+    await router.dispatch('https://verein.example.org/b.png')
+    await router.dispatch('https://andere-domain.example.org/c.png')
     expect(lookup).toHaveBeenCalledTimes(2)
+  })
+
+  // Ohne dieses Verhalten waere ein Request, der noch laeuft, waehrend render() den Browser
+  // schliesst, eine unbehandelte Rejection -- und die beendet den ganzen Worker-Prozess.
+  it('swallows a continue/abort that fails because the page is already closed', async () => {
+    const router = fakeRouter()
+    await guardOutboundRequests(router as never, publicLookup)
+    await expect(router.dispatch('https://verein.example.org/late.png', new Error('Target page, context or browser has been closed'))).resolves.toBeDefined()
+    await expect(router.dispatch('https://blocked.example.org/late.png', new Error('Route is already handled!'))).resolves.toBeDefined()
+  })
+
+  // page.route()/context.route() ist asynchron: bis es erfuellt ist, faengt Chromium noch nichts
+  // ab. Der Guard muss es abwarten, sonst liefe eine Navigation unmittelbar danach ungeprueft
+  // hinaus -- genau der Sub-Request-Weg, den er schliessen soll.
+  it('does not resolve before the route registration itself has resolved', async () => {
+    let release = () => {}
+    const registered = new Promise<void>((resolve) => { release = resolve })
+    const router = { route: vi.fn(async () => { await registered }) }
+    let guardReady = false
+    const guarding = guardOutboundRequests(router as never, publicLookup).then(() => { guardReady = true })
+    await new Promise((resolve) => { setImmediate(resolve) })
+    expect(guardReady).toBe(false)
+    release()
+    await guarding
+    expect(guardReady).toBe(true)
   })
 })

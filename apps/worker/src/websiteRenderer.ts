@@ -1,6 +1,6 @@
 import { OutboundFetchError } from '@vereinsfunk/outbound-fetch'
 import { chromium } from 'playwright'
-import { assertNavigableUrl, guardPageNavigation } from './browserGuard.js'
+import { assertNavigableUrl, guardOutboundRequests } from './browserGuard.js'
 import { WorkflowExecutionError } from './workflows.js'
 
 export interface WebsiteRenderResult {
@@ -20,11 +20,15 @@ export interface WebsiteRenderer {
 
 const NAVIGATION_TIMEOUT_MS = 15_000
 const VIEWPORT = { width: 1280, height: 900 }
+// Eine Obergrenze fuer die Kandidatenliste: der Aufrufer laedt jeden Eintrag der Reihe nach
+// herunter und dekodiert ihn, und eine Seite mit einer Sponsorenleiste im Header liefert sonst
+// dutzende Treffer -- Arbeit, die nach den ersten Kandidaten nichts mehr beitraegt.
+const MAX_LOGO_CANDIDATES = 5
 
 /**
  * Rendert die Startseite eines Vereins per echtem, headless Chromium (Paket 048). Die
  * SSRF-Pruefung laeuft zweifach: einmal vor der Navigation (assertNavigableUrl) und einmal je
- * Sub-Request der Seite selbst (guardPageNavigation) -- Playwrights eigenes Networking laeuft
+ * Sub-Request der Seite selbst (guardOutboundRequests) -- Playwrights eigenes Networking laeuft
  * nicht durch fetch()/fetchPublicUrl(). Schrift- und Logo-Kandidaten werden deterministisch aus
  * dem DOM gelesen, nie von der Vision-KI geraten (siehe packages/content-engine/visionAnalysis.ts).
  */
@@ -39,8 +43,11 @@ export class PlaywrightWebsiteRenderer implements WebsiteRenderer {
 
     const browser = await chromium.launch({ headless: true })
     try {
-      const page = await browser.newPage({ viewport: VIEWPORT })
-      guardPageNavigation(page)
+      // Eigener Context statt browser.newPage(), damit der Guard fuer jede Seite darin gilt --
+      // auch fuer ein per window.open() geoeffnetes Fenster (siehe guardOutboundRequests).
+      const context = await browser.newContext({ viewport: VIEWPORT })
+      await guardOutboundRequests(context)
+      const page = await context.newPage()
       try {
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT_MS })
       } catch {
@@ -63,12 +70,15 @@ export class PlaywrightWebsiteRenderer implements WebsiteRenderer {
         }
         const ogImage = document.querySelector<HTMLMetaElement>('meta[property="og:image"]')?.content ?? null
         const icon = document.querySelector<HTMLLinkElement>('link[rel~="icon"]')?.href ?? null
-        const heading = document.querySelector<HTMLElement>('h1, h2')
-        const detectedFontFamily = heading ? getComputedStyle(heading).fontFamily : getComputedStyle(document.body).fontFamily || null
+        const heading = document.querySelector<HTMLElement>('h1, h2') ?? document.body
+        const detectedFontFamily = heading ? getComputedStyle(heading).fontFamily || null : null
         return { logoCandidateUrls: [...pickLogo(), ...(ogImage ? [ogImage] : []), ...(icon ? [icon] : [])], detectedFontFamily }
       })
 
-      return { screenshotBase64: screenshotBuffer.toString('base64'), screenshotMediaType: 'image/png', logoCandidateUrls: hints.logoCandidateUrls, detectedFontFamily: hints.detectedFontFamily }
+      return {
+        screenshotBase64: screenshotBuffer.toString('base64'), screenshotMediaType: 'image/png',
+        logoCandidateUrls: hints.logoCandidateUrls.slice(0, MAX_LOGO_CANDIDATES), detectedFontFamily: hints.detectedFontFamily,
+      }
     } finally {
       await browser.close()
     }

@@ -547,6 +547,32 @@ describe('Paket 048: KI-gestuetzte Markenerkennung aus der Vereins-Homepage', ()
     expect(capturedArgs).toMatchObject({ p_organization_id: ORGANIZATION_ID, p_website_url: 'https://verein.example.org', p_requested_by: USER_ID })
   })
 
+  // Ohne diese Vorabpruefung waere die Antwort auf ein gewoehnliches "http://..." eine 500: das
+  // CHECK auf brand_website_analysis_jobs.website_url ('^https://') schlaegt in der RPC zu, und
+  // dieser Fehler ist keiner der beiden abgebildeten Faelle.
+  it.each([
+    ['http://verein.example.org', 'plain http'],
+    ['https://192.168.10.5', 'a private address'],
+    ['https://intranet.internal', 'an internal hostname'],
+  ])('rejects %s as a target the server must not fetch (%s)', async (websiteUrl) => {
+    let rpcCalled = false
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({ rpc: async () => { rpcCalled = true; return { data: null, error: null } } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${ORGANIZATION_ID}/brand/website-analysis`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { websiteUrl },
+    })
+    expect(response.statusCode).toBe(400)
+    expect(response.json().error).toBe('website_url_not_allowed')
+    expect(rpcCalled).toBe(false)
+  })
+
   it('maps a running analysis to 409 instead of silently duplicating it', async () => {
     const clients: SupabaseClientFactory = {
       forUser: () => ({}) as unknown as SupabaseClient,
