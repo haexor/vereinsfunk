@@ -317,6 +317,8 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
       process.env.API_PUBLIC_BASE_URL = 'https://api.example.test'
       try {
         const publishCalls: PublicationInput[] = []
+        const attemptsCaptured: Record<string, unknown>[] = []
+        const auditCaptured: Record<string, unknown>[] = []
         const clients: SupabaseClientFactory = {
           ...readOnlyClients(),
           forService: () =>
@@ -344,15 +346,21 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
                   return chain({ data: { token_ciphertext: ciphertextToBytea(sealed.ciphertext), token_key_version: 'v1' }, error: null })
                 }
                 if (table === 'publication_media_grants') return { insert: async () => ({ error: null }), update: () => ({ eq: () => ({ is: async () => ({ error: null }) }) }) }
-                if (table === 'publication_attempts') return { ...chain({ data: null, error: null }), insert: async () => ({ error: null }) }
-                if (table === 'audit_events') return { insert: async () => ({ error: null }) }
+                if (table === 'publication_attempts') return { ...chain({ data: null, error: null }), insert: async (row: Record<string, unknown>) => { attemptsCaptured.push(row); return { error: null } } }
+                if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { auditCaptured.push(row); return { error: null } } }
                 throw new Error(`unexpected table in service fake: ${table}`)
               },
             }) as unknown as SupabaseClient,
         }
+        const carouselSteps = [
+          { label: 'carousel item creation', externalId: 'ig_item_1' },
+          { label: 'carousel item creation', externalId: 'ig_item_2' },
+          { label: 'carousel container creation', externalId: 'ig_container_1' },
+          { label: 'carousel publish', externalId: 'ig_carousel_1' },
+        ]
         const publisher: SocialPublisher = {
           async validate() { return { valid: true, errors: [] } },
-          async publish(input) { publishCalls.push(input); return { externalId: 'ig_carousel_1', status: 'published' } },
+          async publish(input) { publishCalls.push(input); return { externalId: 'ig_carousel_1', status: 'published', completedSteps: carouselSteps } },
           async reconcile() { return { externalId: 'ig_carousel_1', status: 'published' } },
         }
         const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients, publisher })
@@ -362,6 +370,10 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
         expect(publishCalls).toHaveLength(1)
         expect(publishCalls[0]!.media.map((entry) => entry.role)).toEqual(['primary', 'slide'])
         expect(publishCalls[0]!.media.map((entry) => entry.sha256)).toEqual(['a'.repeat(64), 'b'.repeat(64)])
+        // Code-Review zu diesem PR: ein geglueckter Mehrfoto-Ablauf hat mehr erzeugt als die eine
+        // externalId -- die Zwischen-IDs muessen im Versuchsdatensatz und in der Auditspur landen.
+        expect(attemptsCaptured.at(-1)).toMatchObject({ provider_container_id: 'ig_carousel_1', response_summary: { completedSteps: carouselSteps } })
+        expect(auditCaptured.at(-1)).toMatchObject({ action: 'post.published', metadata: { completedExternalIds: ['ig_item_1', 'ig_item_2', 'ig_container_1', 'ig_carousel_1'] } })
       } finally {
         delete process.env.API_PUBLIC_BASE_URL
       }

@@ -243,14 +243,25 @@ export function registerPublishingRoutes(app: FastifyInstance, context: ApiRoute
       const result = await publisher.publish(publicationInput)
       const markPublished = await service.from('publications').update({ status: result.status, provider_publication_id: result.externalId }).eq('id', params.id)
       if (markPublished.error) request.log.error({ err: markPublished.error, correlationId: request.id }, 'publications status update failed')
+      // Auch ein geglueckter Mehrfoto-Ablauf hat mehr erzeugt als die eine externalId: die
+      // Facebook-Fotos bleiben eigene, adressierbare Objekte auf der Seite, und die
+      // Instagram-Container sind der einzige Beleg, wie der Beitrag zusammengesetzt wurde. Ohne sie
+      // im Versuchsdatensatz waere nur das Endergebnis auditiert, nicht die ausgefuehrten Schritte
+      // (AGENTS.md: "Externe Aktionen sind idempotent und werden auditiert"). Einstufige Publishes
+      // liefern completedSteps nicht -- dort ist die externalId schon der ganze Ablauf.
+      const publishedSteps = result.completedSteps ?? []
       const attemptInsert = await service.from('publication_attempts').insert({
         organization_id: publication.data.organization_id, publication_id: params.id, attempt_number: nextAttemptNumber,
-        status: result.status, provider_container_id: result.externalId, response_summary: result.permalink ? { permalink: result.permalink } : {},
+        status: result.status, provider_container_id: result.externalId,
+        response_summary: { ...(result.permalink ? { permalink: result.permalink } : {}), ...(publishedSteps.length > 0 ? { completedSteps: publishedSteps } : {}) },
       })
       if (attemptInsert.error) request.log.error({ err: attemptInsert.error, correlationId: request.id }, 'publication_attempts insert failed')
       await recordAuditEvent(request, {
         organizationId: publication.data.organization_id as string, action: 'post.published', entityType: 'publications', entityId: params.id,
-        metadata: { platform: publicationInput.platform, status: result.status },
+        metadata: {
+          platform: publicationInput.platform, status: result.status,
+          ...(publishedSteps.length > 0 ? { completedExternalIds: publishedSteps.map((step) => step.externalId) } : {}),
+        },
       })
       await revokeGrants()
       return reply.code(200).send(PublicationExecuteResultSchema.parse({ id: params.id, status: result.status, externalId: result.externalId, permalink: result.permalink }))

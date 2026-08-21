@@ -105,7 +105,17 @@ describe('MetaPublisher', () => {
     const [publishUrl, publishInit] = calls[4]!
     expect(publishUrl).toContain('/ig-1/media_publish')
     expect(String(publishInit.body)).toContain('creation_id=container-1')
-    expect(result).toEqual({ externalId: 'published-1', status: 'published' })
+    // Die ausgefuehrten Schritte gehoeren zum Ergebnis, damit die Route sie auditieren kann.
+    expect(result).toEqual({
+      externalId: 'published-1', status: 'published',
+      completedSteps: [
+        { label: 'carousel item creation', externalId: 'item-1' },
+        { label: 'carousel item creation', externalId: 'item-2' },
+        { label: 'carousel item creation', externalId: 'item-3' },
+        { label: 'carousel container creation', externalId: 'container-1' },
+        { label: 'carousel publish', externalId: 'published-1' },
+      ],
+    })
   })
 
   it('stops an Instagram carousel build if a single item container fails, without publishing anything', async () => {
@@ -191,7 +201,14 @@ describe('MetaPublisher', () => {
     expect(feedUrl).toContain('/page-1/feed')
     expect(String(feedInit.body)).toContain(`attached_media%5B0%5D=${encodeURIComponent(JSON.stringify({ media_fbid: 'photo-1' }))}`)
     expect(String(feedInit.body)).toContain(`attached_media%5B1%5D=${encodeURIComponent(JSON.stringify({ media_fbid: 'photo-2' }))}`)
-    expect(result).toEqual({ externalId: 'post-1', status: 'published' })
+    expect(result).toEqual({
+      externalId: 'post-1', status: 'published',
+      completedSteps: [
+        { label: 'unpublished photo upload', externalId: 'photo-1' },
+        { label: 'unpublished photo upload', externalId: 'photo-2' },
+        { label: 'multi-photo feed post', externalId: 'post-1' },
+      ],
+    })
   })
 })
 
