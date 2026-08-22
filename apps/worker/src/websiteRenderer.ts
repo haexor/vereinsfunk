@@ -49,7 +49,10 @@ const MAX_LOGO_CANDIDATES_TO_ATTEMPT = 10
  */
 export function scoreLogoCandidates(): LogoCandidate[] {
   const LOGO_PATTERN = /logo/i
-  const SPONSOR_PATTERN = /sponsor|partner|werbung|anzeige|ad-|banner|facebook|instagram|whatsapp|twitter|linkedin|youtube|tiktok|social/i
+  // \b vor "ad-": ohne Wortgrenze matcht die Substring-Regex sonst zufaellig in Vereinsnamen wie
+  // "Radsportverein" (rad-...) oder "Pfadfinder" (pfad-...) -- haeufig bei einem Dateinamen wie
+  // "pfad-logo.png" ohne dass irgendein Sponsor-/Social-Bezug besteht.
+  const SPONSOR_PATTERN = /sponsor|partner|werbung|anzeige|\bad-|banner|facebook|instagram|whatsapp|twitter|linkedin|youtube|tiktok|social/i
 
   const normalize = (raw: string): string | null => {
     try {
@@ -78,14 +81,19 @@ export function scoreLogoCandidates(): LogoCandidate[] {
     // class="icon"> innerhalb eines <a href="https://instagram.com/verein">.
     const combinedText = `${ownText} ${img.src} ${hrefRaw ?? ''}`
 
-    // Sponsor-/Social-Signale schliessen den Kandidaten komplett aus statt ihn nur abzuwerten --
-    // ein solches Bild als Vereinslogo herunterzuladen waere schlechter als gar keins, und eine
-    // reine Abwertung verhindert das nicht, wenn alle anderen Kandidaten am Download scheitern.
-    if (SPONSOR_PATTERN.test(combinedText)) continue
-    if (img.parentElement && img.parentElement.querySelectorAll(':scope > img').length >= 3) continue
+    // Ein Logo-Signal aus den eigenen Attributen (class/id/alt) sticht einen Sponsor-/Social-Treffer
+    // in Dateiname oder Linkziel aus -- SPONSOR_PATTERN ist eine Substring-Regex und matcht sonst
+    // auch auf einem echten Logo mit zufaelligem Treffer (z.B. "/partner-verein-logo.png") oder
+    // einem Logo, das auf die eigene Facebook-Seite statt die Startseite verlinkt.
+    const ownSignalsLogo = LOGO_PATTERN.test(ownText)
+    // Nur ein eindeutiges Sponsor-/Social-Signal OHNE eigenes Logo-Signal schliesst den Kandidaten
+    // komplett aus statt ihn nur abzuwerten -- ein solches Bild als Vereinslogo herunterzuladen
+    // waere schlechter als gar keins, und eine reine Abwertung verhindert das nicht, wenn alle
+    // anderen Kandidaten am Download scheitern.
+    if (!ownSignalsLogo && SPONSOR_PATTERN.test(combinedText)) continue
 
     let score = 0
-    if (LOGO_PATTERN.test(ownText)) score += 3
+    if (ownSignalsLogo) score += 3
     if (img.parentElement?.closest('[class*="logo" i], [id*="logo" i]')) score += 2
     if (img.closest('header, nav')) score += 2
     const hrefUrl = hrefRaw ? normalize(hrefRaw) : null
@@ -93,6 +101,10 @@ export function scoreLogoCandidates(): LogoCandidate[] {
       const parsed = new URL(hrefUrl)
       if (parsed.origin === location.origin && (parsed.pathname === '/' || parsed.pathname === '')) score += 2
     }
+    // Mehrere Geschwister-Bilder sind ein rein strukturelles, schwaches Signal (Sponsorenzeile,
+    // aber auch z.B. ein Sprachumschalter mit Flaggen-Icons) -- nur eine Abwertung, kein
+    // Ausschluss, damit ein echtes Logo mit starken eigenen Signalen trotzdem gewinnt.
+    if (img.parentElement && img.parentElement.querySelectorAll(':scope > img').length >= 3) score -= 3
 
     record(url, score)
   }

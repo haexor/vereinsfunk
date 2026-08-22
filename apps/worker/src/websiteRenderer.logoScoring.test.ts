@@ -62,6 +62,46 @@ describe('scoreLogoCandidates', () => {
     expect(candidates[0]?.url).toBe(clubLogo?.url)
   })
 
+  it('behaelt ein echtes Logo trotz 3+ generischer Geschwisterbilder (z.B. Sprachumschalter) als Top-Kandidat', async () => {
+    const candidates = await scoreFixture(`
+      <html><body>
+        <header>
+          <div class="toolbar">
+            <img class="site-logo" src="/logo.png" alt="Vereinslogo">
+            <img src="/search-icon.png" alt="Suche">
+            <img src="/menu-icon.png" alt="Menu">
+            <img src="/flag-de.png" alt="Deutsch">
+          </div>
+        </header>
+      </body></html>
+    `)
+    expect(candidates[0]?.url).toBe(`${FIXTURE_ORIGIN}/logo.png`)
+  })
+
+  it('schliesst ein Logo nicht aus, nur weil sein Dateiname zufaellig "ad-" wie in "Radsportverein" enthaelt', async () => {
+    const candidates = await scoreFixture(`
+      <html><body>
+        <header>
+          <img class="brand" src="/rad-verein-wappen.png" alt="RSV Musterstadt">
+        </header>
+      </body></html>
+    `)
+    expect(candidates[0]?.url).toBe(`${FIXTURE_ORIGIN}/rad-verein-wappen.png`)
+  })
+
+  it('schliesst ein Logo nicht aus, das auf die eigene Facebook-Seite statt die Startseite verlinkt', async () => {
+    const candidates = await scoreFixture(`
+      <html><body>
+        <header>
+          <a href="https://www.facebook.com/svmusterstadt">
+            <img class="site-logo" src="/logo.png" alt="Vereinslogo">
+          </a>
+        </header>
+      </body></html>
+    `)
+    expect(candidates[0]?.url).toBe(`${FIXTURE_ORIGIN}/logo.png`)
+  })
+
   it('dedupliziert dasselbe Bild ueber eine absolute img-src und ein relatives og:image', async () => {
     const candidates = await scoreFixture(`
       <html>
