@@ -505,6 +505,58 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
     expect(response.statusCode).toBe(400)
     expect(response.json().error).toBe('use_organization_logo_endpoint')
   })
+
+  it('rejects removing the organization logo without brand.manage', async () => {
+    const app = await startApp({ roleProvider: denyingRoleProvider })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'DELETE',
+      url: `/v1/organizations/${ORGANIZATION_ID}/brand/logo?variant=light`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(403)
+  })
+
+  it('removes the organization logo: nulls the pointer, supersedes the ready asset, and records an audit event', async () => {
+    const updateCalls: Array<{ table: string; payload: unknown }> = []
+    let auditAction: unknown
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'organization_brand_profiles' || table === 'brand_assets') {
+              return {
+                update: (payload: unknown) => {
+                  updateCalls.push({ table, payload })
+                  return chain({ data: null, error: null })
+                },
+              }
+            }
+            if (table === 'audit_events') {
+              return {
+                insert: (payload: { action: unknown }) => {
+                  auditAction = payload.action
+                  return chain({ data: null, error: null })
+                },
+              }
+            }
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'DELETE',
+      url: `/v1/organizations/${ORGANIZATION_ID}/brand/logo?variant=light`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(204)
+    expect(updateCalls).toContainEqual({ table: 'organization_brand_profiles', payload: { logo_path: null } })
+    expect(updateCalls).toContainEqual({ table: 'brand_assets', payload: { status: 'replaced' } })
+    expect(auditAction).toBe('organization.brand_logo_removed')
+  })
 })
 
 describe('Paket 048: KI-gestuetzte Markenerkennung aus der Vereins-Homepage', () => {
