@@ -1,5 +1,6 @@
 import { OutboundFetchError } from '@vereinsfunk/outbound-fetch'
 import { chromium } from 'playwright'
+import { z } from 'zod'
 import { assertNavigableUrl, guardOutboundRequests } from './browserGuard.js'
 import { WorkflowExecutionError } from './workflows.js'
 
@@ -7,6 +8,13 @@ export interface LogoCandidate {
   url: string
   score: number
 }
+
+// Validiert das Ergebnis von page.evaluate(scoreLogoCandidates), bevor der Worker es anfasst --
+// siehe die Verteidigung-in-der-Tiefe-Anmerkung an scoreLogoCandidates: eine fremde Seite kann
+// globale Built-ins ueberschreiben, wodurch das serialisierte Ergebnis auch strukturell von
+// LogoCandidate[] abweichen kann, nicht nur einzelne url-Werte betreffen.
+const LogoCandidateSchema: z.ZodType<LogoCandidate> = z.object({ url: z.string().min(1), score: z.number().finite() })
+const LogoCandidatesSchema = z.array(LogoCandidateSchema)
 
 export interface WebsiteRenderResult {
   screenshotBase64: string
@@ -66,6 +74,12 @@ export function scoreLogoCandidates(): LogoCandidate[] {
     const ownText = `${img.className} ${img.id} ${img.alt}`
     const combinedText = `${ownText} ${img.src}`
 
+    // Sponsor-/Social-Signale schliessen den Kandidaten komplett aus statt ihn nur abzuwerten --
+    // ein solches Bild als Vereinslogo herunterzuladen waere schlechter als gar keins, und eine
+    // reine Abwertung verhindert das nicht, wenn alle anderen Kandidaten am Download scheitern.
+    if (SPONSOR_PATTERN.test(combinedText)) continue
+    if (img.parentElement && img.parentElement.querySelectorAll(':scope > img').length >= 3) continue
+
     let score = 0
     if (LOGO_PATTERN.test(ownText)) score += 3
     if (img.parentElement?.closest('[class*="logo" i], [id*="logo" i]')) score += 2
@@ -76,8 +90,6 @@ export function scoreLogoCandidates(): LogoCandidate[] {
       const parsed = new URL(hrefUrl)
       if (parsed.origin === location.origin && (parsed.pathname === '/' || parsed.pathname === '')) score += 2
     }
-    if (SPONSOR_PATTERN.test(combinedText)) score -= 4
-    if (img.parentElement && img.parentElement.querySelectorAll(':scope > img').length >= 3) score -= 3
 
     record(url, score)
   }
@@ -140,7 +152,9 @@ export class PlaywrightWebsiteRenderer implements WebsiteRenderer {
       await page.waitForTimeout(500)
 
       const screenshotBuffer = await page.screenshot({ type: 'png' })
-      const logoCandidates = await page.evaluate(scoreLogoCandidates)
+      const rawLogoCandidates = await page.evaluate(scoreLogoCandidates)
+      const parsedLogoCandidates = LogoCandidatesSchema.safeParse(rawLogoCandidates)
+      const logoCandidates = parsedLogoCandidates.success ? parsedLogoCandidates.data : []
       const detectedFontFamily = await page.evaluate(() => {
         const heading = document.querySelector<HTMLElement>('h1, h2') ?? document.body
         return heading ? getComputedStyle(heading).fontFamily || null : null

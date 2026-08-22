@@ -42,7 +42,7 @@ describe('scoreLogoCandidates', () => {
     expect(candidates[0]?.url).toBe(`${FIXTURE_ORIGIN}/assets/logo-ifa.png`)
   })
 
-  it('bewertet das echte Vereinslogo hoeher als eine Sponsorenzeile im Header (Bug B)', async () => {
+  it('schliesst eine Sponsorenzeile im Header komplett aus, das echte Vereinslogo bleibt Kandidat (Bug B)', async () => {
     const candidates = await scoreFixture(`
       <html><body>
         <header>
@@ -58,9 +58,8 @@ describe('scoreLogoCandidates', () => {
     const clubLogo = candidates.find((candidate) => candidate.url.endsWith('/club-logo.png'))
     const sponsor = candidates.find((candidate) => candidate.url.endsWith('/sponsor-1.png'))
     expect(clubLogo).toBeDefined()
-    expect(sponsor).toBeDefined()
+    expect(sponsor).toBeUndefined()
     expect(candidates[0]?.url).toBe(clubLogo?.url)
-    expect(clubLogo!.score).toBeGreaterThan(sponsor!.score)
   })
 
   it('dedupliziert dasselbe Bild ueber eine absolute img-src und ein relatives og:image', async () => {
@@ -109,7 +108,7 @@ describe('scoreLogoCandidates', () => {
     ])
   })
 
-  it('wertet ein Social-Icon im Header ab, obwohl es im Header steht (Sponsor-Keyword-Ausschluss)', async () => {
+  it('schliesst ein Social-Icon im Header komplett aus (Sponsor-Keyword-Ausschluss)', async () => {
     const candidates = await scoreFixture(`
       <html><body>
         <header>
@@ -121,6 +120,17 @@ describe('scoreLogoCandidates', () => {
     const logo = candidates.find((candidate) => candidate.url.endsWith('/logo.png'))
     const facebookIcon = candidates.find((candidate) => candidate.url.endsWith('/facebook.png'))
     expect(candidates[0]?.url).toBe(logo?.url)
-    expect(logo!.score).toBeGreaterThan(facebookIcon!.score)
+    expect(facebookIcon).toBeUndefined()
+  })
+
+  it('liefert keinen Kandidaten fuer ein Social-Icon, wenn kein Vereinslogo auf der Seite existiert', async () => {
+    const candidates = await scoreFixture(`
+      <html><body>
+        <header>
+          <a href="https://facebook.com/verein"><img class="facebook-icon" src="/facebook.png" alt="Facebook"></a>
+        </header>
+      </body></html>
+    `)
+    expect(candidates.find((candidate) => candidate.url.endsWith('/facebook.png'))).toBeUndefined()
   })
 })

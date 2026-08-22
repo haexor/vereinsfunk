@@ -23,6 +23,9 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # websiteRenderer.logoScoring.test.ts startet echtes Chromium (kein Mock) -- ohne diesen
+      # Schritt fehlt die Runner-Binary und `pnpm test` schlaegt in apps/worker fehl.
+      - run: pnpm --filter @vereinsfunk/worker exec playwright install --with-deps chromium
       - run: pnpm lint
       # Eigene Schritte, nicht Teil von `pnpm db:test`: die pgTAP-Suite selbst braucht Docker und
       # laeuft hier nicht, diese Pruefungen lesen nur Dateien.
