@@ -5,6 +5,7 @@ import { ConcurrencyLimitStrategy, NonRetryableError } from '@hatchet-dev/typesc
 import type { WorkerEnvironment } from '@vereinsfunk/config'
 import { WorkflowNameSchema, WorkflowPayloadSchema, type WorkflowName, type WorkflowPayload } from '@vereinsfunk/contracts'
 import { scanAndRecoverStaleCandidates, type GenerationRecoveryRepository } from './generationRecovery.js'
+import { drainPendingVisionProviderComparisons, type VisionProviderComparisonExecutor } from './visionProviderComparison.js'
 
 export const concurrency = {
   llm: { global: 20, organization: 4, department: 2 }, image: { global: 12, organization: 3, department: 1 },
@@ -112,12 +113,31 @@ export function createGenerationRecoveryScanWorkflow(client: HatchetClient<Workf
   })
 }
 
+/**
+ * Registers the vision-provider-comparison poll (Paket 050, plattform-admin/vision-vergleich).
+ * Outside the generic per-entity loop for the same reason as the recovery-scan cron above: a
+ * platform-admin test run has no organization/department to satisfy workflow_outbox's NOT NULL
+ * columns (siehe feedback_workflow_outbox_erzwingt_department_id) and there is no real one to
+ * borrow, unlike start_brand_website_analysis's placeholder-department trick. The claim RPC's own
+ * skip-locked select already makes every tick safe against concurrent or overlapping execution.
+ */
+export function createVisionProviderComparisonScanWorkflow(client: HatchetClient<WorkflowPayload>, comparisons: VisionProviderComparisonExecutor) {
+  return client.task({
+    name: 'vision-provider-comparison-scan',
+    onCrons: ['*/1 * * * *'],
+    inputValidator: z.object({}),
+    executionTimeout: '10m',
+    fn: async () => { await drainPendingVisionProviderComparisons(comparisons) },
+  })
+}
+
 /** Creates a real SDK worker and registers all bounded technical workflow envelopes. */
 export async function createHatchetWorker(
   config: WorkerEnvironment,
   runs: WorkflowExecutionRepository,
   executor: ProductWorkflowExecutor,
   recovery: GenerationRecoveryRepository,
+  visionComparisons: VisionProviderComparisonExecutor,
 ): Promise<Worker> {
   const client = HatchetClient.init<WorkflowPayload>({
     token: config.HATCHET_CLIENT_TOKEN,
@@ -126,6 +146,10 @@ export async function createHatchetWorker(
     tls_config: { tls_strategy: config.HATCHET_TLS ? 'tls' : 'none' },
   })
   const worker = await client.worker('vereinsfunk-worker', { slots: config.HATCHET_WORKER_SLOTS })
-  await worker.registerWorkflows([...createWorkflowDefinitions(client, runs, executor), createGenerationRecoveryScanWorkflow(client, recovery)])
+  await worker.registerWorkflows([
+    ...createWorkflowDefinitions(client, runs, executor),
+    createGenerationRecoveryScanWorkflow(client, recovery),
+    createVisionProviderComparisonScanWorkflow(client, visionComparisons),
+  ])
   return worker
 }

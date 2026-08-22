@@ -32,29 +32,30 @@ export interface BrandWebsiteAnalysisRepository {
 }
 
 // Ein Adapter je Protokoll, analog zu textGeneration.ts's GENERATORS -- ein Protokoll ohne Eintrag
-// gilt als nicht implementiert.
-const VISION_GENERATORS: Record<string, VisionAnalysisGenerator | undefined> = {
+// gilt als nicht implementiert. Exportiert, weil visionProviderComparison.ts (Paket 050) denselben
+// Adapter-Satz braucht, um mehrere aktive Vision-Provider parallel anzufragen.
+export const VISION_GENERATORS: Record<string, VisionAnalysisGenerator | undefined> = {
   openai: new OpenAiCompatibleVisionAnalysisGenerator(),
   anthropic: new AnthropicVisionAnalysisGenerator(),
 }
 
-const FONT_PAIRING_OPTIONS = curatedFontPairings.map((pairing) => ({ key: pairing.key, label: pairing.label, styleDescription: pairing.styleDescription }))
+export const FONT_PAIRING_OPTIONS = curatedFontPairings.map((pairing) => ({ key: pairing.key, label: pairing.label, styleDescription: pairing.styleDescription }))
 
-type LogoFetcher = (input: string, init: RequestInit) => Promise<Response>
+export type LogoFetcher = (input: string, init: RequestInit) => Promise<Response>
 
 // createGuardedFetch() bringt eine Groessengrenze mit, aber keine Zeitgrenze (anders als
 // fetchPublicUrl): ohne diese haelt eine Adresse, die die Verbindung offen laesst, den ganzen Job
 // bis zum 10-Minuten-Timeout des Hatchet-Schritts auf -- und die Adresse stammt aus dem HTML einer
 // fremden Seite, ist also nichts, worauf man sich verlassen kann.
-const LOGO_DOWNLOAD_TIMEOUT_MS = 10_000
+export const LOGO_DOWNLOAD_TIMEOUT_MS = 10_000
 
 /**
  * Versucht der Reihe nach jeden Kandidaten und nimmt den ersten, der sich als Logo verarbeiten
  * laesst. Wirft nie: ein Kandidat, der nicht laedt oder kein brauchbares Bild ist, darf weder die
  * uebrigen Kandidaten noch die Farb-/Font-Analyse verhindern -- ohne Logo-Vorschlag ist das
- * Ergebnis unvollstaendig, aber nicht falsch.
+ * Ergebnis unvollstaendig, aber nicht falsch. Exportiert aus demselben Grund wie VISION_GENERATORS.
  */
-async function downloadFirstValidLogo(candidateUrls: readonly string[], fetcher: LogoFetcher): Promise<ProcessedLogo | null> {
+export async function downloadFirstValidLogo(candidateUrls: readonly string[], fetcher: LogoFetcher): Promise<ProcessedLogo | null> {
   for (const url of candidateUrls) {
     try {
       const response = await fetcher(url, { method: 'GET', signal: AbortSignal.timeout(LOGO_DOWNLOAD_TIMEOUT_MS) })
