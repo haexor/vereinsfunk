@@ -287,17 +287,18 @@ async function downloadLogoCandidate(logoCandidate: { signedUrl: string; mimeTyp
   }
 }
 
-// Weder Verein noch Abteilung haben einen Datei-Staging-Mechanismus -- ein KI-Logovorschlag laeuft
-// wie ein manueller Upload sofort ueber die geteilte Asset-Bibliothek (POST /v1/brand/assets); nur
-// die eigentliche Uebernahme als AKTIVES Logo (logoAssetId) bleibt an "Aenderungen speichern"
-// gebunden, genauso wie bei einem manuell ueber "als Logo" gewaehlten Asset.
-async function applyLogoCandidateAsAsset(departmentId: string | null, logoCandidate: { signedUrl: string; mimeType: string }) {
+// Weder Verein noch Abteilung haben einen Datei-Staging-Mechanismus -- ein uebernommener
+// KI-Logovorschlag laeuft wie ein manueller Upload sofort ueber die geteilte Asset-Bibliothek
+// (POST /v1/brand/assets) und erscheint danach in der Galerie unten. Anders als frueher setzt das
+// KEIN aktives Logo (logoAssetId) -- bei mehreren gefundenen Vorschlaegen ist das eine bewusste
+// menschliche Entscheidung ueber den bestehenden "als Logo"-Umschalter, keine Auto-Klassifizierung.
+async function uploadLogoSuggestion(departmentId: string | null, logoCandidate: { signedUrl: string; mimeType: string }, kind: string): Promise<boolean> {
   const file = await downloadLogoCandidate(logoCandidate)
-  if (!file || !organizationId.value) return
+  if (!file || !organizationId.value) return false
   const formData = new FormData()
   formData.append('organizationId', organizationId.value)
   if (departmentId) formData.append('departmentId', departmentId)
-  formData.append('kind', 'logo_primary')
+  formData.append('kind', kind)
   formData.append('file', file)
   try {
     const uploaded = await api.request('/v1/brand/assets', { method: 'POST', body: formData }, BrandAssetSchema)
@@ -305,8 +306,8 @@ async function applyLogoCandidateAsAsset(departmentId: string | null, logoCandid
     // verwerfen (es ersetzt departmentOverrides komplett durch den DB-Stand) -- die neue Asset-
     // Zeile wird deshalb lokal angehaengt statt per vollem Reload nachgeladen. Der Upload ist
     // inhalts-adressiert (gleicher Dateiinhalt -> gleicher object_path -> derselbe upsert-Treffer);
-    // ein zweiter Analyse-Lauf mit unveraendertem Logo lieferte sonst dieselbe id ein zweites Mal
-    // und verletzte die :key-Eindeutigkeit in der Asset-Liste unten.
+    // zweimaliges Uebernehmen desselben Vorschlags lieferte sonst dieselbe id ein zweites Mal und
+    // verletzte die :key-Eindeutigkeit in der Asset-Liste unten.
     if (!assets.value.some((asset) => asset.id === uploaded.id)) {
       assets.value = [...assets.value, {
         id: uploaded.id, departmentId: uploaded.departmentId, teamId: uploaded.teamId, kind: uploaded.kind,
@@ -315,18 +316,35 @@ async function applyLogoCandidateAsAsset(departmentId: string | null, logoCandid
         createdAt: uploaded.createdAt,
       }]
     }
-    if (departmentId) overrideFor(departmentId).logoAssetId = uploaded.id
-    else org.logoAssetId = uploaded.id
+    return true
   } catch {
-    // Farbvorschlag bleibt uebernommen, auch wenn der Logo-Upload scheitert.
+    return false
   }
+}
+
+// Ein Klick pro gefundenem Logo-Kandidaten (siehe Galerie im Template) -- Kind-Auswahl und
+// Uebernommen-Status je Index, zurueckgesetzt sobald ein neues Analyseergebnis eintrifft (siehe
+// Watch unten), sonst zeigte ein zweiter Lauf noch den Stand des vorherigen.
+const logoSuggestionKinds = ref<string[]>([])
+const logoSuggestionApplied = ref<boolean[]>([])
+watch(() => websiteAnalysisResult.value?.logoCandidates, (candidates) => {
+  logoSuggestionKinds.value = (candidates ?? []).map(() => 'logo_primary')
+  logoSuggestionApplied.value = (candidates ?? []).map(() => false)
+})
+async function applyLogoSuggestion(index: number) {
+  const candidate = websiteAnalysisResult.value?.logoCandidates[index]
+  if (!candidate) return
+  const departmentId = activeLevel.value === 'department' ? activeDepartmentId.value : null
+  const kind = logoSuggestionKinds.value[index] ?? 'logo_primary'
+  if (await uploadLogoSuggestion(departmentId, candidate, kind)) logoSuggestionApplied.value[index] = true
 }
 
 async function applyWebsiteAnalysisResult(result: BrandWebsiteAnalysisResult) {
   if (activeLevel.value === 'department' && activeDepartmentId.value) {
-    // Nur Primaer-/Akzentfarbe und Logo: Hintergrund-/Text-/Auf-Primaer-Farbe und das kuratierte
+    // Nur Primaer-/Akzentfarbe: Hintergrund-/Text-/Auf-Primaer-Farbe und das kuratierte
     // Schriftpaar bleiben bewusst Vereinssache (packages/domain/src/brand.ts) -- eine Abteilung
-    // kann sie technisch gar nicht setzen, unabhaengig von dieser Funktion.
+    // kann sie technisch gar nicht setzen, unabhaengig von dieser Funktion. Logos werden nicht mehr
+    // automatisch uebernommen (siehe applyLogoSuggestion), unabhaengig vom Scope.
     // Vom Verein gesperrte Felder respektieren, genau wie die manuellen Farbfelder oben
     // (:disabled="lockedForActiveLevel.has(...)") -- sonst schriebe ein automatisch uebernommener
     // Vorschlag einen Wert in ein gesperrtes Feld, den "Aenderungen speichern" anschliessend mit
@@ -335,7 +353,6 @@ async function applyWebsiteAnalysisResult(result: BrandWebsiteAnalysisResult) {
     const override = overrideFor(activeDepartmentId.value)
     if (!locked.has('primaryColor')) override.primaryColor = result.primaryColor
     if (!locked.has('accentColor')) override.accentColor = result.accentColor
-    if (result.logoCandidate && !locked.has('logoAssetId')) await applyLogoCandidateAsAsset(activeDepartmentId.value, result.logoCandidate)
     return
   }
   org.primaryColor = result.primaryColor
@@ -355,8 +372,6 @@ async function applyWebsiteAnalysisResult(result: BrandWebsiteAnalysisResult) {
     org.displayFontAssetId = null
     org.bodyFontAssetId = null
   }
-  if (!result.logoCandidate) return
-  await applyLogoCandidateAsAsset(null, result.logoCandidate)
 }
 // Uebernommen wird nur auf der Ebene, fuer die der Job tatsaechlich lief (Verein oder die eine
 // Abteilung, die ihn gestartet hat): das Polling laeuft weiter, auch wenn der Nutzer inzwischen
@@ -490,9 +505,10 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
             <h2 class="font-display flex items-center gap-2 text-base font-bold"><Sparkles :size="16" /> Automatisch aus der Homepage übernehmen</h2>
             <p class="mt-2 text-xs text-[#7a817c]">
               {{ activeLevel === 'department'
-                ? 'Primärfarbe, Akzentfarbe und Logo aus der Homepage dieser Abteilung vorschlagen lassen.'
-                : 'Farben, Logo und eine Schriftempfehlung aus eurer Vereins-Homepage vorschlagen lassen.' }}
-              Übernommen wird erst mit „Änderungen speichern“ unten.
+                ? 'Primärfarbe und Akzentfarbe aus der Homepage dieser Abteilung vorschlagen lassen.'
+                : 'Farben und eine Schriftempfehlung aus eurer Vereins-Homepage vorschlagen lassen.' }}
+              Gefundene Logos erscheinen unten als eigene Vorschläge zum Übernehmen.
+              Farben/Schrift werden erst mit „Änderungen speichern“ unten übernommen.
             </p>
             <div class="mt-4 flex flex-wrap items-center gap-2">
               <input v-model="websiteAnalysisUrl" type="url" :placeholder="activeLevel === 'department' ? 'https://abteilung.euer-verein.de' : 'https://euer-verein.de'" class="focus-ring min-w-0 flex-1 rounded-lg border border-[#dfe0d9] px-3 py-2 text-xs" :disabled="websiteAnalysisRunning || websiteAnalysisStarting" />
@@ -503,8 +519,22 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
             </div>
             <p v-if="websiteAnalysisStartError" class="mt-2 text-[11px] text-amber-800">{{ websiteAnalysisStartError }}</p>
             <p v-else-if="websiteAnalysisFailureMessage" class="mt-2 text-[11px] text-amber-800">{{ websiteAnalysisFailureMessage }}</p>
-            <p v-if="websiteAnalysisApplied" class="mt-2 flex items-center gap-1.5 text-[11px] text-emerald-700"><Check :size="12" /> Vorschlag übernommen — bitte prüfen und unten speichern.</p>
+            <p v-if="websiteAnalysisApplied" class="mt-2 flex items-center gap-1.5 text-[11px] text-emerald-700"><Check :size="12" /> Farb-/Schriftvorschlag übernommen — bitte prüfen und unten speichern.</p>
             <p v-if="detectedFontNotice" class="mt-2 text-[11px] text-[#7a817c]">{{ detectedFontNotice }}</p>
+            <div v-if="websiteAnalysisResult?.logoCandidates.length" class="mt-4">
+              <p class="text-[11px] font-semibold text-[#7b827d]">Gefundene Logos — einzeln prüfen und übernehmen</p>
+              <div class="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div v-for="(candidate, index) in websiteAnalysisResult.logoCandidates" :key="candidate.signedUrl" class="rounded-xl border border-[#e1e2db] p-2 text-center">
+                  <img :src="candidate.signedUrl" alt="" class="mx-auto h-12 w-12 object-contain" />
+                  <select v-model="logoSuggestionKinds[index]" class="focus-ring mt-1.5 w-full rounded-lg border border-[#dfe0d9] px-1 py-1 text-[10px]">
+                    <option v-for="kind in ['logo_primary', 'logo_dark', 'logo_mark', 'wordmark', 'watermark']" :key="kind" :value="kind">{{ LOGO_ASSET_KIND_LABELS[kind] }}</option>
+                  </select>
+                  <button type="button" class="focus-ring mt-1.5 block w-full rounded-lg bg-forest px-2 py-1 text-[10px] font-bold text-white disabled:opacity-50" :disabled="logoSuggestionApplied[index]" @click="applyLogoSuggestion(index)">
+                    {{ logoSuggestionApplied[index] ? 'Übernommen' : 'Übernehmen' }}
+                  </button>
+                </div>
+              </div>
+            </div>
           </section>
 
 

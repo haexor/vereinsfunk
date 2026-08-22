@@ -112,18 +112,19 @@ async function mapBrandWebsiteAnalysisRow(
   if (row.result) {
     const stored = row.result as Record<string, unknown>
     // Bei jedem Abruf frisch erzeugt statt gespeichert: eine Signed URL kann waehrend eines
-    // langen Polls verfallen, siehe Plandokument.
-    let logoCandidate: { signedUrl: string; mimeType: string } | null = null
-    if (stored.logoObjectPath) {
-      const signed = await service.storage.from('brand-assets').createSignedUrl(stored.logoObjectPath as string, 600)
+    // langen Polls verfallen, siehe Plandokument. Parallel signiert, da die Kandidatenzahl
+    // (bis zu 8, siehe MAX_LOGO_SUGGESTIONS im Worker) unabhaengige Storage-Aufrufe sind.
+    const storedCandidates = Array.isArray(stored.logoCandidates) ? stored.logoCandidates as Array<{ objectPath: string; mimeType: string }> : []
+    const logoCandidates = await Promise.all(storedCandidates.map(async (candidate) => {
+      const signed = await service.storage.from('brand-assets').createSignedUrl(candidate.objectPath, 600)
       if (signed.error) throw signed.error
-      logoCandidate = { signedUrl: signed.data.signedUrl, mimeType: stored.logoMimeType as string }
-    }
+      return { signedUrl: signed.data.signedUrl, mimeType: candidate.mimeType }
+    }))
     result = {
       primaryColor: stored.primaryColor, accentColor: stored.accentColor, backgroundColor: stored.backgroundColor,
       textColor: stored.textColor, onPrimaryColor: stored.onPrimaryColor,
       suggestedFontPairingKey: stored.suggestedFontPairingKey, detectedFontFamily: stored.detectedFontFamily,
-      logoCandidate,
+      logoCandidates,
     }
   }
   return BrandWebsiteAnalysisStatusResponseSchema.parse({ status: row.status, result, errorReason: row.error_reason })

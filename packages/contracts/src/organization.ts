@@ -184,6 +184,7 @@ export const BrandWebsiteAnalysisStatusSchema = z.enum(['pending', 'running', 's
 // serverseitig im Vision-Adapter (packages/content-engine/visionAnalysis.ts, parsePairingKey) --
 // ein zweites, hier dupliziertes Enum wuerde nur auseinanderlaufen koennen, ohne einen eigenen
 // Sicherheitsgewinn zu haben.
+export const BrandWebsiteAnalysisLogoCandidateSchema = z.object({ signedUrl: z.url(), mimeType: z.string().min(1) })
 export const BrandWebsiteAnalysisResultSchema = z.object({
   primaryColor: HexColorSchema,
   accentColor: HexColorSchema,
@@ -192,7 +193,9 @@ export const BrandWebsiteAnalysisResultSchema = z.object({
   onPrimaryColor: HexColorSchema,
   suggestedFontPairingKey: z.string().nullable(),
   detectedFontFamily: z.string().nullable(),
-  logoCandidate: z.object({ signedUrl: z.url(), mimeType: z.string().min(1) }).nullable(),
+  // Ein Verein kann mehrere echte Logos/Wortmarken fuehren -- die Uebernahme jedes einzelnen
+  // Vorschlags bleibt eine manuelle Entscheidung (marke.vue), kein automatisches Ranking hier.
+  logoCandidates: BrandWebsiteAnalysisLogoCandidateSchema.array().max(8),
 })
 export const BrandWebsiteAnalysisStatusResponseSchema = z.object({
   status: BrandWebsiteAnalysisStatusSchema,
@@ -242,6 +245,7 @@ export type CreateBrandAssetRequest = z.infer<typeof CreateBrandAssetRequestSche
 export type ConfirmBrandAssetLicenseRequest = z.infer<typeof ConfirmBrandAssetLicenseRequestSchema>
 export type StartBrandWebsiteAnalysisRequest = z.infer<typeof StartBrandWebsiteAnalysisRequestSchema>
 export type BrandWebsiteAnalysisStatus = z.infer<typeof BrandWebsiteAnalysisStatusSchema>
+export type BrandWebsiteAnalysisLogoCandidate = z.infer<typeof BrandWebsiteAnalysisLogoCandidateSchema>
 export type BrandWebsiteAnalysisResult = z.infer<typeof BrandWebsiteAnalysisResultSchema>
 export type BrandWebsiteAnalysisStatusResponse = z.infer<typeof BrandWebsiteAnalysisStatusResponseSchema>
 export type UpdateDepartmentBrandRequest = z.infer<typeof UpdateDepartmentBrandRequestSchema>

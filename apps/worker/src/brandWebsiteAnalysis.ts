@@ -1,5 +1,5 @@
 import { curatedFontPairings } from '@vereinsfunk/domain'
-import { processBrandLogoUpload, type ProcessedLogo } from '@vereinsfunk/brand-assets'
+import { hashLogoBuffer, processBrandLogoUpload, type ProcessedLogo } from '@vereinsfunk/brand-assets'
 import { AnthropicVisionAnalysisGenerator, OpenAiCompatibleVisionAnalysisGenerator, VisionAnalysisError, type VisionAnalysisGenerator } from '@vereinsfunk/content-engine'
 import { fetchPublicBinary, OutboundFetchError } from '@vereinsfunk/outbound-fetch'
 import type { WorkflowPayload } from '@vereinsfunk/contracts'
@@ -18,9 +18,14 @@ export interface BrandAnalysisResult {
   onPrimaryColor: string
   suggestedFontPairingKey: string | null
   detectedFontFamily: string | null
-  logoObjectPath: string | null
-  logoMimeType: string | null
+  logoCandidates: { objectPath: string; mimeType: string }[]
 }
+
+// Ein Verein kann mehrere echte Logos/Wortmarken fuehren -- die Vision-Analyse liefert deshalb bis
+// zu MAX_LOGO_SUGGESTIONS Vorschlaege statt nur des bestbewerteten Kandidaten. Die eigentliche
+// Uebernahme (welcher Vorschlag welche Asset-Art wird und ob er das aktive Logo ist) bleibt eine
+// manuelle Entscheidung in marke.vue.
+const MAX_LOGO_SUGGESTIONS = 8
 
 export interface BrandWebsiteAnalysisRepository {
   loadJob(id: string, organizationId: string): Promise<BrandAnalysisJobRow | null>
@@ -48,20 +53,30 @@ export type LogoFetcher = (url: string) => Promise<Buffer>
 
 /**
  * Versucht der Reihe nach jeden -- bereits nach Score sortierten (siehe scoreLogoCandidates) --
- * Kandidaten und nimmt den ersten, der sich als Logo verarbeiten laesst. Wirft nie: ein Kandidat,
- * der nicht laedt oder kein brauchbares Bild ist, darf weder die uebrigen Kandidaten noch die
- * Farb-/Font-Analyse verhindern -- ohne Logo-Vorschlag ist das Ergebnis unvollstaendig, aber nicht
- * falsch. Exportiert aus demselben Grund wie VISION_GENERATORS.
+ * Kandidaten und sammelt bis zu maxLogos erfolgreich verarbeitete Logos. Ein Kandidat, der nicht
+ * laedt oder kein brauchbares Bild ist, wird uebersprungen, nicht als Abbruch gewertet -- ohne
+ * (vollstaendige) Logo-Vorschlagsliste ist das Ergebnis unvollstaendig, aber nicht falsch.
+ * Dedupliziert per Inhalts-Hash: dieselbe Bilddatei kann unter mehreren URLs verlinkt sein (z.B.
+ * <img src> und og:image), ohne dass die Kandidatenliste selbst das erkennt. Exportiert aus
+ * demselben Grund wie VISION_GENERATORS.
  */
-export async function downloadFirstValidLogo(candidates: readonly LogoCandidate[], fetcher: LogoFetcher): Promise<ProcessedLogo | null> {
+export async function downloadValidLogos(candidates: readonly LogoCandidate[], fetcher: LogoFetcher, maxLogos: number = MAX_LOGO_SUGGESTIONS): Promise<ProcessedLogo[]> {
+  const logos: ProcessedLogo[] = []
+  const seenHashes = new Set<string>()
   for (const candidate of candidates) {
+    if (logos.length >= maxLogos) break
+    let processed: ProcessedLogo
     try {
-      return await processBrandLogoUpload(await fetcher(candidate.url))
+      processed = await processBrandLogoUpload(await fetcher(candidate.url))
     } catch {
       continue // blockierte/zu grosse/abgelaufene Antwort, kein Bildformat, zu kleines Bild, ...
     }
+    const hash = hashLogoBuffer(processed.buffer)
+    if (seenHashes.has(hash)) continue
+    seenHashes.add(hash)
+    logos.push(processed)
   }
-  return null
+  return logos
 }
 
 /** Executes one ID-only analyze-website-branding delivery. No content crosses the Hatchet envelope. */
@@ -96,8 +111,11 @@ export class BrandWebsiteAnalysisExecutor {
       const apiKey = openProviderSecret(this.config, provider.api_key_ciphertext, provider.key_version, provider.id)
 
       const render = await this.renderer.render(job.website_url)
-      const logo = await downloadFirstValidLogo(render.logoCandidates, this.logoFetcher)
-      const logoObjectPath = logo ? await this.repository.uploadStagedLogo(job.organization_id, logo) : null
+      const logos = await downloadValidLogos(render.logoCandidates, this.logoFetcher)
+      const logoCandidates = await Promise.all(logos.map(async (logo) => ({
+        objectPath: await this.repository.uploadStagedLogo(job.organization_id, logo),
+        mimeType: logo.contentType,
+      })))
 
       const analysis = await generator.analyzeBrand({
         imageBase64: render.screenshotBase64, imageMediaType: render.screenshotMediaType,
@@ -106,8 +124,7 @@ export class BrandWebsiteAnalysisExecutor {
       })
 
       await this.repository.markSucceeded(job.id, job.revision, {
-        ...analysis, detectedFontFamily: render.detectedFontFamily,
-        logoObjectPath, logoMimeType: logo?.contentType ?? null,
+        ...analysis, detectedFontFamily: render.detectedFontFamily, logoCandidates,
       })
     } catch (error) {
       const classified = error instanceof WorkflowExecutionError ? error

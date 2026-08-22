@@ -857,7 +857,7 @@ describe('Paket 048: KI-gestuetzte Markenerkennung aus der Vereins-Homepage', ()
     expect(response.json()).toEqual({ status: 'pending', result: null, errorReason: null })
   })
 
-  it('mints a fresh signed url for the staged logo candidate on every read instead of a stored, possibly expired one', async () => {
+  it('mints a fresh signed url for every staged logo candidate on each read instead of a stored, possibly expired one', async () => {
     const clients: SupabaseClientFactory = {
       forUser: () => ({}) as unknown as SupabaseClient,
       forService: () =>
@@ -869,7 +869,7 @@ describe('Paket 048: KI-gestuetzte Markenerkennung aus der Vereins-Homepage', ()
                 result: {
                   primaryColor: '#163a2c', accentColor: '#caff4a', backgroundColor: '#f6f4ec', textColor: '#122820', onPrimaryColor: '#ffffff',
                   suggestedFontPairingKey: 'manrope_dm_sans', detectedFontFamily: 'Roboto, sans-serif',
-                  logoObjectPath: 'organizations/x/brand/analysis-staging/abc.png', logoMimeType: 'image/png',
+                  logoCandidates: [{ objectPath: 'organizations/x/brand/analysis-staging/abc.png', mimeType: 'image/png' }],
                 },
                 error_reason: null,
               },
@@ -888,7 +888,7 @@ describe('Paket 048: KI-gestuetzte Markenerkennung aus der Vereins-Homepage', ()
     expect(response.statusCode).toBe(200)
     expect(response.json()).toMatchObject({
       status: 'succeeded',
-      result: { suggestedFontPairingKey: 'manrope_dm_sans', logoCandidate: { signedUrl: 'https://signed.example/logo-candidate.png', mimeType: 'image/png' } },
+      result: { suggestedFontPairingKey: 'manrope_dm_sans', logoCandidates: [{ signedUrl: 'https://signed.example/logo-candidate.png', mimeType: 'image/png' }] },
     })
   })
 
@@ -1050,7 +1050,7 @@ describe('Paket 049: KI-gestuetzte Markenerkennung auf Abteilungsebene', () => {
                 status: 'succeeded',
                 result: {
                   primaryColor: '#163a2c', accentColor: '#caff4a', backgroundColor: '#f6f4ec', textColor: '#122820', onPrimaryColor: '#ffffff',
-                  suggestedFontPairingKey: null, detectedFontFamily: null, logoObjectPath: null, logoMimeType: null,
+                  suggestedFontPairingKey: null, detectedFontFamily: null, logoCandidates: [],
                 },
                 error_reason: null,
               },
