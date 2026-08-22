@@ -290,11 +290,11 @@ async function deletePreset(preset: ImageStylePreset) {
               <h2 class="font-display text-base font-bold">Bausteine für diese Ebene</h2>
               <p class="mt-1 text-xs text-[#7a817c]">Rahmengrafiken und Wasserzeichen, die ein Preset dieser Ebene referenzieren kann.</p>
               <div class="mt-4 flex flex-wrap gap-2">
-                <label class="focus-ring flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-[11px] font-semibold">
+                <label class="focus-ring relative flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-[11px] font-semibold">
                   <input type="file" accept="image/png,image/jpeg,image/svg+xml" class="sr-only" :disabled="uploadingAsset" @change="uploadBrandAsset($event, 'frame')" />
                   <LoaderCircle v-if="uploadingAsset" :size="12" class="animate-spin" /><Upload v-else :size="12" /> Rahmengrafik hochladen
                 </label>
-                <label class="focus-ring flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-[11px] font-semibold">
+                <label class="focus-ring relative flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-[11px] font-semibold">
                   <input type="file" accept="image/png,image/jpeg,image/svg+xml" class="sr-only" :disabled="uploadingAsset" @change="uploadBrandAsset($event, 'watermark')" />
                   <LoaderCircle v-if="uploadingAsset" :size="12" class="animate-spin" /><Upload v-else :size="12" /> Wasserzeichen hochladen
                 </label>
