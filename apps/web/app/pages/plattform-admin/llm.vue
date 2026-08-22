@@ -4,13 +4,10 @@ import {
   ListLlmProviderModelsRequestSchema,
   ListLlmProviderModelsResponseSchema,
   LlmProviderConfigurationSchema,
-  PlatformSettingSchema,
-  PlatformSettingValueSchemas,
   SocialPlatformSchema,
   TextGenerationPlatformDefaultSchema,
   UpdateLlmProviderConfigurationRequestSchema,
   UpdateTextGenerationPlatformDefaultRequestSchema,
-  UpdatePlatformSettingRequestSchema,
   UuidSchema,
   type LlmProviderConfigurationDto,
   type LlmProviderProtocol,
@@ -56,16 +53,8 @@ const loading = ref(true)
 const saving = ref(false)
 const errorMessage = ref('')
 const providers = ref<LlmProviderConfigurationDto[]>([])
-
-// Paket 046: wie viele der unten konfigurierten aktiven Provider gleichzeitig einen Vorschlag
-// liefern -- eine globale platform_settings-Einstellung, kein weiteres Feld je Provider. Es
-// duerfen mehr Provider aktiv sein, als hier eingetragen: es zaehlen dann nur die obersten nach
-// Prioritaet.
-const ensembleSize = ref<number | null>(null)
-const ensembleSizeUpdatedAt = ref<string | null>(null)
-const ensembleSizeLoading = ref(true)
-const ensembleSizeSaving = ref(false)
-const ensembleSizeError = ref('')
+const taskAssignmentSaving = reactive<Partial<Record<string, boolean>>>({})
+const taskAssignmentError = ref('')
 
 const platformDefaults = ref<TextGenerationPlatformDefault[]>([])
 const platformDefaultsLoading = ref(true)
@@ -88,7 +77,6 @@ const newProvider = reactive({
   baseUrl: PROVIDER_PRESETS[0].baseUrl as string,
   model: '',
   apiKey: '',
-  priority: 100,
   isActive: true,
 })
 
@@ -122,7 +110,6 @@ function resetProviderForm() {
   newProvider.baseUrl = PROVIDER_PRESETS[0].baseUrl
   newProvider.model = ''
   newProvider.apiKey = ''
-  newProvider.priority = 100
   newProvider.isActive = true
   resetModelChoice()
 }
@@ -137,7 +124,6 @@ function editProvider(provider: LlmProviderConfigurationDto) {
   newProvider.baseUrl = provider.baseUrl
   newProvider.model = provider.model
   newProvider.apiKey = ''
-  newProvider.priority = provider.priority
   newProvider.isActive = provider.isActive
   resetModelChoice()
   newProvider.model = provider.model
@@ -176,39 +162,31 @@ async function load() {
 }
 await load()
 
-async function loadEnsembleSize() {
-  ensembleSizeLoading.value = true
-  ensembleSizeError.value = ''
-  try {
-    const headers = await useAuthHeader()
-    const response = await $fetch(`${config.public.apiBase}/v1/platform-settings`, { headers })
-    const settings = PlatformSettingSchema.array().parse(response)
-    const setting = settings.find((entry) => entry.key === 'text_generation_ensemble_size')
-    ensembleSize.value = setting ? PlatformSettingValueSchemas.text_generation_ensemble_size.parse(setting.value) : 1
-    ensembleSizeUpdatedAt.value = setting?.updatedAt ?? null
-  } catch {
-    ensembleSizeError.value = 'Die Ensemble-Größe konnte nicht geladen werden.'
-  } finally {
-    ensembleSizeLoading.value = false
-  }
-}
-await loadEnsembleSize()
+// Paket 050: welche konfigurierten Provider gerade fuer ihre Aufgabe genutzt werden, ist ausschliesslich
+// is_active -- diese Karte gruppiert dieselbe Liste wie oben nur nach Aufgabe und bedient denselben
+// PATCH-Endpunkt. Fuer text_generation bestimmt die Anzahl der hier aktivierten Provider zugleich die
+// Anzahl der Textvorschlaege (siehe resolveTextGenerationProviderConfigurationIds, apps/api).
+const providersByTaskKind = computed(() => {
+  const grouped = new Map<LlmTaskKind, LlmProviderConfigurationDto[]>()
+  for (const option of TASK_KIND_OPTIONS) grouped.set(option.value, [])
+  for (const provider of providers.value) grouped.get(provider.taskKind)?.push(provider)
+  return grouped
+})
 
-async function saveEnsembleSize() {
-  if (ensembleSize.value === null) return
-  ensembleSizeSaving.value = true
-  ensembleSizeError.value = ''
+async function toggleProviderActive(provider: LlmProviderConfigurationDto) {
+  taskAssignmentSaving[provider.id] = true
+  taskAssignmentError.value = ''
   try {
     const headers = await useAuthHeader()
-    const body = UpdatePlatformSettingRequestSchema.parse({ value: PlatformSettingValueSchemas.text_generation_ensemble_size.parse(ensembleSize.value) })
-    const response = await $fetch(`${config.public.apiBase}/v1/platform-settings/text_generation_ensemble_size`, { method: 'PUT', headers, body })
-    const updated = PlatformSettingSchema.parse(response)
-    ensembleSize.value = PlatformSettingValueSchemas.text_generation_ensemble_size.parse(updated.value)
-    ensembleSizeUpdatedAt.value = updated.updatedAt
+    const body = UpdateLlmProviderConfigurationRequestSchema.parse({ isActive: !provider.isActive })
+    const response = await $fetch(`${config.public.apiBase}/v1/llm-providers/${provider.id}`, { method: 'PATCH', headers, body })
+    const updated = LlmProviderConfigurationSchema.parse(response)
+    const index = providers.value.findIndex((entry) => entry.id === provider.id)
+    if (index >= 0) providers.value[index] = updated
   } catch {
-    ensembleSizeError.value = 'Die Ensemble-Größe konnte nicht gespeichert werden.'
+    taskAssignmentError.value = 'Der Aktiv-Status konnte nicht geändert werden.'
   } finally {
-    ensembleSizeSaving.value = false
+    taskAssignmentSaving[provider.id] = false
   }
 }
 
@@ -293,7 +271,6 @@ async function saveProvider() {
       baseUrl: newProvider.baseUrl,
       model: newProvider.model,
       taskKind: newProvider.taskKind,
-      priority: newProvider.priority,
       isActive: newProvider.isActive,
     }
     if (editingProviderId.value) {
@@ -305,11 +282,8 @@ async function saveProvider() {
     }
     resetProviderForm()
     await load()
-  } catch (error) {
-    const code = (error as { data?: { error?: string } })?.data?.error
-    errorMessage.value = code === 'priority_already_taken'
-      ? 'Diese Priorität ist für die Aufgabenart bereits an einen aktiven Provider vergeben. Bitte eine andere Zahl wählen.'
-      : isEditing.value ? 'Provider konnte nicht gespeichert werden.' : 'Provider konnte nicht angelegt werden.'
+  } catch {
+    errorMessage.value = isEditing.value ? 'Provider konnte nicht gespeichert werden.' : 'Provider konnte nicht angelegt werden.'
   } finally {
     saving.value = false
   }
@@ -444,9 +418,6 @@ async function removeProvider(id: string) {
             <p v-else-if="!showModelSelect" class="mt-1 text-[11px] font-normal text-[#9aa096]">Basis-URL und Schlüssel eintragen, dann Modelle laden.</p>
           </label>
 
-          <label class="text-xs font-semibold text-[#5c655f] sm:col-span-2">Priorität (kleinere Zahl gewinnt, je Aufgabenart nur einmal aktiv)
-            <input v-model.number="newProvider.priority" type="number" step="1" required class="mt-1 w-full rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-sm font-normal" />
-          </label>
           <label class="flex items-center gap-2 text-xs font-semibold text-[#5c655f] sm:col-span-2">
             <input v-model="newProvider.isActive" type="checkbox" class="accent-forest" /> Aktiv
           </label>
@@ -469,7 +440,6 @@ async function removeProvider(id: string) {
               <th class="pb-2 pr-4 font-semibold">Protokoll</th>
               <th class="pb-2 pr-4 font-semibold">Modell</th>
               <th class="pb-2 pr-4 font-semibold">Aufgabe</th>
-              <th class="pb-2 pr-4 font-semibold">Priorität</th>
               <th class="pb-2 pr-4 font-semibold">Schlüssel</th>
               <th class="pb-2 pr-4 font-semibold">Aktiv</th>
               <th class="pb-2 font-semibold" />
@@ -481,7 +451,6 @@ async function removeProvider(id: string) {
               <td class="py-2 pr-4">{{ provider.protocol }}</td>
               <td class="py-2 pr-4">{{ provider.model }}</td>
               <td class="py-2 pr-4">{{ provider.taskKind }}</td>
-              <td class="py-2 pr-4">{{ provider.priority }}</td>
               <td class="py-2 pr-4">{{ provider.hasSecret ? 'hinterlegt' : 'fehlt' }}</td>
               <td class="py-2 pr-4">
                 <span :class="provider.isActive ? 'font-semibold text-forest' : 'text-[#9aa096]'">{{ provider.isActive ? 'Aktiv' : 'Inaktiv' }}</span>
@@ -510,31 +479,28 @@ async function removeProvider(id: string) {
       </section>
 
       <section class="card p-6">
-        <h2 class="mb-1 font-display text-base font-bold">Gleichzeitige Modelle</h2>
+        <h2 class="mb-1 font-display text-base font-bold">Aufgaben-Zuordnung</h2>
         <p class="mb-4 text-xs text-[#727a75]">
-          Wie viele der oben aktiven Textgenerierungs-Provider gleichzeitig einen Vorschlag liefern. Es zählen die aktiven Provider mit der höchsten Priorität (kleinste Zahl); überzählige aktive Provider bleiben als Ersatz vorbereitet, ohne mitzugenerieren.
+          Welche der oben konfigurierten Provider gerade für ihre Aufgabe genutzt werden. Für Textgenerierung bestimmt die Anzahl aktivierter Provider zugleich, wie viele Textvorschläge gleichzeitig entstehen.
         </p>
-        <div v-if="ensembleSizeLoading" class="p-4 text-center text-xs text-[#7b827d]">Wird geladen …</div>
-        <div v-else class="flex items-center gap-3">
-          <input
-            v-model.number="ensembleSize"
-            type="number"
-            min="1"
-            max="5"
-            step="1"
-            class="focus-ring w-24 rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-xs font-normal"
-          />
-          <button
-            type="button"
-            class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-[11px] font-semibold disabled:opacity-60"
-            :disabled="ensembleSizeSaving || ensembleSize === null"
-            @click="saveEnsembleSize"
-          >
-            {{ ensembleSizeSaving ? 'Speichert …' : 'Speichern' }}
-          </button>
-          <span v-if="ensembleSizeUpdatedAt" class="text-[11px] text-[#7b827d]">Aktualisiert am {{ new Date(ensembleSizeUpdatedAt).toLocaleString('de-DE') }}</span>
+        <div v-for="option in TASK_KIND_OPTIONS" :key="option.value" class="mb-5 last:mb-0">
+          <h3 class="mb-2 text-xs font-bold text-[#3c4238]">{{ option.label }}</h3>
+          <p v-if="!providersByTaskKind.get(option.value)?.length" class="text-xs text-[#9aa096]">Noch kein Provider für diese Aufgabe konfiguriert.</p>
+          <ul v-else class="space-y-1.5">
+            <li v-for="provider in providersByTaskKind.get(option.value)" :key="provider.id" class="flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                class="accent-forest"
+                :checked="provider.isActive"
+                :disabled="taskAssignmentSaving[provider.id]"
+                @change="toggleProviderActive(provider)"
+              />
+              <span :class="provider.isActive ? 'font-semibold text-forest' : 'text-[#5c655f]'">{{ provider.label }}</span>
+              <span class="text-[#9aa096]">({{ provider.model }})</span>
+            </li>
+          </ul>
         </div>
-        <p v-if="ensembleSizeError" class="mt-2 text-[11px] font-normal text-amber-800">{{ ensembleSizeError }}</p>
+        <p v-if="taskAssignmentError" class="mt-2 text-[11px] font-normal text-amber-800">{{ taskAssignmentError }}</p>
       </section>
 
       <section class="card overflow-x-auto p-6">

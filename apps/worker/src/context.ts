@@ -8,6 +8,7 @@ import type { BrandAnalysisJobRow, BrandWebsiteAnalysisRepository, VisionProvide
 import { WorkflowExecutionError, type WorkflowExecutionRepository, type WorkflowRunAcquireResult } from './workflows.js'
 import type { CandidateRow, ProviderRow, SessionRow, TextGenerationRepository } from './textGeneration.js'
 import type { GenerationRecoveryRepository, RecoverableSessionRow, StalledCandidateRow } from './generationRecovery.js'
+import type { VisionComparisonProviderRow, VisionProviderComparisonRepository } from './visionProviderComparison.js'
 
 // style_profile_snapshot stays unvalidated here: a pre-migration snapshot in the old dial shape
 // must not fail loadSession() before acquirePendingCandidate() runs, or a stuck 'pending'
@@ -193,12 +194,15 @@ export function createBrandWebsiteAnalysisRepository(config: WorkerEnvironment):
         .update({ status: 'failed', error_reason: errorReason }).eq('id', jobId).eq('revision', expectedRevision)
       if (error) throw error
     },
-    // Top-1 nach Prioritaet, kein Ensemble (anders als Textgenerierung): eine einzelne Analyse
-    // braucht keine mehreren gleichzeitigen Vorschlaege.
+    // Top-1, kein Ensemble (anders als Textgenerierung): eine einzelne Analyse braucht keine
+    // mehreren gleichzeitigen Vorschlaege. Seit Paket 050 gibt es dafuer kein Rangfolge-Kriterium
+    // mehr -- order('created_at') ist ein reiner, willkuerlicher Tiebreak, kein fachliches
+    // Auswahlkriterium (das echte Vergleichen mehrerer aktiver Vision-Provider passiert stattdessen
+    // ueber das separate Admin-Werkzeug, siehe visionProviderComparison.ts).
     async resolveVisionProvider() {
       const { data, error } = await client.from('llm_provider_configurations')
         .select('id, protocol, base_url, model, llm_provider_secrets!inner(api_key_ciphertext, key_version)')
-        .eq('task_kind', 'vision_analysis').eq('is_active', true).order('priority').limit(1)
+        .eq('task_kind', 'vision_analysis').eq('is_active', true).order('created_at').limit(1)
       if (error) throw error
       if (data.length === 0) return null
       const row = z.object({
@@ -221,12 +225,12 @@ export function createBrandWebsiteAnalysisRepository(config: WorkerEnvironment):
   }
 }
 
-/** Same priority-ordered top-1 selection create_text_generation_session's caller normally does for a
- * fresh request (apps/api/src/routes/shared.ts, resolveTextGenerationProviderConfigurationIds) --
- * recovery deliberately ignores the ensemble-size setting, see createRecoveryAttempt above. */
+/** Picks a single active text_generation provider for recovery, deliberately ignoring the rest of
+ * the ensemble (see createRecoveryAttempt above) -- order('created_at') is a pure, arbitrary
+ * tiebreak since Paket 050 removed priority as a ranking criterion. */
 async function resolveDefaultTextProviderId(client: SupabaseClient): Promise<string | null> {
   const { data, error } = await client.from('llm_provider_configurations').select('id')
-    .eq('task_kind', 'text_generation').eq('is_active', true).order('priority').limit(1)
+    .eq('task_kind', 'text_generation').eq('is_active', true).order('created_at').limit(1)
   if (error) throw error
   return data.length === 0 ? null : UuidSchema.parse(data[0]!.id)
 }
@@ -248,10 +252,10 @@ export function createGenerationRecoveryRepository(config: WorkerEnvironment): G
       return data === null ? null : RecoverableSessionRowSchema.parse(data)
     },
     async createRecoveryAttempt(session, stale, candidateInputHash, correlationId, idempotencyKey) {
-      // Recovery ersetzt genau EINEN festgefahrenen Kandidaten -- immer mit dem einzelnen,
-      // regulaer aktiven Top-1-Provider, unabhaengig von der Ensemble-Groesse (platform_settings
-      // text_generation_ensemble_size). Ein haengender Kandidat soll nicht ploetzlich N neue
-      // erzeugen; das waere weder das Ziel noch mit dem 8er-Rundenlimit vertraeglich.
+      // Recovery ersetzt genau EINEN festgefahrenen Kandidaten -- immer mit einem einzelnen,
+      // regulaer aktiven Provider, unabhaengig davon, wie viele aktive text_generation-Provider es
+      // insgesamt gibt. Ein haengender Kandidat soll nicht ploetzlich N neue erzeugen; das waere
+      // weder das Ziel noch mit dem 8er-Rundenlimit vertraeglich.
       const providerId = await resolveDefaultTextProviderId(client)
       if (!providerId) return 'no_provider'
       const { error } = await client.rpc('create_text_generation_session', {
@@ -278,6 +282,56 @@ export function createGenerationRecoveryRepository(config: WorkerEnvironment): G
       const { error } = await client.rpc('finalize_stalled_generation_recovery', {
         p_candidate_id: stale.id, p_session_id: stale.composition_session_id, p_lease_token: stale.generation_lease_token, p_failure_code: failureCode,
       })
+      if (error) throw error
+    },
+  }
+}
+
+const VisionComparisonProviderRowSchema: z.ZodType<VisionComparisonProviderRow> = z.object({
+  id: UuidSchema, label: z.string().trim().min(1), protocol: z.string(), base_url: z.url(), model: z.string().trim().min(1),
+  api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1),
+})
+
+/** Worker-only data access for the platform-admin vision-provider comparison tool (Paket 050). */
+export function createVisionProviderComparisonRepository(config: WorkerEnvironment): VisionProviderComparisonRepository {
+  const client = createClient(config.SUPABASE_URL, config.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  return {
+    async claimPendingRun() {
+      const { data, error } = await client.rpc('claim_pending_vision_provider_comparison_run')
+      if (error) throw error
+      const row = z.object({ id: UuidSchema, website_url: z.url() }).array().parse(data)[0]
+      return row ? { id: row.id, websiteUrl: row.website_url } : null
+    },
+    async listActiveVisionProviders() {
+      const { data, error } = await client.from('llm_provider_configurations')
+        .select('id, label, protocol, base_url, model, llm_provider_secrets!inner(api_key_ciphertext, key_version)')
+        .eq('task_kind', 'vision_analysis').eq('is_active', true)
+      if (error) throw error
+      return data.map((row) => {
+        const secret = row.llm_provider_secrets as { api_key_ciphertext: string; key_version: string } | { api_key_ciphertext: string; key_version: string }[]
+        const value = Array.isArray(secret) ? secret[0] : secret
+        if (!value) throw new Error('vision provider secret missing')
+        return VisionComparisonProviderRowSchema.parse({ ...row, api_key_ciphertext: value.api_key_ciphertext, key_version: value.key_version })
+      })
+    },
+    // Kein organizationId als Namensraum: dieses Werkzeug ist rein plattformbezogen, anders als
+    // BrandWebsiteAnalysisRepository.uploadStagedLogo oben.
+    async uploadStagedLogo(runId, logo) {
+      const objectPath = `platform-admin/vision-comparisons/${runId}/${hashLogoBuffer(logo.buffer)}.${logo.extension}`
+      const { error } = await client.storage.from('brand-assets').upload(objectPath, logo.buffer, { contentType: logo.contentType, upsert: true })
+      if (error) throw error
+      return objectPath
+    },
+    async markSucceeded(runId, details) {
+      const { error } = await client.from('vision_provider_comparison_runs').update({
+        status: 'succeeded', detected_font_family: details.detectedFontFamily,
+        logo_object_path: details.logoObjectPath, logo_mime_type: details.logoMimeType,
+        results: details.results, error_reason: null,
+      }).eq('id', runId)
+      if (error) throw error
+    },
+    async markFailed(runId, errorReason) {
+      const { error } = await client.from('vision_provider_comparison_runs').update({ status: 'failed', error_reason: errorReason }).eq('id', runId)
       if (error) throw error
     },
   }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Bot, CreditCard, Cpu, LayoutDashboard, LogOut, Menu, Settings, ShieldCheck, X } from '@lucide/vue'
+import { Bot, CreditCard, Cpu, Images, LayoutDashboard, LogOut, Menu, Settings, ShieldCheck, X } from '@lucide/vue'
 
 const mobileOpen = ref(false)
 const route = useRoute()
@@ -20,6 +20,7 @@ const navigation: { label: string; to: string; icon: typeof LayoutDashboard }[] 
   { label: 'Tarife', to: '/plattform-admin/tarife', icon: CreditCard },
   { label: 'Einstellungen', to: '/plattform-admin/einstellungen', icon: Settings },
   { label: 'LLM-Provider', to: '/plattform-admin/llm', icon: Cpu },
+  { label: 'Vision-Vergleich', to: '/plattform-admin/vision-vergleich', icon: Images },
   { label: 'Personas', to: '/plattform-admin/personas', icon: Bot },
 ]
 </script>

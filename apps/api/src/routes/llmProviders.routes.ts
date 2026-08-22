@@ -33,8 +33,8 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
     const service = supabaseClients.forService()
     const configs = await service
       .from('llm_provider_configurations')
-      .select('id, label, protocol, base_url, model, purpose, task_kind, structured_output_required, priority, is_active')
-      .order('priority')
+      .select('id, label, protocol, base_url, model, purpose, task_kind, structured_output_required, is_active')
+      .order('created_at')
     if (configs.error) throw configs.error
     const secrets = await service.from('llm_provider_secrets').select('llm_provider_configuration_id')
     if (secrets.error) throw secrets.error
@@ -65,18 +65,11 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
         purpose: input.purpose,
         task_kind: input.taskKind,
         structured_output_required: input.structuredOutputRequired,
-        priority: input.priority,
         is_active: input.isActive,
       })
-      .select('id, label, protocol, base_url, model, purpose, task_kind, structured_output_required, priority, is_active')
+      .select('id, label, protocol, base_url, model, purpose, task_kind, structured_output_required, is_active')
       .single()
-    // Eine aktive Aufgabenart vergibt jede Prioritaet nur einmal (2026081305): zwei gleichrangige
-    // aktive Provider liessen offen, welcher der aktive ist. Der Konflikt wird hier sichtbar --
-    // in der Verwaltung, wo die Prioritaet im selben Formular steht -- statt spaeter im Lesepfad.
-    if (insert.error) {
-      if (insert.error.code === '23505') return reply.code(409).send({ error: 'priority_already_taken', correlationId: request.id })
-      throw insert.error
-    }
+    if (insert.error) throw insert.error
     // seal() kann ebenfalls werfen (siehe secretBox.ts) -- der try/catch faengt das ab, damit auch
     // dieser Fehlerpfad die Konfiguration zurueckrollt, nicht nur secretInsert.error.
     let secretInsert
@@ -125,20 +118,14 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
     if (input.purpose !== undefined) payload.purpose = input.purpose
     if (input.taskKind !== undefined) payload.task_kind = input.taskKind
     if (input.structuredOutputRequired !== undefined) payload.structured_output_required = input.structuredOutputRequired
-    if (input.priority !== undefined) payload.priority = input.priority
     if (input.isActive !== undefined) payload.is_active = input.isActive
     const update = await service
       .from('llm_provider_configurations')
       .update(payload)
       .eq('id', params.id)
-      .select('id, label, protocol, base_url, model, purpose, task_kind, structured_output_required, priority, is_active')
+      .select('id, label, protocol, base_url, model, purpose, task_kind, structured_output_required, is_active')
       .single()
-    // Trifft nicht nur eine geaenderte Prioritaet: auch das Aktivschalten einer vorbereiteten
-    // Ersatzzeile laeuft in den Index, wenn ihre Prioritaet bereits vergeben ist.
-    if (update.error) {
-      if (update.error.code === '23505') return reply.code(409).send({ error: 'priority_already_taken', correlationId: request.id })
-      throw update.error
-    }
+    if (update.error) throw update.error
     if (input.apiKey !== undefined) {
       const sealed = createSecretBoxFromEnvironment(environment).seal(input.apiKey, params.id)
       const upsert = await service.from('llm_provider_secrets').upsert({
@@ -239,14 +226,13 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
   app.get('/v1/text-generation-capabilities', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const service = supabaseClients.forService()
-    // Dieselbe Auswahl wie loadActiveTextProvider() im Worker (apps/worker/src/context.ts): eine
-    // aktive Aufgabenart vergibt jede Prioritaet nur einmal (2026081305), die vorderste Zeile ist
-    // also eindeutig der Provider, der eine echte Generierung tatsaechlich bedient. Der !inner-Join
-    // gehoert dazu: eine aktive Konfiguration ohne hinterlegtes Geheimnis ist ein modellierter
-    // Zustand (GET /v1/llm-providers gibt dafuer hasSecret: false zurueck), und der Worker
-    // ueberspringt sie. Ohne den Join meldete diese Route das Protokoll einer Zeile, die nie
-    // generiert (Review dieses PRs).
-    const result = await service.from('llm_provider_configurations').select('protocol, llm_provider_secrets!inner(key_version)').eq('task_kind', 'text_generation').eq('is_active', true).order('priority').limit(1)
+    // Repraesentativ, kein bestimmter Provider: seit Paket 050 zaehlen alle aktiven
+    // text_generation-Provider gleichzeitig (Ensemble), diese Route beantwortet aber nur die eine
+    // Frage "ist der Regler ueberhaupt wirksam" -- ein beliebiger aktiver Provider mit hinterlegtem
+    // Geheimnis reicht dafuer aus. Der !inner-Join gehoert dazu: eine aktive Konfiguration ohne
+    // hinterlegtes Geheimnis ist ein modellierter Zustand (GET /v1/llm-providers gibt dafuer
+    // hasSecret: false zurueck), und der Worker ueberspringt sie.
+    const result = await service.from('llm_provider_configurations').select('protocol, llm_provider_secrets!inner(key_version)').eq('task_kind', 'text_generation').eq('is_active', true).order('created_at').limit(1)
     if (result.error) throw result.error
     // Ist kein Provider aktiv, ist die Frage ohnehin hinfaellig -- dann laesst sich kein Beitrag
     // erzeugen.
