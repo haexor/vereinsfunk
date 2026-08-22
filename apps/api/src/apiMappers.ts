@@ -48,6 +48,7 @@ export function mapBrandRow(row: Record<string, unknown>) {
     backgroundColor: row.background_color, textColor: row.text_color, onPrimaryColor: row.on_primary_color,
     displayFontKey: row.display_font_key, bodyFontKey: row.body_font_key,
     displayFontAssetId: row.display_font_asset_id, bodyFontAssetId: row.body_font_asset_id,
+    logoAssetId: row.logo_asset_id,
     allowDepartmentOverrides: row.allow_department_overrides, lockedFields: row.locked_fields,
     logoPath: row.logo_path, logoDarkPath: row.logo_dark_path,
   }

@@ -46,6 +46,7 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
                     body_font_key: 'dm_sans',
                     display_font_asset_id: null,
                     body_font_asset_id: null,
+                    logo_asset_id: null,
                     allow_department_overrides: true,
                     locked_fields: [],
                     logo_path: null,
@@ -68,6 +69,72 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
     })
     expect(response.statusCode).toBe(200)
     expect(response.json()).toMatchObject({ backgroundColor: '#f6f4ec', textColor: '#122820', onPrimaryColor: '#ffffff' })
+  })
+
+  it('updates the organization brand profile with a logoAssetId that resolves to a selectable, ready logo asset', async () => {
+    const LOGO_ASSET_ID = '10000000-9000-4000-8000-000000000002'
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'brand_assets') {
+              return chain({ data: { id: LOGO_ASSET_ID, organization_id: ORGANIZATION_ID, department_id: null, team_id: null, kind: 'logo_mark', status: 'ready' }, error: null })
+            }
+            if (table === 'organization_brand_profiles') {
+              return {
+                update: () =>
+                  chain({
+                    data: {
+                      organization_id: ORGANIZATION_ID,
+                      primary_color: '#163a2c', accent_color: '#caff4a', background_color: '#f6f4ec',
+                      text_color: '#122820', on_primary_color: '#ffffff', display_font_key: 'manrope', body_font_key: 'dm_sans',
+                      display_font_asset_id: null, body_font_asset_id: null, logo_asset_id: LOGO_ASSET_ID,
+                      allow_department_overrides: true, locked_fields: [], logo_path: null, logo_dark_path: null,
+                    },
+                    error: null,
+                  }),
+              }
+            }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/v1/organizations/${ORGANIZATION_ID}/brand`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { ...BRAND_ORGANIZATION_UPDATE, logoAssetId: LOGO_ASSET_ID },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ logoAssetId: LOGO_ASSET_ID })
+  })
+
+  it('rejects an organization logoAssetId whose kind is not a logo-ish kind', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'brand_assets') {
+              return chain({ data: { id: '10000000-9000-4000-8000-000000000003', organization_id: ORGANIZATION_ID, department_id: null, team_id: null, kind: 'font', status: 'ready' }, error: null })
+            }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/v1/organizations/${ORGANIZATION_ID}/brand`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { ...BRAND_ORGANIZATION_UPDATE, logoAssetId: '10000000-9000-4000-8000-000000000003' },
+    })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ error: 'invalid_asset_reference' })
   })
 
   it('rejects a font/logo asset reference that does not resolve to a selectable, ready asset', async () => {
