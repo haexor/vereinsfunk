@@ -72,7 +72,11 @@ export function scoreLogoCandidates(): LogoCandidate[] {
     if (!url) continue
 
     const ownText = `${img.className} ${img.id} ${img.alt}`
-    const combinedText = `${ownText} ${img.src}`
+    const hrefRaw = img.closest('a')?.getAttribute('href')
+    // hrefRaw fliesst mit ein, weil ein generisch benanntes Icon (kein "sponsor"/"social" in
+    // class/id/alt/src) oft erst am Linkziel als Social-Icon erkennbar ist, z.B. ein <img
+    // class="icon"> innerhalb eines <a href="https://instagram.com/verein">.
+    const combinedText = `${ownText} ${img.src} ${hrefRaw ?? ''}`
 
     // Sponsor-/Social-Signale schliessen den Kandidaten komplett aus statt ihn nur abzuwerten --
     // ein solches Bild als Vereinslogo herunterzuladen waere schlechter als gar keins, und eine
@@ -84,7 +88,6 @@ export function scoreLogoCandidates(): LogoCandidate[] {
     if (LOGO_PATTERN.test(ownText)) score += 3
     if (img.parentElement?.closest('[class*="logo" i], [id*="logo" i]')) score += 2
     if (img.closest('header, nav')) score += 2
-    const hrefRaw = img.closest('a')?.getAttribute('href')
     const hrefUrl = hrefRaw ? normalize(hrefRaw) : null
     if (hrefUrl) {
       const parsed = new URL(hrefUrl)

@@ -133,4 +133,19 @@ describe('scoreLogoCandidates', () => {
     `)
     expect(candidates.find((candidate) => candidate.url.endsWith('/facebook.png'))).toBeUndefined()
   })
+
+  it('schliesst ein generisch benanntes Icon aus, das zu einem Social-Profil verlinkt', async () => {
+    const candidates = await scoreFixture(`
+      <html><body>
+        <header>
+          <img class="site-logo" src="/logo.png" alt="Vereinslogo">
+          <a href="https://www.instagram.com/verein"><img class="icon" src="/icon-1.png" alt="Icon"></a>
+        </header>
+      </body></html>
+    `)
+    const logo = candidates.find((candidate) => candidate.url.endsWith('/logo.png'))
+    const icon = candidates.find((candidate) => candidate.url.endsWith('/icon-1.png'))
+    expect(candidates[0]?.url).toBe(logo?.url)
+    expect(icon).toBeUndefined()
+  })
 })
