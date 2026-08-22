@@ -523,7 +523,7 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
                 <img v-if="logoPreviewUrlLight || logoUrl" :src="logoPreviewUrlLight || logoUrl" alt="Logo hell" class="mx-auto h-16 w-16 object-contain" />
                 <span v-else class="grid h-16 w-16 place-items-center rounded-xl bg-[#eef1ea] font-display text-lg font-extrabold text-[#5b625d] mx-auto">?</span>
                 <p class="mt-2 text-[10px] text-[#7b827d]">Auf hellem Grund</p>
-                <label class="focus-ring mt-2 flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-[#dfe0d9] px-2 py-1.5 text-[11px] font-semibold">
+                <label class="focus-ring relative mt-2 flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-[#dfe0d9] px-2 py-1.5 text-[11px] font-semibold">
                   <input type="file" accept="image/png,image/jpeg,image/svg+xml" class="sr-only" @change="onLogoSelected($event, 'light')" />
                   <Upload :size="12" /> Ersetzen
                 </label>
@@ -534,7 +534,7 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
                 <img v-if="logoPreviewUrlDark || logoDarkUrl" :src="logoPreviewUrlDark || logoDarkUrl" alt="Logo dunkel" class="mx-auto h-16 w-16 object-contain" />
                 <span v-else class="grid h-16 w-16 place-items-center rounded-xl bg-white/10 font-display text-lg font-extrabold text-white mx-auto">?</span>
                 <p class="mt-2 text-[10px] text-white/60">Auf dunklem Grund</p>
-                <label class="focus-ring mt-2 flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-white/30 px-2 py-1.5 text-[11px] font-semibold text-white">
+                <label class="focus-ring relative mt-2 flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-white/30 px-2 py-1.5 text-[11px] font-semibold text-white">
                   <input type="file" accept="image/png,image/jpeg,image/svg+xml" class="sr-only" @change="onLogoSelected($event, 'dark')" />
                   <Upload :size="12" /> Ersetzen
                 </label>
@@ -625,7 +625,7 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
             <template v-if="activeLevel === 'organization'">
               <p class="mt-2 text-xs text-[#7a817c]">Kuratiertes Paar wählen oder eine eigene Schrift hochladen.</p>
               <div class="mt-4 grid gap-2 sm:grid-cols-2">
-                <label v-for="pairing in curatedFontPairings" :key="pairing.key" class="focus-ring cursor-pointer rounded-xl border p-3" :class="org.displayFontKey === pairing.displayFontKey ? 'border-forest bg-[#f2f6e9]' : 'border-[#e1e2db]'">
+                <label v-for="pairing in curatedFontPairings" :key="pairing.key" class="focus-ring relative cursor-pointer rounded-xl border p-3" :class="org.displayFontKey === pairing.displayFontKey ? 'border-forest bg-[#f2f6e9]' : 'border-[#e1e2db]'">
                   <input v-model="org.displayFontKey" type="radio" :value="pairing.displayFontKey" class="sr-only" @change="org.bodyFontKey = pairing.bodyFontKey" />
                   <strong class="block text-xs">{{ pairing.label }}</strong>
                 </label>
@@ -637,7 +637,7 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
 
             <div class="mt-6 border-t border-[#eceee7] pt-4">
               <p class="text-xs font-semibold">Eigene Schrift</p>
-              <label class="focus-ring mt-2 flex w-fit cursor-pointer items-center gap-2 rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-xs font-semibold">
+              <label class="focus-ring relative mt-2 flex w-fit cursor-pointer items-center gap-2 rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-xs font-semibold">
                 <input type="file" accept=".ttf,.otf,.woff2,font/ttf,font/otf,font/woff2" class="sr-only" :disabled="uploadingAsset" @change="uploadAsset($event, 'font')" />
                 <LoaderCircle v-if="uploadingAsset" :size="14" class="animate-spin" /><Upload v-else :size="14" /> Schriftdatei hochladen
               </label>
@@ -674,7 +674,7 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
             <h2 class="font-display text-base font-bold">Weitere Logovarianten</h2>
             <p class="mt-2 text-xs text-[#7a817c]">Symbol, Wortmarke oder Wasserzeichen — für Remotion und quadratische Formate.</p>
             <div class="mt-4 flex flex-wrap gap-2">
-              <label v-for="kind in ['logo_mark', 'wordmark', 'watermark']" :key="kind" class="focus-ring flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-[11px] font-semibold">
+              <label v-for="kind in ['logo_mark', 'wordmark', 'watermark']" :key="kind" class="focus-ring relative flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-[11px] font-semibold">
                 <input type="file" accept="image/png,image/jpeg,image/svg+xml" class="sr-only" :disabled="uploadingAsset" @change="uploadAsset($event, kind)" />
                 <Upload :size="12" /> {{ kind === 'logo_mark' ? 'Symbol' : kind === 'wordmark' ? 'Wortmarke' : 'Wasserzeichen' }}
               </label>
