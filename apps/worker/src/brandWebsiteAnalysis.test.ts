@@ -91,19 +91,19 @@ describe('BrandWebsiteAnalysisExecutor', () => {
     const generator = { analyzeBrand: vi.fn().mockResolvedValue(analysis) }
     // A real 40x40 PNG (above MIN_DIMENSION_PX) so processBrandLogoUpload's magic-byte + sharp decode succeed for real.
     const pngBytes = await sharp({ create: { width: 40, height: 40, channels: 4, background: { r: 22, g: 58, b: 44, alpha: 1 } } }).png().toBuffer()
-    const logoFetcher = vi.fn().mockResolvedValue(new Response(pngBytes, { status: 200, headers: { 'content-type': 'image/png' } }))
+    const logoFetcher = vi.fn().mockResolvedValue(pngBytes)
     await new BrandWebsiteAnalysisExecutor(config, repo, withLogo, generator, logoFetcher).execute(payload)
     expect(repo.uploadStagedLogo).toHaveBeenCalledTimes(1)
     expect(repo.markSucceeded).toHaveBeenCalledWith(payload.entityId, 1, expect.objectContaining({ logoObjectPath: 'organizations/x/brand/analysis-staging/abc.png', logoMimeType: 'image/png' }))
   })
 
-  it('bounds every logo download with a deadline -- the url comes from a foreign page', async () => {
+  it('passes each candidate url to the download unchanged', async () => {
     const repo = repository()
     const withLogo = renderer({ ...renderResult, logoCandidateUrls: ['https://verein.example.org/logo.png'] })
     const generator = { analyzeBrand: vi.fn().mockResolvedValue(analysis) }
-    const logoFetcher = vi.fn().mockResolvedValue(new Response('not an image', { status: 200 }))
+    const logoFetcher = vi.fn().mockResolvedValue(Buffer.from('not an image'))
     await new BrandWebsiteAnalysisExecutor(config, repo, withLogo, generator, logoFetcher).execute(payload)
-    expect(logoFetcher).toHaveBeenCalledWith('https://verein.example.org/logo.png', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(logoFetcher).toHaveBeenCalledWith('https://verein.example.org/logo.png')
   })
 
   it('moves on to the next candidate instead of giving up on the first unusable one', async () => {
@@ -113,7 +113,7 @@ describe('BrandWebsiteAnalysisExecutor', () => {
     const pngBytes = await sharp({ create: { width: 40, height: 40, channels: 4, background: { r: 22, g: 58, b: 44, alpha: 1 } } }).png().toBuffer()
     const logoFetcher = vi.fn()
       .mockRejectedValueOnce(new Error('socket hang up'))
-      .mockResolvedValueOnce(new Response(pngBytes, { status: 200, headers: { 'content-type': 'image/png' } }))
+      .mockResolvedValueOnce(pngBytes)
     await new BrandWebsiteAnalysisExecutor(config, repo, withLogos, generator, logoFetcher).execute(payload)
     expect(logoFetcher).toHaveBeenCalledTimes(2)
     expect(repo.markSucceeded).toHaveBeenCalledWith(payload.entityId, 1, expect.objectContaining({ logoObjectPath: 'organizations/x/brand/analysis-staging/abc.png' }))
@@ -123,7 +123,7 @@ describe('BrandWebsiteAnalysisExecutor', () => {
     const repo = repository()
     const withLogo = renderer({ ...renderResult, logoCandidateUrls: ['https://verein.example.org/missing-logo.png'] })
     const generator = { analyzeBrand: vi.fn().mockResolvedValue(analysis) }
-    const logoFetcher = vi.fn().mockResolvedValue(new Response('not found', { status: 404 }))
+    const logoFetcher = vi.fn().mockRejectedValue(new OutboundFetchError('request_failed', 'unexpected status 404'))
     await new BrandWebsiteAnalysisExecutor(config, repo, withLogo, generator, logoFetcher).execute(payload)
     expect(repo.uploadStagedLogo).not.toHaveBeenCalled()
     expect(repo.markSucceeded).toHaveBeenCalledWith(payload.entityId, 1, expect.objectContaining({ logoObjectPath: null }))

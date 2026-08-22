@@ -1,6 +1,6 @@
 import type { ProcessedLogo } from '@vereinsfunk/brand-assets'
 import { VisionAnalysisError } from '@vereinsfunk/content-engine'
-import { createGuardedFetch, OutboundFetchError } from '@vereinsfunk/outbound-fetch'
+import { fetchPublicBinary, OutboundFetchError } from '@vereinsfunk/outbound-fetch'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
 import { downloadFirstValidLogo, FONT_PAIRING_OPTIONS, VISION_GENERATORS, type LogoFetcher } from './brandWebsiteAnalysis.js'
 import { openProviderSecret } from './providerSecrets.js'
@@ -43,7 +43,7 @@ export class VisionProviderComparisonExecutor {
     private readonly config: WorkerEnvironment,
     private readonly repository: VisionProviderComparisonRepository,
     private readonly renderer: WebsiteRenderer,
-    private readonly logoFetcher: LogoFetcher = createGuardedFetch(),
+    private readonly logoFetcher: LogoFetcher = fetchPublicBinary,
   ) {}
 
   /** Claims and runs at most one pending comparison. Returns false when the queue was empty. */

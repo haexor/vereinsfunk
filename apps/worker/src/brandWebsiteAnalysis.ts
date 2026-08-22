@@ -1,7 +1,7 @@
 import { curatedFontPairings } from '@vereinsfunk/domain'
 import { processBrandLogoUpload, type ProcessedLogo } from '@vereinsfunk/brand-assets'
 import { AnthropicVisionAnalysisGenerator, OpenAiCompatibleVisionAnalysisGenerator, VisionAnalysisError, type VisionAnalysisGenerator } from '@vereinsfunk/content-engine'
-import { createGuardedFetch, OutboundFetchError } from '@vereinsfunk/outbound-fetch'
+import { fetchPublicBinary, OutboundFetchError } from '@vereinsfunk/outbound-fetch'
 import type { WorkflowPayload } from '@vereinsfunk/contracts'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
 import { openProviderSecret } from './providerSecrets.js'
@@ -41,13 +41,10 @@ export const VISION_GENERATORS: Record<string, VisionAnalysisGenerator | undefin
 
 export const FONT_PAIRING_OPTIONS = curatedFontPairings.map((pairing) => ({ key: pairing.key, label: pairing.label, styleDescription: pairing.styleDescription }))
 
-export type LogoFetcher = (input: string, init: RequestInit) => Promise<Response>
-
-// createGuardedFetch() bringt eine Groessengrenze mit, aber keine Zeitgrenze (anders als
-// fetchPublicUrl): ohne diese haelt eine Adresse, die die Verbindung offen laesst, den ganzen Job
-// bis zum 10-Minuten-Timeout des Hatchet-Schritts auf -- und die Adresse stammt aus dem HTML einer
-// fremden Seite, ist also nichts, worauf man sich verlassen kann.
-export const LOGO_DOWNLOAD_TIMEOUT_MS = 10_000
+// Exportiert aus demselben Grund wie VISION_GENERATORS. Die Zeit- und Groessengrenze steckt nicht
+// mehr hier, sondern in fetchPublicBinary -- die Adresse stammt aus dem HTML einer fremden Seite
+// und ist nichts, worauf man sich verlassen kann.
+export type LogoFetcher = (url: string) => Promise<Buffer>
 
 /**
  * Versucht der Reihe nach jeden Kandidaten und nimmt den ersten, der sich als Logo verarbeiten
@@ -58,10 +55,7 @@ export const LOGO_DOWNLOAD_TIMEOUT_MS = 10_000
 export async function downloadFirstValidLogo(candidateUrls: readonly string[], fetcher: LogoFetcher): Promise<ProcessedLogo | null> {
   for (const url of candidateUrls) {
     try {
-      const response = await fetcher(url, { method: 'GET', signal: AbortSignal.timeout(LOGO_DOWNLOAD_TIMEOUT_MS) })
-      if (!response.ok) continue
-      const buffer = Buffer.from(await response.arrayBuffer())
-      return await processBrandLogoUpload(buffer)
+      return await processBrandLogoUpload(await fetcher(url))
     } catch {
       continue // blockierte/zu grosse/abgelaufene Antwort, kein Bildformat, zu kleines Bild, ...
     }
@@ -76,8 +70,13 @@ export class BrandWebsiteAnalysisExecutor {
     private readonly repository: BrandWebsiteAnalysisRepository,
     private readonly renderer: WebsiteRenderer,
     private readonly visionGenerator?: VisionAnalysisGenerator,
-    /** Testklammer fuer den Logo-Download; sonst dieselbe SSRF-geschuetzte Fetch-Funktion wie die Content-Engine-Adapter. */
-    private readonly logoFetcher: LogoFetcher = createGuardedFetch(),
+    /**
+     * Testklammer fuer den Logo-Download; sonst fetchPublicBinary -- SSRF-geprueft je Hop, mit
+     * Zeit- und Groessengrenze, und Weiterleitungen folgend. Letzteres ist hier keine Bequemlichkeit:
+     * die Bild-Adressen stammen aus dem HTML einer fremden Seite, und Vereinsseiten liefern sie
+     * regelmaessig ohne `www` aus, obwohl der Server von dort dauerhaft auf `www` weiterleitet.
+     */
+    private readonly logoFetcher: LogoFetcher = fetchPublicBinary,
   ) {}
 
   async execute(payload: WorkflowPayload): Promise<void> {
