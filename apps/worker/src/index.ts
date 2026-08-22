@@ -2,11 +2,12 @@ import { parseWorkerEnvironment } from '@vereinsfunk/config'
 import { runPendingMigrations } from '@vereinsfunk/db-migrate'
 import { createLogger } from '@vereinsfunk/observability'
 import { WorkflowOutboxDispatcher } from '@vereinsfunk/orchestration'
-import { createBrandWebsiteAnalysisRepository, createGenerationRecoveryRepository, createTextGenerationRepository, createWorkflowExecutionRepository, createWorkflowOutboxRepository } from './context.js'
+import { createBrandWebsiteAnalysisRepository, createGenerationRecoveryRepository, createTextGenerationRepository, createVisionProviderComparisonRepository, createWorkflowExecutionRepository, createWorkflowOutboxRepository } from './context.js'
 import { createHatchetClient, HatchetOrchestrator } from './hatchet.js'
 import { concurrency, createHatchetWorker, WorkflowExecutionError, type ProductWorkflowExecutor } from './workflows.js'
 import { TextGenerationExecutor } from './textGeneration.js'
 import { BrandWebsiteAnalysisExecutor } from './brandWebsiteAnalysis.js'
+import { VisionProviderComparisonExecutor } from './visionProviderComparison.js'
 import { PlaywrightWebsiteRenderer } from './websiteRenderer.js'
 
 const logger = createLogger({ name: 'worker' })
@@ -66,6 +67,7 @@ async function main(): Promise<void> {
   const runs = createWorkflowExecutionRepository(config)
   const textGeneration = new TextGenerationExecutor(config, createTextGenerationRepository(config))
   const brandWebsiteAnalysis = new BrandWebsiteAnalysisExecutor(config, createBrandWebsiteAnalysisRepository(config), new PlaywrightWebsiteRenderer())
+  const visionProviderComparison = new VisionProviderComparisonExecutor(config, createVisionProviderComparisonRepository(config), new PlaywrightWebsiteRenderer())
   const executor: ProductWorkflowExecutor = {
     async execute(workflow, payload) {
       if (workflow === 'generate-text-post') return textGeneration.execute(payload)
@@ -73,7 +75,7 @@ async function main(): Promise<void> {
       throw new WorkflowExecutionError('product_executor_unavailable', false, `no product executor is configured for ${workflow}`)
     },
   }
-  const createdWorker = await createHatchetWorker(config, runs, executor, createGenerationRecoveryRepository(config))
+  const createdWorker = await createHatchetWorker(config, runs, executor, createGenerationRecoveryRepository(config), visionProviderComparison)
   worker = createdWorker
   if (stopping) return stopWorker()
 

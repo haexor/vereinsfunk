@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(60);
+select plan(58);
 
 set local role postgres;
 
@@ -267,29 +267,13 @@ select is(
   0, 'an organization id without any rows still gets department_count 0 instead of being dropped'
 );
 
--- Eine aktive Aufgabenart darf jede Prioritaet nur einmal vergeben, sonst waere "der aktive
--- Provider" undefiniert (2026081305). Die Zeile aus dem CRUD-Smoke oben belegt bereits
--- (text_generation, 100, aktiv) und dient hier als Gegenpart.
-select throws_ok(
-  $$insert into public.llm_provider_configurations (label, protocol, base_url, model, priority)
-    values ('PGTAP Duplicate Priority', 'openai', 'https://example.invalid', 'openai-test', 100)$$,
-  '23505', null, 'a second active text provider cannot take an already used priority'
-);
+-- Seit Paket 050 gibt es keine Prioritaet und damit auch keinen Gleichstand mehr zu verhindern:
+-- mehrere aktive Provider derselben Aufgabenart sind ausdruecklich erlaubt (siehe
+-- 2026082201_llm_provider_configuration_priority_removed.sql).
 select lives_ok(
-  $$insert into public.llm_provider_configurations (label, protocol, base_url, model, priority, is_active)
-    values ('PGTAP Standby', 'openai', 'https://example.invalid', 'openai-test', 100, false)$$,
-  'an inactive provider may keep a priority an active one already uses'
-);
--- Dass eine andere Aufgabenart dieselbe Prioritaet belegen darf, ist seit Paket 048 (vision_analysis
--- hat jetzt ebenfalls einen Adapter) tatsaechlich pruefbar -- siehe
--- llm_provider_vision_analysis_adapter.test.sql. Die uebrigen, weiterhin unimplementierten
--- Aufgabenarten (image_generation, video_generation) bleiben von der Aktivierung ausgeschlossen.
-
--- Der vorbereitete Ersatz aus dem Fall davor darf erst aktiv werden, wenn seine Prioritaet frei
--- ist -- genau der Moment, in dem die Verwaltung den Konflikt anzeigen soll.
-select throws_ok(
-  $$update public.llm_provider_configurations set is_active = true where label = 'PGTAP Standby'$$,
-  '23505', null, 'activating a standby onto an occupied priority is rejected'
+  $$insert into public.llm_provider_configurations (label, protocol, base_url, model, is_active)
+    values ('PGTAP Second Active Text Provider', 'openai', 'https://example.invalid', 'openai-test', true)$$,
+  'a second active text provider is allowed alongside the one from the CRUD smoke above'
 );
 
 -- 41-56: Plattform-Admin-Einladungsflow (2026081901_platform_admin_invitations.sql). operator

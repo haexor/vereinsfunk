@@ -641,7 +641,6 @@ describe('platform administration', () => {
       model: 'approved-text-model',
       purpose: 'default',
       task_kind: 'text_generation', structured_output_required: true,
-      priority: 100,
       is_active: true,
       system_prompt_override: null,
     }
@@ -733,7 +732,7 @@ describe('platform administration', () => {
       label: 'Claude via haex-claude-proxy', protocol: 'anthropic', base_url: 'https://claude-proxy.example/v1',
       model: 'claude-opus-4-8', purpose: 'default',
       task_kind: 'text_generation', structured_output_required: true,
-      priority: 100, is_active: true,
+      is_active: true,
     }
     const clients: SupabaseClientFactory = {
       forUser: () => ({}) as unknown as SupabaseClient,
@@ -754,56 +753,6 @@ describe('platform administration', () => {
     })
     expect(response.statusCode).toBe(201)
     expect(response.json()).toMatchObject({ protocol: 'anthropic', hasSecret: true })
-  })
-
-  // Eine aktive Aufgabenart vergibt jede Prioritaet nur einmal (2026081305). Der Unique-Index ist
-  // die Quelle der Wahrheit; die Route muss seinen Verstoss als verstaendlichen Konflikt
-  // weiterreichen, nicht als 500.
-  it('reports an already used priority as a conflict instead of a server error', async () => {
-    const clients: SupabaseClientFactory = {
-      forUser: () => ({}) as unknown as SupabaseClient,
-      forService: () => ({
-        from: (table: string) => {
-          if (table === 'llm_provider_configurations') {
-            return { insert: () => ({ select: () => ({ single: async () => ({ data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint' } }) }) }) }
-          }
-          // Ohne Konfigurationszeile darf kein Geheimnis entstehen und nichts zurueckgerollt werden.
-          throw new Error(`unexpected table in test fake: ${table}`)
-        },
-      }) as unknown as SupabaseClient,
-    }
-    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
-    const token = await signAccessToken(USER_ID)
-    const response = await app.inject({
-      method: 'POST', url: '/v1/llm-providers',
-      headers: { authorization: `Bearer ${token}` },
-      payload: { label: 'Zweiter Textprovider', protocol: 'openai', baseUrl: 'https://llm-proxy.internal/v1', model: 'approved-text-model', apiKey: 'super-secret-bearer-token', priority: 100 },
-    })
-    expect(response.statusCode).toBe(409)
-    expect(response.json()).toMatchObject({ error: 'priority_already_taken' })
-  })
-
-  it('reports the same conflict when a prepared standby is activated onto an occupied priority', async () => {
-    const clients: SupabaseClientFactory = {
-      forUser: () => ({}) as unknown as SupabaseClient,
-      forService: () => ({
-        from: (table: string) => {
-          if (table !== 'llm_provider_configurations') throw new Error(`unexpected table in test fake: ${table}`)
-          return {
-            select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { protocol: 'openai', task_kind: 'text_generation', is_active: false }, error: null }) }) }),
-            update: () => ({ eq: () => ({ select: () => ({ single: async () => ({ data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint' } }) }) }) }),
-          }
-        },
-      }) as unknown as SupabaseClient,
-    }
-    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
-    const token = await signAccessToken(USER_ID)
-    const response = await app.inject({
-      method: 'PATCH', url: '/v1/llm-providers/a0000000-0000-4000-8000-000000000001',
-      headers: { authorization: `Bearer ${token}` }, payload: { isActive: true },
-    })
-    expect(response.statusCode).toBe(409)
-    expect(response.json()).toMatchObject({ error: 'priority_already_taken' })
   })
 
   it('refuses to list models behind a base url that points into the internal network', async () => {

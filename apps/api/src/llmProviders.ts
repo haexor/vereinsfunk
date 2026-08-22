@@ -60,7 +60,6 @@ export function mapLlmProviderConfigurationRow(row: Record<string, unknown>, has
     purpose: row.purpose,
     taskKind: row.task_kind,
     structuredOutputRequired: row.structured_output_required,
-    priority: row.priority,
     isActive: row.is_active,
     hasSecret,
   }

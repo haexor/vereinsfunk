@@ -20,14 +20,10 @@ describe('platform administration contracts', () => {
     expect(PlatformSettingValueSchemas.publishing_enabled.safeParse('true').success).toBe(false)
   })
 
-  // Paket 046: wie viele LLM-Provider gleichzeitig einen Textvorschlag liefern.
-  it('bounds the text generation ensemble size to a sane range', () => {
-    expect(PlatformSettingKeySchema.safeParse('text_generation_ensemble_size').success).toBe(true)
-    expect(PlatformSettingValueSchemas.text_generation_ensemble_size.safeParse(0).success).toBe(false)
-    expect(PlatformSettingValueSchemas.text_generation_ensemble_size.safeParse(1).success).toBe(true)
-    expect(PlatformSettingValueSchemas.text_generation_ensemble_size.safeParse(5).success).toBe(true)
-    expect(PlatformSettingValueSchemas.text_generation_ensemble_size.safeParse(6).success).toBe(false)
-    expect(PlatformSettingValueSchemas.text_generation_ensemble_size.safeParse(1.5).success).toBe(false)
+  // Paket 050: die Ensemble-Groesse ist kein separater platform_settings-Schluessel mehr -- alle
+  // aktiven text_generation-Provider zaehlen (siehe LlmProviderConfigurationSchema/isActive).
+  it('rejects the retired text generation ensemble size key', () => {
+    expect(PlatformSettingKeySchema.safeParse('text_generation_ensemble_size').success).toBe(false)
   })
 
   // Regression: PostgREST serializes timestamptz with a numeric UTC offset (+00:00), not the

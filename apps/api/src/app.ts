@@ -40,6 +40,7 @@ import { registerDirectoryRoutes } from './routes/directory.js'
 import { registerImageStyleRoutes } from './routes/imageStyle.js'
 import { registerIntegrationRoutes } from './routes/integrations.js'
 import { registerLlmProviderRoutes } from './routes/llmProviders.routes.js'
+import { registerVisionProviderComparisonRoutes } from './routes/visionProviderComparisons.routes.js'
 import { registerInvitationRoutes } from './routes/invitations.js'
 import { registerMemberRoutes } from './routes/members.js'
 import { registerPhotoLayoutRoutes } from './routes/photoLayout.js'
@@ -245,6 +246,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   registerPlatformAdminRoutes(app, context)
 
   registerLlmProviderRoutes(app, context)
+  registerVisionProviderComparisonRoutes(app, context)
   registerPlatformPersonaRoutes(app, context)
 
   registerChannelRoutes(app, context)

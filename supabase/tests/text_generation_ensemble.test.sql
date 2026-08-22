@@ -19,10 +19,10 @@ insert into public.departments (id, organization_id, name, slug) values
   ('46000000-1100-4000-8000-000000000001', '46000000-1000-4000-8000-000000000001', 'Ensemble Department', 'ensemble-department');
 insert into public.department_memberships (organization_id, department_id, user_id, role) values
   ('46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', '46000000-0000-4000-8000-000000000001', 'editor');
-insert into public.llm_provider_configurations (id, label, protocol, base_url, model, priority) values
-  ('46000000-4000-4000-8000-000000000001', 'Ensemble Provider A', 'openai', 'https://provider-a.example.test', 'model-a', 100),
-  ('46000000-4000-4000-8000-000000000002', 'Ensemble Provider B', 'openai', 'https://provider-b.example.test', 'model-b', 200),
-  ('46000000-4000-4000-8000-000000000003', 'Ensemble Provider C', 'openai', 'https://provider-c.example.test', 'model-c', 300);
+insert into public.llm_provider_configurations (id, label, protocol, base_url, model) values
+  ('46000000-4000-4000-8000-000000000001', 'Ensemble Provider A', 'openai', 'https://provider-a.example.test', 'model-a'),
+  ('46000000-4000-4000-8000-000000000002', 'Ensemble Provider B', 'openai', 'https://provider-b.example.test', 'model-b'),
+  ('46000000-4000-4000-8000-000000000003', 'Ensemble Provider C', 'openai', 'https://provider-c.example.test', 'model-c');
 
 -- ===========================================================================================
 -- Fan-out: ein Aufruf mit drei Providern erzeugt drei Kandidaten und drei Outbox-Eintraege,

@@ -2,7 +2,7 @@ import type { ConsentScope, GeneratedPost, OutputFormat, ScopeLevel, SocialPlatf
 import { canRemoveRole, hasPermission, type Permission, type Role } from '@vereinsfunk/authorization'
 import type { ApiEnvironment } from '@vereinsfunk/config'
 import { AnthropicStructuredContentGenerator, buildStructuredTextPrompt, ContentGenerationError, OpenAiCompatibleStructuredContentGenerator, type StructuredContentGenerator, type TextGroundedContentBrief } from '@vereinsfunk/content-engine'
-import { PlatformSettingValueSchemas, SocialPlatformSchema, TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS, TEXT_GENERATION_DEFAULT_TEMPERATURE, UuidSchema } from '@vereinsfunk/contracts'
+import { SocialPlatformSchema, TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS, TEXT_GENERATION_DEFAULT_TEMPERATURE, UuidSchema } from '@vereinsfunk/contracts'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { mergeEffectiveConfig, resolveAvailableChannels, resolveEffectiveConfig, type ChannelCandidate, type ConfigOverride, type ScopeLevelName, type TrustRecord } from '@vereinsfunk/domain'
 import type { FastifyRequest } from 'fastify'
@@ -433,18 +433,15 @@ export async function resolveTextGenerationPlatformAvailability(
   return result
 }
 
-// Paket 046: welche und wie viele LLM-Provider gleichzeitig einen Textvorschlag liefern. Die
-// Ensemble-Groesse ist eine globale Betreiber-Einstellung (platform_settings), die Auswahl selbst
-// folgt derselben Prioritaets-Reihenfolge wie die bisherige Einzelauswahl (vormals
+// Paket 046/050: welche LLM-Provider gleichzeitig einen Textvorschlag liefern. Seit Paket 050 gibt
+// es keine gesonderte Ensemble-Groesse mehr -- es zaehlen schlicht alle gerade aktiven
+// text_generation-Provider (Auswahl in plattform-admin/llm.vue, "Aufgaben-Zuordnung"). Vormals
 // apps/worker/src/context.ts loadActiveTextProvider, jetzt hier, weil create_text_generation_session
 // die Zuweisung braucht, bevor irgendein Worker die Sitzung ueberhaupt sieht -- siehe Migration
-// 2026081912). Liefert nur IDs: Modellname/Anbieter bleiben Mitgliedern verborgen (siehe
+// 2026081912. Liefert nur IDs: Modellname/Anbieter bleiben Mitgliedern verborgen (siehe
 // post_generation_provenance, "enthaelt nie Rohprompt/Providerdaten").
 export async function resolveTextGenerationProviderConfigurationIds(service: SupabaseClient): Promise<string[]> {
-  const setting = await service.from('platform_settings').select('value').eq('key', 'text_generation_ensemble_size').maybeSingle()
-  if (setting.error) throw setting.error
-  const ensembleSize = setting.data ? PlatformSettingValueSchemas.text_generation_ensemble_size.parse(setting.data.value) : 1
-  const providers = await service.from('llm_provider_configurations').select('id').eq('task_kind', 'text_generation').eq('is_active', true).order('priority').limit(ensembleSize)
+  const providers = await service.from('llm_provider_configurations').select('id').eq('task_kind', 'text_generation').eq('is_active', true).order('created_at')
   if (providers.error) throw providers.error
   return z.array(z.object({ id: UuidSchema })).parse(providers.data).map((row) => row.id)
 }
@@ -644,16 +641,14 @@ async function runStyleProfilePreview(
   generatorOverride?: StructuredContentGenerator,
 ): Promise<StyleProfilePreviewResult> {
   const service = supabaseClients.forService()
-  // Seit 2026081305 vergibt eine aktive Aufgabenart jede Prioritaet nur einmal -- die vorderste
-  // Zeile ist damit eindeutig, und die frueher hier noetige Gleichstandspruefung (zwei Zeilen
-  // laden, bei gleicher Prioritaet abbrechen) kann nicht mehr greifen. Sie haette den Konflikt
-  // ohnehin erst hier gemeldet, wo ihn niemand mehr aufloesen kann, und dazu unter dem Namen
-  // text_provider_not_configured -- der Konflikt scheitert jetzt beim Speichern in der
-  // Provider-Verwaltung (POST/PATCH /v1/llm-providers, 409 priority_already_taken).
+  // Repraesentativ, kein bestimmter Provider: seit Paket 050 gibt es fuer text_generation kein
+  // Rangfolge-Kriterium mehr, ein beliebiger aktiver Provider mit hinterlegtem Geheimnis reicht fuer
+  // diesen "Testen"-Knopf aus (anders als die echte Generierung, die alle aktiven Provider
+  // gleichzeitig anfragt, siehe resolveTextGenerationProviderConfigurationIds oben).
   const configs = await service
     .from('llm_provider_configurations')
     .select('id, protocol, base_url, model, structured_output_required, llm_provider_secrets!inner(api_key_ciphertext, key_version)')
-    .eq('task_kind', 'text_generation').eq('is_active', true).order('priority').limit(1)
+    .eq('task_kind', 'text_generation').eq('is_active', true).order('created_at').limit(1)
   if (configs.error) throw configs.error
   const rows = configs.data as Record<string, unknown>[]
   if (rows.length === 0) {

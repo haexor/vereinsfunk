@@ -36,19 +36,15 @@ export const PlatformAdminInvitationSchema = z.object({
 })
 export const AcceptPlatformAdminInvitationRequestSchema = z.object({ token: z.string().min(1) })
 
-// Nur ein Schluessel existiert heute (loest 009s hartkodierte Konstante ab). Ein unbekannter
+// Nur zwei Schluessel existieren heute (loest 009s hartkodierte Konstante ab). Ein unbekannter
 // Schluessel wird von der API abgelehnt statt stillschweigend ungeprueft gespeichert zu werden.
-export const PlatformSettingKeySchema = z.enum(['max_organizations_per_owner', 'publishing_enabled', 'text_generation_ensemble_size'])
+export const PlatformSettingKeySchema = z.enum(['max_organizations_per_owner', 'publishing_enabled'])
 export const PlatformSettingValueSchemas = {
   max_organizations_per_owner: z.int().positive().max(1000),
   // Globaler Not-Aus fuer externe Veroeffentlichungen. Er ist bewusst keine
   // organisationsbezogene Einstellung: ein Plattform-Admin muss im Incident-Fall alle
   // Vereine gleichzeitig und ohne deren Berechtigungen erreichen koennen.
   publishing_enabled: z.boolean(),
-  // Paket 046: wie viele aktive Textgenerierungs-Provider gleichzeitig einen Vorschlag liefern.
-  // Obergrenze 5 orientiert sich an der Hatchet-Nebenlaeufigkeitsgrenze je Abteilung (concurrency.llm
-  // in apps/worker/src/workflows.ts) -- deutlich mehr Modelle wuerden ohnehin nur nacheinander laufen.
-  text_generation_ensemble_size: z.int().positive().max(5),
 } as const satisfies Record<z.infer<typeof PlatformSettingKeySchema>, z.ZodType<unknown>>
 export const PlatformSettingSchema = z.object({
   key: PlatformSettingKeySchema,
@@ -90,7 +86,6 @@ export const LlmProviderConfigurationSchema = z.object({
   purpose: z.string().trim().min(1).max(60), // historical display/operations field
   taskKind: LlmTaskKindSchema,
   structuredOutputRequired: z.literal(true),
-  priority: z.int(),
   isActive: z.boolean(),
   hasSecret: z.boolean(),
 })
@@ -102,7 +97,6 @@ export const CreateLlmProviderConfigurationRequestSchema = z.object({
   purpose: z.string().trim().min(1).max(60).default('text_generation'),
   taskKind: LlmTaskKindSchema.default('text_generation'),
   structuredOutputRequired: z.literal(true).default(true),
-  priority: z.int().default(100),
   isActive: z.boolean().default(true),
   apiKey: z.string().trim().min(1).max(4000),
 })
@@ -114,7 +108,6 @@ export const UpdateLlmProviderConfigurationRequestSchema = z.object({
   purpose: z.string().trim().min(1).max(60).optional(),
   taskKind: LlmTaskKindSchema.optional(),
   structuredOutputRequired: z.literal(true).optional(),
-  priority: z.int().optional(),
   isActive: z.boolean().optional(),
   apiKey: z.string().trim().min(1).max(4000).optional(),
 })
@@ -165,6 +158,43 @@ export const ListLlmProviderModelsRequestSchema = z.object({
 export const ListLlmProviderModelsResponseSchema = z.object({
   models: z.array(z.string().trim().min(1).max(120)),
 })
+
+// Plattform-Admin-Werkzeug (Paket 050), um mehrere aktive Vision-Provider gegen dieselbe Test-URL
+// vergleichen zu koennen -- Grundlage fuer die Entscheidung, welche Modelle fuer die echte
+// Markenerkennung (organization.ts, BrandWebsiteAnalysisResultSchema) aktiv bleiben. Eigene, kleine
+// Regex statt eines geteilten Symbols aus organization.ts: dieselbe Begruendung wie in imageStyle.ts
+// (HexColorSchema ist dort modul-privat).
+const ComparisonHexColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/)
+export const VisionProviderComparisonStatusSchema = z.enum(['pending', 'running', 'succeeded', 'failed'])
+// Ein einzelner scheiternder Provider darf die Ergebnisse der uebrigen nicht verdecken: ein Status
+// je Eintrag statt eines Abbruchs des gesamten Laufs. Die Farbfelder sind deshalb optional --
+// gefuellt nur bei status 'succeeded'.
+export const VisionProviderComparisonResultEntrySchema = z.object({
+  providerConfigurationId: UuidSchema,
+  providerLabel: z.string().trim().min(1).max(160),
+  status: z.enum(['succeeded', 'failed']),
+  primaryColor: ComparisonHexColorSchema.optional(),
+  accentColor: ComparisonHexColorSchema.optional(),
+  backgroundColor: ComparisonHexColorSchema.optional(),
+  textColor: ComparisonHexColorSchema.optional(),
+  onPrimaryColor: ComparisonHexColorSchema.optional(),
+  suggestedFontPairingKey: z.string().nullable().optional(),
+  errorReason: z.string().optional(),
+})
+// detectedFontFamily/logoCandidate sind laufweit geteilt statt je Provider: beide werden
+// deterministisch aus dem gerenderten Screenshot gelesen (Font per getComputedStyle, Logo per
+// Kandidaten-Download), nicht von der Vision-KI -- alle Provider bekommen also denselben Wert.
+export const VisionProviderComparisonRunSchema = z.object({
+  id: UuidSchema,
+  websiteUrl: z.url(),
+  status: VisionProviderComparisonStatusSchema,
+  detectedFontFamily: z.string().nullable(),
+  logoCandidate: z.object({ signedUrl: z.url(), mimeType: z.string().min(1) }).nullable(),
+  results: z.array(VisionProviderComparisonResultEntrySchema),
+  errorReason: z.string().nullable(),
+  createdAt: z.iso.datetime({ offset: true }),
+})
+export const CreateVisionProviderComparisonRunRequestSchema = z.object({ websiteUrl: z.url() })
 
 export const PlatformAdminOrganizationSummarySchema = z.object({
   organizationId: UuidSchema,
@@ -249,6 +279,10 @@ export type UpdateTextGenerationPlatformDefaultRequest = z.infer<typeof UpdateTe
 export type TextGenerationCapabilities = z.infer<typeof TextGenerationCapabilitiesSchema>
 export type ListLlmProviderModelsRequest = z.infer<typeof ListLlmProviderModelsRequestSchema>
 export type ListLlmProviderModelsResponse = z.infer<typeof ListLlmProviderModelsResponseSchema>
+export type VisionProviderComparisonStatus = z.infer<typeof VisionProviderComparisonStatusSchema>
+export type VisionProviderComparisonResultEntry = z.infer<typeof VisionProviderComparisonResultEntrySchema>
+export type VisionProviderComparisonRun = z.infer<typeof VisionProviderComparisonRunSchema>
+export type CreateVisionProviderComparisonRunRequest = z.infer<typeof CreateVisionProviderComparisonRunRequestSchema>
 export type PlatformAdminOrganizationSummary = z.infer<typeof PlatformAdminOrganizationSummarySchema>
 export type PlatformAdminOrganizationDetail = z.infer<typeof PlatformAdminOrganizationDetailSchema>
 export type PlatformAdminOrganizationActivity = z.infer<typeof PlatformAdminOrganizationActivitySchema>
