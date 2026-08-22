@@ -73,13 +73,14 @@ app.put('/v1/organizations/:id/brand', async (request, reply) => {
   // nichts gegenueber vorher -- nur der Name der durchgesetzten Berechtigung.
   if (!(await requirePermission(request, reply, 'brand.manage', { organizationId: params.id }))) return
   const client = supabaseClients.forUser(request.auth!.accessToken)
-  for (const [assetId, expectedKind] of [
-    [input.displayFontAssetId, 'font'],
-    [input.bodyFontAssetId, 'font'],
+  for (const [assetId, expectedKinds] of [
+    [input.logoAssetId, LOGO_ASSET_KINDS],
+    [input.displayFontAssetId, new Set(['font'])],
+    [input.bodyFontAssetId, new Set(['font'])],
   ] as const) {
     if (!assetId) continue
     const asset = await loadSelectableBrandAsset(client, params.id, assetId, 'organization', undefined, undefined)
-    if (!asset || asset.kind !== expectedKind) {
+    if (!asset || !expectedKinds.has(asset.kind)) {
       return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
     }
   }
@@ -94,6 +95,7 @@ app.put('/v1/organizations/:id/brand', async (request, reply) => {
   }
   if (input.displayFontAssetId !== undefined) payload.display_font_asset_id = input.displayFontAssetId
   if (input.bodyFontAssetId !== undefined) payload.body_font_asset_id = input.bodyFontAssetId
+  if (input.logoAssetId !== undefined) payload.logo_asset_id = input.logoAssetId
   if (input.allowDepartmentOverrides !== undefined) payload.allow_department_overrides = input.allowDepartmentOverrides
   if (input.lockedFields !== undefined) payload.locked_fields = input.lockedFields
   const update = await client.from('organization_brand_profiles').update(payload).eq('organization_id', params.id).select().single()
