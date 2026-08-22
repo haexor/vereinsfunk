@@ -6,12 +6,12 @@ import { createSecretBox } from '@vereinsfunk/secrets'
 import { VisionAnalysisError } from '@vereinsfunk/content-engine'
 import { OutboundFetchError } from '@vereinsfunk/outbound-fetch'
 import { BrandWebsiteAnalysisExecutor, type BrandWebsiteAnalysisRepository } from './brandWebsiteAnalysis.js'
-import type { WebsiteRenderer } from './websiteRenderer.js'
+import type { LogoCandidate, WebsiteRenderer } from './websiteRenderer.js'
 
 const payload: WorkflowPayload = { entityId: '20000000-0000-4000-8000-000000000001', organizationId: '20000000-1000-4000-8000-000000000001', departmentId: '20000000-1100-4000-8000-000000000001', correlationId: '20000000-1200-4000-8000-000000000001', sourceRevision: 1, purpose: 'default', idempotencyKey: 'analyze-website-branding:test' }
 const config = { SUPABASE_URL: 'https://db.example', SUPABASE_SERVICE_ROLE_KEY: 'service', DATABASE_URL: 'postgresql://postgres:secret@db.example:5432/postgres', HATCHET_CLIENT_TOKEN: 'token', SECRET_BOX_KEYS: JSON.stringify({ v1: Buffer.alloc(32, 1).toString('base64') }), SECRET_BOX_CURRENT_KEY_VERSION: 'v1' } as WorkerEnvironment
 const analysis = { primaryColor: '#163a2c', accentColor: '#caff4a', backgroundColor: '#f6f4ec', textColor: '#122820', onPrimaryColor: '#ffffff', suggestedFontPairingKey: 'manrope_dm_sans' }
-const renderResult = { screenshotBase64: 'ZmFrZS1wbmc=', screenshotMediaType: 'image/png' as const, logoCandidateUrls: [] as string[], detectedFontFamily: 'Roboto, sans-serif' }
+const renderResult = { screenshotBase64: 'ZmFrZS1wbmc=', screenshotMediaType: 'image/png' as const, logoCandidates: [] as LogoCandidate[], detectedFontFamily: 'Roboto, sans-serif' }
 
 function repository(): BrandWebsiteAnalysisRepository {
   const sealed = createSecretBox({ v1: Buffer.alloc(32, 1).toString('base64') }, 'v1').seal('provider-key', 'provider-1')
@@ -87,7 +87,7 @@ describe('BrandWebsiteAnalysisExecutor', () => {
 
   it('uploads a successfully processed logo candidate and records its object path and mime type', async () => {
     const repo = repository()
-    const withLogo = renderer({ ...renderResult, logoCandidateUrls: ['https://verein.example.org/logo.png'] })
+    const withLogo = renderer({ ...renderResult, logoCandidates: [{ url: 'https://verein.example.org/logo.png', score: 5 }] })
     const generator = { analyzeBrand: vi.fn().mockResolvedValue(analysis) }
     // A real 40x40 PNG (above MIN_DIMENSION_PX) so processBrandLogoUpload's magic-byte + sharp decode succeed for real.
     const pngBytes = await sharp({ create: { width: 40, height: 40, channels: 4, background: { r: 22, g: 58, b: 44, alpha: 1 } } }).png().toBuffer()
@@ -99,7 +99,7 @@ describe('BrandWebsiteAnalysisExecutor', () => {
 
   it('passes each candidate url to the download unchanged', async () => {
     const repo = repository()
-    const withLogo = renderer({ ...renderResult, logoCandidateUrls: ['https://verein.example.org/logo.png'] })
+    const withLogo = renderer({ ...renderResult, logoCandidates: [{ url: 'https://verein.example.org/logo.png', score: 5 }] })
     const generator = { analyzeBrand: vi.fn().mockResolvedValue(analysis) }
     const logoFetcher = vi.fn().mockResolvedValue(Buffer.from('not an image'))
     await new BrandWebsiteAnalysisExecutor(config, repo, withLogo, generator, logoFetcher).execute(payload)
@@ -108,7 +108,7 @@ describe('BrandWebsiteAnalysisExecutor', () => {
 
   it('moves on to the next candidate instead of giving up on the first unusable one', async () => {
     const repo = repository()
-    const withLogos = renderer({ ...renderResult, logoCandidateUrls: ['https://verein.example.org/broken.svg', 'https://verein.example.org/logo.png'] })
+    const withLogos = renderer({ ...renderResult, logoCandidates: [{ url: 'https://verein.example.org/broken.svg', score: 5 }, { url: 'https://verein.example.org/logo.png', score: 3 }] })
     const generator = { analyzeBrand: vi.fn().mockResolvedValue(analysis) }
     const pngBytes = await sharp({ create: { width: 40, height: 40, channels: 4, background: { r: 22, g: 58, b: 44, alpha: 1 } } }).png().toBuffer()
     const logoFetcher = vi.fn()
@@ -121,7 +121,7 @@ describe('BrandWebsiteAnalysisExecutor', () => {
 
   it('does not fail the whole analysis when the only logo candidate cannot be downloaded', async () => {
     const repo = repository()
-    const withLogo = renderer({ ...renderResult, logoCandidateUrls: ['https://verein.example.org/missing-logo.png'] })
+    const withLogo = renderer({ ...renderResult, logoCandidates: [{ url: 'https://verein.example.org/missing-logo.png', score: 5 }] })
     const generator = { analyzeBrand: vi.fn().mockResolvedValue(analysis) }
     const logoFetcher = vi.fn().mockRejectedValue(new OutboundFetchError('request_failed', 'unexpected status 404'))
     await new BrandWebsiteAnalysisExecutor(config, repo, withLogo, generator, logoFetcher).execute(payload)
