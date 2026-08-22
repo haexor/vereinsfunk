@@ -1,4 +1,4 @@
-import { findCuratedFont, isBrandAssetSelectable } from '@vereinsfunk/domain'
+import { isBrandAssetSelectable } from '@vereinsfunk/domain'
 import { BrandLogoUploadResponseSchema } from '@vereinsfunk/contracts'
 import type { ComputedRef, Ref } from 'vue'
 
@@ -46,14 +46,6 @@ export interface BrandOrganizationState {
   logoDarkPath: string | null
 }
 
-interface ResolvedBrand {
-  displayFontAssetId: string | null
-  displayFontKey: string | null
-  bodyFontAssetId: string | null
-  bodyFontKey: string | null
-  logoAssetId: string | null
-}
-
 export function useBrandAssets({
   api,
   supabase,
@@ -64,7 +56,6 @@ export function useBrandAssets({
   activeTeamId,
   activeDepartmentOverride,
   activeTeamOverride,
-  resolved,
   reload,
 }: {
   api: ReturnType<typeof useApiClient>
@@ -76,7 +67,6 @@ export function useBrandAssets({
   activeTeamId: Ref<string | null>
   activeDepartmentOverride: ComputedRef<BrandLevelOverride | null>
   activeTeamOverride: ComputedRef<BrandLevelOverride | null>
-  resolved: ComputedRef<ResolvedBrand>
   reload: () => Promise<void>
 }) {
   const assets = ref<BrandAssetRow[]>([])
@@ -148,46 +138,6 @@ export function useBrandAssets({
   }
   watch(assets, (list) => { for (const asset of list) if (asset.kind !== 'font' && asset.status !== 'replaced') void signAsset(asset) }, { immediate: true })
 
-  const previewFontFaceCss = ref('')
-  const previewDisplayFamily = ref('Manrope')
-  const previewBodyFamily = ref('DM Sans')
-  const PREVIEW_DISPLAY_FAMILY = 'vf-preview-display'
-  const PREVIEW_BODY_FAMILY = 'vf-preview-body'
-
-  function cssUrlLiteral(url: string): string {
-    return `'${url.replace(/[\\'"<>]/g, (character) => `\\${character.charCodeAt(0).toString(16)} `)}'`
-  }
-
-  async function fontFamilyForPreview(assetId: string | null, fontKey: string | null, cssFamilyName: string): Promise<{ family: string, faceRule: string | null }> {
-    if (assetId) {
-      const asset = assets.value.find((row) => row.id === assetId && row.kind === 'font' && row.status === 'ready')
-      if (asset) {
-        const signed = await supabase.storage.from('brand-assets').createSignedUrl(asset.objectPath, 600)
-        if (signed.data) return { family: cssFamilyName, faceRule: `@font-face { font-family: '${cssFamilyName}'; src: url(${cssUrlLiteral(signed.data.signedUrl)}) format('woff2'); font-weight: ${asset.fontWeight ?? 400}; font-style: ${asset.fontStyle ?? 'normal'}; }` }
-      }
-    }
-    const curated = findCuratedFont(fontKey ?? 'manrope')
-    return { family: curated?.family ?? 'Manrope', faceRule: null }
-  }
-
-  watchEffect(async (onCleanup) => {
-    let cancelled = false
-    onCleanup(() => { cancelled = true })
-    const display = await fontFamilyForPreview(resolved.value.displayFontAssetId, resolved.value.displayFontKey, PREVIEW_DISPLAY_FAMILY)
-    const body = await fontFamilyForPreview(resolved.value.bodyFontAssetId, resolved.value.bodyFontKey, PREVIEW_BODY_FAMILY)
-    if (cancelled) return
-    previewDisplayFamily.value = display.family
-    previewBodyFamily.value = body.family
-    previewFontFaceCss.value = [display.faceRule, body.faceRule].filter(Boolean).join('\n')
-  })
-  useHead(() => ({ style: previewFontFaceCss.value ? [{ innerHTML: previewFontFaceCss.value }] : [] }))
-
-  const previewLogoUrl = computed(() => {
-    const assetId = resolved.value.logoAssetId
-    if (!assetId) return activeLevel.value === 'organization' ? logoUrl.value : ''
-    return assetSignedUrls.value[assetId] ?? ''
-  })
-
   // Aus onLogoSelected herausgezogen (Paket 048), damit ein KI-vorgeschlagenes Logo denselben
   // Vorschau-/Speicherpfad wie ein manueller Upload durchlaeuft, statt einen zweiten zu bauen.
   function applyLogoFile(file: File, variant: 'light' | 'dark') {
@@ -238,6 +188,47 @@ export function useBrandAssets({
       URL.revokeObjectURL(previewRef.value)
       previewRef.value = ''
     }
+  }
+
+  const removingLogo = ref<'light' | 'dark' | null>(null)
+  const logoRemoveError = ref('')
+  async function removeOrgLogo(variant: 'light' | 'dark') {
+    if (!organizationId.value) return
+    removingLogo.value = variant
+    logoRemoveError.value = ''
+    try {
+      await api.request(`/v1/organizations/${organizationId.value}/brand/logo`, { method: 'DELETE', query: { variant } })
+      if (variant === 'light') logoUrl.value = ''
+      else logoDarkUrl.value = ''
+      // Der Server setzt das bisherige logo_primary/logo_dark-Asset auf 'replaced' (siehe
+      // DELETE .../brand/logo) -- ohne reload() bliebe es in `assets` lokal weiterhin 'ready'
+      // und in selectableLogoAssets fuer Abteilungen/Mannschaften waehlbar, obwohl ein Speichern
+      // dort serverseitig mit invalid_asset_reference scheitert.
+      await reload()
+    } catch {
+      logoRemoveError.value = 'Das Logo konnte nicht entfernt werden.'
+    } finally {
+      removingLogo.value = null
+    }
+  }
+
+  // Ebenen-Gegenstueck zu toggleFontAsset unten: eine Abteilung/Mannschaft waehlt ihr Logo ueber
+  // dieselbe logoAssetId, die "als Logo" oben setzt -- ein erneuter Klick auf das bereits aktive
+  // Logo muss es wieder auf null setzen koennen (erben), sonst gibt es fuer diese Ebene keinen Weg
+  // zurueck zum geerbten Logo.
+  function activeLogoOverride(): BrandLevelOverride | null {
+    if (activeLevel.value === 'department') return activeDepartmentOverride.value
+    if (activeLevel.value === 'team') return activeTeamOverride.value
+    return null
+  }
+
+  function activeLogoAssetId(): string | null {
+    return activeLogoOverride()?.logoAssetId ?? null
+  }
+
+  function toggleLogoAsset(assetId: string) {
+    const target = activeLogoOverride()
+    if (target) target.logoAssetId = target.logoAssetId === assetId ? null : assetId
   }
 
   function assignFontAsset(role: 'display' | 'body', assetId: string | null) {
@@ -312,10 +303,10 @@ export function useBrandAssets({
   return {
     assets, assetSignedUrls, logoUrl, logoDarkUrl, logoPreviewUrlLight, logoPreviewUrlDark,
     sanitizedNotice, selectableLogoAssets, selectableFontAssets, ownFontAssets,
-    pendingLicenseAssets, ownLogoAssets, previewDisplayFamily, previewBodyFamily,
-    previewFontFaceCss, previewLogoUrl, uploadingAsset, uploadError, licenseDrafts,
+    pendingLicenseAssets, ownLogoAssets, uploadingAsset, uploadError, licenseDrafts,
     confirmingLicense, assetOrigin, onLogoSelected, applyLogoFile, clearLogoFile,
-    logoFileLight, logoFileDark, saveOrgLogoIfSelected,
-    activeFontAssetId, toggleFontAsset, uploadAsset, licenseDraftFor, confirmLicense,
+    logoFileLight, logoFileDark, saveOrgLogoIfSelected, removingLogo, logoRemoveError, removeOrgLogo,
+    activeFontAssetId, toggleFontAsset, activeLogoAssetId, toggleLogoAsset,
+    uploadAsset, licenseDraftFor, confirmLicense,
   }
 }

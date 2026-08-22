@@ -206,6 +206,44 @@ app.post('/v1/organizations/:id/brand/logo', async (request, reply) => {
   )
 })
 
+app.delete('/v1/organizations/:id/brand/logo', async (request, reply) => {
+  if (!(await requireAuth(request, reply))) return
+  const params = z.object({ id: UuidSchema }).parse(request.params)
+  if (!(await requirePermission(request, reply, 'brand.manage', { organizationId: params.id }))) return
+  const query = z.object({ variant: BrandLogoVariantSchema }).parse(request.query)
+
+  const service = supabaseClients.forService()
+  const column = query.variant === 'light' ? 'logo_path' : 'logo_dark_path'
+  const brandUpdate = await service.from('organization_brand_profiles').update({ [column]: null }).eq('organization_id', params.id)
+  if (brandUpdate.error) throw brandUpdate.error
+
+  // Denselben Supersede-Schritt wie beim Hochladen (siehe oben): das bisherige 'ready'-Asset
+  // bleibt sonst faelschlich waehlbar, obwohl der denormalisierte Zeiger bereits auf null steht.
+  const assetKind = query.variant === 'light' ? 'logo_primary' : 'logo_dark'
+  const supersede = await service
+    .from('brand_assets')
+    .update({ status: 'replaced' })
+    .eq('organization_id', params.id)
+    .is('department_id', null)
+    .is('team_id', null)
+    .eq('kind', assetKind)
+    .eq('status', 'ready')
+  if (supersede.error) throw supersede.error
+
+  const audit = await service.from('audit_events').insert({
+    organization_id: params.id,
+    actor_user_id: request.auth!.userId,
+    action: 'organization.brand_logo_removed',
+    entity_type: 'organization_brand_profiles',
+    entity_id: params.id,
+    correlation_id: request.id,
+    metadata: { variant: query.variant },
+  })
+  if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+
+  return reply.code(204).send()
+})
+
 // Von der Vereins- und der Abteilungs-GET-Route geteilt (Paket 049): baut die HTTP-Antwort aus
 // einer brand_website_analysis_jobs-Zeile, unabhaengig vom Scope.
 async function mapBrandWebsiteAnalysisRow(
