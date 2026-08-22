@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createGuardedFetch, fetchPublicUrl, isAllowedOutboundUrl, isBlockedAddress, OutboundFetchError } from './index.js'
+import { createGuardedFetch, fetchPublicBinary, fetchPublicUrl, isAllowedOutboundUrl, isBlockedAddress, OutboundFetchError } from './index.js'
 
 function response(body: string, init: ResponseInit = {}): Response {
   return new Response(body, { status: 200, ...init })
@@ -192,6 +192,66 @@ describe('fetchPublicUrl', () => {
       },
     })
     expect(seen[1]).toEqual({ accept: 'application/json' })
+  })
+})
+
+describe('fetchPublicBinary', () => {
+  // Ein PNG-Kopf: die ersten acht Bytes sind kein gueltiges UTF-8, ein TextDecoder wuerde sie
+  // durch U+FFFD ersetzen und damit jede Magic-Byte-Pruefung stromabwaerts scheitern lassen.
+  const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01])
+
+  it('returns the bytes unchanged instead of decoding them as text', async () => {
+    const bytes = await fetchPublicBinary('https://example.org/logo.png', {
+      lookupImpl: publicLookup,
+      fetchImpl: async () => new Response(pngHeader, { status: 200 }),
+    })
+    expect(Buffer.compare(bytes, pngHeader)).toBe(0)
+  })
+
+  it('follows a redirect to the same file -- Vereinsseiten verweisen auf ihre Bilder oft ohne www', async () => {
+    // Der Fall, an dem die KI-Markenerkennung fuer tsv-ifa-chemnitz.de scheiterte: das <img> im
+    // Header zeigt auf die Adresse ohne www, der Server leitet von dort dauerhaft auf www um.
+    const bytes = await fetchPublicBinary('https://verein.example.org/asset/logo.png', {
+      lookupImpl: publicLookup,
+      fetchImpl: async (input) =>
+        String(input) === 'https://verein.example.org/asset/logo.png'
+          ? new Response('', { status: 301, headers: { location: 'https://www.verein.example.org/asset/logo.png' } })
+          : new Response(pngHeader, { status: 200 }),
+    })
+    expect(Buffer.compare(bytes, pngHeader)).toBe(0)
+  })
+
+  it('re-checks the target of a redirect just like the text variant', async () => {
+    const targets: string[] = []
+    await expect(
+      fetchPublicBinary('https://verein.example.org/asset/logo.png', {
+        lookupImpl: publicLookup,
+        fetchImpl: async (input) => {
+          targets.push(String(input))
+          return new Response('', { status: 301, headers: { location: 'https://169.254.169.254/latest/meta-data/' } })
+        },
+      }),
+    ).rejects.toMatchObject({ reason: 'blocked_url' })
+    expect(targets).toEqual(['https://verein.example.org/asset/logo.png'])
+  })
+
+  it('refuses a body larger than the limit, even when content-length lies', async () => {
+    await expect(
+      fetchPublicBinary('https://verein.example.org/asset/logo.png', {
+        maxBytes: 4,
+        lookupImpl: publicLookup,
+        fetchImpl: async () => new Response(pngHeader, { status: 200 }),
+      }),
+    ).rejects.toMatchObject({ reason: 'too_large' })
+  })
+
+  it('reports an unusable candidate as a failure instead of returning an error page as image bytes', async () => {
+    await expect(
+      fetchPublicBinary('https://verein.example.org/asset/missing.png', {
+        lookupImpl: publicLookup,
+        fetchImpl: async () => new Response('<html>404</html>', { status: 404 }),
+      }),
+    ).rejects.toMatchObject({ reason: 'request_failed' })
   })
 })
 

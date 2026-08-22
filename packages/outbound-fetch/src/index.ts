@@ -113,6 +113,8 @@ export async function assertResolvesPublicly(hostname: string, resolve: AddressL
   }
 }
 
+const DEFAULT_MAX_BYTES = 5_000_000
+
 export interface FetchPublicUrlOptions {
   timeoutMs?: number
   maxBytes?: number
@@ -138,13 +140,16 @@ function stripCredentialHeadersOnCrossOrigin(headers: Record<string, string>, fr
 }
 
 /**
- * Holt eine Adresse als Text -- mit Zieladressenpruefung (auch je Weiterleitung), Zeitgrenze und
- * Groessengrenze. Weiterleitungen werden bewusst selbst verfolgt: `fetch` folgt ihnen sonst
- * stillschweigend, und eine Weiterleitung auf `http://169.254.169.254` haette die Pruefung des
- * urspruenglichen Ziels wertlos gemacht.
+ * Folgt Weiterleitungen selbst und prueft jeden Hop erneut -- gemeinsame Grundlage von
+ * {@link fetchPublicUrl} (Text) und {@link fetchPublicBinary} (Bytes). Weiterleitungen werden
+ * bewusst nicht `fetch` ueberlassen: das folgt ihnen stillschweigend, und eine Weiterleitung auf
+ * `http://169.254.169.254` haette die Pruefung des urspruenglichen Ziels wertlos gemacht.
+ *
+ * Gibt die Antwort des letzten Hops zurueck; die Groessengrenze auf dem Body zieht der Aufrufer,
+ * weil Text und Bytes unterschiedlich gelesen werden muessen.
  */
-export async function fetchPublicUrl(rawUrl: string, options: FetchPublicUrlOptions = {}): Promise<string> {
-  const { timeoutMs = 10_000, maxBytes = 5_000_000, maxRedirects = 3, headers = {}, fetchImpl = fetch, lookupImpl = systemLookup } = options
+async function followGuardedRedirects(rawUrl: string, options: FetchPublicUrlOptions): Promise<Response> {
+  const { timeoutMs = 10_000, maxBytes = DEFAULT_MAX_BYTES, maxRedirects = 3, headers = {}, fetchImpl = fetch, lookupImpl = systemLookup } = options
   let current = rawUrl
   let currentHeaders = headers
   for (let hop = 0; hop <= maxRedirects; hop += 1) {
@@ -177,9 +182,30 @@ export async function fetchPublicUrl(rawUrl: string, options: FetchPublicUrlOpti
     if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
       throw new OutboundFetchError('too_large', `content-length ${declaredLength} exceeds ${maxBytes}`)
     }
-    return await readCapped(response, maxBytes)
+    return response
   }
   throw new OutboundFetchError('request_failed', `too many redirects for ${rawUrl}`)
+}
+
+/**
+ * Holt eine Adresse als Text -- mit Zieladressenpruefung (auch je Weiterleitung), Zeitgrenze und
+ * Groessengrenze.
+ */
+export async function fetchPublicUrl(rawUrl: string, options: FetchPublicUrlOptions = {}): Promise<string> {
+  const response = await followGuardedRedirects(rawUrl, options)
+  return await readCapped(response, options.maxBytes ?? DEFAULT_MAX_BYTES)
+}
+
+/**
+ * Wie {@link fetchPublicUrl}, aber als Bytes: fuer Binaerdaten, die ein TextDecoder zerstoeren
+ * wuerde. Gedacht fuer die Logo-Kandidaten, die die KI-Markenerkennung von der Homepage eines
+ * Vereins herunterlaedt (Paket 048) -- dort ist eine Weiterleitung der Normalfall, nicht die
+ * Ausnahme (`example.org` -> `www.example.org`, http -> https, CDN), weshalb
+ * {@link createGuardedFetch} mit seiner bewussten Weiterleitungssperre dafuer nicht taugt.
+ */
+export async function fetchPublicBinary(rawUrl: string, options: FetchPublicUrlOptions = {}): Promise<Buffer> {
+  const response = await followGuardedRedirects(rawUrl, options)
+  return await readCappedBytes(response, options.maxBytes ?? DEFAULT_MAX_BYTES)
 }
 
 // content-length ist nur eine Behauptung der Gegenstelle -- ohne diese Grenze koennte eine Quelle
@@ -203,6 +229,29 @@ async function readCapped(response: Response, maxBytes: number): Promise<string>
     await reader.cancel().catch(() => {})
   }
   return text + decoder.decode()
+}
+
+// Dasselbe wie readCapped, nur ohne TextDecoder: ein PNG durch einen TextDecoder zu schicken
+// ersetzt jede Bytefolge, die kein gueltiges UTF-8 ist, durch U+FFFD -- das Bild waere danach
+// unbrauchbar, ohne dass irgendwo ein Fehler auffiele.
+async function readCappedBytes(response: Response, maxBytes: number): Promise<Buffer> {
+  const body = response.body
+  if (!body) return Buffer.alloc(0)
+  const reader = body.getReader()
+  const chunks: Uint8Array[] = []
+  let received = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      received += value.byteLength
+      if (received > maxBytes) throw new OutboundFetchError('too_large', `response exceeds ${maxBytes} bytes`)
+      chunks.push(value)
+    }
+  } finally {
+    await reader.cancel().catch(() => {})
+  }
+  return Buffer.concat(chunks)
 }
 
 export interface GuardedFetchOptions {
