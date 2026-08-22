@@ -217,14 +217,15 @@ describe('onboarding', () => {
     const token = await signAccessToken(USER_ID)
     const boundary = '----vereinsfunkTestBoundary'
     const body = Buffer.concat([
-      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="variant"\r\n\r\nlight\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="organizationId"\r\n\r\n${ORGANIZATION_ID}\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="kind"\r\n\r\nlogo_primary\r\n`),
       Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="logo.txt"\r\nContent-Type: text/plain\r\n\r\n`),
       Buffer.from('this is not an image'),
       Buffer.from(`\r\n--${boundary}--\r\n`),
     ])
     const response = await app.inject({
       method: 'POST',
-      url: `/v1/organizations/${ORGANIZATION_ID}/brand/logo`,
+      url: '/v1/brand/assets',
       headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` },
       payload: body,
     })
@@ -238,14 +239,15 @@ describe('onboarding', () => {
     const boundary = '----vereinsfunkTestBoundaryLarge'
     const oversized = Buffer.alloc(9 * 1024 * 1024, 0x41)
     const body = Buffer.concat([
-      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="variant"\r\n\r\nlight\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="organizationId"\r\n\r\n${ORGANIZATION_ID}\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="kind"\r\n\r\nlogo_primary\r\n`),
       Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="logo.png"\r\nContent-Type: image/png\r\n\r\n`),
       oversized,
       Buffer.from(`\r\n--${boundary}--\r\n`),
     ])
     const response = await app.inject({
       method: 'POST',
-      url: `/v1/organizations/${ORGANIZATION_ID}/brand/logo`,
+      url: '/v1/brand/assets',
       headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` },
       payload: body,
     })

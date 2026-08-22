@@ -550,9 +550,11 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
     expect(response.json()).toMatchObject({ error: 'field_locked', field: 'accentColor' })
   })
 
-  it('refuses an organization-wide logo through the generic asset endpoint', async () => {
-    // logo_path/logo_dark_path pflegt nur der dedizierte Endpunkt -- sonst zeigte der
-    // denormalisierte Zeiger nach dem Upload auf ein Asset mit Status 'replaced'.
+  it('accepts an organization-wide logo_primary through the generic asset endpoint (no more use_organization_logo_endpoint block)', async () => {
+    // Die dedizierte Route ist entfallen -- der Scope-Block, der logo_primary/logo_dark auf
+    // Vereinsebene bisher ablehnte, ist mit ihr weg. Garbage-Bytes reichen, um das zu belegen: ohne
+    // den Block laeuft die Anfrage bis zur Bildvalidierung durch (invalid_logo), nicht mehr bis zum
+    // fruehen 400 use_organization_logo_endpoint.
     const app = await startApp({ roleProvider: organizationManagerRoleProvider })
     const token = await signAccessToken(USER_ID)
     const boundary = '----vereinsfunkOrgLogoBoundary'
@@ -560,7 +562,7 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
       Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="organizationId"\r\n\r\n${ORGANIZATION_ID}\r\n`),
       Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="kind"\r\n\r\nlogo_primary\r\n`),
       Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="logo.png"\r\nContent-Type: image/png\r\n\r\n`),
-      Buffer.from('irrelevant -- the scope check runs before the file is read'),
+      Buffer.from('not really a png'),
       Buffer.from(`\r\n--${boundary}--\r\n`),
     ])
     const response = await app.inject({
@@ -570,33 +572,75 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
       payload: body,
     })
     expect(response.statusCode).toBe(400)
-    expect(response.json().error).toBe('use_organization_logo_endpoint')
+    expect(response.json().error).toBe('invalid_logo')
   })
 
-  it('rejects removing the organization logo without brand.manage', async () => {
-    const app = await startApp({ roleProvider: denyingRoleProvider })
+  it('rejects deleting a brand asset without brand.manage in its scope', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'brand_assets') {
+              return chain({ data: { organization_id: ORGANIZATION_ID, department_id: null, team_id: null, status: 'ready' }, error: null })
+            }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used before the permission check') } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: denyingRoleProvider, supabaseClients: clients })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'DELETE',
-      url: `/v1/organizations/${ORGANIZATION_ID}/brand/logo?variant=light`,
+      url: '/v1/brand/assets/10000000-9000-4000-8000-000000000004',
       headers: { authorization: `Bearer ${token}` },
     })
     expect(response.statusCode).toBe(403)
   })
 
-  it('removes the organization logo: nulls the pointer, supersedes the ready asset, and records an audit event', async () => {
-    const updateCalls: Array<{ table: string; payload: unknown }> = []
-    let auditAction: unknown
+  it('returns 404 when deleting a brand asset that does not exist', async () => {
     const clients: SupabaseClientFactory = {
-      forUser: () => ({}) as unknown as SupabaseClient,
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'brand_assets') return chain({ data: null, error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used before the existence check') } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'DELETE',
+      url: '/v1/brand/assets/10000000-9000-4000-8000-000000000099',
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(404)
+  })
+
+  it('soft-deletes a brand asset (status=deleted) and records an audit event', async () => {
+    const ASSET_ID = '10000000-9000-4000-8000-000000000005'
+    let auditAction: unknown
+    let updatePayload: unknown
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'brand_assets') {
+              return chain({ data: { organization_id: ORGANIZATION_ID, department_id: null, team_id: null, status: 'ready' }, error: null })
+            }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
       forService: () =>
         ({
           from: (table: string) => {
-            if (table === 'organization_brand_profiles' || table === 'brand_assets') {
+            if (table === 'brand_assets') {
               return {
                 update: (payload: unknown) => {
-                  updateCalls.push({ table, payload })
-                  return chain({ data: null, error: null })
+                  updatePayload = payload
+                  return chain({ data: { id: ASSET_ID }, error: null })
                 },
               }
             }
@@ -616,13 +660,12 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'DELETE',
-      url: `/v1/organizations/${ORGANIZATION_ID}/brand/logo?variant=light`,
+      url: `/v1/brand/assets/${ASSET_ID}`,
       headers: { authorization: `Bearer ${token}` },
     })
     expect(response.statusCode).toBe(204)
-    expect(updateCalls).toContainEqual({ table: 'organization_brand_profiles', payload: { logo_path: null } })
-    expect(updateCalls).toContainEqual({ table: 'brand_assets', payload: { status: 'replaced' } })
-    expect(auditAction).toBe('organization.brand_logo_removed')
+    expect(updatePayload).toEqual({ status: 'deleted' })
+    expect(auditAction).toBe('brand_asset.deleted')
   })
 })
 
