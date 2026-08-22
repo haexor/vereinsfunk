@@ -98,6 +98,7 @@ export const OrganizationBrandUpdateSchema = z.object({
   bodyFontKey: CuratedFontKeySchema,
   displayFontAssetId: UuidSchema.nullable().optional(),
   bodyFontAssetId: UuidSchema.nullable().optional(),
+  logoAssetId: UuidSchema.nullable().optional(),
   allowDepartmentOverrides: z.boolean().optional(),
   lockedFields: LockedFieldsSchema.optional(),
 })
@@ -112,6 +113,7 @@ export const OrganizationBrandSchema = z.object({
   bodyFontKey: CuratedFontKeySchema,
   displayFontAssetId: UuidSchema.nullable(),
   bodyFontAssetId: UuidSchema.nullable(),
+  logoAssetId: UuidSchema.nullable(),
   allowDepartmentOverrides: z.boolean(),
   lockedFields: z.array(BrandLockableFieldSchema),
   logoPath: z.string().nullable(),
