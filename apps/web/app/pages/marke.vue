@@ -179,9 +179,6 @@ const {
   selectableFontAssets,
   pendingLicenseAssets,
   ownLogoAssets,
-  previewDisplayFamily,
-  previewBodyFamily,
-  previewLogoUrl,
   uploadingAsset,
   uploadError,
   confirmingLicense,
@@ -192,8 +189,13 @@ const {
   logoFileLight,
   logoFileDark,
   saveOrgLogoIfSelected,
+  removingLogo,
+  logoRemoveError,
+  removeOrgLogo,
   activeFontAssetId,
   toggleFontAsset,
+  activeLogoAssetId,
+  toggleLogoAsset,
   uploadAsset,
   licenseDraftFor,
   confirmLicense,
@@ -207,9 +209,13 @@ const {
   activeTeamId,
   activeDepartmentOverride,
   activeTeamOverride,
-  resolved,
   reload: loadAll,
 })
+
+async function removeLogo(variant: 'light' | 'dark') {
+  if (!confirm('Logo wirklich entfernen?')) return
+  await removeOrgLogo(variant)
+}
 
 // Paket 048: KI-gestuetzte Markenerkennung aus der Homepage -- fuellt nur Formularfelder vor,
 // speichert nichts selbst (siehe Plandokument 048). Seit Paket 049 auch pro Abteilung, mit
@@ -345,10 +351,11 @@ async function applyWebsiteAnalysisResult(result: BrandWebsiteAnalysisResult) {
   if (pairing) {
     org.displayFontKey = pairing.displayFontKey
     org.bodyFontKey = pairing.bodyFontKey
-    // Eine eigene Schriftdatei gewinnt in der Vorschau und beim Aufloesen ueber den Font-Key
-    // (useBrandAssets.fontFamilyForPreview). Blieb sie gesetzt, war der uebernommene Vorschlag
-    // unsichtbar und wurde trotzdem gespeichert -- wirksam erst, wenn das Asset irgendwann
-    // entfernt wird.
+    // Eine eigene Schriftdatei soll Vorrang vor dem kuratierten Font-Key haben (siehe die
+    // FontSpec-Praezedenz in apps/remotion/src/ClubPost.tsx). Bliebe displayFontAssetId/
+    // bodyFontAssetId hier gesetzt, waere der gerade uebernommene Vorschlag fuer jeden
+    // kuenftigen Verbraucher dieser Praezedenz wirkungslos, obwohl er als aktueller Stand
+    // gespeichert wird.
     org.displayFontAssetId = null
     org.bodyFontAssetId = null
   }
@@ -481,8 +488,7 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
         </span>
       </div>
 
-      <div class="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
-        <div class="space-y-6">
+      <div class="space-y-6">
           <!-- KI-Markenerkennung aus der Homepage (Verein oder Abteilung, füllt nur vor) -->
           <!-- Ohne allowDepartmentOverrides kann eine Abteilung ohnehin kein eigenes Branding
                speichern (PUT .../brand lehnt mit 400 overrides_not_allowed ab) -- die Karte bliebe
@@ -522,6 +528,7 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
                   <Upload :size="12" /> Ersetzen
                 </label>
                 <button v-if="logoFileLight" type="button" class="focus-ring mt-1.5 w-full rounded-lg px-2 py-1 text-[11px] font-semibold text-[#7b827d] underline" @click="clearLogoFile('light')">Vorgemerktes Logo verwerfen</button>
+                <button v-else-if="logoUrl" type="button" class="focus-ring mt-1.5 w-full rounded-lg px-2 py-1 text-[11px] font-semibold text-amber-800 underline disabled:opacity-50" :disabled="removingLogo === 'light'" @click="removeLogo('light')">{{ removingLogo === 'light' ? 'Wird entfernt …' : 'Logo entfernen' }}</button>
               </div>
               <div class="rounded-2xl bg-ink p-4 text-center">
                 <img v-if="logoPreviewUrlDark || logoDarkUrl" :src="logoPreviewUrlDark || logoDarkUrl" alt="Logo dunkel" class="mx-auto h-16 w-16 object-contain" />
@@ -532,9 +539,11 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
                   <Upload :size="12" /> Ersetzen
                 </label>
                 <button v-if="logoFileDark" type="button" class="focus-ring mt-1.5 w-full rounded-lg px-2 py-1 text-[11px] font-semibold text-white/70 underline" @click="clearLogoFile('dark')">Vorgemerktes Logo verwerfen</button>
+                <button v-else-if="logoDarkUrl" type="button" class="focus-ring mt-1.5 w-full rounded-lg px-2 py-1 text-[11px] font-semibold text-amber-400 underline disabled:opacity-50" :disabled="removingLogo === 'dark'" @click="removeLogo('dark')">{{ removingLogo === 'dark' ? 'Wird entfernt …' : 'Logo entfernen' }}</button>
               </div>
             </div>
             <p v-if="sanitizedNotice" class="mt-2 flex items-center gap-1.5 text-[11px] text-amber-800"><AlertTriangle :size="13" /> Das SVG enthielt nicht unterstützte Elemente, die entfernt wurden.</p>
+            <p v-if="logoRemoveError" class="mt-2 text-[11px] text-amber-800">{{ logoRemoveError }}</p>
           </section>
 
           <!-- Farbrollen -->
@@ -671,29 +680,19 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
               </label>
             </div>
             <div v-if="ownLogoAssets.length" class="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-4">
-              <div v-for="asset in ownLogoAssets" :key="asset.id" class="rounded-xl border border-[#e1e2db] p-2 text-center">
+              <div v-for="asset in ownLogoAssets" :key="asset.id" class="rounded-xl border p-2 text-center" :class="activeLevel !== 'organization' && activeLogoAssetId() === asset.id ? 'border-forest bg-[#f2f6e9]' : 'border-[#e1e2db]'">
                 <img v-if="assetSignedUrls[asset.id]" :src="assetSignedUrls[asset.id]" :alt="asset.kind" class="mx-auto h-12 w-12 object-contain" />
                 <p class="mt-1 text-[9px] text-[#9aa096]">{{ asset.kind }}</p>
-                <button v-if="activeLevel !== 'organization'" class="focus-ring text-[9px] underline" @click="(activeLevel === 'department' ? activeDepartmentOverride! : activeTeamOverride!).logoAssetId = asset.id">als Logo</button>
+                <button v-if="activeLevel !== 'organization'" type="button" class="focus-ring text-[9px] underline" :aria-pressed="activeLogoAssetId() === asset.id" @click="toggleLogoAsset(asset.id)">{{ activeLogoAssetId() === asset.id ? 'Logo entfernen' : 'als Logo' }}</button>
               </div>
             </div>
             <div v-if="activeLevel !== 'organization' && selectableLogoAssets.length" class="mt-4">
-              <p class="text-[11px] font-semibold text-[#7b827d]">Wählbar (vom Verein{{ activeLevel === 'team' ? ' oder der Abteilung' : '' }})</p>
+              <p class="text-[11px] font-semibold text-[#7b827d]">Wählbar (vom Verein{{ activeLevel === 'team' ? ' oder der Abteilung' : '' }}) — erneut klicken entfernt die Auswahl</p>
               <div class="mt-2 flex flex-wrap gap-2">
-                <button v-for="asset in selectableLogoAssets" :key="asset.id" class="focus-ring rounded-lg bg-[#f4f6f1] px-2 py-1 text-[10px]" @click="(activeLevel === 'department' ? activeDepartmentOverride! : activeTeamOverride!).logoAssetId = asset.id">{{ asset.kind }} — {{ assetOrigin(asset) }}</button>
+                <button v-for="asset in selectableLogoAssets" :key="asset.id" type="button" class="focus-ring rounded-lg px-2 py-1 text-[10px]" :class="activeLogoAssetId() === asset.id ? 'bg-forest text-white' : 'bg-[#f4f6f1]'" :aria-pressed="activeLogoAssetId() === asset.id" @click="toggleLogoAsset(asset.id)">{{ asset.kind }} — {{ assetOrigin(asset) }}</button>
               </div>
             </div>
           </section>
-        </div>
-
-        <div class="lg:sticky lg:top-6 lg:self-start">
-          <BrandLivePreview
-            :primary-color="resolved.primaryColor" :accent-color="resolved.accentColor"
-            :background-color="resolved.backgroundColor" :text-color="resolved.textColor"
-            :on-primary-color="resolved.onPrimaryColor" :display-font-family="previewDisplayFamily"
-            :body-font-family="previewBodyFamily" :logo-url="previewLogoUrl"
-          />
-        </div>
       </div>
 
       <p v-if="errorMessage" class="mt-4 text-sm text-amber-800">{{ errorMessage }}</p>
