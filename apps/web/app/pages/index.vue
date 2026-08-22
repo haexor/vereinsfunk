@@ -61,7 +61,7 @@ async function loadDashboard() {
   const [postsResult, approvalsResult, brandResult, profileResult] = await Promise.all([
     postsQuery,
     supabase.from('approval_requests').select('id', { count: 'exact', head: true }).eq('organization_id', organizationId).is('invalidated_at', null),
-    supabase.from('organization_brand_profiles').select('logo_path').eq('organization_id', organizationId).maybeSingle(),
+    supabase.from('organization_brand_profiles').select('logo_asset_id').eq('organization_id', organizationId).maybeSingle(),
     supabase.from('organization_profiles').select('responsible_person_profile_id').eq('organization_id', organizationId).maybeSingle(),
   ])
 
@@ -91,7 +91,7 @@ async function loadDashboard() {
   }).catch(() => ({ completedSteps: [] as string[] }))
 
   const steps: { key: string; label: string; href: string }[] = []
-  if (!brandResult.data?.logo_path && !onboarding.completedSteps.includes('branding')) {
+  if (!brandResult.data?.logo_asset_id && !onboarding.completedSteps.includes('branding')) {
     steps.push({ key: 'branding', label: 'Logo und Farben festlegen', href: '/marke' })
   }
   if (!profileResult.data?.responsible_person_profile_id && !onboarding.completedSteps.includes('responsible_person')) {

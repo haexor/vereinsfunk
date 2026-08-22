@@ -50,10 +50,9 @@ const org = reactive<BrandOrganizationState>({
   bodyFontKey: 'dm_sans',
   displayFontAssetId: null as string | null,
   bodyFontAssetId: null as string | null,
+  logoAssetId: null as string | null,
   allowDepartmentOverrides: true,
   lockedFields: [] as string[],
-  logoPath: null as string | null,
-  logoDarkPath: null as string | null,
 })
 const { departmentOverrides, teamOverrides, readOverride, readTeamOverride, overrideFor, teamOverrideFor } = useBrandOverrides()
 
@@ -99,7 +98,7 @@ async function loadAll() {
   try {
     const [brandResult, departmentsResult, teamsResult, departmentProfilesResult, teamProfilesResult, assetsResult, organizationProfileResult] = await Promise.all([
       supabase.from('organization_brand_profiles')
-        .select('primary_color, accent_color, background_color, text_color, on_primary_color, display_font_key, body_font_key, display_font_asset_id, body_font_asset_id, allow_department_overrides, locked_fields, logo_path, logo_dark_path')
+        .select('primary_color, accent_color, background_color, text_color, on_primary_color, display_font_key, body_font_key, display_font_asset_id, body_font_asset_id, logo_asset_id, allow_department_overrides, locked_fields')
         .eq('organization_id', organizationId.value).maybeSingle(),
       supabase.from('departments').select('id, name').eq('organization_id', organizationId.value).is('archived_at', null).order('name'),
       supabase.from('teams').select('id, name, department_id').eq('organization_id', organizationId.value).is('archived_at', null).order('name'),
@@ -128,12 +127,9 @@ async function loadAll() {
       org.bodyFontKey = brandResult.data.body_font_key
       org.displayFontAssetId = brandResult.data.display_font_asset_id
       org.bodyFontAssetId = brandResult.data.body_font_asset_id
+      org.logoAssetId = brandResult.data.logo_asset_id
       org.allowDepartmentOverrides = brandResult.data.allow_department_overrides
       org.lockedFields = brandResult.data.locked_fields ?? []
-      org.logoPath = brandResult.data.logo_path
-      org.logoDarkPath = brandResult.data.logo_dark_path
-      if (org.logoPath) logoUrl.value = (await supabase.storage.from('brand-assets').createSignedUrl(org.logoPath, 600)).data?.signedUrl ?? ''
-      if (org.logoDarkPath) logoDarkUrl.value = (await supabase.storage.from('brand-assets').createSignedUrl(org.logoDarkPath, 600)).data?.signedUrl ?? ''
     }
     departments.value = departmentsResult.data.map((row) => ({ id: row.id, name: row.name }))
     teams.value = teamsResult.data.map((row) => ({ id: row.id, name: row.name, departmentId: row.department_id }))
@@ -170,11 +166,6 @@ async function loadAll() {
 const {
   assets,
   assetSignedUrls,
-  logoUrl,
-  logoDarkUrl,
-  logoPreviewUrlLight,
-  logoPreviewUrlDark,
-  sanitizedNotice,
   selectableLogoAssets,
   selectableFontAssets,
   pendingLicenseAssets,
@@ -183,15 +174,9 @@ const {
   uploadError,
   confirmingLicense,
   assetOrigin,
-  onLogoSelected,
-  applyLogoFile,
-  clearLogoFile,
-  logoFileLight,
-  logoFileDark,
-  saveOrgLogoIfSelected,
-  removingLogo,
-  logoRemoveError,
-  removeOrgLogo,
+  deletingAsset,
+  deleteAssetError,
+  deleteAsset,
   activeFontAssetId,
   toggleFontAsset,
   activeLogoAssetId,
@@ -212,9 +197,21 @@ const {
   reload: loadAll,
 })
 
-async function removeLogo(variant: 'light' | 'dark') {
+async function removeLogo(assetId: string) {
   if (!confirm('Logo wirklich entfernen?')) return
-  await removeOrgLogo(variant)
+  await deleteAsset(assetId)
+}
+
+// Genau die Werte, die auch ImageStylePresetForm.vue fuer LOGO_ASSET_KINDS anzeigt (Formatvarianten
+// desselben Vereinslogos, kein Fremd-/Sponsorlogo-Konzept) -- dieselbe deutsche Beschriftung statt
+// des rohen kind-Strings, sobald logo_primary/logo_dark hier (statt in den beiden frueheren
+// Karten) erscheinen.
+const LOGO_ASSET_KIND_LABELS: Readonly<Record<string, string>> = {
+  logo_primary: 'Logo (hell)',
+  logo_dark: 'Logo (dunkel)',
+  logo_mark: 'Symbol',
+  wordmark: 'Wortmarke',
+  watermark: 'Wasserzeichen',
 }
 
 // Paket 048: KI-gestuetzte Markenerkennung aus der Homepage -- fuellt nur Formularfelder vor,
@@ -290,18 +287,16 @@ async function downloadLogoCandidate(logoCandidate: { signedUrl: string; mimeTyp
   }
 }
 
-// Eine Abteilung hat keinen Datei-Staging-Mechanismus wie der Verein (logoFileLight, erst bei
-// "Aenderungen speichern" hochgeladen) -- Abteilungslogos laufen ausschliesslich ueber die
-// geteilte Asset-Bibliothek (POST /v1/brand/assets + logoAssetId-Zuweisung, siehe "als Logo"-
-// Button). Der Kandidat wird deshalb sofort als neues Asset hochgeladen; die eigentliche
-// Uebernahme (Persistenz der Override-Zeile) bleibt trotzdem an "Aenderungen speichern" gebunden,
-// genauso wie bei einem manuell ueber "als Logo" gewaehlten Asset.
-async function applyDepartmentLogoCandidate(departmentId: string, logoCandidate: { signedUrl: string; mimeType: string }) {
+// Weder Verein noch Abteilung haben einen Datei-Staging-Mechanismus -- ein KI-Logovorschlag laeuft
+// wie ein manueller Upload sofort ueber die geteilte Asset-Bibliothek (POST /v1/brand/assets); nur
+// die eigentliche Uebernahme als AKTIVES Logo (logoAssetId) bleibt an "Aenderungen speichern"
+// gebunden, genauso wie bei einem manuell ueber "als Logo" gewaehlten Asset.
+async function applyLogoCandidateAsAsset(departmentId: string | null, logoCandidate: { signedUrl: string; mimeType: string }) {
   const file = await downloadLogoCandidate(logoCandidate)
   if (!file || !organizationId.value) return
   const formData = new FormData()
   formData.append('organizationId', organizationId.value)
-  formData.append('departmentId', departmentId)
+  if (departmentId) formData.append('departmentId', departmentId)
   formData.append('kind', 'logo_primary')
   formData.append('file', file)
   try {
@@ -320,7 +315,8 @@ async function applyDepartmentLogoCandidate(departmentId: string, logoCandidate:
         createdAt: uploaded.createdAt,
       }]
     }
-    overrideFor(departmentId).logoAssetId = uploaded.id
+    if (departmentId) overrideFor(departmentId).logoAssetId = uploaded.id
+    else org.logoAssetId = uploaded.id
   } catch {
     // Farbvorschlag bleibt uebernommen, auch wenn der Logo-Upload scheitert.
   }
@@ -339,7 +335,7 @@ async function applyWebsiteAnalysisResult(result: BrandWebsiteAnalysisResult) {
     const override = overrideFor(activeDepartmentId.value)
     if (!locked.has('primaryColor')) override.primaryColor = result.primaryColor
     if (!locked.has('accentColor')) override.accentColor = result.accentColor
-    if (result.logoCandidate && !locked.has('logoAssetId')) await applyDepartmentLogoCandidate(activeDepartmentId.value, result.logoCandidate)
+    if (result.logoCandidate && !locked.has('logoAssetId')) await applyLogoCandidateAsAsset(activeDepartmentId.value, result.logoCandidate)
     return
   }
   org.primaryColor = result.primaryColor
@@ -360,8 +356,7 @@ async function applyWebsiteAnalysisResult(result: BrandWebsiteAnalysisResult) {
     org.bodyFontAssetId = null
   }
   if (!result.logoCandidate) return
-  const file = await downloadLogoCandidate(result.logoCandidate)
-  if (file) applyLogoFile(file, 'light')
+  await applyLogoCandidateAsAsset(null, result.logoCandidate)
 }
 // Uebernommen wird nur auf der Ebene, fuer die der Job tatsaechlich lief (Verein oder die eine
 // Abteilung, die ihn gestartet hat): das Polling laeuft weiter, auch wenn der Nutzer inzwischen
@@ -397,7 +392,7 @@ async function saveOrganization() {
       primaryColor: org.primaryColor, accentColor: org.accentColor, backgroundColor: org.backgroundColor,
       textColor: org.textColor, onPrimaryColor: org.onPrimaryColor,
       displayFontKey: org.displayFontKey, bodyFontKey: org.bodyFontKey,
-      displayFontAssetId: org.displayFontAssetId, bodyFontAssetId: org.bodyFontAssetId,
+      displayFontAssetId: org.displayFontAssetId, bodyFontAssetId: org.bodyFontAssetId, logoAssetId: org.logoAssetId,
       allowDepartmentOverrides: org.allowDepartmentOverrides, lockedFields: org.lockedFields,
     },
   })
@@ -431,10 +426,7 @@ async function save() {
   saving.value = true
   errorMessage.value = ''
   try {
-    // Das vorgemerkte Logo gehoert der Vereinsebene: ungefiltert aufgerufen haette ein Speichern
-    // auf einem Abteilungs-Tab das Vereinslogo ersetzt (POST .../brand/logo setzt das bisherige
-    // logo_primary-Asset auf 'replaced'), obwohl der Nutzer dort eine Abteilung bearbeitet.
-    if (activeLevel.value === 'organization') { await saveOrgLogoIfSelected(); await saveOrganization() }
+    if (activeLevel.value === 'organization') await saveOrganization()
     else if (activeLevel.value === 'department' && activeDepartmentId.value) await saveDepartment(activeDepartmentId.value)
     else if (activeLevel.value === 'team' && activeTeamId.value) await saveTeam(activeTeamId.value)
     await loadAll()
@@ -515,36 +507,6 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
             <p v-if="detectedFontNotice" class="mt-2 text-[11px] text-[#7a817c]">{{ detectedFontNotice }}</p>
           </section>
 
-          <!-- Logo (nur Vereinsebene: Primär/Dunkel-Upload bleibt hier, weitere Varianten unten je Ebene) -->
-          <section v-if="activeLevel === 'organization'" class="card p-6">
-            <h2 class="font-display text-base font-bold">Logo</h2>
-            <div class="mt-5 grid grid-cols-2 gap-4">
-              <div class="rounded-2xl bg-white p-4 text-center">
-                <img v-if="logoPreviewUrlLight || logoUrl" :src="logoPreviewUrlLight || logoUrl" alt="Logo hell" class="mx-auto h-16 w-16 object-contain" />
-                <span v-else class="grid h-16 w-16 place-items-center rounded-xl bg-[#eef1ea] font-display text-lg font-extrabold text-[#5b625d] mx-auto">?</span>
-                <p class="mt-2 text-[10px] text-[#7b827d]">Auf hellem Grund</p>
-                <label class="focus-ring relative mt-2 flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-[#dfe0d9] px-2 py-1.5 text-[11px] font-semibold">
-                  <input type="file" accept="image/png,image/jpeg,image/svg+xml" class="sr-only" @change="onLogoSelected($event, 'light')" />
-                  <Upload :size="12" /> Ersetzen
-                </label>
-                <button v-if="logoFileLight" type="button" class="focus-ring mt-1.5 w-full rounded-lg px-2 py-1 text-[11px] font-semibold text-[#7b827d] underline" @click="clearLogoFile('light')">Vorgemerktes Logo verwerfen</button>
-                <button v-else-if="logoUrl" type="button" class="focus-ring mt-1.5 w-full rounded-lg px-2 py-1 text-[11px] font-semibold text-amber-800 underline disabled:opacity-50" :disabled="removingLogo === 'light'" @click="removeLogo('light')">{{ removingLogo === 'light' ? 'Wird entfernt …' : 'Logo entfernen' }}</button>
-              </div>
-              <div class="rounded-2xl bg-ink p-4 text-center">
-                <img v-if="logoPreviewUrlDark || logoDarkUrl" :src="logoPreviewUrlDark || logoDarkUrl" alt="Logo dunkel" class="mx-auto h-16 w-16 object-contain" />
-                <span v-else class="grid h-16 w-16 place-items-center rounded-xl bg-white/10 font-display text-lg font-extrabold text-white mx-auto">?</span>
-                <p class="mt-2 text-[10px] text-white/60">Auf dunklem Grund</p>
-                <label class="focus-ring relative mt-2 flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-white/30 px-2 py-1.5 text-[11px] font-semibold text-white">
-                  <input type="file" accept="image/png,image/jpeg,image/svg+xml" class="sr-only" @change="onLogoSelected($event, 'dark')" />
-                  <Upload :size="12" /> Ersetzen
-                </label>
-                <button v-if="logoFileDark" type="button" class="focus-ring mt-1.5 w-full rounded-lg px-2 py-1 text-[11px] font-semibold text-white/70 underline" @click="clearLogoFile('dark')">Vorgemerktes Logo verwerfen</button>
-                <button v-else-if="logoDarkUrl" type="button" class="focus-ring mt-1.5 w-full rounded-lg px-2 py-1 text-[11px] font-semibold text-amber-400 underline disabled:opacity-50" :disabled="removingLogo === 'dark'" @click="removeLogo('dark')">{{ removingLogo === 'dark' ? 'Wird entfernt …' : 'Logo entfernen' }}</button>
-              </div>
-            </div>
-            <p v-if="sanitizedNotice" class="mt-2 flex items-center gap-1.5 text-[11px] text-amber-800"><AlertTriangle :size="13" /> Das SVG enthielt nicht unterstützte Elemente, die entfernt wurden.</p>
-            <p v-if="logoRemoveError" class="mt-2 text-[11px] text-amber-800">{{ logoRemoveError }}</p>
-          </section>
 
           <!-- Farbrollen -->
           <section class="card p-6">
@@ -669,27 +631,29 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
             </div>
           </section>
 
-          <!-- Weitere Logo-Varianten je Ebene -->
+          <!-- Logo -->
           <section class="card p-6">
-            <h2 class="font-display text-base font-bold">Weitere Logovarianten</h2>
-            <p class="mt-2 text-xs text-[#7a817c]">Symbol, Wortmarke oder Wasserzeichen — für Remotion und quadratische Formate.</p>
+            <h2 class="font-display text-base font-bold">Logo</h2>
+            <p class="mt-2 text-xs text-[#7a817c]">Beliebig viele Varianten hochladen — für hellen/dunklen Grund, als Symbol, Wortmarke oder Wasserzeichen. „als Logo“ legt fest, welche Variante dieser Ebene aktuell verwendet wird.</p>
             <div class="mt-4 flex flex-wrap gap-2">
-              <label v-for="kind in ['logo_mark', 'wordmark', 'watermark']" :key="kind" class="focus-ring relative flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-[11px] font-semibold">
+              <label v-for="kind in ['logo_primary', 'logo_dark', 'logo_mark', 'wordmark', 'watermark']" :key="kind" class="focus-ring relative flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-[11px] font-semibold">
                 <input type="file" accept="image/png,image/jpeg,image/svg+xml" class="sr-only" :disabled="uploadingAsset" @change="uploadAsset($event, kind)" />
-                <Upload :size="12" /> {{ kind === 'logo_mark' ? 'Symbol' : kind === 'wordmark' ? 'Wortmarke' : 'Wasserzeichen' }}
+                <Upload :size="12" /> {{ LOGO_ASSET_KIND_LABELS[kind] }}
               </label>
             </div>
             <div v-if="ownLogoAssets.length" class="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-4">
-              <div v-for="asset in ownLogoAssets" :key="asset.id" class="rounded-xl border p-2 text-center" :class="activeLevel !== 'organization' && activeLogoAssetId() === asset.id ? 'border-forest bg-[#f2f6e9]' : 'border-[#e1e2db]'">
-                <img v-if="assetSignedUrls[asset.id]" :src="assetSignedUrls[asset.id]" :alt="asset.kind" class="mx-auto h-12 w-12 object-contain" />
-                <p class="mt-1 text-[9px] text-[#9aa096]">{{ asset.kind }}</p>
-                <button v-if="activeLevel !== 'organization'" type="button" class="focus-ring text-[9px] underline" :aria-pressed="activeLogoAssetId() === asset.id" @click="toggleLogoAsset(asset.id)">{{ activeLogoAssetId() === asset.id ? 'Logo entfernen' : 'als Logo' }}</button>
+              <div v-for="asset in ownLogoAssets" :key="asset.id" class="rounded-xl border p-2 text-center" :class="activeLogoAssetId() === asset.id ? 'border-forest bg-[#f2f6e9]' : 'border-[#e1e2db]'">
+                <img v-if="assetSignedUrls[asset.id]" :src="assetSignedUrls[asset.id]" :alt="LOGO_ASSET_KIND_LABELS[asset.kind] ?? asset.kind" class="mx-auto h-12 w-12 object-contain" />
+                <p class="mt-1 text-[9px] text-[#9aa096]">{{ LOGO_ASSET_KIND_LABELS[asset.kind] ?? asset.kind }}</p>
+                <button type="button" class="focus-ring text-[9px] underline disabled:opacity-50" :aria-pressed="activeLogoAssetId() === asset.id" :disabled="activeLevel !== 'organization' && lockedForActiveLevel.has('logoAssetId')" @click="toggleLogoAsset(asset.id)">{{ activeLogoAssetId() === asset.id ? 'Logo entfernen' : 'als Logo' }}</button>
+                <button type="button" class="focus-ring mt-1 block w-full text-[9px] text-amber-800 underline disabled:opacity-50" :disabled="deletingAsset === asset.id" @click="removeLogo(asset.id)">{{ deletingAsset === asset.id ? 'Wird entfernt …' : 'löschen' }}</button>
               </div>
             </div>
+            <p v-if="deleteAssetError" class="mt-2 text-[11px] text-amber-800">{{ deleteAssetError }}</p>
             <div v-if="activeLevel !== 'organization' && selectableLogoAssets.length" class="mt-4">
               <p class="text-[11px] font-semibold text-[#7b827d]">Wählbar (vom Verein{{ activeLevel === 'team' ? ' oder der Abteilung' : '' }}) — erneut klicken entfernt die Auswahl</p>
               <div class="mt-2 flex flex-wrap gap-2">
-                <button v-for="asset in selectableLogoAssets" :key="asset.id" type="button" class="focus-ring rounded-lg px-2 py-1 text-[10px]" :class="activeLogoAssetId() === asset.id ? 'bg-forest text-white' : 'bg-[#f4f6f1]'" :aria-pressed="activeLogoAssetId() === asset.id" @click="toggleLogoAsset(asset.id)">{{ asset.kind }} — {{ assetOrigin(asset) }}</button>
+                <button v-for="asset in selectableLogoAssets" :key="asset.id" type="button" class="focus-ring rounded-lg px-2 py-1 text-[10px] disabled:opacity-50" :class="activeLogoAssetId() === asset.id ? 'bg-forest text-white' : 'bg-[#f4f6f1]'" :aria-pressed="activeLogoAssetId() === asset.id" :disabled="lockedForActiveLevel.has('logoAssetId')" @click="toggleLogoAsset(asset.id)">{{ LOGO_ASSET_KIND_LABELS[asset.kind] ?? asset.kind }} — {{ assetOrigin(asset) }}</button>
               </div>
             </div>
           </section>

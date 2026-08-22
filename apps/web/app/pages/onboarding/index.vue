@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { AlertTriangle, ArrowRight, Check, ShieldCheck, Sparkles, Upload } from '@lucide/vue'
+import { CreateBrandAssetResponseSchema } from '@vereinsfunk/contracts'
 
 definePageMeta({ layout: false })
 
@@ -124,16 +125,19 @@ async function saveBranding() {
   errorMessage.value = ''
   try {
     const headers = await useAuthHeader()
+    let logoAssetId: string | undefined
     if (logoFile.value) {
       const formData = new FormData()
-      formData.append('variant', 'light')
+      formData.append('organizationId', organizationId.value)
+      formData.append('kind', 'logo_primary')
       formData.append('file', logoFile.value)
-      const uploaded = await $fetch<{ signedUrl: string; sanitized: boolean }>(
-        `${config.public.apiBase}/v1/organizations/${organizationId.value}/brand/logo`,
-        { method: 'POST', headers, body: formData },
+      // logoPreviewUrl bleibt die lokale URL.createObjectURL()-Vorschau aus onLogoSelected --
+      // die generische Route liefert einen Objekt-Pfad, keine Signed URL, ein zweiter
+      // Sign-Aufruf nur fuer die Vorschau lohnt hier nicht.
+      const uploaded = CreateBrandAssetResponseSchema.parse(
+        await $fetch(`${config.public.apiBase}/v1/brand/assets`, { method: 'POST', headers, body: formData }),
       )
-      URL.revokeObjectURL(logoPreviewUrl.value)
-      logoPreviewUrl.value = uploaded.signedUrl
+      logoAssetId = uploaded.id
       logoSanitizedNotice.value = uploaded.sanitized
     }
     await $fetch(`${config.public.apiBase}/v1/organizations/${organizationId.value}/brand`, {
@@ -150,6 +154,7 @@ async function saveBranding() {
         onPrimaryColor: '#ffffff',
         displayFontKey: 'manrope',
         bodyFontKey: 'dm_sans',
+        ...(logoAssetId ? { logoAssetId } : {}),
       },
     })
     await $fetch(`${config.public.apiBase}/v1/onboarding/steps/branding/complete`, { method: 'POST', headers, body: { organizationId: organizationId.value } })

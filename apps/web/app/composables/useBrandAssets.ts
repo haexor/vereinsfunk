@@ -1,5 +1,4 @@
 import { isBrandAssetSelectable } from '@vereinsfunk/domain'
-import { BrandLogoUploadResponseSchema } from '@vereinsfunk/contracts'
 import type { ComputedRef, Ref } from 'vue'
 
 export type BrandScopeLevel = 'organization' | 'department' | 'team'
@@ -40,10 +39,9 @@ export interface BrandOrganizationState {
   bodyFontKey: string
   displayFontAssetId: string | null
   bodyFontAssetId: string | null
+  logoAssetId: string | null
   allowDepartmentOverrides: boolean
   lockedFields: string[]
-  logoPath: string | null
-  logoDarkPath: string | null
 }
 
 export function useBrandAssets({
@@ -71,14 +69,6 @@ export function useBrandAssets({
 }) {
   const assets = ref<BrandAssetRow[]>([])
   const assetSignedUrls = ref<Record<string, string>>({})
-  const logoUrl = ref('')
-  const logoDarkUrl = ref('')
-  // Getrennte Refs pro Variante: ein gemeinsames Feld hier hiess vorher, dass die Auswahl des
-  // hellen Logos verworfen wurde, sobald danach das dunkle Logo gewaehlt wurde (und umgekehrt).
-  const logoFileLight = ref<File | null>(null)
-  const logoFileDark = ref<File | null>(null)
-  const logoPreviewUrlLight = ref('')
-  const logoPreviewUrlDark = ref('')
 
   function assetOrigin(asset: BrandAssetRow): string {
     if (asset.teamId) return 'aus dieser Mannschaft'
@@ -124,7 +114,7 @@ export function useBrandAssets({
   const pendingLicenseAssets = computed(() => ownFontAssets.value.filter((asset) => asset.status === 'processing'))
   const ownLogoAssets = computed(() =>
     assets.value.filter((asset) => {
-      if (asset.kind === 'font' || asset.kind === 'logo_primary' || asset.kind === 'logo_dark' || asset.kind === 'frame' || asset.status === 'replaced') return false
+      if (asset.kind === 'font' || asset.kind === 'frame' || asset.status === 'replaced' || asset.status === 'deleted') return false
       if (activeLevel.value === 'organization') return asset.departmentId === null && asset.teamId === null
       if (activeLevel.value === 'department') return asset.departmentId === activeDepartmentId.value && asset.teamId === null
       return asset.teamId === activeTeamId.value
@@ -136,86 +126,37 @@ export function useBrandAssets({
     const signed = await supabase.storage.from('brand-assets').createSignedUrl(asset.objectPath, 600)
     if (signed.data) assetSignedUrls.value[asset.id] = signed.data.signedUrl
   }
-  watch(assets, (list) => { for (const asset of list) if (asset.kind !== 'font' && asset.status !== 'replaced') void signAsset(asset) }, { immediate: true })
+  // Nur 'ready' signieren: die Storage-RLS prueft den Asset-Status nicht, und ein Soft-Delete
+  // entfernt das Storage-Objekt nicht -- eine tote Signed-URL fuer 'deleted'/'processing'/
+  // 'rejected'/'replaced' waere sonst weiterhin abrufbar. Veraltete Eintraege (Asset nicht mehr
+  // in der Liste oder nicht mehr signierbar) fallen aus assetSignedUrls, statt eine alte URL zu
+  // behalten.
+  watch(assets, (list) => {
+    const signableIds = new Set(list.filter((asset) => asset.kind !== 'font' && asset.status === 'ready').map((asset) => asset.id))
+    for (const id of Object.keys(assetSignedUrls.value)) if (!signableIds.has(id)) delete assetSignedUrls.value[id]
+    for (const asset of list) if (signableIds.has(asset.id)) void signAsset(asset)
+  }, { immediate: true })
 
-  // Aus onLogoSelected herausgezogen (Paket 048), damit ein KI-vorgeschlagenes Logo denselben
-  // Vorschau-/Speicherpfad wie ein manueller Upload durchlaeuft, statt einen zweiten zu bauen.
-  function applyLogoFile(file: File, variant: 'light' | 'dark') {
-    const fileRef = variant === 'light' ? logoFileLight : logoFileDark
-    const previewRef = variant === 'light' ? logoPreviewUrlLight : logoPreviewUrlDark
-    if (previewRef.value) URL.revokeObjectURL(previewRef.value)
-    fileRef.value = file
-    previewRef.value = URL.createObjectURL(file)
-  }
-
-  // Verwirft ein vorgemerktes, noch nicht gespeichertes Logo. Ohne diesen Weg liess sich ein
-  // KI-vorgeschlagenes Logo (Paket 048) nicht mehr ablehnen: jedes spaetere Speichern haette es
-  // hochgeladen und das bisherige Asset auf 'replaced' gesetzt.
-  function clearLogoFile(variant: 'light' | 'dark') {
-    const fileRef = variant === 'light' ? logoFileLight : logoFileDark
-    const previewRef = variant === 'light' ? logoPreviewUrlLight : logoPreviewUrlDark
-    if (previewRef.value) URL.revokeObjectURL(previewRef.value)
-    fileRef.value = null
-    previewRef.value = ''
-  }
-
-  function onLogoSelected(event: Event, variant: 'light' | 'dark') {
-    const file = (event.target as HTMLInputElement).files?.[0]
-    if (file) applyLogoFile(file, variant)
-  }
-
-  const sanitizedNotice = ref(false)
-  async function saveOrgLogoIfSelected() {
-    if (!organizationId.value) return
-    const pending = (['light', 'dark'] as const)
-      .map((variant) => ({ variant, file: variant === 'light' ? logoFileLight.value : logoFileDark.value }))
-      .filter((entry): entry is { variant: 'light' | 'dark', file: File } => entry.file !== null)
-    for (const { variant, file } of pending) {
-      const formData = new FormData()
-      formData.append('variant', variant)
-      formData.append('file', file)
-      const uploaded = await api.request(
-        `/v1/organizations/${organizationId.value}/brand/logo`,
-        { method: 'POST', body: formData },
-        BrandLogoUploadResponseSchema,
-      )
-      const fileRef = variant === 'light' ? logoFileLight : logoFileDark
-      const previewRef = variant === 'light' ? logoPreviewUrlLight : logoPreviewUrlDark
-      if (variant === 'light') logoUrl.value = uploaded.signedUrl
-      else logoDarkUrl.value = uploaded.signedUrl
-      if (uploaded.sanitized) sanitizedNotice.value = true
-      fileRef.value = null
-      URL.revokeObjectURL(previewRef.value)
-      previewRef.value = ''
-    }
-  }
-
-  const removingLogo = ref<'light' | 'dark' | null>(null)
-  const logoRemoveError = ref('')
-  async function removeOrgLogo(variant: 'light' | 'dark') {
-    if (!organizationId.value) return
-    removingLogo.value = variant
-    logoRemoveError.value = ''
+  const deletingAsset = ref<string | null>(null)
+  const deleteAssetError = ref('')
+  async function deleteAsset(assetId: string) {
+    deletingAsset.value = assetId
+    deleteAssetError.value = ''
     try {
-      await api.request(`/v1/organizations/${organizationId.value}/brand/logo`, { method: 'DELETE', query: { variant } })
-      if (variant === 'light') logoUrl.value = ''
-      else logoDarkUrl.value = ''
-      // Der Server setzt das bisherige logo_primary/logo_dark-Asset auf 'replaced' (siehe
-      // DELETE .../brand/logo) -- ohne reload() bliebe es in `assets` lokal weiterhin 'ready'
-      // und in selectableLogoAssets fuer Abteilungen/Mannschaften waehlbar, obwohl ein Speichern
-      // dort serverseitig mit invalid_asset_reference scheitert.
+      await api.request(`/v1/brand/assets/${assetId}`, { method: 'DELETE' })
       await reload()
     } catch {
-      logoRemoveError.value = 'Das Logo konnte nicht entfernt werden.'
+      deleteAssetError.value = 'Das Logo konnte nicht entfernt werden.'
     } finally {
-      removingLogo.value = null
+      deletingAsset.value = null
     }
   }
 
-  // Ebenen-Gegenstueck zu toggleFontAsset unten: eine Abteilung/Mannschaft waehlt ihr Logo ueber
+  // Ebenen-Gegenstueck zu toggleFontAsset unten: jede Ebene waehlt ihr aktives Logo ueber
   // dieselbe logoAssetId, die "als Logo" oben setzt -- ein erneuter Klick auf das bereits aktive
-  // Logo muss es wieder auf null setzen koennen (erben), sonst gibt es fuer diese Ebene keinen Weg
-  // zurueck zum geerbten Logo.
+  // Logo muss es wieder auf null setzen koennen (erben/kein Logo), sonst gibt es keinen Weg zurueck.
+  // Verein schreibt direkt auf `org` (kein Override-Objekt -- es gibt keine Ebene darueber, von
+  // der er erben koennte), Abteilung/Mannschaft ueber ihr jeweiliges Override.
   function activeLogoOverride(): BrandLevelOverride | null {
     if (activeLevel.value === 'department') return activeDepartmentOverride.value
     if (activeLevel.value === 'team') return activeTeamOverride.value
@@ -223,10 +164,15 @@ export function useBrandAssets({
   }
 
   function activeLogoAssetId(): string | null {
+    if (activeLevel.value === 'organization') return org.logoAssetId
     return activeLogoOverride()?.logoAssetId ?? null
   }
 
   function toggleLogoAsset(assetId: string) {
+    if (activeLevel.value === 'organization') {
+      org.logoAssetId = org.logoAssetId === assetId ? null : assetId
+      return
+    }
     const target = activeLogoOverride()
     if (target) target.logoAssetId = target.logoAssetId === assetId ? null : assetId
   }
@@ -295,17 +241,11 @@ export function useBrandAssets({
     }
   }
 
-  onBeforeUnmount(() => {
-    if (logoPreviewUrlLight.value) URL.revokeObjectURL(logoPreviewUrlLight.value)
-    if (logoPreviewUrlDark.value) URL.revokeObjectURL(logoPreviewUrlDark.value)
-  })
-
   return {
-    assets, assetSignedUrls, logoUrl, logoDarkUrl, logoPreviewUrlLight, logoPreviewUrlDark,
-    sanitizedNotice, selectableLogoAssets, selectableFontAssets, ownFontAssets,
+    assets, assetSignedUrls,
+    selectableLogoAssets, selectableFontAssets, ownFontAssets,
     pendingLicenseAssets, ownLogoAssets, uploadingAsset, uploadError, licenseDrafts,
-    confirmingLicense, assetOrigin, onLogoSelected, applyLogoFile, clearLogoFile,
-    logoFileLight, logoFileDark, saveOrgLogoIfSelected, removingLogo, logoRemoveError, removeOrgLogo,
+    confirmingLicense, assetOrigin, deletingAsset, deleteAssetError, deleteAsset,
     activeFontAssetId, toggleFontAsset, activeLogoAssetId, toggleLogoAsset,
     uploadAsset, licenseDraftFor, confirmLicense,
   }

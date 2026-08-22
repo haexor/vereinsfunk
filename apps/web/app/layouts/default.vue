@@ -17,20 +17,29 @@ const organizationInitials = computed(() => (activeOrganization.value?.organizat
 // wo es keinen (oder noch keinen einzelnen) aktiven Verein gibt -- dort waere ein Vereinslogo
 // fachlich falsch, es ist die Produktmarke "vereinsfunk", nicht die des Vereins.
 const organizationLogoUrl = ref('')
+// Lauf-ID statt reiner organizationId-Pruefung: bei A -> B -> A stimmt organizationId beim
+// dritten Lauf wieder mit dem ersten ueberein, ein spaet zurueckkehrender erster Lauf wuerde die
+// Pruefung also bestehen und das (moeglicherweise veraltete) Ergebnis des dritten Laufs
+// ueberschreiben. Die Lauf-ID ist bei jedem Watcher-Aufruf eindeutig, unabhaengig vom Zielverein.
+let latestOrganizationLogoRun = 0
 watch(
   () => scope.value?.organizationId,
   async (organizationId) => {
+    const run = ++latestOrganizationLogoRun
     organizationLogoUrl.value = ''
     if (!organizationId) return
     const supabase = useSupabaseClient()
-    const result = await supabase.from('organization_brand_profiles').select('logo_path').eq('organization_id', organizationId).maybeSingle()
-    // Nach jedem await pruefen, ob der Verein inzwischen gewechselt hat: sonst kann ein frueher
-    // gestarteter Durchlauf nach einem spaeteren zurueckkehren und das Logo des vorigen Vereins
-    // in den Umschalter schreiben.
-    if (scope.value?.organizationId !== organizationId) return
-    if (!result.data?.logo_path) return
-    const signed = await supabase.storage.from('brand-assets').createSignedUrl(result.data.logo_path, 600)
-    if (scope.value?.organizationId !== organizationId) return
+    const result = await supabase.from('organization_brand_profiles').select('logo_asset_id').eq('organization_id', organizationId).maybeSingle()
+    if (run !== latestOrganizationLogoRun) return
+    if (!result.data?.logo_asset_id) return
+    // status='ready' faengt ein zwischenzeitlich geloeschtes/ersetztes Asset ab (Verteidigung in
+    // der Tiefe -- die RLS-Policy verlangt das bereits beim Setzen von logo_asset_id, siehe
+    // Migration), sonst zeigte der Umschalter eine tote Signed-URL statt der Initialen.
+    const asset = await supabase.from('brand_assets').select('object_path').eq('id', result.data.logo_asset_id).eq('status', 'ready').maybeSingle()
+    if (run !== latestOrganizationLogoRun) return
+    if (!asset.data?.object_path) return
+    const signed = await supabase.storage.from('brand-assets').createSignedUrl(asset.data.object_path, 600)
+    if (run !== latestOrganizationLogoRun) return
     organizationLogoUrl.value = signed.data?.signedUrl ?? ''
   },
   { immediate: true },

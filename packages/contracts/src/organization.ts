@@ -120,18 +120,10 @@ export const OrganizationBrandSchema = z.object({
   logoDarkPath: z.string().nullable(),
 })
 
-export const BrandLogoVariantSchema = z.enum(['light', 'dark'])
-export const BrandLogoUploadResponseSchema = z.object({
-  variant: BrandLogoVariantSchema,
-  path: z.string().min(1),
-  signedUrl: z.url(),
-  sanitized: z.boolean(),
-})
-
 // Paket 013: Branding-Assets (Logovarianten, Wasserzeichen, eigene Schriften) auf Vereins-,
 // Abteilungs- und Mannschaftsebene. 'frame' (Plan 045): eigene Rahmengrafik fuer Bildstil-Presets.
 export const BrandAssetKindSchema = z.enum(['logo_primary', 'logo_light', 'logo_dark', 'logo_mark', 'wordmark', 'watermark', 'font', 'frame'])
-export const BrandAssetStatusSchema = z.enum(['processing', 'ready', 'rejected', 'replaced'])
+export const BrandAssetStatusSchema = z.enum(['processing', 'ready', 'rejected', 'replaced', 'deleted'])
 export const FontStyleSchema = z.enum(['normal', 'italic'])
 
 export const BrandAssetSchema = z.object({
@@ -155,6 +147,14 @@ export const BrandAssetSchema = z.object({
   rejectionReason: z.string().nullable(),
   createdAt: z.iso.datetime({ offset: true }),
 })
+
+// Antwortform von POST /v1/brand/assets: dieselbe brand_assets-Zeile wie BrandAssetSchema, plus
+// `sanitized` -- eine einmalige Nebeninformation dieser Antwort (kein persistiertes Feld), die den
+// Hinweis "SVG enthielt nicht unterstuetzte Elemente" traegt.
+export const CreateBrandAssetResponseSchema = BrandAssetSchema.extend({
+  sanitized: z.boolean(),
+})
+export type CreateBrandAssetResponse = z.infer<typeof CreateBrandAssetResponseSchema>
 
 // Aus den multipart-Feldern eines POST /v1/brand/assets gelesen -- die Datei selbst kommt als
 // eigener Teil des multipart-Streams, nicht durch dieses Schema.
@@ -235,7 +235,6 @@ export type OrganizationProfileUpdate = z.infer<typeof OrganizationProfileUpdate
 export type OrganizationProfile = z.infer<typeof OrganizationProfileSchema>
 export type OrganizationBrandUpdate = z.infer<typeof OrganizationBrandUpdateSchema>
 export type OrganizationBrand = z.infer<typeof OrganizationBrandSchema>
-export type BrandLogoVariant = z.infer<typeof BrandLogoVariantSchema>
 export type BrandAssetKind = z.infer<typeof BrandAssetKindSchema>
 export type BrandAssetStatus = z.infer<typeof BrandAssetStatusSchema>
 export type BrandAsset = z.infer<typeof BrandAssetSchema>
