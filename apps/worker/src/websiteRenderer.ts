@@ -3,13 +3,19 @@ import { chromium } from 'playwright'
 import { assertNavigableUrl, guardOutboundRequests } from './browserGuard.js'
 import { WorkflowExecutionError } from './workflows.js'
 
+export interface LogoCandidate {
+  url: string
+  score: number
+}
+
 export interface WebsiteRenderResult {
   screenshotBase64: string
   screenshotMediaType: 'image/png'
-  /** In der Reihenfolge, in der ein Logo am wahrscheinlichsten gefunden wird -- Header/Nav-Bild
-   *  zuerst, dann og:image, dann das Favicon. Der Aufrufer versucht der Reihe nach, bis eine
-   *  Datei tatsaechlich als Logo taugt (siehe brandWebsiteAnalysis.ts). */
-  logoCandidateUrls: readonly string[]
+  /** Nach Score absteigend sortiert (siehe scoreLogoCandidates). og:image/Favicon sind reine
+   *  Fallback-Kandidaten mit einem fixen, niedrigen Score und stehen immer am Ende, unabhaengig
+   *  vom Score echter DOM-Treffer. Der Aufrufer versucht der Reihe nach, bis eine Datei
+   *  tatsaechlich als Logo taugt (siehe brandWebsiteAnalysis.ts). */
+  logoCandidates: readonly LogoCandidate[]
   /** Aus getComputedStyle gelesen, nie geraten. null, wenn keine Ueberschrift/kein body existiert. */
   detectedFontFamily: string | null
 }
@@ -21,9 +27,86 @@ export interface WebsiteRenderer {
 const NAVIGATION_TIMEOUT_MS = 15_000
 const VIEWPORT = { width: 1280, height: 900 }
 // Eine Obergrenze fuer die Kandidatenliste: der Aufrufer laedt jeden Eintrag der Reihe nach
-// herunter und dekodiert ihn, und eine Seite mit einer Sponsorenleiste im Header liefert sonst
-// dutzende Treffer -- Arbeit, die nach den ersten Kandidaten nichts mehr beitraegt.
-const MAX_LOGO_CANDIDATES = 5
+// herunter und dekodiert ihn. Dank Scoring (statt reiner Selektor-Reihenfolge) darf die Grenze
+// grosszuegiger sein, ohne dass eine Sponsorenleiste im Header die guten Kandidaten verdraengt.
+const MAX_LOGO_CANDIDATES_TO_ATTEMPT = 10
+
+/**
+ * Bewertet jedes moegliche Logo-Bild rein anhand des DOM (keine Vision-/Farb-Analyse). Laeuft im
+ * Seitenkontext ueber page.evaluate(scoreLogoCandidates) -- Playwright serialisiert die Funktion
+ * per toString() und fuehrt sie im Browser aus, deshalb darf sie ausschliesslich auf Werte
+ * zugreifen, die sie selbst im Funktionskoerper deklariert (keine Modul-Konstanten/Imports).
+ * Exportiert, damit Regressionstests sie isoliert per page.setContent()+page.evaluate() gegen
+ * Fixture-HTML pruefen koennen, ohne echte Websites zu laden.
+ */
+export function scoreLogoCandidates(): LogoCandidate[] {
+  const LOGO_PATTERN = /logo/i
+  const SPONSOR_PATTERN = /sponsor|partner|werbung|anzeige|ad-|banner|facebook|instagram|whatsapp|twitter|linkedin|youtube|tiktok|social/i
+
+  const normalize = (raw: string): string | null => {
+    try {
+      return new URL(raw, location.href).href
+    } catch {
+      return null
+    }
+  }
+
+  const scores = new Map<string, number>()
+  const record = (url: string, score: number) => {
+    const existing = scores.get(url)
+    if (existing === undefined || score > existing) scores.set(url, score)
+  }
+
+  const selector = 'header img, nav img, [class*="logo" i] img, img[alt*="logo" i], img[class*="logo" i], img[id*="logo" i]'
+  for (const img of Array.from(document.querySelectorAll<HTMLImageElement>(selector))) {
+    if (!img.src) continue
+    const url = normalize(img.src)
+    if (!url) continue
+
+    const ownText = `${img.className} ${img.id} ${img.alt}`
+    const combinedText = `${ownText} ${img.src}`
+
+    let score = 0
+    if (LOGO_PATTERN.test(ownText)) score += 3
+    if (img.parentElement?.closest('[class*="logo" i], [id*="logo" i]')) score += 2
+    if (img.closest('header, nav')) score += 2
+    const hrefRaw = img.closest('a')?.getAttribute('href')
+    const hrefUrl = hrefRaw ? normalize(hrefRaw) : null
+    if (hrefUrl) {
+      const parsed = new URL(hrefUrl)
+      if (parsed.origin === location.origin && (parsed.pathname === '/' || parsed.pathname === '')) score += 2
+    }
+    if (SPONSOR_PATTERN.test(combinedText)) score -= 4
+    if (img.parentElement && img.parentElement.querySelectorAll(':scope > img').length >= 3) score -= 3
+
+    record(url, score)
+  }
+
+  const ranked = Array.from(scores.entries())
+    .map(([url, score]) => ({ url, score }))
+    .sort((a, b) => b.score - a.score)
+
+  // Fallbacks werden absichtlich NICHT in die Sortierung einbezogen, sondern immer ans Ende
+  // angehaengt: selbst ein stark abgewerteter DOM-Kandidat (Sponsorenbild) ist ein besserer
+  // Download-Versuch als og:image/Favicon. Der Score dient hier nur der Beobachtbarkeit.
+  const seen = new Set(ranked.map((candidate) => candidate.url))
+  const ogImageRaw = document.querySelector<HTMLMetaElement>('meta[property="og:image"]')?.getAttribute('content') ?? null
+  const ogImage = ogImageRaw ? normalize(ogImageRaw) : null
+  if (ogImage && !seen.has(ogImage)) {
+    ranked.push({ url: ogImage, score: -100 })
+    seen.add(ogImage)
+  }
+  const iconRaw = document.querySelector<HTMLLinkElement>('link[rel~="icon"]')?.getAttribute('href') ?? null
+  const icon = iconRaw ? normalize(iconRaw) : null
+  if (icon && !seen.has(icon)) ranked.push({ url: icon, score: -101 })
+
+  // Verteidigung in der Tiefe: page.evaluate() laeuft in der Haupt-Welt der fremden Seite, nicht
+  // isoliert -- ein Skript dieser Seite kann globale Built-ins wie Map/Array.from ueberschreiben
+  // (beobachtet auf einer echten Vereinsseite mit veralteten Polyfills) und dadurch einen
+  // kaputten Eintrag erzeugen. Der Aufrufer bricht daran zwar nicht (jeder Download-Versuch ist
+  // ohnehin einzeln abgesichert), aber ein Kandidat ohne echte URL ist niemals brauchbar.
+  return ranked.filter((candidate) => typeof candidate.url === 'string' && candidate.url.length > 0)
+}
 
 /**
  * Rendert die Startseite eines Vereins per echtem, headless Chromium (Paket 048). Die
@@ -57,27 +140,15 @@ export class PlaywrightWebsiteRenderer implements WebsiteRenderer {
       await page.waitForTimeout(500)
 
       const screenshotBuffer = await page.screenshot({ type: 'png' })
-      const hints = await page.evaluate(() => {
-        const pickLogo = () => {
-          const selectors = ['header img', 'nav img', '[class*="logo" i] img', 'img[alt*="logo" i]']
-          const urls: string[] = []
-          for (const selector of selectors) {
-            for (const img of Array.from(document.querySelectorAll<HTMLImageElement>(selector))) {
-              if (img.src && !urls.includes(img.src)) urls.push(img.src)
-            }
-          }
-          return urls
-        }
-        const ogImage = document.querySelector<HTMLMetaElement>('meta[property="og:image"]')?.content ?? null
-        const icon = document.querySelector<HTMLLinkElement>('link[rel~="icon"]')?.href ?? null
+      const logoCandidates = await page.evaluate(scoreLogoCandidates)
+      const detectedFontFamily = await page.evaluate(() => {
         const heading = document.querySelector<HTMLElement>('h1, h2') ?? document.body
-        const detectedFontFamily = heading ? getComputedStyle(heading).fontFamily || null : null
-        return { logoCandidateUrls: [...pickLogo(), ...(ogImage ? [ogImage] : []), ...(icon ? [icon] : [])], detectedFontFamily }
+        return heading ? getComputedStyle(heading).fontFamily || null : null
       })
 
       return {
         screenshotBase64: screenshotBuffer.toString('base64'), screenshotMediaType: 'image/png',
-        logoCandidateUrls: hints.logoCandidateUrls.slice(0, MAX_LOGO_CANDIDATES), detectedFontFamily: hints.detectedFontFamily,
+        logoCandidates: logoCandidates.slice(0, MAX_LOGO_CANDIDATES_TO_ATTEMPT), detectedFontFamily,
       }
     } finally {
       await browser.close()

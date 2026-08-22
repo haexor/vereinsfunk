@@ -58,7 +58,7 @@ export class VisionProviderComparisonExecutor {
       }
 
       const render = await this.renderer.render(claimed.websiteUrl)
-      const logo = await downloadFirstValidLogo(render.logoCandidateUrls, this.logoFetcher)
+      const logo = await downloadFirstValidLogo(render.logoCandidates, this.logoFetcher)
       const logoObjectPath = logo ? await this.repository.uploadStagedLogo(claimed.id, logo) : null
 
       const results = await Promise.all(providers.map((provider): Promise<VisionComparisonResultEntry> => this.analyzeWithProvider(provider, render)))
