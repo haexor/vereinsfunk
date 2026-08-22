@@ -5,7 +5,7 @@ import { fetchPublicBinary, OutboundFetchError } from '@vereinsfunk/outbound-fet
 import type { WorkflowPayload } from '@vereinsfunk/contracts'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
 import { openProviderSecret } from './providerSecrets.js'
-import type { WebsiteRenderer } from './websiteRenderer.js'
+import type { LogoCandidate, WebsiteRenderer } from './websiteRenderer.js'
 import { WorkflowExecutionError } from './workflows.js'
 
 export type BrandAnalysisJobRow = { id: string; organization_id: string; website_url: string; revision: number }
@@ -47,15 +47,16 @@ export const FONT_PAIRING_OPTIONS = curatedFontPairings.map((pairing) => ({ key:
 export type LogoFetcher = (url: string) => Promise<Buffer>
 
 /**
- * Versucht der Reihe nach jeden Kandidaten und nimmt den ersten, der sich als Logo verarbeiten
- * laesst. Wirft nie: ein Kandidat, der nicht laedt oder kein brauchbares Bild ist, darf weder die
- * uebrigen Kandidaten noch die Farb-/Font-Analyse verhindern -- ohne Logo-Vorschlag ist das
- * Ergebnis unvollstaendig, aber nicht falsch. Exportiert aus demselben Grund wie VISION_GENERATORS.
+ * Versucht der Reihe nach jeden -- bereits nach Score sortierten (siehe scoreLogoCandidates) --
+ * Kandidaten und nimmt den ersten, der sich als Logo verarbeiten laesst. Wirft nie: ein Kandidat,
+ * der nicht laedt oder kein brauchbares Bild ist, darf weder die uebrigen Kandidaten noch die
+ * Farb-/Font-Analyse verhindern -- ohne Logo-Vorschlag ist das Ergebnis unvollstaendig, aber nicht
+ * falsch. Exportiert aus demselben Grund wie VISION_GENERATORS.
  */
-export async function downloadFirstValidLogo(candidateUrls: readonly string[], fetcher: LogoFetcher): Promise<ProcessedLogo | null> {
-  for (const url of candidateUrls) {
+export async function downloadFirstValidLogo(candidates: readonly LogoCandidate[], fetcher: LogoFetcher): Promise<ProcessedLogo | null> {
+  for (const candidate of candidates) {
     try {
-      return await processBrandLogoUpload(await fetcher(url))
+      return await processBrandLogoUpload(await fetcher(candidate.url))
     } catch {
       continue // blockierte/zu grosse/abgelaufene Antwort, kein Bildformat, zu kleines Bild, ...
     }
@@ -95,7 +96,7 @@ export class BrandWebsiteAnalysisExecutor {
       const apiKey = openProviderSecret(this.config, provider.api_key_ciphertext, provider.key_version, provider.id)
 
       const render = await this.renderer.render(job.website_url)
-      const logo = await downloadFirstValidLogo(render.logoCandidateUrls, this.logoFetcher)
+      const logo = await downloadFirstValidLogo(render.logoCandidates, this.logoFetcher)
       const logoObjectPath = logo ? await this.repository.uploadStagedLogo(job.organization_id, logo) : null
 
       const analysis = await generator.analyzeBrand({

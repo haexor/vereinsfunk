@@ -33,5 +33,10 @@ jobs:
       # jeweils in sich konsistent.
       - run: pnpm db:test:timestamps
       - run: pnpm typecheck
+      # websiteRenderer.logoScoring.test.ts startet echtes Chromium (kein Mock) -- ohne diesen
+      # Schritt fehlt die Runner-Binary und `pnpm test` schlaegt in apps/worker fehl. Erst kurz vor
+      # `pnpm test`, damit ein Lint-/Typecheck-Fehler schneller durchschlaegt statt hinter dem
+      # Download+Install von Chromium zu warten.
+      - run: pnpm --filter @vereinsfunk/worker exec playwright install --with-deps chromium
       - run: pnpm test
       - run: pnpm build
