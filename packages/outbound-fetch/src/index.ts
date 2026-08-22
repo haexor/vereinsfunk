@@ -164,6 +164,11 @@ async function followGuardedRedirects(rawUrl: string, options: FetchPublicUrlOpt
     }
 
     if (response.status >= 300 && response.status < 400) {
+      // Der Body eines Redirects wird nie gelesen. Ohne cancel() bleibt die Verbindung belegt, bis
+      // der GC sie einsammelt -- fuer fetchPublicUrl (ein iCal-Abruf, selten weitergeleitet) kaum
+      // messbar, fuer fetchPublicBinary aber der Normalfall: bis zu fuenf Logo-Kandidaten je Lauf,
+      // jeder mit Weiterleitung, in einem langlebigen Worker-Prozess.
+      await response.body?.cancel().catch(() => {})
       const location = response.headers.get('location')
       if (!location) throw new OutboundFetchError('request_failed', `redirect without location (${response.status})`)
       let next: string
@@ -199,9 +204,14 @@ export async function fetchPublicUrl(rawUrl: string, options: FetchPublicUrlOpti
 /**
  * Wie {@link fetchPublicUrl}, aber als Bytes: fuer Binaerdaten, die ein TextDecoder zerstoeren
  * wuerde. Gedacht fuer die Logo-Kandidaten, die die KI-Markenerkennung von der Homepage eines
- * Vereins herunterlaedt (Paket 048) -- dort ist eine Weiterleitung der Normalfall, nicht die
- * Ausnahme (`example.org` -> `www.example.org`, http -> https, CDN), weshalb
- * {@link createGuardedFetch} mit seiner bewussten Weiterleitungssperre dafuer nicht taugt.
+ * Vereins herunterlaedt (Paket 048) -- dort ist eine Weiterleitung innerhalb von https der
+ * Normalfall, nicht die Ausnahme (`example.org` -> `www.example.org`, Auslieferung ueber ein CDN),
+ * weshalb {@link createGuardedFetch} mit seiner bewussten Weiterleitungssperre dafuer nicht taugt.
+ *
+ * Nicht mitverfolgt wird der Sprung von http auf https: `isAllowedOutboundUrl` laesst je Hop nur
+ * https zu. Ein Kandidat, den eine Seite hartkodiert als `http://.../logo.png` ausliefert, faellt
+ * damit als `blocked_url` durch -- bewusst, denn diese Grenze ist die Zusage des Pakets und nicht
+ * fuer einen Logo-Vorschlag aufzuweichen.
  */
 export async function fetchPublicBinary(rawUrl: string, options: FetchPublicUrlOptions = {}): Promise<Buffer> {
   const response = await followGuardedRedirects(rawUrl, options)

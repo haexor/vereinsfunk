@@ -235,6 +235,38 @@ describe('fetchPublicBinary', () => {
     expect(targets).toEqual(['https://verein.example.org/asset/logo.png'])
   })
 
+  it('bounds each hop with a deadline -- die Adresse stammt aus dem HTML einer fremden Seite', async () => {
+    // Vorher lag die Zeitgrenze im Aufrufer (brandWebsiteAnalysis.ts); seit sie hier steckt, muss
+    // sie hier auch abgesichert sein. Ohne sie haelt eine Gegenstelle, die die Verbindung offen
+    // laesst, den ganzen Analyse-Job bis zum 10-Minuten-Timeout des Hatchet-Schritts auf.
+    await expect(
+      fetchPublicBinary('https://verein.example.org/asset/logo.png', {
+        timeoutMs: 5,
+        lookupImpl: publicLookup,
+        fetchImpl: (_input, init) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+          }),
+      }),
+    ).rejects.toMatchObject({ reason: 'request_failed' })
+  })
+
+  it('releases the body of a redirect it does not read', async () => {
+    let cancelled = false
+    const redirectBody = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode('<html>moved</html>')) },
+      cancel() { cancelled = true },
+    })
+    await fetchPublicBinary('https://verein.example.org/asset/logo.png', {
+      lookupImpl: publicLookup,
+      fetchImpl: async (input) =>
+        String(input) === 'https://verein.example.org/asset/logo.png'
+          ? new Response(redirectBody, { status: 301, headers: { location: 'https://www.verein.example.org/asset/logo.png' } })
+          : new Response(pngHeader, { status: 200 }),
+    })
+    expect(cancelled).toBe(true)
+  })
+
   it('refuses a body larger than the limit, even when content-length lies', async () => {
     await expect(
       fetchPublicBinary('https://verein.example.org/asset/logo.png', {
