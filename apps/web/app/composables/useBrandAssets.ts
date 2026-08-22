@@ -200,6 +200,11 @@ export function useBrandAssets({
       await api.request(`/v1/organizations/${organizationId.value}/brand/logo`, { method: 'DELETE', query: { variant } })
       if (variant === 'light') logoUrl.value = ''
       else logoDarkUrl.value = ''
+      // Der Server setzt das bisherige logo_primary/logo_dark-Asset auf 'replaced' (siehe
+      // DELETE .../brand/logo) -- ohne reload() bliebe es in `assets` lokal weiterhin 'ready'
+      // und in selectableLogoAssets fuer Abteilungen/Mannschaften waehlbar, obwohl ein Speichern
+      // dort serverseitig mit invalid_asset_reference scheitert.
+      await reload()
     } catch {
       logoRemoveError.value = 'Das Logo konnte nicht entfernt werden.'
     } finally {
