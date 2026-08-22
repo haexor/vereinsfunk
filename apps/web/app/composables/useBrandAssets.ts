@@ -126,7 +126,16 @@ export function useBrandAssets({
     const signed = await supabase.storage.from('brand-assets').createSignedUrl(asset.objectPath, 600)
     if (signed.data) assetSignedUrls.value[asset.id] = signed.data.signedUrl
   }
-  watch(assets, (list) => { for (const asset of list) if (asset.kind !== 'font' && asset.status !== 'replaced') void signAsset(asset) }, { immediate: true })
+  // Nur 'ready' signieren: die Storage-RLS prueft den Asset-Status nicht, und ein Soft-Delete
+  // entfernt das Storage-Objekt nicht -- eine tote Signed-URL fuer 'deleted'/'processing'/
+  // 'rejected'/'replaced' waere sonst weiterhin abrufbar. Veraltete Eintraege (Asset nicht mehr
+  // in der Liste oder nicht mehr signierbar) fallen aus assetSignedUrls, statt eine alte URL zu
+  // behalten.
+  watch(assets, (list) => {
+    const signableIds = new Set(list.filter((asset) => asset.kind !== 'font' && asset.status === 'ready').map((asset) => asset.id))
+    for (const id of Object.keys(assetSignedUrls.value)) if (!signableIds.has(id)) delete assetSignedUrls.value[id]
+    for (const asset of list) if (signableIds.has(asset.id)) void signAsset(asset)
+  }, { immediate: true })
 
   const deletingAsset = ref<string | null>(null)
   const deleteAssetError = ref('')

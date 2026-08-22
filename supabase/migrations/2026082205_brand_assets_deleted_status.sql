@@ -7,6 +7,7 @@ begin;
 -- Exakter Constraint-Name per \d+ public.brand_assets gegen die lokale Instanz verifiziert.
 alter table public.brand_assets drop constraint brand_assets_status_check;
 alter table public.brand_assets add constraint brand_assets_status_check
-  check (status = any (array['processing', 'ready', 'rejected', 'replaced', 'deleted']));
+  check (status = any (array['processing', 'ready', 'rejected', 'replaced', 'deleted'])) not valid;
+alter table public.brand_assets validate constraint brand_assets_status_check;
 
 commit;

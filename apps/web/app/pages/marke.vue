@@ -645,7 +645,7 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
               <div v-for="asset in ownLogoAssets" :key="asset.id" class="rounded-xl border p-2 text-center" :class="activeLogoAssetId() === asset.id ? 'border-forest bg-[#f2f6e9]' : 'border-[#e1e2db]'">
                 <img v-if="assetSignedUrls[asset.id]" :src="assetSignedUrls[asset.id]" :alt="LOGO_ASSET_KIND_LABELS[asset.kind] ?? asset.kind" class="mx-auto h-12 w-12 object-contain" />
                 <p class="mt-1 text-[9px] text-[#9aa096]">{{ LOGO_ASSET_KIND_LABELS[asset.kind] ?? asset.kind }}</p>
-                <button type="button" class="focus-ring text-[9px] underline" :aria-pressed="activeLogoAssetId() === asset.id" @click="toggleLogoAsset(asset.id)">{{ activeLogoAssetId() === asset.id ? 'Logo entfernen' : 'als Logo' }}</button>
+                <button type="button" class="focus-ring text-[9px] underline disabled:opacity-50" :aria-pressed="activeLogoAssetId() === asset.id" :disabled="activeLevel !== 'organization' && lockedForActiveLevel.has('logoAssetId')" @click="toggleLogoAsset(asset.id)">{{ activeLogoAssetId() === asset.id ? 'Logo entfernen' : 'als Logo' }}</button>
                 <button type="button" class="focus-ring mt-1 block w-full text-[9px] text-amber-800 underline disabled:opacity-50" :disabled="deletingAsset === asset.id" @click="removeLogo(asset.id)">{{ deletingAsset === asset.id ? 'Wird entfernt …' : 'löschen' }}</button>
               </div>
             </div>
@@ -653,7 +653,7 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
             <div v-if="activeLevel !== 'organization' && selectableLogoAssets.length" class="mt-4">
               <p class="text-[11px] font-semibold text-[#7b827d]">Wählbar (vom Verein{{ activeLevel === 'team' ? ' oder der Abteilung' : '' }}) — erneut klicken entfernt die Auswahl</p>
               <div class="mt-2 flex flex-wrap gap-2">
-                <button v-for="asset in selectableLogoAssets" :key="asset.id" type="button" class="focus-ring rounded-lg px-2 py-1 text-[10px]" :class="activeLogoAssetId() === asset.id ? 'bg-forest text-white' : 'bg-[#f4f6f1]'" :aria-pressed="activeLogoAssetId() === asset.id" @click="toggleLogoAsset(asset.id)">{{ LOGO_ASSET_KIND_LABELS[asset.kind] ?? asset.kind }} — {{ assetOrigin(asset) }}</button>
+                <button v-for="asset in selectableLogoAssets" :key="asset.id" type="button" class="focus-ring rounded-lg px-2 py-1 text-[10px] disabled:opacity-50" :class="activeLogoAssetId() === asset.id ? 'bg-forest text-white' : 'bg-[#f4f6f1]'" :aria-pressed="activeLogoAssetId() === asset.id" :disabled="lockedForActiveLevel.has('logoAssetId')" @click="toggleLogoAsset(asset.id)">{{ LOGO_ASSET_KIND_LABELS[asset.kind] ?? asset.kind }} — {{ assetOrigin(asset) }}</button>
               </div>
             </div>
           </section>

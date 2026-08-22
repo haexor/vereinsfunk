@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { AlertTriangle, ArrowRight, Check, ShieldCheck, Sparkles, Upload } from '@lucide/vue'
+import { CreateBrandAssetResponseSchema } from '@vereinsfunk/contracts'
 
 definePageMeta({ layout: false })
 
@@ -133,9 +134,8 @@ async function saveBranding() {
       // logoPreviewUrl bleibt die lokale URL.createObjectURL()-Vorschau aus onLogoSelected --
       // die generische Route liefert einen Objekt-Pfad, keine Signed URL, ein zweiter
       // Sign-Aufruf nur fuer die Vorschau lohnt hier nicht.
-      const uploaded = await $fetch<{ id: string; sanitized: boolean }>(
-        `${config.public.apiBase}/v1/brand/assets`,
-        { method: 'POST', headers, body: formData },
+      const uploaded = CreateBrandAssetResponseSchema.parse(
+        await $fetch(`${config.public.apiBase}/v1/brand/assets`, { method: 'POST', headers, body: formData }),
       )
       logoAssetId = uploaded.id
       logoSanitizedNotice.value = uploaded.sanitized

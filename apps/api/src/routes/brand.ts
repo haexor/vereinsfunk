@@ -3,6 +3,7 @@ import {
   BrandWebsiteAnalysisStatusResponseSchema,
   ConfirmBrandAssetLicenseRequestSchema,
   CreateBrandAssetRequestSchema,
+  CreateBrandAssetResponseSchema,
   DepartmentBrandSchema,
   OrganizationBrandSchema,
   OrganizationBrandUpdateSchema,
@@ -400,7 +401,7 @@ app.post('/v1/brand/assets', async (request, reply) => {
   // sanitized ist bewusst kein Feld von BrandAssetSchema (der persistierten Asset-Zeile), sondern
   // eine einmalige Nebeninformation dieser Antwort -- der Onboarding-Wizard zeigt damit denselben
   // Hinweis wie /marke, wenn ein SVG nicht unterstuetzte Elemente enthielt.
-  return reply.code(201).send({ ...BrandAssetSchema.parse(mapBrandAssetRow(insert.data)), sanitized: processedImage?.sanitized ?? false })
+  return reply.code(201).send(CreateBrandAssetResponseSchema.parse({ ...mapBrandAssetRow(insert.data), sanitized: processedImage?.sanitized ?? false }))
 })
 
 // Ersetzt die beiden dedizierten Logo-Endpunkte (siehe Loeschung oben): "aktives Logo entfernen"
@@ -423,12 +424,17 @@ app.delete('/v1/brand/assets/:id', async (request, reply) => {
 
   const service = supabaseClients.forService()
   // Soft-Delete statt DELETE FROM: brand_assets wird von nicht-kaskadierenden Fremdschluesseln aus
-  // organization_/department_/team_brand_profiles sowie image_style_presets referenziert. Der
-  // status='ready'-Filter macht einen zweiten Loeschversuch desselben Assets zu einem sauberen
-  // 404 statt eines stillen Zweit-Updates.
-  const update = await service.from('brand_assets').update({ status: 'deleted' }).eq('id', params.id).eq('status', 'ready').select().maybeSingle()
-  if (update.error) throw update.error
-  if (!update.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+  // organization_/department_/team_brand_profiles sowie image_style_presets referenziert. Pruefung
+  // und Status-Aenderung laufen deshalb atomar in delete_brand_asset_if_unused() (Migration
+  // 2026082206) -- ein separates .eq('status','ready') vor einem ungesperrten Update haette ein
+  // noch referenziertes Asset loeschen und die referenzierende Profilzeile mit einer toten
+  // Referenz zuruecklassen koennen (Review-Fund PR #138).
+  const deletion = await service.rpc('delete_brand_asset_if_unused', { target_asset_id: params.id })
+  if (deletion.error) {
+    if (deletion.error.message.includes('brand_asset_referenced')) return reply.code(409).send({ error: 'asset_referenced', correlationId: request.id })
+    throw deletion.error
+  }
+  if (!deletion.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
 
   const audit = await service.from('audit_events').insert({
     organization_id: existing.data.organization_id,

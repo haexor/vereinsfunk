@@ -598,7 +598,12 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
     expect(response.statusCode).toBe(403)
   })
 
-  it('returns 404 when deleting a brand asset that does not exist', async () => {
+  // Deckt zugleich die Mandantentrennung ab: ein Asset eines fremden Vereins ist ueber
+  // brand_assets_select fuer den Nutzer-Client unsichtbar (siehe supabase/tests/
+  // brand_assets_and_fonts.test.sql, "18: Mandantentrennung") und liefert deshalb hier dieselbe
+  // maybeSingle()-Null-Antwort wie ein echt nicht existierendes Asset -- die Route erreicht in
+  // beiden Faellen niemals die Service Role.
+  it('returns 404 when deleting a brand asset that does not exist (or belongs to another organization, invisible via RLS)', async () => {
     const clients: SupabaseClientFactory = {
       forUser: () =>
         ({
@@ -622,7 +627,7 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
   it('soft-deletes a brand asset (status=deleted) and records an audit event', async () => {
     const ASSET_ID = '10000000-9000-4000-8000-000000000005'
     let auditAction: unknown
-    let updatePayload: unknown
+    let rpcArgs: unknown
     const clients: SupabaseClientFactory = {
       forUser: () =>
         ({
@@ -635,15 +640,12 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
         }) as unknown as SupabaseClient,
       forService: () =>
         ({
+          rpc: async (name: string, args: Record<string, unknown>) => {
+            if (name !== 'delete_brand_asset_if_unused') throw new Error(`unexpected rpc: ${name}`)
+            rpcArgs = args
+            return { data: ASSET_ID, error: null }
+          },
           from: (table: string) => {
-            if (table === 'brand_assets') {
-              return {
-                update: (payload: unknown) => {
-                  updatePayload = payload
-                  return chain({ data: { id: ASSET_ID }, error: null })
-                },
-              }
-            }
             if (table === 'audit_events') {
               return {
                 insert: (payload: { action: unknown }) => {
@@ -664,8 +666,69 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
       headers: { authorization: `Bearer ${token}` },
     })
     expect(response.statusCode).toBe(204)
-    expect(updatePayload).toEqual({ status: 'deleted' })
+    expect(rpcArgs).toEqual({ target_asset_id: ASSET_ID })
     expect(auditAction).toBe('brand_asset.deleted')
+  })
+
+  it('returns 404 when the asset was already deleted, without recording another audit event', async () => {
+    const ASSET_ID = '10000000-9000-4000-8000-000000000006'
+    let auditCalled = false
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'brand_assets') {
+              return chain({ data: { organization_id: ORGANIZATION_ID, department_id: null, team_id: null, status: 'deleted' }, error: null })
+            }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          rpc: async () => ({ data: null, error: null }),
+          from: () => { auditCalled = true; return { insert: () => chain({ data: null, error: null }) } },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'DELETE',
+      url: `/v1/brand/assets/${ASSET_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(404)
+    expect(auditCalled).toBe(false)
+  })
+
+  it('returns 409 when the asset is still referenced by a brand profile or image style preset', async () => {
+    const ASSET_ID = '10000000-9000-4000-8000-000000000007'
+    let auditCalled = false
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'brand_assets') {
+              return chain({ data: { organization_id: ORGANIZATION_ID, department_id: null, team_id: null, status: 'ready' }, error: null })
+            }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          rpc: async () => ({ data: null, error: { message: 'brand_asset_referenced' } }),
+          from: () => { auditCalled = true; return { insert: () => chain({ data: null, error: null }) } },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'DELETE',
+      url: `/v1/brand/assets/${ASSET_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'asset_referenced' })
+    expect(auditCalled).toBe(false)
   })
 })
 

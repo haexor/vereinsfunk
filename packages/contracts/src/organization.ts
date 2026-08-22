@@ -148,6 +148,14 @@ export const BrandAssetSchema = z.object({
   createdAt: z.iso.datetime({ offset: true }),
 })
 
+// Antwortform von POST /v1/brand/assets: dieselbe brand_assets-Zeile wie BrandAssetSchema, plus
+// `sanitized` -- eine einmalige Nebeninformation dieser Antwort (kein persistiertes Feld), die den
+// Hinweis "SVG enthielt nicht unterstuetzte Elemente" traegt.
+export const CreateBrandAssetResponseSchema = BrandAssetSchema.extend({
+  sanitized: z.boolean(),
+})
+export type CreateBrandAssetResponse = z.infer<typeof CreateBrandAssetResponseSchema>
+
 // Aus den multipart-Feldern eines POST /v1/brand/assets gelesen -- die Datei selbst kommt als
 // eigener Teil des multipart-Streams, nicht durch dieses Schema.
 export const CreateBrandAssetRequestSchema = z.object({
