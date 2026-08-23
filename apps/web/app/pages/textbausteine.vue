@@ -96,6 +96,17 @@ const editDraft = ref<ContentSignatureBlockDraft>(emptyContentSignatureBlockDraf
 const editSaving = ref(false)
 const editError = ref('')
 
+// Beim Vereinswechsel duerfen weder die zuvor gewaehlte Abteilung noch ein offener Entwurf
+// weiterverwendet werden. Sonst waere die Anzeige bis zum naechsten manuellen Reload veraltet.
+watch(organizationId, () => {
+  activeDepartmentId.value = null
+  editingId.value = null
+  createError.value = ''
+  deleteError.value = ''
+  editError.value = ''
+  void loadAll()
+})
+
 function startEdit(block: ContentSignatureBlock) {
   editingId.value = block.id
   editDraft.value = { name: block.name, body: block.body }

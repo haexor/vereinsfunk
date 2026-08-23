@@ -136,6 +136,19 @@ describe('PATCH/DELETE /v1/content-signature-blocks/:id', () => {
     expect(response.statusCode).toBe(404)
   })
 
+  it('validates PATCH input before querying the block', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => { throw new Error('invalid input must not query Supabase') },
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PATCH', url: `/v1/content-signature-blocks/${BLOCK_ID}`, headers: { authorization: `Bearer ${token}` }, payload: { name: '', body: BASE_FIELDS.body },
+    })
+    expect(response.statusCode).toBe(400)
+  })
+
   it('updates a block', async () => {
     const updatedRow = { ...BLOCK_ROW, name: 'Herbst-CTA', is_active: false }
     const clients: SupabaseClientFactory = {
@@ -165,7 +178,7 @@ describe('PATCH/DELETE /v1/content-signature-blocks/:id', () => {
         userClient({
           content_signature_blocks: {
             select: () => chain({ data: BLOCK_ROW, error: null }),
-            delete: () => ({ eq: async () => { deleted = true; return { error: null } } }),
+            delete: ({ count }: { count: string }) => ({ eq: async () => { deleted = count === 'exact'; return { count: 1, error: null } } }),
           },
         }),
       forService: () => ({ from: () => ({ insert: async () => ({ error: null }) }) }) as unknown as SupabaseClient,
@@ -175,5 +188,24 @@ describe('PATCH/DELETE /v1/content-signature-blocks/:id', () => {
     const response = await app.inject({ method: 'DELETE', url: `/v1/content-signature-blocks/${BLOCK_ID}`, headers: { authorization: `Bearer ${token}` } })
     expect(response.statusCode).toBe(204)
     expect(deleted).toBe(true)
+  })
+
+  it('returns 404 and does not audit when the block is concurrently deleted', async () => {
+    let auditRecorded = false
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        userClient({
+          content_signature_blocks: {
+            select: () => chain({ data: BLOCK_ROW, error: null }),
+            delete: () => ({ eq: async () => ({ count: 0, error: null }) }),
+          },
+        }),
+      forService: () => ({ from: () => ({ insert: async () => { auditRecorded = true; return { error: null } } }) }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'DELETE', url: `/v1/content-signature-blocks/${BLOCK_ID}`, headers: { authorization: `Bearer ${token}` } })
+    expect(response.statusCode).toBe(404)
+    expect(auditRecorded).toBe(false)
   })
 })

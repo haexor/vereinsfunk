@@ -67,13 +67,13 @@ export function registerContentSignatureBlockRoutes(app: FastifyInstance, contex
   app.patch('/v1/content-signature-blocks/:id', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
+    const input = UpdateContentSignatureBlockRequestSchema.parse(request.body)
     const client = supabaseClients.forUser(request.auth!.accessToken)
     const existing = await client.from('content_signature_blocks').select('organization_id, department_id').eq('id', params.id).maybeSingle()
     if (existing.error) throw existing.error
     if (!existing.data) return reply.code(404).send({ error: 'content_signature_block_not_found', correlationId: request.id })
     const scope = toPermissionScope(existing.data.organization_id as string, existing.data.department_id as string | null)
     if (!(await requirePermission(request, reply, 'post.create', scope))) return
-    const input = UpdateContentSignatureBlockRequestSchema.parse(request.body)
 
     const payload: Record<string, unknown> = { name: input.name, body: input.body }
     if (input.isActive !== undefined) payload.is_active = input.isActive
@@ -99,8 +99,12 @@ export function registerContentSignatureBlockRoutes(app: FastifyInstance, contex
     if (!existing.data) return reply.code(404).send({ error: 'content_signature_block_not_found', correlationId: request.id })
     const scope = toPermissionScope(existing.data.organization_id as string, existing.data.department_id as string | null)
     if (!(await requirePermission(request, reply, 'post.create', scope))) return
-    const del = await client.from('content_signature_blocks').delete().eq('id', params.id)
+    // Zwischen dem Lookup und dem DELETE kann eine andere berechtigte Anfrage die Zeile entfernt
+    // haben. Supabase meldet das nicht als Fehler; deshalb die exakte Anzahl pruefen und nur eine
+    // tatsaechlich geloeschte Zeile auditieren.
+    const del = await client.from('content_signature_blocks').delete({ count: 'exact' }).eq('id', params.id)
     if (del.error) throw del.error
+    if (del.count !== 1) return reply.code(404).send({ error: 'content_signature_block_not_found', correlationId: request.id })
     await recordAuditEvent(request, {
       organizationId: existing.data.organization_id as string,
       action: 'content_signature_block.deleted',

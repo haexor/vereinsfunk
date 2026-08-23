@@ -29,7 +29,7 @@ const isValid = computed(() => draft.value.name.trim().length > 0 && draft.value
     </label>
     <p class="mt-1 text-[11px] text-[#9aa096]">{{ draft.body.length }}/1000 Zeichen</p>
 
-    <p v-if="error" class="mt-4 text-xs text-amber-800">{{ error }}</p>
+    <p v-if="error" role="alert" class="mt-4 text-xs text-amber-800">{{ error }}</p>
     <div class="mt-5 flex gap-2">
       <button type="button" :disabled="saving || !isValid" class="focus-ring flex items-center gap-2 rounded-xl bg-forest px-4 py-2.5 text-xs font-bold text-white disabled:opacity-60" @click="emit('save')">
         <LoaderCircle v-if="saving" :size="14" class="animate-spin" /> {{ saving ? 'Wird gespeichert …' : submitLabel }}

@@ -59,16 +59,19 @@ grant all privileges on public.content_signature_blocks to service_role;
 
 create trigger set_content_signature_blocks_updated_at before update on public.content_signature_blocks for each row execute function public.set_updated_at();
 
--- created_by-Immutability direkt in dieser Migration statt als Nachzuegler (anders als
+-- Scope und Urheberschaft sind direkt in dieser Migration unveraenderlich (anders als
 -- image_style_presets, siehe 2026081919): die update-Policy prueft nur post.create auf der Ebene
--- des Bausteins, nicht welche Spalten sich aendern -- ohne diese Sperre koennte jede Person mit
--- post.create created_by auf eine beliebige andere profiles.id umbiegen und so die Urheberschaft
--- eines fremden Bausteins faelschen.
+-- des Bausteins, nicht welche Spalten sich aendern. Ohne diese Sperre koennte eine Person mit
+-- post.create einen Baustein auf eine andere Organisation/Abteilung verschieben oder created_by
+-- auf eine beliebige andere profiles.id umbiegen.
 create or replace function public.enforce_immutable_content_signature_block_created_by()
 returns trigger language plpgsql set search_path = public, pg_temp as $$
 begin
   if new.created_by is distinct from old.created_by then
     raise exception 'content signature block created_by is immutable';
+  end if;
+  if new.organization_id is distinct from old.organization_id or new.department_id is distinct from old.department_id then
+    raise exception 'content signature block scope is immutable';
   end if;
   return new;
 end;
