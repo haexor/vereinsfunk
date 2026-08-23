@@ -1530,8 +1530,11 @@ describe('Paket 049: KI-gestuetzte Markenerkennung auf Abteilungsebene', () => {
       forService: () =>
         ({
           from: (table: string) => {
-            if (table !== 'department_brand_profiles') throw new Error(`unexpected table: ${table}`)
-            return chain({ data: { website_url: 'https://abteilung.example.org' }, error: null })
+            if (table === 'organization_brand_profiles')
+              return chain({ data: { allow_department_overrides: true }, error: null })
+            if (table === 'department_brand_profiles')
+              return chain({ data: { website_url: 'https://abteilung.example.org' }, error: null })
+            throw new Error(`unexpected table: ${table}`)
           },
           rpc: async (name: string, args: Record<string, unknown>) => {
             if (name !== 'start_brand_website_analysis') throw new Error(`unexpected rpc: ${name}`)
@@ -1561,6 +1564,47 @@ describe('Paket 049: KI-gestuetzte Markenerkennung auf Abteilungsebene', () => {
     })
   })
 
+  it('does not start a department analysis when organization branding overrides are disabled', async () => {
+    let rpcCalled = false
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'departments')
+              return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table !== 'organization_brand_profiles')
+              throw new Error(`unexpected table: ${table}`)
+            return chain({ data: { allow_department_overrides: false }, error: null })
+          },
+          rpc: async () => {
+            rpcCalled = true
+            return { data: null, error: null }
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/departments/${DEPARTMENT_ID}/brand/website-analysis`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: {},
+    })
+
+    expect(response.statusCode).toBe(400)
+    expect(response.json().error).toBe('overrides_not_allowed')
+    expect(rpcCalled).toBe(false)
+  })
+
   it('maps a running department analysis to 409 instead of silently duplicating it', async () => {
     const clients: SupabaseClientFactory = {
       forUser: () =>
@@ -1574,8 +1618,11 @@ describe('Paket 049: KI-gestuetzte Markenerkennung auf Abteilungsebene', () => {
       forService: () =>
         ({
           from: (table: string) => {
-            if (table !== 'department_brand_profiles') throw new Error(`unexpected table: ${table}`)
-            return chain({ data: { website_url: 'https://abteilung.example.org' }, error: null })
+            if (table === 'organization_brand_profiles')
+              return chain({ data: { allow_department_overrides: true }, error: null })
+            if (table === 'department_brand_profiles')
+              return chain({ data: { website_url: 'https://abteilung.example.org' }, error: null })
+            throw new Error(`unexpected table: ${table}`)
           },
           rpc: async () => ({ data: null, error: { message: 'analysis_in_progress' } }),
         }) as unknown as SupabaseClient,

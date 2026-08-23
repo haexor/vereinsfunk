@@ -30,6 +30,8 @@ function startErrorMessage(error: unknown, isDepartment: boolean): string {
   if (code === 'website_url_missing')
     return 'Bitte zuerst eine Homepage-Adresse in der Marke speichern.'
   if (code === 'website_url_not_allowed') return 'Diese Adresse kann nicht abgerufen werden.'
+  if (code === 'overrides_not_allowed')
+    return 'Für diese Abteilung sind Marken-Überschreibungen deaktiviert.'
   if (code === 'analysis_in_progress') return `Es läuft bereits eine Analyse für ${isDepartment ? 'diese Abteilung' : 'diesen Verein'}.`
   if (code === 'organization_has_no_department') return 'Dafür braucht der Verein mindestens eine Abteilung.'
   return 'Die Analyse konnte nicht gestartet werden.'

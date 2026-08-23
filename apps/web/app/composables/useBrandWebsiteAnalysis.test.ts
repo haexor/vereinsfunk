@@ -49,6 +49,7 @@ describe('useBrandWebsiteAnalysis', () => {
   it.each([
     ['website_url_missing', 'Bitte zuerst eine Homepage-Adresse in der Marke speichern.'],
     ['website_url_not_allowed', 'Diese Adresse kann nicht abgerufen werden.'],
+    ['overrides_not_allowed', 'Für diese Abteilung sind Marken-Überschreibungen deaktiviert.'],
     ['analysis_in_progress', 'Es läuft bereits eine Analyse für diesen Verein.'],
     ['organization_has_no_department', 'Dafür braucht der Verein mindestens eine Abteilung.'],
     ['something_else', 'Die Analyse konnte nicht gestartet werden.'],

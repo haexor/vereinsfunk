@@ -294,6 +294,18 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
       return
     StartBrandWebsiteAnalysisRequestSchema.parse(request.body ?? {})
     const service = supabaseClients.forService()
+    // Ein bereits vorhandenes Abteilungsprofil bleibt beim spaeteren Deaktivieren der
+    // Überschreibungen bestehen. Der Start eines kostenpflichtigen Analyse-Jobs muss dieselbe
+    // Grenze daher serverseitig durchsetzen wie das Speichern eines Abteilungs-Overrides.
+    const organizationBrand = await service
+      .from('organization_brand_profiles')
+      .select('allow_department_overrides')
+      .eq('organization_id', organizationId)
+      .maybeSingle()
+    if (organizationBrand.error) throw organizationBrand.error
+    if (organizationBrand.data && !organizationBrand.data.allow_department_overrides) {
+      return reply.code(400).send({ error: 'overrides_not_allowed', correlationId: request.id })
+    }
     const profile = await service
       .from('department_brand_profiles')
       .select('website_url')

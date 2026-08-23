@@ -1,6 +1,18 @@
-export interface ActiveScope {
-  organizationId: string
-  departmentId: string | null
+import { z } from 'zod'
+
+// Sowohl Nuxt-State als auch das Cookie koennen aus einem frueheren Client-Build oder einer
+// manipulierten Browser-Nutzlast stammen. Beide werden vor der Membership-Pruefung strikt
+// validiert, damit sie keine unvollstaendigen Scope-Objekte in die App tragen.
+export const ActiveScopeSchema = z.object({
+  organizationId: z.string().min(1),
+  departmentId: z.string().min(1).nullable(),
+}).strict()
+
+export type ActiveScope = z.infer<typeof ActiveScopeSchema>
+
+export function parseActiveScope(candidate: unknown): ActiveScope | null {
+  const parsed = ActiveScopeSchema.safeParse(candidate)
+  return parsed.success ? parsed.data : null
 }
 
 export function findValidScope(scopes: readonly { organizationId: string; departments: readonly { id: string }[] }[], candidate: ActiveScope | null): ActiveScope | null {
@@ -27,7 +39,7 @@ export async function useScope() {
   const session = await useSession()
   const scopes = session.value?.scopes ?? []
 
-  const valid = findValidScope(scopes, active.value) ?? findValidScope(scopes, remembered.value)
+  const valid = findValidScope(scopes, parseActiveScope(active.value)) ?? findValidScope(scopes, parseActiveScope(remembered.value))
   if (valid) {
     active.value = valid
   } else {
