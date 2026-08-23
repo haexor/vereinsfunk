@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { BarChart3, BookUser, Building2, CalendarDays, CheckCircle2, CreditCard, Feather, FileSignature, FileText, Frame, LayoutDashboard, LayoutGrid, LogOut, Menu, Palette, Plug, Plus, Scale, Settings, Share2, ShieldCheck, Users, UserRound, UserSearch, X } from '@lucide/vue'
+import { deriveSidebarPalette } from '../utils/sidebarBrand'
 
 const mobileOpen = ref(false)
 const route = useRoute()
@@ -13,6 +14,7 @@ const activeDepartment = computed(() => activeOrganization.value?.departments.fi
 const activeScopeName = computed(() => activeDepartment.value?.name ?? activeOrganization.value?.organizationName ?? '')
 const activeScopeKind = computed(() => activeDepartment.value ? 'Abteilung' : 'Verein')
 const scopeInitials = computed(() => activeScopeName.value.split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join('').toUpperCase())
+const { revision: brandRevision } = useBrandRevision()
 
 // Paket 013, Rueckbau: das Vereinslogo ersetzt die Initialen dort, wo der Verein tatsaechlich
 // als Marke auftritt -- diese kleine Kachel im Umschalter, nicht die geteilte AppLogo-Komponente.
@@ -20,30 +22,29 @@ const scopeInitials = computed(() => activeScopeName.value.split(/\s+/).filter(B
 // wo es keinen (oder noch keinen einzelnen) aktiven Verein gibt -- dort waere ein Vereinslogo
 // fachlich falsch, es ist die Produktmarke "vereinsfunk", nicht die des Vereins.
 const scopeLogoUrl = ref('')
-const scopeBrand = ref({ primaryColor: '#163a2c', accentColor: '#caff4a', onPrimaryColor: '#ffffff' })
+const scopeBrand = ref({ primaryColor: '#163a2c', accentColor: '#caff4a' })
 // Lauf-ID statt reiner organizationId-Pruefung: bei A -> B -> A stimmt organizationId beim
 // dritten Lauf wieder mit dem ersten ueberein, ein spaet zurueckkehrender erster Lauf wuerde die
 // Pruefung also bestehen und das (moeglicherweise veraltete) Ergebnis des dritten Laufs
 // ueberschreiben. Die Lauf-ID ist bei jedem Watcher-Aufruf eindeutig, unabhaengig vom Zielverein.
 let latestScopeBrandRun = 0
 watch(
-  () => [scope.value?.organizationId, scope.value?.departmentId] as const,
+  () => [scope.value?.organizationId, scope.value?.departmentId, brandRevision.value] as const,
   async ([organizationId, departmentId]) => {
     const run = ++latestScopeBrandRun
     scopeLogoUrl.value = ''
-    scopeBrand.value = { primaryColor: '#163a2c', accentColor: '#caff4a', onPrimaryColor: '#ffffff' }
+    scopeBrand.value = { primaryColor: '#163a2c', accentColor: '#caff4a' }
     if (!organizationId) return
     const supabase = useSupabaseClient()
     const organizationBrand = await supabase
       .from('organization_brand_profiles')
-      .select('primary_color, accent_color, on_primary_color, logo_asset_id')
+      .select('primary_color, accent_color, logo_asset_id')
       .eq('organization_id', organizationId)
       .maybeSingle()
     if (run !== latestScopeBrandRun || !organizationBrand.data) return
     let brand = {
       primaryColor: organizationBrand.data.primary_color as string,
       accentColor: organizationBrand.data.accent_color as string,
-      onPrimaryColor: organizationBrand.data.on_primary_color as string,
       logoAssetId: organizationBrand.data.logo_asset_id as string | null,
     }
     if (departmentId) {
@@ -99,8 +100,20 @@ const scopeSelection = computed({
   },
 })
 
-const sidebarStyle = computed(() => ({ backgroundColor: scopeBrand.value.primaryColor, color: scopeBrand.value.onPrimaryColor }))
-const accentStyle = computed(() => ({ backgroundColor: scopeBrand.value.accentColor, color: scopeBrand.value.primaryColor }))
+const sidebarPalette = computed(() => deriveSidebarPalette(scopeBrand.value.primaryColor, scopeBrand.value.accentColor))
+const sidebarStyle = computed(() => ({ backgroundColor: sidebarPalette.value.surface, color: sidebarPalette.value.onSurface }))
+const accentStyle = computed(() => ({ backgroundColor: sidebarPalette.value.actionSurface, color: sidebarPalette.value.onAction }))
+const sidebarClasses = computed(() =>
+  sidebarPalette.value.onSurface === '#ffffff'
+    ? {
+        text: 'text-white', muted: 'text-white/55', quiet: 'text-white/45', panel: 'border-white/10 bg-white/[.06]', divider: 'bg-white/10',
+        select: 'text-white [&_svg]:text-white/50', nav: 'text-white/65 hover:bg-white/[.07] hover:text-white', activeNav: '!bg-white/[.11] !text-white', footer: 'border-white/10',
+      }
+    : {
+        text: 'text-ink', muted: 'text-ink/60', quiet: 'text-ink/55', panel: 'border-ink/10 bg-ink/[.05]', divider: 'bg-ink/10',
+        select: 'text-ink [&_svg]:text-ink/50', nav: 'text-ink/70 hover:bg-ink/[.07] hover:text-ink', activeNav: '!bg-ink/[.11] !text-ink', footer: 'border-ink/10',
+      },
+)
 
 async function logout() {
   await signOut()
@@ -142,8 +155,8 @@ const organizationNav = [
   <ClientOnly>
   <div class="min-h-screen bg-oat lg:flex lg:h-screen lg:overflow-hidden">
     <header class="sticky top-0 z-40 flex h-16 items-center justify-between px-4 lg:hidden" :style="sidebarStyle">
-      <AppLogo />
-      <button class="focus-ring rounded-lg p-2 text-white" aria-label="Navigation öffnen" @click="mobileOpen = !mobileOpen">
+      <AppLogo :text-class="sidebarClasses.text" />
+      <button class="focus-ring rounded-lg p-2" :class="sidebarClasses.text" aria-label="Navigation öffnen" @click="mobileOpen = !mobileOpen">
         <X v-if="mobileOpen" :size="22" />
         <Menu v-else :size="22" />
       </button>
@@ -151,38 +164,38 @@ const organizationNav = [
 
     <div v-if="mobileOpen" class="fixed inset-0 z-30 bg-ink/40 backdrop-blur-sm lg:hidden" @click="mobileOpen = false" />
     <aside
-      class="fixed bottom-0 left-0 top-0 z-30 flex w-[268px] flex-col overflow-y-auto px-4 py-5 text-white transition-transform duration-200 lg:sticky lg:h-screen lg:min-h-0 lg:translate-x-0"
+      class="fixed bottom-0 left-0 top-0 z-30 flex w-[268px] flex-col overflow-y-auto px-4 py-5 transition-transform duration-200 lg:sticky lg:h-screen lg:min-h-0 lg:translate-x-0"
       :class="mobileOpen ? 'translate-x-0 pt-20' : '-translate-x-full'"
       :style="sidebarStyle"
     >
-      <div class="hidden px-2 pb-7 lg:block"><AppLogo /></div>
+      <div class="hidden px-2 pb-7 lg:block"><AppLogo :text-class="sidebarClasses.text" /></div>
 
-      <div v-if="activeOrganization" class="mb-5 rounded-2xl border border-white/10 bg-white/[.06] p-2">
+      <div v-if="activeOrganization" class="mb-5 rounded-2xl border p-2" :class="sidebarClasses.panel">
         <div class="flex w-full items-center gap-3 p-2 text-left">
-          <img v-if="scopeLogoUrl" :src="scopeLogoUrl" :alt="`${activeScopeName} Logo`" class="h-9 w-9 shrink-0 rounded-xl object-contain p-1" :style="accentStyle" />
+          <img v-if="scopeLogoUrl" :src="scopeLogoUrl" :alt="`${activeScopeName} Logo`" class="h-10 w-10 shrink-0 rounded-xl border border-black/5 bg-white p-1.5 shadow-sm" @error="scopeLogoUrl = ''" />
           <span v-else class="grid h-9 w-9 shrink-0 place-items-center rounded-xl font-display text-sm font-extrabold" :style="accentStyle">{{ scopeInitials }}</span>
           <span v-if="(session?.scopes.length ?? 0) <= 1" class="min-w-0 flex-1">
             <span class="block truncate text-sm font-semibold">{{ activeScopeName }}</span>
-            <span class="block text-[11px] text-white/55">{{ activeScopeKind }}</span>
+            <span class="block text-[11px]" :class="sidebarClasses.muted">{{ activeScopeKind }}</span>
           </span>
           <div v-else class="relative block min-w-0 flex-1">
             <Select :model-value="scope?.organizationId ?? ''" @update:model-value="(value: unknown) => selectOrganization(value as string)">
-              <SelectTrigger aria-label="Verein auswählen" class="border-0 py-1 pr-6 pl-0 text-sm font-semibold text-white [&_svg]:text-white/50">
+              <SelectTrigger aria-label="Verein auswählen" class="border-0 py-1 pr-6 pl-0 text-sm font-semibold" :class="sidebarClasses.select">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem v-for="item in session?.scopes" :key="item.organizationId" :value="item.organizationId">{{ item.organizationName }}</SelectItem>
               </SelectContent>
             </Select>
-            <span class="block text-[11px] text-white/55">{{ activeScopeKind }}</span>
+            <span class="block text-[11px]" :class="sidebarClasses.muted">{{ activeScopeKind }}</span>
           </div>
         </div>
         <template v-if="activeOrganization.departments.length">
-          <div class="mx-2 my-1 h-px bg-white/10" />
+          <div class="mx-2 my-1 h-px" :class="sidebarClasses.divider" />
           <div class="relative block">
-            <p class="px-2 pt-2 text-[10px] font-bold uppercase tracking-[.12em] text-white/45">Arbeitsbereich</p>
+            <p class="px-2 pt-2 text-[10px] font-bold uppercase tracking-[.12em]" :class="sidebarClasses.quiet">Arbeitsbereich</p>
             <Select v-model="scopeSelection">
-              <SelectTrigger aria-label="Verein oder Abteilung auswählen" class="border-0 py-2 pr-8 pl-2 text-xs font-medium text-white/80 [&_svg]:text-white/50">
+              <SelectTrigger aria-label="Verein oder Abteilung auswählen" class="border-0 py-2 pr-8 pl-2 text-xs font-medium" :class="sidebarClasses.select">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -199,25 +212,25 @@ const organizationNav = [
       </NuxtLink>
 
       <nav class="space-y-1" aria-label="Hauptnavigation">
-        <NuxtLink v-for="item in navigation" :key="item.to" :to="item.to" class="focus-ring group flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium text-white/65 transition hover:bg-white/[.07] hover:text-white" active-class="!bg-white/[.11] !text-white">
+        <NuxtLink v-for="item in navigation" :key="item.to" :to="item.to" class="focus-ring group flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition" :class="sidebarClasses.nav" :active-class="sidebarClasses.activeNav">
           <component :is="item.icon" :size="17" />
           <span class="flex-1">{{ item.label }}</span>
-          <span v-if="item.badge" class="grid h-5 min-w-5 place-items-center rounded-full bg-coral px-1 text-[10px] font-bold text-white">{{ item.badge }}</span>
+          <span v-if="item.badge" class="grid h-5 min-w-5 place-items-center rounded-full bg-coral px-1 text-[10px] font-bold text-ink">{{ item.badge }}</span>
         </NuxtLink>
       </nav>
 
-      <div class="mb-2 mt-7 px-3 text-[10px] font-bold uppercase tracking-[.14em] text-white/35">Verein verwalten</div>
+      <div class="mb-2 mt-7 px-3 text-[10px] font-bold uppercase tracking-[.14em]" :class="sidebarClasses.quiet">Verein verwalten</div>
       <nav class="space-y-1" aria-label="Vereinsverwaltung">
-        <NuxtLink v-for="item in organizationNav" :key="item.to" :to="item.to" class="focus-ring flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium text-white/65 transition hover:bg-white/[.07] hover:text-white" active-class="!bg-white/[.11] !text-white">
+        <NuxtLink v-for="item in organizationNav" :key="item.to" :to="item.to" class="focus-ring flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition" :class="sidebarClasses.nav" :active-class="sidebarClasses.activeNav">
           <component :is="item.icon" :size="17" />{{ item.label }}
         </NuxtLink>
       </nav>
 
-      <div class="mt-auto flex items-center gap-3 border-t border-white/10 px-2 pt-4">
+      <div class="mt-auto flex items-center gap-3 border-t px-2 pt-4" :class="sidebarClasses.footer">
         <span class="grid h-9 w-9 place-items-center rounded-full bg-[#d2c7ff] text-xs font-bold text-[#3c3260]">{{ userInitials }}</span>
-        <span class="min-w-0 flex-1"><span class="block truncate text-xs font-semibold">{{ session?.displayName }}</span><span class="block text-[10px] text-white/45">{{ topRoleLabel }}</span></span>
-        <NuxtLink to="/profil" class="focus-ring rounded-lg p-1.5 text-white/45 hover:text-white" aria-label="Profil"><UserRound :size="15" /></NuxtLink>
-        <button class="focus-ring rounded-lg p-1.5 text-white/45 hover:text-white" aria-label="Abmelden" @click="logout"><LogOut :size="15" /></button>
+        <span class="min-w-0 flex-1"><span class="block truncate text-xs font-semibold">{{ session?.displayName }}</span><span class="block text-[10px]" :class="sidebarClasses.quiet">{{ topRoleLabel }}</span></span>
+        <NuxtLink to="/profil" class="focus-ring rounded-lg p-1.5" :class="sidebarClasses.muted" aria-label="Profil"><UserRound :size="15" /></NuxtLink>
+        <button class="focus-ring rounded-lg p-1.5" :class="sidebarClasses.muted" aria-label="Abmelden" @click="logout"><LogOut :size="15" /></button>
       </div>
     </aside>
 
