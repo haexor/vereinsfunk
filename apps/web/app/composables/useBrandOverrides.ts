@@ -6,6 +6,7 @@ function emptyOverride(): BrandLevelOverride {
     primaryColor: null,
     accentColor: null,
     logoAssetId: null,
+    websiteUrl: null,
     displayFontAssetId: null,
     bodyFontAssetId: null,
     displayFontKey: null,
@@ -32,7 +33,8 @@ export function useBrandOverrides() {
 
   // Leere Profile entstehen ausschließlich in Event-Handlern oder nach einem erfolgreichen Load.
   function overrideFor(departmentId: string): BrandLevelOverride {
-    if (!departmentOverrides.value[departmentId]) departmentOverrides.value[departmentId] = newDepartmentOverride()
+    if (!departmentOverrides.value[departmentId])
+      departmentOverrides.value[departmentId] = newDepartmentOverride()
     return departmentOverrides.value[departmentId]!
   }
   function teamOverrideFor(teamId: string): BrandLevelOverride {
@@ -40,5 +42,12 @@ export function useBrandOverrides() {
     return teamOverrides.value[teamId]!
   }
 
-  return { departmentOverrides, teamOverrides, readOverride, readTeamOverride, overrideFor, teamOverrideFor }
+  return {
+    departmentOverrides,
+    teamOverrides,
+    readOverride,
+    readTeamOverride,
+    overrideFor,
+    teamOverrideFor,
+  }
 }

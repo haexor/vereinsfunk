@@ -21,6 +21,7 @@ export interface BrandLevelOverride {
   primaryColor: string | null
   accentColor: string | null
   logoAssetId: string | null
+  websiteUrl?: string | null
   displayFontAssetId: string | null
   bodyFontAssetId: string | null
   displayFontKey: string | null
@@ -40,6 +41,7 @@ export interface BrandOrganizationState {
   displayFontAssetId: string | null
   bodyFontAssetId: string | null
   logoAssetId: string | null
+  websiteUrl: string | null
   allowDepartmentOverrides: boolean
   lockedFields: string[]
 }
@@ -83,7 +85,11 @@ export function useBrandAssets({
         asset.kind !== 'font' &&
         asset.kind !== 'frame' &&
         isBrandAssetSelectable(
-          { scope: asset.teamId ? 'team' : asset.departmentId ? 'department' : 'organization', departmentId: asset.departmentId ?? undefined, teamId: asset.teamId ?? undefined },
+          {
+            scope: asset.teamId ? 'team' : asset.departmentId ? 'department' : 'organization',
+            departmentId: asset.departmentId ?? undefined,
+            teamId: asset.teamId ?? undefined,
+          },
           activeLevel.value,
           activeDepartmentId.value ?? undefined,
           activeTeamId.value ?? undefined,
@@ -96,7 +102,11 @@ export function useBrandAssets({
         asset.status === 'ready' &&
         asset.kind === 'font' &&
         isBrandAssetSelectable(
-          { scope: asset.teamId ? 'team' : asset.departmentId ? 'department' : 'organization', departmentId: asset.departmentId ?? undefined, teamId: asset.teamId ?? undefined },
+          {
+            scope: asset.teamId ? 'team' : asset.departmentId ? 'department' : 'organization',
+            departmentId: asset.departmentId ?? undefined,
+            teamId: asset.teamId ?? undefined,
+          },
           activeLevel.value,
           activeDepartmentId.value ?? undefined,
           activeTeamId.value ?? undefined,
@@ -106,24 +116,38 @@ export function useBrandAssets({
   const ownFontAssets = computed(() =>
     assets.value.filter((asset) => {
       if (asset.kind !== 'font') return false
-      if (activeLevel.value === 'organization') return asset.departmentId === null && asset.teamId === null
-      if (activeLevel.value === 'department') return asset.departmentId === activeDepartmentId.value && asset.teamId === null
+      if (activeLevel.value === 'organization')
+        return asset.departmentId === null && asset.teamId === null
+      if (activeLevel.value === 'department')
+        return asset.departmentId === activeDepartmentId.value && asset.teamId === null
       return asset.teamId === activeTeamId.value
     }),
   )
-  const pendingLicenseAssets = computed(() => ownFontAssets.value.filter((asset) => asset.status === 'processing'))
+  const pendingLicenseAssets = computed(() =>
+    ownFontAssets.value.filter((asset) => asset.status === 'processing'),
+  )
   const ownLogoAssets = computed(() =>
     assets.value.filter((asset) => {
-      if (asset.kind === 'font' || asset.kind === 'frame' || asset.status === 'replaced' || asset.status === 'deleted') return false
-      if (activeLevel.value === 'organization') return asset.departmentId === null && asset.teamId === null
-      if (activeLevel.value === 'department') return asset.departmentId === activeDepartmentId.value && asset.teamId === null
+      if (
+        asset.kind === 'font' ||
+        asset.kind === 'frame' ||
+        asset.status === 'replaced' ||
+        asset.status === 'deleted'
+      )
+        return false
+      if (activeLevel.value === 'organization')
+        return asset.departmentId === null && asset.teamId === null
+      if (activeLevel.value === 'department')
+        return asset.departmentId === activeDepartmentId.value && asset.teamId === null
       return asset.teamId === activeTeamId.value
     }),
   )
 
   async function signAsset(asset: BrandAssetRow) {
     if (assetSignedUrls.value[asset.id]) return
-    const signed = await supabase.storage.from('brand-assets').createSignedUrl(asset.objectPath, 600)
+    const signed = await supabase.storage
+      .from('brand-assets')
+      .createSignedUrl(asset.objectPath, 600)
     if (signed.data) assetSignedUrls.value[asset.id] = signed.data.signedUrl
   }
   // Nur 'ready' signieren: die Storage-RLS prueft den Asset-Status nicht, und ein Soft-Delete
@@ -131,11 +155,20 @@ export function useBrandAssets({
   // 'rejected'/'replaced' waere sonst weiterhin abrufbar. Veraltete Eintraege (Asset nicht mehr
   // in der Liste oder nicht mehr signierbar) fallen aus assetSignedUrls, statt eine alte URL zu
   // behalten.
-  watch(assets, (list) => {
-    const signableIds = new Set(list.filter((asset) => asset.kind !== 'font' && asset.status === 'ready').map((asset) => asset.id))
-    for (const id of Object.keys(assetSignedUrls.value)) if (!signableIds.has(id)) delete assetSignedUrls.value[id]
-    for (const asset of list) if (signableIds.has(asset.id)) void signAsset(asset)
-  }, { immediate: true })
+  watch(
+    assets,
+    (list) => {
+      const signableIds = new Set(
+        list
+          .filter((asset) => asset.kind !== 'font' && asset.status === 'ready')
+          .map((asset) => asset.id),
+      )
+      for (const id of Object.keys(assetSignedUrls.value))
+        if (!signableIds.has(id)) delete assetSignedUrls.value[id]
+      for (const asset of list) if (signableIds.has(asset.id)) void signAsset(asset)
+    },
+    { immediate: true },
+  )
 
   const deletingAsset = ref<string | null>(null)
   const deleteAssetError = ref('')
@@ -179,15 +212,23 @@ export function useBrandAssets({
 
   function assignFontAsset(role: 'display' | 'body', assetId: string | null) {
     const key = role === 'display' ? 'displayFontAssetId' : 'bodyFontAssetId'
-    if (activeLevel.value === 'organization') { org[key] = assetId; return }
-    const target = activeLevel.value === 'department' ? activeDepartmentOverride.value : activeTeamOverride.value
+    if (activeLevel.value === 'organization') {
+      org[key] = assetId
+      return
+    }
+    const target =
+      activeLevel.value === 'department' ? activeDepartmentOverride.value : activeTeamOverride.value
     if (target) target[key] = assetId
   }
 
   function activeFontAssetId(role: 'display' | 'body'): string | null {
     const key = role === 'display' ? 'displayFontAssetId' : 'bodyFontAssetId'
     if (activeLevel.value === 'organization') return org[key]
-    return (activeLevel.value === 'department' ? activeDepartmentOverride.value : activeTeamOverride.value)?.[key] ?? null
+    return (
+      (activeLevel.value === 'department'
+        ? activeDepartmentOverride.value
+        : activeTeamOverride.value)?.[key] ?? null
+    )
   }
 
   function toggleFontAsset(role: 'display' | 'body', assetId: string) {
@@ -206,21 +247,26 @@ export function useBrandAssets({
       const formData = new FormData()
       formData.append('organizationId', organizationId.value)
       if (activeDepartmentId.value) formData.append('departmentId', activeDepartmentId.value)
-      if (activeLevel.value === 'team' && activeTeamId.value) formData.append('teamId', activeTeamId.value)
+      if (activeLevel.value === 'team' && activeTeamId.value)
+        formData.append('teamId', activeTeamId.value)
       formData.append('kind', kind)
       formData.append('file', file)
       await api.request('/v1/brand/assets', { method: 'POST', body: formData })
       await reload()
     } catch {
-      uploadError.value = 'Die Datei konnte nicht hochgeladen werden. Bitte Format und Größe prüfen.'
+      uploadError.value =
+        'Die Datei konnte nicht hochgeladen werden. Bitte Format und Größe prüfen.'
     } finally {
       uploadingAsset.value = false
     }
   }
 
-  const licenseDrafts = ref<Record<string, { licenseHolder: string, licenseNote: string, confirmed: boolean }>>({})
+  const licenseDrafts = ref<
+    Record<string, { licenseHolder: string; licenseNote: string; confirmed: boolean }>
+  >({})
   function licenseDraftFor(assetId: string) {
-    if (!licenseDrafts.value[assetId]) licenseDrafts.value[assetId] = { licenseHolder: '', licenseNote: '', confirmed: false }
+    if (!licenseDrafts.value[assetId])
+      licenseDrafts.value[assetId] = { licenseHolder: '', licenseNote: '', confirmed: false }
     return licenseDrafts.value[assetId]!
   }
   const confirmingLicense = ref<string | null>(null)
@@ -231,7 +277,11 @@ export function useBrandAssets({
     try {
       await api.request(`/v1/brand/assets/${assetId}/confirm-license`, {
         method: 'POST',
-        body: { licenseHolder: draft.licenseHolder, licenseNote: draft.licenseNote || undefined, confirmed: true },
+        body: {
+          licenseHolder: draft.licenseHolder,
+          licenseNote: draft.licenseNote || undefined,
+          confirmed: true,
+        },
       })
       await reload()
     } catch {
@@ -242,11 +292,27 @@ export function useBrandAssets({
   }
 
   return {
-    assets, assetSignedUrls,
-    selectableLogoAssets, selectableFontAssets, ownFontAssets,
-    pendingLicenseAssets, ownLogoAssets, uploadingAsset, uploadError, licenseDrafts,
-    confirmingLicense, assetOrigin, deletingAsset, deleteAssetError, deleteAsset,
-    activeFontAssetId, toggleFontAsset, activeLogoAssetId, toggleLogoAsset,
-    uploadAsset, licenseDraftFor, confirmLicense,
+    assets,
+    assetSignedUrls,
+    selectableLogoAssets,
+    selectableFontAssets,
+    ownFontAssets,
+    pendingLicenseAssets,
+    ownLogoAssets,
+    uploadingAsset,
+    uploadError,
+    licenseDrafts,
+    confirmingLicense,
+    assetOrigin,
+    deletingAsset,
+    deleteAssetError,
+    deleteAsset,
+    activeFontAssetId,
+    toggleFontAsset,
+    activeLogoAssetId,
+    toggleLogoAsset,
+    uploadAsset,
+    licenseDraftFor,
+    confirmLicense,
   }
 }

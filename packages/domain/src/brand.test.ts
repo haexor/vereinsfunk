@@ -113,8 +113,8 @@ describe('resolveBrand', () => {
     expect(resolveBrand(organization, department).backgroundColor).toBe('#f6f4ec')
   })
 
-  it('exposes exactly the fields a department or team can actually carry', () => {
-    expect([...BRAND_LOCKABLE_FIELDS]).toEqual(['primaryColor', 'accentColor', 'logoAssetId', 'displayFontAssetId', 'bodyFontAssetId'])
+  it('exposes exactly the fields a department can carry', () => {
+    expect([...BRAND_LOCKABLE_FIELDS]).toEqual(['primaryColor', 'accentColor', 'logoAssetId', 'websiteUrl', 'displayFontAssetId', 'bodyFontAssetId'])
   })
 })
 
@@ -145,4 +145,3 @@ describe('isBrandAssetSelectable', () => {
     expect(isBrandAssetSelectable(asset, 'team', 'dept-1', 'team-2')).toBe(false)
   })
 })
-

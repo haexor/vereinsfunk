@@ -15,17 +15,18 @@ const ORGANIZATION_FIELDS = [
   'bodyFontKey',
   'bodyFontAssetId',
   'logoAssetId',
+  'websiteUrl',
 ] as const
 
-// Genau die Spalten, die department_brand_profiles/team_brand_profiles fuehren -- und damit die
-// einzigen Felder, bei denen "sperren" und "abweichen" ueberhaupt eine Wirkung haben. Hintergrund-,
-// Text- und Auf-Primaer-Farbe sowie die kuratierten Schriftschluessel bleiben bewusst Vereinssache
-// (siehe Migration): sie hier zuzulassen hiesse, in der Oberflaeche eine Sperre anzubieten, die
-// nichts sperrt, weil die untere Ebene den Wert ohnehin nie setzen kann.
+// Genau die Felder, die mindestens eine untere Ebene selbst fuehren -- und damit die einzigen, bei
+// denen "sperren" und "abweichen" ueberhaupt eine Wirkung haben. websiteUrl ist nur auf
+// Abteilungsebene pflegbar; Hintergrund-, Text- und Auf-Primaer-Farbe sowie die kuratierten
+// Schriftschluessel bleiben bewusst Vereinssache (siehe Migration).
 export const BRAND_LOCKABLE_FIELDS = [
   'primaryColor',
   'accentColor',
   'logoAssetId',
+  'websiteUrl',
   'displayFontAssetId',
   'bodyFontAssetId',
 ] as const
@@ -43,6 +44,7 @@ export interface BrandLevelProfile {
   bodyFontKey?: string | null
   bodyFontAssetId?: string | null
   logoAssetId?: string | null
+  websiteUrl?: string | null
 }
 
 // Was eine Abteilung oder Mannschaft selbst fuehren kann -- eine echte Teilmenge von
@@ -73,6 +75,7 @@ export interface ResolvedBrand {
   bodyFontKey: string | null
   bodyFontAssetId: string | null
   logoAssetId: string | null
+  websiteUrl: string | null
 }
 
 function applyOverride(
@@ -103,6 +106,7 @@ export const DEFAULT_RESOLVED_BRAND: ResolvedBrand = {
   bodyFontKey: 'dm_sans',
   bodyFontAssetId: null,
   logoAssetId: null,
+  websiteUrl: null,
 }
 
 export function resolveBrand(
