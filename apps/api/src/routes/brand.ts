@@ -211,29 +211,30 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
     })
   }
 
-  // Paket 048: der Verein gibt seine Homepage-URL an, ein Worker-Job leitet daraus per Screenshot
-  // + Vision-KI einen Farb-/Font-/Logo-Vorschlag ab. Die RPC ist die einzige Schreibstelle (siehe
-  // start_brand_website_analysis, Migration 2026082007) -- diese Route prueft nur die Berechtigung
-  // und bildet deren Fehlermeldungen auf HTTP-Antworten ab. Seit Paket 049 gilt dasselbe fuer eine
-  // Abteilung (siehe die beiden /v1/departments/:id/brand/website-analysis-Routen unten).
+  // Die Homepage wird als Markenwert gepflegt. Der Analyse-Request übergibt bewusst keine URL,
+  // damit der Worker immer genau die gespeicherte Adresse abruft.
   app.post('/v1/organizations/:id/brand/website-analysis', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
     if (!(await requirePermission(request, reply, 'brand.manage', { organizationId: params.id })))
       return
-    const input = StartBrandWebsiteAnalysisRequestSchema.parse(request.body)
-    // Dieselbe Vorabpruefung wie fuer jede andere vom Verein hinterlegte Adresse, die der Server
-    // spaeter selbst abruft (Plan 034, siehe channels.ts/integrations.ts): der Worker rendert genau
-    // diese URL mit einem echten Browser. Ohne sie waere die Antwort auf eine gewoehnliche Eingabe
-    // ausserdem eine 500 -- brand_website_analysis_jobs.website_url hat ein CHECK auf '^https://',
-    // an dem die RPC sonst mit einem nicht abgebildeten Fehler scheitert (z.B. bei "http://...").
-    if (!isAllowedOutboundUrl(input.websiteUrl)) {
+    StartBrandWebsiteAnalysisRequestSchema.parse(request.body ?? {})
+    const service = supabaseClients.forService()
+    const profile = await service
+      .from('organization_brand_profiles')
+      .select('website_url')
+      .eq('organization_id', params.id)
+      .maybeSingle()
+    if (profile.error) throw profile.error
+    const websiteUrl = profile.data?.website_url
+    if (!websiteUrl)
+      return reply.code(422).send({ error: 'website_url_missing', correlationId: request.id })
+    if (!isAllowedOutboundUrl(websiteUrl)) {
       return reply.code(400).send({ error: 'website_url_not_allowed', correlationId: request.id })
     }
-    const service = supabaseClients.forService()
     const result = await service.rpc('start_brand_website_analysis', {
       p_organization_id: params.id,
-      p_website_url: input.websiteUrl,
+      p_website_url: websiteUrl,
       p_requested_by: request.auth!.userId,
     })
     if (result.error) {
@@ -291,14 +292,23 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
       ))
     )
       return
-    const input = StartBrandWebsiteAnalysisRequestSchema.parse(request.body)
-    if (!isAllowedOutboundUrl(input.websiteUrl)) {
+    StartBrandWebsiteAnalysisRequestSchema.parse(request.body ?? {})
+    const service = supabaseClients.forService()
+    const profile = await service
+      .from('department_brand_profiles')
+      .select('website_url')
+      .eq('department_id', params.id)
+      .maybeSingle()
+    if (profile.error) throw profile.error
+    const websiteUrl = profile.data?.website_url
+    if (!websiteUrl)
+      return reply.code(422).send({ error: 'website_url_missing', correlationId: request.id })
+    if (!isAllowedOutboundUrl(websiteUrl)) {
       return reply.code(400).send({ error: 'website_url_not_allowed', correlationId: request.id })
     }
-    const service = supabaseClients.forService()
     const result = await service.rpc('start_brand_website_analysis', {
       p_organization_id: organizationId,
-      p_website_url: input.websiteUrl,
+      p_website_url: websiteUrl,
       p_requested_by: request.auth!.userId,
       p_department_id: params.id,
     })
