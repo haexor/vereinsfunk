@@ -1,3 +1,7 @@
+<script setup lang="ts">
+withDefaults(defineProps<{ textClass?: string }>(), { textClass: 'text-white' })
+</script>
+
 <template>
   <NuxtLink to="/" class="focus-ring flex items-center gap-3 rounded-xl" aria-label="Vereinsfunk Startseite">
     <span class="relative grid h-10 w-10 place-items-center overflow-hidden rounded-xl bg-lime text-forest">
@@ -6,6 +10,6 @@
         <path d="m8.5 11 2.2 2.2 4.8-4.8" />
       </svg>
     </span>
-    <span class="font-display text-[19px] font-extrabold tracking-[-.04em] text-white">vereinsfunk</span>
+    <span class="font-display text-[19px] font-extrabold tracking-[-.04em]" :class="textClass">vereinsfunk</span>
   </NuxtLink>
 </template>

@@ -47,6 +47,7 @@ const LOCKABLE_FIELDS = BRAND_LOCKABLE_FIELDS.map((key) => ({
 
 const api = useApiClient()
 const scope = await useScope()
+const { refreshBrandRevision } = useBrandRevision()
 const organizationId = computed(() => scope.value?.organizationId ?? null)
 const supabase = useSupabaseClient()
 
@@ -625,6 +626,7 @@ async function save() {
       await saveDepartment(activeDepartmentId.value)
     else if (activeLevel.value === 'team' && activeTeamId.value) await saveTeam(activeTeamId.value)
     await loadAll()
+    refreshBrandRevision()
   } catch (error) {
     errorMessage.value =
       error instanceof ApiRequestError && error.code === 'invalid_logo' && error.data.message
