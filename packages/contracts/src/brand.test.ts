@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BrandAssetSchema, ConfirmBrandAssetLicenseRequestSchema, CreateBrandAssetRequestSchema, OrganizationBrandUpdateSchema, UpdateDepartmentBrandRequestSchema } from './index.js'
+import { BrandAssetSchema, BrandWebsiteAnalysisResultSchema, ConfirmBrandAssetLicenseRequestSchema, CreateBrandAssetRequestSchema, OrganizationBrandUpdateSchema, UpdateDepartmentBrandRequestSchema } from './index.js'
 import { department, org, team } from './testFixtures.js'
 
 describe('brand contracts (Paket 013)', () => {
@@ -78,5 +78,14 @@ describe('brand contracts (Paket 013)', () => {
       }).success,
     ).toBe(true)
   })
-})
 
+  it('accepts the legacy single-logo analysis result and initializes the additive list', () => {
+    const parsed = BrandWebsiteAnalysisResultSchema.parse({
+      primaryColor: '#163a2c', accentColor: '#caff4a', backgroundColor: '#f6f4ec', textColor: '#122820', onPrimaryColor: '#ffffff',
+      suggestedFontPairingKey: null, detectedFontFamily: null,
+      logoCandidate: { signedUrl: 'https://signed.example/logo.png', mimeType: 'image/png' },
+    })
+    expect(parsed.logoCandidates).toEqual([])
+    expect(parsed.logoCandidate).toEqual({ signedUrl: 'https://signed.example/logo.png', mimeType: 'image/png' })
+  })
+})

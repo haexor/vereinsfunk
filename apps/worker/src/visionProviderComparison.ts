@@ -2,7 +2,7 @@ import type { ProcessedLogo } from '@vereinsfunk/brand-assets'
 import { VisionAnalysisError } from '@vereinsfunk/content-engine'
 import { fetchPublicBinary, OutboundFetchError } from '@vereinsfunk/outbound-fetch'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
-import { downloadFirstValidLogo, FONT_PAIRING_OPTIONS, VISION_GENERATORS, type LogoFetcher } from './brandWebsiteAnalysis.js'
+import { downloadValidLogos, FONT_PAIRING_OPTIONS, VISION_GENERATORS, type LogoFetcher } from './brandWebsiteAnalysis.js'
 import { openProviderSecret } from './providerSecrets.js'
 import type { WebsiteRenderer } from './websiteRenderer.js'
 import { WorkflowExecutionError } from './workflows.js'
@@ -58,7 +58,9 @@ export class VisionProviderComparisonExecutor {
       }
 
       const render = await this.renderer.render(claimed.websiteUrl)
-      const logo = await downloadFirstValidLogo(render.logoCandidates, this.logoFetcher)
+      // Nur der bestbewertete Kandidat: dieses Werkzeug vergleicht Vision-Provider anhand
+      // desselben einzelnen Logos, kein Mehrfachvorschlag noetig (siehe VisionComparisonResultEntry).
+      const [logo] = await downloadValidLogos(render.logoCandidates, this.logoFetcher, 1)
       const logoObjectPath = logo ? await this.repository.uploadStagedLogo(claimed.id, logo) : null
 
       const results = await Promise.all(providers.map((provider): Promise<VisionComparisonResultEntry> => this.analyzeWithProvider(provider, render)))

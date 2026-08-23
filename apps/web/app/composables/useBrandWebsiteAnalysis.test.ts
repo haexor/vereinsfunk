@@ -6,7 +6,7 @@ import { useBrandWebsiteAnalysis, type BrandWebsiteAnalysisScope } from './useBr
 
 const RESULT = {
   primaryColor: '#123456', accentColor: '#654321', backgroundColor: '#ffffff', textColor: '#000000',
-  onPrimaryColor: '#ffffff', suggestedFontPairingKey: 'manrope_dm_sans', detectedFontFamily: null, logoCandidate: null,
+  onPrimaryColor: '#ffffff', suggestedFontPairingKey: 'manrope_dm_sans', detectedFontFamily: null, logoCandidates: [],
 }
 
 const ORG_SCOPE: BrandWebsiteAnalysisScope = { organizationId: 'org-1', departmentId: null }

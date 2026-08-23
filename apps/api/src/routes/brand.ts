@@ -60,6 +60,16 @@ export async function loadSelectableBrandAsset(
 // auf kind='watermark' gepinnt, sondern akzeptiert jede hier gelistete Logovariante.
 export const LOGO_ASSET_KINDS = new Set(['logo_primary', 'logo_light', 'logo_dark', 'logo_mark', 'wordmark', 'watermark'])
 
+// brand_website_analysis_jobs.result ist jsonb und damit auch bei einem durch den Worker
+// geschriebenen Wert eine Systemgrenze. Nur diese drei Formate kann processBrandLogoUpload in
+// den privaten brand-assets-Bucket schreiben; unbekannte Werte duerfen nie zum Service-Role-
+// Signing gelangen.
+const StoredBrandWebsiteAnalysisLogoCandidateSchema = z.object({
+  objectPath: z.string().min(1).max(512),
+  mimeType: z.enum(['image/svg+xml', 'image/png', 'image/jpeg']),
+}).strict()
+const MAX_STORED_LOGO_CANDIDATES = 8
+
 export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients } = context
 
@@ -107,23 +117,36 @@ app.put('/v1/organizations/:id/brand', async (request, reply) => {
 async function mapBrandWebsiteAnalysisRow(
   service: SupabaseClient,
   row: { status: string; result: unknown; error_reason: string | null },
+  organizationId: string,
 ): Promise<unknown> {
   let result: unknown = null
   if (row.result) {
     const stored = row.result as Record<string, unknown>
     // Bei jedem Abruf frisch erzeugt statt gespeichert: eine Signed URL kann waehrend eines
-    // langen Polls verfallen, siehe Plandokument.
-    let logoCandidate: { signedUrl: string; mimeType: string } | null = null
-    if (stored.logoObjectPath) {
-      const signed = await service.storage.from('brand-assets').createSignedUrl(stored.logoObjectPath as string, 600)
+    // langen Polls verfallen, siehe Plandokument. Parallel signiert, da die Kandidatenzahl
+    // (bis zu 8, siehe MAX_LOGO_SUGGESTIONS im Worker) unabhaengige Storage-Aufrufe sind.
+    // logoCandidate ist das Format vor der Mehrfachlogo-Migration. Es wird nur gelesen, wenn die neue Liste
+    // tatsaechlich fehlt -- eine bewusst leere neue Liste darf keinen alten Vorschlag reaktivieren.
+    const rawCandidates = Array.isArray(stored.logoCandidates)
+      ? stored.logoCandidates
+      : stored.logoCandidate === undefined ? [] : [stored.logoCandidate]
+    const organizationPathPrefix = `organizations/${organizationId}/brand/analysis-staging/`
+    const storedCandidates = rawCandidates.flatMap((candidate) => {
+      const parsed = StoredBrandWebsiteAnalysisLogoCandidateSchema.safeParse(candidate)
+      return parsed.success && parsed.data.objectPath.startsWith(organizationPathPrefix) ? [parsed.data] : []
+    }).slice(0, MAX_STORED_LOGO_CANDIDATES)
+    const logoCandidates = await Promise.all(storedCandidates.map(async (candidate) => {
+      const signed = await service.storage.from('brand-assets').createSignedUrl(candidate.objectPath, 600)
       if (signed.error) throw signed.error
-      logoCandidate = { signedUrl: signed.data.signedUrl, mimeType: stored.logoMimeType as string }
-    }
+      return { signedUrl: signed.data.signedUrl, mimeType: candidate.mimeType }
+    }))
     result = {
       primaryColor: stored.primaryColor, accentColor: stored.accentColor, backgroundColor: stored.backgroundColor,
       textColor: stored.textColor, onPrimaryColor: stored.onPrimaryColor,
       suggestedFontPairingKey: stored.suggestedFontPairingKey, detectedFontFamily: stored.detectedFontFamily,
-      logoCandidate,
+      // Deprecated compatibility field; selecting the first preserves the previous API semantics.
+      logoCandidate: logoCandidates[0] ?? null,
+      logoCandidates,
     }
   }
   return BrandWebsiteAnalysisStatusResponseSchema.parse({ status: row.status, result, errorReason: row.error_reason })
@@ -170,7 +193,7 @@ app.get('/v1/organizations/:id/brand/website-analysis', async (request, reply) =
   const row = await service.from('brand_website_analysis_jobs').select('status, result, error_reason').eq('organization_id', params.id).is('department_id', null).maybeSingle()
   if (row.error) throw row.error
   if (!row.data) return reply.code(404).send({ error: 'no_analysis_yet', correlationId: request.id })
-  return reply.code(200).send(await mapBrandWebsiteAnalysisRow(service, row.data))
+  return reply.code(200).send(await mapBrandWebsiteAnalysisRow(service, row.data, params.id))
 })
 
 app.post('/v1/departments/:id/brand/website-analysis', async (request, reply) => {
@@ -211,7 +234,7 @@ app.get('/v1/departments/:id/brand/website-analysis', async (request, reply) => 
   const row = await service.from('brand_website_analysis_jobs').select('status, result, error_reason').eq('department_id', params.id).maybeSingle()
   if (row.error) throw row.error
   if (!row.data) return reply.code(404).send({ error: 'no_analysis_yet', correlationId: request.id })
-  return reply.code(200).send(await mapBrandWebsiteAnalysisRow(service, row.data))
+  return reply.code(200).send(await mapBrandWebsiteAnalysisRow(service, row.data, department.data.organization_id as string))
 })
 
 app.post('/v1/brand/assets', async (request, reply) => {

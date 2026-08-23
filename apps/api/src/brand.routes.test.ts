@@ -857,7 +857,7 @@ describe('Paket 048: KI-gestuetzte Markenerkennung aus der Vereins-Homepage', ()
     expect(response.json()).toEqual({ status: 'pending', result: null, errorReason: null })
   })
 
-  it('mints a fresh signed url for the staged logo candidate on every read instead of a stored, possibly expired one', async () => {
+  it('mints a fresh signed url for every staged logo candidate on each read instead of a stored, possibly expired one', async () => {
     const clients: SupabaseClientFactory = {
       forUser: () => ({}) as unknown as SupabaseClient,
       forService: () =>
@@ -869,13 +869,13 @@ describe('Paket 048: KI-gestuetzte Markenerkennung aus der Vereins-Homepage', ()
                 result: {
                   primaryColor: '#163a2c', accentColor: '#caff4a', backgroundColor: '#f6f4ec', textColor: '#122820', onPrimaryColor: '#ffffff',
                   suggestedFontPairingKey: 'manrope_dm_sans', detectedFontFamily: 'Roboto, sans-serif',
-                  logoObjectPath: 'organizations/x/brand/analysis-staging/abc.png', logoMimeType: 'image/png',
+                  logoCandidates: [{ objectPath: `organizations/${ORGANIZATION_ID}/brand/analysis-staging/abc.png`, mimeType: 'image/png' }],
                 },
                 error_reason: null,
               },
               error: null,
             }),
-          storage: { from: (bucket: string) => ({ createSignedUrl: async (path: string) => { expect(bucket).toBe('brand-assets'); expect(path).toBe('organizations/x/brand/analysis-staging/abc.png'); return { data: { signedUrl: 'https://signed.example/logo-candidate.png' }, error: null } } }) },
+          storage: { from: (bucket: string) => ({ createSignedUrl: async (path: string) => { expect(bucket).toBe('brand-assets'); expect(path).toBe(`organizations/${ORGANIZATION_ID}/brand/analysis-staging/abc.png`); return { data: { signedUrl: 'https://signed.example/logo-candidate.png' }, error: null } } }) },
         }) as unknown as SupabaseClient,
     }
     const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
@@ -888,8 +888,72 @@ describe('Paket 048: KI-gestuetzte Markenerkennung aus der Vereins-Homepage', ()
     expect(response.statusCode).toBe(200)
     expect(response.json()).toMatchObject({
       status: 'succeeded',
-      result: { suggestedFontPairingKey: 'manrope_dm_sans', logoCandidate: { signedUrl: 'https://signed.example/logo-candidate.png', mimeType: 'image/png' } },
+      result: {
+        suggestedFontPairingKey: 'manrope_dm_sans',
+        logoCandidate: { signedUrl: 'https://signed.example/logo-candidate.png', mimeType: 'image/png' },
+        logoCandidates: [{ signedUrl: 'https://signed.example/logo-candidate.png', mimeType: 'image/png' }],
+      },
     })
+  })
+
+  it('does not sign malformed or cross-organization staged logo paths', async () => {
+    let signingCalled = false
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({
+        from: () => chain({
+          data: {
+            status: 'succeeded',
+            result: {
+              primaryColor: '#163a2c', accentColor: '#caff4a', backgroundColor: '#f6f4ec', textColor: '#122820', onPrimaryColor: '#ffffff',
+              suggestedFontPairingKey: null, detectedFontFamily: null,
+              logoCandidates: [
+                { objectPath: 'organizations/other/brand/analysis-staging/abc.png', mimeType: 'image/png' },
+                { objectPath: `organizations/${ORGANIZATION_ID}/brand/analysis-staging/abc.png`, mimeType: 'application/pdf' },
+              ],
+            },
+            error_reason: null,
+          },
+          error: null,
+        }),
+        storage: { from: () => ({ createSignedUrl: async () => { signingCalled = true; return { data: { signedUrl: 'https://signed.example/logo-candidate.png' }, error: null } } }) },
+      }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: `/v1/organizations/${ORGANIZATION_ID}/brand/website-analysis`, headers: { authorization: `Bearer ${token}` } })
+    expect(response.statusCode).toBe(200)
+    expect(signingCalled).toBe(false)
+    expect(response.json()).toMatchObject({ result: { logoCandidate: null, logoCandidates: [] } })
+  })
+
+  it('returns the first eight of nine valid stored logo candidates without signing the ninth', async () => {
+    const paths = Array.from({ length: 9 }, (_, index) => `organizations/${ORGANIZATION_ID}/brand/analysis-staging/${index}.png`)
+    const signedPaths: string[] = []
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({
+        from: () => chain({
+          data: {
+            status: 'succeeded',
+            result: {
+              primaryColor: '#163a2c', accentColor: '#caff4a', backgroundColor: '#f6f4ec', textColor: '#122820', onPrimaryColor: '#ffffff',
+              suggestedFontPairingKey: null, detectedFontFamily: null,
+              logoCandidates: paths.map((objectPath) => ({ objectPath, mimeType: 'image/png' })),
+            },
+            error_reason: null,
+          },
+          error: null,
+        }),
+        storage: { from: () => ({ createSignedUrl: async (path: string) => { signedPaths.push(path); return { data: { signedUrl: `https://signed.example/${path.split('/').at(-1)}` }, error: null } } }) },
+      }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: `/v1/organizations/${ORGANIZATION_ID}/brand/website-analysis`, headers: { authorization: `Bearer ${token}` } })
+    expect(response.statusCode).toBe(200)
+    expect(signedPaths).toEqual(paths.slice(0, 8))
+    expect(response.json().result.logoCandidates).toHaveLength(8)
   })
 
   it('reports a failed analysis with its error reason and no result', async () => {
@@ -1050,7 +1114,7 @@ describe('Paket 049: KI-gestuetzte Markenerkennung auf Abteilungsebene', () => {
                 status: 'succeeded',
                 result: {
                   primaryColor: '#163a2c', accentColor: '#caff4a', backgroundColor: '#f6f4ec', textColor: '#122820', onPrimaryColor: '#ffffff',
-                  suggestedFontPairingKey: null, detectedFontFamily: null, logoObjectPath: null, logoMimeType: null,
+                  suggestedFontPairingKey: null, detectedFontFamily: null, logoCandidates: [],
                 },
                 error_reason: null,
               },
@@ -1074,4 +1138,3 @@ describe('Paket 049: KI-gestuetzte Markenerkennung auf Abteilungsebene', () => {
     expect(filteredBy).toEqual({ column: 'department_id', value: DEPARTMENT_ID })
   })
 })
-

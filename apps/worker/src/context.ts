@@ -170,6 +170,33 @@ const VisionProviderRowSchema: z.ZodType<VisionProviderRow> = z.object({
 /** Worker-only data access for the website-branding analysis job (Paket 048). */
 export function createBrandWebsiteAnalysisRepository(config: WorkerEnvironment): BrandWebsiteAnalysisRepository {
   const client = createClient(config.SUPABASE_URL, config.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  // Der deterministische Schlüssel macht wiederholte Hatchet-Auslieferungen auch im Audit-Trail
+  // idempotent. Die Speicheraktion selbst ist durch den hashbasierten Pfad plus upsert idempotent.
+  const stagedLogoAuditId = (jobId: string, organizationId: string, contentHash: string, outcome: 'succeeded' | 'failed') => {
+    const hash = hashLogoBuffer(Buffer.from(`${jobId}:${organizationId}:${contentHash}:${outcome}`))
+    return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-5${hash.slice(13, 16)}-${(8 + (Number.parseInt(hash[16]!, 16) & 3)).toString(16)}${hash.slice(17, 20)}-${hash.slice(20, 32)}`
+  }
+  const recordStagedLogoUpload = async (
+    jobId: string,
+    organizationId: string,
+    correlationId: string,
+    objectPath: string,
+    contentHash: string,
+    outcome: 'succeeded' | 'failed',
+  ): Promise<void> => {
+    const audit = await client.from('audit_events').insert({
+      id: stagedLogoAuditId(jobId, organizationId, contentHash, outcome),
+      organization_id: organizationId,
+      action: outcome === 'succeeded' ? 'brand_website_analysis.logo_staged' : 'brand_website_analysis.logo_staging_failed',
+      entity_type: 'brand_website_analysis_job',
+      entity_id: jobId,
+      correlation_id: correlationId,
+      metadata: { objectPath, contentHash, outcome },
+    })
+    // Die deterministische ID kann bei einem Worker-Retry bereits existieren. Der vorherige,
+    // unveraenderliche Audit-Eintrag beschreibt dieselbe hashbasierte Storage-Aktion vollstaendig.
+    if (audit.error && audit.error.code !== '23505') throw audit.error
+  }
   return {
     async loadJob(id, organizationId) {
       const { data, error } = await client.from('brand_website_analysis_jobs').select('id, organization_id, website_url, revision')
@@ -216,10 +243,17 @@ export function createBrandWebsiteAnalysisRepository(config: WorkerEnvironment):
     },
     // Staging-Pfad, kein brand_assets-Datenbankeintrag: der entsteht erst, wenn der Verein den
     // KI-Vorschlag tatsaechlich uebernimmt und auf marke.vue speichert (siehe Plandokument).
-    async uploadStagedLogo(organizationId, logo) {
-      const objectPath = `organizations/${organizationId}/brand/analysis-staging/${hashLogoBuffer(logo.buffer)}.${logo.extension}`
-      const { error } = await client.storage.from('brand-assets').upload(objectPath, logo.buffer, { contentType: logo.contentType, upsert: true })
-      if (error) throw error
+    async uploadStagedLogo(jobId, organizationId, correlationId, logo) {
+      const contentHash = hashLogoBuffer(logo.buffer)
+      const objectPath = `organizations/${organizationId}/brand/analysis-staging/${contentHash}.${logo.extension}`
+      try {
+        const { error } = await client.storage.from('brand-assets').upload(objectPath, logo.buffer, { contentType: logo.contentType, upsert: true })
+        if (error) throw error
+      } catch (error) {
+        await recordStagedLogoUpload(jobId, organizationId, correlationId, objectPath, contentHash, 'failed')
+        throw error
+      }
+      await recordStagedLogoUpload(jobId, organizationId, correlationId, objectPath, contentHash, 'succeeded')
       return objectPath
     },
   }

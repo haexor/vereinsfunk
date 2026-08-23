@@ -1,5 +1,6 @@
 import sharp from 'sharp'
 import { describe, expect, it, vi } from 'vitest'
+import { hashLogoBuffer } from '@vereinsfunk/brand-assets'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
 import type { WorkflowPayload } from '@vereinsfunk/contracts'
 import { createSecretBox } from '@vereinsfunk/secrets'
@@ -30,12 +31,12 @@ function renderer(result: typeof renderResult = renderResult): WebsiteRenderer {
 }
 
 describe('BrandWebsiteAnalysisExecutor', () => {
-  it('runs the full pipeline and marks the job succeeded with no logo when none was found', async () => {
+  it('runs the full pipeline and marks the job succeeded with no logo candidates when none was found', async () => {
     const repo = repository()
     const generator = { analyzeBrand: vi.fn().mockResolvedValue(analysis) }
     await new BrandWebsiteAnalysisExecutor(config, repo, renderer(), generator).execute(payload)
     expect(repo.markRunning).toHaveBeenCalledWith(payload.entityId, 1)
-    expect(repo.markSucceeded).toHaveBeenCalledWith(payload.entityId, 1, { ...analysis, detectedFontFamily: 'Roboto, sans-serif', logoObjectPath: null, logoMimeType: null })
+    expect(repo.markSucceeded).toHaveBeenCalledWith(payload.entityId, 1, { ...analysis, detectedFontFamily: 'Roboto, sans-serif', logoCandidates: [] })
     expect(repo.markFailed).not.toHaveBeenCalled()
     expect(repo.uploadStagedLogo).not.toHaveBeenCalled()
   })
@@ -94,7 +95,72 @@ describe('BrandWebsiteAnalysisExecutor', () => {
     const logoFetcher = vi.fn().mockResolvedValue(pngBytes)
     await new BrandWebsiteAnalysisExecutor(config, repo, withLogo, generator, logoFetcher).execute(payload)
     expect(repo.uploadStagedLogo).toHaveBeenCalledTimes(1)
-    expect(repo.markSucceeded).toHaveBeenCalledWith(payload.entityId, 1, expect.objectContaining({ logoObjectPath: 'organizations/x/brand/analysis-staging/abc.png', logoMimeType: 'image/png' }))
+    expect(repo.markSucceeded).toHaveBeenCalledWith(payload.entityId, 1, expect.objectContaining({ logoCandidates: [{ objectPath: 'organizations/x/brand/analysis-staging/abc.png', mimeType: 'image/png' }] }))
+  })
+
+  it('collects every distinct logo candidate instead of only the first', async () => {
+    const repo = repository()
+    const withLogos = renderer({ ...renderResult, logoCandidates: [{ url: 'https://verein.example.org/logo.png', score: 5 }, { url: 'https://verein.example.org/wortmarke.png', score: 3 }] })
+    const generator = { analyzeBrand: vi.fn().mockResolvedValue(analysis) }
+    const first = await sharp({ create: { width: 40, height: 40, channels: 4, background: { r: 22, g: 58, b: 44, alpha: 1 } } }).png().toBuffer()
+    const second = await sharp({ create: { width: 60, height: 40, channels: 4, background: { r: 200, g: 200, b: 200, alpha: 1 } } }).png().toBuffer()
+    repo.uploadStagedLogo = vi.fn()
+      .mockResolvedValueOnce('organizations/x/brand/analysis-staging/abc.png')
+      .mockResolvedValueOnce('organizations/x/brand/analysis-staging/def.png')
+    const logoFetcher = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second)
+    await new BrandWebsiteAnalysisExecutor(config, repo, withLogos, generator, logoFetcher).execute(payload)
+    expect(repo.uploadStagedLogo).toHaveBeenCalledTimes(2)
+    expect(repo.markSucceeded).toHaveBeenCalledWith(payload.entityId, 1, expect.objectContaining({
+      logoCandidates: [
+        { objectPath: 'organizations/x/brand/analysis-staging/abc.png', mimeType: 'image/png' },
+        { objectPath: 'organizations/x/brand/analysis-staging/def.png', mimeType: 'image/png' },
+      ],
+    }))
+  })
+
+  it('drops a repeated candidate whose downloaded bytes are identical to one already collected', async () => {
+    const repo = repository()
+    const withLogos = renderer({ ...renderResult, logoCandidates: [{ url: 'https://verein.example.org/logo.png', score: 5 }, { url: 'https://verein.example.org/logo-again.png', score: 3 }] })
+    const generator = { analyzeBrand: vi.fn().mockResolvedValue(analysis) }
+    const pngBytes = await sharp({ create: { width: 40, height: 40, channels: 4, background: { r: 22, g: 58, b: 44, alpha: 1 } } }).png().toBuffer()
+    const logoFetcher = vi.fn().mockResolvedValue(pngBytes)
+    await new BrandWebsiteAnalysisExecutor(config, repo, withLogos, generator, logoFetcher).execute(payload)
+    expect(logoFetcher).toHaveBeenCalledTimes(2)
+    expect(repo.uploadStagedLogo).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps only the first eight distinct logo candidates after processing the bounded download pool', async () => {
+    const repo = repository()
+    const candidates: LogoCandidate[] = Array.from({ length: 10 }, (_, i) => ({ url: `https://verein.example.org/logo-${i}.png`, score: 10 - i }))
+    const withLogos = renderer({ ...renderResult, logoCandidates: candidates })
+    const generator = { analyzeBrand: vi.fn().mockResolvedValue(analysis) }
+    const logoFetcher = vi.fn().mockImplementation(async (url: string) => {
+      const index = Number(/logo-(\d+)\.png$/.exec(url)![1])
+      return sharp({ create: { width: 40, height: 40, channels: 4, background: { r: index * 20, g: 0, b: 0, alpha: 1 } } }).png().toBuffer()
+    })
+    await new BrandWebsiteAnalysisExecutor(config, repo, withLogos, generator, logoFetcher).execute(payload)
+    expect(logoFetcher).toHaveBeenCalledTimes(10)
+    expect(repo.uploadStagedLogo).toHaveBeenCalledTimes(8)
+  })
+
+  it('downloads at most four candidates concurrently while keeping the score order in the result', async () => {
+    const candidates: LogoCandidate[] = Array.from({ length: 5 }, (_, i) => ({ url: `https://verein.example.org/logo-${i}.png`, score: 5 - i }))
+    const pngs = await Promise.all(candidates.map((_, i) => sharp({ create: { width: 40, height: 40, channels: 4, background: { r: i * 30, g: 0, b: 0, alpha: 1 } } }).png().toBuffer()))
+    let inFlight = 0
+    let maximumInFlight = 0
+    const logoFetcher = vi.fn(async (url: string) => {
+      inFlight += 1
+      maximumInFlight = Math.max(maximumInFlight, inFlight)
+      const index = Number(/logo-(\d+)\.png$/.exec(url)![1])
+      await new Promise((resolve) => setTimeout(resolve, index === 0 ? 20 : 5))
+      inFlight -= 1
+      return pngs[index]!
+    })
+    const repo = repository()
+    repo.uploadStagedLogo = vi.fn().mockImplementation(async (_jobId, _organizationId, _correlationId, logo) => `organizations/x/brand/analysis-staging/${logo.width}.png`)
+    await new BrandWebsiteAnalysisExecutor(config, repo, renderer({ ...renderResult, logoCandidates: candidates }), { analyzeBrand: vi.fn().mockResolvedValue(analysis) }, logoFetcher).execute(payload)
+    expect(maximumInFlight).toBe(4)
+    expect(vi.mocked(repo.uploadStagedLogo).mock.calls.map((call) => hashLogoBuffer(call[3].buffer))).toEqual(pngs.map(hashLogoBuffer))
   })
 
   it('passes each candidate url to the download unchanged', async () => {
@@ -116,7 +182,7 @@ describe('BrandWebsiteAnalysisExecutor', () => {
       .mockResolvedValueOnce(pngBytes)
     await new BrandWebsiteAnalysisExecutor(config, repo, withLogos, generator, logoFetcher).execute(payload)
     expect(logoFetcher).toHaveBeenCalledTimes(2)
-    expect(repo.markSucceeded).toHaveBeenCalledWith(payload.entityId, 1, expect.objectContaining({ logoObjectPath: 'organizations/x/brand/analysis-staging/abc.png' }))
+    expect(repo.markSucceeded).toHaveBeenCalledWith(payload.entityId, 1, expect.objectContaining({ logoCandidates: [{ objectPath: 'organizations/x/brand/analysis-staging/abc.png', mimeType: 'image/png' }] }))
   })
 
   it('does not fail the whole analysis when the only logo candidate cannot be downloaded', async () => {
@@ -126,6 +192,6 @@ describe('BrandWebsiteAnalysisExecutor', () => {
     const logoFetcher = vi.fn().mockRejectedValue(new OutboundFetchError('request_failed', 'unexpected status 404'))
     await new BrandWebsiteAnalysisExecutor(config, repo, withLogo, generator, logoFetcher).execute(payload)
     expect(repo.uploadStagedLogo).not.toHaveBeenCalled()
-    expect(repo.markSucceeded).toHaveBeenCalledWith(payload.entityId, 1, expect.objectContaining({ logoObjectPath: null }))
+    expect(repo.markSucceeded).toHaveBeenCalledWith(payload.entityId, 1, expect.objectContaining({ logoCandidates: [] }))
   })
 })
