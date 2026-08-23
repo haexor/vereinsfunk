@@ -125,6 +125,9 @@ async function save() {
   }
 }
 
+const saveDisabled = computed(() => !selectedEntry.value?.canEdit)
+usePageSaveFab({ label: 'Richtlinie speichern', save, saving, disabled: saveDisabled })
+
 // Prueferzuweisung: Person aus der Mitgliederliste oder eine Rolle in Verein/Abteilung/Team.
 const reviewerKind = ref<ReviewerRef['kind']>('user')
 const reviewerUserId = ref('')
@@ -340,9 +343,6 @@ function reviewerLabel(reviewer: { kind: string; userId: string | null; role: st
             />
           </div>
           <p v-if="saveError" class="mt-3 text-xs text-amber-800">{{ saveError }}</p>
-          <button v-if="selectedEntry.canEdit" type="button" :disabled="saving" class="focus-ring mt-4 rounded-xl bg-forest px-4 py-2.5 text-xs font-bold text-white disabled:opacity-60" @click="save">
-            {{ saving ? 'Wird gespeichert …' : 'Speichern' }}
-          </button>
         </section>
 
         <section class="card mt-4 p-6">

@@ -225,11 +225,10 @@ export const ConfirmBrandAssetLicenseRequestSchema = z.object({
   confirmed: z.literal(true),
 })
 
-// Paket 048: KI-gestuetzte Markenerkennung aus der Vereins-Homepage. websiteUrl ist bewusst ein
-// eigenes, ad-hoc uebergebenes Feld -- unabhaengig vom Impressum-websiteUrl in
-// OrganizationProfileFieldsSchema, damit diese Funktion ohne einen Umweg ueber die
-// Rechtseinstellungen benutzbar ist.
-export const StartBrandWebsiteAnalysisRequestSchema = z.object({ websiteUrl: z.url() })
+// Die Analyse verwendet ausschliesslich die zuvor im Markenprofil gespeicherte Homepage. Ein
+// Request darf deshalb keine URL mitbringen: so kann eine ungespeicherte oder manipulierte
+// Browser-Eingabe nie von unserem Worker abgerufen werden.
+export const StartBrandWebsiteAnalysisRequestSchema = z.object({}).strict()
 export const BrandWebsiteAnalysisStatusSchema = z.enum([
   'pending',
   'running',

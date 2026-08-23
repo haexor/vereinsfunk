@@ -1,14 +1,31 @@
-export interface ActiveScope {
-  organizationId: string
-  departmentId: string | null
+import { z } from 'zod'
+
+// Sowohl Nuxt-State als auch das Cookie koennen aus einem frueheren Client-Build oder einer
+// manipulierten Browser-Nutzlast stammen. Beide werden vor der Membership-Pruefung strikt
+// validiert, damit sie keine unvollstaendigen Scope-Objekte in die App tragen.
+export const ActiveScopeSchema = z.object({
+  organizationId: z.string().min(1),
+  departmentId: z.string().min(1).nullable(),
+}).strict()
+
+export type ActiveScope = z.infer<typeof ActiveScopeSchema>
+
+export function parseActiveScope(candidate: unknown): ActiveScope | null {
+  const parsed = ActiveScopeSchema.safeParse(candidate)
+  return parsed.success ? parsed.data : null
 }
 
-function findValidScope(scopes: readonly { organizationId: string; departments: readonly { id: string }[] }[], candidate: ActiveScope | null): ActiveScope | null {
+export function findValidScope(scopes: readonly { organizationId: string; departments: readonly { id: string }[] }[], candidate: ActiveScope | null): ActiveScope | null {
   if (!candidate) return null
   const organization = scopes.find((item) => item.organizationId === candidate.organizationId)
   if (!organization) return null
   if (candidate.departmentId && !organization.departments.some((department) => department.id === candidate.departmentId)) return null
   return candidate
+}
+
+export function defaultScope(scopes: readonly { organizationId: string }[]): ActiveScope | null {
+  const firstScope = scopes[0]
+  return firstScope ? { organizationId: firstScope.organizationId, departmentId: null } : null
 }
 
 // Aktive Verein-/Abteilungsauswahl. Wird bei jedem Laden gegen useSession() validiert;
@@ -18,19 +35,30 @@ export async function useScope() {
   // synchrone Nuxt-Instance-Fenster und schlaegt serverseitig fehl (NUXT_E1001).
   const active = useState<ActiveScope | null>('vf-scope', () => null)
   const remembered = useCookie<ActiveScope | null>('vf-scope-cookie', { default: () => null })
+  const cookieSyncRegistered = useState<boolean>('vf-scope-cookie-sync-registered', () => false)
   const session = await useSession()
   const scopes = session.value?.scopes ?? []
 
-  const valid = findValidScope(scopes, active.value) ?? findValidScope(scopes, remembered.value)
+  const valid = findValidScope(scopes, parseActiveScope(active.value)) ?? findValidScope(scopes, parseActiveScope(remembered.value))
   if (valid) {
     active.value = valid
   } else {
-    const firstScope = scopes[0]
-    active.value = firstScope ? { organizationId: firstScope.organizationId, departmentId: firstScope.departments[0]?.id ?? null } : null
+    // Verein und Abteilung sind gleichwertige fachliche Kontexte. Der Verein darf deshalb beim
+    // ersten Öffnen nicht stillschweigend auf seine erste Abteilung umgebogen werden.
+    active.value = defaultScope(scopes)
   }
   // useSession() is always empty on the server, so a server-side write here would
   // overwrite the real, previously remembered cookie with null on every SSR pass.
-  if (import.meta.client) remembered.value = active.value
+  if (import.meta.client) {
+    remembered.value = active.value
+    // Das Layout wechselt den Kontext ohne einen erneuten useScope()-Aufruf. Genau ein globaler
+    // Watcher hält deshalb die Auswahl für den nächsten Besuch fest, ohne pro Seite weitere
+    // Watcher auf denselben State zu registrieren.
+    if (!cookieSyncRegistered.value) {
+      cookieSyncRegistered.value = true
+      watch(active, (value) => { remembered.value = value }, { deep: true })
+    }
+  }
 
   return active
 }

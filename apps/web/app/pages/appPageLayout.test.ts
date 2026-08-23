@@ -18,4 +18,11 @@ describe('standard app page layout', () => {
     expect(layout).toContain('<template #fallback>')
     expect(layout).toContain('Anwendung wird geladen …')
   })
+
+  it('offers the organization itself as a first-class working context and renders page save actions as a FAB', () => {
+    const layout = readFileSync(join(appDirectory, 'layouts/default.vue'), 'utf8')
+
+    expect(layout).toContain('<SelectItem value="organization">')
+    expect(layout).toContain('<PageSaveFab />')
+  })
 })

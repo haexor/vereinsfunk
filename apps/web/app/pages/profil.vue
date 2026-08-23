@@ -45,6 +45,9 @@ async function save() {
   }
 }
 
+const saveDisabled = computed(() => !displayNameDraft.value.trim())
+usePageSaveFab({ label: 'Speichern', save, saving, disabled: saveDisabled })
+
 const initials = computed(() => (profile.value?.displayName ?? '').split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join('').toUpperCase())
 
 // Flache Liste aus Vereins-/Abteilungs-/Team-Rollen je Verein, damit das Template kein
@@ -86,11 +89,6 @@ const membershipGroups = computed(() =>
           </label>
           <p v-if="actionError" class="text-xs text-amber-800">{{ actionError }}</p>
           <p v-if="saveSuccess" class="text-xs text-emerald-700">Gespeichert.</p>
-          <div>
-            <button type="submit" :disabled="saving" class="focus-ring rounded-xl bg-forest px-4 py-2.5 text-xs font-bold text-white disabled:opacity-60">
-              {{ saving ? 'Wird gespeichert …' : 'Speichern' }}
-            </button>
-          </div>
         </form>
       </section>
 

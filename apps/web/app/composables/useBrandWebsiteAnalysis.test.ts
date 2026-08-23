@@ -38,7 +38,7 @@ describe('useBrandWebsiteAnalysis', () => {
       return { status: 'succeeded', result: RESULT, errorReason: null }
     })
 
-    await startAnalysis('https://verein.example.org')
+    await startAnalysis()
     expect(status.value).toBe('pending')
 
     await vi.advanceTimersByTimeAsync(3000)
@@ -47,7 +47,9 @@ describe('useBrandWebsiteAnalysis', () => {
   })
 
   it.each([
+    ['website_url_missing', 'Bitte zuerst eine Homepage-Adresse in der Marke speichern.'],
     ['website_url_not_allowed', 'Diese Adresse kann nicht abgerufen werden.'],
+    ['overrides_not_allowed', 'Für diese Abteilung sind Marken-Überschreibungen deaktiviert.'],
     ['analysis_in_progress', 'Es läuft bereits eine Analyse für diesen Verein.'],
     ['organization_has_no_department', 'Dafür braucht der Verein mindestens eine Abteilung.'],
     ['something_else', 'Die Analyse konnte nicht gestartet werden.'],
@@ -56,34 +58,21 @@ describe('useBrandWebsiteAnalysis', () => {
       throw new ApiRequestError(code, 400)
     })
 
-    await startAnalysis('https://verein.example.org')
+    await startAnalysis()
     expect(startError.value).toBe(message)
     expect(status.value).toBe('idle')
   })
 
-  it('completes a bare domain to https and posts the normalized address', async () => {
+  it('starts without sending a URL, so the API uses the saved brand setting', async () => {
     const { requestMock, startAnalysis, startError } = setup(async () => undefined)
 
-    await startAnalysis('  verein.example.org  ')
+    await startAnalysis()
 
     expect(startError.value).toBe('')
     expect(requestMock).toHaveBeenCalledWith(
       '/v1/organizations/org-1/brand/website-analysis',
-      { method: 'POST', body: { websiteUrl: 'https://verein.example.org' } },
+      { method: 'POST', body: {} },
     )
-  })
-
-  it.each([
-    ['http://verein.example.org', 'Bitte eine Adresse angeben, die mit https:// beginnt.'],
-    ['nicht mal eine adresse', 'Bitte eine vollständige Webadresse angeben, zum Beispiel https://euer-verein.de.'],
-  ])('rejects %s at the browser boundary without a request', async (input, message) => {
-    const { requestMock, startAnalysis, startError, status } = setup(async () => undefined)
-
-    await startAnalysis(input)
-
-    expect(startError.value).toBe(message)
-    expect(status.value).toBe('idle')
-    expect(requestMock).not.toHaveBeenCalled()
   })
 
   it('drops a previous success when the next start fails', async () => {
@@ -96,12 +85,12 @@ describe('useBrandWebsiteAnalysis', () => {
       return { status: 'succeeded', result: RESULT, errorReason: null }
     })
 
-    await startAnalysis('https://verein.example.org')
+    await startAnalysis()
     await vi.advanceTimersByTimeAsync(3000)
     expect(status.value).toBe('succeeded')
 
     failStart = true
-    await startAnalysis('https://verein.example.org')
+    await startAnalysis()
 
     expect(startError.value).toBe('Es läuft bereits eine Analyse für diesen Verein.')
     expect(status.value).toBe('idle')
@@ -114,7 +103,7 @@ describe('useBrandWebsiteAnalysis', () => {
       return { status: 'running', result: null, errorReason: null }
     })
 
-    await startAnalysis('https://verein.example.org')
+    await startAnalysis()
     // Die Deadline folgt dem serverseitigen Ausfuehrungsbudget von 10 Minuten.
     await vi.advanceTimersByTimeAsync(605_000)
 
@@ -134,7 +123,7 @@ describe('useBrandWebsiteAnalysis', () => {
       return { status: 'succeeded', result: RESULT, errorReason: null }
     })
 
-    await startAnalysis('https://verein.example.org')
+    await startAnalysis()
     await vi.advanceTimersByTimeAsync(3000)
     expect(status.value).toBe('pending')
 
@@ -149,7 +138,7 @@ describe('useBrandWebsiteAnalysis', () => {
       throw new Error('network down')
     })
 
-    await startAnalysis('https://verein.example.org')
+    await startAnalysis()
     await vi.advanceTimersByTimeAsync(6000)
     expect(status.value).toBe('pending')
 
@@ -204,11 +193,11 @@ describe('useBrandWebsiteAnalysis', () => {
       return undefined
     }, DEPARTMENT_SCOPE)
 
-    await startAnalysis('https://abteilung.example.org')
+    await startAnalysis()
 
     expect(requestMock).toHaveBeenCalledWith(
       '/v1/departments/dept-1/brand/website-analysis',
-      { method: 'POST', body: { websiteUrl: 'https://abteilung.example.org' } },
+      { method: 'POST', body: {} },
     )
     expect(startError.value).toBe('Es läuft bereits eine Analyse für diese Abteilung.')
   })
@@ -225,7 +214,7 @@ describe('useBrandWebsiteAnalysis', () => {
       return { status: 'running', result: null, errorReason: null }
     })
 
-    await startAnalysis('https://verein.example.org')
+    await startAnalysis()
     expect(status.value).toBe('pending')
 
     scope.value = DEPARTMENT_SCOPE

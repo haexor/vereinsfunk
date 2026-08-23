@@ -27,7 +27,11 @@ export type BrandWebsiteAnalysisUiStatus = 'idle' | 'pending' | 'running' | 'suc
 
 function startErrorMessage(error: unknown, isDepartment: boolean): string {
   const code = error instanceof ApiRequestError ? error.code : null
+  if (code === 'website_url_missing')
+    return 'Bitte zuerst eine Homepage-Adresse in der Marke speichern.'
   if (code === 'website_url_not_allowed') return 'Diese Adresse kann nicht abgerufen werden.'
+  if (code === 'overrides_not_allowed')
+    return 'Für diese Abteilung sind Marken-Überschreibungen deaktiviert.'
   if (code === 'analysis_in_progress') return `Es läuft bereits eine Analyse für ${isDepartment ? 'diese Abteilung' : 'diesen Verein'}.`
   if (code === 'organization_has_no_department') return 'Dafür braucht der Verein mindestens eine Abteilung.'
   return 'Die Analyse konnte nicht gestartet werden.'
@@ -37,15 +41,6 @@ function endpointPath(scope: BrandWebsiteAnalysisScope): string {
   return scope.departmentId
     ? `/v1/departments/${scope.departmentId}/brand/website-analysis`
     : `/v1/organizations/${scope.organizationId}/brand/website-analysis`
-}
-
-// Der Verein tippt "verein.de" oder bekommt aus dem Impressum ein "http://..." vorbelegt
-// (OrganizationProfileFieldsSchema.websiteUrl erlaubt http). Der Analyse-Endpunkt verlangt aber
-// hart https (isAllowedOutboundUrl), ein fehlendes Schema faellt ausserdem schon an z.url() --
-// beides ergaebe eine unspezifische Fehlermeldung fuer eine gewoehnliche Eingabe.
-function normalizeWebsiteUrl(raw: string): string {
-  const trimmed = raw.trim()
-  return /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
 }
 
 export function useBrandWebsiteAnalysis({
@@ -120,7 +115,7 @@ export function useBrandWebsiteAnalysis({
     }
   }
 
-  async function startAnalysis(websiteUrl: string) {
+  async function startAnalysis() {
     starting.value = true
     startError.value = ''
     stopPolling()
@@ -138,22 +133,10 @@ export function useBrandWebsiteAnalysis({
         startError.value = 'Der Verein ist noch nicht vollständig geladen. Bitte die Seite neu laden.'
         return
       }
-      // Dieselbe Zod-Grenze wie serverseitig in der Route: die Browser-Grenze validiert die
-      // Eingabe gegen denselben Vertrag, statt eine unspezifische 400 abzuwarten.
-      const websiteUrlInput = StartBrandWebsiteAnalysisRequestSchema.safeParse({
-        websiteUrl: normalizeWebsiteUrl(websiteUrl),
-      })
-      if (!websiteUrlInput.success) {
-        startError.value = 'Bitte eine vollständige Webadresse angeben, zum Beispiel https://euer-verein.de.'
-        return
-      }
-      if (!websiteUrlInput.data.websiteUrl.startsWith('https://')) {
-        startError.value = 'Bitte eine Adresse angeben, die mit https:// beginnt.'
-        return
-      }
       await api.request(endpointPath(currentScope), {
         method: 'POST',
-        body: websiteUrlInput.data,
+        // Keine URL im Request: die API liest exakt die gespeicherte Marken-URL.
+        body: StartBrandWebsiteAnalysisRequestSchema.parse({}),
       })
       // Der Scope kann sich waehrend des Requests geaendert haben (stopPolling() in der
       // scopeKey-Watch unten hat dann bereits eine neue Generation begonnen und ggf. den

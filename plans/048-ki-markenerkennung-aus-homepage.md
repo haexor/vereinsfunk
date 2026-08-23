@@ -8,6 +8,15 @@ Stand: 2026-08-21. PR 1 (Datenmodell + LLM-Task-Kind-Vokabular), PR 2 (Worker: S
 
 Die App hatte dafür bislang **keine** multimodale LLM-Infrastruktur, **keine** Screenshot-Fähigkeit und **keinen** passenden `task_kind`. Die bestehende Anti-Google-Fonts-Datenschutzpolicy (`packages/domain/src/fonts.ts`) bleibt unangetastet: bei einer erkannten Fremdschrift schlägt die KI nur das ähnlichste der zwei kuratierten, selbst gehosteten Font-Paare vor **und** nennt den erkannten Namen als Hinweis für einen lizenzkonformen Eigen-Upload — sie lädt nie selbst eine Fremdschrift nach.
 
+## Breaking Change (PR 143)
+
+`POST /v1/organizations/:id/brand/website-analysis` und `POST /v1/departments/:id/brand/website-analysis` akzeptieren kein `websiteUrl`-Feld mehr. Der Vertrag
+`StartBrandWebsiteAnalysisRequestSchema` ist strikt und erwartet einen leeren Request-Body (`{}`).
+
+Clients müssen die Homepage zuerst über das jeweilige Markenprofil speichern und den Analyse-Start
+anschließend ohne `websiteUrl` aufrufen. Die API liest und validiert ausschließlich diese persistierte
+Adresse; ältere Clients, die `{ websiteUrl: "…" }` senden, erhalten einen Validierungsfehler.
+
 ## Entschiedene Fragen
 
 1. **Analyse-Methode**: echter Screenshot (Playwright) + Vision-LLM, nicht nur HTML/CSS-Text-Analyse.

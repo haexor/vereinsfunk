@@ -9,38 +9,70 @@ const scope = await useScope()
 watch(() => route.path, () => { mobileOpen.value = false })
 
 const activeOrganization = computed(() => session.value?.scopes.find((item) => item.organizationId === scope.value?.organizationId) ?? null)
-const organizationInitials = computed(() => (activeOrganization.value?.organizationName ?? '').split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join('').toUpperCase())
+const activeDepartment = computed(() => activeOrganization.value?.departments.find((item) => item.id === scope.value?.departmentId) ?? null)
+const activeScopeName = computed(() => activeDepartment.value?.name ?? activeOrganization.value?.organizationName ?? '')
+const activeScopeKind = computed(() => activeDepartment.value ? 'Abteilung' : 'Verein')
+const scopeInitials = computed(() => activeScopeName.value.split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join('').toUpperCase())
 
 // Paket 013, Rueckbau: das Vereinslogo ersetzt die Initialen dort, wo der Verein tatsaechlich
 // als Marke auftritt -- diese kleine Kachel im Umschalter, nicht die geteilte AppLogo-Komponente.
 // AppLogo bleibt bewusst unveraendert: sie steht auch in layouts/admin.vue und layouts/auth.vue,
 // wo es keinen (oder noch keinen einzelnen) aktiven Verein gibt -- dort waere ein Vereinslogo
 // fachlich falsch, es ist die Produktmarke "vereinsfunk", nicht die des Vereins.
-const organizationLogoUrl = ref('')
+const scopeLogoUrl = ref('')
+const scopeBrand = ref({ primaryColor: '#163a2c', accentColor: '#caff4a', onPrimaryColor: '#ffffff' })
 // Lauf-ID statt reiner organizationId-Pruefung: bei A -> B -> A stimmt organizationId beim
 // dritten Lauf wieder mit dem ersten ueberein, ein spaet zurueckkehrender erster Lauf wuerde die
 // Pruefung also bestehen und das (moeglicherweise veraltete) Ergebnis des dritten Laufs
 // ueberschreiben. Die Lauf-ID ist bei jedem Watcher-Aufruf eindeutig, unabhaengig vom Zielverein.
-let latestOrganizationLogoRun = 0
+let latestScopeBrandRun = 0
 watch(
-  () => scope.value?.organizationId,
-  async (organizationId) => {
-    const run = ++latestOrganizationLogoRun
-    organizationLogoUrl.value = ''
+  () => [scope.value?.organizationId, scope.value?.departmentId] as const,
+  async ([organizationId, departmentId]) => {
+    const run = ++latestScopeBrandRun
+    scopeLogoUrl.value = ''
+    scopeBrand.value = { primaryColor: '#163a2c', accentColor: '#caff4a', onPrimaryColor: '#ffffff' }
     if (!organizationId) return
     const supabase = useSupabaseClient()
-    const result = await supabase.from('organization_brand_profiles').select('logo_asset_id').eq('organization_id', organizationId).maybeSingle()
-    if (run !== latestOrganizationLogoRun) return
-    if (!result.data?.logo_asset_id) return
+    const organizationBrand = await supabase
+      .from('organization_brand_profiles')
+      .select('primary_color, accent_color, on_primary_color, logo_asset_id')
+      .eq('organization_id', organizationId)
+      .maybeSingle()
+    if (run !== latestScopeBrandRun || !organizationBrand.data) return
+    let brand = {
+      primaryColor: organizationBrand.data.primary_color as string,
+      accentColor: organizationBrand.data.accent_color as string,
+      onPrimaryColor: organizationBrand.data.on_primary_color as string,
+      logoAssetId: organizationBrand.data.logo_asset_id as string | null,
+    }
+    if (departmentId) {
+      const departmentBrand = await supabase
+        .from('department_brand_profiles')
+        .select('primary_color, accent_color, logo_asset_id')
+        .eq('department_id', departmentId)
+        .maybeSingle()
+      if (run !== latestScopeBrandRun) return
+      if (departmentBrand.data) {
+        brand = {
+          ...brand,
+          primaryColor: (departmentBrand.data.primary_color as string | null) ?? brand.primaryColor,
+          accentColor: (departmentBrand.data.accent_color as string | null) ?? brand.accentColor,
+          logoAssetId: (departmentBrand.data.logo_asset_id as string | null) ?? brand.logoAssetId,
+        }
+      }
+    }
+    scopeBrand.value = brand
+    if (!brand.logoAssetId) return
     // status='ready' faengt ein zwischenzeitlich geloeschtes/ersetztes Asset ab (Verteidigung in
     // der Tiefe -- die RLS-Policy verlangt das bereits beim Setzen von logo_asset_id, siehe
     // Migration), sonst zeigte der Umschalter eine tote Signed-URL statt der Initialen.
-    const asset = await supabase.from('brand_assets').select('object_path').eq('id', result.data.logo_asset_id).eq('status', 'ready').maybeSingle()
-    if (run !== latestOrganizationLogoRun) return
+    const asset = await supabase.from('brand_assets').select('object_path').eq('id', brand.logoAssetId).eq('status', 'ready').maybeSingle()
+    if (run !== latestScopeBrandRun) return
     if (!asset.data?.object_path) return
     const signed = await supabase.storage.from('brand-assets').createSignedUrl(asset.data.object_path, 600)
-    if (run !== latestOrganizationLogoRun) return
-    organizationLogoUrl.value = signed.data?.signedUrl ?? ''
+    if (run !== latestScopeBrandRun) return
+    scopeLogoUrl.value = signed.data?.signedUrl ?? ''
   },
   { immediate: true },
 )
@@ -51,14 +83,24 @@ const topRoleLabel = computed(() => {
 })
 const userInitials = computed(() => (session.value?.displayName ?? '').split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join('').toUpperCase())
 
-function selectDepartment(departmentId: string) {
-  if (scope.value) scope.value = { ...scope.value, departmentId }
-}
-
 function selectOrganization(organizationId: string) {
   const organization = session.value?.scopes.find((item) => item.organizationId === organizationId)
-  if (organization) scope.value = { organizationId, departmentId: organization.departments[0]?.id ?? null }
+  if (organization) scope.value = { organizationId, departmentId: null }
 }
+
+const scopeSelection = computed({
+  get: () => scope.value?.departmentId ? `department:${scope.value.departmentId}` : 'organization',
+  set: (value: string) => {
+    if (!scope.value) return
+    scope.value = {
+      ...scope.value,
+      departmentId: value === 'organization' ? null : value.replace(/^department:/, ''),
+    }
+  },
+})
+
+const sidebarStyle = computed(() => ({ backgroundColor: scopeBrand.value.primaryColor, color: scopeBrand.value.onPrimaryColor }))
+const accentStyle = computed(() => ({ backgroundColor: scopeBrand.value.accentColor, color: scopeBrand.value.primaryColor }))
 
 async function logout() {
   await signOut()
@@ -99,7 +141,7 @@ const organizationNav = [
   -->
   <ClientOnly>
   <div class="min-h-screen bg-oat lg:flex lg:h-screen lg:overflow-hidden">
-    <header class="sticky top-0 z-40 flex h-16 items-center justify-between bg-forest px-4 lg:hidden">
+    <header class="sticky top-0 z-40 flex h-16 items-center justify-between px-4 lg:hidden" :style="sidebarStyle">
       <AppLogo />
       <button class="focus-ring rounded-lg p-2 text-white" aria-label="Navigation öffnen" @click="mobileOpen = !mobileOpen">
         <X v-if="mobileOpen" :size="22" />
@@ -109,18 +151,19 @@ const organizationNav = [
 
     <div v-if="mobileOpen" class="fixed inset-0 z-30 bg-ink/40 backdrop-blur-sm lg:hidden" @click="mobileOpen = false" />
     <aside
-      class="fixed bottom-0 left-0 top-0 z-30 flex w-[268px] flex-col overflow-y-auto bg-forest px-4 py-5 text-white transition-transform duration-200 lg:sticky lg:h-screen lg:min-h-0 lg:translate-x-0"
+      class="fixed bottom-0 left-0 top-0 z-30 flex w-[268px] flex-col overflow-y-auto px-4 py-5 text-white transition-transform duration-200 lg:sticky lg:h-screen lg:min-h-0 lg:translate-x-0"
       :class="mobileOpen ? 'translate-x-0 pt-20' : '-translate-x-full'"
+      :style="sidebarStyle"
     >
       <div class="hidden px-2 pb-7 lg:block"><AppLogo /></div>
 
       <div v-if="activeOrganization" class="mb-5 rounded-2xl border border-white/10 bg-white/[.06] p-2">
         <div class="flex w-full items-center gap-3 p-2 text-left">
-          <img v-if="organizationLogoUrl" :src="organizationLogoUrl" alt="" class="h-9 w-9 shrink-0 rounded-xl bg-lime object-contain p-1" />
-          <span v-else class="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-lime font-display text-sm font-extrabold text-forest">{{ organizationInitials }}</span>
+          <img v-if="scopeLogoUrl" :src="scopeLogoUrl" :alt="`${activeScopeName} Logo`" class="h-9 w-9 shrink-0 rounded-xl object-contain p-1" :style="accentStyle" />
+          <span v-else class="grid h-9 w-9 shrink-0 place-items-center rounded-xl font-display text-sm font-extrabold" :style="accentStyle">{{ scopeInitials }}</span>
           <span v-if="(session?.scopes.length ?? 0) <= 1" class="min-w-0 flex-1">
-            <span class="block truncate text-sm font-semibold">{{ activeOrganization.organizationName }}</span>
-            <span class="block text-[11px] text-white/55">Vereinskonto</span>
+            <span class="block truncate text-sm font-semibold">{{ activeScopeName }}</span>
+            <span class="block text-[11px] text-white/55">{{ activeScopeKind }}</span>
           </span>
           <div v-else class="relative block min-w-0 flex-1">
             <Select :model-value="scope?.organizationId ?? ''" @update:model-value="(value: unknown) => selectOrganization(value as string)">
@@ -131,25 +174,27 @@ const organizationNav = [
                 <SelectItem v-for="item in session?.scopes" :key="item.organizationId" :value="item.organizationId">{{ item.organizationName }}</SelectItem>
               </SelectContent>
             </Select>
-            <span class="block text-[11px] text-white/55">Vereinskonto</span>
+            <span class="block text-[11px] text-white/55">{{ activeScopeKind }}</span>
           </div>
         </div>
         <template v-if="activeOrganization.departments.length">
           <div class="mx-2 my-1 h-px bg-white/10" />
           <div class="relative block">
-            <Select :model-value="scope?.departmentId ?? ''" @update:model-value="(value: unknown) => selectDepartment(value as string)">
-              <SelectTrigger aria-label="Abteilung auswählen" class="border-0 py-2 pr-8 pl-2 text-xs font-medium text-white/80 [&_svg]:text-white/50">
+            <p class="px-2 pt-2 text-[10px] font-bold uppercase tracking-[.12em] text-white/45">Arbeitsbereich</p>
+            <Select v-model="scopeSelection">
+              <SelectTrigger aria-label="Verein oder Abteilung auswählen" class="border-0 py-2 pr-8 pl-2 text-xs font-medium text-white/80 [&_svg]:text-white/50">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem v-for="item in activeOrganization.departments" :key="item.id" :value="item.id">{{ item.name }}</SelectItem>
+                <SelectItem value="organization">{{ activeOrganization.organizationName }} · Verein</SelectItem>
+                <SelectItem v-for="item in activeOrganization.departments" :key="item.id" :value="`department:${item.id}`">{{ item.name }} · Abteilung</SelectItem>
               </SelectContent>
             </Select>
           </div>
         </template>
       </div>
 
-      <NuxtLink to="/erstellen" class="focus-ring mb-6 flex items-center justify-center gap-2 rounded-xl bg-lime px-4 py-3 text-sm font-bold text-forest transition hover:-translate-y-0.5 hover:bg-[#d5ff6c]">
+      <NuxtLink to="/erstellen" class="focus-ring mb-6 flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold transition hover:-translate-y-0.5" :style="accentStyle">
         <Plus :size="17" stroke-width="2.5" /> Beitrag erstellen
       </NuxtLink>
 
@@ -179,6 +224,7 @@ const organizationNav = [
     <main class="min-w-0 flex-1 lg:h-screen lg:min-h-0 lg:overflow-y-auto">
       <div class="mx-auto w-full max-w-[1280px] px-5 py-8 sm:px-10"><slot /></div>
     </main>
+    <PageSaveFab />
   </div>
     <template #fallback>
       <main class="grid min-h-screen place-items-center bg-oat px-5 text-sm text-[#7b827d]" aria-busy="true">

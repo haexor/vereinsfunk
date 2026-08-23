@@ -57,6 +57,9 @@ const errorMessage = ref('')
 
 const departments = ref<DepartmentRow[]>([])
 const teams = ref<TeamRow[]>([])
+// Die Analyse darf erst nach dem Speichern starten. Diese Momentaufnahme trennt eine gerade
+// bearbeitete Eingabe klar von der URL, die die API tatsächlich aus dem Markenprofil liest.
+const savedBrandWebsiteUrls = ref<Record<string, string | null>>({})
 
 const activeLevel = ref<ScopeLevelName>('organization')
 const activeDepartmentId = ref<string | null>(null)
@@ -92,6 +95,14 @@ const activeDepartmentOverride = computed(() =>
 const activeTeamOverride = computed(() =>
   activeTeamId.value ? readTeamOverride(activeTeamId.value) : null,
 )
+const activeBrandWebsiteKey = computed(() => {
+  if (!organizationId.value) return null
+  return activeLevel.value === 'department' && activeDepartmentId.value
+    ? `department:${activeDepartmentId.value}`
+    : activeLevel.value === 'organization'
+      ? `organization:${organizationId.value}`
+      : null
+})
 
 // Sperren wirken nur nach unten: eine Vereinssperre gilt auch fuer die Mannschaft, selbst wenn
 // die Abteilung sie nicht wiederholt (siehe packages/domain/src/brand.ts, resolveBrand).
@@ -231,6 +242,9 @@ async function loadAll() {
       org.allowDepartmentOverrides = rows.data.brand.allow_department_overrides
       org.lockedFields = rows.data.brand.locked_fields
     }
+    const savedUrls: Record<string, string | null> = {
+      [`organization:${organizationId.value}`]: rows.data.brand?.website_url ?? null,
+    }
     departments.value = rows.data.departments.map((row) => ({ id: row.id, name: row.name }))
     teams.value = rows.data.teams.map((row) => ({
       id: row.id,
@@ -239,6 +253,7 @@ async function loadAll() {
     }))
     departmentOverrides.value = {}
     for (const row of rows.data.departmentProfiles) {
+      savedUrls[`department:${row.department_id}`] = row.website_url
       departmentOverrides.value[row.department_id] = {
         primaryColor: row.primary_color,
         accentColor: row.accent_color,
@@ -252,6 +267,7 @@ async function loadAll() {
         lockedFields: row.locked_fields,
       }
     }
+    savedBrandWebsiteUrls.value = savedUrls
     teamOverrides.value = {}
     for (const row of rows.data.teamProfiles) {
       teamOverrides.value[row.team_id] = {
@@ -331,13 +347,9 @@ async function removeLogo(assetId: string) {
 // verständlich.
 const LOGO_ASSET_LABEL = 'Logo'
 
-// Paket 048: KI-gestuetzte Markenerkennung aus der Homepage -- fuellt nur Formularfelder vor,
-// speichert nichts selbst (siehe Plandokument 048). Seit Paket 049 auch pro Abteilung, mit
-// eigenem Job je Scope (siehe Migration 2026082102).
-//
-// Die Analyse-Adresse ist Teil des Markenprofils und wird sowohl für Verein als auch Abteilung
-// beim normalen Speichern dauerhaft abgelegt.
-const websiteAnalysisUrl = computed({
+// Die Homepage ist eine eigene, dauerhafte Markeneinstellung. Die Analyse erhält keine URL aus
+// dem Browser, sondern startet danach ausschliesslich mit der serverseitig gespeicherten Adresse.
+const brandWebsiteUrl = computed({
   get: () =>
     activeLevel.value === 'organization'
       ? (org.websiteUrl ?? '')
@@ -353,6 +365,11 @@ const websiteAnalysisUrl = computed({
     )
       overrideFor(activeDepartmentId.value).websiteUrl = value || null
   },
+})
+const brandWebsiteUrlNeedsSaving = computed(() => {
+  const key = activeBrandWebsiteKey.value
+  if (!key) return false
+  return brandWebsiteUrl.value.trim() !== (savedBrandWebsiteUrls.value[key] ?? '')
 })
 const websiteAnalysisScope = computed(() => {
   if (!organizationId.value) return null
@@ -542,7 +559,7 @@ watch([websiteAnalysisStatus, websiteAnalysisScope], () => {
 
 async function startWebsiteAnalysis() {
   websiteAnalysisApplied.value = false
-  await requestWebsiteAnalysis(websiteAnalysisUrl.value)
+  await requestWebsiteAnalysis()
 }
 
 await loadAll()
@@ -617,6 +634,8 @@ async function save() {
     saving.value = false
   }
 }
+
+usePageSaveFab({ label: 'Änderungen speichern', save, saving })
 
 function selectScope(level: ScopeLevelName, departmentId: string | null, teamId: string | null) {
   // Hier -- im Event-Handler, nicht in einem computed -- entsteht der Eintrag, in den die
@@ -700,7 +719,26 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
       </div>
 
       <div class="space-y-6">
-        <!-- KI-Markenerkennung aus der Homepage (Verein oder Abteilung, füllt nur vor) -->
+        <section
+          v-if="activeLevel === 'organization' || (activeLevel === 'department' && org.allowDepartmentOverrides)"
+          class="card p-6"
+        >
+          <h2 class="font-display text-base font-bold">Homepage</h2>
+          <p class="mt-2 text-xs text-[#7a817c]">
+            Diese Adresse wird dauerhaft für {{ activeLevel === 'department' ? 'die Abteilung' : 'den Verein' }} gespeichert.
+            Nach dem Speichern nutzt die Analyse genau diese Homepage.
+          </p>
+          <input
+            v-model="brandWebsiteUrl"
+            type="url"
+            :placeholder="activeLevel === 'department' ? 'https://abteilung.euer-verein.de' : 'https://euer-verein.de'"
+            class="focus-ring mt-4 w-full rounded-lg border border-[#dfe0d9] px-3 py-2 text-xs"
+            :disabled="activeLevel === 'department' && lockedForActiveLevel.has('websiteUrl')"
+          />
+          <p class="mt-2 text-[11px] text-[#7a817c]">Mit „Änderungen speichern“ wird die Adresse übernommen.</p>
+        </section>
+
+        <!-- KI-Markenerkennung aus der gespeicherten Homepage (Verein oder Abteilung, füllt nur vor) -->
         <!-- Ohne allowDepartmentOverrides kann eine Abteilung ohnehin kein eigenes Branding
                speichern (PUT .../brand lehnt mit 400 overrides_not_allowed ab) -- die Karte bliebe
                sonst sichtbar und würde einen echten, kostenpflichtigen Analyse-Lauf anstoßen, dessen
@@ -721,32 +759,18 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
                 ? 'Primärfarbe und Akzentfarbe aus der Homepage dieser Abteilung vorschlagen lassen.'
                 : 'Primärfarbe, Akzentfarbe und eine Schriftempfehlung aus eurer Vereins-Homepage vorschlagen lassen.'
             }}
-            Gefundene Logos erscheinen unten als eigene Vorschläge zum Übernehmen. Die Adresse sowie
-            Farben und Schrift werden erst mit „Änderungen speichern“ unten dauerhaft übernommen.
+            Gefundene Logos erscheinen unten als eigene Vorschläge zum Übernehmen. Farben und Schrift
+            werden erst mit „Änderungen speichern“ unten dauerhaft übernommen.
           </p>
           <div class="mt-4 flex flex-wrap items-center gap-2">
-            <input
-              v-model="websiteAnalysisUrl"
-              type="url"
-              :placeholder="
-                activeLevel === 'department'
-                  ? 'https://abteilung.euer-verein.de'
-                  : 'https://euer-verein.de'
-              "
-              class="focus-ring min-w-0 flex-1 rounded-lg border border-[#dfe0d9] px-3 py-2 text-xs"
-              :disabled="
-                websiteAnalysisRunning ||
-                websiteAnalysisStarting ||
-                (activeLevel === 'department' && lockedForActiveLevel.has('websiteUrl'))
-              "
-            />
             <button
               type="button"
               class="focus-ring flex items-center gap-1.5 rounded-lg bg-forest px-3 py-2 text-xs font-bold text-white disabled:opacity-60"
               :disabled="
                 websiteAnalysisRunning ||
                 websiteAnalysisStarting ||
-                !websiteAnalysisUrl.trim() ||
+                !brandWebsiteUrl.trim() ||
+                brandWebsiteUrlNeedsSaving ||
                 (activeLevel === 'department' && lockedForActiveLevel.has('websiteUrl'))
               "
               @click="startWebsiteAnalysis"
@@ -759,6 +783,9 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
               {{ websiteAnalysisRunning ? 'Analyse läuft …' : 'Analyse starten' }}
             </button>
           </div>
+          <p v-if="brandWebsiteUrlNeedsSaving" class="mt-2 text-[11px] text-[#7a817c]">
+            Bitte die Homepage-Adresse zuerst mit „Änderungen speichern“ sichern.
+          </p>
           <p v-if="websiteAnalysisStartError" class="mt-2 text-[11px] text-amber-800">
             {{ websiteAnalysisStartError }}
           </p>
@@ -1201,16 +1228,6 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
       </div>
 
       <p v-if="errorMessage" class="mt-4 text-sm text-amber-800">{{ errorMessage }}</p>
-      <div class="mt-6 flex justify-end">
-        <button
-          class="focus-ring flex items-center gap-2 rounded-xl bg-forest px-5 py-3 text-xs font-bold text-white disabled:opacity-60"
-          :disabled="saving"
-          @click="save"
-        >
-          <LoaderCircle v-if="saving" :size="14" class="animate-spin" /><Check v-else :size="14" />
-          {{ saving ? 'Wird gespeichert …' : 'Änderungen speichern' }}
-        </button>
-      </div>
     </template>
   </div>
 </template>
