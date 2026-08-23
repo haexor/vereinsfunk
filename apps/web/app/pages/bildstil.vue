@@ -1,21 +1,45 @@
 <script setup lang="ts">
 import { LoaderCircle, Upload } from '@lucide/vue'
-import { CreateImageStylePresetRequestSchema, ImageStylePresetSchema, UpdateImageStylePresetRequestSchema, type ImageStylePreset } from '@vereinsfunk/contracts'
+import {
+  CreateImageStylePresetRequestSchema,
+  ImageStylePresetSchema,
+  UpdateImageStylePresetRequestSchema,
+  type ImageStylePreset,
+} from '@vereinsfunk/contracts'
 import { isBrandAssetSelectable, type ScopeLevelName } from '@vereinsfunk/domain'
 import { z } from 'zod'
-import { emptyImageStylePresetDraft, type ImageStylePresetDraft } from '../utils/imageStylePresetDraft'
+import {
+  emptyImageStylePresetDraft,
+  type ImageStylePresetDraft,
+} from '../utils/imageStylePresetDraft'
 import { selectableImageStylePresets } from '../utils/imageStylePresets'
 
-interface DepartmentRow { id: string; name: string }
-interface TeamRow { id: string; name: string; departmentId: string }
-interface BrandAssetOption { id: string; departmentId: string | null; teamId: string | null; objectPath: string; signedUrl: string; kind: string }
+interface DepartmentRow {
+  id: string
+  name: string
+}
+interface TeamRow {
+  id: string
+  name: string
+  departmentId: string
+}
+interface BrandAssetOption {
+  id: string
+  departmentId: string | null
+  teamId: string | null
+  objectPath: string
+  signedUrl: string
+  kind: string
+}
 
 const api = useApiClient()
 const session = await useSession()
 const scope = await useScope()
 const supabase = useSupabaseClient()
 const organizationId = computed(() => scope.value?.organizationId ?? null)
-const activeOrganization = computed(() => session.value?.scopes.find((item) => item.organizationId === organizationId.value) ?? null)
+const activeOrganization = computed(
+  () => session.value?.scopes.find((item) => item.organizationId === organizationId.value) ?? null,
+)
 
 const loading = ref(true)
 const loadError = ref(false)
@@ -28,12 +52,16 @@ const frameAssets = ref<BrandAssetOption[]>([])
 const logoAssets = ref<BrandAssetOption[]>([])
 const orgColors = reactive({ primaryColor: '#163a2c', accentColor: '#caff4a' })
 
-// Logovarianten, die als Wasserzeichen waehlbar sind -- deckungsgleich mit LOGO_ASSET_KINDS in
-// apps/api/src/routes/brand.ts (dort die tatsaechliche Durchsetzung, hier nur die Anzeige-Filterung).
-// Seit der Lockerung des Fremdschluessels (2026082002) ist nicht mehr nur ein eigens als
-// "Wasserzeichen" hochgeladenes Bild waehlbar, sondern jede bereits vorhandene Logovariante --
-// inklusive des ueber die Marke-Seite hinterlegten Hauptlogos (kind='logo_primary'/'logo_dark').
-const LOGO_ASSET_KINDS = ['logo_primary', 'logo_light', 'logo_dark', 'logo_mark', 'wordmark', 'watermark']
+// Die technische Liste enthält Altwerte für wiederhergestellte Daten; im Produkt werden sie alle
+// als einheitliches Logo behandelt. Neue Uploads nutzen logo_primary.
+const LOGO_ASSET_KINDS = [
+  'logo_primary',
+  'logo_light',
+  'logo_dark',
+  'logo_mark',
+  'wordmark',
+  'watermark',
+]
 
 const activeLevel = ref<ScopeLevelName>('organization')
 const activeDepartmentId = ref<string | null>(null)
@@ -50,8 +78,10 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
   // Filter, ...) sollen einen bloßen Ebenenwechsel ueberleben. Eine laufende Bearbeitung
   // (editingId/editDraft) bleibt unberuehrt: sie gehoert zu einem Preset der bisherigen Ebene
   // und blendet sich ueber ownPresets ohnehin aus, sobald diese Ebene nicht mehr aktiv ist.
-  if (!selectableFrameAssets.value.some((asset) => asset.id === draft.value.frameBrandAssetId)) draft.value.frameBrandAssetId = null
-  if (!selectableLogoAssets.value.some((asset) => asset.id === draft.value.logoBrandAssetId)) draft.value.logoBrandAssetId = null
+  if (!selectableFrameAssets.value.some((asset) => asset.id === draft.value.frameBrandAssetId))
+    draft.value.frameBrandAssetId = null
+  if (!selectableLogoAssets.value.some((asset) => asset.id === draft.value.logoBrandAssetId))
+    draft.value.logoBrandAssetId = null
   createError.value = ''
   uploadError.value = ''
   deleteError.value = ''
@@ -59,14 +89,32 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
 
 const canManageActiveLevel = computed(() => {
   if (!organizationId.value) return false
-  return useCan('brand.manage', { organizationId: organizationId.value, departmentId: activeDepartmentId.value ?? undefined, teamId: activeTeamId.value ?? undefined })
+  return useCan('brand.manage', {
+    organizationId: organizationId.value,
+    departmentId: activeDepartmentId.value ?? undefined,
+    teamId: activeTeamId.value ?? undefined,
+  })
 })
 
 // "Erben, bis die Ebene ein eigenes Preset anlegt" (plans/045): alle Presets, die von hier aus
 // waehlbar waeren -- eigene UND vererbte von oben, dieselbe Richtung wie brand_assets.
-const visiblePresets = computed(() => selectableImageStylePresets(presets.value, activeLevel.value, activeDepartmentId.value ?? undefined, activeTeamId.value ?? undefined))
-const ownPresets = computed(() => visiblePresets.value.filter((preset) => preset.departmentId === activeDepartmentId.value && preset.teamId === activeTeamId.value))
-const inheritedPresets = computed(() => visiblePresets.value.filter((preset) => !ownPresets.value.includes(preset)))
+const visiblePresets = computed(() =>
+  selectableImageStylePresets(
+    presets.value,
+    activeLevel.value,
+    activeDepartmentId.value ?? undefined,
+    activeTeamId.value ?? undefined,
+  ),
+)
+const ownPresets = computed(() =>
+  visiblePresets.value.filter(
+    (preset) =>
+      preset.departmentId === activeDepartmentId.value && preset.teamId === activeTeamId.value,
+  ),
+)
+const inheritedPresets = computed(() =>
+  visiblePresets.value.filter((preset) => !ownPresets.value.includes(preset)),
+)
 
 function scopeLabel(preset: ImageStylePreset): string {
   const organization = activeOrganization.value
@@ -78,22 +126,56 @@ function scopeLabel(preset: ImageStylePreset): string {
     }
     return 'Mannschaft'
   }
-  if (preset.departmentId) return organization.departments.find((item) => item.id === preset.departmentId)?.name ?? 'Abteilung'
+  if (preset.departmentId)
+    return (
+      organization.departments.find((item) => item.id === preset.departmentId)?.name ?? 'Abteilung'
+    )
   return 'Verein'
 }
 
-function assetOption(asset: BrandAssetOption): { id: string; signedUrl: string; label: string; kind: string } {
-  const label = asset.teamId ? 'aus dieser Mannschaft' : asset.departmentId ? 'aus dieser Abteilung' : 'vom Verein'
+function assetOption(asset: BrandAssetOption): {
+  id: string
+  signedUrl: string
+  label: string
+  kind: string
+} {
+  const label = asset.teamId
+    ? 'aus dieser Mannschaft'
+    : asset.departmentId
+      ? 'aus dieser Abteilung'
+      : 'vom Verein'
   return { id: asset.id, signedUrl: asset.signedUrl, label, kind: asset.kind }
 }
 const selectableFrameAssets = computed(() =>
   frameAssets.value
-    .filter((asset) => isBrandAssetSelectable({ scope: asset.teamId ? 'team' : asset.departmentId ? 'department' : 'organization', departmentId: asset.departmentId ?? undefined, teamId: asset.teamId ?? undefined }, activeLevel.value, activeDepartmentId.value ?? undefined, activeTeamId.value ?? undefined))
+    .filter((asset) =>
+      isBrandAssetSelectable(
+        {
+          scope: asset.teamId ? 'team' : asset.departmentId ? 'department' : 'organization',
+          departmentId: asset.departmentId ?? undefined,
+          teamId: asset.teamId ?? undefined,
+        },
+        activeLevel.value,
+        activeDepartmentId.value ?? undefined,
+        activeTeamId.value ?? undefined,
+      ),
+    )
     .map(assetOption),
 )
 const selectableLogoAssets = computed(() =>
   logoAssets.value
-    .filter((asset) => isBrandAssetSelectable({ scope: asset.teamId ? 'team' : asset.departmentId ? 'department' : 'organization', departmentId: asset.departmentId ?? undefined, teamId: asset.teamId ?? undefined }, activeLevel.value, activeDepartmentId.value ?? undefined, activeTeamId.value ?? undefined))
+    .filter((asset) =>
+      isBrandAssetSelectable(
+        {
+          scope: asset.teamId ? 'team' : asset.departmentId ? 'department' : 'organization',
+          departmentId: asset.departmentId ?? undefined,
+          teamId: asset.teamId ?? undefined,
+        },
+        activeLevel.value,
+        activeDepartmentId.value ?? undefined,
+        activeTeamId.value ?? undefined,
+      ),
+    )
     .map(assetOption),
 )
 
@@ -107,30 +189,94 @@ function signedUrlFor(assets: BrandAssetOption[], assetId: string | null): strin
 }
 
 async function loadAll() {
-  if (!organizationId.value) { loading.value = false; return }
+  if (!organizationId.value) {
+    loading.value = false
+    return
+  }
   loading.value = true
   loadError.value = false
   try {
-    const [departmentsResult, teamsResult, brandAssetsResult, orgBrandResult, presetsResponse] = await Promise.all([
-      supabase.from('departments').select('id, name').eq('organization_id', organizationId.value).is('archived_at', null).order('name'),
-      supabase.from('teams').select('id, name, department_id').eq('organization_id', organizationId.value).is('archived_at', null).order('name'),
-      supabase.from('brand_assets').select('id, department_id, team_id, kind, object_path').eq('organization_id', organizationId.value).eq('status', 'ready').in('kind', ['frame', ...LOGO_ASSET_KINDS]),
-      supabase.from('organization_brand_profiles').select('primary_color, accent_color').eq('organization_id', organizationId.value).maybeSingle(),
-      api.request('/v1/image-style-presets', { query: { organizationId: organizationId.value } }, z.object({ presets: z.array(ImageStylePresetSchema) })),
-    ])
-    if (departmentsResult.error || teamsResult.error || brandAssetsResult.error || orgBrandResult.error) { loadError.value = true; return }
+    const [departmentsResult, teamsResult, brandAssetsResult, orgBrandResult, presetsResponse] =
+      await Promise.all([
+        supabase
+          .from('departments')
+          .select('id, name')
+          .eq('organization_id', organizationId.value)
+          .is('archived_at', null)
+          .order('name'),
+        supabase
+          .from('teams')
+          .select('id, name, department_id')
+          .eq('organization_id', organizationId.value)
+          .is('archived_at', null)
+          .order('name'),
+        supabase
+          .from('brand_assets')
+          .select('id, department_id, team_id, kind, object_path')
+          .eq('organization_id', organizationId.value)
+          .eq('status', 'ready')
+          .in('kind', ['frame', ...LOGO_ASSET_KINDS]),
+        supabase
+          .from('organization_brand_profiles')
+          .select('primary_color, accent_color')
+          .eq('organization_id', organizationId.value)
+          .maybeSingle(),
+        api.request(
+          '/v1/image-style-presets',
+          { query: { organizationId: organizationId.value } },
+          z.object({ presets: z.array(ImageStylePresetSchema) }),
+        ),
+      ])
+    if (
+      departmentsResult.error ||
+      teamsResult.error ||
+      brandAssetsResult.error ||
+      orgBrandResult.error
+    ) {
+      loadError.value = true
+      return
+    }
     departments.value = departmentsResult.data.map((row) => ({ id: row.id, name: row.name }))
-    teams.value = teamsResult.data.map((row) => ({ id: row.id, name: row.name, departmentId: row.department_id }))
+    teams.value = teamsResult.data.map((row) => ({
+      id: row.id,
+      name: row.name,
+      departmentId: row.department_id,
+    }))
     if (orgBrandResult.data) {
       orgColors.primaryColor = orgBrandResult.data.primary_color
       orgColors.accentColor = orgBrandResult.data.accent_color
     }
     const signedUrls = await Promise.all(
-      brandAssetsResult.data.map(async (row) => [row.id, (await supabase.storage.from('brand-assets').createSignedUrl(row.object_path, 600)).data?.signedUrl ?? ''] as const),
+      brandAssetsResult.data.map(
+        async (row) =>
+          [
+            row.id,
+            (await supabase.storage.from('brand-assets').createSignedUrl(row.object_path, 600)).data
+              ?.signedUrl ?? '',
+          ] as const,
+      ),
     )
     const urlById = Object.fromEntries(signedUrls)
-    frameAssets.value = brandAssetsResult.data.filter((row) => row.kind === 'frame').map((row) => ({ id: row.id, departmentId: row.department_id, teamId: row.team_id, objectPath: row.object_path, signedUrl: urlById[row.id] ?? '', kind: row.kind }))
-    logoAssets.value = brandAssetsResult.data.filter((row) => row.kind !== 'frame').map((row) => ({ id: row.id, departmentId: row.department_id, teamId: row.team_id, objectPath: row.object_path, signedUrl: urlById[row.id] ?? '', kind: row.kind }))
+    frameAssets.value = brandAssetsResult.data
+      .filter((row) => row.kind === 'frame')
+      .map((row) => ({
+        id: row.id,
+        departmentId: row.department_id,
+        teamId: row.team_id,
+        objectPath: row.object_path,
+        signedUrl: urlById[row.id] ?? '',
+        kind: row.kind,
+      }))
+    logoAssets.value = brandAssetsResult.data
+      .filter((row) => row.kind !== 'frame')
+      .map((row) => ({
+        id: row.id,
+        departmentId: row.department_id,
+        teamId: row.team_id,
+        objectPath: row.object_path,
+        signedUrl: urlById[row.id] ?? '',
+        kind: row.kind,
+      }))
     presets.value = presetsResponse.presets
   } catch {
     loadError.value = true
@@ -140,13 +286,12 @@ async function loadAll() {
 }
 await loadAll()
 
-// --- Bausteine hochladen (Rahmengrafik/Wasserzeichen) --------------------------------------
+// --- Bausteine hochladen (Rahmengrafik/Logo) ------------------------------------------------
 //
-// Dieselbe Route wie die Marke-Seite (POST /v1/brand/assets), nur mit kind='frame'/'watermark'
-// statt logo_mark/wordmark -- keine neue Upload-Route noetig (plans/045, PR1 Schritt 2).
+// Dieselbe Route wie die Marke-Seite (POST /v1/brand/assets), nur mit kind='frame'/'logo_primary'.
 const uploadingAsset = ref(false)
 const uploadError = ref('')
-async function uploadBrandAsset(event: Event, kind: 'frame' | 'watermark') {
+async function uploadBrandAsset(event: Event, kind: 'frame' | 'logo_primary') {
   const file = (event.target as HTMLInputElement).files?.[0] ?? null
   ;(event.target as HTMLInputElement).value = ''
   if (!file || !organizationId.value) return
@@ -156,7 +301,8 @@ async function uploadBrandAsset(event: Event, kind: 'frame' | 'watermark') {
     const formData = new FormData()
     formData.append('organizationId', organizationId.value)
     if (activeDepartmentId.value) formData.append('departmentId', activeDepartmentId.value)
-    if (activeLevel.value === 'team' && activeTeamId.value) formData.append('teamId', activeTeamId.value)
+    if (activeLevel.value === 'team' && activeTeamId.value)
+      formData.append('teamId', activeTeamId.value)
     formData.append('kind', kind)
     formData.append('file', file)
     await api.request('/v1/brand/assets', { method: 'POST', body: formData })
@@ -204,10 +350,19 @@ const editError = ref('')
 function startEdit(preset: ImageStylePreset) {
   editingId.value = preset.id
   editDraft.value = {
-    name: preset.name, frameType: preset.frameType, frameStyle: preset.frameStyle, frameColor: preset.frameColor, frameWidthPx: preset.frameWidthPx,
-    frameCornerRadiusPx: preset.frameCornerRadiusPx, frameBrandAssetId: preset.frameBrandAssetId,
-    logoEnabled: preset.logoEnabled, logoBrandAssetId: preset.logoBrandAssetId, logoPosition: preset.logoPosition,
-    logoSizePercent: preset.logoSizePercent, logoMarginPercent: preset.logoMarginPercent, filter: preset.filter,
+    name: preset.name,
+    frameType: preset.frameType,
+    frameStyle: preset.frameStyle,
+    frameColor: preset.frameColor,
+    frameWidthPx: preset.frameWidthPx,
+    frameCornerRadiusPx: preset.frameCornerRadiusPx,
+    frameBrandAssetId: preset.frameBrandAssetId,
+    logoEnabled: preset.logoEnabled,
+    logoBrandAssetId: preset.logoBrandAssetId,
+    logoPosition: preset.logoPosition,
+    logoSizePercent: preset.logoSizePercent,
+    logoMarginPercent: preset.logoMarginPercent,
+    filter: preset.filter,
   }
   editError.value = ''
 }
@@ -255,17 +410,65 @@ async function deletePreset(preset: ImageStylePreset) {
     <header class="mb-8">
       <div class="eyebrow mb-3">Vereinsprofil</div>
       <h1 class="font-display text-3xl font-extrabold tracking-[-.04em]">Bildstil</h1>
-      <p class="mt-2 text-sm text-[#727a75]">Rahmen, Logo-Wasserzeichen und Filter für Beitragsfotos — je Verein, Abteilung oder Mannschaft.</p>
+      <p class="mt-2 text-sm text-[#727a75]">
+        Rahmen, Logos und Filter für Beitragsfotos — je Verein, Abteilung oder Mannschaft.
+      </p>
     </header>
 
     <div v-if="loading" class="p-8 text-center text-xs text-[#7b827d]">Wird geladen …</div>
-    <div v-else-if="loadError" class="card p-8 text-center text-sm font-semibold text-red-700">Die Bildstil-Presets konnten nicht geladen werden. Bitte lade die Seite neu.</div>
+    <div v-else-if="loadError" class="card p-8 text-center text-sm font-semibold text-red-700">
+      Die Bildstil-Presets konnten nicht geladen werden. Bitte lade die Seite neu.
+    </div>
     <template v-else>
-      <div class="card mb-6 flex flex-wrap items-center gap-2 p-4" role="group" aria-label="Bildstil-Ebene wählen">
-        <button type="button" :aria-pressed="activeLevel === 'organization'" class="focus-ring rounded-lg px-3 py-1.5 text-xs font-semibold" :class="activeLevel === 'organization' ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'" @click="selectScope('organization', null, null)">Verein</button>
-        <span v-for="department in departments" :key="department.id" class="flex items-center gap-1">
-          <button type="button" :aria-pressed="activeLevel === 'department' && activeDepartmentId === department.id" class="focus-ring rounded-lg px-3 py-1.5 text-xs font-semibold" :class="activeLevel === 'department' && activeDepartmentId === department.id ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'" @click="selectScope('department', department.id, null)">{{ department.name }}</button>
-          <button v-for="team in teams.filter((t) => t.departmentId === department.id)" :key="team.id" type="button" :aria-pressed="activeLevel === 'team' && activeTeamId === team.id" class="focus-ring rounded-lg px-3 py-1.5 text-[11px] font-semibold" :class="activeLevel === 'team' && activeTeamId === team.id ? 'bg-forest text-white' : 'bg-[#f4f6f1] text-[#7b827d]'" @click="selectScope('team', department.id, team.id)">{{ team.name }}</button>
+      <div
+        class="card mb-6 flex flex-wrap items-center gap-2 p-4"
+        role="group"
+        aria-label="Bildstil-Ebene wählen"
+      >
+        <button
+          type="button"
+          :aria-pressed="activeLevel === 'organization'"
+          class="focus-ring rounded-lg px-3 py-1.5 text-xs font-semibold"
+          :class="
+            activeLevel === 'organization' ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'
+          "
+          @click="selectScope('organization', null, null)"
+        >
+          Verein
+        </button>
+        <span
+          v-for="department in departments"
+          :key="department.id"
+          class="flex items-center gap-1"
+        >
+          <button
+            type="button"
+            :aria-pressed="activeLevel === 'department' && activeDepartmentId === department.id"
+            class="focus-ring rounded-lg px-3 py-1.5 text-xs font-semibold"
+            :class="
+              activeLevel === 'department' && activeDepartmentId === department.id
+                ? 'bg-forest text-white'
+                : 'bg-[#eef1ea] text-[#5b625d]'
+            "
+            @click="selectScope('department', department.id, null)"
+          >
+            {{ department.name }}
+          </button>
+          <button
+            v-for="team in teams.filter((t) => t.departmentId === department.id)"
+            :key="team.id"
+            type="button"
+            :aria-pressed="activeLevel === 'team' && activeTeamId === team.id"
+            class="focus-ring rounded-lg px-3 py-1.5 text-[11px] font-semibold"
+            :class="
+              activeLevel === 'team' && activeTeamId === team.id
+                ? 'bg-forest text-white'
+                : 'bg-[#f4f6f1] text-[#7b827d]'
+            "
+            @click="selectScope('team', department.id, team.id)"
+          >
+            {{ team.name }}
+          </button>
         </span>
       </div>
 
@@ -288,15 +491,41 @@ async function deletePreset(preset: ImageStylePreset) {
             />
             <section class="card p-6">
               <h2 class="font-display text-base font-bold">Bausteine für diese Ebene</h2>
-              <p class="mt-1 text-xs text-[#7a817c]">Rahmengrafiken und Wasserzeichen, die ein Preset dieser Ebene referenzieren kann.</p>
+              <p class="mt-1 text-xs text-[#7a817c]">
+                Rahmengrafiken und Logos, die ein Preset dieser Ebene verwenden kann.
+              </p>
               <div class="mt-4 flex flex-wrap gap-2">
-                <label class="focus-ring relative flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-[11px] font-semibold">
-                  <input type="file" accept="image/png,image/jpeg,image/svg+xml" class="sr-only" :disabled="uploadingAsset" @change="uploadBrandAsset($event, 'frame')" />
-                  <LoaderCircle v-if="uploadingAsset" :size="12" class="animate-spin" /><Upload v-else :size="12" /> Rahmengrafik hochladen
+                <label
+                  class="focus-ring relative flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-[11px] font-semibold"
+                >
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/svg+xml"
+                    class="sr-only"
+                    :disabled="uploadingAsset"
+                    @change="uploadBrandAsset($event, 'frame')"
+                  />
+                  <LoaderCircle v-if="uploadingAsset" :size="12" class="animate-spin" /><Upload
+                    v-else
+                    :size="12"
+                  />
+                  Rahmengrafik hochladen
                 </label>
-                <label class="focus-ring relative flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-[11px] font-semibold">
-                  <input type="file" accept="image/png,image/jpeg,image/svg+xml" class="sr-only" :disabled="uploadingAsset" @change="uploadBrandAsset($event, 'watermark')" />
-                  <LoaderCircle v-if="uploadingAsset" :size="12" class="animate-spin" /><Upload v-else :size="12" /> Wasserzeichen hochladen
+                <label
+                  class="focus-ring relative flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-[11px] font-semibold"
+                >
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/svg+xml"
+                    class="sr-only"
+                    :disabled="uploadingAsset"
+                    @change="uploadBrandAsset($event, 'logo_primary')"
+                  />
+                  <LoaderCircle v-if="uploadingAsset" :size="12" class="animate-spin" /><Upload
+                    v-else
+                    :size="12"
+                  />
+                  Logo hochladen
                 </label>
               </div>
               <p v-if="uploadError" class="mt-2 text-[11px] text-amber-800">{{ uploadError }}</p>
@@ -304,8 +533,14 @@ async function deletePreset(preset: ImageStylePreset) {
           </template>
 
           <section class="card p-6">
-            <h2 class="mb-4 font-display text-base font-bold">Presets dieser Ebene ({{ ownPresets.length }})</h2>
-            <div v-for="preset in ownPresets" :key="preset.id" class="border-t border-[#e9ebe4] py-4 first:border-t-0 first:pt-0">
+            <h2 class="mb-4 font-display text-base font-bold">
+              Presets dieser Ebene ({{ ownPresets.length }})
+            </h2>
+            <div
+              v-for="preset in ownPresets"
+              :key="preset.id"
+              class="border-t border-[#e9ebe4] py-4 first:border-t-0 first:pt-0"
+            >
               <template v-if="editingId === preset.id">
                 <ImageStylePresetForm
                   v-model:draft="editDraft"
@@ -328,20 +563,39 @@ async function deletePreset(preset: ImageStylePreset) {
                     <p class="mt-1 text-[11px] text-[#9aa096]">{{ scopeLabel(preset) }}</p>
                   </div>
                   <div v-if="canManageActiveLevel" class="flex shrink-0 gap-2">
-                    <button type="button" class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-[11px] font-semibold" @click="startEdit(preset)">Bearbeiten</button>
-                    <button type="button" :disabled="deletingId === preset.id" class="focus-ring rounded-lg px-3 py-1.5 text-[11px] font-semibold text-amber-800 hover:bg-amber-50 disabled:opacity-60" @click="deletePreset(preset)">
+                    <button
+                      type="button"
+                      class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-[11px] font-semibold"
+                      @click="startEdit(preset)"
+                    >
+                      Bearbeiten
+                    </button>
+                    <button
+                      type="button"
+                      :disabled="deletingId === preset.id"
+                      class="focus-ring rounded-lg px-3 py-1.5 text-[11px] font-semibold text-amber-800 hover:bg-amber-50 disabled:opacity-60"
+                      @click="deletePreset(preset)"
+                    >
                       {{ deletingId === preset.id ? 'Wird gelöscht …' : 'Löschen' }}
                     </button>
                   </div>
                 </div>
               </template>
             </div>
-            <p v-if="!ownPresets.length" class="py-4 text-center text-xs text-[#9aa096]">Noch kein eigenes Preset auf dieser Ebene angelegt.</p>
+            <p v-if="!ownPresets.length" class="py-4 text-center text-xs text-[#9aa096]">
+              Noch kein eigenes Preset auf dieser Ebene angelegt.
+            </p>
           </section>
 
           <section v-if="inheritedPresets.length" class="card p-6">
-            <h2 class="mb-4 font-display text-base font-bold">Geerbt von oben ({{ inheritedPresets.length }})</h2>
-            <div v-for="preset in inheritedPresets" :key="preset.id" class="border-t border-[#e9ebe4] py-3 first:border-t-0 first:pt-0">
+            <h2 class="mb-4 font-display text-base font-bold">
+              Geerbt von oben ({{ inheritedPresets.length }})
+            </h2>
+            <div
+              v-for="preset in inheritedPresets"
+              :key="preset.id"
+              class="border-t border-[#e9ebe4] py-3 first:border-t-0 first:pt-0"
+            >
               <p class="text-sm font-semibold">{{ preset.name }}</p>
               <p class="mt-1 text-[11px] text-[#9aa096]">{{ scopeLabel(preset) }}</p>
             </div>
@@ -357,7 +611,11 @@ async function deletePreset(preset: ImageStylePreset) {
             :frame-width-px="(editingId ? editDraft : draft).frameWidthPx"
             :frame-corner-radius-px="(editingId ? editDraft : draft).frameCornerRadiusPx"
             :frame-color-hex="resolveFrameColor((editingId ? editDraft : draft).frameColor)"
-            :custom-frame-url="(editingId ? editDraft : draft).frameType === 'custom' ? signedUrlFor(frameAssets, (editingId ? editDraft : draft).frameBrandAssetId) : ''"
+            :custom-frame-url="
+              (editingId ? editDraft : draft).frameType === 'custom'
+                ? signedUrlFor(frameAssets, (editingId ? editDraft : draft).frameBrandAssetId)
+                : ''
+            "
             :logo-enabled="(editingId ? editDraft : draft).logoEnabled"
             :logo-url="signedUrlFor(logoAssets, (editingId ? editDraft : draft).logoBrandAssetId)"
             :logo-position="(editingId ? editDraft : draft).logoPosition"

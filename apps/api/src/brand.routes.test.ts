@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { DEPARTMENT_ID, ORGANIZATION_ID, TEAM_ID, USER_ID, brandLimitsService, chain, denyingRoleProvider, organizationManagerRoleProvider, signAccessToken, startApp } from './testSupport.js'
+import {
+  DEPARTMENT_ID,
+  ORGANIZATION_ID,
+  TEAM_ID,
+  USER_ID,
+  brandLimitsService,
+  chain,
+  denyingRoleProvider,
+  organizationManagerRoleProvider,
+  signAccessToken,
+  startApp,
+} from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
 
@@ -7,9 +18,6 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
   const BRAND_ORGANIZATION_UPDATE = {
     primaryColor: '#163a2c',
     accentColor: '#caff4a',
-    backgroundColor: '#f6f4ec',
-    textColor: '#122820',
-    onPrimaryColor: '#ffffff',
     displayFontKey: 'manrope',
     bodyFontKey: 'dm_sans',
   }
@@ -26,15 +34,18 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
     expect(response.statusCode).toBe(403)
   })
 
-  it('updates the organization brand profile including the new color roles', async () => {
+  it('updates the organization brand profile with its persistent analysis website', async () => {
+    const captured: Record<string, unknown>[] = []
     const clients: SupabaseClientFactory = {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table !== 'organization_brand_profiles') throw new Error(`unexpected table in test fake: ${table}`)
+            if (table !== 'organization_brand_profiles')
+              throw new Error(`unexpected table in test fake: ${table}`)
             return {
-              update: () =>
-                chain({
+              update: (payload: Record<string, unknown>) => {
+                captured.push(payload)
+                return chain({
                   data: {
                     organization_id: ORGANIZATION_ID,
                     primary_color: '#163a2c',
@@ -47,26 +58,32 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
                     display_font_asset_id: null,
                     body_font_asset_id: null,
                     logo_asset_id: null,
+                    website_url: 'https://verein.example.org',
                     allow_department_overrides: true,
                     locked_fields: [],
                   },
                   error: null,
-                }),
+                })
+              },
             }
           },
         }) as unknown as SupabaseClient,
       forService: () => ({}) as unknown as SupabaseClient,
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'PUT',
       url: `/v1/organizations/${ORGANIZATION_ID}/brand`,
       headers: { authorization: `Bearer ${token}` },
-      payload: BRAND_ORGANIZATION_UPDATE,
+      payload: { ...BRAND_ORGANIZATION_UPDATE, websiteUrl: 'https://verein.example.org' },
     })
     expect(response.statusCode).toBe(200)
-    expect(response.json()).toMatchObject({ backgroundColor: '#f6f4ec', textColor: '#122820', onPrimaryColor: '#ffffff' })
+    expect(response.json()).toMatchObject({ websiteUrl: 'https://verein.example.org' })
+    expect(captured).toContainEqual(expect.objectContaining({ website_url: 'https://verein.example.org' }))
   })
 
   it('updates the organization brand profile with a logoAssetId that resolves to a selectable, ready logo asset', async () => {
@@ -76,7 +93,17 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
         ({
           from: (table: string) => {
             if (table === 'brand_assets') {
-              return chain({ data: { id: LOGO_ASSET_ID, organization_id: ORGANIZATION_ID, department_id: null, team_id: null, kind: 'logo_mark', status: 'ready' }, error: null })
+              return chain({
+                data: {
+                  id: LOGO_ASSET_ID,
+                  organization_id: ORGANIZATION_ID,
+                  department_id: null,
+                  team_id: null,
+                  kind: 'logo_mark',
+                  status: 'ready',
+                },
+                error: null,
+              })
             }
             if (table === 'organization_brand_profiles') {
               return {
@@ -84,10 +111,19 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
                   chain({
                     data: {
                       organization_id: ORGANIZATION_ID,
-                      primary_color: '#163a2c', accent_color: '#caff4a', background_color: '#f6f4ec',
-                      text_color: '#122820', on_primary_color: '#ffffff', display_font_key: 'manrope', body_font_key: 'dm_sans',
-                      display_font_asset_id: null, body_font_asset_id: null, logo_asset_id: LOGO_ASSET_ID,
-                      allow_department_overrides: true, locked_fields: [],
+                      primary_color: '#163a2c',
+                      accent_color: '#caff4a',
+                      background_color: '#f6f4ec',
+                      text_color: '#122820',
+                      on_primary_color: '#ffffff',
+                      display_font_key: 'manrope',
+                      body_font_key: 'dm_sans',
+                      display_font_asset_id: null,
+                      body_font_asset_id: null,
+                      logo_asset_id: LOGO_ASSET_ID,
+                      website_url: null,
+                      allow_department_overrides: true,
+                      locked_fields: [],
                     },
                     error: null,
                   }),
@@ -98,7 +134,10 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
         }) as unknown as SupabaseClient,
       forService: () => ({}) as unknown as SupabaseClient,
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'PUT',
@@ -116,20 +155,36 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
         ({
           from: (table: string) => {
             if (table === 'brand_assets') {
-              return chain({ data: { id: '10000000-9000-4000-8000-000000000003', organization_id: ORGANIZATION_ID, department_id: null, team_id: null, kind: 'font', status: 'ready' }, error: null })
+              return chain({
+                data: {
+                  id: '10000000-9000-4000-8000-000000000003',
+                  organization_id: ORGANIZATION_ID,
+                  department_id: null,
+                  team_id: null,
+                  kind: 'font',
+                  status: 'ready',
+                },
+                error: null,
+              })
             }
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
       forService: () => ({}) as unknown as SupabaseClient,
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'PUT',
       url: `/v1/organizations/${ORGANIZATION_ID}/brand`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { ...BRAND_ORGANIZATION_UPDATE, logoAssetId: '10000000-9000-4000-8000-000000000003' },
+      payload: {
+        ...BRAND_ORGANIZATION_UPDATE,
+        logoAssetId: '10000000-9000-4000-8000-000000000003',
+      },
     })
     expect(response.statusCode).toBe(400)
     expect(response.json()).toMatchObject({ error: 'invalid_asset_reference' })
@@ -146,13 +201,19 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
         }) as unknown as SupabaseClient,
       forService: () => ({}) as unknown as SupabaseClient,
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'PUT',
       url: `/v1/organizations/${ORGANIZATION_ID}/brand`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { ...BRAND_ORGANIZATION_UPDATE, displayFontAssetId: '10000000-9000-4000-8000-000000000001' },
+      payload: {
+        ...BRAND_ORGANIZATION_UPDATE,
+        displayFontAssetId: '10000000-9000-4000-8000-000000000001',
+      },
     })
     expect(response.statusCode).toBe(400)
     expect(response.json()).toMatchObject({ error: 'invalid_asset_reference' })
@@ -163,16 +224,25 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
     const token = await signAccessToken(USER_ID)
     const boundary = '----vereinsfunkAssetBoundary'
     const body = Buffer.concat([
-      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="organizationId"\r\n\r\n${ORGANIZATION_ID}\r\n`),
-      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="kind"\r\n\r\nlogo_mark\r\n`),
-      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="logo.txt"\r\nContent-Type: text/plain\r\n\r\n`),
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="organizationId"\r\n\r\n${ORGANIZATION_ID}\r\n`,
+      ),
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="kind"\r\n\r\nlogo_mark\r\n`,
+      ),
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="logo.txt"\r\nContent-Type: text/plain\r\n\r\n`,
+      ),
       Buffer.from('this is not an image'),
       Buffer.from(`\r\n--${boundary}--\r\n`),
     ])
     const response = await app.inject({
       method: 'POST',
       url: '/v1/brand/assets',
-      headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` },
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': `multipart/form-data; boundary=${boundary}`,
+      },
       payload: body,
     })
     expect(response.statusCode).toBe(400)
@@ -184,16 +254,23 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
     const token = await signAccessToken(USER_ID)
     const boundary = '----vereinsfunkFontBoundary'
     const body = Buffer.concat([
-      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="organizationId"\r\n\r\n${ORGANIZATION_ID}\r\n`),
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="organizationId"\r\n\r\n${ORGANIZATION_ID}\r\n`,
+      ),
       Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="kind"\r\n\r\nfont\r\n`),
-      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="font.ttf"\r\nContent-Type: font/ttf\r\n\r\n`),
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="font.ttf"\r\nContent-Type: font/ttf\r\n\r\n`,
+      ),
       Buffer.from('this is not a font'),
       Buffer.from(`\r\n--${boundary}--\r\n`),
     ])
     const response = await app.inject({
       method: 'POST',
       url: '/v1/brand/assets',
-      headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` },
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': `multipart/form-data; boundary=${boundary}`,
+      },
       payload: body,
     })
     expect(response.statusCode).toBe(400)
@@ -205,17 +282,28 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
     const token = await signAccessToken(USER_ID)
     const boundary = '----vereinsfunkScopeBoundary'
     const body = Buffer.concat([
-      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="organizationId"\r\n\r\n${ORGANIZATION_ID}\r\n`),
-      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="teamId"\r\n\r\n${TEAM_ID}\r\n`),
-      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="kind"\r\n\r\nwordmark\r\n`),
-      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="logo.png"\r\nContent-Type: image/png\r\n\r\n`),
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="organizationId"\r\n\r\n${ORGANIZATION_ID}\r\n`,
+      ),
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="teamId"\r\n\r\n${TEAM_ID}\r\n`,
+      ),
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="kind"\r\n\r\nwordmark\r\n`,
+      ),
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="logo.png"\r\nContent-Type: image/png\r\n\r\n`,
+      ),
       Buffer.from('not really a png'),
       Buffer.from(`\r\n--${boundary}--\r\n`),
     ])
     const response = await app.inject({
       method: 'POST',
       url: '/v1/brand/assets',
-      headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` },
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': `multipart/form-data; boundary=${boundary}`,
+      },
       payload: body,
     })
     expect(response.statusCode).toBe(400)
@@ -231,9 +319,17 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
-      forService: () => ({ from: () => { throw new Error('forService should not be used before the existence check') } }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: () => {
+            throw new Error('forService should not be used before the existence check')
+          },
+        }) as unknown as SupabaseClient,
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'POST',
@@ -250,14 +346,31 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
         ({
           from: (table: string) => {
             if (table === 'brand_assets') {
-              return chain({ data: { id: '10000000-9000-4000-8000-000000000001', organization_id: ORGANIZATION_ID, department_id: null, team_id: null, kind: 'logo_mark' }, error: null })
+              return chain({
+                data: {
+                  id: '10000000-9000-4000-8000-000000000001',
+                  organization_id: ORGANIZATION_ID,
+                  department_id: null,
+                  team_id: null,
+                  kind: 'logo_mark',
+                },
+                error: null,
+              })
             }
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
-      forService: () => ({ from: () => { throw new Error('forService should not be used before the kind check') } }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: () => {
+            throw new Error('forService should not be used before the kind check')
+          },
+        }) as unknown as SupabaseClient,
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'POST',
@@ -276,7 +389,16 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
         ({
           from: (table: string) => {
             if (table === 'brand_assets') {
-              return chain({ data: { id: '10000000-9000-4000-8000-000000000001', organization_id: ORGANIZATION_ID, department_id: null, team_id: null, kind: 'font' }, error: null })
+              return chain({
+                data: {
+                  id: '10000000-9000-4000-8000-000000000001',
+                  organization_id: ORGANIZATION_ID,
+                  department_id: null,
+                  team_id: null,
+                  kind: 'font',
+                },
+                error: null,
+              })
             }
             throw new Error(`unexpected table in test fake: ${table}`)
           },
@@ -315,12 +437,21 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
                 },
               }
             }
-            if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { captured.push(row); return { error: null } } }
+            if (table === 'audit_events')
+              return {
+                insert: async (row: Record<string, unknown>) => {
+                  captured.push(row)
+                  return { error: null }
+                },
+              }
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'POST',
@@ -343,7 +474,10 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
         }) as unknown as SupabaseClient,
       forService: () => ({}) as unknown as SupabaseClient,
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'PUT',
@@ -359,7 +493,8 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
+            if (table === 'departments')
+              return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
@@ -381,16 +516,36 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
+            if (table === 'departments')
+              return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
             if (table === 'department_brand_profiles') {
-              return { upsert: () => chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, primary_color: '#112233', accent_color: null, logo_asset_id: null, display_font_asset_id: null, body_font_asset_id: null, allow_team_overrides: true, locked_fields: [] }, error: null }) }
+              return {
+                upsert: () =>
+                  chain({
+                    data: {
+                      organization_id: ORGANIZATION_ID,
+                      department_id: DEPARTMENT_ID,
+                      primary_color: '#112233',
+                      accent_color: null,
+                      logo_asset_id: null,
+                      display_font_asset_id: null,
+                      body_font_asset_id: null,
+                      allow_team_overrides: true,
+                      locked_fields: [],
+                    },
+                    error: null,
+                  }),
+              }
             }
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
       forService: brandLimitsService({ allow_department_overrides: true, locked_fields: [] }),
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'PUT',
@@ -407,16 +562,41 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'teams') return chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID }, error: null })
+            if (table === 'teams')
+              return chain({
+                data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID },
+                error: null,
+              })
             if (table === 'team_brand_profiles') {
-              return { upsert: () => chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: TEAM_ID, primary_color: '#445566', accent_color: null, logo_asset_id: null, display_font_asset_id: null, body_font_asset_id: null }, error: null }) }
+              return {
+                upsert: () =>
+                  chain({
+                    data: {
+                      organization_id: ORGANIZATION_ID,
+                      department_id: DEPARTMENT_ID,
+                      team_id: TEAM_ID,
+                      primary_color: '#445566',
+                      accent_color: null,
+                      logo_asset_id: null,
+                      display_font_asset_id: null,
+                      body_font_asset_id: null,
+                    },
+                    error: null,
+                  }),
+              }
             }
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
-      forService: brandLimitsService({ allow_department_overrides: true, locked_fields: [] }, { allow_team_overrides: true, locked_fields: [] }),
+      forService: brandLimitsService(
+        { allow_department_overrides: true, locked_fields: [] },
+        { allow_team_overrides: true, locked_fields: [] },
+      ),
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'PUT',
@@ -436,13 +616,17 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
+            if (table === 'departments')
+              return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
       forService: brandLimitsService({ allow_department_overrides: false, locked_fields: [] }),
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'PUT',
@@ -459,13 +643,20 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
+            if (table === 'departments')
+              return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
-      forService: brandLimitsService({ allow_department_overrides: true, locked_fields: ['primaryColor'] }),
+      forService: brandLimitsService({
+        allow_department_overrides: true,
+        locked_fields: ['primaryColor'],
+      }),
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'PUT',
@@ -482,16 +673,39 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
+            if (table === 'departments')
+              return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
             if (table === 'department_brand_profiles') {
-              return { upsert: () => chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, primary_color: null, accent_color: null, logo_asset_id: null, display_font_asset_id: null, body_font_asset_id: null, allow_team_overrides: true, locked_fields: [] }, error: null }) }
+              return {
+                upsert: () =>
+                  chain({
+                    data: {
+                      organization_id: ORGANIZATION_ID,
+                      department_id: DEPARTMENT_ID,
+                      primary_color: null,
+                      accent_color: null,
+                      logo_asset_id: null,
+                      display_font_asset_id: null,
+                      body_font_asset_id: null,
+                      allow_team_overrides: true,
+                      locked_fields: [],
+                    },
+                    error: null,
+                  }),
+              }
             }
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
-      forService: brandLimitsService({ allow_department_overrides: true, locked_fields: ['primaryColor'] }),
+      forService: brandLimitsService({
+        allow_department_overrides: true,
+        locked_fields: ['primaryColor'],
+      }),
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'PUT',
@@ -507,13 +721,23 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'teams') return chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID }, error: null })
+            if (table === 'teams')
+              return chain({
+                data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID },
+                error: null,
+              })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
-      forService: brandLimitsService({ allow_department_overrides: true, locked_fields: [] }, { allow_team_overrides: false, locked_fields: [] }),
+      forService: brandLimitsService(
+        { allow_department_overrides: true, locked_fields: [] },
+        { allow_team_overrides: false, locked_fields: [] },
+      ),
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'PUT',
@@ -530,13 +754,23 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'teams') return chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID }, error: null })
+            if (table === 'teams')
+              return chain({
+                data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID },
+                error: null,
+              })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
-      forService: brandLimitsService({ allow_department_overrides: true, locked_fields: ['accentColor'] }, { allow_team_overrides: true, locked_fields: [] }),
+      forService: brandLimitsService(
+        { allow_department_overrides: true, locked_fields: ['accentColor'] },
+        { allow_team_overrides: true, locked_fields: [] },
+      ),
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'PUT',
@@ -557,16 +791,25 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
     const token = await signAccessToken(USER_ID)
     const boundary = '----vereinsfunkOrgLogoBoundary'
     const body = Buffer.concat([
-      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="organizationId"\r\n\r\n${ORGANIZATION_ID}\r\n`),
-      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="kind"\r\n\r\nlogo_primary\r\n`),
-      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="logo.png"\r\nContent-Type: image/png\r\n\r\n`),
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="organizationId"\r\n\r\n${ORGANIZATION_ID}\r\n`,
+      ),
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="kind"\r\n\r\nlogo_primary\r\n`,
+      ),
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="logo.png"\r\nContent-Type: image/png\r\n\r\n`,
+      ),
       Buffer.from('not really a png'),
       Buffer.from(`\r\n--${boundary}--\r\n`),
     ])
     const response = await app.inject({
       method: 'POST',
       url: '/v1/brand/assets',
-      headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` },
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': `multipart/form-data; boundary=${boundary}`,
+      },
       payload: body,
     })
     expect(response.statusCode).toBe(400)
@@ -579,12 +822,25 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
         ({
           from: (table: string) => {
             if (table === 'brand_assets') {
-              return chain({ data: { organization_id: ORGANIZATION_ID, department_id: null, team_id: null, status: 'ready' }, error: null })
+              return chain({
+                data: {
+                  organization_id: ORGANIZATION_ID,
+                  department_id: null,
+                  team_id: null,
+                  status: 'ready',
+                },
+                error: null,
+              })
             }
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
-      forService: () => ({ from: () => { throw new Error('forService should not be used before the permission check') } }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: () => {
+            throw new Error('forService should not be used before the permission check')
+          },
+        }) as unknown as SupabaseClient,
     }
     const app = await startApp({ roleProvider: denyingRoleProvider, supabaseClients: clients })
     const token = await signAccessToken(USER_ID)
@@ -610,9 +866,17 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
-      forService: () => ({ from: () => { throw new Error('forService should not be used before the existence check') } }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: () => {
+            throw new Error('forService should not be used before the existence check')
+          },
+        }) as unknown as SupabaseClient,
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'DELETE',
@@ -631,7 +895,15 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
         ({
           from: (table: string) => {
             if (table === 'brand_assets') {
-              return chain({ data: { organization_id: ORGANIZATION_ID, department_id: null, team_id: null, status: 'ready' }, error: null })
+              return chain({
+                data: {
+                  organization_id: ORGANIZATION_ID,
+                  department_id: null,
+                  team_id: null,
+                  status: 'ready',
+                },
+                error: null,
+              })
             }
             throw new Error(`unexpected table in test fake: ${table}`)
           },
@@ -656,7 +928,10 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
           },
         }) as unknown as SupabaseClient,
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'DELETE',
@@ -676,7 +951,15 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
         ({
           from: (table: string) => {
             if (table === 'brand_assets') {
-              return chain({ data: { organization_id: ORGANIZATION_ID, department_id: null, team_id: null, status: 'deleted' }, error: null })
+              return chain({
+                data: {
+                  organization_id: ORGANIZATION_ID,
+                  department_id: null,
+                  team_id: null,
+                  status: 'deleted',
+                },
+                error: null,
+              })
             }
             throw new Error(`unexpected table in test fake: ${table}`)
           },
@@ -684,10 +967,16 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
       forService: () =>
         ({
           rpc: async () => ({ data: null, error: null }),
-          from: () => { auditCalled = true; return { insert: () => chain({ data: null, error: null }) } },
+          from: () => {
+            auditCalled = true
+            return { insert: () => chain({ data: null, error: null }) }
+          },
         }) as unknown as SupabaseClient,
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'DELETE',
@@ -706,7 +995,15 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
         ({
           from: (table: string) => {
             if (table === 'brand_assets') {
-              return chain({ data: { organization_id: ORGANIZATION_ID, department_id: null, team_id: null, status: 'ready' }, error: null })
+              return chain({
+                data: {
+                  organization_id: ORGANIZATION_ID,
+                  department_id: null,
+                  team_id: null,
+                  status: 'ready',
+                },
+                error: null,
+              })
             }
             throw new Error(`unexpected table in test fake: ${table}`)
           },
@@ -714,10 +1011,16 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
       forService: () =>
         ({
           rpc: async () => ({ data: null, error: { message: 'brand_asset_referenced' } }),
-          from: () => { auditCalled = true; return { insert: () => chain({ data: null, error: null }) } },
+          from: () => {
+            auditCalled = true
+            return { insert: () => chain({ data: null, error: null }) }
+          },
         }) as unknown as SupabaseClient,
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'DELETE',
@@ -756,7 +1059,10 @@ describe('Paket 048: KI-gestuetzte Markenerkennung aus der Vereins-Homepage', ()
           },
         }) as unknown as SupabaseClient,
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'POST',
@@ -767,7 +1073,11 @@ describe('Paket 048: KI-gestuetzte Markenerkennung aus der Vereins-Homepage', ()
     expect(response.statusCode).toBe(202)
     expect(response.json()).toEqual({ jobId: '48000000-9000-4000-8000-000000000001' })
     // requested_by kommt aus der authentifizierten Session, nicht vom Client-Body (RPC traut Client nicht).
-    expect(capturedArgs).toMatchObject({ p_organization_id: ORGANIZATION_ID, p_website_url: 'https://verein.example.org', p_requested_by: USER_ID })
+    expect(capturedArgs).toMatchObject({
+      p_organization_id: ORGANIZATION_ID,
+      p_website_url: 'https://verein.example.org',
+      p_requested_by: USER_ID,
+    })
   })
 
   // Ohne diese Vorabpruefung waere die Antwort auf ein gewoehnliches "http://..." eine 500: das
@@ -781,9 +1091,18 @@ describe('Paket 048: KI-gestuetzte Markenerkennung aus der Vereins-Homepage', ()
     let rpcCalled = false
     const clients: SupabaseClientFactory = {
       forUser: () => ({}) as unknown as SupabaseClient,
-      forService: () => ({ rpc: async () => { rpcCalled = true; return { data: null, error: null } } }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          rpc: async () => {
+            rpcCalled = true
+            return { data: null, error: null }
+          },
+        }) as unknown as SupabaseClient,
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'POST',
@@ -799,9 +1118,15 @@ describe('Paket 048: KI-gestuetzte Markenerkennung aus der Vereins-Homepage', ()
   it('maps a running analysis to 409 instead of silently duplicating it', async () => {
     const clients: SupabaseClientFactory = {
       forUser: () => ({}) as unknown as SupabaseClient,
-      forService: () => ({ rpc: async () => ({ data: null, error: { message: 'analysis_in_progress' } }) }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          rpc: async () => ({ data: null, error: { message: 'analysis_in_progress' } }),
+        }) as unknown as SupabaseClient,
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'POST',
@@ -827,9 +1152,13 @@ describe('Paket 048: KI-gestuetzte Markenerkennung aus der Vereins-Homepage', ()
   it('reports 404 when no analysis has ever run for this club', async () => {
     const clients: SupabaseClientFactory = {
       forUser: () => ({}) as unknown as SupabaseClient,
-      forService: () => ({ from: () => chain({ data: null, error: null }) }) as unknown as SupabaseClient,
+      forService: () =>
+        ({ from: () => chain({ data: null, error: null }) }) as unknown as SupabaseClient,
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'GET',
@@ -842,9 +1171,16 @@ describe('Paket 048: KI-gestuetzte Markenerkennung aus der Vereins-Homepage', ()
   it('reports a pending job without a result', async () => {
     const clients: SupabaseClientFactory = {
       forUser: () => ({}) as unknown as SupabaseClient,
-      forService: () => ({ from: () => chain({ data: { status: 'pending', result: null, error_reason: null }, error: null }) }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: () =>
+            chain({ data: { status: 'pending', result: null, error_reason: null }, error: null }),
+        }) as unknown as SupabaseClient,
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'GET',
@@ -865,18 +1201,42 @@ describe('Paket 048: KI-gestuetzte Markenerkennung aus der Vereins-Homepage', ()
               data: {
                 status: 'succeeded',
                 result: {
-                  primaryColor: '#163a2c', accentColor: '#caff4a', backgroundColor: '#f6f4ec', textColor: '#122820', onPrimaryColor: '#ffffff',
-                  suggestedFontPairingKey: 'manrope_dm_sans', detectedFontFamily: 'Roboto, sans-serif',
-                  logoCandidates: [{ objectPath: `organizations/${ORGANIZATION_ID}/brand/analysis-staging/abc.png`, mimeType: 'image/png' }],
+                  primaryColor: '#163a2c',
+                  accentColor: '#caff4a',
+                  backgroundColor: '#f6f4ec',
+                  textColor: '#122820',
+                  onPrimaryColor: '#ffffff',
+                  suggestedFontPairingKey: 'manrope_dm_sans',
+                  detectedFontFamily: 'Roboto, sans-serif',
+                  logoCandidates: [
+                    {
+                      objectPath: `organizations/${ORGANIZATION_ID}/brand/analysis-staging/abc.png`,
+                      mimeType: 'image/png',
+                    },
+                  ],
                 },
                 error_reason: null,
               },
               error: null,
             }),
-          storage: { from: (bucket: string) => ({ createSignedUrl: async (path: string) => { expect(bucket).toBe('brand-assets'); expect(path).toBe(`organizations/${ORGANIZATION_ID}/brand/analysis-staging/abc.png`); return { data: { signedUrl: 'https://signed.example/logo-candidate.png' }, error: null } } }) },
+          storage: {
+            from: (bucket: string) => ({
+              createSignedUrl: async (path: string) => {
+                expect(bucket).toBe('brand-assets')
+                expect(path).toBe(`organizations/${ORGANIZATION_ID}/brand/analysis-staging/abc.png`)
+                return {
+                  data: { signedUrl: 'https://signed.example/logo-candidate.png' },
+                  error: null,
+                }
+              },
+            }),
+          },
         }) as unknown as SupabaseClient,
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'GET',
@@ -888,8 +1248,13 @@ describe('Paket 048: KI-gestuetzte Markenerkennung aus der Vereins-Homepage', ()
       status: 'succeeded',
       result: {
         suggestedFontPairingKey: 'manrope_dm_sans',
-        logoCandidate: { signedUrl: 'https://signed.example/logo-candidate.png', mimeType: 'image/png' },
-        logoCandidates: [{ signedUrl: 'https://signed.example/logo-candidate.png', mimeType: 'image/png' }],
+        logoCandidate: {
+          signedUrl: 'https://signed.example/logo-candidate.png',
+          mimeType: 'image/png',
+        },
+        logoCandidates: [
+          { signedUrl: 'https://signed.example/logo-candidate.png', mimeType: 'image/png' },
+        ],
       },
     })
   })
@@ -898,57 +1263,117 @@ describe('Paket 048: KI-gestuetzte Markenerkennung aus der Vereins-Homepage', ()
     let signingCalled = false
     const clients: SupabaseClientFactory = {
       forUser: () => ({}) as unknown as SupabaseClient,
-      forService: () => ({
-        from: () => chain({
-          data: {
-            status: 'succeeded',
-            result: {
-              primaryColor: '#163a2c', accentColor: '#caff4a', backgroundColor: '#f6f4ec', textColor: '#122820', onPrimaryColor: '#ffffff',
-              suggestedFontPairingKey: null, detectedFontFamily: null,
-              logoCandidates: [
-                { objectPath: 'organizations/other/brand/analysis-staging/abc.png', mimeType: 'image/png' },
-                { objectPath: `organizations/${ORGANIZATION_ID}/brand/analysis-staging/abc.png`, mimeType: 'application/pdf' },
-              ],
-            },
-            error_reason: null,
+      forService: () =>
+        ({
+          from: () =>
+            chain({
+              data: {
+                status: 'succeeded',
+                result: {
+                  primaryColor: '#163a2c',
+                  accentColor: '#caff4a',
+                  backgroundColor: '#f6f4ec',
+                  textColor: '#122820',
+                  onPrimaryColor: '#ffffff',
+                  suggestedFontPairingKey: null,
+                  detectedFontFamily: null,
+                  logoCandidates: [
+                    {
+                      objectPath: 'organizations/other/brand/analysis-staging/abc.png',
+                      mimeType: 'image/png',
+                    },
+                    {
+                      objectPath: `organizations/${ORGANIZATION_ID}/brand/analysis-staging/abc.png`,
+                      mimeType: 'application/pdf',
+                    },
+                  ],
+                },
+                error_reason: null,
+              },
+              error: null,
+            }),
+          storage: {
+            from: () => ({
+              createSignedUrl: async () => {
+                signingCalled = true
+                return {
+                  data: { signedUrl: 'https://signed.example/logo-candidate.png' },
+                  error: null,
+                }
+              },
+            }),
           },
-          error: null,
-        }),
-        storage: { from: () => ({ createSignedUrl: async () => { signingCalled = true; return { data: { signedUrl: 'https://signed.example/logo-candidate.png' }, error: null } } }) },
-      }) as unknown as SupabaseClient,
+        }) as unknown as SupabaseClient,
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
-    const response = await app.inject({ method: 'GET', url: `/v1/organizations/${ORGANIZATION_ID}/brand/website-analysis`, headers: { authorization: `Bearer ${token}` } })
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${ORGANIZATION_ID}/brand/website-analysis`,
+      headers: { authorization: `Bearer ${token}` },
+    })
     expect(response.statusCode).toBe(200)
     expect(signingCalled).toBe(false)
     expect(response.json()).toMatchObject({ result: { logoCandidate: null, logoCandidates: [] } })
   })
 
   it('returns the first eight of nine valid stored logo candidates without signing the ninth', async () => {
-    const paths = Array.from({ length: 9 }, (_, index) => `organizations/${ORGANIZATION_ID}/brand/analysis-staging/${index}.png`)
+    const paths = Array.from(
+      { length: 9 },
+      (_, index) => `organizations/${ORGANIZATION_ID}/brand/analysis-staging/${index}.png`,
+    )
     const signedPaths: string[] = []
     const clients: SupabaseClientFactory = {
       forUser: () => ({}) as unknown as SupabaseClient,
-      forService: () => ({
-        from: () => chain({
-          data: {
-            status: 'succeeded',
-            result: {
-              primaryColor: '#163a2c', accentColor: '#caff4a', backgroundColor: '#f6f4ec', textColor: '#122820', onPrimaryColor: '#ffffff',
-              suggestedFontPairingKey: null, detectedFontFamily: null,
-              logoCandidates: paths.map((objectPath) => ({ objectPath, mimeType: 'image/png' })),
-            },
-            error_reason: null,
+      forService: () =>
+        ({
+          from: () =>
+            chain({
+              data: {
+                status: 'succeeded',
+                result: {
+                  primaryColor: '#163a2c',
+                  accentColor: '#caff4a',
+                  backgroundColor: '#f6f4ec',
+                  textColor: '#122820',
+                  onPrimaryColor: '#ffffff',
+                  suggestedFontPairingKey: null,
+                  detectedFontFamily: null,
+                  logoCandidates: paths.map((objectPath) => ({
+                    objectPath,
+                    mimeType: 'image/png',
+                  })),
+                },
+                error_reason: null,
+              },
+              error: null,
+            }),
+          storage: {
+            from: () => ({
+              createSignedUrl: async (path: string) => {
+                signedPaths.push(path)
+                return {
+                  data: { signedUrl: `https://signed.example/${path.split('/').at(-1)}` },
+                  error: null,
+                }
+              },
+            }),
           },
-          error: null,
-        }),
-        storage: { from: () => ({ createSignedUrl: async (path: string) => { signedPaths.push(path); return { data: { signedUrl: `https://signed.example/${path.split('/').at(-1)}` }, error: null } } }) },
-      }) as unknown as SupabaseClient,
+        }) as unknown as SupabaseClient,
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
-    const response = await app.inject({ method: 'GET', url: `/v1/organizations/${ORGANIZATION_ID}/brand/website-analysis`, headers: { authorization: `Bearer ${token}` } })
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/organizations/${ORGANIZATION_ID}/brand/website-analysis`,
+      headers: { authorization: `Bearer ${token}` },
+    })
     expect(response.statusCode).toBe(200)
     expect(signedPaths).toEqual(paths.slice(0, 8))
     expect(response.json().result.logoCandidates).toHaveLength(8)
@@ -957,9 +1382,19 @@ describe('Paket 048: KI-gestuetzte Markenerkennung aus der Vereins-Homepage', ()
   it('reports a failed analysis with its error reason and no result', async () => {
     const clients: SupabaseClientFactory = {
       forUser: () => ({}) as unknown as SupabaseClient,
-      forService: () => ({ from: () => chain({ data: { status: 'failed', result: null, error_reason: 'website_unreachable' }, error: null }) }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: () =>
+            chain({
+              data: { status: 'failed', result: null, error_reason: 'website_unreachable' },
+              error: null,
+            }),
+        }) as unknown as SupabaseClient,
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'GET',
@@ -967,7 +1402,11 @@ describe('Paket 048: KI-gestuetzte Markenerkennung aus der Vereins-Homepage', ()
       headers: { authorization: `Bearer ${token}` },
     })
     expect(response.statusCode).toBe(200)
-    expect(response.json()).toEqual({ status: 'failed', result: null, errorReason: 'website_unreachable' })
+    expect(response.json()).toEqual({
+      status: 'failed',
+      result: null,
+      errorReason: 'website_unreachable',
+    })
   })
 })
 
@@ -977,7 +1416,8 @@ describe('Paket 049: KI-gestuetzte Markenerkennung auf Abteilungsebene', () => {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
+            if (table === 'departments')
+              return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
@@ -1005,7 +1445,10 @@ describe('Paket 049: KI-gestuetzte Markenerkennung auf Abteilungsebene', () => {
         }) as unknown as SupabaseClient,
       forService: () => ({}) as unknown as SupabaseClient,
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'POST',
@@ -1022,7 +1465,8 @@ describe('Paket 049: KI-gestuetzte Markenerkennung auf Abteilungsebene', () => {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
+            if (table === 'departments')
+              return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
@@ -1035,7 +1479,10 @@ describe('Paket 049: KI-gestuetzte Markenerkennung auf Abteilungsebene', () => {
           },
         }) as unknown as SupabaseClient,
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'POST',
@@ -1046,7 +1493,10 @@ describe('Paket 049: KI-gestuetzte Markenerkennung auf Abteilungsebene', () => {
     expect(response.statusCode).toBe(202)
     expect(response.json()).toEqual({ jobId: '49000000-9000-4000-8000-000000000001' })
     expect(capturedArgs).toMatchObject({
-      p_organization_id: ORGANIZATION_ID, p_website_url: 'https://abteilung.example.org', p_requested_by: USER_ID, p_department_id: DEPARTMENT_ID,
+      p_organization_id: ORGANIZATION_ID,
+      p_website_url: 'https://abteilung.example.org',
+      p_requested_by: USER_ID,
+      p_department_id: DEPARTMENT_ID,
     })
   })
 
@@ -1055,13 +1505,20 @@ describe('Paket 049: KI-gestuetzte Markenerkennung auf Abteilungsebene', () => {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
+            if (table === 'departments')
+              return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
-      forService: () => ({ rpc: async () => ({ data: null, error: { message: 'analysis_in_progress' } }) }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          rpc: async () => ({ data: null, error: { message: 'analysis_in_progress' } }),
+        }) as unknown as SupabaseClient,
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'POST',
@@ -1078,7 +1535,8 @@ describe('Paket 049: KI-gestuetzte Markenerkennung auf Abteilungsebene', () => {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
+            if (table === 'departments')
+              return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
@@ -1100,7 +1558,8 @@ describe('Paket 049: KI-gestuetzte Markenerkennung auf Abteilungsebene', () => {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
+            if (table === 'departments')
+              return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
@@ -1111,20 +1570,32 @@ describe('Paket 049: KI-gestuetzte Markenerkennung auf Abteilungsebene', () => {
               data: {
                 status: 'succeeded',
                 result: {
-                  primaryColor: '#163a2c', accentColor: '#caff4a', backgroundColor: '#f6f4ec', textColor: '#122820', onPrimaryColor: '#ffffff',
-                  suggestedFontPairingKey: null, detectedFontFamily: null, logoCandidates: [],
+                  primaryColor: '#163a2c',
+                  accentColor: '#caff4a',
+                  backgroundColor: '#f6f4ec',
+                  textColor: '#122820',
+                  onPrimaryColor: '#ffffff',
+                  suggestedFontPairingKey: null,
+                  detectedFontFamily: null,
+                  logoCandidates: [],
                 },
                 error_reason: null,
               },
               error: null,
             }) as unknown as Record<string, unknown>
             const originalEq = builder.eq as (...args: unknown[]) => unknown
-            builder.eq = (...args: unknown[]) => { filteredBy = { column: args[0], value: args[1] }; return originalEq(...args) }
+            builder.eq = (...args: unknown[]) => {
+              filteredBy = { column: args[0], value: args[1] }
+              return originalEq(...args)
+            }
             return builder
           },
         }) as unknown as SupabaseClient,
     }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'GET',
@@ -1132,7 +1603,10 @@ describe('Paket 049: KI-gestuetzte Markenerkennung auf Abteilungsebene', () => {
       headers: { authorization: `Bearer ${token}` },
     })
     expect(response.statusCode).toBe(200)
-    expect(response.json()).toMatchObject({ status: 'succeeded', result: { primaryColor: '#163a2c' } })
+    expect(response.json()).toMatchObject({
+      status: 'succeeded',
+      result: { primaryColor: '#163a2c' },
+    })
     expect(filteredBy).toEqual({ column: 'department_id', value: DEPARTMENT_ID })
   })
 })

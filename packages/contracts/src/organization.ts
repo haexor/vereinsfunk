@@ -3,7 +3,23 @@ import { UuidSchema } from './content.js'
 import { CountryCodeSchema } from './primitives.js'
 
 const HexColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/)
-export const LegalFormSchema = z.enum(['e_v', 'gmbh', 'gugmbh', 'ggmbh', 'nicht_eingetragen', 'sonstige'])
+// Die Marken-Website wird fuer die automatische Analyse von unserem Server abgerufen. Deshalb
+// speichern wir nur sichere HTTPS-Adressen; dieselbe Anforderung prueft die Start-Route noch
+// einmal vor dem externen Abruf.
+const BrandWebsiteUrlSchema = z
+  .url()
+  .max(2048)
+  .refine((value) => value.startsWith('https://'), {
+    message: 'must use https',
+  })
+export const LegalFormSchema = z.enum([
+  'e_v',
+  'gmbh',
+  'gugmbh',
+  'ggmbh',
+  'nicht_eingetragen',
+  'sonstige',
+])
 
 // Oeffentlich, ohne Anmeldung abrufbar (GET /v1/organizations/:id/imprint) -- ein Verein kann
 // diese URL aus seiner Instagram-/Facebook-Bio verlinken, ohne eine eigene Website zu betreiben.
@@ -32,21 +48,31 @@ export const CuratedFontKeySchema = z.enum(['manrope', 'dm_sans', 'space_grotesk
 // Rejects garbage before it ever reaches organizations.timezone -- an invalid IANA zone
 // would otherwise only fail later, as a RangeError inside Intl.DateTimeFormat calls that
 // format every date and scheduling deadline in the organization's timezone.
-const IanaTimezoneSchema = z.string().min(1).max(64).refine((value) => {
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: value })
-    return true
-  } catch {
-    return false
-  }
-}, { message: 'must be a valid IANA time zone' })
+const IanaTimezoneSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .refine(
+    (value) => {
+      try {
+        new Intl.DateTimeFormat('en-US', { timeZone: value })
+        return true
+      } catch {
+        return false
+      }
+    },
+    { message: 'must be a valid IANA time zone' },
+  )
 
 export const CreateOrganizationRequestSchema = z.object({
   name: z.string().trim().min(1).max(160),
   firstDepartmentName: z.string().trim().min(1).max(120),
   timezone: IanaTimezoneSchema.default('Europe/Berlin'),
 })
-export const CreateOrganizationResponseSchema = z.object({ organizationId: UuidSchema, slug: z.string().min(1) })
+export const CreateOrganizationResponseSchema = z.object({
+  organizationId: UuidSchema,
+  slug: z.string().min(1),
+})
 
 const OrganizationProfileFieldsSchema = z.object({
   legalName: z.string().trim().min(1).max(160).nullable().optional(),
@@ -84,21 +110,23 @@ export const OrganizationProfileSchema = OrganizationProfileFieldsSchema.extend(
 // sich ein Tippfehler ('primary_colour') speichern, der dann nichts sperrt -- und die Oberflaeche
 // bot Sperren fuer Felder an, die unterhalb des Vereins ohnehin niemand setzen kann.
 export const BrandLockableFieldSchema = z.enum([
-  'primaryColor', 'accentColor', 'logoAssetId', 'displayFontAssetId', 'bodyFontAssetId',
+  'primaryColor',
+  'accentColor',
+  'logoAssetId',
+  'displayFontAssetId',
+  'bodyFontAssetId',
 ])
 const LockedFieldsSchema = z.array(BrandLockableFieldSchema).max(6)
 
 export const OrganizationBrandUpdateSchema = z.object({
   primaryColor: HexColorSchema,
   accentColor: HexColorSchema,
-  backgroundColor: HexColorSchema,
-  textColor: HexColorSchema,
-  onPrimaryColor: HexColorSchema,
   displayFontKey: CuratedFontKeySchema,
   bodyFontKey: CuratedFontKeySchema,
   displayFontAssetId: UuidSchema.nullable().optional(),
   bodyFontAssetId: UuidSchema.nullable().optional(),
   logoAssetId: UuidSchema.nullable().optional(),
+  websiteUrl: BrandWebsiteUrlSchema.nullable().optional(),
   allowDepartmentOverrides: z.boolean().optional(),
   lockedFields: LockedFieldsSchema.optional(),
 })
@@ -114,14 +142,30 @@ export const OrganizationBrandSchema = z.object({
   displayFontAssetId: UuidSchema.nullable(),
   bodyFontAssetId: UuidSchema.nullable(),
   logoAssetId: UuidSchema.nullable(),
+  websiteUrl: BrandWebsiteUrlSchema.nullable(),
   allowDepartmentOverrides: z.boolean(),
   lockedFields: z.array(BrandLockableFieldSchema),
 })
 
 // Paket 013: Branding-Assets (Logovarianten, Wasserzeichen, eigene Schriften) auf Vereins-,
 // Abteilungs- und Mannschaftsebene. 'frame' (Plan 045): eigene Rahmengrafik fuer Bildstil-Presets.
-export const BrandAssetKindSchema = z.enum(['logo_primary', 'logo_light', 'logo_dark', 'logo_mark', 'wordmark', 'watermark', 'font', 'frame'])
-export const BrandAssetStatusSchema = z.enum(['processing', 'ready', 'rejected', 'replaced', 'deleted'])
+export const BrandAssetKindSchema = z.enum([
+  'logo_primary',
+  'logo_light',
+  'logo_dark',
+  'logo_mark',
+  'wordmark',
+  'watermark',
+  'font',
+  'frame',
+])
+export const BrandAssetStatusSchema = z.enum([
+  'processing',
+  'ready',
+  'rejected',
+  'replaced',
+  'deleted',
+])
 export const FontStyleSchema = z.enum(['normal', 'italic'])
 
 export const BrandAssetSchema = z.object({
@@ -156,14 +200,16 @@ export type CreateBrandAssetResponse = z.infer<typeof CreateBrandAssetResponseSc
 
 // Aus den multipart-Feldern eines POST /v1/brand/assets gelesen -- die Datei selbst kommt als
 // eigener Teil des multipart-Streams, nicht durch dieses Schema.
-export const CreateBrandAssetRequestSchema = z.object({
-  organizationId: UuidSchema,
-  departmentId: UuidSchema.optional(),
-  teamId: UuidSchema.optional(),
-  kind: BrandAssetKindSchema,
-}).refine((value) => value.teamId === undefined || value.departmentId !== undefined, {
-  message: 'teamId requires departmentId',
-})
+export const CreateBrandAssetRequestSchema = z
+  .object({
+    organizationId: UuidSchema,
+    departmentId: UuidSchema.optional(),
+    teamId: UuidSchema.optional(),
+    kind: BrandAssetKindSchema,
+  })
+  .refine((value) => value.teamId === undefined || value.departmentId !== undefined, {
+    message: 'teamId requires departmentId',
+  })
 
 export const ConfirmBrandAssetLicenseRequestSchema = z.object({
   licenseHolder: z.string().trim().min(1).max(200),
@@ -176,13 +222,21 @@ export const ConfirmBrandAssetLicenseRequestSchema = z.object({
 // OrganizationProfileFieldsSchema, damit diese Funktion ohne einen Umweg ueber die
 // Rechtseinstellungen benutzbar ist.
 export const StartBrandWebsiteAnalysisRequestSchema = z.object({ websiteUrl: z.url() })
-export const BrandWebsiteAnalysisStatusSchema = z.enum(['pending', 'running', 'succeeded', 'failed'])
+export const BrandWebsiteAnalysisStatusSchema = z.enum([
+  'pending',
+  'running',
+  'succeeded',
+  'failed',
+])
 // suggestedFontPairingKey bewusst ein loses string statt eines Enums der beiden kuratierten Paare:
 // die eigentliche Pruefung "ist das ueberhaupt eines der beiden kuratierten Paare" passiert bereits
 // serverseitig im Vision-Adapter (packages/content-engine/visionAnalysis.ts, parsePairingKey) --
 // ein zweites, hier dupliziertes Enum wuerde nur auseinanderlaufen koennen, ohne einen eigenen
 // Sicherheitsgewinn zu haben.
-export const BrandWebsiteAnalysisLogoCandidateSchema = z.object({ signedUrl: z.url(), mimeType: z.string().min(1) })
+export const BrandWebsiteAnalysisLogoCandidateSchema = z.object({
+  signedUrl: z.url(),
+  mimeType: z.string().min(1),
+})
 export const BrandWebsiteAnalysisResultSchema = z.object({
   primaryColor: HexColorSchema,
   accentColor: HexColorSchema,
@@ -210,6 +264,7 @@ const BrandOverrideFieldsSchema = z.object({
   primaryColor: HexColorSchema.nullable().optional(),
   accentColor: HexColorSchema.nullable().optional(),
   logoAssetId: UuidSchema.nullable().optional(),
+  websiteUrl: BrandWebsiteUrlSchema.nullable().optional(),
   displayFontAssetId: UuidSchema.nullable().optional(),
   bodyFontAssetId: UuidSchema.nullable().optional(),
 })
@@ -246,11 +301,17 @@ export type BrandAssetStatus = z.infer<typeof BrandAssetStatusSchema>
 export type BrandAsset = z.infer<typeof BrandAssetSchema>
 export type CreateBrandAssetRequest = z.infer<typeof CreateBrandAssetRequestSchema>
 export type ConfirmBrandAssetLicenseRequest = z.infer<typeof ConfirmBrandAssetLicenseRequestSchema>
-export type StartBrandWebsiteAnalysisRequest = z.infer<typeof StartBrandWebsiteAnalysisRequestSchema>
+export type StartBrandWebsiteAnalysisRequest = z.infer<
+  typeof StartBrandWebsiteAnalysisRequestSchema
+>
 export type BrandWebsiteAnalysisStatus = z.infer<typeof BrandWebsiteAnalysisStatusSchema>
-export type BrandWebsiteAnalysisLogoCandidate = z.infer<typeof BrandWebsiteAnalysisLogoCandidateSchema>
+export type BrandWebsiteAnalysisLogoCandidate = z.infer<
+  typeof BrandWebsiteAnalysisLogoCandidateSchema
+>
 export type BrandWebsiteAnalysisResult = z.infer<typeof BrandWebsiteAnalysisResultSchema>
-export type BrandWebsiteAnalysisStatusResponse = z.infer<typeof BrandWebsiteAnalysisStatusResponseSchema>
+export type BrandWebsiteAnalysisStatusResponse = z.infer<
+  typeof BrandWebsiteAnalysisStatusResponseSchema
+>
 export type UpdateDepartmentBrandRequest = z.infer<typeof UpdateDepartmentBrandRequestSchema>
 export type DepartmentBrand = z.infer<typeof DepartmentBrandSchema>
 export type UpdateTeamBrandRequest = z.infer<typeof UpdateTeamBrandRequestSchema>
