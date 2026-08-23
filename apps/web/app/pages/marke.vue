@@ -16,6 +16,7 @@ import {
 import { useBrandOverrides } from '../composables/useBrandOverrides'
 import { useBrandWebsiteAnalysis } from '../composables/useBrandWebsiteAnalysis'
 import { ApiRequestError } from '../utils/apiClient'
+import { BrandPageRowsSchema } from '../utils/brandPageRows'
 
 type ScopeLevelName = BrandScopeLevel
 
@@ -203,29 +204,41 @@ async function loadAll() {
       loadError.value = true
       return
     }
-    if (brandResult.data) {
-      org.primaryColor = brandResult.data.primary_color
-      org.accentColor = brandResult.data.accent_color
-      org.backgroundColor = brandResult.data.background_color
-      org.textColor = brandResult.data.text_color
-      org.onPrimaryColor = brandResult.data.on_primary_color
-      org.displayFontKey = brandResult.data.display_font_key
-      org.bodyFontKey = brandResult.data.body_font_key
-      org.displayFontAssetId = brandResult.data.display_font_asset_id
-      org.bodyFontAssetId = brandResult.data.body_font_asset_id
-      org.logoAssetId = brandResult.data.logo_asset_id
-      org.websiteUrl = brandResult.data.website_url
-      org.allowDepartmentOverrides = brandResult.data.allow_department_overrides
-      org.lockedFields = brandResult.data.locked_fields ?? []
+    const rows = BrandPageRowsSchema.safeParse({
+      brand: brandResult.data,
+      departments: departmentsResult.data,
+      teams: teamsResult.data,
+      departmentProfiles: departmentProfilesResult.data,
+      teamProfiles: teamProfilesResult.data,
+      assets: assetsResult.data,
+    })
+    if (!rows.success) {
+      loadError.value = true
+      return
     }
-    departments.value = departmentsResult.data.map((row) => ({ id: row.id, name: row.name }))
-    teams.value = teamsResult.data.map((row) => ({
+    if (rows.data.brand) {
+      org.primaryColor = rows.data.brand.primary_color
+      org.accentColor = rows.data.brand.accent_color
+      org.backgroundColor = rows.data.brand.background_color
+      org.textColor = rows.data.brand.text_color
+      org.onPrimaryColor = rows.data.brand.on_primary_color
+      org.displayFontKey = rows.data.brand.display_font_key
+      org.bodyFontKey = rows.data.brand.body_font_key
+      org.displayFontAssetId = rows.data.brand.display_font_asset_id
+      org.bodyFontAssetId = rows.data.brand.body_font_asset_id
+      org.logoAssetId = rows.data.brand.logo_asset_id
+      org.websiteUrl = rows.data.brand.website_url
+      org.allowDepartmentOverrides = rows.data.brand.allow_department_overrides
+      org.lockedFields = rows.data.brand.locked_fields
+    }
+    departments.value = rows.data.departments.map((row) => ({ id: row.id, name: row.name }))
+    teams.value = rows.data.teams.map((row) => ({
       id: row.id,
       name: row.name,
       departmentId: row.department_id,
     }))
     departmentOverrides.value = {}
-    for (const row of departmentProfilesResult.data) {
+    for (const row of rows.data.departmentProfiles) {
       departmentOverrides.value[row.department_id] = {
         primaryColor: row.primary_color,
         accentColor: row.accent_color,
@@ -236,11 +249,11 @@ async function loadAll() {
         displayFontKey: null,
         bodyFontKey: null,
         allowTeamOverrides: row.allow_team_overrides,
-        lockedFields: row.locked_fields ?? [],
+        lockedFields: row.locked_fields,
       }
     }
     teamOverrides.value = {}
-    for (const row of teamProfilesResult.data) {
+    for (const row of rows.data.teamProfiles) {
       teamOverrides.value[row.team_id] = {
         primaryColor: row.primary_color,
         accentColor: row.accent_color,
@@ -251,7 +264,7 @@ async function loadAll() {
         bodyFontKey: null,
       }
     }
-    assets.value = assetsResult.data.map((row) => ({
+    assets.value = rows.data.assets.map((row) => ({
       id: row.id,
       departmentId: row.department_id,
       teamId: row.team_id,
@@ -333,7 +346,11 @@ const websiteAnalysisUrl = computed({
         : '',
   set: (value) => {
     if (activeLevel.value === 'organization') org.websiteUrl = value || null
-    else if (activeLevel.value === 'department' && activeDepartmentId.value)
+    else if (
+      activeLevel.value === 'department' &&
+      activeDepartmentId.value &&
+      !lockedForActiveLevel.value.has('websiteUrl')
+    )
       overrideFor(activeDepartmentId.value).websiteUrl = value || null
   },
 })
@@ -550,18 +567,20 @@ async function saveOrganization() {
 
 async function saveDepartment(departmentId: string) {
   const value = overrideFor(departmentId)
+  const locked = lockedForActiveLevel.value
+  const body: Record<string, unknown> = {
+    allowTeamOverrides: value.allowTeamOverrides,
+    lockedFields: value.lockedFields,
+  }
+  if (!locked.has('primaryColor')) body.primaryColor = value.primaryColor
+  if (!locked.has('accentColor')) body.accentColor = value.accentColor
+  if (!locked.has('logoAssetId')) body.logoAssetId = value.logoAssetId
+  if (!locked.has('websiteUrl')) body.websiteUrl = value.websiteUrl
+  if (!locked.has('displayFontAssetId')) body.displayFontAssetId = value.displayFontAssetId
+  if (!locked.has('bodyFontAssetId')) body.bodyFontAssetId = value.bodyFontAssetId
   await api.request(`/v1/departments/${departmentId}/brand`, {
     method: 'PUT',
-    body: {
-      primaryColor: value.primaryColor,
-      accentColor: value.accentColor,
-      logoAssetId: value.logoAssetId,
-      displayFontAssetId: value.displayFontAssetId,
-      bodyFontAssetId: value.bodyFontAssetId,
-      websiteUrl: value.websiteUrl,
-      allowTeamOverrides: value.allowTeamOverrides,
-      lockedFields: value.lockedFields,
-    },
+    body,
   })
 }
 
@@ -715,13 +734,20 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
                   : 'https://euer-verein.de'
               "
               class="focus-ring min-w-0 flex-1 rounded-lg border border-[#dfe0d9] px-3 py-2 text-xs"
-              :disabled="websiteAnalysisRunning || websiteAnalysisStarting"
+              :disabled="
+                websiteAnalysisRunning ||
+                websiteAnalysisStarting ||
+                (activeLevel === 'department' && lockedForActiveLevel.has('websiteUrl'))
+              "
             />
             <button
               type="button"
               class="focus-ring flex items-center gap-1.5 rounded-lg bg-forest px-3 py-2 text-xs font-bold text-white disabled:opacity-60"
               :disabled="
-                websiteAnalysisRunning || websiteAnalysisStarting || !websiteAnalysisUrl.trim()
+                websiteAnalysisRunning ||
+                websiteAnalysisStarting ||
+                !websiteAnalysisUrl.trim() ||
+                (activeLevel === 'department' && lockedForActiveLevel.has('websiteUrl'))
               "
               @click="startWebsiteAnalysis"
             >
