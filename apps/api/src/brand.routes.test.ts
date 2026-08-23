@@ -869,13 +869,13 @@ describe('Paket 048: KI-gestuetzte Markenerkennung aus der Vereins-Homepage', ()
                 result: {
                   primaryColor: '#163a2c', accentColor: '#caff4a', backgroundColor: '#f6f4ec', textColor: '#122820', onPrimaryColor: '#ffffff',
                   suggestedFontPairingKey: 'manrope_dm_sans', detectedFontFamily: 'Roboto, sans-serif',
-                  logoCandidates: [{ objectPath: 'organizations/x/brand/analysis-staging/abc.png', mimeType: 'image/png' }],
+                  logoCandidates: [{ objectPath: `organizations/${ORGANIZATION_ID}/brand/analysis-staging/abc.png`, mimeType: 'image/png' }],
                 },
                 error_reason: null,
               },
               error: null,
             }),
-          storage: { from: (bucket: string) => ({ createSignedUrl: async (path: string) => { expect(bucket).toBe('brand-assets'); expect(path).toBe('organizations/x/brand/analysis-staging/abc.png'); return { data: { signedUrl: 'https://signed.example/logo-candidate.png' }, error: null } } }) },
+          storage: { from: (bucket: string) => ({ createSignedUrl: async (path: string) => { expect(bucket).toBe('brand-assets'); expect(path).toBe(`organizations/${ORGANIZATION_ID}/brand/analysis-staging/abc.png`); return { data: { signedUrl: 'https://signed.example/logo-candidate.png' }, error: null } } }) },
         }) as unknown as SupabaseClient,
     }
     const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
@@ -888,8 +888,43 @@ describe('Paket 048: KI-gestuetzte Markenerkennung aus der Vereins-Homepage', ()
     expect(response.statusCode).toBe(200)
     expect(response.json()).toMatchObject({
       status: 'succeeded',
-      result: { suggestedFontPairingKey: 'manrope_dm_sans', logoCandidates: [{ signedUrl: 'https://signed.example/logo-candidate.png', mimeType: 'image/png' }] },
+      result: {
+        suggestedFontPairingKey: 'manrope_dm_sans',
+        logoCandidate: { signedUrl: 'https://signed.example/logo-candidate.png', mimeType: 'image/png' },
+        logoCandidates: [{ signedUrl: 'https://signed.example/logo-candidate.png', mimeType: 'image/png' }],
+      },
     })
+  })
+
+  it('does not sign malformed or cross-organization staged logo paths', async () => {
+    let signingCalled = false
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({
+        from: () => chain({
+          data: {
+            status: 'succeeded',
+            result: {
+              primaryColor: '#163a2c', accentColor: '#caff4a', backgroundColor: '#f6f4ec', textColor: '#122820', onPrimaryColor: '#ffffff',
+              suggestedFontPairingKey: null, detectedFontFamily: null,
+              logoCandidates: [
+                { objectPath: 'organizations/other/brand/analysis-staging/abc.png', mimeType: 'image/png' },
+                { objectPath: `organizations/${ORGANIZATION_ID}/brand/analysis-staging/abc.png`, mimeType: 'application/pdf' },
+              ],
+            },
+            error_reason: null,
+          },
+          error: null,
+        }),
+        storage: { from: () => ({ createSignedUrl: async () => { signingCalled = true; return { data: { signedUrl: 'https://signed.example/logo-candidate.png' }, error: null } } }) },
+      }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: `/v1/organizations/${ORGANIZATION_ID}/brand/website-analysis`, headers: { authorization: `Bearer ${token}` } })
+    expect(response.statusCode).toBe(200)
+    expect(signingCalled).toBe(false)
+    expect(response.json()).toMatchObject({ result: { logoCandidate: null, logoCandidates: [] } })
   })
 
   it('reports a failed analysis with its error reason and no result', async () => {
@@ -1074,4 +1109,3 @@ describe('Paket 049: KI-gestuetzte Markenerkennung auf Abteilungsebene', () => {
     expect(filteredBy).toEqual({ column: 'department_id', value: DEPARTMENT_ID })
   })
 })
-

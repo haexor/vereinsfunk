@@ -193,9 +193,14 @@ export const BrandWebsiteAnalysisResultSchema = z.object({
   onPrimaryColor: HexColorSchema,
   suggestedFontPairingKey: z.string().nullable(),
   detectedFontFamily: z.string().nullable(),
+  // Deprecated: bleibt fuer bereits ausgerollte Clients waehrend der Umstellung erhalten. Neue
+  // Clients verwenden logoCandidates; die API setzt dieses Feld auf den ersten Vorschlag.
+  logoCandidate: BrandWebsiteAnalysisLogoCandidateSchema.nullable(),
   // Ein Verein kann mehrere echte Logos/Wortmarken fuehren -- die Uebernahme jedes einzelnen
   // Vorschlags bleibt eine manuelle Entscheidung (marke.vue), kein automatisches Ranking hier.
-  logoCandidates: BrandWebsiteAnalysisLogoCandidateSchema.array().max(8),
+  // Der Default akzeptiert gespeicherte Antworten aus der Vor-Migration, in denen das additive
+  // Feld noch nicht vorhanden war.
+  logoCandidates: BrandWebsiteAnalysisLogoCandidateSchema.array().max(8).default([]),
 })
 export const BrandWebsiteAnalysisStatusResponseSchema = z.object({
   status: BrandWebsiteAnalysisStatusSchema,

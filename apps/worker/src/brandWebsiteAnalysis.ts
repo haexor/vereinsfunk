@@ -26,6 +26,7 @@ export interface BrandAnalysisResult {
 // Uebernahme (welcher Vorschlag welche Asset-Art wird und ob er das aktive Logo ist) bleibt eine
 // manuelle Entscheidung in marke.vue.
 const MAX_LOGO_SUGGESTIONS = 8
+const MAX_LOGO_DOWNLOAD_CONCURRENCY = 4
 
 export interface BrandWebsiteAnalysisRepository {
   loadJob(id: string, organizationId: string): Promise<BrandAnalysisJobRow | null>
@@ -33,7 +34,7 @@ export interface BrandWebsiteAnalysisRepository {
   markSucceeded(jobId: string, expectedRevision: number, result: BrandAnalysisResult): Promise<void>
   markFailed(jobId: string, expectedRevision: number, errorReason: string): Promise<void>
   resolveVisionProvider(): Promise<VisionProviderRow | null>
-  uploadStagedLogo(organizationId: string, logo: ProcessedLogo): Promise<string>
+  uploadStagedLogo(jobId: string, organizationId: string, correlationId: string, logo: ProcessedLogo): Promise<string>
 }
 
 // Ein Adapter je Protokoll, analog zu textGeneration.ts's GENERATORS -- ein Protokoll ohne Eintrag
@@ -51,26 +52,41 @@ export const FONT_PAIRING_OPTIONS = curatedFontPairings.map((pairing) => ({ key:
 // und ist nichts, worauf man sich verlassen kann.
 export type LogoFetcher = (url: string) => Promise<Buffer>
 
+/** Maps independent candidates with a fixed worker pool while retaining input order in its result. */
+async function mapWithConcurrency<T, R>(items: readonly T[], concurrency: number, mapper: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  let nextIndex = 0
+  async function worker(): Promise<void> {
+    for (;;) {
+      const index = nextIndex++
+      if (index >= items.length) return
+      results[index] = await mapper(items[index]!)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()))
+  return results
+}
+
 /**
- * Versucht der Reihe nach jeden -- bereits nach Score sortierten (siehe scoreLogoCandidates) --
- * Kandidaten und sammelt bis zu maxLogos erfolgreich verarbeitete Logos. Ein Kandidat, der nicht
- * laedt oder kein brauchbares Bild ist, wird uebersprungen, nicht als Abbruch gewertet -- ohne
- * (vollstaendige) Logo-Vorschlagsliste ist das Ergebnis unvollstaendig, aber nicht falsch.
- * Dedupliziert per Inhalts-Hash: dieselbe Bilddatei kann unter mehreren URLs verlinkt sein (z.B.
- * <img src> und og:image), ohne dass die Kandidatenliste selbst das erkennt. Exportiert aus
- * demselben Grund wie VISION_GENERATORS.
+ * Laedt die bereits nach Score sortierten Kandidaten mit begrenzter Parallelitaet und sammelt die
+ * ersten maxLogos unterschiedlichen Ergebnisse in dieser Reihenfolge. Fehlerhafte Downloads
+ * werden einzeln uebersprungen; die Reihenfolge fuer Deduplizierung und Limitierung bleibt trotz
+ * unterschiedlich schneller Antworten stabil. Exportiert aus demselben Grund wie
+ * VISION_GENERATORS.
  */
 export async function downloadValidLogos(candidates: readonly LogoCandidate[], fetcher: LogoFetcher, maxLogos: number = MAX_LOGO_SUGGESTIONS): Promise<ProcessedLogo[]> {
   const logos: ProcessedLogo[] = []
   const seenHashes = new Set<string>()
-  for (const candidate of candidates) {
-    if (logos.length >= maxLogos) break
-    let processed: ProcessedLogo
+  const processedCandidates = await mapWithConcurrency(candidates, MAX_LOGO_DOWNLOAD_CONCURRENCY, async (candidate) => {
     try {
-      processed = await processBrandLogoUpload(await fetcher(candidate.url))
+      return await processBrandLogoUpload(await fetcher(candidate.url))
     } catch {
-      continue // blockierte/zu grosse/abgelaufene Antwort, kein Bildformat, zu kleines Bild, ...
+      return null // blockierte/zu grosse/abgelaufene Antwort, kein Bildformat, zu kleines Bild, ...
     }
+  })
+  for (const processed of processedCandidates) {
+    if (logos.length >= maxLogos) break
+    if (!processed) continue
     const hash = hashLogoBuffer(processed.buffer)
     if (seenHashes.has(hash)) continue
     seenHashes.add(hash)
@@ -113,7 +129,7 @@ export class BrandWebsiteAnalysisExecutor {
       const render = await this.renderer.render(job.website_url)
       const logos = await downloadValidLogos(render.logoCandidates, this.logoFetcher)
       const logoCandidates = await Promise.all(logos.map(async (logo) => ({
-        objectPath: await this.repository.uploadStagedLogo(job.organization_id, logo),
+        objectPath: await this.repository.uploadStagedLogo(job.id, job.organization_id, payload.correlationId, logo),
         mimeType: logo.contentType,
       })))
 
