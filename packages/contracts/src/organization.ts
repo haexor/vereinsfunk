@@ -116,8 +116,6 @@ export const OrganizationBrandSchema = z.object({
   logoAssetId: UuidSchema.nullable(),
   allowDepartmentOverrides: z.boolean(),
   lockedFields: z.array(BrandLockableFieldSchema),
-  logoPath: z.string().nullable(),
-  logoDarkPath: z.string().nullable(),
 })
 
 // Paket 013: Branding-Assets (Logovarianten, Wasserzeichen, eigene Schriften) auf Vereins-,
