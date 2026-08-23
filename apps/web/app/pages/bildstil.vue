@@ -3,6 +3,7 @@ import { LoaderCircle, Upload } from '@lucide/vue'
 import {
   CreateImageStylePresetRequestSchema,
   ImageStylePresetSchema,
+  BrandLogoAssetKindSchema,
   UpdateImageStylePresetRequestSchema,
   type ImageStylePreset,
 } from '@vereinsfunk/contracts'
@@ -54,14 +55,7 @@ const orgColors = reactive({ primaryColor: '#163a2c', accentColor: '#caff4a' })
 
 // Die technische Liste enthält Altwerte für wiederhergestellte Daten; im Produkt werden sie alle
 // als einheitliches Logo behandelt. Neue Uploads nutzen logo_primary.
-const LOGO_ASSET_KINDS = [
-  'logo_primary',
-  'logo_light',
-  'logo_dark',
-  'logo_mark',
-  'wordmark',
-  'watermark',
-]
+const LOGO_ASSET_KINDS = BrandLogoAssetKindSchema.options
 
 const activeLevel = ref<ScopeLevelName>('organization')
 const activeDepartmentId = ref<string | null>(null)

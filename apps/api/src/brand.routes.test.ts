@@ -84,6 +84,9 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
     expect(response.statusCode).toBe(200)
     expect(response.json()).toMatchObject({ websiteUrl: 'https://verein.example.org' })
     expect(captured).toContainEqual(expect.objectContaining({ website_url: 'https://verein.example.org' }))
+    expect(captured[0]).not.toHaveProperty('background_color')
+    expect(captured[0]).not.toHaveProperty('text_color')
+    expect(captured[0]).not.toHaveProperty('on_primary_color')
   })
 
   it('updates the organization brand profile with a logoAssetId that resolves to a selectable, ready logo asset', async () => {
@@ -228,7 +231,7 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
         `--${boundary}\r\nContent-Disposition: form-data; name="organizationId"\r\n\r\n${ORGANIZATION_ID}\r\n`,
       ),
       Buffer.from(
-        `--${boundary}\r\nContent-Disposition: form-data; name="kind"\r\n\r\nlogo_mark\r\n`,
+        `--${boundary}\r\nContent-Disposition: form-data; name="kind"\r\n\r\nlogo_primary\r\n`,
       ),
       Buffer.from(
         `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="logo.txt"\r\nContent-Type: text/plain\r\n\r\n`,
@@ -289,7 +292,7 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
         `--${boundary}\r\nContent-Disposition: form-data; name="teamId"\r\n\r\n${TEAM_ID}\r\n`,
       ),
       Buffer.from(
-        `--${boundary}\r\nContent-Disposition: form-data; name="kind"\r\n\r\nwordmark\r\n`,
+        `--${boundary}\r\nContent-Disposition: form-data; name="kind"\r\n\r\nlogo_primary\r\n`,
       ),
       Buffer.from(
         `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="logo.png"\r\nContent-Type: image/png\r\n\r\n`,
@@ -511,7 +514,8 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
     expect(response.statusCode).toBe(403)
   })
 
-  it('updates a department brand profile', async () => {
+  it('updates a department brand profile with its persistent analysis website', async () => {
+    const captured: Record<string, unknown>[] = []
     const clients: SupabaseClientFactory = {
       forUser: () =>
         ({
@@ -520,21 +524,24 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
               return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
             if (table === 'department_brand_profiles') {
               return {
-                upsert: () =>
-                  chain({
+                upsert: (payload: Record<string, unknown>) => {
+                  captured.push(payload)
+                  return chain({
                     data: {
                       organization_id: ORGANIZATION_ID,
                       department_id: DEPARTMENT_ID,
                       primary_color: '#112233',
                       accent_color: null,
                       logo_asset_id: null,
+                      website_url: 'https://abteilung.example.org',
                       display_font_asset_id: null,
                       body_font_asset_id: null,
                       allow_team_overrides: true,
                       locked_fields: [],
                     },
                     error: null,
-                  }),
+                  })
+                },
               }
             }
             throw new Error(`unexpected table in test fake: ${table}`)
@@ -551,10 +558,17 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
       method: 'PUT',
       url: `/v1/departments/${DEPARTMENT_ID}/brand`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { primaryColor: '#112233' },
+      payload: { primaryColor: '#112233', websiteUrl: 'https://abteilung.example.org' },
     })
     expect(response.statusCode).toBe(200)
-    expect(response.json()).toMatchObject({ primaryColor: '#112233', departmentId: DEPARTMENT_ID })
+    expect(response.json()).toMatchObject({
+      primaryColor: '#112233',
+      departmentId: DEPARTMENT_ID,
+      websiteUrl: 'https://abteilung.example.org',
+    })
+    expect(captured).toContainEqual(
+      expect.objectContaining({ website_url: 'https://abteilung.example.org' }),
+    )
   })
 
   it('updates a team brand profile', async () => {

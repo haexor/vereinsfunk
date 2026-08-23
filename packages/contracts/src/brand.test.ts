@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
   BrandAssetSchema,
+  BrandWebsiteUrlSchema,
   BrandWebsiteAnalysisResultSchema,
   ConfirmBrandAssetLicenseRequestSchema,
   CreateBrandAssetRequestSchema,
   OrganizationBrandUpdateSchema,
   UpdateDepartmentBrandRequestSchema,
+  UpdateTeamBrandRequestSchema,
 } from './index.js'
 import { department, org, team } from './testFixtures.js'
 
@@ -13,12 +15,18 @@ describe('brand contracts (Paket 013)', () => {
   it('requires the two configurable color roles', () => {
     expect(
       OrganizationBrandUpdateSchema.safeParse({
-        primaryColor: '#163a2c',
         accentColor: '#caff4a',
         displayFontKey: 'manrope',
         bodyFontKey: 'dm_sans',
       }).success,
-    ).toBe(true)
+    ).toBe(false)
+    expect(
+      OrganizationBrandUpdateSchema.safeParse({
+        primaryColor: '#163a2c',
+        displayFontKey: 'manrope',
+        bodyFontKey: 'dm_sans',
+      }).success,
+    ).toBe(false)
   })
 
   it('accepts a complete organization brand update', () => {
@@ -32,12 +40,23 @@ describe('brand contracts (Paket 013)', () => {
     ).toBe(true)
   })
 
+  it('accepts valid HTTPS brand website URLs', () => {
+    expect(BrandWebsiteUrlSchema.safeParse('https://verein.example.org/marke').success).toBe(true)
+  })
+
+  it.each([
+    'http://verein.example.org',
+    `https://verein.example.org/${'a'.repeat(2048)}`,
+  ])('rejects an invalid brand website URL', (websiteUrl) => {
+    expect(BrandWebsiteUrlSchema.safeParse(websiteUrl).success).toBe(false)
+  })
+
   it('rejects a teamId without a departmentId when creating a brand asset', () => {
     expect(
       CreateBrandAssetRequestSchema.safeParse({
         organizationId: org,
         teamId: team,
-        kind: 'wordmark',
+        kind: 'logo_primary',
       }).success,
     ).toBe(false)
   })
@@ -47,9 +66,33 @@ describe('brand contracts (Paket 013)', () => {
       CreateBrandAssetRequestSchema.safeParse({
         organizationId: org,
         departmentId: department,
-        kind: 'logo_mark',
+        kind: 'logo_primary',
       }).success,
     ).toBe(true)
+  })
+
+  it('accepts a frame asset request', () => {
+    expect(
+      CreateBrandAssetRequestSchema.safeParse({
+        organizationId: org,
+        kind: 'frame',
+      }).success,
+    ).toBe(true)
+  })
+
+  it('rejects legacy logo kinds for new brand asset uploads', () => {
+    expect(
+      CreateBrandAssetRequestSchema.safeParse({
+        organizationId: org,
+        kind: 'wordmark',
+      }).success,
+    ).toBe(false)
+  })
+
+  it('rejects a website URL in a team brand update', () => {
+    expect(
+      UpdateTeamBrandRequestSchema.safeParse({ websiteUrl: 'https://team.example.org' }).success,
+    ).toBe(false)
   })
 
   it('rejects an unconfirmed license', () => {
@@ -111,6 +154,7 @@ describe('brand contracts (Paket 013)', () => {
           'primaryColor',
           'accentColor',
           'logoAssetId',
+          'websiteUrl',
           'displayFontAssetId',
           'bodyFontAssetId',
         ],

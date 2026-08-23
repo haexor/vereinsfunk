@@ -35,6 +35,7 @@ const LOCKABLE_FIELD_LABELS: Readonly<Record<string, string>> = {
   primaryColor: 'Primärfarbe',
   accentColor: 'Akzentfarbe',
   logoAssetId: 'Logo',
+  websiteUrl: 'Website-Adresse',
   displayFontAssetId: 'Eigene Überschriften-Schrift',
   bodyFontAssetId: 'Eigene Fließtext-Schrift',
 }
@@ -487,9 +488,6 @@ async function applyWebsiteAnalysisResult(result: BrandWebsiteAnalysisResult) {
   }
   org.primaryColor = result.primaryColor
   org.accentColor = result.accentColor
-  org.backgroundColor = result.backgroundColor
-  org.textColor = result.textColor
-  org.onPrimaryColor = result.onPrimaryColor
   const pairing = curatedFontPairings.find((entry) => entry.key === result.suggestedFontPairingKey)
   if (pairing) {
     org.displayFontKey = pairing.displayFontKey

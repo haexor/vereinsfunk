@@ -6,7 +6,7 @@ const HexColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/)
 // Die Marken-Website wird fuer die automatische Analyse von unserem Server abgerufen. Deshalb
 // speichern wir nur sichere HTTPS-Adressen; dieselbe Anforderung prueft die Start-Route noch
 // einmal vor dem externen Abruf.
-const BrandWebsiteUrlSchema = z
+export const BrandWebsiteUrlSchema = z
   .url()
   .max(2048)
   .refine((value) => value.startsWith('https://'), {
@@ -113,10 +113,11 @@ export const BrandLockableFieldSchema = z.enum([
   'primaryColor',
   'accentColor',
   'logoAssetId',
+  'websiteUrl',
   'displayFontAssetId',
   'bodyFontAssetId',
 ])
-const LockedFieldsSchema = z.array(BrandLockableFieldSchema).max(6)
+const LockedFieldsSchema = z.array(BrandLockableFieldSchema).max(7)
 
 export const OrganizationBrandUpdateSchema = z.object({
   primaryColor: HexColorSchema,
@@ -149,16 +150,23 @@ export const OrganizationBrandSchema = z.object({
 
 // Paket 013: Branding-Assets (Logovarianten, Wasserzeichen, eigene Schriften) auf Vereins-,
 // Abteilungs- und Mannschaftsebene. 'frame' (Plan 045): eigene Rahmengrafik fuer Bildstil-Presets.
-export const BrandAssetKindSchema = z.enum([
+export const BrandLogoAssetKinds = [
   'logo_primary',
   'logo_light',
   'logo_dark',
   'logo_mark',
   'wordmark',
   'watermark',
+] as const
+export const BrandAssetKindSchema = z.enum([
+  ...BrandLogoAssetKinds,
   'font',
   'frame',
 ])
+// Wiederhergestellte Daten duerfen die technischen Altwerte weiterhin lesen. Neue Uploads
+// erhalten dagegen nur den kanonischen Logo-Kindwert; Schrift-Assets bleiben zulaessig.
+export const BrandLogoAssetKindSchema = z.enum(BrandLogoAssetKinds)
+export const BrandAssetUploadKindSchema = z.enum(['logo_primary', 'font', 'frame'])
 export const BrandAssetStatusSchema = z.enum([
   'processing',
   'ready',
@@ -205,7 +213,7 @@ export const CreateBrandAssetRequestSchema = z
     organizationId: UuidSchema,
     departmentId: UuidSchema.optional(),
     teamId: UuidSchema.optional(),
-    kind: BrandAssetKindSchema,
+    kind: BrandAssetUploadKindSchema,
   })
   .refine((value) => value.teamId === undefined || value.departmentId !== undefined, {
     message: 'teamId requires departmentId',
@@ -278,7 +286,9 @@ export const DepartmentBrandSchema = UpdateDepartmentBrandRequestSchema.extend({
   departmentId: UuidSchema,
 })
 
-export const UpdateTeamBrandRequestSchema = BrandOverrideFieldsSchema
+// team_brand_profiles besitzt bewusst keine website_url: Die Analysequelle wird fuer den Verein
+// oder eine Abteilung gepflegt, nicht fuer einzelne Mannschaften.
+export const UpdateTeamBrandRequestSchema = BrandOverrideFieldsSchema.omit({ websiteUrl: true }).strict()
 export const TeamBrandSchema = UpdateTeamBrandRequestSchema.extend({
   organizationId: UuidSchema,
   departmentId: UuidSchema,

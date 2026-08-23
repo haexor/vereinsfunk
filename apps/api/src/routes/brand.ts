@@ -1,5 +1,6 @@
 import {
   BrandAssetSchema,
+  BrandLogoAssetKindSchema,
   BrandWebsiteAnalysisStatusResponseSchema,
   ConfirmBrandAssetLicenseRequestSchema,
   CreateBrandAssetRequestSchema,
@@ -83,14 +84,7 @@ export async function loadSelectableBrandAsset(
 // Exportiert, weil apps/api/src/routes/imageStyle.ts (Bildstil-Nachbesserung) dieselbe Menge
 // braucht: logo_brand_asset_id ist seit der Lockerung des Fremdschluessels (2026082002) nicht mehr
 // auf kind='watermark' gepinnt, sondern akzeptiert jede hier gelistete Logovariante.
-export const LOGO_ASSET_KINDS = new Set([
-  'logo_primary',
-  'logo_light',
-  'logo_dark',
-  'logo_mark',
-  'wordmark',
-  'watermark',
-])
+export const LOGO_ASSET_KINDS = new Set<string>(BrandLogoAssetKindSchema.options)
 
 // brand_website_analysis_jobs.result ist jsonb und damit auch bei einem durch den Worker
 // geschriebenen Wert eine Systemgrenze. Nur diese drei Formate kann processBrandLogoUpload in
