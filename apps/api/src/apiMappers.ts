@@ -50,7 +50,6 @@ export function mapBrandRow(row: Record<string, unknown>) {
     displayFontAssetId: row.display_font_asset_id, bodyFontAssetId: row.body_font_asset_id,
     logoAssetId: row.logo_asset_id,
     allowDepartmentOverrides: row.allow_department_overrides, lockedFields: row.locked_fields,
-    logoPath: row.logo_path, logoDarkPath: row.logo_dark_path,
   }
 }
 
