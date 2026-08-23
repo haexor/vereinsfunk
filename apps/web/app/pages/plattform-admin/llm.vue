@@ -89,6 +89,10 @@ const presetLabelModel = computed({
   },
 })
 const showModelSelect = computed(() => availableModels.value.length > 0 && !useCustomModel.value)
+const modelSelectGroups = computed(() => [{
+  label: 'Verfügbare Modelle',
+  items: availableModels.value.map((model) => ({ value: model, label: model })),
+}])
 const canLoadModels = computed(() => newProvider.baseUrl.trim().length > 0 && newProvider.apiKey.trim().length > 0)
 // Ein Preset gehoert zu genau einem Protokoll -- ein OpenAI-Endpunkt unter "Anthropic (nativ)"
 // waere eine Konfiguration, die erst im Worker auffliegt.
@@ -383,12 +387,13 @@ async function removeProvider(id: string) {
 
           <label class="text-xs font-semibold text-[#5c655f] sm:col-span-2">Modell
             <div class="mt-1 flex gap-2">
-              <Select v-if="showModelSelect" v-model="newProvider.model" required>
-                <SelectTrigger class="px-4 py-2.5 text-sm font-normal"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem v-for="model in availableModels" :key="model" :value="model">{{ model }}</SelectItem>
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                v-if="showModelSelect"
+                v-model="newProvider.model"
+                :groups="modelSelectGroups"
+                placeholder="Modell auswählen …"
+                class="min-w-0 flex-1"
+              />
               <input
                 v-else
                 v-model="newProvider.model"
