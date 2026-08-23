@@ -85,6 +85,14 @@ export function mapPhotoLayoutPresetRow(row: Record<string, unknown>) {
   }
 }
 
+export function mapContentSignatureBlockRow(row: Record<string, unknown>) {
+  return {
+    id: row.id, organizationId: row.organization_id, departmentId: row.department_id,
+    name: row.name, body: row.body, isActive: row.is_active,
+    createdBy: row.created_by, createdAt: row.created_at, updatedAt: row.updated_at,
+  }
+}
+
 export function mapDepartmentBrandRow(row: Record<string, unknown>) {
   return {
     organizationId: row.organization_id, departmentId: row.department_id, primaryColor: row.primary_color,
