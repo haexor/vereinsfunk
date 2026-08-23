@@ -7,13 +7,24 @@ import { WorkflowExecutionError } from './workflows.js'
 export interface LogoCandidate {
   url: string
   score: number
+  /**
+   * Ein Logo kann direkt im HTML als <svg> stehen, ohne eine eigene Bild-URL zu haben. Das
+   * Markup wird ausschliesslich durch processBrandLogoUpload weiterverarbeitet und dort vor dem
+   * Speichern mit der SVG-Allowlist bereinigt. `url` bleibt als stabile, nachvollziehbare
+   * Kandidatenkennung erhalten; sie wird fuer Inline-SVGs nie aus dem Netz geladen.
+   */
+  inlineSvg?: string | undefined
 }
 
 // Validiert das Ergebnis von page.evaluate(scoreLogoCandidates), bevor der Worker es anfasst --
 // siehe die Verteidigung-in-der-Tiefe-Anmerkung an scoreLogoCandidates: eine fremde Seite kann
 // globale Built-ins ueberschreiben, wodurch das serialisierte Ergebnis auch strukturell von
 // LogoCandidate[] abweichen kann, nicht nur einzelne url-Werte betreffen.
-const LogoCandidateSchema: z.ZodType<LogoCandidate> = z.object({ url: z.string().min(1), score: z.number().finite() })
+const LogoCandidateSchema: z.ZodType<LogoCandidate> = z.object({
+  url: z.string().min(1),
+  score: z.number().finite(),
+  inlineSvg: z.string().min(1).optional(),
+})
 const LogoCandidatesSchema = z.array(LogoCandidateSchema)
 
 export interface WebsiteRenderResult {
@@ -52,7 +63,8 @@ export function scoreLogoCandidates(): LogoCandidate[] {
   // \b vor "ad-": ohne Wortgrenze matcht die Substring-Regex sonst zufaellig in Vereinsnamen wie
   // "Radsportverein" (rad-...) oder "Pfadfinder" (pfad-...) -- haeufig bei einem Dateinamen wie
   // "pfad-logo.png" ohne dass irgendein Sponsor-/Social-Bezug besteht.
-  const SPONSOR_PATTERN = /sponsor|partner|werbung|anzeige|\bad-|banner|facebook|instagram|whatsapp|twitter|linkedin|youtube|tiktok|social/i
+  const SPONSOR_PATTERN =
+    /sponsor|partner|werbung|anzeige|\bad-|banner|facebook|instagram|whatsapp|twitter|linkedin|youtube|tiktok|social/i
 
   const normalize = (raw: string): string | null => {
     try {
@@ -62,13 +74,14 @@ export function scoreLogoCandidates(): LogoCandidate[] {
     }
   }
 
-  const scores = new Map<string, number>()
+  const scores = new Map<string, LogoCandidate>()
   const record = (url: string, score: number) => {
     const existing = scores.get(url)
-    if (existing === undefined || score > existing) scores.set(url, score)
+    if (existing === undefined || score > existing.score) scores.set(url, { url, score })
   }
 
-  const selector = 'header img, nav img, [class*="logo" i] img, img[alt*="logo" i], img[class*="logo" i], img[id*="logo" i]'
+  const selector =
+    'header img, nav img, [class*="logo" i] img, img[alt*="logo" i], img[class*="logo" i], img[id*="logo" i]'
   for (const img of Array.from(document.querySelectorAll<HTMLImageElement>(selector))) {
     if (!img.src) continue
     const url = normalize(img.src)
@@ -99,31 +112,65 @@ export function scoreLogoCandidates(): LogoCandidate[] {
     const hrefUrl = hrefRaw ? normalize(hrefRaw) : null
     if (hrefUrl) {
       const parsed = new URL(hrefUrl)
-      if (parsed.origin === location.origin && (parsed.pathname === '/' || parsed.pathname === '')) score += 2
+      if (parsed.origin === location.origin && (parsed.pathname === '/' || parsed.pathname === ''))
+        score += 2
     }
     // Mehrere Geschwister-Bilder sind ein rein strukturelles, schwaches Signal (Sponsorenzeile,
     // aber auch z.B. ein Sprachumschalter mit Flaggen-Icons) -- nur eine Abwertung, kein
     // Ausschluss, damit ein echtes Logo mit starken eigenen Signalen trotzdem gewinnt.
-    if (img.parentElement && img.parentElement.querySelectorAll(':scope > img').length >= 3) score -= 3
+    if (img.parentElement && img.parentElement.querySelectorAll(':scope > img').length >= 3)
+      score -= 3
 
     record(url, score)
   }
 
-  const ranked = Array.from(scores.entries())
-    .map(([url, score]) => ({ url, score }))
-    .sort((a, b) => b.score - a.score)
+  // Manche Vereinsseiten, etwa ballschule-chemnitz.de, betten die Vereinsmarke direkt als SVG
+  // im Header ein. Es gibt in diesem Fall keine Bild-URL, die der bisherige img-only-Scan haette
+  // finden koennen. Nur SVGs mit einem expliziten Logo-Container werden erfasst, damit die
+  // zahlreichen UI-Icons moderner Seiten nicht zu Logo-Kandidaten werden.
+  const inlineSvgSelector =
+    '[class*="logo" i] svg, [id*="logo" i] svg, svg[class*="logo" i], svg[id*="logo" i]'
+  let inlineSvgIndex = 0
+  for (const svg of Array.from(document.querySelectorAll<SVGSVGElement>(inlineSvgSelector))) {
+    const ownText = `${svg.getAttribute('class') ?? ''} ${svg.id} ${svg.getAttribute('aria-label') ?? ''}`
+    const logoContainer = svg.closest('[class*="logo" i], [id*="logo" i]')
+    const ownSignalsLogo = LOGO_PATTERN.test(ownText)
+    if (!ownSignalsLogo && !logoContainer) continue
+
+    let score = 0
+    if (ownSignalsLogo) score += 3
+    if (logoContainer) score += 2
+    if (svg.closest('header, nav')) score += 2
+    const hrefRaw = svg.closest('a')?.getAttribute('href')
+    const hrefUrl = hrefRaw ? normalize(hrefRaw) : null
+    if (hrefUrl) {
+      const parsed = new URL(hrefUrl)
+      if (parsed.origin === location.origin && (parsed.pathname === '/' || parsed.pathname === ''))
+        score += 2
+    }
+
+    // Die Kennung ist nur zur lokalen Deduplizierung/Sortierung bestimmt. Der Downloader nutzt
+    // bei inlineSvg ausschliesslich das Markup und macht keinen Request auf diese Pseudo-URL.
+    const key = `inline-svg-${inlineSvgIndex++}`
+    scores.set(key, { url: `${location.href}#${key}`, score, inlineSvg: svg.outerHTML })
+  }
+
+  const ranked = Array.from(scores.values()).sort((a, b) => b.score - a.score)
 
   // Fallbacks werden absichtlich NICHT in die Sortierung einbezogen, sondern immer ans Ende
   // angehaengt: selbst ein stark abgewerteter DOM-Kandidat (Sponsorenbild) ist ein besserer
   // Download-Versuch als og:image/Favicon. Der Score dient hier nur der Beobachtbarkeit.
   const seen = new Set(ranked.map((candidate) => candidate.url))
-  const ogImageRaw = document.querySelector<HTMLMetaElement>('meta[property="og:image"]')?.getAttribute('content') ?? null
+  const ogImageRaw =
+    document.querySelector<HTMLMetaElement>('meta[property="og:image"]')?.getAttribute('content') ??
+    null
   const ogImage = ogImageRaw ? normalize(ogImageRaw) : null
   if (ogImage && !seen.has(ogImage)) {
     ranked.push({ url: ogImage, score: -100 })
     seen.add(ogImage)
   }
-  const iconRaw = document.querySelector<HTMLLinkElement>('link[rel~="icon"]')?.getAttribute('href') ?? null
+  const iconRaw =
+    document.querySelector<HTMLLinkElement>('link[rel~="icon"]')?.getAttribute('href') ?? null
   const icon = iconRaw ? normalize(iconRaw) : null
   if (icon && !seen.has(icon)) ranked.push({ url: icon, score: -101 })
 
@@ -147,7 +194,8 @@ export class PlaywrightWebsiteRenderer implements WebsiteRenderer {
     try {
       await assertNavigableUrl(url)
     } catch (error) {
-      if (error instanceof OutboundFetchError) throw new WorkflowExecutionError('blocked_url', false)
+      if (error instanceof OutboundFetchError)
+        throw new WorkflowExecutionError('blocked_url', false)
       throw error
     }
 
@@ -176,8 +224,10 @@ export class PlaywrightWebsiteRenderer implements WebsiteRenderer {
       })
 
       return {
-        screenshotBase64: screenshotBuffer.toString('base64'), screenshotMediaType: 'image/png',
-        logoCandidates: logoCandidates.slice(0, MAX_LOGO_CANDIDATES_TO_ATTEMPT), detectedFontFamily,
+        screenshotBase64: screenshotBuffer.toString('base64'),
+        screenshotMediaType: 'image/png',
+        logoCandidates: logoCandidates.slice(0, MAX_LOGO_CANDIDATES_TO_ATTEMPT),
+        detectedFontFamily,
       }
     } finally {
       await browser.close()
