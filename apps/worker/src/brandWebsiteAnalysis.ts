@@ -1,6 +1,15 @@
 import { curatedFontPairings } from '@vereinsfunk/domain'
-import { hashLogoBuffer, processBrandLogoUpload, type ProcessedLogo } from '@vereinsfunk/brand-assets'
-import { AnthropicVisionAnalysisGenerator, OpenAiCompatibleVisionAnalysisGenerator, VisionAnalysisError, type VisionAnalysisGenerator } from '@vereinsfunk/content-engine'
+import {
+  hashLogoBuffer,
+  processBrandLogoUpload,
+  type ProcessedLogo,
+} from '@vereinsfunk/brand-assets'
+import {
+  AnthropicVisionAnalysisGenerator,
+  OpenAiCompatibleVisionAnalysisGenerator,
+  VisionAnalysisError,
+  type VisionAnalysisGenerator,
+} from '@vereinsfunk/content-engine'
 import { fetchPublicBinary, OutboundFetchError } from '@vereinsfunk/outbound-fetch'
 import type { WorkflowPayload } from '@vereinsfunk/contracts'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
@@ -8,8 +17,20 @@ import { openProviderSecret } from './providerSecrets.js'
 import type { LogoCandidate, WebsiteRenderer } from './websiteRenderer.js'
 import { WorkflowExecutionError } from './workflows.js'
 
-export type BrandAnalysisJobRow = { id: string; organization_id: string; website_url: string; revision: number }
-export type VisionProviderRow = { id: string; protocol: string; base_url: string; model: string; api_key_ciphertext: string; key_version: string }
+export type BrandAnalysisJobRow = {
+  id: string
+  organization_id: string
+  website_url: string
+  revision: number
+}
+export type VisionProviderRow = {
+  id: string
+  protocol: string
+  base_url: string
+  model: string
+  api_key_ciphertext: string
+  key_version: string
+}
 export interface BrandAnalysisResult {
   primaryColor: string
   accentColor: string
@@ -34,7 +55,12 @@ export interface BrandWebsiteAnalysisRepository {
   markSucceeded(jobId: string, expectedRevision: number, result: BrandAnalysisResult): Promise<void>
   markFailed(jobId: string, expectedRevision: number, errorReason: string): Promise<void>
   resolveVisionProvider(): Promise<VisionProviderRow | null>
-  uploadStagedLogo(jobId: string, organizationId: string, correlationId: string, logo: ProcessedLogo): Promise<string>
+  uploadStagedLogo(
+    jobId: string,
+    organizationId: string,
+    correlationId: string,
+    logo: ProcessedLogo,
+  ): Promise<string>
 }
 
 // Ein Adapter je Protokoll, analog zu textGeneration.ts's GENERATORS -- ein Protokoll ohne Eintrag
@@ -45,7 +71,11 @@ export const VISION_GENERATORS: Record<string, VisionAnalysisGenerator | undefin
   anthropic: new AnthropicVisionAnalysisGenerator(),
 }
 
-export const FONT_PAIRING_OPTIONS = curatedFontPairings.map((pairing) => ({ key: pairing.key, label: pairing.label, styleDescription: pairing.styleDescription }))
+export const FONT_PAIRING_OPTIONS = curatedFontPairings.map((pairing) => ({
+  key: pairing.key,
+  label: pairing.label,
+  styleDescription: pairing.styleDescription,
+}))
 
 // Exportiert aus demselben Grund wie VISION_GENERATORS. Die Zeit- und Groessengrenze steckt nicht
 // mehr hier, sondern in fetchPublicBinary -- die Adresse stammt aus dem HTML einer fremden Seite
@@ -53,7 +83,11 @@ export const FONT_PAIRING_OPTIONS = curatedFontPairings.map((pairing) => ({ key:
 export type LogoFetcher = (url: string) => Promise<Buffer>
 
 /** Maps independent candidates with a fixed worker pool while retaining input order in its result. */
-async function mapWithConcurrency<T, R>(items: readonly T[], concurrency: number, mapper: (item: T) => Promise<R>): Promise<R[]> {
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  mapper: (item: T) => Promise<R>,
+): Promise<R[]> {
   const results = new Array<R>(items.length)
   let nextIndex = 0
   async function worker(): Promise<void> {
@@ -74,16 +108,31 @@ async function mapWithConcurrency<T, R>(items: readonly T[], concurrency: number
  * unterschiedlich schneller Antworten stabil. Exportiert aus demselben Grund wie
  * VISION_GENERATORS.
  */
-export async function downloadValidLogos(candidates: readonly LogoCandidate[], fetcher: LogoFetcher, maxLogos: number = MAX_LOGO_SUGGESTIONS): Promise<ProcessedLogo[]> {
+export async function downloadValidLogos(
+  candidates: readonly LogoCandidate[],
+  fetcher: LogoFetcher,
+  maxLogos: number = MAX_LOGO_SUGGESTIONS,
+): Promise<ProcessedLogo[]> {
   const logos: ProcessedLogo[] = []
   const seenHashes = new Set<string>()
-  const processedCandidates = await mapWithConcurrency(candidates, MAX_LOGO_DOWNLOAD_CONCURRENCY, async (candidate) => {
-    try {
-      return await processBrandLogoUpload(await fetcher(candidate.url))
-    } catch {
-      return null // blockierte/zu grosse/abgelaufene Antwort, kein Bildformat, zu kleines Bild, ...
-    }
-  })
+  const processedCandidates = await mapWithConcurrency(
+    candidates,
+    MAX_LOGO_DOWNLOAD_CONCURRENCY,
+    async (candidate) => {
+      try {
+        // Ein Inline-SVG hat keine abrufbare Asset-URL. Es stammt dennoch aus einer fremden
+        // Website und durchlaeuft deshalb exakt dieselbe zentrale SVG-Sanitisierung wie ein
+        // heruntergeladenes Logo, bevor es in den privaten Storage gelangt.
+        const bytes =
+          candidate.inlineSvg === undefined
+            ? await fetcher(candidate.url)
+            : Buffer.from(candidate.inlineSvg, 'utf8')
+        return await processBrandLogoUpload(bytes)
+      } catch {
+        return null // blockierte/zu grosse/abgelaufene Antwort, kein Bildformat, zu kleines Bild, ...
+      }
+    },
+  )
   for (const processed of processedCandidates) {
     if (logos.length >= maxLogos) break
     if (!processed) continue
@@ -124,29 +173,51 @@ export class BrandWebsiteAnalysisExecutor {
       if (!provider) throw new WorkflowExecutionError('no_vision_provider_configured', false)
       const generator = this.visionGenerator ?? VISION_GENERATORS[provider.protocol]
       if (!generator) throw new WorkflowExecutionError('unsupported_provider_configuration', false)
-      const apiKey = openProviderSecret(this.config, provider.api_key_ciphertext, provider.key_version, provider.id)
+      const apiKey = openProviderSecret(
+        this.config,
+        provider.api_key_ciphertext,
+        provider.key_version,
+        provider.id,
+      )
 
       const render = await this.renderer.render(job.website_url)
       const logos = await downloadValidLogos(render.logoCandidates, this.logoFetcher)
-      const logoCandidates = await Promise.all(logos.map(async (logo) => ({
-        objectPath: await this.repository.uploadStagedLogo(job.id, job.organization_id, payload.correlationId, logo),
-        mimeType: logo.contentType,
-      })))
+      const logoCandidates = await Promise.all(
+        logos.map(async (logo) => ({
+          objectPath: await this.repository.uploadStagedLogo(
+            job.id,
+            job.organization_id,
+            payload.correlationId,
+            logo,
+          ),
+          mimeType: logo.contentType,
+        })),
+      )
 
       const analysis = await generator.analyzeBrand({
-        imageBase64: render.screenshotBase64, imageMediaType: render.screenshotMediaType,
-        detectedFontFamily: render.detectedFontFamily, fontPairingOptions: FONT_PAIRING_OPTIONS,
-        model: provider.model, baseUrl: provider.base_url, apiKey,
+        imageBase64: render.screenshotBase64,
+        imageMediaType: render.screenshotMediaType,
+        detectedFontFamily: render.detectedFontFamily,
+        fontPairingOptions: FONT_PAIRING_OPTIONS,
+        model: provider.model,
+        baseUrl: provider.base_url,
+        apiKey,
       })
 
       await this.repository.markSucceeded(job.id, job.revision, {
-        ...analysis, detectedFontFamily: render.detectedFontFamily, logoCandidates,
+        ...analysis,
+        detectedFontFamily: render.detectedFontFamily,
+        logoCandidates,
       })
     } catch (error) {
-      const classified = error instanceof WorkflowExecutionError ? error
-        : error instanceof VisionAnalysisError ? new WorkflowExecutionError(error.errorClass, error.retryable)
-        : error instanceof OutboundFetchError ? new WorkflowExecutionError('blocked_url', false)
-        : new WorkflowExecutionError('website_analysis_failed', true)
+      const classified =
+        error instanceof WorkflowExecutionError
+          ? error
+          : error instanceof VisionAnalysisError
+            ? new WorkflowExecutionError(error.errorClass, error.retryable)
+            : error instanceof OutboundFetchError
+              ? new WorkflowExecutionError('blocked_url', false)
+              : new WorkflowExecutionError('website_analysis_failed', true)
       // Anders als bei der Textwerkstatt-Ensemble-Kandidatenzeile (releaseCandidate faellt auf
       // 'pending' zurueck, eine eigene Recovery-Scan-Cron greift bei Erschoepfung) gibt es hier
       // genau eine Job-Zeile pro Verein ohne Fan-out: jeder Fehler -- auch ein retryable-Fehler --

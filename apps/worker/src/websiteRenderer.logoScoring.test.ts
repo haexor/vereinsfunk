@@ -25,7 +25,9 @@ afterEach(async () => {
 
 async function scoreFixture(html: string) {
   page = await browser.newPage()
-  await page.route(`${FIXTURE_ORIGIN}/**`, (route) => route.fulfill({ body: html, contentType: 'text/html' }))
+  await page.route(`${FIXTURE_ORIGIN}/**`, (route) =>
+    route.fulfill({ body: html, contentType: 'text/html' }),
+  )
   await page.goto(`${FIXTURE_ORIGIN}/`)
   return page.evaluate(scoreLogoCandidates)
 }
@@ -40,6 +42,19 @@ describe('scoreLogoCandidates', () => {
       </body></html>
     `)
     expect(candidates[0]?.url).toBe(`${FIXTURE_ORIGIN}/assets/logo-ifa.png`)
+  })
+
+  it('findet ein eingebettetes SVG im Logo-Container (ballschule-chemnitz.de)', async () => {
+    const candidates = await scoreFixture(`
+      <html><body>
+        <div class="bslogo">
+          <a class="logo" href="/"><svg viewBox="0 0 100 100"><path d="M0 0h100v100H0z"/></svg></a>
+        </div>
+      </body></html>
+    `)
+    const inlineLogo = candidates.find((candidate) => candidate.inlineSvg !== undefined)
+    expect(inlineLogo).toMatchObject({ url: `${FIXTURE_ORIGIN}/#inline-svg-0`, score: 4 })
+    expect(inlineLogo?.inlineSvg).toContain('<svg')
   })
 
   it('schliesst eine Sponsorenzeile im Header komplett aus, das echte Vereinslogo bleibt Kandidat (Bug B)', async () => {
@@ -111,7 +126,9 @@ describe('scoreLogoCandidates', () => {
       </body>
       </html>
     `)
-    const matches = candidates.filter((candidate) => candidate.url === `${FIXTURE_ORIGIN}/shared-logo.png`)
+    const matches = candidates.filter(
+      (candidate) => candidate.url === `${FIXTURE_ORIGIN}/shared-logo.png`,
+    )
     expect(matches).toHaveLength(1)
     // Der echte DOM-Treffer gewinnt, nicht der Fallback-Sentinel-Score.
     expect(matches[0]!.score).toBeGreaterThan(0)
@@ -127,7 +144,9 @@ describe('scoreLogoCandidates', () => {
       </body></html>
     `)
     const withHomeLink = candidates.find((candidate) => candidate.url.endsWith('/home-logo.png'))
-    const withoutHomeLink = candidates.find((candidate) => candidate.url.endsWith('/other-logo.png'))
+    const withoutHomeLink = candidates.find((candidate) =>
+      candidate.url.endsWith('/other-logo.png'),
+    )
     expect(withHomeLink!.score).toBeGreaterThan(withoutHomeLink!.score)
     expect(candidates[0]?.url).toBe(withHomeLink?.url)
   })
