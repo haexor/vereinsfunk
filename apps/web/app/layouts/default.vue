@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { BarChart3, BookUser, Building2, CalendarDays, CheckCircle2, CreditCard, Feather, FileText, Frame, LayoutDashboard, LayoutGrid, LogOut, Menu, Palette, Plug, Plus, Scale, Settings, Share2, ShieldCheck, Users, UserRound, UserSearch, X } from '@lucide/vue'
+import { BarChart3, BookUser, Building2, CalendarDays, CheckCircle2, CreditCard, Feather, FileSignature, FileText, Frame, LayoutDashboard, LayoutGrid, LogOut, Menu, Palette, Plug, Plus, Scale, Settings, Share2, ShieldCheck, Users, UserRound, UserSearch, X } from '@lucide/vue'
 
 const mobileOpen = ref(false)
 const route = useRoute()
@@ -77,6 +77,7 @@ const organizationNav = [
   { label: 'Bildstil', to: '/bildstil', icon: Frame },
   { label: 'Bildkomposition', to: '/bildkomposition', icon: LayoutGrid },
   { label: 'Stilprofile', to: '/stilprofile', icon: Feather },
+  { label: 'Textbausteine', to: '/textbausteine', icon: FileSignature },
   { label: 'Struktur', to: '/struktur', icon: Building2 },
   { label: 'Mitglieder', to: '/mitglieder', icon: Users },
   { label: 'Verzeichnis', to: '/verzeichnis', icon: BookUser },
