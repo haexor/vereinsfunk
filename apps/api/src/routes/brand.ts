@@ -68,6 +68,7 @@ const StoredBrandWebsiteAnalysisLogoCandidateSchema = z.object({
   objectPath: z.string().min(1).max(512),
   mimeType: z.enum(['image/svg+xml', 'image/png', 'image/jpeg']),
 }).strict()
+const MAX_STORED_LOGO_CANDIDATES = 8
 
 export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients } = context
@@ -133,7 +134,7 @@ async function mapBrandWebsiteAnalysisRow(
     const storedCandidates = rawCandidates.flatMap((candidate) => {
       const parsed = StoredBrandWebsiteAnalysisLogoCandidateSchema.safeParse(candidate)
       return parsed.success && parsed.data.objectPath.startsWith(organizationPathPrefix) ? [parsed.data] : []
-    })
+    }).slice(0, MAX_STORED_LOGO_CANDIDATES)
     const logoCandidates = await Promise.all(storedCandidates.map(async (candidate) => {
       const signed = await service.storage.from('brand-assets').createSignedUrl(candidate.objectPath, 600)
       if (signed.error) throw signed.error

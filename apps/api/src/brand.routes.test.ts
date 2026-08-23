@@ -927,6 +927,35 @@ describe('Paket 048: KI-gestuetzte Markenerkennung aus der Vereins-Homepage', ()
     expect(response.json()).toMatchObject({ result: { logoCandidate: null, logoCandidates: [] } })
   })
 
+  it('returns the first eight of nine valid stored logo candidates without signing the ninth', async () => {
+    const paths = Array.from({ length: 9 }, (_, index) => `organizations/${ORGANIZATION_ID}/brand/analysis-staging/${index}.png`)
+    const signedPaths: string[] = []
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({
+        from: () => chain({
+          data: {
+            status: 'succeeded',
+            result: {
+              primaryColor: '#163a2c', accentColor: '#caff4a', backgroundColor: '#f6f4ec', textColor: '#122820', onPrimaryColor: '#ffffff',
+              suggestedFontPairingKey: null, detectedFontFamily: null,
+              logoCandidates: paths.map((objectPath) => ({ objectPath, mimeType: 'image/png' })),
+            },
+            error_reason: null,
+          },
+          error: null,
+        }),
+        storage: { from: () => ({ createSignedUrl: async (path: string) => { signedPaths.push(path); return { data: { signedUrl: `https://signed.example/${path.split('/').at(-1)}` }, error: null } } }) },
+      }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: `/v1/organizations/${ORGANIZATION_ID}/brand/website-analysis`, headers: { authorization: `Bearer ${token}` } })
+    expect(response.statusCode).toBe(200)
+    expect(signedPaths).toEqual(paths.slice(0, 8))
+    expect(response.json().result.logoCandidates).toHaveLength(8)
+  })
+
   it('reports a failed analysis with its error reason and no result', async () => {
     const clients: SupabaseClientFactory = {
       forUser: () => ({}) as unknown as SupabaseClient,
