@@ -1,13 +1,14 @@
-# Übergabe: Agenten-Arbeitsplatz – nach Agenten-LLM-Konfiguration
+# Übergabe: Agenten-Arbeitsplatz – nach Publishing-Abschluss
 
 Stand: 24. August 2026
 
-Branch-Ziel: `codex/agent-runtime-configuration`
+Branch-Ziel: `codex/agent-publication-execution`
 
 ## Erledigter Umfang
 
 Pakete A–C des [Agenten-Arbeitsplatz-Plans](agent-workspace-plan.md) sowie die
-bestätigte Scheduling-Teilstufe von Paket D sind umgesetzt:
+Paket D mit bestätigter Planung, direkter Veröffentlichung und sichtbarer
+Fehlernachverfolgung sind umgesetzt:
 
 - Private, mandantenisolierte Conversations und Messages mit RLS, Retention und
   positiven wie negativen pgTAP-Tests.
@@ -49,6 +50,13 @@ bestätigte Scheduling-Teilstufe von Paket D sind umgesetzt:
 - `schedule_publication` plant ausschließlich eine aktuelle, freigegebene
   Post-Version auf genau einem erlaubten Instagram- oder Facebook-Kanal. Die
   vorhandene idempotente Scheduling-RPC bleibt die fachliche Ausführungsgrenze.
+- Fällige, noch wartende Publications erscheinen im Workspace. Die separate,
+  außenwirksame Aktion `execute_publication` verlangt eine zweite Bestätigung,
+  prüft Scope und `post.publish` zweimal und nutzt ausschließlich den bestehenden
+  Publishing-Endpunkt mit Medien-/Consent-Gate, CAS, Idempotenz und Audit.
+- Fehlgeschlagene und `action_required` Publications erscheinen als sichere,
+  knappe Statushinweise im Workspace; die unmittelbare Bestätigung zeigt die
+  fachliche Fehlerursache statt einer generischen Fehlermeldung.
 - Die Plattformadministration kann unter „Einstellungen“ eine aktive,
   OpenAI-kompatible Text-Provider-Konfiguration für den Agenten auswählen. Modell,
   Base-URL und verschlüsseltes Secret werden pro Nachricht ausschließlich auf dem
@@ -74,13 +82,11 @@ Die neue Migration fügt ausschließlich einen deny-all-RLS-geschützten,
 service-role-gelesenen Schlüssel in `platform_settings` ein; sie benötigt keine
 neue Tabelle oder Policy.
 
-## Nächster Umsetzungsschritt: Paket D abschließen
+## Nächster Umsetzungsschritt: Pilot vorbereiten
 
-1. Direkte Veröffentlichung als von Scheduling getrennte, final bestätigte Aktion
-   an die bestehende Outbox-/Hatchet-/Publisher-Kette anbinden.
-2. Reconciliation, Provider-Fehler und Zustandsänderungen als sichere
-   Fortschrittsmeldungen in die Conversation zurückspielen.
-3. Vor einem Pilot Evals für Toolwahl, Scope-Wechsel, gestoppte Freigaben und
+1. Mit einem kleinen Pilotverein die Tool-Evals und echten, anonymisierten Fälle
+   abstimmen.
+2. Vor einem Pilot Evals für Toolwahl, Scope-Wechsel, gestoppte Freigaben und
    Wiederholungen ergänzen.
 
 ## Bewusst später
