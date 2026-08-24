@@ -104,6 +104,7 @@ function mapMessage(row: unknown): AgentMessage {
 function mapProposal(row: unknown): AgentActionProposal {
   const parsed = ProposalRowSchema.parse(row)
   const scope = AgentScopeSchema.parse(parsed.scope_snapshot)
+  if (scope.organizationId !== parsed.organization_id) throw new Error('agent_proposal_scope_mismatch')
   return AgentActionProposalSchema.parse({
     id: parsed.id,
     conversationId: parsed.conversation_id,
@@ -117,6 +118,7 @@ function mapProposal(row: unknown): AgentActionProposal {
     createdAt: parsed.created_at,
     updatedAt: parsed.updated_at,
     ...scope,
+    organizationId: parsed.organization_id,
   })
 }
 
@@ -273,16 +275,19 @@ async function insertActionProposal(
   input: CreateAgentActionProposal,
 ): Promise<AgentActionProposal> {
   const scope = scopeForConversation(conversation)
-  const serializedInput = input.input as Record<string, unknown>
+  // Revalidierung verhindert, dass ein interner Aufrufer zur Laufzeit Scope-Schlüssel in den
+  // Snapshot schmuggelt. Der Snapshot enthält ausschließlich die Tool-Payload.
+  const normalizedInput = CreateAgentActionProposalSchema.parse(input)
+  const serializedInput = normalizedInput.input as Record<string, unknown>
   const created = await service.from('agent_action_proposals').insert({
     organization_id: conversation.organizationId,
     conversation_id: conversation.id,
     created_by: actorUserId,
-    tool_name: input.toolName,
+    tool_name: normalizedInput.toolName,
     scope_snapshot: scope,
     input_snapshot: serializedInput,
     input_hash: hashAgentProposalInput(serializedInput),
-    risk_class: input.toolName === 'create_invitation' ? 'external' : 'write',
+    risk_class: normalizedInput.toolName === 'create_invitation' ? 'external' : 'write',
     expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
   }).select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, status, expires_at, confirmed_at, created_at, updated_at').single()
   if (created.error) throw created.error
@@ -373,7 +378,7 @@ export function registerAgentRoutes(
     const permission = input.toolName === 'create_event' ? 'event.manage' : 'member.invite'
     if (!(await context.requirePermission(request, reply, permission, toPermissionScope(scope.organizationId, scope.departmentId ?? null, scope.teamId ?? null)))) return
     if (input.toolName === 'create_invitation') {
-      const invitationInput = CreateInvitationRequestSchema.parse({ ...scope, ...input.input })
+      const invitationInput = CreateInvitationRequestSchema.parse({ ...input.input, ...scope })
       const roles = await roleProvider.rolesForScope(request.auth!, toPermissionScope(scope.organizationId, scope.departmentId ?? null, scope.teamId ?? null))
       if (!canAssignRole(roles, invitationInput.role)) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
     }
@@ -429,7 +434,7 @@ export function registerAgentRoutes(
     if (!(await context.requirePermission(request, reply, permission, toPermissionScope(scope.organizationId, scope.departmentId ?? null, scope.teamId ?? null)))) return
     const eventInput = proposal.toolName === 'create_event' ? AgentEventProposalInputSchema.parse(proposal.input) : null
     const invitationInput = proposal.toolName === 'create_invitation'
-      ? CreateInvitationRequestSchema.parse({ ...scope, ...(proposal.input as Record<string, unknown>) })
+      ? CreateInvitationRequestSchema.parse({ ...(proposal.input as Record<string, unknown>), ...scope })
       : null
     const parsedInput = eventInput ?? invitationInput
     if (!parsedInput || proposal.inputHash !== hashAgentProposalInput(proposal.input)) return reply.code(409).send({ error: 'proposal_input_changed', correlationId: request.id })
@@ -443,7 +448,12 @@ export function registerAgentRoutes(
       target_proposal_id: proposal.id,
       target_owner_id: request.auth!.userId,
     })
-    if (claim.error) return reply.code(409).send({ error: 'proposal_not_pending', correlationId: request.id })
+    if (claim.error) {
+      if (claim.error.code === 'P0002' || claim.error.message.includes('agent_proposal_not_pending')) {
+        return reply.code(409).send({ error: 'proposal_not_pending', correlationId: request.id })
+      }
+      throw claim.error
+    }
     const claimed = mapProposal(claim.data)
     if (claimed.status === 'expired') return reply.code(410).send({ error: 'proposal_expired', correlationId: request.id })
     const toolRun = await service.from('agent_tool_runs').insert({
@@ -515,7 +525,7 @@ export function registerAgentRoutes(
     const workspace = await loadWorkspace(client, scopeForConversation(conversation), request.auth!.userId)
     const safetyIdentifier = createHash('sha256').update(request.auth!.userId).digest('hex').slice(0, 64)
     let answer: string
-    let requestedProposal: CreateAgentActionProposal | undefined
+    let authorizedProposal: CreateAgentActionProposal | undefined
     try {
       const response = await responder.respond({
         messages: [...existingMessages, { role: 'user', content: input.content }],
@@ -523,29 +533,21 @@ export function registerAgentRoutes(
         userId: safetyIdentifier,
       })
       answer = response.content
-      requestedProposal = response.proposal
+      authorizedProposal = response.proposal
     } catch (error) {
       request.log.warn({ err: error, correlationId: request.id }, 'agent responder failed')
       answer = 'Der Assistent ist gerade nicht erreichbar. Deine Nachricht wurde nicht als Aktion ausgeführt; bitte versuche es erneut.'
     }
-    if (requestedProposal) {
+    if (authorizedProposal) {
       const proposalScope = scopeForConversation(conversation)
-      const permission = requestedProposal.toolName === 'create_event' ? 'event.manage' : 'member.invite'
+      const permission = authorizedProposal.toolName === 'create_event' ? 'event.manage' : 'member.invite'
       const roles = await roleProvider.rolesForScope(request.auth!, toPermissionScope(proposalScope.organizationId, proposalScope.departmentId ?? null, proposalScope.teamId ?? null))
-      const invitationInput = requestedProposal.toolName === 'create_invitation'
-        ? CreateInvitationRequestSchema.parse({ ...proposalScope, ...requestedProposal.input })
+      const invitationInput = authorizedProposal.toolName === 'create_invitation'
+        ? CreateInvitationRequestSchema.parse({ ...authorizedProposal.input, ...proposalScope })
         : null
       if (!hasPermission(roles, permission) || (invitationInput !== null && !canAssignRole(roles, invitationInput.role))) {
         answer = 'Dafür fehlen dir im aktuellen Bereich die nötigen Berechtigungen. Es wurde keine Aktion vorbereitet.'
-      } else {
-        const proposal = await insertActionProposal(service, conversation, request.auth!.userId, requestedProposal)
-        await recordAuditEvent(request, {
-          organizationId: proposal.organizationId,
-          action: 'agent.action_proposal_created',
-          entityType: 'agent_action_proposals',
-          entityId: proposal.id,
-          metadata: { toolName: proposal.toolName, inputHash: proposal.inputHash, source: 'agent_tool' },
-        })
+        authorizedProposal = undefined
       }
     }
     // Die Funktion sperrt die Unterhaltung und schreibt Nutzer- und Assistentennachricht samt
@@ -561,6 +563,16 @@ export function registerAgentRoutes(
     if (persisted.error) throw persisted.error
     const [persistedRow] = z.array(PersistedMessagesRowSchema).length(1).parse(persisted.data)
     if (!persistedRow) throw new Error('agent_message_persistence_invalid_response')
+    if (authorizedProposal) {
+      const proposal = await insertActionProposal(service, conversation, request.auth!.userId, authorizedProposal)
+      await recordAuditEvent(request, {
+        organizationId: proposal.organizationId,
+        action: 'agent.action_proposal_created',
+        entityType: 'agent_action_proposals',
+        entityId: proposal.id,
+        metadata: { toolName: proposal.toolName, inputHash: proposal.inputHash, source: 'agent_tool' },
+      })
+    }
     await recordAuditEvent(request, {
       organizationId: conversation.organizationId,
       action: 'agent.message_completed',

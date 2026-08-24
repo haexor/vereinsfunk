@@ -60,7 +60,9 @@ async function initialize() {
         if (!isCurrent()) return
         conversation.value = detail.conversation
         messages.value = detail.messages
-        proposals.value = await api.request(`/v1/agent/conversations/${detail.conversation.id}/action-proposals`, {}, z.array(AgentActionProposalSchema))
+        const loadedProposals = await api.request(`/v1/agent/conversations/${detail.conversation.id}/action-proposals`, {}, z.array(AgentActionProposalSchema))
+        if (!isCurrent() || conversation.value?.id !== detail.conversation.id) return
+        proposals.value = loadedProposals
         return
       } catch {
         if (!isCurrent()) return
@@ -106,7 +108,9 @@ async function send() {
     if (!isCurrent()) return
     conversation.value = detail.conversation
     messages.value = detail.messages
-    proposals.value = await api.request(`/v1/agent/conversations/${conversationId}/action-proposals`, {}, z.array(AgentActionProposalSchema))
+    const loadedProposals = await api.request(`/v1/agent/conversations/${conversationId}/action-proposals`, {}, z.array(AgentActionProposalSchema))
+    if (!isCurrent()) return
+    proposals.value = loadedProposals
     if (scopeInput.value) {
       const refreshedWorkspace = await api.request('/v1/agent/workspace', { query: scopeInput.value }, AgentWorkspaceSchema)
       if (!isCurrent()) return
@@ -123,7 +127,10 @@ async function send() {
 
 async function refreshActionProposals() {
   if (!conversation.value) return
-  proposals.value = await api.request(`/v1/agent/conversations/${conversation.value.id}/action-proposals`, {}, z.array(AgentActionProposalSchema))
+  const conversationId = conversation.value.id
+  const loadedProposals = await api.request(`/v1/agent/conversations/${conversationId}/action-proposals`, {}, z.array(AgentActionProposalSchema))
+  if (conversation.value?.id !== conversationId) return
+  proposals.value = loadedProposals
 }
 
 async function actOnProposal(proposal: AgentActionProposal, action: 'confirm' | 'cancel') {

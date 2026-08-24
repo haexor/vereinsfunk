@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(31);
+select plan(36);
 
 set local role postgres;
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -151,6 +151,57 @@ select is(
   (select status from public.agent_action_proposals where id = '68000000-9100-4000-8000-000000000004'),
   'expired',
   'expired proposal cannot enter execution'
+);
+insert into public.agent_action_proposals (
+  id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot,
+  input_hash, risk_class, expires_at, created_at
+) values
+  ('68000000-9100-4000-8000-000000000005', '68000000-1000-4000-8000-000000000001', '68000000-9000-4000-8000-000000000001', '68000000-0000-4000-8000-000000000001', 'create_event',
+   '{"organizationId":"68000000-1000-4000-8000-000000000001"}', '{"title":"Fremdzugriff"}', repeat('e', 64), 'write', now() + interval '15 minutes', now()),
+  ('68000000-9100-4000-8000-000000000006', '68000000-1000-4000-8000-000000000001', '68000000-9000-4000-8000-000000000001', '68000000-0000-4000-8000-000000000001', 'create_event',
+   '{"organizationId":"68000000-1000-4000-8000-000000000001"}', '{"title":"Recovery"}', repeat('f', 64), 'write', now() + interval '15 minutes', now());
+select throws_ok(
+  $$select * from public.claim_agent_action_proposal(
+    '68000000-1000-4000-8000-000000000002',
+    '68000000-9100-4000-8000-000000000005',
+    '68000000-0000-4000-8000-000000000001'
+  )$$,
+  'P0002', 'agent_proposal_not_pending',
+  'a foreign organization cannot claim the proposal'
+);
+select throws_ok(
+  $$select * from public.claim_agent_action_proposal(
+    '68000000-1000-4000-8000-000000000001',
+    '68000000-9100-4000-8000-000000000005',
+    '68000000-0000-4000-8000-000000000003'
+  )$$,
+  'P0002', 'agent_proposal_not_pending',
+  'a foreign owner cannot claim the proposal'
+);
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '68000000-0000-4000-8000-000000000001', true);
+select throws_ok(
+  $$select * from public.claim_agent_action_proposal(
+    '68000000-1000-4000-8000-000000000001',
+    '68000000-9100-4000-8000-000000000005',
+    '68000000-0000-4000-8000-000000000001'
+  )$$,
+  '42501', null, 'browser roles cannot claim proposals'
+);
+set local role postgres;
+update public.agent_action_proposals set execution_started_at = now() - interval '16 minutes' where id = '68000000-9100-4000-8000-000000000003';
+select lives_ok(
+  $$select * from public.claim_agent_action_proposal(
+    '68000000-1000-4000-8000-000000000001',
+    '68000000-9100-4000-8000-000000000006',
+    '68000000-0000-4000-8000-000000000001'
+  )$$,
+  'claim recovers stale execution before reserving a new proposal'
+);
+select is(
+  (select status from public.agent_action_proposals where id = '68000000-9100-4000-8000-000000000003'),
+  'failed',
+  'stale execution is marked failed for recovery'
 );
 
 select * from finish();

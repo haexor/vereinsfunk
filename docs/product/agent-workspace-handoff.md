@@ -47,7 +47,7 @@ Erfolgreich ausgeführt:
 - `pnpm --filter @vereinsfunk/api build`
 - `pnpm --filter @vereinsfunk/web build`
 - `pnpm exec supabase migration up --local`
-- `pnpm exec supabase test db supabase/tests/agent_workspace.test.sql` (31 pgTAP-Tests)
+- `pnpm exec supabase test db supabase/tests/agent_workspace.test.sql` (36 pgTAP-Tests)
 
 `pnpm db:test` erreicht den neuen Agenten-Test erfolgreich, endet aber weiterhin
 mit acht bereits vor dieser Änderung auftretenden Fehlern in

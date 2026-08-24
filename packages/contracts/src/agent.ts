@@ -57,24 +57,22 @@ export const AgentEventProposalInputSchema = z.object({
   if (value.endsAt && new Date(value.endsAt).getTime() < new Date(value.startsAt).getTime()) {
     context.addIssue({ code: 'custom', message: 'endsAt must not be before startsAt' })
   }
-})
+}).strict()
 
 export const AgentProposalToolNameSchema = z.enum(['create_event', 'create_invitation'])
 export const AgentInvitationProposalInputSchema = z.object({
   email: z.string().trim().toLowerCase().pipe(z.email()),
   role: AssignableRoleSchema,
-})
+}).strict()
 export const CreateAgentActionProposalSchema = z.discriminatedUnion('toolName', [
   z.object({ toolName: z.literal('create_event'), input: AgentEventProposalInputSchema }),
   z.object({ toolName: z.literal('create_invitation'), input: AgentInvitationProposalInputSchema }),
 ])
 
-export const AgentActionProposalSchema = AgentScopeSchema.extend({
+const AgentActionProposalBaseSchema = AgentScopeSchema.extend({
   id: UuidSchema,
   conversationId: UuidSchema,
   createdBy: UuidSchema,
-  toolName: AgentProposalToolNameSchema,
-  input: z.unknown(),
   inputHash: z.string().regex(/^[a-f0-9]{64}$/),
   status: AgentProposalStatusSchema,
   expiresAt: z.iso.datetime({ offset: true }),
@@ -82,6 +80,10 @@ export const AgentActionProposalSchema = AgentScopeSchema.extend({
   createdAt: z.iso.datetime({ offset: true }),
   updatedAt: z.iso.datetime({ offset: true }),
 })
+export const AgentActionProposalSchema = z.discriminatedUnion('toolName', [
+  AgentActionProposalBaseSchema.extend({ toolName: z.literal('create_event'), input: AgentEventProposalInputSchema }),
+  AgentActionProposalBaseSchema.extend({ toolName: z.literal('create_invitation'), input: AgentInvitationProposalInputSchema }),
+])
 
 export const AgentPostSummarySchema = z.object({
   id: UuidSchema,
