@@ -1,24 +1,35 @@
 import {
   AgentConversationDetailSchema,
   AgentConversationSchema,
+  AgentActionProposalSchema,
+  AgentApprovalProposalInputSchema,
+  AgentEventProposalInputSchema,
+  CreateInvitationRequestSchema,
   AgentMessageSchema,
   AgentScopeSchema,
   AgentWorkspaceSchema,
   CreateAgentConversationSchema,
+  CreateAgentActionProposalSchema,
   CreateAgentMessageSchema,
   UuidSchema,
   type AgentConversation,
+  type AgentActionProposal,
+  type CreateAgentActionProposal,
   type AgentMessage,
   type AgentScope,
   type AgentWorkspace,
 } from '@vereinsfunk/contracts'
+import { canAssignRole, hasPermission } from '@vereinsfunk/authorization'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyInstance } from 'fastify'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
+import { hashAgentProposalInput } from '@vereinsfunk/domain'
 import type { AgentResponder } from '../agent.js'
+import { createClubEvent } from '../services/clubEvents.js'
+import { createInvitation } from '../services/invitations.js'
 import type { ApiRouteContext } from './context.js'
-import { createAuditRecorder, isAnyMemberOfOrganization, resolveDirectoryScope } from './shared.js'
+import { createAuditRecorder, isAnyMemberOfOrganization, resolveDirectoryScope, toPermissionScope } from './shared.js'
 
 const ConversationRowSchema = z.object({
   id: UuidSchema,
@@ -46,6 +57,27 @@ const PersistedMessagesRowSchema = z.object({
   assistant_message: MessageRowSchema,
   last_activity_at: z.string(),
 })
+const ProposalRowSchema = z.object({
+  id: UuidSchema,
+  organization_id: UuidSchema,
+  conversation_id: UuidSchema,
+  created_by: UuidSchema,
+  tool_name: z.enum(['create_event', 'create_invitation']),
+  scope_snapshot: z.unknown(),
+  input_snapshot: z.unknown(),
+  input_hash: z.string(),
+  status: z.enum(['pending', 'executing', 'confirmed', 'cancelled', 'expired', 'failed']),
+  expires_at: z.string(),
+  confirmed_at: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+})
+
+class AgentProposalExecutionError extends Error {
+  constructor(readonly statusCode: 409 | 422, readonly errorCode: string) {
+    super(errorCode)
+  }
+}
 
 function mapConversation(row: unknown): AgentConversation {
   const parsed = ConversationRowSchema.parse(row)
@@ -73,6 +105,27 @@ function mapMessage(row: unknown): AgentMessage {
     role: parsed.role,
     content: parsed.content,
     createdAt: parsed.created_at,
+  })
+}
+
+function mapProposal(row: unknown): AgentActionProposal {
+  const parsed = ProposalRowSchema.parse(row)
+  const scope = AgentScopeSchema.parse(parsed.scope_snapshot)
+  if (scope.organizationId !== parsed.organization_id) throw new Error('agent_proposal_scope_mismatch')
+  return AgentActionProposalSchema.parse({
+    id: parsed.id,
+    conversationId: parsed.conversation_id,
+    createdBy: parsed.created_by,
+    toolName: parsed.tool_name,
+    input: parsed.input_snapshot,
+    inputHash: parsed.input_hash,
+    status: parsed.status,
+    expiresAt: parsed.expires_at,
+    confirmedAt: parsed.confirmed_at,
+    createdAt: parsed.created_at,
+    updatedAt: parsed.updated_at,
+    ...scope,
+    organizationId: parsed.organization_id,
   })
 }
 
@@ -222,12 +275,56 @@ async function loadMessages(client: SupabaseClient, conversation: AgentConversat
   return (result.data ?? []).map(mapMessage)
 }
 
+type ApprovalTarget = { organizationId: string; departmentId: string; teamId: string | null; postId: string }
+
+async function loadApprovalTarget(client: SupabaseClient, postVersionId: string): Promise<ApprovalTarget | null> {
+  const version = await client.from('post_versions').select('id, post_id').eq('id', postVersionId).maybeSingle()
+  if (version.error) throw version.error
+  if (!version.data) return null
+  const post = await client.from('posts').select('id, organization_id, department_id, team_id').eq('id', version.data.post_id as string).maybeSingle()
+  if (post.error) throw post.error
+  if (!post.data) return null
+  return { organizationId: post.data.organization_id as string, departmentId: post.data.department_id as string, teamId: post.data.team_id as string | null, postId: post.data.id as string }
+}
+
+function matchesScope(scope: AgentScope, target: ApprovalTarget): boolean {
+  return scope.organizationId === target.organizationId
+    && scope.departmentId === target.departmentId
+    && (scope.teamId ?? null) === target.teamId
+}
+
+async function insertActionProposal(
+  service: SupabaseClient,
+  conversation: AgentConversation,
+  actorUserId: string,
+  input: CreateAgentActionProposal,
+): Promise<AgentActionProposal> {
+  const scope = scopeForConversation(conversation)
+  // Revalidierung verhindert, dass ein interner Aufrufer zur Laufzeit Scope-Schlüssel in den
+  // Snapshot schmuggelt. Der Snapshot enthält ausschließlich die Tool-Payload.
+  const normalizedInput = CreateAgentActionProposalSchema.parse(input)
+  const serializedInput = normalizedInput.input as Record<string, unknown>
+  const created = await service.from('agent_action_proposals').insert({
+    organization_id: conversation.organizationId,
+    conversation_id: conversation.id,
+    created_by: actorUserId,
+    tool_name: normalizedInput.toolName,
+    scope_snapshot: scope,
+    input_snapshot: serializedInput,
+    input_hash: hashAgentProposalInput(serializedInput),
+    risk_class: normalizedInput.toolName === 'create_invitation' ? 'external' : 'write',
+    expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
+  }).select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, status, expires_at, confirmed_at, created_at, updated_at').single()
+  if (created.error) throw created.error
+  return mapProposal(created.data)
+}
+
 export function registerAgentRoutes(
   app: FastifyInstance,
   context: ApiRouteContext,
   responder: AgentResponder,
 ): void {
-  const { requireAuth, supabaseClients } = context
+  const { requireAuth, supabaseClients, roleProvider, environment } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
 
   app.get('/v1/agent/workspace', async (request, reply) => {
@@ -278,6 +375,192 @@ export function registerAgentRoutes(
     }))
   })
 
+  app.get('/v1/agent/conversations/:id/action-proposals', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const conversation = await loadConversation(client, params.id)
+    if (!conversation) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const proposals = await client
+      .from('agent_action_proposals')
+      .select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, status, expires_at, confirmed_at, created_at, updated_at')
+      .eq('organization_id', conversation.organizationId)
+      .eq('conversation_id', conversation.id)
+      .order('created_at', { ascending: false })
+      .limit(20)
+    if (proposals.error) throw proposals.error
+    return reply.code(200).send((proposals.data ?? []).map(mapProposal))
+  })
+
+  app.post('/v1/agent/conversations/:id/action-proposals', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const input = CreateAgentActionProposalSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const conversation = await loadConversation(client, params.id)
+    if (!conversation) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const scope = scopeForConversation(conversation)
+    if (input.toolName === 'request_approval') {
+      const target = await loadApprovalTarget(client, input.input.postVersionId)
+      if (!target || !matchesScope(scope, target)) return reply.code(404).send({ error: 'post_version_not_in_scope', correlationId: request.id })
+      if (!(await context.requirePermission(request, reply, 'post.submit', toPermissionScope(target.organizationId, target.departmentId, target.teamId)))) return
+    } else {
+      const permission = input.toolName === 'create_event' ? 'event.manage' : 'member.invite'
+      if (!(await context.requirePermission(request, reply, permission, toPermissionScope(scope.organizationId, scope.departmentId ?? null, scope.teamId ?? null)))) return
+    }
+    if (input.toolName === 'create_invitation') {
+      const invitationInput = CreateInvitationRequestSchema.parse({ ...input.input, ...scope })
+      const roles = await roleProvider.rolesForScope(request.auth!, toPermissionScope(scope.organizationId, scope.departmentId ?? null, scope.teamId ?? null))
+      if (!canAssignRole(roles, invitationInput.role)) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+    }
+    const proposal = await insertActionProposal(supabaseClients.forService(), conversation, request.auth!.userId, input)
+    await recordAuditEvent(request, {
+      organizationId: proposal.organizationId,
+      action: 'agent.action_proposal_created',
+      entityType: 'agent_action_proposals',
+      entityId: proposal.id,
+      metadata: { toolName: proposal.toolName, inputHash: proposal.inputHash },
+    })
+    return reply.code(201).send(proposal)
+  })
+
+  app.post('/v1/agent/action-proposals/:id/cancel', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const proposal = await client
+      .from('agent_action_proposals')
+      .select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, status, expires_at, confirmed_at, created_at, updated_at')
+      .eq('id', params.id)
+      .maybeSingle()
+    if (proposal.error) throw proposal.error
+    if (!proposal.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const existing = mapProposal(proposal.data)
+    if (existing.status !== 'pending') return reply.code(409).send({ error: 'proposal_not_pending', correlationId: request.id })
+    const cancelled = await supabaseClients.forService().from('agent_action_proposals')
+      .update({ status: 'cancelled' })
+      .eq('id', existing.id).eq('organization_id', existing.organizationId).eq('created_by', request.auth!.userId).eq('status', 'pending')
+      .select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, status, expires_at, confirmed_at, created_at, updated_at')
+      .maybeSingle()
+    if (cancelled.error) throw cancelled.error
+    if (!cancelled.data) return reply.code(409).send({ error: 'proposal_not_pending', correlationId: request.id })
+    await recordAuditEvent(request, { organizationId: existing.organizationId, action: 'agent.action_proposal_cancelled', entityType: 'agent_action_proposals', entityId: existing.id })
+    return reply.code(200).send(mapProposal(cancelled.data))
+  })
+
+  app.post('/v1/agent/action-proposals/:id/confirm', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const found = await client
+      .from('agent_action_proposals')
+      .select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, status, expires_at, confirmed_at, created_at, updated_at')
+      .eq('id', params.id)
+      .maybeSingle()
+    if (found.error) throw found.error
+    if (!found.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const proposal = mapProposal(found.data)
+    const scope = AgentScopeSchema.parse({ organizationId: proposal.organizationId, departmentId: proposal.departmentId, teamId: proposal.teamId })
+    const approvalInput = proposal.toolName === 'request_approval' ? AgentApprovalProposalInputSchema.parse(proposal.input) : null
+    const approvalTarget = approvalInput ? await loadApprovalTarget(client, approvalInput.postVersionId) : null
+    if (approvalInput && (!approvalTarget || !matchesScope(scope, approvalTarget))) return reply.code(409).send({ error: 'proposal_target_changed', correlationId: request.id })
+    const permission = proposal.toolName === 'create_event' ? 'event.manage' : proposal.toolName === 'create_invitation' ? 'member.invite' : 'post.submit'
+    const permissionScope = approvalTarget
+      ? toPermissionScope(approvalTarget.organizationId, approvalTarget.departmentId, approvalTarget.teamId)
+      : toPermissionScope(scope.organizationId, scope.departmentId ?? null, scope.teamId ?? null)
+    if (!(await context.requirePermission(request, reply, permission, permissionScope))) return
+    const eventInput = proposal.toolName === 'create_event' ? AgentEventProposalInputSchema.parse(proposal.input) : null
+    const invitationInput = proposal.toolName === 'create_invitation'
+      ? CreateInvitationRequestSchema.parse({ ...(proposal.input as Record<string, unknown>), ...scope })
+      : null
+    const parsedInput = eventInput ?? invitationInput ?? approvalInput
+    if (!parsedInput || proposal.inputHash !== hashAgentProposalInput(proposal.input)) return reply.code(409).send({ error: 'proposal_input_changed', correlationId: request.id })
+    if (invitationInput) {
+      const roles = await roleProvider.rolesForScope(request.auth!, toPermissionScope(scope.organizationId, scope.departmentId ?? null, scope.teamId ?? null))
+      if (!canAssignRole(roles, invitationInput.role)) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+    }
+    const service = supabaseClients.forService()
+    const claim = await service.rpc('claim_agent_action_proposal', {
+      target_organization_id: proposal.organizationId,
+      target_proposal_id: proposal.id,
+      target_owner_id: request.auth!.userId,
+    })
+    if (claim.error) {
+      if (claim.error.code === 'P0002' || claim.error.message.includes('agent_proposal_not_pending')) {
+        return reply.code(409).send({ error: 'proposal_not_pending', correlationId: request.id })
+      }
+      throw claim.error
+    }
+    const claimed = mapProposal(claim.data)
+    if (claimed.status === 'expired') return reply.code(410).send({ error: 'proposal_expired', correlationId: request.id })
+    const toolRun = await service.from('agent_tool_runs').insert({
+      organization_id: proposal.organizationId,
+      conversation_id: proposal.conversationId,
+      proposal_id: proposal.id,
+      tool_name: proposal.toolName,
+      correlation_id: request.id,
+      status: 'started',
+    }).select('id').maybeSingle()
+    if (toolRun.error) request.log.error({ err: toolRun.error, correlationId: request.id }, 'agent tool run could not be started')
+    try {
+      let resultId: string
+      let emailDelivered: boolean | undefined
+      let emailError: unknown
+      if (eventInput) {
+        const event = await createClubEvent(service, request.auth!.userId, scope, eventInput)
+        resultId = event.id
+      } else if (invitationInput) {
+        const invitation = await createInvitation(client, service, invitationInput!, environment.WEB_BASE_URL ?? 'http://localhost:4200')
+        resultId = invitation.invitation.id
+        emailDelivered = invitation.emailDelivered
+        emailError = invitation.emailError
+      } else {
+        const approval = await client.rpc('request_approval', { target_post_version_id: approvalInput!.postVersionId })
+        if (approval.error) {
+          if (approval.error.message.includes('invalid_status')) throw new AgentProposalExecutionError(409, 'invalid_status')
+          if (approval.error.message.includes('review_required') || approval.error.message.includes('minor_stage_required') || approval.error.message.includes('invalid_reviewer_snapshot') || approval.error.message.includes('empty_reviewer_snapshot')) {
+            throw new AgentProposalExecutionError(422, 'approval_route_unavailable')
+          }
+          throw approval.error
+        }
+        resultId = z.object({ approvalRequestId: UuidSchema.nullable().optional(), postId: UuidSchema }).parse(approval.data).approvalRequestId ?? approvalTarget!.postId
+      }
+      const completed = await service.from('agent_action_proposals')
+        .update({ status: 'confirmed', confirmed_by: request.auth!.userId, confirmed_at: new Date().toISOString() })
+        .eq('id', proposal.id).eq('organization_id', proposal.organizationId).eq('status', 'executing')
+        .select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, status, expires_at, confirmed_at, created_at, updated_at')
+        .single()
+      if (completed.error) throw completed.error
+      if (toolRun.data) {
+        const toolRunCompleted = await service.from('agent_tool_runs').update({
+          status: 'completed', finished_at: new Date().toISOString(), result_refs: [{ entityType: eventInput ? 'club_events' : invitationInput ? 'invitations' : 'approval_requests', id: resultId }],
+        }).eq('id', toolRun.data.id).eq('organization_id', proposal.organizationId).eq('status', 'started')
+        if (toolRunCompleted.error) request.log.error({ err: toolRunCompleted.error, correlationId: request.id }, 'agent tool run could not be completed')
+      }
+      await recordAuditEvent(request, {
+        organizationId: proposal.organizationId,
+        action: 'agent.action_proposal_confirmed',
+        entityType: 'agent_action_proposals',
+        entityId: proposal.id,
+        metadata: { toolName: proposal.toolName, resultId, emailDelivered },
+      })
+      if (emailDelivered === false) request.log.error({ err: emailError, correlationId: request.id }, 'Supabase invitation email delivery failed')
+      return reply.code(200).send(mapProposal(completed.data))
+    } catch (error) {
+      if (toolRun.data) {
+        const toolRunFailed = await service.from('agent_tool_runs').update({
+          status: 'failed', finished_at: new Date().toISOString(), error_code: 'execution_failed',
+        }).eq('id', toolRun.data.id).eq('organization_id', proposal.organizationId).eq('status', 'started')
+        if (toolRunFailed.error) request.log.error({ err: toolRunFailed.error, correlationId: request.id }, 'agent tool run could not be failed')
+      }
+      const failed = await service.from('agent_action_proposals').update({ status: 'failed' })
+        .eq('id', proposal.id).eq('organization_id', proposal.organizationId).eq('status', 'executing')
+      if (failed.error) request.log.error({ err: failed.error, correlationId: request.id }, 'agent proposal failure state could not be saved')
+      if (error instanceof AgentProposalExecutionError) return reply.code(error.statusCode).send({ error: error.errorCode, correlationId: request.id })
+      throw error
+    }
+  })
+
   app.post('/v1/agent/conversations/:id/messages', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
@@ -290,15 +573,35 @@ export function registerAgentRoutes(
     const workspace = await loadWorkspace(client, scopeForConversation(conversation), request.auth!.userId)
     const safetyIdentifier = createHash('sha256').update(request.auth!.userId).digest('hex').slice(0, 64)
     let answer: string
+    let authorizedProposal: CreateAgentActionProposal | undefined
     try {
-      answer = await responder.respond({
+      const response = await responder.respond({
         messages: [...existingMessages, { role: 'user', content: input.content }],
         workspace,
         userId: safetyIdentifier,
       })
+      answer = response.content
+      authorizedProposal = response.proposal
     } catch (error) {
       request.log.warn({ err: error, correlationId: request.id }, 'agent responder failed')
       answer = 'Der Assistent ist gerade nicht erreichbar. Deine Nachricht wurde nicht als Aktion ausgeführt; bitte versuche es erneut.'
+    }
+    if (authorizedProposal) {
+      const proposalScope = scopeForConversation(conversation)
+      const approvalInput = authorizedProposal.toolName === 'request_approval' ? AgentApprovalProposalInputSchema.parse(authorizedProposal.input) : null
+      const approvalTarget = approvalInput ? await loadApprovalTarget(client, approvalInput.postVersionId) : null
+      const permission = authorizedProposal.toolName === 'create_event' ? 'event.manage' : authorizedProposal.toolName === 'create_invitation' ? 'member.invite' : 'post.submit'
+      const permissionScope = approvalTarget
+        ? toPermissionScope(approvalTarget.organizationId, approvalTarget.departmentId, approvalTarget.teamId)
+        : toPermissionScope(proposalScope.organizationId, proposalScope.departmentId ?? null, proposalScope.teamId ?? null)
+      const roles = await roleProvider.rolesForScope(request.auth!, permissionScope)
+      const invitationInput = authorizedProposal.toolName === 'create_invitation'
+        ? CreateInvitationRequestSchema.parse({ ...authorizedProposal.input, ...proposalScope })
+        : null
+      if ((approvalInput !== null && (!approvalTarget || !matchesScope(proposalScope, approvalTarget))) || !hasPermission(roles, permission) || (invitationInput !== null && !canAssignRole(roles, invitationInput.role))) {
+        answer = 'Dafür fehlen dir im aktuellen Bereich die nötigen Berechtigungen. Es wurde keine Aktion vorbereitet.'
+        authorizedProposal = undefined
+      }
     }
     // Die Funktion sperrt die Unterhaltung und schreibt Nutzer- und Assistentennachricht samt
     // Aktivitätszeit in einer Transaktion. Ein Fehler hinterlässt dadurch nie nur eine Hälfte
@@ -313,6 +616,16 @@ export function registerAgentRoutes(
     if (persisted.error) throw persisted.error
     const [persistedRow] = z.array(PersistedMessagesRowSchema).length(1).parse(persisted.data)
     if (!persistedRow) throw new Error('agent_message_persistence_invalid_response')
+    if (authorizedProposal) {
+      const proposal = await insertActionProposal(service, conversation, request.auth!.userId, authorizedProposal)
+      await recordAuditEvent(request, {
+        organizationId: proposal.organizationId,
+        action: 'agent.action_proposal_created',
+        entityType: 'agent_action_proposals',
+        entityId: proposal.id,
+        metadata: { toolName: proposal.toolName, inputHash: proposal.inputHash, source: 'agent_tool' },
+      })
+    }
     await recordAuditEvent(request, {
       organizationId: conversation.organizationId,
       action: 'agent.message_completed',

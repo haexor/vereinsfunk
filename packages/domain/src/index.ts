@@ -3,6 +3,7 @@
 export * from './postStatus.js'
 export * from './effectiveConfig.js'
 export * from './reviewRoute.js'
+export * from './agentProposals.js'
 export * from './channels.js'
 export * from './mediaGate.js'
 export * from './llmProviders.js'

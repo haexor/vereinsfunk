@@ -1,7 +1,7 @@
 # Plan: Dialogischer Vereinsagent und Agenten-Arbeitsplatz
 
 Stand: 24. August 2026
-Status: Paket A umgesetzt (read-only Arbeitsbereich); Pakete B–D ausstehend
+Status: Pakete A und B umgesetzt (Arbeitsbereich sowie bestätigte Event- und Einladungsaktionen); Pakete C–D ausstehend
 
 Die konkrete Übergabe mit geprüftem Stand und dem nächsten Umsetzungsschritt steht
 in [Agenten-Arbeitsplatz: Übergabe nach Paket A](agent-workspace-handoff.md).
@@ -288,6 +288,15 @@ Tool-Tests unsichtbar.
 Abnahme: Der Agent kann Events und Einladungen vorbereiten, aber ohne explizite
 Bestätigung keine Daten oder E-Mails verändern bzw. versenden.
 
+Umgesetzt am 24. August 2026: kanonischer SHA-256-Payload-Hash, Ablauf, Cancel,
+atomare Execution-Reservation, erneute Berechtigungs- und Scope-Prüfung sowie
+Audit- und Tool-Run-Diagnose. Die Responses-Tool-Registry kennt ausschließlich
+`create_event` und `create_invitation`; der Provider erhält keinen direkten
+Datenbank- oder Versandzugriff. Die Einladungsaktion verwendet denselben
+fachlichen Use Case wie die reguläre Einladungsroute. In `/assistent` erscheinen
+die Vorschläge mit Ablauf sowie Bestätigen/Verwerfen; erst die Bestätigung führt
+die Aktion aus.
+
 ### Paket C – Dialogischer Content- und Freigabeflow
 
 1. Content-Brief aus bestätigten Fakten erstellen und fehlende Angaben abfragen.
@@ -301,6 +310,12 @@ Bestätigung keine Daten oder E-Mails verändern bzw. versenden.
 Abnahme: Eine Chat-Unterhaltung kann einen faktengebundenen Entwurf bis zur
 Freigabe führen; eine geänderte Version, Minderjährigenflag oder fehlende
 Permission stoppt den Prozess sicher.
+
+Fortschritt am 24. August 2026: Das bestätigte Tool `request_approval` ist
+angebunden. Es akzeptiert ausschließlich eine aktuelle Beitragsversion aus dem
+Conversation-Scope, prüft Scope und `post.submit` beim Vorschlag und vor der
+Ausführung erneut und ruft die vorhandene `request_approval`-Fach-RPC auf.
+Der faktengebundene Brief und die Textwerkstatt-Session folgen als nächster Schritt.
 
 ### Paket D – Planung, Publishing und Pilot
 

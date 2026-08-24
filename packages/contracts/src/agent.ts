@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import { UuidSchema } from './content.js'
+import { ClubEventCategorySchema } from './clubSchedule.js'
+import { AssignableRoleSchema } from './structure.js'
 
 // Der Agent kennt immer einen expliziten Verein. Abteilung und Mannschaft schraenken den
 // Arbeitsbereich weiter ein; eine Mannschaft ohne Abteilung waere kein pruefbarer Scope.
@@ -39,6 +41,52 @@ export const AgentMessageSchema = z.object({
 export const CreateAgentMessageSchema = z.object({
   content: z.string().trim().min(1).max(4_000),
 })
+
+export const AgentProposalStatusSchema = z.enum(['pending', 'executing', 'confirmed', 'cancelled', 'expired', 'failed'])
+export const AgentEventProposalInputSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+  description: z.string().trim().max(2_000).nullable().optional(),
+  category: ClubEventCategorySchema.default('other'),
+  startsAt: z.iso.datetime({ offset: true }),
+  endsAt: z.iso.datetime({ offset: true }).nullable().optional(),
+  allDay: z.boolean().default(false),
+  locationName: z.string().trim().max(200).nullable().optional(),
+  locationAddress: z.string().trim().max(500).nullable().optional(),
+  registrationUrl: z.url().nullable().optional(),
+}).superRefine((value, context) => {
+  if (value.endsAt && new Date(value.endsAt).getTime() < new Date(value.startsAt).getTime()) {
+    context.addIssue({ code: 'custom', message: 'endsAt must not be before startsAt' })
+  }
+}).strict()
+
+export const AgentProposalToolNameSchema = z.enum(['create_event', 'create_invitation', 'request_approval'])
+export const AgentInvitationProposalInputSchema = z.object({
+  email: z.string().trim().toLowerCase().pipe(z.email()),
+  role: AssignableRoleSchema,
+}).strict()
+export const AgentApprovalProposalInputSchema = z.object({ postVersionId: UuidSchema }).strict()
+export const CreateAgentActionProposalSchema = z.discriminatedUnion('toolName', [
+  z.object({ toolName: z.literal('create_event'), input: AgentEventProposalInputSchema }),
+  z.object({ toolName: z.literal('create_invitation'), input: AgentInvitationProposalInputSchema }),
+  z.object({ toolName: z.literal('request_approval'), input: AgentApprovalProposalInputSchema }),
+])
+
+const AgentActionProposalBaseSchema = AgentScopeSchema.extend({
+  id: UuidSchema,
+  conversationId: UuidSchema,
+  createdBy: UuidSchema,
+  inputHash: z.string().regex(/^[a-f0-9]{64}$/),
+  status: AgentProposalStatusSchema,
+  expiresAt: z.iso.datetime({ offset: true }),
+  confirmedAt: z.iso.datetime({ offset: true }).nullable(),
+  createdAt: z.iso.datetime({ offset: true }),
+  updatedAt: z.iso.datetime({ offset: true }),
+})
+export const AgentActionProposalSchema = z.discriminatedUnion('toolName', [
+  AgentActionProposalBaseSchema.extend({ toolName: z.literal('create_event'), input: AgentEventProposalInputSchema }),
+  AgentActionProposalBaseSchema.extend({ toolName: z.literal('create_invitation'), input: AgentInvitationProposalInputSchema }),
+  AgentActionProposalBaseSchema.extend({ toolName: z.literal('request_approval'), input: AgentApprovalProposalInputSchema }),
+])
 
 export const AgentPostSummarySchema = z.object({
   id: UuidSchema,
@@ -84,6 +132,12 @@ export type AgentScope = z.infer<typeof AgentScopeSchema>
 export type AgentConversation = z.infer<typeof AgentConversationSchema>
 export type AgentMessage = z.infer<typeof AgentMessageSchema>
 export type AgentMessageRole = z.infer<typeof AgentMessageRoleSchema>
+export type AgentProposalStatus = z.infer<typeof AgentProposalStatusSchema>
+export type AgentEventProposalInput = z.infer<typeof AgentEventProposalInputSchema>
+export type AgentInvitationProposalInput = z.infer<typeof AgentInvitationProposalInputSchema>
+export type AgentApprovalProposalInput = z.infer<typeof AgentApprovalProposalInputSchema>
+export type CreateAgentActionProposal = z.infer<typeof CreateAgentActionProposalSchema>
+export type AgentActionProposal = z.infer<typeof AgentActionProposalSchema>
 export type AgentPostSummary = z.infer<typeof AgentPostSummarySchema>
 export type AgentEventSummary = z.infer<typeof AgentEventSummarySchema>
 export type AgentApprovalSummary = z.infer<typeof AgentApprovalSummarySchema>
