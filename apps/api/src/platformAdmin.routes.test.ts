@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
+import { createSecretBox } from '@vereinsfunk/secrets'
 import { INVITATION_ID, ORGANIZATION_ID, USER_ID, adminProvider, chain, defaultAdminProvider, nonAdminProvider, signAccessToken, startApp } from './testSupport.js'
+import { ciphertextToBytea } from './secretBox.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
 
@@ -782,6 +784,51 @@ describe('platform administration', () => {
       payload: { protocol: 'openai', baseUrl: 'https://api.openai.com/v1', apiKey: 'super-secret-bearer-token' },
     })
     expect(response.statusCode).toBe(403)
+  })
+
+  it('lists stored-provider models without sending its API key back to the browser', async () => {
+    const providerId = 'a0000000-0000-4000-8000-000000000003'
+    const apiKey = 'stored-secret-must-not-reach-browser'
+    const sealed = createSecretBox({ v1: Buffer.alloc(32, 7).toString('base64') }, 'v1').seal(apiKey, providerId)
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({
+        from: (table: string) => {
+          if (table !== 'llm_provider_configurations') throw new Error(`unexpected table in test fake: ${table}`)
+          return chain({
+            data: {
+              id: providerId,
+              protocol: 'openai',
+              // Oeffentliche Literal-Adresse: fetch wird unten gemockt, die URL besteht aber die
+              // SSRF-Pruefung ohne einen echten DNS- oder Provider-Abruf zu brauchen.
+              base_url: 'https://8.8.8.8/v1',
+              llm_provider_secrets: { api_key_ciphertext: ciphertextToBytea(sealed.ciphertext), key_version: sealed.keyVersion },
+            },
+            error: null,
+          })
+        },
+      }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      expect(String(url)).toBe('https://8.8.8.8/v1/models')
+      expect(init?.headers).toEqual({ authorization: `Bearer ${apiKey}` })
+      return new Response(JSON.stringify({ data: [{ id: 'gpt-5-mini' }, { id: 'gpt-5.6' }] }), { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/v1/llm-providers/${providerId}/models`,
+        headers: { authorization: `Bearer ${token}` },
+      })
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toEqual({ models: ['gpt-5-mini', 'gpt-5.6'] })
+      expect(JSON.stringify(response.json())).not.toContain(apiKey)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })
 

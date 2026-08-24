@@ -93,7 +93,10 @@ const modelSelectGroups = computed(() => [{
   label: 'Verfügbare Modelle',
   items: availableModels.value.map((model) => ({ value: model, label: model })),
 }])
-const canLoadModels = computed(() => newProvider.baseUrl.trim().length > 0 && newProvider.apiKey.trim().length > 0)
+// Beim Bearbeiten verwendet der Server den dort verschluesselt gespeicherten Schluessel. Fuer
+// neue Provider (oder wenn ein neuer Schluessel eingegeben wurde) bleibt der explizite Abruf mit
+// dem aktuellen Formularwert erhalten, damit die Modellliste sofort zur neuen Eingabe passt.
+const canLoadModels = computed(() => isEditing.value || (newProvider.baseUrl.trim().length > 0 && newProvider.apiKey.trim().length > 0))
 // Ein Preset gehoert zu genau einem Protokoll -- ein OpenAI-Endpunkt unter "Anthropic (nativ)"
 // waere eine Konfiguration, die erst im Worker auffliegt.
 const visiblePresets = computed(() => PROVIDER_PRESETS.filter((preset) => preset.protocol === newProvider.protocol))
@@ -247,8 +250,13 @@ async function loadModels() {
   modelsMessage.value = ''
   try {
     const headers = await useAuthHeader()
-    const body = ListLlmProviderModelsRequestSchema.parse({ protocol: newProvider.protocol, baseUrl: newProvider.baseUrl, apiKey: newProvider.apiKey })
-    const response = await $fetch(`${config.public.apiBase}/v1/llm-providers/models`, { method: 'POST', headers, body })
+    const response = editingProviderId.value && !newProvider.apiKey.trim()
+      ? await $fetch(`${config.public.apiBase}/v1/llm-providers/${editingProviderId.value}/models`, { method: 'POST', headers })
+      : await $fetch(`${config.public.apiBase}/v1/llm-providers/models`, {
+        method: 'POST',
+        headers,
+        body: ListLlmProviderModelsRequestSchema.parse({ protocol: newProvider.protocol, baseUrl: newProvider.baseUrl, apiKey: newProvider.apiKey }),
+      })
     availableModels.value = ListLlmProviderModelsResponseSchema.parse(response).models
     useCustomModel.value = false
     if (!availableModels.value.includes(newProvider.model)) newProvider.model = availableModels.value[0] ?? ''
@@ -315,7 +323,7 @@ async function removeProvider(id: string) {
       <div class="eyebrow mb-3">Plattform-Administration</div>
       <h1 class="font-display text-3xl font-extrabold tracking-[-.04em]">LLM-Provider</h1>
       <p class="mt-2 text-sm text-[#727a75]">
-        Routing für die ausschließlich asynchrone Textgenerierung. Ein hinterlegter Schlüssel wird nie wieder im Klartext angezeigt und Provider-Aufrufe erfolgen nur im Worker.
+        Routing für die ausschließlich asynchrone Textgenerierung. Ein hinterlegter Schlüssel wird nie wieder im Klartext angezeigt; nur der abgesicherte Server nutzt ihn für die Modellauswahl.
       </p>
     </header>
 
@@ -420,7 +428,7 @@ async function removeProvider(id: string) {
               Modellnamen selbst eingeben
             </button>
             <p v-if="modelsMessage" class="mt-1 text-[11px] font-normal text-amber-800">{{ modelsMessage }}</p>
-            <p v-else-if="!showModelSelect" class="mt-1 text-[11px] font-normal text-[#9aa096]">Basis-URL und Schlüssel eintragen, dann Modelle laden.</p>
+            <p v-else-if="!showModelSelect" class="mt-1 text-[11px] font-normal text-[#9aa096]">{{ isEditing ? 'Modelle des hinterlegten Providers laden.' : 'Basis-URL und Schlüssel eintragen, dann Modelle laden.' }}</p>
           </label>
 
           <label class="flex items-center gap-2 text-xs font-semibold text-[#5c655f] sm:col-span-2">
