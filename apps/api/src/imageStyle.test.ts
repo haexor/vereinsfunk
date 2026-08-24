@@ -98,6 +98,30 @@ describe('renderImageStyle: Filter', () => {
     expect(pixel.b).toBe(230)
   })
 
+  it('delegiert den kuratierten Comic-Effekt an den konfigurierten Bild-Provider', async () => {
+    const source = await solidColorImage(20, 20, { r: 10, g: 120, b: 230 })
+    let receivedEffect = ''
+    const result = await renderImageStyle({
+      sourceBuffer: source,
+      preset: { ...NO_STYLE_PRESET, filter: 'comic' },
+      brandColors: BRAND_COLORS,
+      imageEffects: {
+        id: 'gmic-cli:test',
+        supports: (effect): effect is 'comic' => effect === 'comic',
+        apply: async (effect, buffer) => {
+          receivedEffect = effect
+          return sharp(buffer).negate().png().toBuffer()
+        },
+      },
+    })
+    const pixel = await pixelAt(result.buffer, 10, 10)
+    expect(receivedEffect).toBe('comic')
+    expect(result.filterProvider).toBe('gmic-cli:test')
+    expect(pixel.r).toBe(245)
+    expect(pixel.g).toBe(135)
+    expect(pixel.b).toBe(25)
+  })
+
   it('schwarz_weiss entsaettigt vollstaendig', async () => {
     const source = await solidColorImage(20, 20, { r: 200, g: 40, b: 40 })
     const result = await renderImageStyle({
@@ -427,6 +451,25 @@ describe('renderImageStyle: Rahmenstile', () => {
     const center = await pixelAt(result.buffer, 36, 36)
     expect(center.r).toBe(0)
     expect(center.b).toBe(255)
+  })
+
+  it('festlich clippt die Ranken bei der kleinsten Rahmenbreite auf die Rahmenflaeche', async () => {
+    const source = await solidColorImage(60, 60, { r: 0, g: 0, b: 255 })
+    const result = await renderImageStyle({
+      sourceBuffer: source,
+      preset: {
+        ...NO_STYLE_PRESET,
+        frameType: 'parametric',
+        frameStyle: 'festlich',
+        frameColor: 'primary',
+        frameWidthPx: 1,
+        frameCornerRadiusPx: null,
+      },
+      brandColors: BRAND_COLORS,
+    })
+    // Ohne Clip erreichen die neuen Ranken bei widthPx=1 bis in die obere linke Fotoecke.
+    const photoPixel = await pixelAt(result.buffer, 10, 10)
+    expect(photoPixel).toMatchObject({ r: 0, g: 0, b: 255 })
   })
 
   it('bottom_bar setzt einen deutlich dickeren Balken unten als oben/links/rechts', async () => {

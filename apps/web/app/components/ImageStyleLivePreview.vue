@@ -36,6 +36,8 @@ const FILTER_CSS: Record<ImageStyleFilter, string> = {
   vereinsfarben_duoton: 'grayscale(1) contrast(1.1)',
   comic: 'contrast(1.25) saturate(1.45)',
   konfetti: 'saturate(1.08)',
+  gmic_vintage: 'sepia(.68) contrast(.92) brightness(1.05)',
+  gmic_poster: 'contrast(1.7) saturate(.35) sepia(.2)',
 }
 const photoFilterCss = computed(() => FILTER_CSS[props.filter])
 const duotoneOverlayStyle = computed(() => ({
@@ -59,7 +61,8 @@ const logoStyle = computed(() => ({
   <section class="card p-6">
     <h2 class="font-display text-base font-bold">Live-Vorschau</h2>
     <p class="mt-1 text-[11px] text-[#9aa096]">
-      Näherung per CSS — das endgültige Bild entsteht serverseitig (Rahmen/Logo/Filter-Rendering).
+      Entwurfsansicht — das veröffentlichte Bild wird serverseitig gerendert; G’MIC-Effekte können
+      sichtbar abweichen.
     </p>
     <ImageStyleFramePreview
       class="mt-4 rounded-2xl"
