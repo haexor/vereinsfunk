@@ -60,7 +60,7 @@ export const AgentEventProposalInputSchema = z.object({
   }
 }).strict()
 
-export const AgentProposalToolNameSchema = z.enum(['create_event', 'create_invitation', 'request_approval', 'save_content_brief', 'start_text_generation', 'accept_text_candidate', 'schedule_publication'])
+export const AgentProposalToolNameSchema = z.enum(['create_event', 'create_invitation', 'request_approval', 'save_content_brief', 'start_text_generation', 'accept_text_candidate', 'schedule_publication', 'execute_publication'])
 export const AgentInvitationProposalInputSchema = z.object({
   email: z.string().trim().toLowerCase().pipe(z.email()),
   role: AssignableRoleSchema,
@@ -81,6 +81,9 @@ export const AgentSchedulePublicationProposalInputSchema = z.object({
   platform: OAuthPlatformSchema,
   scheduledFor: z.iso.datetime({ offset: true }).nullable(),
 }).strict()
+// Die Ausführung bleibt absichtlich von der Planung getrennt: Nur eine bereits vorhandene,
+// fällige Publication darf eine externe Aktion auslösen.
+export const AgentPublicationExecutionProposalInputSchema = z.object({ publicationId: UuidSchema }).strict()
 export const AgentProposalTargetRefSchema = z.object({
   entityType: z.enum(['club_events', 'invitations', 'approval_requests', 'text_workshop_drafts', 'composition_sessions', 'post_versions', 'publications']),
   id: UuidSchema,
@@ -93,6 +96,7 @@ export const CreateAgentActionProposalSchema = z.discriminatedUnion('toolName', 
   z.object({ toolName: z.literal('start_text_generation'), input: AgentTextGenerationProposalInputSchema }),
   z.object({ toolName: z.literal('accept_text_candidate'), input: AgentTextCandidateAcceptanceProposalInputSchema }),
   z.object({ toolName: z.literal('schedule_publication'), input: AgentSchedulePublicationProposalInputSchema }),
+  z.object({ toolName: z.literal('execute_publication'), input: AgentPublicationExecutionProposalInputSchema }),
 ])
 
 const AgentActionProposalBaseSchema = AgentScopeSchema.extend({
@@ -115,6 +119,7 @@ export const AgentActionProposalSchema = z.discriminatedUnion('toolName', [
   AgentActionProposalBaseSchema.extend({ toolName: z.literal('start_text_generation'), input: AgentTextGenerationProposalInputSchema }),
   AgentActionProposalBaseSchema.extend({ toolName: z.literal('accept_text_candidate'), input: AgentTextCandidateAcceptanceProposalInputSchema }),
   AgentActionProposalBaseSchema.extend({ toolName: z.literal('schedule_publication'), input: AgentSchedulePublicationProposalInputSchema }),
+  AgentActionProposalBaseSchema.extend({ toolName: z.literal('execute_publication'), input: AgentPublicationExecutionProposalInputSchema }),
 ])
 
 export const AgentPostSummarySchema = z.object({
@@ -152,12 +157,32 @@ export const AgentTextCandidateSummarySchema = z.object({
   teamId: UuidSchema.nullable(),
   headline: z.string().trim().max(200),
 })
+export const AgentDuePublicationSummarySchema = z.object({
+  id: UuidSchema,
+  postVersionId: UuidSchema,
+  departmentId: UuidSchema,
+  teamId: UuidSchema.nullable(),
+  title: z.string().trim().max(200),
+  platform: OAuthPlatformSchema,
+  scheduledFor: z.iso.datetime({ offset: true }).nullable(),
+})
+export const AgentPublicationActivitySummarySchema = z.object({
+  id: UuidSchema,
+  departmentId: UuidSchema,
+  teamId: UuidSchema.nullable(),
+  title: z.string().trim().max(200),
+  platform: OAuthPlatformSchema,
+  status: z.enum(['action_required', 'failed']),
+  errorClass: z.enum(['validation', 'non_retryable', 'retryable', 'unknown']).nullable(),
+})
 
 export const AgentWorkspaceSchema = AgentScopeSchema.extend({
   posts: z.array(AgentPostSummarySchema).max(20),
   events: z.array(AgentEventSummarySchema).max(20),
   pendingApprovals: z.array(AgentApprovalSummarySchema).max(20),
   readyTextCandidates: z.array(AgentTextCandidateSummarySchema).max(20),
+  duePublications: z.array(AgentDuePublicationSummarySchema).max(20),
+  publicationActivities: z.array(AgentPublicationActivitySummarySchema).max(20),
 })
 
 export const AgentConversationDetailSchema = z.object({
@@ -177,6 +202,7 @@ export type AgentContentBriefProposalInput = z.infer<typeof AgentContentBriefPro
 export type AgentTextGenerationProposalInput = z.infer<typeof AgentTextGenerationProposalInputSchema>
 export type AgentTextCandidateAcceptanceProposalInput = z.infer<typeof AgentTextCandidateAcceptanceProposalInputSchema>
 export type AgentSchedulePublicationProposalInput = z.infer<typeof AgentSchedulePublicationProposalInputSchema>
+export type AgentPublicationExecutionProposalInput = z.infer<typeof AgentPublicationExecutionProposalInputSchema>
 export type AgentProposalTargetRef = z.infer<typeof AgentProposalTargetRefSchema>
 export type CreateAgentActionProposal = z.infer<typeof CreateAgentActionProposalSchema>
 export type AgentActionProposal = z.infer<typeof AgentActionProposalSchema>
@@ -184,5 +210,7 @@ export type AgentPostSummary = z.infer<typeof AgentPostSummarySchema>
 export type AgentEventSummary = z.infer<typeof AgentEventSummarySchema>
 export type AgentApprovalSummary = z.infer<typeof AgentApprovalSummarySchema>
 export type AgentTextCandidateSummary = z.infer<typeof AgentTextCandidateSummarySchema>
+export type AgentDuePublicationSummary = z.infer<typeof AgentDuePublicationSummarySchema>
+export type AgentPublicationActivitySummary = z.infer<typeof AgentPublicationActivitySummarySchema>
 export type AgentWorkspace = z.infer<typeof AgentWorkspaceSchema>
 export type AgentConversationDetail = z.infer<typeof AgentConversationDetailSchema>
