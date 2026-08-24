@@ -344,12 +344,10 @@ Die Agenten-UI zeigt den geplanten Zeitpunkt und macht klar, dass das noch keine
 direkte externe Veröffentlichung ist. Direkte Veröffentlichung, Reconciliation
 und Pilot-Evals bleiben offen.
 
-1. Freigegebene aktuelle Versionen und Zielkanäle ermitteln.
-2. Scheduling als bestätigter Vorschlag mit Zeitzonen- und Plattformprüfung.
-3. Publishing ausschließlich über die etablierte Outbox-/Hatchet-/Publisher-Kette
+1. Publishing ausschließlich über die etablierte Outbox-/Hatchet-/Publisher-Kette
    und mit finaler Bestätigung anbinden.
-4. Reconciliation, Fehlermeldungen und Aktivitäten in die Unterhaltung spiegeln.
-5. Mit einem kleinen Pilotverein messen und Tool-Evals gegen echte,
+2. Reconciliation, Fehlermeldungen und Aktivitäten in die Unterhaltung spiegeln.
+3. Mit einem kleinen Pilotverein messen und Tool-Evals gegen echte,
    anonymisierte Pilotfälle erweitern.
 
 Abnahme: Ein bestätigter, freigegebener Post wird genau einmal geplant oder
