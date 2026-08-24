@@ -184,6 +184,16 @@ async function refreshSession() {
   const response = await api.request(`/v1/text-workshop/sessions/${sessionId.value}`, {}, z.object({ candidates: z.array(CandidateSchema) }).passthrough())
   candidate.value = response.candidates[0] ?? null
 }
+async function loadExistingSession(id: string) {
+  try {
+    sessionId.value = id
+    await refreshSession()
+  } catch {
+    sessionId.value = null
+    candidate.value = null
+    notice.value = 'Die Textgeneration konnte nicht geladen werden.'
+  }
+}
 async function loadServerDraft(draftId: string) {
   try {
     const response = await api.request(`/v1/text-workshop/drafts/${draftId}`, {}, z.object({ draft: TextWorkshopDraftRowSchema }))
@@ -283,7 +293,7 @@ async function acceptCandidate() {
   if (!candidate.value) return
   submitting.value = true; notice.value = ''
   try {
-    if (!(await saveServerDraft({ required: true }))) return
+    if (hasDraftContent() && !(await saveServerDraft({ required: true }))) return
     const accepted = await api.request(`/v1/text-workshop/candidates/${candidate.value.id}/accept`, { method: 'POST', body: serverDraftId.value ? { draftId: serverDraftId.value } : {} }, z.union([
       z.object({ postId: z.string(), postVersionId: z.string(), alreadyAccepted: z.literal(false) }),
       z.object({ postVersionId: z.string(), alreadyAccepted: z.literal(true) }),
@@ -335,10 +345,12 @@ restoringDraft = true
 await Promise.all([loadProfiles(), loadPlatformAvailability()])
 const resumePostId = UuidSchema.safeParse(route.query.postId)
 const resumeDraftId = UuidSchema.safeParse(route.query.draftId)
+const resumeSessionId = UuidSchema.safeParse(route.query.sessionId)
 if (resumeDraftId.success) await loadServerDraft(resumeDraftId.data)
 else if (resumePostId.success) await loadDraftFromPost(resumePostId.data)
+else if (resumeSessionId.success) await loadExistingSession(resumeSessionId.data)
 else {
-  if (route.query.postId !== undefined || route.query.draftId !== undefined) notice.value = 'Der Link zum Entwurf ist ungültig.'
+  if (route.query.postId !== undefined || route.query.draftId !== undefined || route.query.sessionId !== undefined) notice.value = 'Der Link zum Entwurf ist ungültig.'
   restoreDraft()
 }
 restoringDraft = false
