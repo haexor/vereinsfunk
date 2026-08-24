@@ -1,13 +1,17 @@
 import {
   AgentConversationDetailSchema,
   AgentConversationSchema,
+  AgentActionProposalSchema,
+  AgentEventProposalInputSchema,
   AgentMessageSchema,
   AgentScopeSchema,
   AgentWorkspaceSchema,
   CreateAgentConversationSchema,
+  CreateAgentActionProposalSchema,
   CreateAgentMessageSchema,
   UuidSchema,
   type AgentConversation,
+  type AgentActionProposal,
   type AgentMessage,
   type AgentScope,
   type AgentWorkspace,
@@ -16,9 +20,11 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyInstance } from 'fastify'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
+import { hashAgentProposalInput } from '@vereinsfunk/domain'
 import type { AgentResponder } from '../agent.js'
+import { createClubEvent } from '../services/clubEvents.js'
 import type { ApiRouteContext } from './context.js'
-import { createAuditRecorder, isAnyMemberOfOrganization, resolveDirectoryScope } from './shared.js'
+import { createAuditRecorder, isAnyMemberOfOrganization, resolveDirectoryScope, toPermissionScope } from './shared.js'
 
 const ConversationRowSchema = z.object({
   id: UuidSchema,
@@ -45,6 +51,21 @@ const PersistedMessagesRowSchema = z.object({
   user_message: MessageRowSchema,
   assistant_message: MessageRowSchema,
   last_activity_at: z.string(),
+})
+const ProposalRowSchema = z.object({
+  id: UuidSchema,
+  organization_id: UuidSchema,
+  conversation_id: UuidSchema,
+  created_by: UuidSchema,
+  tool_name: z.enum(['create_event', 'create_invitation']),
+  scope_snapshot: z.unknown(),
+  input_snapshot: z.unknown(),
+  input_hash: z.string(),
+  status: z.enum(['pending', 'executing', 'confirmed', 'cancelled', 'expired', 'failed']),
+  expires_at: z.string(),
+  confirmed_at: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
 })
 
 function mapConversation(row: unknown): AgentConversation {
@@ -73,6 +94,25 @@ function mapMessage(row: unknown): AgentMessage {
     role: parsed.role,
     content: parsed.content,
     createdAt: parsed.created_at,
+  })
+}
+
+function mapProposal(row: unknown): AgentActionProposal {
+  const parsed = ProposalRowSchema.parse(row)
+  const scope = AgentScopeSchema.parse(parsed.scope_snapshot)
+  return AgentActionProposalSchema.parse({
+    id: parsed.id,
+    conversationId: parsed.conversation_id,
+    createdBy: parsed.created_by,
+    toolName: parsed.tool_name,
+    input: parsed.input_snapshot,
+    inputHash: parsed.input_hash,
+    status: parsed.status,
+    expiresAt: parsed.expires_at,
+    confirmedAt: parsed.confirmed_at,
+    createdAt: parsed.created_at,
+    updatedAt: parsed.updated_at,
+    ...scope,
   })
 }
 
@@ -276,6 +316,131 @@ export function registerAgentRoutes(
       conversation,
       messages: await loadMessages(client, conversation),
     }))
+  })
+
+  app.get('/v1/agent/conversations/:id/action-proposals', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const conversation = await loadConversation(client, params.id)
+    if (!conversation) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const proposals = await client
+      .from('agent_action_proposals')
+      .select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, status, expires_at, confirmed_at, created_at, updated_at')
+      .eq('organization_id', conversation.organizationId)
+      .eq('conversation_id', conversation.id)
+      .order('created_at', { ascending: false })
+      .limit(20)
+    if (proposals.error) throw proposals.error
+    return reply.code(200).send((proposals.data ?? []).map(mapProposal))
+  })
+
+  app.post('/v1/agent/conversations/:id/action-proposals', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const input = CreateAgentActionProposalSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const conversation = await loadConversation(client, params.id)
+    if (!conversation) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const scope = scopeForConversation(conversation)
+    const permission = input.toolName === 'create_event' ? 'event.manage' : 'member.invite'
+    if (!(await context.requirePermission(request, reply, permission, toPermissionScope(scope.organizationId, scope.departmentId, scope.teamId)))) return
+    const serializedInput = input.input as Record<string, unknown>
+    const created = await supabaseClients.forService().from('agent_action_proposals').insert({
+      organization_id: conversation.organizationId,
+      conversation_id: conversation.id,
+      created_by: request.auth!.userId,
+      tool_name: input.toolName,
+      scope_snapshot: scope,
+      input_snapshot: serializedInput,
+      input_hash: hashAgentProposalInput(serializedInput),
+      risk_class: input.toolName === 'create_invitation' ? 'external' : 'write',
+      expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
+    }).select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, status, expires_at, confirmed_at, created_at, updated_at').single()
+    if (created.error) throw created.error
+    const proposal = mapProposal(created.data)
+    await recordAuditEvent(request, {
+      organizationId: proposal.organizationId,
+      action: 'agent.action_proposal_created',
+      entityType: 'agent_action_proposals',
+      entityId: proposal.id,
+      metadata: { toolName: proposal.toolName, inputHash: proposal.inputHash },
+    })
+    return reply.code(201).send(proposal)
+  })
+
+  app.post('/v1/agent/action-proposals/:id/cancel', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const proposal = await client
+      .from('agent_action_proposals')
+      .select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, status, expires_at, confirmed_at, created_at, updated_at')
+      .eq('id', params.id)
+      .maybeSingle()
+    if (proposal.error) throw proposal.error
+    if (!proposal.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const existing = mapProposal(proposal.data)
+    if (existing.status !== 'pending') return reply.code(409).send({ error: 'proposal_not_pending', correlationId: request.id })
+    const cancelled = await supabaseClients.forService().from('agent_action_proposals')
+      .update({ status: 'cancelled' })
+      .eq('id', existing.id).eq('organization_id', existing.organizationId).eq('created_by', request.auth!.userId).eq('status', 'pending')
+      .select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, status, expires_at, confirmed_at, created_at, updated_at')
+      .maybeSingle()
+    if (cancelled.error) throw cancelled.error
+    if (!cancelled.data) return reply.code(409).send({ error: 'proposal_not_pending', correlationId: request.id })
+    await recordAuditEvent(request, { organizationId: existing.organizationId, action: 'agent.action_proposal_cancelled', entityType: 'agent_action_proposals', entityId: existing.id })
+    return reply.code(200).send(mapProposal(cancelled.data))
+  })
+
+  app.post('/v1/agent/action-proposals/:id/confirm', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const found = await client
+      .from('agent_action_proposals')
+      .select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, status, expires_at, confirmed_at, created_at, updated_at')
+      .eq('id', params.id)
+      .maybeSingle()
+    if (found.error) throw found.error
+    if (!found.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const proposal = mapProposal(found.data)
+    if (proposal.toolName !== 'create_event') return reply.code(409).send({ error: 'proposal_tool_not_available', correlationId: request.id })
+    const scope = AgentScopeSchema.parse({ organizationId: proposal.organizationId, departmentId: proposal.departmentId, teamId: proposal.teamId })
+    if (!(await context.requirePermission(request, reply, 'event.manage', toPermissionScope(scope.organizationId, scope.departmentId, scope.teamId)))) return
+    const eventInput = AgentEventProposalInputSchema.parse(proposal.input)
+    if (proposal.inputHash !== hashAgentProposalInput(eventInput)) return reply.code(409).send({ error: 'proposal_input_changed', correlationId: request.id })
+    const service = supabaseClients.forService()
+    const claim = await service.rpc('claim_agent_action_proposal', {
+      target_organization_id: proposal.organizationId,
+      target_proposal_id: proposal.id,
+      target_owner_id: request.auth!.userId,
+    })
+    if (claim.error) return reply.code(409).send({ error: 'proposal_not_pending', correlationId: request.id })
+    const claimed = mapProposal(claim.data)
+    if (claimed.status === 'expired') return reply.code(410).send({ error: 'proposal_expired', correlationId: request.id })
+    try {
+      const event = await createClubEvent(service, request.auth!.userId, scope, eventInput)
+      const completed = await service.from('agent_action_proposals')
+        .update({ status: 'confirmed', confirmed_by: request.auth!.userId, confirmed_at: new Date().toISOString() })
+        .eq('id', proposal.id).eq('organization_id', proposal.organizationId).eq('status', 'executing')
+        .select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, status, expires_at, confirmed_at, created_at, updated_at')
+        .single()
+      if (completed.error) throw completed.error
+      await recordAuditEvent(request, {
+        organizationId: proposal.organizationId,
+        action: 'agent.action_proposal_confirmed',
+        entityType: 'agent_action_proposals',
+        entityId: proposal.id,
+        metadata: { toolName: proposal.toolName, resultId: event.id },
+      })
+      return reply.code(200).send({ proposal: mapProposal(completed.data), event })
+    } catch (error) {
+      const failed = await service.from('agent_action_proposals').update({ status: 'failed' })
+        .eq('id', proposal.id).eq('organization_id', proposal.organizationId).eq('status', 'executing')
+      if (failed.error) request.log.error({ err: failed.error, correlationId: request.id }, 'agent proposal failure state could not be saved')
+      throw error
+    }
   })
 
   app.post('/v1/agent/conversations/:id/messages', async (request, reply) => {
