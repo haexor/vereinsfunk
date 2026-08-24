@@ -520,3 +520,4 @@ export type PreviewCustomStyleProfileRequest = z.infer<typeof PreviewCustomStyle
 export type CreateCompositionSession = z.infer<typeof CreateCompositionSessionSchema>
 export type CreateGenerationCommand = z.infer<typeof CreateGenerationCommandSchema>
 export type TextGenerationPlatformAvailability = z.infer<typeof TextGenerationPlatformAvailabilitySchema>
+export type TextWorkshopDraftPayload = z.infer<typeof TextWorkshopDraftPayloadSchema>

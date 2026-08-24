@@ -34,6 +34,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { CLUB_EVENT_COLUMNS, FIXTURE_COLUMNS, mapClubEventRow, mapFixtureRow, mapTeamRow } from '../apiMappers.js'
 import { ensurePassThroughDerivative } from '../passThroughDerivative.js'
+import { saveTextWorkshopDraft } from '../services/textWorkshopDrafts.js'
 import type { ApiRouteContext } from './context.js'
 import { buildStyleProfilePromptPreview, checkRateLimit, createAuditRecorder, fetchMemberTrust, previewStyleProfile, resolveDirectoryScope, resolvePreviewIdempotencyKey, resolveScopedEffectiveConfig, resolveTextGenerationPlatformAvailability, resolveTextGenerationProviderConfigurationIds, toPermissionScope } from './shared.js'
 
@@ -602,19 +603,18 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
       if (hidden.error) throw hidden.error
       if (hidden.data) return reply.code(404).send({ error: 'draft_not_found', correlationId: request.id })
     }
-    const saved = await service.from('text_workshop_drafts').upsert({
-      id, organization_id: input.organizationId, department_id: input.departmentId, team_id: input.teamId ?? null,
-      payload: input.payload, created_by: request.auth!.userId,
-    }, { onConflict: 'id' }).select(TEXT_WORKSHOP_DRAFT_COLUMNS).single()
-    if (saved.error) throw saved.error
+    const saved = await saveTextWorkshopDraft(service, {
+      id, organizationId: input.organizationId, departmentId: input.departmentId, teamId: input.teamId ?? null,
+      actorUserId: request.auth!.userId, payload: input.payload,
+    })
     await recordAuditEvent(request, {
       organizationId: input.organizationId,
       action: 'text_workshop_draft.saved',
       entityType: 'text_workshop_drafts',
-      entityId: saved.data.id,
+      entityId: saved.id,
       metadata: { departmentId: input.departmentId, teamId: input.teamId ?? null },
     })
-    return reply.send({ draft: TextWorkshopDraftRowSchema.parse(saved.data), correlationId: request.id })
+    return reply.send({ draft: saved, correlationId: request.id })
   })
 
   app.get('/v1/text-workshop/drafts', async (request, reply) => {

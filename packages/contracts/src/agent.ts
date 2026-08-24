@@ -1,6 +1,7 @@
 import { z } from 'zod'
-import { UuidSchema } from './content.js'
+import { CommunicationGoalSchema, SourceMaterialSchema, SystemStyleProfileSlugSchema, UuidSchema } from './content.js'
 import { ClubEventCategorySchema } from './clubSchedule.js'
+import { SocialPlatformSchema } from './primitives.js'
 import { AssignableRoleSchema } from './structure.js'
 
 // Der Agent kennt immer einen expliziten Verein. Abteilung und Mannschaft schraenken den
@@ -59,16 +60,25 @@ export const AgentEventProposalInputSchema = z.object({
   }
 }).strict()
 
-export const AgentProposalToolNameSchema = z.enum(['create_event', 'create_invitation', 'request_approval'])
+export const AgentProposalToolNameSchema = z.enum(['create_event', 'create_invitation', 'request_approval', 'save_content_brief'])
 export const AgentInvitationProposalInputSchema = z.object({
   email: z.string().trim().toLowerCase().pipe(z.email()),
   role: AssignableRoleSchema,
 }).strict()
 export const AgentApprovalProposalInputSchema = z.object({ postVersionId: UuidSchema }).strict()
+export const AgentContentBriefProposalInputSchema = z.object({
+  communicationGoal: CommunicationGoalSchema,
+  sourceMaterial: SourceMaterialSchema,
+  systemStyleProfileSlug: SystemStyleProfileSlugSchema.default('klar_erklaerend'),
+  targetPlatforms: z.array(SocialPlatformSchema).min(1).max(SocialPlatformSchema.options.length).superRefine((platforms, context) => {
+    if (new Set(platforms).size !== platforms.length) context.addIssue({ code: 'custom', message: 'targetPlatforms must not contain duplicates' })
+  }),
+}).strict()
 export const CreateAgentActionProposalSchema = z.discriminatedUnion('toolName', [
   z.object({ toolName: z.literal('create_event'), input: AgentEventProposalInputSchema }),
   z.object({ toolName: z.literal('create_invitation'), input: AgentInvitationProposalInputSchema }),
   z.object({ toolName: z.literal('request_approval'), input: AgentApprovalProposalInputSchema }),
+  z.object({ toolName: z.literal('save_content_brief'), input: AgentContentBriefProposalInputSchema }),
 ])
 
 const AgentActionProposalBaseSchema = AgentScopeSchema.extend({
@@ -86,6 +96,7 @@ export const AgentActionProposalSchema = z.discriminatedUnion('toolName', [
   AgentActionProposalBaseSchema.extend({ toolName: z.literal('create_event'), input: AgentEventProposalInputSchema }),
   AgentActionProposalBaseSchema.extend({ toolName: z.literal('create_invitation'), input: AgentInvitationProposalInputSchema }),
   AgentActionProposalBaseSchema.extend({ toolName: z.literal('request_approval'), input: AgentApprovalProposalInputSchema }),
+  AgentActionProposalBaseSchema.extend({ toolName: z.literal('save_content_brief'), input: AgentContentBriefProposalInputSchema }),
 ])
 
 export const AgentPostSummarySchema = z.object({
@@ -136,6 +147,7 @@ export type AgentProposalStatus = z.infer<typeof AgentProposalStatusSchema>
 export type AgentEventProposalInput = z.infer<typeof AgentEventProposalInputSchema>
 export type AgentInvitationProposalInput = z.infer<typeof AgentInvitationProposalInputSchema>
 export type AgentApprovalProposalInput = z.infer<typeof AgentApprovalProposalInputSchema>
+export type AgentContentBriefProposalInput = z.infer<typeof AgentContentBriefProposalInputSchema>
 export type CreateAgentActionProposal = z.infer<typeof CreateAgentActionProposalSchema>
 export type AgentActionProposal = z.infer<typeof AgentActionProposalSchema>
 export type AgentPostSummary = z.infer<typeof AgentPostSummarySchema>

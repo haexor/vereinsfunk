@@ -153,12 +153,14 @@ async function actOnProposal(proposal: AgentActionProposal, action: 'confirm' | 
 function proposalTitle(proposal: AgentActionProposal) {
   if (proposal.toolName === 'create_event') return `Termin: ${proposal.input.title}`
   if (proposal.toolName === 'create_invitation') return `Einladung: ${proposal.input.email}`
+  if (proposal.toolName === 'save_content_brief') return 'Content-Brief speichern'
   return 'Freigabe anfordern'
 }
 
 function proposalDescription(proposal: AgentActionProposal) {
   if (proposal.toolName === 'create_event') return `Beginn: ${formatDate(proposal.input.startsAt)}`
   if (proposal.toolName === 'create_invitation') return `Rolle: ${proposal.input.role} · Der Versand startet erst nach deiner Bestätigung.`
+  if (proposal.toolName === 'save_content_brief') return `${Object.keys(proposal.input.sourceMaterial.facts).length} bestätigte Fakten · Textwerkstatt wird noch nicht gestartet.`
   return 'Die aktuelle Beitragsversion wird an die bestehende Freigaberoute übergeben.'
 }
 

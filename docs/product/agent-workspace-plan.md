@@ -315,7 +315,9 @@ Fortschritt am 24. August 2026: Das bestätigte Tool `request_approval` ist
 angebunden. Es akzeptiert ausschließlich eine aktuelle Beitragsversion aus dem
 Conversation-Scope, prüft Scope und `post.submit` beim Vorschlag und vor der
 Ausführung erneut und ruft die vorhandene `request_approval`-Fach-RPC auf.
-Der faktengebundene Brief und die Textwerkstatt-Session folgen als nächster Schritt.
+`save_content_brief` speichert ausschließlich bestätigte Fakten als Textwerkstatt-Entwurf
+über den gemeinsamen Draft-Use-Case. Die eigentliche Textwerkstatt-Session und ihr
+Worker-Auftrag bleiben ein separater, kostenpflichtiger Bestätigungsschritt.
 
 ### Paket D – Planung, Publishing und Pilot
 
