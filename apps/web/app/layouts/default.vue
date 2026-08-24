@@ -146,7 +146,7 @@ const navigation: { label: string; to: string; icon: typeof LayoutDashboard; bad
   { label: 'Kalender', to: '/kalender', icon: CalendarDays },
   { label: 'Auswertung', to: '/auswertung', icon: BarChart3 },
 ]
-const organizationNav = [
+const organizationNav: { label: string; to: string; icon: typeof LayoutDashboard; organizationOnly?: boolean }[] = [
   { label: 'Marke', to: '/marke', icon: Palette },
   { label: 'Bildstil', to: '/bildstil', icon: Frame },
   { label: 'Bildkomposition', to: '/bildkomposition', icon: LayoutGrid },
@@ -159,10 +159,22 @@ const organizationNav = [
   { label: 'Kanäle', to: '/kanaele', icon: Share2 },
   { label: 'Integrationen', to: '/integrationen', icon: Plug },
   { label: 'Einstellungen', to: '/einstellungen', icon: Settings },
-  { label: 'Tarif', to: '/einstellungen/tarif', icon: CreditCard },
-  { label: 'Recht & Datenschutz', to: '/einstellungen/recht', icon: Scale },
-  { label: 'Betroffenenanfragen', to: '/datenschutz/anfragen', icon: UserSearch },
+  { label: 'Tarif', to: '/einstellungen/tarif', icon: CreditCard, organizationOnly: true },
+  { label: 'Recht & Datenschutz', to: '/einstellungen/recht', icon: Scale, organizationOnly: true },
+  { label: 'Betroffenenanfragen', to: '/datenschutz/anfragen', icon: UserSearch, organizationOnly: true },
 ]
+const visibleOrganizationNav = computed(() => organizationNav.filter((item) => !item.organizationOnly || !scope.value?.departmentId))
+const organizationOnlyRoutes = new Set(organizationNav.filter((item) => item.organizationOnly).map((item) => item.to))
+
+// Vereinsweite Vertrags- und Datenschutzthemen dürfen nicht im Arbeitsbereich einer
+// Abteilung offen bleiben, auch nicht über einen alten Tab oder einen Direktlink.
+watch(
+  () => [scope.value?.departmentId, route.path] as const,
+  ([departmentId, path]) => {
+    if (departmentId && organizationOnlyRoutes.has(path)) void navigateTo('/')
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -240,7 +252,7 @@ const organizationNav = [
 
       <div class="mb-2 mt-7 px-3 text-[10px] font-bold uppercase tracking-[.14em]" :class="sidebarClasses.quiet">Verein verwalten</div>
       <nav class="space-y-1" aria-label="Vereinsverwaltung">
-        <NuxtLink v-for="item in organizationNav" :key="item.to" :to="item.to" class="focus-ring flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition" :class="sidebarClasses.nav" :active-class="sidebarClasses.activeNav">
+        <NuxtLink v-for="item in visibleOrganizationNav" :key="item.to" :to="item.to" class="focus-ring flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition" :class="sidebarClasses.nav" :active-class="sidebarClasses.activeNav">
           <component :is="item.icon" :size="17" />{{ item.label }}
         </NuxtLink>
       </nav>

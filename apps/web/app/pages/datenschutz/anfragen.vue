@@ -16,9 +16,9 @@ import {
 // Paket 020: Betroffenenanfragen (Auskunft, Löschung, Berichtigung, Widerspruch,
 // Datenübertragbarkeit) -- Frist wird serverseitig aus receivedAt berechnet, hier nur angezeigt.
 const config = useRuntimeConfig()
-const scope = await useScope()
-const organizationId = computed(() => scope.value?.organizationId ?? null)
-const canManage = computed(() => useCan('organization.manage', { organizationId: organizationId.value ?? '' }))
+const { organizationId, level: activeScopeLevel } = await useActiveScope()
+const isOrganizationScope = computed(() => activeScopeLevel.value === 'organization')
+const canManage = computed(() => isOrganizationScope.value && useCan('organization.manage', { organizationId: organizationId.value ?? '' }))
 
 const loading = ref(true)
 const errorMessage = ref('')
@@ -44,7 +44,7 @@ async function load() {
   }
 }
 await load()
-watch(organizationId, () => { void load() })
+watch([organizationId, isOrganizationScope], () => { void load() })
 
 function personLabel(personId: string | null): string {
   if (!personId) return ''

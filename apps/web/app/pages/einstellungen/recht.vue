@@ -18,9 +18,9 @@ import {
 // Verweis, Verarbeitungsdokumentation, Auftragsverarbeiter und der manipulationssichere
 // Audit-Trail auf einer Seite, analog zur Struktur von einstellungen/index.vue.
 const api = useApiClient()
-const scope = await useScope()
-const organizationId = computed(() => scope.value?.organizationId ?? null)
-const canManage = computed(() => useCan('organization.manage', { organizationId: organizationId.value ?? '' }))
+const { organizationId, level: activeScopeLevel } = await useActiveScope()
+const isOrganizationScope = computed(() => activeScopeLevel.value === 'organization')
+const canManage = computed(() => isOrganizationScope.value && useCan('organization.manage', { organizationId: organizationId.value ?? '' }))
 
 const loading = ref(true)
 const errorMessage = ref('')
@@ -56,7 +56,7 @@ async function load() {
   }
 }
 await load()
-watch(organizationId, () => { void load() })
+watch([organizationId, isOrganizationScope], () => { void load() })
 
 function formatDate(value: string | null): string {
   return value ? new Date(value).toLocaleDateString('de-DE') : 'nicht angegeben'
