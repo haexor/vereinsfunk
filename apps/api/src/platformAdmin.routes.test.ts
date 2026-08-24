@@ -117,6 +117,54 @@ describe('platform administration', () => {
     expect(response.json()).toMatchObject({ error: 'invalid_request' })
   })
 
+  it('only stores an active OpenAI text provider with a secret for the agent', async () => {
+    let updateValue: unknown
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({ from: (table: string) => {
+        if (table === 'llm_provider_configurations') return chain({ data: { id: '10000000-5000-4000-8000-000000000001' }, error: null })
+        if (table === 'llm_provider_secrets') return chain({ data: { llm_provider_configuration_id: '10000000-5000-4000-8000-000000000001' }, error: null })
+        if (table === 'platform_settings') {
+          return {
+            update: (payload: { value: unknown }) => {
+              updateValue = payload.value
+              return { eq: () => ({ select: () => ({ single: async () => ({ data: { key: 'agent_llm_provider_configuration_id', value: payload.value, updated_at: '2026-08-24T10:00:00+00:00' }, error: null }) }) }) }
+            },
+          }
+        }
+        throw new Error(`unexpected table in agent LLM setting test: ${table}`)
+      } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/v1/platform-settings/agent_llm_provider_configuration_id',
+      headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+      payload: { value: '10000000-5000-4000-8000-000000000001' },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(updateValue).toBe('10000000-5000-4000-8000-000000000001')
+  })
+
+  it('rejects an agent LLM selection without a usable provider configuration', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({ from: (table: string) => {
+        if (table === 'llm_provider_configurations') return chain({ data: null, error: null })
+        throw new Error(`unexpected table in unusable agent LLM setting test: ${table}`)
+      } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/v1/platform-settings/agent_llm_provider_configuration_id',
+      headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+      payload: { value: '10000000-5000-4000-8000-000000000001' },
+    })
+    expect(response.statusCode).toBe(422)
+    expect(response.json()).toMatchObject({ error: 'agent_llm_provider_not_configured' })
+  })
+
   it('does not let the UI enable publishing when this deployment has no live provider', async () => {
     const clients: SupabaseClientFactory = {
       forUser: () => ({}) as unknown as SupabaseClient,

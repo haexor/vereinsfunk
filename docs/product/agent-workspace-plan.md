@@ -1,10 +1,11 @@
 # Plan: Dialogischer Vereinsagent und Agenten-Arbeitsplatz
 
 Stand: 24. August 2026
-Status: Pakete A–C umgesetzt (Arbeitsbereich, bestätigte Organisations- und Content-Aktionen); Paket D ausstehend
+Status: Pakete A–C umgesetzt; Paket D enthält die bestätigte Planung, während direkte
+Veröffentlichung, Reconciliation und Pilot weiterhin ausstehen.
 
 Die konkrete Übergabe mit geprüftem Stand und dem nächsten Umsetzungsschritt steht
-in [Agenten-Arbeitsplatz: Übergabe nach Paket A](agent-workspace-handoff.md).
+in [Agenten-Arbeitsplatz: aktuelle Übergabe](agent-workspace-handoff.md).
 
 ## 1. Produktziel und Grenzen
 
@@ -228,6 +229,12 @@ editierbar. Er instruiert über Faktenbindung, Rückfragen, Scope, das Verbot
 autonomer Mutationen und die korrekte Nutzung der Tools. Prompt-Version und
 Modellkonfiguration werden pro Tool-Run als nicht geheime Provenienz gespeichert.
 
+Die Plattformadministration kann die konkrete aktive OpenAI-kompatible
+Text-Provider-Konfiguration für den Agenten wählen. Die Auswahl referenziert nur
+eine bestehende Konfiguration; Base-URL, Modell und verschlüsseltes Secret werden
+ausschließlich serverseitig aufgelöst. Fehlt die Auswahl oder wird sie später
+deaktiviert, bleibt der sichere Deployment-Fallback aktiv.
+
 ## 8. Berechtigungen, Sicherheit und Betrieb
 
 - Jede Tool-Ausführung autorisiert erneut über die bestehenden Permission-Checks;
@@ -328,6 +335,14 @@ Aktionsresultate tragen strukturierte Referenzen und verlinken zur Textwerkstatt
 die bestehende Freigabeaktion schließt den Chatpfad bis zur Freigabe ab.
 
 ### Paket D – Planung, Publishing und Pilot
+
+**Stand 24. August 2026:** Schritt 1 und 2 sind umgesetzt. Der Workspace liefert
+freigegebene aktuelle Versionen; `schedule_publication` wählt exakt einen erlaubten
+Instagram- oder Facebook-Kanal, erzeugt einen bestätigungspflichtigen Vorschlag
+und ruft nach Re-Autorisierung die bestehende, idempotente Scheduling-RPC auf.
+Die Agenten-UI zeigt den geplanten Zeitpunkt und macht klar, dass das noch keine
+direkte externe Veröffentlichung ist. Direkte Veröffentlichung, Reconciliation
+und Pilot-Evals bleiben offen.
 
 1. Freigegebene aktuelle Versionen und Zielkanäle ermitteln.
 2. Scheduling als bestätigter Vorschlag mit Zeitzonen- und Plattformprüfung.

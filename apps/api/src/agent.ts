@@ -1,4 +1,5 @@
 import { CreateAgentActionProposalSchema, type AgentMessage, type AgentWorkspace, type CreateAgentActionProposal } from '@vereinsfunk/contracts'
+import { createGuardedFetch } from '@vereinsfunk/outbound-fetch'
 import { z } from 'zod'
 
 export interface AgentResponse {
@@ -159,11 +160,18 @@ function normalizeSourceMaterialFacts(argumentsValue: unknown): unknown {
  */
 export class OpenAiResponsesAgentResponder implements AgentResponder {
   constructor(
-    private readonly options: { apiKey: string; model: string; fetcher?: FetchLike },
+    private readonly options: { apiKey: string; model: string; baseUrl?: string; fetcher?: FetchLike },
   ) {}
 
   async respond(input: { messages: readonly Pick<AgentMessage, 'role' | 'content'>[]; workspace: AgentWorkspace; userId: string }): Promise<AgentResponse> {
-    const response = await (this.options.fetcher ?? fetch)('https://api.openai.com/v1/responses', {
+    const baseUrl = this.options.baseUrl ?? 'https://api.openai.com/v1'
+    const endpoint = new URL(baseUrl)
+    endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/responses`
+    // Eine in der Plattform verwaltete Basis-URL ist konfigurierbar und muss deshalb vor jedem
+    // Aufruf gegen private Ziele und Redirects geschützt werden. Der eingebaute OpenAI-Endpunkt
+    // ist dagegen fest verdrahtet; Test-Fetcher haben weiterhin Vorrang.
+    const fetcher = this.options.fetcher ?? (this.options.baseUrl ? createGuardedFetch() : fetch)
+    const response = await fetcher(endpoint.toString(), {
       method: 'POST',
       headers: { authorization: `Bearer ${this.options.apiKey}`, 'content-type': 'application/json' },
       signal: AbortSignal.timeout(30_000),

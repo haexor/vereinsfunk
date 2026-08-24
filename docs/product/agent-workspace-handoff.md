@@ -1,12 +1,13 @@
-# Übergabe: Agenten-Arbeitsplatz – nach Paket C
+# Übergabe: Agenten-Arbeitsplatz – nach Agenten-LLM-Konfiguration
 
 Stand: 24. August 2026
 
-Branch-Ziel: `codex/agent-workspace-package-c`
+Branch-Ziel: `codex/agent-runtime-configuration`
 
 ## Erledigter Umfang
 
-Pakete A–C des [Agenten-Arbeitsplatz-Plans](agent-workspace-plan.md) sind umgesetzt:
+Pakete A–C des [Agenten-Arbeitsplatz-Plans](agent-workspace-plan.md) sowie die
+bestätigte Scheduling-Teilstufe von Paket D sind umgesetzt:
 
 - Private, mandantenisolierte Conversations und Messages mit RLS, Retention und
   positiven wie negativen pgTAP-Tests.
@@ -45,37 +46,40 @@ Pakete A–C des [Agenten-Arbeitsplatz-Plans](agent-workspace-plan.md) sind umge
 - Resultatreferenzen auf Proposals und Tool-Runs, damit bestätigte Content-Aktionen
   zur passenden Textwerkstatt-Sitzung oder zum Draft zurückführen.
 
+- `schedule_publication` plant ausschließlich eine aktuelle, freigegebene
+  Post-Version auf genau einem erlaubten Instagram- oder Facebook-Kanal. Die
+  vorhandene idempotente Scheduling-RPC bleibt die fachliche Ausführungsgrenze.
+- Die Plattformadministration kann unter „Einstellungen“ eine aktive,
+  OpenAI-kompatible Text-Provider-Konfiguration für den Agenten auswählen. Modell,
+  Base-URL und verschlüsseltes Secret werden pro Nachricht ausschließlich auf dem
+  Server aufgelöst; ohne Auswahl bleibt der Deployment-Fallback erhalten.
+- Die Textkandidaten-Kachel ist vom Kern-Workspace entkoppelt: ein Fehler in ihrer
+  optionalen Abfrage verhindert nicht mehr, dass `/assistent` geladen wird.
+
 Die Nachrichtenroute liefert weiterhin eine vollständige Antwort statt SSE-Streaming.
 
 ## Verifizierter Stand
 
 Erfolgreich ausgeführt:
 
-- `pnpm --filter @vereinsfunk/contracts typecheck`
 - `pnpm --filter @vereinsfunk/api typecheck`
 - `pnpm --filter @vereinsfunk/web typecheck`
-- `pnpm --filter @vereinsfunk/contracts test` (116 Tests)
-- `pnpm --filter @vereinsfunk/api test` (536 Tests)
+- `pnpm --filter @vereinsfunk/contracts test -- platformAdmin.test.ts` (116 Tests)
+- `pnpm --filter @vereinsfunk/api test -- agent.test.ts agent.routes.test.ts platformAdmin.routes.test.ts` (547 Tests)
 - `pnpm lint`
-- `pnpm --filter @vereinsfunk/api build`
-- `pnpm --filter @vereinsfunk/web build`
-- `pnpm exec supabase migration up --local`
-- `pnpm exec supabase test db supabase/tests/agent_workspace.test.sql` (36 pgTAP-Tests)
+- `pnpm build`
 
-`pnpm db:test` erreicht den neuen Agenten-Test erfolgreich, endet aber weiterhin
-mit acht bereits vor dieser Änderung auftretenden Fehlern in
-`supabase/tests/platform_administration.test.sql`. Diese betreffen den lokalen
-Bootstrap-Plattform-Admin-Testzustand, nicht die Agenten-Migration.
+Die neue Migration fügt ausschließlich einen deny-all-RLS-geschützten,
+service-role-gelesenen Schlüssel in `platform_settings` ein; sie benötigt keine
+neue Tabelle oder Policy.
 
-## Nächster Umsetzungsschritt: Paket D
+## Nächster Umsetzungsschritt: Paket D abschließen
 
-1. Freigegebene aktuelle Versionen und berechtigte Zielkanäle im Workspace
-   ermitteln.
-2. Scheduling und Publishing als getrennte bestätigte Agentenaktionen an die
-   bestehende Outbox-/Hatchet-/Publisher-Kette anbinden.
-3. Reconciliation, Provider-Fehler und Zustandsänderungen als sichere
+1. Direkte Veröffentlichung als von Scheduling getrennte, final bestätigte Aktion
+   an die bestehende Outbox-/Hatchet-/Publisher-Kette anbinden.
+2. Reconciliation, Provider-Fehler und Zustandsänderungen als sichere
    Fortschrittsmeldungen in die Conversation zurückspielen.
-4. Vor einem Pilot Evals für Toolwahl, Scope-Wechsel, gestoppte Freigaben und
+3. Vor einem Pilot Evals für Toolwahl, Scope-Wechsel, gestoppte Freigaben und
    Wiederholungen ergänzen.
 
 ## Bewusst später

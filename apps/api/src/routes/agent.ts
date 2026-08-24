@@ -186,21 +186,10 @@ async function loadWorkspace(
     .order('deadline_at', { ascending: true })
     .limit(20)
 
-  let candidateSessionsQuery = client
-    .from('composition_sessions')
-    .select('id, department_id, team_id')
-    .eq('organization_id', scope.organizationId)
-    .eq('status', 'candidate_ready')
-    .order('created_at', { ascending: false })
-    .limit(20)
-  if (scope.departmentId) candidateSessionsQuery = candidateSessionsQuery.eq('department_id', scope.departmentId)
-  if (scope.teamId) candidateSessionsQuery = candidateSessionsQuery.eq('team_id', scope.teamId)
-
-  const [postsResult, eventsResult, approvalStagesResult, candidateSessionsResult] = await Promise.all([postsQuery, eventsQuery, approvalsQuery, candidateSessionsQuery])
+  const [postsResult, eventsResult, approvalStagesResult] = await Promise.all([postsQuery, eventsQuery, approvalsQuery])
   if (postsResult.error) throw postsResult.error
   if (eventsResult.error) throw eventsResult.error
   if (approvalStagesResult.error) throw approvalStagesResult.error
-  if (candidateSessionsResult.error) throw candidateSessionsResult.error
 
   const posts = postsResult.data ?? []
   const currentVersionIds = posts.map((row) => row.current_version_id as string | null).filter((id): id is string => id !== null)
@@ -234,18 +223,37 @@ async function loadWorkspace(
     : await client.from('post_versions').select('id, title').in('id', approvalVersionIds)
   if (approvalVersionsResult.error) throw approvalVersionsResult.error
   const approvalTitleByVersionId = new Map((approvalVersionsResult.data ?? []).map((row) => [row.id as string, row.title as string]))
-  const candidateSessions = candidateSessionsResult.data ?? []
-  const candidateSessionById = new Map(candidateSessions.map((row) => [row.id as string, row]))
-  const candidatesResult = candidateSessions.length === 0
-    ? { data: [], error: null }
-    : await client.from('generation_candidates').select('id, composition_session_id, generated_content').in('composition_session_id', candidateSessions.map((row) => row.id as string)).eq('status', 'ready').order('created_at', { ascending: false }).limit(20)
-  if (candidatesResult.error) throw candidatesResult.error
-  const readyTextCandidates = (candidatesResult.data ?? []).flatMap((row) => {
-    const session = candidateSessionById.get(row.composition_session_id as string)
-    const content = z.object({ headline: z.string() }).nullable().safeParse(row.generated_content)
-    if (!session || !content.success || content.data === null) return []
-    return [{ id: row.id as string, sessionId: row.composition_session_id as string, departmentId: session.department_id as string, teamId: session.team_id as string | null, headline: content.data.headline.slice(0, 200) }]
-  })
+  // Textkandidaten sind eine ergänzende Kachel. Ein unvollständiges Upgrade oder ein einzelner
+  // fehlerhafter Datensatz darf nie den gesamten Chat-Arbeitsplatz blockieren (die drei
+  // Kernübersichten oben bleiben dabei weiterhin strikt fehlerhaft, statt Daten zu verstecken).
+  let readyTextCandidates: AgentWorkspace['readyTextCandidates'] = []
+  try {
+    let candidateSessionsQuery = client
+      .from('composition_sessions')
+      .select('id, department_id, team_id')
+      .eq('organization_id', scope.organizationId)
+      .eq('status', 'candidate_ready')
+      .order('created_at', { ascending: false })
+      .limit(20)
+    if (scope.departmentId) candidateSessionsQuery = candidateSessionsQuery.eq('department_id', scope.departmentId)
+    if (scope.teamId) candidateSessionsQuery = candidateSessionsQuery.eq('team_id', scope.teamId)
+    const candidateSessionsResult = await candidateSessionsQuery
+    if (candidateSessionsResult.error) throw candidateSessionsResult.error
+    const candidateSessions = candidateSessionsResult.data ?? []
+    const candidateSessionById = new Map(candidateSessions.map((row) => [row.id as string, row]))
+    const candidatesResult = candidateSessions.length === 0
+      ? { data: [], error: null }
+      : await client.from('generation_candidates').select('id, composition_session_id, generated_content').in('composition_session_id', candidateSessions.map((row) => row.id as string)).eq('status', 'ready').order('created_at', { ascending: false }).limit(20)
+    if (candidatesResult.error) throw candidatesResult.error
+    readyTextCandidates = (candidatesResult.data ?? []).flatMap((row) => {
+      const session = candidateSessionById.get(row.composition_session_id as string)
+      const content = z.object({ headline: z.string() }).nullable().safeParse(row.generated_content)
+      if (!session || !content.success || content.data === null) return []
+      return [{ id: row.id as string, sessionId: row.composition_session_id as string, departmentId: session.department_id as string, teamId: session.team_id as string | null, headline: content.data.headline.slice(0, 200) }]
+    })
+  } catch {
+    readyTextCandidates = []
+  }
   const now = Date.now()
 
   return AgentWorkspaceSchema.parse({

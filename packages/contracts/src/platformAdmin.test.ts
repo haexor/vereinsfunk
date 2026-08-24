@@ -18,6 +18,10 @@ describe('platform administration contracts', () => {
     expect(PlatformSettingKeySchema.safeParse('publishing_enabled').success).toBe(true)
     expect(PlatformSettingValueSchemas.publishing_enabled.safeParse(true).success).toBe(true)
     expect(PlatformSettingValueSchemas.publishing_enabled.safeParse('true').success).toBe(false)
+    expect(PlatformSettingKeySchema.safeParse('agent_llm_provider_configuration_id').success).toBe(true)
+    expect(PlatformSettingValueSchemas.agent_llm_provider_configuration_id.safeParse('10000000-0000-4000-8000-000000000001').success).toBe(true)
+    expect(PlatformSettingValueSchemas.agent_llm_provider_configuration_id.safeParse(null).success).toBe(true)
+    expect(PlatformSettingValueSchemas.agent_llm_provider_configuration_id.safeParse('not-a-uuid').success).toBe(false)
   })
 
   // Paket 050: die Ensemble-Groesse ist kein separater platform_settings-Schluessel mehr -- alle
@@ -34,6 +38,7 @@ describe('platform administration contracts', () => {
     expect(PlatformAdminSchema.safeParse({ userId: org, isDefaultAdmin: true, createdAt: offsetTimestamp }).success).toBe(true)
     expect(PlatformSettingSchema.safeParse({ key: 'max_organizations_per_owner', value: 3, updatedAt: offsetTimestamp }).success).toBe(true)
     expect(PlatformSettingSchema.safeParse({ key: 'publishing_enabled', value: false, updatedAt: offsetTimestamp }).success).toBe(true)
+    expect(PlatformSettingSchema.safeParse({ key: 'agent_llm_provider_configuration_id', value: null, updatedAt: offsetTimestamp }).success).toBe(true)
     expect(
       PlatformAdminOrganizationSummarySchema.safeParse({
         organizationId: org,
