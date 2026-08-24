@@ -118,6 +118,68 @@ function ensembleProviderFakeFrom(table: string, providerIds: string[] = [PROVID
   return null
 }
 
+describe('DELETE /v1/posts/:id', () => {
+  const TARGET_POST_ID = '3d000000-0000-4000-8000-000000000001'
+
+  it('deletes a deletable draft for a member with post.edit in scope', async () => {
+    let rpcArgs: Record<string, unknown> | undefined
+    const auditRows: Record<string, unknown>[] = []
+    const scopes: PermissionScope[] = []
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ from: (table: string) => {
+        if (table !== 'posts') throw new Error(`unexpected user table: ${table}`)
+        return chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: null, status: 'draft_ready' }, error: null })
+      } }) as unknown as SupabaseClient,
+      forService: () => ({
+        rpc: async (name: string, args: Record<string, unknown>) => { rpcArgs = { name, ...args }; return { data: TARGET_POST_ID, error: null } },
+        from: (table: string) => {
+          if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { auditRows.push(row); return { error: null } } }
+          throw new Error(`unexpected service table: ${table}`)
+        },
+      }) as unknown as SupabaseClient,
+    }
+    const scopeCapturingRoleProvider: RoleProvider = { async rolesForScope(_auth, scope) { scopes.push(scope); return ['editor'] } }
+    const app = await startApp({ roleProvider: scopeCapturingRoleProvider, supabaseClients: clients })
+    const response = await app.inject({ method: 'DELETE', url: `/v1/posts/${TARGET_POST_ID}`, headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` } })
+    expect(response.statusCode).toBe(204)
+    expect(scopes[0]).toEqual({ organizationId: ORGANIZATION_ID, departmentId: DEPARTMENT_ID })
+    expect(rpcArgs).toEqual({ name: 'delete_post_if_deletable', target_post_id: TARGET_POST_ID })
+    expect(auditRows).toEqual([expect.objectContaining({ action: 'post.deleted', entity_id: TARGET_POST_ID, metadata: {} })])
+  })
+
+  it('returns 404 for an unknown post', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ from: () => chain({ data: null, error: null }) }) as unknown as SupabaseClient,
+      forService: () => { throw new Error('forService should not be called when the post is not found') },
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const response = await app.inject({ method: 'DELETE', url: `/v1/posts/${TARGET_POST_ID}`, headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` } })
+    expect(response.statusCode).toBe(404)
+    expect(response.json()).toMatchObject({ error: 'post_not_found' })
+  })
+
+  it('rejects a member without post.edit in the post\'s scope', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ from: () => chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: null, status: 'draft' }, error: null }) }) as unknown as SupabaseClient,
+      forService: () => { throw new Error('forService should not be called when permission is denied') },
+    }
+    const app = await startApp({ roleProvider: denyingRoleProvider, supabaseClients: clients })
+    const response = await app.inject({ method: 'DELETE', url: `/v1/posts/${TARGET_POST_ID}`, headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` } })
+    expect(response.statusCode).toBe(403)
+  })
+
+  it('returns 409 when the post already left the deletable draft states', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ from: () => chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: null, status: 'awaiting_approval' }, error: null }) }) as unknown as SupabaseClient,
+      forService: () => ({ rpc: async () => ({ data: null, error: { message: 'post_not_deletable: awaiting_approval' } }) }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const response = await app.inject({ method: 'DELETE', url: `/v1/posts/${TARGET_POST_ID}`, headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` } })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'post_not_deletable' })
+  })
+})
+
 describe('GET /v1/content-style-profiles', () => {
   it('merges hardcoded system modes, platform personas, and custom club profiles with the correct kind', async () => {
     const clients: SupabaseClientFactory = {
@@ -1149,6 +1211,67 @@ describe('text workshop drafts', () => {
     expect(filters).toEqual(expect.arrayContaining([
       ['eq', 'id', DRAFT_ID], ['eq', 'organization_id', ORGANIZATION_ID], ['eq', 'department_id', DEPARTMENT_ID], ['is', 'team_id', null], ['eq', 'created_by', USER_ID],
     ]))
+  })
+})
+
+describe('DELETE /v1/text-workshop/drafts/:id', () => {
+  const TARGET_DRAFT_ID = '3f000000-0000-4000-8000-000000000006'
+
+  it('deletes an own draft', async () => {
+    let deletedId: string | undefined
+    const auditRows: Record<string, unknown>[] = []
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ from: (table: string) => {
+        if (table !== 'text_workshop_drafts') throw new Error(`unexpected user table: ${table}`)
+        return chain({ data: { id: TARGET_DRAFT_ID, organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: null }, error: null })
+      } }) as unknown as SupabaseClient,
+      forService: () => ({ from: (table: string) => {
+        if (table === 'text_workshop_drafts') return { delete: () => ({ eq: (_field: string, value: string) => { deletedId = value; return { select: async () => ({ data: [{ id: value }], error: null }) } } }) }
+        if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { auditRows.push(row); return { error: null } } }
+        throw new Error(`unexpected service table: ${table}`)
+      } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const response = await app.inject({ method: 'DELETE', url: `/v1/text-workshop/drafts/${TARGET_DRAFT_ID}`, headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` } })
+    expect(response.statusCode).toBe(204)
+    expect(deletedId).toBe(TARGET_DRAFT_ID)
+    expect(auditRows).toEqual([expect.objectContaining({ action: 'text_workshop_draft.deleted', entity_id: TARGET_DRAFT_ID })])
+  })
+
+  // text_workshop_drafts_select_own zeigt ausschliesslich eigene Entwuerfe -- ein fremder Entwurf
+  // sieht fuer den Nutzer-Client wie "nicht gefunden" aus, ganz ohne eigenen Eigentuemer-Check.
+  it('returns 404 for a draft owned by someone else (hidden by RLS)', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ from: () => chain({ data: null, error: null }) }) as unknown as SupabaseClient,
+      forService: () => { throw new Error('forService should not be called when the draft is not visible') },
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const response = await app.inject({ method: 'DELETE', url: `/v1/text-workshop/drafts/${TARGET_DRAFT_ID}`, headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` } })
+    expect(response.statusCode).toBe(404)
+    expect(response.json()).toMatchObject({ error: 'draft_not_found' })
+  })
+
+  // Review-Fund PR #161: ein zeitgleicher zweiter Delete-Aufruf trifft auf der Service-Rolle keine
+  // Zeile mehr an -- ohne die .select('id')-Pruefung waere das faelschlich als 204 samt Audit-Eintrag
+  // durchgegangen, obwohl gar keine Loeschung stattfand.
+  it('returns 404 without an audit event when the draft was already deleted concurrently', async () => {
+    const auditRows: Record<string, unknown>[] = []
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ from: (table: string) => {
+        if (table !== 'text_workshop_drafts') throw new Error(`unexpected user table: ${table}`)
+        return chain({ data: { id: TARGET_DRAFT_ID, organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: null }, error: null })
+      } }) as unknown as SupabaseClient,
+      forService: () => ({ from: (table: string) => {
+        if (table === 'text_workshop_drafts') return { delete: () => ({ eq: () => ({ select: async () => ({ data: [], error: null }) }) }) }
+        if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { auditRows.push(row); return { error: null } } }
+        throw new Error(`unexpected service table: ${table}`)
+      } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const response = await app.inject({ method: 'DELETE', url: `/v1/text-workshop/drafts/${TARGET_DRAFT_ID}`, headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` } })
+    expect(response.statusCode).toBe(404)
+    expect(response.json()).toMatchObject({ error: 'draft_not_found' })
+    expect(auditRows).toEqual([])
   })
 })
 

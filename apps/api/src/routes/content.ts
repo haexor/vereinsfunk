@@ -43,6 +43,7 @@ import { buildStyleProfilePromptPreview, checkRateLimit, createAuditRecorder, fe
 const CUSTOM_STYLE_PROFILE_COLUMNS = 'id, organization_id, department_id, team_id, slug, name, description, style_rules, avoid_rules, do_rules, is_active, created_by, created_at, updated_at'
 const SessionAttachmentSchema = z.object({ media_asset_id: UuidSchema })
 const CompletionAssetScopeSchema = z.object({ organization_id: UuidSchema, department_id: UuidSchema })
+const DeletableScopeSchema = z.object({ organization_id: UuidSchema, department_id: UuidSchema, team_id: UuidSchema.nullable() })
 
 function parseSupabaseData<T>(schema: z.ZodType<T>, data: unknown): T {
   const parsed = schema.safeParse(data)
@@ -291,6 +292,32 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     return reply.code(202).send({ ...accepted, preview: generated })
   })
 
+  // /beitraege zeigte Entwuerfe bisher nur an -- es gab keinen Weg, einen verworfenen wieder
+  // loszuwerden. Loeschbar bleibt nur, was noch keine Freigabeanfrage durchlaufen hat; die
+  // eigentliche Statuspruefung sitzt atomar (SELECT ... FOR UPDATE) in delete_post_if_deletable
+  // (Migration 2026082408), damit ein zeitgleiches Einreichen zur Freigabe nicht verloren geht.
+  app.delete('/v1/posts/:id', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const existing = await client.from('posts').select('organization_id, department_id, team_id').eq('id', params.id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return reply.code(404).send({ error: 'post_not_found', correlationId: request.id })
+    const existingScope = parseSupabaseData(DeletableScopeSchema, existing.data)
+    if (!(await requirePermission(request, reply, 'post.edit', toPermissionScope(existingScope.organization_id, existingScope.department_id, existingScope.team_id)))) return
+    const service = supabaseClients.forService()
+    const deletion = await service.rpc('delete_post_if_deletable', { target_post_id: params.id })
+    if (deletion.error) {
+      if (deletion.error.message.includes('post_not_deletable')) return reply.code(409).send({ error: 'post_not_deletable', correlationId: request.id })
+      throw deletion.error
+    }
+    if (!deletion.data) return reply.code(404).send({ error: 'post_not_found', correlationId: request.id })
+    await recordAuditEvent(request, {
+      organizationId: existingScope.organization_id, action: 'post.deleted', entityType: 'posts', entityId: params.id,
+    })
+    return reply.code(204).send()
+  })
+
   const TextWorkshopScopeSchema = z.object({ organizationId: UuidSchema, departmentId: UuidSchema, teamId: UuidSchema.nullable().optional() })
 
   app.get('/v1/content-style-profiles', async (request, reply) => {
@@ -489,6 +516,30 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
       metadata: { departmentId: input.departmentId, teamId: input.teamId ?? null },
     })
     return reply.send({ draft: saved, correlationId: request.id })
+  })
+
+  app.delete('/v1/text-workshop/drafts/:id', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const id = z.object({ id: UuidSchema }).parse(request.params).id
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    // text_workshop_drafts_select_own zeigt ausschliesslich eigene Entwuerfe -- ein fremder Entwurf
+    // liefert hier bereits "nicht gefunden", ganz ohne eigenen Eigentuemer-Check.
+    const existing = await client.from('text_workshop_drafts').select('id, organization_id, department_id, team_id').eq('id', id).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) return reply.code(404).send({ error: 'draft_not_found', correlationId: request.id })
+    const existingScope = parseSupabaseData(DeletableScopeSchema, existing.data)
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(existingScope.organization_id, existingScope.department_id, existingScope.team_id)))) return
+    const service = supabaseClients.forService()
+    const del = await service.from('text_workshop_drafts').delete().eq('id', id).select('id')
+    if (del.error) throw del.error
+    // Ein zeitgleicher zweiter Delete-Aufruf derselben Entwurf-ID darf kein Audit-Ereignis fuer eine
+    // Loeschung schreiben, die gar nicht stattgefunden hat (Review-Fund PR #161).
+    if (del.data.length === 0) return reply.code(404).send({ error: 'draft_not_found', correlationId: request.id })
+    await recordAuditEvent(request, {
+      organizationId: existingScope.organization_id, action: 'text_workshop_draft.deleted', entityType: 'text_workshop_drafts', entityId: id,
+      metadata: { departmentId: existingScope.department_id, teamId: existingScope.team_id },
+    })
+    return reply.code(204).send()
   })
 
   app.get('/v1/text-workshop/drafts', async (request, reply) => {
