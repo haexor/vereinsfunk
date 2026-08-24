@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(26);
+select plan(31);
 
 set local role postgres;
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -107,6 +107,50 @@ select throws_ok(
   $$insert into public.agent_conversations (organization_id, team_id, created_by, retention_expires_at)
     values ('68000000-1000-4000-8000-000000000001', '68000000-1100-4000-8000-000000000001', '68000000-0000-4000-8000-000000000001', now() + interval '90 days')$$,
   '23514', null, 'team scope requires a department'
+);
+
+insert into public.agent_action_proposals (
+  id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot,
+  input_hash, risk_class, expires_at, created_at
+) values
+  ('68000000-9100-4000-8000-000000000003', '68000000-1000-4000-8000-000000000001', '68000000-9000-4000-8000-000000000001', '68000000-0000-4000-8000-000000000001', 'create_event',
+   '{"organizationId":"68000000-1000-4000-8000-000000000001"}', '{"title":"Atomarer Termin"}', repeat('c', 64), 'write', now() + interval '15 minutes', now()),
+  ('68000000-9100-4000-8000-000000000004', '68000000-1000-4000-8000-000000000001', '68000000-9000-4000-8000-000000000001', '68000000-0000-4000-8000-000000000001', 'create_event',
+   '{"organizationId":"68000000-1000-4000-8000-000000000001"}', '{"title":"Abgelaufener Termin"}', repeat('d', 64), 'write', now() - interval '1 minute', now() - interval '2 minutes');
+select lives_ok(
+  $$select * from public.claim_agent_action_proposal(
+    '68000000-1000-4000-8000-000000000001',
+    '68000000-9100-4000-8000-000000000003',
+    '68000000-0000-4000-8000-000000000001'
+  )$$,
+  'claim atomically reserves a pending proposal'
+);
+select is(
+  (select status from public.agent_action_proposals where id = '68000000-9100-4000-8000-000000000003'),
+  'executing',
+  'claimed proposal is executing'
+);
+select throws_ok(
+  $$select * from public.claim_agent_action_proposal(
+    '68000000-1000-4000-8000-000000000001',
+    '68000000-9100-4000-8000-000000000003',
+    '68000000-0000-4000-8000-000000000001'
+  )$$,
+  'P0002', 'agent_proposal_not_pending',
+  'a second claim cannot execute the proposal again'
+);
+select lives_ok(
+  $$select * from public.claim_agent_action_proposal(
+    '68000000-1000-4000-8000-000000000001',
+    '68000000-9100-4000-8000-000000000004',
+    '68000000-0000-4000-8000-000000000001'
+  )$$,
+  'claiming an expired proposal is safe'
+);
+select is(
+  (select status from public.agent_action_proposals where id = '68000000-9100-4000-8000-000000000004'),
+  'expired',
+  'expired proposal cannot enter execution'
 );
 
 select * from finish();

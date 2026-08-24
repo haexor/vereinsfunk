@@ -2,21 +2,26 @@
 import {
   AgentConversationDetailSchema,
   AgentConversationSchema,
+  AgentActionProposalSchema,
   AgentWorkspaceSchema,
+  type AgentActionProposal,
   type AgentConversation,
   type AgentMessage,
   type AgentWorkspace,
 } from '@vereinsfunk/contracts'
-import { ArrowUp, Bot, CalendarDays, CheckCircle2, FileText, LoaderCircle, Sparkles } from '@lucide/vue'
+import { ArrowUp, Bot, CalendarDays, CheckCircle2, FileText, LoaderCircle, Sparkles, UserPlus, X } from '@lucide/vue'
+import { z } from 'zod'
 
 const scope = await useScope()
 const api = useApiClient()
 const workspace = ref<AgentWorkspace | null>(null)
 const conversation = ref<AgentConversation | null>(null)
 const messages = ref<AgentMessage[]>([])
+const proposals = ref<AgentActionProposal[]>([])
 const prompt = ref('')
 const loading = ref(true)
 const sending = ref(false)
+const actingProposalId = ref<string | null>(null)
 const errorMessage = ref('')
 const cachedConversation = useState<{ scopeKey: string; id: string } | null>('vf-agent-conversation', () => null)
 let initializeRun = 0
@@ -38,6 +43,7 @@ async function initialize() {
   workspace.value = null
   conversation.value = null
   messages.value = []
+  proposals.value = []
   cachedConversation.value = null
   sending.value = false
   if (!input) { loading.value = false; return }
@@ -54,6 +60,7 @@ async function initialize() {
         if (!isCurrent()) return
         conversation.value = detail.conversation
         messages.value = detail.messages
+        proposals.value = await api.request(`/v1/agent/conversations/${detail.conversation.id}/action-proposals`, {}, z.array(AgentActionProposalSchema))
         return
       } catch {
         if (!isCurrent()) return
@@ -99,6 +106,7 @@ async function send() {
     if (!isCurrent()) return
     conversation.value = detail.conversation
     messages.value = detail.messages
+    proposals.value = await api.request(`/v1/agent/conversations/${conversationId}/action-proposals`, {}, z.array(AgentActionProposalSchema))
     if (scopeInput.value) {
       const refreshedWorkspace = await api.request('/v1/agent/workspace', { query: scopeInput.value }, AgentWorkspaceSchema)
       if (!isCurrent()) return
@@ -111,6 +119,42 @@ async function send() {
   } finally {
     if (isCurrent()) sending.value = false
   }
+}
+
+async function refreshActionProposals() {
+  if (!conversation.value) return
+  proposals.value = await api.request(`/v1/agent/conversations/${conversation.value.id}/action-proposals`, {}, z.array(AgentActionProposalSchema))
+}
+
+async function actOnProposal(proposal: AgentActionProposal, action: 'confirm' | 'cancel') {
+  if (proposal.status !== 'pending' || actingProposalId.value) return
+  actingProposalId.value = proposal.id
+  errorMessage.value = ''
+  try {
+    await api.request(`/v1/agent/action-proposals/${proposal.id}/${action}`, { method: 'POST' }, AgentActionProposalSchema)
+    await Promise.all([
+      refreshActionProposals(),
+      scopeInput.value ? api.request('/v1/agent/workspace', { query: scopeInput.value }, AgentWorkspaceSchema).then((value) => { workspace.value = value }) : Promise.resolve(),
+    ])
+  } catch {
+    errorMessage.value = action === 'confirm' ? 'Die Aktion konnte nicht bestätigt werden. Es wurde nichts erneut ausgeführt.' : 'Der Vorschlag konnte nicht verworfen werden.'
+  } finally {
+    actingProposalId.value = null
+  }
+}
+
+function proposalTitle(proposal: AgentActionProposal) {
+  const input = proposal.input as { title?: string; email?: string; role?: string }
+  return proposal.toolName === 'create_event'
+    ? `Termin: ${input.title ?? 'Ohne Titel'}`
+    : `Einladung: ${input.email ?? 'Unbekannte E-Mail'}`
+}
+
+function proposalDescription(proposal: AgentActionProposal) {
+  const input = proposal.input as { startsAt?: string; role?: string }
+  return proposal.toolName === 'create_event'
+    ? `Beginn: ${formatDate(input.startsAt ?? null)}`
+    : `Rolle: ${input.role ?? '—'} · Der Versand startet erst nach deiner Bestätigung.`
 }
 
 function formatDate(value: string | null) {
@@ -136,7 +180,7 @@ function formatDate(value: string | null) {
       <section class="card flex min-h-[620px] flex-col overflow-hidden">
         <div class="flex items-center gap-3 border-b border-[#e7e8e1] px-5 py-4">
           <span class="grid h-9 w-9 place-items-center rounded-xl bg-forest text-white"><Sparkles :size="17" /></span>
-          <div><h2 class="text-sm font-bold">Vereinsfunk-Assistent</h2><p class="text-xs text-[#727a75]">Liest deinen aktuellen Arbeitsbereich sicher aus.</p></div>
+          <div><h2 class="text-sm font-bold">Vereinsfunk-Assistent</h2><p class="text-xs text-[#727a75]">Bereitet Änderungen vor, die du anschließend bestätigst.</p></div>
         </div>
         <div class="flex-1 space-y-4 overflow-y-auto p-5">
           <article v-for="message in messages" :key="message.id" class="flex" :class="message.role === 'user' ? 'justify-end' : 'justify-start'">
@@ -152,11 +196,26 @@ function formatDate(value: string | null) {
             <textarea id="assistant-prompt" v-model="prompt" maxlength="4000" rows="2" class="min-h-12 flex-1 resize-none border-0 bg-transparent px-2 py-1 text-sm outline-none" placeholder="Zum Beispiel: Welche Freigaben sind offen?" @keydown.enter.exact.prevent="send" />
             <button type="submit" :disabled="!prompt.trim() || sending" class="focus-ring grid h-10 w-10 place-items-center rounded-xl bg-forest text-white disabled:cursor-not-allowed disabled:opacity-50" aria-label="Nachricht senden"><ArrowUp :size="18" /></button>
           </div>
-          <p class="mt-2 px-2 text-[11px] text-[#7a827c]">Noch im read-only Start: Der Assistent bereitet keine Änderungen oder Veröffentlichungen ohne deine Bestätigung vor.</p>
+          <p class="mt-2 px-2 text-[11px] text-[#7a827c]">Termine und Einladungen werden als Karte vorbereitet und erst nach deiner Bestätigung ausgeführt.</p>
         </form>
       </section>
 
       <aside class="space-y-5">
+        <section v-if="proposals.length" class="card p-5">
+          <div class="mb-4 flex items-center gap-2"><UserPlus :size="17" class="text-forest" /><h2 class="font-display text-base font-bold">Vorgeschlagene Aktionen</h2></div>
+          <div class="space-y-3">
+            <article v-for="proposal in proposals" :key="proposal.id" class="rounded-xl border border-[#e2e5de] p-3">
+              <p class="text-sm font-semibold">{{ proposalTitle(proposal) }}</p>
+              <p class="mt-1 text-xs text-[#727a75]">{{ proposalDescription(proposal) }}</p>
+              <p v-if="proposal.status === 'pending'" class="mt-2 text-[11px] text-[#7a827c]">Bestätigbar bis {{ formatDate(proposal.expiresAt) }}</p>
+              <p v-else class="mt-2 text-[11px] capitalize text-[#7a827c]">{{ proposal.status.replaceAll('_', ' ') }}</p>
+              <div v-if="proposal.status === 'pending'" class="mt-3 flex gap-2">
+                <button class="focus-ring inline-flex items-center gap-1 rounded-lg bg-forest px-2.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50" :disabled="actingProposalId !== null" @click="actOnProposal(proposal, 'confirm')"><CheckCircle2 :size="14" /> Bestätigen</button>
+                <button class="focus-ring inline-flex items-center gap-1 rounded-lg border border-[#dfe2da] px-2.5 py-1.5 text-xs font-semibold text-[#536056] disabled:opacity-50" :disabled="actingProposalId !== null" @click="actOnProposal(proposal, 'cancel')"><X :size="14" /> Verwerfen</button>
+              </div>
+            </article>
+          </div>
+        </section>
         <section class="card p-5">
           <div class="mb-4 flex items-center gap-2"><CheckCircle2 :size="17" class="text-forest" /><h2 class="font-display text-base font-bold">Deine offenen Freigaben</h2></div>
           <div v-if="workspace?.pendingApprovals.length" class="space-y-3">

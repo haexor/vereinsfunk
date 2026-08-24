@@ -1,12 +1,12 @@
-# Übergabe: Agenten-Arbeitsplatz – nach Paket A
+# Übergabe: Agenten-Arbeitsplatz – nach Paket B
 
 Stand: 24. August 2026
 
-Branch-Ziel: `codex/agent-workspace-package-a`
+Branch-Ziel: `codex/agent-workspace-package-b`
 
 ## Erledigter Umfang
 
-Paket A des [Agenten-Arbeitsplatz-Plans](agent-workspace-plan.md) ist umgesetzt:
+Pakete A und B des [Agenten-Arbeitsplatz-Plans](agent-workspace-plan.md) sind umgesetzt:
 
 - Private, mandantenisolierte Conversations und Messages mit RLS, Retention und
   positiven wie negativen pgTAP-Tests.
@@ -22,9 +22,17 @@ Paket A des [Agenten-Arbeitsplatz-Plans](agent-workspace-plan.md) ist umgesetzt:
   validiert, Scope-Wechsel können keine veralteten UI-Daten übernehmen und das
   Speichern eines Nachrichtenpaars erfolgt atomar.
 
-Die Tabelle für Proposals und Tool-Runs ist bewusst schon angelegt, wird in Paket A
-aber noch nicht benutzt. Die Nachrichtenroute liefert noch eine vollständige
-Antwort statt SSE-Streaming. Es gibt noch keine schreibenden Agenten-Tools.
+- Strikte Responses-Tool-Registry für `create_event` und `create_invitation`;
+  ein Tool-Aufruf erzeugt nur ein Proposal, nie eine direkte externe Aktion.
+- Proposal-Lifecycle mit kanonischem Hash, 15-Minuten-Ablauf, Verwerfen,
+  atomarer Execution-Reservation, Re-Autorisierung, Audit und Tool-Run-Diagnose.
+- Bestätigte Events über den gemeinsamen Event-Use-Case sowie bestätigte
+  Einladungen über den nun aus der HTTP-Route wiederverwendeten
+  Einladungs-Use-Case. Ein fehlgeschlagener E-Mail-Versand macht die angelegte
+  Einladung sichtbar, statt sie doppelt auszuführen.
+- Aktionskarten unter `/assistent` mit Vorschau, Ablauf, Bestätigen und Verwerfen.
+
+Die Nachrichtenroute liefert weiterhin eine vollständige Antwort statt SSE-Streaming.
 
 ## Verifizierter Stand
 
@@ -34,33 +42,27 @@ Erfolgreich ausgeführt:
 - `pnpm --filter @vereinsfunk/api typecheck`
 - `pnpm --filter @vereinsfunk/web typecheck`
 - `pnpm --filter @vereinsfunk/contracts test` (115 Tests)
-- `pnpm --filter @vereinsfunk/api test` (535 Tests)
+- `pnpm --filter @vereinsfunk/api test` (536 Tests)
 - `pnpm lint`
 - `pnpm --filter @vereinsfunk/api build`
 - `pnpm --filter @vereinsfunk/web build`
 - `pnpm exec supabase migration up --local`
-- `pnpm exec supabase test db supabase/tests/agent_workspace.test.sql` (26 pgTAP-Tests)
+- `pnpm exec supabase test db supabase/tests/agent_workspace.test.sql` (31 pgTAP-Tests)
 
 `pnpm db:test` erreicht den neuen Agenten-Test erfolgreich, endet aber weiterhin
 mit acht bereits vor dieser Änderung auftretenden Fehlern in
 `supabase/tests/platform_administration.test.sql`. Diese betreffen den lokalen
 Bootstrap-Plattform-Admin-Testzustand, nicht die Agenten-Migration.
 
-## Nächster Umsetzungsschritt: Paket B
+## Nächster Umsetzungsschritt: Paket C
 
-1. Den Proposal-Lifecycle in `agent_action_proposals` vollständig implementieren:
-   kanonischer Input-Hash, Ablauf, Verwerfen, atomare Bestätigung, erneute
-   Autorisierung und idempotente Ausführung.
-2. Bestehende fachliche Use Cases zuerst aus den HTTP-Routen herauslösen oder
-   wiederverwenden. Der Agent darf keine Routen per HTTP aufrufen und keine
-   Fachdaten direkt mit der Service Role mutieren.
-3. Zunächst nur `propose_event`/`create_event` und
-   `propose_invitation`/`create_invitation` als enge Tool-Registry umsetzen.
-4. Aktionskarten in `/assistent` um Wirkung, Scope, Ablauf, Deep Link sowie
-   „Bestätigen“ und „Verwerfen“ ergänzen.
-5. Für jede Aktion positive und negative Autorisierungs-, RLS-,
-   Idempotenz- und Audit-Tests ergänzen. Insbesondere darf eine Bestätigung nie
-   ohne erneute Permission- und Scope-Prüfung ausführen.
+1. Content-Brief aus bestätigten Fakten und fehlenden Angaben ableiten.
+2. Die bestehende Textgenerierung als bestätigte, kostenpflichtige Aktion
+   anbinden; Resultate bleiben immutable Post-Versionen.
+3. Freigaben ausschließlich über `approval_policy` und `review_route` starten
+   und beantworten.
+4. Dialog- und Tool-Evals für Mehrdeutigkeit, fehlende Berechtigungen und
+   veränderte Fakten ergänzen.
 
 ## Bewusst später
 

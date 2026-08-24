@@ -18,7 +18,7 @@ describe('agent responders', () => {
       workspace,
       userId: 'hashed-user',
     })
-    expect(answer).not.toContain('veröffentlicht')
+    expect(answer.content).not.toContain('veröffentlicht')
   })
 
   it('uses the stateless Responses API and passes a hashed safety identifier only', async () => {
@@ -34,7 +34,7 @@ describe('agent responders', () => {
       messages: [{ role: 'user', content: 'Was ist offen?' }],
       workspace,
       userId: 'a'.repeat(64),
-    })).resolves.toBe('Zwei Freigaben warten auf dich.')
+    })).resolves.toEqual({ content: 'Zwei Freigaben warten auf dich.' })
     expect(capturedInit).toBeDefined()
     const body = JSON.parse(String(capturedInit!.body)) as { store: boolean; safety_identifier: string; input: unknown[] }
     expect(body.store).toBe(false)
@@ -56,5 +56,17 @@ describe('agent responders', () => {
     })
     await expect(responder.respond({ messages: [], workspace, userId: 'a'.repeat(64) }))
       .rejects.toThrow('agent_provider_invalid_response')
+  })
+
+  it('accepts only a validated, single function call as an action proposal', async () => {
+    const responder = new OpenAiResponsesAgentResponder({
+      apiKey: 'secret', model: 'gpt-test', fetcher: async () => new Response(JSON.stringify({
+        output: [{ type: 'function_call', name: 'create_invitation', arguments: JSON.stringify({ email: 'neues.mitglied@example.org', role: 'viewer' }) }],
+      }), { status: 200 }),
+    })
+    await expect(responder.respond({ messages: [], workspace, userId: 'a'.repeat(64) })).resolves.toEqual({
+      content: 'Ich habe eine Aktion zur Bestätigung vorbereitet.',
+      proposal: { toolName: 'create_invitation', input: { email: 'neues.mitglied@example.org', role: 'viewer' } },
+    })
   })
 })

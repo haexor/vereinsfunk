@@ -3,6 +3,7 @@ import {
   AgentConversationSchema,
   AgentActionProposalSchema,
   AgentEventProposalInputSchema,
+  CreateInvitationRequestSchema,
   AgentMessageSchema,
   AgentScopeSchema,
   AgentWorkspaceSchema,
@@ -12,10 +13,12 @@ import {
   UuidSchema,
   type AgentConversation,
   type AgentActionProposal,
+  type CreateAgentActionProposal,
   type AgentMessage,
   type AgentScope,
   type AgentWorkspace,
 } from '@vereinsfunk/contracts'
+import { canAssignRole, hasPermission } from '@vereinsfunk/authorization'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyInstance } from 'fastify'
 import { createHash } from 'node:crypto'
@@ -23,6 +26,7 @@ import { z } from 'zod'
 import { hashAgentProposalInput } from '@vereinsfunk/domain'
 import type { AgentResponder } from '../agent.js'
 import { createClubEvent } from '../services/clubEvents.js'
+import { createInvitation } from '../services/invitations.js'
 import type { ApiRouteContext } from './context.js'
 import { createAuditRecorder, isAnyMemberOfOrganization, resolveDirectoryScope, toPermissionScope } from './shared.js'
 
@@ -262,12 +266,35 @@ async function loadMessages(client: SupabaseClient, conversation: AgentConversat
   return (result.data ?? []).map(mapMessage)
 }
 
+async function insertActionProposal(
+  service: SupabaseClient,
+  conversation: AgentConversation,
+  actorUserId: string,
+  input: CreateAgentActionProposal,
+): Promise<AgentActionProposal> {
+  const scope = scopeForConversation(conversation)
+  const serializedInput = input.input as Record<string, unknown>
+  const created = await service.from('agent_action_proposals').insert({
+    organization_id: conversation.organizationId,
+    conversation_id: conversation.id,
+    created_by: actorUserId,
+    tool_name: input.toolName,
+    scope_snapshot: scope,
+    input_snapshot: serializedInput,
+    input_hash: hashAgentProposalInput(serializedInput),
+    risk_class: input.toolName === 'create_invitation' ? 'external' : 'write',
+    expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
+  }).select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, status, expires_at, confirmed_at, created_at, updated_at').single()
+  if (created.error) throw created.error
+  return mapProposal(created.data)
+}
+
 export function registerAgentRoutes(
   app: FastifyInstance,
   context: ApiRouteContext,
   responder: AgentResponder,
 ): void {
-  const { requireAuth, supabaseClients } = context
+  const { requireAuth, supabaseClients, roleProvider, environment } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
 
   app.get('/v1/agent/workspace', async (request, reply) => {
@@ -344,21 +371,13 @@ export function registerAgentRoutes(
     if (!conversation) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     const scope = scopeForConversation(conversation)
     const permission = input.toolName === 'create_event' ? 'event.manage' : 'member.invite'
-    if (!(await context.requirePermission(request, reply, permission, toPermissionScope(scope.organizationId, scope.departmentId, scope.teamId)))) return
-    const serializedInput = input.input as Record<string, unknown>
-    const created = await supabaseClients.forService().from('agent_action_proposals').insert({
-      organization_id: conversation.organizationId,
-      conversation_id: conversation.id,
-      created_by: request.auth!.userId,
-      tool_name: input.toolName,
-      scope_snapshot: scope,
-      input_snapshot: serializedInput,
-      input_hash: hashAgentProposalInput(serializedInput),
-      risk_class: input.toolName === 'create_invitation' ? 'external' : 'write',
-      expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
-    }).select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, status, expires_at, confirmed_at, created_at, updated_at').single()
-    if (created.error) throw created.error
-    const proposal = mapProposal(created.data)
+    if (!(await context.requirePermission(request, reply, permission, toPermissionScope(scope.organizationId, scope.departmentId ?? null, scope.teamId ?? null)))) return
+    if (input.toolName === 'create_invitation') {
+      const invitationInput = CreateInvitationRequestSchema.parse({ ...scope, ...input.input })
+      const roles = await roleProvider.rolesForScope(request.auth!, toPermissionScope(scope.organizationId, scope.departmentId ?? null, scope.teamId ?? null))
+      if (!canAssignRole(roles, invitationInput.role)) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+    }
+    const proposal = await insertActionProposal(supabaseClients.forService(), conversation, request.auth!.userId, input)
     await recordAuditEvent(request, {
       organizationId: proposal.organizationId,
       action: 'agent.action_proposal_created',
@@ -405,11 +424,19 @@ export function registerAgentRoutes(
     if (found.error) throw found.error
     if (!found.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     const proposal = mapProposal(found.data)
-    if (proposal.toolName !== 'create_event') return reply.code(409).send({ error: 'proposal_tool_not_available', correlationId: request.id })
     const scope = AgentScopeSchema.parse({ organizationId: proposal.organizationId, departmentId: proposal.departmentId, teamId: proposal.teamId })
-    if (!(await context.requirePermission(request, reply, 'event.manage', toPermissionScope(scope.organizationId, scope.departmentId, scope.teamId)))) return
-    const eventInput = AgentEventProposalInputSchema.parse(proposal.input)
-    if (proposal.inputHash !== hashAgentProposalInput(eventInput)) return reply.code(409).send({ error: 'proposal_input_changed', correlationId: request.id })
+    const permission = proposal.toolName === 'create_event' ? 'event.manage' : 'member.invite'
+    if (!(await context.requirePermission(request, reply, permission, toPermissionScope(scope.organizationId, scope.departmentId ?? null, scope.teamId ?? null)))) return
+    const eventInput = proposal.toolName === 'create_event' ? AgentEventProposalInputSchema.parse(proposal.input) : null
+    const invitationInput = proposal.toolName === 'create_invitation'
+      ? CreateInvitationRequestSchema.parse({ ...scope, ...(proposal.input as Record<string, unknown>) })
+      : null
+    const parsedInput = eventInput ?? invitationInput
+    if (!parsedInput || proposal.inputHash !== hashAgentProposalInput(proposal.input)) return reply.code(409).send({ error: 'proposal_input_changed', correlationId: request.id })
+    if (invitationInput) {
+      const roles = await roleProvider.rolesForScope(request.auth!, toPermissionScope(scope.organizationId, scope.departmentId ?? null, scope.teamId ?? null))
+      if (!canAssignRole(roles, invitationInput.role)) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+    }
     const service = supabaseClients.forService()
     const claim = await service.rpc('claim_agent_action_proposal', {
       target_organization_id: proposal.organizationId,
@@ -419,23 +446,56 @@ export function registerAgentRoutes(
     if (claim.error) return reply.code(409).send({ error: 'proposal_not_pending', correlationId: request.id })
     const claimed = mapProposal(claim.data)
     if (claimed.status === 'expired') return reply.code(410).send({ error: 'proposal_expired', correlationId: request.id })
+    const toolRun = await service.from('agent_tool_runs').insert({
+      organization_id: proposal.organizationId,
+      conversation_id: proposal.conversationId,
+      proposal_id: proposal.id,
+      tool_name: proposal.toolName,
+      correlation_id: request.id,
+      status: 'started',
+    }).select('id').maybeSingle()
+    if (toolRun.error) request.log.error({ err: toolRun.error, correlationId: request.id }, 'agent tool run could not be started')
     try {
-      const event = await createClubEvent(service, request.auth!.userId, scope, eventInput)
+      let resultId: string
+      let emailDelivered: boolean | undefined
+      let emailError: unknown
+      if (eventInput) {
+        const event = await createClubEvent(service, request.auth!.userId, scope, eventInput)
+        resultId = event.id
+      } else {
+        const invitation = await createInvitation(client, service, invitationInput!, environment.WEB_BASE_URL ?? 'http://localhost:4200')
+        resultId = invitation.invitation.id
+        emailDelivered = invitation.emailDelivered
+        emailError = invitation.emailError
+      }
       const completed = await service.from('agent_action_proposals')
         .update({ status: 'confirmed', confirmed_by: request.auth!.userId, confirmed_at: new Date().toISOString() })
         .eq('id', proposal.id).eq('organization_id', proposal.organizationId).eq('status', 'executing')
         .select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, status, expires_at, confirmed_at, created_at, updated_at')
         .single()
       if (completed.error) throw completed.error
+      if (toolRun.data) {
+        const toolRunCompleted = await service.from('agent_tool_runs').update({
+          status: 'completed', finished_at: new Date().toISOString(), result_refs: [{ entityType: eventInput ? 'club_events' : 'invitations', id: resultId }],
+        }).eq('id', toolRun.data.id).eq('organization_id', proposal.organizationId).eq('status', 'started')
+        if (toolRunCompleted.error) request.log.error({ err: toolRunCompleted.error, correlationId: request.id }, 'agent tool run could not be completed')
+      }
       await recordAuditEvent(request, {
         organizationId: proposal.organizationId,
         action: 'agent.action_proposal_confirmed',
         entityType: 'agent_action_proposals',
         entityId: proposal.id,
-        metadata: { toolName: proposal.toolName, resultId: event.id },
+        metadata: { toolName: proposal.toolName, resultId, emailDelivered },
       })
-      return reply.code(200).send({ proposal: mapProposal(completed.data), event })
+      if (emailDelivered === false) request.log.error({ err: emailError, correlationId: request.id }, 'Supabase invitation email delivery failed')
+      return reply.code(200).send(mapProposal(completed.data))
     } catch (error) {
+      if (toolRun.data) {
+        const toolRunFailed = await service.from('agent_tool_runs').update({
+          status: 'failed', finished_at: new Date().toISOString(), error_code: 'execution_failed',
+        }).eq('id', toolRun.data.id).eq('organization_id', proposal.organizationId).eq('status', 'started')
+        if (toolRunFailed.error) request.log.error({ err: toolRunFailed.error, correlationId: request.id }, 'agent tool run could not be failed')
+      }
       const failed = await service.from('agent_action_proposals').update({ status: 'failed' })
         .eq('id', proposal.id).eq('organization_id', proposal.organizationId).eq('status', 'executing')
       if (failed.error) request.log.error({ err: failed.error, correlationId: request.id }, 'agent proposal failure state could not be saved')
@@ -455,15 +515,38 @@ export function registerAgentRoutes(
     const workspace = await loadWorkspace(client, scopeForConversation(conversation), request.auth!.userId)
     const safetyIdentifier = createHash('sha256').update(request.auth!.userId).digest('hex').slice(0, 64)
     let answer: string
+    let requestedProposal: CreateAgentActionProposal | undefined
     try {
-      answer = await responder.respond({
+      const response = await responder.respond({
         messages: [...existingMessages, { role: 'user', content: input.content }],
         workspace,
         userId: safetyIdentifier,
       })
+      answer = response.content
+      requestedProposal = response.proposal
     } catch (error) {
       request.log.warn({ err: error, correlationId: request.id }, 'agent responder failed')
       answer = 'Der Assistent ist gerade nicht erreichbar. Deine Nachricht wurde nicht als Aktion ausgeführt; bitte versuche es erneut.'
+    }
+    if (requestedProposal) {
+      const proposalScope = scopeForConversation(conversation)
+      const permission = requestedProposal.toolName === 'create_event' ? 'event.manage' : 'member.invite'
+      const roles = await roleProvider.rolesForScope(request.auth!, toPermissionScope(proposalScope.organizationId, proposalScope.departmentId ?? null, proposalScope.teamId ?? null))
+      const invitationInput = requestedProposal.toolName === 'create_invitation'
+        ? CreateInvitationRequestSchema.parse({ ...proposalScope, ...requestedProposal.input })
+        : null
+      if (!hasPermission(roles, permission) || (invitationInput !== null && !canAssignRole(roles, invitationInput.role))) {
+        answer = 'Dafür fehlen dir im aktuellen Bereich die nötigen Berechtigungen. Es wurde keine Aktion vorbereitet.'
+      } else {
+        const proposal = await insertActionProposal(service, conversation, request.auth!.userId, requestedProposal)
+        await recordAuditEvent(request, {
+          organizationId: proposal.organizationId,
+          action: 'agent.action_proposal_created',
+          entityType: 'agent_action_proposals',
+          entityId: proposal.id,
+          metadata: { toolName: proposal.toolName, inputHash: proposal.inputHash, source: 'agent_tool' },
+        })
+      }
     }
     // Die Funktion sperrt die Unterhaltung und schreibt Nutzer- und Assistentennachricht samt
     // Aktivitätszeit in einer Transaktion. Ein Fehler hinterlässt dadurch nie nur eine Hälfte

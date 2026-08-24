@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { mapInvitationRow } from '../apiMappers.js'
 import { generateInvitationToken, invitationCallbackUrls, sendInvitationThroughSupabaseAuth } from '../invitations.js'
+import { createInvitation, InvitationCreationError } from '../services/invitations.js'
 import type { ApiRouteContext } from './context.js'
 import { createAuditRecorder, resolveInvitationScope, toPermissionScope } from './shared.js'
 
@@ -62,65 +63,24 @@ export function registerInvitationRoutes(app: FastifyInstance, context: ApiRoute
     if (!(await requirePermission(request, reply, 'member.invite', scope))) return
     const roles = await roleProvider.rolesForScope(request.auth!, scope)
     if (!canAssignRole(roles, input.role)) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
-    const alreadyMember = await client.rpc('email_has_membership', {
-      target_organization_id: scope.organizationId,
-      target_department_id: scope.departmentId ?? null,
-      target_team_id: scope.teamId ?? null,
-      target_email: input.email,
-    })
-    if (alreadyMember.error) throw alreadyMember.error
-    if (alreadyMember.data) return reply.code(409).send({ error: 'already_a_member', correlationId: request.id })
-
-    const { rawToken, tokenHash } = generateInvitationToken()
-    // create_invitation() ist eine security-definer-RPC statt eines direkten Inserts: sie
-    // invalidiert eine abgelaufene, aber noch offene Einladung fuer dieselbe Adresse/denselben
-    // Scope in derselben Transaktion (sonst blockiert invitations_open_unique eine neue
-    // Einladung bis zum manuellen Widerruf, beim Vertraege-Review gefunden) und prueft
-    // zusaetzlich das adressbezogene Rate-Limit ueber alle Einladungs-Zeilen hinweg (schliesst
-    // eine Umgehung per revoke()+erneutem create(), siehe Plan 010 "Risiken").
-    const rpc = await client.rpc('create_invitation', {
-      target_organization_id: scope.organizationId,
-      target_department_id: scope.departmentId ?? null,
-      target_team_id: scope.teamId ?? null,
-      target_email: input.email,
-      target_role: input.role,
-      target_token_hash: tokenHash,
-    })
-    if (rpc.error) {
-      if (rpc.error.message.includes('invitation_already_open')) return reply.code(409).send({ error: 'invitation_already_open', correlationId: request.id })
-      if (rpc.error.message.includes('resend_limit_reached')) return reply.code(429).send({ error: 'resend_limit_reached', correlationId: request.id })
-      if (rpc.error.message.includes('resent at most once per hour')) return reply.code(429).send({ error: 'resend_rate_limited', correlationId: request.id })
-      // requirePermission oben kennt nur die Rollen des Anfragenden, nicht
-      // `policy_settings.invite_allowed` (Paket 023) -- create_invitation() prueft das zusaetzlich
-      // selbst und wirft dieselbe Meldung wie ein fehlendes member.invite, weil beides fuer den
-      // Aufrufer gleich aussieht: er darf hier gerade niemanden einladen.
-      if (rpc.error.message.includes('insufficient_permission')) return reply.code(403).send({ error: 'invite_not_allowed', correlationId: request.id })
-      if (rpc.error.code === '23514' || rpc.error.code === '23503') return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
-      throw rpc.error
-    }
-    const insertData = rpc.data as Record<string, unknown>
-
-    const urls = invitationUrls(environment.WEB_BASE_URL ?? 'http://localhost:4200', rawToken)
-    let emailDelivered = true
     try {
-      await sendInvitationThroughSupabaseAuth(supabaseClients.forService(), input.email, urls)
+      const created = await createInvitation(client, supabaseClients.forService(), input, environment.WEB_BASE_URL ?? 'http://localhost:4200')
+      if (!created.emailDelivered) request.log.error({ err: created.emailError, correlationId: request.id }, 'Supabase invitation email delivery failed')
+      await recordAuditEvent(request, {
+        organizationId: scope.organizationId,
+        action: 'invitation.created',
+        entityType: 'invitations',
+        entityId: created.invitation.id,
+        metadata: { email: input.email, role: input.role, departmentId: scope.departmentId ?? null, teamId: scope.teamId ?? null, emailDelivered: created.emailDelivered },
+      })
+      return reply.code(201).send({ ...created.invitation, emailDelivered: created.emailDelivered })
     } catch (error) {
-      // Die Einladung besteht bereits in der Datenbank -- ein Fehler bei Supabase Auth/Brevo
-      // soll den Request nicht mit 500 scheitern lassen, sondern nur den Versandstatus sichtbar
-      // machen. Ein erneuter Versand rotiert den fachlichen Token und startet einen neuen
-      // Auth-Link.
-      emailDelivered = false
-      request.log.error({ err: error, correlationId: request.id }, 'Supabase invitation email delivery failed')
+      if (error instanceof InvitationCreationError) {
+        const status = error.code === 'already_a_member' || error.code === 'invitation_already_open' ? 409 : error.code === 'resend_limit_reached' || error.code === 'resend_rate_limited' ? 429 : error.code === 'invite_not_allowed' ? 403 : 400
+        return reply.code(status).send({ error: error.code, correlationId: request.id })
+      }
+      throw error
     }
-    await recordAuditEvent(request, {
-      organizationId: scope.organizationId,
-      action: 'invitation.created',
-      entityType: 'invitations',
-      entityId: insertData.id as string,
-      metadata: { email: input.email, role: input.role, departmentId: scope.departmentId ?? null, teamId: scope.teamId ?? null, emailDelivered },
-    })
-
-    return reply.code(201).send({ ...InvitationSchema.parse(mapInvitationRow(insertData)), emailDelivered })
   })
 
   app.post('/v1/invitations/:id/resend', async (request, reply) => {
