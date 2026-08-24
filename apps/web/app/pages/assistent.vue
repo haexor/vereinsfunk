@@ -156,6 +156,7 @@ function proposalTitle(proposal: AgentActionProposal) {
   if (proposal.toolName === 'save_content_brief') return 'Content-Brief speichern'
   if (proposal.toolName === 'start_text_generation') return 'Textgeneration starten'
   if (proposal.toolName === 'accept_text_candidate') return 'Textkandidat übernehmen'
+  if (proposal.toolName === 'schedule_publication') return `Beitrag auf ${proposal.input.platform} einplanen`
   return 'Freigabe anfordern'
 }
 
@@ -165,6 +166,7 @@ function proposalDescription(proposal: AgentActionProposal) {
   if (proposal.toolName === 'save_content_brief') return `${Object.keys(proposal.input.sourceMaterial.facts).length} bestätigte Fakten · Die Textwerkstatt startet erst über den nächsten Schritt.`
   if (proposal.toolName === 'start_text_generation') return `${Object.keys(proposal.input.sourceMaterial.facts).length} bestätigte Fakten · Der Textkandidat wird nach deiner Bestätigung asynchron erstellt.`
   if (proposal.toolName === 'accept_text_candidate') return 'Der bereite Textkandidat wird als neue, unveränderliche Beitragsversion übernommen.'
+  if (proposal.toolName === 'schedule_publication') return proposal.input.scheduledFor ? `Geplant für ${formatDate(proposal.input.scheduledFor)}.` : 'Wird sofort zur Veröffentlichung eingeplant; die externe Veröffentlichung bleibt ein eigener Schritt.'
   return 'Die aktuelle Beitragsversion wird an die bestehende Freigaberoute übergeben.'
 }
 
