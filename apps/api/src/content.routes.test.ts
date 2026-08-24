@@ -144,7 +144,7 @@ describe('DELETE /v1/posts/:id', () => {
     expect(response.statusCode).toBe(204)
     expect(scopes[0]).toEqual({ organizationId: ORGANIZATION_ID, departmentId: DEPARTMENT_ID })
     expect(rpcArgs).toEqual({ name: 'delete_post_if_deletable', target_post_id: TARGET_POST_ID })
-    expect(auditRows).toEqual([expect.objectContaining({ action: 'post.deleted', entity_id: TARGET_POST_ID, metadata: { status: 'draft_ready' } })])
+    expect(auditRows).toEqual([expect.objectContaining({ action: 'post.deleted', entity_id: TARGET_POST_ID, metadata: {} })])
   })
 
   it('returns 404 for an unknown post', async () => {
@@ -1226,7 +1226,7 @@ describe('DELETE /v1/text-workshop/drafts/:id', () => {
         return chain({ data: { id: TARGET_DRAFT_ID, organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: null }, error: null })
       } }) as unknown as SupabaseClient,
       forService: () => ({ from: (table: string) => {
-        if (table === 'text_workshop_drafts') return { delete: () => ({ eq: async (_field: string, value: string) => { deletedId = value; return { error: null } } }) }
+        if (table === 'text_workshop_drafts') return { delete: () => ({ eq: (_field: string, value: string) => { deletedId = value; return { select: async () => ({ data: [{ id: value }], error: null }) } } }) }
         if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { auditRows.push(row); return { error: null } } }
         throw new Error(`unexpected service table: ${table}`)
       } }) as unknown as SupabaseClient,
@@ -1249,6 +1249,29 @@ describe('DELETE /v1/text-workshop/drafts/:id', () => {
     const response = await app.inject({ method: 'DELETE', url: `/v1/text-workshop/drafts/${TARGET_DRAFT_ID}`, headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` } })
     expect(response.statusCode).toBe(404)
     expect(response.json()).toMatchObject({ error: 'draft_not_found' })
+  })
+
+  // Review-Fund PR #161: ein zeitgleicher zweiter Delete-Aufruf trifft auf der Service-Rolle keine
+  // Zeile mehr an -- ohne die .select('id')-Pruefung waere das faelschlich als 204 samt Audit-Eintrag
+  // durchgegangen, obwohl gar keine Loeschung stattfand.
+  it('returns 404 without an audit event when the draft was already deleted concurrently', async () => {
+    const auditRows: Record<string, unknown>[] = []
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ from: (table: string) => {
+        if (table !== 'text_workshop_drafts') throw new Error(`unexpected user table: ${table}`)
+        return chain({ data: { id: TARGET_DRAFT_ID, organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: null }, error: null })
+      } }) as unknown as SupabaseClient,
+      forService: () => ({ from: (table: string) => {
+        if (table === 'text_workshop_drafts') return { delete: () => ({ eq: () => ({ select: async () => ({ data: [], error: null }) }) }) }
+        if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { auditRows.push(row); return { error: null } } }
+        throw new Error(`unexpected service table: ${table}`)
+      } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const response = await app.inject({ method: 'DELETE', url: `/v1/text-workshop/drafts/${TARGET_DRAFT_ID}`, headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` } })
+    expect(response.statusCode).toBe(404)
+    expect(response.json()).toMatchObject({ error: 'draft_not_found' })
+    expect(auditRows).toEqual([])
   })
 })
 

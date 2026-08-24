@@ -43,6 +43,7 @@ import { buildStyleProfilePromptPreview, checkRateLimit, createAuditRecorder, fe
 const CUSTOM_STYLE_PROFILE_COLUMNS = 'id, organization_id, department_id, team_id, slug, name, description, style_rules, avoid_rules, do_rules, is_active, created_by, created_at, updated_at'
 const SessionAttachmentSchema = z.object({ media_asset_id: UuidSchema })
 const CompletionAssetScopeSchema = z.object({ organization_id: UuidSchema, department_id: UuidSchema })
+const DeletableScopeSchema = z.object({ organization_id: UuidSchema, department_id: UuidSchema, team_id: UuidSchema.nullable() })
 
 function parseSupabaseData<T>(schema: z.ZodType<T>, data: unknown): T {
   const parsed = schema.safeParse(data)
@@ -299,10 +300,11 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
     const client = supabaseClients.forUser(request.auth!.accessToken)
-    const existing = await client.from('posts').select('organization_id, department_id, team_id, status').eq('id', params.id).maybeSingle()
+    const existing = await client.from('posts').select('organization_id, department_id, team_id').eq('id', params.id).maybeSingle()
     if (existing.error) throw existing.error
     if (!existing.data) return reply.code(404).send({ error: 'post_not_found', correlationId: request.id })
-    if (!(await requirePermission(request, reply, 'post.edit', toPermissionScope(existing.data.organization_id, existing.data.department_id, existing.data.team_id)))) return
+    const existingScope = parseSupabaseData(DeletableScopeSchema, existing.data)
+    if (!(await requirePermission(request, reply, 'post.edit', toPermissionScope(existingScope.organization_id, existingScope.department_id, existingScope.team_id)))) return
     const service = supabaseClients.forService()
     const deletion = await service.rpc('delete_post_if_deletable', { target_post_id: params.id })
     if (deletion.error) {
@@ -311,8 +313,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     }
     if (!deletion.data) return reply.code(404).send({ error: 'post_not_found', correlationId: request.id })
     await recordAuditEvent(request, {
-      organizationId: existing.data.organization_id, action: 'post.deleted', entityType: 'posts', entityId: params.id,
-      metadata: { status: existing.data.status },
+      organizationId: existingScope.organization_id, action: 'post.deleted', entityType: 'posts', entityId: params.id,
     })
     return reply.code(204).send()
   })
@@ -526,13 +527,17 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     const existing = await client.from('text_workshop_drafts').select('id, organization_id, department_id, team_id').eq('id', id).maybeSingle()
     if (existing.error) throw existing.error
     if (!existing.data) return reply.code(404).send({ error: 'draft_not_found', correlationId: request.id })
-    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(existing.data.organization_id, existing.data.department_id, existing.data.team_id)))) return
+    const existingScope = parseSupabaseData(DeletableScopeSchema, existing.data)
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(existingScope.organization_id, existingScope.department_id, existingScope.team_id)))) return
     const service = supabaseClients.forService()
-    const del = await service.from('text_workshop_drafts').delete().eq('id', id)
+    const del = await service.from('text_workshop_drafts').delete().eq('id', id).select('id')
     if (del.error) throw del.error
+    // Ein zeitgleicher zweiter Delete-Aufruf derselben Entwurf-ID darf kein Audit-Ereignis fuer eine
+    // Loeschung schreiben, die gar nicht stattgefunden hat (Review-Fund PR #161).
+    if (del.data.length === 0) return reply.code(404).send({ error: 'draft_not_found', correlationId: request.id })
     await recordAuditEvent(request, {
-      organizationId: existing.data.organization_id, action: 'text_workshop_draft.deleted', entityType: 'text_workshop_drafts', entityId: id,
-      metadata: { departmentId: existing.data.department_id, teamId: existing.data.team_id },
+      organizationId: existingScope.organization_id, action: 'text_workshop_draft.deleted', entityType: 'text_workshop_drafts', entityId: id,
+      metadata: { departmentId: existingScope.department_id, teamId: existingScope.team_id },
     })
     return reply.code(204).send()
   })
