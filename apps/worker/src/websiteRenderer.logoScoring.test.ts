@@ -33,6 +33,30 @@ async function scoreFixture(html: string) {
 }
 
 describe('scoreLogoCandidates', () => {
+  it('findet ein Vereinswappen als sichtbares CSS-Hintergrundbild im Header (Jimdo, vfb-fortuna-chemnitz.de)', async () => {
+    const candidates = await scoreFixture(`
+      <html>
+        <head><style>
+          .jtpl-header {
+            width: 100%; height: 260px;
+            background-image: url('/assets/vfb-fortuna-wappen.jpg');
+          }
+        </style></head>
+        <body>
+          <div class="jtpl-header"><header></header></div>
+          <img src="/match-photo.jpg" alt="Spielbericht">
+        </body>
+      </html>
+    `)
+    expect(candidates[0]).toMatchObject({
+      url: `${FIXTURE_ORIGIN}/assets/vfb-fortuna-wappen.jpg`,
+      score: 3,
+    })
+    expect(
+      candidates.find((candidate) => candidate.url.endsWith('/match-photo.jpg')),
+    ).toBeUndefined()
+  })
+
   it('findet ein Logo mit eigener Klasse ausserhalb von header/nav (Bug A: tsv-ifa-chemnitz.de)', async () => {
     const candidates = await scoreFixture(`
       <html><body>
