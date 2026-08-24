@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { BarChart3, BookUser, Building2, CalendarDays, CheckCircle2, CreditCard, Feather, FileSignature, FileText, Frame, LayoutDashboard, LayoutGrid, LogOut, Menu, Palette, Plug, Plus, Scale, Settings, Share2, ShieldCheck, Users, UserRound, UserSearch, X } from '@lucide/vue'
 import { deriveSidebarPalette } from '../utils/sidebarBrand'
+import { resolveSidebarLogoAsset, type SidebarLogoAsset } from '../utils/sidebarLogo'
 
 const mobileOpen = ref(false)
 const route = useRoute()
@@ -64,14 +65,32 @@ watch(
       }
     }
     scopeBrand.value = brand
-    if (!brand.logoAssetId) return
-    // status='ready' faengt ein zwischenzeitlich geloeschtes/ersetztes Asset ab (Verteidigung in
-    // der Tiefe -- die RLS-Policy verlangt das bereits beim Setzen von logo_asset_id, siehe
-    // Migration), sonst zeigte der Umschalter eine tote Signed-URL statt der Initialen.
-    const asset = await supabase.from('brand_assets').select('object_path').eq('id', brand.logoAssetId).eq('status', 'ready').maybeSingle()
-    if (run !== latestScopeBrandRun) return
-    if (!asset.data?.object_path) return
-    const signed = await supabase.storage.from('brand-assets').createSignedUrl(asset.data.object_path, 600)
+    // Das aktiv verknuepfte Logo bleibt die erste Wahl. Wurde eine passende Logo-Datei bereits
+    // hochgeladen, aber auf /marke noch nicht als Render-Logo gespeichert, zeigt die Shell sie
+    // trotzdem als Identitaet des aktuellen Bereichs. So bleibt der Kontext eindeutig, ohne die
+    // fachliche, explizite Verknuepfung fuer Beitraege zu veraendern.
+    const logoAssets = await supabase
+      .from('brand_assets')
+      .select('id, department_id, team_id, kind, object_path, status')
+      .eq('organization_id', organizationId)
+      .eq('status', 'ready')
+      .in('kind', ['logo_primary', 'logo_light', 'logo_dark', 'logo_mark'])
+      .order('created_at', { ascending: false })
+    if (run !== latestScopeBrandRun || logoAssets.error || !logoAssets.data) return
+    const asset = resolveSidebarLogoAsset(
+      logoAssets.data.map((item) => ({
+        id: item.id as string,
+        departmentId: item.department_id as string | null,
+        teamId: item.team_id as string | null,
+        kind: item.kind as string,
+        objectPath: item.object_path as string,
+        status: item.status as string,
+      } satisfies SidebarLogoAsset)),
+      departmentId ?? null,
+      brand.logoAssetId,
+    )
+    if (!asset) return
+    const signed = await supabase.storage.from('brand-assets').createSignedUrl(asset.objectPath, 600)
     if (run !== latestScopeBrandRun) return
     scopeLogoUrl.value = signed.data?.signedUrl ?? ''
   },
@@ -106,12 +125,12 @@ const accentStyle = computed(() => ({ backgroundColor: sidebarPalette.value.acti
 const sidebarClasses = computed(() =>
   sidebarPalette.value.onSurface === '#ffffff'
     ? {
-        text: 'text-white', muted: 'text-white/55', quiet: 'text-white/45', panel: 'border-white/10 bg-white/[.06]', divider: 'bg-white/10',
-        select: 'text-white [&_svg]:text-white/50', nav: 'text-white/65 hover:bg-white/[.07] hover:text-white', activeNav: '!bg-white/[.11] !text-white', footer: 'border-white/10',
+        text: 'text-white', muted: 'text-white', quiet: 'text-white', panel: 'border-white/30 bg-white/[.06]', divider: 'bg-white/30',
+        select: 'text-white [&_svg]:text-white', nav: 'text-white hover:bg-white/[.07]', activeNav: '!bg-white/[.11] !text-white', footer: 'border-white/30',
       }
     : {
-        text: 'text-ink', muted: 'text-ink/60', quiet: 'text-ink/55', panel: 'border-ink/10 bg-ink/[.05]', divider: 'bg-ink/10',
-        select: 'text-ink [&_svg]:text-ink/50', nav: 'text-ink/70 hover:bg-ink/[.07] hover:text-ink', activeNav: '!bg-ink/[.11] !text-ink', footer: 'border-ink/10',
+        text: 'text-ink', muted: 'text-ink', quiet: 'text-ink', panel: 'border-ink/30 bg-ink/[.05]', divider: 'bg-ink/30',
+        select: 'text-ink [&_svg]:text-ink', nav: 'text-ink hover:bg-ink/[.07]', activeNav: '!bg-ink/[.11] !text-ink', footer: 'border-ink/30',
       },
 )
 

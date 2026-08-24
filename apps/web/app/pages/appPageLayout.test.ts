@@ -31,6 +31,7 @@ describe('standard app page layout', () => {
     const brandPage = readFileSync(join(appDirectory, 'pages/marke.vue'), 'utf8')
 
     expect(layout).toContain('deriveSidebarPalette')
+    expect(layout).toContain('resolveSidebarLogoAsset')
     expect(layout).toContain('brandRevision.value')
     expect(layout).toContain('@error="scopeLogoUrl = \'\'"')
     expect(brandPage).toContain('refreshBrandRevision()')
