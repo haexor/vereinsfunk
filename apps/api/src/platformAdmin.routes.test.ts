@@ -118,22 +118,21 @@ describe('platform administration', () => {
   })
 
   it('only stores an active OpenAI text provider with a secret for the agent', async () => {
-    let updateValue: unknown
+    let rpcArgs: Record<string, unknown> | undefined
     const clients: SupabaseClientFactory = {
       forUser: () => ({}) as unknown as SupabaseClient,
-      forService: () => ({ from: (table: string) => {
-        if (table === 'llm_provider_configurations') return chain({ data: { id: '10000000-5000-4000-8000-000000000001' }, error: null })
-        if (table === 'llm_provider_secrets') return chain({ data: { llm_provider_configuration_id: '10000000-5000-4000-8000-000000000001' }, error: null })
-        if (table === 'platform_settings') {
-          return {
-            update: (payload: { value: unknown }) => {
-              updateValue = payload.value
-              return { eq: () => ({ select: () => ({ single: async () => ({ data: { key: 'agent_llm_provider_configuration_id', value: payload.value, updated_at: '2026-08-24T10:00:00+00:00' }, error: null }) }) }) }
-            },
-          }
-        }
-        throw new Error(`unexpected table in agent LLM setting test: ${table}`)
-      } }) as unknown as SupabaseClient,
+      forService: () => ({
+        from: (table: string) => {
+          if (table === 'llm_provider_configurations') return chain({ data: { id: '10000000-5000-4000-8000-000000000001' }, error: null })
+          if (table === 'llm_provider_secrets') return chain({ data: { llm_provider_configuration_id: '10000000-5000-4000-8000-000000000001' }, error: null })
+          throw new Error(`unexpected table in agent LLM setting test: ${table}`)
+        },
+        rpc: (name: string, args: Record<string, unknown>) => {
+          if (name !== 'update_platform_setting_value') throw new Error(`unexpected rpc in agent LLM setting test: ${name}`)
+          rpcArgs = args
+          return chain({ data: { key: 'agent_llm_provider_configuration_id', value: JSON.parse(args.target_value_json as string), updated_at: '2026-08-24T10:00:00+00:00' }, error: null })
+        },
+      }) as unknown as SupabaseClient,
     }
     const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
     const response = await app.inject({
@@ -143,7 +142,35 @@ describe('platform administration', () => {
       payload: { value: '10000000-5000-4000-8000-000000000001' },
     })
     expect(response.statusCode).toBe(200)
-    expect(updateValue).toBe('10000000-5000-4000-8000-000000000001')
+    expect(rpcArgs?.target_value_json).toBe('"10000000-5000-4000-8000-000000000001"')
+  })
+
+  // Regression: PostgREST maps a JSON `null` in an update body to SQL NULL regardless of the
+  // column's declared type -- value is `not null`, so resetting this setting back to "no
+  // override" always 500'd until the route started encoding it as a text RPC argument instead
+  // (see update_platform_setting_value in the migrations).
+  it('can reset the agent LLM selection back to the deployment default (null)', async () => {
+    let rpcArgs: Record<string, unknown> | undefined
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({
+        rpc: (name: string, args: Record<string, unknown>) => {
+          if (name !== 'update_platform_setting_value') throw new Error(`unexpected rpc in agent LLM reset test: ${name}`)
+          rpcArgs = args
+          return chain({ data: { key: 'agent_llm_provider_configuration_id', value: JSON.parse(args.target_value_json as string), updated_at: '2026-08-24T10:00:00+00:00' }, error: null })
+        },
+      }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/v1/platform-settings/agent_llm_provider_configuration_id',
+      headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+      payload: { value: null },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ value: null })
+    expect(rpcArgs?.target_value_json).toBe('null')
   })
 
   it('rejects an agent LLM selection without a usable provider configuration', async () => {

@@ -72,8 +72,9 @@ Erfolgreich ausgeführt:
 
 - `pnpm --filter @vereinsfunk/api typecheck`
 - `pnpm --filter @vereinsfunk/web typecheck`
-- `pnpm --filter @vereinsfunk/contracts test -- platformAdmin.test.ts` (116 Tests)
-- `pnpm --filter @vereinsfunk/api test -- agent.test.ts agent.routes.test.ts platformAdmin.routes.test.ts` (547 Tests)
+- `pnpm --filter @vereinsfunk/contracts test` (116 Tests; ein Dateiname nach `--`
+  filtert bei diesem Vitest-Setup nichts, es läuft immer die volle Suite)
+- `pnpm --filter @vereinsfunk/api test` (547 Tests; siehe Hinweis oben)
 - `pnpm lint`
 - `pnpm build`
 

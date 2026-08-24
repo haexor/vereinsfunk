@@ -77,6 +77,17 @@ export const UpdatePublishingProviderConfigurationRequestSchema = z.object({
   graphVersion: z.string().trim().min(1).max(80).nullable().optional(),
 })
 
+// createGuardedFetch() (apps/api/src/agent.ts) blockt http:// erst zur Laufzeit beim ersten
+// Chat-Aufruf -- ohne diese Einschraenkung landet eine ungueltig gespeicherte Basis-URL erst dort
+// als generischer Fehler statt beim Anlegen/Aendern der Konfiguration selbst.
+// Breaking: CreateLlmProviderConfigurationRequestSchema/UpdateLlmProviderConfigurationRequestSchema
+// lehnen ab jetzt http://-Basis-URLs ab. Nur apps/api (POST/PATCH /v1/llm-providers) und apps/web
+// (Formular unter /plattform-admin/llm) nutzen diese Schemas ausserhalb dieses Packages; kein
+// anderes @vereinsfunk/*-Paket ist betroffen. Eine bereits gespeicherte http://-Konfiguration bleibt
+// bis zur naechsten Aenderung unveraendert lesbar, laesst sich danach aber nicht mehr auf http://
+// zuruecksetzen.
+const HttpsUrlSchema = z.url({ protocol: /^https$/ })
+
 export const LlmProviderProtocolSchema = z.enum(['anthropic', 'openai'])
 // The vocabulary deliberately describes future tasks, but only text_generation has an adapter.
 // APIs must reject activating every other task until its own adapter spike exists. vision_analysis
@@ -101,7 +112,7 @@ export const LlmProviderConfigurationSchema = z.object({
 export const CreateLlmProviderConfigurationRequestSchema = z.object({
   label: z.string().trim().min(1).max(160),
   protocol: LlmProviderProtocolSchema,
-  baseUrl: z.url(),
+  baseUrl: HttpsUrlSchema,
   model: z.string().trim().min(1).max(120),
   purpose: z.string().trim().min(1).max(60).default('text_generation'),
   taskKind: LlmTaskKindSchema.default('text_generation'),
@@ -112,7 +123,7 @@ export const CreateLlmProviderConfigurationRequestSchema = z.object({
 export const UpdateLlmProviderConfigurationRequestSchema = z.object({
   label: z.string().trim().min(1).max(160).optional(),
   protocol: LlmProviderProtocolSchema.optional(),
-  baseUrl: z.url().optional(),
+  baseUrl: HttpsUrlSchema.optional(),
   model: z.string().trim().min(1).max(120).optional(),
   purpose: z.string().trim().min(1).max(60).optional(),
   taskKind: LlmTaskKindSchema.optional(),

@@ -3,6 +3,7 @@ import {
   AddPlatformAdminRequestSchema,
   ContentLimitOverrideSchema,
   CreateSubscriptionPlanRequestSchema,
+  JsonValueSchema,
   OrganizationSubscriptionSchema,
   PlatformAdminInvitationSchema,
   PlatformAdminOrganizationDetailSchema,
@@ -340,15 +341,19 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
         return reply.code(422).send({ error: 'agent_llm_provider_not_configured', correlationId: request.id })
       }
     }
-    const update = await service
-      .from('platform_settings')
-      .update({ value, updated_by: request.auth!.userId })
-      .eq('key', params.key)
-      .select('key, value, updated_at')
-      .single()
+    // Ueber die RPC statt .update(): PostgREST bildet ein JSON-null im Update-Body immer auf
+    // SQL-NULL ab (value ist aber `not null`), unabhaengig davon, dass die Spalte jsonb ist --
+    // ein zurueckgesetztes agent_llm_provider_configuration_id (null = kein Override) waere sonst
+    // nie speicherbar. Siehe update_platform_setting_value in den Migrationen.
+    const update = await service.rpc('update_platform_setting_value', {
+      target_key: params.key,
+      target_value_json: JSON.stringify(value),
+      actor_user_id: request.auth!.userId,
+    }).single()
     if (update.error) throw update.error
+    const updatedRow = z.object({ key: PlatformSettingKeySchema, value: JsonValueSchema, updated_at: z.string() }).parse(update.data)
     return reply.code(200).send(
-      PlatformSettingSchema.parse({ key: update.data.key, value: update.data.value, updatedAt: update.data.updated_at }),
+      PlatformSettingSchema.parse({ key: updatedRow.key, value: updatedRow.value, updatedAt: updatedRow.updated_at }),
     )
   })
 

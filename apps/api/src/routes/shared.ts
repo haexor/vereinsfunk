@@ -9,7 +9,7 @@ import type { FastifyRequest } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { permissionScopeKey, type PermissionScope, type RoleProvider } from '../auth.js'
-import { byteaToBuffer, createSecretBoxFromEnvironment } from '../secretBox.js'
+import { byteaToBuffer, createSecretBoxFromEnvironment, EmbeddedProviderSecretSchema, unwrapEmbeddedSecret } from '../secretBox.js'
 export { fetchAllRows, fetchAllRowsForIds } from '../supabase.js'
 import type { SupabaseClientFactory } from './context.js'
 
@@ -539,10 +539,7 @@ export async function resolveInvitationScope(
 const ActiveTextProviderRowSchema = z.object({
   id: UuidSchema, protocol: z.string(), base_url: z.url(), model: z.string().trim().min(1),
   structured_output_required: z.boolean(),
-  llm_provider_secrets: z.union([
-    z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) }),
-    z.array(z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) })).min(1),
-  ]),
+  llm_provider_secrets: EmbeddedProviderSecretSchema,
 })
 
 const PREVIEW_TEXT_GENERATORS: Record<string, StructuredContentGenerator | undefined> = {
@@ -659,7 +656,7 @@ async function runStyleProfilePreview(
   if (!generator || !row.structured_output_required) {
     return { ok: false, status: 422, error: 'unsupported_provider_configuration' }
   }
-  const secret = Array.isArray(row.llm_provider_secrets) ? row.llm_provider_secrets[0]! : row.llm_provider_secrets
+  const secret = unwrapEmbeddedSecret(row.llm_provider_secrets)
   const apiKey = createSecretBoxFromEnvironment(environment).open(byteaToBuffer(secret.api_key_ciphertext), secret.key_version, row.id)
   try {
     const post = await generator.generateText({
