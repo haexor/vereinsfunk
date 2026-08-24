@@ -80,6 +80,48 @@ export function scoreLogoCandidates(): LogoCandidate[] {
     if (existing === undefined || score > existing.score) scores.set(url, { url, score })
   }
 
+  // Manche Templates legen das Vereinswappen nicht als <img>, sondern als Hintergrund des
+  // sichtbaren Header-/Hero-Bereichs ab. Das ist bei Jimdo besonders verbreitet. Wir lesen nur
+  // markennahe Bereiche aus, nicht pauschal jedes CSS-Hintergrundbild der Seite: Letzteres wuerde
+  // Beitragsfotos, Texturen und Button-Icons zu sehr beguenstigen.
+  const backgroundImageUrls = (backgroundImage: string): string[] => {
+    const urls: string[] = []
+    const pattern = /url\(\s*(['"]?)(.*?)\1\s*\)/g
+    for (const match of backgroundImage.matchAll(pattern)) {
+      const url = normalize(match[2] ?? '')
+      if (url) urls.push(url)
+    }
+    return urls
+  }
+  const backgroundSelector =
+    'header, nav, [class*="header" i], [id*="header" i], [class*="logo" i], [id*="logo" i]'
+  for (const element of Array.from(document.querySelectorAll<HTMLElement>(backgroundSelector))) {
+    const ownText = `${element.className} ${element.id}`
+    const inHeaderOrNav =
+      element.matches('header, nav') ||
+      element.closest('header, nav') !== null ||
+      /header/i.test(ownText)
+    const inLogoContainer =
+      /logo/i.test(ownText) || element.closest('[class*="logo" i], [id*="logo" i]') !== null
+    const rect = element.getBoundingClientRect()
+    const isVisible = rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < innerHeight
+    if (!isVisible || (!inHeaderOrNav && !inLogoContainer)) continue
+
+    let score = 0
+    if (inHeaderOrNav) score += 2
+    if (inLogoContainer) score += 2
+    // Ein sichtbarer Marken-Hintergrund ist ein sinnvoller Kandidat, aber bleibt hinter einem
+    // expliziten <img class="logo"> mit Home-Link. So behandeln wir Header-Fotos als Fallback,
+    // ohne sie mit dem in diesem Template verwendeten Wappenbild zu verwechseln.
+    score += 1
+    for (const url of backgroundImageUrls(getComputedStyle(element).backgroundImage))
+      record(url, score)
+    for (const url of backgroundImageUrls(getComputedStyle(element, '::before').backgroundImage))
+      record(url, score)
+    for (const url of backgroundImageUrls(getComputedStyle(element, '::after').backgroundImage))
+      record(url, score)
+  }
+
   const selector =
     'header img, nav img, [class*="logo" i] img, img[alt*="logo" i], img[class*="logo" i], img[id*="logo" i]'
   for (const img of Array.from(document.querySelectorAll<HTMLImageElement>(selector))) {
