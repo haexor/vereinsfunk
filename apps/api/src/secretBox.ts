@@ -61,9 +61,11 @@ export function byteaToBuffer(value: string): Buffer {
 // llm_provider_secrets kommt ueber PostgREST' !inner-Embed entweder als Objekt oder als
 // Ein-Element-Array zurueck (PostgREST kann die Kardinalitaet der Beziehung nicht immer statisch
 // bestimmen) -- Form und Unwrap wurden bisher in app.ts und routes/shared.ts dupliziert.
+// Genau ein Element, nicht min(1): llm_provider_configuration_id ist in llm_provider_secrets
+// PRIMARY KEY, eine gueltige Antwort kann also nie mehr als eine Zeile enthalten.
 export const EmbeddedProviderSecretSchema = z.union([
   z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) }),
-  z.array(z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) })).min(1),
+  z.array(z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) })).length(1),
 ])
 
 export function unwrapEmbeddedSecret<T>(secret: T | T[]): T {

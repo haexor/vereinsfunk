@@ -80,6 +80,12 @@ export const UpdatePublishingProviderConfigurationRequestSchema = z.object({
 // createGuardedFetch() (apps/api/src/agent.ts) blockt http:// erst zur Laufzeit beim ersten
 // Chat-Aufruf -- ohne diese Einschraenkung landet eine ungueltig gespeicherte Basis-URL erst dort
 // als generischer Fehler statt beim Anlegen/Aendern der Konfiguration selbst.
+// Breaking: CreateLlmProviderConfigurationRequestSchema/UpdateLlmProviderConfigurationRequestSchema
+// lehnen ab jetzt http://-Basis-URLs ab. Nur apps/api (POST/PATCH /v1/llm-providers) und apps/web
+// (Formular unter /plattform-admin/llm) nutzen diese Schemas ausserhalb dieses Packages; kein
+// anderes @vereinsfunk/*-Paket ist betroffen. Eine bereits gespeicherte http://-Konfiguration bleibt
+// bis zur naechsten Aenderung unveraendert lesbar, laesst sich danach aber nicht mehr auf http://
+// zuruecksetzen.
 const HttpsUrlSchema = z.url({ protocol: /^https$/ })
 
 export const LlmProviderProtocolSchema = z.enum(['anthropic', 'openai'])

@@ -96,9 +96,10 @@ const availableAgentLlmProviders = computed(() => llmProviderConfigurations.valu
   provider.protocol === 'openai' && provider.taskKind === 'text_generation' && provider.isActive && provider.hasSecret,
 ))
 
-// Eine gespeicherte Auswahl kann zwischen zwei Seitenaufrufen geloescht oder deaktiviert worden
-// sein -- das <Select> zeigt dann einfach keine Auswahl mehr, ohne dass sichtbar wird, dass der
-// Assistent seither leise auf die Deployment-Standardkonfiguration zurueckfaellt.
+// Eine gespeicherte Auswahl kann zwischen zwei Seitenaufrufen aus availableAgentLlmProviders
+// gefallen sein -- geloescht, deaktiviert, ohne Secret oder nicht mehr openai/text_generation --
+// das <Select> zeigt dann einfach keine Auswahl mehr, ohne dass sichtbar wird, dass der Assistent
+// seither leise auf die Deployment-Standardkonfiguration zurueckfaellt.
 const selectedAgentLlmProviderUnavailable = computed(() =>
   agentLlmProviderConfigurationId.value !== null
   && !availableAgentLlmProviders.value.some((provider) => provider.id === agentLlmProviderConfigurationId.value),
@@ -194,7 +195,7 @@ async function saveLimit() {
           Noch keine aktive OpenAI-kompatible Text-Provider-Konfiguration mit Secret vorhanden. Lege sie unter „LLM-Provider“ an.
         </p>
         <p v-if="selectedAgentLlmProviderUnavailable" class="mt-3 text-xs text-amber-800">
-          Die gespeicherte Auswahl wurde gelöscht oder deaktiviert. Der Assistent nutzt aktuell die Deployment-Standardkonfiguration.
+          Die gespeicherte Auswahl ist nicht mehr verfügbar. Der Assistent nutzt aktuell die Deployment-Standardkonfiguration.
         </p>
       </section>
       <section class="card mt-6 p-6">
