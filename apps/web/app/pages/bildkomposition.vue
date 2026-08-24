@@ -5,9 +5,6 @@ import { z } from 'zod'
 import { emptyPhotoLayoutPresetDraft, type PhotoLayoutPresetDraft } from '../utils/photoLayoutPresetDraft'
 import { selectablePhotoLayoutPresets } from '../utils/photoLayoutPresets'
 
-interface DepartmentRow { id: string; name: string }
-interface TeamRow { id: string; name: string; departmentId: string }
-
 const api = useApiClient()
 const session = await useSession()
 const scope = await useScope()
@@ -18,23 +15,14 @@ const activeOrganization = computed(() => session.value?.scopes.find((item) => i
 const loading = ref(true)
 const loadError = ref(false)
 const saving = ref(false)
+let latestLoadRun = 0
 
-const departments = ref<DepartmentRow[]>([])
-const teams = ref<TeamRow[]>([])
 const presets = ref<PhotoLayoutPreset[]>([])
 const orgColors = reactive({ primaryColor: '#163a2c', accentColor: '#caff4a' })
 
-const activeLevel = ref<ScopeLevelName>('organization')
-const activeDepartmentId = ref<string | null>(null)
-const activeTeamId = ref<string | null>(null)
-
-function selectScope(level: ScopeLevelName, departmentId: string | null, teamId: string | null) {
-  activeLevel.value = level
-  activeDepartmentId.value = departmentId
-  activeTeamId.value = teamId
-  createError.value = ''
-  deleteError.value = ''
-}
+const activeLevel = computed<ScopeLevelName>(() => scope.value?.departmentId ? 'department' : 'organization')
+const activeDepartmentId = computed(() => scope.value?.departmentId ?? null)
+const activeTeamId = computed<string | null>(() => null)
 
 const canManageActiveLevel = computed(() => {
   if (!organizationId.value) return false
@@ -67,19 +55,17 @@ function resolveDividerColor(dividerColor: string): string {
 }
 
 async function loadAll() {
+  const loadRun = ++latestLoadRun
   if (!organizationId.value) { loading.value = false; return }
   loading.value = true
   loadError.value = false
   try {
-    const [departmentsResult, teamsResult, orgBrandResult, presetsResponse] = await Promise.all([
-      supabase.from('departments').select('id, name').eq('organization_id', organizationId.value).is('archived_at', null).order('name'),
-      supabase.from('teams').select('id, name, department_id').eq('organization_id', organizationId.value).is('archived_at', null).order('name'),
+    const [orgBrandResult, presetsResponse] = await Promise.all([
       supabase.from('organization_brand_profiles').select('primary_color, accent_color').eq('organization_id', organizationId.value).maybeSingle(),
       api.request('/v1/photo-layout-presets', { query: { organizationId: organizationId.value } }, z.object({ presets: z.array(PhotoLayoutPresetSchema) })),
     ])
-    if (departmentsResult.error || teamsResult.error || orgBrandResult.error) { loadError.value = true; return }
-    departments.value = departmentsResult.data.map((row) => ({ id: row.id, name: row.name }))
-    teams.value = teamsResult.data.map((row) => ({ id: row.id, name: row.name, departmentId: row.department_id }))
+    if (loadRun !== latestLoadRun) return
+    if (orgBrandResult.error) { loadError.value = true; return }
     if (orgBrandResult.data) {
       orgColors.primaryColor = orgBrandResult.data.primary_color
       orgColors.accentColor = orgBrandResult.data.accent_color
@@ -88,10 +74,15 @@ async function loadAll() {
   } catch {
     loadError.value = true
   } finally {
-    loading.value = false
+    if (loadRun === latestLoadRun) loading.value = false
   }
 }
 await loadAll()
+watch(organizationId, () => { void loadAll() })
+watch([activeLevel, activeDepartmentId], () => {
+  createError.value = ''
+  deleteError.value = ''
+})
 
 // --- Anlage ------------------------------------------------------------------------------
 
@@ -200,14 +191,6 @@ async function deletePreset(preset: PhotoLayoutPreset) {
     <div v-if="loading" class="p-8 text-center text-xs text-[#7b827d]">Wird geladen …</div>
     <div v-else-if="loadError" class="card p-8 text-center text-sm font-semibold text-red-700">Die Layout-Presets konnten nicht geladen werden. Bitte lade die Seite neu.</div>
     <template v-else>
-      <div class="card mb-6 flex flex-wrap items-center gap-2 p-4" role="group" aria-label="Bildkomposition-Ebene wählen">
-        <button type="button" :aria-pressed="activeLevel === 'organization'" class="focus-ring rounded-lg px-3 py-1.5 text-xs font-semibold" :class="activeLevel === 'organization' ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'" @click="selectScope('organization', null, null)">Verein</button>
-        <span v-for="department in departments" :key="department.id" class="flex items-center gap-1">
-          <button type="button" :aria-pressed="activeLevel === 'department' && activeDepartmentId === department.id" class="focus-ring rounded-lg px-3 py-1.5 text-xs font-semibold" :class="activeLevel === 'department' && activeDepartmentId === department.id ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'" @click="selectScope('department', department.id, null)">{{ department.name }}</button>
-          <button v-for="team in teams.filter((t) => t.departmentId === department.id)" :key="team.id" type="button" :aria-pressed="activeLevel === 'team' && activeTeamId === team.id" class="focus-ring rounded-lg px-3 py-1.5 text-[11px] font-semibold" :class="activeLevel === 'team' && activeTeamId === team.id ? 'bg-forest text-white' : 'bg-[#f4f6f1] text-[#7b827d]'" @click="selectScope('team', department.id, team.id)">{{ team.name }}</button>
-        </span>
-      </div>
-
       <div class="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
         <div class="space-y-6">
           <section v-if="!canManageActiveLevel" class="card p-6 text-center text-sm text-[#7b827d]">

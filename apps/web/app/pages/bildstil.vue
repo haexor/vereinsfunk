@@ -15,15 +15,6 @@ import {
 } from '../utils/imageStylePresetDraft'
 import { selectableImageStylePresets } from '../utils/imageStylePresets'
 
-interface DepartmentRow {
-  id: string
-  name: string
-}
-interface TeamRow {
-  id: string
-  name: string
-  departmentId: string
-}
 interface BrandAssetOption {
   id: string
   departmentId: string | null
@@ -45,9 +36,8 @@ const activeOrganization = computed(
 const loading = ref(true)
 const loadError = ref(false)
 const saving = ref(false)
+let latestLoadRun = 0
 
-const departments = ref<DepartmentRow[]>([])
-const teams = ref<TeamRow[]>([])
 const presets = ref<ImageStylePreset[]>([])
 const frameAssets = ref<BrandAssetOption[]>([])
 const logoAssets = ref<BrandAssetOption[]>([])
@@ -57,14 +47,11 @@ const orgColors = reactive({ primaryColor: '#163a2c', accentColor: '#caff4a' })
 // als einheitliches Logo behandelt. Neue Uploads nutzen logo_primary.
 const LOGO_ASSET_KINDS = BrandLogoAssetKindSchema.options
 
-const activeLevel = ref<ScopeLevelName>('organization')
-const activeDepartmentId = ref<string | null>(null)
-const activeTeamId = ref<string | null>(null)
+const activeLevel = computed<ScopeLevelName>(() => scope.value?.departmentId ? 'department' : 'organization')
+const activeDepartmentId = computed(() => scope.value?.departmentId ?? null)
+const activeTeamId = computed<string | null>(() => null)
 
-function selectScope(level: ScopeLevelName, departmentId: string | null, teamId: string | null) {
-  activeLevel.value = level
-  activeDepartmentId.value = departmentId
-  activeTeamId.value = teamId
+function resetScopeDependentDraft() {
   // selectableFrameAssets/selectableLogoAssets sind von der aktiven Ebene abhaengig -- ein im
   // Anlage-Entwurf gewaehltes Rahmen-/Logo-Asset der alten Ebene kann in der neuen fehlen und
   // faellt sonst erst beim Speichern als invalid_asset_reference auf. Nur die betroffenen
@@ -183,6 +170,7 @@ function signedUrlFor(assets: BrandAssetOption[], assetId: string | null): strin
 }
 
 async function loadAll() {
+  const loadRun = ++latestLoadRun
   if (!organizationId.value) {
     loading.value = false
     return
@@ -190,20 +178,8 @@ async function loadAll() {
   loading.value = true
   loadError.value = false
   try {
-    const [departmentsResult, teamsResult, brandAssetsResult, orgBrandResult, presetsResponse] =
+    const [brandAssetsResult, orgBrandResult, presetsResponse] =
       await Promise.all([
-        supabase
-          .from('departments')
-          .select('id, name')
-          .eq('organization_id', organizationId.value)
-          .is('archived_at', null)
-          .order('name'),
-        supabase
-          .from('teams')
-          .select('id, name, department_id')
-          .eq('organization_id', organizationId.value)
-          .is('archived_at', null)
-          .order('name'),
         supabase
           .from('brand_assets')
           .select('id, department_id, team_id, kind, object_path')
@@ -222,20 +198,14 @@ async function loadAll() {
         ),
       ])
     if (
-      departmentsResult.error ||
-      teamsResult.error ||
       brandAssetsResult.error ||
       orgBrandResult.error
     ) {
+      if (loadRun !== latestLoadRun) return
       loadError.value = true
       return
     }
-    departments.value = departmentsResult.data.map((row) => ({ id: row.id, name: row.name }))
-    teams.value = teamsResult.data.map((row) => ({
-      id: row.id,
-      name: row.name,
-      departmentId: row.department_id,
-    }))
+    if (loadRun !== latestLoadRun) return
     if (orgBrandResult.data) {
       orgColors.primaryColor = orgBrandResult.data.primary_color
       orgColors.accentColor = orgBrandResult.data.accent_color
@@ -250,6 +220,7 @@ async function loadAll() {
           ] as const,
       ),
     )
+    if (loadRun !== latestLoadRun) return
     const urlById = Object.fromEntries(signedUrls)
     frameAssets.value = brandAssetsResult.data
       .filter((row) => row.kind === 'frame')
@@ -275,10 +246,12 @@ async function loadAll() {
   } catch {
     loadError.value = true
   } finally {
-    loading.value = false
+    if (loadRun === latestLoadRun) loading.value = false
   }
 }
 await loadAll()
+watch(organizationId, () => { void loadAll() })
+watch([activeLevel, activeDepartmentId], resetScopeDependentDraft)
 
 // --- Bausteine hochladen (Rahmengrafik/Logo) ------------------------------------------------
 //
@@ -414,58 +387,6 @@ async function deletePreset(preset: ImageStylePreset) {
       Die Bildstil-Presets konnten nicht geladen werden. Bitte lade die Seite neu.
     </div>
     <template v-else>
-      <div
-        class="card mb-6 flex flex-wrap items-center gap-2 p-4"
-        role="group"
-        aria-label="Bildstil-Ebene wählen"
-      >
-        <button
-          type="button"
-          :aria-pressed="activeLevel === 'organization'"
-          class="focus-ring rounded-lg px-3 py-1.5 text-xs font-semibold"
-          :class="
-            activeLevel === 'organization' ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'
-          "
-          @click="selectScope('organization', null, null)"
-        >
-          Verein
-        </button>
-        <span
-          v-for="department in departments"
-          :key="department.id"
-          class="flex items-center gap-1"
-        >
-          <button
-            type="button"
-            :aria-pressed="activeLevel === 'department' && activeDepartmentId === department.id"
-            class="focus-ring rounded-lg px-3 py-1.5 text-xs font-semibold"
-            :class="
-              activeLevel === 'department' && activeDepartmentId === department.id
-                ? 'bg-forest text-white'
-                : 'bg-[#eef1ea] text-[#5b625d]'
-            "
-            @click="selectScope('department', department.id, null)"
-          >
-            {{ department.name }}
-          </button>
-          <button
-            v-for="team in teams.filter((t) => t.departmentId === department.id)"
-            :key="team.id"
-            type="button"
-            :aria-pressed="activeLevel === 'team' && activeTeamId === team.id"
-            class="focus-ring rounded-lg px-3 py-1.5 text-[11px] font-semibold"
-            :class="
-              activeLevel === 'team' && activeTeamId === team.id
-                ? 'bg-forest text-white'
-                : 'bg-[#f4f6f1] text-[#7b827d]'
-            "
-            @click="selectScope('team', department.id, team.id)"
-          >
-            {{ team.name }}
-          </button>
-        </span>
-      </div>
-
       <div class="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
         <div class="space-y-6">
           <section v-if="!canManageActiveLevel" class="card p-6 text-center text-sm text-[#7b827d]">
