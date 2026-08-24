@@ -64,14 +64,15 @@ function messageRow(role: 'user' | 'assistant', content: string): Record<string,
 }
 
 // Deckt sowohl loadConversation/loadMessages als auch das (in diesem Szenario immer leere)
-// loadWorkspace ab -- posts/club_events/approval_stages/composition_sessions leer zu lassen
-// vermeidet die jeweiligen Folgeabfragen (post_versions, approval_requests, generation_candidates).
+// loadWorkspace ab -- posts/club_events/approval_stages/composition_sessions/publications leer zu
+// lassen vermeidet die jeweiligen Folgeabfragen (post_versions, approval_requests,
+// generation_candidates, publication_attempts).
 function userClientForMessagesRoute(): SupabaseClient {
   return {
     from: (table: string) => {
       if (table === 'agent_conversations') return chain({ data: conversationRow(), error: null })
       if (table === 'agent_messages') return chain({ data: [], error: null })
-      if (table === 'posts' || table === 'club_events' || table === 'approval_stages' || table === 'composition_sessions') {
+      if (table === 'posts' || table === 'club_events' || table === 'approval_stages' || table === 'composition_sessions' || table === 'publications') {
         return chain({ data: [], error: null })
       }
       throw new Error(`unexpected table in agent messages test (user client): ${table}`)
