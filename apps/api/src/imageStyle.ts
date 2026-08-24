@@ -395,8 +395,8 @@ async function applyFestlichFrameStyle(buffer: Buffer, widthPx: number): Promise
   ].join('')
   const svg =
     `<svg width="${width}" height="${height}">` +
-    `<defs><linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#604515"/><stop offset="16%" stop-color="#c79929"/><stop offset="40%" stop-color="#fff3bd"/><stop offset="60%" stop-color="#d4af37"/><stop offset="100%" stop-color="#6b4c14"/></linearGradient></defs>` +
-    `<path fill-rule="evenodd" fill="url(#gold)" d="${ringPath}"/><rect x="${inset}" y="${inset}" width="${width - 2 * inset}" height="${height - 2 * inset}" fill="none" stroke="#725418" stroke-width="${Math.max(1, widthPx * 0.1)}"/><rect x="${widthPx - inset}" y="${widthPx - inset}" width="${width - 2 * (widthPx - inset)}" height="${height - 2 * (widthPx - inset)}" fill="none" stroke="#fff0a8" stroke-width="${Math.max(1, widthPx * 0.08)}"/>${beads}${corners}</svg>`
+    `<defs><linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#604515"/><stop offset="16%" stop-color="#c79929"/><stop offset="40%" stop-color="#fff3bd"/><stop offset="60%" stop-color="#d4af37"/><stop offset="100%" stop-color="#6b4c14"/></linearGradient><clipPath id="frame-area" clipPathUnits="userSpaceOnUse"><path fill-rule="evenodd" clip-rule="evenodd" d="${ringPath}"/></clipPath></defs>` +
+    `<path fill-rule="evenodd" fill="url(#gold)" d="${ringPath}"/><rect x="${inset}" y="${inset}" width="${width - 2 * inset}" height="${height - 2 * inset}" fill="none" stroke="#725418" stroke-width="${Math.max(1, widthPx * 0.1)}"/><rect x="${widthPx - inset}" y="${widthPx - inset}" width="${width - 2 * (widthPx - inset)}" height="${height - 2 * (widthPx - inset)}" fill="none" stroke="#fff0a8" stroke-width="${Math.max(1, widthPx * 0.08)}"/>${beads}<g clip-path="url(#frame-area)">${corners}</g></svg>`
   return sharp(extended)
     .composite([{ input: Buffer.from(svg), blend: 'over' }])
     .png()

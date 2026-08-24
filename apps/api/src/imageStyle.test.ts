@@ -453,6 +453,25 @@ describe('renderImageStyle: Rahmenstile', () => {
     expect(center.b).toBe(255)
   })
 
+  it('festlich clippt die Ranken bei der kleinsten Rahmenbreite auf die Rahmenflaeche', async () => {
+    const source = await solidColorImage(60, 60, { r: 0, g: 0, b: 255 })
+    const result = await renderImageStyle({
+      sourceBuffer: source,
+      preset: {
+        ...NO_STYLE_PRESET,
+        frameType: 'parametric',
+        frameStyle: 'festlich',
+        frameColor: 'primary',
+        frameWidthPx: 1,
+        frameCornerRadiusPx: null,
+      },
+      brandColors: BRAND_COLORS,
+    })
+    // Ohne Clip erreichen die neuen Ranken bei widthPx=1 bis in die obere linke Fotoecke.
+    const photoPixel = await pixelAt(result.buffer, 10, 10)
+    expect(photoPixel).toMatchObject({ r: 0, g: 0, b: 255 })
+  })
+
   it('bottom_bar setzt einen deutlich dickeren Balken unten als oben/links/rechts', async () => {
     const source = await solidColorImage(20, 20, { r: 0, g: 0, b: 255 })
     const result = await renderImageStyle({
