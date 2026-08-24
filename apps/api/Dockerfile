@@ -29,6 +29,11 @@ RUN pnpm --filter @vereinsfunk/api deploy --legacy --prod --config.node-linker=h
 
 FROM base AS runtime
 ENV NODE_ENV=production
+# G'MIC bleibt ausschliesslich im Servercontainer; Browser erhalten nur das fertige Derivat.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gmic \
+ && rm -rf /var/lib/apt/lists/*
+ENV IMAGE_EFFECTS_PROVIDER=gmic
 WORKDIR /app
 COPY --from=build --chown=node:node /out ./
 # Plan 036: der Migrations-Boot-Hook (packages/db-migrate, aufgerufen aus server.ts vor jeder

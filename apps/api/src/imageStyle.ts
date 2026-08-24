@@ -4,6 +4,7 @@ import type {
   ImageStyleLogoPosition,
   ImageStylePreset,
 } from '@vereinsfunk/contracts'
+import type { ImageEffectProvider } from '@vereinsfunk/media-processing'
 import sharp from 'sharp'
 
 export interface BrandColors {
@@ -29,6 +30,7 @@ export interface ImageStyleRenderInput {
   frameAssetBuffer?: Buffer
   logoAssetBuffer?: Buffer
   brandColors: BrandColors
+  imageEffects?: ImageEffectProvider
 }
 
 export interface ImageStyleRenderResult {
@@ -36,6 +38,7 @@ export interface ImageStyleRenderResult {
   contentType: string
   width: number
   height: number
+  filterProvider: string
 }
 
 // Exportiert, weil apps/api/src/photoLayout.ts (Plan 047, PR 1) dieselbe Hex->RGB-Umrechnung fuer
@@ -173,22 +176,32 @@ async function applyFilter(
   buffer: Buffer,
   filter: ImageStyleFilter,
   brandColors: BrandColors,
-): Promise<Buffer> {
+  imageEffects?: ImageEffectProvider,
+): Promise<{ buffer: Buffer; provider: string }> {
+  if (imageEffects?.supports(filter)) {
+    return { buffer: await imageEffects.apply(filter, buffer), provider: imageEffects.id }
+  }
   switch (filter) {
     case 'original':
-      return buffer
+      return { buffer, provider: 'sharp' }
     case 'schwarz_weiss':
-      return sharp(buffer).greyscale().toBuffer()
+      return { buffer: await sharp(buffer).greyscale().toBuffer(), provider: 'sharp' }
     case 'kontrastreich':
-      return applyHighContrast(buffer)
+      return { buffer: await applyHighContrast(buffer), provider: 'sharp' }
     case 'warm':
-      return applyWarm(buffer)
+      return { buffer: await applyWarm(buffer), provider: 'sharp' }
     case 'vereinsfarben_duoton':
-      return applyDuotone(buffer, brandColors.primaryColor, brandColors.accentColor)
+      return {
+        buffer: await applyDuotone(buffer, brandColors.primaryColor, brandColors.accentColor),
+        provider: 'sharp',
+      }
     case 'comic':
-      return applyComic(buffer)
+      return { buffer: await applyComic(buffer), provider: 'sharp' }
     case 'konfetti':
-      return applyConfetti(buffer)
+      return { buffer: await applyConfetti(buffer), provider: 'sharp' }
+    case 'gmic_vintage':
+    case 'gmic_poster':
+      throw new Error("G'MIC image effects are not enabled")
   }
 }
 
@@ -328,8 +341,9 @@ function beadOffsets(length: number, spacing: number): number[] {
 }
 
 // "Festlich" ist ein echter Siegerrahmen, nicht bloß ein goldener CSS-Rand: geformte Leisten,
-// ein inneres Perlband und vier Florentiner Eckornamente. Er bleibt fest golden statt frameColor,
-// damit ein Siegerfoto unabhängig vom Vereins-Branding sofort als Auszeichnung erkennbar ist.
+// ein inneres Perlband und vier ausgearbeitete Ranken-Eckornamente mit Blättern, Rosetten und
+// Voluten. Er bleibt fest golden statt frameColor, damit ein Siegerfoto unabhängig vom
+// Vereins-Branding sofort als Auszeichnung erkennbar ist.
 async function applyFestlichFrameStyle(buffer: Buffer, widthPx: number): Promise<Buffer> {
   const extended = await sharp(buffer)
     .extend({
@@ -349,7 +363,7 @@ async function applyFestlichFrameStyle(buffer: Buffer, widthPx: number): Promise
   const beadRadius = Math.max(1, widthPx * 0.16)
   const beadSpacing = beadRadius * 3.2
   const centerline = widthPx * 0.68
-  const ornamentSize = Math.max(3, widthPx * 0.8)
+  const ornamentSize = Math.max(7, widthPx * 0.95)
   const beads = [
     ...beadOffsets(width, beadSpacing).flatMap((x) => [
       `<circle cx="${x}" cy="${centerline}" r="${beadRadius}" fill="#5c4413"/>`,
@@ -361,10 +375,16 @@ async function applyFestlichFrameStyle(buffer: Buffer, widthPx: number): Promise
     ]),
   ].join('')
   const corner = (x: number, y: number, horizontal: number, vertical: number): string => {
-    const leaf = (factor: number, rotation: number) =>
-      `<ellipse cx="${x + horizontal * ornamentSize * factor}" cy="${y + vertical * ornamentSize * factor}" rx="${Math.max(1, ornamentSize * 0.16)}" ry="${Math.max(1.4, ornamentSize * 0.38)}" fill="#fbe8a6" stroke="#725418" stroke-width="${Math.max(0.6, widthPx * 0.045)}" transform="rotate(${rotation} ${x + horizontal * ornamentSize * factor} ${y + vertical * ornamentSize * factor})"/>`
-    const baseRotation = horizontal === vertical ? 45 : -45
-    return `<g><circle cx="${x}" cy="${y}" r="${ornamentSize * 0.42}" fill="url(#gold)" stroke="#725418" stroke-width="${Math.max(1, widthPx * 0.09)}"/><circle cx="${x}" cy="${y}" r="${ornamentSize * 0.13}" fill="#fff1b8"/>${leaf(0.65, baseRotation)}${leaf(1.15, baseRotation)}${leaf(1.65, baseRotation)}<path d="M${x},${y} L${x + horizontal * ornamentSize * 2.1},${y + vertical * ornamentSize * 2.1}" stroke="#725418" stroke-width="${Math.max(1, widthPx * 0.08)}"/></g>`
+    const point = (factorX: number, factorY = factorX) =>
+      `${x + horizontal * ornamentSize * factorX},${y + vertical * ornamentSize * factorY}`
+    const leaf = (factorX: number, factorY: number, rotation: number) => {
+      const cx = x + horizontal * ornamentSize * factorX
+      const cy = y + vertical * ornamentSize * factorY
+      return `<path d="M${point(factorX - 0.24, factorY + 0.16)} Q${cx},${cy - vertical * ornamentSize * 0.28} ${point(factorX + 0.24, factorY - 0.16)} Q${cx},${cy + vertical * ornamentSize * 0.28} ${point(factorX - 0.24, factorY + 0.16)}Z" fill="#fbe8a6" stroke="#725418" stroke-width="${Math.max(0.65, widthPx * 0.045)}" transform="rotate(${rotation} ${cx} ${cy})"/>`
+    }
+    const diagonalRotation = horizontal === vertical ? 45 : -45
+    const stroke = Math.max(0.8, widthPx * 0.07)
+    return `<g><path d="M${point(0, 0)} C${point(0.25, 1.12)} ${point(1.42, 0.22)} ${point(1.18, 1.42)} C${point(1.02, 2.05)} ${point(2.18, 1.72)} ${point(2.12, 0.86)}" fill="none" stroke="#725418" stroke-width="${stroke}" stroke-linecap="round"/><path d="M${point(0.34, 0.34)} C${point(1.1, 0.04)} ${point(1.78, 0.68)} ${point(1.48, 1.18)} C${point(1.24, 1.58)} ${point(0.82, 1.28)} ${point(1.04, 0.92)}" fill="none" stroke="#725418" stroke-width="${Math.max(0.65, stroke * 0.72)}" stroke-linecap="round"/>${leaf(0.58, 0.88, diagonalRotation)}${leaf(1.32, 0.6, diagonalRotation + horizontal * 24)}${leaf(1.72, 1.38, diagonalRotation - horizontal * 28)}<circle cx="${x}" cy="${y}" r="${ornamentSize * 0.48}" fill="url(#gold)" stroke="#725418" stroke-width="${Math.max(1, widthPx * 0.09)}"/><path d="M${point(0, -0.27)} L${point(0.18, 0)} L${point(0, 0.27)} L${point(-0.18, 0)}Z M${point(-0.27, 0)} L${point(0, 0.18)} L${point(0.27, 0)} L${point(0, -0.18)}Z" fill="#fff1b8"/><circle cx="${x}" cy="${y}" r="${ornamentSize * 0.09}" fill="#725418"/></g>`
   }
   const inset = Math.max(1, widthPx * 0.22)
   const corners = [
@@ -499,6 +519,7 @@ async function encodeResult(
     contentType: lossless ? 'image/png' : 'image/jpeg',
     width: metadata.width ?? 0,
     height: metadata.height ?? 0,
+    filterProvider: 'sharp',
   }
 }
 
@@ -507,7 +528,13 @@ export async function renderImageStyle(
 ): Promise<ImageStyleRenderResult> {
   const { preset } = input
   const sourceFormat = (await sharp(input.sourceBuffer).metadata()).format
-  let current = await applyFilter(input.sourceBuffer, preset.filter, input.brandColors)
+  const filtered = await applyFilter(
+    input.sourceBuffer,
+    preset.filter,
+    input.brandColors,
+    input.imageEffects,
+  )
+  let current = filtered.buffer
 
   if (preset.frameType === 'parametric') {
     if (preset.frameWidthPx === null) throw new Error('parametric frame requires frameWidthPx')
@@ -540,5 +567,5 @@ export async function renderImageStyle(
     )
   }
 
-  return encodeResult(current, sourceFormat)
+  return { ...(await encodeResult(current, sourceFormat)), filterProvider: filtered.provider }
 }

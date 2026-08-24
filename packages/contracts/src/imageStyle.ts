@@ -28,6 +28,8 @@ export const ImageStyleFilterSchema = z.enum([
   'vereinsfarben_duoton',
   'comic',
   'konfetti',
+  'gmic_vintage',
+  'gmic_poster',
 ])
 export const ImageStyleLogoPositionSchema = z.enum([
   'bottom_right',

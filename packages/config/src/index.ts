@@ -3,11 +3,17 @@ import { z } from 'zod'
 const emptyStringToUndefined = (value: unknown) => (value === '' ? undefined : value)
 const optionalSecret = z.preprocess(emptyStringToUndefined, z.string().min(1).optional())
 const optionalUrl = z.preprocess(emptyStringToUndefined, z.url().optional())
-const postgresUrl = z.string().regex(/^postgres(ql)?:\/\//, 'must start with postgres:// or postgresql://')
+const postgresUrl = z
+  .string()
+  .regex(/^postgres(ql)?:\/\//, 'must start with postgres:// or postgresql://')
 const optionalPostgresUrl = z.preprocess(emptyStringToUndefined, postgresUrl.optional())
-const hostPort = z.string()
+const hostPort = z
+  .string()
   .regex(/^[a-zA-Z0-9.-]+:\d{1,5}$/, 'must be a host:port pair')
-  .refine((value) => Number(value.slice(value.lastIndexOf(':') + 1)) <= 65_535, 'must use a valid port')
+  .refine(
+    (value) => Number(value.slice(value.lastIndexOf(':') + 1)) <= 65_535,
+    'must use a valid port',
+  )
 
 const ApiEnvironmentBaseSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -28,12 +34,26 @@ const ApiEnvironmentBaseSchema = z.object({
   DATABASE_URL: optionalPostgresUrl,
   HATCHET_CLIENT_TOKEN: optionalSecret,
   OPENAI_API_KEY: optionalSecret,
+  // Bildstil-Effekte laufen standardmaessig lokal ueber Sharp. Das Produktions-Image setzt
+  // explizit `gmic`; so bleiben lokale Tests ohne nativen G'MIC-Binary lauffaehig, waehrend der
+  // produktive Renderer die kuratierten G'MIC-Rezepte verwendet.
+  IMAGE_EFFECTS_PROVIDER: z.enum(['sharp', 'gmic']).default('sharp'),
+  GMIC_BINARY: z
+    .string()
+    .regex(/^[a-zA-Z0-9_./-]+$/)
+    .default('gmic'),
   // 'mixpost' widersprach der getroffenen Architekturentscheidung (plans/README.md: Mixpost wird im
   // MVP nicht betrieben, Meta wird direkt angebunden) und wurde in Paket 012 durch 'meta' ersetzt.
   // Ein Einzelwert bleibt gueltig; mehrere aktivierte Provider werden kommagetrennt angegeben.
   // Ob diese Provider echt oder als lokale Testdoubles laufen, ist bewusst eine separate Einstellung.
   PUBLISHING_PROVIDER: z.preprocess(
-    (value) => (typeof value === 'string' ? value.split(',').map((entry) => entry.trim()).filter(Boolean) : value),
+    (value) =>
+      typeof value === 'string'
+        ? value
+            .split(',')
+            .map((entry) => entry.trim())
+            .filter(Boolean)
+        : value,
     z.array(z.enum(['meta', 'twitter', 'linkedin'])).default(['meta', 'twitter', 'linkedin']),
   ),
   // Fake ist nur ein expliziter, nichtproduktiver Adapter-Modus. `disabled` ist der sichere
@@ -82,14 +102,22 @@ const ApiEnvironmentBaseSchema = z.object({
 // In production the API cannot start without a real database and token-verification secret.
 export const ApiEnvironmentSchema = ApiEnvironmentBaseSchema.superRefine((environment, context) => {
   if (environment.NODE_ENV === 'production' && environment.PUBLISHING_MODE === 'fake') {
-    context.addIssue({ code: 'custom', path: ['PUBLISHING_MODE'], message: 'PUBLISHING_MODE must be "disabled" or "live" in production' })
+    context.addIssue({
+      code: 'custom',
+      path: ['PUBLISHING_MODE'],
+      message: 'PUBLISHING_MODE must be "disabled" or "live" in production',
+    })
   }
   // Die echten Adapter folgen erst in den naechsten beiden Paketen. Ihre Aktivierung im Live-Modus
   // muss daher beim Start fehlschlagen, statt spaeter unbemerkt einen Fake-Erfolg zu melden.
   if (environment.PUBLISHING_MODE === 'live') {
     for (const provider of ['twitter', 'linkedin'] as const) {
       if (environment.PUBLISHING_PROVIDER.includes(provider)) {
-        context.addIssue({ code: 'custom', path: ['PUBLISHING_PROVIDER'], message: `${provider} is not available in PUBLISHING_MODE=live until its real adapter is implemented` })
+        context.addIssue({
+          code: 'custom',
+          path: ['PUBLISHING_PROVIDER'],
+          message: `${provider} is not available in PUBLISHING_MODE=live until its real adapter is implemented`,
+        })
       }
     }
   }
@@ -100,7 +128,12 @@ export const ApiEnvironmentSchema = ApiEnvironmentBaseSchema.superRefine((enviro
   if (environment.EMAIL_PROVIDER === 'smtp') {
     const requiredSmtpFields = ['SMTP_HOST', 'SMTP_USER', 'SMTP_PASSWORD', 'SMTP_FROM'] as const
     for (const key of requiredSmtpFields) {
-      if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required when EMAIL_PROVIDER=smtp` })
+      if (!environment[key])
+        context.addIssue({
+          code: 'custom',
+          path: [key],
+          message: `${key} is required when EMAIL_PROVIDER=smtp`,
+        })
     }
   }
 
@@ -113,19 +146,40 @@ export const ApiEnvironmentSchema = ApiEnvironmentBaseSchema.superRefine((enviro
     // URLs stay in deployment configuration because they describe this API's public address.
     const requiredMetaFields = ['META_OAUTH_REDIRECT_URL', 'API_PUBLIC_BASE_URL'] as const
     for (const key of requiredMetaFields) {
-      if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required when PUBLISHING_PROVIDER includes meta` })
+      if (!environment[key])
+        context.addIssue({
+          code: 'custom',
+          path: [key],
+          message: `${key} is required when PUBLISHING_PROVIDER includes meta`,
+        })
     }
   }
-  if (environment.PUBLISHING_MODE === 'live' && environment.PUBLISHING_PROVIDER.includes('twitter')) {
+  if (
+    environment.PUBLISHING_MODE === 'live' &&
+    environment.PUBLISHING_PROVIDER.includes('twitter')
+  ) {
     const requiredTwitterFields = ['TWITTER_OAUTH_REDIRECT_URL', 'API_PUBLIC_BASE_URL'] as const
     for (const key of requiredTwitterFields) {
-      if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required when PUBLISHING_PROVIDER includes twitter` })
+      if (!environment[key])
+        context.addIssue({
+          code: 'custom',
+          path: [key],
+          message: `${key} is required when PUBLISHING_PROVIDER includes twitter`,
+        })
     }
   }
-  if (environment.PUBLISHING_MODE === 'live' && environment.PUBLISHING_PROVIDER.includes('linkedin')) {
+  if (
+    environment.PUBLISHING_MODE === 'live' &&
+    environment.PUBLISHING_PROVIDER.includes('linkedin')
+  ) {
     const requiredLinkedInFields = ['LINKEDIN_OAUTH_REDIRECT_URL', 'API_PUBLIC_BASE_URL'] as const
     for (const key of requiredLinkedInFields) {
-      if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required when PUBLISHING_PROVIDER includes linkedin` })
+      if (!environment[key])
+        context.addIssue({
+          code: 'custom',
+          path: [key],
+          message: `${key} is required when PUBLISHING_PROVIDER includes linkedin`,
+        })
     }
   }
   // Provider-Secrets liegen verschluesselt in Supabase; ohne den Schluesselring kann
@@ -135,20 +189,37 @@ export const ApiEnvironmentSchema = ApiEnvironmentBaseSchema.superRefine((enviro
   if (environment.PUBLISHING_MODE === 'live') {
     const requiredSecretBoxFields = ['SECRET_BOX_KEYS', 'SECRET_BOX_CURRENT_KEY_VERSION'] as const
     for (const key of requiredSecretBoxFields) {
-      if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required when PUBLISHING_MODE=live` })
+      if (!environment[key])
+        context.addIssue({
+          code: 'custom',
+          path: [key],
+          message: `${key} is required when PUBLISHING_MODE=live`,
+        })
     }
   }
 
   if (environment.NODE_ENV !== 'production') return
-  const required = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'WEB_BASE_URL', 'CONSENT_RESPONSE_HASH_PEPPER', 'DATABASE_URL'] as const
+  const required = [
+    'SUPABASE_URL',
+    'SUPABASE_ANON_KEY',
+    'SUPABASE_SERVICE_ROLE_KEY',
+    'WEB_BASE_URL',
+    'CONSENT_RESPONSE_HASH_PEPPER',
+    'DATABASE_URL',
+  ] as const
   for (const key of required) {
-    if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required in production` })
+    if (!environment[key])
+      context.addIssue({ code: 'custom', path: [key], message: `${key} is required in production` })
   }
   // FakeEmailSender protokolliert die komplette Mail inklusive Einladungslink (mit Rohtoken) --
   // in Produktion waere ein vergessenes EMAIL_PROVIDER=smtp sonst ein stiller Secret-Leak ins
   // Log (beim Geheimnisse-Review dieses Pakets gefunden).
   if (environment.EMAIL_PROVIDER === 'fake') {
-    context.addIssue({ code: 'custom', path: ['EMAIL_PROVIDER'], message: 'EMAIL_PROVIDER must not be "fake" in production' })
+    context.addIssue({
+      code: 'custom',
+      path: ['EMAIL_PROVIDER'],
+      message: 'EMAIL_PROVIDER must not be "fake" in production',
+    })
   }
 })
 
@@ -167,7 +238,10 @@ export const WorkerEnvironmentSchema = z.object({
   HATCHET_CLIENT_TOKEN: z.string().min(1),
   HATCHET_CLIENT_API_URL: z.url().default('http://127.0.0.1:8080'),
   HATCHET_CLIENT_HOST_PORT: hostPort.default('localhost:7077'),
-  HATCHET_TLS: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
+  HATCHET_TLS: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((value) => value === 'true'),
   HATCHET_WORKER_SLOTS: z.coerce.number().int().positive().default(8),
   SECRET_BOX_KEYS: z.string().min(1),
   SECRET_BOX_CURRENT_KEY_VERSION: z.string().min(1),

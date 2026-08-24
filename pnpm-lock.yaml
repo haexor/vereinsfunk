@@ -86,6 +86,9 @@ importers:
       '@vereinsfunk/integrations':
         specifier: workspace:*
         version: link:../../packages/integrations
+      '@vereinsfunk/media-processing':
+        specifier: workspace:*
+        version: link:../../packages/media-processing
       '@vereinsfunk/member-directory':
         specifier: workspace:*
         version: link:../../packages/member-directory

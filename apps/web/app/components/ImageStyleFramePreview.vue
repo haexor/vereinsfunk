@@ -46,7 +46,7 @@ const frameStyleObject = computed(() => {
     case 'festlich':
       return {
         borderStyle: 'solid',
-        borderWidth: `${w}px`,
+        borderWidth: `${Math.max(w, 8)}px`,
         borderImage:
           'linear-gradient(135deg, #7a5c1e, #d4af37 20%, #fbe8a6 45%, #d4af37 65%, #7a5c1e) 1',
       }
@@ -125,18 +125,47 @@ function cornerMarkStyle(
       class="pointer-events-none absolute inset-0 h-full w-full"
       aria-hidden="true"
     >
-      <g fill="none" stroke="#725418" stroke-width="1.2">
-        <path d="M2 18 Q8 7 18 2 M82 2 Q92 7 98 18 M2 82 Q8 93 18 98 M82 98 Q92 93 98 82" />
+      <defs>
+        <linearGradient id="preview-gold" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#6a4a13" />
+          <stop offset=".36" stop-color="#fff1ad" />
+          <stop offset=".64" stop-color="#c79422" />
+          <stop offset="1" stop-color="#6a4a13" />
+        </linearGradient>
+        <g id="filigree-corner" fill="none" stroke="#725418" stroke-linecap="round">
+          <path d="M2 17 C3 7 9 3 18 2 C13 7 13 12 20 14 C27 16 28 7 23 5" stroke-width="1.4" />
+          <path d="M4 11 C10 9 11 16 17 19 C22 22 27 18 26 13" stroke-width="1" />
+          <path
+            d="M7 5 C11 3 14 5 13 9 C10 11 6 9 7 5Z"
+            fill="url(#preview-gold)"
+            stroke-width=".7"
+          />
+          <path
+            d="M15 12 C19 9 23 12 22 16 C18 18 14 16 15 12Z"
+            fill="url(#preview-gold)"
+            stroke-width=".7"
+          />
+          <circle cx="5" cy="5" r="2.25" fill="#fff2b5" stroke-width=".8" />
+          <circle cx="5" cy="5" r=".65" fill="#7a5615" stroke="none" />
+        </g>
+      </defs>
+      <g stroke="#725418" fill="none" stroke-width=".8" opacity=".9">
+        <path d="M29 3 Q34 7 39 3 M61 3 Q66 7 71 3 M29 97 Q34 93 39 97 M61 97 Q66 93 71 97" />
       </g>
-      <g fill="#fff0aa" stroke="#725418" stroke-width=".75">
-        <circle cx="8" cy="8" r="3" />
-        <circle cx="92" cy="8" r="3" />
-        <circle cx="8" cy="92" r="3" />
-        <circle cx="92" cy="92" r="3" />
+      <g fill="#fce9a2" stroke="#725418" stroke-width=".45">
+        <circle cx="32" cy="4.5" r="1.1" />
+        <circle cx="40" cy="4.5" r="1.1" />
+        <circle cx="60" cy="4.5" r="1.1" />
+        <circle cx="68" cy="4.5" r="1.1" />
+        <circle cx="32" cy="95.5" r="1.1" />
+        <circle cx="40" cy="95.5" r="1.1" />
+        <circle cx="60" cy="95.5" r="1.1" />
+        <circle cx="68" cy="95.5" r="1.1" />
       </g>
-      <g fill="#d4af37">
-        <path d="M12 12 l4 1 l-2 5z M88 12 l-4 1 l2 5z M12 88 l4 -1 l-2 -5z M88 88 l-4 -1 l2 -5z" />
-      </g>
+      <use href="#filigree-corner" />
+      <use href="#filigree-corner" transform="translate(100 0) scale(-1 1)" />
+      <use href="#filigree-corner" transform="translate(0 100) scale(1 -1)" />
+      <use href="#filigree-corner" transform="translate(100 100) scale(-1 -1)" />
     </svg>
     <slot />
   </div>

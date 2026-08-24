@@ -77,6 +77,18 @@ const FILTER_OPTIONS: {
     css: 'saturate(1.08)',
     effect: 'konfetti',
   },
+  {
+    value: 'gmic_vintage',
+    label: 'Vintage',
+    description: 'G’MIC · analog',
+    css: 'sepia(.68) contrast(.92) brightness(1.05)',
+  },
+  {
+    value: 'gmic_poster',
+    label: 'Poster',
+    description: 'G’MIC · Schablone',
+    css: 'contrast(1.7) saturate(.35) sepia(.2)',
+  },
 ]
 const LOGO_POSITION_OPTIONS: { value: ImageStyleLogoPosition; label: string }[] = [
   { value: 'bottom_right', label: 'Unten rechts' },
@@ -90,7 +102,7 @@ const FRAME_STYLE_OPTIONS: { value: ImageStyleFrameStyle; label: string; descrip
   { value: 'double', label: 'Editorial', description: 'doppelte Linie' },
   { value: 'corner_marks', label: 'Spieltag', description: 'dynamische Ecken' },
   { value: 'bottom_bar', label: 'Polaroid', description: 'Platz für Titel' },
-  { value: 'festlich', label: 'Siegerfoto', description: 'ornamentiertes Gold' },
+  { value: 'festlich', label: 'Siegerfoto', description: 'florales Goldornament' },
 ]
 // Feste, kleine Breite fuer die Galerie-Kacheln statt des tatsaechlich eingestellten
 // frameWidthPx (der bis zu 200px reichen kann) -- die Kacheln sollen die RahmenFORM

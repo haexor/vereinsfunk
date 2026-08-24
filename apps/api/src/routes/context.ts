@@ -1,7 +1,14 @@
 import type { Permission } from '@vereinsfunk/authorization'
 import type { ApiEnvironment } from '@vereinsfunk/config'
 import type { StructuredContentGenerator } from '@vereinsfunk/content-engine'
-import type { LinkedInOAuthClient, MetaOAuthClient, Platform, SocialPublisher, TwitterOAuthClient } from '@vereinsfunk/publishing'
+import type { ImageEffectProvider } from '@vereinsfunk/media-processing'
+import type {
+  LinkedInOAuthClient,
+  MetaOAuthClient,
+  Platform,
+  SocialPublisher,
+  TwitterOAuthClient,
+} from '@vereinsfunk/publishing'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { EmailSender } from '../email.js'
@@ -16,14 +23,31 @@ export interface SupabaseClientFactory {
 }
 
 export interface MediaUploadService {
-  create(input: { organizationId: string; departmentId: string; assetId: string; filename: string; mimeType: string; byteSize: number }): Promise<{ uploadUrl: string; objectPath: string; expiresAt: string }>
+  create(input: {
+    organizationId: string
+    departmentId: string
+    assetId: string
+    filename: string
+    mimeType: string
+    byteSize: number
+  }): Promise<{ uploadUrl: string; objectPath: string; expiresAt: string }>
   complete(input: { assetId: string; sha256: string }): Promise<{ accepted: true }>
 }
 
 export interface ApiRouteGuards {
   requireAuth(request: FastifyRequest, reply: FastifyReply): Promise<boolean>
-  requirePermission(request: FastifyRequest, reply: FastifyReply, permission: Permission, scope: PermissionScope): Promise<boolean>
-  requirePermissionAnyOf(request: FastifyRequest, reply: FastifyReply, permissions: readonly Permission[], scope: PermissionScope): Promise<boolean>
+  requirePermission(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    permission: Permission,
+    scope: PermissionScope,
+  ): Promise<boolean>
+  requirePermissionAnyOf(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    permissions: readonly Permission[],
+    scope: PermissionScope,
+  ): Promise<boolean>
   requirePlatformAdmin(request: FastifyRequest, reply: FastifyReply): Promise<boolean>
 }
 
@@ -34,13 +58,18 @@ export interface ApiRouteContext extends ApiRouteGuards {
   roleProvider: RoleProvider
   platformAdminProvider: PlatformAdminProvider
   emailSender: EmailSender
+  imageEffects?: ImageEffectProvider
   getMetaOAuthClient(): Promise<MetaOAuthClient>
   // Paket 045: Twitter/LinkedIn haben strukturell andere OAuth-Flows als der gemeinsame
   // Meta-Adapter (PKCE bei Twitter, Organisations-Listing bei LinkedIn) -- eigene Client-Felder statt
   // eines vereinheitlichten Interface, das die Unterschiede nur verstecken wuerde.
   twitterOAuthClient: TwitterOAuthClient
   linkedinOAuthClient: LinkedInOAuthClient
-  createPublisherForConnection(platform: Platform, accessToken: string, externalAccountId: string): Promise<SocialPublisher>
+  createPublisherForConnection(
+    platform: Platform,
+    accessToken: string,
+    externalAccountId: string,
+  ): Promise<SocialPublisher>
   // Plan 040: "Persona/Stilprofil testen" ueberschreibt die Protokollauswahl vollstaendig, genau
   // wie TextGenerationExecutor.generator im Worker (apps/worker/src/textGeneration.ts) -- ein Test
   // kann so eine echte Provider-Zeile faken (fuer model/baseUrl/apiKey), ohne einen echten

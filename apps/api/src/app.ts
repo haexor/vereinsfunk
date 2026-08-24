@@ -3,6 +3,7 @@ import cors from '@fastify/cors'
 import { parseApiEnvironment } from '@vereinsfunk/config'
 import type { StructuredContentGenerator } from '@vereinsfunk/content-engine'
 import { HealthSchema } from '@vereinsfunk/contracts'
+import { GmicCliImageEffectProvider, type ImageEffectProvider } from '@vereinsfunk/media-processing'
 import {
   FakeLinkedInOAuthClient,
   FakeMetaOAuthClient,
@@ -20,7 +21,13 @@ import Fastify, { LogController, type FastifyInstance, type FastifyServerOptions
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { byteaToBuffer, createSecretBoxFromEnvironment } from './secretBox.js'
-import { createAuthGuards, SupabasePlatformAdminProvider, SupabaseRoleProvider, type PlatformAdminProvider, type RoleProvider } from './auth.js'
+import {
+  createAuthGuards,
+  SupabasePlatformAdminProvider,
+  SupabaseRoleProvider,
+  type PlatformAdminProvider,
+  type RoleProvider,
+} from './auth.js'
 import { createEmailSender, type EmailSender } from './email.js'
 import { SupabaseUploadService } from './mediaUpload.js'
 import { createServiceClient, createUserClient } from './supabase.js'
@@ -53,7 +60,11 @@ import { registerPublishingRoutes } from './routes/publishing.js'
 import { registerRetentionRoutes } from './routes/retention.js'
 import { registerStructureRoutes } from './routes/structure.js'
 import { registerSubscriptionRoutes } from './routes/subscriptions.js'
-import type { ApiRouteContext, MediaUploadService, SupabaseClientFactory } from './routes/context.js'
+import type {
+  ApiRouteContext,
+  MediaUploadService,
+  SupabaseClientFactory,
+} from './routes/context.js'
 
 export type { MediaUploadService, SupabaseClientFactory } from './routes/context.js'
 
@@ -79,6 +90,9 @@ export interface BuildAppOptions {
   // Plan 040: Ueberschreibung fuer Tests, analog zu TextGenerationExecutor.generator im Worker --
   // laesst "Persona/Stilprofil testen" ohne echten ausgehenden Fetch testen.
   textGenerator?: StructuredContentGenerator
+  // G'MIC ist ein Prozess-Provider und wird deshalb wie Upload-/Publishing-Provider injiziert.
+  // Unit- und Route-Tests brauchen so nie ein natives Binary im Testprozess.
+  imageEffects?: ImageEffectProvider
 }
 
 // Form der embedded PostgREST-Abfrage in loadMetaConfiguration -- publishing_provider_secrets ist
@@ -86,7 +100,9 @@ export interface BuildAppOptions {
 const MetaProviderConfigurationRowSchema = z.object({
   client_id: z.string(),
   graph_version: z.string().nullable(),
-  publishing_provider_secrets: z.object({ client_secret_ciphertext: z.string(), key_version: z.string() }).nullable(),
+  publishing_provider_secrets: z
+    .object({ client_secret_ciphertext: z.string(), key_version: z.string() })
+    .nullable(),
 })
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
@@ -101,7 +117,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         : {
             level: environment.LOG_LEVEL,
             redact: {
-              paths: ['req.headers.authorization', 'req.headers.cookie', '*.access_token', '*.media'],
+              paths: [
+                'req.headers.authorization',
+                'req.headers.cookie',
+                '*.access_token',
+                '*.media',
+              ],
               censor: '[REDACTED]',
             },
           },
@@ -113,10 +134,22 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     forService: () => createServiceClient(environment),
   }
   const uploads = options.uploads ?? new SupabaseUploadService(() => supabaseClients.forService())
-  const platformAdminProvider = options.platformAdminProvider ?? new SupabasePlatformAdminProvider(() => supabaseClients.forService())
+  const imageEffects =
+    options.imageEffects ??
+    (environment.IMAGE_EFFECTS_PROVIDER === 'gmic'
+      ? new GmicCliImageEffectProvider({ binary: environment.GMIC_BINARY })
+      : undefined)
+  const platformAdminProvider =
+    options.platformAdminProvider ??
+    new SupabasePlatformAdminProvider(() => supabaseClients.forService())
   const useFakePublishing = environment.PUBLISHING_MODE === 'fake'
-  async function loadMetaConfiguration(): Promise<{ clientId: string; clientSecret: string; graphVersion: string }> {
-    if (environment.PUBLISHING_MODE !== 'live') return { clientId: '', clientSecret: '', graphVersion: environment.META_GRAPH_VERSION }
+  async function loadMetaConfiguration(): Promise<{
+    clientId: string
+    clientSecret: string
+    graphVersion: string
+  }> {
+    if (environment.PUBLISHING_MODE !== 'live')
+      return { clientId: '', clientSecret: '', graphVersion: environment.META_GRAPH_VERSION }
     const service = supabaseClients.forService()
     // Konfiguration und Secret in EINER Abfrage (PostgREST-Embedding ueber die FK auf provider) --
     // zwei getrennte maybeSingle()-Aufrufe liefen in getrennten Snapshots und konnten bei einer
@@ -124,7 +157,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     // Update selbst atomar war (upsert_publishing_provider_configuration).
     const result = await service
       .from('publishing_provider_configurations')
-      .select('client_id, graph_version, publishing_provider_secrets(client_secret_ciphertext, key_version)')
+      .select(
+        'client_id, graph_version, publishing_provider_secrets(client_secret_ciphertext, key_version)',
+      )
       .eq('provider', 'meta')
       .maybeSingle()
     if (result.error) throw result.error
@@ -145,24 +180,40 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     if (options.metaOAuthClient) return options.metaOAuthClient
     if (environment.PUBLISHING_MODE !== 'live') return new FakeMetaOAuthClient()
     const configuration = await loadMetaConfiguration()
-    return new RealMetaOAuthClient({ appId: configuration.clientId, appSecret: configuration.clientSecret, graphVersion: configuration.graphVersion })
+    return new RealMetaOAuthClient({
+      appId: configuration.clientId,
+      appSecret: configuration.clientSecret,
+      graphVersion: configuration.graphVersion,
+    })
   }
   // Twitter/LinkedIn koennen ausschliesslich im expliziten Fake-Modus konstruiert werden. Die
   // Konfiguration lehnt ihre Live-Aktivierung ab, solange die echten Adapter noch fehlen.
-  const twitterOAuthClient: TwitterOAuthClient = options.twitterOAuthClient ?? new FakeTwitterOAuthClient()
-  const linkedinOAuthClient: LinkedInOAuthClient = options.linkedinOAuthClient ?? new FakeLinkedInOAuthClient()
+  const twitterOAuthClient: TwitterOAuthClient =
+    options.twitterOAuthClient ?? new FakeTwitterOAuthClient()
+  const linkedinOAuthClient: LinkedInOAuthClient =
+    options.linkedinOAuthClient ?? new FakeLinkedInOAuthClient()
   const emailSender =
     options.emailSender ??
     // Ohne echten Versand ist der Log die einzige Stelle, an der der Einladungslink (inkl.
     // Rohtoken) ueberhaupt sichtbar wird -- ohne message.text waere die Einladung lokal nicht
     // einloesbar, obwohl sie serverseitig korrekt erzeugt wurde.
-    createEmailSender(environment, (message) => app.log.info({ to: message.to, subject: message.subject, text: message.text }, 'invitation email (fake provider)'))
-  const { requireAuth, requirePermission, requirePermissionAnyOf, requirePlatformAdmin } = createAuthGuards(environment, roleProvider, platformAdminProvider)
+    createEmailSender(environment, (message) =>
+      app.log.info(
+        { to: message.to, subject: message.subject, text: message.text },
+        'invitation email (fake provider)',
+      ),
+    )
+  const { requireAuth, requirePermission, requirePermissionAnyOf, requirePlatformAdmin } =
+    createAuthGuards(environment, roleProvider, platformAdminProvider)
 
   // Paket 025: ein MetaPublisher braucht das entschluesselte Token GENAU dieser Social-Connection
   // (anders als metaOAuthClient oben, das appId/appSecret-Ebene bleibt) -- deshalb keine einmalige
   // Instanz, sondern eine Fabrik je Aufruf. options.publisher ueberschreibt vollstaendig (Tests).
-  async function createPublisherForConnection(platform: Platform, accessToken: string, externalAccountId: string): Promise<SocialPublisher> {
+  async function createPublisherForConnection(
+    platform: Platform,
+    accessToken: string,
+    externalAccountId: string,
+  ): Promise<SocialPublisher> {
     if (options.publisher) return options.publisher
     switch (platform) {
       case 'instagram':
@@ -171,11 +222,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         return new MetaPublisher({
           graphVersion: (await loadMetaConfiguration()).graphVersion,
           accessToken,
-          ...(platform === 'instagram' ? { instagramAccountId: externalAccountId } : { facebookPageId: externalAccountId }),
+          ...(platform === 'instagram'
+            ? { instagramAccountId: externalAccountId }
+            : { facebookPageId: externalAccountId }),
         })
       case 'twitter':
       case 'linkedin':
-        if (!useFakePublishing) throw new Error(`${platform} publisher is not available in live mode`)
+        if (!useFakePublishing)
+          throw new Error(`${platform} publisher is not available in live mode`)
         return new FakePublisher()
     }
   }
@@ -186,6 +240,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     roleProvider,
     platformAdminProvider,
     emailSender,
+    ...(imageEffects ? { imageEffects } : {}),
     getMetaOAuthClient,
     twitterOAuthClient,
     linkedinOAuthClient,
@@ -278,8 +333,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   app.setErrorHandler((error, request, reply) => {
     request.log.warn({ err: error, correlationId: request.id }, 'request rejected')
     const isValidation = error instanceof Error && error.name === 'ZodError'
-    const thrownStatus = error instanceof Error && 'statusCode' in error && typeof error.statusCode === 'number' ? error.statusCode : null
-    const clientStatus = thrownStatus !== null && thrownStatus >= 400 && thrownStatus < 500 ? thrownStatus : null
+    const thrownStatus =
+      error instanceof Error && 'statusCode' in error && typeof error.statusCode === 'number'
+        ? error.statusCode
+        : null
+    const clientStatus =
+      thrownStatus !== null && thrownStatus >= 400 && thrownStatus < 500 ? thrownStatus : null
     const statusCode = isValidation ? 400 : (clientStatus ?? 500)
     return reply.code(statusCode).send({
       error: statusCode === 500 ? 'internal_error' : 'invalid_request',

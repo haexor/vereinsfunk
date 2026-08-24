@@ -98,6 +98,30 @@ describe('renderImageStyle: Filter', () => {
     expect(pixel.b).toBe(230)
   })
 
+  it('delegiert den kuratierten Comic-Effekt an den konfigurierten Bild-Provider', async () => {
+    const source = await solidColorImage(20, 20, { r: 10, g: 120, b: 230 })
+    let receivedEffect = ''
+    const result = await renderImageStyle({
+      sourceBuffer: source,
+      preset: { ...NO_STYLE_PRESET, filter: 'comic' },
+      brandColors: BRAND_COLORS,
+      imageEffects: {
+        id: 'gmic-cli:test',
+        supports: (effect): effect is 'comic' => effect === 'comic',
+        apply: async (effect, buffer) => {
+          receivedEffect = effect
+          return sharp(buffer).negate().png().toBuffer()
+        },
+      },
+    })
+    const pixel = await pixelAt(result.buffer, 10, 10)
+    expect(receivedEffect).toBe('comic')
+    expect(result.filterProvider).toBe('gmic-cli:test')
+    expect(pixel.r).toBe(245)
+    expect(pixel.g).toBe(135)
+    expect(pixel.b).toBe(25)
+  })
+
   it('schwarz_weiss entsaettigt vollstaendig', async () => {
     const source = await solidColorImage(20, 20, { r: 200, g: 40, b: 40 })
     const result = await renderImageStyle({
