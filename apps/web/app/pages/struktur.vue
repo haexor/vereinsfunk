@@ -239,7 +239,13 @@ async function deleteTeam(team: TeamRow) {
   }
 }
 
-const canManageOrganization = computed(() => useCan('department.manage', { organizationId: organizationId.value ?? '' }))
+// Neue Abteilungen duerfen ausschliesslich Vereinsadmins und nur im Vereinsbereich anlegen.
+// In einem aktiven Abteilungsbereich darf auch ein Vereinsadmin keine neue Abteilung
+// versehentlich aus dem falschen Kontext heraus anlegen.
+const isOrganizationScope = computed(() => !scope.value?.departmentId)
+const canManageOrganization = computed(() => (
+  isOrganizationScope.value && useCan('organization.manage', { organizationId: organizationId.value ?? '' })
+))
 // Die Umbenennen-/Archivieren-/Loeschen-Steuerelemente waren fuer alle Mitglieder sichtbar,
 // auch fuer einen viewer -- ein Klick erzeugte einen API-Aufruf, den der Server korrekt ablehnt,
 // aber die Oberflaeche wirkte dadurch irrefuehrend (beim Review dieses Pakets gefunden). Die
