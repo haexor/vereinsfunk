@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AddPlatformAdminRequestSchema, OnboardingStateSchema, PlatformAdminOrganizationDetailSchema, PlatformAdminOrganizationSummarySchema, PlatformAdminSchema, PlatformSettingKeySchema, PlatformSettingSchema, PlatformSettingValueSchemas, TextGenerationCapabilitiesSchema, TextGenerationPlatformDefaultSchema, UpdateTextGenerationPlatformDefaultRequestSchema } from './index.js'
+import { AddPlatformAdminRequestSchema, CreateLlmProviderConfigurationRequestSchema, OnboardingStateSchema, PlatformAdminOrganizationDetailSchema, PlatformAdminOrganizationSummarySchema, PlatformAdminSchema, PlatformSettingKeySchema, PlatformSettingSchema, PlatformSettingValueSchemas, TextGenerationCapabilitiesSchema, TextGenerationPlatformDefaultSchema, UpdateLlmProviderConfigurationRequestSchema, UpdateTextGenerationPlatformDefaultRequestSchema } from './index.js'
 import { org } from './testFixtures.js'
 
 describe('platform administration contracts', () => {
@@ -83,6 +83,34 @@ describe('platform administration contracts', () => {
         },
       }).success,
     ).toBe(true)
+  })
+})
+
+describe('llm provider configuration contracts', () => {
+  const validCreate = {
+    label: 'OpenAI Produktion',
+    protocol: 'openai' as const,
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4.1-mini',
+    apiKey: 'sk-test',
+  }
+
+  // createGuardedFetch() blockt http:// erst zur Laufzeit beim ersten Chat-Aufruf -- die
+  // Konfiguration muss das schon beim Anlegen/Aendern ablehnen, siehe Plan-Follow-up zu PR #162.
+  it('rejects an http:// base URL when creating a provider configuration', () => {
+    expect(CreateLlmProviderConfigurationRequestSchema.safeParse({ ...validCreate, baseUrl: 'http://api.openai.com/v1' }).success).toBe(false)
+  })
+
+  it('accepts an https:// base URL when creating a provider configuration', () => {
+    expect(CreateLlmProviderConfigurationRequestSchema.safeParse(validCreate).success).toBe(true)
+  })
+
+  it('rejects an http:// base URL when updating a provider configuration', () => {
+    expect(UpdateLlmProviderConfigurationRequestSchema.safeParse({ baseUrl: 'http://api.openai.com/v1' }).success).toBe(false)
+  })
+
+  it('accepts an https:// base URL when updating a provider configuration', () => {
+    expect(UpdateLlmProviderConfigurationRequestSchema.safeParse({ baseUrl: 'https://api.openai.com/v1' }).success).toBe(true)
   })
 })
 

@@ -20,7 +20,7 @@ import {
 import Fastify, { LogController, type FastifyInstance, type FastifyServerOptions } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import { byteaToBuffer, createSecretBoxFromEnvironment } from './secretBox.js'
+import { byteaToBuffer, createSecretBoxFromEnvironment, EmbeddedProviderSecretSchema, unwrapEmbeddedSecret } from './secretBox.js'
 import { LocalAgentResponder, OpenAiResponsesAgentResponder, type AgentResponder } from './agent.js'
 import {
   createAuthGuards,
@@ -117,10 +117,7 @@ const AgentLlmProviderConfigurationRowSchema = z.object({
   task_kind: z.literal('text_generation'),
   base_url: z.url(),
   model: z.string().trim().min(1).max(120),
-  llm_provider_secrets: z.union([
-    z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) }),
-    z.array(z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) })).min(1),
-  ]),
+  llm_provider_secrets: EmbeddedProviderSecretSchema,
 })
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
@@ -254,9 +251,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       if (provider.error) throw provider.error
       if (!provider.data) return null
       const row = AgentLlmProviderConfigurationRowSchema.parse(provider.data)
-      const secret = Array.isArray(row.llm_provider_secrets)
-        ? row.llm_provider_secrets[0]!
-        : row.llm_provider_secrets
+      const secret = unwrapEmbeddedSecret(row.llm_provider_secrets)
       const apiKey = createSecretBoxFromEnvironment(environment).open(
         byteaToBuffer(secret.api_key_ciphertext), secret.key_version, row.id,
       )
