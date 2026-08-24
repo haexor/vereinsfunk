@@ -15,11 +15,11 @@ const session = await useSession()
 const { organizationId, departmentId: activeDepartmentId } = await useActiveScope()
 const supabase = useSupabaseClient()
 const activeOrganization = computed(() => session.value?.scopes.find((item) => item.organizationId === organizationId.value) ?? null)
-const canManageActiveScope = computed(() =>
-  organizationId.value
-    ? useCan('post.create', { organizationId: organizationId.value, departmentId: activeDepartmentId.value ?? undefined })
-    : false,
-)
+const canManageActiveScope = computed(() => {
+  const departmentId = activeDepartmentId.value
+  if (!organizationId.value || !departmentId) return false
+  return useCan('post.create', { organizationId: organizationId.value, departmentId })
+})
 
 function scopeLabel(profile: CustomStyleProfile): string {
   const organization = activeOrganization.value
@@ -95,12 +95,13 @@ const creatingPreviewKey = ref(crypto.randomUUID())
 watch(draft, () => { creatingPreviewKey.value = crypto.randomUUID() }, { deep: true })
 
 async function createProfile() {
-  if (!organizationId.value || !canManageActiveScope.value || !draft.value.name.trim() || !draft.value.description.trim()) return
+  const departmentId = activeDepartmentId.value
+  if (!organizationId.value || !departmentId || !canManageActiveScope.value || !draft.value.name.trim() || !draft.value.description.trim()) return
   creating.value = true
   createError.value = ''
   try {
     const body = CreateCustomStyleProfileRequestSchema.parse({
-      organizationId: organizationId.value, departmentId: activeDepartmentId.value, teamId: null,
+      organizationId: organizationId.value, departmentId, teamId: null,
       slug: slugify(draft.value.name), name: draft.value.name, description: draft.value.description,
       styleRules: styleRulesFromDraft(draft.value), avoidRules: avoidRulesFromDraft(draft.value), doRules: doRulesFromDraft(draft.value),
     })
@@ -116,9 +117,10 @@ async function createProfile() {
 }
 
 function createPreviewRequestBody() {
-  if (!organizationId.value || !canManageActiveScope.value) return null
+  const departmentId = activeDepartmentId.value
+  if (!organizationId.value || !departmentId || !canManageActiveScope.value) return null
   return PreviewCustomStyleProfileRequestSchema.parse({
-    organizationId: organizationId.value, departmentId: activeDepartmentId.value, teamId: null,
+    organizationId: organizationId.value, departmentId, teamId: null,
     name: draft.value.name, description: draft.value.description,
     styleRules: styleRulesFromDraft(draft.value), avoidRules: avoidRulesFromDraft(draft.value), doRules: doRulesFromDraft(draft.value),
     sampleInput: draft.value.sampleInput,
@@ -239,6 +241,9 @@ async function deleteProfile(profile: CustomStyleProfile) {
 
     <div v-if="loading" class="p-8 text-center text-xs text-[#7b827d]">Wird geladen …</div>
     <div v-else-if="loadError" class="card p-8 text-center text-sm font-semibold text-red-700">Die Stilprofile konnten nicht geladen werden. Bitte lade die Seite neu.</div>
+    <div v-else-if="!activeDepartmentId" class="card p-8 text-center text-sm text-[#7b827d]">
+      Wähle in der Sidebar eine Abteilung, um Stilprofile zu verwalten.
+    </div>
     <div v-else-if="!canManageActiveScope" class="card p-8 text-center text-sm text-[#7b827d]">
       Du hast in diesem Arbeitsbereich keine Berechtigung. Das übernimmt jemand mit der Rolle „Beiträge erstellen“.
     </div>

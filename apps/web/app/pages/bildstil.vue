@@ -239,7 +239,7 @@ async function loadAll() {
       }))
     presets.value = presetsResponse.presets
   } catch {
-    loadError.value = true
+    if (loadRun === latestLoadRun) loadError.value = true
   } finally {
     if (loadRun === latestLoadRun) loading.value = false
   }

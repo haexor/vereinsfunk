@@ -6,12 +6,12 @@ import { emptyContentSignatureBlockDraft, type ContentSignatureBlockDraft } from
 const api = useApiClient()
 const session = await useSession()
 const { organizationId, departmentId: activeDepartmentId } = await useActiveScope()
-const supabase = useSupabaseClient()
 const activeOrganization = computed(() => session.value?.scopes.find((item) => item.organizationId === organizationId.value) ?? null)
 
 const loading = ref(true)
 const loadError = ref(false)
 const saving = ref(false)
+let latestLoadRun = 0
 
 const blocks = ref<ContentSignatureBlock[]>([])
 
@@ -32,6 +32,7 @@ function scopeLabel(block: ContentSignatureBlock): string {
 }
 
 async function loadAll() {
+  const loadRun = ++latestLoadRun
   if (!organizationId.value) { loading.value = false; return }
   loading.value = true
   loadError.value = false
@@ -39,11 +40,12 @@ async function loadAll() {
     const [blocksResponse] = await Promise.all([
       api.request('/v1/content-signature-blocks', { query: { organizationId: organizationId.value } }, z.object({ blocks: z.array(ContentSignatureBlockSchema) })),
     ])
+    if (loadRun !== latestLoadRun) return
     blocks.value = blocksResponse.blocks
   } catch {
-    loadError.value = true
+    if (loadRun === latestLoadRun) loadError.value = true
   } finally {
-    loading.value = false
+    if (loadRun === latestLoadRun) loading.value = false
   }
 }
 await loadAll()
