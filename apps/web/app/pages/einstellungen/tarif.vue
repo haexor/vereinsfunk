@@ -18,10 +18,12 @@ const MEDIA_ORIGIN_LABELS: Record<MediaOrigin, string> = { own_upload: 'Eigene B
 const MEDIA_ORIGIN_AVAILABLE: Record<MediaOrigin, boolean> = { own_upload: true, ai_image: false, ai_video: false }
 
 const api = useApiClient()
-const scope = await useScope()
-const organizationId = computed(() => scope.value?.organizationId ?? null)
+const { organizationId, level: activeScopeLevel } = await useActiveScope()
+const isOrganizationScope = computed(() => activeScopeLevel.value === 'organization')
 const canView = computed(() => useCan('organization.manage', { organizationId: organizationId.value ?? '' }) || useCan('billing.manage', { organizationId: organizationId.value ?? '' }))
-const canChangePlan = computed(() => useCan('billing.manage', { organizationId: organizationId.value ?? '' }))
+// Der Tarif gehoert zum Verein, nicht zu einer Abteilung. Auch eine Person mit
+// Abrechnungsrolle wechselt ihn deshalb erst nach dem Wechsel in den Vereinsbereich.
+const canChangePlan = computed(() => isOrganizationScope.value && useCan('billing.manage', { organizationId: organizationId.value ?? '' }))
 
 const loading = ref(true)
 const errorMessage = ref('')
@@ -61,7 +63,7 @@ await load()
 watch(organizationId, () => { void load() })
 
 async function changePlan() {
-  if (!organizationId.value || !summary.value || selectedPlanKey.value === summary.value.plan.key) return
+  if (!canChangePlan.value || !organizationId.value || !summary.value || selectedPlanKey.value === summary.value.plan.key) return
   saving.value = true
   actionError.value = ''
   try {
