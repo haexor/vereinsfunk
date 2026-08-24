@@ -31,7 +31,7 @@ describe('Zielplattform-Vorgaben', () => {
     // leeren Formularzustand über den gespeicherten bzw. wiedereroeffneten Entwurf: nach jedem
     // Neuladen war das getippte Quellmaterial still verloren.
     expect(page.replace(/\s+/g, ' ')).toContain(
-      "restoringDraft = true await Promise.all([loadProfiles(), loadPlatformAvailability()]) const resumePostId = UuidSchema.safeParse(route.query.postId) const resumeDraftId = UuidSchema.safeParse(route.query.draftId) if (resumeDraftId.success) await loadServerDraft(resumeDraftId.data) else if (resumePostId.success) await loadDraftFromPost(resumePostId.data) else { if (route.query.postId !== undefined || route.query.draftId !== undefined) notice.value = 'Der Link zum Entwurf ist ungültig.' restoreDraft() } restoringDraft = false",
+      "restoringDraft = true await Promise.all([loadProfiles(), loadPlatformAvailability()]) const resumePostId = UuidSchema.safeParse(route.query.postId) const resumeDraftId = UuidSchema.safeParse(route.query.draftId) const resumeSessionId = UuidSchema.safeParse(route.query.sessionId) if (resumeDraftId.success) await loadServerDraft(resumeDraftId.data) else if (resumePostId.success) await loadDraftFromPost(resumePostId.data) else if (resumeSessionId.success) await loadExistingSession(resumeSessionId.data) else { if (route.query.postId !== undefined || route.query.draftId !== undefined || route.query.sessionId !== undefined) notice.value = 'Der Link zum Entwurf ist ungültig.' restoreDraft() } restoringDraft = false",
     )
   })
 
@@ -50,6 +50,12 @@ describe('Zielplattform-Vorgaben', () => {
 
     expect(page).toContain('required = false')
     expect(page).toContain('return queuedSave')
-    expect(page.match(/if \(!\(await saveServerDraft\(\{ required: true \}\)\)\) return/g) ?? []).toHaveLength(2)
+    // createCandidate hat immer schon Entwurfsinhalt (die Aufrufe davor pruefen das) und bricht
+    // deshalb bei einem fehlschlagenden verpflichtenden Speichern ab.
+    expect(page.match(/if \(!\(await saveServerDraft\(\{ required: true \}\)\)\) return/g) ?? []).toHaveLength(1)
+    // acceptCandidate erreicht auch per ?sessionId= geoeffnete Sitzungen ohne Formularinhalt --
+    // dort haette das verpflichtende Speichern nichts zu sichern und muss die Uebernahme nicht
+    // blockieren.
+    expect(page).toContain('if (hasDraftContent() && !(await saveServerDraft({ required: true }))) return')
   })
 })
