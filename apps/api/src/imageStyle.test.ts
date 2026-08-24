@@ -17,11 +17,22 @@ const NO_STYLE_PRESET = {
   filter: 'original' as const,
 }
 
-async function solidColorImage(width: number, height: number, color: { r: number; g: number; b: number }): Promise<Buffer> {
-  return sharp({ create: { width, height, channels: 3, background: color } }).png().toBuffer()
+async function solidColorImage(
+  width: number,
+  height: number,
+  color: { r: number; g: number; b: number },
+): Promise<Buffer> {
+  return sharp({ create: { width, height, channels: 3, background: color } })
+    .png()
+    .toBuffer()
 }
 
-async function splitImage(width: number, height: number, left: { r: number; g: number; b: number }, right: { r: number; g: number; b: number }): Promise<Buffer> {
+async function splitImage(
+  width: number,
+  height: number,
+  left: { r: number; g: number; b: number },
+  right: { r: number; g: number; b: number },
+): Promise<Buffer> {
   const leftHalf = await solidColorImage(Math.floor(width / 2), height, left)
   const rightHalf = await solidColorImage(width - Math.floor(width / 2), height, right)
   return sharp({ create: { width, height, channels: 3, background: { r: 0, g: 0, b: 0 } } })
@@ -36,7 +47,12 @@ async function splitImage(width: number, height: number, left: { r: number; g: n
 // Eine Rahmengrafik, wie sie gemeint ist: opaker Rand, durchsichtige Mitte. Genau diese Annahme
 // macht applyCustomFrame -- ein rundum deckendes Overlay wuerde das Foto vollstaendig verdecken
 // und liesse jede Implementierung durchgehen, die das Foto einfach wegwirft.
-async function frameWithTransparentCenter(width: number, height: number, border: number, color: { r: number; g: number; b: number }): Promise<Buffer> {
+async function frameWithTransparentCenter(
+  width: number,
+  height: number,
+  border: number,
+  color: { r: number; g: number; b: number },
+): Promise<Buffer> {
   const pixels = Buffer.alloc(width * height * 4)
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -48,19 +64,34 @@ async function frameWithTransparentCenter(width: number, height: number, border:
       pixels[index + 3] = onBorder ? 255 : 0
     }
   }
-  return sharp(pixels, { raw: { width, height, channels: 4 } }).png().toBuffer()
+  return sharp(pixels, { raw: { width, height, channels: 4 } })
+    .png()
+    .toBuffer()
 }
 
-async function pixelAt(buffer: Buffer, x: number, y: number): Promise<{ r: number; g: number; b: number; a: number | null }> {
+async function pixelAt(
+  buffer: Buffer,
+  x: number,
+  y: number,
+): Promise<{ r: number; g: number; b: number; a: number | null }> {
   const { data, info } = await sharp(buffer).raw().toBuffer({ resolveWithObject: true })
   const index = (y * info.width + x) * info.channels
-  return { r: data[index]!, g: data[index + 1]!, b: data[index + 2]!, a: info.channels >= 4 ? data[index + 3]! : null }
+  return {
+    r: data[index]!,
+    g: data[index + 1]!,
+    b: data[index + 2]!,
+    a: info.channels >= 4 ? data[index + 3]! : null,
+  }
 }
 
 describe('renderImageStyle: Filter', () => {
   it('original laesst das Bild unveraendert', async () => {
     const source = await solidColorImage(20, 20, { r: 10, g: 120, b: 230 })
-    const result = await renderImageStyle({ sourceBuffer: source, preset: NO_STYLE_PRESET, brandColors: BRAND_COLORS })
+    const result = await renderImageStyle({
+      sourceBuffer: source,
+      preset: NO_STYLE_PRESET,
+      brandColors: BRAND_COLORS,
+    })
     const pixel = await pixelAt(result.buffer, 10, 10)
     expect(pixel.r).toBe(10)
     expect(pixel.g).toBe(120)
@@ -69,7 +100,11 @@ describe('renderImageStyle: Filter', () => {
 
   it('schwarz_weiss entsaettigt vollstaendig', async () => {
     const source = await solidColorImage(20, 20, { r: 200, g: 40, b: 40 })
-    const result = await renderImageStyle({ sourceBuffer: source, preset: { ...NO_STYLE_PRESET, filter: 'schwarz_weiss' }, brandColors: BRAND_COLORS })
+    const result = await renderImageStyle({
+      sourceBuffer: source,
+      preset: { ...NO_STYLE_PRESET, filter: 'schwarz_weiss' },
+      brandColors: BRAND_COLORS,
+    })
     const pixel = await pixelAt(result.buffer, 10, 10)
     expect(pixel.r).toBe(pixel.g)
     expect(pixel.g).toBe(pixel.b)
@@ -77,7 +112,11 @@ describe('renderImageStyle: Filter', () => {
 
   it('kontrastreich spreizt Werte vom Mittelpunkt weg', async () => {
     const source = await splitImage(20, 20, { r: 200, g: 200, b: 200 }, { r: 50, g: 50, b: 50 })
-    const result = await renderImageStyle({ sourceBuffer: source, preset: { ...NO_STYLE_PRESET, filter: 'kontrastreich' }, brandColors: BRAND_COLORS })
+    const result = await renderImageStyle({
+      sourceBuffer: source,
+      preset: { ...NO_STYLE_PRESET, filter: 'kontrastreich' },
+      brandColors: BRAND_COLORS,
+    })
     const light = await pixelAt(result.buffer, 4, 10)
     const dark = await pixelAt(result.buffer, 16, 10)
     expect(light.r).toBeGreaterThan(200)
@@ -86,7 +125,11 @@ describe('renderImageStyle: Filter', () => {
 
   it('warm verschiebt Richtung Amber (roter Kanal ueber blauem)', async () => {
     const source = await solidColorImage(20, 20, { r: 128, g: 128, b: 128 })
-    const result = await renderImageStyle({ sourceBuffer: source, preset: { ...NO_STYLE_PRESET, filter: 'warm' }, brandColors: BRAND_COLORS })
+    const result = await renderImageStyle({
+      sourceBuffer: source,
+      preset: { ...NO_STYLE_PRESET, filter: 'warm' },
+      brandColors: BRAND_COLORS,
+    })
     const pixel = await pixelAt(result.buffer, 10, 10)
     expect(pixel.r).toBeGreaterThan(pixel.b)
   })
@@ -96,7 +139,11 @@ describe('renderImageStyle: Filter', () => {
   // bleiben. Genau das ging mit sharp' .tint() verloren.
   it('warm laesst Buntfarben bunt (kein verkapptes schwarz_weiss)', async () => {
     const source = await splitImage(20, 20, { r: 20, g: 220, b: 20 }, { r: 20, g: 20, b: 220 })
-    const result = await renderImageStyle({ sourceBuffer: source, preset: { ...NO_STYLE_PRESET, filter: 'warm' }, brandColors: BRAND_COLORS })
+    const result = await renderImageStyle({
+      sourceBuffer: source,
+      preset: { ...NO_STYLE_PRESET, filter: 'warm' },
+      brandColors: BRAND_COLORS,
+    })
     const green = await pixelAt(result.buffer, 4, 10)
     expect(green.g).toBeGreaterThan(green.r)
     expect(green.g).toBeGreaterThan(green.b)
@@ -107,7 +154,11 @@ describe('renderImageStyle: Filter', () => {
 
   it('vereinsfarben_duoton bildet Schatten auf primaryColor, Lichter auf accentColor ab', async () => {
     const source = await splitImage(20, 20, { r: 0, g: 0, b: 0 }, { r: 255, g: 255, b: 255 })
-    const result = await renderImageStyle({ sourceBuffer: source, preset: { ...NO_STYLE_PRESET, filter: 'vereinsfarben_duoton' }, brandColors: BRAND_COLORS })
+    const result = await renderImageStyle({
+      sourceBuffer: source,
+      preset: { ...NO_STYLE_PRESET, filter: 'vereinsfarben_duoton' },
+      brandColors: BRAND_COLORS,
+    })
     const shadow = await pixelAt(result.buffer, 4, 10)
     const highlight = await pixelAt(result.buffer, 16, 10)
     expect(shadow.r).toBeCloseTo(0x16, -1)
@@ -117,6 +168,46 @@ describe('renderImageStyle: Filter', () => {
     expect(highlight.g).toBeCloseTo(0xff, -1)
     expect(highlight.b).toBeCloseTo(0x4a, -1)
   })
+
+  it('comic quantisiert die Farben und legt ein sichtbares Halftone-Raster darüber', async () => {
+    const source = await solidColorImage(90, 90, { r: 110, g: 150, b: 210 })
+    const result = await renderImageStyle({
+      sourceBuffer: source,
+      preset: { ...NO_STYLE_PRESET, filter: 'comic' },
+      brandColors: BRAND_COLORS,
+    })
+    const dot = await pixelAt(result.buffer, 3, 3)
+    const plain = await pixelAt(result.buffer, 10, 10)
+    // Das Raster muss sich auch auf einem einfarbigen Testbild sichtbar vom Grund unterscheiden.
+    expect([dot.r, dot.g, dot.b]).not.toEqual([plain.r, plain.g, plain.b])
+  })
+
+  it('konfetti legt farbige, deterministische Formen über das Foto', async () => {
+    const source = await solidColorImage(120, 90, { r: 20, g: 40, b: 60 })
+    const first = await renderImageStyle({
+      sourceBuffer: source,
+      preset: { ...NO_STYLE_PRESET, filter: 'konfetti' },
+      brandColors: BRAND_COLORS,
+    })
+    const second = await renderImageStyle({
+      sourceBuffer: source,
+      preset: { ...NO_STYLE_PRESET, filter: 'konfetti' },
+      brandColors: BRAND_COLORS,
+    })
+    expect(first.buffer.equals(second.buffer)).toBe(true)
+    const { data, info } = await sharp(first.buffer).raw().toBuffer({ resolveWithObject: true })
+    const sourcePixel = [20, 40, 60]
+    let coloredPixels = 0
+    for (let offset = 0; offset < data.length; offset += info.channels) {
+      if (
+        data[offset] !== sourcePixel[0] ||
+        data[offset + 1] !== sourcePixel[1] ||
+        data[offset + 2] !== sourcePixel[2]
+      )
+        coloredPixels++
+    }
+    expect(coloredPixels).toBeGreaterThan(0)
+  })
 })
 
 describe('renderImageStyle: Rahmen', () => {
@@ -124,7 +215,14 @@ describe('renderImageStyle: Rahmen', () => {
     const source = await solidColorImage(20, 20, { r: 0, g: 255, b: 0 })
     const result = await renderImageStyle({
       sourceBuffer: source,
-      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameStyle: 'solid', frameColor: '#ff0000', frameWidthPx: 10, frameCornerRadiusPx: null },
+      preset: {
+        ...NO_STYLE_PRESET,
+        frameType: 'parametric',
+        frameStyle: 'solid',
+        frameColor: '#ff0000',
+        frameWidthPx: 10,
+        frameCornerRadiusPx: null,
+      },
       brandColors: BRAND_COLORS,
     })
     expect(result.width).toBe(40)
@@ -141,7 +239,14 @@ describe('renderImageStyle: Rahmen', () => {
     const source = await solidColorImage(10, 10, { r: 0, g: 0, b: 0 })
     const result = await renderImageStyle({
       sourceBuffer: source,
-      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameStyle: 'solid', frameColor: 'accent', frameWidthPx: 4, frameCornerRadiusPx: null },
+      preset: {
+        ...NO_STYLE_PRESET,
+        frameType: 'parametric',
+        frameStyle: 'solid',
+        frameColor: 'accent',
+        frameWidthPx: 4,
+        frameCornerRadiusPx: null,
+      },
       brandColors: BRAND_COLORS,
     })
     const border = await pixelAt(result.buffer, 1, 1)
@@ -154,11 +259,22 @@ describe('renderImageStyle: Rahmen', () => {
     const source = await solidColorImage(40, 40, { r: 10, g: 10, b: 10 })
     const result = await renderImageStyle({
       sourceBuffer: source,
-      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameStyle: 'solid', frameColor: '#000000', frameWidthPx: 5, frameCornerRadiusPx: 15 },
+      preset: {
+        ...NO_STYLE_PRESET,
+        frameType: 'parametric',
+        frameStyle: 'solid',
+        frameColor: '#000000',
+        frameWidthPx: 5,
+        frameCornerRadiusPx: 15,
+      },
       brandColors: BRAND_COLORS,
     })
     const corner = await pixelAt(result.buffer, 0, 0)
-    const center = await pixelAt(result.buffer, Math.floor(result.width / 2), Math.floor(result.height / 2))
+    const center = await pixelAt(
+      result.buffer,
+      Math.floor(result.width / 2),
+      Math.floor(result.height / 2),
+    )
     expect(corner.a).not.toBeNull()
     expect(corner.a!).toBeLessThan(50)
     expect(center.a).toBe(255)
@@ -169,7 +285,13 @@ describe('renderImageStyle: Rahmen', () => {
     const frameOverlay = await frameWithTransparentCenter(30, 20, 4, { r: 255, g: 255, b: 0 })
     const result = await renderImageStyle({
       sourceBuffer: source,
-      preset: { ...NO_STYLE_PRESET, frameType: 'custom', frameColor: null, frameWidthPx: null, frameCornerRadiusPx: null },
+      preset: {
+        ...NO_STYLE_PRESET,
+        frameType: 'custom',
+        frameColor: null,
+        frameWidthPx: null,
+        frameCornerRadiusPx: null,
+      },
       frameAssetBuffer: frameOverlay,
       brandColors: BRAND_COLORS,
     })
@@ -207,7 +329,14 @@ describe('renderImageStyle: Rahmenstile', () => {
     const source = await solidColorImage(60, 60, { r: 0, g: 255, b: 0 })
     const result = await renderImageStyle({
       sourceBuffer: source,
-      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameStyle: 'double', frameColor: '#ff0000', frameWidthPx: 9, frameCornerRadiusPx: null },
+      preset: {
+        ...NO_STYLE_PRESET,
+        frameType: 'parametric',
+        frameStyle: 'double',
+        frameColor: '#ff0000',
+        frameWidthPx: 9,
+        frameCornerRadiusPx: null,
+      },
       brandColors: BRAND_COLORS,
     })
     expect(result.width).toBe(78)
@@ -230,7 +359,14 @@ describe('renderImageStyle: Rahmenstile', () => {
     const source = await solidColorImage(40, 40, { r: 0, g: 0, b: 255 })
     const result = await renderImageStyle({
       sourceBuffer: source,
-      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameStyle: 'corner_marks', frameColor: '#ff0000', frameWidthPx: 5, frameCornerRadiusPx: null },
+      preset: {
+        ...NO_STYLE_PRESET,
+        frameType: 'parametric',
+        frameStyle: 'corner_marks',
+        frameColor: '#ff0000',
+        frameWidthPx: 5,
+        frameCornerRadiusPx: null,
+      },
       brandColors: BRAND_COLORS,
     })
     expect(result.width).toBe(40)
@@ -249,7 +385,14 @@ describe('renderImageStyle: Rahmenstile', () => {
     const source = await solidColorImage(40, 40, { r: 0, g: 0, b: 255 })
     const result = await renderImageStyle({
       sourceBuffer: source,
-      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameStyle: 'corner_marks', frameColor: '#ff0000', frameWidthPx: 200, frameCornerRadiusPx: null },
+      preset: {
+        ...NO_STYLE_PRESET,
+        frameType: 'parametric',
+        frameStyle: 'corner_marks',
+        frameColor: '#ff0000',
+        frameWidthPx: 200,
+        frameCornerRadiusPx: null,
+      },
       brandColors: BRAND_COLORS,
     })
     expect(result.width).toBe(40)
@@ -263,7 +406,14 @@ describe('renderImageStyle: Rahmenstile', () => {
     const source = await solidColorImage(60, 60, { r: 0, g: 0, b: 255 })
     const result = await renderImageStyle({
       sourceBuffer: source,
-      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameStyle: 'festlich', frameColor: '#00ff00', frameWidthPx: 6, frameCornerRadiusPx: null },
+      preset: {
+        ...NO_STYLE_PRESET,
+        frameType: 'parametric',
+        frameStyle: 'festlich',
+        frameColor: '#00ff00',
+        frameWidthPx: 6,
+        frameCornerRadiusPx: null,
+      },
       brandColors: BRAND_COLORS,
     })
     expect(result.width).toBe(72)
@@ -283,7 +433,14 @@ describe('renderImageStyle: Rahmenstile', () => {
     const source = await solidColorImage(20, 20, { r: 0, g: 0, b: 255 })
     const result = await renderImageStyle({
       sourceBuffer: source,
-      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameStyle: 'bottom_bar', frameColor: '#ff0000', frameWidthPx: 4, frameCornerRadiusPx: null },
+      preset: {
+        ...NO_STYLE_PRESET,
+        frameType: 'parametric',
+        frameStyle: 'bottom_bar',
+        frameColor: '#ff0000',
+        frameWidthPx: 4,
+        frameCornerRadiusPx: null,
+      },
       brandColors: BRAND_COLORS,
     })
     expect(result.width).toBe(28)
@@ -306,7 +463,13 @@ describe('renderImageStyle: Logo-Wasserzeichen', () => {
     const logo = await solidColorImage(40, 40, { r: 255, g: 0, b: 255 })
     const result = await renderImageStyle({
       sourceBuffer: source,
-      preset: { ...NO_STYLE_PRESET, logoEnabled: true, logoPosition: 'bottom_right', logoSizePercent: 20, logoMarginPercent: 5 },
+      preset: {
+        ...NO_STYLE_PRESET,
+        logoEnabled: true,
+        logoPosition: 'bottom_right',
+        logoSizePercent: 20,
+        logoMarginPercent: 5,
+      },
       logoAssetBuffer: logo,
       brandColors: BRAND_COLORS,
     })
@@ -329,7 +492,13 @@ describe('renderImageStyle: Logo-Wasserzeichen', () => {
     const logo = await solidColorImage(50, 50, { r: 255, g: 0, b: 255 })
     const result = await renderImageStyle({
       sourceBuffer: source,
-      preset: { ...NO_STYLE_PRESET, logoEnabled: true, logoPosition: 'bottom_right', logoSizePercent: 30, logoMarginPercent: 15 },
+      preset: {
+        ...NO_STYLE_PRESET,
+        logoEnabled: true,
+        logoPosition: 'bottom_right',
+        logoSizePercent: 30,
+        logoMarginPercent: 15,
+      },
       logoAssetBuffer: logo,
       brandColors: BRAND_COLORS,
     })
@@ -347,7 +516,13 @@ describe('renderImageStyle: Logo-Wasserzeichen', () => {
     const logo = await solidColorImage(20, 20, { r: 0, g: 255, b: 255 })
     const result = await renderImageStyle({
       sourceBuffer: source,
-      preset: { ...NO_STYLE_PRESET, logoEnabled: true, logoPosition: 'center', logoSizePercent: 20, logoMarginPercent: 0 },
+      preset: {
+        ...NO_STYLE_PRESET,
+        logoEnabled: true,
+        logoPosition: 'center',
+        logoSizePercent: 20,
+        logoMarginPercent: 0,
+      },
       logoAssetBuffer: logo,
       brandColors: BRAND_COLORS,
     })
@@ -365,8 +540,15 @@ describe('renderImageStyle: Kombinationen', () => {
     const result = await renderImageStyle({
       sourceBuffer: source,
       preset: {
-        frameType: 'parametric', frameStyle: 'solid', frameColor: '#00ff00', frameWidthPx: 5, frameCornerRadiusPx: null,
-        logoEnabled: true, logoPosition: 'top_left', logoSizePercent: 20, logoMarginPercent: 0,
+        frameType: 'parametric',
+        frameStyle: 'solid',
+        frameColor: '#00ff00',
+        frameWidthPx: 5,
+        frameCornerRadiusPx: null,
+        logoEnabled: true,
+        logoPosition: 'top_left',
+        logoSizePercent: 20,
+        logoMarginPercent: 0,
         filter: 'schwarz_weiss',
       },
       logoAssetBuffer: logo,
@@ -393,9 +575,15 @@ describe('renderImageStyle: Kombinationen', () => {
 // gar nicht annimmt.
 describe('renderImageStyle: Ausgabeformat', () => {
   async function photoJpeg(width: number, height: number): Promise<Buffer> {
-    const circles = Array.from({ length: 200 }, (_, i) => `<circle cx="${(i * 97) % width}" cy="${(i * 61) % height}" r="20" fill="hsl(${i * 7}, 70%, 50%)"/>`).join('')
+    const circles = Array.from(
+      { length: 200 },
+      (_, i) =>
+        `<circle cx="${(i * 97) % width}" cy="${(i * 61) % height}" r="20" fill="hsl(${i * 7}, 70%, 50%)"/>`,
+    ).join('')
     return sharp({ create: { width, height, channels: 3, background: { r: 60, g: 120, b: 190 } } })
-      .composite([{ input: Buffer.from(`<svg width="${width}" height="${height}">${circles}</svg>`) }])
+      .composite([
+        { input: Buffer.from(`<svg width="${width}" height="${height}">${circles}</svg>`) },
+      ])
       .jpeg({ quality: 82 })
       .toBuffer()
   }
@@ -404,7 +592,13 @@ describe('renderImageStyle: Ausgabeformat', () => {
     const source = await photoJpeg(600, 400)
     const result = await renderImageStyle({
       sourceBuffer: source,
-      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameStyle: 'solid', frameColor: '#ff0000', frameWidthPx: 10 },
+      preset: {
+        ...NO_STYLE_PRESET,
+        frameType: 'parametric',
+        frameStyle: 'solid',
+        frameColor: '#ff0000',
+        frameWidthPx: 10,
+      },
       brandColors: BRAND_COLORS,
     })
     expect(result.contentType).toBe('image/jpeg')
@@ -416,15 +610,30 @@ describe('renderImageStyle: Ausgabeformat', () => {
     const source = await photoJpeg(200, 200)
     const result = await renderImageStyle({
       sourceBuffer: source,
-      preset: { ...NO_STYLE_PRESET, frameType: 'parametric', frameStyle: 'solid', frameColor: '#ff0000', frameWidthPx: 5, frameCornerRadiusPx: 20 },
+      preset: {
+        ...NO_STYLE_PRESET,
+        frameType: 'parametric',
+        frameStyle: 'solid',
+        frameColor: '#ff0000',
+        frameWidthPx: 5,
+        frameCornerRadiusPx: 20,
+      },
       brandColors: BRAND_COLORS,
     })
     expect(result.contentType).toBe('image/png')
   })
 
   it('gibt eine WebP-Quelle als JPEG aus -- der rendered-media-Bucket laesst kein image/webp zu', async () => {
-    const source = await sharp({ create: { width: 40, height: 40, channels: 3, background: { r: 10, g: 20, b: 30 } } }).webp().toBuffer()
-    const result = await renderImageStyle({ sourceBuffer: source, preset: NO_STYLE_PRESET, brandColors: BRAND_COLORS })
+    const source = await sharp({
+      create: { width: 40, height: 40, channels: 3, background: { r: 10, g: 20, b: 30 } },
+    })
+      .webp()
+      .toBuffer()
+    const result = await renderImageStyle({
+      sourceBuffer: source,
+      preset: NO_STYLE_PRESET,
+      brandColors: BRAND_COLORS,
+    })
     expect(result.contentType).toBe('image/jpeg')
   })
 })

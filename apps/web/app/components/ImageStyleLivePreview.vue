@@ -1,5 +1,10 @@
 <script setup lang="ts">
-import type { ImageStyleFilter, ImageStyleFrameStyle, ImageStyleFrameType, ImageStyleLogoPosition } from '@vereinsfunk/contracts'
+import type {
+  ImageStyleFilter,
+  ImageStyleFrameStyle,
+  ImageStyleFrameType,
+  ImageStyleLogoPosition,
+} from '@vereinsfunk/contracts'
 
 const props = defineProps<{
   frameType: ImageStyleFrameType
@@ -29,6 +34,8 @@ const FILTER_CSS: Record<ImageStyleFilter, string> = {
   kontrastreich: 'contrast(1.35) saturate(1.2)',
   warm: 'sepia(.35) saturate(1.15)',
   vereinsfarben_duoton: 'grayscale(1) contrast(1.1)',
+  comic: 'contrast(1.25) saturate(1.45)',
+  konfetti: 'saturate(1.08)',
 }
 const photoFilterCss = computed(() => FILTER_CSS[props.filter])
 const duotoneOverlayStyle = computed(() => ({
@@ -51,7 +58,9 @@ const logoStyle = computed(() => ({
 <template>
   <section class="card p-6">
     <h2 class="font-display text-base font-bold">Live-Vorschau</h2>
-    <p class="mt-1 text-[11px] text-[#9aa096]">Näherung per CSS — das endgültige Bild entsteht serverseitig (Rahmen/Logo/Filter-Rendering).</p>
+    <p class="mt-1 text-[11px] text-[#9aa096]">
+      Näherung per CSS — das endgültige Bild entsteht serverseitig (Rahmen/Logo/Filter-Rendering).
+    </p>
     <ImageStyleFramePreview
       class="mt-4 rounded-2xl"
       :frame-style="frameType === 'parametric' ? frameStyle : null"
@@ -59,10 +68,27 @@ const logoStyle = computed(() => ({
       :corner-radius-px="frameCornerRadiusPx"
       :color-hex="frameColorHex"
       :photo-filter-css="photoFilterCss"
+      :photo-effect="filter === 'comic' || filter === 'konfetti' ? filter : undefined"
     >
-      <div v-if="filter === 'vereinsfarben_duoton'" class="absolute inset-0" :style="duotoneOverlayStyle" />
-      <img v-if="customFrameUrl" :src="customFrameUrl" alt="" class="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-90" />
-      <img v-if="logoEnabled && logoUrl" :src="logoUrl" alt="Logo" class="absolute rounded bg-white/80 object-contain p-1" :class="LOGO_POSITION_CLASSES[logoPosition]" :style="logoStyle" />
+      <div
+        v-if="filter === 'vereinsfarben_duoton'"
+        class="absolute inset-0"
+        :style="duotoneOverlayStyle"
+      />
+      <img
+        v-if="customFrameUrl"
+        :src="customFrameUrl"
+        alt=""
+        class="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-90"
+      />
+      <img
+        v-if="logoEnabled && logoUrl"
+        :src="logoUrl"
+        alt="Logo"
+        class="absolute rounded bg-white/80 object-contain p-1"
+        :class="LOGO_POSITION_CLASSES[logoPosition]"
+        :style="logoStyle"
+      />
     </ImageStyleFramePreview>
   </section>
 </template>

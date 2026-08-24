@@ -36,12 +36,47 @@ const draft = defineModel<ImageStylePresetDraft>('draft', { required: true })
 
 const emit = defineEmits<{ save: []; cancel: [] }>()
 
-const FILTER_OPTIONS: { value: ImageStyleFilter; label: string }[] = [
-  { value: 'original', label: 'Original' },
-  { value: 'schwarz_weiss', label: 'Schwarz-Weiß' },
-  { value: 'kontrastreich', label: 'Kontrastreich' },
-  { value: 'warm', label: 'Warm' },
-  { value: 'vereinsfarben_duoton', label: 'Vereinsfarben (Duoton)' },
+const FILTER_OPTIONS: {
+  value: ImageStyleFilter
+  label: string
+  description: string
+  css: string
+  effect?: 'comic' | 'konfetti'
+}[] = [
+  { value: 'original', label: 'Original', description: 'Unbearbeitet', css: 'none' },
+  {
+    value: 'schwarz_weiss',
+    label: 'Schwarz-Weiß',
+    description: 'Klar & zeitlos',
+    css: 'grayscale(1)',
+  },
+  {
+    value: 'kontrastreich',
+    label: 'Kontrast',
+    description: 'Mehr Energie',
+    css: 'contrast(1.35) saturate(1.2)',
+  },
+  { value: 'warm', label: 'Warm', description: 'Sanfte Töne', css: 'sepia(.35) saturate(1.15)' },
+  {
+    value: 'vereinsfarben_duoton',
+    label: 'Duoton',
+    description: 'In Vereinsfarben',
+    css: 'grayscale(1) contrast(1.1)',
+  },
+  {
+    value: 'comic',
+    label: 'Comic',
+    description: 'Pop-Art & Raster',
+    css: 'contrast(1.25) saturate(1.45)',
+    effect: 'comic',
+  },
+  {
+    value: 'konfetti',
+    label: 'Konfetti',
+    description: 'Jubel aufs Bild',
+    css: 'saturate(1.08)',
+    effect: 'konfetti',
+  },
 ]
 const LOGO_POSITION_OPTIONS: { value: ImageStyleLogoPosition; label: string }[] = [
   { value: 'bottom_right', label: 'Unten rechts' },
@@ -50,12 +85,12 @@ const LOGO_POSITION_OPTIONS: { value: ImageStyleLogoPosition; label: string }[] 
   { value: 'top_left', label: 'Oben links' },
   { value: 'center', label: 'Mitte' },
 ]
-const FRAME_STYLE_OPTIONS: { value: ImageStyleFrameStyle; label: string }[] = [
-  { value: 'solid', label: 'Schlicht' },
-  { value: 'double', label: 'Doppelrand' },
-  { value: 'corner_marks', label: 'Eckmarken' },
-  { value: 'bottom_bar', label: 'Farbbalken' },
-  { value: 'festlich', label: 'Festlich (Gold)' },
+const FRAME_STYLE_OPTIONS: { value: ImageStyleFrameStyle; label: string; description: string }[] = [
+  { value: 'solid', label: 'Klassisch', description: 'klarer Bildrand' },
+  { value: 'double', label: 'Editorial', description: 'doppelte Linie' },
+  { value: 'corner_marks', label: 'Spieltag', description: 'dynamische Ecken' },
+  { value: 'bottom_bar', label: 'Polaroid', description: 'Platz für Titel' },
+  { value: 'festlich', label: 'Siegerfoto', description: 'ornamentiertes Gold' },
 ]
 // Feste, kleine Breite fuer die Galerie-Kacheln statt des tatsaechlich eingestellten
 // frameWidthPx (der bis zu 200px reichen kann) -- die Kacheln sollen die RahmenFORM
@@ -105,6 +140,10 @@ function setFrameType(type: ImageStyleFrameType) {
 }
 function setFrameStyle(style: ImageStyleFrameStyle) {
   draft.value.frameStyle = style
+  // Die Details eines Bilderrahmens brauchen sichtbar Raum. Dieser Standard greift nur beim
+  // Wechsel auf den Siegerrahmen; bewusst größere, bereits gewählte Breiten bleiben erhalten.
+  if (style === 'festlich' && (draft.value.frameWidthPx === null || draft.value.frameWidthPx < 18))
+    draft.value.frameWidthPx = 18
 }
 const resolvedFrameColorHex = computed(() => {
   if (draft.value.frameColor === 'primary') return props.primaryColor
@@ -200,7 +239,7 @@ const isValid = computed(() => {
       </div>
 
       <div v-if="draft.frameType === 'parametric'" class="mt-4 space-y-3">
-        <div class="grid grid-cols-3 gap-2">
+        <div class="grid grid-cols-2 gap-2 sm:grid-cols-3">
           <button
             v-for="option in FRAME_STYLE_OPTIONS"
             :key="option.value"
@@ -219,6 +258,11 @@ const isValid = computed(() => {
               class="block text-center text-[10px] font-semibold"
               :class="draft.frameStyle === option.value ? 'text-white' : 'text-[#5b625d]'"
               >{{ option.label }}</span
+            >
+            <span
+              class="block text-center text-[9px]"
+              :class="draft.frameStyle === option.value ? 'text-white/75' : 'text-[#7a827b]'"
+              >{{ option.description }}</span
             >
           </button>
         </div>
@@ -262,7 +306,8 @@ const isValid = computed(() => {
           />
         </div>
         <p v-else class="text-[11px] text-[#9aa096]">
-          Der festliche Rahmen ist immer golden, unabhängig von der Vereinsfarbe.
+          Der Siegerrahmen ist immer golden, unabhängig von der Vereinsfarbe. Für die Ornamente
+          empfehlen wir mindestens 18 px Breite.
         </p>
         <label class="block text-xs font-semibold text-[#5c655f]"
           >Breite (px)
@@ -382,18 +427,29 @@ const isValid = computed(() => {
 
     <div class="mt-5 border-t border-[#e9ebe4] pt-4">
       <p class="mb-2 text-xs font-semibold text-[#5c655f]">Filter</p>
-      <div class="flex flex-wrap gap-2">
+      <div class="grid grid-cols-2 gap-2 sm:grid-cols-3">
         <button
           v-for="option in FILTER_OPTIONS"
           :key="option.value"
           type="button"
-          class="focus-ring rounded-lg px-3 py-1.5 text-[11px] font-semibold"
+          class="focus-ring space-y-1 rounded-lg p-1.5 text-left"
           :class="
             draft.filter === option.value ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'
           "
           @click="draft.filter = option.value"
         >
-          {{ option.label }}
+          <ImageStyleFramePreview
+            :frame-style="null"
+            :photo-filter-css="option.css"
+            :photo-effect="option.effect"
+            class="rounded-md"
+          />
+          <span class="block text-center text-[10px] font-semibold">{{ option.label }}</span>
+          <span
+            class="block text-center text-[9px]"
+            :class="draft.filter === option.value ? 'text-white/75' : 'text-[#7a827b]'"
+            >{{ option.description }}</span
+          >
         </button>
       </div>
     </div>
