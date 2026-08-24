@@ -1,9 +1,15 @@
 import { CreateAgentActionProposalSchema, type AgentMessage, type AgentWorkspace, type CreateAgentActionProposal } from '@vereinsfunk/contracts'
+import { createGuardedFetch } from '@vereinsfunk/outbound-fetch'
 import { z } from 'zod'
+import { joinUrlPath } from './llmProviders.js'
 
 export interface AgentResponse {
   content: string
   proposal?: CreateAgentActionProposal
+  // Ob eine echte LLM-Anfrage beantwortet hat statt der eingebauten Kurzantworten -- fuer
+  // Audit-Metadaten, die seit Paket "agent-runtime-configuration" nicht mehr allein an
+  // OPENAI_API_KEY haengen (ein plattformweit konfigurierter Provider antwortet unabhaengig davon).
+  providerConfigured: boolean
 }
 
 export interface AgentResponder {
@@ -27,21 +33,21 @@ export class LocalAgentResponder implements AgentResponder {
   async respond(input: { messages: readonly Pick<AgentMessage, 'role' | 'content'>[]; workspace: AgentWorkspace; userId: string }): Promise<AgentResponse> {
     const question = input.messages.at(-1)?.content.toLowerCase() ?? ''
     if (question.includes('freigab')) {
-      return { content: input.workspace.pendingApprovals.length === 0
+      return { providerConfigured: false, content: input.workspace.pendingApprovals.length === 0
         ? 'Für deinen aktuellen Arbeitsbereich warten keine Freigaben auf dich.'
         : `Es warten ${input.workspace.pendingApprovals.length} Freigabe${input.workspace.pendingApprovals.length === 1 ? '' : 'n'} auf dich. Ich habe sie rechts aufgelistet.` }
     }
     if (question.includes('termin') || question.includes('event') || question.includes('veranstalt')) {
-      return { content: input.workspace.events.length === 0
+      return { providerConfigured: false, content: input.workspace.events.length === 0
         ? 'Im aktuellen Arbeitsbereich sind keine kommenden Veranstaltungen hinterlegt.'
         : `Ich habe ${input.workspace.events.length} kommende Veranstaltung${input.workspace.events.length === 1 ? '' : 'en'} gefunden. Du siehst sie rechts in der Übersicht.` }
     }
     if (question.includes('beitrag') || question.includes('post')) {
-      return { content: input.workspace.posts.length === 0
+      return { providerConfigured: false, content: input.workspace.posts.length === 0
         ? 'Im aktuellen Arbeitsbereich sind noch keine Beiträge vorhanden.'
         : `Ich habe ${input.workspace.posts.length} aktuelle Beiträge gefunden. Sag mir gern, welchen Status oder Zeitraum du genauer ansehen möchtest.` }
     }
-    return { content: 'Ich kann dir Beiträge, offene Freigaben und kommende Termine im aktuellen Arbeitsbereich zeigen. Schreib zum Beispiel: „Welche Freigaben sind offen?“' }
+    return { providerConfigured: false, content: 'Ich kann dir Beiträge, offene Freigaben und kommende Termine im aktuellen Arbeitsbereich zeigen. Schreib zum Beispiel: „Welche Freigaben sind offen?“' }
   }
 }
 
@@ -159,11 +165,17 @@ function normalizeSourceMaterialFacts(argumentsValue: unknown): unknown {
  */
 export class OpenAiResponsesAgentResponder implements AgentResponder {
   constructor(
-    private readonly options: { apiKey: string; model: string; fetcher?: FetchLike },
+    private readonly options: { apiKey: string; model: string; baseUrl?: string; fetcher?: FetchLike },
   ) {}
 
   async respond(input: { messages: readonly Pick<AgentMessage, 'role' | 'content'>[]; workspace: AgentWorkspace; userId: string }): Promise<AgentResponse> {
-    const response = await (this.options.fetcher ?? fetch)('https://api.openai.com/v1/responses', {
+    const baseUrl = this.options.baseUrl ?? 'https://api.openai.com/v1'
+    const endpoint = joinUrlPath(baseUrl, 'responses')
+    // Eine in der Plattform verwaltete Basis-URL ist konfigurierbar und muss deshalb vor jedem
+    // Aufruf gegen private Ziele und Redirects geschützt werden. Der eingebaute OpenAI-Endpunkt
+    // ist dagegen fest verdrahtet; Test-Fetcher haben weiterhin Vorrang.
+    const fetcher = this.options.fetcher ?? (this.options.baseUrl ? createGuardedFetch() : fetch)
+    const response = await fetcher(endpoint, {
       method: 'POST',
       headers: { authorization: `Bearer ${this.options.apiKey}`, 'content-type': 'application/json' },
       signal: AbortSignal.timeout(30_000),
@@ -214,6 +226,6 @@ export class OpenAiResponsesAgentResponder implements AgentResponder {
       throw new Error('agent_provider_invalid_response')
     }
     const content = (answer || 'Ich habe eine Aktion zur Bestätigung vorbereitet.').slice(0, 8_000)
-    return proposal ? { content, proposal } : { content }
+    return proposal ? { content, proposal, providerConfigured: true } : { content, providerConfigured: true }
   }
 }

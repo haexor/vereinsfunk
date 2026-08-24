@@ -36,15 +36,24 @@ export const PlatformAdminInvitationSchema = z.object({
 })
 export const AcceptPlatformAdminInvitationRequestSchema = z.object({ token: z.string().min(1) })
 
-// Nur zwei Schluessel existieren heute (loest 009s hartkodierte Konstante ab). Ein unbekannter
-// Schluessel wird von der API abgelehnt statt stillschweigend ungeprueft gespeichert zu werden.
-export const PlatformSettingKeySchema = z.enum(['max_organizations_per_owner', 'publishing_enabled'])
+// Die globale, bewusst kleine Schluesselliste loest 009s hartkodierte Konstante ab. Ein
+// unbekannter Schluessel wird von der API abgelehnt statt stillschweigend ungeprueft gespeichert
+// zu werden.
+export const PlatformSettingKeySchema = z.enum([
+  'max_organizations_per_owner',
+  'publishing_enabled',
+  // Der dialogische Agent verwendet ausschliesslich die referenzierte, verschluesselte
+  // OpenAI-kompatible Provider-Konfiguration. Ein null-Wert behaelt den Deployment-Fallback
+  // bei, damit eine neue Plattform-Installation nicht ohne Assistenten startet.
+  'agent_llm_provider_configuration_id',
+])
 export const PlatformSettingValueSchemas = {
   max_organizations_per_owner: z.int().positive().max(1000),
   // Globaler Not-Aus fuer externe Veroeffentlichungen. Er ist bewusst keine
   // organisationsbezogene Einstellung: ein Plattform-Admin muss im Incident-Fall alle
   // Vereine gleichzeitig und ohne deren Berechtigungen erreichen koennen.
   publishing_enabled: z.boolean(),
+  agent_llm_provider_configuration_id: UuidSchema.nullable(),
 } as const satisfies Record<z.infer<typeof PlatformSettingKeySchema>, z.ZodType<unknown>>
 export const PlatformSettingSchema = z.object({
   key: PlatformSettingKeySchema,

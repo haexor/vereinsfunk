@@ -29,7 +29,7 @@ import {
 import { canAssignRole, hasPermission } from '@vereinsfunk/authorization'
 import { resolveAvailableChannels } from '@vereinsfunk/domain'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { FastifyInstance } from 'fastify'
+import type { FastifyBaseLogger, FastifyInstance } from 'fastify'
 import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { hashAgentProposalInput } from '@vereinsfunk/domain'
@@ -153,6 +153,7 @@ async function loadWorkspace(
   client: SupabaseClient,
   scope: AgentScope,
   userId: string,
+  logger: FastifyBaseLogger,
 ): Promise<AgentWorkspace> {
   let postsQuery = client
     .from('posts')
@@ -186,6 +187,9 @@ async function loadWorkspace(
     .order('deadline_at', { ascending: true })
     .limit(20)
 
+  // Textkandidaten sind eine ergänzende Kachel und dürfen den Arbeitsplatz nie blockieren (siehe
+  // Kommentar unten) -- die Abfrage läuft aber weiterhin in derselben Runde wie die drei
+  // Kernübersichten, statt erst nach deren komplettem Folge-Anfragen zu starten.
   let candidateSessionsQuery = client
     .from('composition_sessions')
     .select('id, department_id, team_id')
@@ -200,7 +204,6 @@ async function loadWorkspace(
   if (postsResult.error) throw postsResult.error
   if (eventsResult.error) throw eventsResult.error
   if (approvalStagesResult.error) throw approvalStagesResult.error
-  if (candidateSessionsResult.error) throw candidateSessionsResult.error
 
   const posts = postsResult.data ?? []
   const currentVersionIds = posts.map((row) => row.current_version_id as string | null).filter((id): id is string => id !== null)
@@ -234,18 +237,28 @@ async function loadWorkspace(
     : await client.from('post_versions').select('id, title').in('id', approvalVersionIds)
   if (approvalVersionsResult.error) throw approvalVersionsResult.error
   const approvalTitleByVersionId = new Map((approvalVersionsResult.data ?? []).map((row) => [row.id as string, row.title as string]))
-  const candidateSessions = candidateSessionsResult.data ?? []
-  const candidateSessionById = new Map(candidateSessions.map((row) => [row.id as string, row]))
-  const candidatesResult = candidateSessions.length === 0
-    ? { data: [], error: null }
-    : await client.from('generation_candidates').select('id, composition_session_id, generated_content').in('composition_session_id', candidateSessions.map((row) => row.id as string)).eq('status', 'ready').order('created_at', { ascending: false }).limit(20)
-  if (candidatesResult.error) throw candidatesResult.error
-  const readyTextCandidates = (candidatesResult.data ?? []).flatMap((row) => {
-    const session = candidateSessionById.get(row.composition_session_id as string)
-    const content = z.object({ headline: z.string() }).nullable().safeParse(row.generated_content)
-    if (!session || !content.success || content.data === null) return []
-    return [{ id: row.id as string, sessionId: row.composition_session_id as string, departmentId: session.department_id as string, teamId: session.team_id as string | null, headline: content.data.headline.slice(0, 200) }]
-  })
+  // Textkandidaten sind eine ergänzende Kachel. Ein unvollständiges Upgrade oder ein einzelner
+  // fehlerhafter Datensatz darf nie den gesamten Chat-Arbeitsplatz blockieren (die drei
+  // Kernübersichten oben bleiben dabei weiterhin strikt fehlerhaft, statt Daten zu verstecken).
+  let readyTextCandidates: AgentWorkspace['readyTextCandidates'] = []
+  try {
+    if (candidateSessionsResult.error) throw candidateSessionsResult.error
+    const candidateSessions = candidateSessionsResult.data ?? []
+    const candidateSessionById = new Map(candidateSessions.map((row) => [row.id as string, row]))
+    const candidatesResult = candidateSessions.length === 0
+      ? { data: [], error: null }
+      : await client.from('generation_candidates').select('id, composition_session_id, generated_content').in('composition_session_id', candidateSessions.map((row) => row.id as string)).eq('status', 'ready').order('created_at', { ascending: false }).limit(20)
+    if (candidatesResult.error) throw candidatesResult.error
+    readyTextCandidates = (candidatesResult.data ?? []).flatMap((row) => {
+      const session = candidateSessionById.get(row.composition_session_id as string)
+      const content = z.object({ headline: z.string() }).nullable().safeParse(row.generated_content)
+      if (!session || !content.success || content.data === null) return []
+      return [{ id: row.id as string, sessionId: row.composition_session_id as string, departmentId: session.department_id as string, teamId: session.team_id as string | null, headline: content.data.headline.slice(0, 200) }]
+    })
+  } catch (error) {
+    logger.warn({ err: error }, 'ready text candidates unavailable, degrading to empty list')
+    readyTextCandidates = []
+  }
   const now = Date.now()
 
   return AgentWorkspaceSchema.parse({
@@ -445,7 +458,7 @@ export function registerAgentRoutes(
     if (!validatedScope || !(await isAnyMemberOfOrganization(client, request.auth!.userId, scope.organizationId))) {
       return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     }
-    return reply.code(200).send(await loadWorkspace(client, scope, request.auth!.userId))
+    return reply.code(200).send(await loadWorkspace(client, scope, request.auth!.userId, request.log))
   })
 
   app.post('/v1/agent/conversations', async (request, reply) => {
@@ -765,10 +778,11 @@ export function registerAgentRoutes(
     if (!conversation) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     const existingMessages = await loadMessages(client, conversation)
     const service = supabaseClients.forService()
-    const workspace = await loadWorkspace(client, scopeForConversation(conversation), request.auth!.userId)
+    const workspace = await loadWorkspace(client, scopeForConversation(conversation), request.auth!.userId, request.log)
     const safetyIdentifier = createHash('sha256').update(request.auth!.userId).digest('hex').slice(0, 64)
     let answer: string
     let authorizedProposal: CreateAgentActionProposal | undefined
+    let providerConfigured = false
     try {
       const response = await responder.respond({
         messages: [...existingMessages, { role: 'user', content: input.content }],
@@ -777,6 +791,7 @@ export function registerAgentRoutes(
       })
       answer = response.content
       authorizedProposal = response.proposal
+      providerConfigured = response.providerConfigured
     } catch (error) {
       request.log.warn({ err: error, correlationId: request.id }, 'agent responder failed')
       answer = 'Der Assistent ist gerade nicht erreichbar. Deine Nachricht wurde nicht als Aktion ausgeführt; bitte versuche es erneut.'
@@ -833,7 +848,7 @@ export function registerAgentRoutes(
       action: 'agent.message_completed',
       entityType: 'agent_conversations',
       entityId: conversation.id,
-      metadata: { providerConfigured: context.environment.OPENAI_API_KEY !== undefined },
+      metadata: { providerConfigured },
     })
     return reply.code(201).send(AgentConversationDetailSchema.parse({
       conversation: { ...conversation, lastActivityAt: persistedRow.last_activity_at },

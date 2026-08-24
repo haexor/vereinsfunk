@@ -2,7 +2,7 @@ import multipart from '@fastify/multipart'
 import cors from '@fastify/cors'
 import { parseApiEnvironment } from '@vereinsfunk/config'
 import type { StructuredContentGenerator } from '@vereinsfunk/content-engine'
-import { HealthSchema } from '@vereinsfunk/contracts'
+import { HealthSchema, PlatformSettingValueSchemas, UuidSchema } from '@vereinsfunk/contracts'
 import { GmicCliImageEffectProvider, type ImageEffectProvider } from '@vereinsfunk/media-processing'
 import {
   FakeLinkedInOAuthClient,
@@ -110,6 +110,19 @@ const MetaProviderConfigurationRowSchema = z.object({
     .nullable(),
 })
 
+const AgentLlmProviderSettingSchema = z.object({ value: PlatformSettingValueSchemas.agent_llm_provider_configuration_id })
+const AgentLlmProviderConfigurationRowSchema = z.object({
+  id: UuidSchema,
+  protocol: z.literal('openai'),
+  task_kind: z.literal('text_generation'),
+  base_url: z.url(),
+  model: z.string().trim().min(1).max(120),
+  llm_provider_secrets: z.union([
+    z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) }),
+    z.array(z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) })).min(1),
+  ]),
+})
+
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
   const environment = parseApiEnvironment()
   const fastifyOptions: FastifyServerOptions = {
@@ -208,11 +221,57 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         'invitation email (fake provider)',
       ),
     )
-  const agentResponder = options.agentResponder ?? (
-    environment.OPENAI_API_KEY
-      ? new OpenAiResponsesAgentResponder({ apiKey: environment.OPENAI_API_KEY, model: environment.AGENT_LLM_MODEL })
-      : new LocalAgentResponder()
-  )
+  const deploymentAgentResponder: AgentResponder = environment.OPENAI_API_KEY
+    ? new OpenAiResponsesAgentResponder({ apiKey: environment.OPENAI_API_KEY, model: environment.AGENT_LLM_MODEL })
+    : new LocalAgentResponder()
+  // Eine entfernte, deaktivierte oder unvollständige Auswahl darf den Arbeitsplatz nicht
+  // unbenutzbar machen -- ebenso wenig ein DB-Lesefehler oder eine kaputte Zeile beim Aufloesen
+  // der Auswahl selbst. Alle diese Faelle fallen kontrolliert auf die Deployment-Konfiguration
+  // zurueck; nur der eigentliche Chat-Aufruf (unten, einmalig) darf noch durchschlagen.
+  async function resolveConfiguredAgentResponder(): Promise<AgentResponder | null> {
+    try {
+      const service = supabaseClients.forService()
+      const setting = await service
+        .from('platform_settings')
+        .select('value')
+        .eq('key', 'agent_llm_provider_configuration_id')
+        .maybeSingle()
+      if (setting.error) throw setting.error
+      // Die Migration legt den Wert als null an. Fehlt die Zeile in einem noch nicht migrierten
+      // Deployment, bleibt der bisherige Umgebungsvariablen-Fallback funktional.
+      const configuredId = setting.data
+        ? AgentLlmProviderSettingSchema.parse(setting.data).value
+        : null
+      if (!configuredId) return null
+      const provider = await service
+        .from('llm_provider_configurations')
+        .select('id, protocol, task_kind, base_url, model, llm_provider_secrets!inner(api_key_ciphertext, key_version)')
+        .eq('id', configuredId)
+        .eq('protocol', 'openai')
+        .eq('task_kind', 'text_generation')
+        .eq('is_active', true)
+        .maybeSingle()
+      if (provider.error) throw provider.error
+      if (!provider.data) return null
+      const row = AgentLlmProviderConfigurationRowSchema.parse(provider.data)
+      const secret = Array.isArray(row.llm_provider_secrets)
+        ? row.llm_provider_secrets[0]!
+        : row.llm_provider_secrets
+      const apiKey = createSecretBoxFromEnvironment(environment).open(
+        byteaToBuffer(secret.api_key_ciphertext), secret.key_version, row.id,
+      )
+      return new OpenAiResponsesAgentResponder({ apiKey, model: row.model, baseUrl: row.base_url })
+    } catch (error) {
+      app.log.warn({ err: error }, 'configured agent llm provider unavailable, falling back to deployment responder')
+      return null
+    }
+  }
+  const agentResponder: AgentResponder = options.agentResponder ?? {
+    async respond(input) {
+      const configured = await resolveConfiguredAgentResponder()
+      return (configured ?? deploymentAgentResponder).respond(input)
+    },
+  }
   const { requireAuth, requirePermission, requirePermissionAnyOf, requirePlatformAdmin } =
     createAuthGuards(environment, roleProvider, platformAdminProvider)
 

@@ -323,6 +323,23 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
         return reply.code(409).send({ error: 'publishing_not_configured', correlationId: request.id })
       }
     }
+    if (params.key === 'agent_llm_provider_configuration_id' && value !== null) {
+      // Der Responses-Adapter spricht nur OpenAI-kompatible Textprovider. Die Prüfung erfolgt
+      // schon beim Speichern, damit eine URL- oder Modelländerung nicht erst beim nächsten Chat
+      // als Laufzeitfehler auffällt; das Secret wird hierbei nicht gelesen oder ausgegeben.
+      const configuredProvider = await service
+        .from('llm_provider_configurations')
+        .select('id, llm_provider_secrets!inner(llm_provider_configuration_id)')
+        .eq('id', value)
+        .eq('protocol', 'openai')
+        .eq('task_kind', 'text_generation')
+        .eq('is_active', true)
+        .maybeSingle()
+      if (configuredProvider.error) throw configuredProvider.error
+      if (!configuredProvider.data) {
+        return reply.code(422).send({ error: 'agent_llm_provider_not_configured', correlationId: request.id })
+      }
+    }
     const update = await service
       .from('platform_settings')
       .update({ value, updated_by: request.auth!.userId })

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { PlatformSettingSchema, PlatformSettingValueSchemas, PublishingProviderConfigurationSchema, PublishingProviderSchema, UpdatePublishingProviderConfigurationRequestSchema, type PublishingProvider, type PublishingProviderConfiguration } from '@vereinsfunk/contracts'
+import { LlmProviderConfigurationSchema, PlatformSettingSchema, PlatformSettingValueSchemas, PublishingProviderConfigurationSchema, PublishingProviderSchema, UpdatePublishingProviderConfigurationRequestSchema, type LlmProviderConfigurationDto, type PublishingProvider, type PublishingProviderConfiguration } from '@vereinsfunk/contracts'
 
 definePageMeta({ layout: 'admin' })
 
@@ -10,6 +10,8 @@ const errorMessage = ref('')
 
 const maxOrganizationsPerOwner = ref(3)
 const publishingEnabled = ref(false)
+const agentLlmProviderConfigurationId = ref<string | null>(null)
+const llmProviderConfigurations = ref<LlmProviderConfigurationDto[]>([])
 const providerConfigurations = ref<PublishingProviderConfiguration[]>([])
 const providerDraft = reactive({ provider: 'meta' as PublishingProvider, clientId: '', clientSecret: '', graphVersion: 'v21.0' })
 
@@ -18,9 +20,10 @@ async function load() {
   errorMessage.value = ''
   try {
     const headers = await useAuthHeader()
-    const [response, providerResponse] = await Promise.all([
+    const [response, providerResponse, llmResponse] = await Promise.all([
       $fetch(`${config.public.apiBase}/v1/platform-settings`, { headers }),
       $fetch(`${config.public.apiBase}/v1/publishing-providers`, { headers }),
+      $fetch(`${config.public.apiBase}/v1/llm-providers`, { headers }),
     ])
     const settings = PlatformSettingSchema.array().parse(response)
     const limitSetting = settings.find((setting) => setting.key === 'max_organizations_per_owner')
@@ -29,7 +32,11 @@ async function load() {
     const publishingSetting = settings.find((setting) => setting.key === 'publishing_enabled')
     const publishingValue = PlatformSettingValueSchemas.publishing_enabled.safeParse(publishingSetting?.value)
     if (publishingValue.success) publishingEnabled.value = publishingValue.data
+    const agentLlmSetting = settings.find((setting) => setting.key === 'agent_llm_provider_configuration_id')
+    const agentLlmValue = PlatformSettingValueSchemas.agent_llm_provider_configuration_id.safeParse(agentLlmSetting?.value)
+    if (agentLlmValue.success) agentLlmProviderConfigurationId.value = agentLlmValue.data
     providerConfigurations.value = PublishingProviderConfigurationSchema.array().parse(providerResponse)
+    llmProviderConfigurations.value = LlmProviderConfigurationSchema.array().parse(llmResponse)
   } catch {
     errorMessage.value = 'Einstellungen konnten nicht geladen werden.'
   } finally {
@@ -84,6 +91,27 @@ async function savePublishingEnabled() {
     saving.value = false
   }
 }
+
+const availableAgentLlmProviders = computed(() => llmProviderConfigurations.value.filter((provider) =>
+  provider.protocol === 'openai' && provider.taskKind === 'text_generation' && provider.isActive && provider.hasSecret,
+))
+
+async function saveAgentLlmProvider() {
+  saving.value = true
+  errorMessage.value = ''
+  try {
+    const headers = await useAuthHeader()
+    const value = PlatformSettingValueSchemas.agent_llm_provider_configuration_id.parse(agentLlmProviderConfigurationId.value)
+    await $fetch(`${config.public.apiBase}/v1/platform-settings/agent_llm_provider_configuration_id`, {
+      method: 'PUT', headers, body: { value },
+    })
+  } catch {
+    errorMessage.value = 'Die Modellkonfiguration konnte nicht gespeichert werden.'
+    await load()
+  } finally {
+    saving.value = false
+  }
+}
 await load()
 
 async function saveLimit() {
@@ -132,6 +160,31 @@ async function saveLimit() {
             Speichern
           </button>
         </div>
+      </section>
+      <section class="card mt-6 p-6">
+        <h2 class="font-display text-base font-bold">Vereinsassistent</h2>
+        <p class="mt-2 text-sm text-[#727a75]">
+          Wähle die aktive OpenAI-kompatible Text-Provider-Konfiguration für den Chat-Agenten. Zugangsdaten bleiben verschlüsselt auf dem Server. Ohne Auswahl verwendet der Assistent die Deployment-Standardkonfiguration.
+        </p>
+        <div class="mt-4 flex flex-wrap items-end gap-3">
+          <label class="min-w-72 flex-1 text-xs font-semibold text-[#5c655f]">Bereitgestelltes LLM
+            <Select v-model="agentLlmProviderConfigurationId">
+              <SelectTrigger class="mt-1 px-4 py-2.5 text-sm font-normal"><SelectValue placeholder="Deployment-Standard" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem :value="null">Deployment-Standard</SelectItem>
+                <SelectItem v-for="provider in availableAgentLlmProviders" :key="provider.id" :value="provider.id">
+                  {{ provider.label }} · {{ provider.model }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </label>
+          <button class="focus-ring rounded-xl bg-forest px-5 py-2.5 text-xs font-bold text-white disabled:opacity-60" :disabled="saving" @click="saveAgentLlmProvider">
+            Agenten-LLM speichern
+          </button>
+        </div>
+        <p v-if="availableAgentLlmProviders.length === 0" class="mt-3 text-xs text-[#7a827c]">
+          Noch keine aktive OpenAI-kompatible Text-Provider-Konfiguration mit Secret vorhanden. Lege sie unter „LLM-Provider“ an.
+        </p>
       </section>
       <section class="card mt-6 p-6">
         <h2 class="font-display text-base font-bold">Veröffentlichungen</h2>

@@ -122,7 +122,7 @@ export function emptyPolicyRuleColumns() {
 
 export function chain(result: { data: unknown; error: unknown; count?: number }): PromiseLike<{ data: unknown; error: unknown; count?: number }> & Record<string, unknown> {
   const builder: Record<string, unknown> = {
-    eq: () => builder, is: () => builder, in: () => builder, or: () => builder, order: () => builder, limit: () => builder, range: () => builder, select: () => builder, filter: () => builder,
+    eq: () => builder, is: () => builder, in: () => builder, or: () => builder, contains: () => builder, order: () => builder, limit: () => builder, range: () => builder, select: () => builder, filter: () => builder,
     // Paket 019 (GET .../content-suggestions) verkettet zusaetzlich neq()/gte()/lte()/not() --
     // dieselbe Ignorierhaltung wie bei eq()/is()/in() oben, das Ergebnis steht schon fest.
     neq: () => builder, gte: () => builder, lte: () => builder, not: () => builder, lt: () => builder,

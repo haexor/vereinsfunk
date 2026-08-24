@@ -35,7 +35,7 @@ describe('agent responders', () => {
       messages: [{ role: 'user', content: 'Was ist offen?' }],
       workspace,
       userId: 'a'.repeat(64),
-    })).resolves.toEqual({ content: 'Zwei Freigaben warten auf dich.' })
+    })).resolves.toEqual({ content: 'Zwei Freigaben warten auf dich.', providerConfigured: true })
     expect(capturedInit).toBeDefined()
     const body = JSON.parse(String(capturedInit!.body)) as { store: boolean; safety_identifier: string; input: unknown[] }
     expect(body.store).toBe(false)
@@ -68,6 +68,7 @@ describe('agent responders', () => {
     await expect(responder.respond({ messages: [], workspace, userId: 'a'.repeat(64) })).resolves.toEqual({
       content: 'Ich habe eine Aktion zur Bestätigung vorbereitet.',
       proposal: { toolName: 'create_invitation', input: { email: 'neues.mitglied@example.org', role: 'viewer' } },
+      providerConfigured: true,
     })
   })
 
