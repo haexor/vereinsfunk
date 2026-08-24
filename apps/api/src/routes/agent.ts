@@ -726,6 +726,15 @@ export function registerAgentRoutes(
           metadata: { candidateId: textCandidateInput.candidateId, source: 'agent_tool' },
         })
       }
+      if (scheduleInput) {
+        await recordAuditEvent(request, {
+          organizationId: proposal.organizationId,
+          action: 'post.publication_scheduled',
+          entityType: 'publications',
+          entityId: resultId,
+          metadata: { postVersionId: scheduleInput.postVersionId, platform: scheduleInput.platform, scheduledFor: scheduleInput.scheduledFor, source: 'agent_tool' },
+        })
+      }
       if (emailDelivered === false) request.log.error({ err: emailError, correlationId: request.id }, 'Supabase invitation email delivery failed')
       return reply.code(200).send(mapProposal(completed.data))
     } catch (error) {
