@@ -18,6 +18,9 @@ Paket A des [Agenten-Arbeitsplatz-Plans](agent-workspace-plan.md) ist umgesetzt:
 - Nuxt-Arbeitsplatz unter `/assistent` mit Conversation, offenen Freigaben,
   Events und Beiträgen.
 - ADR-012: interne Command-Plane zuerst; MCP erst später als dünner Adapter.
+- Review-Härtung: Responses werden aus den rohen `output[].content[]`-Einträgen
+  validiert, Scope-Wechsel können keine veralteten UI-Daten übernehmen und das
+  Speichern eines Nachrichtenpaars erfolgt atomar.
 
 Die Tabelle für Proposals und Tool-Runs ist bewusst schon angelegt, wird in Paket A
 aber noch nicht benutzt. Die Nachrichtenroute liefert noch eine vollständige
@@ -31,12 +34,12 @@ Erfolgreich ausgeführt:
 - `pnpm --filter @vereinsfunk/api typecheck`
 - `pnpm --filter @vereinsfunk/web typecheck`
 - `pnpm --filter @vereinsfunk/contracts test` (115 Tests)
-- `pnpm --filter @vereinsfunk/api test` (533 Tests)
+- `pnpm --filter @vereinsfunk/api test` (535 Tests)
 - `pnpm lint`
 - `pnpm --filter @vereinsfunk/api build`
 - `pnpm --filter @vereinsfunk/web build`
 - `pnpm exec supabase migration up --local`
-- `pnpm exec supabase test db supabase/tests/agent_workspace.test.sql` (11 pgTAP-Tests)
+- `pnpm exec supabase test db supabase/tests/agent_workspace.test.sql` (26 pgTAP-Tests)
 
 `pnpm db:test` erreicht den neuen Agenten-Test erfolgreich, endet aber weiterhin
 mit acht bereits vor dieser Änderung auftretenden Fehlern in

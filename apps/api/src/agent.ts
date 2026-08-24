@@ -1,4 +1,5 @@
 import type { AgentMessage, AgentWorkspace } from '@vereinsfunk/contracts'
+import { z } from 'zod'
 
 export interface AgentResponder {
   respond(input: {
@@ -17,7 +18,7 @@ Freigaben. Du darfst in dieser Ausbaustufe nur Informationen erklären und zusam
 // Sichere Betriebsart ohne Provider-Konfiguration. Sie macht die Seite auch in lokalen/CI-Umgebungen
 // nutzbar, ohne den Eindruck zu erwecken, eine externe Aktion sei ausgeführt worden.
 export class LocalAgentResponder implements AgentResponder {
-  async respond(input: { messages: readonly Pick<AgentMessage, 'role' | 'content'>[]; workspace: AgentWorkspace }): Promise<string> {
+  async respond(input: { messages: readonly Pick<AgentMessage, 'role' | 'content'>[]; workspace: AgentWorkspace; userId: string }): Promise<string> {
     const question = input.messages.at(-1)?.content.toLowerCase() ?? ''
     if (question.includes('freigab')) {
       return input.workspace.pendingApprovals.length === 0
@@ -39,6 +40,15 @@ export class LocalAgentResponder implements AgentResponder {
 }
 
 type FetchLike = (input: string, init: RequestInit) => Promise<Response>
+
+const ResponsesApiResponseSchema = z.object({
+  output: z.array(z.object({
+    content: z.array(z.object({
+      type: z.string(),
+      text: z.string().optional(),
+    }).passthrough()).default([]),
+  }).passthrough()).default([]),
+}).passthrough()
 
 /**
  * Responses-Adapter für den read-only Start. Die Command-Plane bleibt serverseitig: Das Modell
@@ -74,10 +84,17 @@ export class OpenAiResponsesAgentResponder implements AgentResponder {
       }),
     })
     if (!response.ok) throw new Error(`agent_provider_${response.status}`)
-    const body = await response.json() as { output_text?: unknown }
-    if (typeof body.output_text !== 'string' || body.output_text.trim().length === 0) {
+    const body = ResponsesApiResponseSchema.safeParse(await response.json().catch(() => null))
+    if (!body.success) throw new Error('agent_provider_invalid_response')
+    const answer = body.data.output
+      .flatMap((item) => item.content)
+      .filter((item) => item.type === 'output_text')
+      .map((item) => item.text ?? '')
+      .join('\n')
+      .trim()
+    if (answer.length === 0) {
       throw new Error('agent_provider_invalid_response')
     }
-    return body.output_text.trim().slice(0, 8_000)
+    return answer.slice(0, 8_000)
   }
 }

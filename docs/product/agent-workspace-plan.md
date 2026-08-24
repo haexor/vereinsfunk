@@ -199,12 +199,16 @@ Neue Fastify-Routen:
 - `GET /v1/agent/conversations/:id` – Conversation, Nachrichten und sichere
   Aktionsreferenzen lesen.
 - `POST /v1/agent/conversations/:id/messages` – Nutzereingabe validieren,
-  Antwort und Tool-Fortschritt streamen.
+  den berechtigten Kontext aufbauen und nach Abschluss die vollständige Conversation
+  mit beiden neu gespeicherten Nachrichten zurückgeben.
 - `POST /v1/agent/action-proposals/:id/confirm` – Proposal atomar bestätigen
   und den fachlichen Use Case ausführen.
 - `POST /v1/agent/action-proposals/:id/cancel` – Proposal verwerfen.
 
-Der Streaming-Endpunkt arbeitet in folgender Reihenfolge:
+Paket A arbeitet noch ohne SSE: Die Route wartet auf die vollständige Agentenantwort
+und liefert anschließend einen validierten JSON-Response. Der spätere Streaming-Endpunkt
+übernimmt denselben Ablauf, überträgt Tool-Fortschritt und Kartenereignisse jedoch als
+Ereignisstrom:
 
 1. Bearer-Session validieren und Conversation/Scope per RLS laden.
 2. Serverseitig erlaubten Agentenkontext aufbauen.

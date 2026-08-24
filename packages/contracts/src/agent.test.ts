@@ -13,6 +13,7 @@ describe('agent contracts', () => {
 
   it('keeps user input bounded before it reaches conversation storage or a provider', () => {
     expect(CreateAgentMessageSchema.safeParse({ content: 'Welche Freigaben sind offen?' }).success).toBe(true)
+    expect(CreateAgentMessageSchema.safeParse({ content: 'x'.repeat(4_000) }).success).toBe(true)
     expect(CreateAgentMessageSchema.safeParse({ content: 'x'.repeat(4_001) }).success).toBe(false)
   })
 })

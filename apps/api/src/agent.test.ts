@@ -22,17 +22,39 @@ describe('agent responders', () => {
   })
 
   it('uses the stateless Responses API and passes a hashed safety identifier only', async () => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({ output_text: 'Zwei Freigaben warten auf dich.' }), { status: 200 }))
+    let capturedInit: RequestInit | undefined
+    const fetcher = vi.fn(async (_input: string, init: RequestInit) => {
+      capturedInit = init
+      return new Response(JSON.stringify({
+        output: [{ content: [{ type: 'output_text', text: 'Zwei Freigaben warten auf dich.' }] }],
+      }), { status: 200 })
+    })
     const responder = new OpenAiResponsesAgentResponder({ apiKey: 'secret', model: 'gpt-test', fetcher })
     await expect(responder.respond({
       messages: [{ role: 'user', content: 'Was ist offen?' }],
       workspace,
       userId: 'a'.repeat(64),
     })).resolves.toBe('Zwei Freigaben warten auf dich.')
-    const [, init] = fetcher.mock.calls[0] as [string, RequestInit]
-    const body = JSON.parse(String(init.body)) as { store: boolean; safety_identifier: string; input: unknown[] }
+    expect(capturedInit).toBeDefined()
+    const body = JSON.parse(String(capturedInit!.body)) as { store: boolean; safety_identifier: string; input: unknown[] }
     expect(body.store).toBe(false)
     expect(body.safety_identifier).toBe('a'.repeat(64))
     expect(JSON.stringify(body.input)).not.toContain('secret')
+  })
+
+  it('surfaces provider status failures for the route fallback', async () => {
+    const responder = new OpenAiResponsesAgentResponder({
+      apiKey: 'secret', model: 'gpt-test', fetcher: async () => new Response('', { status: 429 }),
+    })
+    await expect(responder.respond({ messages: [], workspace, userId: 'a'.repeat(64) }))
+      .rejects.toThrow('agent_provider_429')
+  })
+
+  it('rejects successful but malformed provider responses for the route fallback', async () => {
+    const responder = new OpenAiResponsesAgentResponder({
+      apiKey: 'secret', model: 'gpt-test', fetcher: async () => new Response(JSON.stringify({ output: [] }), { status: 200 }),
+    })
+    await expect(responder.respond({ messages: [], workspace, userId: 'a'.repeat(64) }))
+      .rejects.toThrow('agent_provider_invalid_response')
   })
 })

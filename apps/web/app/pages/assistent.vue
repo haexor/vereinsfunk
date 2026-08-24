@@ -19,6 +19,8 @@ const loading = ref(true)
 const sending = ref(false)
 const errorMessage = ref('')
 const cachedConversation = useState<{ scopeKey: string; id: string } | null>('vf-agent-conversation', () => null)
+let initializeRun = 0
+let sendRun = 0
 
 const scopeInput = computed(() => {
   if (!scope.value) return null
@@ -28,30 +30,46 @@ const scopeLabel = computed(() => scope.value?.departmentId ? 'deiner Abteilung'
 const scopeKey = computed(() => scopeInput.value ? `${scopeInput.value.organizationId}:${scopeInput.value.departmentId ?? ''}` : '')
 
 async function initialize() {
-  if (!scopeInput.value) { loading.value = false; return }
+  const run = ++initializeRun
+  ++sendRun
+  const input = scopeInput.value
+  const expectedScopeKey = scopeKey.value
+  const previousCachedConversation = cachedConversation.value
+  workspace.value = null
+  conversation.value = null
+  messages.value = []
+  cachedConversation.value = null
+  sending.value = false
+  if (!input) { loading.value = false; return }
   loading.value = true
   errorMessage.value = ''
+  const isCurrent = () => run === initializeRun && expectedScopeKey === scopeKey.value
   try {
-    const loadedWorkspace = await api.request('/v1/agent/workspace', { query: scopeInput.value }, AgentWorkspaceSchema)
+    const loadedWorkspace = await api.request('/v1/agent/workspace', { query: input }, AgentWorkspaceSchema)
+    if (!isCurrent()) return
     workspace.value = loadedWorkspace
-    if (cachedConversation.value?.scopeKey === scopeKey.value) {
+    if (previousCachedConversation?.scopeKey === expectedScopeKey) {
       try {
-        const detail = await api.request(`/v1/agent/conversations/${cachedConversation.value.id}`, {}, AgentConversationDetailSchema)
+        const detail = await api.request(`/v1/agent/conversations/${previousCachedConversation.id}`, {}, AgentConversationDetailSchema)
+        if (!isCurrent()) return
         conversation.value = detail.conversation
         messages.value = detail.messages
         return
       } catch {
+        if (!isCurrent()) return
         cachedConversation.value = null
       }
     }
-    const createdConversation = await api.request('/v1/agent/conversations', { method: 'POST', body: scopeInput.value }, AgentConversationSchema)
+    const createdConversation = await api.request('/v1/agent/conversations', { method: 'POST', body: input }, AgentConversationSchema)
+    if (!isCurrent()) return
     conversation.value = createdConversation
-    cachedConversation.value = { scopeKey: scopeKey.value, id: createdConversation.id }
+    cachedConversation.value = { scopeKey: expectedScopeKey, id: createdConversation.id }
     messages.value = [{ id: `welcome-${createdConversation.id}`, conversationId: createdConversation.id, organizationId: createdConversation.organizationId, role: 'assistant', content: `Hallo! Ich habe den Überblick zu ${scopeLabel.value} geladen. Wobei soll ich dir helfen?`, createdAt: new Date().toISOString() }]
   } catch {
+    if (!isCurrent()) return
     errorMessage.value = 'Der Assistent konnte nicht geladen werden. Bitte versuche es erneut.'
   } finally {
-    loading.value = false
+    if (isCurrent()) loading.value = false
   }
 }
 
@@ -61,23 +79,37 @@ watch(scopeInput, () => void initialize(), { deep: true })
 async function send() {
   const content = prompt.value.trim()
   if (!content || !conversation.value || sending.value) return
+  const run = ++sendRun
+  const expectedInitializeRun = initializeRun
+  const expectedScopeKey = scopeKey.value
+  const conversationId = conversation.value.id
+  const isCurrent = () => run === sendRun
+    && expectedInitializeRun === initializeRun
+    && expectedScopeKey === scopeKey.value
+    && conversation.value?.id === conversationId
   sending.value = true
   errorMessage.value = ''
   prompt.value = ''
   try {
     const detail = await api.request(
-      `/v1/agent/conversations/${conversation.value.id}/messages`,
+      `/v1/agent/conversations/${conversationId}/messages`,
       { method: 'POST', body: { content } },
       AgentConversationDetailSchema,
     )
+    if (!isCurrent()) return
     conversation.value = detail.conversation
     messages.value = detail.messages
-    if (scopeInput.value) workspace.value = await api.request('/v1/agent/workspace', { query: scopeInput.value }, AgentWorkspaceSchema)
+    if (scopeInput.value) {
+      const refreshedWorkspace = await api.request('/v1/agent/workspace', { query: scopeInput.value }, AgentWorkspaceSchema)
+      if (!isCurrent()) return
+      workspace.value = refreshedWorkspace
+    }
   } catch {
+    if (!isCurrent()) return
     prompt.value = content
     errorMessage.value = 'Die Nachricht konnte nicht verarbeitet werden. Es wurde keine Aktion ausgeführt.'
   } finally {
-    sending.value = false
+    if (isCurrent()) sending.value = false
   }
 }
 

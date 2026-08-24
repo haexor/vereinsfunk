@@ -41,6 +41,11 @@ const MessageRowSchema = z.object({
   content: z.string(),
   created_at: z.string(),
 })
+const PersistedMessagesRowSchema = z.object({
+  user_message: MessageRowSchema,
+  assistant_message: MessageRowSchema,
+  last_activity_at: z.string(),
+})
 
 function mapConversation(row: unknown): AgentConversation {
   const parsed = ConversationRowSchema.parse(row)
@@ -107,7 +112,7 @@ async function loadWorkspace(
   // Nur offene Stufen, denen der aktuelle Nutzer tatsächlich zugeordnet ist. Das JSON-Containment
   // ergänzt die RLS-Sichtbarkeit; eine Organisationsrolle allein darf keine fremde Aufgabe in die
   // Agentenantwort bringen.
-  let approvalsQuery = client
+  const approvalsQuery = client
     .from('approval_stages')
     .select('id, label, deadline_at, status, approval_request_id, reviewer_snapshot')
     .eq('organization_id', scope.organizationId)
@@ -141,9 +146,12 @@ async function loadWorkspace(
   const approvalPostIds = [...new Set((requestsResult.data ?? []).map((row) => row.post_id as string))]
   const approvalPostsResult = approvalPostIds.length === 0
     ? { data: [], error: null }
-    : await client.from('posts').select('id, department_id').in('id', approvalPostIds)
+    : await client.from('posts').select('id, department_id, team_id').in('id', approvalPostIds)
   if (approvalPostsResult.error) throw approvalPostsResult.error
-  const departmentByPostId = new Map((approvalPostsResult.data ?? []).map((row) => [row.id as string, row.department_id as string]))
+  const scopeByApprovalPostId = new Map((approvalPostsResult.data ?? []).map((row) => [row.id as string, {
+    departmentId: row.department_id as string,
+    teamId: row.team_id as string | null,
+  }]))
   const approvalVersionIds = [...new Set((requestsResult.data ?? []).map((row) => row.post_version_id as string))]
   const approvalVersionsResult = approvalVersionIds.length === 0
     ? { data: [], error: null }
@@ -173,14 +181,15 @@ async function loadWorkspace(
     pendingApprovals: approvalStages.flatMap((stage) => {
       const request = requestById.get(stage.approval_request_id as string)
       if (!request) return []
-      const departmentId = departmentByPostId.get(request.post_id as string)
-      if (!departmentId) return []
-      if (scope.departmentId && scope.departmentId !== departmentId) return []
+      const postScope = scopeByApprovalPostId.get(request.post_id as string)
+      if (!postScope) return []
+      if (scope.departmentId && scope.departmentId !== postScope.departmentId) return []
+      if (scope.teamId && scope.teamId !== postScope.teamId) return []
       return [{
         stageId: stage.id,
         postId: request.post_id,
         postVersionId: request.post_version_id,
-        departmentId,
+        departmentId: postScope.departmentId,
         title: approvalTitleByVersionId.get(request.post_version_id as string) ?? '',
         label: stage.label,
         deadlineAt: stage.deadline_at,
@@ -278,21 +287,12 @@ export function registerAgentRoutes(
     if (!conversation) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     const existingMessages = await loadMessages(client, conversation)
     const service = supabaseClients.forService()
-    const userMessageResult = await service.from('agent_messages').insert({
-      organization_id: conversation.organizationId,
-      conversation_id: conversation.id,
-      role: 'user',
-      content: input.content,
-      retention_expires_at: conversation.retentionExpiresAt,
-    }).select('id, organization_id, conversation_id, role, content, created_at').single()
-    if (userMessageResult.error) throw userMessageResult.error
-    const userMessage = mapMessage(userMessageResult.data)
     const workspace = await loadWorkspace(client, scopeForConversation(conversation), request.auth!.userId)
     const safetyIdentifier = createHash('sha256').update(request.auth!.userId).digest('hex').slice(0, 64)
     let answer: string
     try {
       answer = await responder.respond({
-        messages: [...existingMessages, userMessage],
+        messages: [...existingMessages, { role: 'user', content: input.content }],
         workspace,
         userId: safetyIdentifier,
       })
@@ -300,16 +300,19 @@ export function registerAgentRoutes(
       request.log.warn({ err: error, correlationId: request.id }, 'agent responder failed')
       answer = 'Der Assistent ist gerade nicht erreichbar. Deine Nachricht wurde nicht als Aktion ausgeführt; bitte versuche es erneut.'
     }
-    const assistantMessageResult = await service.from('agent_messages').insert({
-      organization_id: conversation.organizationId,
-      conversation_id: conversation.id,
-      role: 'assistant',
-      content: answer,
-      retention_expires_at: conversation.retentionExpiresAt,
-    }).select('id, organization_id, conversation_id, role, content, created_at').single()
-    if (assistantMessageResult.error) throw assistantMessageResult.error
-    const update = await service.from('agent_conversations').update({ last_activity_at: new Date().toISOString() }).eq('id', conversation.id)
-    if (update.error) throw update.error
+    // Die Funktion sperrt die Unterhaltung und schreibt Nutzer- und Assistentennachricht samt
+    // Aktivitätszeit in einer Transaktion. Ein Fehler hinterlässt dadurch nie nur eine Hälfte
+    // einer Unterhaltung, die ein Client beim Retry doppelt an den Provider schicken könnte.
+    const persisted = await service.rpc('append_agent_conversation_messages', {
+      target_organization_id: conversation.organizationId,
+      target_conversation_id: conversation.id,
+      target_owner_id: request.auth!.userId,
+      user_message_content: input.content,
+      assistant_message_content: answer,
+    })
+    if (persisted.error) throw persisted.error
+    const [persistedRow] = z.array(PersistedMessagesRowSchema).length(1).parse(persisted.data)
+    if (!persistedRow) throw new Error('agent_message_persistence_invalid_response')
     await recordAuditEvent(request, {
       organizationId: conversation.organizationId,
       action: 'agent.message_completed',
@@ -318,8 +321,8 @@ export function registerAgentRoutes(
       metadata: { providerConfigured: context.environment.OPENAI_API_KEY !== undefined },
     })
     return reply.code(201).send(AgentConversationDetailSchema.parse({
-      conversation: { ...conversation, lastActivityAt: new Date().toISOString() },
-      messages: [...existingMessages, userMessage, mapMessage(assistantMessageResult.data)],
+      conversation: { ...conversation, lastActivityAt: persistedRow.last_activity_at },
+      messages: [...existingMessages, mapMessage(persistedRow.user_message), mapMessage(persistedRow.assistant_message)],
     }))
   })
 }
