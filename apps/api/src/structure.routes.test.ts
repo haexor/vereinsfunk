@@ -5,8 +5,26 @@ import type { SupabaseClientFactory } from './app.js'
 import type { RoleProvider } from './auth.js'
 
 describe('structure, memberships and invitations', () => {
-  it('rejects creating a department without department.manage', async () => {
+  it('rejects creating a department without organization.manage', async () => {
     const app = await startApp({ roleProvider: denyingRoleProvider })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${ORGANIZATION_ID}/departments`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'Handball' },
+    })
+    expect(response.statusCode).toBe(403)
+    expect(response.json()).toMatchObject({ error: 'forbidden' })
+  })
+
+  it('rejects a department_admin from creating a department', async () => {
+    const departmentAdminRoleProvider: RoleProvider = {
+      async rolesForScope() {
+        return ['department_admin']
+      },
+    }
+    const app = await startApp({ roleProvider: departmentAdminRoleProvider })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({
       method: 'POST',

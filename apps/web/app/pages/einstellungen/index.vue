@@ -32,6 +32,29 @@ function entryKey(entry: { scope: ScopeLevel; scopeId: string }) {
   return `${entry.scope}:${entry.scopeId}`
 }
 
+// Die Arbeitsbereich-Auswahl ist zugleich die fachliche Grenze der Richtlinienoberflaeche:
+// Wer in einer Abteilung arbeitet, kann deren Richtlinien und die ihrer Teams verwalten, aber
+// nicht versehentlich die vereinsweite Regelung auswaehlen. Vereinsrichtlinien werden nur im
+// Vereinsbereich bearbeitet.
+const activeDepartmentId = computed(() => scope.value?.departmentId ?? null)
+const availableEntries = computed(() => {
+  const departmentId = activeDepartmentId.value
+  if (!departmentId) return entries.value
+  const teamIds = new Set(
+    organization.value?.departments.find((department) => department.id === departmentId)?.teams.map((team) => team.id) ?? [],
+  )
+  return entries.value.filter((entry) => (
+    (entry.scope === 'department' && entry.scopeId === departmentId)
+    || (entry.scope === 'team' && teamIds.has(entry.scopeId))
+  ))
+})
+
+function selectFirstAvailableEntry() {
+  if (!availableEntries.value.some((entry) => entryKey(entry) === selectedKey.value)) {
+    selectedKey.value = availableEntries.value[0] ? entryKey(availableEntries.value[0]) : ''
+  }
+}
+
 async function load() {
   if (!organizationId.value) { loading.value = false; return }
   loading.value = true
@@ -44,9 +67,7 @@ async function load() {
     ])
     entries.value = PolicyRuleSettingSchema.array().parse(rulesResponse)
     members.value = MemberSchema.array().parse(membersResponse)
-    if (!entries.value.some((entry) => entryKey(entry) === selectedKey.value)) {
-      selectedKey.value = entries.value[0] ? entryKey(entries.value[0]) : ''
-    }
+    selectFirstAvailableEntry()
   } catch {
     errorMessage.value = 'Die Richtlinien konnten nicht geladen werden.'
   } finally {
@@ -56,8 +77,9 @@ async function load() {
 await load()
 
 watch(organizationId, () => { selectedKey.value = ''; void load() })
+watch(activeDepartmentId, () => selectFirstAvailableEntry())
 
-const selectedEntry = computed(() => entries.value.find((entry) => entryKey(entry) === selectedKey.value) ?? null)
+const selectedEntry = computed(() => availableEntries.value.find((entry) => entryKey(entry) === selectedKey.value) ?? null)
 
 const draft = reactive<PolicyRuleValues>({
   reviewRequired: null, reviewMode: null, reviewStageLabel: null, reviewMinimumApprovals: null, reviewDeadlineHours: null,
@@ -266,7 +288,7 @@ function reviewerLabel(reviewer: { kind: string; userId: string | null; role: st
         <Select v-model="selectedKey">
           <SelectTrigger class="max-w-sm rounded-xl p-2.5 text-sm"><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem v-for="entry in entries" :key="entryKey(entry)" :value="entryKey(entry)">
+            <SelectItem v-for="entry in availableEntries" :key="entryKey(entry)" :value="entryKey(entry)">
               {{ entry.name }} ({{ entry.scope === 'organization' ? 'Verein' : entry.scope === 'department' ? 'Abteilung' : 'Team' }})
             </SelectItem>
           </SelectContent>

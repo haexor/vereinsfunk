@@ -30,6 +30,11 @@ describe('authorization', () => {
     expect(hasPermission(['department_admin'], 'integration.manage')).toBe(true)
     expect(hasPermission(['team_manager'], 'integration.manage')).toBe(false)
   })
+
+  it('reserves organization management for organization roles', () => {
+    expect(hasPermission(['organization_admin'], 'organization.manage')).toBe(true)
+    expect(hasPermission(['department_admin'], 'organization.manage')).toBe(false)
+  })
 })
 
 describe('canAssignRole', () => {

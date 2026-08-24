@@ -19,7 +19,9 @@ app.post('/v1/organizations/:orgId/departments', async (request, reply) => {
   if (!(await requireAuth(request, reply))) return
   const params = z.object({ orgId: UuidSchema }).parse(request.params)
   const input = CreateDepartmentRequestSchema.parse(request.body)
-  if (!(await requirePermission(request, reply, 'department.manage', { organizationId: params.orgId }))) return
+  // Neue Abteilungen veraendern die Vereinsstruktur insgesamt. Das ist eine
+  // Vereinsverwaltungsaufgabe, keine Verwaltungsaufgabe einer einzelnen Abteilung.
+  if (!(await requirePermission(request, reply, 'organization.manage', { organizationId: params.orgId }))) return
   const client = supabaseClients.forUser(request.auth!.accessToken)
   const rpc = await client.rpc('create_department', { target_organization_id: params.orgId, department_name: input.name })
   if (rpc.error) {

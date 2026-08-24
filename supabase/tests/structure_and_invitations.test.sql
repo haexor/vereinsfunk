@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(60);
+select plan(61);
 
 set local role postgres;
 
@@ -112,12 +112,17 @@ select lives_ok(
   'an empty department without content can be deleted'
 );
 
--- 9-10: create_department rejects a non-admin and generates a collision-safe slug for an admin.
+-- 9-11: create_department is reserved for organization admins and generates collision-safe slugs.
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '60000000-0000-4000-8000-000000000008', true);
 select throws_ok(
   $$select public.create_department('60000000-1000-4000-8000-000000000001', 'Neue Abteilung')$$,
-  'P0001', null, 'create_department rejects a caller without department.manage'
+  'P0001', null, 'create_department rejects a caller without organization.manage'
+);
+select set_config('request.jwt.claim.sub', '60000000-0000-4000-8000-000000000002', true);
+select throws_ok(
+  $$select public.create_department('60000000-1000-4000-8000-000000000001', 'Neue Abteilung')$$,
+  'P0001', null, 'a department_admin cannot create another department'
 );
 select set_config('request.jwt.claim.sub', '60000000-0000-4000-8000-000000000001', true);
 select isnt(public.create_department('60000000-1000-4000-8000-000000000001', 'Fussball'), null, 'create_department succeeds for an organization_owner');

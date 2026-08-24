@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(19);
+select plan(20);
 
 set local role postgres;
 
@@ -73,6 +73,10 @@ select set_config('request.jwt.claim.sub', '63000000-0000-4000-8000-000000000003
 select throws_ok(
   $$select public.set_policy_setting('63000000-1000-4000-8000-000000000001', 'organization', null, null, 'invite_allowed', false)$$,
   'P0001', 'insufficient_permission', 'a department_admin cannot set the organization-level policy row'
+);
+select throws_ok(
+  $$select public.set_policy_rules('63000000-1000-4000-8000-000000000001', 'organization', null, null, '{"reviewRequired": true}'::jsonb)$$,
+  'P0001', 'insufficient_permission', 'a department_admin cannot change organization-wide policy rules'
 );
 
 -- 7: a team_manager (without team.manage, same gap as struktur.vue's existing archive controls)
