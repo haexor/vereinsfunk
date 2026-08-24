@@ -367,6 +367,33 @@ async function loadWorkspace(
   })
 }
 
+// Die Workspace-Kacheln sind ausschliesslich lesender Kontext für den Assistenten. Ein Fehler in
+// einer einzelnen Abfrage (etwa während eines gestaffelten Datenbank-Upgrades oder bei einem
+// einzelnen Altdatensatz) darf deshalb weder das Anlegen einer Unterhaltung noch das Senden einer
+// Nachricht verhindern. Scope- und Mitgliedschaftsprüfung passieren vor diesem Aufruf weiterhin
+// strikt; der leere Fallback kann also keine Daten eines anderen Mandanten sichtbar machen.
+async function loadWorkspaceOrEmpty(
+  client: SupabaseClient,
+  scope: AgentScope,
+  userId: string,
+  logger: FastifyBaseLogger,
+): Promise<AgentWorkspace> {
+  try {
+    return await loadWorkspace(client, scope, userId, logger)
+  } catch (error) {
+    logger.error({ err: error }, 'agent workspace unavailable, returning empty workspace')
+    return AgentWorkspaceSchema.parse({
+      ...scope,
+      posts: [],
+      events: [],
+      pendingApprovals: [],
+      readyTextCandidates: [],
+      duePublications: [],
+      publicationActivities: [],
+    })
+  }
+}
+
 async function loadConversation(client: SupabaseClient, id: string): Promise<AgentConversation | null> {
   const result = await client
     .from('agent_conversations')
@@ -540,7 +567,7 @@ export function registerAgentRoutes(
     if (!validatedScope || !(await isAnyMemberOfOrganization(client, request.auth!.userId, scope.organizationId))) {
       return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     }
-    return reply.code(200).send(await loadWorkspace(client, scope, request.auth!.userId, request.log))
+    return reply.code(200).send(await loadWorkspaceOrEmpty(client, scope, request.auth!.userId, request.log))
   })
 
   app.post('/v1/agent/conversations', async (request, reply) => {
@@ -893,7 +920,7 @@ export function registerAgentRoutes(
     if (!conversation) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     const existingMessages = await loadMessages(client, conversation)
     const service = supabaseClients.forService()
-    const workspace = await loadWorkspace(client, scopeForConversation(conversation), request.auth!.userId, request.log)
+    const workspace = await loadWorkspaceOrEmpty(client, scopeForConversation(conversation), request.auth!.userId, request.log)
     const safetyIdentifier = createHash('sha256').update(request.auth!.userId).digest('hex').slice(0, 64)
     let answer: string
     let authorizedProposal: CreateAgentActionProposal | undefined
