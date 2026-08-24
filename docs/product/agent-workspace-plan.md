@@ -1,8 +1,8 @@
 # Plan: Dialogischer Vereinsagent und Agenten-Arbeitsplatz
 
 Stand: 24. August 2026
-Status: Pakete A–C umgesetzt; Paket D enthält die bestätigte Planung, während direkte
-Veröffentlichung, Reconciliation und Pilot weiterhin ausstehen.
+Status: Pakete A–C umgesetzt; Paket D enthält bestätigte Planung, direkte
+Veröffentlichung sowie Status- und Fehlerhinweise. Pilot-Evals stehen weiterhin aus.
 
 Die konkrete Übergabe mit geprüftem Stand und dem nächsten Umsetzungsschritt steht
 in [Agenten-Arbeitsplatz: aktuelle Übergabe](agent-workspace-handoff.md).
@@ -341,13 +341,17 @@ freigegebene aktuelle Versionen; `schedule_publication` wählt exakt einen erlau
 Instagram- oder Facebook-Kanal, erzeugt einen bestätigungspflichtigen Vorschlag
 und ruft nach Re-Autorisierung die bestehende, idempotente Scheduling-RPC auf.
 Die Agenten-UI zeigt den geplanten Zeitpunkt und macht klar, dass das noch keine
-direkte externe Veröffentlichung ist. Direkte Veröffentlichung, Reconciliation
-und Pilot-Evals bleiben offen.
+direkte externe Veröffentlichung ist. Fällige, noch `queued`e Publications werden
+separat im Workspace angezeigt; `execute_publication` ist als außenwirksame Aktion
+klassifiziert, prüft Scope und `post.publish` beim Vorschlag und unmittelbar vor
+der Bestätigung erneut und führt anschließend ausschließlich den bestehenden
+Execution-Endpunkt aus. Dadurch bleiben dessen Medien-/Consent-Gate,
+Compare-and-Set, Idempotenz, Provider-Audit und Fehlerklassifikation der einzige
+Ausführungspfad. Der Workspace zeigt außerdem fehlgeschlagene oder eine Prüfung
+erfordernde Veröffentlichungen samt sicherer, knapper Fehlereinordnung. Pilot-Evals
+bleiben offen.
 
-1. Publishing ausschließlich über die etablierte Outbox-/Hatchet-/Publisher-Kette
-   und mit finaler Bestätigung anbinden.
-2. Reconciliation, Fehlermeldungen und Aktivitäten in die Unterhaltung spiegeln.
-3. Mit einem kleinen Pilotverein messen und Tool-Evals gegen echte,
+1. Mit einem kleinen Pilotverein messen und Tool-Evals gegen echte,
    anonymisierte Pilotfälle erweitern.
 
 Abnahme: Ein bestätigter, freigegebener Post wird genau einmal geplant oder

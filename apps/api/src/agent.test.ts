@@ -9,6 +9,8 @@ const workspace = {
   events: [],
   pendingApprovals: [],
   readyTextCandidates: [],
+  duePublications: [],
+  publicationActivities: [],
 }
 
 describe('agent responders', () => {
@@ -68,6 +70,19 @@ describe('agent responders', () => {
     await expect(responder.respond({ messages: [], workspace, userId: 'a'.repeat(64) })).resolves.toEqual({
       content: 'Ich habe eine Aktion zur Bestätigung vorbereitet.',
       proposal: { toolName: 'create_invitation', input: { email: 'neues.mitglied@example.org', role: 'viewer' } },
+      providerConfigured: true,
+    })
+  })
+
+  it('accepts a direct publication only through the dedicated confirmation tool', async () => {
+    const responder = new OpenAiResponsesAgentResponder({
+      apiKey: 'secret', model: 'gpt-test', fetcher: async () => new Response(JSON.stringify({
+        output: [{ type: 'function_call', name: 'execute_publication', arguments: JSON.stringify({ publicationId: '10000000-8000-4000-8000-000000000001' }) }],
+      }), { status: 200 }),
+    })
+    await expect(responder.respond({ messages: [], workspace, userId: 'a'.repeat(64) })).resolves.toEqual({
+      content: 'Ich habe eine Aktion zur Bestätigung vorbereitet.',
+      proposal: { toolName: 'execute_publication', input: { publicationId: '10000000-8000-4000-8000-000000000001' } },
       providerConfigured: true,
     })
   })

@@ -9,8 +9,9 @@ import {
   type AgentMessage,
   type AgentWorkspace,
 } from '@vereinsfunk/contracts'
-import { ArrowUp, Bot, CalendarDays, CheckCircle2, FileText, LoaderCircle, Sparkles, UserPlus, X } from '@lucide/vue'
+import { ArrowUp, Bot, CalendarDays, CheckCircle2, FileText, LoaderCircle, Send, Sparkles, UserPlus, X } from '@lucide/vue'
 import { z } from 'zod'
+import { ApiRequestError } from '../utils/apiClient'
 
 const scope = await useScope()
 const api = useApiClient()
@@ -143,11 +144,28 @@ async function actOnProposal(proposal: AgentActionProposal, action: 'confirm' | 
       refreshActionProposals(),
       scopeInput.value ? api.request('/v1/agent/workspace', { query: scopeInput.value }, AgentWorkspaceSchema).then((value) => { workspace.value = value }) : Promise.resolve(),
     ])
-  } catch {
-    errorMessage.value = action === 'confirm' ? 'Die Aktion konnte nicht bestätigt werden. Es wurde nichts erneut ausgeführt.' : 'Der Vorschlag konnte nicht verworfen werden.'
+  } catch (error) {
+    errorMessage.value = action === 'confirm' ? actionConfirmationError(error) : 'Der Vorschlag konnte nicht verworfen werden.'
   } finally {
     actingProposalId.value = null
   }
+}
+
+function actionConfirmationError(error: unknown) {
+  const code = error instanceof ApiRequestError ? error.code : undefined
+  if (code === 'media_gate_blocked') return 'Die Veröffentlichung wurde wegen einer Medien- oder Einwilligungsprüfung gestoppt.'
+  if (code === 'validation_failed') return 'Die Veröffentlichung wurde von der Plattformprüfung abgelehnt.'
+  if (code === 'not_due_yet') return 'Die Veröffentlichung ist noch nicht fällig.'
+  if (code === 'publishing_disabled') return 'Die Veröffentlichung ist in der Plattformadministration derzeit deaktiviert.'
+  if (code === 'publish_failed') return 'Die Plattform konnte den Beitrag nicht veröffentlichen. Der Status wurde für die Nachverfolgung gespeichert.'
+  if (code === 'invalid_status') return 'Der Veröffentlichungsstatus hat sich verändert. Es wurde nichts erneut ausgeführt.'
+  return 'Die Aktion konnte nicht bestätigt werden. Es wurde nichts erneut ausgeführt.'
+}
+
+function publicationActivityDescription(activity: AgentWorkspace['publicationActivities'][number]) {
+  if (activity.status === 'action_required') return 'Die Veröffentlichung konnte nicht sicher abgeschlossen werden. Prüfe den Beitrag und den Plattformstatus.'
+  if (activity.errorClass === 'validation') return 'Die Plattformprüfung hat den Beitrag abgelehnt.'
+  return 'Die Veröffentlichung ist fehlgeschlagen. Prüfe den Beitrag und die Kanalverbindung.'
 }
 
 function proposalTitle(proposal: AgentActionProposal) {
@@ -157,6 +175,7 @@ function proposalTitle(proposal: AgentActionProposal) {
   if (proposal.toolName === 'start_text_generation') return 'Textgeneration starten'
   if (proposal.toolName === 'accept_text_candidate') return 'Textkandidat übernehmen'
   if (proposal.toolName === 'schedule_publication') return `Beitrag auf ${proposal.input.platform} einplanen`
+  if (proposal.toolName === 'execute_publication') return 'Beitrag jetzt veröffentlichen'
   return 'Freigabe anfordern'
 }
 
@@ -167,6 +186,7 @@ function proposalDescription(proposal: AgentActionProposal) {
   if (proposal.toolName === 'start_text_generation') return `${Object.keys(proposal.input.sourceMaterial.facts).length} bestätigte Fakten · Der Textkandidat wird nach deiner Bestätigung asynchron erstellt.`
   if (proposal.toolName === 'accept_text_candidate') return 'Der bereite Textkandidat wird als neue, unveränderliche Beitragsversion übernommen.'
   if (proposal.toolName === 'schedule_publication') return proposal.input.scheduledFor ? `Geplant für ${formatDate(proposal.input.scheduledFor)}.` : 'Wird sofort zur Veröffentlichung eingeplant; die externe Veröffentlichung bleibt ein eigener Schritt.'
+  if (proposal.toolName === 'execute_publication') return 'Die Veröffentlichung wird nach deiner Bestätigung extern ausgeführt.'
   return 'Die aktuelle Beitragsversion wird an die bestehende Freigaberoute übergeben.'
 }
 
@@ -249,6 +269,24 @@ function formatDate(value: string | null) {
             <NuxtLink v-for="candidate in workspace.readyTextCandidates" :key="candidate.id" :to="`/erstellen?sessionId=${candidate.sessionId}`" class="block rounded-xl border border-[#e2e5de] p-3 transition hover:bg-[#f6f8f3]">
               <p class="text-sm font-semibold">{{ candidate.headline || 'Textkandidat' }}</p>
               <p class="mt-1 text-xs text-[#727a75]">Im Chat kannst du die Übernahme vorbereiten.</p>
+            </NuxtLink>
+          </div>
+        </section>
+        <section v-if="workspace?.duePublications.length" class="card p-5">
+          <div class="mb-4 flex items-center gap-2"><Send :size="17" class="text-forest" /><h2 class="font-display text-base font-bold">Bereit zur Veröffentlichung</h2></div>
+          <div class="space-y-3">
+            <NuxtLink v-for="publication in workspace.duePublications" :key="publication.id" to="/beitraege" class="block rounded-xl border border-[#e2e5de] p-3 transition hover:bg-[#f6f8f3]">
+              <p class="text-sm font-semibold">{{ publication.title || 'Ohne Titel' }}</p>
+              <p class="mt-1 text-xs capitalize text-[#727a75]">{{ publication.platform }} · Im Chat kannst du die Veröffentlichung vorbereiten.</p>
+            </NuxtLink>
+          </div>
+        </section>
+        <section v-if="workspace?.publicationActivities.length" class="card border-amber-200 p-5">
+          <div class="mb-4 flex items-center gap-2"><Send :size="17" class="text-amber-700" /><h2 class="font-display text-base font-bold">Veröffentlichungen prüfen</h2></div>
+          <div class="space-y-3">
+            <NuxtLink v-for="activity in workspace.publicationActivities" :key="activity.id" to="/beitraege" class="block rounded-xl border border-amber-200 p-3 transition hover:bg-amber-50">
+              <p class="text-sm font-semibold">{{ activity.title || 'Ohne Titel' }}</p>
+              <p class="mt-1 text-xs text-[#727a75]">{{ publicationActivityDescription(activity) }}</p>
             </NuxtLink>
           </div>
         </section>

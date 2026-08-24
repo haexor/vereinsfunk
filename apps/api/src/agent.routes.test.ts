@@ -20,7 +20,7 @@ describe('agent routes', () => {
         from: (table: string) => {
           if (table === 'organization_memberships') return membershipRowsStub([{ id: MEMBERSHIP_ID }])
           if (table === 'department_memberships' || table === 'team_memberships') return membershipRowsStub([])
-          if (table === 'posts' || table === 'club_events' || table === 'approval_stages') return chain({ data: [], error: null })
+          if (table === 'posts' || table === 'club_events' || table === 'approval_stages' || table === 'publications') return chain({ data: [], error: null })
           if (table === 'composition_sessions') return chain({ data: null, error: { message: 'relation is temporarily unavailable' } })
           throw new Error(`unexpected table in agent workspace test: ${table}`)
         },
@@ -34,6 +34,6 @@ describe('agent routes', () => {
       headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
     })
     expect(response.statusCode).toBe(200)
-    expect(response.json()).toMatchObject({ organizationId: ORGANIZATION_ID, readyTextCandidates: [] })
+    expect(response.json()).toMatchObject({ organizationId: ORGANIZATION_ID, readyTextCandidates: [], duePublications: [], publicationActivities: [] })
   })
 })
