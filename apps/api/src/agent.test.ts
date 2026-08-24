@@ -39,10 +39,11 @@ describe('agent responders', () => {
       userId: 'a'.repeat(64),
     })).resolves.toEqual({ content: 'Zwei Freigaben warten auf dich.', providerConfigured: true })
     expect(capturedInit).toBeDefined()
-    const body = JSON.parse(String(capturedInit!.body)) as { store: boolean; safety_identifier: string; input: unknown[] }
+    const body = JSON.parse(String(capturedInit!.body)) as { store: boolean; safety_identifier: string; input: unknown[]; instructions: string }
     expect(body.store).toBe(false)
     expect(body.safety_identifier).toBe('a'.repeat(64))
     expect(JSON.stringify(body.input)).not.toContain('secret')
+    expect(body.instructions).toContain('schlichtem Markdown')
   })
 
   it('surfaces provider status failures for the route fallback', async () => {

@@ -230,7 +230,8 @@ function formatDate(value: string | null) {
         <div class="flex-1 space-y-4 overflow-y-auto p-5">
           <article v-for="message in messages" :key="message.id" class="flex" :class="message.role === 'user' ? 'justify-end' : 'justify-start'">
             <div class="max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-6" :class="message.role === 'user' ? 'bg-forest text-white' : 'bg-[#f2f4ee] text-[#28372e]'">
-              {{ message.content }}
+              <AgentMarkdown v-if="message.role === 'assistant'" :content="message.content" />
+              <template v-else>{{ message.content }}</template>
             </div>
           </article>
           <div v-if="sending" class="flex items-center gap-2 text-xs text-[#727a75]"><LoaderCircle class="animate-spin" :size="15" /> Der Assistent prüft den Arbeitsbereich …</div>

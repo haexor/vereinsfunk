@@ -78,3 +78,18 @@
 
 .scrollbar-none { scrollbar-width: none; }
 .scrollbar-none::-webkit-scrollbar { display: none; }
+
+.agent-markdown > :first-child { @apply mt-0; }
+.agent-markdown > :last-child { @apply mb-0; }
+.agent-markdown p, .agent-markdown ul, .agent-markdown ol, .agent-markdown blockquote, .agent-markdown pre { @apply my-2.5; }
+.agent-markdown h1, .agent-markdown h2, .agent-markdown h3 { @apply mt-3.5 mb-1.5 font-display font-bold; }
+.agent-markdown h1 { @apply text-base; }
+.agent-markdown h2, .agent-markdown h3 { @apply text-sm; }
+.agent-markdown ul { @apply list-disc pl-5; }
+.agent-markdown ol { @apply list-decimal pl-5; }
+.agent-markdown li + li { @apply mt-1; }
+.agent-markdown blockquote { @apply border-l-2 border-forest/35 pl-3 text-[#536056]; }
+.agent-markdown code { @apply rounded bg-black/8 px-1 py-0.5 font-mono text-[.9em]; }
+.agent-markdown pre { @apply overflow-x-auto rounded-lg bg-black/8 p-3 font-mono text-xs leading-5; }
+.agent-markdown pre code { @apply bg-transparent p-0; }
+.agent-markdown a { @apply font-medium underline decoration-current/50 underline-offset-2; }
