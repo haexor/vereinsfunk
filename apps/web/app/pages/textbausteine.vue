@@ -3,30 +3,17 @@ import { CreateContentSignatureBlockRequestSchema, ContentSignatureBlockSchema, 
 import { z } from 'zod'
 import { emptyContentSignatureBlockDraft, type ContentSignatureBlockDraft } from '../utils/contentSignatureBlockDraft'
 
-interface DepartmentRow { id: string; name: string }
-
 const api = useApiClient()
 const session = await useSession()
-const scope = await useScope()
-const supabase = useSupabaseClient()
-const organizationId = computed(() => scope.value?.organizationId ?? null)
+const { organizationId, departmentId: activeDepartmentId } = await useActiveScope()
 const activeOrganization = computed(() => session.value?.scopes.find((item) => item.organizationId === organizationId.value) ?? null)
 
 const loading = ref(true)
 const loadError = ref(false)
 const saving = ref(false)
+let latestLoadRun = 0
 
-const departments = ref<DepartmentRow[]>([])
 const blocks = ref<ContentSignatureBlock[]>([])
-
-// Kein Mannschafts-Level (nicht angefragt, "Einfachheit zuerst") -- nur Verein und Abteilung.
-const activeDepartmentId = ref<string | null>(null)
-
-function selectScope(departmentId: string | null) {
-  activeDepartmentId.value = departmentId
-  createError.value = ''
-  deleteError.value = ''
-}
 
 const canManageActiveLevel = computed(() => {
   if (!organizationId.value) return false
@@ -45,21 +32,20 @@ function scopeLabel(block: ContentSignatureBlock): string {
 }
 
 async function loadAll() {
+  const loadRun = ++latestLoadRun
   if (!organizationId.value) { loading.value = false; return }
   loading.value = true
   loadError.value = false
   try {
-    const [departmentsResult, blocksResponse] = await Promise.all([
-      supabase.from('departments').select('id, name').eq('organization_id', organizationId.value).is('archived_at', null).order('name'),
+    const [blocksResponse] = await Promise.all([
       api.request('/v1/content-signature-blocks', { query: { organizationId: organizationId.value } }, z.object({ blocks: z.array(ContentSignatureBlockSchema) })),
     ])
-    if (departmentsResult.error) { loadError.value = true; return }
-    departments.value = departmentsResult.data.map((row) => ({ id: row.id, name: row.name }))
+    if (loadRun !== latestLoadRun) return
     blocks.value = blocksResponse.blocks
   } catch {
-    loadError.value = true
+    if (loadRun === latestLoadRun) loadError.value = true
   } finally {
-    loading.value = false
+    if (loadRun === latestLoadRun) loading.value = false
   }
 }
 await loadAll()
@@ -96,15 +82,19 @@ const editDraft = ref<ContentSignatureBlockDraft>(emptyContentSignatureBlockDraf
 const editSaving = ref(false)
 const editError = ref('')
 
-// Beim Vereinswechsel duerfen weder die zuvor gewaehlte Abteilung noch ein offener Entwurf
-// weiterverwendet werden. Sonst waere die Anzeige bis zum naechsten manuellen Reload veraltet.
+// Ein Wechsel in der Sidebar darf keinen offenen Entwurf oder Editor im zuvor aktiven Bereich
+// zurücklassen.
 watch(organizationId, () => {
-  activeDepartmentId.value = null
   editingId.value = null
   createError.value = ''
   deleteError.value = ''
   editError.value = ''
   void loadAll()
+})
+watch(activeDepartmentId, () => {
+  editingId.value = null
+  createError.value = ''
+  deleteError.value = ''
 })
 
 function startEdit(block: ContentSignatureBlock) {
@@ -162,11 +152,6 @@ async function deleteBlock(block: ContentSignatureBlock) {
     <div v-if="loading" class="p-8 text-center text-xs text-[#7b827d]">Wird geladen …</div>
     <div v-else-if="loadError" class="card p-8 text-center text-sm font-semibold text-red-700">Die Textbausteine konnten nicht geladen werden. Bitte lade die Seite neu.</div>
     <template v-else>
-      <div class="card mb-6 flex flex-wrap items-center gap-2 p-4" role="group" aria-label="Ebene wählen">
-        <button type="button" :aria-pressed="activeDepartmentId === null" class="focus-ring rounded-lg px-3 py-1.5 text-xs font-semibold" :class="activeDepartmentId === null ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'" @click="selectScope(null)">Verein</button>
-        <button v-for="department in departments" :key="department.id" type="button" :aria-pressed="activeDepartmentId === department.id" class="focus-ring rounded-lg px-3 py-1.5 text-xs font-semibold" :class="activeDepartmentId === department.id ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'" @click="selectScope(department.id)">{{ department.name }}</button>
-      </div>
-
       <div class="max-w-2xl space-y-6">
         <section v-if="!canManageActiveLevel" class="card p-6 text-center text-sm text-[#7b827d]">
           Du hast auf dieser Ebene keine Berechtigung, Textbausteine zu verwalten.

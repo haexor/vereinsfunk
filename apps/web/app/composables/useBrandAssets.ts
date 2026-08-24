@@ -62,9 +62,9 @@ export function useBrandAssets({
   supabase: ReturnType<typeof useSupabaseClient>
   organizationId: ComputedRef<string | null>
   org: BrandOrganizationState
-  activeLevel: Ref<BrandScopeLevel>
-  activeDepartmentId: Ref<string | null>
-  activeTeamId: Ref<string | null>
+  activeLevel: Readonly<Ref<BrandScopeLevel>>
+  activeDepartmentId: Readonly<Ref<string | null>>
+  activeTeamId: Readonly<Ref<string | null>>
   activeDepartmentOverride: ComputedRef<BrandLevelOverride | null>
   activeTeamOverride: ComputedRef<BrandLevelOverride | null>
   reload: () => Promise<void>

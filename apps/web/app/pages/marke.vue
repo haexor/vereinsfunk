@@ -10,25 +10,12 @@ import {
 import { BrandAssetSchema, type BrandWebsiteAnalysisResult } from '@vereinsfunk/contracts'
 import {
   type BrandOrganizationState,
-  type BrandScopeLevel,
   useBrandAssets,
 } from '../composables/useBrandAssets'
 import { useBrandOverrides } from '../composables/useBrandOverrides'
 import { useBrandWebsiteAnalysis } from '../composables/useBrandWebsiteAnalysis'
 import { ApiRequestError } from '../utils/apiClient'
 import { BrandPageRowsSchema } from '../utils/brandPageRows'
-
-type ScopeLevelName = BrandScopeLevel
-
-interface DepartmentRow {
-  id: string
-  name: string
-}
-interface TeamRow {
-  id: string
-  name: string
-  departmentId: string
-}
 
 // Genau BRAND_LOCKABLE_FIELDS aus packages/domain, nur mit deutschem Etikett: eine Sperre wirkt
 // ausschliesslich auf Felder, die eine Abteilung/Mannschaft ueberhaupt selbst fuehren kann.
@@ -46,25 +33,19 @@ const LOCKABLE_FIELDS = BRAND_LOCKABLE_FIELDS.map((key) => ({
 }))
 
 const api = useApiClient()
-const scope = await useScope()
+const { organizationId, departmentId: activeDepartmentId, teamId: activeTeamId, level: activeLevel } = await useActiveScope()
 const { refreshBrandRevision } = useBrandRevision()
-const organizationId = computed(() => scope.value?.organizationId ?? null)
 const supabase = useSupabaseClient()
 
 const loading = ref(true)
 const loadError = ref(false)
 const saving = ref(false)
 const errorMessage = ref('')
+let latestLoadRun = 0
 
-const departments = ref<DepartmentRow[]>([])
-const teams = ref<TeamRow[]>([])
 // Die Analyse darf erst nach dem Speichern starten. Diese Momentaufnahme trennt eine gerade
 // bearbeitete Eingabe klar von der URL, die die API tatsächlich aus dem Markenprofil liest.
 const savedBrandWebsiteUrls = ref<Record<string, string | null>>({})
-
-const activeLevel = ref<ScopeLevelName>('organization')
-const activeDepartmentId = ref<string | null>(null)
-const activeTeamId = ref<string | null>(null)
 
 const org = reactive<BrandOrganizationState>({
   primaryColor: '#163a2c',
@@ -151,6 +132,7 @@ const contrastChecks = computed(() => [
 ])
 
 async function loadAll() {
+  const loadRun = ++latestLoadRun
   if (!organizationId.value) {
     loading.value = false
     return
@@ -213,9 +195,11 @@ async function loadAll() {
       teamProfilesResult.error ||
       assetsResult.error
     ) {
+      if (loadRun !== latestLoadRun) return
       loadError.value = true
       return
     }
+    if (loadRun !== latestLoadRun) return
     const rows = BrandPageRowsSchema.safeParse({
       brand: brandResult.data,
       departments: departmentsResult.data,
@@ -246,12 +230,6 @@ async function loadAll() {
     const savedUrls: Record<string, string | null> = {
       [`organization:${organizationId.value}`]: rows.data.brand?.website_url ?? null,
     }
-    departments.value = rows.data.departments.map((row) => ({ id: row.id, name: row.name }))
-    teams.value = rows.data.teams.map((row) => ({
-      id: row.id,
-      name: row.name,
-      departmentId: row.department_id,
-    }))
     departmentOverrides.value = {}
     for (const row of rows.data.departmentProfiles) {
       savedUrls[`department:${row.department_id}`] = row.website_url
@@ -301,7 +279,7 @@ async function loadAll() {
       overrideFor(activeDepartmentId.value)
     if (activeLevel.value === 'team' && activeTeamId.value) teamOverrideFor(activeTeamId.value)
   } finally {
-    loading.value = false
+    if (loadRun === latestLoadRun) loading.value = false
   }
 }
 const {
@@ -565,6 +543,12 @@ async function startWebsiteAnalysis() {
 
 await loadAll()
 
+watch(organizationId, () => { void loadAll() })
+watch(activeDepartmentId, (departmentId) => {
+  if (departmentId) overrideFor(departmentId)
+  errorMessage.value = ''
+}, { immediate: true })
+
 async function saveOrganization() {
   await api.request(`/v1/organizations/${organizationId.value}/brand`, {
     method: 'PUT',
@@ -639,15 +623,6 @@ async function save() {
 
 usePageSaveFab({ label: 'Änderungen speichern', save, saving })
 
-function selectScope(level: ScopeLevelName, departmentId: string | null, teamId: string | null) {
-  // Hier -- im Event-Handler, nicht in einem computed -- entsteht der Eintrag, in den die
-  // Formularfelder der gewaehlten Ebene anschliessend schreiben.
-  if (level === 'department' && departmentId) overrideFor(departmentId)
-  if (level === 'team' && teamId) teamOverrideFor(teamId)
-  activeLevel.value = level
-  activeDepartmentId.value = departmentId
-  activeTeamId.value = teamId
-}
 </script>
 
 <template>
@@ -665,61 +640,6 @@ function selectScope(level: ScopeLevelName, departmentId: string | null, teamId:
       Die Markendaten konnten nicht geladen werden. Bitte lade die Seite neu.
     </div>
     <template v-else>
-      <!-- Scope-Umschalter -->
-      <!-- Der aktive Bereich darf nicht allein an der Farbe haengen, sonst meldet ein Screenreader
-           ihn gar nicht -- daher aria-pressed je Schaltflaeche und eine Gruppenbeschriftung. -->
-      <div
-        class="card mb-6 flex flex-wrap items-center gap-2 p-4"
-        role="group"
-        aria-label="Markenebene wählen"
-      >
-        <button
-          type="button"
-          :aria-pressed="activeLevel === 'organization'"
-          class="focus-ring rounded-lg px-3 py-1.5 text-xs font-semibold"
-          :class="
-            activeLevel === 'organization' ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'
-          "
-          @click="selectScope('organization', null, null)"
-        >
-          Verein
-        </button>
-        <span
-          v-for="department in departments"
-          :key="department.id"
-          class="flex items-center gap-1"
-        >
-          <button
-            type="button"
-            :aria-pressed="activeLevel === 'department' && activeDepartmentId === department.id"
-            class="focus-ring rounded-lg px-3 py-1.5 text-xs font-semibold"
-            :class="
-              activeLevel === 'department' && activeDepartmentId === department.id
-                ? 'bg-forest text-white'
-                : 'bg-[#eef1ea] text-[#5b625d]'
-            "
-            @click="selectScope('department', department.id, null)"
-          >
-            {{ department.name }}
-          </button>
-          <button
-            v-for="team in teams.filter((t) => t.departmentId === department.id)"
-            :key="team.id"
-            type="button"
-            :aria-pressed="activeLevel === 'team' && activeTeamId === team.id"
-            class="focus-ring rounded-lg px-3 py-1.5 text-[11px] font-semibold"
-            :class="
-              activeLevel === 'team' && activeTeamId === team.id
-                ? 'bg-forest text-white'
-                : 'bg-[#f4f6f1] text-[#7b827d]'
-            "
-            @click="selectScope('team', department.id, team.id)"
-          >
-            {{ team.name }}
-          </button>
-        </span>
-      </div>
-
       <div class="space-y-6">
         <section
           v-if="activeLevel === 'organization' || (activeLevel === 'department' && org.allowDepartmentOverrides)"

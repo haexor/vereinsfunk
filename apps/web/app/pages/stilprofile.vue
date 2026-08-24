@@ -12,32 +12,14 @@ import { avoidRulesFromDraft, doRulesFromDraft, emptyStyleProfileDraft, previewE
 
 const api = useApiClient()
 const session = await useSession()
-const scope = await useScope()
+const { organizationId, departmentId: activeDepartmentId } = await useActiveScope()
 const supabase = useSupabaseClient()
-const organizationId = computed(() => scope.value?.organizationId ?? null)
 const activeOrganization = computed(() => session.value?.scopes.find((item) => item.organizationId === organizationId.value) ?? null)
-
-interface ScopeChoice { key: string; label: string; departmentId: string | null; teamId: string | null }
-
-const scopeChoices = computed<ScopeChoice[]>(() => {
-  const organization = activeOrganization.value
-  if (!organization || !organizationId.value) return []
-  const orgId = organizationId.value
-  const choices: ScopeChoice[] = []
-  if (useCan('post.create', { organizationId: orgId })) choices.push({ key: 'organization', label: 'Ganzer Verein', departmentId: null, teamId: null })
-  for (const department of organization.departments) {
-    if (useCan('post.create', { organizationId: orgId, departmentId: department.id })) {
-      choices.push({ key: `department:${department.id}`, label: department.name, departmentId: department.id, teamId: null })
-    }
-    for (const team of department.teams) {
-      if (useCan('post.create', { organizationId: orgId, departmentId: department.id, teamId: team.id })) {
-        choices.push({ key: `team:${team.id}`, label: `${department.name} – ${team.name}`, departmentId: department.id, teamId: team.id })
-      }
-    }
-  }
-  return choices
+const canManageActiveScope = computed(() => {
+  const departmentId = activeDepartmentId.value
+  if (!organizationId.value || !departmentId) return false
+  return useCan('post.create', { organizationId: organizationId.value, departmentId })
 })
-const canCreateAnywhere = computed(() => scopeChoices.value.length > 0)
 
 function scopeLabel(profile: CustomStyleProfile): string {
   const organization = activeOrganization.value
@@ -60,6 +42,9 @@ function canManage(profile: CustomStyleProfile): boolean {
 const loading = ref(true)
 const loadError = ref(false)
 const profiles = ref<CustomStyleProfile[]>([])
+const activeProfiles = computed(() =>
+  profiles.value.filter((profile) => profile.departmentId === activeDepartmentId.value && profile.teamId === null),
+)
 
 async function load() {
   const requestedOrganizationId = organizationId.value
@@ -87,15 +72,13 @@ async function load() {
 }
 await load()
 watch(organizationId, () => { void load() })
+watch(activeDepartmentId, () => {
+  editingId.value = null
+  createError.value = ''
+  deleteError.value = ''
+})
 
 // --- Anlage ------------------------------------------------------------------------------
-
-const selectedScopeKey = ref('')
-watch(scopeChoices, (choices) => {
-  if (choices.some((choice) => choice.key === selectedScopeKey.value)) return
-  const preferred = scope.value?.departmentId ? choices.find((choice) => choice.departmentId === scope.value?.departmentId && choice.teamId === null) : undefined
-  selectedScopeKey.value = preferred?.key ?? choices[0]?.key ?? ''
-}, { immediate: true })
 
 function slugify(value: string): string {
   const slug = value.toLowerCase().normalize('NFKD').replace(/\p{M}/gu, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64)
@@ -112,13 +95,13 @@ const creatingPreviewKey = ref(crypto.randomUUID())
 watch(draft, () => { creatingPreviewKey.value = crypto.randomUUID() }, { deep: true })
 
 async function createProfile() {
-  const scopeChoice = scopeChoices.value.find((choice) => choice.key === selectedScopeKey.value)
-  if (!organizationId.value || !scopeChoice || !draft.value.name.trim() || !draft.value.description.trim()) return
+  const departmentId = activeDepartmentId.value
+  if (!organizationId.value || !departmentId || !canManageActiveScope.value || !draft.value.name.trim() || !draft.value.description.trim()) return
   creating.value = true
   createError.value = ''
   try {
     const body = CreateCustomStyleProfileRequestSchema.parse({
-      organizationId: organizationId.value, departmentId: scopeChoice.departmentId, teamId: scopeChoice.teamId,
+      organizationId: organizationId.value, departmentId, teamId: null,
       slug: slugify(draft.value.name), name: draft.value.name, description: draft.value.description,
       styleRules: styleRulesFromDraft(draft.value), avoidRules: avoidRulesFromDraft(draft.value), doRules: doRulesFromDraft(draft.value),
     })
@@ -134,10 +117,10 @@ async function createProfile() {
 }
 
 function createPreviewRequestBody() {
-  const scopeChoice = scopeChoices.value.find((choice) => choice.key === selectedScopeKey.value)
-  if (!organizationId.value || !scopeChoice) return null
+  const departmentId = activeDepartmentId.value
+  if (!organizationId.value || !departmentId || !canManageActiveScope.value) return null
   return PreviewCustomStyleProfileRequestSchema.parse({
-    organizationId: organizationId.value, departmentId: scopeChoice.departmentId, teamId: scopeChoice.teamId,
+    organizationId: organizationId.value, departmentId, teamId: null,
     name: draft.value.name, description: draft.value.description,
     styleRules: styleRulesFromDraft(draft.value), avoidRules: avoidRulesFromDraft(draft.value), doRules: doRulesFromDraft(draft.value),
     sampleInput: draft.value.sampleInput,
@@ -258,22 +241,13 @@ async function deleteProfile(profile: CustomStyleProfile) {
 
     <div v-if="loading" class="p-8 text-center text-xs text-[#7b827d]">Wird geladen …</div>
     <div v-else-if="loadError" class="card p-8 text-center text-sm font-semibold text-red-700">Die Stilprofile konnten nicht geladen werden. Bitte lade die Seite neu.</div>
-    <div v-else-if="!canCreateAnywhere" class="card p-8 text-center text-sm text-[#7b827d]">
-      Du hast hier keine Berechtigung. Das übernimmt jemand mit der Rolle „Beiträge erstellen“ in deinem Verein, deiner Abteilung oder Mannschaft.
+    <div v-else-if="!activeDepartmentId" class="card p-8 text-center text-sm text-[#7b827d]">
+      Wähle in der Sidebar eine Abteilung, um Stilprofile zu verwalten.
+    </div>
+    <div v-else-if="!canManageActiveScope" class="card p-8 text-center text-sm text-[#7b827d]">
+      Du hast in diesem Arbeitsbereich keine Berechtigung. Das übernimmt jemand mit der Rolle „Beiträge erstellen“.
     </div>
     <template v-else>
-      <section class="card mb-6 p-6">
-        <h2 class="mb-4 font-display text-base font-bold">Stilprofil anlegen</h2>
-        <label class="mb-4 block text-xs font-semibold text-[#5c655f]">Bereich
-          <Select v-model="selectedScopeKey">
-            <SelectTrigger class="mt-1 w-full max-w-sm rounded-xl px-4 py-2.5 text-sm font-normal"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem v-for="choice in scopeChoices" :key="choice.key" :value="choice.key">{{ choice.label }}</SelectItem>
-            </SelectContent>
-          </Select>
-        </label>
-      </section>
-
       <StyleProfileEditorForm
         v-model:draft="draft"
         :saving="creating"
@@ -287,8 +261,8 @@ async function deleteProfile(profile: CustomStyleProfile) {
       />
 
       <section class="card p-6">
-        <h2 class="mb-4 font-display text-base font-bold">Eigene Stilprofile ({{ profiles.length }})</h2>
-        <div v-for="profile in profiles" :key="profile.id" class="border-t border-[#e9ebe4] py-4 first:border-t-0 first:pt-0">
+        <h2 class="mb-4 font-display text-base font-bold">Eigene Stilprofile ({{ activeProfiles.length }})</h2>
+        <div v-for="profile in activeProfiles" :key="profile.id" class="border-t border-[#e9ebe4] py-4 first:border-t-0 first:pt-0">
           <template v-if="editingId === profile.id">
             <p class="mb-3 text-[11px] font-semibold uppercase tracking-wide text-[#9aa096]">{{ scopeLabel(profile) }}</p>
             <StyleProfileEditorForm
@@ -321,7 +295,7 @@ async function deleteProfile(profile: CustomStyleProfile) {
             </div>
           </template>
         </div>
-        <p v-if="!profiles.length" class="py-4 text-center text-xs text-[#9aa096]">Noch kein eigenes Stilprofil angelegt.</p>
+        <p v-if="!activeProfiles.length" class="py-4 text-center text-xs text-[#9aa096]">Noch kein eigenes Stilprofil angelegt.</p>
       </section>
       <p v-if="deleteError" class="mt-4 text-sm text-amber-800">{{ deleteError }}</p>
     </template>
