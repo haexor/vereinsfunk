@@ -2,6 +2,7 @@ import {
   AgentConversationDetailSchema,
   AgentConversationSchema,
   AgentActionProposalSchema,
+  AgentApprovalProposalInputSchema,
   AgentEventProposalInputSchema,
   CreateInvitationRequestSchema,
   AgentMessageSchema,
@@ -71,6 +72,12 @@ const ProposalRowSchema = z.object({
   created_at: z.string(),
   updated_at: z.string(),
 })
+
+class AgentProposalExecutionError extends Error {
+  constructor(readonly statusCode: 409 | 422, readonly errorCode: string) {
+    super(errorCode)
+  }
+}
 
 function mapConversation(row: unknown): AgentConversation {
   const parsed = ConversationRowSchema.parse(row)
@@ -268,6 +275,24 @@ async function loadMessages(client: SupabaseClient, conversation: AgentConversat
   return (result.data ?? []).map(mapMessage)
 }
 
+type ApprovalTarget = { organizationId: string; departmentId: string; teamId: string | null; postId: string }
+
+async function loadApprovalTarget(client: SupabaseClient, postVersionId: string): Promise<ApprovalTarget | null> {
+  const version = await client.from('post_versions').select('id, post_id').eq('id', postVersionId).maybeSingle()
+  if (version.error) throw version.error
+  if (!version.data) return null
+  const post = await client.from('posts').select('id, organization_id, department_id, team_id').eq('id', version.data.post_id as string).maybeSingle()
+  if (post.error) throw post.error
+  if (!post.data) return null
+  return { organizationId: post.data.organization_id as string, departmentId: post.data.department_id as string, teamId: post.data.team_id as string | null, postId: post.data.id as string }
+}
+
+function matchesScope(scope: AgentScope, target: ApprovalTarget): boolean {
+  return scope.organizationId === target.organizationId
+    && scope.departmentId === target.departmentId
+    && (scope.teamId ?? null) === target.teamId
+}
+
 async function insertActionProposal(
   service: SupabaseClient,
   conversation: AgentConversation,
@@ -375,8 +400,14 @@ export function registerAgentRoutes(
     const conversation = await loadConversation(client, params.id)
     if (!conversation) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     const scope = scopeForConversation(conversation)
-    const permission = input.toolName === 'create_event' ? 'event.manage' : 'member.invite'
-    if (!(await context.requirePermission(request, reply, permission, toPermissionScope(scope.organizationId, scope.departmentId ?? null, scope.teamId ?? null)))) return
+    if (input.toolName === 'request_approval') {
+      const target = await loadApprovalTarget(client, input.input.postVersionId)
+      if (!target || !matchesScope(scope, target)) return reply.code(404).send({ error: 'post_version_not_in_scope', correlationId: request.id })
+      if (!(await context.requirePermission(request, reply, 'post.submit', toPermissionScope(target.organizationId, target.departmentId, target.teamId)))) return
+    } else {
+      const permission = input.toolName === 'create_event' ? 'event.manage' : 'member.invite'
+      if (!(await context.requirePermission(request, reply, permission, toPermissionScope(scope.organizationId, scope.departmentId ?? null, scope.teamId ?? null)))) return
+    }
     if (input.toolName === 'create_invitation') {
       const invitationInput = CreateInvitationRequestSchema.parse({ ...input.input, ...scope })
       const roles = await roleProvider.rolesForScope(request.auth!, toPermissionScope(scope.organizationId, scope.departmentId ?? null, scope.teamId ?? null))
@@ -430,13 +461,19 @@ export function registerAgentRoutes(
     if (!found.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     const proposal = mapProposal(found.data)
     const scope = AgentScopeSchema.parse({ organizationId: proposal.organizationId, departmentId: proposal.departmentId, teamId: proposal.teamId })
-    const permission = proposal.toolName === 'create_event' ? 'event.manage' : 'member.invite'
-    if (!(await context.requirePermission(request, reply, permission, toPermissionScope(scope.organizationId, scope.departmentId ?? null, scope.teamId ?? null)))) return
+    const approvalInput = proposal.toolName === 'request_approval' ? AgentApprovalProposalInputSchema.parse(proposal.input) : null
+    const approvalTarget = approvalInput ? await loadApprovalTarget(client, approvalInput.postVersionId) : null
+    if (approvalInput && (!approvalTarget || !matchesScope(scope, approvalTarget))) return reply.code(409).send({ error: 'proposal_target_changed', correlationId: request.id })
+    const permission = proposal.toolName === 'create_event' ? 'event.manage' : proposal.toolName === 'create_invitation' ? 'member.invite' : 'post.submit'
+    const permissionScope = approvalTarget
+      ? toPermissionScope(approvalTarget.organizationId, approvalTarget.departmentId, approvalTarget.teamId)
+      : toPermissionScope(scope.organizationId, scope.departmentId ?? null, scope.teamId ?? null)
+    if (!(await context.requirePermission(request, reply, permission, permissionScope))) return
     const eventInput = proposal.toolName === 'create_event' ? AgentEventProposalInputSchema.parse(proposal.input) : null
     const invitationInput = proposal.toolName === 'create_invitation'
       ? CreateInvitationRequestSchema.parse({ ...(proposal.input as Record<string, unknown>), ...scope })
       : null
-    const parsedInput = eventInput ?? invitationInput
+    const parsedInput = eventInput ?? invitationInput ?? approvalInput
     if (!parsedInput || proposal.inputHash !== hashAgentProposalInput(proposal.input)) return reply.code(409).send({ error: 'proposal_input_changed', correlationId: request.id })
     if (invitationInput) {
       const roles = await roleProvider.rolesForScope(request.auth!, toPermissionScope(scope.organizationId, scope.departmentId ?? null, scope.teamId ?? null))
@@ -472,11 +509,21 @@ export function registerAgentRoutes(
       if (eventInput) {
         const event = await createClubEvent(service, request.auth!.userId, scope, eventInput)
         resultId = event.id
-      } else {
+      } else if (invitationInput) {
         const invitation = await createInvitation(client, service, invitationInput!, environment.WEB_BASE_URL ?? 'http://localhost:4200')
         resultId = invitation.invitation.id
         emailDelivered = invitation.emailDelivered
         emailError = invitation.emailError
+      } else {
+        const approval = await client.rpc('request_approval', { target_post_version_id: approvalInput!.postVersionId })
+        if (approval.error) {
+          if (approval.error.message.includes('invalid_status')) throw new AgentProposalExecutionError(409, 'invalid_status')
+          if (approval.error.message.includes('review_required') || approval.error.message.includes('minor_stage_required') || approval.error.message.includes('invalid_reviewer_snapshot') || approval.error.message.includes('empty_reviewer_snapshot')) {
+            throw new AgentProposalExecutionError(422, 'approval_route_unavailable')
+          }
+          throw approval.error
+        }
+        resultId = z.object({ approvalRequestId: UuidSchema.nullable().optional(), postId: UuidSchema }).parse(approval.data).approvalRequestId ?? approvalTarget!.postId
       }
       const completed = await service.from('agent_action_proposals')
         .update({ status: 'confirmed', confirmed_by: request.auth!.userId, confirmed_at: new Date().toISOString() })
@@ -486,7 +533,7 @@ export function registerAgentRoutes(
       if (completed.error) throw completed.error
       if (toolRun.data) {
         const toolRunCompleted = await service.from('agent_tool_runs').update({
-          status: 'completed', finished_at: new Date().toISOString(), result_refs: [{ entityType: eventInput ? 'club_events' : 'invitations', id: resultId }],
+          status: 'completed', finished_at: new Date().toISOString(), result_refs: [{ entityType: eventInput ? 'club_events' : invitationInput ? 'invitations' : 'approval_requests', id: resultId }],
         }).eq('id', toolRun.data.id).eq('organization_id', proposal.organizationId).eq('status', 'started')
         if (toolRunCompleted.error) request.log.error({ err: toolRunCompleted.error, correlationId: request.id }, 'agent tool run could not be completed')
       }
@@ -509,6 +556,7 @@ export function registerAgentRoutes(
       const failed = await service.from('agent_action_proposals').update({ status: 'failed' })
         .eq('id', proposal.id).eq('organization_id', proposal.organizationId).eq('status', 'executing')
       if (failed.error) request.log.error({ err: failed.error, correlationId: request.id }, 'agent proposal failure state could not be saved')
+      if (error instanceof AgentProposalExecutionError) return reply.code(error.statusCode).send({ error: error.errorCode, correlationId: request.id })
       throw error
     }
   })
@@ -540,12 +588,17 @@ export function registerAgentRoutes(
     }
     if (authorizedProposal) {
       const proposalScope = scopeForConversation(conversation)
-      const permission = authorizedProposal.toolName === 'create_event' ? 'event.manage' : 'member.invite'
-      const roles = await roleProvider.rolesForScope(request.auth!, toPermissionScope(proposalScope.organizationId, proposalScope.departmentId ?? null, proposalScope.teamId ?? null))
+      const approvalInput = authorizedProposal.toolName === 'request_approval' ? AgentApprovalProposalInputSchema.parse(authorizedProposal.input) : null
+      const approvalTarget = approvalInput ? await loadApprovalTarget(client, approvalInput.postVersionId) : null
+      const permission = authorizedProposal.toolName === 'create_event' ? 'event.manage' : authorizedProposal.toolName === 'create_invitation' ? 'member.invite' : 'post.submit'
+      const permissionScope = approvalTarget
+        ? toPermissionScope(approvalTarget.organizationId, approvalTarget.departmentId, approvalTarget.teamId)
+        : toPermissionScope(proposalScope.organizationId, proposalScope.departmentId ?? null, proposalScope.teamId ?? null)
+      const roles = await roleProvider.rolesForScope(request.auth!, permissionScope)
       const invitationInput = authorizedProposal.toolName === 'create_invitation'
         ? CreateInvitationRequestSchema.parse({ ...authorizedProposal.input, ...proposalScope })
         : null
-      if (!hasPermission(roles, permission) || (invitationInput !== null && !canAssignRole(roles, invitationInput.role))) {
+      if ((approvalInput !== null && (!approvalTarget || !matchesScope(proposalScope, approvalTarget))) || !hasPermission(roles, permission) || (invitationInput !== null && !canAssignRole(roles, invitationInput.role))) {
         answer = 'Dafür fehlen dir im aktuellen Bereich die nötigen Berechtigungen. Es wurde keine Aktion vorbereitet.'
         authorizedProposal = undefined
       }

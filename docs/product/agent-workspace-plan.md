@@ -311,6 +311,12 @@ Abnahme: Eine Chat-Unterhaltung kann einen faktengebundenen Entwurf bis zur
 Freigabe führen; eine geänderte Version, Minderjährigenflag oder fehlende
 Permission stoppt den Prozess sicher.
 
+Fortschritt am 24. August 2026: Das bestätigte Tool `request_approval` ist
+angebunden. Es akzeptiert ausschließlich eine aktuelle Beitragsversion aus dem
+Conversation-Scope, prüft Scope und `post.submit` beim Vorschlag und vor der
+Ausführung erneut und ruft die vorhandene `request_approval`-Fach-RPC auf.
+Der faktengebundene Brief und die Textwerkstatt-Session folgen als nächster Schritt.
+
 ### Paket D – Planung, Publishing und Pilot
 
 1. Freigegebene aktuelle Versionen und Zielkanäle ermitteln.

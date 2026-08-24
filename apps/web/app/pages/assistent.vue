@@ -151,17 +151,15 @@ async function actOnProposal(proposal: AgentActionProposal, action: 'confirm' | 
 }
 
 function proposalTitle(proposal: AgentActionProposal) {
-  const input = proposal.input as { title?: string; email?: string; role?: string }
-  return proposal.toolName === 'create_event'
-    ? `Termin: ${input.title ?? 'Ohne Titel'}`
-    : `Einladung: ${input.email ?? 'Unbekannte E-Mail'}`
+  if (proposal.toolName === 'create_event') return `Termin: ${proposal.input.title}`
+  if (proposal.toolName === 'create_invitation') return `Einladung: ${proposal.input.email}`
+  return 'Freigabe anfordern'
 }
 
 function proposalDescription(proposal: AgentActionProposal) {
-  const input = proposal.input as { startsAt?: string; role?: string }
-  return proposal.toolName === 'create_event'
-    ? `Beginn: ${formatDate(input.startsAt ?? null)}`
-    : `Rolle: ${input.role ?? '—'} · Der Versand startet erst nach deiner Bestätigung.`
+  if (proposal.toolName === 'create_event') return `Beginn: ${formatDate(proposal.input.startsAt)}`
+  if (proposal.toolName === 'create_invitation') return `Rolle: ${proposal.input.role} · Der Versand startet erst nach deiner Bestätigung.`
+  return 'Die aktuelle Beitragsversion wird an die bestehende Freigaberoute übergeben.'
 }
 
 function formatDate(value: string | null) {

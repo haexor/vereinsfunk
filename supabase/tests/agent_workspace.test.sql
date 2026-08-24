@@ -32,15 +32,15 @@ insert into public.agent_action_proposals (
   id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot,
   input_hash, risk_class, expires_at
 ) values
-  ('68000000-9100-4000-8000-000000000001', '68000000-1000-4000-8000-000000000001', '68000000-9000-4000-8000-000000000001', '68000000-0000-4000-8000-000000000001', 'propose_event',
-   '{"organizationId":"68000000-1000-4000-8000-000000000001"}', '{"title":"Sommerfest"}', repeat('a', 64), 'write', now() + interval '15 minutes'),
-  ('68000000-9100-4000-8000-000000000002', '68000000-1000-4000-8000-000000000002', '68000000-9000-4000-8000-000000000002', '68000000-0000-4000-8000-000000000003', 'propose_event',
-   '{"organizationId":"68000000-1000-4000-8000-000000000002"}', '{"title":"Fremdes Sommerfest"}', repeat('b', 64), 'write', now() + interval '15 minutes');
+  ('68000000-9100-4000-8000-000000000001', '68000000-1000-4000-8000-000000000001', '68000000-9000-4000-8000-000000000001', '68000000-0000-4000-8000-000000000001', 'create_event',
+   '{"organizationId":"68000000-1000-4000-8000-000000000001"}', '{"title":"Sommerfest","description":null,"category":"other","startsAt":"2026-09-01T10:00:00.000Z","endsAt":null,"allDay":false,"locationName":null,"locationAddress":null,"registrationUrl":null}', repeat('a', 64), 'write', now() + interval '15 minutes'),
+  ('68000000-9100-4000-8000-000000000002', '68000000-1000-4000-8000-000000000002', '68000000-9000-4000-8000-000000000002', '68000000-0000-4000-8000-000000000003', 'create_event',
+   '{"organizationId":"68000000-1000-4000-8000-000000000002"}', '{"title":"Fremdes Sommerfest","description":null,"category":"other","startsAt":"2026-09-01T10:00:00.000Z","endsAt":null,"allDay":false,"locationName":null,"locationAddress":null,"registrationUrl":null}', repeat('b', 64), 'write', now() + interval '15 minutes');
 insert into public.agent_tool_runs (
   organization_id, conversation_id, proposal_id, tool_name, correlation_id, status, finished_at
 ) values
-  ('68000000-1000-4000-8000-000000000001', '68000000-9000-4000-8000-000000000001', '68000000-9100-4000-8000-000000000001', 'propose_event', '68000000-9200-4000-8000-000000000001', 'completed', now()),
-  ('68000000-1000-4000-8000-000000000002', '68000000-9000-4000-8000-000000000002', '68000000-9100-4000-8000-000000000002', 'propose_event', '68000000-9200-4000-8000-000000000002', 'completed', now());
+  ('68000000-1000-4000-8000-000000000001', '68000000-9000-4000-8000-000000000001', '68000000-9100-4000-8000-000000000001', 'create_event', '68000000-9200-4000-8000-000000000001', 'completed', now()),
+  ('68000000-1000-4000-8000-000000000002', '68000000-9000-4000-8000-000000000002', '68000000-9100-4000-8000-000000000002', 'create_event', '68000000-9200-4000-8000-000000000002', 'completed', now());
 
 select is((select relforcerowsecurity from pg_class where oid = 'public.agent_conversations'::regclass), true, 'agent conversations enforce RLS');
 select is((select relforcerowsecurity from pg_class where oid = 'public.agent_messages'::regclass), true, 'agent messages enforce RLS');

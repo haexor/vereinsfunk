@@ -59,14 +59,16 @@ export const AgentEventProposalInputSchema = z.object({
   }
 }).strict()
 
-export const AgentProposalToolNameSchema = z.enum(['create_event', 'create_invitation'])
+export const AgentProposalToolNameSchema = z.enum(['create_event', 'create_invitation', 'request_approval'])
 export const AgentInvitationProposalInputSchema = z.object({
   email: z.string().trim().toLowerCase().pipe(z.email()),
   role: AssignableRoleSchema,
 }).strict()
+export const AgentApprovalProposalInputSchema = z.object({ postVersionId: UuidSchema }).strict()
 export const CreateAgentActionProposalSchema = z.discriminatedUnion('toolName', [
   z.object({ toolName: z.literal('create_event'), input: AgentEventProposalInputSchema }),
   z.object({ toolName: z.literal('create_invitation'), input: AgentInvitationProposalInputSchema }),
+  z.object({ toolName: z.literal('request_approval'), input: AgentApprovalProposalInputSchema }),
 ])
 
 const AgentActionProposalBaseSchema = AgentScopeSchema.extend({
@@ -83,6 +85,7 @@ const AgentActionProposalBaseSchema = AgentScopeSchema.extend({
 export const AgentActionProposalSchema = z.discriminatedUnion('toolName', [
   AgentActionProposalBaseSchema.extend({ toolName: z.literal('create_event'), input: AgentEventProposalInputSchema }),
   AgentActionProposalBaseSchema.extend({ toolName: z.literal('create_invitation'), input: AgentInvitationProposalInputSchema }),
+  AgentActionProposalBaseSchema.extend({ toolName: z.literal('request_approval'), input: AgentApprovalProposalInputSchema }),
 ])
 
 export const AgentPostSummarySchema = z.object({
@@ -132,6 +135,7 @@ export type AgentMessageRole = z.infer<typeof AgentMessageRoleSchema>
 export type AgentProposalStatus = z.infer<typeof AgentProposalStatusSchema>
 export type AgentEventProposalInput = z.infer<typeof AgentEventProposalInputSchema>
 export type AgentInvitationProposalInput = z.infer<typeof AgentInvitationProposalInputSchema>
+export type AgentApprovalProposalInput = z.infer<typeof AgentApprovalProposalInputSchema>
 export type CreateAgentActionProposal = z.infer<typeof CreateAgentActionProposalSchema>
 export type AgentActionProposal = z.infer<typeof AgentActionProposalSchema>
 export type AgentPostSummary = z.infer<typeof AgentPostSummarySchema>

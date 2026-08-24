@@ -23,6 +23,7 @@ describe('agent contracts', () => {
       organizationId, inputHash: 'a'.repeat(64), status: 'pending', expiresAt: '2026-08-24T18:00:00.000Z', confirmedAt: null, createdAt: '2026-08-24T17:00:00.000Z', updatedAt: '2026-08-24T17:00:00.000Z',
     }
     expect(AgentActionProposalSchema.safeParse({ ...base, toolName: 'create_invitation', input: { email: 'mitglied@example.org', role: 'organization_viewer' } }).success).toBe(true)
+    expect(AgentActionProposalSchema.safeParse({ ...base, toolName: 'request_approval', input: { postVersionId: '10000000-5000-4000-8000-000000000001' } }).success).toBe(true)
     expect(AgentActionProposalSchema.safeParse({ ...base, toolName: 'create_event', input: { email: 'mitglied@example.org', role: 'organization_viewer' } }).success).toBe(false)
     expect(AgentActionProposalSchema.safeParse({ ...base, toolName: 'create_invitation', input: { email: 'mitglied@example.org', role: 'organization_viewer', organizationId: '10000000-9000-4000-8000-000000000001' } }).success).toBe(false)
   })
