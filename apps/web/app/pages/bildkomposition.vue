@@ -1,15 +1,13 @@
 <script setup lang="ts">
 import { CreatePhotoLayoutPresetRequestSchema, PhotoLayoutPresetSchema, UpdatePhotoLayoutPresetRequestSchema, type PhotoLayoutPreset } from '@vereinsfunk/contracts'
-import type { ScopeLevelName } from '@vereinsfunk/domain'
 import { z } from 'zod'
 import { emptyPhotoLayoutPresetDraft, type PhotoLayoutPresetDraft } from '../utils/photoLayoutPresetDraft'
 import { selectablePhotoLayoutPresets } from '../utils/photoLayoutPresets'
 
 const api = useApiClient()
 const session = await useSession()
-const scope = await useScope()
+const { organizationId, departmentId: activeDepartmentId, teamId: activeTeamId, level: activeLevel } = await useActiveScope()
 const supabase = useSupabaseClient()
-const organizationId = computed(() => scope.value?.organizationId ?? null)
 const activeOrganization = computed(() => session.value?.scopes.find((item) => item.organizationId === organizationId.value) ?? null)
 
 const loading = ref(true)
@@ -19,10 +17,6 @@ let latestLoadRun = 0
 
 const presets = ref<PhotoLayoutPreset[]>([])
 const orgColors = reactive({ primaryColor: '#163a2c', accentColor: '#caff4a' })
-
-const activeLevel = computed<ScopeLevelName>(() => scope.value?.departmentId ? 'department' : 'organization')
-const activeDepartmentId = computed(() => scope.value?.departmentId ?? null)
-const activeTeamId = computed<string | null>(() => null)
 
 const canManageActiveLevel = computed(() => {
   if (!organizationId.value) return false

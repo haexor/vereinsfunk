@@ -7,7 +7,7 @@ import {
   UpdateImageStylePresetRequestSchema,
   type ImageStylePreset,
 } from '@vereinsfunk/contracts'
-import { isBrandAssetSelectable, type ScopeLevelName } from '@vereinsfunk/domain'
+import { isBrandAssetSelectable } from '@vereinsfunk/domain'
 import { z } from 'zod'
 import {
   emptyImageStylePresetDraft,
@@ -26,9 +26,8 @@ interface BrandAssetOption {
 
 const api = useApiClient()
 const session = await useSession()
-const scope = await useScope()
+const { organizationId, departmentId: activeDepartmentId, teamId: activeTeamId, level: activeLevel } = await useActiveScope()
 const supabase = useSupabaseClient()
-const organizationId = computed(() => scope.value?.organizationId ?? null)
 const activeOrganization = computed(
   () => session.value?.scopes.find((item) => item.organizationId === organizationId.value) ?? null,
 )
@@ -46,10 +45,6 @@ const orgColors = reactive({ primaryColor: '#163a2c', accentColor: '#caff4a' })
 // Die technische Liste enthält Altwerte für wiederhergestellte Daten; im Produkt werden sie alle
 // als einheitliches Logo behandelt. Neue Uploads nutzen logo_primary.
 const LOGO_ASSET_KINDS = BrandLogoAssetKindSchema.options
-
-const activeLevel = computed<ScopeLevelName>(() => scope.value?.departmentId ? 'department' : 'organization')
-const activeDepartmentId = computed(() => scope.value?.departmentId ?? null)
-const activeTeamId = computed<string | null>(() => null)
 
 function resetScopeDependentDraft() {
   // selectableFrameAssets/selectableLogoAssets sind von der aktiven Ebene abhaengig -- ein im

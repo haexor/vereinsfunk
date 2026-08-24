@@ -5,9 +5,8 @@ import { emptyContentSignatureBlockDraft, type ContentSignatureBlockDraft } from
 
 const api = useApiClient()
 const session = await useSession()
-const scope = await useScope()
+const { organizationId, departmentId: activeDepartmentId } = await useActiveScope()
 const supabase = useSupabaseClient()
-const organizationId = computed(() => scope.value?.organizationId ?? null)
 const activeOrganization = computed(() => session.value?.scopes.find((item) => item.organizationId === organizationId.value) ?? null)
 
 const loading = ref(true)
@@ -15,8 +14,6 @@ const loadError = ref(false)
 const saving = ref(false)
 
 const blocks = ref<ContentSignatureBlock[]>([])
-
-const activeDepartmentId = computed(() => scope.value?.departmentId ?? null)
 
 const canManageActiveLevel = computed(() => {
   if (!organizationId.value) return false

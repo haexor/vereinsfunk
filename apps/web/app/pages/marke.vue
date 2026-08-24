@@ -10,15 +10,12 @@ import {
 import { BrandAssetSchema, type BrandWebsiteAnalysisResult } from '@vereinsfunk/contracts'
 import {
   type BrandOrganizationState,
-  type BrandScopeLevel,
   useBrandAssets,
 } from '../composables/useBrandAssets'
 import { useBrandOverrides } from '../composables/useBrandOverrides'
 import { useBrandWebsiteAnalysis } from '../composables/useBrandWebsiteAnalysis'
 import { ApiRequestError } from '../utils/apiClient'
 import { BrandPageRowsSchema } from '../utils/brandPageRows'
-
-type ScopeLevelName = BrandScopeLevel
 
 // Genau BRAND_LOCKABLE_FIELDS aus packages/domain, nur mit deutschem Etikett: eine Sperre wirkt
 // ausschliesslich auf Felder, die eine Abteilung/Mannschaft ueberhaupt selbst fuehren kann.
@@ -36,9 +33,8 @@ const LOCKABLE_FIELDS = BRAND_LOCKABLE_FIELDS.map((key) => ({
 }))
 
 const api = useApiClient()
-const scope = await useScope()
+const { organizationId, departmentId: activeDepartmentId, teamId: activeTeamId, level: activeLevel } = await useActiveScope()
 const { refreshBrandRevision } = useBrandRevision()
-const organizationId = computed(() => scope.value?.organizationId ?? null)
 const supabase = useSupabaseClient()
 
 const loading = ref(true)
@@ -50,14 +46,6 @@ let latestLoadRun = 0
 // Die Analyse darf erst nach dem Speichern starten. Diese Momentaufnahme trennt eine gerade
 // bearbeitete Eingabe klar von der URL, die die API tatsächlich aus dem Markenprofil liest.
 const savedBrandWebsiteUrls = ref<Record<string, string | null>>({})
-
-// Der Arbeitsbereich wird ausschließlich in der Sidebar gewählt. Diese Seite liest ihn nur;
-// damit gibt es keine konkurrierende, nur für /marke geltende Bereichsauswahl mehr.
-const activeLevel = computed<ScopeLevelName>(() =>
-  scope.value?.departmentId ? 'department' : 'organization',
-)
-const activeDepartmentId = computed(() => scope.value?.departmentId ?? null)
-const activeTeamId = computed<string | null>(() => null)
 
 const org = reactive<BrandOrganizationState>({
   primaryColor: '#163a2c',

@@ -12,11 +12,9 @@ import { avoidRulesFromDraft, doRulesFromDraft, emptyStyleProfileDraft, previewE
 
 const api = useApiClient()
 const session = await useSession()
-const scope = await useScope()
+const { organizationId, departmentId: activeDepartmentId } = await useActiveScope()
 const supabase = useSupabaseClient()
-const organizationId = computed(() => scope.value?.organizationId ?? null)
 const activeOrganization = computed(() => session.value?.scopes.find((item) => item.organizationId === organizationId.value) ?? null)
-const activeDepartmentId = computed(() => scope.value?.departmentId ?? null)
 const canManageActiveScope = computed(() =>
   organizationId.value
     ? useCan('post.create', { organizationId: organizationId.value, departmentId: activeDepartmentId.value ?? undefined })
