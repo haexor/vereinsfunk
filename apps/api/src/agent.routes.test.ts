@@ -36,4 +36,30 @@ describe('agent routes', () => {
     expect(response.statusCode).toBe(200)
     expect(response.json()).toMatchObject({ organizationId: ORGANIZATION_ID, readyTextCandidates: [], duePublications: [], publicationActivities: [] })
   })
+
+  it('keeps the chat available with an empty workspace when a core summary query fails', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({
+        from: (table: string) => {
+          if (table === 'organization_memberships') return membershipRowsStub([{ id: MEMBERSHIP_ID }])
+          if (table === 'department_memberships' || table === 'team_memberships') return membershipRowsStub([])
+          if (table === 'posts') return chain({ data: null, error: { message: 'relation is temporarily unavailable' } })
+          if (table === 'club_events' || table === 'approval_stages' || table === 'composition_sessions' || table === 'publications') return chain({ data: [], error: null })
+          throw new Error(`unexpected table in agent workspace test: ${table}`)
+        },
+      }) as unknown as SupabaseClient,
+      forService: () => ({}) as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/agent/workspace?organizationId=${ORGANIZATION_ID}`,
+      headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({
+      organizationId: ORGANIZATION_ID,
+      posts: [], events: [], pendingApprovals: [], readyTextCandidates: [], duePublications: [], publicationActivities: [],
+    })
+  })
 })
