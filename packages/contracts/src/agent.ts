@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { CommunicationGoalSchema, SourceMaterialSchema, SystemStyleProfileSlugSchema, UuidSchema } from './content.js'
 import { ClubEventCategorySchema } from './clubSchedule.js'
-import { SocialPlatformSchema } from './primitives.js'
+import { OAuthPlatformSchema, SocialPlatformSchema } from './primitives.js'
 import { AssignableRoleSchema } from './structure.js'
 
 // Der Agent kennt immer einen expliziten Verein. Abteilung und Mannschaft schraenken den
@@ -60,7 +60,7 @@ export const AgentEventProposalInputSchema = z.object({
   }
 }).strict()
 
-export const AgentProposalToolNameSchema = z.enum(['create_event', 'create_invitation', 'request_approval', 'save_content_brief', 'start_text_generation', 'accept_text_candidate'])
+export const AgentProposalToolNameSchema = z.enum(['create_event', 'create_invitation', 'request_approval', 'save_content_brief', 'start_text_generation', 'accept_text_candidate', 'schedule_publication'])
 export const AgentInvitationProposalInputSchema = z.object({
   email: z.string().trim().toLowerCase().pipe(z.email()),
   role: AssignableRoleSchema,
@@ -76,8 +76,13 @@ export const AgentContentBriefProposalInputSchema = z.object({
 }).strict()
 export const AgentTextGenerationProposalInputSchema = AgentContentBriefProposalInputSchema
 export const AgentTextCandidateAcceptanceProposalInputSchema = z.object({ candidateId: UuidSchema }).strict()
+export const AgentSchedulePublicationProposalInputSchema = z.object({
+  postVersionId: UuidSchema,
+  platform: OAuthPlatformSchema,
+  scheduledFor: z.iso.datetime({ offset: true }).nullable(),
+}).strict()
 export const AgentProposalTargetRefSchema = z.object({
-  entityType: z.enum(['club_events', 'invitations', 'approval_requests', 'text_workshop_drafts', 'composition_sessions', 'post_versions']),
+  entityType: z.enum(['club_events', 'invitations', 'approval_requests', 'text_workshop_drafts', 'composition_sessions', 'post_versions', 'publications']),
   id: UuidSchema,
 }).strict()
 export const CreateAgentActionProposalSchema = z.discriminatedUnion('toolName', [
@@ -87,6 +92,7 @@ export const CreateAgentActionProposalSchema = z.discriminatedUnion('toolName', 
   z.object({ toolName: z.literal('save_content_brief'), input: AgentContentBriefProposalInputSchema }),
   z.object({ toolName: z.literal('start_text_generation'), input: AgentTextGenerationProposalInputSchema }),
   z.object({ toolName: z.literal('accept_text_candidate'), input: AgentTextCandidateAcceptanceProposalInputSchema }),
+  z.object({ toolName: z.literal('schedule_publication'), input: AgentSchedulePublicationProposalInputSchema }),
 ])
 
 const AgentActionProposalBaseSchema = AgentScopeSchema.extend({
@@ -108,6 +114,7 @@ export const AgentActionProposalSchema = z.discriminatedUnion('toolName', [
   AgentActionProposalBaseSchema.extend({ toolName: z.literal('save_content_brief'), input: AgentContentBriefProposalInputSchema }),
   AgentActionProposalBaseSchema.extend({ toolName: z.literal('start_text_generation'), input: AgentTextGenerationProposalInputSchema }),
   AgentActionProposalBaseSchema.extend({ toolName: z.literal('accept_text_candidate'), input: AgentTextCandidateAcceptanceProposalInputSchema }),
+  AgentActionProposalBaseSchema.extend({ toolName: z.literal('schedule_publication'), input: AgentSchedulePublicationProposalInputSchema }),
 ])
 
 export const AgentPostSummarySchema = z.object({
@@ -169,6 +176,7 @@ export type AgentApprovalProposalInput = z.infer<typeof AgentApprovalProposalInp
 export type AgentContentBriefProposalInput = z.infer<typeof AgentContentBriefProposalInputSchema>
 export type AgentTextGenerationProposalInput = z.infer<typeof AgentTextGenerationProposalInputSchema>
 export type AgentTextCandidateAcceptanceProposalInput = z.infer<typeof AgentTextCandidateAcceptanceProposalInputSchema>
+export type AgentSchedulePublicationProposalInput = z.infer<typeof AgentSchedulePublicationProposalInputSchema>
 export type AgentProposalTargetRef = z.infer<typeof AgentProposalTargetRefSchema>
 export type CreateAgentActionProposal = z.infer<typeof CreateAgentActionProposalSchema>
 export type AgentActionProposal = z.infer<typeof AgentActionProposalSchema>
