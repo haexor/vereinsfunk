@@ -15,7 +15,7 @@ import { fetchPublicUrl, OutboundFetchError } from '@vereinsfunk/outbound-fetch'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { IMPLEMENTED_LLM_PROTOCOLS, IMPLEMENTED_LLM_TASK_KINDS, joinUrlPath, mapLlmProviderConfigurationRow, parseModelListingIds } from '../llmProviders.js'
-import { ciphertextToBytea, createSecretBoxFromEnvironment } from '../secretBox.js'
+import { byteaToBuffer, ciphertextToBytea, createSecretBoxFromEnvironment } from '../secretBox.js'
 import type { ApiRouteContext } from './context.js'
 
 export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRouteContext): void {
@@ -165,6 +165,54 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
       payload = JSON.parse(await fetchPublicUrl(joinUrlPath(input.baseUrl, 'models'), { headers, maxBytes: 1_000_000 }))
     } catch (error) {
       request.log.warn({ err: error, correlationId: request.id }, 'llm provider model listing failed')
+      if (error instanceof OutboundFetchError && error.reason === 'blocked_url') {
+        return reply.code(400).send({ error: 'base_url_not_allowed', correlationId: request.id })
+      }
+      return reply.code(502).send({ error: 'provider_unreachable', correlationId: request.id })
+    }
+    const models = parseModelListingIds(payload)
+    if (models.length === 0) return reply.code(502).send({ error: 'provider_returned_no_models', correlationId: request.id })
+    return reply.code(200).send(ListLlmProviderModelsResponseSchema.parse({ models }))
+  })
+
+  // Beim Bearbeiten bleibt der API-Schluessel bewusst leer im Browser. Die Modellauswahl darf
+  // trotzdem mit der bestehenden Konfiguration arbeiten: Die API liest das verschluesselte
+  // Geheimnis ausschliesslich mit der Service Role, entschluesselt es nur fuer diesen Abruf und
+  // gibt lediglich die Modell-IDs zurueck. Eine neue oder absichtlich geaenderte Eingabe nutzt
+  // weiterhin den obigen Endpoint, damit sie vor dem Speichern mit genau diesem Schluessel
+  // getestet werden kann.
+  app.post('/v1/llm-providers/:id/models', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    if (!(await requirePlatformAdmin(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const service = supabaseClients.forService()
+    const result = await service
+      .from('llm_provider_configurations')
+      .select('id, protocol, base_url, llm_provider_secrets!inner(api_key_ciphertext, key_version)')
+      .eq('id', params.id)
+      .maybeSingle()
+    if (result.error) throw result.error
+    if (!result.data) return reply.code(404).send({ error: 'llm_provider_not_found' })
+
+    const provider = z.object({
+      id: UuidSchema,
+      protocol: z.enum(['anthropic', 'openai']),
+      base_url: z.url(),
+      llm_provider_secrets: z.union([
+        z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) }),
+        z.array(z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) })).min(1),
+      ]),
+    }).parse(result.data)
+    const secret = Array.isArray(provider.llm_provider_secrets) ? provider.llm_provider_secrets[0]! : provider.llm_provider_secrets
+    const apiKey = createSecretBoxFromEnvironment(environment).open(byteaToBuffer(secret.api_key_ciphertext), secret.key_version, provider.id)
+    const headers = provider.protocol === 'anthropic'
+      ? { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }
+      : { authorization: `Bearer ${apiKey}` }
+    let payload: unknown
+    try {
+      payload = JSON.parse(await fetchPublicUrl(joinUrlPath(provider.base_url, 'models'), { headers, maxBytes: 1_000_000 }))
+    } catch (error) {
+      request.log.warn({ err: error, correlationId: request.id }, 'stored llm provider model listing failed')
       if (error instanceof OutboundFetchError && error.reason === 'blocked_url') {
         return reply.code(400).send({ error: 'base_url_not_allowed', correlationId: request.id })
       }
