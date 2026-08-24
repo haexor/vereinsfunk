@@ -21,6 +21,7 @@ import Fastify, { LogController, type FastifyInstance, type FastifyServerOptions
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { byteaToBuffer, createSecretBoxFromEnvironment } from './secretBox.js'
+import { LocalAgentResponder, OpenAiResponsesAgentResponder, type AgentResponder } from './agent.js'
 import {
   createAuthGuards,
   SupabasePlatformAdminProvider,
@@ -32,6 +33,7 @@ import { createEmailSender, type EmailSender } from './email.js'
 import { SupabaseUploadService } from './mediaUpload.js'
 import { createServiceClient, createUserClient } from './supabase.js'
 import { registerAnalyticsRoutes } from './routes/analytics.js'
+import { registerAgentRoutes } from './routes/agent.js'
 import { registerApprovalRoutes } from './routes/approvals.js'
 import { registerChannelQuotaRoutes } from './routes/channelQuotas.js'
 import { registerBrandRoutes } from './routes/brand.js'
@@ -93,6 +95,9 @@ export interface BuildAppOptions {
   // G'MIC ist ein Prozess-Provider und wird deshalb wie Upload-/Publishing-Provider injiziert.
   // Unit- und Route-Tests brauchen so nie ein natives Binary im Testprozess.
   imageEffects?: ImageEffectProvider
+  // Paket A des Agenten-Arbeitsplatzes: Tests ersetzen den Provider vollstaendig und brauchen
+  // daher weder einen API-Key noch einen ausgehenden HTTP-Aufruf.
+  agentResponder?: AgentResponder
 }
 
 // Form der embedded PostgREST-Abfrage in loadMetaConfiguration -- publishing_provider_secrets ist
@@ -203,6 +208,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         'invitation email (fake provider)',
       ),
     )
+  const agentResponder = options.agentResponder ?? (
+    environment.OPENAI_API_KEY
+      ? new OpenAiResponsesAgentResponder({ apiKey: environment.OPENAI_API_KEY, model: environment.AGENT_LLM_MODEL })
+      : new LocalAgentResponder()
+  )
   const { requireAuth, requirePermission, requirePermissionAnyOf, requirePlatformAdmin } =
     createAuthGuards(environment, roleProvider, platformAdminProvider)
 
@@ -282,6 +292,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   )
 
   registerContentRoutes(app, context)
+  registerAgentRoutes(app, context, agentResponder)
 
   registerOrganizationRoutes(app, context)
   registerBrandRoutes(app, context)

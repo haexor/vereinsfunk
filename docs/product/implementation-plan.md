@@ -1238,6 +1238,26 @@ Vor Pilotstart:
 - Skalierung der Worker
 - Betriebs-SLOs
 
+### Phase 10 – Dialogischer Vereinsagent
+
+Das Folgepaket ist in [Agenten-Arbeitsplatz-Plan](agent-workspace-plan.md) und
+[ADR-012](../adr/ADR-012-agent-command-plane.md) konkretisiert.
+
+Der Agent nutzt eine interne, typisierte Command-Plane in Fastify und alle
+bestehenden Fach-, Sicherheits- und Workflow-Grenzen. Er ist keine autonome
+Publishing-Route und kein direkter Datenbankzugang für ein LLM. Leseaktionen sind
+unmittelbar möglich; schreibende oder außenwirksame Aktionen entstehen als
+bestätigbare Aktionskarten. Ein Remote-MCP ist ausdrücklich nicht Voraussetzung und
+kann später nur als dünner Adapter auf die stabilisierte Command-Plane entstehen.
+
+Abnahmekriterien:
+
+- Nutzer können Beiträge, Freigaben und Termine dialogisch finden und organisieren,
+- alle Mutationen werden mit aktuellem Nutzer, Scope, Permission und Audit erneut geprüft,
+- ohne Bestätigung werden keine Einladungen, Termine, Freigaben, Kostenaktionen oder Publishes ausgelöst,
+- alle neuen Daten und Toolzugriffe bestehen positive und negative RLS-Isolationstests,
+- Publishing bleibt versionsgebunden, idempotent und über die vorhandene Outbox-/Worker-Kette ausgeführt.
+
 ## 20. MVP-Scope
 
 ### Im MVP enthalten
@@ -1263,6 +1283,7 @@ Vor Pilotstart:
 - Mobile Apps
 - vollständige Social Inbox
 - umfangreiche KI-Analytics
+- Remote-MCP-Zugang zu Vereinsdaten und -aktionen (erst nach Agenten-Pilot und eigenem Security-Gate)
 - White Label
 - eigene direkte Integration für jede Plattform
 - gewichtetes Fair Queuing jenseits tarifbasierter Limits

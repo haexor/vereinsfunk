@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { BarChart3, BookUser, Building2, CalendarDays, CheckCircle2, CreditCard, Feather, FileSignature, FileText, Frame, LayoutDashboard, LayoutGrid, LogOut, Menu, Palette, Plug, Plus, Scale, Settings, Share2, ShieldCheck, Users, UserRound, UserSearch, X } from '@lucide/vue'
+import { BarChart3, BookUser, Bot, Building2, CalendarDays, CheckCircle2, CreditCard, Feather, FileSignature, FileText, Frame, LayoutDashboard, LayoutGrid, LogOut, Menu, Palette, Plug, Plus, Scale, Settings, Share2, ShieldCheck, Users, UserRound, UserSearch, X } from '@lucide/vue'
 import { deriveSidebarPalette } from '../utils/sidebarBrand'
 import { resolveSidebarLogoAsset, type SidebarLogoAsset } from '../utils/sidebarLogo'
 
@@ -141,6 +141,7 @@ async function logout() {
 
 const navigation: { label: string; to: string; icon: typeof LayoutDashboard; badge?: number }[] = [
   { label: 'Übersicht', to: '/', icon: LayoutDashboard },
+  { label: 'Assistent', to: '/assistent', icon: Bot },
   { label: 'Beiträge', to: '/beitraege', icon: FileText },
   { label: 'Freigaben', to: '/freigaben', icon: CheckCircle2 },
   { label: 'Kalender', to: '/kalender', icon: CalendarDays },

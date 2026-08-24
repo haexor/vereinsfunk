@@ -34,6 +34,9 @@ const ApiEnvironmentBaseSchema = z.object({
   DATABASE_URL: optionalPostgresUrl,
   HATCHET_CLIENT_TOKEN: optionalSecret,
   OPENAI_API_KEY: optionalSecret,
+  // Der dialogische Vereinsagent nutzt einen eigenen Modellschalter. Ohne OPENAI_API_KEY faellt
+  // er kontrolliert auf den lokalen read-only Antworter zurueck; der Browser sieht den Key nie.
+  AGENT_LLM_MODEL: z.string().trim().min(1).max(160).default('gpt-5.4-mini'),
   // Bildstil-Effekte laufen standardmaessig lokal ueber Sharp. Das Produktions-Image setzt
   // explizit `gmic`; so bleiben lokale Tests ohne nativen G'MIC-Binary lauffaehig, waehrend der
   // produktive Renderer die kuratierten G'MIC-Rezepte verwendet.
