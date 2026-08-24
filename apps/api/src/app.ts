@@ -2,7 +2,7 @@ import multipart from '@fastify/multipart'
 import cors from '@fastify/cors'
 import { parseApiEnvironment } from '@vereinsfunk/config'
 import type { StructuredContentGenerator } from '@vereinsfunk/content-engine'
-import { HealthSchema, UuidSchema } from '@vereinsfunk/contracts'
+import { HealthSchema, PlatformSettingValueSchemas, UuidSchema } from '@vereinsfunk/contracts'
 import { GmicCliImageEffectProvider, type ImageEffectProvider } from '@vereinsfunk/media-processing'
 import {
   FakeLinkedInOAuthClient,
@@ -110,7 +110,7 @@ const MetaProviderConfigurationRowSchema = z.object({
     .nullable(),
 })
 
-const AgentLlmProviderSettingSchema = z.object({ value: UuidSchema.nullable() })
+const AgentLlmProviderSettingSchema = z.object({ value: PlatformSettingValueSchemas.agent_llm_provider_configuration_id })
 const AgentLlmProviderConfigurationRowSchema = z.object({
   id: UuidSchema,
   protocol: z.literal('openai'),
@@ -224,8 +224,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const deploymentAgentResponder: AgentResponder = environment.OPENAI_API_KEY
     ? new OpenAiResponsesAgentResponder({ apiKey: environment.OPENAI_API_KEY, model: environment.AGENT_LLM_MODEL })
     : new LocalAgentResponder()
-  const agentResponder: AgentResponder = options.agentResponder ?? {
-    async respond(input) {
+  // Eine entfernte, deaktivierte oder unvollständige Auswahl darf den Arbeitsplatz nicht
+  // unbenutzbar machen -- ebenso wenig ein DB-Lesefehler oder eine kaputte Zeile beim Aufloesen
+  // der Auswahl selbst. Alle diese Faelle fallen kontrolliert auf die Deployment-Konfiguration
+  // zurueck; nur der eigentliche Chat-Aufruf (unten, einmalig) darf noch durchschlagen.
+  async function resolveConfiguredAgentResponder(): Promise<AgentResponder | null> {
+    try {
       const service = supabaseClients.forService()
       const setting = await service
         .from('platform_settings')
@@ -238,7 +242,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       const configuredId = setting.data
         ? AgentLlmProviderSettingSchema.parse(setting.data).value
         : null
-      if (!configuredId) return deploymentAgentResponder.respond(input)
+      if (!configuredId) return null
       const provider = await service
         .from('llm_provider_configurations')
         .select('id, protocol, task_kind, base_url, model, llm_provider_secrets!inner(api_key_ciphertext, key_version)')
@@ -248,9 +252,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         .eq('is_active', true)
         .maybeSingle()
       if (provider.error) throw provider.error
-      // Eine entfernte, deaktivierte oder unvollständige Auswahl darf den Arbeitsplatz nicht
-      // unbenutzbar machen. Sie fällt kontrolliert auf die Deployment-Konfiguration zurück.
-      if (!provider.data) return deploymentAgentResponder.respond(input)
+      if (!provider.data) return null
       const row = AgentLlmProviderConfigurationRowSchema.parse(provider.data)
       const secret = Array.isArray(row.llm_provider_secrets)
         ? row.llm_provider_secrets[0]!
@@ -258,7 +260,16 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       const apiKey = createSecretBoxFromEnvironment(environment).open(
         byteaToBuffer(secret.api_key_ciphertext), secret.key_version, row.id,
       )
-      return new OpenAiResponsesAgentResponder({ apiKey, model: row.model, baseUrl: row.base_url }).respond(input)
+      return new OpenAiResponsesAgentResponder({ apiKey, model: row.model, baseUrl: row.base_url })
+    } catch (error) {
+      app.log.warn({ err: error }, 'configured agent llm provider unavailable, falling back to deployment responder')
+      return null
+    }
+  }
+  const agentResponder: AgentResponder = options.agentResponder ?? {
+    async respond(input) {
+      const configured = await resolveConfiguredAgentResponder()
+      return (configured ?? deploymentAgentResponder).respond(input)
     },
   }
   const { requireAuth, requirePermission, requirePermissionAnyOf, requirePlatformAdmin } =
