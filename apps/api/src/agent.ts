@@ -93,7 +93,7 @@ const RESPONSE_TOOLS = [
         sourceMaterial: {
           type: 'object', additionalProperties: false, required: ['facts', 'observations', 'quotes', 'doNotMention'],
           properties: {
-            facts: { type: 'object', additionalProperties: { type: ['string', 'number', 'boolean'] } },
+            facts: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key', 'value'], properties: { key: { type: 'string' }, value: { type: ['string', 'number', 'boolean'] } } } },
             observations: { type: 'array', items: { type: 'string' } },
             quotes: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['text', 'attribution', 'approved'], properties: { text: { type: 'string' }, attribution: { type: 'string' }, approved: { type: 'boolean' } } } },
             doNotMention: { type: 'array', items: { type: 'string' } },
@@ -113,7 +113,7 @@ const RESPONSE_TOOLS = [
         sourceMaterial: {
           type: 'object', additionalProperties: false, required: ['facts', 'observations', 'quotes', 'doNotMention'],
           properties: {
-            facts: { type: 'object', additionalProperties: { type: ['string', 'number', 'boolean'] } },
+            facts: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key', 'value'], properties: { key: { type: 'string' }, value: { type: ['string', 'number', 'boolean'] } } } },
             observations: { type: 'array', items: { type: 'string' } },
             quotes: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['text', 'attribution', 'approved'], properties: { text: { type: 'string' }, attribution: { type: 'string' }, approved: { type: 'boolean' } } } },
             doNotMention: { type: 'array', items: { type: 'string' } },
@@ -130,6 +130,24 @@ const RESPONSE_TOOLS = [
     },
   },
 ] as const
+
+// OpenAI Structured Outputs (strict: true) erlaubt keine freien Objekt-Maps, deshalb liefert das
+// Modell `facts` als Array von {key, value}. Für die Weiterverarbeitung wird es hier zurück in die
+// vom Contract-Schema erwartete Map-Form gebracht.
+function normalizeSourceMaterialFacts(argumentsValue: unknown): unknown {
+  if (typeof argumentsValue !== 'object' || argumentsValue === null) return argumentsValue
+  const sourceMaterial = (argumentsValue as Record<string, unknown>).sourceMaterial
+  if (typeof sourceMaterial !== 'object' || sourceMaterial === null) return argumentsValue
+  const facts = (sourceMaterial as Record<string, unknown>).facts
+  if (!Array.isArray(facts)) return argumentsValue
+  const factsRecord: Record<string, unknown> = {}
+  for (const entry of facts) {
+    if (typeof entry !== 'object' || entry === null) continue
+    const { key, value } = entry as Record<string, unknown>
+    if (typeof key === 'string') factsRecord[key] = value
+  }
+  return { ...argumentsValue, sourceMaterial: { ...sourceMaterial, facts: factsRecord } }
+}
 
 /**
  * Das Modell darf ausschließlich strukturierte Proposal-Tools anfordern. Ausführen, Autorisieren,
@@ -175,6 +193,9 @@ export class OpenAiResponsesAgentResponder implements AgentResponder {
       if (!functionCall.name || !functionCall.arguments) throw new Error('agent_provider_invalid_tool_call')
       let argumentsValue: unknown
       try { argumentsValue = JSON.parse(functionCall.arguments) } catch { throw new Error('agent_provider_invalid_tool_call') }
+      if (functionCall.name === 'save_content_brief' || functionCall.name === 'start_text_generation') {
+        argumentsValue = normalizeSourceMaterialFacts(argumentsValue)
+      }
       const parsedProposal = CreateAgentActionProposalSchema.safeParse({ toolName: functionCall.name, input: argumentsValue })
       if (!parsedProposal.success) throw new Error('agent_provider_invalid_tool_call')
       proposal = parsedProposal.data

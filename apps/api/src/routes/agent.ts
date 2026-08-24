@@ -16,6 +16,7 @@ import {
   CreateAgentConversationSchema,
   CreateAgentActionProposalSchema,
   CreateAgentMessageSchema,
+  TextWorkshopDraftPayloadSchema,
   UuidSchema,
   type AgentConversation,
   type AgentActionProposal,
@@ -239,9 +240,9 @@ async function loadWorkspace(
   if (candidatesResult.error) throw candidatesResult.error
   const readyTextCandidates = (candidatesResult.data ?? []).flatMap((row) => {
     const session = candidateSessionById.get(row.composition_session_id as string)
-    const content = z.object({ headline: z.string().max(200) }).nullable().safeParse(row.generated_content)
+    const content = z.object({ headline: z.string() }).nullable().safeParse(row.generated_content)
     if (!session || !content.success || content.data === null) return []
-    return [{ id: row.id as string, sessionId: row.composition_session_id as string, departmentId: session.department_id as string, teamId: session.team_id as string | null, headline: content.data.headline }]
+    return [{ id: row.id as string, sessionId: row.composition_session_id as string, departmentId: session.department_id as string, teamId: session.team_id as string | null, headline: content.data.headline.slice(0, 200) }]
   })
   const now = Date.now()
 
@@ -341,16 +342,21 @@ function toTextWorkshopDraftPayload(input: z.infer<typeof AgentContentBriefPropo
   const approvedQuotes = input.sourceMaterial.quotes
     .filter((quote) => quote.approved)
     .map((quote) => `Zitat: ${quote.text}${quote.attribution ? ` (${quote.attribution})` : ''}`)
-  return {
+  const factsText = Object.entries(input.sourceMaterial.facts).map(([key, value]) => `${key}: ${String(value)}`).join('\n')
+  const observation = [...input.sourceMaterial.observations, ...approvedQuotes].join('\n')
+  const doNotMention = input.sourceMaterial.doNotMention.join('\n')
+  // SourceMaterialSchema erlaubt längere Ableitungen als TextWorkshopDraftPayloadSchema; kürzen
+  // statt den Entwurf ungeprüft zu schreiben und erst beim Rücklesen scheitern zu lassen.
+  return TextWorkshopDraftPayloadSchema.parse({
     communicationGoal: input.communicationGoal,
-    factsText: Object.entries(input.sourceMaterial.facts).map(([key, value]) => `${key}: ${String(value)}`).join('\n'),
-    observation: [...input.sourceMaterial.observations, ...approvedQuotes].join('\n'),
-    doNotMention: input.sourceMaterial.doNotMention.join('\n'),
+    factsText: factsText.slice(0, 10_000),
+    observation: observation.slice(0, 5_000),
+    doNotMention: doNotMention.slice(0, 5_000),
     selectedProfile: input.systemStyleProfileSlug,
     temperature: 0.6 as const,
     selectedPlatforms: input.targetPlatforms,
     maxCharactersOverride: '',
-  }
+  })
 }
 
 function toInitialTextGenerationInput(scope: AgentScope, input: z.infer<typeof AgentTextGenerationProposalInputSchema>) {

@@ -70,4 +70,26 @@ describe('agent responders', () => {
       proposal: { toolName: 'create_invitation', input: { email: 'neues.mitglied@example.org', role: 'viewer' } },
     })
   })
+
+  it('declares facts as a strict-mode-compatible array and rebuilds the map from the tool call', async () => {
+    let capturedInit: RequestInit | undefined
+    const sourceMaterial = { facts: [{ key: 'Termin', value: 'Samstag' }], observations: [], quotes: [], doNotMention: [] }
+    const responder = new OpenAiResponsesAgentResponder({
+      apiKey: 'secret', model: 'gpt-test', fetcher: async (_input, init) => {
+        capturedInit = init
+        return new Response(JSON.stringify({
+          output: [{
+            type: 'function_call',
+            name: 'save_content_brief',
+            arguments: JSON.stringify({ communicationGoal: 'inform', sourceMaterial, systemStyleProfileSlug: 'klar_erklaerend', targetPlatforms: ['instagram'] }),
+          }],
+        }), { status: 200 })
+      },
+    })
+    const response = await responder.respond({ messages: [], workspace, userId: 'a'.repeat(64) })
+    expect(response.proposal?.input).toMatchObject({ sourceMaterial: { facts: { Termin: 'Samstag' } } })
+    const tools = JSON.parse(String(capturedInit!.body)).tools as { name: string; parameters: { properties: { sourceMaterial: { properties: { facts: { type: string } } } } } }[]
+    const briefTool = tools.find((tool) => tool.name === 'save_content_brief')!
+    expect(briefTool.parameters.properties.sourceMaterial.properties.facts.type).toBe('array')
+  })
 })
