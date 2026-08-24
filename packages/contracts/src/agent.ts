@@ -60,7 +60,7 @@ export const AgentEventProposalInputSchema = z.object({
   }
 }).strict()
 
-export const AgentProposalToolNameSchema = z.enum(['create_event', 'create_invitation', 'request_approval', 'save_content_brief'])
+export const AgentProposalToolNameSchema = z.enum(['create_event', 'create_invitation', 'request_approval', 'save_content_brief', 'start_text_generation', 'accept_text_candidate'])
 export const AgentInvitationProposalInputSchema = z.object({
   email: z.string().trim().toLowerCase().pipe(z.email()),
   role: AssignableRoleSchema,
@@ -74,11 +74,19 @@ export const AgentContentBriefProposalInputSchema = z.object({
     if (new Set(platforms).size !== platforms.length) context.addIssue({ code: 'custom', message: 'targetPlatforms must not contain duplicates' })
   }),
 }).strict()
+export const AgentTextGenerationProposalInputSchema = AgentContentBriefProposalInputSchema
+export const AgentTextCandidateAcceptanceProposalInputSchema = z.object({ candidateId: UuidSchema }).strict()
+export const AgentProposalTargetRefSchema = z.object({
+  entityType: z.enum(['club_events', 'invitations', 'approval_requests', 'text_workshop_drafts', 'composition_sessions', 'post_versions']),
+  id: UuidSchema,
+}).strict()
 export const CreateAgentActionProposalSchema = z.discriminatedUnion('toolName', [
   z.object({ toolName: z.literal('create_event'), input: AgentEventProposalInputSchema }),
   z.object({ toolName: z.literal('create_invitation'), input: AgentInvitationProposalInputSchema }),
   z.object({ toolName: z.literal('request_approval'), input: AgentApprovalProposalInputSchema }),
   z.object({ toolName: z.literal('save_content_brief'), input: AgentContentBriefProposalInputSchema }),
+  z.object({ toolName: z.literal('start_text_generation'), input: AgentTextGenerationProposalInputSchema }),
+  z.object({ toolName: z.literal('accept_text_candidate'), input: AgentTextCandidateAcceptanceProposalInputSchema }),
 ])
 
 const AgentActionProposalBaseSchema = AgentScopeSchema.extend({
@@ -89,6 +97,7 @@ const AgentActionProposalBaseSchema = AgentScopeSchema.extend({
   status: AgentProposalStatusSchema,
   expiresAt: z.iso.datetime({ offset: true }),
   confirmedAt: z.iso.datetime({ offset: true }).nullable(),
+  targetRefs: z.array(AgentProposalTargetRefSchema).max(1).default([]),
   createdAt: z.iso.datetime({ offset: true }),
   updatedAt: z.iso.datetime({ offset: true }),
 })
@@ -97,6 +106,8 @@ export const AgentActionProposalSchema = z.discriminatedUnion('toolName', [
   AgentActionProposalBaseSchema.extend({ toolName: z.literal('create_invitation'), input: AgentInvitationProposalInputSchema }),
   AgentActionProposalBaseSchema.extend({ toolName: z.literal('request_approval'), input: AgentApprovalProposalInputSchema }),
   AgentActionProposalBaseSchema.extend({ toolName: z.literal('save_content_brief'), input: AgentContentBriefProposalInputSchema }),
+  AgentActionProposalBaseSchema.extend({ toolName: z.literal('start_text_generation'), input: AgentTextGenerationProposalInputSchema }),
+  AgentActionProposalBaseSchema.extend({ toolName: z.literal('accept_text_candidate'), input: AgentTextCandidateAcceptanceProposalInputSchema }),
 ])
 
 export const AgentPostSummarySchema = z.object({
@@ -127,11 +138,19 @@ export const AgentApprovalSummarySchema = z.object({
   deadlineAt: z.iso.datetime({ offset: true }).nullable(),
   isOverdue: z.boolean(),
 })
+export const AgentTextCandidateSummarySchema = z.object({
+  id: UuidSchema,
+  sessionId: UuidSchema,
+  departmentId: UuidSchema,
+  teamId: UuidSchema.nullable(),
+  headline: z.string().trim().max(200),
+})
 
 export const AgentWorkspaceSchema = AgentScopeSchema.extend({
   posts: z.array(AgentPostSummarySchema).max(20),
   events: z.array(AgentEventSummarySchema).max(20),
   pendingApprovals: z.array(AgentApprovalSummarySchema).max(20),
+  readyTextCandidates: z.array(AgentTextCandidateSummarySchema).max(20),
 })
 
 export const AgentConversationDetailSchema = z.object({
@@ -148,10 +167,14 @@ export type AgentEventProposalInput = z.infer<typeof AgentEventProposalInputSche
 export type AgentInvitationProposalInput = z.infer<typeof AgentInvitationProposalInputSchema>
 export type AgentApprovalProposalInput = z.infer<typeof AgentApprovalProposalInputSchema>
 export type AgentContentBriefProposalInput = z.infer<typeof AgentContentBriefProposalInputSchema>
+export type AgentTextGenerationProposalInput = z.infer<typeof AgentTextGenerationProposalInputSchema>
+export type AgentTextCandidateAcceptanceProposalInput = z.infer<typeof AgentTextCandidateAcceptanceProposalInputSchema>
+export type AgentProposalTargetRef = z.infer<typeof AgentProposalTargetRefSchema>
 export type CreateAgentActionProposal = z.infer<typeof CreateAgentActionProposalSchema>
 export type AgentActionProposal = z.infer<typeof AgentActionProposalSchema>
 export type AgentPostSummary = z.infer<typeof AgentPostSummarySchema>
 export type AgentEventSummary = z.infer<typeof AgentEventSummarySchema>
 export type AgentApprovalSummary = z.infer<typeof AgentApprovalSummarySchema>
+export type AgentTextCandidateSummary = z.infer<typeof AgentTextCandidateSummarySchema>
 export type AgentWorkspace = z.infer<typeof AgentWorkspaceSchema>
 export type AgentConversationDetail = z.infer<typeof AgentConversationDetailSchema>

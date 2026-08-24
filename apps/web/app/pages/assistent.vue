@@ -154,14 +154,30 @@ function proposalTitle(proposal: AgentActionProposal) {
   if (proposal.toolName === 'create_event') return `Termin: ${proposal.input.title}`
   if (proposal.toolName === 'create_invitation') return `Einladung: ${proposal.input.email}`
   if (proposal.toolName === 'save_content_brief') return 'Content-Brief speichern'
+  if (proposal.toolName === 'start_text_generation') return 'Textgeneration starten'
+  if (proposal.toolName === 'accept_text_candidate') return 'Textkandidat übernehmen'
   return 'Freigabe anfordern'
 }
 
 function proposalDescription(proposal: AgentActionProposal) {
   if (proposal.toolName === 'create_event') return `Beginn: ${formatDate(proposal.input.startsAt)}`
   if (proposal.toolName === 'create_invitation') return `Rolle: ${proposal.input.role} · Der Versand startet erst nach deiner Bestätigung.`
-  if (proposal.toolName === 'save_content_brief') return `${Object.keys(proposal.input.sourceMaterial.facts).length} bestätigte Fakten · Textwerkstatt wird noch nicht gestartet.`
+  if (proposal.toolName === 'save_content_brief') return `${Object.keys(proposal.input.sourceMaterial.facts).length} bestätigte Fakten · Die Textwerkstatt startet erst über den nächsten Schritt.`
+  if (proposal.toolName === 'start_text_generation') return `${Object.keys(proposal.input.sourceMaterial.facts).length} bestätigte Fakten · Der Textkandidat wird nach deiner Bestätigung asynchron erstellt.`
+  if (proposal.toolName === 'accept_text_candidate') return 'Der bereite Textkandidat wird als neue, unveränderliche Beitragsversion übernommen.'
   return 'Die aktuelle Beitragsversion wird an die bestehende Freigaberoute übergeben.'
+}
+
+function contentBriefHref(proposal: AgentActionProposal) {
+  if (proposal.toolName !== 'save_content_brief' || proposal.status !== 'confirmed') return null
+  const draft = proposal.targetRefs.find((reference) => reference.entityType === 'text_workshop_drafts')
+  return draft ? `/erstellen?draftId=${draft.id}` : null
+}
+
+function textGenerationHref(proposal: AgentActionProposal) {
+  if (proposal.toolName !== 'start_text_generation' || proposal.status !== 'confirmed') return null
+  const session = proposal.targetRefs.find((reference) => reference.entityType === 'composition_sessions')
+  return session ? `/erstellen?sessionId=${session.id}` : null
 }
 
 function formatDate(value: string | null) {
@@ -220,7 +236,18 @@ function formatDate(value: string | null) {
                 <button class="focus-ring inline-flex items-center gap-1 rounded-lg bg-forest px-2.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50" :disabled="actingProposalId !== null" @click="actOnProposal(proposal, 'confirm')"><CheckCircle2 :size="14" /> Bestätigen</button>
                 <button class="focus-ring inline-flex items-center gap-1 rounded-lg border border-[#dfe2da] px-2.5 py-1.5 text-xs font-semibold text-[#536056] disabled:opacity-50" :disabled="actingProposalId !== null" @click="actOnProposal(proposal, 'cancel')"><X :size="14" /> Verwerfen</button>
               </div>
+              <NuxtLink v-else-if="contentBriefHref(proposal)" :to="contentBriefHref(proposal)!" class="focus-ring mt-3 inline-flex items-center gap-1 rounded-lg bg-forest px-2.5 py-1.5 text-xs font-semibold text-white"><FileText :size="14" /> In Textwerkstatt öffnen</NuxtLink>
+              <NuxtLink v-else-if="textGenerationHref(proposal)" :to="textGenerationHref(proposal)!" class="focus-ring mt-3 inline-flex items-center gap-1 rounded-lg bg-forest px-2.5 py-1.5 text-xs font-semibold text-white"><Sparkles :size="14" /> Kandidat öffnen</NuxtLink>
             </article>
+          </div>
+        </section>
+        <section v-if="workspace?.readyTextCandidates.length" class="card p-5">
+          <div class="mb-4 flex items-center gap-2"><Sparkles :size="17" class="text-forest" /><h2 class="font-display text-base font-bold">Bereite Textkandidaten</h2></div>
+          <div class="space-y-3">
+            <NuxtLink v-for="candidate in workspace.readyTextCandidates" :key="candidate.id" :to="`/erstellen?sessionId=${candidate.sessionId}`" class="block rounded-xl border border-[#e2e5de] p-3 transition hover:bg-[#f6f8f3]">
+              <p class="text-sm font-semibold">{{ candidate.headline || 'Textkandidat' }}</p>
+              <p class="mt-1 text-xs text-[#727a75]">Im Chat kannst du die Übernahme vorbereiten.</p>
+            </NuxtLink>
           </div>
         </section>
         <section class="card p-5">

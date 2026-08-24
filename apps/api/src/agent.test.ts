@@ -8,6 +8,7 @@ const workspace = {
   posts: [],
   events: [],
   pendingApprovals: [],
+  readyTextCandidates: [],
 }
 
 describe('agent responders', () => {

@@ -1,7 +1,7 @@
 # Plan: Dialogischer Vereinsagent und Agenten-Arbeitsplatz
 
 Stand: 24. August 2026
-Status: Pakete A und B umgesetzt (Arbeitsbereich sowie bestätigte Event- und Einladungsaktionen); Pakete C–D ausstehend
+Status: Pakete A–C umgesetzt (Arbeitsbereich, bestätigte Organisations- und Content-Aktionen); Paket D ausstehend
 
 Die konkrete Übergabe mit geprüftem Stand und dem nächsten Umsetzungsschritt steht
 in [Agenten-Arbeitsplatz: Übergabe nach Paket A](agent-workspace-handoff.md).
@@ -311,13 +311,21 @@ Abnahme: Eine Chat-Unterhaltung kann einen faktengebundenen Entwurf bis zur
 Freigabe führen; eine geänderte Version, Minderjährigenflag oder fehlende
 Permission stoppt den Prozess sicher.
 
-Fortschritt am 24. August 2026: Das bestätigte Tool `request_approval` ist
+Umgesetzt am 24. August 2026: Das bestätigte Tool `request_approval` ist
 angebunden. Es akzeptiert ausschließlich eine aktuelle Beitragsversion aus dem
 Conversation-Scope, prüft Scope und `post.submit` beim Vorschlag und vor der
 Ausführung erneut und ruft die vorhandene `request_approval`-Fach-RPC auf.
 `save_content_brief` speichert ausschließlich bestätigte Fakten als Textwerkstatt-Entwurf
-über den gemeinsamen Draft-Use-Case. Die eigentliche Textwerkstatt-Session und ihr
-Worker-Auftrag bleiben ein separater, kostenpflichtiger Bestätigungsschritt.
+über den gemeinsamen Draft-Use-Case. `start_text_generation` ist ein separater,
+kostenpflichtiger Bestätigungsschritt und nutzt denselben API-Use-Case wie die
+Textwerkstatt: Scope, Richtlinien, Plattformverfügbarkeit, Provider-Konfiguration,
+idempotente Session-RPC und Outbox/Worker bleiben identisch. Bereite Textkandidaten
+werden nur aus dem aktuellen Scope in den Modellkontext aufgenommen;
+`accept_text_candidate` erzeugt nach einer erneuten Bestätigung eine unveränderliche
+Post-Version. Kandidaten mit Medien werden bewusst an die Textwerkstatt verwiesen,
+damit deren sichtbare Personenprüfung und Derivatlogik nicht umgangen werden.
+Aktionsresultate tragen strukturierte Referenzen und verlinken zur Textwerkstatt;
+die bestehende Freigabeaktion schließt den Chatpfad bis zur Freigabe ab.
 
 ### Paket D – Planung, Publishing und Pilot
 

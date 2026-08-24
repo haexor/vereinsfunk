@@ -23,7 +23,6 @@ import {
   TextWorkshopDraftRowSchema,
   UpdateCustomStyleProfileRequestSchema,
   UuidSchema,
-  type StyleProfileRules,
   type Team,
 } from '@vereinsfunk/contracts'
 import { assertGroundedPost, createGroundedContentBrief, FakeContentGenerator, factsFromClubEvent, factsFromFixture } from '@vereinsfunk/content-engine'
@@ -35,21 +34,13 @@ import { z } from 'zod'
 import { CLUB_EVENT_COLUMNS, FIXTURE_COLUMNS, mapClubEventRow, mapFixtureRow, mapTeamRow } from '../apiMappers.js'
 import { ensurePassThroughDerivative } from '../passThroughDerivative.js'
 import { saveTextWorkshopDraft } from '../services/textWorkshopDrafts.js'
+import { createTextGenerationSession, SYSTEM_STYLE_PROFILES } from '../services/textGenerationSessions.js'
 import type { ApiRouteContext } from './context.js'
 import { buildStyleProfilePromptPreview, checkRateLimit, createAuditRecorder, fetchMemberTrust, previewStyleProfile, resolveDirectoryScope, resolvePreviewIdempotencyKey, resolveScopedEffectiveConfig, resolveTextGenerationPlatformAvailability, resolveTextGenerationProviderConfigurationIds, toPermissionScope } from './shared.js'
 
 // Plan 033 text-only workshop. Diese Routen rufen kein LLM auf: sie schreiben Sitzung und einen
 // reinen ID-Umschlag ueber eine service-only RPC, die der Worker spaeter ausfuehrt.
-const systemStyleProfiles: Record<string, { name: string; description: string; styleRules: StyleProfileRules; avoidRules: string[]; doRules: string[] }> = {
-  klar_erklaerend: { name: 'Klar erklärend', description: 'Sachlich, verständlich und direkt.', styleRules: { toneTags: ['klar', 'sachlich'], catchphrases: [], examples: [{ input: '3:1 Sieg im Lokalderby, Tore: Müller, Meier, 500 Zuschauer', output: '3:1 gegen den Lokalrivalen. Müller und Meier trafen vor 500 Zuschauern – ein klarer Auftritt unserer Mannschaft.' }], additionalInstructions: '' }, avoidRules: ['Superlative ohne Beleg'], doRules: [] },
-  warm_gemeinschaftlich: { name: 'Warm gemeinschaftlich', description: 'Einladend und verbunden.', styleRules: { toneTags: ['warm', 'gemeinschaftlich', 'einladend'], catchphrases: ['unsere Gemeinschaft'], examples: [{ input: 'Vereinsfest am Samstag, alle Abteilungen dabei', output: 'Am Samstag feiern wir gemeinsam – alle Abteilungen unter einem Dach. Schön, dass wir das als Gemeinschaft erleben dürfen.' }], additionalInstructions: '' }, avoidRules: [], doRules: ['Zusammenhalt/Gemeinschaft erwähnen'] },
-  lebendig_sportlich: { name: 'Lebendig sportlich', description: 'Aktiv und motivierend.', styleRules: { toneTags: ['lebendig', 'sportlich', 'motivierend'], catchphrases: ['Vollgas'], examples: [{ input: 'Sieg im Auswärtsspiel, 2:0, starke zweite Halbzeit', output: '2:0 auswärts! Nach der Pause volle Power – so geht Einsatz.' }], additionalInstructions: '' }, avoidRules: [], doRules: ['Energie/Tempo im Text spürbar machen'] },
-  leicht_humorvoll: { name: 'Leicht humorvoll', description: 'Freundlich mit zurückhaltendem Humor.', styleRules: { toneTags: ['humorvoll', 'freundlich', 'locker'], catchphrases: [], examples: [{ input: 'Trainingsauftakt nach der Sommerpause, alle etwas außer Form', output: 'Nach der Sommerpause ächzten die Beine beim ersten Sprint – aber der Spaß war sofort wieder da.' }], additionalInstructions: '' }, avoidRules: ['Ironie auf Kosten Einzelner'], doRules: [] },
-  feierlich_wertschaetzend: { name: 'Feierlich wertschätzend', description: 'Dankbar und respektvoll.', styleRules: { toneTags: ['feierlich', 'dankbar', 'respektvoll'], catchphrases: [], examples: [{ input: '25 Jahre Vereinsmitgliedschaft von Herrn Schmidt', output: 'Seit 25 Jahren trägt Herr Schmidt unseren Verein mit – dafür sagen wir von Herzen Danke.' }], additionalInstructions: '' }, avoidRules: [], doRules: ['Dank/Anerkennung aussprechen'] },
-}
-
 const CUSTOM_STYLE_PROFILE_COLUMNS = 'id, organization_id, department_id, team_id, slug, name, description, style_rules, avoid_rules, do_rules, is_active, created_by, created_at, updated_at'
-const SessionMediaAssetSchema = z.object({ organization_id: UuidSchema, department_id: UuidSchema, upload_status: z.string(), people_reviewed_at: z.string().nullable() })
 const SessionAttachmentSchema = z.object({ media_asset_id: UuidSchema })
 const CompletionAssetScopeSchema = z.object({ organization_id: UuidSchema, department_id: UuidSchema })
 
@@ -314,7 +305,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     // filter, since platform_style_personas has none.
     const personaRows = await client.from('platform_style_personas').select('id, slug, name, description, style_rules, avoid_rules, do_rules').eq('is_active', true)
     if (personaRows.error) throw personaRows.error
-    const systems = Object.entries(systemStyleProfiles).map(([slug, profile]) => ({ id: null, slug, kind: 'system', ...profile, isActive: true }))
+    const systems = Object.entries(SYSTEM_STYLE_PROFILES).map(([slug, profile]) => ({ id: null, slug, kind: 'system', ...profile, isActive: true }))
     const personas = personaRows.data.map((row) => ({ id: row.id, slug: row.slug, kind: 'persona', name: row.name, description: row.description, styleRules: StyleProfileRulesSchema.parse(row.style_rules), avoidRules: row.avoid_rules, doRules: row.do_rules, isActive: true }))
     const customs = rows.data.map((row) => ({ id: row.id, slug: row.slug, kind: 'custom', name: row.name, description: row.description, styleRules: StyleProfileRulesSchema.parse(row.style_rules), avoidRules: row.avoid_rules, doRules: row.do_rules, isActive: row.is_active }))
     return reply.send({ profiles: [...systems, ...personas, ...customs] })
@@ -452,130 +443,13 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
   app.post('/v1/text-workshop/sessions', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const input = CreateCompositionSessionSchema.parse(request.body)
-    // Plan 047, PR 0: die fruehere Grenze "hoechstens ein Foto" (Plan 045, PR 0 Schritt 3) ist
-    // aufgehoben -- mehrere Fotos koennen jetzt angehaengt werden (Grundlage fuer Bildkomposition
-    // und Karussell, siehe plans/047). requestedFormats bleibt weiterhin ausschliesslich text_post
-    // -- angehaengte Fotos sind ein Zusatz zum Text, keine eigene Formatvariante des noch nicht
-    // existierenden Kreativsystems (Plan 005).
-    if (input.requestedFormats.some((format) => format !== 'text_post')) return reply.code(422).send({ error: 'text_only_pilot' })
     const scope = toPermissionScope(input.organizationId, input.departmentId, input.teamId ?? null)
     if (!(await requirePermission(request, reply, 'post.create', scope))) return
-    const client = supabaseClients.forUser(request.auth!.accessToken)
-    const mediaAssetIds = input.mediaAssetIds
-    // allowedPresets bleibt eine Photo-Pipeline-Policy (/v1/submissions oben): die Textwerkstatt
-    // kennt seit dem Wegfall von "Anlass" keinen presetSlug mehr, den sie dagegen pruefen koennte.
-    const config = await resolveScopedEffectiveConfig(client, input.organizationId, input.departmentId, input.teamId ?? null)
-    let styleSnapshot: Record<string, unknown>
-    const styleProfileId: string | null = input.styleProfileId ?? null
-    if (styleProfileId) {
-      const row = await client.from('content_style_profiles').select('id, name, description, style_rules, avoid_rules, do_rules, department_id, team_id').eq('id', styleProfileId).eq('organization_id', input.organizationId).eq('is_active', true).maybeSingle()
-      if (row.error) throw row.error
-      if (!row.data) return reply.code(404).send({ error: 'style_profile_not_found' })
-      if ((row.data.department_id !== null && row.data.department_id !== input.departmentId) || (row.data.team_id !== null && row.data.team_id !== (input.teamId ?? null))) {
-        return reply.code(404).send({ error: 'style_profile_not_found' })
-      }
-      styleSnapshot = { name: row.data.name, description: row.data.description, styleRules: StyleProfileRulesSchema.parse(row.data.style_rules), avoidRules: row.data.avoid_rules, doRules: row.data.do_rules }
-    } else if (input.personaSlug) {
-      // Plan 037: a platform persona has no organization_id/department_id/team_id to scope
-      // against -- unlike styleProfileId above, only is_active gates it.
-      const persona = await client.from('platform_style_personas').select('name, description, style_rules, avoid_rules, do_rules').eq('slug', input.personaSlug).eq('is_active', true).maybeSingle()
-      if (persona.error) throw persona.error
-      if (!persona.data) return reply.code(404).send({ error: 'persona_not_found' })
-      styleSnapshot = { name: persona.data.name, description: persona.data.description, styleRules: StyleProfileRulesSchema.parse(persona.data.style_rules), avoidRules: persona.data.avoid_rules, doRules: persona.data.do_rules, slug: input.personaSlug }
-    } else {
-      const profile = systemStyleProfiles[input.systemStyleProfileSlug ?? 'klar_erklaerend']!
-      styleSnapshot = { name: profile.name, description: profile.description, styleRules: profile.styleRules, avoidRules: profile.avoidRules, doRules: profile.doRules, slug: input.systemStyleProfileSlug ?? 'klar_erklaerend' }
-    }
-    const sourceMaterial = { ...input.sourceMaterial, doNotMention: Array.from(new Set([...input.sourceMaterial.doNotMention, ...config.policies.forbiddenTopics])) }
-    // Sortiert, damit ['facebook','instagram'] und ['instagram','facebook'] dieselbe Anfrage
-    // bleiben -- sonst erzeugte dieselbe Auswahl je nach Reihenfolge der Haekchen zwei Sitzungen.
-    const targetPlatforms = [...input.targetPlatforms].sort()
-    // Nur Plattformen erlauben, auf die dieser Scope tatsaechlich veroeffentlichen kann (Plan 042,
-    // PR 3 Step 3) -- die Anzeige in erstellen.vue ist Bequemlichkeit, diese Pruefung ist die Regel
-    // (vgl. "Berechtigungen aus einer Quelle").
-    const platformAvailability = await resolveTextGenerationPlatformAvailability(client, input.organizationId, input.departmentId, input.teamId ?? null, config.policies.allowedChannelIds)
-    const unavailablePlatform = targetPlatforms.find((platform) => !platformAvailability.get(platform)?.available)
-    if (unavailablePlatform) return reply.code(422).send({ error: 'platform_not_available', platform: unavailablePlatform, correlationId: request.id })
-    // targetPlatforms/maxOutputTokens/temperature gehoeren in den Hash: die Sitzung friert sie ein
-    // und der RPC gibt fuer einen bereits bekannten Hash die vorhandene Sitzung samt Kandidat
-    // zurueck. Ohne sie wuerde ein zweites Absenden desselben Materials mit anderer Regler-Stufe
-    // stillschweigend den alten Kandidaten liefern -- die neue Stufe waere nirgends gespeichert und
-    // ueber `revise` auch nicht mehr erreichbar. Gehasht wird die Anfrage, nicht der aufgeloeste
-    // Token-Wert: ein echter Wiederholungsversuch derselben Anfrage bleibt damit idempotent, auch
-    // wenn ein Plattform-Admin die Vorgabe zwischenzeitlich geaendert hat.
-    const sessionHash = createHash('sha256').update(JSON.stringify({
-      goal: input.communicationGoal, sourceMaterial, styleSnapshot, sourceRevision: input.sourceRevision,
-      targetPlatforms, maxCharacters: input.maxCharacters ?? null, temperature: input.temperature, mediaAssetIds,
-    })).digest('hex')
-    const candidateHash = createHash('sha256').update(`${sessionHash}:initial`).digest('hex')
-    const idempotencyKey = `generate-text:${sessionHash}:${input.sourceRevision}`
-    const service = supabaseClients.forService()
-    // Service Client, nicht Nutzer-Client: media_assets_select gewaehrt nur is_department_member,
-    // hier zaehlt aber dieselbe Zugehoerigkeits- und Bereitschaftspruefung wie beim Anhaengen selbst.
-    // Erst hier, nach Persona-/Plattform-Aufloesung: dieselbe "kein Service-Client vor jedem
-    // frueheren Fehlschlag"-Reihenfolge wie der Rest dieser Route. Jedes Foto einzeln pruefen --
-    // die Reihenfolge in mediaAssetIds bestimmt spaeter die position der post_media-Zeilen.
-    for (const mediaAssetId of mediaAssetIds) {
-      const asset = await service.from('media_assets').select('organization_id, department_id, upload_status, people_reviewed_at').eq('id', mediaAssetId).maybeSingle()
-      if (asset.error) throw asset.error
-      const parsedAsset = asset.data === null ? null : parseSupabaseData(SessionMediaAssetSchema, asset.data)
-      if (!parsedAsset || parsedAsset.organization_id !== input.organizationId || parsedAsset.department_id !== input.departmentId) {
-        return reply.code(404).send({ error: 'media_asset_not_found', correlationId: request.id })
-      }
-      if (parsedAsset.upload_status !== 'ready') return reply.code(422).send({ error: 'media_asset_not_ready', correlationId: request.id })
-      if (parsedAsset.people_reviewed_at === null) return reply.code(422).send({ error: 'media_asset_not_reviewed', correlationId: request.id })
-    }
-    // Aufgeloest bei Anlage, danach eingefroren (siehe composition_sessions.max_characters):
-    // expliziter Request-Wert > kleinste Vorgabe der gewaehlten Plattformen (aus derselben
-    // Verfuegbarkeitspruefung oben) > generischer Fallback. Das Minimum, nicht der Durchschnitt
-    // oder die erste Wahl: ein einziger Text soll auf jeder angehakten Plattform passen, also gibt
-    // die knappste den Rahmen vor. Fehlt fuer eine gewaehlte Plattform die Vorgabezeile, zaehlt sie
-    // hier nicht mit -- weder darf ihr Fehlen die Laenge heimlich hochsetzen noch den ausdruecklich
-    // gesetzten Wert einer anderen Plattform auf den Fallback herunterziehen, und ihr Fehlen ist
-    // ein Betreiberproblem (siehe PUT-Route).
-    // Der Wunsch des Mitglieds ist ein WEITERER Kandidat der Minimumbildung, keine Ueberschreibung
-    // (Plan 039, "Zusaetzlich aus dem Review von PR #76"): wer Instagram angehakt hat, darf dessen
-    // 2200 nicht per Formular aushebeln -- ein Text, der dort nicht erscheinen kann, nuetzt
-    // niemandem. Kuerzer als die Plattform erlaubt darf er sich den Beitrag jederzeit wuenschen.
-    // Bis zum Review dieses PRs stand hier "input.maxCharacters ?? ...", was beide Minimumbildungen
-    // uebersprang; seit die Token-Leine an max_characters haengt (Step 4), war das zugleich ein
-    // Kostenhebel: ein Mitglied konnte den Provideraufruf allein ueber dieses Feld aufblaehen.
-    const platformLimits = targetPlatforms.map((platform) => platformAvailability.get(platform)!.maxCharacters).filter((limit): limit is number => limit !== null)
-    const resolvedPlatformLimit = platformLimits.length > 0 ? Math.min(...platformLimits) : TEXT_GENERATION_DEFAULT_MAX_CHARACTERS
-    const maxCharacters = input.maxCharacters !== undefined ? Math.min(input.maxCharacters, resolvedPlatformLimit) : resolvedPlatformLimit
-    // Paket 046: wie viele und welche LLM-Provider diese Runde beantworten, steht schon hier fest
-    // (nicht erst beim Ausfuehren im Worker) -- siehe resolveTextGenerationProviderConfigurationIds.
-    const providerConfigurationIds = await resolveTextGenerationProviderConfigurationIds(service)
-    if (providerConfigurationIds.length === 0) return reply.code(422).send({ error: 'no_active_text_provider', correlationId: request.id })
-    const result = await service.rpc('create_text_generation_session', {
-      p_organization_id: input.organizationId, p_department_id: input.departmentId, p_team_id: input.teamId ?? null,
-      p_communication_goal: input.communicationGoal, p_requested_formats: input.requestedFormats, p_source_material: sourceMaterial,
-      p_style_profile_id: styleProfileId, p_style_profile_snapshot: styleSnapshot, p_effective_config_snapshot: { config: { goals: config.goals, hashtags: config.hashtags, ...config.policies } },
-      p_target_platforms: targetPlatforms, p_max_characters: maxCharacters, p_temperature: input.temperature,
-      p_source_revision: input.sourceRevision, p_input_hash: sessionHash, p_candidate_input_hash: candidateHash, p_generation_intent: 'initial', p_revision_instruction: null,
-      p_created_by: request.auth!.userId, p_correlation_id: request.id, p_idempotency_key: idempotencyKey,
-      p_provider_configuration_ids: providerConfigurationIds,
-    })
-    if (result.error) throw result.error
-    const created = z.object({ sessionId: UuidSchema, candidateIds: z.array(UuidSchema).min(1) }).parse(result.data)
-    if (mediaAssetIds.length > 0) {
-      // upsert statt insert: create_text_generation_session ist selbst idempotent (derselbe
-      // sessionHash liefert dieselbe Sitzung zurueck) -- ein Retry darf hier nicht an der
-      // unique(composition_session_id, position)-Bedingung scheitern. Position spiegelt die
-      // Reihenfolge in mediaAssetIds; role folgt derselben Konvention wie routes/publishing.ts
-      // (Position 0 = 'primary', alles danach 'slide').
-      const attach = await service
-        .from('composition_session_post_media')
-        .upsert(
-          mediaAssetIds.map((mediaAssetId, position) => ({
-            organization_id: input.organizationId, composition_session_id: created.sessionId, media_asset_id: mediaAssetId,
-            position, role: position === 0 ? 'primary' : 'slide', created_by: request.auth!.userId,
-          })),
-          { onConflict: 'composition_session_id,position' },
-        )
-      if (attach.error) throw attach.error
-    }
-    return reply.code(202).send({ ...created, correlationId: request.id })
+    const result = await createTextGenerationSession(
+      supabaseClients.forUser(request.auth!.accessToken), () => supabaseClients.forService(), input, request.auth!.userId, request.id,
+    )
+    if (!result.ok) return reply.code(result.statusCode).send({ error: result.error, ...(result.platform ? { platform: result.platform } : {}), correlationId: request.id })
+    return reply.code(202).send({ sessionId: result.sessionId, candidateIds: result.candidateIds, correlationId: request.id })
   })
 
   const TEXT_WORKSHOP_DRAFT_COLUMNS = 'id, organization_id, department_id, team_id, post_id, payload, created_at, updated_at'

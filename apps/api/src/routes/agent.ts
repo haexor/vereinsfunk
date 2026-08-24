@@ -4,7 +4,11 @@ import {
   AgentActionProposalSchema,
   AgentApprovalProposalInputSchema,
   AgentContentBriefProposalInputSchema,
+  AgentProposalTargetRefSchema,
+  AgentTextCandidateAcceptanceProposalInputSchema,
+  AgentTextGenerationProposalInputSchema,
   AgentEventProposalInputSchema,
+  CreateCompositionSessionSchema,
   CreateInvitationRequestSchema,
   AgentMessageSchema,
   AgentScopeSchema,
@@ -30,6 +34,7 @@ import type { AgentResponder } from '../agent.js'
 import { createClubEvent } from '../services/clubEvents.js'
 import { createInvitation } from '../services/invitations.js'
 import { saveTextWorkshopDraft } from '../services/textWorkshopDrafts.js'
+import { createTextGenerationSession } from '../services/textGenerationSessions.js'
 import type { ApiRouteContext } from './context.js'
 import { createAuditRecorder, isAnyMemberOfOrganization, resolveDirectoryScope, toPermissionScope } from './shared.js'
 
@@ -64,10 +69,11 @@ const ProposalRowSchema = z.object({
   organization_id: UuidSchema,
   conversation_id: UuidSchema,
   created_by: UuidSchema,
-  tool_name: z.enum(['create_event', 'create_invitation']),
+  tool_name: z.enum(['create_event', 'create_invitation', 'request_approval', 'save_content_brief', 'start_text_generation', 'accept_text_candidate']),
   scope_snapshot: z.unknown(),
   input_snapshot: z.unknown(),
   input_hash: z.string(),
+  target_refs: z.array(AgentProposalTargetRefSchema),
   status: z.enum(['pending', 'executing', 'confirmed', 'cancelled', 'expired', 'failed']),
   expires_at: z.string(),
   confirmed_at: z.string().nullable(),
@@ -76,7 +82,7 @@ const ProposalRowSchema = z.object({
 })
 
 class AgentProposalExecutionError extends Error {
-  constructor(readonly statusCode: 409 | 422, readonly errorCode: string) {
+  constructor(readonly statusCode: 404 | 409 | 422, readonly errorCode: string) {
     super(errorCode)
   }
 }
@@ -121,6 +127,7 @@ function mapProposal(row: unknown): AgentActionProposal {
     toolName: parsed.tool_name,
     input: parsed.input_snapshot,
     inputHash: parsed.input_hash,
+    targetRefs: parsed.target_refs,
     status: parsed.status,
     expiresAt: parsed.expires_at,
     confirmedAt: parsed.confirmed_at,
@@ -176,10 +183,21 @@ async function loadWorkspace(
     .order('deadline_at', { ascending: true })
     .limit(20)
 
-  const [postsResult, eventsResult, approvalStagesResult] = await Promise.all([postsQuery, eventsQuery, approvalsQuery])
+  let candidateSessionsQuery = client
+    .from('composition_sessions')
+    .select('id, department_id, team_id')
+    .eq('organization_id', scope.organizationId)
+    .eq('status', 'candidate_ready')
+    .order('created_at', { ascending: false })
+    .limit(20)
+  if (scope.departmentId) candidateSessionsQuery = candidateSessionsQuery.eq('department_id', scope.departmentId)
+  if (scope.teamId) candidateSessionsQuery = candidateSessionsQuery.eq('team_id', scope.teamId)
+
+  const [postsResult, eventsResult, approvalStagesResult, candidateSessionsResult] = await Promise.all([postsQuery, eventsQuery, approvalsQuery, candidateSessionsQuery])
   if (postsResult.error) throw postsResult.error
   if (eventsResult.error) throw eventsResult.error
   if (approvalStagesResult.error) throw approvalStagesResult.error
+  if (candidateSessionsResult.error) throw candidateSessionsResult.error
 
   const posts = postsResult.data ?? []
   const currentVersionIds = posts.map((row) => row.current_version_id as string | null).filter((id): id is string => id !== null)
@@ -213,6 +231,18 @@ async function loadWorkspace(
     : await client.from('post_versions').select('id, title').in('id', approvalVersionIds)
   if (approvalVersionsResult.error) throw approvalVersionsResult.error
   const approvalTitleByVersionId = new Map((approvalVersionsResult.data ?? []).map((row) => [row.id as string, row.title as string]))
+  const candidateSessions = candidateSessionsResult.data ?? []
+  const candidateSessionById = new Map(candidateSessions.map((row) => [row.id as string, row]))
+  const candidatesResult = candidateSessions.length === 0
+    ? { data: [], error: null }
+    : await client.from('generation_candidates').select('id, composition_session_id, generated_content').in('composition_session_id', candidateSessions.map((row) => row.id as string)).eq('status', 'ready').order('created_at', { ascending: false }).limit(20)
+  if (candidatesResult.error) throw candidatesResult.error
+  const readyTextCandidates = (candidatesResult.data ?? []).flatMap((row) => {
+    const session = candidateSessionById.get(row.composition_session_id as string)
+    const content = z.object({ headline: z.string().max(200) }).nullable().safeParse(row.generated_content)
+    if (!session || !content.success || content.data === null) return []
+    return [{ id: row.id as string, sessionId: row.composition_session_id as string, departmentId: session.department_id as string, teamId: session.team_id as string | null, headline: content.data.headline }]
+  })
   const now = Date.now()
 
   return AgentWorkspaceSchema.parse({
@@ -251,6 +281,7 @@ async function loadWorkspace(
         isOverdue: stage.deadline_at !== null && new Date(stage.deadline_at as string).getTime() < now,
       }]
     }),
+    readyTextCandidates,
   })
 }
 
@@ -278,6 +309,7 @@ async function loadMessages(client: SupabaseClient, conversation: AgentConversat
 }
 
 type ApprovalTarget = { organizationId: string; departmentId: string; teamId: string | null; postId: string }
+type TextCandidateTarget = { organizationId: string; departmentId: string; teamId: string | null; sessionId: string }
 
 async function loadApprovalTarget(client: SupabaseClient, postVersionId: string): Promise<ApprovalTarget | null> {
   const version = await client.from('post_versions').select('id, post_id').eq('id', postVersionId).maybeSingle()
@@ -289,7 +321,17 @@ async function loadApprovalTarget(client: SupabaseClient, postVersionId: string)
   return { organizationId: post.data.organization_id as string, departmentId: post.data.department_id as string, teamId: post.data.team_id as string | null, postId: post.data.id as string }
 }
 
-function matchesScope(scope: AgentScope, target: ApprovalTarget): boolean {
+async function loadTextCandidateTarget(client: SupabaseClient, candidateId: string): Promise<TextCandidateTarget | null> {
+  const candidate = await client.from('generation_candidates').select('organization_id, composition_session_id, status').eq('id', candidateId).maybeSingle()
+  if (candidate.error) throw candidate.error
+  if (!candidate.data || candidate.data.status !== 'ready') return null
+  const session = await client.from('composition_sessions').select('organization_id, department_id, team_id').eq('id', candidate.data.composition_session_id as string).maybeSingle()
+  if (session.error) throw session.error
+  if (!session.data || session.data.organization_id !== candidate.data.organization_id) return null
+  return { organizationId: session.data.organization_id as string, departmentId: session.data.department_id as string, teamId: session.data.team_id as string | null, sessionId: candidate.data.composition_session_id as string }
+}
+
+function matchesScope(scope: AgentScope, target: Pick<ApprovalTarget, 'organizationId' | 'departmentId' | 'teamId'>): boolean {
   return scope.organizationId === target.organizationId
     && scope.departmentId === target.departmentId
     && (scope.teamId ?? null) === target.teamId
@@ -309,6 +351,21 @@ function toTextWorkshopDraftPayload(input: z.infer<typeof AgentContentBriefPropo
     selectedPlatforms: input.targetPlatforms,
     maxCharactersOverride: '',
   }
+}
+
+function toInitialTextGenerationInput(scope: AgentScope, input: z.infer<typeof AgentTextGenerationProposalInputSchema>) {
+  return CreateCompositionSessionSchema.parse({
+    organizationId: scope.organizationId,
+    departmentId: scope.departmentId,
+    teamId: scope.teamId,
+    communicationGoal: input.communicationGoal,
+    requestedFormats: ['text_post'],
+    systemStyleProfileSlug: input.systemStyleProfileSlug,
+    sourceMaterial: input.sourceMaterial,
+    mediaAssetIds: [],
+    sourceRevision: 1,
+    targetPlatforms: input.targetPlatforms,
+  })
 }
 
 async function insertActionProposal(
@@ -332,7 +389,7 @@ async function insertActionProposal(
     input_hash: hashAgentProposalInput(serializedInput),
     risk_class: normalizedInput.toolName === 'create_invitation' ? 'external' : 'write',
     expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
-  }).select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, status, expires_at, confirmed_at, created_at, updated_at').single()
+  }).select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, target_refs, status, expires_at, confirmed_at, created_at, updated_at').single()
   if (created.error) throw created.error
   return mapProposal(created.data)
 }
@@ -401,7 +458,7 @@ export function registerAgentRoutes(
     if (!conversation) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     const proposals = await client
       .from('agent_action_proposals')
-      .select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, status, expires_at, confirmed_at, created_at, updated_at')
+      .select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, target_refs, status, expires_at, confirmed_at, created_at, updated_at')
       .eq('organization_id', conversation.organizationId)
       .eq('conversation_id', conversation.id)
       .order('created_at', { ascending: false })
@@ -418,13 +475,17 @@ export function registerAgentRoutes(
     const conversation = await loadConversation(client, params.id)
     if (!conversation) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     const scope = scopeForConversation(conversation)
-    if (input.toolName === 'save_content_brief' && !scope.departmentId) {
+    if ((input.toolName === 'save_content_brief' || input.toolName === 'start_text_generation') && !scope.departmentId) {
       return reply.code(422).send({ error: 'content_brief_requires_department', correlationId: request.id })
     }
     if (input.toolName === 'request_approval') {
       const target = await loadApprovalTarget(client, input.input.postVersionId)
       if (!target || !matchesScope(scope, target)) return reply.code(404).send({ error: 'post_version_not_in_scope', correlationId: request.id })
       if (!(await context.requirePermission(request, reply, 'post.submit', toPermissionScope(target.organizationId, target.departmentId, target.teamId)))) return
+    } else if (input.toolName === 'accept_text_candidate') {
+      const target = await loadTextCandidateTarget(client, input.input.candidateId)
+      if (!target || !matchesScope(scope, target)) return reply.code(404).send({ error: 'text_candidate_not_in_scope', correlationId: request.id })
+      if (!(await context.requirePermission(request, reply, 'post.create', toPermissionScope(target.organizationId, target.departmentId, target.teamId)))) return
     } else {
       const permission = input.toolName === 'create_event' ? 'event.manage' : input.toolName === 'create_invitation' ? 'member.invite' : 'post.create'
       if (!(await context.requirePermission(request, reply, permission, toPermissionScope(scope.organizationId, scope.departmentId ?? null, scope.teamId ?? null)))) return
@@ -451,7 +512,7 @@ export function registerAgentRoutes(
     const client = supabaseClients.forUser(request.auth!.accessToken)
     const proposal = await client
       .from('agent_action_proposals')
-      .select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, status, expires_at, confirmed_at, created_at, updated_at')
+      .select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, target_refs, status, expires_at, confirmed_at, created_at, updated_at')
       .eq('id', params.id)
       .maybeSingle()
     if (proposal.error) throw proposal.error
@@ -461,7 +522,7 @@ export function registerAgentRoutes(
     const cancelled = await supabaseClients.forService().from('agent_action_proposals')
       .update({ status: 'cancelled' })
       .eq('id', existing.id).eq('organization_id', existing.organizationId).eq('created_by', request.auth!.userId).eq('status', 'pending')
-      .select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, status, expires_at, confirmed_at, created_at, updated_at')
+      .select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, target_refs, status, expires_at, confirmed_at, created_at, updated_at')
       .maybeSingle()
     if (cancelled.error) throw cancelled.error
     if (!cancelled.data) return reply.code(409).send({ error: 'proposal_not_pending', correlationId: request.id })
@@ -475,7 +536,7 @@ export function registerAgentRoutes(
     const client = supabaseClients.forUser(request.auth!.accessToken)
     const found = await client
       .from('agent_action_proposals')
-      .select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, status, expires_at, confirmed_at, created_at, updated_at')
+      .select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, target_refs, status, expires_at, confirmed_at, created_at, updated_at')
       .eq('id', params.id)
       .maybeSingle()
     if (found.error) throw found.error
@@ -484,19 +545,24 @@ export function registerAgentRoutes(
     const scope = AgentScopeSchema.parse({ organizationId: proposal.organizationId, departmentId: proposal.departmentId, teamId: proposal.teamId })
     const approvalInput = proposal.toolName === 'request_approval' ? AgentApprovalProposalInputSchema.parse(proposal.input) : null
     const contentBriefInput = proposal.toolName === 'save_content_brief' ? AgentContentBriefProposalInputSchema.parse(proposal.input) : null
-    if (contentBriefInput && !scope.departmentId) return reply.code(409).send({ error: 'proposal_target_changed', correlationId: request.id })
+    const textGenerationInput = proposal.toolName === 'start_text_generation' ? AgentTextGenerationProposalInputSchema.parse(proposal.input) : null
+    const textCandidateInput = proposal.toolName === 'accept_text_candidate' ? AgentTextCandidateAcceptanceProposalInputSchema.parse(proposal.input) : null
+    if ((contentBriefInput || textGenerationInput) && !scope.departmentId) return reply.code(409).send({ error: 'proposal_target_changed', correlationId: request.id })
     const approvalTarget = approvalInput ? await loadApprovalTarget(client, approvalInput.postVersionId) : null
+    const textCandidateTarget = textCandidateInput ? await loadTextCandidateTarget(client, textCandidateInput.candidateId) : null
     if (approvalInput && (!approvalTarget || !matchesScope(scope, approvalTarget))) return reply.code(409).send({ error: 'proposal_target_changed', correlationId: request.id })
+    if (textCandidateInput && (!textCandidateTarget || !matchesScope(scope, textCandidateTarget))) return reply.code(409).send({ error: 'proposal_target_changed', correlationId: request.id })
     const permission = proposal.toolName === 'create_event' ? 'event.manage' : proposal.toolName === 'create_invitation' ? 'member.invite' : proposal.toolName === 'request_approval' ? 'post.submit' : 'post.create'
-    const permissionScope = approvalTarget
-      ? toPermissionScope(approvalTarget.organizationId, approvalTarget.departmentId, approvalTarget.teamId)
+    const permissionTarget = approvalTarget ?? textCandidateTarget
+    const permissionScope = permissionTarget
+      ? toPermissionScope(permissionTarget.organizationId, permissionTarget.departmentId, permissionTarget.teamId)
       : toPermissionScope(scope.organizationId, scope.departmentId ?? null, scope.teamId ?? null)
     if (!(await context.requirePermission(request, reply, permission, permissionScope))) return
     const eventInput = proposal.toolName === 'create_event' ? AgentEventProposalInputSchema.parse(proposal.input) : null
     const invitationInput = proposal.toolName === 'create_invitation'
       ? CreateInvitationRequestSchema.parse({ ...(proposal.input as Record<string, unknown>), ...scope })
       : null
-    const parsedInput = eventInput ?? invitationInput ?? approvalInput ?? contentBriefInput
+    const parsedInput = eventInput ?? invitationInput ?? approvalInput ?? contentBriefInput ?? textGenerationInput ?? textCandidateInput
     if (!parsedInput || proposal.inputHash !== hashAgentProposalInput(proposal.input)) return reply.code(409).send({ error: 'proposal_input_changed', correlationId: request.id })
     if (invitationInput) {
       const roles = await roleProvider.rolesForScope(request.auth!, toPermissionScope(scope.organizationId, scope.departmentId ?? null, scope.teamId ?? null))
@@ -548,23 +614,39 @@ export function registerAgentRoutes(
             throw approval.error
           }
           resultId = z.object({ approvalRequestId: UuidSchema.nullable().optional(), postId: UuidSchema }).parse(approval.data).approvalRequestId ?? approvalTarget!.postId
-        } else {
+        } else if (contentBriefInput) {
           const draft = await saveTextWorkshopDraft(service, {
             id: randomUUID(), organizationId: scope.organizationId, departmentId: scope.departmentId!, teamId: scope.teamId ?? null,
             actorUserId: request.auth!.userId, payload: toTextWorkshopDraftPayload(contentBriefInput!),
           })
           resultId = draft.id
+        } else if (textGenerationInput) {
+          const generated = await createTextGenerationSession(client, () => service, toInitialTextGenerationInput(scope, textGenerationInput!), request.auth!.userId, request.id)
+          if (!generated.ok) throw new AgentProposalExecutionError(generated.statusCode, generated.error)
+          resultId = generated.sessionId
+        } else {
+          const attachments = await service.from('composition_session_post_media').select('media_asset_id').eq('organization_id', textCandidateTarget!.organizationId).eq('composition_session_id', textCandidateTarget!.sessionId).limit(1)
+          if (attachments.error) throw attachments.error
+          if ((attachments.data ?? []).length > 0) throw new AgentProposalExecutionError(422, 'text_candidate_with_media_requires_text_workshop')
+          const accepted = await service.rpc('accept_text_generation_candidate', { p_candidate_id: textCandidateInput!.candidateId, p_actor_user_id: request.auth!.userId, p_media_derivative_ids: null })
+          if (accepted.error) throw accepted.error
+          resultId = z.object({ postVersionId: UuidSchema }).parse(accepted.data).postVersionId
         }
       }
       const completed = await service.from('agent_action_proposals')
-        .update({ status: 'confirmed', confirmed_by: request.auth!.userId, confirmed_at: new Date().toISOString() })
+        .update({
+          status: 'confirmed',
+          confirmed_by: request.auth!.userId,
+          confirmed_at: new Date().toISOString(),
+          target_refs: [{ entityType: eventInput ? 'club_events' : invitationInput ? 'invitations' : approvalInput ? 'approval_requests' : contentBriefInput ? 'text_workshop_drafts' : textGenerationInput ? 'composition_sessions' : 'post_versions', id: resultId }],
+        })
         .eq('id', proposal.id).eq('organization_id', proposal.organizationId).eq('status', 'executing')
-        .select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, status, expires_at, confirmed_at, created_at, updated_at')
+        .select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, target_refs, status, expires_at, confirmed_at, created_at, updated_at')
         .single()
       if (completed.error) throw completed.error
       if (toolRun.data) {
         const toolRunCompleted = await service.from('agent_tool_runs').update({
-          status: 'completed', finished_at: new Date().toISOString(), result_refs: [{ entityType: eventInput ? 'club_events' : invitationInput ? 'invitations' : approvalInput ? 'approval_requests' : 'text_workshop_drafts', id: resultId }],
+          status: 'completed', finished_at: new Date().toISOString(), result_refs: [{ entityType: eventInput ? 'club_events' : invitationInput ? 'invitations' : approvalInput ? 'approval_requests' : contentBriefInput ? 'text_workshop_drafts' : textGenerationInput ? 'composition_sessions' : 'post_versions', id: resultId }],
         }).eq('id', toolRun.data.id).eq('organization_id', proposal.organizationId).eq('status', 'started')
         if (toolRunCompleted.error) request.log.error({ err: toolRunCompleted.error, correlationId: request.id }, 'agent tool run could not be completed')
       }
@@ -582,6 +664,24 @@ export function registerAgentRoutes(
           entityType: 'text_workshop_drafts',
           entityId: resultId,
           metadata: { departmentId: scope.departmentId, teamId: scope.teamId ?? null, source: 'agent_tool' },
+        })
+      }
+      if (textGenerationInput) {
+        await recordAuditEvent(request, {
+          organizationId: proposal.organizationId,
+          action: 'text_generation_session.created',
+          entityType: 'composition_sessions',
+          entityId: resultId,
+          metadata: { departmentId: scope.departmentId, teamId: scope.teamId ?? null, source: 'agent_tool' },
+        })
+      }
+      if (textCandidateInput) {
+        await recordAuditEvent(request, {
+          organizationId: proposal.organizationId,
+          action: 'text_generation_candidate.accepted',
+          entityType: 'post_versions',
+          entityId: resultId,
+          metadata: { candidateId: textCandidateInput.candidateId, source: 'agent_tool' },
         })
       }
       if (emailDelivered === false) request.log.error({ err: emailError, correlationId: request.id }, 'Supabase invitation email delivery failed')
@@ -630,16 +730,20 @@ export function registerAgentRoutes(
       const proposalScope = scopeForConversation(conversation)
       const approvalInput = authorizedProposal.toolName === 'request_approval' ? AgentApprovalProposalInputSchema.parse(authorizedProposal.input) : null
       const contentBriefInput = authorizedProposal.toolName === 'save_content_brief' ? AgentContentBriefProposalInputSchema.parse(authorizedProposal.input) : null
+      const textGenerationInput = authorizedProposal.toolName === 'start_text_generation' ? AgentTextGenerationProposalInputSchema.parse(authorizedProposal.input) : null
+      const textCandidateInput = authorizedProposal.toolName === 'accept_text_candidate' ? AgentTextCandidateAcceptanceProposalInputSchema.parse(authorizedProposal.input) : null
       const approvalTarget = approvalInput ? await loadApprovalTarget(client, approvalInput.postVersionId) : null
+      const textCandidateTarget = textCandidateInput ? await loadTextCandidateTarget(client, textCandidateInput.candidateId) : null
       const permission = authorizedProposal.toolName === 'create_event' ? 'event.manage' : authorizedProposal.toolName === 'create_invitation' ? 'member.invite' : authorizedProposal.toolName === 'request_approval' ? 'post.submit' : 'post.create'
-      const permissionScope = approvalTarget
-        ? toPermissionScope(approvalTarget.organizationId, approvalTarget.departmentId, approvalTarget.teamId)
+      const permissionTarget = approvalTarget ?? textCandidateTarget
+      const permissionScope = permissionTarget
+        ? toPermissionScope(permissionTarget.organizationId, permissionTarget.departmentId, permissionTarget.teamId)
         : toPermissionScope(proposalScope.organizationId, proposalScope.departmentId ?? null, proposalScope.teamId ?? null)
       const roles = await roleProvider.rolesForScope(request.auth!, permissionScope)
       const invitationInput = authorizedProposal.toolName === 'create_invitation'
         ? CreateInvitationRequestSchema.parse({ ...authorizedProposal.input, ...proposalScope })
         : null
-      if ((contentBriefInput !== null && !proposalScope.departmentId) || (approvalInput !== null && (!approvalTarget || !matchesScope(proposalScope, approvalTarget))) || !hasPermission(roles, permission) || (invitationInput !== null && !canAssignRole(roles, invitationInput.role))) {
+      if (((contentBriefInput !== null || textGenerationInput !== null) && !proposalScope.departmentId) || (approvalInput !== null && (!approvalTarget || !matchesScope(proposalScope, approvalTarget))) || (textCandidateInput !== null && (!textCandidateTarget || !matchesScope(proposalScope, textCandidateTarget))) || !hasPermission(roles, permission) || (invitationInput !== null && !canAssignRole(roles, invitationInput.role))) {
         answer = 'Dafür fehlen dir im aktuellen Bereich die nötigen Berechtigungen. Es wurde keine Aktion vorbereitet.'
         authorizedProposal = undefined
       }
