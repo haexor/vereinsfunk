@@ -293,7 +293,7 @@ async function acceptCandidate() {
   if (!candidate.value) return
   submitting.value = true; notice.value = ''
   try {
-    if (!(await saveServerDraft({ required: true }))) return
+    if (hasDraftContent() && !(await saveServerDraft({ required: true }))) return
     const accepted = await api.request(`/v1/text-workshop/candidates/${candidate.value.id}/accept`, { method: 'POST', body: serverDraftId.value ? { draftId: serverDraftId.value } : {} }, z.union([
       z.object({ postId: z.string(), postVersionId: z.string(), alreadyAccepted: z.literal(false) }),
       z.object({ postVersionId: z.string(), alreadyAccepted: z.literal(true) }),

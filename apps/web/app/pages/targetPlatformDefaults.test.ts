@@ -50,6 +50,12 @@ describe('Zielplattform-Vorgaben', () => {
 
     expect(page).toContain('required = false')
     expect(page).toContain('return queuedSave')
-    expect(page.match(/if \(!\(await saveServerDraft\(\{ required: true \}\)\)\) return/g) ?? []).toHaveLength(2)
+    // createCandidate hat immer schon Entwurfsinhalt (die Aufrufe davor pruefen das) und bricht
+    // deshalb bei einem fehlschlagenden verpflichtenden Speichern ab.
+    expect(page.match(/if \(!\(await saveServerDraft\(\{ required: true \}\)\)\) return/g) ?? []).toHaveLength(1)
+    // acceptCandidate erreicht auch per ?sessionId= geoeffnete Sitzungen ohne Formularinhalt --
+    // dort haette das verpflichtende Speichern nichts zu sichern und muss die Uebernahme nicht
+    // blockieren.
+    expect(page).toContain('if (hasDraftContent() && !(await saveServerDraft({ required: true }))) return')
   })
 })
