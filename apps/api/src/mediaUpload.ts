@@ -4,7 +4,7 @@ import sharp from 'sharp'
 import { z } from 'zod'
 import type { MediaUploadService } from './routes/context.js'
 
-type MediaMimeType = 'image/jpeg' | 'image/png' | 'image/webp' | 'video/mp4'
+type MediaMimeType = 'image/jpeg' | 'image/png' | 'image/webp' | 'video/mp4' | 'audio/mpeg' | 'audio/mp4'
 
 const SignedUploadDataSchema = z.object({ signedUrl: z.string().min(1) })
 const MediaAssetDataSchema = z.object({
@@ -31,7 +31,8 @@ function detectMediaMimeType(buffer: Buffer): MediaMimeType | null {
   if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg'
   if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png'
   if (buffer.length >= 12 && buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP') return 'image/webp'
-  if (buffer.length >= 12 && buffer.subarray(4, 8).toString('ascii') === 'ftyp') return 'video/mp4'
+  if (buffer.length >= 12 && buffer.subarray(4, 8).toString('ascii') === 'ftyp') return buffer.subarray(8, 12).toString('ascii') === 'M4A ' ? 'audio/mp4' : 'video/mp4'
+  if ((buffer.length >= 3 && buffer.subarray(0, 3).toString('ascii') === 'ID3') || (buffer.length >= 2 && buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0)) return 'audio/mpeg'
   return null
 }
 
@@ -93,7 +94,7 @@ export class SupabaseUploadService implements MediaUploadService {
     let normalizedBuffer = buffer
     let width: number | null = null
     let height: number | null = null
-    if (detectedMimeType !== 'video/mp4') {
+    if (detectedMimeType.startsWith('image/')) {
       try {
         const metadata = await sharp(buffer).metadata()
         // .rotate() bakes in EXIF orientation; omitting .withMetadata() during re-encode drops
@@ -132,7 +133,7 @@ export class SupabaseUploadService implements MediaUploadService {
       byte_size: normalizedBuffer.length,
       mime_type: detectedMimeType,
       width, height,
-      exif_stripped_at: detectedMimeType === 'video/mp4' ? null : new Date().toISOString(),
+      exif_stripped_at: detectedMimeType.startsWith('image/') ? new Date().toISOString() : null,
     }).eq('id', input.assetId)
     if (update.error) throw update.error
 

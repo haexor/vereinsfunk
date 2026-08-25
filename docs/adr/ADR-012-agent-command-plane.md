@@ -33,6 +33,12 @@ Ablaufzeit. Beim Bestätigen wird die Fachlage erneut geprüft. Publishing verla
 stets eine solche Bestätigung; Freigabe- und Minderjährigenschutzregeln bleiben
 unverändert gültig.
 
+Chat-Nachrichten dürfen private Medien ausschließlich als begrenzte `media_asset`-IDs
+referenzieren. Asset-Bytes und ihre Metadaten werden weder in die Unterhaltung noch in den
+normalen Text-LLM-Kontext übernommen. Ein künftiger Bild-Edit-Command darf ein explizit
+ausgewähltes Bild nur nach einer eigenen Bestätigung an einen dafür konfigurierten Bild-/Vision-
+Provider übergeben; Eingabe, Provider, Ergebnis-Asset und Auftrag werden dabei auditiert.
+
 Ein optionaler Remote-MCP-Adapter darf erst nach Stabilisierung der Command-Plane
 entstehen. Er ist dann ein dünner Server-zu-Server-Adapter auf eine dokumentierte,
 gezielt kleine Teilmenge der Commands. Er ist weder Teil des Browser-Produkts noch

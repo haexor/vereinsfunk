@@ -9,7 +9,7 @@ import {
   type AgentMessage,
   type AgentWorkspace,
 } from '@vereinsfunk/contracts'
-import { ArrowUp, Bot, CalendarDays, CheckCircle2, FileText, LoaderCircle, Send, Sparkles, UserPlus, X } from '@lucide/vue'
+import { ArrowUp, Bot, CalendarDays, CheckCircle2, FileText, LoaderCircle, Paperclip, Send, Sparkles, UserPlus, X } from '@lucide/vue'
 import { z } from 'zod'
 import { ApiRequestError } from '../utils/apiClient'
 import { toAgentScopeRequest } from '../utils/agentScope'
@@ -21,6 +21,7 @@ const conversation = ref<AgentConversation | null>(null)
 const messages = ref<AgentMessage[]>([])
 const proposals = ref<AgentActionProposal[]>([])
 const prompt = ref('')
+const messageMediaAssetIds = ref<string[]>([])
 const loading = ref(true)
 const sending = ref(false)
 const actingProposalId = ref<string | null>(null)
@@ -46,6 +47,7 @@ async function initialize() {
   conversation.value = null
   messages.value = []
   proposals.value = []
+  messageMediaAssetIds.value = []
   cachedConversation.value = null
   sending.value = false
   if (!input) { loading.value = false; return }
@@ -75,7 +77,7 @@ async function initialize() {
     if (!isCurrent()) return
     conversation.value = createdConversation
     cachedConversation.value = { scopeKey: expectedScopeKey, id: createdConversation.id }
-    messages.value = [{ id: `welcome-${createdConversation.id}`, conversationId: createdConversation.id, organizationId: createdConversation.organizationId, role: 'assistant', content: `Hallo! Ich habe den Überblick zu ${scopeLabel.value} geladen. Wobei soll ich dir helfen?`, createdAt: new Date().toISOString() }]
+    messages.value = [{ id: `welcome-${createdConversation.id}`, conversationId: createdConversation.id, organizationId: createdConversation.organizationId, role: 'assistant', content: `Hallo! Ich habe den Überblick zu ${scopeLabel.value} geladen. Wobei soll ich dir helfen?`, mediaAssetIds: [], createdAt: new Date().toISOString() }]
   } catch {
     if (!isCurrent()) return
     errorMessage.value = 'Der Assistent konnte nicht geladen werden. Bitte versuche es erneut.'
@@ -104,12 +106,13 @@ async function send() {
   try {
     const detail = await api.request(
       `/v1/agent/conversations/${conversationId}/messages`,
-      { method: 'POST', body: { content } },
+      { method: 'POST', body: { content, mediaAssetIds: messageMediaAssetIds.value } },
       AgentConversationDetailSchema,
     )
     if (!isCurrent()) return
     conversation.value = detail.conversation
     messages.value = detail.messages
+    messageMediaAssetIds.value = []
     const loadedProposals = await api.request(`/v1/agent/conversations/${conversationId}/action-proposals`, {}, z.array(AgentActionProposalSchema))
     if (!isCurrent()) return
     proposals.value = loadedProposals
@@ -233,6 +236,7 @@ function formatDate(value: string | null) {
             <div class="max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-6" :class="message.role === 'user' ? 'bg-forest text-white' : 'bg-[#f2f4ee] text-[#28372e]'">
               <AgentMarkdown v-if="message.role === 'assistant'" :content="message.content" />
               <template v-else>{{ message.content }}</template>
+              <p v-if="message.mediaAssetIds.length" class="mt-2 text-[11px] opacity-75"><Paperclip :size="12" class="mr-1 inline" />{{ message.mediaAssetIds.length }} Anhang{{ message.mediaAssetIds.length === 1 ? '' : 'e' }}</p>
             </div>
           </article>
           <div v-if="sending" class="flex items-center gap-2 text-xs text-[#727a75]"><LoaderCircle class="animate-spin" :size="15" /> Der Assistent prüft den Arbeitsbereich …</div>
@@ -243,7 +247,8 @@ function formatDate(value: string | null) {
             <textarea id="assistant-prompt" v-model="prompt" maxlength="4000" rows="2" class="min-h-12 flex-1 resize-none border-0 bg-transparent px-2 py-1 text-sm outline-none" placeholder="Zum Beispiel: Welche Freigaben sind offen?" @keydown.enter.exact.prevent="send" />
             <button type="submit" :disabled="!prompt.trim() || sending" class="focus-ring grid h-10 w-10 place-items-center rounded-xl bg-forest text-white disabled:cursor-not-allowed disabled:opacity-50" aria-label="Nachricht senden"><ArrowUp :size="18" /></button>
           </div>
-          <p class="mt-2 px-2 text-[11px] text-[#7a827c]">Termine und Einladungen werden als Karte vorbereitet und erst nach deiner Bestätigung ausgeführt.</p>
+          <MediaAttachmentUpload v-if="scope?.organizationId && scope.departmentId" v-model="messageMediaAssetIds" class="mt-3 px-2" :organization-id="scope.organizationId" :department-id="scope.departmentId" :max="10" />
+          <p class="mt-2 px-2 text-[11px] text-[#7a827c]">Anhänge bleiben privat. Sie werden nicht automatisch an das Textmodell gesendet; eine Bildbearbeitung braucht immer einen eigenen bestätigten Auftrag. Termine und Einladungen werden als Karte vorbereitet und erst nach deiner Bestätigung ausgeführt.</p>
         </form>
       </section>
 

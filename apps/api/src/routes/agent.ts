@@ -62,6 +62,7 @@ const MessageRowSchema = z.object({
   conversation_id: UuidSchema,
   role: z.enum(['user', 'assistant']),
   content: z.string(),
+  media_asset_ids: z.array(UuidSchema).default([]),
   created_at: z.string(),
 })
 const PersistedMessagesRowSchema = z.object({
@@ -117,6 +118,7 @@ function mapMessage(row: unknown): AgentMessage {
     organizationId: parsed.organization_id,
     role: parsed.role,
     content: parsed.content,
+    mediaAssetIds: parsed.media_asset_ids,
     createdAt: parsed.created_at,
   })
 }
@@ -408,7 +410,7 @@ async function loadConversation(client: SupabaseClient, id: string): Promise<Age
 async function loadMessages(client: SupabaseClient, conversation: AgentConversation): Promise<AgentMessage[]> {
   const result = await client
     .from('agent_messages')
-    .select('id, organization_id, conversation_id, role, content, created_at')
+    .select('id, organization_id, conversation_id, role, content, media_asset_ids, created_at')
     .eq('organization_id', conversation.organizationId)
     .eq('conversation_id', conversation.id)
     .order('created_at', { ascending: true })
@@ -920,6 +922,16 @@ export function registerAgentRoutes(
     if (!conversation) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     const existingMessages = await loadMessages(client, conversation)
     const service = supabaseClients.forService()
+    if (input.mediaAssetIds.length > 0) {
+      // The responder below only gets textual messages. Attachments are private references for
+      // the user interface, never multimodal context for the model.
+      if (!conversation.departmentId) return reply.code(422).send({ error: 'agent_media_requires_department', correlationId: request.id })
+      const assets = await service.from('media_assets').select('id, organization_id, department_id, upload_status').in('id', input.mediaAssetIds)
+      if (assets.error) throw assets.error
+      if (assets.data.length !== input.mediaAssetIds.length || assets.data.some((asset) => asset.organization_id !== conversation.organizationId || asset.department_id !== conversation.departmentId || asset.upload_status !== 'ready')) {
+        return reply.code(422).send({ error: 'agent_media_not_ready_or_out_of_scope', correlationId: request.id })
+      }
+    }
     const workspace = await loadWorkspaceOrEmpty(client, scopeForConversation(conversation), request.auth!.userId, request.log)
     const safetyIdentifier = createHash('sha256').update(request.auth!.userId).digest('hex').slice(0, 64)
     let answer: string
@@ -972,6 +984,7 @@ export function registerAgentRoutes(
       target_conversation_id: conversation.id,
       target_owner_id: request.auth!.userId,
       user_message_content: input.content,
+      user_message_media_asset_ids: input.mediaAssetIds,
       assistant_message_content: answer,
     })
     if (persisted.error) throw persisted.error

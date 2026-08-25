@@ -718,7 +718,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     return reply.send(accepted.data)
   })
 
-  const UploadInitiateSchema = z.object({ organizationId: UuidSchema, departmentId: UuidSchema, filename: z.string().min(1).max(120).regex(/^[^/\\]+$/), mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp', 'video/mp4']), byteSize: z.int().positive().max(100 * 1024 * 1024) })
+  const UploadInitiateSchema = z.object({ organizationId: UuidSchema, departmentId: UuidSchema, filename: z.string().min(1).max(120).regex(/^[^/\\]+$/), mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp', 'video/mp4', 'audio/mpeg', 'audio/mp4']), byteSize: z.int().positive().max(100 * 1024 * 1024) })
   app.post('/v1/media/uploads', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const input = UploadInitiateSchema.parse(request.body); const assetId = randomUUID()

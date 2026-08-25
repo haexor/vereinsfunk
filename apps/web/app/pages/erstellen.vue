@@ -79,9 +79,11 @@ const PROFILE_GROUPS = [
 const profileGroups = computed(() => PROFILE_GROUPS.map((group) => ({ label: group.label, items: group.kinds.flatMap((kind) => profiles.value.filter((profile) => profile.kind === kind)) })).filter((group) => group.items.length))
 const profileSelectGroups = computed(() => profileGroups.value.map((group) => ({ label: group.label, items: group.items.map((profile) => ({ value: profile.id ?? profile.slug, label: profile.name, description: profile.description })) })))
 const communicationGoal = ref('inform')
-const factsText = ref('')
-const observation = ref('')
-const doNotMention = ref('')
+// Die Erfassung bleibt bewusst ein einziges, freies Feld. Erst an der API-Grenze wird der Text
+// in begrenzte Beobachtungen zerlegt; so bleibt die Faktenbindung erhalten, ohne Menschen in ein
+// Datenmodell hineinzuzwingen, bevor sie ihren Beitrag überhaupt formuliert haben.
+const contentText = ref('')
+const additionalMediaAssetIds = ref<string[]>([])
 const revisionInstruction = ref('')
 const serverDraftId = ref<string | null>(null)
 const draftSaveState = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
@@ -92,20 +94,33 @@ let serverDraftSaveChain: Promise<void> = Promise.resolve()
 let latestServerDraftSave = 0
 
 function sourceMaterial() {
-  const facts = Object.fromEntries(factsText.value.split('\n').map((line) => line.split(':')).filter(([key, value]) => key?.trim() && value?.trim()).map(([key, ...rest]) => [key!.trim(), rest.join(':').trim()]))
-  return { facts, observations: observation.value.trim() ? [observation.value.trim()] : [], quotes: [], doNotMention: doNotMention.value.trim() ? doNotMention.value.split('\n').map((value) => value.trim()).filter(Boolean) : [] }
+  const text = contentText.value.trim()
+  // SourceMaterial begrenzt einzelne Beobachtungen auf 500 Zeichen. Wir teilen nur an
+  // Wortgrenzen, damit ein längerer frei formulierter Rohtext vollständig erhalten bleibt.
+  const observations: string[] = []
+  let rest = text
+  while (rest.length > 500 && observations.length < 19) {
+    const wordBoundary = Math.max(rest.lastIndexOf(' ', 500), rest.lastIndexOf('\n', 500))
+    const boundary = wordBoundary > 0 ? wordBoundary : 500
+    observations.push(rest.slice(0, boundary).trim())
+    rest = rest.slice(boundary).trim()
+  }
+  if (rest) observations.push(rest.slice(0, 500))
+  return { facts: {}, observations, quotes: [], doNotMention: [] }
 }
 function persistDraft() {
   if (restoringDraft || !import.meta.client || !draftKey.value) return
-  localStorage.setItem(draftKey.value, JSON.stringify({ communicationGoal: communicationGoal.value, factsText: factsText.value, observation: observation.value, doNotMention: doNotMention.value, selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }))
+  localStorage.setItem(draftKey.value, JSON.stringify({ communicationGoal: communicationGoal.value, contentText: contentText.value, selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }))
 }
 function clearDraft() { if (import.meta.client && draftKey.value) localStorage.removeItem(draftKey.value) }
 function draftPayload() {
-  return { communicationGoal: communicationGoal.value, factsText: factsText.value, observation: observation.value, doNotMention: doNotMention.value, selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }
+  // Die persistierte Vertragsform bleibt vorerst kompatibel zu bestehenden Entwürfen. Das UI
+  // schreibt nur noch den Rohtext in observation; die früheren Spezialfelder bleiben leer.
+  return { communicationGoal: communicationGoal.value, factsText: '', observation: contentText.value, doNotMention: '', selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }
 }
 function hasDraftContent() {
   const payload = draftPayload()
-  return Boolean(payload.factsText.trim() || payload.observation.trim() || payload.doNotMention.trim() || payload.communicationGoal !== 'inform' || payload.selectedProfile !== 'klar_erklaerend' || payload.selectedPlatforms.length || payload.maxCharactersOverride.trim())
+  return Boolean(payload.observation.trim() || payload.communicationGoal !== 'inform' || payload.selectedProfile !== 'klar_erklaerend' || payload.selectedPlatforms.length || payload.maxCharactersOverride.trim())
 }
 async function saveServerDraft({ explicit = false, required = false }: { explicit?: boolean; required?: boolean } = {}): Promise<boolean> {
   if (draftSaveTimer) { clearTimeout(draftSaveTimer); draftSaveTimer = undefined }
@@ -150,15 +165,15 @@ function restoreDraft() {
   if (!import.meta.client || !draftKey.value) return
   try {
     const raw = localStorage.getItem(draftKey.value); if (!raw) return
-    const draft = z.object({ communicationGoal: z.string(), factsText: z.string(), observation: z.string(), doNotMention: z.string(), selectedProfile: z.string(), selectedPlatforms: z.array(SocialPlatformSchema).default([]), maxCharactersOverride: z.string().default('') }).parse(JSON.parse(raw))
-    communicationGoal.value = draft.communicationGoal; factsText.value = draft.factsText; observation.value = draft.observation; doNotMention.value = draft.doNotMention; selectedProfile.value = draft.selectedProfile; maxCharactersOverride.value = draft.maxCharactersOverride
+    const draft = z.object({ communicationGoal: z.string(), contentText: z.string().optional(), factsText: z.string().optional(), observation: z.string().optional(), selectedProfile: z.string(), selectedPlatforms: z.array(SocialPlatformSchema).default([]), maxCharactersOverride: z.string().default('') }).parse(JSON.parse(raw))
+    communicationGoal.value = draft.communicationGoal; contentText.value = draft.contentText ?? [draft.factsText, draft.observation].filter(Boolean).join('\n'); selectedProfile.value = draft.selectedProfile; maxCharactersOverride.value = draft.maxCharactersOverride
     // Nur uebernehmen, was laut der zuletzt geladenen Verfuegbarkeit noch anhakbar ist -- ein Kanal
     // kann seit dem letzten Entwurf entfernt worden sein.
     if (draft.selectedPlatforms.length) selectedPlatforms.value = draft.selectedPlatforms.filter((platform) => platforms.value.some((entry) => entry.platform === platform && entry.available))
   } catch { clearDraft() }
 }
-watch([communicationGoal, factsText, observation, doNotMention, selectedProfile, selectedPlatforms, maxCharactersOverride], () => { persistDraft(); queueServerDraftSave() }, { flush: 'sync', deep: true })
-watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; communicationGoal.value = 'inform'; selectedProfile.value = 'klar_erklaerend'; factsText.value = ''; observation.value = ''; doNotMention.value = ''; revisionInstruction.value = ''; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; mediaAssetIds.value = []; composedPhotoPreview.value = null; photoMode.value = 'carousel'; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
+watch([communicationGoal, contentText, selectedProfile, selectedPlatforms, maxCharactersOverride], () => { persistDraft(); queueServerDraftSave() }, { flush: 'sync', deep: true })
+watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; communicationGoal.value = 'inform'; selectedProfile.value = 'klar_erklaerend'; contentText.value = ''; additionalMediaAssetIds.value = []; revisionInstruction.value = ''; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; mediaAssetIds.value = []; composedPhotoPreview.value = null; photoMode.value = 'carousel'; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
 
 async function loadProfiles() {
   if (!scope.value?.organizationId || !scope.value.departmentId) return
@@ -199,7 +214,7 @@ async function loadServerDraft(draftId: string) {
     const response = await api.request(`/v1/text-workshop/drafts/${draftId}`, {}, z.object({ draft: TextWorkshopDraftRowSchema }))
     const draft = response.draft
     serverDraftId.value = draft.id
-    communicationGoal.value = draft.payload.communicationGoal; factsText.value = draft.payload.factsText; observation.value = draft.payload.observation; doNotMention.value = draft.payload.doNotMention; selectedProfile.value = draft.payload.selectedProfile; maxCharactersOverride.value = draft.payload.maxCharactersOverride
+    communicationGoal.value = draft.payload.communicationGoal; contentText.value = [draft.payload.factsText, draft.payload.observation].filter(Boolean).join('\n'); selectedProfile.value = draft.payload.selectedProfile; maxCharactersOverride.value = draft.payload.maxCharactersOverride
     selectedPlatforms.value = draft.payload.selectedPlatforms.filter((platform) => platforms.value.some((entry) => entry.platform === platform && entry.available))
     persistDraft()
   } catch { notice.value = 'Der Entwurf konnte nicht geladen werden.' }
@@ -214,12 +229,11 @@ async function loadDraftFromPost(postId: string) {
     const response = await api.request('/v1/text-workshop/sessions', { query: { postId } }, z.object({ session: CompositionSessionDraftSchema, candidates: z.array(CandidateSchema) }))
     const { session: draftSession, candidates } = response
     communicationGoal.value = draftSession.communication_goal
-    factsText.value = Object.entries(draftSession.source_material.facts).map(([key, value]) => `${key}: ${value}`).join('\n')
-    observation.value = draftSession.source_material.observations[0] ?? ''
-    // doNotMention traegt seit der Anlage bereits die Verbotsliste des Vereins/der Abteilung
-    // eingemischt (routes/content.ts) -- ein Herauskuerzen hier haette beim erneuten Absenden
-    // ohnehin keine Wirkung, die Route mischt sie wieder ein. Bewusst nicht getrennt angezeigt.
-    doNotMention.value = draftSession.source_material.doNotMention.join('\n')
+    contentText.value = [
+      ...Object.entries(draftSession.source_material.facts).map(([key, value]) => `${key}: ${value}`),
+      ...draftSession.source_material.observations,
+      ...draftSession.source_material.quotes.map((quote) => quote.text),
+    ].join('\n')
     selectedProfile.value = draftSession.style_profile_id ?? draftSession.style_profile_snapshot.slug ?? 'klar_erklaerend'
     // Nur uebernehmen, was laut der zuletzt geladenen Verfuegbarkeit noch anhakbar ist -- derselbe
     // Filter wie in restoreDraft(), ein Kanal kann seither entfernt worden sein.
@@ -242,7 +256,7 @@ function parsedMaxCharactersOverride(): number | undefined | 'invalid' {
 }
 async function createCandidate() {
   if (!scope.value?.organizationId || !scope.value.departmentId) { notice.value = 'Bitte wähle Verein und Abteilung.'; return }
-  if (!Object.keys(sourceMaterial().facts).length && !observation.value.trim()) { notice.value = 'Gib mindestens eine bestätigte Tatsache oder Beobachtung an.'; return }
+  if (!contentText.value.trim()) { notice.value = 'Schreibe kurz, worum es in deinem Beitrag geht.'; return }
   if (!selectedPlatforms.value.length) { notice.value = 'Bitte wähle mindestens eine Zielplattform.'; return }
   const maxCharacters = parsedMaxCharactersOverride()
   if (maxCharacters === 'invalid') { notice.value = 'Die maximale Länge muss zwischen 100 und 10.000 Zeichen liegen.'; return }
@@ -256,7 +270,7 @@ async function createCandidate() {
       method: 'POST',
       body: {
         organizationId: scope.value.organizationId, departmentId: scope.value.departmentId, communicationGoal: communicationGoal.value, requestedFormats: ['text_post'],
-        mediaAssetIds: mediaAssetIds.value,
+        mediaAssetIds: [...mediaAssetIds.value, ...additionalMediaAssetIds.value],
         ...profileChoice, sourceMaterial: sourceMaterial(), targetPlatforms: selectedPlatforms.value,
         // Ein weiterer Kandidat der serverseitigen Minimumbildung, keine Ueberschreibung -- die
         // gewaehlten Plattformen bleiben die verbindliche Obergrenze (routes/content.ts).
@@ -360,11 +374,29 @@ onBeforeUnmount(() => { if (hasDraftContent()) void saveServerDraft() })
 
 <template>
   <div>
-    <header class="mb-7"><div class="eyebrow mb-2">Textwerkstatt</div><h1 class="font-display text-3xl font-extrabold">Aus bestätigten Angaben formulieren</h1><p class="mt-2 text-sm text-[#727a75]">Dieser Pilot erstellt nur Text. Fotos können angehängt werden, werden aber nie an das Sprachmodell gesendet. Videoanhänge sind noch nicht verfügbar.</p></header>
+    <header class="mb-7"><div class="eyebrow mb-2">Textwerkstatt</div><h1 class="font-display text-3xl font-extrabold">Beitrag erstellen</h1><p class="mt-2 text-sm text-[#727a75]">Schreibe einfach auf, was passiert ist. Bilder, Videos und Musik bleiben private Anhänge und werden nicht an das Sprachmodell gesendet.</p></header>
     <section v-if="!sessionId" class="card grid gap-5 p-5 sm:p-7">
-      <label><span class="mb-1 block text-xs font-semibold">Kommunikationsziel</span><Select v-model="communicationGoal"><SelectTrigger class="sm:max-w-xs"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="inform">Informieren</SelectItem><SelectItem value="invite">Einladen</SelectItem><SelectItem value="thank">Danken</SelectItem><SelectItem value="recruit">Gewinnen</SelectItem><SelectItem value="inspire">Inspirieren</SelectItem></SelectContent></Select></label>
-      <fieldset><legend class="mb-2 text-xs font-semibold">Stilprofil</legend><SearchableSelect v-model="selectedProfile" :groups="profileSelectGroups" placeholder="Stilprofil wählen…" /><NuxtLink to="/stilprofile" class="focus-ring mt-2 inline-block text-[11px] font-semibold text-forest underline">Eigene Stilprofile verwalten →</NuxtLink></fieldset>
-      <template v-if="scope?.organizationId && scope.departmentId">
+      <label>
+        <span class="mb-2 block text-sm font-bold">Was möchtest du erzählen?</span>
+        <textarea v-model="contentText" rows="7" maxlength="10000" class="w-full resize-y rounded-2xl border border-[#dfe2da] bg-white p-4 text-sm leading-6 shadow-sm outline-none placeholder:text-[#929991] focus:border-forest focus:ring-2 focus:ring-forest/15" placeholder="Zum Beispiel: Heute hat unsere U12 im Training Passen geübt. Besonders schön war, wie sich alle gegenseitig unterstützt haben." />
+      </label>
+      <fieldset>
+        <legend class="mb-2 text-xs font-semibold">Anhänge</legend>
+        <p class="mb-3 text-xs text-[#727a75]">Ein Bild macht deinen Beitrag meist direkt lebendig.</p>
+        <template v-if="scope?.organizationId && scope.departmentId">
+          <PhotoAttachmentList v-if="additionalMediaAssetIds.length < 10" :key="`${scope.organizationId}:${scope.departmentId}`" v-model:media-asset-ids="mediaAssetIds" :organization-id="scope.organizationId" :department-id="scope.departmentId" :max="10 - additionalMediaAssetIds.length" />
+          <p v-else class="text-xs text-[#727a75]">Die maximale Anzahl von zehn Anhängen ist erreicht.</p>
+          <div class="mt-3 border-t border-[#e7e8e1] pt-3">
+            <MediaAttachmentUpload :key="`other-media:${scope.organizationId}:${scope.departmentId}`" v-model="additionalMediaAssetIds" :organization-id="scope.organizationId" :department-id="scope.departmentId" :max="10 - mediaAssetIds.length" :allow-images="false" review-videos />
+          </div>
+        </template>
+      </fieldset>
+      <details class="rounded-xl border border-[#e1e2db] p-4">
+        <summary class="cursor-pointer text-sm font-semibold text-[#435047]">Beitrag einstellen</summary>
+        <div class="mt-4 grid gap-5">
+          <label><span class="mb-1 block text-xs font-semibold">Kommunikationsziel</span><Select v-model="communicationGoal"><SelectTrigger class="sm:max-w-xs"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="inform">Informieren</SelectItem><SelectItem value="invite">Einladen</SelectItem><SelectItem value="thank">Danken</SelectItem><SelectItem value="recruit">Gewinnen</SelectItem><SelectItem value="inspire">Inspirieren</SelectItem></SelectContent></Select></label>
+          <fieldset><legend class="mb-2 text-xs font-semibold">Stilprofil</legend><SearchableSelect v-model="selectedProfile" :groups="profileSelectGroups" placeholder="Stilprofil wählen…" /><NuxtLink to="/stilprofile" class="focus-ring mt-2 inline-block text-[11px] font-semibold text-forest underline">Eigene Stilprofile verwalten →</NuxtLink></fieldset>
+          <template v-if="scope?.organizationId && scope.departmentId">
         <template v-if="composedPhotoPreview">
           <div class="rounded-xl border border-[#e1e2db] p-3">
             <p class="mb-2 text-xs font-semibold text-[#727a75]">Zusammengefügtes Foto</p>
@@ -374,7 +406,6 @@ onBeforeUnmount(() => { if (hasDraftContent()) void saveServerDraft() })
           </div>
         </template>
         <template v-else>
-          <PhotoAttachmentList :key="`${scope.organizationId}:${scope.departmentId}`" v-model:media-asset-ids="mediaAssetIds" :organization-id="scope.organizationId" :department-id="scope.departmentId" />
           <div v-if="mediaAssetIds.length >= 2" class="mt-3">
             <p class="mb-1 text-xs font-semibold text-[#5c655f]">Mehrere Fotos verwenden als</p>
             <div class="flex gap-2" role="group" aria-label="Mehrere Fotos verwenden als">
@@ -385,7 +416,7 @@ onBeforeUnmount(() => { if (hasDraftContent()) void saveServerDraft() })
           </div>
           <PhotoLayoutGallery v-if="photoMode === 'layout'" :key="`layout:${scope.organizationId}:${scope.departmentId}`" v-model:media-asset-ids="mediaAssetIds" v-model:composed-preview="composedPhotoPreview" :organization-id="scope.organizationId" :department-id="scope.departmentId" />
         </template>
-      </template>
+          </template>
       <fieldset>
         <legend class="mb-2 text-xs font-semibold">Zielplattformen</legend>
         <div v-if="platforms.length" class="flex flex-wrap gap-2">
@@ -410,9 +441,8 @@ onBeforeUnmount(() => { if (hasDraftContent()) void saveServerDraft() })
         <input v-model="maxCharactersOverride" type="number" min="100" max="10000" placeholder="z. B. 800" class="w-32 rounded-xl border p-3 text-sm" />
         <p class="mt-1 text-[11px] font-normal text-[#9aa096]">Kürzer als die gewählten Plattformen erlauben ist möglich, länger nicht.</p>
       </fieldset>
-      <label><span class="mb-1 block text-xs font-semibold">Bestätigte Fakten (eine Zeile je „Feld: Wert“)</span><textarea v-model="factsText" rows="4" class="w-full rounded-xl border p-3 text-sm" placeholder="Übung: Passen&#10;Gruppe: U12" /></label>
-      <label><span class="mb-1 block text-xs font-semibold">Beobachtung oder Rohtext</span><textarea v-model="observation" rows="3" class="w-full rounded-xl border p-3 text-sm" /></label>
-      <label><span class="mb-1 block text-xs font-semibold">Nicht erwähnen (je Zeile)</span><input v-model="doNotMention" class="w-full rounded-xl border p-3 text-sm" /></label>
+        </div>
+      </details>
       <div class="flex flex-wrap items-center gap-3"><button class="inline-flex items-center justify-center gap-2 rounded-xl border border-forest px-5 py-3 text-sm font-bold text-forest disabled:opacity-60" :disabled="submitting || draftSaveState === 'saving'" @click="saveServerDraft({ explicit: true })"><LoaderCircle v-if="draftSaveState === 'saving'" class="animate-spin" :size="16" /><Save v-else :size="16" /> Als Entwurf speichern</button><span v-if="draftSaveState === 'saved'" class="text-xs text-[#727a75]">Entwurf gespeichert</span><span v-else-if="draftSaveState === 'error'" class="text-xs text-amber-800">Lokale Sicherung aktiv</span></div>
     </section>
     <section v-else class="card p-5 sm:p-7"><div class="flex items-center justify-between"><h2 class="font-display text-xl font-bold">{{ candidateFinished ? 'Textkandidat bereit' : 'Text wird erzeugt' }}</h2><button class="rounded-lg border px-3 py-2 text-xs" @click="refreshSession"><RefreshCw :size="14" /> Aktualisieren</button></div><p v-if="candidate && !candidateFinished" class="mt-4 text-sm text-[#727a75]">Der Worker verarbeitet die Anfrage im Hintergrund. Diese Seite enthält keinen Prompt und keine Providerdaten.</p><p v-if="candidate?.triggered_by === 'automatic_recovery'" class="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-900">Diese Version wurde nach einem technischen Fehler automatisch neu erzeugt.</p><template v-if="candidate?.generated_content"><textarea :value="candidate.generated_content.caption" readonly rows="10" class="mt-5 w-full rounded-xl border p-3 text-sm" /><div class="mt-3 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-900">{{ candidate.generated_content.verifiedFacts.length }} belegte Angaben · {{ candidate.generated_content.missingFacts.length }} offene Angaben</div><label class="mt-5 block"><span class="mb-1 block text-xs font-semibold">Überarbeitungswunsch</span><textarea v-model="revisionInstruction" rows="2" maxlength="500" class="w-full rounded-xl border p-3 text-sm" placeholder="z. B. kürzer und mit direkter Einladung" /></label><button class="mt-3 rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-60" :disabled="submitting || !revisionInstruction.trim()" @click="reviseCandidate"><RefreshCw :size="15" class="mr-1 inline" /> Überarbeiten</button><button class="mt-5 inline-flex items-center gap-2 rounded-xl bg-forest px-5 py-3 text-sm font-bold text-white disabled:opacity-60" :disabled="submitting" @click="acceptCandidate"><LoaderCircle v-if="submitting" class="animate-spin" :size="16" /><Check v-else :size="16" /> Übernehmen und zur Freigabe</button></template><p v-if="candidate?.status === 'failed'" class="mt-4 text-sm text-red-700">Die Anfrage konnte nicht verarbeitet werden. Bitte prüfe die bestätigten Angaben und starte eine neue Sitzung.</p></section>
