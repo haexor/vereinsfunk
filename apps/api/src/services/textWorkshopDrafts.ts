@@ -6,7 +6,7 @@ export async function saveTextWorkshopDraft(
   input: {
     id: string
     organizationId: string
-    departmentId: string
+    departmentId: string | null
     teamId: string | null
     actorUserId: string
     payload: TextWorkshopDraftPayload

@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(22);
+select plan(26);
 
 set local role postgres;
 
@@ -8,7 +8,8 @@ insert into auth.users (instance_id, id, aud, role, email, encrypted_password, r
 values
   ('00000000-0000-0000-0000-000000000000', '45000000-0000-4000-8000-000000000001', 'authenticated', 'authenticated', 'admin@pgtap-people-review.local', '', '{}', '{}', now(), now()),
   ('00000000-0000-4000-8000-000000000000', '45000000-0000-4000-8000-000000000002', 'authenticated', 'authenticated', 'viewer@pgtap-people-review.local', '', '{}', '{}', now(), now()),
-  ('00000000-0000-0000-0000-000000000000', '45000000-0000-4000-8000-000000000003', 'authenticated', 'authenticated', 'foreign-admin@pgtap-people-review.local', '', '{}', '{}', now(), now());
+  ('00000000-0000-0000-0000-000000000000', '45000000-0000-4000-8000-000000000003', 'authenticated', 'authenticated', 'foreign-admin@pgtap-people-review.local', '', '{}', '{}', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '45000000-0000-4000-8000-000000000004', 'authenticated', 'authenticated', 'org-owner@pgtap-people-review.local', '', '{}', '{}', now(), now());
 
 insert into public.organizations (id, name, slug) values
   ('45000000-1000-4000-8000-000000000001', 'PGTAP People Review Verein', 'pgtap-people-review-verein'),
@@ -20,6 +21,10 @@ insert into public.department_memberships (organization_id, department_id, user_
   ('45000000-1000-4000-8000-000000000001', '45000000-1100-4000-8000-000000000001', '45000000-0000-4000-8000-000000000001', 'department_admin'),
   ('45000000-1000-4000-8000-000000000001', '45000000-1100-4000-8000-000000000001', '45000000-0000-4000-8000-000000000002', 'viewer'),
   ('45000000-1000-4000-8000-000000000002', '45000000-1100-4000-8000-000000000002', '45000000-0000-4000-8000-000000000003', 'department_admin');
+-- Traegt post.edit ausschliesslich ueber die Vereinsebene, ohne jede Abteilungsmitgliedschaft --
+-- genau die Rolle, die einen Beitrag ohne gewaehlte Abteilung schreibt (Block 11 unten).
+insert into public.organization_memberships (organization_id, user_id, role) values
+  ('45000000-1000-4000-8000-000000000001', '45000000-0000-4000-8000-000000000004', 'organization_owner');
 
 insert into public.media_assets (
   id, organization_id, department_id, bucket_id, object_path, mime_type, byte_size,
@@ -201,6 +206,45 @@ select ok(
 select ok(
   (select status from public.schedule_publication('45000000-5000-4000-8000-000000000001', '45000000-8000-4000-8000-000000000001', now() + interval '1 hour')) = 'queued',
   'schedule_publication now succeeds once the photo has been reviewed for people'
+);
+
+-- 11: Medien auf Vereinsebene (Migration 2026082504/2026082505). media_assets.department_id darf
+-- null sein; authz.is_department_member(null)/authz.has_department_permission(null, ...) sind aber
+-- beide false, deshalb braucht face_regions denselben Organisationszweig wie media_assets selbst.
+-- Ohne ihn scheitert schon das Markieren einer Person auf einem Vereinsfoto -- und mit ihm der
+-- ganze Weg, weil confirm_media_people_review(faces_present => true) eine Markierung verlangt.
+set local role postgres;
+insert into public.media_assets (
+  id, organization_id, department_id, bucket_id, object_path, mime_type, byte_size,
+  scan_status, upload_status, structural_validation_status, created_by
+) values (
+  '45000000-2000-4000-8000-000000000003', '45000000-1000-4000-8000-000000000001', null,
+  'raw-media', 'organizations/x/assets/3/c.jpg', 'image/jpeg', 1000,
+  'clean', 'ready', 'valid', '45000000-0000-4000-8000-000000000004'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '45000000-0000-4000-8000-000000000004', true);
+select lives_ok(
+  $$insert into public.face_regions (id, organization_id, media_asset_id, x, y, width, height, source, subject_kind, decision) values ('45000000-3000-4000-8000-000000000003', '45000000-1000-4000-8000-000000000001', '45000000-2000-4000-8000-000000000003', 0.1, 0.1, 0.2, 0.2, 'manual', 'adult', 'exclude')$$,
+  'a member with organization-level post.edit can mark a person on an asset without a department'
+);
+-- Getrennt geprueft, weil PhotoAttachment.vue mit insert ... returning arbeitet: ohne SELECT-Policy
+-- auf dieselbe Zeile schlaegt der Browser-Aufruf trotz erlaubtem Schreiben fehl.
+select is(
+  (select count(*)::integer from public.face_regions where id = '45000000-3000-4000-8000-000000000003'),
+  1, 'the org-level face region is readable by the same member (insert ... returning needs the select policy too)'
+);
+select ok(
+  (select people_reviewed_at from public.confirm_media_people_review('45000000-2000-4000-8000-000000000003', true)) is not null,
+  'confirm_media_people_review accepts an organization-level asset once its region is decided'
+);
+-- Der Organisationszweig weitet nur auf post.edit aus, nicht auf jedes Vereinsmitglied: eine
+-- Abteilungs-viewer-Rolle darf das Vereinsfoto sehen, aber nichts daran markieren.
+select set_config('request.jwt.claim.sub', '45000000-0000-4000-8000-000000000002', true);
+select throws_ok(
+  $$insert into public.face_regions (id, organization_id, media_asset_id, x, y, width, height, source, subject_kind, decision) values ('45000000-3000-4000-8000-000000000004', '45000000-1000-4000-8000-000000000001', '45000000-2000-4000-8000-000000000003', 0.5, 0.5, 0.1, 0.1, 'manual', 'adult', 'exclude')$$,
+  '42501', null, 'a member without post.edit still cannot mark a person on an organization-level asset'
 );
 
 select * from finish();

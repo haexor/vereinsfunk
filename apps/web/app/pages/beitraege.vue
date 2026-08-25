@@ -32,14 +32,12 @@ if (scope.value?.organizationId) {
   if (result.error) postsError.value = 'Beiträge konnten nicht geladen werden. Bitte versuche es erneut.'
   else { posts.value = result.data; postsError.value = null }
   postsLoading.value = false
-  if (scope.value.departmentId) {
-    workshopDraftsLoading.value = true
-    try {
-      const result = await api.request('/v1/text-workshop/drafts', { query: { organizationId: scope.value.organizationId, departmentId: scope.value.departmentId } }, z.object({ drafts: z.array(TextWorkshopDraftRowSchema) }))
-      workshopDrafts.value = result.drafts
-    } catch { workshopDraftsError.value = 'Entwürfe konnten nicht geladen werden. Bitte versuche es erneut.' }
-    finally { workshopDraftsLoading.value = false }
-  }
+  workshopDraftsLoading.value = true
+  try {
+    const result = await api.request('/v1/text-workshop/drafts', { query: { organizationId: scope.value.organizationId, departmentId: scope.value.departmentId ?? undefined } }, z.object({ drafts: z.array(TextWorkshopDraftRowSchema) }))
+    workshopDrafts.value = result.drafts
+  } catch { workshopDraftsError.value = 'Entwürfe konnten nicht geladen werden. Bitte versuche es erneut.' }
+  finally { workshopDraftsLoading.value = false }
 } else postsLoading.value = false
 
 const deletingId = ref<string | null>(null)

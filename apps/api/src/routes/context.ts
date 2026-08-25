@@ -25,7 +25,7 @@ export interface SupabaseClientFactory {
 export interface MediaUploadService {
   create(input: {
     organizationId: string
-    departmentId: string
+    departmentId: string | null
     assetId: string
     filename: string
     mimeType: string

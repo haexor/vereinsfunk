@@ -8,7 +8,7 @@ import { createSecretBox } from '@vereinsfunk/secrets'
 import type * as AgentModule from './agent.js'
 import type { SupabaseClientFactory } from './app.js'
 import { ciphertextToBytea } from './secretBox.js'
-import { chain, ORGANIZATION_ID, signAccessToken, startApp, USER_ID } from './testSupport.js'
+import { chain, DEPARTMENT_ID, ORGANIZATION_ID, signAccessToken, startApp, USER_ID } from './testSupport.js'
 
 const capturedProviderOptions: { apiKey: string; model: string; baseUrl?: string }[] = []
 
@@ -33,6 +33,7 @@ vi.mock('./agent.js', async (importOriginal) => {
 })
 
 const CONVERSATION_ID = '10000000-4000-4000-8000-000000000001'
+const MEDIA_ASSET_ID = '10000000-7000-4000-8000-000000000001'
 const PROVIDER_ID = '10000000-5000-4000-8000-000000000001'
 const TEST_SECRET_BOX = createSecretBox({ v1: Buffer.alloc(32, 7).toString('base64') }, 'v1')
 
@@ -83,11 +84,13 @@ function userClientForMessagesRoute(): SupabaseClient {
 function serviceClientForMessagesRoute(
   settingResult: { data: unknown; error: unknown },
   providerResult: { data: unknown; error: unknown } = { data: null, error: null },
+  mediaAssetRows: unknown[] = [],
 ): SupabaseClient {
   return {
     from: (table: string) => {
       if (table === 'platform_settings') return chain(settingResult)
       if (table === 'llm_provider_configurations') return chain(providerResult)
+      if (table === 'media_assets') return chain({ data: mediaAssetRows, error: null })
       if (table === 'audit_events') return { insert: async () => ({ error: null }) }
       throw new Error(`unexpected table in agent messages test (service client): ${table}`)
     },
@@ -108,13 +111,13 @@ function serviceClientForMessagesRoute(
   } as unknown as SupabaseClient
 }
 
-async function postMessage(clients: SupabaseClientFactory, content: string) {
+async function postMessage(clients: SupabaseClientFactory, content: string, mediaAssetIds: string[] = []) {
   const app = await startApp({ supabaseClients: clients })
   return app.inject({
     method: 'POST',
     url: `/v1/agent/conversations/${CONVERSATION_ID}/messages`,
     headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
-    payload: { content },
+    payload: { content, mediaAssetIds },
   })
 }
 
@@ -181,5 +184,33 @@ describe('POST /v1/agent/conversations/:id/messages without an agentResponder ov
     expect(capturedProviderOptions).toEqual([
       { apiKey: 'sk-configured-secret', model: 'configured-model', baseUrl: 'https://configured-provider.example.com/v1' },
     ])
+  })
+
+  // Org-level posting: conversationRow() traegt department_id null, genau der Fall, den
+  // assistent.vue seit dieser PR anbietet (der Anhang-Knopf haengt nur noch an der
+  // organizationId). Der Scope-Vergleich der Route ist ein Gleichheitsvergleich, null gegen null
+  // -- ein Anhang derselben Abteilungslosigkeit gehoert dazu, einer aus einer Abteilung nicht.
+  it('accepts a media attachment on an organization-level conversation', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => userClientForMessagesRoute(),
+      forService: () => serviceClientForMessagesRoute({ data: null, error: null }, { data: null, error: null }, [
+        { id: MEDIA_ASSET_ID, organization_id: ORGANIZATION_ID, department_id: null, upload_status: 'ready' },
+      ]),
+    }
+    const response = await postMessage(clients, UNMATCHED_QUESTION, [MEDIA_ASSET_ID])
+    expect(response.statusCode).toBe(201)
+    expect(response.json().messages.at(-2)).toMatchObject({ role: 'user', mediaAssetIds: [MEDIA_ASSET_ID] })
+  })
+
+  it('rejects a department-scoped attachment on an organization-level conversation', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => userClientForMessagesRoute(),
+      forService: () => serviceClientForMessagesRoute({ data: null, error: null }, { data: null, error: null }, [
+        { id: MEDIA_ASSET_ID, organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, upload_status: 'ready' },
+      ]),
+    }
+    const response = await postMessage(clients, UNMATCHED_QUESTION, [MEDIA_ASSET_ID])
+    expect(response.statusCode).toBe(422)
+    expect(response.json()).toMatchObject({ error: 'agent_media_not_ready_or_out_of_scope' })
   })
 })
