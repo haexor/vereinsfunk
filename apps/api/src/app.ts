@@ -75,7 +75,7 @@ export type { MediaUploadService, SupabaseClientFactory } from './routes/context
 // nach dist/server.js, dort zeigt ../assets auf das vom Dockerfile nach /app/assets kopierte
 // Verzeichnis -- unter `tsx watch src/server.ts` auf apps/api/assets. Beides trifft, ohne
 // vorauszusetzen, dass der Prozess in apps/api bzw. /app gestartet wurde.
-export const SAMPLE_PHOTO_URL = new URL('../assets/sample-photos/alejandro-stuardo-team-photo.jpg', import.meta.url)
+const SAMPLE_PHOTO_URL = new URL('../assets/sample-photos/alejandro-stuardo-team-photo.jpg', import.meta.url)
 
 // Injectable the same way orchestrator/uploads/roleProvider already are: routes that create
 // an organization or its profile need a real Postgres round-trip (RLS, the owner-limit
