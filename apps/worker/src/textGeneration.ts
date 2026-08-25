@@ -5,7 +5,7 @@ import type { WorkerEnvironment } from '@vereinsfunk/config'
 import { openProviderSecret } from './providerSecrets.js'
 import { WorkflowExecutionError } from './workflows.js'
 
-export type SessionRow = { id: string; organization_id: string; department_id: string; team_id: string | null; communication_goal: 'inform' | 'inspire' | 'thank' | 'invite' | 'recruit' | 'educate' | 'strengthen_community'; source_material: unknown; style_profile_snapshot: unknown; max_characters: number; temperature: number }
+export type SessionRow = { id: string; organization_id: string; department_id: string | null; team_id: string | null; communication_goal: 'inform' | 'inspire' | 'thank' | 'invite' | 'recruit' | 'educate' | 'strengthen_community'; source_material: unknown; style_profile_snapshot: unknown; max_characters: number; temperature: number }
 // provider_configuration_id ist ab Paket 046 fest zugewiesen (create_text_generation_session
 // weist die Zeile beim Anlegen einem bestimmten Provider zu, siehe Migration 2026081912) --
 // execute() unten laedt genau diesen statt "den gerade aktiven".
@@ -64,7 +64,7 @@ export class TextGenerationExecutor {
     if (!payload.candidateId) throw new WorkflowExecutionError('generation_candidate_not_found', false)
     if (!hasGenerationPurpose(payload)) throw new WorkflowExecutionError('invalid_generation_purpose', false)
     const session = await this.repository.loadSession(payload.entityId, payload.organizationId)
-    if (!session || session.department_id !== payload.departmentId) throw new WorkflowExecutionError('generation_session_not_found', false)
+    if (!session || (session.department_id ?? null) !== (payload.departmentId ?? null)) throw new WorkflowExecutionError('generation_session_not_found', false)
     const candidate = await this.repository.acquirePendingCandidate(payload.candidateId, session.id, session.organization_id)
     if (!candidate) return // duplicate delivery or a terminal candidate; never create a second one
     try {

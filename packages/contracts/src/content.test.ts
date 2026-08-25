@@ -4,9 +4,14 @@ import { department, org, team } from './testFixtures.js'
 
 describe('contracts', () => {
   it('accepts only small ID-based workflow payloads', () => {
-    const payload = { entityId: org, organizationId: org, departmentId: department, correlationId: team, sourceRevision: 1, purpose: 'render', idempotencyKey: 'render:1' }
+    const payload = { entityId: org, organizationId: org, departmentId: department, departmentConcurrencyKey: department, correlationId: team, sourceRevision: 1, purpose: 'render', idempotencyKey: 'render:1' }
     expect(WorkflowPayloadSchema.safeParse(payload).success).toBe(true)
     expect(WorkflowPayloadSchema.safeParse({ ...payload, caption: 'This must never reach Hatchet' }).success).toBe(false)
+  })
+  it('accepts an organization-level workflow payload (no departmentId, departmentConcurrencyKey="org")', () => {
+    const payload = { entityId: org, organizationId: org, departmentConcurrencyKey: 'org', correlationId: team, sourceRevision: 1, purpose: 'render', idempotencyKey: 'render:1' }
+    expect(WorkflowPayloadSchema.safeParse(payload).success).toBe(true)
+    expect(WorkflowPayloadSchema.safeParse({ ...payload, departmentConcurrencyKey: undefined }).success).toBe(false)
   })
 
   it('rejects an invalid tenant boundary', () => {

@@ -6,7 +6,7 @@ import { ContentGenerationError } from '@vereinsfunk/content-engine'
 import { WorkflowExecutionError } from './workflows.js'
 import { TextGenerationExecutor, type TextGenerationRepository } from './textGeneration.js'
 
-const payload: WorkflowPayload = { candidateId: '10000000-1300-4000-8000-000000000001', entityId: '10000000-0000-4000-8000-000000000001', organizationId: '10000000-1000-4000-8000-000000000001', departmentId: '10000000-1100-4000-8000-000000000001', correlationId: '10000000-1200-4000-8000-000000000001', sourceRevision: 1, purpose: 'initial', idempotencyKey: 'generate-text:test' }
+const payload: WorkflowPayload = { candidateId: '10000000-1300-4000-8000-000000000001', entityId: '10000000-0000-4000-8000-000000000001', organizationId: '10000000-1000-4000-8000-000000000001', departmentId: '10000000-1100-4000-8000-000000000001', departmentConcurrencyKey: '10000000-1100-4000-8000-000000000001', correlationId: '10000000-1200-4000-8000-000000000001', sourceRevision: 1, purpose: 'initial', idempotencyKey: 'generate-text:test' }
 const config = { SUPABASE_URL: 'https://db.example', SUPABASE_SERVICE_ROLE_KEY: 'service', DATABASE_URL: 'postgresql://postgres:secret@db.example:5432/postgres', HATCHET_CLIENT_TOKEN: 'token', SECRET_BOX_KEYS: JSON.stringify({ v1: Buffer.alloc(32, 1).toString('base64') }), SECRET_BOX_CURRENT_KEY_VERSION: 'v1' } as WorkerEnvironment
 const post = { verifiedFacts: ['topic: Passen'], missingFacts: [], headline: 'Passen', caption: 'Passen', shortCaption: 'Passen', callToAction: '', hashtags: [], altText: 'Passen', templateId: 'v1', safetyFlags: [], generatedClaims: [{ sourceId: 'fact:topic', text: 'topic: Passen' }], variants: [] }
 
@@ -44,6 +44,18 @@ describe('TextGenerationExecutor', () => {
     const repo = repository()
     const generator = { generateText: vi.fn().mockResolvedValue(post) }
     await new TextGenerationExecutor(config, repo, generator).execute(payload)
+    expect(repo.markReady).toHaveBeenCalledTimes(1)
+    expect(repo.markFailed).not.toHaveBeenCalled()
+  })
+  it('accepts an organization-level session (null departmentId on both session and payload)', async () => {
+    const repo = repository()
+    repo.loadSession = vi.fn().mockResolvedValue({ id: payload.entityId, organization_id: payload.organizationId, department_id: null, team_id: null, communication_goal: 'inform', source_material: { facts: { topic: 'Passen' }, observations: [], quotes: [], doNotMention: [] }, style_profile_snapshot: { name: 'Klar', description: 'klar', styleRules: { toneTags: ['klar'], catchphrases: [], examples: [], additionalInstructions: '' }, avoidRules: [], doRules: [] }, max_characters: 2200, temperature: 0.6 })
+    const generator = { generateText: vi.fn().mockResolvedValue(post) }
+    // departmentId absent (jsonb_strip_nulls strips it server-side), not just null -- the naive
+    // `session.department_id !== payload.departmentId` comparison this guards against would see
+    // `null !== undefined` and wrongly reject every organization-level delivery.
+    const orgLevelPayload: WorkflowPayload = { ...payload, departmentId: undefined, departmentConcurrencyKey: 'org' }
+    await new TextGenerationExecutor(config, repo, generator).execute(orgLevelPayload)
     expect(repo.markReady).toHaveBeenCalledTimes(1)
     expect(repo.markFailed).not.toHaveBeenCalled()
   })
