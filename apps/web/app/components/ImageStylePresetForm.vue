@@ -113,6 +113,17 @@ function logoAssetLabel(asset: AssetOption): string {
   return `Logo · ${asset.label}`
 }
 
+// Handgebaute Tabs statt eines neuen ui/tabs/-Primitivs: der einzige heute vendorte reka-ui-
+// Wrapper (ui/select/) existiert wegen echter Listbox-/Popover-Semantik -- ein Tab-Header ist
+// deutlich einfacher und rechtfertigt die zusaetzliche Abstraktion hier nicht.
+const TABS = [
+  { value: 'frame', label: 'Rahmen' },
+  { value: 'logo', label: 'Logo' },
+  { value: 'filter', label: 'Filter' },
+] as const
+type PresetTab = (typeof TABS)[number]['value']
+const activeTab = ref<PresetTab>('frame')
+
 // Farbe des parametrischen Rahmens: Vereinsfarbe/Akzentfarbe als Rollen (folgen Markenänderungen
 // automatisch) oder eine fest eingetragene Hex-Farbe -- spiegelt die CHECK-Constraint der Migration
 // (frame_color ~ Hex oder in ('primary','accent')).
@@ -213,8 +224,22 @@ const isValid = computed(() => {
       />
     </label>
 
-    <div class="mt-5 border-t border-[#e9ebe4] pt-4">
-      <p class="mb-2 text-xs font-semibold text-[#5c655f]">Rahmen</p>
+    <div class="mt-5 flex gap-1 border-t border-[#e9ebe4] pt-4" role="tablist">
+      <button
+        v-for="tab in TABS"
+        :key="tab.value"
+        type="button"
+        role="tab"
+        :aria-selected="activeTab === tab.value"
+        class="focus-ring rounded-lg px-3 py-1.5 text-[11px] font-semibold"
+        :class="activeTab === tab.value ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'"
+        @click="activeTab = tab.value"
+      >
+        {{ tab.label }}
+      </button>
+    </div>
+
+    <div v-show="activeTab === 'frame'" class="mt-4">
       <div class="flex flex-wrap gap-2">
         <button
           type="button"
@@ -366,7 +391,7 @@ const isValid = computed(() => {
       </div>
     </div>
 
-    <div class="mt-5 border-t border-[#e9ebe4] pt-4">
+    <div v-show="activeTab === 'logo'" class="mt-4">
       <label class="flex items-center gap-2 text-xs font-semibold text-[#5c655f]">
         <input
           :checked="draft.logoEnabled"
@@ -437,8 +462,7 @@ const isValid = computed(() => {
       </div>
     </div>
 
-    <div class="mt-5 border-t border-[#e9ebe4] pt-4">
-      <p class="mb-2 text-xs font-semibold text-[#5c655f]">Filter</p>
+    <div v-show="activeTab === 'filter'" class="mt-4">
       <div class="grid grid-cols-2 gap-2 sm:grid-cols-3">
         <button
           v-for="option in FILTER_OPTIONS"

@@ -6,6 +6,8 @@ settings:
 
 overrides:
   uuid@<11.1.1: ^11.1.1
+  fabric>canvas: '-'
+  fabric>jsdom: '-'
 
 importers:
 
@@ -217,6 +219,9 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
+      fabric:
+        specifier: ^7.4.0
+        version: 7.4.0
       markdown-it:
         specifier: ^15.0.0
         version: 15.0.0
@@ -3991,6 +3996,10 @@ packages:
 
   exsolve@1.1.1:
     resolution: {integrity: sha512-9U/jZUgjnSGyntRr6y5Muu1MJcwFl6kPu7k8qLF0IMNfLqvw0NZ4nnVDq0RVoZ0RvCyumib4Ez3KYrVfilrw+g==}
+
+  fabric@7.4.0:
+    resolution: {integrity: sha512-NalYDc3eifTl1C33zryQwpH6+XA/2ClxQrH9vkASkZw3tbkRmorpikhYMmxhUTmi7O3e9ODz0vOT8qfaCh9IVA==}
+    engines: {node: '>=20.0.0'}
 
   fast-csv@4.3.6:
     resolution: {integrity: sha512-2RNSpuwwsJGP0frGsOmTb9oUF+VkFSM4SyLTDgwf2ciHWTarN0lQTC+F2f/t5J9QjW+c65VFIAAu85GsvMIusw==}
@@ -10528,6 +10537,8 @@ snapshots:
   expect-type@1.4.0: {}
 
   exsolve@1.1.1: {}
+
+  fabric@7.4.0: {}
 
   fast-csv@4.3.6:
     dependencies:

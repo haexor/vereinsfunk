@@ -19,6 +19,8 @@ import {
 } from '@vereinsfunk/publishing'
 import Fastify, { LogController, type FastifyInstance, type FastifyServerOptions } from 'fastify'
 import { randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
 import { z } from 'zod'
 import { byteaToBuffer, createSecretBoxFromEnvironment, EmbeddedProviderSecretSchema, unwrapEmbeddedSecret } from './secretBox.js'
 import { LocalAgentResponder, OpenAiResponsesAgentResponder, type AgentResponder } from './agent.js'
@@ -95,6 +97,9 @@ export interface BuildAppOptions {
   // G'MIC ist ein Prozess-Provider und wird deshalb wie Upload-/Publishing-Provider injiziert.
   // Unit- und Route-Tests brauchen so nie ein natives Binary im Testprozess.
   imageEffects?: ImageEffectProvider
+  // Bildstil-Vorschau (POST /v1/image-style-presets/preview): Ueberschreibung fuer Tests, damit sie
+  // einen kleinen synthetischen Puffer statt echter Datei-I/O verwenden koennen.
+  samplePhotoLoader?: () => Promise<Buffer>
   // Paket A des Agenten-Arbeitsplatzes: Tests ersetzen den Provider vollstaendig und brauchen
   // daher weder einen API-Key noch einen ausgehenden HTTP-Aufruf.
   agentResponder?: AgentResponder
@@ -154,6 +159,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     (environment.IMAGE_EFFECTS_PROVIDER === 'gmic'
       ? new GmicCliImageEffectProvider({ binary: environment.GMIC_BINARY })
       : undefined)
+  const samplePhotoLoader =
+    options.samplePhotoLoader ??
+    (() => readFile(path.join(process.cwd(), 'assets', 'sample-photos', 'team-photo.jpg')))
   const platformAdminProvider =
     options.platformAdminProvider ??
     new SupabasePlatformAdminProvider(() => supabaseClients.forService())
@@ -305,6 +313,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     platformAdminProvider,
     emailSender,
     ...(imageEffects ? { imageEffects } : {}),
+    samplePhotoLoader,
     getMetaOAuthClient,
     twitterOAuthClient,
     linkedinOAuthClient,

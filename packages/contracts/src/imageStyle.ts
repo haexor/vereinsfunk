@@ -140,6 +140,30 @@ export const UpdateImageStylePresetRequestSchema = ImageStylePresetFieldsSchema.
   isActive: z.boolean().optional(),
 }).superRefine(checkImageStylePresetFields)
 
+// Bildstil-Nachbesserung: zustandslose Vorschau eines noch nicht gespeicherten Entwurfs (Bildstil,
+// PR fabric.js-Editor). name ist hier -- anders als bei Create/Update -- optional: die Vorschau muss
+// schon fuer einen frisch angelegten, noch namenlosen Entwurf funktionieren (siehe
+// emptyImageStylePresetDraft() in apps/web/app/utils/imageStylePresetDraft.ts).
+export const PreviewImageStylePresetRequestSchema = ImageStylePresetFieldsSchema.extend({
+  name: z.string().trim().max(80).optional(),
+  organizationId: UuidSchema,
+  departmentId: UuidSchema.optional(),
+  teamId: UuidSchema.optional(),
+}).superRefine((preset, context) => {
+  checkImageStylePresetFields({ ...preset, name: preset.name ?? '' }, context)
+  if (preset.teamId !== undefined && preset.departmentId === undefined) {
+    context.addIssue({ code: 'custom', path: ['teamId'], message: 'teamId requires departmentId' })
+  }
+})
+
+export const PreviewImageStylePresetResponseSchema = z.object({
+  imageBase64: z.string().min(1),
+  contentType: z.enum(['image/png', 'image/jpeg']),
+  width: z.int(),
+  height: z.int(),
+  filterProvider: z.string(),
+})
+
 // Plan 045, PR 2: POST /v1/post-media/:postMediaId/style-render. Antwort trägt objectPath
 // zusätzlich zur signedUrl mit -- dieselbe Signatur wie marke.vue/bildstil.vue sie sich später
 // selbst über supabase.storage...createSignedUrl(objectPath, 600) neu holen können, ohne die
@@ -160,3 +184,5 @@ export type CreateImageStylePresetRequest = z.infer<typeof CreateImageStylePrese
 export type UpdateImageStylePresetRequest = z.infer<typeof UpdateImageStylePresetRequestSchema>
 export type ApplyImageStyleRenderRequest = z.infer<typeof ApplyImageStyleRenderRequestSchema>
 export type ApplyImageStyleRenderResponse = z.infer<typeof ApplyImageStyleRenderResponseSchema>
+export type PreviewImageStylePresetRequest = z.infer<typeof PreviewImageStylePresetRequestSchema>
+export type PreviewImageStylePresetResponse = z.infer<typeof PreviewImageStylePresetResponseSchema>

@@ -40,6 +40,9 @@ COPY --from=build --chown=node:node /out ./
 # Route-Registrierung) braucht die Migrationsdateien selbst zur Laufzeit, nicht nur zur Build-Zeit
 # -- `pnpm deploy` oben kopiert nur Node-Pakete, keine losen Repo-Ordner wie supabase/migrations.
 COPY --chown=node:node supabase/migrations ./supabase/migrations
+# Bildstil-Vorschau (POST /v1/image-style-presets/preview) rendert gegen ein festes Beispielfoto --
+# liegt in apps/api statt in apps/web/public, weil dieser Container eigenstaendig deploybar bleibt.
+COPY --chown=node:node apps/api/assets ./assets
 USER node
 EXPOSE 4201
 # Same probe as the api service in docker-compose.yml. bookworm-slim ships neither curl nor wget,

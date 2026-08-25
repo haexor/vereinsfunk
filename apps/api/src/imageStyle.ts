@@ -12,6 +12,16 @@ export interface BrandColors {
   accentColor: string
 }
 
+// Eigener Fehlertyp statt einer bloßen Error: apps/api/src/app.ts verallgemeinert jeden
+// unbehandelten 5xx bewusst zu "internal_error" (error.message kann Interna tragen) -- ohne diesen
+// Typ könnten Aufrufer (z.B. der neue Preview-Endpunkt) "G'MIC fehlt in dieser Umgebung" nicht von
+// einem echten Serverfehler unterscheiden und also keine erklärende Meldung zeigen.
+export class GmicNotEnabledError extends Error {
+  constructor() {
+    super("G'MIC image effects are not enabled")
+  }
+}
+
 export interface ImageStyleRenderInput {
   sourceBuffer: Buffer
   preset: Pick<
@@ -201,7 +211,7 @@ async function applyFilter(
       return { buffer: await applyConfetti(buffer), provider: 'sharp' }
     case 'gmic_vintage':
     case 'gmic_poster':
-      throw new Error("G'MIC image effects are not enabled")
+      throw new GmicNotEnabledError()
   }
 }
 
