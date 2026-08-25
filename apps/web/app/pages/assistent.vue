@@ -12,6 +12,7 @@ import {
 import { ArrowUp, Bot, CalendarDays, CheckCircle2, FileText, LoaderCircle, Send, Sparkles, UserPlus, X } from '@lucide/vue'
 import { z } from 'zod'
 import { ApiRequestError } from '../utils/apiClient'
+import { toAgentScopeRequest } from '../utils/agentScope'
 
 const scope = await useScope()
 const api = useApiClient()
@@ -30,7 +31,7 @@ let sendRun = 0
 
 const scopeInput = computed(() => {
   if (!scope.value) return null
-  return { organizationId: scope.value.organizationId, departmentId: scope.value.departmentId }
+  return toAgentScopeRequest(scope.value)
 })
 const scopeLabel = computed(() => scope.value?.departmentId ? 'deiner Abteilung' : 'deinem Verein')
 const scopeKey = computed(() => scopeInput.value ? `${scopeInput.value.organizationId}:${scopeInput.value.departmentId ?? ''}` : '')
