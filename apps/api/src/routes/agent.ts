@@ -571,7 +571,7 @@ async function insertActionProposal(
     tool_name: normalizedInput.toolName,
     scope_snapshot: scope,
     input_snapshot: serializedInput,
-    input_hash: hashAgentProposalInput(serializedInput),
+    input_hash: await hashAgentProposalInput(serializedInput),
     risk_class: normalizedInput.toolName === 'create_invitation' || normalizedInput.toolName === 'execute_publication' ? 'external' : 'write',
     expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
   }).select('id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot, input_hash, target_refs, status, expires_at, confirmed_at, created_at, updated_at').single()
@@ -762,7 +762,7 @@ export function registerAgentRoutes(
       ? CreateInvitationRequestSchema.parse({ ...(proposal.input as Record<string, unknown>), ...scope })
       : null
     const parsedInput = eventInput ?? invitationInput ?? approvalInput ?? contentBriefInput ?? textGenerationInput ?? textCandidateInput ?? scheduleInput ?? publicationExecutionInput
-    if (!parsedInput || proposal.inputHash !== hashAgentProposalInput(proposal.input)) return reply.code(409).send({ error: 'proposal_input_changed', correlationId: request.id })
+    if (!parsedInput || proposal.inputHash !== (await hashAgentProposalInput(proposal.input))) return reply.code(409).send({ error: 'proposal_input_changed', correlationId: request.id })
     if (invitationInput) {
       const roles = await roleProvider.rolesForScope(request.auth!, toPermissionScope(scope.organizationId, scope.departmentId ?? null, scope.teamId ?? null))
       if (!canAssignRole(roles, invitationInput.role)) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
