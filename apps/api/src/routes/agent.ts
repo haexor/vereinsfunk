@@ -72,7 +72,8 @@ const MessageMediaReferenceRowSchema = z.object({
 const MediaAssetScopeRowSchema = z.object({
   id: UuidSchema,
   organization_id: UuidSchema,
-  department_id: UuidSchema,
+  // null = Anhang auf Vereinsebene, genau wie die Unterhaltung selbst keine Abteilung tragen muss.
+  department_id: UuidSchema.nullable(),
   upload_status: z.string(),
 })
 const PersistedMessagesRowSchema = z.object({
@@ -951,11 +952,15 @@ export function registerAgentRoutes(
     if (input.mediaAssetIds.length > 0) {
       // The responder below only gets textual messages. Attachments are private references for
       // the user interface, never multimodal context for the model.
-      if (!conversation.departmentId) return reply.code(422).send({ error: 'agent_media_requires_department', correlationId: request.id })
+      // Eine Unterhaltung auf Vereinsebene traegt departmentId null -- der Scope-Vergleich unten
+      // deckt das mit ab, es braucht keine Abteilung fuer einen Anhang. AgentScopeSchema macht
+      // departmentId nullable UND optional, deshalb wird auf null normalisiert statt direkt
+      // verglichen: sonst entschiede ein `null !== undefined` den Vereinsfall danach, ob die Quelle
+      // den Schluessel weglaesst oder auf null setzt.
       const assets = await service.from('media_assets').select('id, organization_id, department_id, upload_status').in('id', input.mediaAssetIds)
       if (assets.error) throw assets.error
       const assetRows = z.array(MediaAssetScopeRowSchema).parse(assets.data)
-      if (assetRows.length !== input.mediaAssetIds.length || assetRows.some((asset) => asset.organization_id !== conversation.organizationId || asset.department_id !== conversation.departmentId || asset.upload_status !== 'ready')) {
+      if (assetRows.length !== input.mediaAssetIds.length || assetRows.some((asset) => asset.organization_id !== conversation.organizationId || asset.department_id !== (conversation.departmentId ?? null) || asset.upload_status !== 'ready')) {
         return reply.code(422).send({ error: 'agent_media_not_ready_or_out_of_scope', correlationId: request.id })
       }
     }

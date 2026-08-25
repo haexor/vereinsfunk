@@ -54,7 +54,8 @@ describe('TextGenerationExecutor', () => {
     // departmentId absent (jsonb_strip_nulls strips it server-side), not just null -- the naive
     // `session.department_id !== payload.departmentId` comparison this guards against would see
     // `null !== undefined` and wrongly reject every organization-level delivery.
-    const { departmentId: _departmentId, ...orgLevelPayload } = payload
+    const orgLevelPayload: Record<string, unknown> = { ...payload }
+    delete orgLevelPayload.departmentId
     await new TextGenerationExecutor(config, repo, generator).execute(orgLevelPayload as WorkflowPayload)
     expect(repo.markReady).toHaveBeenCalledTimes(1)
     expect(repo.markFailed).not.toHaveBeenCalled()
