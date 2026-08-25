@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(17);
+select plan(21);
 
 set local role postgres;
 
@@ -133,6 +133,48 @@ select set_config('request.jwt.claim.sub', '62000000-0000-4000-8000-000000000006
 select is(
   (select count(*)::integer from public.posts where id = '62000000-2000-4000-8000-000000000003'),
   1, 'the new team member still sees their team''s draft via has_team_membership, without a department membership'
+);
+
+-- 18-21: Beitrag auf Vereinsebene (Migration 2026082504/2026082506). posts_select/
+-- post_versions_select haben ihren Vereinszweig in 2026082504 bekommen, die beiden Tabellen
+-- daneben nicht: post_status_events (Statushistorie) und post_generation_provenance (Herkunft der
+-- generierten Version) haengen weiter allein an der Abteilung. Fuer department_id null ist
+-- authz.has_department_permission(null, ...)/authz.is_department_member(null) false -- beide
+-- Tabellen waren fuer einen Vereinsbeitrag also von NIEMANDEM lesbar.
+set local role postgres;
+-- Der posts_status_history_insert-Trigger schreibt die erste Statuszeile selbst.
+insert into public.posts (id, organization_id, department_id, team_id, status, created_by) values
+  ('62000000-2000-4000-8000-000000000005', '62000000-1000-4000-8000-000000000001', null, null, 'draft', '62000000-0000-4000-8000-000000000001');
+insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type, created_by_user_id) values
+  ('62000000-3000-4000-8000-000000000005', '62000000-1000-4000-8000-000000000001', '62000000-2000-4000-8000-000000000005', 1, '{}', '{}', 'user', '62000000-0000-4000-8000-000000000001');
+insert into public.llm_provider_configurations (id, label, protocol, base_url, model) values
+  ('62000000-4000-4000-8000-000000000001', 'PGTAP Sichtbarkeit Provider', 'openai', 'https://provider.example.test', 'smoke-test-model');
+insert into public.post_generation_provenance (organization_id, post_version_id, style_profile_snapshot, prompt_template_version, provider_model_id, provider_configuration_id, provider_parameter_hash, input_hash) values
+  ('62000000-1000-4000-8000-000000000001', '62000000-3000-4000-8000-000000000005', '{}', 'v1', 'smoke-test-model', '62000000-4000-4000-8000-000000000001', repeat('e', 64), repeat('f', 64));
+
+set local role authenticated;
+-- Statushistorie: analytics.view auf Vereinsebene, dieselbe Stufe wie der Abteilungszweig daneben.
+select set_config('request.jwt.claim.sub', '62000000-0000-4000-8000-000000000001', true);
+select is(
+  (select count(*)::integer from public.post_status_events where post_id = '62000000-2000-4000-8000-000000000005'),
+  1, 'an organization owner reads the status history of a post without a department'
+);
+-- Eine Abteilungs-viewer-Rolle traegt analytics.view nur in ihrer Abteilung, nicht im Verein.
+select set_config('request.jwt.claim.sub', '62000000-0000-4000-8000-000000000003', true);
+select is(
+  (select count(*)::integer from public.post_status_events where post_id = '62000000-2000-4000-8000-000000000005'),
+  0, 'a department viewer without an organization role reads no organization-level status history'
+);
+-- Herkunft: derselbe Zweig wie posts_select -- jedes Vereinsmitglied, auch ohne Organisationsrolle
+-- und ohne die (nicht vorhandene) Abteilung des Beitrags.
+select is(
+  (select count(*)::integer from public.post_generation_provenance where post_version_id = '62000000-3000-4000-8000-000000000005'),
+  1, 'any club member reads the provenance of an organization-level draft, mirroring posts_select'
+);
+select set_config('request.jwt.claim.sub', '62000000-0000-4000-8000-000000000005', true);
+select is(
+  (select count(*)::integer from public.post_generation_provenance where post_version_id = '62000000-3000-4000-8000-000000000005'),
+  0, 'negative tenant isolation: an outsider reads no organization-level provenance'
 );
 
 select * from finish();

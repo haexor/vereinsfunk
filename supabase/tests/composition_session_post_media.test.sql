@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(21);
+select plan(25);
 
 set local role postgres;
 
@@ -8,6 +8,8 @@ insert into auth.users (instance_id, id, aud, role, email, encrypted_password, r
 values
   ('00000000-0000-0000-0000-000000000000', '46000000-0000-4000-8000-000000000001', 'authenticated', 'authenticated', 'admin@pgtap-session-media.local', '', '{}', '{}', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '46000000-0000-4000-8000-000000000002', 'authenticated', 'authenticated', 'viewer@pgtap-session-media.local', '', '{}', '{}', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '46000000-0000-4000-8000-000000000003', 'authenticated', 'authenticated', 'vereinsinhaberin@pgtap-session-media.local', '', '{}', '{}', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '46000000-0000-4000-8000-000000000004', 'authenticated', 'authenticated', 'social-manager@pgtap-session-media.local', '', '{}', '{}', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '46000000-0000-4000-8000-000000000099', 'authenticated', 'authenticated', 'fremdverein@pgtap-session-media.local', '', '{}', '{}', now(), now());
 
 insert into public.organizations (id, name, slug) values
@@ -20,6 +22,11 @@ insert into public.departments (id, organization_id, name, slug) values
 insert into public.department_memberships (organization_id, department_id, user_id, role) values
   ('46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', '46000000-0000-4000-8000-000000000001', 'department_admin'),
   ('46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', '46000000-0000-4000-8000-000000000002', 'viewer');
+-- Beide tragen post.edit ausschliesslich ueber die Vereinsebene, ohne jede Abteilungsmitgliedschaft
+-- -- genau die Konstellation eines Beitrags ohne gewaehlte Abteilung (Block 15 unten).
+insert into public.organization_memberships (organization_id, user_id, role) values
+  ('46000000-1000-4000-8000-000000000001', '46000000-0000-4000-8000-000000000003', 'organization_owner'),
+  ('46000000-1000-4000-8000-000000000001', '46000000-0000-4000-8000-000000000004', 'social_manager');
 
 insert into public.media_assets (id, organization_id, department_id, bucket_id, object_path, mime_type, byte_size, scan_status, upload_status, structural_validation_status, people_reviewed_at, created_by) values
   ('46000000-2000-4000-8000-000000000001', '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', 'raw-media', 'organizations/x/departments/y/assets/1/a.jpg', 'image/jpeg', 1000, 'clean', 'ready', 'valid', now(), '46000000-0000-4000-8000-000000000001'),
@@ -203,6 +210,42 @@ insert into public.composition_session_post_media (organization_id, composition_
 select is((select count(*)::integer from public.composition_session_post_media where composition_session_id = '46000000-3000-4000-8000-000000000002'), 1, 'the attachment row still exists before the session is deleted');
 delete from public.composition_sessions where id = '46000000-3000-4000-8000-000000000002';
 select is((select count(*)::integer from public.composition_session_post_media where composition_session_id = '46000000-3000-4000-8000-000000000002'), 0, 'deleting the composition session cascades to its photo attachment row');
+
+-- 15: Anhaenge auf Vereinsebene (Migration 2026082504/2026082506). Sitzung und Asset tragen beide
+-- department_id null. Die Schreib-Policy verlangt "Asset und Sitzung in derselben Abteilung" --
+-- als blosses `=` ergibt das fuer zwei NULLs NULL und sperrt, deshalb `is not distinct from`. Der
+-- Berechtigungszweig kommt zusaetzlich von der Vereinsebene statt von der Abteilung.
+set local role postgres;
+insert into public.media_assets (id, organization_id, department_id, bucket_id, object_path, mime_type, byte_size, scan_status, upload_status, structural_validation_status, people_reviewed_at, created_by) values
+  ('46000000-2000-4000-8000-000000000004', '46000000-1000-4000-8000-000000000001', null, 'raw-media', 'organizations/x/assets/4/d.jpg', 'image/jpeg', 1000, 'clean', 'ready', 'valid', now(), '46000000-0000-4000-8000-000000000003');
+insert into public.composition_sessions (id, organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values
+  ('46000000-3000-4000-8000-000000000003', '46000000-1000-4000-8000-000000000001', null, 'inform', '["text_post"]', '{"facts":{"title":"Vereinsfest"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('3', 64), '46000000-0000-4000-8000-000000000003');
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '46000000-0000-4000-8000-000000000003', true);
+select lives_ok(
+  $$insert into public.composition_session_post_media (organization_id, composition_session_id, media_asset_id, created_by) values ('46000000-1000-4000-8000-000000000001', '46000000-3000-4000-8000-000000000003', '46000000-2000-4000-8000-000000000004', '46000000-0000-4000-8000-000000000003')$$,
+  'attaching an organization-level photo to an organization-level session succeeds'
+);
+-- Der NULL-sichere Vergleich darf keine Wildcard werden: ein Abteilungsfoto bleibt auch in einer
+-- Sitzung ohne Abteilung ausgeschlossen (Gegenstueck zu Fall 2 oben).
+select throws_ok(
+  $$insert into public.composition_session_post_media (organization_id, composition_session_id, media_asset_id, position, created_by) values ('46000000-1000-4000-8000-000000000001', '46000000-3000-4000-8000-000000000003', '46000000-2000-4000-8000-000000000001', 1, '46000000-0000-4000-8000-000000000003')$$,
+  '42501', null, 'a department-scoped asset is still rejected in an organization-level session'
+);
+-- Sichtbarkeit kommt hier NICHT ueber created_by: Nutzer 4 hat die Sitzung nicht angelegt und
+-- keinerlei Abteilungsmitgliedschaft, nur post.edit auf Vereinsebene.
+select set_config('request.jwt.claim.sub', '46000000-0000-4000-8000-000000000004', true);
+select is(
+  (select count(*)::integer from public.composition_session_post_media where composition_session_id = '46000000-3000-4000-8000-000000000003'),
+  1, 'another member with organization-level post.edit sees the attachment of an organization-level session'
+);
+-- Und der Fremdverein weiterhin nicht.
+select set_config('request.jwt.claim.sub', '46000000-0000-4000-8000-000000000099', true);
+select is(
+  (select count(*)::integer from public.composition_session_post_media where composition_session_id = '46000000-3000-4000-8000-000000000003'),
+  0, 'negative tenant isolation: a foreign organization member sees no organization-level attachment'
+);
 
 select * from finish();
 rollback;
