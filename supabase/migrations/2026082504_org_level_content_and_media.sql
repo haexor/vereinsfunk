@@ -142,9 +142,23 @@ alter policy storage_read_raw_media on storage.objects using (
 --    Postgres re-validates CHECK constraints on every UPDATE of a row, not just when the checked
 --    column changes, so a still-pending row would fail its next claim/release update once the
 --    function is replaced. department_id was NOT NULL on every affected table until this same
---    migration, so every existing row's real department_id is exactly its concurrency key.
-update public.workflow_outbox
-  set payload = payload || jsonb_build_object('departmentConcurrencyKey', department_id::text)
+--    migration, so every existing row's real department_id is its concurrency key -- except
+--    analyze-website-branding, where department_id always carries the organization's technical
+--    carrier department, even for an org-level job (see start_brand_website_analysis below). The
+--    true org/department split for those rows lives on brand_website_analysis_jobs.department_id,
+--    joined via entity_id = job id.
+update public.workflow_outbox wo
+  set payload = payload || jsonb_build_object(
+    'departmentConcurrencyKey',
+    case
+      when wo.workflow_name = 'analyze-website-branding' then coalesce(
+        (select case when job.department_id is null then 'org' else job.department_id::text end
+           from public.brand_website_analysis_jobs job where job.id = wo.entity_id),
+        coalesce(wo.department_id::text, 'org')
+      )
+      else coalesce(wo.department_id::text, 'org')
+    end
+  )
   where not (payload ? 'departmentConcurrencyKey');
 
 -- 4. workflow_outbox payload contract: departmentId becomes optional, and a new always-present
