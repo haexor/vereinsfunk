@@ -20,7 +20,6 @@ import {
 import Fastify, { LogController, type FastifyInstance, type FastifyServerOptions } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
-import path from 'node:path'
 import { z } from 'zod'
 import { byteaToBuffer, createSecretBoxFromEnvironment, EmbeddedProviderSecretSchema, unwrapEmbeddedSecret } from './secretBox.js'
 import { LocalAgentResponder, OpenAiResponsesAgentResponder, type AgentResponder } from './agent.js'
@@ -71,6 +70,12 @@ import type {
 } from './routes/context.js'
 
 export type { MediaUploadService, SupabaseClientFactory } from './routes/context.js'
+
+// Relativ zur eigenen Moduldatei aufgeloest, nicht zu process.cwd(): tsup buendelt src/server.ts
+// nach dist/server.js, dort zeigt ../assets auf das vom Dockerfile nach /app/assets kopierte
+// Verzeichnis -- unter `tsx watch src/server.ts` auf apps/api/assets. Beides trifft, ohne
+// vorauszusetzen, dass der Prozess in apps/api bzw. /app gestartet wurde.
+const SAMPLE_PHOTO_URL = new URL('../assets/sample-photos/alejandro-stuardo-team-photo.jpg', import.meta.url)
 
 // Injectable the same way orchestrator/uploads/roleProvider already are: routes that create
 // an organization or its profile need a real Postgres round-trip (RLS, the owner-limit
@@ -159,10 +164,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     (environment.IMAGE_EFFECTS_PROVIDER === 'gmic'
       ? new GmicCliImageEffectProvider({ binary: environment.GMIC_BINARY })
       : undefined)
-  const samplePhotoLoader =
-    options.samplePhotoLoader ??
-    (() =>
-      readFile(path.join(process.cwd(), 'assets', 'sample-photos', 'alejandro-stuardo-team-photo.jpg')))
+  const samplePhotoLoader = options.samplePhotoLoader ?? (() => readFile(SAMPLE_PHOTO_URL))
   const platformAdminProvider =
     options.platformAdminProvider ??
     new SupabasePlatformAdminProvider(() => supabaseClients.forService())
