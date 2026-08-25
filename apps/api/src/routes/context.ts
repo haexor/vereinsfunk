@@ -59,6 +59,11 @@ export interface ApiRouteContext extends ApiRouteGuards {
   platformAdminProvider: PlatformAdminProvider
   emailSender: EmailSender
   imageEffects?: ImageEffectProvider
+  // Bildstil-Vorschau (POST /v1/image-style-presets/preview) rendert immer gegen dasselbe
+  // Beispielfoto -- anders als imageEffects (echt fehlend im 'sharp'-Modus) hat das immer einen
+  // echten Default (buildApp), daher hier nicht optional. Tests injizieren einen synthetischen
+  // Puffer statt echter Datei-I/O.
+  samplePhotoLoader: () => Promise<Buffer>
   getMetaOAuthClient(): Promise<MetaOAuthClient>
   // Paket 045: Twitter/LinkedIn haben strukturell andere OAuth-Flows als der gemeinsame
   // Meta-Adapter (PKCE bei Twitter, Organisations-Listing bei LinkedIn) -- eigene Client-Felder statt

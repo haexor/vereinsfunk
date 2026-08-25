@@ -20,7 +20,8 @@ begin;
 
 -- 1. Nullable columns -------------------------------------------------------
 alter table public.composition_sessions alter column department_id drop not null;
-alter table public.composition_sessions add constraint composition_sessions_team_requires_department check (team_id is null or department_id is not null);
+alter table public.composition_sessions add constraint composition_sessions_team_requires_department check (team_id is null or department_id is not null) not valid;
+alter table public.composition_sessions validate constraint composition_sessions_team_requires_department;
 
 alter table public.text_workshop_drafts alter column department_id drop not null;
 -- already carries check (team_id is null or department_id is not null), 2026081703.
@@ -29,7 +30,8 @@ alter table public.media_assets alter column department_id drop not null;
 -- no team_id column on media_assets, nothing else to guard.
 
 alter table public.posts alter column department_id drop not null;
-alter table public.posts add constraint posts_team_requires_department check (team_id is null or department_id is not null);
+alter table public.posts add constraint posts_team_requires_department check (team_id is null or department_id is not null) not valid;
+alter table public.posts validate constraint posts_team_requires_department;
 
 alter table public.post_status_events alter column department_id drop not null;
 -- trigger-populated only from posts, which now enforces the team/department check itself.
@@ -135,7 +137,17 @@ alter policy storage_read_raw_media on storage.objects using (
   end
 );
 
--- 3. workflow_outbox payload contract: departmentId becomes optional, and a new always-present
+-- 3. Backfill: every pre-existing workflow_outbox row was written before departmentConcurrencyKey
+--    existed, so its payload lacks the key the new CHECK constraint below is about to require.
+--    Postgres re-validates CHECK constraints on every UPDATE of a row, not just when the checked
+--    column changes, so a still-pending row would fail its next claim/release update once the
+--    function is replaced. department_id was NOT NULL on every affected table until this same
+--    migration, so every existing row's real department_id is exactly its concurrency key.
+update public.workflow_outbox
+  set payload = payload || jsonb_build_object('departmentConcurrencyKey', department_id::text)
+  where not (payload ? 'departmentConcurrencyKey');
+
+-- 4. workflow_outbox payload contract: departmentId becomes optional, and a new always-present
 --    departmentConcurrencyKey is added to the allowed/required key set.
 create or replace function public.is_id_only_workflow_payload(value jsonb)
 returns boolean language sql immutable set search_path = public, pg_temp as $$
@@ -160,7 +172,7 @@ returns boolean language sql immutable set search_path = public, pg_temp as $$
     and jsonb_typeof(value->'idempotencyKey') = 'string' and char_length(value->>'idempotencyKey') between 1 and 240;
 $$;
 
--- 4. create_text_generation_session: same signature (p_department_id was already nullable at the
+-- 5. create_text_generation_session: same signature (p_department_id was already nullable at the
 --    SQL level), body now stamps departmentConcurrencyKey on every workflow_outbox insert.
 create or replace function public.create_text_generation_session(
   p_organization_id uuid, p_department_id uuid, p_team_id uuid,
@@ -274,9 +286,11 @@ begin
 end;
 $$;
 
--- 5. start_brand_website_analysis (Paket 048/049): carrier_department_id is never null in this
---    function -- add departmentConcurrencyKey to satisfy the new mandatory payload key, no
---    behavioural change (it's always the real department's uuid, never 'org').
+-- 6. start_brand_website_analysis (Paket 048/049): department_id keeps carrying the organization's
+--    technical carrier department for an org-level job (pre-existing behaviour, see
+--    brand_website_analysis.test.sql). departmentConcurrencyKey is independent of that carrier --
+--    'org' for an org-level job, the real department id otherwise -- so an org-level analysis gets
+--    its own concurrency lane instead of silently sharing a real department's.
 create or replace function public.start_brand_website_analysis(
   p_organization_id uuid, p_website_url text, p_requested_by uuid, p_department_id uuid default null
 ) returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
@@ -344,7 +358,7 @@ begin
     p_organization_id, carrier_department_id, 'analyze-website-branding', job_row.id, job_row.revision, 'default', v_correlation_id,
     jsonb_build_object(
       'entityId', job_row.id, 'organizationId', p_organization_id, 'departmentId', carrier_department_id,
-      'departmentConcurrencyKey', carrier_department_id::text,
+      'departmentConcurrencyKey', coalesce(p_department_id::text, 'org'),
       'correlationId', v_correlation_id, 'sourceRevision', job_row.revision, 'purpose', 'default',
       'idempotencyKey', job_row.id::text || ':' || job_row.revision::text
     )
@@ -353,7 +367,7 @@ begin
 end;
 $$;
 
--- 6. schedule_publication / request_approval: add an org-fallback branch to the department
+-- 7. schedule_publication / request_approval: add an org-fallback branch to the department
 --    permission gate. Channel-scope matching, quota-row matching and the policy_settings lookup
 --    (request_approval) already degrade correctly on a null post.department_id -- confirmed by
 --    reading each site, no change needed there.
@@ -667,7 +681,7 @@ begin
 end;
 $$;
 
--- 7. confirm_media_people_review: add the same org-fallback branch as media_assets_select/_insert above.
+-- 8. confirm_media_people_review: add the same org-fallback branch as media_assets_select/_insert above.
 create or replace function public.confirm_media_people_review(
   target_asset_id uuid, faces_present boolean
 ) returns public.media_assets

@@ -3,8 +3,11 @@ import {
   ApplyImageStyleRenderResponseSchema,
   CreateImageStylePresetRequestSchema,
   ImageStylePresetSchema,
+  PreviewImageStylePresetRequestSchema,
+  PreviewImageStylePresetResponseSchema,
   UpdateImageStylePresetRequestSchema,
   UuidSchema,
+  type PreviewImageStylePresetRequest,
 } from '@vereinsfunk/contracts'
 import {
   isBrandAssetSelectable,
@@ -17,6 +20,7 @@ import {
 } from '@vereinsfunk/domain'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyInstance } from 'fastify'
+import sharp from 'sharp'
 import { z } from 'zod'
 import {
   mapBrandRow,
@@ -25,10 +29,15 @@ import {
   mapTeamBrandRow,
 } from '../apiMappers.js'
 import { hashLogoBuffer } from '@vereinsfunk/brand-assets'
-import { renderImageStyle } from '../imageStyle.js'
+import { GmicNotEnabledError, renderImageStyle } from '../imageStyle.js'
 import type { ApiRouteContext } from './context.js'
 import { loadSelectableBrandAsset, LOGO_ASSET_KINDS } from './brand.js'
-import { createAuditRecorder, resolveDirectoryScope, toPermissionScope } from './shared.js'
+import {
+  checkRateLimit,
+  createAuditRecorder,
+  resolveDirectoryScope,
+  toPermissionScope,
+} from './shared.js'
 
 // Zod an der DB-Grenze statt roher `as string`-Zusicherungen: media_assets.sha256 ist nullable und
 // post_media.media_derivative_id koennte theoretisch fehlen -- durchgereicht landen beide als
@@ -157,6 +166,72 @@ export async function loadResolvedBrandColors(
   return { primaryColor: resolved.primaryColor, accentColor: resolved.accentColor }
 }
 
+// Bildstil-Vorschau: rendert einen noch nicht gespeicherten Entwurf gegen das feste Beispielfoto
+// (context.samplePhotoLoader). Reine Berechnung -- kein Storage-Upload, kein DB-Write, keine RPC,
+// anders als style-render weiter unten.
+interface ImageStylePreviewResult {
+  imageBase64: string
+  contentType: 'image/webp'
+  width: number
+  height: number
+  filterProvider: string
+}
+
+// Die Vorschau wird angeschaut, nicht veroeffentlicht -- deshalb NICHT das Format aus encodeResult
+// (imageStyle.ts) uebernehmen: das waehlt fuer jedes Ergebnis mit Alpha (abgerundete Ecken,
+// 'double'/'festlich'-Rahmen, durchscheinende Rahmengrafik) verlustfreies PNG und liefert damit
+// gemessene 4,3 MB -- als Base64 im JSON-Body 5,7 MB, und das bei bis zu 30 Anfragen/Minute je
+// Nutzer. WebP q80 auf 1200 px Breite behaelt den Alphakanal, ist auf derselben Messung 0,26 MB
+// Base64 und immer noch doppelt so breit wie die Editorspalte je darstellt (~600 CSS-px).
+const PREVIEW_MAX_WIDTH = 1200
+
+async function encodePreview(buffer: Buffer): Promise<{ buffer: Buffer; width: number; height: number }> {
+  const encoded = await sharp(buffer)
+    .resize({ width: PREVIEW_MAX_WIDTH, withoutEnlargement: true })
+    .webp({ quality: 80 })
+    .toBuffer({ resolveWithObject: true })
+  return { buffer: encoded.data, width: encoded.info.width, height: encoded.info.height }
+}
+
+async function previewImageStyle(
+  service: SupabaseClient,
+  context: ApiRouteContext,
+  input: PreviewImageStylePresetRequest,
+  scope: { departmentId?: string; teamId?: string },
+): Promise<ImageStylePreviewResult> {
+  const [sourceBuffer, frameAssetBuffer, logoAssetBuffer, brandColors] = await Promise.all([
+    context.samplePhotoLoader(),
+    input.frameType === 'custom' && input.frameBrandAssetId
+      ? downloadBrandAssetBuffer(service, input.organizationId, input.frameBrandAssetId)
+      : Promise.resolve(undefined),
+    input.logoEnabled && input.logoBrandAssetId
+      ? downloadBrandAssetBuffer(service, input.organizationId, input.logoBrandAssetId)
+      : Promise.resolve(undefined),
+    loadResolvedBrandColors(
+      service,
+      input.organizationId,
+      scope.departmentId ?? null,
+      scope.teamId ?? null,
+    ),
+  ])
+  const rendered = await renderImageStyle({
+    sourceBuffer,
+    preset: input,
+    brandColors,
+    ...(context.imageEffects ? { imageEffects: context.imageEffects } : {}),
+    ...(frameAssetBuffer ? { frameAssetBuffer } : {}),
+    ...(logoAssetBuffer ? { logoAssetBuffer } : {}),
+  })
+  const preview = await encodePreview(rendered.buffer)
+  return {
+    imageBase64: preview.buffer.toString('base64'),
+    contentType: 'image/webp',
+    width: preview.width,
+    height: preview.height,
+    filterProvider: rendered.filterProvider,
+  }
+}
+
 // Plan 045, PR 1: CRUD fuer Bildstil-Presets. Eigenes Modul statt in brand.ts (Modulgrenze wie
 // Plan 027) -- ein Preset ist kein brand_asset, sondern referenziert bis zu zwei davon.
 export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRouteContext): void {
@@ -257,6 +332,71 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
       },
     })
     return reply.code(201).send(ImageStylePresetSchema.parse(mapImageStylePresetRow(insert.data)))
+  })
+
+  // Zustandslose WYSIWYG-Vorschau eines noch nicht gespeicherten Entwurfs (fabric.js-Editor auf
+  // /bildstil). Rendert gegen das feste Beispielfoto statt gegen ein echtes Beitragsfoto -- anders
+  // als style-render weiter unten gibt es hier keinen post_media-Kontext, und ein Aufruf pro
+  // debounced Aenderung darf keinen echten Beitrag mutieren. brand.manage statt post.edit: das
+  // Konfigurieren eines Presets ist eine Marken-, keine Beitragsaktion.
+  app.post('/v1/image-style-presets/preview', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    // Hoeher als das 10/60s-Muster der LLM-gestuetzten Vorschauen (style-preview): interaktives
+    // Ziehen am Logo-Griff feuert debounced oefter als ein "Testen"-Button, und G'MIC deckelt seine
+    // eigenen Worst-Case-Kosten bereits ueber den 30s-execFile-Timeout (gmic.ts).
+    if (!checkRateLimit(`image-style-preview:${request.auth!.userId}`, 30, 60_000)) {
+      return reply.code(429).send({ error: 'rate_limited', correlationId: request.id })
+    }
+    const input = PreviewImageStylePresetRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const resolvedScope = await resolveDirectoryScope(
+      client,
+      input.organizationId,
+      input.departmentId ?? null,
+      input.teamId ?? null,
+    )
+    if (resolvedScope === null)
+      return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'brand.manage', resolvedScope))) return
+
+    for (const [assetId, isExpectedKind] of [
+      [input.frameBrandAssetId, (kind: string) => kind === 'frame'],
+      [input.logoBrandAssetId, (kind: string) => LOGO_ASSET_KINDS.has(kind)],
+    ] as const) {
+      if (!assetId) continue
+      const targetScope = resolvedScope.teamId
+        ? 'team'
+        : resolvedScope.departmentId
+          ? 'department'
+          : 'organization'
+      const asset = await loadSelectableBrandAsset(
+        client,
+        input.organizationId,
+        assetId,
+        targetScope,
+        resolvedScope.departmentId,
+        resolvedScope.teamId,
+      )
+      if (!asset || !isExpectedKind(asset.kind))
+        return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
+    }
+
+    // Kein Idempotency-Key/In-Flight-Dedupe wie bei den LLM-Vorschauen (previewStyleProfile,
+    // routes/shared.ts): dort schuetzt es vor einem zweiten BEZAHLTEN Provider-Aufruf bei einem
+    // Client-Retry. Hier gibt es keinen externen Aufruf, ofetch wiederholt POSTs nicht, und der
+    // Client entprellt bereits samt Race-Guard (useImageStylePreviewRequest.ts) -- ein Cache haette
+    // ohne mitgeschickten Header nur zufaellige Schluessel und damit garantiert keinen Treffer,
+    // wuerde aber jedes gerenderte Bild 60 s im Speicher halten.
+    try {
+      const result = await previewImageStyle(supabaseClients.forService(), context, input, resolvedScope)
+      return reply.code(200).send(PreviewImageStylePresetResponseSchema.parse(result))
+    } catch (error) {
+      if (error instanceof GmicNotEnabledError)
+        return reply.code(422).send({ error: 'gmic_not_enabled', correlationId: request.id })
+      if (error instanceof Error && error.message === 'brand_asset_not_ready')
+        return reply.code(422).send({ error: 'brand_asset_not_ready', correlationId: request.id })
+      throw error
+    }
   })
 
   // Scope ist unveraendlich und wird aus der bestehenden Zeile hergeleitet, nicht aus dem Body

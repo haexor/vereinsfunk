@@ -85,9 +85,14 @@ select is((select count(*)::integer from public.agent_action_proposals where con
 select is((select count(*)::integer from public.agent_tool_runs where conversation_id = '68000000-9000-4000-8000-000000000001'), 0, 'foreign tenant tool run is invisible');
 
 set local role postgres;
+-- Muss (organization_id, agent_message_id) zum tatsaechlichen Verein der Nachricht passen, sonst
+-- feuert enforce_agent_message_media_reference_role() zuerst (P0001) -- dessen EXISTS-Check
+-- verlangt exakt dieselbe (id, organization_id)-Uebereinstimmung wie die erste zusammengesetzte FK,
+-- die also nie isoliert erreichbar ist. Der media_asset_id-Grenzfall bleibt der einzige Weg, die
+-- zusammengesetzte FK selbst zu treffen.
 select throws_ok(
   $$insert into public.agent_message_media_references (organization_id, agent_message_id, media_asset_id, position)
-    values ('68000000-1000-4000-8000-000000000002', '68000000-9300-4000-8000-000000000001', '68000000-9400-4000-8000-000000000002', 0)$$,
+    values ('68000000-1000-4000-8000-000000000001', '68000000-9300-4000-8000-000000000001', '68000000-9400-4000-8000-000000000002', 1)$$,
   '23503', null, 'composite foreign key rejects a media reference across organizations'
 );
 insert into public.agent_messages (id, organization_id, conversation_id, role, content, retention_expires_at)
@@ -119,7 +124,9 @@ select lives_ok(
   )$$,
   'atomic function stores both conversation messages'
 );
-select is((select count(*)::integer from public.agent_messages where conversation_id = '68000000-9000-4000-8000-000000000001'), 3, 'atomic function stored both messages');
+-- 4, nicht 2 + die beiden neuen: 'Interne Frage' (Fixture) und 'Interne Antwort' (oben, fuer den
+-- Rollen-Test) stehen zu diesem Zeitpunkt schon in derselben Unterhaltung.
+select is((select count(*)::integer from public.agent_messages where conversation_id = '68000000-9000-4000-8000-000000000001'), 4, 'atomic function stored both messages');
 select throws_ok(
   $$select * from public.append_agent_conversation_messages(
     '68000000-1000-4000-8000-000000000001',
@@ -131,7 +138,7 @@ select throws_ok(
   )$$,
   '23514', null, 'invalid assistant message rolls back the user message'
 );
-select is((select count(*)::integer from public.agent_messages where conversation_id = '68000000-9000-4000-8000-000000000001'), 3, 'failed atomic write leaves no partial user message');
+select is((select count(*)::integer from public.agent_messages where conversation_id = '68000000-9000-4000-8000-000000000001'), 4, 'failed atomic write leaves no partial user message');
 select lives_ok(
   $$select * from public.append_agent_conversation_messages(
     '68000000-1000-4000-8000-000000000001',
