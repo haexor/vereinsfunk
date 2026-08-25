@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(104);
+select plan(105);
 
 set local role postgres;
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -146,14 +146,26 @@ insert into public.team_memberships (organization_id, department_id, team_id, us
 -- shape that used to fail the org-wide branch because it required is_organization_member.
 insert into public.department_memberships (organization_id, department_id, user_id, role) values
   ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', '32000000-0000-4000-8000-000000000005', 'viewer');
+-- Zweite Abteilung in Verein B, in der style-d NICHT mitspielt -- die Gegenprobe zu
+-- participates_in_department unten braucht ein Abteilungsprofil, das verborgen bleiben muss.
+insert into public.departments (id, organization_id, name, slug) values
+  ('32000000-2210-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', 'Abteilung B2', 'abteilung-b2');
 insert into public.content_style_profiles (id, organization_id, department_id, team_id, slug, name, description, style_rules, created_by) values
   ('32000000-2410-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', '32000000-2300-4000-8000-000000000002', 'team-b-only', 'Team B only', 'Team-scoped style', '{}', '32000000-0000-4000-8000-000000000002'),
-  ('32000000-2420-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', null, null, 'org-b-wide', 'Org B wide', 'Org-wide style', '{}', '32000000-0000-4000-8000-000000000002');
+  ('32000000-2420-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', null, null, 'org-b-wide', 'Org B wide', 'Org-wide style', '{}', '32000000-0000-4000-8000-000000000002'),
+  ('32000000-2430-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2210-4000-8000-000000000002', null, 'dept-b2-only', 'Abteilung B2 only', 'Sibling-department style', '{}', '32000000-0000-4000-8000-000000000002');
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '32000000-0000-4000-8000-000000000004', true);
-select is((select count(*)::integer from public.content_style_profiles), 2, 'a team-only viewer (role=viewer, no post.create) sees their team-scoped and the org-wide profile via plain membership');
-select is((select count(*)::integer from public.content_style_profiles where slug = 'warm-und-nah'), 0, 'negative: a team-only member still cannot see a department-scoped profile outside their team');
+-- Migration 2026082507: was auf Abteilungsebene definiert wird, ist DARUNTER sichtbar. style-d
+-- haengt ausschliesslich ueber team_memberships an Mannschaft B von Abteilung B -- authz.
+-- is_department_member(Abteilung B) ist fuer diese Person false, authz.participates_in_department
+-- zaehlt die Mannschaften der Abteilung mit. Damit drei Profile: das eigene Mannschaftsprofil, das
+-- Abteilungsprofil darueber und das vereinsweite.
+select is((select count(*)::integer from public.content_style_profiles), 3, 'a team-only viewer sees their team profile, their department''s profile above it and the org-wide one');
+select is((select count(*)::integer from public.content_style_profiles where slug = 'warm-und-nah'), 1, 'a team-only member reads the style profile of the department their team belongs to');
+-- Kein Freibrief: participates_in_department trifft nur die eigene Abteilung, nicht jede.
+select is((select count(*)::integer from public.content_style_profiles where slug = 'dept-b2-only'), 0, 'negative: a team-only member still cannot see the profile of a sibling department they do not participate in');
 
 select set_config('request.jwt.claim.sub', '32000000-0000-4000-8000-000000000005', true);
 select is((select count(*)::integer from public.content_style_profiles where slug = 'org-b-wide'), 1, 'a department-only member (no organization role) sees an org-wide style profile via is_any_member_of_organization');

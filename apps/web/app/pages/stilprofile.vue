@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isBrandAssetSelectable } from '@vereinsfunk/domain'
 import {
   CreateCustomStyleProfileRequestSchema,
   CustomStyleProfileSchema,
@@ -12,13 +13,19 @@ import { avoidRulesFromDraft, doRulesFromDraft, emptyStyleProfileDraft, previewE
 
 const api = useApiClient()
 const session = await useSession()
-const { organizationId, departmentId: activeDepartmentId } = await useActiveScope()
+const { organizationId, departmentId: activeDepartmentId, teamId: activeTeamId, level: activeLevel } = await useActiveScope()
 const supabase = useSupabaseClient()
 const activeOrganization = computed(() => session.value?.scopes.find((item) => item.organizationId === organizationId.value) ?? null)
+// Auch auf Vereinsebene verwaltbar (departmentId null): POST/PATCH /v1/content-style-profiles und
+// CreateCustomStyleProfileRequestSchema fuehren departmentId seit je nullable, nur diese Seite hat
+// eine Abteilung verlangt -- ein vereinsweites Stilprofil liess sich dadurch gar nicht anlegen.
 const canManageActiveScope = computed(() => {
-  const departmentId = activeDepartmentId.value
-  if (!organizationId.value || !departmentId) return false
-  return useCan('post.create', { organizationId: organizationId.value, departmentId })
+  if (!organizationId.value) return false
+  return useCan('post.create', {
+    organizationId: organizationId.value,
+    departmentId: activeDepartmentId.value ?? undefined,
+    teamId: activeTeamId.value ?? undefined,
+  })
 })
 
 function scopeLabel(profile: CustomStyleProfile): string {
@@ -42,9 +49,27 @@ function canManage(profile: CustomStyleProfile): boolean {
 const loading = ref(true)
 const loadError = ref(false)
 const profiles = ref<CustomStyleProfile[]>([])
-const activeProfiles = computed(() =>
-  profiles.value.filter((profile) => profile.departmentId === activeDepartmentId.value && profile.teamId === null),
+// "Erben, bis die Ebene ein eigenes Profil anlegt" -- dieselbe Vererbungsrichtung wie brand_assets
+// und die Seiten, die sie schon spiegeln (/bildstil, /bildkomposition, /textbausteine): ein
+// vereinsweites Profil ist auf jeder Ebene sichtbar, ein Abteilungsprofil in seiner Abteilung, ein
+// Mannschaftsprofil nur dort. Bisher zeigte diese Seite ausschliesslich die eigene Ebene -- in einer
+// Abteilung war jedes vereinsweite Stilprofil unsichtbar, obwohl /erstellen es anbietet.
+const visibleProfiles = computed(() =>
+  profiles.value.filter((profile) =>
+    isBrandAssetSelectable(
+      { scope: profile.teamId ? 'team' : profile.departmentId ? 'department' : 'organization', departmentId: profile.departmentId ?? undefined, teamId: profile.teamId ?? undefined },
+      activeLevel.value,
+      activeDepartmentId.value ?? undefined,
+      activeTeamId.value ?? undefined,
+    ),
+  ),
 )
+const ownProfiles = computed(() =>
+  visibleProfiles.value.filter(
+    (profile) => (profile.departmentId ?? null) === (activeDepartmentId.value ?? null) && (profile.teamId ?? null) === (activeTeamId.value ?? null),
+  ),
+)
+const inheritedProfiles = computed(() => visibleProfiles.value.filter((profile) => !ownProfiles.value.includes(profile)))
 
 async function load() {
   const requestedOrganizationId = organizationId.value
@@ -95,13 +120,13 @@ const creatingPreviewKey = ref(crypto.randomUUID())
 watch(draft, () => { creatingPreviewKey.value = crypto.randomUUID() }, { deep: true })
 
 async function createProfile() {
-  const departmentId = activeDepartmentId.value
-  if (!organizationId.value || !departmentId || !canManageActiveScope.value || !draft.value.name.trim() || !draft.value.description.trim()) return
+  if (!organizationId.value || !canManageActiveScope.value || !draft.value.name.trim() || !draft.value.description.trim()) return
   creating.value = true
   createError.value = ''
   try {
     const body = CreateCustomStyleProfileRequestSchema.parse({
-      organizationId: organizationId.value, departmentId, teamId: null,
+      organizationId: organizationId.value,
+      departmentId: activeDepartmentId.value ?? undefined, teamId: activeTeamId.value ?? undefined,
       slug: slugify(draft.value.name), name: draft.value.name, description: draft.value.description,
       styleRules: styleRulesFromDraft(draft.value), avoidRules: avoidRulesFromDraft(draft.value), doRules: doRulesFromDraft(draft.value),
     })
@@ -117,10 +142,10 @@ async function createProfile() {
 }
 
 function createPreviewRequestBody() {
-  const departmentId = activeDepartmentId.value
-  if (!organizationId.value || !departmentId || !canManageActiveScope.value) return null
+  if (!organizationId.value || !canManageActiveScope.value) return null
   return PreviewCustomStyleProfileRequestSchema.parse({
-    organizationId: organizationId.value, departmentId, teamId: null,
+    organizationId: organizationId.value,
+    departmentId: activeDepartmentId.value ?? undefined, teamId: activeTeamId.value ?? undefined,
     name: draft.value.name, description: draft.value.description,
     styleRules: styleRulesFromDraft(draft.value), avoidRules: avoidRulesFromDraft(draft.value), doRules: doRulesFromDraft(draft.value),
     sampleInput: draft.value.sampleInput,
@@ -241,14 +266,14 @@ async function deleteProfile(profile: CustomStyleProfile) {
 
     <div v-if="loading" class="p-8 text-center text-xs text-[#7b827d]">Wird geladen …</div>
     <div v-else-if="loadError" class="card p-8 text-center text-sm font-semibold text-red-700">Die Stilprofile konnten nicht geladen werden. Bitte lade die Seite neu.</div>
-    <div v-else-if="!activeDepartmentId" class="card p-8 text-center text-sm text-[#7b827d]">
-      Wähle in der Sidebar eine Abteilung, um Stilprofile zu verwalten.
-    </div>
-    <div v-else-if="!canManageActiveScope" class="card p-8 text-center text-sm text-[#7b827d]">
-      Du hast in diesem Arbeitsbereich keine Berechtigung. Das übernimmt jemand mit der Rolle „Beiträge erstellen“.
-    </div>
     <template v-else>
+      <!-- Sichtbarkeit und Verwaltung sind getrennt (wie /textbausteine): wer hier nichts anlegen
+           darf, sieht die Profile dieser Ebene trotzdem -- RLS gibt sie jedem Mitglied frei. -->
+      <section v-if="!canManageActiveScope" class="card mb-6 p-6 text-center text-sm text-[#7b827d]">
+        Du hast in diesem Arbeitsbereich keine Berechtigung, Stilprofile zu verwalten. Das übernimmt jemand mit der Rolle „Beiträge erstellen“.
+      </section>
       <StyleProfileEditorForm
+        v-else
         v-model:draft="draft"
         :saving="creating"
         :error="createError"
@@ -261,8 +286,8 @@ async function deleteProfile(profile: CustomStyleProfile) {
       />
 
       <section class="card p-6">
-        <h2 class="mb-4 font-display text-base font-bold">Eigene Stilprofile ({{ activeProfiles.length }})</h2>
-        <div v-for="profile in activeProfiles" :key="profile.id" class="border-t border-[#e9ebe4] py-4 first:border-t-0 first:pt-0">
+        <h2 class="mb-4 font-display text-base font-bold">Stilprofile dieser Ebene ({{ ownProfiles.length }})</h2>
+        <div v-for="profile in ownProfiles" :key="profile.id" class="border-t border-[#e9ebe4] py-4 first:border-t-0 first:pt-0">
           <template v-if="editingId === profile.id">
             <p class="mb-3 text-[11px] font-semibold uppercase tracking-wide text-[#9aa096]">{{ scopeLabel(profile) }}</p>
             <StyleProfileEditorForm
@@ -295,7 +320,16 @@ async function deleteProfile(profile: CustomStyleProfile) {
             </div>
           </template>
         </div>
-        <p v-if="!activeProfiles.length" class="py-4 text-center text-xs text-[#9aa096]">Noch kein eigenes Stilprofil angelegt.</p>
+        <p v-if="!ownProfiles.length" class="py-4 text-center text-xs text-[#9aa096]">Noch kein eigenes Stilprofil auf dieser Ebene angelegt.</p>
+      </section>
+
+      <section v-if="inheritedProfiles.length" class="card mt-6 p-6">
+        <h2 class="mb-4 font-display text-base font-bold">Geerbt ({{ inheritedProfiles.length }})</h2>
+        <div v-for="profile in inheritedProfiles" :key="profile.id" class="border-t border-[#e9ebe4] py-3 first:border-t-0 first:pt-0">
+          <p class="text-sm font-semibold">{{ profile.name }}</p>
+          <p class="mt-1 text-[11px] text-[#9aa096]">{{ scopeLabel(profile) }}</p>
+          <p class="mt-1 text-xs text-[#727a75]">{{ profile.description }}</p>
+        </div>
       </section>
       <p v-if="deleteError" class="mt-4 text-sm text-amber-800">{{ deleteError }}</p>
     </template>
