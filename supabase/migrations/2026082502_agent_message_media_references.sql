@@ -40,6 +40,26 @@ create trigger agent_message_media_references_require_user_message
   before insert or update on public.agent_message_media_references
   for each row execute function public.enforce_agent_message_media_reference_role();
 
+-- Schliesst die verbleibende Luecke des Triggers oben: der feuert nur bei Aenderungen an
+-- agent_message_media_references selbst. Ohne diesen zweiten Trigger koennte ein
+-- service_role-Aufruf agent_messages.role nachtraeglich von 'user' auf 'assistant' aendern und
+-- die Referenz so einer Assistentenantwort zuschieben.
+create function public.enforce_agent_message_role_change() returns trigger
+language plpgsql set search_path = public, pg_temp as $$
+begin
+  if new.role <> 'user' and exists (
+    select 1 from public.agent_message_media_references reference
+    where reference.agent_message_id = new.id and reference.organization_id = new.organization_id
+  ) then
+    raise exception 'agent_message_media_reference_requires_user_message';
+  end if;
+  return new;
+end;
+$$;
+create trigger agent_messages_media_reference_role_guard
+  before update of role on public.agent_messages
+  for each row execute function public.enforce_agent_message_role_change();
+
 alter table public.agent_message_media_references enable row level security;
 alter table public.agent_message_media_references force row level security;
 create policy agent_message_media_references_select on public.agent_message_media_references for select to authenticated

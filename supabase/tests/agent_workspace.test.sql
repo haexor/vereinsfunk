@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(42);
+select plan(46);
 
 set local role postgres;
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -97,6 +97,10 @@ select throws_ok(
     values ('68000000-1000-4000-8000-000000000001', '68000000-9300-4000-8000-000000000002', '68000000-9400-4000-8000-000000000001', 0)$$,
   'P0001', 'agent_message_media_reference_requires_user_message', 'assistant messages cannot carry media references'
 );
+select throws_ok(
+  $$update public.agent_messages set role = 'assistant' where id = '68000000-9300-4000-8000-000000000001'$$,
+  'P0001', 'agent_message_media_reference_requires_user_message', 'changing a referenced message to assistant is rejected'
+);
 
 delete from public.agent_action_proposals where id = '68000000-9100-4000-8000-000000000001';
 select is(
@@ -110,6 +114,7 @@ select lives_ok(
     '68000000-9000-4000-8000-000000000001',
     '68000000-0000-4000-8000-000000000001',
     'Atomare Nutzerfrage',
+    array[]::uuid[],
     'Atomare Assistentenantwort'
   )$$,
   'atomic function stores both conversation messages'
@@ -121,11 +126,41 @@ select throws_ok(
     '68000000-9000-4000-8000-000000000001',
     '68000000-0000-4000-8000-000000000001',
     'Darf nicht einzeln gespeichert werden',
+    array[]::uuid[],
     repeat('x', 8001)
   )$$,
   '23514', null, 'invalid assistant message rolls back the user message'
 );
 select is((select count(*)::integer from public.agent_messages where conversation_id = '68000000-9000-4000-8000-000000000001'), 3, 'failed atomic write leaves no partial user message');
+select lives_ok(
+  $$select * from public.append_agent_conversation_messages(
+    '68000000-1000-4000-8000-000000000001',
+    '68000000-9000-4000-8000-000000000001',
+    '68000000-0000-4000-8000-000000000001',
+    'Mit Anhang',
+    array['68000000-9400-4000-8000-000000000001']::uuid[],
+    'Antwort mit Anhang'
+  )$$,
+  'atomic function stores a media reference for the new user message'
+);
+select is(
+  (select count(*)::integer from public.agent_message_media_references
+    where media_asset_id = '68000000-9400-4000-8000-000000000001'
+      and agent_message_id in (select id from public.agent_messages where content = 'Mit Anhang')),
+  1,
+  'atomic function persisted the media reference row'
+);
+select throws_ok(
+  $$select * from public.append_agent_conversation_messages(
+    '68000000-1000-4000-8000-000000000001',
+    '68000000-9000-4000-8000-000000000001',
+    '68000000-0000-4000-8000-000000000001',
+    'Zu viele Anhaenge',
+    (select array_agg(gen_random_uuid()) from generate_series(1, 11)),
+    'Sollte nie gespeichert werden'
+  )$$,
+  'P0001', 'agent_message_media_reference_limit_exceeded', 'atomic function rejects more than ten media references'
+);
 select throws_ok(
   $$insert into public.agent_conversations (organization_id, team_id, created_by, retention_expires_at)
     values ('68000000-1000-4000-8000-000000000001', '68000000-1100-4000-8000-000000000001', '68000000-0000-4000-8000-000000000001', now() + interval '90 days')$$,

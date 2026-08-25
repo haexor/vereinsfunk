@@ -11,7 +11,9 @@ const MediaAssetDataSchema = z.object({
   bucket_id: z.string().min(1),
   object_path: z.string().min(1),
   upload_status: z.string().min(1),
+  mime_type: z.string().nullable(),
 })
+const UploadStatusRowSchema = z.object({ upload_status: z.string().min(1) })
 const DownloadDataSchema = z.instanceof(Blob)
 
 function parseSupabaseData<T>(schema: z.ZodType<T>, data: unknown): T {
@@ -64,22 +66,34 @@ export class SupabaseUploadService implements MediaUploadService {
     }
   }
 
-  async complete(input: { assetId: string; sha256: string }): Promise<{ accepted: true; uploadStatus: string }> {
+  async complete(input: { assetId: string; sha256: string }): Promise<{ accepted: true; uploadStatus: string; mimeType: string | null }> {
     const service = this.getServiceClient()
-    const existing = await service.from('media_assets').select('bucket_id, object_path, upload_status').eq('id', input.assetId).single()
+    const existing = await service.from('media_assets').select('bucket_id, object_path, upload_status, mime_type').eq('id', input.assetId).single()
     if (existing.error) throw existing.error
     const existingData = parseSupabaseData(MediaAssetDataSchema, existing.data)
     // Idempotent: a second /complete call for an asset that already left 'initiated' (ready,
     // failed, quarantined, ...) must not re-download and re-process bytes that may since have
     // been superseded -- the same "never silently re-render" discipline media_derivatives already
     // enforces via enforce_immutable_derivative().
-    if (existingData.upload_status !== 'initiated') return { accepted: true, uploadStatus: existingData.upload_status }
+    if (existingData.upload_status !== 'initiated') return { accepted: true, uploadStatus: existingData.upload_status, mimeType: existingData.mime_type }
 
-    const markFailed = async () => {
-      const update = await service.from('media_assets').update({ structural_validation_status: 'failed', scan_status: 'failed', upload_status: 'failed' }).eq('id', input.assetId)
+    // Compare-and-set on upload_status = 'initiated': two concurrent /complete calls for the same
+    // asset both pass the read above before either writes. Without the .eq() below, whichever call
+    // reaches this update last would silently overwrite the other's terminal state (e.g. a stale
+    // retry marking an already-'ready' asset 'failed'). When no row matches, someone else already
+    // resolved this asset -- report that persisted state instead of pretending this call won.
+    const applyTerminalUpdate = async (payload: Record<string, unknown>, uploadStatus: string, mimeType: string | null) => {
+      const update = await service.from('media_assets').update(payload).eq('id', input.assetId).eq('upload_status', 'initiated').select('upload_status')
       if (update.error) throw update.error
-      return { accepted: true as const, uploadStatus: 'failed' }
+      if (update.data.length === 0) {
+        const current = await service.from('media_assets').select('upload_status').eq('id', input.assetId).single()
+        if (current.error) throw current.error
+        return { accepted: true as const, uploadStatus: parseSupabaseData(UploadStatusRowSchema, current.data).upload_status, mimeType: null }
+      }
+      return { accepted: true as const, uploadStatus, mimeType }
     }
+
+    const markFailed = () => applyTerminalUpdate({ structural_validation_status: 'failed', scan_status: 'failed', upload_status: 'failed' }, 'failed', null)
 
     const download = await service.storage.from(existingData.bucket_id).download(existingData.object_path)
     if (download.error) throw download.error
@@ -124,7 +138,7 @@ export class SupabaseUploadService implements MediaUploadService {
     // Entscheidung (Betreiber, 2026-08-18, siehe Migration 2026081801): kein separater
     // Malware-Scanner. Ein erfolgreicher Struktur-Befund setzt scan_status direkt auf 'clean' --
     // es gibt keine zweite, unabhaengige Scan-Stufe in diesem Pfad.
-    const update = await service.from('media_assets').update({
+    return applyTerminalUpdate({
       structural_validation_status: 'valid',
       scan_status: 'clean',
       upload_status: 'ready',
@@ -134,9 +148,6 @@ export class SupabaseUploadService implements MediaUploadService {
       mime_type: detectedMimeType,
       width, height,
       exif_stripped_at: detectedMimeType.startsWith('image/') ? new Date().toISOString() : null,
-    }).eq('id', input.assetId)
-    if (update.error) throw update.error
-
-    return { accepted: true, uploadStatus: 'ready' }
+    }, 'ready', detectedMimeType)
   }
 }

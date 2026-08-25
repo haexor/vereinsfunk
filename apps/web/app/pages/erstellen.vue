@@ -264,6 +264,11 @@ async function createCandidate() {
   if (!selectedPlatforms.value.length) { notice.value = 'Bitte wähle mindestens eine Zielplattform.'; return }
   const maxCharacters = parsedMaxCharactersOverride()
   if (maxCharacters === 'invalid') { notice.value = 'Die maximale Länge muss zwischen 100 und 10.000 Zeichen liegen.'; return }
+  // Beide Anhang-Komponenten deckeln nur ihren eigenen Zustand auf 10 (siehe deren max-Props unten)
+  // -- bei parallelen Uploads in beiden koennen die fertigen Arrays zusammen trotzdem mehr als 10
+  // IDs enthalten. Die API weist das mit derselben Grenze zurueck; hier vorher abfangen statt eine
+  // verwirrende 422 abzuwarten.
+  if (mediaAssetIds.value.length + additionalMediaAssetIds.value.length > 10) { notice.value = 'Insgesamt sind höchstens 10 Medienanhänge erlaubt. Bitte entferne einige.'; return }
   submitting.value = true; notice.value = ''
   try {
     if (!(await saveServerDraft({ required: true }))) return

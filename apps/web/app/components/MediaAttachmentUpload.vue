@@ -27,6 +27,7 @@ const effectiveMax = computed(() => Math.min(props.max, 10))
 const UploadCompletionSchema = z.object({
   accepted: z.literal(true),
   uploadStatus: z.enum(['initiated', 'uploaded', 'normalizing', 'ready', 'quarantined', 'failed', 'deleted']),
+  mimeType: z.string().nullable(),
 })
 const PeopleReviewInputSchema = z.object({ target_asset_id: z.string().uuid(), faces_present: z.boolean() })
 const ReviewedMediaAssetSchema = z.object({
@@ -73,7 +74,9 @@ async function upload(attachment: PendingAttachment) {
       attachment.error = 'Der Upload konnte nicht geprüft werden. Bitte versuche es erneut.'
       return
     }
-    attachment.state = props.reviewVideos && attachment.file.type.startsWith('video/') ? 'review' : 'ready'
+    // Der clientseitig gemeldete File.type ist ungeprüft -- ob eine Video-Personenprüfung nötig
+    // ist, richtet sich nach dem serverseitig aus den Bytes erkannten MIME-Typ.
+    attachment.state = props.reviewVideos && completed.mimeType?.startsWith('video/') ? 'review' : 'ready'
     if (attachment.state === 'ready') syncModel()
   } catch {
     attachment.state = 'failed'

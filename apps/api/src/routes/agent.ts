@@ -69,6 +69,12 @@ const MessageMediaReferenceRowSchema = z.object({
   media_asset_id: UuidSchema,
   position: z.number().int().min(0).max(9),
 })
+const MediaAssetScopeRowSchema = z.object({
+  id: UuidSchema,
+  organization_id: UuidSchema,
+  department_id: UuidSchema,
+  upload_status: z.string(),
+})
 const PersistedMessagesRowSchema = z.object({
   user_message: MessageRowSchema,
   assistant_message: MessageRowSchema,
@@ -948,7 +954,8 @@ export function registerAgentRoutes(
       if (!conversation.departmentId) return reply.code(422).send({ error: 'agent_media_requires_department', correlationId: request.id })
       const assets = await service.from('media_assets').select('id, organization_id, department_id, upload_status').in('id', input.mediaAssetIds)
       if (assets.error) throw assets.error
-      if (assets.data.length !== input.mediaAssetIds.length || assets.data.some((asset) => asset.organization_id !== conversation.organizationId || asset.department_id !== conversation.departmentId || asset.upload_status !== 'ready')) {
+      const assetRows = z.array(MediaAssetScopeRowSchema).parse(assets.data)
+      if (assetRows.length !== input.mediaAssetIds.length || assetRows.some((asset) => asset.organization_id !== conversation.organizationId || asset.department_id !== conversation.departmentId || asset.upload_status !== 'ready')) {
         return reply.code(422).send({ error: 'agent_media_not_ready_or_out_of_scope', correlationId: request.id })
       }
     }
