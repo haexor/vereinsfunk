@@ -34,7 +34,7 @@ import { z } from 'zod'
 import { CLUB_EVENT_COLUMNS, FIXTURE_COLUMNS, mapClubEventRow, mapFixtureRow, mapTeamRow } from '../apiMappers.js'
 import { ensurePassThroughDerivative } from '../passThroughDerivative.js'
 import { saveTextWorkshopDraft } from '../services/textWorkshopDrafts.js'
-import { createTextGenerationSession, SYSTEM_STYLE_PROFILES } from '../services/textGenerationSessions.js'
+import { createTextGenerationSession, isStyleProfileUsableInScope, SYSTEM_STYLE_PROFILES } from '../services/textGenerationSessions.js'
 import type { ApiRouteContext } from './context.js'
 import { buildStyleProfilePromptPreview, checkRateLimit, createAuditRecorder, fetchMemberTrust, previewStyleProfile, resolveDirectoryScope, resolvePreviewIdempotencyKey, resolveScopedEffectiveConfig, resolveTextGenerationPlatformAvailability, resolveTextGenerationProviderConfigurationIds, toPermissionScope } from './shared.js'
 
@@ -42,8 +42,8 @@ import { buildStyleProfilePromptPreview, checkRateLimit, createAuditRecorder, fe
 // reinen ID-Umschlag ueber eine service-only RPC, die der Worker spaeter ausfuehrt.
 const CUSTOM_STYLE_PROFILE_COLUMNS = 'id, organization_id, department_id, team_id, slug, name, description, style_rules, avoid_rules, do_rules, is_active, created_by, created_at, updated_at'
 const SessionAttachmentSchema = z.object({ media_asset_id: UuidSchema })
-const CompletionAssetScopeSchema = z.object({ organization_id: UuidSchema, department_id: UuidSchema })
-const DeletableScopeSchema = z.object({ organization_id: UuidSchema, department_id: UuidSchema, team_id: UuidSchema.nullable() })
+const CompletionAssetScopeSchema = z.object({ organization_id: UuidSchema, department_id: UuidSchema.nullable() })
+const DeletableScopeSchema = z.object({ organization_id: UuidSchema, department_id: UuidSchema.nullable(), team_id: UuidSchema.nullable() })
 
 function parseSupabaseData<T>(schema: z.ZodType<T>, data: unknown): T {
   const parsed = schema.safeParse(data)
@@ -318,12 +318,12 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     return reply.code(204).send()
   })
 
-  const TextWorkshopScopeSchema = z.object({ organizationId: UuidSchema, departmentId: UuidSchema, teamId: UuidSchema.nullable().optional() })
+  const TextWorkshopScopeSchema = z.object({ organizationId: UuidSchema, departmentId: UuidSchema.nullable().optional(), teamId: UuidSchema.nullable().optional() })
 
   app.get('/v1/content-style-profiles', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const scope = TextWorkshopScopeSchema.parse(request.query)
-    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(scope.organizationId, scope.departmentId, scope.teamId ?? null)))) return
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(scope.organizationId, scope.departmentId ?? null, scope.teamId ?? null)))) return
     const client = supabaseClients.forUser(request.auth!.accessToken)
     const rows = await client.from('content_style_profiles').select('id, slug, name, description, style_rules, avoid_rules, do_rules, department_id, team_id, created_by, created_at, updated_at, is_active').eq('organization_id', scope.organizationId).eq('is_active', true)
     if (rows.error) throw rows.error
@@ -334,7 +334,13 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (personaRows.error) throw personaRows.error
     const systems = Object.entries(SYSTEM_STYLE_PROFILES).map(([slug, profile]) => ({ id: null, slug, kind: 'system', ...profile, isActive: true }))
     const personas = personaRows.data.map((row) => ({ id: row.id, slug: row.slug, kind: 'persona', name: row.name, description: row.description, styleRules: StyleProfileRulesSchema.parse(row.style_rules), avoidRules: row.avoid_rules, doRules: row.do_rules, isActive: true }))
-    const customs = rows.data.map((row) => ({ id: row.id, slug: row.slug, kind: 'custom', name: row.name, description: row.description, styleRules: StyleProfileRulesSchema.parse(row.style_rules), avoidRules: row.avoid_rules, doRules: row.do_rules, isActive: row.is_active }))
+    // Nur die Profile, mit denen sich im angefragten Scope auch eine Sitzung anlegen laesst --
+    // dieselbe Regel wie in createTextGenerationSession, sonst bietet erstellen.vue ein Profil an,
+    // das die Anlage anschliessend mit style_profile_not_found ablehnt. System- und
+    // Plattform-Personas sind global und daher nicht betroffen.
+    const customs = rows.data
+      .filter((row) => isStyleProfileUsableInScope(row, scope.departmentId ?? null, scope.teamId ?? null))
+      .map((row) => ({ id: row.id, slug: row.slug, kind: 'custom', name: row.name, description: row.description, styleRules: StyleProfileRulesSchema.parse(row.style_rules), avoidRules: row.avoid_rules, doRules: row.do_rules, isActive: row.is_active }))
     return reply.send({ profiles: [...systems, ...personas, ...customs] })
   })
 
@@ -349,11 +355,11 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     // Wie /preview oben: departmentId/teamId gegen ihre echte organization_id verifizieren, BEVOR
     // die Berechtigung geprueft wird -- sonst waeren sie client-seitig frei kombinierbar (Review
     // dieses PRs).
-    const resolvedScope = await resolveDirectoryScope(client, scope.organizationId, scope.departmentId, scope.teamId ?? null)
+    const resolvedScope = await resolveDirectoryScope(client, scope.organizationId, scope.departmentId ?? null, scope.teamId ?? null)
     if (resolvedScope === null) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     if (!(await requirePermission(request, reply, 'post.create', resolvedScope))) return
-    const config = await resolveScopedEffectiveConfig(client, scope.organizationId, scope.departmentId, scope.teamId ?? null)
-    const availability = await resolveTextGenerationPlatformAvailability(client, scope.organizationId, scope.departmentId, scope.teamId ?? null, config.policies.allowedChannelIds)
+    const config = await resolveScopedEffectiveConfig(client, scope.organizationId, scope.departmentId ?? null, scope.teamId ?? null)
+    const availability = await resolveTextGenerationPlatformAvailability(client, scope.organizationId, scope.departmentId ?? null, scope.teamId ?? null, config.policies.allowedChannelIds)
     // Plan 044, PR 1 Step 3: mit der Verfuegbarkeit geschnitten -- eine Plattform in der Vorgabe
     // ohne (mehr) eingerichteten Kanal ist nicht isDefault, sonst liefe erstellen.vue vorausgewaehlt
     // in ein 422 (dasselbe Schneiden, das restoreDraft dort schon fuer gespeicherte Entwuerfe macht).
@@ -544,10 +550,11 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
 
   app.get('/v1/text-workshop/drafts', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
-    const query = z.object({ organizationId: UuidSchema, departmentId: UuidSchema, teamId: UuidSchema.nullable().optional() }).parse(request.query)
-    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(query.organizationId, query.departmentId, query.teamId ?? null)))) return
+    const query = z.object({ organizationId: UuidSchema, departmentId: UuidSchema.nullable().optional(), teamId: UuidSchema.nullable().optional() }).parse(request.query)
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(query.organizationId, query.departmentId ?? null, query.teamId ?? null)))) return
     const client = supabaseClients.forUser(request.auth!.accessToken)
-    let drafts = client.from('text_workshop_drafts').select(TEXT_WORKSHOP_DRAFT_COLUMNS).eq('organization_id', query.organizationId).eq('department_id', query.departmentId)
+    let drafts = client.from('text_workshop_drafts').select(TEXT_WORKSHOP_DRAFT_COLUMNS).eq('organization_id', query.organizationId)
+    drafts = (query.departmentId ? drafts.eq('department_id', query.departmentId) : drafts.is('department_id', null)) as typeof drafts
     drafts = (query.teamId ? drafts.eq('team_id', query.teamId) : drafts.is('team_id', null)) as typeof drafts
     const result = await drafts.order('updated_at', { ascending: false })
     if (result.error) throw result.error
@@ -574,7 +581,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
   const CompositionSessionRowSchema = z.object({
     id: UuidSchema,
     organization_id: UuidSchema,
-    department_id: UuidSchema,
+    department_id: UuidSchema.nullable(),
     team_id: UuidSchema.nullable(),
     status: CompositionSessionStatusSchema,
     communication_goal: CommunicationGoalSchema,
@@ -706,8 +713,10 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
         let update = service.from('text_workshop_drafts').update({ post_id: postId })
           .eq('id', draftId)
           .eq('organization_id', candidate.data.organization_id)
-          .eq('department_id', session.data.department_id)
           .eq('created_by', request.auth!.userId)
+        update = session.data.department_id
+          ? update.eq('department_id', session.data.department_id)
+          : update.is('department_id', null)
         update = session.data.team_id
           ? update.eq('team_id', session.data.team_id)
           : update.is('team_id', null)
@@ -718,11 +727,11 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     return reply.send(accepted.data)
   })
 
-  const UploadInitiateSchema = z.object({ organizationId: UuidSchema, departmentId: UuidSchema, filename: z.string().min(1).max(120).regex(/^[^/\\]+$/), mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp', 'video/mp4', 'audio/mpeg', 'audio/mp4']), byteSize: z.int().positive().max(100 * 1024 * 1024) })
+  const UploadInitiateSchema = z.object({ organizationId: UuidSchema, departmentId: UuidSchema.nullable(), filename: z.string().min(1).max(120).regex(/^[^/\\]+$/), mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp', 'video/mp4', 'audio/mpeg', 'audio/mp4']), byteSize: z.int().positive().max(100 * 1024 * 1024) })
   app.post('/v1/media/uploads', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const input = UploadInitiateSchema.parse(request.body); const assetId = randomUUID()
-    if (!(await requirePermission(request, reply, 'post.create', { organizationId: input.organizationId, departmentId: input.departmentId }))) return
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(input.organizationId, input.departmentId)))) return
     const service = supabaseClients.forService()
     // Plan 021: geprueft wird VOR dem Ausstellen der signierten URL, nicht erst nach dem Hochladen
     // -- sonst laege das Objekt schon im Bucket, wenn die Grenze auffiel. reserve_storage_upload()
@@ -732,9 +741,12 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     // einem ungesperrten insert liesse genau das zu, gefunden im eigenen Review dieser PR).
     // object_path folgt demselben Muster wie LocalUploadService.create() unten, weil die echte
     // Pfadvergabe dort passiert und hier noch nicht bekannt ist.
+    const objectPath = input.departmentId
+      ? `organizations/${input.organizationId}/departments/${input.departmentId}/assets/${assetId}/${input.filename}`
+      : `organizations/${input.organizationId}/assets/${assetId}/${input.filename}`
     const reservation = await service.rpc('reserve_storage_upload', {
       target_organization: input.organizationId, target_department: input.departmentId, target_asset_id: assetId,
-      target_bucket_id: 'raw-media', target_object_path: `organizations/${input.organizationId}/departments/${input.departmentId}/assets/${assetId}/${input.filename}`,
+      target_bucket_id: 'raw-media', target_object_path: objectPath,
       target_mime_type: input.mimeType, announced_bytes: input.byteSize, target_created_by: request.auth!.userId,
     })
     if (reservation.error) {
@@ -757,7 +769,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (asset.error) throw asset.error
     if (!asset.data) return reply.code(404).send({ error: 'media_asset_not_found', correlationId: request.id })
     const parsedAsset = parseSupabaseData(CompletionAssetScopeSchema, asset.data)
-    if (!(await requirePermission(request, reply, 'post.edit', { organizationId: parsedAsset.organization_id, departmentId: parsedAsset.department_id }))) return
+    if (!(await requirePermission(request, reply, 'post.edit', toPermissionScope(parsedAsset.organization_id, parsedAsset.department_id)))) return
     return reply.code(202).send(await uploads.complete({ ...params, ...body }))
   })
   app.post('/v1/media/gate', async (request, reply) => {

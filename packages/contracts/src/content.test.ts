@@ -12,6 +12,14 @@ describe('contracts', () => {
     const payload = { entityId: org, organizationId: org, departmentConcurrencyKey: 'org', correlationId: team, sourceRevision: 1, purpose: 'render', idempotencyKey: 'render:1' }
     expect(WorkflowPayloadSchema.safeParse(payload).success).toBe(true)
     expect(WorkflowPayloadSchema.safeParse({ ...payload, departmentConcurrencyKey: undefined }).success).toBe(false)
+    // Nur 'org' oder eine UUID, wie workflow_outbox_id_only_payload_check in der Datenbank: ein
+    // beliebiger String wuerde in concurrencyFor() eine eigene, unbeabsichtigte Lane aufmachen.
+    expect(WorkflowPayloadSchema.safeParse({ ...payload, departmentConcurrencyKey: 'organization' }).success).toBe(false)
+    expect(WorkflowPayloadSchema.safeParse({ ...payload, departmentConcurrencyKey: '' }).success).toBe(false)
+    // start_brand_website_analysis schreibt fuer einen vereinsweiten Lauf die technische
+    // Traegerabteilung nach departmentId und trotzdem 'org' als Schluessel -- diese Kombination
+    // muss gueltig bleiben, sonst scheitert jeder analyze-website-branding-Lauf auf Vereinsebene.
+    expect(WorkflowPayloadSchema.safeParse({ ...payload, departmentId: department }).success).toBe(true)
   })
 
   it('rejects an invalid tenant boundary', () => {
@@ -83,6 +91,48 @@ describe('text workshop contracts', () => {
     expect(SaveTextWorkshopDraftSchema.safeParse(draft).success).toBe(true)
     expect(SaveTextWorkshopDraftSchema.safeParse({ ...draft, payload: { ...draft.payload, selectedPlatforms: ['instagram', 'instagram'] } }).success).toBe(false)
     expect(SaveTextWorkshopDraftSchema.safeParse({ ...draft, departmentId: 'not-an-id' }).success).toBe(false)
+  })
+
+  // Org-level posting: departmentId: null means "no specific department" and must be accepted for
+  // both the composition session and the autosave draft -- but the key itself stays required
+  // (.nullable() without .optional()), so an omitted departmentId is still rejected.
+  it('accepts departmentId: null for an organization-level session or draft, but not the key being omitted', () => {
+    const base = {
+      organizationId: org, departmentId: department, communicationGoal: 'invite',
+      requestedFormats: ['text_post'] as const, sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [], doNotMention: [] },
+      targetPlatforms: ['instagram'] as const,
+    }
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, departmentId: null }).success).toBe(true)
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, departmentId: undefined }).success).toBe(false)
+
+    const draft = {
+      organizationId: org, departmentId: department,
+      payload: { communicationGoal: 'inform', factsText: '', observation: 'Erste Notiz', doNotMention: '', selectedProfile: 'klar_erklaerend', temperature: 0.6, selectedPlatforms: [], maxCharactersOverride: '' },
+    }
+    expect(SaveTextWorkshopDraftSchema.safeParse({ ...draft, departmentId: null }).success).toBe(true)
+    expect(SaveTextWorkshopDraftSchema.safeParse({ ...draft, departmentId: undefined }).success).toBe(false)
+  })
+
+  // Ein Team liegt immer in einer Abteilung -- composition_sessions und text_workshop_drafts
+  // tragen beide check (team_id is null or department_id is not null). Ohne diese Vorpruefung
+  // schluege die Kombination erst beim Schreiben als 23514 auf.
+  it('rejects a teamId without a departmentId in both request schemas', () => {
+    const base = {
+      organizationId: org, communicationGoal: 'invite',
+      requestedFormats: ['text_post'] as const, sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [], doNotMention: [] },
+      targetPlatforms: ['instagram'] as const,
+    }
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, departmentId: department, teamId: team }).success).toBe(true)
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, departmentId: null, teamId: null }).success).toBe(true)
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, departmentId: null, teamId: team }).success).toBe(false)
+
+    const draftBase = {
+      organizationId: org,
+      payload: { communicationGoal: 'inform', factsText: '', observation: 'Erste Notiz', doNotMention: '', selectedProfile: 'klar_erklaerend', temperature: 0.6, selectedPlatforms: [], maxCharactersOverride: '' },
+    }
+    expect(SaveTextWorkshopDraftSchema.safeParse({ ...draftBase, departmentId: department, teamId: team }).success).toBe(true)
+    expect(SaveTextWorkshopDraftSchema.safeParse({ ...draftBase, departmentId: null, teamId: null }).success).toBe(true)
+    expect(SaveTextWorkshopDraftSchema.safeParse({ ...draftBase, departmentId: null, teamId: team }).success).toBe(false)
   })
 
   it('accepts text/photo/video composition choices but keeps historical reels outside new commands', () => {

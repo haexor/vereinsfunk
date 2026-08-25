@@ -90,7 +90,7 @@ const additionalMediaAssetIds = ref<string[]>([])
 const revisionInstruction = ref('')
 const serverDraftId = ref<string | null>(null)
 const draftSaveState = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
-const draftKey = computed(() => session.value && scope.value?.organizationId && scope.value.departmentId ? `vf:text-draft:${session.value.userId}:${scope.value.organizationId}:${scope.value.departmentId}` : null)
+const draftKey = computed(() => session.value && scope.value?.organizationId ? `vf:text-draft:${session.value.userId}:${scope.value.organizationId}:${scope.value.departmentId ?? 'org'}` : null)
 let restoringDraft = false
 let draftSaveTimer: ReturnType<typeof setTimeout> | undefined
 let serverDraftSaveChain: Promise<void> = Promise.resolve()
@@ -127,7 +127,7 @@ function hasDraftContent() {
 }
 async function saveServerDraft({ explicit = false, required = false }: { explicit?: boolean; required?: boolean } = {}): Promise<boolean> {
   if (draftSaveTimer) { clearTimeout(draftSaveTimer); draftSaveTimer = undefined }
-  if (restoringDraft || !scope.value?.organizationId || !scope.value.departmentId || (!explicit && !hasDraftContent())) return false
+  if (restoringDraft || !scope.value?.organizationId || (!explicit && !hasDraftContent())) return false
   if (!hasDraftContent()) { notice.value = 'Gib zuerst etwas für den Entwurf ein.'; return false }
   if (!serverDraftId.value) serverDraftId.value = crypto.randomUUID()
   const draftId = serverDraftId.value
@@ -179,17 +179,17 @@ watch([communicationGoal, contentText, doNotMention, selectedProfile, selectedPl
 watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; communicationGoal.value = 'inform'; selectedProfile.value = 'klar_erklaerend'; contentText.value = ''; doNotMention.value = []; additionalMediaAssetIds.value = []; revisionInstruction.value = ''; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; mediaAssetIds.value = []; composedPhotoPreview.value = null; photoMode.value = 'carousel'; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
 
 async function loadProfiles() {
-  if (!scope.value?.organizationId || !scope.value.departmentId) return
+  if (!scope.value?.organizationId) return
   try {
-    const response = await api.request('/v1/content-style-profiles', { query: { organizationId: scope.value.organizationId, departmentId: scope.value.departmentId } }, z.object({ profiles: z.array(z.object({ id: z.string().nullable(), slug: z.string(), kind: z.enum(['system', 'persona', 'custom']), name: z.string(), description: z.string() }).passthrough()) }))
+    const response = await api.request('/v1/content-style-profiles', { query: { organizationId: scope.value.organizationId, departmentId: scope.value.departmentId ?? undefined } }, z.object({ profiles: z.array(z.object({ id: z.string().nullable(), slug: z.string(), kind: z.enum(['system', 'persona', 'custom']), name: z.string(), description: z.string() }).passthrough()) }))
     profiles.value = response.profiles
   } catch { notice.value = 'Stilprofile konnten nicht geladen werden.' }
 }
 
 async function loadPlatformAvailability() {
-  if (!scope.value?.organizationId || !scope.value.departmentId) return
+  if (!scope.value?.organizationId) return
   try {
-    const response = await api.request('/v1/text-generation-platforms', { query: { organizationId: scope.value.organizationId, departmentId: scope.value.departmentId } }, z.array(TextGenerationPlatformAvailabilitySchema))
+    const response = await api.request('/v1/text-generation-platforms', { query: { organizationId: scope.value.organizationId, departmentId: scope.value.departmentId ?? undefined } }, z.array(TextGenerationPlatformAvailabilitySchema))
     platforms.value = response
     // Plan 044, PR 1 Step 3: keine Plattform ist ab Werk vorausgewaehlt -- angehakt wird nur, was
     // der Verein/die Abteilung als eigene Vorgabe gesetzt hat (isDefault, bereits mit der
@@ -259,7 +259,7 @@ function parsedMaxCharactersOverride(): number | undefined | 'invalid' {
   return parsed.success ? parsed.data : 'invalid'
 }
 async function createCandidate() {
-  if (!scope.value?.organizationId || !scope.value.departmentId) { notice.value = 'Bitte wähle Verein und Abteilung.'; return }
+  if (!scope.value?.organizationId) { notice.value = 'Bitte wähle einen Verein.'; return }
   if (!contentText.value.trim()) { notice.value = 'Schreibe kurz, worum es in deinem Beitrag geht.'; return }
   if (!selectedPlatforms.value.length) { notice.value = 'Bitte wähle mindestens eine Zielplattform.'; return }
   const maxCharacters = parsedMaxCharactersOverride()
@@ -392,11 +392,11 @@ onBeforeUnmount(() => { if (hasDraftContent()) void saveServerDraft() })
       <fieldset>
         <legend class="mb-2 text-xs font-semibold">Anhänge</legend>
         <p class="mb-3 text-xs text-[#727a75]">Ein Bild macht deinen Beitrag meist direkt lebendig.</p>
-        <template v-if="scope?.organizationId && scope.departmentId">
-          <PhotoAttachmentList v-if="additionalMediaAssetIds.length < 10" :key="`${scope.organizationId}:${scope.departmentId}`" v-model:media-asset-ids="mediaAssetIds" :organization-id="scope.organizationId" :department-id="scope.departmentId" :max="10 - additionalMediaAssetIds.length" />
+        <template v-if="scope?.organizationId">
+          <PhotoAttachmentList v-if="additionalMediaAssetIds.length < 10" :key="`${scope.organizationId}:${scope.departmentId ?? 'org'}`" v-model:media-asset-ids="mediaAssetIds" :organization-id="scope.organizationId" :department-id="scope.departmentId" :max="10 - additionalMediaAssetIds.length" />
           <p v-else class="text-xs text-[#727a75]">Die maximale Anzahl von zehn Anhängen ist erreicht.</p>
           <div class="mt-3 border-t border-[#e7e8e1] pt-3">
-            <MediaAttachmentUpload :key="`other-media:${scope.organizationId}:${scope.departmentId}`" v-model="additionalMediaAssetIds" :organization-id="scope.organizationId" :department-id="scope.departmentId" :max="10 - mediaAssetIds.length" :allow-images="false" review-videos />
+            <MediaAttachmentUpload :key="`other-media:${scope.organizationId}:${scope.departmentId ?? 'org'}`" v-model="additionalMediaAssetIds" :organization-id="scope.organizationId" :department-id="scope.departmentId" :max="10 - mediaAssetIds.length" :allow-images="false" review-videos />
           </div>
         </template>
       </fieldset>

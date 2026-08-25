@@ -51,8 +51,10 @@ function detectMediaMimeType(buffer: Buffer): MediaMimeType | null {
 export class SupabaseUploadService implements MediaUploadService {
   constructor(private readonly getServiceClient: () => SupabaseClient) {}
 
-  async create(input: { organizationId: string; departmentId: string; assetId: string; filename: string; mimeType: string; byteSize: number }) {
-    const objectPath = `organizations/${input.organizationId}/departments/${input.departmentId}/assets/${input.assetId}/${input.filename}`
+  async create(input: { organizationId: string; departmentId: string | null; assetId: string; filename: string; mimeType: string; byteSize: number }) {
+    const objectPath = input.departmentId
+      ? `organizations/${input.organizationId}/departments/${input.departmentId}/assets/${input.assetId}/${input.filename}`
+      : `organizations/${input.organizationId}/assets/${input.assetId}/${input.filename}`
     const service = this.getServiceClient()
     const signed = await service.storage.from('raw-media').createSignedUploadUrl(objectPath)
     if (signed.error) throw signed.error

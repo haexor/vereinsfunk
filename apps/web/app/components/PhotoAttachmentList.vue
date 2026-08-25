@@ -4,7 +4,7 @@
 // bleiben pro Foto exakt dieselbe, bereits funktionierende Einheit, hier nur mehrfach
 // nebeneinander gestellt. Die Reihenfolge der Slots wird zur Reihenfolge in mediaAssetIds und
 // spaeter zur position der post_media-Zeilen (routes/content.ts).
-const props = withDefaults(defineProps<{ organizationId: string; departmentId: string; max?: number }>(), { max: 10 })
+const props = withDefaults(defineProps<{ organizationId: string; departmentId: string | null; max?: number }>(), { max: 10 })
 const mediaAssetIds = defineModel<string[]>('mediaAssetIds', { required: true })
 
 // Deckelt jeden Aufrufwert auf die Contract-Obergrenze (CreateCompositionSessionSchema.mediaAssetIds,
