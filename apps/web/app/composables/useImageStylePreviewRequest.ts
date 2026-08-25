@@ -1,5 +1,5 @@
 import { PreviewImageStylePresetResponseSchema, type PreviewImageStylePresetRequest } from '@vereinsfunk/contracts'
-import { ref } from 'vue'
+import { getCurrentScope, onScopeDispose, ref } from 'vue'
 import { ApiRequestError } from '../utils/apiClient'
 import type { useApiClient } from './useApiClient'
 
@@ -47,6 +47,11 @@ export function useImageStylePreviewRequest({ api }: { api: ReturnType<typeof us
     if (debounceTimer) clearTimeout(debounceTimer)
     debounceTimer = setTimeout(() => void fetchNow(payload), delayMs)
   }
+
+  // Ohne das schickt ein noch ausstehender Debounce-Timer nach dem Unmount (Scope-Wechsel auf
+  // /bildstil, Navigation) noch eine Vorschau-Anfrage los. getCurrentScope(), weil der Unit-Test
+  // dieses Composable bewusst ohne Komponenten-Scope aufruft.
+  if (getCurrentScope()) onScopeDispose(() => clearTimeout(debounceTimer))
 
   return { state, imageDataUrl, errorCode, schedule, fetchNow }
 }

@@ -156,9 +156,13 @@ export const PreviewImageStylePresetRequestSchema = ImageStylePresetFieldsSchema
   }
 })
 
+// Immer WebP, anders als ApplyImageStyleRenderResponse: die Vorschau geht nicht in den
+// 'rendered-media'-Bucket (der nur image/jpeg und image/png zulaesst), sondern als data:-URL in ein
+// Canvas -- WebP behaelt den Alphakanal bei einem Bruchteil der Base64-Groesse (siehe encodePreview
+// in apps/api/src/routes/imageStyle.ts).
 export const PreviewImageStylePresetResponseSchema = z.object({
   imageBase64: z.string().min(1),
-  contentType: z.enum(['image/png', 'image/jpeg']),
+  contentType: z.literal('image/webp'),
   width: z.int(),
   height: z.int(),
   filterProvider: z.string(),

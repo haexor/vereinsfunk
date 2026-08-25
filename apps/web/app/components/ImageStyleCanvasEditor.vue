@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { LoaderCircle } from '@lucide/vue'
-import type { Canvas as FabricCanvas, FabricImage, Rect } from 'fabric'
+import type * as Fabric from 'fabric'
 import type { PreviewImageStylePresetRequest } from '@vereinsfunk/contracts'
 import type { ImageStylePresetDraft } from '../utils/imageStylePresetDraft'
 import { logoFieldsToPixelRect, pixelRectToLogoFields } from '../utils/imageStyleLogoHandle'
@@ -47,10 +47,13 @@ const canPreview = computed(() => {
   return true
 })
 
+// name fliesst absichtlich NICHT mit: renderImageStyle (apps/api/src/imageStyle.ts) liest ihn nie,
+// und der Watcher unten haengt an genau diesem Payload -- mit dem Namen darin loeste jeder
+// Tastendruck im Namensfeld ein vollstaendiges serverseitiges Rendering aus und zehrte am
+// Ratenlimit von 30 Anfragen/Minute.
 function buildPreviewPayload(): PreviewImageStylePresetRequest {
   const value = draft.value
   return {
-    ...(value.name.trim() ? { name: value.name } : {}),
     organizationId: props.organizationId,
     ...(props.departmentId ? { departmentId: props.departmentId } : {}),
     ...(props.teamId ? { teamId: props.teamId } : {}),
@@ -69,23 +72,37 @@ function buildPreviewPayload(): PreviewImageStylePresetRequest {
   }
 }
 
+// organizationId ist leer, solange kein Vereins-Scope aufgeloest ist -- ein Abruf damit scheitert
+// garantiert an UuidSchema, also gar nicht erst schicken.
+const previewPayload = computed<PreviewImageStylePresetRequest | null>(() =>
+  canPreview.value && props.organizationId ? buildPreviewPayload() : null,
+)
+
 watch(
-  () => JSON.stringify(draft.value),
+  () => JSON.stringify(previewPayload.value),
   () => {
-    if (!canPreview.value) return
-    schedule(buildPreviewPayload())
+    // Serverseitig nichts anstossen: der Timer aus schedule() feuerte sonst erst nach der
+    // SSR-Antwort -- ohne Nuxt-Kontext und mit noch leerem Scope (Muster wie in index.vue).
+    if (import.meta.server) return
+    const payload = previewPayload.value
+    if (payload) schedule(payload)
   },
   { immediate: true },
 )
 
 const canvasEl = ref<HTMLCanvasElement | null>(null)
-let fabricCanvas: FabricCanvas | null = null
-let logoHandle: Rect | null = null
+// Ein einziger dynamischer Import (fabric laeuft nur im Browser), dessen Modul hier gehalten wird:
+// vorher legte refreshLogoHandle den Griff erst im .then() eines eigenen Imports an, wodurch eine
+// zwischenzeitliche Entwurfsaenderung mit veralteten Massen gewinnen konnte.
+let fabricModule: typeof Fabric | null = null
+let fabricCanvas: Fabric.Canvas | null = null
+let logoHandle: Fabric.Rect | null = null
 let updatingFromCanvas = false
 let logoAspectRatio = 1
+let latestBackgroundUrl = ''
 
 function refreshLogoHandle() {
-  if (!fabricCanvas) return
+  if (!fabricCanvas || !fabricModule) return
   if (!draft.value.logoEnabled || draft.value.logoSizePercent === null || draft.value.logoMarginPercent === null) {
     if (logoHandle) {
       fabricCanvas.remove(logoHandle)
@@ -104,23 +121,24 @@ function refreshLogoHandle() {
     logoAspectRatio,
   )
   if (!logoHandle) {
-    import('fabric').then(({ Rect: FabricRect }) => {
-      if (!fabricCanvas || logoHandle) return
-      logoHandle = new FabricRect({
-        left: rect.left,
-        top: rect.top,
-        width: rect.width,
-        height: rect.height,
-        fill: 'rgba(22, 58, 44, 0.15)',
-        stroke: '#163a2c',
-        strokeWidth: 2,
-        strokeDashArray: [6, 4],
-        lockRotation: true,
-      })
-      logoHandle.on('modified', onLogoHandleModified)
-      fabricCanvas.add(logoHandle)
-      fabricCanvas.renderAll()
+    logoHandle = new fabricModule.Rect({
+      left: rect.left,
+      top: rect.top,
+      width: rect.width,
+      height: rect.height,
+      fill: 'rgba(22, 58, 44, 0.15)',
+      stroke: '#163a2c',
+      strokeWidth: 2,
+      strokeDashArray: [6, 4],
+      lockRotation: true,
     })
+    // Nur die Eckgriffe: Drehen ist gesperrt, und eine reine Hoehenaenderung ueber die Seitengriffe
+    // waere wirkungslos -- der Server skaliert das Logo seitenverhaeltnis-erhaltend
+    // (applyLogoWatermark), pixelRectToLogoFields liest deshalb nur die Breite.
+    logoHandle.setControlsVisibility({ mtr: false, mt: false, mb: false, ml: false, mr: false })
+    logoHandle.on('modified', onLogoHandleModified)
+    fabricCanvas.add(logoHandle)
+    fabricCanvas.renderAll()
     return
   }
   updatingFromCanvas = true
@@ -146,6 +164,11 @@ function onLogoHandleModified() {
   draft.value.logoPosition = fields.logoPosition
   draft.value.logoSizePercent = fields.logoSizePercent
   draft.value.logoMarginPercent = fields.logoMarginPercent
+  // Immer nachziehen, nicht nur wenn der Watcher unten anspringt: die Rueckrechnung rastet auf
+  // Enum-Zonen und ganze Prozentwerte ein, ein Ziehen innerhalb derselben Ecke laesst also alle
+  // drei Felder unveraendert. Ohne diesen Aufruf blieb der Griff dann liegen, wo er losgelassen
+  // wurde, und zeigte etwas anderes als der Server rendert.
+  refreshLogoHandle()
 }
 
 async function loadLogoAspectRatio() {
@@ -165,13 +188,21 @@ async function loadLogoAspectRatio() {
 }
 
 async function applyBackgroundImage(dataUrl: string) {
-  if (!fabricCanvas) return
-  const { FabricImage: FabricImageClass } = await import('fabric')
-  const image: FabricImage = await FabricImageClass.fromURL(dataUrl)
-  if (!fabricCanvas) return
+  if (!fabricCanvas || !fabricModule) return
+  latestBackgroundUrl = dataUrl
+  const image: Fabric.FabricImage = await fabricModule.FabricImage.fromURL(dataUrl)
+  // Dekodieren dauert je Bild unterschiedlich lange: eine frueher gestartete, spaeter fertige
+  // Vorschau darf die neuere nicht wieder verdraengen (gleicher Race-Guard wie im Composable).
+  if (!fabricCanvas || latestBackgroundUrl !== dataUrl) return
   const width = image.width ?? fabricCanvas.width
   const height = image.height ?? fabricCanvas.height
   fabricCanvas.setDimensions({ width, height })
+  // setDimensions schreibt die Bildmasse zusaetzlich als Inline-CSS auf beide Canvas-Elemente UND
+  // auf den von fabric erzeugten Wrapper (CanvasDOMManager.setCSSDimensions) -- der traegt keine
+  // Tailwind-Klassen, ein 1200 px breites Vorschaubild sprengte damit die Editorspalte. Die
+  // Backstore-Groesse bleibt in Bildpixeln: fabric rechnet Zeigerpositionen ueber das Verhaeltnis
+  // von Canvas-Breite zu Bounding-Box um, die Griff-Mathematik stimmt also weiterhin.
+  fabricCanvas.setDimensions({ width: '100%', height: 'auto' }, { cssOnly: true })
   fabricCanvas.backgroundImage = image
   fabricCanvas.renderAll()
   refreshLogoHandle()
@@ -190,9 +221,9 @@ watch(
 )
 
 onMounted(async () => {
-  const { Canvas } = await import('fabric')
+  fabricModule = await import('fabric')
   if (!canvasEl.value) return
-  fabricCanvas = new Canvas(canvasEl.value, { selection: false })
+  fabricCanvas = new fabricModule.Canvas(canvasEl.value, { selection: false })
   await loadLogoAspectRatio()
   if (imageDataUrl.value) await applyBackgroundImage(imageDataUrl.value)
 })

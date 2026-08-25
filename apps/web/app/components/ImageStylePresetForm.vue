@@ -113,9 +113,12 @@ function logoAssetLabel(asset: AssetOption): string {
   return `Logo · ${asset.label}`
 }
 
-// Handgebaute Tabs statt eines neuen ui/tabs/-Primitivs: der einzige heute vendorte reka-ui-
-// Wrapper (ui/select/) existiert wegen echter Listbox-/Popover-Semantik -- ein Tab-Header ist
-// deutlich einfacher und rechtfertigt die zusaetzliche Abstraktion hier nicht.
+// Handgebaute Umschalter statt eines neuen ui/tabs/-Primitivs: der einzige heute vendorte reka-ui-
+// Wrapper (ui/select/) existiert wegen echter Listbox-/Popover-Semantik -- ein Bereichsumschalter
+// ist deutlich einfacher und rechtfertigt die zusaetzliche Abstraktion hier nicht. Bewusst
+// role="group" + aria-pressed statt role="tablist"/role="tab": das Tab-Muster verspricht
+// verknuepfte role="tabpanel"-Bereiche und Pfeiltasten-Navigation, beides gibt es hier nicht --
+// Umschaltknoepfe sind das, was tatsaechlich gebaut ist.
 const TABS = [
   { value: 'frame', label: 'Rahmen' },
   { value: 'logo', label: 'Logo' },
@@ -224,13 +227,12 @@ const isValid = computed(() => {
       />
     </label>
 
-    <div class="mt-5 flex gap-1 border-t border-[#e9ebe4] pt-4" role="tablist">
+    <div class="mt-5 flex gap-1 border-t border-[#e9ebe4] pt-4" role="group" aria-label="Bereich">
       <button
         v-for="tab in TABS"
         :key="tab.value"
         type="button"
-        role="tab"
-        :aria-selected="activeTab === tab.value"
+        :aria-pressed="activeTab === tab.value"
         class="focus-ring rounded-lg px-3 py-1.5 text-[11px] font-semibold"
         :class="activeTab === tab.value ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'"
         @click="activeTab = tab.value"

@@ -228,7 +228,8 @@ describe('image style preset contracts (Plan 045, PR 1)', () => {
   })
 
   it('preview accepts a draft without a name', () => {
-    const { name: _name, ...withoutName } = baseFields
+    const withoutName: Record<string, unknown> = { ...baseFields }
+    delete withoutName.name
     expect(
       PreviewImageStylePresetRequestSchema.safeParse({ ...withoutName, organizationId: org })
         .success,

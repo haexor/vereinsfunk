@@ -77,8 +77,8 @@ async function applyHighContrast(buffer: Buffer): Promise<Buffer> {
 }
 
 // Bewusst NICHT .tint(): das koloriert (ersetzt die Chroma) statt zu waermen -- ein Mannschafts-
-// foto kaeme einfarbig sepia zurueck, praktisch ein zweites schwarz_weiss, und die CSS-Vorschau
-// (ImageStyleLivePreview.vue, "sepia(.35) saturate(1.15)") verspricht das Gegenteil. Stattdessen
+// foto kaeme einfarbig sepia zurueck, praktisch ein zweites schwarz_weiss, und die Filter-Kachel
+// (ImageStyleFramePreview.vue, "sepia(.35) saturate(1.15)") verspricht das Gegenteil. Stattdessen
 // eine Verschiebung je Kanal: Rot leicht anheben, Gruen halten, Blau absenken -- Farben bleiben
 // erhalten, das Gesamtbild kippt Richtung Amber.
 async function applyWarm(buffer: Buffer): Promise<Buffer> {
@@ -557,7 +557,7 @@ export async function renderImageStyle(
   }
 
   // Nach dem Rahmen, aber unabhaengig von dessen Art: frame_corner_radius_px ist weder im Contract
-  // noch in den DB-CHECKs an frameType 'parametric' gebunden, und ImageStyleLivePreview.vue setzt
+  // noch in den DB-CHECKs an frameType 'parametric' gebunden, und ImageStyleFramePreview.vue setzt
   // borderRadius ebenfalls fuer jeden Rahmentyp. Solange die Rundung nur im parametrischen Zweig
   // lief, zeigte die Vorschau bei frameType 'none'/'custom' runde Ecken, die im Ergebnis fehlten.
   if (preset.frameCornerRadiusPx && preset.frameCornerRadiusPx > 0) {

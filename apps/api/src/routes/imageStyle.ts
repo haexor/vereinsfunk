@@ -20,6 +20,7 @@ import {
 } from '@vereinsfunk/domain'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyInstance } from 'fastify'
+import sharp from 'sharp'
 import { z } from 'zod'
 import {
   mapBrandRow,
@@ -35,7 +36,6 @@ import {
   checkRateLimit,
   createAuditRecorder,
   resolveDirectoryScope,
-  resolvePreviewIdempotencyKey,
   toPermissionScope,
 } from './shared.js'
 
@@ -169,17 +169,28 @@ export async function loadResolvedBrandColors(
 // Bildstil-Vorschau: rendert einen noch nicht gespeicherten Entwurf gegen das feste Beispielfoto
 // (context.samplePhotoLoader). Reine Berechnung -- kein Storage-Upload, kein DB-Write, keine RPC,
 // anders als style-render weiter unten.
-// Rueckgabetyp bewusst loser als PreviewImageStylePresetResponse (contentType: string statt der
-// engen 'image/png'|'image/jpeg'-Union): renderImageStyle liefert contentType nur als string
-// (ImageStyleRenderResult, unveraendert), die eigentliche Engführung passiert erst am Routen-Rand
-// durch PreviewImageStylePresetResponseSchema.parse(...) -- derselbe Grenzverlauf wie ueberall
-// sonst in diesem Modul (Zod an der API-Grenze, nicht an internen Hilfsfunktionen).
 interface ImageStylePreviewResult {
   imageBase64: string
-  contentType: string
+  contentType: 'image/webp'
   width: number
   height: number
   filterProvider: string
+}
+
+// Die Vorschau wird angeschaut, nicht veroeffentlicht -- deshalb NICHT das Format aus encodeResult
+// (imageStyle.ts) uebernehmen: das waehlt fuer jedes Ergebnis mit Alpha (abgerundete Ecken,
+// 'double'/'festlich'-Rahmen, durchscheinende Rahmengrafik) verlustfreies PNG und liefert damit
+// gemessene 4,3 MB -- als Base64 im JSON-Body 5,7 MB, und das bei bis zu 30 Anfragen/Minute je
+// Nutzer. WebP q80 auf 1200 px Breite behaelt den Alphakanal, ist auf derselben Messung 0,26 MB
+// Base64 und immer noch doppelt so breit wie die Editorspalte je darstellt (~600 CSS-px).
+const PREVIEW_MAX_WIDTH = 1200
+
+async function encodePreview(buffer: Buffer): Promise<{ buffer: Buffer; width: number; height: number }> {
+  const encoded = await sharp(buffer)
+    .resize({ width: PREVIEW_MAX_WIDTH, withoutEnlargement: true })
+    .webp({ quality: 80 })
+    .toBuffer({ resolveWithObject: true })
+  return { buffer: encoded.data, width: encoded.info.width, height: encoded.info.height }
 }
 
 async function previewImageStyle(
@@ -211,47 +222,14 @@ async function previewImageStyle(
     ...(frameAssetBuffer ? { frameAssetBuffer } : {}),
     ...(logoAssetBuffer ? { logoAssetBuffer } : {}),
   })
+  const preview = await encodePreview(rendered.buffer)
   return {
-    imageBase64: rendered.buffer.toString('base64'),
-    contentType: rendered.contentType,
-    width: rendered.width,
-    height: rendered.height,
+    imageBase64: preview.buffer.toString('base64'),
+    contentType: 'image/webp',
+    width: preview.width,
+    height: preview.height,
     filterProvider: rendered.filterProvider,
   }
-}
-
-// Gleiches In-Flight-Dedupe-Muster wie previewStyleProfile (routes/shared.ts), aber lokal
-// gehalten: eigener Ergebnistyp, und dieses Modul haelt seine privaten Hilfsmittel schon heute
-// lokal (z.B. RPC_ERROR_STATUS) statt shared.ts fuer jedes Routen-eigene Anliegen wachsen zu lassen.
-const imagePreviewByIdempotencyKey = new Map<
-  string,
-  { promise: Promise<ImageStylePreviewResult>; expiresAt: number }
->()
-let nextImagePreviewSweepAt = 0
-const IMAGE_PREVIEW_DEDUPE_WINDOW_MS = 60_000
-
-function previewImageStyleDeduped(
-  service: SupabaseClient,
-  context: ApiRouteContext,
-  input: PreviewImageStylePresetRequest,
-  scope: { departmentId?: string; teamId?: string },
-  idempotencyKey: string,
-): Promise<ImageStylePreviewResult> {
-  const now = Date.now()
-  if (imagePreviewByIdempotencyKey.size > 1_000 && now >= nextImagePreviewSweepAt) {
-    nextImagePreviewSweepAt = now + 60_000
-    for (const [key, entry] of imagePreviewByIdempotencyKey) {
-      if (entry.expiresAt < now) imagePreviewByIdempotencyKey.delete(key)
-    }
-  }
-  const existing = imagePreviewByIdempotencyKey.get(idempotencyKey)
-  if (existing && existing.expiresAt >= now) return existing.promise
-  const promise = previewImageStyle(service, context, input, scope)
-  imagePreviewByIdempotencyKey.set(idempotencyKey, {
-    promise,
-    expiresAt: now + IMAGE_PREVIEW_DEDUPE_WINDOW_MS,
-  })
-  return promise
 }
 
 // Plan 045, PR 1: CRUD fuer Bildstil-Presets. Eigenes Modul statt in brand.ts (Modulgrenze wie
@@ -403,18 +381,14 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
         return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
     }
 
-    const idempotencyKey = resolvePreviewIdempotencyKey(request)
-    if (idempotencyKey === null)
-      return reply.code(400).send({ error: 'invalid_idempotency_key', correlationId: request.id })
-
+    // Kein Idempotency-Key/In-Flight-Dedupe wie bei den LLM-Vorschauen (previewStyleProfile,
+    // routes/shared.ts): dort schuetzt es vor einem zweiten BEZAHLTEN Provider-Aufruf bei einem
+    // Client-Retry. Hier gibt es keinen externen Aufruf, ofetch wiederholt POSTs nicht, und der
+    // Client entprellt bereits samt Race-Guard (useImageStylePreviewRequest.ts) -- ein Cache haette
+    // ohne mitgeschickten Header nur zufaellige Schluessel und damit garantiert keinen Treffer,
+    // wuerde aber jedes gerenderte Bild 60 s im Speicher halten.
     try {
-      const result = await previewImageStyleDeduped(
-        supabaseClients.forService(),
-        context,
-        input,
-        resolvedScope,
-        idempotencyKey,
-      )
+      const result = await previewImageStyle(supabaseClients.forService(), context, input, resolvedScope)
       return reply.code(200).send(PreviewImageStylePresetResponseSchema.parse(result))
     } catch (error) {
       if (error instanceof GmicNotEnabledError)

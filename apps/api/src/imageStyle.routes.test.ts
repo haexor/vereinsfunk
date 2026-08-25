@@ -276,9 +276,9 @@ describe('POST /v1/image-style-presets/preview', () => {
 
   async function preview(
     body: Record<string, unknown>,
-    options: { clients?: SupabaseClientFactory; imageEffects?: unknown } = {},
+    options: { clients?: SupabaseClientFactory; imageEffects?: unknown; samplePhoto?: Buffer } = {},
   ) {
-    const image = await tinyImage()
+    const image = options.samplePhoto ?? (await tinyImage())
     const app = await startApp({
       roleProvider: organizationManagerRoleProvider,
       supabaseClients: options.clients ?? noAssetClients(),
@@ -299,12 +299,30 @@ describe('POST /v1/image-style-presets/preview', () => {
     expect(response.statusCode).toBe(200)
     const json = response.json()
     expect(json.filterProvider).toBe('sharp')
-    expect(json.contentType).toBe('image/png')
-    expect(Buffer.from(json.imageBase64, 'base64').length).toBeGreaterThan(0)
+    // Immer WebP, unabhaengig vom Quellformat: die Vorschau geht in ein Canvas, nicht in den
+    // 'rendered-media'-Bucket -- und ein volles PNG waere hier mehrere MB Base64 (encodePreview).
+    expect(json.contentType).toBe('image/webp')
+    const decoded = await sharp(Buffer.from(json.imageBase64, 'base64')).metadata()
+    expect(decoded.format).toBe('webp')
+  })
+
+  // encodePreview deckelt die Breite: das echte Beispielfoto ist 1600 px breit und kaeme mit Alpha
+  // (abgerundete Ecken, 'double'-Rahmen) als PNG mit mehreren MB Base64 zurueck -- je entprellter
+  // Aenderung, bei bis zu 30 Anfragen/Minute.
+  it('caps the preview width instead of returning the full-size render', async () => {
+    const wide = await sharp({
+      create: { width: 2000, height: 1000, channels: 3, background: { r: 10, g: 20, b: 30 } },
+    })
+      .png()
+      .toBuffer()
+    const response = await preview({}, { samplePhoto: wide })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ width: 1200, height: 600 })
   })
 
   it('renders a preview for a draft that has no name yet', async () => {
-    const { name: _name, ...withoutName } = BASE_FIELDS
+    const withoutName: Record<string, unknown> = { ...BASE_FIELDS }
+    delete withoutName.name
     const response = await preview(withoutName)
     expect(response.statusCode).toBe(200)
   })

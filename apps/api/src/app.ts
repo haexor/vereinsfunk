@@ -161,7 +161,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       : undefined)
   const samplePhotoLoader =
     options.samplePhotoLoader ??
-    (() => readFile(path.join(process.cwd(), 'assets', 'sample-photos', 'team-photo.jpg')))
+    (() =>
+      readFile(path.join(process.cwd(), 'assets', 'sample-photos', 'alejandro-stuardo-team-photo.jpg')))
   const platformAdminProvider =
     options.platformAdminProvider ??
     new SupabasePlatformAdminProvider(() => supabaseClients.forService())
