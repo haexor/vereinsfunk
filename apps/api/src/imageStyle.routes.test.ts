@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import sharp from 'sharp'
 import { describe, expect, it } from 'vitest'
 import {
@@ -12,7 +13,7 @@ import {
   USER_ID,
 } from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { SupabaseClientFactory } from './app.js'
+import { SAMPLE_PHOTO_URL, type SupabaseClientFactory } from './app.js'
 
 const PRESET_ID = '47000000-0000-4000-8000-000000000001'
 const FRAME_ASSET_ID = '47000000-0000-4000-8000-000000000002'
@@ -293,6 +294,15 @@ describe('POST /v1/image-style-presets/preview', () => {
       payload: { ...BASE_FIELDS, organizationId: ORGANIZATION_ID, ...body },
     })
   }
+
+  // Jeder andere Test hier injiziert samplePhotoLoader -- der Standardpfad aus buildApp wird also
+  // sonst nie ausgefuehrt, und eine umbenannte oder verschobene Datei fiele erst in Produktion als
+  // 500 auf. Diese Datei wurde im Review schon einmal umbenannt, das ist keine hypothetische Sorge.
+  it('resolves the bundled sample photo that the default loader reads', async () => {
+    const metadata = await sharp(await readFile(SAMPLE_PHOTO_URL)).metadata()
+    expect(metadata.format).toBe('jpeg')
+    expect(metadata.width).toBeGreaterThan(0)
+  })
 
   it('renders a preview for a plain, unstyled preset', async () => {
     const response = await preview({})
