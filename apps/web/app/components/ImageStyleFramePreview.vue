@@ -16,12 +16,11 @@ const props = withDefaults(
   },
 )
 
-// Rein kosmetische CSS-Naeherung, wie schon die bisherige Live-Vorschau (Rahmen/Filter entstehen
-// serverseitig per Sharp, siehe apps/api/src/imageStyle.ts). Das bereitgestellte Mannschaftsfoto
-// macht die Filterwirkung statt eines abstrakten Platzhalters sichtbar. Es wird fuer die grosse
-// Live-Vorschau (ImageStyleLivePreview.vue, frameStyle darf dort null sein -- kein/eigener Rahmen
-// braucht keine CSS-Umrandung) UND die kleinen Stil-Galerie-Kacheln in ImageStylePresetForm.vue
-// genutzt.
+// Rein kosmetische CSS-Naeherung (Rahmen/Filter entstehen serverseitig per Sharp, siehe
+// apps/api/src/imageStyle.ts). Das bereitgestellte Mannschaftsfoto macht die Filterwirkung statt
+// eines abstrakten Platzhalters sichtbar. Genutzt fuer die kleinen Rahmenstil-/Filter-Galerie-
+// Kacheln in ImageStylePresetForm.vue -- die grosse Vorschau zeigt seit ImageStyleCanvasEditor.vue
+// das echte, serverseitig gerenderte Ergebnis statt dieser Annaeherung.
 const outerStyle = computed(() => ({
   borderRadius: props.cornerRadiusPx ? `${props.cornerRadiusPx}px` : undefined,
 }))

@@ -1091,6 +1091,30 @@ describe('POST /v1/content-style-profiles/preview', () => {
     expect(calls).toBe(1)
   })
 
+  // Kehrseite davon: der Idempotency-Key kommt vom Client, geteilt wird trotzdem nur innerhalb
+  // desselben Nutzers (resolvePreviewIdempotencyKey praefixiert mit der userId). Sonst bekaeme ein
+  // fremder Verein mit demselben Wert den fertigen Text des ersten Aufrufs zurueck.
+  it('does not share a provider call between different users with the same Idempotency-Key', async () => {
+    let calls = 0
+    const clients: SupabaseClientFactory = {
+      forUser: () => scopeResolvingUserClient(),
+      forService: () => activeTextProviderService(),
+    }
+    const app = await startApp({
+      roleProvider: grantingRoleProvider, supabaseClients: clients,
+      textGenerator: { generateText: async () => { calls += 1; return FAKE_GENERATED_POST } },
+    })
+    const send = async (userId: string) => app.inject({
+      method: 'POST', url: '/v1/content-style-profiles/preview',
+      headers: { authorization: `Bearer ${await signAccessToken(userId)}`, 'idempotency-key': 'preview-shared-key' },
+      payload: PREVIEW_PAYLOAD,
+    })
+    const [first, second] = await Promise.all([send(USER_ID), send('47000000-2000-4000-8000-0000000000aa')])
+    expect(first.statusCode).toBe(200)
+    expect(second.statusCode).toBe(200)
+    expect(calls).toBe(2)
+  })
+
   it('maps an ungrounded generation to 502', async () => {
     const clients: SupabaseClientFactory = {
       forUser: () => scopeResolvingUserClient(),
