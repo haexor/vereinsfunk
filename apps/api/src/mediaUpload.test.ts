@@ -82,7 +82,7 @@ describe('SupabaseUploadService.complete', () => {
     const client = fakeClient({ downloadBuffer: original, captured })
     const service = new SupabaseUploadService(() => client)
     const result = await service.complete({ assetId: ASSET_ID, sha256: createHash('sha256').update(original).digest('hex') })
-    expect(result).toEqual({ accepted: true })
+    expect(result).toEqual({ accepted: true, uploadStatus: 'ready' })
     expect(captured.uploaded?.contentType).toBe('image/jpeg')
     const update = captured.updates.at(-1)!
     expect(update).toMatchObject({ structural_validation_status: 'valid', scan_status: 'clean', upload_status: 'ready', width: 2, height: 2, mime_type: 'image/jpeg' })
@@ -96,7 +96,7 @@ describe('SupabaseUploadService.complete', () => {
     const client = fakeClient({ downloadBuffer: buffer, captured })
     const service = new SupabaseUploadService(() => client)
     const result = await service.complete({ assetId: ASSET_ID, sha256: 'f'.repeat(64) })
-    expect(result).toEqual({ accepted: true })
+    expect(result).toEqual({ accepted: true, uploadStatus: 'failed' })
     expect(captured.updates).toEqual([{ structural_validation_status: 'failed', scan_status: 'failed', upload_status: 'failed' }])
   })
 
@@ -106,7 +106,7 @@ describe('SupabaseUploadService.complete', () => {
     const client = fakeClient({ downloadBuffer: buffer, captured })
     const service = new SupabaseUploadService(() => client)
     const result = await service.complete({ assetId: ASSET_ID, sha256: createHash('sha256').update(buffer).digest('hex') })
-    expect(result).toEqual({ accepted: true })
+    expect(result).toEqual({ accepted: true, uploadStatus: 'failed' })
     expect(captured.updates).toEqual([{ structural_validation_status: 'failed', scan_status: 'failed', upload_status: 'failed' }])
   })
 
@@ -117,7 +117,7 @@ describe('SupabaseUploadService.complete', () => {
     const client = fakeClient({ downloadBuffer: buffer, captured })
     const service = new SupabaseUploadService(() => client)
     const result = await service.complete({ assetId: ASSET_ID, sha256: createHash('sha256').update(buffer).digest('hex') })
-    expect(result).toEqual({ accepted: true })
+    expect(result).toEqual({ accepted: true, uploadStatus: 'failed' })
     expect(captured.updates).toEqual([{ structural_validation_status: 'failed', scan_status: 'failed', upload_status: 'failed' }])
   })
 
@@ -127,7 +127,7 @@ describe('SupabaseUploadService.complete', () => {
     const client = fakeClient({ downloadBuffer: buffer, captured })
     const service = new SupabaseUploadService(() => client)
     const result = await service.complete({ assetId: ASSET_ID, sha256: createHash('sha256').update(buffer).digest('hex') })
-    expect(result).toEqual({ accepted: true })
+    expect(result).toEqual({ accepted: true, uploadStatus: 'ready' })
     const update = captured.updates.at(-1)!
     expect(update).toMatchObject({ structural_validation_status: 'valid', scan_status: 'clean', upload_status: 'ready', mime_type: 'video/mp4', width: null, height: null, exif_stripped_at: null })
     expect(captured.uploaded?.buffer).toEqual(buffer)
@@ -141,7 +141,7 @@ describe('SupabaseUploadService.complete', () => {
     } as unknown as SupabaseClient
     const service = new SupabaseUploadService(() => client)
     const result = await service.complete({ assetId: ASSET_ID, sha256: 'f'.repeat(64) })
-    expect(result).toEqual({ accepted: true })
+    expect(result).toEqual({ accepted: true, uploadStatus: 'ready' })
     expect(downloadCalled).toBe(false)
   })
 
@@ -153,7 +153,7 @@ describe('SupabaseUploadService.complete', () => {
     const input = { assetId: ASSET_ID, sha256: createHash('sha256').update(original).digest('hex') }
 
     await expect(service.complete(input)).rejects.toMatchObject({ message: 'temporary database outage' })
-    await expect(service.complete(input)).resolves.toEqual({ accepted: true })
+    await expect(service.complete(input)).resolves.toEqual({ accepted: true, uploadStatus: 'ready' })
 
     expect(captured.updates).toHaveLength(2)
     expect(captured.updates[0]).toMatchObject({ object_path: 'organizations/x/departments/y/assets/z/foto.jpg.normalized', upload_status: 'ready' })

@@ -32,7 +32,7 @@ function detectMediaMimeType(buffer: Buffer): MediaMimeType | null {
   if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png'
   if (buffer.length >= 12 && buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP') return 'image/webp'
   if (buffer.length >= 12 && buffer.subarray(4, 8).toString('ascii') === 'ftyp') return buffer.subarray(8, 12).toString('ascii') === 'M4A ' ? 'audio/mp4' : 'video/mp4'
-  if ((buffer.length >= 3 && buffer.subarray(0, 3).toString('ascii') === 'ID3') || (buffer.length >= 2 && buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0)) return 'audio/mpeg'
+  if ((buffer.length >= 3 && buffer.subarray(0, 3).toString('ascii') === 'ID3') || (buffer.length >= 2 && buffer[0] === 0xff && (buffer[1]! & 0xe0) === 0xe0)) return 'audio/mpeg'
   return null
 }
 
@@ -64,7 +64,7 @@ export class SupabaseUploadService implements MediaUploadService {
     }
   }
 
-  async complete(input: { assetId: string; sha256: string }): Promise<{ accepted: true }> {
+  async complete(input: { assetId: string; sha256: string }): Promise<{ accepted: true; uploadStatus: string }> {
     const service = this.getServiceClient()
     const existing = await service.from('media_assets').select('bucket_id, object_path, upload_status').eq('id', input.assetId).single()
     if (existing.error) throw existing.error
@@ -73,12 +73,12 @@ export class SupabaseUploadService implements MediaUploadService {
     // failed, quarantined, ...) must not re-download and re-process bytes that may since have
     // been superseded -- the same "never silently re-render" discipline media_derivatives already
     // enforces via enforce_immutable_derivative().
-    if (existingData.upload_status !== 'initiated') return { accepted: true }
+    if (existingData.upload_status !== 'initiated') return { accepted: true, uploadStatus: existingData.upload_status }
 
     const markFailed = async () => {
       const update = await service.from('media_assets').update({ structural_validation_status: 'failed', scan_status: 'failed', upload_status: 'failed' }).eq('id', input.assetId)
       if (update.error) throw update.error
-      return { accepted: true as const }
+      return { accepted: true as const, uploadStatus: 'failed' }
     }
 
     const download = await service.storage.from(existingData.bucket_id).download(existingData.object_path)
@@ -137,6 +137,6 @@ export class SupabaseUploadService implements MediaUploadService {
     }).eq('id', input.assetId)
     if (update.error) throw update.error
 
-    return { accepted: true }
+    return { accepted: true, uploadStatus: 'ready' }
   }
 }

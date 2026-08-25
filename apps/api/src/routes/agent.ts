@@ -62,8 +62,12 @@ const MessageRowSchema = z.object({
   conversation_id: UuidSchema,
   role: z.enum(['user', 'assistant']),
   content: z.string(),
-  media_asset_ids: z.array(UuidSchema).default([]),
   created_at: z.string(),
+})
+const MessageMediaReferenceRowSchema = z.object({
+  agent_message_id: UuidSchema,
+  media_asset_id: UuidSchema,
+  position: z.number().int().min(0).max(9),
 })
 const PersistedMessagesRowSchema = z.object({
   user_message: MessageRowSchema,
@@ -110,7 +114,7 @@ function mapConversation(row: unknown): AgentConversation {
   })
 }
 
-function mapMessage(row: unknown): AgentMessage {
+function mapMessage(row: unknown, mediaAssetIds: string[] = []): AgentMessage {
   const parsed = MessageRowSchema.parse(row)
   return AgentMessageSchema.parse({
     id: parsed.id,
@@ -118,7 +122,7 @@ function mapMessage(row: unknown): AgentMessage {
     organizationId: parsed.organization_id,
     role: parsed.role,
     content: parsed.content,
-    mediaAssetIds: parsed.media_asset_ids,
+    mediaAssetIds,
     createdAt: parsed.created_at,
   })
 }
@@ -410,13 +414,29 @@ async function loadConversation(client: SupabaseClient, id: string): Promise<Age
 async function loadMessages(client: SupabaseClient, conversation: AgentConversation): Promise<AgentMessage[]> {
   const result = await client
     .from('agent_messages')
-    .select('id, organization_id, conversation_id, role, content, media_asset_ids, created_at')
+    .select('id, organization_id, conversation_id, role, content, created_at')
     .eq('organization_id', conversation.organizationId)
     .eq('conversation_id', conversation.id)
     .order('created_at', { ascending: true })
     .limit(100)
   if (result.error) throw result.error
-  return (result.data ?? []).map(mapMessage)
+  const rows = result.data ?? []
+  if (rows.length === 0) return []
+  const references = await client
+    .from('agent_message_media_references')
+    .select('agent_message_id, media_asset_id, position')
+    .eq('organization_id', conversation.organizationId)
+    .in('agent_message_id', rows.map((row) => row.id as string))
+    .order('position', { ascending: true })
+  if (references.error) throw references.error
+  const mediaAssetIdsByMessageId = new Map<string, string[]>()
+  for (const row of references.data ?? []) {
+    const reference = MessageMediaReferenceRowSchema.parse(row)
+    const mediaAssetIds = mediaAssetIdsByMessageId.get(reference.agent_message_id) ?? []
+    mediaAssetIds.push(reference.media_asset_id)
+    mediaAssetIdsByMessageId.set(reference.agent_message_id, mediaAssetIds)
+  }
+  return rows.map((row) => mapMessage(row, mediaAssetIdsByMessageId.get(row.id as string) ?? []))
 }
 
 type ApprovalTarget = { organizationId: string; departmentId: string; teamId: string | null; postId: string }
@@ -1009,7 +1029,7 @@ export function registerAgentRoutes(
     })
     return reply.code(201).send(AgentConversationDetailSchema.parse({
       conversation: { ...conversation, lastActivityAt: persistedRow.last_activity_at },
-      messages: [...existingMessages, mapMessage(persistedRow.user_message), mapMessage(persistedRow.assistant_message)],
+      messages: [...existingMessages, mapMessage(persistedRow.user_message, input.mediaAssetIds), mapMessage(persistedRow.assistant_message)],
     }))
   })
 }

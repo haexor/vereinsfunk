@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(36);
+select plan(42);
 
 set local role postgres;
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -17,7 +17,8 @@ insert into public.organizations (id, name, slug) values
   ('68000000-1000-4000-8000-000000000001', 'Agent Verein', 'agent-verein'),
   ('68000000-1000-4000-8000-000000000002', 'Agent Fremdverein', 'agent-fremdverein');
 insert into public.departments (id, organization_id, name, slug) values
-  ('68000000-1100-4000-8000-000000000001', '68000000-1000-4000-8000-000000000001', 'Agent Abteilung', 'agent-abteilung');
+  ('68000000-1100-4000-8000-000000000001', '68000000-1000-4000-8000-000000000001', 'Agent Abteilung', 'agent-abteilung'),
+  ('68000000-1100-4000-8000-000000000002', '68000000-1000-4000-8000-000000000002', 'Agent Fremdabteilung', 'agent-fremdabteilung');
 insert into public.organization_memberships (organization_id, user_id, role) values
   ('68000000-1000-4000-8000-000000000001', '68000000-0000-4000-8000-000000000001', 'organization_admin'),
   ('68000000-1000-4000-8000-000000000001', '68000000-0000-4000-8000-000000000002', 'organization_viewer'),
@@ -26,8 +27,13 @@ insert into public.agent_conversations (id, organization_id, department_id, crea
 values
   ('68000000-9000-4000-8000-000000000001', '68000000-1000-4000-8000-000000000001', '68000000-1100-4000-8000-000000000001', '68000000-0000-4000-8000-000000000001', now() + interval '90 days'),
   ('68000000-9000-4000-8000-000000000002', '68000000-1000-4000-8000-000000000002', null, '68000000-0000-4000-8000-000000000003', now() + interval '90 days');
-insert into public.agent_messages (organization_id, conversation_id, role, content, retention_expires_at)
-values ('68000000-1000-4000-8000-000000000001', '68000000-9000-4000-8000-000000000001', 'user', 'Interne Frage', now() + interval '90 days');
+insert into public.agent_messages (id, organization_id, conversation_id, role, content, retention_expires_at)
+values ('68000000-9300-4000-8000-000000000001', '68000000-1000-4000-8000-000000000001', '68000000-9000-4000-8000-000000000001', 'user', 'Interne Frage', now() + interval '90 days');
+insert into public.media_assets (id, organization_id, department_id, bucket_id, object_path, mime_type, byte_size, created_by) values
+  ('68000000-9400-4000-8000-000000000001', '68000000-1000-4000-8000-000000000001', '68000000-1100-4000-8000-000000000001', 'raw-media', 'organizations/agent/attachments/local.jpg', 'image/jpeg', 1, '68000000-0000-4000-8000-000000000001'),
+  ('68000000-9400-4000-8000-000000000002', '68000000-1000-4000-8000-000000000002', '68000000-1100-4000-8000-000000000002', 'raw-media', 'organizations/agent/attachments/foreign.jpg', 'image/jpeg', 1, '68000000-0000-4000-8000-000000000003');
+insert into public.agent_message_media_references (organization_id, agent_message_id, media_asset_id, position)
+values ('68000000-1000-4000-8000-000000000001', '68000000-9300-4000-8000-000000000001', '68000000-9400-4000-8000-000000000001', 0);
 insert into public.agent_action_proposals (
   id, organization_id, conversation_id, created_by, tool_name, scope_snapshot, input_snapshot,
   input_hash, risk_class, expires_at
@@ -44,6 +50,7 @@ insert into public.agent_tool_runs (
 
 select is((select relforcerowsecurity from pg_class where oid = 'public.agent_conversations'::regclass), true, 'agent conversations enforce RLS');
 select is((select relforcerowsecurity from pg_class where oid = 'public.agent_messages'::regclass), true, 'agent messages enforce RLS');
+select is((select relforcerowsecurity from pg_class where oid = 'public.agent_message_media_references'::regclass), true, 'agent message media references enforce RLS');
 select is((select relforcerowsecurity from pg_class where oid = 'public.agent_action_proposals'::regclass), true, 'agent proposals enforce RLS');
 select is((select relforcerowsecurity from pg_class where oid = 'public.agent_tool_runs'::regclass), true, 'agent tool runs enforce RLS');
 
@@ -51,6 +58,7 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub', '68000000-0000-4000-8000-000000000001', true);
 select is((select count(*)::integer from public.agent_conversations), 1, 'owner sees their own conversation');
 select is((select count(*)::integer from public.agent_messages), 1, 'owner sees messages from their own conversation');
+select is((select count(*)::integer from public.agent_message_media_references), 1, 'owner sees references from their own conversation');
 select is((select count(*)::integer from public.agent_action_proposals), 1, 'owner sees proposals from their own conversation');
 select is((select count(*)::integer from public.agent_tool_runs), 1, 'owner sees tool runs from their own conversation');
 select throws_ok(
@@ -62,12 +70,14 @@ select throws_ok(
 select set_config('request.jwt.claim.sub', '68000000-0000-4000-8000-000000000002', true);
 select is((select count(*)::integer from public.agent_conversations), 0, 'another member of the same organization cannot read a private conversation');
 select is((select count(*)::integer from public.agent_messages), 0, 'another member cannot read private conversation messages');
+select is((select count(*)::integer from public.agent_message_media_references), 0, 'another member cannot read private conversation media references');
 select is((select count(*)::integer from public.agent_action_proposals), 0, 'another member cannot read private conversation proposals');
 select is((select count(*)::integer from public.agent_tool_runs), 0, 'another member cannot read private conversation tool runs');
 
 select set_config('request.jwt.claim.sub', '68000000-0000-4000-8000-000000000003', true);
 select is((select count(*)::integer from public.agent_conversations), 1, 'foreign owner sees only their own foreign-tenant conversation');
 select is((select count(*)::integer from public.agent_messages), 0, 'foreign owner cannot read messages from another tenant');
+select is((select count(*)::integer from public.agent_message_media_references), 0, 'foreign owner cannot read media references from another tenant');
 select is((select count(*)::integer from public.agent_action_proposals), 1, 'foreign owner sees only their own foreign-tenant proposal');
 select is((select count(*)::integer from public.agent_tool_runs), 1, 'foreign owner sees only their own foreign-tenant tool run');
 select is((select count(*)::integer from public.agent_conversations where id = '68000000-9000-4000-8000-000000000001'), 0, 'foreign tenant conversation is invisible');
@@ -75,6 +85,19 @@ select is((select count(*)::integer from public.agent_action_proposals where con
 select is((select count(*)::integer from public.agent_tool_runs where conversation_id = '68000000-9000-4000-8000-000000000001'), 0, 'foreign tenant tool run is invisible');
 
 set local role postgres;
+select throws_ok(
+  $$insert into public.agent_message_media_references (organization_id, agent_message_id, media_asset_id, position)
+    values ('68000000-1000-4000-8000-000000000002', '68000000-9300-4000-8000-000000000001', '68000000-9400-4000-8000-000000000002', 0)$$,
+  '23503', null, 'composite foreign key rejects a media reference across organizations'
+);
+insert into public.agent_messages (id, organization_id, conversation_id, role, content, retention_expires_at)
+values ('68000000-9300-4000-8000-000000000002', '68000000-1000-4000-8000-000000000001', '68000000-9000-4000-8000-000000000001', 'assistant', 'Interne Antwort', now() + interval '90 days');
+select throws_ok(
+  $$insert into public.agent_message_media_references (organization_id, agent_message_id, media_asset_id, position)
+    values ('68000000-1000-4000-8000-000000000001', '68000000-9300-4000-8000-000000000002', '68000000-9400-4000-8000-000000000001', 0)$$,
+  'P0001', 'agent_message_media_reference_requires_user_message', 'assistant messages cannot carry media references'
+);
+
 delete from public.agent_action_proposals where id = '68000000-9100-4000-8000-000000000001';
 select is(
   (select proposal_id is null from public.agent_tool_runs where correlation_id = '68000000-9200-4000-8000-000000000001'),

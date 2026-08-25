@@ -31,7 +31,7 @@ export interface MediaUploadService {
     mimeType: string
     byteSize: number
   }): Promise<{ uploadUrl: string; objectPath: string; expiresAt: string }>
-  complete(input: { assetId: string; sha256: string }): Promise<{ accepted: true }>
+  complete(input: { assetId: string; sha256: string }): Promise<{ accepted: true; uploadStatus?: string }>
 }
 
 export interface ApiRouteGuards {

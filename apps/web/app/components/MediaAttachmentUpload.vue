@@ -24,6 +24,19 @@ const api = useApiClient()
 const input = useTemplateRef<HTMLInputElement>('input')
 const attachments = ref<PendingAttachment[]>([])
 const effectiveMax = computed(() => Math.min(props.max, 10))
+const UploadCompletionSchema = z.object({
+  accepted: z.literal(true),
+  uploadStatus: z.enum(['initiated', 'uploaded', 'normalizing', 'ready', 'quarantined', 'failed', 'deleted']),
+})
+const PeopleReviewInputSchema = z.object({ target_asset_id: z.string().uuid(), faces_present: z.boolean() })
+const ReviewedMediaAssetSchema = z.object({
+  id: z.string().uuid(),
+  organization_id: z.string().uuid(),
+  department_id: z.string().uuid(),
+  upload_status: z.literal('ready'),
+  people_reviewed_at: z.string().datetime({ offset: true }),
+  people_reviewed_by: z.string().uuid(),
+})
 
 function iconFor(file: File) {
   if (file.type.startsWith('video/')) return FileVideo
@@ -53,10 +66,15 @@ async function upload(attachment: PendingAttachment) {
     }, z.object({ assetId: z.string(), uploadUrl: z.string() }))
     const sent = await fetch(initiated.uploadUrl, { method: 'PUT', body: attachment.file, headers: { 'content-type': attachment.file.type } })
     if (!sent.ok) throw new Error('upload_failed')
-    await api.request(`/v1/media/${initiated.assetId}/complete`, { method: 'POST', body: { sha256: await sha256Hex(attachment.file) } }, z.object({ accepted: z.boolean() }))
+    const completed = await api.request(`/v1/media/${initiated.assetId}/complete`, { method: 'POST', body: { sha256: await sha256Hex(attachment.file) } }, UploadCompletionSchema)
     attachment.assetId = initiated.assetId
+    if (completed.uploadStatus !== 'ready') {
+      attachment.state = 'failed'
+      attachment.error = 'Der Upload konnte nicht geprüft werden. Bitte versuche es erneut.'
+      return
+    }
     attachment.state = props.reviewVideos && attachment.file.type.startsWith('video/') ? 'review' : 'ready'
-    syncModel()
+    if (attachment.state === 'ready') syncModel()
   } catch {
     attachment.state = 'failed'
     attachment.error = 'Der Upload ist fehlgeschlagen. Bitte versuche es erneut.'
@@ -74,8 +92,11 @@ function onFiles(event: Event) {
 async function confirmVideoReview(attachment: PendingAttachment) {
   if (!attachment.assetId) return
   try {
-    const confirmed = await useSupabaseClient().rpc('confirm_media_people_review', { target_asset_id: attachment.assetId, faces_present: false })
+    const reviewInput = PeopleReviewInputSchema.parse({ target_asset_id: attachment.assetId, faces_present: false })
+    const confirmed = await useSupabaseClient().rpc('confirm_media_people_review', reviewInput)
     if (confirmed.error) throw confirmed.error
+    const asset = ReviewedMediaAssetSchema.parse(confirmed.data)
+    if (asset.id !== reviewInput.target_asset_id || asset.organization_id !== props.organizationId || asset.department_id !== props.departmentId) throw new Error('unexpected_media_people_review_response')
     attachment.state = 'ready'
     syncModel()
   } catch {
