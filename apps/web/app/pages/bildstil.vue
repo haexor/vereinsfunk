@@ -155,11 +155,6 @@ const selectableLogoAssets = computed(() =>
     .map(assetOption),
 )
 
-function resolveFrameColor(frameColor: string | null): string {
-  if (frameColor === 'primary') return orgColors.primaryColor
-  if (frameColor === 'accent') return orgColors.accentColor
-  return frameColor ?? 'transparent'
-}
 function signedUrlFor(assets: BrandAssetOption[], assetId: string | null): string {
   return assets.find((asset) => asset.id === assetId)?.signedUrl ?? ''
 }
@@ -308,6 +303,18 @@ const editingId = ref<string | null>(null)
 const editDraft = ref<ImageStylePresetDraft>(emptyImageStylePresetDraft())
 const editSaving = ref(false)
 const editError = ref('')
+
+// ImageStyleCanvasEditor schreibt Logo-Aenderungen aus dem Ziehgriff in den Entwurf zurueck --
+// dafuer braucht es ein v-model, und ein Ternary wie "editingId ? editDraft : draft" ist kein
+// gueltiges v-model-Ziel. Dieser Computed macht denselben "wer ist gerade aktiv"-Wechsel wie unten
+// im Template (:frame-type="(editingId ? editDraft : draft).frameType" etc.) v-model-faehig.
+const activeDraft = computed<ImageStylePresetDraft>({
+  get: () => (editingId.value ? editDraft.value : draft.value),
+  set: (value) => {
+    if (editingId.value) editDraft.value = value
+    else draft.value = value
+  },
+})
 
 function startEdit(preset: ImageStylePreset) {
   editingId.value = preset.id
@@ -515,25 +522,12 @@ async function deletePreset(preset: ImageStylePreset) {
         </div>
 
         <div class="lg:sticky lg:top-6 lg:self-start">
-          <ImageStyleLivePreview
-            :frame-type="(editingId ? editDraft : draft).frameType"
-            :frame-style="(editingId ? editDraft : draft).frameStyle"
-            :frame-width-px="(editingId ? editDraft : draft).frameWidthPx"
-            :frame-corner-radius-px="(editingId ? editDraft : draft).frameCornerRadiusPx"
-            :frame-color-hex="resolveFrameColor((editingId ? editDraft : draft).frameColor)"
-            :custom-frame-url="
-              (editingId ? editDraft : draft).frameType === 'custom'
-                ? signedUrlFor(frameAssets, (editingId ? editDraft : draft).frameBrandAssetId)
-                : ''
-            "
-            :logo-enabled="(editingId ? editDraft : draft).logoEnabled"
-            :logo-url="signedUrlFor(logoAssets, (editingId ? editDraft : draft).logoBrandAssetId)"
-            :logo-position="(editingId ? editDraft : draft).logoPosition"
-            :logo-size-percent="(editingId ? editDraft : draft).logoSizePercent"
-            :logo-margin-percent="(editingId ? editDraft : draft).logoMarginPercent"
-            :filter="(editingId ? editDraft : draft).filter"
-            :primary-color="orgColors.primaryColor"
-            :accent-color="orgColors.accentColor"
+          <ImageStyleCanvasEditor
+            v-model:draft="activeDraft"
+            :logo-url="signedUrlFor(logoAssets, activeDraft.logoBrandAssetId)"
+            :organization-id="organizationId ?? ''"
+            :department-id="activeDepartmentId ?? null"
+            :team-id="activeTeamId ?? null"
           />
         </div>
       </div>
