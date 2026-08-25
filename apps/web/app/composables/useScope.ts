@@ -35,7 +35,6 @@ export async function useScope() {
   // synchrone Nuxt-Instance-Fenster und schlaegt serverseitig fehl (NUXT_E1001).
   const active = useState<ActiveScope | null>('vf-scope', () => null)
   const remembered = useCookie<ActiveScope | null>('vf-scope-cookie', { default: () => null })
-  const cookieSyncRegistered = useState<boolean>('vf-scope-cookie-sync-registered', () => false)
   const session = await useSession()
   const scopes = session.value?.scopes ?? []
 
@@ -47,18 +46,8 @@ export async function useScope() {
     // ersten Öffnen nicht stillschweigend auf seine erste Abteilung umgebogen werden.
     active.value = defaultScope(scopes)
   }
-  // useSession() is always empty on the server, so a server-side write here would
-  // overwrite the real, previously remembered cookie with null on every SSR pass.
-  if (import.meta.client) {
-    remembered.value = active.value
-    // Das Layout wechselt den Kontext ohne einen erneuten useScope()-Aufruf. Genau ein globaler
-    // Watcher hält deshalb die Auswahl für den nächsten Besuch fest, ohne pro Seite weitere
-    // Watcher auf denselben State zu registrieren.
-    if (!cookieSyncRegistered.value) {
-      cookieSyncRegistered.value = true
-      watch(active, (value) => { remembered.value = value }, { deep: true })
-    }
-  }
+  // Das Cookie-Schreiben uebernimmt app/plugins/scope-cookie-sync.client.ts - dort laeuft es
+  // clientseitig genau einmal pro App-Instanz, statt hier bei jedem useScope()-Aufruf erneut.
 
   return active
 }
