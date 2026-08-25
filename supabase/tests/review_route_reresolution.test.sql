@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(37);
+select plan(39);
 
 set local role postgres;
 
@@ -13,7 +13,10 @@ values
   ('00000000-0000-0000-0000-000000000000', '65000000-0000-4000-8000-000000000002', 'authenticated', 'authenticated', 'medien@pgtap-reresolve.local', '', '{}', '{}', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '65000000-0000-4000-8000-000000000003', 'authenticated', 'authenticated', 'verwalter@pgtap-reresolve.local', '', '{}', '{}', now(), now()),
   ('00000000-0000-0000-0000-000000000000', '65000000-0000-4000-8000-000000000004', 'authenticated', 'authenticated', 'org-admin@pgtap-reresolve.local', '', '{}', '{}', now(), now()),
-  ('00000000-0000-0000-0000-000000000000', '65000000-0000-4000-8000-000000000005', 'authenticated', 'authenticated', 'neue-medien@pgtap-reresolve.local', '', '{}', '{}', now(), now());
+  ('00000000-0000-0000-0000-000000000000', '65000000-0000-4000-8000-000000000005', 'authenticated', 'authenticated', 'neue-medien@pgtap-reresolve.local', '', '{}', '{}', now(), now()),
+  -- Traegt post.submit ausschliesslich ueber die Vereinsebene -- die Person, die einen Beitrag ohne
+  -- gewaehlte Abteilung einreicht (Block 35-36 unten).
+  ('00000000-0000-0000-0000-000000000000', '65000000-0000-4000-8000-000000000008', 'authenticated', 'authenticated', 'vereins-autorin@pgtap-reresolve.local', '', '{}', '{}', now(), now());
 
 insert into public.organizations (id, name, slug) values
   ('65000000-1000-4000-8000-000000000001', 'PGTAP Reresolve Verein', 'pgtap-reresolve-verein');
@@ -21,7 +24,8 @@ insert into public.departments (id, organization_id, name, slug) values
   ('65000000-1100-4000-8000-000000000001', '65000000-1000-4000-8000-000000000001', 'Fußball', 'fussball');
 
 insert into public.organization_memberships (organization_id, user_id, role) values
-  ('65000000-1000-4000-8000-000000000001', '65000000-0000-4000-8000-000000000004', 'organization_admin');
+  ('65000000-1000-4000-8000-000000000001', '65000000-0000-4000-8000-000000000004', 'organization_admin'),
+  ('65000000-1000-4000-8000-000000000001', '65000000-0000-4000-8000-000000000008', 'social_manager');
 insert into public.department_memberships (organization_id, department_id, user_id, role) values
   ('65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', '65000000-0000-4000-8000-000000000001', 'editor'),
   ('65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', '65000000-0000-4000-8000-000000000002', 'approver'),
@@ -414,6 +418,46 @@ select set_config('request.jwt.claim.sub', '65000000-0000-4000-8000-000000000003
 select throws_ok(
   $$select public.reresolve_approval_route((select id from public.approval_requests where post_version_id = '65000000-3000-4000-8000-000000000008'), 'Testet den Abbruch bei doppelter Stufenzuordnung.')$$,
   'P0001', 'ambiguous_stage_mapping', 'reresolve_approval_route aborts instead of guessing when two existing stages share the same scope key'
+);
+
+-- 35-36: Beitrag auf Vereinsebene (Migration 2026082504/2026082506). posts.department_id darf null
+-- sein; authz.has_department_permission(null, 'department.manage') ist false, also war die
+-- Neuaufloesung -- die einzige Korrekturmoeglichkeit an einem laufenden Freigabeweg -- fuer einen
+-- Vereinsbeitrag von NIEMANDEM erreichbar. Der Vereinszweig hat exakt dieselbe Berechtigungsstufe:
+-- department.manage, hier auf der Vereinsebene geprueft.
+set local role postgres;
+-- Die Vereinsebene verlangt ab hier selbst eine benannte Stufe -- ohne sie liefe ein Beitrag ohne
+-- Abteilung an jeder Freigabe vorbei und stuende nie auf awaiting_approval. Alle Faelle oben sind
+-- bereits gelaufen, die Aenderung wirkt nur noch auf diesen Block.
+update public.policy_settings set review_required = true, review_mode = 'named', review_stage_label = 'Vereinsfreigabe'
+  where organization_id = '65000000-1000-4000-8000-000000000001' and scope = 'organization';
+insert into public.policy_reviewers (organization_id, policy_settings_id, kind, user_id, created_by) values
+  ('65000000-1000-4000-8000-000000000001',
+   (select id from public.policy_settings where organization_id = '65000000-1000-4000-8000-000000000001' and scope = 'organization'),
+   'user', '65000000-0000-4000-8000-000000000002', '65000000-0000-4000-8000-000000000004');
+insert into public.posts (id, organization_id, department_id, status, created_by) values
+  ('65000000-2000-4000-8000-000000000009', '65000000-1000-4000-8000-000000000001', null, 'draft_ready', '65000000-0000-4000-8000-000000000008');
+insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type, created_by_user_id) values
+  ('65000000-3000-4000-8000-000000000009', '65000000-1000-4000-8000-000000000001', '65000000-2000-4000-8000-000000000009', 1, '{}', '{}', 'user', '65000000-0000-4000-8000-000000000008');
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '65000000-0000-4000-8000-000000000008', true);
+select public.request_approval('65000000-3000-4000-8000-000000000009');
+
+-- Der Vereinszweig prueft department.manage, nicht blosse Vereinsmitgliedschaft: die einreichende
+-- social_manager-Rolle traegt post.create/edit/submit/approve/publish, aber kein department.manage
+-- -- sie scheitert schon an der Berechtigung, noch vor der Autorenregel darunter.
+select set_config('request.jwt.claim.sub', '65000000-0000-4000-8000-000000000008', true);
+select throws_ok(
+  $$select public.reresolve_approval_route((select id from public.approval_requests where post_version_id = '65000000-3000-4000-8000-000000000009'), 'Vereinsmitglied ohne Verwaltungsrecht versucht es.')$$,
+  'P0001', 'insufficient_permission', 'an organization member without department.manage cannot reresolve an organization-level post'
+);
+
+select set_config('request.jwt.claim.sub', '65000000-0000-4000-8000-000000000004', true);
+select is(
+  (select (rpc.result->>'status') from (select public.reresolve_approval_route(
+     (select id from public.approval_requests where post_version_id = '65000000-3000-4000-8000-000000000009'),
+     'Vereinsfreigabe neu aufgeloest, benannte Person nicht mehr zustaendig.') as result) rpc),
+  'awaiting_approval', 'an organization admin can reresolve the route of a post without a department'
 );
 
 select * from finish();

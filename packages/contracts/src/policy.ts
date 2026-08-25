@@ -223,7 +223,9 @@ export const StalledApprovalRequestSchema = z.object({
   approvalRequestId: UuidSchema,
   postId: UuidSchema,
   postVersionId: UuidSchema,
-  departmentId: UuidSchema,
+  // null = Beitrag auf Vereinsebene (posts.department_id ist seit Migration 2026082504 nullable).
+  // Nicht optional: die Route liefert das Feld immer, nur eben mit null.
+  departmentId: UuidSchema.nullable(),
   postTitle: z.string(),
   isOverdue: z.boolean(),
   invalidated: z.boolean(),

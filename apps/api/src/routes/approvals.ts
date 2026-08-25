@@ -202,19 +202,25 @@ export function registerApprovalRoutes(app: FastifyInstance, context: ApiRouteCo
     const postIds = Array.from(new Set(stalled.map((row) => row.post_id)))
     const postVersionIds = Array.from(new Set(stalled.map((row) => row.post_version_id)))
     const [postRows, versionRows] = await Promise.all([
-      fetchAllRowsForIds<{ id: string; department_id: string }>(postIds, (batch, from, to) => client.from('posts').select('id, department_id').in('id', batch).order('id', { ascending: true }).range(from, to)),
+      fetchAllRowsForIds<{ id: string; department_id: string | null }>(postIds, (batch, from, to) => client.from('posts').select('id, department_id').in('id', batch).order('id', { ascending: true }).range(from, to)),
       fetchAllRowsForIds<{ id: string; title: string }>(postVersionIds, (batch, from, to) => client.from('post_versions').select('id, title').in('id', batch).order('id', { ascending: true }).range(from, to)),
     ])
-    const departmentByPostId = new Map(postRows.map((row) => [row.id, row.department_id]))
+    // Auf den Treffer selbst pruefen, nicht auf den Wert: posts.department_id ist seit Migration
+    // 2026082504 nullable (null = Vereinsebene). Ein "if (!departmentId) return null" haette jeden
+    // festhaengenden Vereinsbeitrag still aus der Liste geworfen -- und damit genau die Oberflaeche,
+    // von der aus reresolve_approval_route ueberhaupt erreichbar ist. Fehlt der posts-Treffer
+    // dagegen wirklich (die Anfrage ist ueber approval_requests_select sichtbar, der Beitrag ueber
+    // posts_select nicht), bleibt es beim Auslassen der Zeile.
+    const postById = new Map(postRows.map((row) => [row.id, row]))
     const titleByVersionId = new Map(versionRows.map((row) => [row.id, row.title]))
 
     return reply.code(200).send(
       stalled
         .map((row) => {
-          const departmentId = departmentByPostId.get(row.post_id as string)
-          if (!departmentId) return null
+          const post = postById.get(row.post_id as string)
+          if (!post) return null
           return StalledApprovalRequestSchema.parse({
-            approvalRequestId: row.id, postId: row.post_id, postVersionId: row.post_version_id, departmentId,
+            approvalRequestId: row.id, postId: row.post_id, postVersionId: row.post_version_id, departmentId: post.department_id ?? null,
             postTitle: titleByVersionId.get(row.post_version_id as string) ?? '',
             isOverdue: row.is_overdue, invalidated: row.invalidated_at !== null,
           })
