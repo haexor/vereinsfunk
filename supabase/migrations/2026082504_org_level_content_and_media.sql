@@ -137,32 +137,12 @@ alter policy storage_read_raw_media on storage.objects using (
   end
 );
 
--- 3. Backfill: every pre-existing workflow_outbox row was written before departmentConcurrencyKey
---    existed, so its payload lacks the key the new CHECK constraint below is about to require.
---    Postgres re-validates CHECK constraints on every UPDATE of a row, not just when the checked
---    column changes, so a still-pending row would fail its next claim/release update once the
---    function is replaced. department_id was NOT NULL on every affected table until this same
---    migration, so every existing row's real department_id is its concurrency key -- except
---    analyze-website-branding, where department_id always carries the organization's technical
---    carrier department, even for an org-level job (see start_brand_website_analysis below). The
---    true org/department split for those rows lives on brand_website_analysis_jobs.department_id,
---    joined via entity_id = job id.
-update public.workflow_outbox wo
-  set payload = payload || jsonb_build_object(
-    'departmentConcurrencyKey',
-    case
-      when wo.workflow_name = 'analyze-website-branding' then coalesce(
-        (select case when job.department_id is null then 'org' else job.department_id::text end
-           from public.brand_website_analysis_jobs job where job.id = wo.entity_id),
-        coalesce(wo.department_id::text, 'org')
-      )
-      else coalesce(wo.department_id::text, 'org')
-    end
-  )
-  where not (payload ? 'departmentConcurrencyKey');
-
--- 4. workflow_outbox payload contract: departmentId becomes optional, and a new always-present
---    departmentConcurrencyKey is added to the allowed/required key set.
+-- 3. workflow_outbox payload contract: departmentId becomes optional, and a new always-present
+--    departmentConcurrencyKey is added to the allowed/required key set. Must run BEFORE the
+--    backfill below: a CHECK constraint validates against whatever function definition is current
+--    at the time each row is written, and the backfill is exactly what adds departmentConcurrencyKey
+--    to every pre-existing row -- running it against the still-old function (which does not yet
+--    recognize that key) rejects it as an unknown field on every single row.
 create or replace function public.is_id_only_workflow_payload(value jsonb)
 returns boolean language sql immutable set search_path = public, pg_temp as $$
   select jsonb_typeof(value) = 'object'
@@ -185,6 +165,35 @@ returns boolean language sql immutable set search_path = public, pg_temp as $$
     and jsonb_typeof(value->'purpose') = 'string' and value->>'purpose' = btrim(value->>'purpose') and char_length(value->>'purpose') between 1 and 80
     and jsonb_typeof(value->'idempotencyKey') = 'string' and char_length(value->>'idempotencyKey') between 1 and 240;
 $$;
+
+-- 4. Backfill: every pre-existing workflow_outbox row was written before departmentConcurrencyKey
+--    existed, so its payload lacks the key the CHECK constraint above now requires. department_id
+--    was NOT NULL on every affected table until this same migration, so every existing row's real
+--    department_id is its concurrency key -- except analyze-website-branding, where department_id
+--    always carries the organization's technical carrier department, even for an org-level job
+--    (see start_brand_website_analysis below). The true org/department split for those rows lives
+--    on brand_website_analysis_jobs.department_id, joined via entity_id = job id. Extracted into
+--    its own function so both this one-time backfill and any future caller compute the same thing
+--    (and so it is directly unit-testable -- see workflow_outbox_department_concurrency_key.test.sql).
+create function public.workflow_outbox_department_concurrency_key(
+  p_workflow_name text, p_entity_id uuid, p_department_id uuid
+) returns text language sql stable set search_path = public, pg_temp as $$
+  select case
+    when p_workflow_name = 'analyze-website-branding' then coalesce(
+      (select case when job.department_id is null then 'org' else job.department_id::text end
+         from public.brand_website_analysis_jobs job where job.id = p_entity_id),
+      coalesce(p_department_id::text, 'org')
+    )
+    else coalesce(p_department_id::text, 'org')
+  end;
+$$;
+
+update public.workflow_outbox wo
+  set payload = payload || jsonb_build_object(
+    'departmentConcurrencyKey',
+    public.workflow_outbox_department_concurrency_key(wo.workflow_name, wo.entity_id, wo.department_id)
+  )
+  where not (payload ? 'departmentConcurrencyKey');
 
 -- 5. create_text_generation_session: same signature (p_department_id was already nullable at the
 --    SQL level), body now stamps departmentConcurrencyKey on every workflow_outbox insert.
