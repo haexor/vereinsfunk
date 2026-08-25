@@ -49,7 +49,9 @@ function concurrencyFor(workflow: WorkflowName) {
       : workflow === 'anonymize-media' ? concurrency.image
         : workflow === 'analyze-website-branding' ? concurrency.browser : concurrency.llm
   return [
-    { expression: "input.organizationId + ':' + input.departmentId", maxRuns: limits.department, limitStrategy: ConcurrencyLimitStrategy.GROUP_ROUND_ROBIN },
+    // departmentConcurrencyKey, not departmentId: an organization-level job (null departmentId)
+    // gets its own 'org' lane instead of silently sharing a real department's round-robin group.
+    { expression: "input.organizationId + ':' + input.departmentConcurrencyKey", maxRuns: limits.department, limitStrategy: ConcurrencyLimitStrategy.GROUP_ROUND_ROBIN },
     { expression: 'input.organizationId', maxRuns: limits.organization, limitStrategy: ConcurrencyLimitStrategy.GROUP_ROUND_ROBIN },
     { expression: "'global'", maxRuns: limits.global, limitStrategy: ConcurrencyLimitStrategy.GROUP_ROUND_ROBIN },
   ]

@@ -14,7 +14,12 @@ import { UuidSchema } from './content.js'
 // becoming executable code in Hatchet.
 export const WorkflowNameSchema = z.enum(['process-submission', 'generate-text-post', 'anonymize-media', 'render-content', 'apply-revision', 'publish-content', 'collect-analytics', 'cleanup-expired-invitations', 'sync-integration-source', 'enforce-retention', 'aggregate-metrics', 'analyze-website-branding'])
 export const WorkflowPayloadSchema = z.object({
-  submissionId: UuidSchema.optional(), candidateId: UuidSchema.optional(), entityId: UuidSchema, organizationId: UuidSchema, departmentId: UuidSchema, teamId: UuidSchema.optional(),
+  submissionId: UuidSchema.optional(), candidateId: UuidSchema.optional(), entityId: UuidSchema, organizationId: UuidSchema,
+  // null/absent departmentId means an organization-wide job (no specific department). Every
+  // dispatch still carries a real, always-present departmentConcurrencyKey ('org' in that case,
+  // the department id otherwise) -- concurrencyFor() below keys on that, never on departmentId
+  // itself, so an org-level job can never end up sharing a real department's concurrency lane.
+  departmentId: UuidSchema.nullish(), departmentConcurrencyKey: z.string().min(1).max(80), teamId: UuidSchema.optional(),
   correlationId: UuidSchema, sourceRevision: z.int().positive(), purpose: z.string().trim().min(1).max(80), idempotencyKey: z.string().min(1).max(240),
 }).strict().superRefine((payload, context) => {
   if (payload.submissionId && payload.submissionId !== payload.entityId) context.addIssue({ code: 'custom', message: 'submissionId must match entityId' })

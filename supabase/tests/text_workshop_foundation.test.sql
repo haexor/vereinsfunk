@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(82);
+select plan(100);
 
 set local role postgres;
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -539,6 +539,114 @@ select is((select count(*)::integer from public.text_workshop_drafts where id = 
 set local role postgres;
 update public.posts set status = 'awaiting_approval' where id = '32000000-5100-4000-8000-000000000099';
 select is((select count(*)::integer from public.text_workshop_drafts where id = '32000000-5200-4000-8000-000000000099'), 0, 'a linked workshop draft is removed once its post is submitted for review');
+
+-- Org-level posting (department_id is null = the whole club, not one department): check
+-- constraints guarding team_id against a missing department, RLS org-fallback branches on
+-- composition_sessions/composition_session_media/generation_candidates/media_assets, and
+-- create_text_generation_session/workflow_outbox end-to-end with a null department.
+set local role postgres;
+select throws_ok(
+  $$insert into public.composition_sessions (organization_id, department_id, team_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values ('32000000-2000-4000-8000-000000000002', null, '32000000-2300-4000-8000-000000000002', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, encode(sha256('org-level-team-without-department'::bytea), 'hex'), '32000000-0000-4000-8000-000000000002')$$,
+  '23514', null, 'negative: a composition session cannot carry a team_id without a department_id'
+);
+select throws_ok(
+  $$insert into public.posts (organization_id, department_id, team_id, status, created_by) values ('32000000-2000-4000-8000-000000000002', null, '32000000-2300-4000-8000-000000000002', 'draft', '32000000-0000-4000-8000-000000000002')$$,
+  '23514', null, 'negative: a post cannot carry a team_id without a department_id'
+);
+select lives_ok(
+  $$insert into public.text_workshop_drafts (id, organization_id, department_id, payload, created_by) values ('32000000-5300-4000-8000-000000000099', '32000000-2000-4000-8000-000000000002', null, '{"factsText":"Vereinsweiter Entwurf"}', '32000000-0000-4000-8000-000000000002')$$,
+  'a text workshop draft can be organization-level (null department_id)'
+);
+select throws_ok(
+  $$insert into public.text_workshop_drafts (id, organization_id, department_id, team_id, payload, created_by) values ('32000000-5310-4000-8000-000000000099', '32000000-2000-4000-8000-000000000002', null, '32000000-2300-4000-8000-000000000002', '{}', '32000000-0000-4000-8000-000000000002')$$,
+  '23514', null, 'negative: a text workshop draft cannot carry a team_id without a department_id (pre-existing check)'
+);
+
+-- Two org B members with organization-level roles and deliberately NO department/team membership
+-- at all, so any visibility they get to an organization-level row can only come from the new
+-- org-fallback RLS branches, never from a pre-existing department/team/creator branch.
+insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at) values
+  ('00000000-0000-0000-0000-000000000000', '32000000-0000-4000-8000-000000000007', 'authenticated', 'authenticated', 'style-g@test.local', '', '{}', '{}', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '32000000-0000-4000-8000-000000000008', 'authenticated', 'authenticated', 'style-h@test.local', '', '{}', '{}', now(), now());
+insert into public.organization_memberships (organization_id, user_id, role) values
+  ('32000000-2000-4000-8000-000000000002', '32000000-0000-4000-8000-000000000007', 'organization_admin'),
+  ('32000000-2000-4000-8000-000000000002', '32000000-0000-4000-8000-000000000008', 'social_manager');
+
+select lives_ok(
+  $$select public.create_text_generation_session(
+    '32000000-2000-4000-8000-000000000002', null, null,
+    'inform', '["text_post"]'::jsonb,
+    '{"facts":{"title":"Vereinsweite Nachricht"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
+    null, '{"name":"System","description":"","styleRules":{"toneTags":["klar"],"catchphrases":[],"exampleInput":"","exampleOutput":"","additionalInstructions":""},"avoidRules":[]}'::jsonb,
+    '{}'::jsonb, array['instagram']::text[], 2200, 0.6, 1, encode(sha256('org-level-session'::bytea), 'hex'), encode(sha256('org-level-candidate'::bytea), 'hex'), 'initial', null,
+    '32000000-0000-4000-8000-000000000007', '32000000-9100-4000-8000-000000000002', 'org-level-generation',
+    array['31000000-4000-4000-8000-000000000001']::uuid[]
+  )$$,
+  'create_text_generation_session accepts a null department_id for an organization-level post'
+);
+select is(
+  (select department_id from public.composition_sessions where organization_id = '32000000-2000-4000-8000-000000000002' and input_hash = encode(sha256('org-level-session'::bytea), 'hex')),
+  null,
+  'the organization-level session persists with a null department_id'
+);
+select is(
+  (select department_id from public.workflow_outbox where workflow_name = 'generate-text-post' and entity_id = (select id from public.composition_sessions where input_hash = encode(sha256('org-level-session'::bytea), 'hex'))),
+  null,
+  'the dispatched workflow_outbox row also carries a null department_id'
+);
+select is(
+  (select payload->>'departmentConcurrencyKey' from public.workflow_outbox where workflow_name = 'generate-text-post' and entity_id = (select id from public.composition_sessions where input_hash = encode(sha256('org-level-session'::bytea), 'hex'))),
+  'org',
+  'the organization-level dispatch gets its own ''org'' concurrency lane instead of a real department''s'
+);
+select is(
+  (select payload ? 'departmentId' from public.workflow_outbox where workflow_name = 'generate-text-post' and entity_id = (select id from public.composition_sessions where input_hash = encode(sha256('org-level-session'::bytea), 'hex'))),
+  false,
+  'jsonb_strip_nulls removes the null departmentId key from the dispatched payload entirely'
+);
+
+-- Fixtures for the RLS org-fallback assertions below: an organization-level session created by
+-- style-g (organization_admin), with attached media and a candidate, plus a standalone
+-- organization-level media asset.
+insert into public.composition_session_media (id, organization_id, composition_session_id, media_asset_id, position) values
+  ('32000000-3110-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', (select id from public.composition_sessions where input_hash = encode(sha256('org-level-session'::bytea), 'hex')), '32000000-2600-4000-8000-000000000002', 1);
+insert into public.media_assets (id, organization_id, department_id, bucket_id, object_path, mime_type, byte_size, sha256, scan_status, created_by) values
+  ('32000000-3130-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', null, 'raw-media', 'organizations/32000000-2000-4000-8000-000000000002/assets/org-level/original.jpg', 'image/jpeg', 12, repeat('e', 64), 'clean', '32000000-0000-4000-8000-000000000007');
+
+set local role authenticated;
+-- style-g (organization_admin, no department/team membership, and NOT the session's creator) --
+-- any visibility here can only come from the new org-permission RLS branch.
+select set_config('request.jwt.claim.sub', '32000000-0000-4000-8000-000000000008', true);
+select is((select count(*)::integer from public.composition_sessions where input_hash = encode(sha256('org-level-session'::bytea), 'hex')), 1, 'an organization-level social_manager (no department/team role, not the creator) reads the organization-level session via the org-permission branch');
+select is((select count(*)::integer from public.composition_session_media where composition_session_id = (select id from public.composition_sessions where input_hash = encode(sha256('org-level-session'::bytea), 'hex'))), 1, 'the same organization-level social_manager reads the organization-level session''s attached media');
+select is((select count(*)::integer from public.generation_candidates where composition_session_id = (select id from public.composition_sessions where input_hash = encode(sha256('org-level-session'::bytea), 'hex'))), 1, 'the same organization-level social_manager reads the organization-level session''s generation candidate');
+
+-- style-b: organization_viewer at the org level (no post.edit) plus a real department B editor
+-- role -- the department role is irrelevant here because the session's department_id is null.
+select set_config('request.jwt.claim.sub', '32000000-0000-4000-8000-000000000002', true);
+select is((select count(*)::integer from public.composition_sessions where input_hash = encode(sha256('org-level-session'::bytea), 'hex')), 0, 'negative: a department B editor with only organization_viewer at the org level cannot read the organization-level session (their department role does not apply to a null department_id)');
+
+-- style-e: department B viewer only, no organization_memberships row at all -- insufficient for
+-- post.edit at any level, but is_any_member_of_organization still covers them for media_assets.
+select set_config('request.jwt.claim.sub', '32000000-0000-4000-8000-000000000005', true);
+select is((select count(*)::integer from public.composition_sessions where input_hash = encode(sha256('org-level-session'::bytea), 'hex')), 0, 'negative: a department-only viewer with no organization role cannot read the organization-level session');
+select is((select count(*)::integer from public.media_assets where id = '32000000-3130-4000-8000-000000000002'), 1, 'the same department-only viewer reads the organization-level media asset via is_any_member_of_organization');
+
+-- style-a: an unrelated tenant A member, the pre-existing cross-tenant negative pattern.
+select set_config('request.jwt.claim.sub', '31000000-0000-4000-8000-000000000001', true);
+select is((select count(*)::integer from public.composition_sessions where input_hash = encode(sha256('org-level-session'::bytea), 'hex')), 0, 'negative: an unrelated tenant A member cannot read tenant B''s organization-level session');
+
+-- media_assets_insert org-fallback: post.create via organization role, not department membership.
+select set_config('request.jwt.claim.sub', '32000000-0000-4000-8000-000000000008', true);
+select lives_ok(
+  $$insert into public.media_assets (organization_id, department_id, bucket_id, object_path, mime_type, byte_size, created_by) values ('32000000-2000-4000-8000-000000000002', null, 'raw-media', 'organizations/32000000-2000-4000-8000-000000000002/assets/social-manager/original.jpg', 'image/jpeg', 12, '32000000-0000-4000-8000-000000000008')$$,
+  'a social_manager with post.create at the organization level can insert an organization-level media asset'
+);
+select set_config('request.jwt.claim.sub', '32000000-0000-4000-8000-000000000005', true);
+select throws_ok(
+  $$insert into public.media_assets (organization_id, department_id, bucket_id, object_path, mime_type, byte_size, created_by) values ('32000000-2000-4000-8000-000000000002', null, 'raw-media', 'organizations/32000000-2000-4000-8000-000000000002/assets/viewer/original.jpg', 'image/jpeg', 12, '32000000-0000-4000-8000-000000000005')$$,
+  '42501', null, 'negative: a department-only viewer without post.create cannot insert an organization-level media asset'
+);
 
 select * from finish();
 rollback;
