@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(26);
+select plan(32);
 
 set local role postgres;
 
@@ -131,6 +131,45 @@ select is((select count(*)::integer from public.brand_website_analysis_jobs wher
 select throws_ok(
   $$select public.start_brand_website_analysis('68000000-1000-4000-8000-000000000001', 'https://fremd.example.org', '68000000-0000-4000-8000-000000000001', '68000000-2100-4000-8000-000000000001')$$,
   'P0001', 'department_not_in_organization', 'a department belonging to a different organization is rejected'
+);
+
+-- workflow_outbox_department_concurrency_key(): analyze-website-branding's workflow_outbox row
+-- always carries the organization's technical carrier department, even for an org-level job (see
+-- start_brand_website_analysis above) -- the true org/department split lives on
+-- brand_website_analysis_jobs.department_id instead, joined via entity_id = job id. A pre-existing
+-- production incident (the 2026082504 backfill assumed workflow_outbox.department_id itself was
+-- the concurrency key for every workflow type) makes this decoupling worth pinning down directly.
+insert into public.organizations (id, name, slug) values
+  ('68000000-9000-4000-8000-000000000001', 'PGTAP Concurrency Key Verein', 'pgtap-concurrency-key-verein');
+insert into public.departments (id, organization_id, name, slug) values
+  ('68000000-9100-4000-8000-000000000001', '68000000-9000-4000-8000-000000000001', 'Marketing', 'marketing');
+insert into public.brand_website_analysis_jobs (id, organization_id, department_id, website_url, requested_by) values
+  ('68000000-9200-4000-8000-000000000001', '68000000-9000-4000-8000-000000000001', null, 'https://org-level.example.org', '68000000-0000-4000-8000-000000000001'),
+  ('68000000-9200-4000-8000-000000000002', '68000000-9000-4000-8000-000000000001', '68000000-9100-4000-8000-000000000001', 'https://department-level.example.org', '68000000-0000-4000-8000-000000000001');
+
+select is(
+  public.workflow_outbox_department_concurrency_key('analyze-website-branding', '68000000-9200-4000-8000-000000000001', '68000000-9100-4000-8000-000000000001'),
+  'org', 'analyze-website-branding uses the job''s own org/department split, not workflow_outbox.department_id (the carrier)'
+);
+select is(
+  public.workflow_outbox_department_concurrency_key('analyze-website-branding', '68000000-9200-4000-8000-000000000002', '68000000-9100-4000-8000-000000000001'),
+  '68000000-9100-4000-8000-000000000001', 'analyze-website-branding for a department-scoped job uses that department as the concurrency key'
+);
+select is(
+  public.workflow_outbox_department_concurrency_key('analyze-website-branding', gen_random_uuid(), null),
+  'org', 'analyze-website-branding falls back to org when no matching job row exists and the outbox row itself has no department'
+);
+select is(
+  public.workflow_outbox_department_concurrency_key('analyze-website-branding', gen_random_uuid(), '68000000-9100-4000-8000-000000000001'),
+  '68000000-9100-4000-8000-000000000001', 'analyze-website-branding falls back to workflow_outbox.department_id when no matching job row exists'
+);
+select is(
+  public.workflow_outbox_department_concurrency_key('generate-text-post', gen_random_uuid(), null),
+  'org', 'every other workflow type treats a null department_id as the organization-wide lane'
+);
+select is(
+  public.workflow_outbox_department_concurrency_key('generate-text-post', gen_random_uuid(), '68000000-9100-4000-8000-000000000001'),
+  '68000000-9100-4000-8000-000000000001', 'every other workflow type uses its own department_id as the concurrency key'
 );
 
 -- RLS: nur wer brand.manage in GENAU dieser Abteilung hat, sieht ihren Job -- nicht den

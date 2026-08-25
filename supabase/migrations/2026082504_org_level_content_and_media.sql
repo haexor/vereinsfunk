@@ -146,18 +146,26 @@ alter policy storage_read_raw_media on storage.objects using (
 --    analyze-website-branding, where department_id always carries the organization's technical
 --    carrier department, even for an org-level job (see start_brand_website_analysis below). The
 --    true org/department split for those rows lives on brand_website_analysis_jobs.department_id,
---    joined via entity_id = job id.
+--    joined via entity_id = job id. Extracted into its own function so both this one-time backfill
+--    and any future caller compute the same thing (and so it is directly unit-testable -- see
+--    workflow_outbox_department_concurrency_key.test.sql).
+create function public.workflow_outbox_department_concurrency_key(
+  p_workflow_name text, p_entity_id uuid, p_department_id uuid
+) returns text language sql stable set search_path = public, pg_temp as $$
+  select case
+    when p_workflow_name = 'analyze-website-branding' then coalesce(
+      (select case when job.department_id is null then 'org' else job.department_id::text end
+         from public.brand_website_analysis_jobs job where job.id = p_entity_id),
+      coalesce(p_department_id::text, 'org')
+    )
+    else coalesce(p_department_id::text, 'org')
+  end;
+$$;
+
 update public.workflow_outbox wo
   set payload = payload || jsonb_build_object(
     'departmentConcurrencyKey',
-    case
-      when wo.workflow_name = 'analyze-website-branding' then coalesce(
-        (select case when job.department_id is null then 'org' else job.department_id::text end
-           from public.brand_website_analysis_jobs job where job.id = wo.entity_id),
-        coalesce(wo.department_id::text, 'org')
-      )
-      else coalesce(wo.department_id::text, 'org')
-    end
+    public.workflow_outbox_department_concurrency_key(wo.workflow_name, wo.entity_id, wo.department_id)
   )
   where not (payload ? 'departmentConcurrencyKey');
 
