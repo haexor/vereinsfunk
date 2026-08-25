@@ -186,7 +186,7 @@ describe('GET /v1/content-style-profiles', () => {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'content_style_profiles') return chain({ data: [{ id: 'c0000000-0000-4000-8000-000000000001', slug: 'unser-ton', name: 'Unser Ton', description: 'Warm.', style_rules: STYLE_RULES, avoid_rules: [], do_rules: [], is_active: true }], error: null })
+            if (table === 'content_style_profiles') return chain({ data: [{ id: 'c0000000-0000-4000-8000-000000000001', slug: 'unser-ton', name: 'Unser Ton', description: 'Warm.', style_rules: STYLE_RULES, avoid_rules: [], do_rules: [], department_id: DEPARTMENT_ID, team_id: null, is_active: true }], error: null })
             if (table === 'platform_style_personas') return chain({ data: [PERSONA_ROW], error: null })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
@@ -236,6 +236,38 @@ describe('GET /v1/content-style-profiles', () => {
     expect(scopes[0]).toEqual({ organizationId: ORGANIZATION_ID })
     const { profiles } = response.json()
     expect(profiles.filter((p: { kind: string }) => p.kind === 'system')).toHaveLength(5)
+  })
+
+  // Die Liste darf nur Profile anbieten, mit denen sich im angefragten Scope auch eine Sitzung
+  // anlegen laesst -- createTextGenerationSession lehnt ein fremdes Abteilungs-/Teamprofil mit
+  // style_profile_not_found ab. Auf Vereinsebene faellt damit jedes Abteilungsprofil weg.
+  it('offers only custom profiles usable in the requested scope', async () => {
+    const CUSTOM_ROWS = [
+      { id: 'c0000000-0000-4000-8000-000000000001', slug: 'vereinsweit', name: 'Vereinsweit', description: 'Warm.', style_rules: STYLE_RULES, avoid_rules: [], do_rules: [], department_id: null, team_id: null, is_active: true },
+      { id: 'c0000000-0000-4000-8000-000000000002', slug: 'eigene-abteilung', name: 'Eigene Abteilung', description: 'Warm.', style_rules: STYLE_RULES, avoid_rules: [], do_rules: [], department_id: DEPARTMENT_ID, team_id: null, is_active: true },
+      { id: 'c0000000-0000-4000-8000-000000000003', slug: 'fremde-abteilung', name: 'Fremde Abteilung', description: 'Warm.', style_rules: STYLE_RULES, avoid_rules: [], do_rules: [], department_id: '4d000000-0000-4000-8000-000000000009', team_id: null, is_active: true },
+      { id: 'c0000000-0000-4000-8000-000000000004', slug: 'fremdes-team', name: 'Fremdes Team', description: 'Warm.', style_rules: STYLE_RULES, avoid_rules: [], do_rules: [], department_id: DEPARTMENT_ID, team_id: '4e000000-0000-4000-8000-000000000009', is_active: true },
+    ]
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'content_style_profiles') return chain({ data: CUSTOM_ROWS, error: null })
+            if (table === 'platform_style_personas') return chain({ data: [], error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => { throw new Error('forService should not be called by this route') },
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const slugsFor = async (query: Record<string, string>) => {
+      const response = await app.inject({ method: 'GET', url: '/v1/content-style-profiles', headers: { authorization: `Bearer ${token}` }, query })
+      expect(response.statusCode).toBe(200)
+      return response.json().profiles.filter((profile: { kind: string }) => profile.kind === 'custom').map((profile: { slug: string }) => profile.slug)
+    }
+    expect(await slugsFor({ organizationId: ORGANIZATION_ID, departmentId: DEPARTMENT_ID })).toEqual(['vereinsweit', 'eigene-abteilung'])
+    expect(await slugsFor({ organizationId: ORGANIZATION_ID })).toEqual(['vereinsweit'])
   })
 })
 

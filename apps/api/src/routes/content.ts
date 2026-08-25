@@ -34,7 +34,7 @@ import { z } from 'zod'
 import { CLUB_EVENT_COLUMNS, FIXTURE_COLUMNS, mapClubEventRow, mapFixtureRow, mapTeamRow } from '../apiMappers.js'
 import { ensurePassThroughDerivative } from '../passThroughDerivative.js'
 import { saveTextWorkshopDraft } from '../services/textWorkshopDrafts.js'
-import { createTextGenerationSession, SYSTEM_STYLE_PROFILES } from '../services/textGenerationSessions.js'
+import { createTextGenerationSession, isStyleProfileUsableInScope, SYSTEM_STYLE_PROFILES } from '../services/textGenerationSessions.js'
 import type { ApiRouteContext } from './context.js'
 import { buildStyleProfilePromptPreview, checkRateLimit, createAuditRecorder, fetchMemberTrust, previewStyleProfile, resolveDirectoryScope, resolvePreviewIdempotencyKey, resolveScopedEffectiveConfig, resolveTextGenerationPlatformAvailability, resolveTextGenerationProviderConfigurationIds, toPermissionScope } from './shared.js'
 
@@ -334,7 +334,13 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (personaRows.error) throw personaRows.error
     const systems = Object.entries(SYSTEM_STYLE_PROFILES).map(([slug, profile]) => ({ id: null, slug, kind: 'system', ...profile, isActive: true }))
     const personas = personaRows.data.map((row) => ({ id: row.id, slug: row.slug, kind: 'persona', name: row.name, description: row.description, styleRules: StyleProfileRulesSchema.parse(row.style_rules), avoidRules: row.avoid_rules, doRules: row.do_rules, isActive: true }))
-    const customs = rows.data.map((row) => ({ id: row.id, slug: row.slug, kind: 'custom', name: row.name, description: row.description, styleRules: StyleProfileRulesSchema.parse(row.style_rules), avoidRules: row.avoid_rules, doRules: row.do_rules, isActive: row.is_active }))
+    // Nur die Profile, mit denen sich im angefragten Scope auch eine Sitzung anlegen laesst --
+    // dieselbe Regel wie in createTextGenerationSession, sonst bietet erstellen.vue ein Profil an,
+    // das die Anlage anschliessend mit style_profile_not_found ablehnt. System- und
+    // Plattform-Personas sind global und daher nicht betroffen.
+    const customs = rows.data
+      .filter((row) => isStyleProfileUsableInScope(row, scope.departmentId ?? null, scope.teamId ?? null))
+      .map((row) => ({ id: row.id, slug: row.slug, kind: 'custom', name: row.name, description: row.description, styleRules: StyleProfileRulesSchema.parse(row.style_rules), avoidRules: row.avoid_rules, doRules: row.do_rules, isActive: row.is_active }))
     return reply.send({ profiles: [...systems, ...personas, ...customs] })
   })
 

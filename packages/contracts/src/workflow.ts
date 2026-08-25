@@ -19,7 +19,13 @@ export const WorkflowPayloadSchema = z.object({
   // dispatch still carries a real, always-present departmentConcurrencyKey ('org' in that case,
   // the department id otherwise) -- concurrencyFor() below keys on that, never on departmentId
   // itself, so an org-level job can never end up sharing a real department's concurrency lane.
-  departmentId: UuidSchema.nullish(), departmentConcurrencyKey: z.string().min(1).max(80), teamId: UuidSchema.optional(),
+  //
+  // Der Schluessel ist bewusst NICHT an departmentId gekoppelt: start_brand_website_analysis
+  // schreibt fuer einen vereinsweiten Lauf die technische Traegerabteilung nach departmentId und
+  // trotzdem 'org' als Schluessel. Erlaubt ist deshalb dieselbe Form, die
+  // workflow_outbox_id_only_payload_check schon in der Datenbank erzwingt: 'org' oder eine UUID --
+  // kein beliebiger String, der eine eigene Lane aufmachen wuerde.
+  departmentId: UuidSchema.nullish(), departmentConcurrencyKey: z.union([z.literal('org'), UuidSchema]), teamId: UuidSchema.optional(),
   correlationId: UuidSchema, sourceRevision: z.int().positive(), purpose: z.string().trim().min(1).max(80), idempotencyKey: z.string().min(1).max(240),
 }).strict().superRefine((payload, context) => {
   if (payload.submissionId && payload.submissionId !== payload.entityId) context.addIssue({ code: 'custom', message: 'submissionId must match entityId' })

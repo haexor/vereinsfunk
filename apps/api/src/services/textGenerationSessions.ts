@@ -32,6 +32,21 @@ const SessionMediaAssetSchema = z.object({
   people_reviewed_at: z.string().nullable(),
 })
 
+// Ein eigenes Stilprofil ist in einem Scope verwendbar, wenn seine eigene Abteilung bzw. sein
+// eigenes Team entweder null (= vereinsweit) ist oder exakt zum angefragten Scope passt.
+// createTextGenerationSession unten lehnt alles andere mit style_profile_not_found ab; GET
+// /v1/content-style-profiles filtert mit derselben Funktion, damit die Auswahlliste kein Profil
+// anbietet, mit dem sich anschliessend keine Sitzung anlegen laesst -- auf Vereinsebene
+// (departmentId null) waere das sonst jedes einzelne Abteilungsprofil.
+export function isStyleProfileUsableInScope(
+  profile: { department_id: string | null; team_id: string | null },
+  departmentId: string | null,
+  teamId: string | null,
+): boolean {
+  return (profile.department_id === null || profile.department_id === departmentId)
+    && (profile.team_id === null || profile.team_id === teamId)
+}
+
 function parseSupabaseData<T>(schema: z.ZodType<T>, data: unknown): T {
   const parsed = schema.safeParse(data)
   if (parsed.success) return parsed.data
@@ -55,7 +70,7 @@ export async function createTextGenerationSession(
   if (styleProfileId) {
     const row = await userClient.from('content_style_profiles').select('id, name, description, style_rules, avoid_rules, do_rules, department_id, team_id').eq('id', styleProfileId).eq('organization_id', input.organizationId).eq('is_active', true).maybeSingle()
     if (row.error) throw row.error
-    if (!row.data || (row.data.department_id !== null && row.data.department_id !== input.departmentId) || (row.data.team_id !== null && row.data.team_id !== (input.teamId ?? null))) return { ok: false, statusCode: 404, error: 'style_profile_not_found' }
+    if (!row.data || !isStyleProfileUsableInScope(row.data, input.departmentId, input.teamId ?? null)) return { ok: false, statusCode: 404, error: 'style_profile_not_found' }
     styleSnapshot = { name: row.data.name, description: row.data.description, styleRules: StyleProfileRulesSchema.parse(row.data.style_rules), avoidRules: row.data.avoid_rules, doRules: row.data.do_rules }
   } else if (input.personaSlug) {
     const persona = await userClient.from('platform_style_personas').select('name, description, style_rules, avoid_rules, do_rules').eq('slug', input.personaSlug).eq('is_active', true).maybeSingle()
