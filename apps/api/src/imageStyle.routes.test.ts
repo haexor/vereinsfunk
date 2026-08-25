@@ -294,6 +294,30 @@ describe('POST /v1/image-style-presets/preview', () => {
     })
   }
 
+  // Jeder andere Test hier injiziert samplePhotoLoader -- der Standardpfad aus buildApp wird also
+  // sonst nie ausgefuehrt, und eine umbenannte oder verschobene Datei fiele erst in Produktion als
+  // 500 auf. Diese Datei wurde im Review schon einmal umbenannt, das ist keine hypothetische Sorge.
+  // Deshalb hier bewusst OHNE Override: es laeuft der Loader, den buildApp selbst verdrahtet.
+  it('renders a preview through the default sample photo loader from buildApp', async () => {
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: noAssetClients(),
+    })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: PREVIEW_URL,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { ...BASE_FIELDS, organizationId: ORGANIZATION_ID },
+    })
+    expect(response.statusCode).toBe(200)
+    const decoded = await sharp(Buffer.from(response.json().imageBase64, 'base64')).metadata()
+    expect(decoded.format).toBe('webp')
+    // encodePreview verkleinert auf 1200 px, vergroessert aber nie (withoutEnlargement) -- die
+    // volle Breite belegt, dass wirklich das 1600 px breite Beispielfoto gelesen wurde.
+    expect(decoded.width).toBe(1200)
+  })
+
   it('renders a preview for a plain, unstyled preset', async () => {
     const response = await preview({})
     expect(response.statusCode).toBe(200)
