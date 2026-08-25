@@ -60,9 +60,17 @@ alter policy post_status_events_select on public.post_status_events using (
   or (department_id is null and authz.has_organization_permission(organization_id, 'analytics.view'))
 );
 
--- 3. post_generation_provenance: Herkunft einer generierten Version. Derselbe Zweig wie
---    posts_select/post_versions_select in 2026082504 -- ohne ihn sieht bei einem Vereinsbeitrag vor
---    der Veroeffentlichung niemand die Provenienz, auch die verfassende Person nicht.
+-- 3. post_generation_provenance: Herkunft einer generierten Version. Der VEREINSZWEIG ist derselbe
+--    wie in posts_select/post_versions_select (2026082504) -- ohne ihn sieht bei einem
+--    Vereinsbeitrag vor der Veroeffentlichung niemand die Provenienz, auch die verfassende Person
+--    nicht.
+--    Der published/scheduled-Zweig daneben bleibt unveraendert uebernommen und ist damit BREITER
+--    als der, den er laut 2026081003 spiegeln sollte: post_versions_select hat in 2026080701/
+--    2026082504 zusaetzlich resolve_policy_flag(..., 'posts_visible_org_wide') und
+--    post_is_not_confidential_only(...) bekommen, post_generation_provenance_select nicht. Bewusst
+--    nicht in dieser Migration mitgezogen -- das waere eine Verschaerfung (wer Provenienz eines
+--    veroeffentlichten Beitrags lesen darf) und damit die umgekehrte Richtung dieses Nachtrags,
+--    also eine eigene Betreiberentscheidung.
 alter policy post_generation_provenance_select on public.post_generation_provenance using (
   exists (
     select 1 from public.post_versions version

@@ -690,10 +690,13 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
   it('lists only stalled approval requests -- overdue or invalidated, not the merely open one', async () => {
     const OVERDUE_REQUEST_ID = '10000000-4000-4000-8000-000000000010'
     const INVALIDATED_REQUEST_ID = '10000000-4000-4000-8000-000000000011'
+    const ORGANIZATION_LEVEL_REQUEST_ID = '10000000-4000-4000-8000-000000000012'
     const OVERDUE_POST_ID = '10000000-2000-4000-8000-000000000010'
     const INVALIDATED_POST_ID = '10000000-2000-4000-8000-000000000011'
+    const ORGANIZATION_LEVEL_POST_ID = '10000000-2000-4000-8000-000000000012'
     const OVERDUE_VERSION_ID = '10000000-3000-4000-8000-000000000010'
     const INVALIDATED_VERSION_ID = '10000000-3000-4000-8000-000000000011'
+    const ORGANIZATION_LEVEL_VERSION_ID = '10000000-3000-4000-8000-000000000012'
     const clients: SupabaseClientFactory = {
       forUser: () =>
         ({
@@ -703,6 +706,7 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
                 data: [
                   { id: OVERDUE_REQUEST_ID, post_id: OVERDUE_POST_ID, post_version_id: OVERDUE_VERSION_ID, invalidated_at: null, is_overdue: true },
                   { id: INVALIDATED_REQUEST_ID, post_id: INVALIDATED_POST_ID, post_version_id: INVALIDATED_VERSION_ID, invalidated_at: new Date().toISOString(), is_overdue: false },
+                  { id: ORGANIZATION_LEVEL_REQUEST_ID, post_id: ORGANIZATION_LEVEL_POST_ID, post_version_id: ORGANIZATION_LEVEL_VERSION_ID, invalidated_at: null, is_overdue: true },
                 ],
                 error: null,
               })
@@ -712,6 +716,10 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
                 data: [
                   { id: OVERDUE_POST_ID, department_id: DEPARTMENT_ID },
                   { id: INVALIDATED_POST_ID, department_id: DEPARTMENT_ID },
+                  // Beitrag auf Vereinsebene: posts.department_id ist seit Migration 2026082504
+                  // nullable. Die Route darf so eine Zeile nicht mehr auslassen -- sonst waere
+                  // reresolve_approval_route (2026082506) von /freigaben aus gar nicht erreichbar.
+                  { id: ORGANIZATION_LEVEL_POST_ID, department_id: null },
                 ],
                 error: null,
               })
@@ -721,6 +729,7 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
                 data: [
                   { id: OVERDUE_VERSION_ID, title: 'Überfälliger Beitrag' },
                   { id: INVALIDATED_VERSION_ID, title: 'Invalidierter Beitrag' },
+                  { id: ORGANIZATION_LEVEL_VERSION_ID, title: 'Vereinsbeitrag' },
                 ],
                 error: null,
               })
@@ -738,10 +747,46 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
       headers: { authorization: `Bearer ${token}` },
     })
     expect(response.statusCode).toBe(200)
-    const body = response.json() as { approvalRequestId: string; isOverdue: boolean; invalidated: boolean }[]
-    expect(body.map((row) => row.approvalRequestId).sort()).toEqual([INVALIDATED_REQUEST_ID, OVERDUE_REQUEST_ID].sort())
-    expect(body.find((row) => row.approvalRequestId === OVERDUE_REQUEST_ID)).toMatchObject({ isOverdue: true, invalidated: false })
+    const body = response.json() as { approvalRequestId: string; isOverdue: boolean; invalidated: boolean; departmentId: string | null }[]
+    expect(body.map((row) => row.approvalRequestId).sort()).toEqual([INVALIDATED_REQUEST_ID, ORGANIZATION_LEVEL_REQUEST_ID, OVERDUE_REQUEST_ID].sort())
+    expect(body.find((row) => row.approvalRequestId === OVERDUE_REQUEST_ID)).toMatchObject({ isOverdue: true, invalidated: false, departmentId: DEPARTMENT_ID })
     expect(body.find((row) => row.approvalRequestId === INVALIDATED_REQUEST_ID)).toMatchObject({ isOverdue: false, invalidated: true })
+    expect(body.find((row) => row.approvalRequestId === ORGANIZATION_LEVEL_REQUEST_ID)).toMatchObject({ isOverdue: true, invalidated: false, departmentId: null })
+  })
+
+  // Gegenprobe zum Vereinszweig oben: fehlt der posts-Treffer wirklich (die Anfrage ist ueber
+  // approval_requests_select sichtbar, der Beitrag ueber posts_select nicht), bleibt es beim
+  // Auslassen der Zeile -- "kein Treffer" und "Treffer ohne Abteilung" duerfen nicht zusammenfallen.
+  it('still omits a stalled request whose post row is not readable at all', async () => {
+    const UNREADABLE_REQUEST_ID = '10000000-4000-4000-8000-000000000013'
+    const UNREADABLE_POST_ID = '10000000-2000-4000-8000-000000000013'
+    const UNREADABLE_VERSION_ID = '10000000-3000-4000-8000-000000000013'
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'stalled_approval_requests') {
+              return chain({
+                data: [{ id: UNREADABLE_REQUEST_ID, post_id: UNREADABLE_POST_ID, post_version_id: UNREADABLE_VERSION_ID, invalidated_at: null, is_overdue: true }],
+                error: null,
+              })
+            }
+            if (table === 'posts') return chain({ data: [], error: null })
+            if (table === 'post_versions') return chain({ data: [], error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used') } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/approval-requests/stalled?organizationId=${ORGANIZATION_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual([])
   })
 
   it('rejects reading member review trust of an organization the caller does not belong to with 403', async () => {
