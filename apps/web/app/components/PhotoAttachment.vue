@@ -7,7 +7,7 @@ import { z } from 'zod'
 // unveraendert (Pass-Through-Derivat) in den Beitrag. Bewusst hoechstens ein Foto (kein
 // Karussell, siehe plans/045 "Nicht enthalten"); decision='obscure'/'exclude' werden hier nicht
 // angeboten, weil ImageAnonymizer (Plan 003) nichts rendern kann, das sie umsetzt.
-const props = defineProps<{ organizationId: string; departmentId: string }>()
+const props = defineProps<{ organizationId: string; departmentId: string | null }>()
 const mediaAssetId = defineModel<string | null>({ required: true })
 
 type Phase = 'idle' | 'uploading' | 'processing' | 'failed' | 'marking' | 'reviewed'
@@ -85,7 +85,7 @@ async function onFileSelected(event: Event) {
 
 async function loadConsents() {
   try {
-    const rows = await api.request('/v1/consents', { query: { organizationId: props.organizationId, departmentId: props.departmentId } }, z.array(z.object({ id: z.string(), signerName: z.string().nullable(), scope: z.string(), status: z.string() })))
+    const rows = await api.request('/v1/consents', { query: { organizationId: props.organizationId, departmentId: props.departmentId ?? undefined } }, z.array(z.object({ id: z.string(), signerName: z.string().nullable(), scope: z.string(), status: z.string() })))
     consents.value = rows.map((row) => ({ id: row.id, label: `${row.signerName ?? 'Unbenannt'} — ${row.scope} (${row.status})` }))
   } catch {
     consents.value = []

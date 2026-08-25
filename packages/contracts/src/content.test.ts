@@ -80,6 +80,26 @@ describe('text workshop contracts', () => {
     expect(SaveTextWorkshopDraftSchema.safeParse({ ...draft, departmentId: 'not-an-id' }).success).toBe(false)
   })
 
+  // Org-level posting: departmentId: null means "no specific department" and must be accepted for
+  // both the composition session and the autosave draft -- but the key itself stays required
+  // (.nullable() without .optional()), so an omitted departmentId is still rejected.
+  it('accepts departmentId: null for an organization-level session or draft, but not the key being omitted', () => {
+    const base = {
+      organizationId: org, departmentId: department, communicationGoal: 'invite',
+      requestedFormats: ['text_post'] as const, sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [], doNotMention: [] },
+      targetPlatforms: ['instagram'] as const,
+    }
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, departmentId: null }).success).toBe(true)
+    expect(CreateCompositionSessionSchema.safeParse({ ...base, departmentId: undefined }).success).toBe(false)
+
+    const draft = {
+      organizationId: org, departmentId: department,
+      payload: { communicationGoal: 'inform', factsText: '', observation: 'Erste Notiz', doNotMention: '', selectedProfile: 'klar_erklaerend', temperature: 0.6, selectedPlatforms: [], maxCharactersOverride: '' },
+    }
+    expect(SaveTextWorkshopDraftSchema.safeParse({ ...draft, departmentId: null }).success).toBe(true)
+    expect(SaveTextWorkshopDraftSchema.safeParse({ ...draft, departmentId: undefined }).success).toBe(false)
+  })
+
   it('accepts text/photo/video composition choices but keeps historical reels outside new commands', () => {
     const input = CreateCompositionSessionSchema.parse({
       organizationId: org, departmentId: department, communicationGoal: 'invite',

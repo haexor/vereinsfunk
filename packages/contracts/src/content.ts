@@ -325,7 +325,10 @@ export const TEXT_GENERATION_DEFAULT_TEMPERATURE = TEXT_GENERATION_TEMPERATURE_S
 
 export const CreateCompositionSessionSchema = z.object({
   organizationId: UuidSchema,
-  departmentId: UuidSchema,
+  // null = organization-level (no specific department). CreateSubmissionSchema below stays
+  // department-required on purpose: it always originates from a fixture/club_event, which are
+  // inherently department/team-scoped -- only the manual text-workshop path here is org-optional.
+  departmentId: UuidSchema.nullable(),
   teamId: UuidSchema.nullable().optional(),
   communicationGoal: CommunicationGoalSchema,
   requestedFormats: z.array(CompositionFormatSchema).min(1).max(3).superRefine((formats, context) => {
@@ -383,12 +386,12 @@ export const TextWorkshopDraftPayloadSchema = z.object({
 })
 export const SaveTextWorkshopDraftSchema = z.object({
   organizationId: UuidSchema,
-  departmentId: UuidSchema,
+  departmentId: UuidSchema.nullable(),
   teamId: UuidSchema.nullable().optional(),
   payload: TextWorkshopDraftPayloadSchema,
 })
 export const TextWorkshopDraftRowSchema = z.object({
-  id: UuidSchema, organization_id: UuidSchema, department_id: UuidSchema, team_id: UuidSchema.nullable(),
+  id: UuidSchema, organization_id: UuidSchema, department_id: UuidSchema.nullable(), team_id: UuidSchema.nullable(),
   post_id: UuidSchema.nullable(), payload: TextWorkshopDraftPayloadSchema, created_at: z.iso.datetime({ offset: true }), updated_at: z.iso.datetime({ offset: true }),
 })
 export const CreateGenerationCommandSchema = z.object({

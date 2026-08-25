@@ -207,6 +207,36 @@ describe('GET /v1/content-style-profiles', () => {
     expect(profiles).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'persona', slug: 'kapitaen-klar', name: 'Kapitän Klar' })]))
     expect(profiles).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'custom', slug: 'unser-ton' })]))
   })
+
+  // Org-level posting: departmentId omitted from the query resolves to an organization-level
+  // scope (toPermissionScope drops the key entirely, routes/content.ts), not a 400/404.
+  it('resolves an organization-level scope when departmentId is omitted from the query', async () => {
+    const scopes: PermissionScope[] = []
+    const scopeCapturingRoleProvider: RoleProvider = { async rolesForScope(_auth, scope) { scopes.push(scope); return ['editor'] } }
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'content_style_profiles') return chain({ data: [], error: null })
+            if (table === 'platform_style_personas') return chain({ data: [PERSONA_ROW], error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => { throw new Error('forService should not be called by this route') },
+    }
+    const app = await startApp({ roleProvider: scopeCapturingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/content-style-profiles',
+      headers: { authorization: `Bearer ${token}` },
+      query: { organizationId: ORGANIZATION_ID },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(scopes[0]).toEqual({ organizationId: ORGANIZATION_ID })
+    const { profiles } = response.json()
+    expect(profiles.filter((p: { kind: string }) => p.kind === 'system')).toHaveLength(5)
+  })
 })
 
 describe('POST /v1/text-workshop/sessions', () => {
@@ -252,6 +282,19 @@ describe('POST /v1/text-workshop/sessions', () => {
     expect(response.statusCode).toBe(202)
     expect(capturedRpcParams?.p_style_profile_id).toBeNull()
     expect(capturedRpcParams?.p_style_profile_snapshot).toMatchObject({ name: 'Kapitän Klar', slug: 'kapitaen-klar' })
+  })
+
+  // Org-level posting: departmentId: null creates a session with no specific department --
+  // toPermissionScope drops the key so permission resolves at the organization scope, and the
+  // null flows unchanged into the create_text_generation_session RPC.
+  it('creates a session at organization level when departmentId is null', async () => {
+    let captured: Record<string, unknown> | undefined
+    const response = await createSession(
+      sessionCreatingClients({ platformDefaults: { instagram: 2200, facebook: 2200 }, onRpc: (params) => { captured = params } }),
+      { ...basePayload, departmentId: null },
+    )
+    expect(response.statusCode).toBe(202)
+    expect(captured?.p_department_id).toBeNull()
   })
 
   it('returns 404 for an unknown or inactive persona slug', async () => {
@@ -683,6 +726,34 @@ describe('GET /v1/text-generation-platforms', () => {
     const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({ method: 'GET', url: '/v1/text-generation-platforms', headers: { authorization: `Bearer ${token}` }, query })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual(expect.arrayContaining([
+      { platform: 'instagram', available: true, maxCharacters: 2200, isDefault: false },
+      { platform: 'facebook', available: true, maxCharacters: 1500, isDefault: false },
+    ]))
+  })
+
+  // Org-level posting: departmentId omitted resolves to an organization-level scope.
+  // resolveDirectoryScope (routes/shared.ts) returns { organizationId } directly without querying
+  // the departments table when neither departmentId nor teamId is given -- unlike the
+  // department-scoped tests in this block, this fake therefore has no 'departments' branch.
+  it('resolves organization-level scope when departmentId is omitted', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'policy_settings') return policySettingsFake()
+            if (table === 'social_connections') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.socialConnections, error: null })
+            if (table === 'channel_scopes') return chain({ data: AVAILABLE_CHANNEL_FIXTURES.channelScopes, error: null })
+            if (table === 'text_generation_platform_defaults') return chain({ data: [{ platform: 'instagram', max_characters: 2200 }, { platform: 'facebook', max_characters: 1500 }], error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => { throw new Error('forService should not be called by this route') },
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: '/v1/text-generation-platforms', headers: { authorization: `Bearer ${token}` }, query: { organizationId: ORGANIZATION_ID } })
     expect(response.statusCode).toBe(200)
     expect(response.json()).toEqual(expect.arrayContaining([
       { platform: 'instagram', available: true, maxCharacters: 2200, isDefault: false },

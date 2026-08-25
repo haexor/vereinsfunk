@@ -338,9 +338,10 @@ export function computeRuleEntry(
   return { ownRow, config }
 }
 
-export async function resolveScopedEffectiveConfig(client: SupabaseClient, organizationId: string, departmentId: string, teamId: string | null) {
+export async function resolveScopedEffectiveConfig(client: SupabaseClient, organizationId: string, departmentId: string | null, teamId: string | null) {
   const rows = await fetchPolicyRuleRows(client, organizationId)
-  return computeRuleEntry(rows, teamId ? 'team' : 'department', teamId ?? departmentId, departmentId).config
+  const scope = teamId ? 'team' : departmentId ? 'department' : 'organization'
+  return computeRuleEntry(rows, scope, teamId ?? departmentId ?? organizationId, departmentId).config
 }
 
 // maxCharacters bleibt null, wenn fuer die Plattform keine Vorgabezeile existiert: eine fehlende
@@ -381,7 +382,7 @@ export function toChannelCandidates(connections: readonly ChannelConnectionRow[]
 // Richtlinie ausgeschlossen, nicht "nicht eingerichtet" -- sonst schickt der Hinweistext einen
 // Verein einen zweiten Kanal anlegen, statt die Person einzutragen (Review dieses PRs).
 export async function resolveTextGenerationPlatformAvailability(
-  client: SupabaseClient, organizationId: string, departmentId: string, teamId: string | null, allowedChannelIds: readonly string[] | null,
+  client: SupabaseClient, organizationId: string, departmentId: string | null, teamId: string | null, allowedChannelIds: readonly string[] | null,
 ): Promise<Map<SocialPlatform, TextGenerationPlatformResolution>> {
   const [connections, scopeRows, policyRow, platformDefaults] = await Promise.all([
     client.from('social_connections').select('id, platform, status, archived_at, responsible_profile_id, max_characters').eq('organization_id', organizationId),
@@ -394,14 +395,14 @@ export async function resolveTextGenerationPlatformAvailability(
   if (policyRow.error) throw policyRow.error
   if (platformDefaults.error) throw platformDefaults.error
 
-  const targetScope: ScopeLevelName = teamId ? 'team' : 'department'
+  const targetScope: ScopeLevelName = teamId ? 'team' : departmentId ? 'department' : 'organization'
   const requireChannelResponsible = policyRow.data?.require_channel_responsible ?? false
   const maxCharactersByPlatform = new Map(platformDefaults.data.map((row) => [row.platform as SocialPlatform, row.max_characters as number]))
   // Plan 039, PR 1 Step 3: je Kanal eine eigene Laengengrenze (social_connections.max_characters).
   const maxCharactersByConnectionId = new Map(connections.data.map((row) => [row.id as string, row.max_characters as number | null]))
 
   const result = new Map<SocialPlatform, TextGenerationPlatformResolution>()
-  const scopeInput = { scope: targetScope, departmentId, ...(teamId ? { teamId } : {}) }
+  const scopeInput = { scope: targetScope, ...(departmentId ? { departmentId } : {}), ...(teamId ? { teamId } : {}) }
   for (const platform of SocialPlatformSchema.options) {
     const candidates = toChannelCandidates(connections.data.filter((connection) => connection.platform === platform), scopeRows.data)
     const withoutPolicies = resolveAvailableChannels({ ...scopeInput, channels: candidates, allowedChannelIds: null, requireChannelResponsible: false })
@@ -447,7 +448,7 @@ export async function resolveTextGenerationProviderConfigurationIds(service: Sup
 }
 
 export async function fetchMemberTrust(
-  client: SupabaseClient, userId: string, organizationId: string, departmentId: string, teamId: string | null,
+  client: SupabaseClient, userId: string, organizationId: string, departmentId: string | null, teamId: string | null,
 ): Promise<TrustRecord[]> {
   // Eine abgelaufene Befreiung darf keine Freigabestufe mehr entfernen -- deshalb derselbe
   // Ablauffilter wie bei den Mitgliedschaften (beim Review dieses Pakets gefunden).

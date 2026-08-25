@@ -4,7 +4,7 @@ import { z } from 'zod'
 
 const props = withDefaults(defineProps<{
   organizationId: string
-  departmentId: string
+  departmentId: string | null
   /** Videos need an explicit visual review before they can be used in a post. */
   reviewVideos?: boolean
   allowImages?: boolean
@@ -33,7 +33,7 @@ const PeopleReviewInputSchema = z.object({ target_asset_id: z.string().uuid(), f
 const ReviewedMediaAssetSchema = z.object({
   id: z.string().uuid(),
   organization_id: z.string().uuid(),
-  department_id: z.string().uuid(),
+  department_id: z.string().uuid().nullable(),
   upload_status: z.literal('ready'),
   people_reviewed_at: z.string().datetime({ offset: true }),
   people_reviewed_by: z.string().uuid(),

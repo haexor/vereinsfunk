@@ -24,7 +24,7 @@ type TextGenerationSessionResult =
 
 const SessionMediaAssetSchema = z.object({
   organization_id: UuidSchema,
-  department_id: UuidSchema,
+  department_id: UuidSchema.nullable(),
   // Every production row has a MIME type. The default keeps older narrow test doubles and
   // restored pre-audio records compatible while retaining the conservative visual-media gate.
   mime_type: z.string().min(1).default('image/jpeg'),
