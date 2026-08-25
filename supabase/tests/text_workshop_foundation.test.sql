@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(100);
+select plan(104);
 
 set local role postgres;
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -614,7 +614,7 @@ insert into public.media_assets (id, organization_id, department_id, bucket_id, 
   ('32000000-3130-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', null, 'raw-media', 'organizations/32000000-2000-4000-8000-000000000002/assets/org-level/original.jpg', 'image/jpeg', 12, repeat('e', 64), 'clean', '32000000-0000-4000-8000-000000000007');
 
 set local role authenticated;
--- style-g (organization_admin, no department/team membership, and NOT the session's creator) --
+-- style-h (social_manager, no department/team membership, and NOT the session's creator) --
 -- any visibility here can only come from the new org-permission RLS branch.
 select set_config('request.jwt.claim.sub', '32000000-0000-4000-8000-000000000008', true);
 select is((select count(*)::integer from public.composition_sessions where input_hash = encode(sha256('org-level-session'::bytea), 'hex')), 1, 'an organization-level social_manager (no department/team role, not the creator) reads the organization-level session via the org-permission branch');
@@ -647,6 +647,23 @@ select throws_ok(
   $$insert into public.media_assets (organization_id, department_id, bucket_id, object_path, mime_type, byte_size, created_by) values ('32000000-2000-4000-8000-000000000002', null, 'raw-media', 'organizations/32000000-2000-4000-8000-000000000002/assets/viewer/original.jpg', 'image/jpeg', 12, '32000000-0000-4000-8000-000000000005')$$,
   '42501', null, 'negative: a department-only viewer without post.create cannot insert an organization-level media asset'
 );
+
+-- posts_select / post_versions_select org-fallback: an organization-level draft post (department_id
+-- null, status 'draft' so the published/scheduled branch never applies) that only the new
+-- `department_id is null and is_any_member_of_organization(...)` branch can reveal.
+set local role postgres;
+insert into public.posts (id, organization_id, department_id, status, created_by) values
+  ('32000000-5400-4000-8000-000000000099', '32000000-2000-4000-8000-000000000002', null, 'draft', '32000000-0000-4000-8000-000000000007');
+insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type) values
+  ('32000000-5410-4000-8000-000000000099', '32000000-2000-4000-8000-000000000002', '32000000-5400-4000-8000-000000000099', 1, '{}', '{}', 'llm');
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '32000000-0000-4000-8000-000000000005', true);
+select is((select count(*)::integer from public.posts where id = '32000000-5400-4000-8000-000000000099'), 1, 'a department-only viewer with no organization role can still read the organization-level draft post via is_any_member_of_organization');
+select is((select count(*)::integer from public.post_versions where post_id = '32000000-5400-4000-8000-000000000099'), 1, 'the same department-only viewer reads the organization-level post''s version');
+select set_config('request.jwt.claim.sub', '31000000-0000-4000-8000-000000000001', true);
+select is((select count(*)::integer from public.posts where id = '32000000-5400-4000-8000-000000000099'), 0, 'negative: an unrelated tenant A member cannot read tenant B''s organization-level draft post');
+select is((select count(*)::integer from public.post_versions where post_id = '32000000-5400-4000-8000-000000000099'), 0, 'negative: an unrelated tenant A member cannot read tenant B''s organization-level post version');
 
 select * from finish();
 rollback;
