@@ -7,8 +7,22 @@ packages:
 # buf auf, und wir schreiben nie Arbeitsmappen -- erreichbar ist die Stelle also nicht. Der
 # Override haelt trotzdem `pnpm audit` sauber, damit ein echter Fund kuenftig nicht im Rauschen
 # untergeht.
+#
+# fabric>canvas/fabric>jsdom: "-" entfernt beide Kanten (pnpm-Syntax zum gezielten Streichen einer
+# Abhaengigkeitskante, https://pnpm.io/settings/dependency-resolution#overrides). fabric
+# (Bildstil-Editor, ImageStyleCanvasEditor.vue) haengt sie nur optional fuer serverseitiges
+# Canvas-Rendering in Node an -- der Editor laeuft ausschliesslich im Browser (dynamischer Import
+# in onMounted). Noetig, weil jsdom@30 (bereits vorhandene Abhaengigkeit von packages/svg-safe und
+# vitest) selbst ein optionales peerDependency auf canvas hat: sobald canvas irgendwo im Baum
+# aufloesbar ist, haengt pnpm es an JEDE jsdom-Instanz, auch an die von svg-safe/vitest, die mit
+# fabric nichts zu tun haben -- und mit dabei ungebautem canvas (kein Build-Skript zugelassen)
+# stuerzte apps/api beim naechsten tsx-watch-Neustart mit "Cannot find package 'jsdom'" ab
+# (packages/svg-safe/src/index.ts). Die gezielte Kante verhindert das an der Wurzel, statt canvas
+# erst aufzuloesen und hinterher wieder aufzuraeumen.
 overrides:
   uuid@<11.1.1: ^11.1.1
+  fabric>canvas: "-"
+  fabric>jsdom: "-"
 
 allowBuilds:
   '@hatchet-dev/typescript-sdk': true

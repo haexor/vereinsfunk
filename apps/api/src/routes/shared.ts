@@ -567,11 +567,18 @@ const PreviewIdempotencyKeySchema = z.string().trim().min(1).max(128).regex(/^[A
 // Falls back to a random key when the client sends none, exactly like the sync route -- until PR
 // 3/3's frontend actually resends the same key on retry, every call gets its own random key and
 // this is a no-op, so today's behavior is unchanged.
+//
+// Der Schluessel wird mit der userId praefixiert (gefunden im Code-Review): der Header kommt vom
+// Client, und die Dedupe-Maps unten sind allein nach diesem Schluessel geschluesselt. Ohne Praefix
+// bekaeme ein zweiter Aufruf mit demselben (geratenen oder abgeschriebenen) Wert innerhalb des
+// Fensters das Ergebnis des ersten Aufrufs zurueck -- ueber Vereinsgrenzen hinweg. Ein Retry
+// desselben Nutzers dedupliziert weiterhin, genau darum geht es hier.
 export function resolvePreviewIdempotencyKey(request: FastifyRequest): string | null {
   const header = request.headers['idempotency-key']
   if (Array.isArray(header)) return null
   const parsed = PreviewIdempotencyKeySchema.safeParse(header ?? randomUUID())
-  return parsed.success ? parsed.data : null
+  if (!parsed.success || !request.auth) return null
+  return `${request.auth.userId}:${parsed.data}`
 }
 
 const previewByIdempotencyKey = new Map<string, { promise: Promise<StyleProfilePreviewResult>; expiresAt: number }>()
