@@ -36,11 +36,14 @@ export const AgentMessageSchema = z.object({
   organizationId: UuidSchema,
   role: AgentMessageRoleSchema,
   content: z.string().trim().min(1).max(8_000),
+  // IDs only: conversation history never holds private media bytes.
+  mediaAssetIds: z.array(UuidSchema).max(10).default([]),
   createdAt: z.iso.datetime({ offset: true }),
 })
 
 export const CreateAgentMessageSchema = z.object({
   content: z.string().trim().min(1).max(4_000),
+  mediaAssetIds: z.array(UuidSchema).max(10).default([]),
 })
 
 export const AgentProposalStatusSchema = z.enum(['pending', 'executing', 'confirmed', 'cancelled', 'expired', 'failed'])

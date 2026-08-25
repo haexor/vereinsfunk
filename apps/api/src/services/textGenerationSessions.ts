@@ -22,7 +22,15 @@ type TextGenerationSessionResult =
   | { ok: true; sessionId: string; candidateIds: string[] }
   | { ok: false; statusCode: 404 | 422; error: string; platform?: string }
 
-const SessionMediaAssetSchema = z.object({ organization_id: UuidSchema, department_id: UuidSchema, upload_status: z.string(), people_reviewed_at: z.string().nullable() })
+const SessionMediaAssetSchema = z.object({
+  organization_id: UuidSchema,
+  department_id: UuidSchema,
+  // Every production row has a MIME type. The default keeps older narrow test doubles and
+  // restored pre-audio records compatible while retaining the conservative visual-media gate.
+  mime_type: z.string().min(1).default('image/jpeg'),
+  upload_status: z.string(),
+  people_reviewed_at: z.string().nullable(),
+})
 
 function parseSupabaseData<T>(schema: z.ZodType<T>, data: unknown): T {
   const parsed = schema.safeParse(data)
@@ -69,12 +77,12 @@ export async function createTextGenerationSession(
   const candidateHash = createHash('sha256').update(`${sessionHash}:initial`).digest('hex')
   const serviceClient = getServiceClient()
   for (const mediaAssetId of mediaAssetIds) {
-    const asset = await serviceClient.from('media_assets').select('organization_id, department_id, upload_status, people_reviewed_at').eq('id', mediaAssetId).maybeSingle()
+    const asset = await serviceClient.from('media_assets').select('organization_id, department_id, mime_type, upload_status, people_reviewed_at').eq('id', mediaAssetId).maybeSingle()
     if (asset.error) throw asset.error
     const parsedAsset = asset.data === null ? null : parseSupabaseData(SessionMediaAssetSchema, asset.data)
     if (!parsedAsset || parsedAsset.organization_id !== input.organizationId || parsedAsset.department_id !== input.departmentId) return { ok: false, statusCode: 404, error: 'media_asset_not_found' }
     if (parsedAsset.upload_status !== 'ready') return { ok: false, statusCode: 422, error: 'media_asset_not_ready' }
-    if (parsedAsset.people_reviewed_at === null) return { ok: false, statusCode: 422, error: 'media_asset_not_reviewed' }
+    if ((parsedAsset.mime_type.startsWith('image/') || parsedAsset.mime_type.startsWith('video/')) && parsedAsset.people_reviewed_at === null) return { ok: false, statusCode: 422, error: 'media_asset_not_reviewed' }
   }
   const platformLimits = targetPlatforms.map((platform) => platformAvailability.get(platform)!.maxCharacters).filter((limit): limit is number => limit !== null)
   const resolvedPlatformLimit = platformLimits.length > 0 ? Math.min(...platformLimits) : TEXT_GENERATION_DEFAULT_MAX_CHARACTERS

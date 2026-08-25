@@ -64,6 +64,17 @@ const MessageRowSchema = z.object({
   content: z.string(),
   created_at: z.string(),
 })
+const MessageMediaReferenceRowSchema = z.object({
+  agent_message_id: UuidSchema,
+  media_asset_id: UuidSchema,
+  position: z.number().int().min(0).max(9),
+})
+const MediaAssetScopeRowSchema = z.object({
+  id: UuidSchema,
+  organization_id: UuidSchema,
+  department_id: UuidSchema,
+  upload_status: z.string(),
+})
 const PersistedMessagesRowSchema = z.object({
   user_message: MessageRowSchema,
   assistant_message: MessageRowSchema,
@@ -109,7 +120,7 @@ function mapConversation(row: unknown): AgentConversation {
   })
 }
 
-function mapMessage(row: unknown): AgentMessage {
+function mapMessage(row: unknown, mediaAssetIds: string[] = []): AgentMessage {
   const parsed = MessageRowSchema.parse(row)
   return AgentMessageSchema.parse({
     id: parsed.id,
@@ -117,6 +128,7 @@ function mapMessage(row: unknown): AgentMessage {
     organizationId: parsed.organization_id,
     role: parsed.role,
     content: parsed.content,
+    mediaAssetIds,
     createdAt: parsed.created_at,
   })
 }
@@ -414,7 +426,23 @@ async function loadMessages(client: SupabaseClient, conversation: AgentConversat
     .order('created_at', { ascending: true })
     .limit(100)
   if (result.error) throw result.error
-  return (result.data ?? []).map(mapMessage)
+  const rows = result.data ?? []
+  if (rows.length === 0) return []
+  const references = await client
+    .from('agent_message_media_references')
+    .select('agent_message_id, media_asset_id, position')
+    .eq('organization_id', conversation.organizationId)
+    .in('agent_message_id', rows.map((row) => row.id as string))
+    .order('position', { ascending: true })
+  if (references.error) throw references.error
+  const mediaAssetIdsByMessageId = new Map<string, string[]>()
+  for (const row of references.data ?? []) {
+    const reference = MessageMediaReferenceRowSchema.parse(row)
+    const mediaAssetIds = mediaAssetIdsByMessageId.get(reference.agent_message_id) ?? []
+    mediaAssetIds.push(reference.media_asset_id)
+    mediaAssetIdsByMessageId.set(reference.agent_message_id, mediaAssetIds)
+  }
+  return rows.map((row) => mapMessage(row, mediaAssetIdsByMessageId.get(row.id as string) ?? []))
 }
 
 type ApprovalTarget = { organizationId: string; departmentId: string; teamId: string | null; postId: string }
@@ -920,6 +948,17 @@ export function registerAgentRoutes(
     if (!conversation) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     const existingMessages = await loadMessages(client, conversation)
     const service = supabaseClients.forService()
+    if (input.mediaAssetIds.length > 0) {
+      // The responder below only gets textual messages. Attachments are private references for
+      // the user interface, never multimodal context for the model.
+      if (!conversation.departmentId) return reply.code(422).send({ error: 'agent_media_requires_department', correlationId: request.id })
+      const assets = await service.from('media_assets').select('id, organization_id, department_id, upload_status').in('id', input.mediaAssetIds)
+      if (assets.error) throw assets.error
+      const assetRows = z.array(MediaAssetScopeRowSchema).parse(assets.data)
+      if (assetRows.length !== input.mediaAssetIds.length || assetRows.some((asset) => asset.organization_id !== conversation.organizationId || asset.department_id !== conversation.departmentId || asset.upload_status !== 'ready')) {
+        return reply.code(422).send({ error: 'agent_media_not_ready_or_out_of_scope', correlationId: request.id })
+      }
+    }
     const workspace = await loadWorkspaceOrEmpty(client, scopeForConversation(conversation), request.auth!.userId, request.log)
     const safetyIdentifier = createHash('sha256').update(request.auth!.userId).digest('hex').slice(0, 64)
     let answer: string
@@ -972,6 +1011,7 @@ export function registerAgentRoutes(
       target_conversation_id: conversation.id,
       target_owner_id: request.auth!.userId,
       user_message_content: input.content,
+      user_message_media_asset_ids: input.mediaAssetIds,
       assistant_message_content: answer,
     })
     if (persisted.error) throw persisted.error
@@ -996,7 +1036,7 @@ export function registerAgentRoutes(
     })
     return reply.code(201).send(AgentConversationDetailSchema.parse({
       conversation: { ...conversation, lastActivityAt: persistedRow.last_activity_at },
-      messages: [...existingMessages, mapMessage(persistedRow.user_message), mapMessage(persistedRow.assistant_message)],
+      messages: [...existingMessages, mapMessage(persistedRow.user_message, input.mediaAssetIds), mapMessage(persistedRow.assistant_message)],
     }))
   })
 }
