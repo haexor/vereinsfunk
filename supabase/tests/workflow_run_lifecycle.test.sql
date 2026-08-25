@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(20);
+select plan(23);
 set local role postgres;
 
 insert into public.workflow_outbox (
@@ -12,7 +12,7 @@ insert into public.workflow_outbox (
   '22222222-2222-4222-8222-222222222222',
   'process-submission', '62000000-0000-4000-8000-000000000002', 1,
   'lifecycle-test', '62000000-0000-4000-8000-000000000003',
-  '{"entityId":"62000000-0000-4000-8000-000000000002","organizationId":"11111111-1111-4111-8111-111111111111","departmentId":"22222222-2222-4222-8222-222222222222","correlationId":"62000000-0000-4000-8000-000000000003","sourceRevision":1,"purpose":"lifecycle-test","idempotencyKey":"lifecycle:1"}'::jsonb
+  '{"entityId":"62000000-0000-4000-8000-000000000002","organizationId":"11111111-1111-4111-8111-111111111111","departmentId":"22222222-2222-4222-8222-222222222222","departmentConcurrencyKey":"22222222-2222-4222-8222-222222222222","correlationId":"62000000-0000-4000-8000-000000000003","sourceRevision":1,"purpose":"lifecycle-test","idempotencyKey":"lifecycle:1"}'::jsonb
 );
 
 select is((select count(*)::integer from public.claim_workflow_outbox(1)), 1, 'lifecycle event is claimed once');
@@ -71,29 +71,47 @@ select throws_ok(
 );
 select ok(not public.is_id_only_workflow_payload(jsonb_build_object(
   'entityId', '62000000-0000-4000-8000-000000000002', 'organizationId', '11111111-1111-4111-8111-111111111111',
-  'departmentId', '22222222-2222-4222-8222-222222222222', 'correlationId', '62000000-0000-4000-8000-000000000003',
+  'departmentId', '22222222-2222-4222-8222-222222222222', 'departmentConcurrencyKey', '22222222-2222-4222-8222-222222222222', 'correlationId', '62000000-0000-4000-8000-000000000003',
   'sourceRevision', 1, 'purpose', 42, 'idempotencyKey', 'lifecycle:1'
 )), 'database rejects a numeric purpose');
 select ok(not public.is_id_only_workflow_payload(jsonb_build_object(
   'entityId', '62000000-0000-4000-8000-000000000002', 'organizationId', '11111111-1111-4111-8111-111111111111',
-  'departmentId', '22222222-2222-4222-8222-222222222222', 'correlationId', '62000000-0000-4000-8000-000000000003',
+  'departmentId', '22222222-2222-4222-8222-222222222222', 'departmentConcurrencyKey', '22222222-2222-4222-8222-222222222222', 'correlationId', '62000000-0000-4000-8000-000000000003',
   'sourceRevision', 1, 'purpose', 'lifecycle-test', 'idempotencyKey', 42
 )), 'database rejects a numeric idempotency key');
 select ok(not public.is_id_only_workflow_payload(jsonb_build_object(
   'entityId', '62000000-0000-4000-8000-000000000002', 'organizationId', '11111111-1111-4111-8111-111111111111',
-  'departmentId', '22222222-2222-4222-8222-222222222222', 'correlationId', '62000000-0000-4000-8000-000000000003',
+  'departmentId', '22222222-2222-4222-8222-222222222222', 'departmentConcurrencyKey', '22222222-2222-4222-8222-222222222222', 'correlationId', '62000000-0000-4000-8000-000000000003',
   'sourceRevision', 1, 'purpose', 'lifecycle-test', 'idempotencyKey', 'lifecycle:1', 'submissionId', 'not-a-uuid', 'teamId', 42
 )), 'database rejects invalid optional UUIDs');
 select ok(not public.is_id_only_workflow_payload(jsonb_build_object(
   'entityId', '62000000-0000-4000-8000-000000000002', 'organizationId', '11111111-1111-4111-8111-111111111111',
-  'departmentId', '22222222-2222-4222-8222-222222222222', 'correlationId', '62000000-0000-4000-8000-000000000003',
+  'departmentId', '22222222-2222-4222-8222-222222222222', 'departmentConcurrencyKey', '22222222-2222-4222-8222-222222222222', 'correlationId', '62000000-0000-4000-8000-000000000003',
   'sourceRevision', 1, 'purpose', ' lifecycle-test ', 'idempotencyKey', 'lifecycle:1'
 )), 'database rejects an untrimmed purpose');
 select ok(not public.is_id_only_workflow_payload(jsonb_build_object(
   'entityId', '62000000-0000-4000-8000-000000000002', 'organizationId', '11111111-1111-4111-8111-111111111111',
-  'departmentId', '22222222-2222-4222-8222-222222222222', 'correlationId', '62000000-0000-4000-8000-000000000003',
+  'departmentId', '22222222-2222-4222-8222-222222222222', 'departmentConcurrencyKey', '22222222-2222-4222-8222-222222222222', 'correlationId', '62000000-0000-4000-8000-000000000003',
   'sourceRevision', 1, 'purpose', repeat('x', 81), 'idempotencyKey', 'lifecycle:1'
 )), 'database rejects an overlong purpose');
+
+-- Org-level posting: departmentId becomes optional, but departmentConcurrencyKey is always
+-- required -- 'org' for an organization-level job, the real department id text otherwise.
+select ok(public.is_id_only_workflow_payload(jsonb_build_object(
+  'entityId', '62000000-0000-4000-8000-000000000002', 'organizationId', '11111111-1111-4111-8111-111111111111',
+  'departmentConcurrencyKey', 'org', 'correlationId', '62000000-0000-4000-8000-000000000003',
+  'sourceRevision', 1, 'purpose', 'lifecycle-test', 'idempotencyKey', 'lifecycle:1'
+)), 'an organization-level payload with no departmentId key and departmentConcurrencyKey=''org'' is accepted');
+select ok(not public.is_id_only_workflow_payload(jsonb_build_object(
+  'entityId', '62000000-0000-4000-8000-000000000002', 'organizationId', '11111111-1111-4111-8111-111111111111',
+  'correlationId', '62000000-0000-4000-8000-000000000003',
+  'sourceRevision', 1, 'purpose', 'lifecycle-test', 'idempotencyKey', 'lifecycle:1'
+)), 'database rejects a payload missing departmentConcurrencyKey entirely');
+select ok(not public.is_id_only_workflow_payload(jsonb_build_object(
+  'entityId', '62000000-0000-4000-8000-000000000002', 'organizationId', '11111111-1111-4111-8111-111111111111',
+  'departmentConcurrencyKey', 'not-org-and-not-a-uuid', 'correlationId', '62000000-0000-4000-8000-000000000003',
+  'sourceRevision', 1, 'purpose', 'lifecycle-test', 'idempotencyKey', 'lifecycle:1'
+)), 'database rejects a departmentConcurrencyKey that is neither ''org'' nor a uuid');
 
 select * from finish();
 rollback;

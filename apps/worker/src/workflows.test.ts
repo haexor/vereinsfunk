@@ -7,7 +7,8 @@ import { concurrency, createGenerationRecoveryScanWorkflow, createWorkflowDefini
 
 const payload: WorkflowPayload = {
   entityId: '11111111-1111-4111-8111-111111111111', organizationId: '22222222-2222-4222-8222-222222222222',
-  departmentId: '33333333-3333-4333-8333-333333333333', correlationId: '44444444-4444-4444-8444-444444444444',
+  departmentId: '33333333-3333-4333-8333-333333333333', departmentConcurrencyKey: '33333333-3333-4333-8333-333333333333',
+  correlationId: '44444444-4444-4444-8444-444444444444',
   sourceRevision: 1, purpose: 'test', idempotencyKey: 'technical:test:1',
 }
 
@@ -31,14 +32,14 @@ describe('worker workflow registration', () => {
     expect(definitions).toHaveLength(WorkflowNameSchema.options.length)
     expect(definitions.map((definition) => definition.name)).toEqual(WorkflowNameSchema.options)
     expect(definitions[0]?.definition._tasks[0]?.concurrency).toEqual([
-      expect.objectContaining({ expression: "input.organizationId + ':' + input.departmentId", maxRuns: 2 }),
+      expect.objectContaining({ expression: "input.organizationId + ':' + input.departmentConcurrencyKey", maxRuns: 2 }),
       expect.objectContaining({ expression: 'input.organizationId', maxRuns: 4 }),
       expect.objectContaining({ expression: "'global'", maxRuns: 20 }),
     ])
     expect(concurrency.llm).toEqual({ global: 20, organization: 4, department: 2 })
     // Die Browser-Analyse laeuft bewusst nicht unter den llm-Grenzen, siehe concurrency.browser.
     expect(definitions.find((definition) => definition.name === 'analyze-website-branding')?.definition._tasks[0]?.concurrency).toEqual([
-      expect.objectContaining({ expression: "input.organizationId + ':' + input.departmentId", maxRuns: 1 }),
+      expect.objectContaining({ expression: "input.organizationId + ':' + input.departmentConcurrencyKey", maxRuns: 1 }),
       expect.objectContaining({ expression: 'input.organizationId', maxRuns: 1 }),
       expect.objectContaining({ expression: "'global'", maxRuns: 2 }),
     ])

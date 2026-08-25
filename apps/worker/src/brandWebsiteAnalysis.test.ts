@@ -16,6 +16,7 @@ const payload: WorkflowPayload = {
   entityId: '20000000-0000-4000-8000-000000000001',
   organizationId: '20000000-1000-4000-8000-000000000001',
   departmentId: '20000000-1100-4000-8000-000000000001',
+  departmentConcurrencyKey: '20000000-1100-4000-8000-000000000001',
   correlationId: '20000000-1200-4000-8000-000000000001',
   sourceRevision: 1,
   purpose: 'default',

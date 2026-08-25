@@ -16,7 +16,7 @@ import type { VisionComparisonProviderRow, VisionProviderComparisonRepository } 
 // textGeneration.ts's execute() is the single place that parses it, inside its try/catch, where
 // a schema mismatch is properly classified and the candidate is marked failed.
 const SessionRowSchema = z.object({
-  id: UuidSchema, organization_id: UuidSchema, department_id: UuidSchema, team_id: UuidSchema.nullable(),
+  id: UuidSchema, organization_id: UuidSchema, department_id: UuidSchema.nullable(), team_id: UuidSchema.nullable(),
   communication_goal: CommunicationGoalSchema, source_material: SourceMaterialSchema,
   style_profile_snapshot: z.unknown(), max_characters: z.coerce.number().pipe(MaxCharactersSchema), temperature: z.coerce.number().pipe(TextGenerationTemperatureSchema),
 }) satisfies z.ZodType<SessionRow>
@@ -39,7 +39,7 @@ const StalledCandidateRowSchema: z.ZodType<StalledCandidateRow> = z.object({
 // rejected at this boundary rather than silently passed through create_text_generation_session
 // as a JSON null.
 const RecoverableSessionRowSchema = z.object({
-  organization_id: UuidSchema, department_id: UuidSchema, team_id: UuidSchema.nullable(),
+  organization_id: UuidSchema, department_id: UuidSchema.nullable(), team_id: UuidSchema.nullable(),
   communication_goal: CommunicationGoalSchema, requested_formats: z.unknown().nonoptional(), source_material: z.unknown().nonoptional(), style_profile_id: UuidSchema.nullable(),
   style_profile_snapshot: z.unknown().nonoptional(), effective_config_snapshot: z.unknown().nonoptional(),
   target_platforms: z.array(SocialPlatformSchema), max_characters: z.coerce.number().pipe(MaxCharactersSchema), temperature: z.coerce.number().pipe(TextGenerationTemperatureSchema),
