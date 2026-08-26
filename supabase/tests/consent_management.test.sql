@@ -196,7 +196,7 @@ select is(
 insert into public.profiles (id, display_name) values ('70000000-0000-4000-8000-000000000002', 'Dept Admin') on conflict (id) do nothing;
 insert into public.submissions (id, organization_id, department_id, content_type, created_by, preset_slug, communication_goal, requested_formats, source_material) values
   ('70000000-1700-4000-8000-000000000001', '70000000-1000-4000-8000-000000000001', '70000000-1100-4000-8000-000000000001', 'training', '70000000-0000-4000-8000-000000000002', 'training', 'inform', '["feed_image"]'::jsonb,
-   '{"facts":{},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb);
+   '{"facts":{},"observations":[],"quotes":[],"forbiddenTopics":[]}'::jsonb);
 insert into public.posts (id, organization_id, department_id, submission_id, status, created_by) values
   ('70000000-1700-4000-8000-000000000002', '70000000-1000-4000-8000-000000000001', '70000000-1100-4000-8000-000000000001', '70000000-1700-4000-8000-000000000001', 'awaiting_approval', '70000000-0000-4000-8000-000000000002');
 insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type) values

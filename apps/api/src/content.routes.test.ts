@@ -1,4 +1,5 @@
 import { ContentGenerationError } from '@vereinsfunk/content-engine'
+import { TEXT_GENERATION_DEFAULT_MAX_CHARACTERS } from '@vereinsfunk/contracts'
 import { createSecretBox } from '@vereinsfunk/secrets'
 import { describe, expect, it } from 'vitest'
 import { ciphertextToBytea } from './secretBox.js'
@@ -276,7 +277,7 @@ describe('POST /v1/text-workshop/sessions', () => {
   // beide Plattformen deshalb explizit, damit die uebrigen Faelle unten unveraendert bleiben.
   const basePayload = {
     organizationId: ORGANIZATION_ID, departmentId: DEPARTMENT_ID, communicationGoal: 'inform',
-    requestedFormats: ['text_post'], sourceMaterial: { facts: { title: 'Training' }, observations: [], quotes: [], doNotMention: [] },
+    requestedFormats: ['text_post'], sourceMaterial: { facts: { title: 'Training' }, observations: [], quotes: [] },
     targetPlatforms: ['instagram', 'facebook'],
   }
 
@@ -518,6 +519,54 @@ describe('POST /v1/text-workshop/sessions', () => {
     expect(response.json()).toMatchObject({ error: 'platform_not_available', platform: 'facebook' })
   })
 
+  // 'plaintext' ist exklusiv: die serverseitige Minimumbildung wuerde seine grosszuegige Grenze
+  // sonst sinnlos auf die knappste andere gewaehlte Plattform herunterziehen. Die Ablehnung greift
+  // vor der Verfuegbarkeitspruefung -- social_connections/channel_scopes/text_generation_platform_defaults
+  // werden dafuer gar nicht erst befragt.
+  it('rejects combining plaintext with another platform with 422', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'policy_settings') return policySettingsFake()
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => { throw new Error('forService should not be called once an invalid platform combination is rejected') },
+    }
+    const response = await createSession(clients, { ...basePayload, targetPlatforms: ['plaintext', 'instagram'] })
+    expect(response.statusCode).toBe(422)
+    expect(response.json()).toMatchObject({ error: 'platform_combination_not_allowed' })
+  })
+
+  // Kanallose Zielplattform: 'plaintext' ist immer verfuegbar, ganz ohne social_connections-Zeile
+  // -- fuer einen Verein ohne verbundenen Kanal testet das den einzigen Weg, ueberhaupt einen
+  // Textkandidaten zu erzeugen.
+  it('creates a session for plaintext alone with no channel fixtures at all', async () => {
+    let captured: Record<string, unknown> | undefined
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'policy_settings') return policySettingsFake()
+            if (table === 'social_connections') return chain({ data: [], error: null })
+            if (table === 'channel_scopes') return chain({ data: [], error: null })
+            if (table === 'text_generation_platform_defaults') return chain({ data: [{ platform: 'plaintext', max_characters: 10000 }], error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => ensembleProviderFakeFrom(table) ?? (() => { throw new Error(`unexpected service table: ${table}`) })(),
+          rpc: async (_name: string, params: Record<string, unknown>) => { captured = params; return { data: { sessionId: '3c000000-0000-4000-8000-000000000001', candidateIds: ['3c000000-0000-4000-8000-000000000002'] }, error: null } },
+        }) as unknown as SupabaseClient,
+    }
+    const response = await createSession(clients, { ...basePayload, targetPlatforms: ['plaintext'] })
+    expect(response.statusCode).toBe(202)
+    expect(captured?.p_target_platforms).toEqual(['plaintext'])
+    expect(captured?.p_max_characters).toBe(10000)
+  })
+
   // Plan 047, PR 0: mehrere Foto-Anhaenge moeglich (frueher hoechstens einer, Plan 045 PR 0
   // Schritt 3), geprueft und angehaengt in derselben Route.
   describe('mediaAssetIds (photo attachment)', () => {
@@ -627,7 +676,7 @@ describe('GET /v1/text-workshop/sessions', () => {
   const SESSION_ROW = {
     id: '3c000000-0000-4000-8000-000000000001', organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: null,
     status: 'accepted', communication_goal: 'inform',
-    source_material: { facts: { title: 'Training' }, observations: [], quotes: [], doNotMention: [] },
+    source_material: { facts: { title: 'Training' }, observations: [], quotes: [] },
     style_profile_id: null,
     style_profile_snapshot: { name: 'Klar erklärend', description: 'Sachlich.', styleRules: STYLE_RULES, avoidRules: [], doRules: [], slug: 'klar_erklaerend' },
     target_platforms: ['instagram'], max_characters: 2200, temperature: 0.6, created_at: '2026-08-09T10:00:00+00:00',
@@ -762,6 +811,34 @@ describe('GET /v1/text-generation-platforms', () => {
     expect(response.json()).toEqual(expect.arrayContaining([
       { platform: 'instagram', available: true, maxCharacters: 2200, isDefault: false },
       { platform: 'facebook', available: true, maxCharacters: 1500, isDefault: false },
+    ]))
+  })
+
+  // Kanallose Zielplattform: 'plaintext' ist immer verfuegbar, selbst wenn die Organisation
+  // ueberhaupt keine social_connections-Zeile hat -- fuer einen frischen Verein ohne verbundenen
+  // Kanal ist das der einzige Weg, die Textwerkstatt ueberhaupt zu benutzen.
+  it('reports plaintext as available: true with zero social_connections rows for the organization', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
+            if (table === 'policy_settings') return policySettingsFake()
+            if (table === 'social_connections') return chain({ data: [], error: null })
+            if (table === 'channel_scopes') return chain({ data: [], error: null })
+            if (table === 'text_generation_platform_defaults') return chain({ data: [{ platform: 'plaintext', max_characters: 10000 }], error: null })
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => { throw new Error('forService should not be called by this route') },
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: '/v1/text-generation-platforms', headers: { authorization: `Bearer ${token}` }, query })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual(expect.arrayContaining([
+      { platform: 'plaintext', available: true, maxCharacters: 10000, isDefault: false },
+      { platform: 'instagram', available: false, maxCharacters: TEXT_GENERATION_DEFAULT_MAX_CHARACTERS, isDefault: false, reason: 'no_channel' },
     ]))
   })
 
@@ -1272,7 +1349,7 @@ describe('text workshop drafts', () => {
   const POST_ID = '3f000000-0000-4000-8000-000000000002'
   const SESSION_ID = '3f000000-0000-4000-8000-000000000003'
   const CANDIDATE_ID = '3f000000-0000-4000-8000-000000000004'
-  const draftPayload = { communicationGoal: 'inform', factsText: 'Übung: Passen', observation: '', doNotMention: '', selectedProfile: 'klar_erklaerend', temperature: 0.6, selectedPlatforms: [], maxCharactersOverride: '' }
+  const draftPayload = { communicationGoal: 'inform', factsText: 'Übung: Passen', observation: '', selectedProfile: 'klar_erklaerend', temperature: 0.6, selectedPlatforms: [], maxCharactersOverride: '' }
 
   it('audits a successfully saved draft without its raw input', async () => {
     const auditRows: Record<string, unknown>[] = []

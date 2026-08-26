@@ -32,7 +32,7 @@ select lives_ok(
   $$select public.create_text_generation_session(
     '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', null,
     'inform', '["text_post"]'::jsonb,
-    '{"facts":{"title":"Ensembletraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
+    '{"facts":{"title":"Ensembletraining"},"observations":[],"quotes":[],"forbiddenTopics":[]}'::jsonb,
     null, '{}'::jsonb, '{}'::jsonb, array['instagram']::text[], 2200, 0.6, 1,
     encode(sha256('ensemble-fan-out'::bytea), 'hex'), encode(sha256('ensemble-fan-out-candidate'::bytea), 'hex'), 'initial', null,
     '46000000-0000-4000-8000-000000000001', gen_random_uuid(), 'ensemble-fan-out',
@@ -55,7 +55,7 @@ select lives_ok(
   $$select public.create_text_generation_session(
     '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', null,
     'inform', '["text_post"]'::jsonb,
-    '{"facts":{"title":"Ensembletraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
+    '{"facts":{"title":"Ensembletraining"},"observations":[],"quotes":[],"forbiddenTopics":[]}'::jsonb,
     null, '{}'::jsonb, '{}'::jsonb, array['instagram']::text[], 2200, 0.6, 1,
     encode(sha256('ensemble-fan-out'::bytea), 'hex'), encode(sha256('ensemble-fan-out-candidate'::bytea), 'hex'), 'initial', null,
     '46000000-0000-4000-8000-000000000001', gen_random_uuid(), 'ensemble-fan-out-retry',
@@ -68,7 +68,7 @@ select is((select count(*)::integer from public.generation_candidates where comp
 select throws_ok(
   $$select public.create_text_generation_session(
     '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', null,
-    'inform', '["text_post"]'::jsonb, '{"facts":{"title":"x"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
+    'inform', '["text_post"]'::jsonb, '{"facts":{"title":"x"},"observations":[],"quotes":[],"forbiddenTopics":[]}'::jsonb,
     null, '{}'::jsonb, '{}'::jsonb, array['instagram']::text[], 2200, 0.6, 1,
     encode(sha256('ensemble-empty-round'::bytea), 'hex'), encode(sha256('ensemble-empty-round-candidate'::bytea), 'hex'), 'initial', null,
     '46000000-0000-4000-8000-000000000001', gen_random_uuid(), 'ensemble-empty-round', array[]::uuid[]
@@ -82,11 +82,11 @@ select throws_ok(
 -- eine volle Dreier-Runde -- die gesamte Anfrage wird abgelehnt, keine Teilrunde entsteht.
 -- ===========================================================================================
 insert into public.composition_sessions (id, organization_id, department_id, team_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, status, candidate_count, created_by) values
-  ('46000000-2000-4000-8000-000000000001', '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', null, 'inform', '["text_post"]', '{"facts":{"title":"Limittraining"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, encode(sha256('ensemble-limit-session'::bytea), 'hex'), 'queued', 6, '46000000-0000-4000-8000-000000000001');
+  ('46000000-2000-4000-8000-000000000001', '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', null, 'inform', '["text_post"]', '{"facts":{"title":"Limittraining"},"observations":[],"quotes":[],"forbiddenTopics":[]}', '{}', 1, encode(sha256('ensemble-limit-session'::bytea), 'hex'), 'queued', 6, '46000000-0000-4000-8000-000000000001');
 select throws_ok(
   $$select public.create_text_generation_session(
     '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', null,
-    'inform', '["text_post"]'::jsonb, '{"facts":{"title":"Limittraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
+    'inform', '["text_post"]'::jsonb, '{"facts":{"title":"Limittraining"},"observations":[],"quotes":[],"forbiddenTopics":[]}'::jsonb,
     null, '{}'::jsonb, '{}'::jsonb, array['instagram']::text[], 2200, 0.6, 1,
     encode(sha256('ensemble-limit-session'::bytea), 'hex'), encode(sha256('ensemble-limit-round'::bytea), 'hex'), 'revise', 'Kuerzer bitte',
     '46000000-0000-4000-8000-000000000001', gen_random_uuid(), 'ensemble-limit-round',
@@ -136,13 +136,13 @@ select is((select status::text from public.composition_sessions where id = :'ens
 -- Ersatzkandidat reiht sich ueber p_round_input_hash in dieselbe Runde ein wie das Original.
 -- ===========================================================================================
 insert into public.composition_sessions (id, organization_id, department_id, team_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, status, candidate_count, created_by) values
-  ('46000000-3000-4000-8000-000000000001', '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', null, 'inform', '["text_post"]', '{"facts":{"title":"Recoverytraining"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, encode(sha256('ensemble-recovery-session'::bytea), 'hex'), 'generating', 1, '46000000-0000-4000-8000-000000000001');
+  ('46000000-3000-4000-8000-000000000001', '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', null, 'inform', '["text_post"]', '{"facts":{"title":"Recoverytraining"},"observations":[],"quotes":[],"forbiddenTopics":[]}', '{}', 1, encode(sha256('ensemble-recovery-session'::bytea), 'hex'), 'generating', 1, '46000000-0000-4000-8000-000000000001');
 insert into public.generation_candidates (id, organization_id, composition_session_id, generation_intent, status, input_hash, round_input_hash, provider_configuration_id, generation_lease_token, updated_at) values
   ('46000000-3010-4000-8000-000000000001', '46000000-1000-4000-8000-000000000001', '46000000-3000-4000-8000-000000000001', 'initial', 'generating', encode(sha256('ensemble-recovery-original'::bytea), 'hex'), encode(sha256('ensemble-recovery-round'::bytea), 'hex'), '46000000-4000-4000-8000-000000000001', gen_random_uuid(), now() - interval '20 minutes');
 select throws_ok(
   $$select public.create_text_generation_session(
     '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', null,
-    'inform', '["text_post"]'::jsonb, '{"facts":{"title":"Recoverytraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
+    'inform', '["text_post"]'::jsonb, '{"facts":{"title":"Recoverytraining"},"observations":[],"quotes":[],"forbiddenTopics":[]}'::jsonb,
     null, '{}'::jsonb, '{}'::jsonb, array['instagram']::text[], 2200, 0.6, 1,
     encode(sha256('ensemble-recovery-session'::bytea), 'hex'), encode(sha256('ensemble-recovery-member-retry'::bytea), 'hex'), 'initial', null,
     '46000000-0000-4000-8000-000000000001', gen_random_uuid(), 'ensemble-recovery-member-retry',
@@ -154,7 +154,7 @@ select throws_ok(
 select lives_ok(
   $$select public.create_text_generation_session(
     '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', null,
-    'inform', '["text_post"]'::jsonb, '{"facts":{"title":"Recoverytraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
+    'inform', '["text_post"]'::jsonb, '{"facts":{"title":"Recoverytraining"},"observations":[],"quotes":[],"forbiddenTopics":[]}'::jsonb,
     null, '{}'::jsonb, '{}'::jsonb, array['instagram']::text[], 2200, 0.6, 1,
     encode(sha256('ensemble-recovery-session'::bytea), 'hex'), encode(sha256('46000000-3010-4000-8000-000000000001:recovery'::bytea), 'hex'), 'initial', null,
     '46000000-0000-4000-8000-000000000001', gen_random_uuid(), 'ensemble-recovery-attempt',

@@ -27,11 +27,12 @@ const inheritedHint = computed(() => {
 function setOwn(own: boolean) {
   ownValue.value = own ? [] : null
 }
+// 'plaintext' ist exklusiv (primitives.ts, createTextGenerationSession) -- ohne diesen Ausschluss
+// liesse sich hier eine Vorgabe wie ['plaintext', 'instagram'] anhaken, die erstellen.vue beim
+// Laden ueber resolveExclusivePlatforms stillschweigend auf 'plaintext' reduziert (Review PR #181).
 function toggle(platform: SocialPlatform) {
   if (ownValue.value === null) return
-  ownValue.value = ownValue.value.includes(platform)
-    ? ownValue.value.filter((entry) => entry !== platform)
-    : [...ownValue.value, platform]
+  ownValue.value = toggleExclusivePlatform(ownValue.value, platform)
 }
 </script>
 

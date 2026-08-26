@@ -57,7 +57,7 @@ select lives_ok(
   $$select public.create_text_generation_session(
     '90000000-1000-4000-8000-000000000001', '90000000-1100-4000-8000-000000000001', null,
     'inform', '["text_post"]'::jsonb,
-    '{"facts":{"title":"Training A"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
+    '{"facts":{"title":"Training A"},"observations":[],"quotes":[],"forbiddenTopics":[]}'::jsonb,
     null, '{"name":"System","description":"","styleRules":{"toneTags":["klar"],"catchphrases":[],"examples":[],"additionalInstructions":""},"avoidRules":[],"doRules":[]}'::jsonb,
     '{}'::jsonb, array['instagram']::text[], 2200, 0.6, 1,
     encode(sha256('pipeline-smoke-a'::bytea), 'hex'), encode(sha256('pipeline-smoke-a-candidate'::bytea), 'hex'), 'initial', null,
@@ -110,7 +110,7 @@ select lives_ok(
   $$select public.create_text_generation_session(
     '90000000-1000-4000-8000-000000000001', '90000000-1100-4000-8000-000000000002', null,
     'inform', '["text_post"]'::jsonb,
-    '{"facts":{"title":"Training B"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
+    '{"facts":{"title":"Training B"},"observations":[],"quotes":[],"forbiddenTopics":[]}'::jsonb,
     null, '{"name":"System","description":"","styleRules":{"toneTags":["klar"],"catchphrases":[],"examples":[],"additionalInstructions":""},"avoidRules":[],"doRules":[]}'::jsonb,
     '{}'::jsonb, array['instagram']::text[], 2200, 0.6, 1,
     encode(sha256('pipeline-smoke-b'::bytea), 'hex'), encode(sha256('pipeline-smoke-b-candidate'::bytea), 'hex'), 'initial', null,
@@ -167,7 +167,7 @@ select lives_ok(
   $$select public.create_text_generation_session(
     '90000000-1000-4000-8000-000000000001', '90000000-1100-4000-8000-000000000002', null,
     'inform', '["text_post"]'::jsonb,
-    '{"facts":{"title":"Training C"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
+    '{"facts":{"title":"Training C"},"observations":[],"quotes":[],"forbiddenTopics":[]}'::jsonb,
     null, '{"name":"System","description":"","styleRules":{"toneTags":["klar"],"catchphrases":[],"examples":[],"additionalInstructions":""},"avoidRules":[],"doRules":[]}'::jsonb,
     '{}'::jsonb, array['instagram']::text[], 2200, 0.6, 1,
     encode(sha256('pipeline-smoke-c'::bytea), 'hex'), encode(sha256('pipeline-smoke-c-candidate'::bytea), 'hex'), 'initial', null,

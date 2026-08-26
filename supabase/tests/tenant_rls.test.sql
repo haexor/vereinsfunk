@@ -44,7 +44,7 @@ select throws_ok(
 );
 select throws_ok(
   $$insert into public.submissions (organization_id, department_id, content_type, preset_slug, communication_goal, requested_formats, source_material, facts, created_by)
-    values ('20000000-2000-4000-8000-000000000002', '10000000-1100-4000-8000-000000000001', 'event', 'event', 'inform', '["feed_image"]', '{"facts":{},"observations":[],"quotes":[],"doNotMention":[]}', '{}', '10000000-0000-4000-8000-000000000001')$$,
+    values ('20000000-2000-4000-8000-000000000002', '10000000-1100-4000-8000-000000000001', 'event', 'event', 'inform', '["feed_image"]', '{"facts":{},"observations":[],"quotes":[],"forbiddenTopics":[]}', '{}', '10000000-0000-4000-8000-000000000001')$$,
   '23503', null, 'cross-tenant foreign key is denied'
 );
 

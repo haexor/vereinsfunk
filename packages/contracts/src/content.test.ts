@@ -30,7 +30,7 @@ describe('contracts', () => {
         presetSlug: 'event',
         communicationGoal: 'inform',
         requestedFormats: ['feed_image'],
-        sourceMaterial: { facts: {}, observations: ['Sommerfest'], quotes: [], doNotMention: [] },
+        sourceMaterial: { facts: {}, observations: ['Sommerfest'], quotes: [] },
       }),
     ).toThrow()
   })
@@ -42,7 +42,7 @@ describe('contracts', () => {
       presetSlug: 'event',
       communicationGoal: 'invite',
       requestedFormats: ['feed_image'],
-      sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [], doNotMention: [] },
+      sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [] },
     })
     expect(result.priority).toBe(40)
     expect(result.sourceRevision).toBe(1)
@@ -86,7 +86,7 @@ describe('text workshop contracts', () => {
   it('accepts incomplete autosave input but keeps its scope and platform choices bounded', () => {
     const draft = {
       organizationId: org, departmentId: department,
-      payload: { communicationGoal: 'inform', factsText: '', observation: 'Erste Notiz', doNotMention: '', selectedProfile: 'klar_erklaerend', temperature: 0.6, selectedPlatforms: [], maxCharactersOverride: '' },
+      payload: { communicationGoal: 'inform', factsText: '', observation: 'Erste Notiz', selectedProfile: 'klar_erklaerend', temperature: 0.6, selectedPlatforms: [], maxCharactersOverride: '' },
     }
     expect(SaveTextWorkshopDraftSchema.safeParse(draft).success).toBe(true)
     expect(SaveTextWorkshopDraftSchema.safeParse({ ...draft, payload: { ...draft.payload, selectedPlatforms: ['instagram', 'instagram'] } }).success).toBe(false)
@@ -99,7 +99,7 @@ describe('text workshop contracts', () => {
   it('accepts departmentId: null for an organization-level session or draft, but not the key being omitted', () => {
     const base = {
       organizationId: org, departmentId: department, communicationGoal: 'invite',
-      requestedFormats: ['text_post'] as const, sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [], doNotMention: [] },
+      requestedFormats: ['text_post'] as const, sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [] },
       targetPlatforms: ['instagram'] as const,
     }
     expect(CreateCompositionSessionSchema.safeParse({ ...base, departmentId: null }).success).toBe(true)
@@ -107,7 +107,7 @@ describe('text workshop contracts', () => {
 
     const draft = {
       organizationId: org, departmentId: department,
-      payload: { communicationGoal: 'inform', factsText: '', observation: 'Erste Notiz', doNotMention: '', selectedProfile: 'klar_erklaerend', temperature: 0.6, selectedPlatforms: [], maxCharactersOverride: '' },
+      payload: { communicationGoal: 'inform', factsText: '', observation: 'Erste Notiz', selectedProfile: 'klar_erklaerend', temperature: 0.6, selectedPlatforms: [], maxCharactersOverride: '' },
     }
     expect(SaveTextWorkshopDraftSchema.safeParse({ ...draft, departmentId: null }).success).toBe(true)
     expect(SaveTextWorkshopDraftSchema.safeParse({ ...draft, departmentId: undefined }).success).toBe(false)
@@ -119,7 +119,7 @@ describe('text workshop contracts', () => {
   it('rejects a teamId without a departmentId in both request schemas', () => {
     const base = {
       organizationId: org, communicationGoal: 'invite',
-      requestedFormats: ['text_post'] as const, sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [], doNotMention: [] },
+      requestedFormats: ['text_post'] as const, sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [] },
       targetPlatforms: ['instagram'] as const,
     }
     expect(CreateCompositionSessionSchema.safeParse({ ...base, departmentId: department, teamId: team }).success).toBe(true)
@@ -128,7 +128,7 @@ describe('text workshop contracts', () => {
 
     const draftBase = {
       organizationId: org,
-      payload: { communicationGoal: 'inform', factsText: '', observation: 'Erste Notiz', doNotMention: '', selectedProfile: 'klar_erklaerend', temperature: 0.6, selectedPlatforms: [], maxCharactersOverride: '' },
+      payload: { communicationGoal: 'inform', factsText: '', observation: 'Erste Notiz', selectedProfile: 'klar_erklaerend', temperature: 0.6, selectedPlatforms: [], maxCharactersOverride: '' },
     }
     expect(SaveTextWorkshopDraftSchema.safeParse({ ...draftBase, departmentId: department, teamId: team }).success).toBe(true)
     expect(SaveTextWorkshopDraftSchema.safeParse({ ...draftBase, departmentId: null, teamId: null }).success).toBe(true)
@@ -138,7 +138,7 @@ describe('text workshop contracts', () => {
   it('accepts text/photo/video composition choices but keeps historical reels outside new commands', () => {
     const input = CreateCompositionSessionSchema.parse({
       organizationId: org, departmentId: department, communicationGoal: 'invite',
-      requestedFormats: ['video_post'], sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [], doNotMention: [] },
+      requestedFormats: ['video_post'], sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [] },
       targetPlatforms: ['instagram'],
     })
     expect(input.requestedFormats).toEqual(['video_post'])
@@ -188,7 +188,7 @@ describe('text workshop contracts', () => {
   it('allows at most one of styleProfileId, systemStyleProfileSlug, or personaSlug', () => {
     const base = {
       organizationId: org, departmentId: department, communicationGoal: 'invite',
-      requestedFormats: ['text_post'] as const, sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [], doNotMention: [] },
+      requestedFormats: ['text_post'] as const, sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [] },
       targetPlatforms: ['instagram'] as const,
     }
     expect(CreateCompositionSessionSchema.safeParse(base).success).toBe(true)
@@ -206,7 +206,7 @@ describe('text workshop contracts', () => {
   it('defaults temperature to the "Ausgewogen" step and rejects any value off the four fixed steps', () => {
     const base = {
       organizationId: org, departmentId: department, communicationGoal: 'invite',
-      requestedFormats: ['text_post'] as const, sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [], doNotMention: [] },
+      requestedFormats: ['text_post'] as const, sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [] },
       targetPlatforms: ['instagram'] as const,
     }
     expect(CreateCompositionSessionSchema.parse(base).temperature).toBe(0.6)
@@ -224,7 +224,7 @@ describe('text workshop contracts', () => {
   it('requires an explicit, non-empty targetPlatforms selection, rejects duplicates or an unknown platform', () => {
     const base = {
       organizationId: org, departmentId: department, communicationGoal: 'invite',
-      requestedFormats: ['text_post'] as const, sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [], doNotMention: [] },
+      requestedFormats: ['text_post'] as const, sourceMaterial: { facts: { title: 'Sommerfest' }, observations: [], quotes: [] },
     }
     expect(CreateCompositionSessionSchema.safeParse(base).success).toBe(false)
     expect(CreateCompositionSessionSchema.safeParse({ ...base, targetPlatforms: ['instagram'], maxCharacters: 500 }).success).toBe(true)

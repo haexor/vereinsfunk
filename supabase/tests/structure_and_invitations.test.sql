@@ -100,7 +100,7 @@ select throws_ok(
 
 -- 7: a department with existing posts cannot be deleted.
 insert into public.submissions (organization_id, department_id, content_type, preset_slug, communication_goal, requested_formats, source_material, facts, created_by)
-values ('60000000-1000-4000-8000-000000000001', '60000000-1100-4000-8000-000000000003', 'event', 'event', 'inform', '["feed_image"]', '{"facts":{},"observations":[],"quotes":[],"doNotMention":[]}', '{}', '60000000-0000-4000-8000-000000000001');
+values ('60000000-1000-4000-8000-000000000001', '60000000-1100-4000-8000-000000000003', 'event', 'event', 'inform', '["feed_image"]', '{"facts":{},"observations":[],"quotes":[],"forbiddenTopics":[]}', '{}', '60000000-0000-4000-8000-000000000001');
 select throws_ok(
   $$delete from public.departments where id = '60000000-1100-4000-8000-000000000003'$$,
   'P0001', null, 'a department with existing submissions cannot be deleted, archive it instead'

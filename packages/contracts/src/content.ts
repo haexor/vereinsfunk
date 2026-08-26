@@ -382,7 +382,6 @@ export const TextWorkshopDraftPayloadSchema = z.object({
   communicationGoal: CommunicationGoalSchema,
   factsText: z.string().max(10_000),
   observation: z.string().max(5_000),
-  doNotMention: z.string().max(5_000),
   selectedProfile: z.string().trim().min(1).max(80),
   temperature: TextGenerationTemperatureSchema,
   selectedPlatforms: z.array(SocialPlatformSchema).max(SocialPlatformSchema.options.length).superRefine((platforms, context) => {
@@ -412,16 +411,25 @@ export const CreateGenerationCommandSchema = z.object({
 })
 export const SourceFactValueSchema = z.union([z.string().trim().min(1).max(500), z.number().finite(), z.boolean()])
 
-export const SourceMaterialSchema = z.object({
+const SourceMaterialShape = z.object({
   facts: z.record(z.string().trim().min(1).max(80), SourceFactValueSchema).refine((facts) => Object.keys(facts).length <= 30),
   observations: z.array(z.string().trim().min(1).max(500)).max(20),
   quotes: z.array(z.object({ text: z.string().trim().min(1).max(500), attribution: z.string().trim().min(1).max(120).optional(), approved: z.boolean() })).max(10),
-  doNotMention: z.array(z.string().trim().min(1).max(200)).max(20),
-}).superRefine((material, context) => {
+})
+function requireSourceMaterialContent(material: { facts: Record<string, unknown>; observations: readonly unknown[]; quotes: readonly unknown[] }, context: z.RefinementCtx) {
   if (Object.keys(material.facts).length + material.observations.length + material.quotes.length === 0) {
     context.addIssue({ code: 'custom', message: 'At least one fact, observation, or quote is required' })
   }
-})
+}
+export const SourceMaterialSchema = SourceMaterialShape.superRefine(requireSourceMaterialContent)
+// Die Form, in der source_material tatsaechlich in composition_sessions/submissions liegt: dieselbe
+// Nutzereingabe, ergaenzt um die zum Anlagezeitpunkt geltende organisationsweite Sperrliste
+// (policies.forbiddenTopics) -- ausschliesslich serverseitig gesetzt, nie Teil der Nutzer- oder
+// Agent-Eingabe (SourceMaterialSchema oben), damit sie nicht durch eine Nutzereingabe ueberschrieben
+// werden kann.
+export const StoredSourceMaterialSchema = SourceMaterialShape.extend({
+  forbiddenTopics: z.array(z.string().trim().min(1).max(200)).max(20),
+}).superRefine(requireSourceMaterialContent)
 
 export const HealthSchema = z.object({
   status: z.literal('ok'), service: z.string().min(1), version: z.string().min(1), timestamp: z.iso.datetime(),

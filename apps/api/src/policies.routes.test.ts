@@ -229,7 +229,7 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
       headers: { authorization: `Bearer ${token}` },
       payload: {
         organizationId: ORGANIZATION_ID, departmentId: DEPARTMENT_ID, presetSlug: 'training_insight', communicationGoal: 'inform',
-        requestedFormats: ['feed_image'], sourceMaterial: { facts: {}, observations: ['x'], quotes: [], doNotMention: [] },
+        requestedFormats: ['feed_image'], sourceMaterial: { facts: {}, observations: ['x'], quotes: [] },
       },
     })
     expect(response.statusCode).toBe(422)
@@ -256,7 +256,7 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
       headers: { authorization: `Bearer ${token}` },
       payload: {
         organizationId: ORGANIZATION_ID, departmentId: DEPARTMENT_ID, presetSlug: 'training_insight', communicationGoal: 'inform',
-        requestedFormats: ['feed_image'], sourceMaterial: { facts: {}, observations: ['x'], quotes: [], doNotMention: [] },
+        requestedFormats: ['feed_image'], sourceMaterial: { facts: {}, observations: ['x'], quotes: [] },
       },
     })
     expect(response.statusCode).toBe(403)
@@ -286,7 +286,7 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
       headers: { authorization: `Bearer ${token}` },
       payload: {
         organizationId: ORGANIZATION_ID, departmentId: DEPARTMENT_ID, teamId: TEAM_ID, presetSlug: 'training_insight', communicationGoal: 'inform',
-        requestedFormats: ['feed_image'], sourceMaterial: { facts: {}, observations: ['x'], quotes: [], doNotMention: [] },
+        requestedFormats: ['feed_image'], sourceMaterial: { facts: {}, observations: ['x'], quotes: [] },
       },
     })
     expect(response.statusCode).toBe(403)

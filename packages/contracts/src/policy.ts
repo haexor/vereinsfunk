@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { ContentPresetSlugSchema, MediaGateBlockerSchema, OutputFormatSchema, UuidSchema } from './content.js'
-import { OAuthPlatformSchema, SocialPlatformSchema } from './primitives.js'
+import { hasExclusivePlatformConflict, OAuthPlatformSchema, SocialPlatformSchema } from './primitives.js'
 import { AssignableRoleSchema, ScopeLevelSchema } from './structure.js'
 
 // Richtlinien mit Vererbung (Paket 023): zwei boolesche Felder je Ebene, `null` heisst "von oben
@@ -95,8 +95,14 @@ export const PolicyRuleValuesSchema = z.object({
   // Plan 044: null = geerbt, [] = ausdruecklich keine Vorauswahl -- anders als die drei Felder
   // oben ersetzt ein gesetzter Wert die Vorgabe der aeusseren Ebene komplett (packages/domain,
   // mergeReplaceableList), statt sie nur einzuengen.
-  defaultTargetPlatforms: z.array(SocialPlatformSchema).nullable(),
-  forbiddenTopics: z.array(z.string().trim().min(1).max(200)),
+  defaultTargetPlatforms: z.array(SocialPlatformSchema).nullable().refine(
+    (platforms) => platforms === null || !hasExclusivePlatformConflict(platforms),
+    { message: "defaultTargetPlatforms must not combine 'plaintext' with other platforms" },
+  ),
+  // max(20) muss mit StoredSourceMaterialSchema.forbiddenTopics (content.ts) uebereinstimmen --
+  // createTextGenerationSession kopiert diese Liste ungekuerzt in sourceMaterial, eine hier erlaubte
+  // laengere Liste liesse den Worker beim Parsen der gespeicherten Sitzung scheitern (Review PR #181).
+  forbiddenTopics: z.array(z.string().trim().min(1).max(200)).max(20),
   requiredHashtags: z.array(z.string().regex(/^#[\p{L}\p{N}_]+$/u)),
 })
 export const PolicyRuleSettingSchema = z.object({

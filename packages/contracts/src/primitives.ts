@@ -18,8 +18,22 @@ export const CountryCodeSchema = z.string().regex(/^[A-Z]{2}$/)
 // kein Sonderfall. Was ihn von Instagram/Facebook unterscheidet -- kein OAuth-Token, eine eigene
 // Adresse statt einer externen Konto-ID -- sitzt an den Spalten von social_connections, nicht an
 // diesem Enum (siehe MetaOAuthPlatformSchema in channels.ts fuer die enger gefasste OAuth-Menge).
-export const SocialPlatformSchema = z.enum(['instagram', 'facebook', 'twitter', 'linkedin', 'website'])
+//
+// 'plaintext' ("Nur Text"): einzige echte Ausnahme von "Plattform = hat einen Kanal" -- braucht nie
+// eine social_connections-Zeile, damit sich LLM/Stilprofil-Ergebnisse auch ohne verbundenen Kanal
+// testen lassen. Bekommt deshalb nie eine publications-Zeile (dort bewusst nicht mit aufgenommen,
+// wie schon 'website') und ist exklusiv, nicht mit anderen Plattformen kombinierbar
+// (createTextGenerationSession in apps/api).
+export const SocialPlatformSchema = z.enum(['instagram', 'facebook', 'twitter', 'linkedin', 'website', 'plaintext'])
 export type SocialPlatform = z.infer<typeof SocialPlatformSchema>
+
+// Eine Quelle fuer 'plaintext ist exklusiv', geteilt von jeder Stelle, die eine Plattformliste
+// entgegennimmt (createTextGenerationSession, policy.ts defaultTargetPlatforms, der
+// save_content_brief-Bestaetigungspfad in apps/api/src/routes/agent.ts) -- vorher an mehreren
+// Stellen unabhaengig nachgebaut, teils gar nicht (Review PR #181).
+export function hasExclusivePlatformConflict(platforms: readonly SocialPlatform[]): boolean {
+  return platforms.includes('plaintext') && platforms.length > 1
+}
 
 // Paket 045: die Menge aller Plattformen, die ueberhaupt per OAuth verbunden werden -- Instagram und
 // Facebook laufen ueber den Meta-Adapter (MetaOAuthPlatformSchema in channels.ts), Twitter/LinkedIn

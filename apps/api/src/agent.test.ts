@@ -90,7 +90,7 @@ describe('agent responders', () => {
 
   it('declares facts as a strict-mode-compatible array and rebuilds the map from the tool call', async () => {
     let capturedInit: RequestInit | undefined
-    const sourceMaterial = { facts: [{ key: 'Termin', value: 'Samstag' }], observations: [], quotes: [], doNotMention: [] }
+    const sourceMaterial = { facts: [{ key: 'Termin', value: 'Samstag' }], observations: [], quotes: [] }
     const responder = new OpenAiResponsesAgentResponder({
       apiKey: 'secret', model: 'gpt-test', fetcher: async (_input, init) => {
         capturedInit = init

@@ -110,7 +110,7 @@ describe('api', () => {
         presetSlug: 'training_insight',
         communicationGoal: 'inform',
         requestedFormats: ['feed_image'],
-        sourceMaterial: { facts: {}, observations: ['Heute war Training.'], quotes: [], doNotMention: [] },
+        sourceMaterial: { facts: {}, observations: ['Heute war Training.'], quotes: [] },
       },
     })
     expect(response.statusCode).toBe(403)
@@ -145,7 +145,7 @@ describe('api', () => {
         presetSlug: 'training_insight',
         communicationGoal: 'inform',
         requestedFormats: ['feed_image'],
-        sourceMaterial: { facts: {}, observations: ['Heute war Training.'], quotes: [], doNotMention: [] },
+        sourceMaterial: { facts: {}, observations: ['Heute war Training.'], quotes: [] },
       },
     })
     expect(response.statusCode).toBe(202)
@@ -189,7 +189,7 @@ describe('api', () => {
         presetSlug: 'training_insight',
         communicationGoal: 'inform',
         requestedFormats: ['feed_image'],
-        sourceMaterial: { facts: {}, observations: [], quotes: [{ text: 'Toller Tag!', approved: true }], doNotMention: [] },
+        sourceMaterial: { facts: {}, observations: [], quotes: [{ text: 'Toller Tag!', approved: true }] },
       },
     })
     expect(response.statusCode).toBe(202)

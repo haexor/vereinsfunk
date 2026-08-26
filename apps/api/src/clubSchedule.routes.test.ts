@@ -795,7 +795,7 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
         headers: { authorization: `Bearer ${token}` },
         payload: {
           organizationId: ORGANIZATION_ID, departmentId: DEPARTMENT_ID, presetSlug: 'training_insight', communicationGoal: 'inform',
-          requestedFormats: ['feed_image'], sourceMaterial: { facts: {}, observations: ['Testspiel.'], quotes: [], doNotMention: [] },
+          requestedFormats: ['feed_image'], sourceMaterial: { facts: {}, observations: ['Testspiel.'], quotes: [] },
           fixtureId: FIXTURE_ID, clubEventId: CLUB_EVENT_ID,
         },
       })
@@ -840,7 +840,7 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
         headers: { authorization: `Bearer ${token}` },
         payload: {
           organizationId: ORGANIZATION_ID, departmentId: DEPARTMENT_ID, presetSlug: 'training_insight', communicationGoal: 'inform',
-          requestedFormats: ['feed_image'], sourceMaterial: { facts: {}, observations: ['Testspiel steht an.'], quotes: [], doNotMention: [] },
+          requestedFormats: ['feed_image'], sourceMaterial: { facts: {}, observations: ['Testspiel steht an.'], quotes: [] },
           fixtureId: FIXTURE_ID,
         },
       })
@@ -883,7 +883,7 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
         headers: { authorization: `Bearer ${token}` },
         payload: {
           organizationId: ORGANIZATION_ID, departmentId: DEPARTMENT_ID, presetSlug: 'training_insight', communicationGoal: 'inform',
-          requestedFormats: ['feed_image'], sourceMaterial: { facts: {}, observations: ['Testspiel.'], quotes: [], doNotMention: [] },
+          requestedFormats: ['feed_image'], sourceMaterial: { facts: {}, observations: ['Testspiel.'], quotes: [] },
           fixtureId: FIXTURE_ID,
         },
       })
@@ -927,7 +927,7 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
         headers: { authorization: `Bearer ${token}` },
         payload: {
           organizationId: ORGANIZATION_ID, departmentId: DEPARTMENT_ID, presetSlug: 'training_insight', communicationGoal: 'invite',
-          requestedFormats: ['feed_image'], sourceMaterial: { facts: {}, observations: ['Sommerfest steht an.'], quotes: [], doNotMention: [] },
+          requestedFormats: ['feed_image'], sourceMaterial: { facts: {}, observations: ['Sommerfest steht an.'], quotes: [] },
           clubEventId: CLUB_EVENT_ID,
         },
       })
