@@ -99,7 +99,10 @@ export const PolicyRuleValuesSchema = z.object({
     (platforms) => platforms === null || !hasExclusivePlatformConflict(platforms),
     { message: "defaultTargetPlatforms must not combine 'plaintext' with other platforms" },
   ),
-  forbiddenTopics: z.array(z.string().trim().min(1).max(200)),
+  // max(20) muss mit StoredSourceMaterialSchema.forbiddenTopics (content.ts) uebereinstimmen --
+  // createTextGenerationSession kopiert diese Liste ungekuerzt in sourceMaterial, eine hier erlaubte
+  // laengere Liste liesse den Worker beim Parsen der gespeicherten Sitzung scheitern (Review PR #181).
+  forbiddenTopics: z.array(z.string().trim().min(1).max(200)).max(20),
   requiredHashtags: z.array(z.string().regex(/^#[\p{L}\p{N}_]+$/u)),
 })
 export const PolicyRuleSettingSchema = z.object({
