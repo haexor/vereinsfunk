@@ -501,6 +501,24 @@ export const MediaGateBlockerSchema = z.enum([
 ])
 export const MediaGateResultSchema = z.object({ publishable: z.boolean(), blockers: z.array(MediaGateBlockerSchema) })
 
+// Medien-/Postuebersicht: Zusammenfassung eines media_assets-Datensatzes fuer Galerie-Ansichten
+// (Beitraege-Uebersicht, Chat-Anhang-Auswahl). signedUrl ist nur fuer Bilder gesetzt -- es gibt
+// keine Thumbnail-Pipeline fuer Video/Audio.
+export const MediaAssetSummarySchema = z.object({
+  id: UuidSchema,
+  organizationId: UuidSchema,
+  departmentId: UuidSchema.nullable(),
+  mimeType: z.string().min(1),
+  byteSize: z.number().int().positive(),
+  width: z.number().int().positive().nullable(),
+  height: z.number().int().positive().nullable(),
+  durationMs: z.number().int().positive().nullable(),
+  createdBy: UuidSchema,
+  createdAt: z.iso.datetime({ offset: true }),
+  peopleReviewedAt: z.iso.datetime({ offset: true }).nullable(),
+  signedUrl: z.url().nullable(),
+})
+
 export type Health = z.infer<typeof HealthSchema>
 export type ContentPresetSlug = z.infer<typeof ContentPresetSlugSchema>
 export type CommunicationGoal = z.infer<typeof CommunicationGoalSchema>
@@ -511,6 +529,7 @@ export type GeneratedPost = z.infer<typeof GeneratedPostSchema>
 export type PlatformVariant = z.infer<typeof PlatformVariantSchema>
 export type FaceDecision = z.infer<typeof FaceDecisionSchema>
 export type MediaGateResult = z.infer<typeof MediaGateResultSchema>
+export type MediaAssetSummary = z.infer<typeof MediaAssetSummarySchema>
 export type MembershipScope = z.infer<typeof MembershipScopeSchema>
 export type MediaGateBlocker = z.infer<typeof MediaGateBlockerSchema>
 export type CompositionFormat = z.infer<typeof CompositionFormatSchema>

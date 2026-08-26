@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { TextWorkshopDraftRowSchema } from '@vereinsfunk/contracts'
+import { MediaAssetSummarySchema, TextWorkshopDraftRowSchema, type MediaAssetSummary } from '@vereinsfunk/contracts'
 import { z } from 'zod'
 const scope = await useScope()
 const api = useApiClient()
@@ -9,6 +9,25 @@ const postsLoading = ref(true)
 const workshopDraftsLoading = ref(false)
 const postsError = ref<string | null>(null)
 const workshopDraftsError = ref<string | null>(null)
+const mediaAssets = ref<MediaAssetSummary[]>([])
+const mediaLoading = ref(false)
+const mediaError = ref<string | null>(null)
+const onlyMyMedia = ref(false)
+async function loadMedia() {
+  if (!scope.value?.organizationId) return
+  mediaLoading.value = true
+  mediaError.value = null
+  try {
+    mediaAssets.value = await api.request('/v1/media-assets', {
+      query: { organizationId: scope.value.organizationId, departmentId: scope.value.departmentId ?? undefined, createdBy: onlyMyMedia.value ? 'me' : undefined },
+    }, z.array(MediaAssetSummarySchema))
+  } catch {
+    mediaError.value = 'Medien konnten nicht geladen werden. Bitte versuche es erneut.'
+  } finally {
+    mediaLoading.value = false
+  }
+}
+watch(onlyMyMedia, () => void loadMedia())
 // draft_ready/changes_requested haben noch keine (gueltige) Freigabeanfrage laufen -- /freigaben
 // zeigt nur, was gerade auf eine Entscheidung der aufrufenden Person wartet, und wertet
 // postVersionId nicht aus. Fuer diese beiden Stati fuehrt der Weg zurueck in die Textwerkstatt,
@@ -38,6 +57,7 @@ if (scope.value?.organizationId) {
     workshopDrafts.value = result.drafts
   } catch { workshopDraftsError.value = 'Entwürfe konnten nicht geladen werden. Bitte versuche es erneut.' }
   finally { workshopDraftsLoading.value = false }
+  await loadMedia()
 } else postsLoading.value = false
 
 const deletingId = ref<string | null>(null)
@@ -114,6 +134,31 @@ async function deleteWorkshopDraft(draft: z.infer<typeof TextWorkshopDraftRowSch
         </button>
       </div>
       <p v-if="!postsLoading && !workshopDraftsLoading && !postsError && !workshopDraftsError && !posts.length && !workshopDrafts.length" class="p-12 text-center text-sm text-[#7b827d]">Noch keine Beiträge. Starte in der Textwerkstatt.</p>
+    </div>
+
+    <div class="mt-8 flex items-center justify-between">
+      <h2 class="font-display text-xl font-extrabold">Medien</h2>
+      <label class="flex items-center gap-2 text-xs font-semibold text-[#435047]">
+        <input v-model="onlyMyMedia" type="checkbox" class="rounded border-[#dfe2da]" /> Nur meine
+      </label>
+    </div>
+    <p class="mt-1 text-sm text-[#727a75]">Bereits erzeugte Fotos und Videos. Bilder lassen sich in einem neuen Beitrag wiederverwenden.</p>
+    <div class="card mt-4 p-5">
+      <p v-if="mediaLoading" class="text-sm text-[#727a75]">Lade Medien …</p>
+      <p v-else-if="mediaError" class="text-sm text-red-700">{{ mediaError }}</p>
+      <p v-else-if="!mediaAssets.length" class="text-sm text-[#7b827d]">Noch keine Medien vorhanden.</p>
+      <div v-else class="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+        <div v-for="asset in mediaAssets" :key="asset.id" class="group relative aspect-square overflow-hidden rounded-xl border border-[#e1e2db]">
+          <img v-if="asset.signedUrl" :src="asset.signedUrl" class="h-full w-full object-cover" alt="" />
+          <span v-else class="grid h-full w-full place-items-center bg-[#f2f4ee] text-[#727a75]"><component :is="iconForMimeType(asset.mimeType)" :size="24" /></span>
+          <NuxtLink
+            v-if="asset.mimeType.startsWith('image/') && asset.peopleReviewedAt" :to="`/erstellen?mediaAssetId=${asset.id}`"
+            class="absolute inset-x-0 bottom-0 bg-black/60 px-2 py-1.5 text-center text-[11px] font-semibold text-white opacity-0 transition group-hover:opacity-100"
+          >
+            In neuem Beitrag verwenden
+          </NuxtLink>
+        </div>
+      </div>
     </div>
   </div>
 </template>

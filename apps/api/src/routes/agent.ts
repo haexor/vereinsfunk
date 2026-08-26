@@ -104,6 +104,9 @@ class AgentProposalExecutionError extends Error {
   }
 }
 
+const AGENT_CONVERSATION_COLUMNS =
+  'id, organization_id, department_id, team_id, created_by, title, last_activity_at, archived_at, retention_expires_at, created_at, updated_at'
+
 function mapConversation(row: unknown): AgentConversation {
   const parsed = ConversationRowSchema.parse(row)
   return AgentConversationSchema.parse({
@@ -410,7 +413,7 @@ async function loadWorkspaceOrEmpty(
 async function loadConversation(client: SupabaseClient, id: string): Promise<AgentConversation | null> {
   const result = await client
     .from('agent_conversations')
-    .select('id, organization_id, department_id, team_id, created_by, title, last_activity_at, archived_at, retention_expires_at, created_at, updated_at')
+    .select(AGENT_CONVERSATION_COLUMNS)
     .eq('id', id)
     .is('archived_at', null)
     .maybeSingle()
@@ -612,7 +615,7 @@ export function registerAgentRoutes(
       department_id: input.departmentId ?? null,
       team_id: input.teamId ?? null,
       created_by: request.auth!.userId,
-    }).select('id, organization_id, department_id, team_id, created_by, title, last_activity_at, archived_at, retention_expires_at, created_at, updated_at').single()
+    }).select(AGENT_CONVERSATION_COLUMNS).single()
     if (created.error) throw created.error
     const conversation = mapConversation(created.data)
     await recordAuditEvent(request, {
@@ -622,6 +625,37 @@ export function registerAgentRoutes(
       entityId: conversation.id,
     })
     return reply.code(201).send(AgentConversationSchema.parse(conversation))
+  })
+
+  // Konversationshistorie: die 50 zuletzt aktiven, nicht archivierten Unterhaltungen desselben
+  // Scopes. RLS (agent_conversations_select) beschraenkt das Ergebnis bereits auf created_by =
+  // auth.uid() -- Unterhaltungen sind privat, siehe Migration 2026082404. Bounded query statt
+  // fetchAllRows: die 90-Tage-Retention haelt das Volumen von Natur aus klein.
+  app.get('/v1/agent/conversations', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const scope = AgentScopeSchema.parse(request.query)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const validatedScope = await resolveDirectoryScope(client, scope.organizationId, scope.departmentId ?? null, scope.teamId ?? null)
+    if (!validatedScope || !(await isAnyMemberOfOrganization(client, request.auth!.userId, scope.organizationId))) {
+      return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    }
+    // department_id/team_id immer konkret filtern (eq bei Wert, is bei null) -- eine Unterhaltung
+    // wird beim Anlegen ebenso konkret gespeichert (siehe POST oben: input.departmentId ?? null),
+    // nie mit "beliebig". Ein fehlender Query-Parameter bedeutet Vereins-Scope (toAgentScopeRequest
+    // im Frontend), nicht "ueber alle Abteilungen hinweg" -- sonst mischen sich fremde
+    // Abteilungs-Unterhaltungen in den Verlauf, obwohl der Kommentar oben "desselben Scopes" verspricht.
+    // .eq(col, null) waere hier falsch: PostgREST versucht dann, den literalen String "null" in den
+    // uuid-Spaltentyp zu casten, statt IS NULL zu pruefen -- derselbe Fallstrick, den .is() bereits
+    // an anderer Stelle vermeidet (siehe text-workshop/drafts weiter unten in content.ts).
+    let rows = client
+      .from('agent_conversations')
+      .select(AGENT_CONVERSATION_COLUMNS)
+      .eq('organization_id', scope.organizationId)
+    rows = (scope.departmentId ? rows.eq('department_id', scope.departmentId) : rows.is('department_id', null)) as typeof rows
+    rows = (scope.teamId ? rows.eq('team_id', scope.teamId) : rows.is('team_id', null)) as typeof rows
+    const result = await rows.is('archived_at', null).order('last_activity_at', { ascending: false }).limit(50)
+    if (result.error) throw result.error
+    return reply.code(200).send((result.data ?? []).map(mapConversation))
   })
 
   app.get('/v1/agent/conversations/:id', async (request, reply) => {

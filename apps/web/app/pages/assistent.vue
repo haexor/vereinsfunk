@@ -9,21 +9,24 @@ import {
   type AgentMessage,
   type AgentWorkspace,
 } from '@vereinsfunk/contracts'
-import { ArrowUp, Bot, CalendarDays, CheckCircle2, FileText, LoaderCircle, Paperclip, Send, Sparkles, UserPlus, X } from '@lucide/vue'
+import { ArrowUp, Bot, CalendarDays, CheckCircle2, FileText, History, LoaderCircle, Paperclip, Plus, Send, Sparkles, UserPlus, X } from '@lucide/vue'
 import { z } from 'zod'
 import { ApiRequestError } from '../utils/apiClient'
-import { toAgentScopeRequest } from '../utils/agentScope'
+import { toAgentScopeRequest, type AgentScopeRequest } from '../utils/agentScope'
 
 const scope = await useScope()
 const api = useApiClient()
 const workspace = ref<AgentWorkspace | null>(null)
 const conversation = ref<AgentConversation | null>(null)
+const conversations = ref<AgentConversation[]>([])
 const messages = ref<AgentMessage[]>([])
 const proposals = ref<AgentActionProposal[]>([])
 const prompt = ref('')
 const messageMediaAssetIds = ref<string[]>([])
 const loading = ref(true)
 const sending = ref(false)
+const switchingConversationId = ref<string | null>(null)
+const startingNewConversation = ref(false)
 const actingProposalId = ref<string | null>(null)
 const errorMessage = ref('')
 const cachedConversation = useState<{ scopeKey: string; id: string } | null>('vf-agent-conversation', () => null)
@@ -37,6 +40,14 @@ const scopeInput = computed(() => {
 const scopeLabel = computed(() => scope.value?.departmentId ? 'deiner Abteilung' : 'deinem Verein')
 const scopeKey = computed(() => scopeInput.value ? `${scopeInput.value.organizationId}:${scopeInput.value.departmentId ?? ''}` : '')
 
+async function fetchConversations(input: AgentScopeRequest): Promise<AgentConversation[]> {
+  try {
+    return await api.request('/v1/agent/conversations', { query: input }, z.array(AgentConversationSchema))
+  } catch {
+    return []
+  }
+}
+
 async function initialize() {
   const run = ++initializeRun
   ++sendRun
@@ -45,19 +56,26 @@ async function initialize() {
   const previousCachedConversation = cachedConversation.value
   workspace.value = null
   conversation.value = null
+  conversations.value = []
   messages.value = []
   proposals.value = []
   messageMediaAssetIds.value = []
   cachedConversation.value = null
   sending.value = false
+  switchingConversationId.value = null
+  startingNewConversation.value = false
   if (!input) { loading.value = false; return }
   loading.value = true
   errorMessage.value = ''
   const isCurrent = () => run === initializeRun && expectedScopeKey === scopeKey.value
   try {
-    const loadedWorkspace = await api.request('/v1/agent/workspace', { query: input }, AgentWorkspaceSchema)
+    const [loadedWorkspace, loadedConversations] = await Promise.all([
+      api.request('/v1/agent/workspace', { query: input }, AgentWorkspaceSchema),
+      fetchConversations(input),
+    ])
     if (!isCurrent()) return
     workspace.value = loadedWorkspace
+    conversations.value = loadedConversations
     if (previousCachedConversation?.scopeKey === expectedScopeKey) {
       try {
         const detail = await api.request(`/v1/agent/conversations/${previousCachedConversation.id}`, {}, AgentConversationDetailSchema)
@@ -76,6 +94,7 @@ async function initialize() {
     const createdConversation = await api.request('/v1/agent/conversations', { method: 'POST', body: input }, AgentConversationSchema)
     if (!isCurrent()) return
     conversation.value = createdConversation
+    conversations.value = [createdConversation, ...conversations.value]
     cachedConversation.value = { scopeKey: expectedScopeKey, id: createdConversation.id }
     messages.value = [{ id: `welcome-${createdConversation.id}`, conversationId: createdConversation.id, organizationId: createdConversation.organizationId, role: 'assistant', content: `Hallo! Ich habe den Überblick zu ${scopeLabel.value} geladen. Wobei soll ich dir helfen?`, mediaAssetIds: [], createdAt: new Date().toISOString() }]
   } catch {
@@ -89,9 +108,59 @@ async function initialize() {
 await initialize()
 watch(scopeInput, () => void initialize(), { deep: true })
 
+async function switchConversation(id: string) {
+  if (id === conversation.value?.id || switchingConversationId.value || startingNewConversation.value || sending.value) return
+  const run = ++initializeRun
+  const expectedScopeKey = scopeKey.value
+  const isCurrent = () => run === initializeRun && expectedScopeKey === scopeKey.value
+  switchingConversationId.value = id
+  errorMessage.value = ''
+  try {
+    const detail = await api.request(`/v1/agent/conversations/${id}`, {}, AgentConversationDetailSchema)
+    if (!isCurrent()) return
+    const loadedProposals = await api.request(`/v1/agent/conversations/${id}/action-proposals`, {}, z.array(AgentActionProposalSchema))
+    if (!isCurrent()) return
+    conversation.value = detail.conversation
+    messages.value = detail.messages
+    proposals.value = loadedProposals
+    messageMediaAssetIds.value = []
+    cachedConversation.value = { scopeKey: expectedScopeKey, id }
+  } catch {
+    if (!isCurrent()) return
+    errorMessage.value = 'Die Unterhaltung konnte nicht geladen werden. Bitte versuche es erneut.'
+  } finally {
+    if (switchingConversationId.value === id) switchingConversationId.value = null
+  }
+}
+
+async function startNewConversation() {
+  const input = scopeInput.value
+  if (!input || switchingConversationId.value || startingNewConversation.value || sending.value) return
+  const run = ++initializeRun
+  const expectedScopeKey = scopeKey.value
+  const isCurrent = () => run === initializeRun && expectedScopeKey === scopeKey.value
+  startingNewConversation.value = true
+  errorMessage.value = ''
+  try {
+    const createdConversation = await api.request('/v1/agent/conversations', { method: 'POST', body: input }, AgentConversationSchema)
+    if (!isCurrent()) return
+    conversation.value = createdConversation
+    conversations.value = [createdConversation, ...conversations.value]
+    messages.value = [{ id: `welcome-${createdConversation.id}`, conversationId: createdConversation.id, organizationId: createdConversation.organizationId, role: 'assistant', content: `Hallo! Ich habe den Überblick zu ${scopeLabel.value} geladen. Wobei soll ich dir helfen?`, mediaAssetIds: [], createdAt: new Date().toISOString() }]
+    proposals.value = []
+    messageMediaAssetIds.value = []
+    cachedConversation.value = { scopeKey: expectedScopeKey, id: createdConversation.id }
+  } catch {
+    if (!isCurrent()) return
+    errorMessage.value = 'Es konnte keine neue Unterhaltung gestartet werden. Bitte versuche es erneut.'
+  } finally {
+    if (startingNewConversation.value) startingNewConversation.value = false
+  }
+}
+
 async function send() {
   const content = prompt.value.trim()
-  if (!content || !conversation.value || sending.value) return
+  if (!content || !conversation.value || sending.value || switchingConversationId.value || startingNewConversation.value) return
   const run = ++sendRun
   const expectedInitializeRun = initializeRun
   const expectedScopeKey = scopeKey.value
@@ -111,6 +180,7 @@ async function send() {
     )
     if (!isCurrent()) return
     conversation.value = detail.conversation
+    conversations.value = [detail.conversation, ...conversations.value.filter((entry) => entry.id !== detail.conversation.id)]
     messages.value = detail.messages
     messageMediaAssetIds.value = []
     const loadedProposals = await api.request(`/v1/agent/conversations/${conversationId}/action-proposals`, {}, z.array(AgentActionProposalSchema))
@@ -245,14 +315,33 @@ function formatDate(value: string | null) {
           <label class="sr-only" for="assistant-prompt">Nachricht an den Assistenten</label>
           <div class="flex items-end gap-2 rounded-2xl border border-[#dfe2da] bg-white p-2 focus-within:ring-2 focus-within:ring-forest/30">
             <textarea id="assistant-prompt" v-model="prompt" maxlength="4000" rows="2" class="min-h-12 flex-1 resize-none border-0 bg-transparent px-2 py-1 text-sm outline-none" placeholder="Zum Beispiel: Welche Freigaben sind offen?" @keydown.enter.exact.prevent="send" />
-            <button type="submit" :disabled="!prompt.trim() || sending" class="focus-ring grid h-10 w-10 place-items-center rounded-xl bg-forest text-white disabled:cursor-not-allowed disabled:opacity-50" aria-label="Nachricht senden"><ArrowUp :size="18" /></button>
+            <button type="submit" :disabled="!prompt.trim() || sending || switchingConversationId !== null || startingNewConversation" class="focus-ring grid h-10 w-10 place-items-center rounded-xl bg-forest text-white disabled:cursor-not-allowed disabled:opacity-50" aria-label="Nachricht senden"><ArrowUp :size="18" /></button>
           </div>
-          <MediaAttachmentUpload v-if="scope?.organizationId" v-model="messageMediaAssetIds" class="mt-3 px-2" :organization-id="scope.organizationId" :department-id="scope.departmentId ?? null" :max="10" />
+          <MediaAttachmentUpload v-if="scope?.organizationId" :key="`${scope.organizationId}:${scope.departmentId ?? 'org'}`" v-model="messageMediaAssetIds" class="mt-3 px-2" :organization-id="scope.organizationId" :department-id="scope.departmentId ?? null" :max="10" />
           <p class="mt-2 px-2 text-[11px] text-[#7a827c]">Anhänge bleiben privat. Sie werden nicht automatisch an das Textmodell gesendet; eine Bildbearbeitung braucht immer einen eigenen bestätigten Auftrag. Termine und Einladungen werden als Karte vorbereitet und erst nach deiner Bestätigung ausgeführt.</p>
         </form>
       </section>
 
       <aside class="space-y-5">
+        <section class="card p-5">
+          <div class="mb-4 flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2"><History :size="17" class="text-forest" /><h2 class="font-display text-base font-bold">Verlauf</h2></div>
+            <button type="button" class="focus-ring inline-flex items-center gap-1 rounded-lg border border-[#dfe2da] px-2 py-1 text-xs font-semibold text-[#435047] disabled:opacity-50" :disabled="startingNewConversation || sending" @click="startNewConversation"><Plus :size="13" /> Neu</button>
+          </div>
+          <div v-if="conversations.length" class="space-y-1.5">
+            <button
+              v-for="entry in conversations" :key="entry.id" type="button"
+              class="focus-ring flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-xs transition"
+              :class="entry.id === conversation?.id ? 'bg-forest text-white' : 'text-[#435047] hover:bg-[#f2f4ee]'"
+              :disabled="switchingConversationId !== null || startingNewConversation || sending"
+              @click="switchConversation(entry.id)"
+            >
+              <span class="min-w-0 flex-1 truncate">{{ entry.title || formatDate(entry.lastActivityAt) }}</span>
+              <LoaderCircle v-if="switchingConversationId === entry.id" class="animate-spin" :size="13" />
+            </button>
+          </div>
+          <p v-else class="text-sm text-[#727a75]">Noch keine früheren Unterhaltungen.</p>
+        </section>
         <section v-if="proposals.length" class="card p-5">
           <div class="mb-4 flex items-center gap-2"><UserPlus :size="17" class="text-forest" /><h2 class="font-display text-base font-bold">Vorgeschlagene Aktionen</h2></div>
           <div class="space-y-3">

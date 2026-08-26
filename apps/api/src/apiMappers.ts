@@ -6,6 +6,7 @@ import {
   IntegrationSourceSchema,
   IntegrationSyncConflictSchema,
   IntegrationSyncRunSchema,
+  MediaAssetSummarySchema,
   type OAuthPlatform,
   type ScopeLevel,
 } from '@vereinsfunk/contracts'
@@ -434,6 +435,23 @@ export function mapDirectoryPersonRow(row: Record<string, unknown>) {
   })
 }
 
+export function mapMediaAssetSummaryRow(row: Record<string, unknown>, signedUrl: string | null) {
+  return MediaAssetSummarySchema.parse({
+    id: row.id,
+    organizationId: row.organization_id,
+    departmentId: row.department_id,
+    mimeType: row.mime_type,
+    byteSize: row.byte_size,
+    width: row.width,
+    height: row.height,
+    durationMs: row.duration_ms,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+    peopleReviewedAt: row.people_reviewed_at,
+    signedUrl,
+  })
+}
+
 // Spalten dieser beiden Zeilenformen, damit Leser und Schreiber nicht auseinanderlaufen: die
 // Auswahl steht sonst wortgleich in bis zu vier Routen je Tabelle.
 export const FIXTURE_COLUMNS =
@@ -448,3 +466,5 @@ export const SYNC_CONFLICT_COLUMNS =
   'id, organization_id, sync_run_id, source_id, domain, external_id, local_id, label, field, current_value, incoming_value, kind, resolution, resolved_at, created_at'
 export const DIRECTORY_PERSON_COLUMNS =
   'id, organization_id, department_id, team_id, first_name, last_name, birth_year, is_minor, status, left_at, joined_at, profile_id, became_adult_at, source_id, created_at'
+export const MEDIA_ASSET_SUMMARY_COLUMNS =
+  'id, organization_id, department_id, bucket_id, object_path, mime_type, byte_size, width, height, duration_ms, created_by, created_at, people_reviewed_at'

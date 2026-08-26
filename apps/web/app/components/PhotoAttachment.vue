@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { AlertTriangle, Check, ImagePlus, LoaderCircle, Trash2, X } from '@lucide/vue'
+import { MediaAssetSummarySchema } from '@vereinsfunk/contracts'
 import { z } from 'zod'
 
 // Plan 045, PR 0 Schritt 3: minimale Foto-Anhang-Steuerung fuer die Textwerkstatt. Rahmen, Logo
@@ -7,10 +8,10 @@ import { z } from 'zod'
 // unveraendert (Pass-Through-Derivat) in den Beitrag. Bewusst hoechstens ein Foto (kein
 // Karussell, siehe plans/045 "Nicht enthalten"); decision='obscure'/'exclude' werden hier nicht
 // angeboten, weil ImageAnonymizer (Plan 003) nichts rendern kann, das sie umsetzt.
-const props = defineProps<{ organizationId: string; departmentId: string | null }>()
+const props = defineProps<{ organizationId: string; departmentId: string | null; initialMediaAssetId?: string | null }>()
 const mediaAssetId = defineModel<string | null>({ required: true })
 
-type Phase = 'idle' | 'uploading' | 'processing' | 'failed' | 'marking' | 'reviewed'
+type Phase = 'idle' | 'uploading' | 'processing' | 'failed' | 'marking' | 'reviewed' | 'hydrating'
 type FaceBox = { id: string; x: number; y: number; width: number; height: number; subjectKind: 'adult' | 'minor' | 'unknown'; decision: 'pending' | 'consented'; consentRecordId: string | null }
 type ConsentOption = { id: string; label: string }
 const FaceRegionInsertSchema = z.object({ id: z.string().uuid() })
@@ -22,6 +23,9 @@ const supabase = useSupabaseClient()
 const phase = ref<Phase>('idle')
 const errorMessage = ref('')
 const previewUrl = ref('')
+// Nur ein frisch hochgeladenes Foto laeuft ueber createObjectURL -- ein wiederverwendetes/signiertes
+// Foto bekommt immer eine echte https-URL. Aus dem URL-Schema ableitbar statt separat mitgefuehrt.
+const previewIsObjectUrl = computed(() => previewUrl.value.startsWith('blob:'))
 const boxes = ref<FaceBox[]>([])
 const consents = ref<ConsentOption[]>([])
 const imageEl = useTemplateRef<HTMLImageElement>('imageEl')
@@ -29,6 +33,11 @@ const drag = ref<{ startX: number; startY: number; x: number; y: number } | null
 // Getrennt von mediaAssetId (dem Modelwert): das Model wird erst gesetzt, wenn die
 // Personen-Pruefung abgeschlossen ist -- bis dahin braucht die Markier-UI die Asset-ID trotzdem.
 const currentAssetId = ref<string | null>(null)
+// Ein wiederverwendetes Foto (initialMediaAssetId) hat keine lokal geladenen face_regions -- die
+// Markier-UI wuerde bei "Markierung bearbeiten" mit einem leeren boxes-Array starten und koennte
+// eine echte, bereits bestaetigte Personen-Markierung faelschlich durch "keine Personen erkennbar"
+// ersetzen. Deshalb bleibt "Markierung bearbeiten" fuer diesen Fall verborgen.
+const isHydratedExternalAsset = ref(false)
 
 watch(mediaAssetId, (assetId) => {
   if (assetId === null && phase.value === 'reviewed') phase.value = 'marking'
@@ -37,13 +46,39 @@ watch(mediaAssetId, (assetId) => {
 const hasUndecidedBox = computed(() => boxes.value.some((box) => box.decision === 'pending'))
 
 function resetPreview() {
-  if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
+  if (previewIsObjectUrl.value && previewUrl.value) URL.revokeObjectURL(previewUrl.value)
   previewUrl.value = ''
 }
 function reset() {
-  phase.value = 'idle'; errorMessage.value = ''; boxes.value = []; mediaAssetId.value = null; resetPreview()
+  phase.value = 'idle'; errorMessage.value = ''; boxes.value = []; mediaAssetId.value = null; isHydratedExternalAsset.value = false; resetPreview()
 }
 onBeforeUnmount(resetPreview)
+
+onMounted(async () => {
+  if (!props.initialMediaAssetId) return
+  phase.value = 'hydrating'
+  try {
+    const asset = await api.request(`/v1/media-assets/${props.initialMediaAssetId}`, {}, MediaAssetSummarySchema)
+    if (asset.organizationId !== props.organizationId || asset.departmentId !== props.departmentId) {
+      phase.value = 'failed'
+      errorMessage.value = 'Dieses Foto gehört zu einem anderen Bereich und kann hier nicht verwendet werden.'
+      return
+    }
+    if (!asset.mimeType.startsWith('image/') || !asset.peopleReviewedAt || !asset.signedUrl) {
+      phase.value = 'failed'
+      errorMessage.value = 'Dieses Foto wurde noch nicht geprüft und kann nicht wiederverwendet werden.'
+      return
+    }
+    previewUrl.value = asset.signedUrl
+    currentAssetId.value = asset.id
+    isHydratedExternalAsset.value = true
+    mediaAssetId.value = asset.id
+    phase.value = 'reviewed'
+  } catch {
+    phase.value = 'failed'
+    errorMessage.value = 'Das Foto konnte nicht geladen werden.'
+  }
+})
 
 async function sha256Hex(file: File): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
@@ -174,6 +209,7 @@ function editAgain() { mediaAssetId.value = null; phase.value = 'marking' }
     <label class="mb-1 block text-xs font-semibold">Foto (optional)</label>
     <input v-if="phase === 'idle' || phase === 'failed'" type="file" accept="image/jpeg,image/png,image/webp" class="block w-full text-sm" @change="onFileSelected" />
     <p v-if="phase === 'uploading' || phase === 'processing'" class="mt-2 inline-flex items-center gap-2 text-sm text-[#727a75]"><LoaderCircle class="animate-spin" :size="16" /> {{ phase === 'uploading' ? 'Foto wird hochgeladen …' : 'Foto wird geprüft …' }}</p>
+    <p v-if="phase === 'hydrating'" class="mt-2 inline-flex items-center gap-2 text-sm text-[#727a75]"><LoaderCircle class="animate-spin" :size="16" /> Vorhandenes Foto wird geladen …</p>
     <p v-if="phase === 'failed'" class="mt-2 inline-flex items-center gap-2 text-sm text-red-700"><AlertTriangle :size="16" /> {{ errorMessage }}</p>
 
     <div v-if="phase === 'marking'" class="mt-3">
@@ -231,8 +267,8 @@ function editAgain() { mediaAssetId.value = null; phase.value = 'marking' }
 
     <div v-if="phase === 'reviewed'" class="mt-3 flex items-center gap-3">
       <img :src="previewUrl" class="h-16 w-16 rounded-lg border object-cover" alt="Angehängtes Foto" />
-      <span class="inline-flex items-center gap-1 text-sm text-emerald-700"><Check :size="16" /> Foto geprüft und angehängt</span>
-      <button type="button" class="text-xs text-forest underline" @click="editAgain">Markierung bearbeiten</button>
+      <span class="inline-flex items-center gap-1 text-sm text-emerald-700"><Check :size="16" /> {{ isHydratedExternalAsset ? 'Vorhandenes Foto angehängt' : 'Foto geprüft und angehängt' }}</span>
+      <button v-if="!isHydratedExternalAsset" type="button" class="text-xs text-forest underline" @click="editAgain">Markierung bearbeiten</button>
       <button type="button" class="text-xs text-[#727a75] underline" @click="reset">Entfernen</button>
     </div>
 
