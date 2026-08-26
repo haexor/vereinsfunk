@@ -85,6 +85,9 @@ export async function createTextGenerationSession(
   }
   const sourceMaterial = { ...input.sourceMaterial, doNotMention: Array.from(new Set([...input.sourceMaterial.doNotMention, ...config.policies.forbiddenTopics])) }
   const targetPlatforms = [...input.targetPlatforms].sort()
+  // 'plaintext' ist exklusiv (primitives.ts) -- sonst zieht die serverseitige Minimumbildung weiter
+  // unten seine grosszuegige Grenze sinnlos auf die knappste andere gewaehlte Plattform herunter.
+  if (targetPlatforms.includes('plaintext') && targetPlatforms.length > 1) return { ok: false, statusCode: 422, error: 'platform_combination_not_allowed' }
   const platformAvailability = await resolveTextGenerationPlatformAvailability(userClient, input.organizationId, input.departmentId, input.teamId ?? null, config.policies.allowedChannelIds)
   const unavailablePlatform = targetPlatforms.find((platform) => !platformAvailability.get(platform)?.available)
   if (unavailablePlatform) return { ok: false, statusCode: 422, error: 'platform_not_available', platform: unavailablePlatform }

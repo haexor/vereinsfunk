@@ -9,6 +9,7 @@ export const platformLabels: Record<SocialPlatform, string> = {
   twitter: 'X (Twitter)',
   linkedin: 'LinkedIn',
   website: 'Eigene Website',
+  plaintext: 'Nur Text',
 }
 
 export const platformColors: Record<SocialPlatform, string> = {
@@ -17,6 +18,7 @@ export const platformColors: Record<SocialPlatform, string> = {
   twitter: '#000000',
   linkedin: '#0A66C2',
   website: '#163a2c',
+  plaintext: '#6b7280',
 }
 
 // Pfade aus Bootstrap Icons (MIT, https://icons.getbootstrap.com), viewBox 0 0 16 16.

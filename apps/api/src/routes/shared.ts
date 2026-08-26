@@ -404,6 +404,12 @@ export async function resolveTextGenerationPlatformAvailability(
   const result = new Map<SocialPlatform, TextGenerationPlatformResolution>()
   const scopeInput = { scope: targetScope, ...(departmentId ? { departmentId } : {}), ...(teamId ? { teamId } : {}) }
   for (const platform of SocialPlatformSchema.options) {
+    // 'plaintext' hat strukturell nie einen Kanal (primitives.ts) -- immer verfuegbar, ohne
+    // social_connections/channel_scopes ueberhaupt zu befragen.
+    if (platform === 'plaintext') {
+      result.set(platform, { available: true, maxCharacters: maxCharactersByPlatform.get(platform) ?? null })
+      continue
+    }
     const candidates = toChannelCandidates(connections.data.filter((connection) => connection.platform === platform), scopeRows.data)
     const withoutPolicies = resolveAvailableChannels({ ...scopeInput, channels: candidates, allowedChannelIds: null, requireChannelResponsible: false })
     const withPolicies = resolveAvailableChannels({ ...scopeInput, channels: candidates, allowedChannelIds, requireChannelResponsible })

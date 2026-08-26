@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(12);
+select plan(13);
 
 set local role postgres;
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -15,12 +15,15 @@ select is((select max_characters from public.text_generation_platform_defaults w
 -- Paket 045's seed rows: the real platform maxima for X (280) and LinkedIn (3000).
 select is((select max_characters from public.text_generation_platform_defaults where platform = 'twitter'), 280, 'twitter ships with its real 280 character caption limit');
 select is((select max_characters from public.text_generation_platform_defaults where platform = 'linkedin'), 3000, 'linkedin ships with its real 3000 character caption limit');
+-- plaintext_platform's seed row: the system character ceiling, since 'plaintext' has no external
+-- platform maximum of its own (see MaxCharactersSchema, packages/contracts/src/content.ts).
+select is((select max_characters from public.text_generation_platform_defaults where platform = 'plaintext'), 10000, 'plaintext ships with the 10000 character system ceiling');
 
 -- RLS: select is unrestricted for any authenticated user (like platform_style_personas_select) --
 -- the text workshop must show the value to prefill without the caller being a platform admin.
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '73000000-0000-4000-8000-000000000001', true);
-select is((select count(*)::integer from public.text_generation_platform_defaults), 5, 'any authenticated user can read all five platform defaults');
+select is((select count(*)::integer from public.text_generation_platform_defaults), 6, 'any authenticated user can read all six platform defaults');
 
 -- RLS: no write policy exists for authenticated -- only the service-role client behind
 -- requirePlatformAdmin (PUT /v1/text-generation-platform-defaults/:platform) may write.

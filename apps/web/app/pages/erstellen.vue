@@ -83,9 +83,6 @@ const communicationGoal = ref('inform')
 // in begrenzte Beobachtungen zerlegt; so bleibt die Faktenbindung erhalten, ohne Menschen in ein
 // Datenmodell hineinzuzwingen, bevor sie ihren Beitrag überhaupt formuliert haben.
 const contentText = ref('')
-// Legacy-Entwürfe speichern Ausschlüsse separat. Sie bleiben beim Wechsel zum freien Textfeld
-// erhalten und werden erst entfernt, wenn ein Mitglied sie im Formular ausdrücklich löscht.
-const doNotMention = ref<string[]>([])
 const additionalMediaAssetIds = ref<string[]>([])
 const revisionInstruction = ref('')
 const serverDraftId = ref<string | null>(null)
@@ -109,21 +106,21 @@ function sourceMaterial() {
     rest = rest.slice(boundary).trim()
   }
   if (rest) observations.push(rest.slice(0, 500))
-  return { facts: {}, observations, quotes: [], doNotMention: doNotMention.value }
+  return { facts: {}, observations, quotes: [], doNotMention: [] }
 }
 function persistDraft() {
   if (restoringDraft || !import.meta.client || !draftKey.value) return
-  localStorage.setItem(draftKey.value, JSON.stringify({ communicationGoal: communicationGoal.value, contentText: contentText.value, doNotMention: doNotMention.value, selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }))
+  localStorage.setItem(draftKey.value, JSON.stringify({ communicationGoal: communicationGoal.value, contentText: contentText.value, selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }))
 }
 function clearDraft() { if (import.meta.client && draftKey.value) localStorage.removeItem(draftKey.value) }
 function draftPayload() {
   // Die persistierte Vertragsform bleibt vorerst kompatibel zu bestehenden Entwürfen. Das UI
   // schreibt nur noch den Rohtext in observation; die früheren Spezialfelder bleiben leer.
-  return { communicationGoal: communicationGoal.value, factsText: '', observation: contentText.value, doNotMention: doNotMention.value.join('\n'), selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }
+  return { communicationGoal: communicationGoal.value, factsText: '', observation: contentText.value, doNotMention: '', selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }
 }
 function hasDraftContent() {
   const payload = draftPayload()
-  return Boolean(payload.observation.trim() || payload.doNotMention.trim() || payload.communicationGoal !== 'inform' || payload.selectedProfile !== 'klar_erklaerend' || payload.selectedPlatforms.length || payload.maxCharactersOverride.trim())
+  return Boolean(payload.observation.trim() || payload.communicationGoal !== 'inform' || payload.selectedProfile !== 'klar_erklaerend' || payload.selectedPlatforms.length || payload.maxCharactersOverride.trim())
 }
 async function saveServerDraft({ explicit = false, required = false }: { explicit?: boolean; required?: boolean } = {}): Promise<boolean> {
   if (draftSaveTimer) { clearTimeout(draftSaveTimer); draftSaveTimer = undefined }
@@ -168,15 +165,15 @@ function restoreDraft() {
   if (!import.meta.client || !draftKey.value) return
   try {
     const raw = localStorage.getItem(draftKey.value); if (!raw) return
-    const draft = z.object({ communicationGoal: z.string(), contentText: z.string().optional(), factsText: z.string().optional(), observation: z.string().optional(), doNotMention: z.union([z.array(z.string()), z.string()]).optional(), selectedProfile: z.string(), selectedPlatforms: z.array(SocialPlatformSchema).default([]), maxCharactersOverride: z.string().default('') }).parse(JSON.parse(raw))
-    communicationGoal.value = draft.communicationGoal; contentText.value = draft.contentText ?? [draft.factsText, draft.observation].filter(Boolean).join('\n'); doNotMention.value = Array.isArray(draft.doNotMention) ? draft.doNotMention : draft.doNotMention?.split('\n').map((item) => item.trim()).filter(Boolean) ?? []; selectedProfile.value = draft.selectedProfile; maxCharactersOverride.value = draft.maxCharactersOverride
+    const draft = z.object({ communicationGoal: z.string(), contentText: z.string().optional(), factsText: z.string().optional(), observation: z.string().optional(), selectedProfile: z.string(), selectedPlatforms: z.array(SocialPlatformSchema).default([]), maxCharactersOverride: z.string().default('') }).parse(JSON.parse(raw))
+    communicationGoal.value = draft.communicationGoal; contentText.value = draft.contentText ?? [draft.factsText, draft.observation].filter(Boolean).join('\n'); selectedProfile.value = draft.selectedProfile; maxCharactersOverride.value = draft.maxCharactersOverride
     // Nur uebernehmen, was laut der zuletzt geladenen Verfuegbarkeit noch anhakbar ist -- ein Kanal
     // kann seit dem letzten Entwurf entfernt worden sein.
-    if (draft.selectedPlatforms.length) selectedPlatforms.value = draft.selectedPlatforms.filter((platform) => platforms.value.some((entry) => entry.platform === platform && entry.available))
+    if (draft.selectedPlatforms.length) selectedPlatforms.value = resolveExclusivePlatforms(draft.selectedPlatforms.filter((platform) => platforms.value.some((entry) => entry.platform === platform && entry.available)))
   } catch { clearDraft() }
 }
-watch([communicationGoal, contentText, doNotMention, selectedProfile, selectedPlatforms, maxCharactersOverride], () => { persistDraft(); queueServerDraftSave() }, { flush: 'sync', deep: true })
-watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; communicationGoal.value = 'inform'; selectedProfile.value = 'klar_erklaerend'; contentText.value = ''; doNotMention.value = []; additionalMediaAssetIds.value = []; revisionInstruction.value = ''; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; mediaAssetIds.value = []; composedPhotoPreview.value = null; photoMode.value = 'carousel'; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
+watch([communicationGoal, contentText, selectedProfile, selectedPlatforms, maxCharactersOverride], () => { persistDraft(); queueServerDraftSave() }, { flush: 'sync', deep: true })
+watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; communicationGoal.value = 'inform'; selectedProfile.value = 'klar_erklaerend'; contentText.value = ''; additionalMediaAssetIds.value = []; revisionInstruction.value = ''; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; mediaAssetIds.value = []; composedPhotoPreview.value = null; photoMode.value = 'carousel'; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
 
 async function loadProfiles() {
   if (!scope.value?.organizationId) return
@@ -194,7 +191,7 @@ async function loadPlatformAvailability() {
     // Plan 044, PR 1 Step 3: keine Plattform ist ab Werk vorausgewaehlt -- angehakt wird nur, was
     // der Verein/die Abteilung als eigene Vorgabe gesetzt hat (isDefault, bereits mit der
     // Verfuegbarkeit geschnitten). Ohne Vorgabe startet die Auswahl leer.
-    selectedPlatforms.value = response.filter((entry) => entry.isDefault).map((entry) => entry.platform)
+    selectedPlatforms.value = resolveExclusivePlatforms(response.filter((entry) => entry.isDefault).map((entry) => entry.platform))
   } catch { notice.value = 'Zielplattformen konnten nicht geladen werden.' }
 }
 async function refreshSession() {
@@ -217,8 +214,8 @@ async function loadServerDraft(draftId: string) {
     const response = await api.request(`/v1/text-workshop/drafts/${draftId}`, {}, z.object({ draft: TextWorkshopDraftRowSchema }))
     const draft = response.draft
     serverDraftId.value = draft.id
-    communicationGoal.value = draft.payload.communicationGoal; contentText.value = [draft.payload.factsText, draft.payload.observation].filter(Boolean).join('\n'); doNotMention.value = draft.payload.doNotMention.split('\n').map((item) => item.trim()).filter(Boolean); selectedProfile.value = draft.payload.selectedProfile; maxCharactersOverride.value = draft.payload.maxCharactersOverride
-    selectedPlatforms.value = draft.payload.selectedPlatforms.filter((platform) => platforms.value.some((entry) => entry.platform === platform && entry.available))
+    communicationGoal.value = draft.payload.communicationGoal; contentText.value = [draft.payload.factsText, draft.payload.observation].filter(Boolean).join('\n'); selectedProfile.value = draft.payload.selectedProfile; maxCharactersOverride.value = draft.payload.maxCharactersOverride
+    selectedPlatforms.value = resolveExclusivePlatforms(draft.payload.selectedPlatforms.filter((platform) => platforms.value.some((entry) => entry.platform === platform && entry.available)))
     persistDraft()
   } catch { notice.value = 'Der Entwurf konnte nicht geladen werden.' }
 }
@@ -237,11 +234,10 @@ async function loadDraftFromPost(postId: string) {
       ...draftSession.source_material.observations,
       ...draftSession.source_material.quotes.map((quote) => quote.text),
     ].join('\n')
-    doNotMention.value = draftSession.source_material.doNotMention
     selectedProfile.value = draftSession.style_profile_id ?? draftSession.style_profile_snapshot.slug ?? 'klar_erklaerend'
     // Nur uebernehmen, was laut der zuletzt geladenen Verfuegbarkeit noch anhakbar ist -- derselbe
     // Filter wie in restoreDraft(), ein Kanal kann seither entfernt worden sein.
-    selectedPlatforms.value = draftSession.target_platforms.filter((platform) => platforms.value.some((entry) => entry.platform === platform && entry.available))
+    selectedPlatforms.value = resolveExclusivePlatforms(draftSession.target_platforms.filter((platform) => platforms.value.some((entry) => entry.platform === platform && entry.available)))
     // max_characters bewusst NICHT vorbefuellt: die Spalte traegt den nach Minimumbildung mit den
     // gewaehlten Plattformen aufgeloesten Wert (routes/content.ts), nicht zwingend eine eigene
     // Obergrenze, die die Person tatsaechlich eingetragen hatte -- eine Vorbefuellung wuerde hier
@@ -296,6 +292,8 @@ async function createCandidate() {
     if (code === 'platform_not_available') {
       await loadPlatformAvailability()
       notice.value = 'Eine gewählte Plattform ist nicht mehr verfügbar. Bitte Auswahl aktualisieren.'
+    } else if (code === 'platform_combination_not_allowed') {
+      notice.value = '„Nur Text" lässt sich nicht mit anderen Zielplattformen kombinieren.'
     } else if (code === 'media_asset_not_reviewed' || code === 'media_asset_not_ready' || code === 'media_asset_not_found') {
       // Die Personen-Pruefung wurde ungueltig, seit PhotoAttachment sie abgeschlossen hat (z. B.
       // eine Markierung wurde in einem anderen Tab geaendert) -- der Trigger in Migration
@@ -346,8 +344,17 @@ const candidateFinished = computed(() => candidate.value?.status === 'ready' || 
 const showCreateCandidateFab = computed(() => !sessionId.value)
 usePageSaveFab({ label: 'Textkandidaten erzeugen', save: createCandidate, saving: submitting, visible: showCreateCandidateFab, icon: Sparkles, savingLabel: 'Textkandidaten werden erzeugt …' })
 const unavailableReasons = computed(() => [...new Set(platforms.value.filter((entry) => !entry.available).map((entry) => entry.reason))].filter((reason): reason is PlatformUnavailableReason => reason !== undefined))
+// 'plaintext' ist exklusiv (primitives.ts, createTextGenerationSession) -- sonst zoege die
+// serverseitige Minimumbildung seine grosszuegige Zeichengrenze sinnlos auf die knappste andere
+// gewaehlte Plattform herunter. Wird von jeder Stelle genutzt, die selectedPlatforms aus zuvor
+// gespeicherten/vorgegebenen Daten befuellt, nicht nur von togglePlatform.
+function resolveExclusivePlatforms(platforms: SocialPlatform[]): SocialPlatform[] {
+  return platforms.includes('plaintext') ? ['plaintext'] : platforms
+}
 function togglePlatform(platform: SocialPlatform) {
-  selectedPlatforms.value = selectedPlatforms.value.includes(platform) ? selectedPlatforms.value.filter((entry) => entry !== platform) : [...selectedPlatforms.value, platform]
+  if (selectedPlatforms.value.includes(platform)) { selectedPlatforms.value = selectedPlatforms.value.filter((entry) => entry !== platform); return }
+  if (platform === 'plaintext') { selectedPlatforms.value = ['plaintext']; return }
+  selectedPlatforms.value = [...selectedPlatforms.value.filter((entry) => entry !== 'plaintext'), platform]
 }
 async function reviseCandidate() {
   if (!sessionId.value || !revisionInstruction.value.trim()) return
@@ -407,11 +414,29 @@ onBeforeUnmount(() => { if (hasDraftContent()) void saveServerDraft() })
           </div>
         </template>
       </fieldset>
+      <fieldset>
+        <legend class="mb-2 text-xs font-semibold">Zielplattformen</legend>
+        <div v-if="platforms.length" class="flex flex-wrap gap-2">
+          <button
+            v-for="entry in platforms" :key="entry.platform" type="button"
+            class="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+            :style="selectedPlatforms.includes(entry.platform) ? { borderColor: platformColors[entry.platform], backgroundColor: `${platformColors[entry.platform]}1a` } : {}"
+            :aria-pressed="selectedPlatforms.includes(entry.platform)"
+            :disabled="!entry.available"
+            :title="entry.reason ? PLATFORM_UNAVAILABLE_REASONS[entry.reason] : undefined"
+            @click="togglePlatform(entry.platform)"
+          >
+            <PlatformIcon :platform="entry.platform" />
+            {{ platformLabels[entry.platform] }}
+          </button>
+        </div>
+        <p v-else class="text-[11px] font-normal text-[#9aa096]">Die Zielplattformen konnten nicht geladen werden. Bitte lade die Seite neu.</p>
+        <p v-for="reason in unavailableReasons" :key="reason" class="mt-1 text-[11px] font-normal text-[#9aa096]">{{ PLATFORM_UNAVAILABLE_EXPLANATIONS[reason] }}</p>
+      </fieldset>
       <details class="rounded-xl border border-[#e1e2db] p-4">
         <summary class="cursor-pointer text-sm font-semibold text-[#435047]">Beitrag einstellen</summary>
         <div class="mt-4 grid gap-5">
           <label><span class="mb-1 block text-xs font-semibold">Kommunikationsziel</span><Select v-model="communicationGoal"><SelectTrigger class="sm:max-w-xs"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="inform">Informieren</SelectItem><SelectItem value="invite">Einladen</SelectItem><SelectItem value="thank">Danken</SelectItem><SelectItem value="recruit">Gewinnen</SelectItem><SelectItem value="inspire">Inspirieren</SelectItem></SelectContent></Select></label>
-          <label><span class="mb-1 block text-xs font-semibold">Nicht erwähnen</span><textarea :value="doNotMention.join('\n')" rows="2" maxlength="2000" class="w-full rounded-xl border p-3 text-sm" placeholder="Ein Begriff pro Zeile" @input="doNotMention = ($event.target as HTMLTextAreaElement).value.split('\n').map((item) => item.trim()).filter(Boolean)" /></label>
           <fieldset><legend class="mb-2 text-xs font-semibold">Stilprofil</legend><SearchableSelect v-model="selectedProfile" :groups="profileSelectGroups" placeholder="Stilprofil wählen…" /><NuxtLink to="/stilprofile" class="focus-ring mt-2 inline-block text-[11px] font-semibold text-forest underline">Eigene Stilprofile verwalten →</NuxtLink></fieldset>
           <template v-if="scope?.organizationId && scope.departmentId">
         <template v-if="composedPhotoPreview">
@@ -434,25 +459,6 @@ onBeforeUnmount(() => { if (hasDraftContent()) void saveServerDraft() })
           <PhotoLayoutGallery v-if="photoMode === 'layout'" :key="`layout:${scope.organizationId}:${scope.departmentId}`" v-model:media-asset-ids="mediaAssetIds" v-model:composed-preview="composedPhotoPreview" :organization-id="scope.organizationId" :department-id="scope.departmentId" />
         </template>
           </template>
-      <fieldset>
-        <legend class="mb-2 text-xs font-semibold">Zielplattformen</legend>
-        <div v-if="platforms.length" class="flex flex-wrap gap-2">
-          <button
-            v-for="entry in platforms" :key="entry.platform" type="button"
-            class="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
-            :style="selectedPlatforms.includes(entry.platform) ? { borderColor: platformColors[entry.platform], backgroundColor: `${platformColors[entry.platform]}1a` } : {}"
-            :aria-pressed="selectedPlatforms.includes(entry.platform)"
-            :disabled="!entry.available"
-            :title="entry.reason ? PLATFORM_UNAVAILABLE_REASONS[entry.reason] : undefined"
-            @click="togglePlatform(entry.platform)"
-          >
-            <PlatformIcon :platform="entry.platform" />
-            {{ platformLabels[entry.platform] }}
-          </button>
-        </div>
-        <p v-else class="text-[11px] font-normal text-[#9aa096]">Die Zielplattformen konnten nicht geladen werden. Bitte lade die Seite neu.</p>
-        <p v-for="reason in unavailableReasons" :key="reason" class="mt-1 text-[11px] font-normal text-[#9aa096]">{{ PLATFORM_UNAVAILABLE_EXPLANATIONS[reason] }}</p>
-      </fieldset>
       <fieldset>
         <legend class="mb-2 text-xs font-semibold">Maximale Länge (optional)</legend>
         <input v-model="maxCharactersOverride" type="number" min="100" max="10000" placeholder="z. B. 800" class="w-32 rounded-xl border p-3 text-sm" />
