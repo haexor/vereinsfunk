@@ -1,5 +1,6 @@
 import {
   TEXT_GENERATION_DEFAULT_MAX_CHARACTERS,
+  hasExclusivePlatformConflict,
   StyleProfileRulesSchema,
   UuidSchema,
   type CreateCompositionSession,
@@ -83,11 +84,11 @@ export async function createTextGenerationSession(
     if (!profile) return { ok: false, statusCode: 422, error: 'style_profile_not_found' }
     styleSnapshot = { name: profile.name, description: profile.description, styleRules: profile.styleRules, avoidRules: profile.avoidRules, doRules: profile.doRules, slug }
   }
-  const sourceMaterial = { ...input.sourceMaterial, doNotMention: Array.from(new Set([...input.sourceMaterial.doNotMention, ...config.policies.forbiddenTopics])) }
+  const sourceMaterial = { ...input.sourceMaterial, forbiddenTopics: Array.from(new Set(config.policies.forbiddenTopics)) }
   const targetPlatforms = [...input.targetPlatforms].sort()
   // 'plaintext' ist exklusiv (primitives.ts) -- sonst zieht die serverseitige Minimumbildung weiter
   // unten seine grosszuegige Grenze sinnlos auf die knappste andere gewaehlte Plattform herunter.
-  if (targetPlatforms.includes('plaintext') && targetPlatforms.length > 1) return { ok: false, statusCode: 422, error: 'platform_combination_not_allowed' }
+  if (hasExclusivePlatformConflict(targetPlatforms)) return { ok: false, statusCode: 422, error: 'platform_combination_not_allowed' }
   const platformAvailability = await resolveTextGenerationPlatformAvailability(userClient, input.organizationId, input.departmentId, input.teamId ?? null, config.policies.allowedChannelIds)
   const unavailablePlatform = targetPlatforms.find((platform) => !platformAvailability.get(platform)?.available)
   if (unavailablePlatform) return { ok: false, statusCode: 422, error: 'platform_not_available', platform: unavailablePlatform }

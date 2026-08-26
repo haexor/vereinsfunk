@@ -31,7 +31,7 @@ insert into public.content_style_profiles (id, organization_id, department_id, s
   ('31000000-1200-4000-8000-000000000001', '31000000-1000-4000-8000-000000000001', '31000000-1100-4000-8000-000000000001', 'klar-und-nah', 'Klar und nah', 'Kurze, konkrete Sätze', '{"toneTags":["klar","sachlich"],"catchphrases":[],"exampleInput":"","exampleOutput":"","additionalInstructions":""}', '{Floskeln}', '31000000-0000-4000-8000-000000000001'),
   ('32000000-2400-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'warm-und-nah', 'Warm und nah', 'Gemeinschaft zuerst', '{"toneTags":["warm","gemeinschaftlich"],"catchphrases":[],"exampleInput":"","exampleOutput":"","additionalInstructions":""}', '{Phrasen}', '32000000-0000-4000-8000-000000000002');
 insert into public.composition_sessions (id, organization_id, department_id, team_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values
-  ('32000000-2500-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', '32000000-2300-4000-8000-000000000002', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('a', 64), '32000000-0000-4000-8000-000000000002');
+  ('32000000-2500-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', '32000000-2300-4000-8000-000000000002', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"forbiddenTopics":[]}', '{}', 1, repeat('a', 64), '32000000-0000-4000-8000-000000000002');
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '31000000-0000-4000-8000-000000000001', true);
@@ -86,27 +86,27 @@ select throws_ok(
   '23514', null, 'negative: database rejects a custom profile shadowing a reserved system slug'
 );
 select throws_ok(
-  $$insert into public.composition_sessions (organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'not_a_real_goal', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('a', 64), '32000000-0000-4000-8000-000000000002')$$,
+  $$insert into public.composition_sessions (organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'not_a_real_goal', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"forbiddenTopics":[]}', '{}', 1, repeat('a', 64), '32000000-0000-4000-8000-000000000002')$$,
   '23514', null, 'negative: database rejects an unknown communication goal'
 );
 select throws_ok(
-  $$insert into public.composition_sessions (organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'inform', '["video_post", "photo_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('a', 64), '32000000-0000-4000-8000-000000000002')$$,
+  $$insert into public.composition_sessions (organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'inform', '["video_post", "photo_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"forbiddenTopics":[]}', '{}', 1, repeat('a', 64), '32000000-0000-4000-8000-000000000002')$$,
   '23514', null, 'negative: database rejects video_post combined with another presentation type'
 );
 select throws_ok(
-  $$insert into public.composition_sessions (organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'inform', '["text_post", "text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('a', 64), '32000000-0000-4000-8000-000000000002')$$,
+  $$insert into public.composition_sessions (organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'inform', '["text_post", "text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"forbiddenTopics":[]}', '{}', 1, repeat('a', 64), '32000000-0000-4000-8000-000000000002')$$,
   '23514', null, 'negative: database rejects duplicate entries in requestedFormats'
 );
 select throws_ok(
-  $$insert into public.composition_sessions (organization_id, department_id, team_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values ('31000000-1000-4000-8000-000000000001', '31000000-1100-4000-8000-000000000001', '32000000-2300-4000-8000-000000000002', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('a', 64), '31000000-0000-4000-8000-000000000001')$$,
+  $$insert into public.composition_sessions (organization_id, department_id, team_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values ('31000000-1000-4000-8000-000000000001', '31000000-1100-4000-8000-000000000001', '32000000-2300-4000-8000-000000000002', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"forbiddenTopics":[]}', '{}', 1, repeat('a', 64), '31000000-0000-4000-8000-000000000001')$$,
   '23503', null, 'negative: a session cannot reference a team from another organization/department'
 );
 select throws_ok(
-  $$insert into public.composition_sessions (organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'inform', '["text_post"]', '{"facts":[],"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('a', 64), '32000000-0000-4000-8000-000000000002')$$,
+  $$insert into public.composition_sessions (organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'inform', '["text_post"]', '{"facts":[],"observations":[],"quotes":[],"forbiddenTopics":[]}', '{}', 1, repeat('a', 64), '32000000-0000-4000-8000-000000000002')$$,
   '23514', null, 'negative: database rejects source_material.facts that is not an object'
 );
 select throws_ok(
-  $$insert into public.composition_sessions (organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'inform', '["text_post"]', '{"facts":{},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('a', 64), '32000000-0000-4000-8000-000000000002')$$,
+  $$insert into public.composition_sessions (organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'inform', '["text_post"]', '{"facts":{},"observations":[],"quotes":[],"forbiddenTopics":[]}', '{}', 1, repeat('a', 64), '32000000-0000-4000-8000-000000000002')$$,
   '23514', null, 'negative: database rejects source_material with no facts, observations, or quotes'
 );
 
@@ -252,7 +252,7 @@ select lives_ok(
   $$select public.create_text_generation_session(
     '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', null,
     'inform', '["text_post"]'::jsonb,
-    '{"facts":{"title":"Revisionstraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
+    '{"facts":{"title":"Revisionstraining"},"observations":[],"quotes":[],"forbiddenTopics":[]}'::jsonb,
     null, '{"name":"System","description":"","styleRules":{"toneTags":["klar"],"catchphrases":[],"exampleInput":"","exampleOutput":"","additionalInstructions":""},"avoidRules":[]}'::jsonb,
     '{}'::jsonb, array['instagram', 'facebook']::text[], 2200, 0.6, 1, repeat('e', 64), repeat('f', 64), 'initial', null,
     '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-initial',
@@ -264,7 +264,7 @@ select lives_ok(
   $$select public.create_text_generation_session(
     '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', null,
     'inform', '["text_post"]'::jsonb,
-    '{"facts":{"title":"Revisionstraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
+    '{"facts":{"title":"Revisionstraining"},"observations":[],"quotes":[],"forbiddenTopics":[]}'::jsonb,
     null, '{"name":"System","description":"","styleRules":{"toneTags":["klar"],"catchphrases":[],"exampleInput":"","exampleOutput":"","additionalInstructions":""},"avoidRules":[]}'::jsonb,
     '{}'::jsonb, array['instagram', 'facebook']::text[], 2200, 0.6, 1, repeat('e', 64), repeat('0', 64), 'revise', 'Bitte kürzer formulieren',
     '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-revision',
@@ -277,7 +277,7 @@ select lives_ok(
   $$select public.create_text_generation_session(
     '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', null,
     'inform', '["text_post"]'::jsonb,
-    '{"facts":{"title":"Revisionstraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
+    '{"facts":{"title":"Revisionstraining"},"observations":[],"quotes":[],"forbiddenTopics":[]}'::jsonb,
     null, '{"name":"System","description":"","styleRules":{"toneTags":["klar"],"catchphrases":[],"exampleInput":"","exampleOutput":"","additionalInstructions":""},"avoidRules":[]}'::jsonb,
     '{}'::jsonb, array['instagram', 'facebook']::text[], 2200, 0.6, 1, repeat('e', 64), repeat('1', 64), 'revise', 'Bitte mit mehr Energie formulieren',
     '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-revision-2',
@@ -383,14 +383,14 @@ select throws_ok(
 -- consecutive revision calls should succeed and only the ninth should hit the placeholder ceiling.
 set local role postgres;
 insert into public.composition_sessions (id, organization_id, department_id, team_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, status, candidate_count, created_by) values
-  ('32000000-2900-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', null, 'inform', '["text_post"]', '{"facts":{"title":"Limittraining"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('2', 64), 'queued', 0, '32000000-0000-4000-8000-000000000002');
+  ('32000000-2900-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', null, 'inform', '["text_post"]', '{"facts":{"title":"Limittraining"},"observations":[],"quotes":[],"forbiddenTopics":[]}', '{}', 1, repeat('2', 64), 'queued', 0, '32000000-0000-4000-8000-000000000002');
 do $$
 begin
   for i in 1..8 loop
     perform public.create_text_generation_session(
       '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', null,
       'inform', '["text_post"]'::jsonb,
-      '{"facts":{"title":"Limittraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
+      '{"facts":{"title":"Limittraining"},"observations":[],"quotes":[],"forbiddenTopics":[]}'::jsonb,
       null, '{}'::jsonb, '{}'::jsonb, array['instagram']::text[], 2200, 0.6, 1, repeat('2', 64), encode(sha256(('limit-revision-' || i::text)::bytea), 'hex'), 'revise', 'Bitte kuerzer',
       '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-limit-revise-' || i::text,
       array['31000000-4000-4000-8000-000000000001']::uuid[]
@@ -412,7 +412,7 @@ select throws_ok(
   $$select public.create_text_generation_session(
     '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', null,
     'inform', '["text_post"]'::jsonb,
-    '{"facts":{"title":"Limittraining"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
+    '{"facts":{"title":"Limittraining"},"observations":[],"quotes":[],"forbiddenTopics":[]}'::jsonb,
     null, '{}'::jsonb, '{}'::jsonb, array['instagram']::text[], 2200, 0.6, 1, repeat('2', 64), encode(sha256('limit-revision-overflow'::bytea), 'hex'), 'revise', 'Zu viel',
     '32000000-0000-4000-8000-000000000002', '32000000-9000-4000-8000-000000000002', 'generation-limit-overflow',
     array['31000000-4000-4000-8000-000000000001']::uuid[]
@@ -432,7 +432,7 @@ select throws_ok(
 -- used anywhere else in this suite.
 set local role postgres;
 insert into public.composition_sessions (id, organization_id, department_id, team_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, status, created_by) values
-  ('32000000-3000-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', null, 'inform', '["text_post"]', '{"facts":{"title":"Recoverytraining"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('3', 64), 'generating', '32000000-0000-4000-8000-000000000002');
+  ('32000000-3000-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', null, 'inform', '["text_post"]', '{"facts":{"title":"Recoverytraining"},"observations":[],"quotes":[],"forbiddenTopics":[]}', '{}', 1, repeat('3', 64), 'generating', '32000000-0000-4000-8000-000000000002');
 insert into public.generation_candidates (id, organization_id, composition_session_id, generation_intent, status, input_hash, generation_lease_token, updated_at) values
   ('32000000-3010-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-3000-4000-8000-000000000002', 'initial', 'generating', repeat('4', 64), gen_random_uuid(), now() - interval '20 minutes'),
   ('32000000-3020-4000-8000-000000000002', '32000000-2000-4000-8000-000000000002', '32000000-2500-4000-8000-000000000002', 'initial', 'generating', repeat('5', 64), null, now());
@@ -509,27 +509,27 @@ select is(
 -- 'mastodon' statt 'twitter': seit Paket 045 ist twitter eine gueltige Zielplattform, dieser Test
 -- braucht deshalb einen weiterhin nicht implementierten Wert.
 select throws_ok(
-  $$insert into public.composition_sessions (organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, target_platforms, created_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, encode(sha256('paket-042-invalid-platform'::bytea), 'hex'), array['mastodon']::text[], '32000000-0000-4000-8000-000000000002')$$,
+  $$insert into public.composition_sessions (organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, target_platforms, created_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"forbiddenTopics":[]}', '{}', 1, encode(sha256('paket-042-invalid-platform'::bytea), 'hex'), array['mastodon']::text[], '32000000-0000-4000-8000-000000000002')$$,
   '23514', null, 'negative: target_platforms only accepts instagram, facebook, twitter, linkedin or website'
 );
 -- Mehrfachauswahl darf keine Doppelung enthalten, sonst zaehlt eine Plattform bei einer kuenftigen
 -- Pro-Plattform-Ausgabe (Plan 005) doppelt. Der Wert kaeme sonst am <@-Test vorbei.
 select throws_ok(
-  $$insert into public.composition_sessions (organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, target_platforms, created_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, encode(sha256('paket-042-duplicate-platform'::bytea), 'hex'), array['instagram', 'instagram']::text[], '32000000-0000-4000-8000-000000000002')$$,
+  $$insert into public.composition_sessions (organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, target_platforms, created_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"forbiddenTopics":[]}', '{}', 1, encode(sha256('paket-042-duplicate-platform'::bytea), 'hex'), array['instagram', 'instagram']::text[], '32000000-0000-4000-8000-000000000002')$$,
   '23514', null, 'negative: target_platforms rejects a duplicated platform'
 );
 -- Das leere Array bleibt erlaubt: Sitzungen von vor dieser Migration haben nie eine Plattform
 -- gewaehlt (siehe Migrationskommentar). Die API verlangt fuer neue Sitzungen mindestens eine.
 select lives_ok(
-  $$insert into public.composition_sessions (organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, encode(sha256('paket-042-no-platform'::bytea), 'hex'), '32000000-0000-4000-8000-000000000002')$$,
+  $$insert into public.composition_sessions (organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"forbiddenTopics":[]}', '{}', 1, encode(sha256('paket-042-no-platform'::bytea), 'hex'), '32000000-0000-4000-8000-000000000002')$$,
   'a pre-migration session without any platform choice stays valid'
 );
 select throws_ok(
-  $$insert into public.composition_sessions (organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, max_characters, created_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, encode(sha256('paket-042-invalid-characters'::bytea), 'hex'), 99, '32000000-0000-4000-8000-000000000002')$$,
+  $$insert into public.composition_sessions (organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, max_characters, created_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"forbiddenTopics":[]}', '{}', 1, encode(sha256('paket-042-invalid-characters'::bytea), 'hex'), 99, '32000000-0000-4000-8000-000000000002')$$,
   '23514', null, 'negative: max_characters below 100 is rejected'
 );
 select throws_ok(
-  $$insert into public.composition_sessions (organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, temperature, created_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, encode(sha256('paket-042-invalid-temperature'::bytea), 'hex'), 0.5, '32000000-0000-4000-8000-000000000002')$$,
+  $$insert into public.composition_sessions (organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, temperature, created_by) values ('32000000-2000-4000-8000-000000000002', '32000000-2200-4000-8000-000000000002', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"forbiddenTopics":[]}', '{}', 1, encode(sha256('paket-042-invalid-temperature'::bytea), 'hex'), 0.5, '32000000-0000-4000-8000-000000000002')$$,
   '23514', null, 'negative: temperature only accepts one of the four fixed regler steps'
 );
 
@@ -558,7 +558,7 @@ select is((select count(*)::integer from public.text_workshop_drafts where id = 
 -- create_text_generation_session/workflow_outbox end-to-end with a null department.
 set local role postgres;
 select throws_ok(
-  $$insert into public.composition_sessions (organization_id, department_id, team_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values ('32000000-2000-4000-8000-000000000002', null, '32000000-2300-4000-8000-000000000002', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, encode(sha256('org-level-team-without-department'::bytea), 'hex'), '32000000-0000-4000-8000-000000000002')$$,
+  $$insert into public.composition_sessions (organization_id, department_id, team_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values ('32000000-2000-4000-8000-000000000002', null, '32000000-2300-4000-8000-000000000002', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"forbiddenTopics":[]}', '{}', 1, encode(sha256('org-level-team-without-department'::bytea), 'hex'), '32000000-0000-4000-8000-000000000002')$$,
   '23514', null, 'negative: a composition session cannot carry a team_id without a department_id'
 );
 select throws_ok(
@@ -588,7 +588,7 @@ select lives_ok(
   $$select public.create_text_generation_session(
     '32000000-2000-4000-8000-000000000002', null, null,
     'inform', '["text_post"]'::jsonb,
-    '{"facts":{"title":"Vereinsweite Nachricht"},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb,
+    '{"facts":{"title":"Vereinsweite Nachricht"},"observations":[],"quotes":[],"forbiddenTopics":[]}'::jsonb,
     null, '{"name":"System","description":"","styleRules":{"toneTags":["klar"],"catchphrases":[],"exampleInput":"","exampleOutput":"","additionalInstructions":""},"avoidRules":[]}'::jsonb,
     '{}'::jsonb, array['instagram']::text[], 2200, 0.6, 1, encode(sha256('org-level-session'::bytea), 'hex'), encode(sha256('org-level-candidate'::bytea), 'hex'), 'initial', null,
     '32000000-0000-4000-8000-000000000007', '32000000-9100-4000-8000-000000000002', 'org-level-generation',

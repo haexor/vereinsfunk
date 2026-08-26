@@ -303,17 +303,17 @@ select is((select count(*)::integer from public.club_events where id = '69000000
 -- erhalten, nur der Verweis wird entfernt.
 select throws_ok(
   $$insert into public.submissions (organization_id, department_id, content_type, created_by, preset_slug, communication_goal, requested_formats, source_material, source_provenance)
-    values ('69000000-1000-4000-8000-000000000001', '69000000-1100-4000-8000-000000000001', 'match_result', '69000000-0000-4000-8000-000000000001', 'match_result', 'inform', '["feed_image"]'::jsonb, '{"facts":[],"observations":[],"quotes":[],"doNotMention":[]}'::jsonb, '[]'::jsonb)$$,
+    values ('69000000-1000-4000-8000-000000000001', '69000000-1100-4000-8000-000000000001', 'match_result', '69000000-0000-4000-8000-000000000001', 'match_result', 'inform', '["feed_image"]'::jsonb, '{"facts":[],"observations":[],"quotes":[],"forbiddenTopics":[]}'::jsonb, '[]'::jsonb)$$,
   '23514', null, 'source_provenance rejects a non-object JSON value'
 );
 select throws_ok(
   $$insert into public.submissions (organization_id, department_id, content_type, created_by, preset_slug, communication_goal, requested_formats, source_material, source_prefill_snapshot)
-    values ('69000000-1000-4000-8000-000000000001', '69000000-1100-4000-8000-000000000001', 'match_result', '69000000-0000-4000-8000-000000000001', 'match_result', 'inform', '["feed_image"]'::jsonb, '{"facts":[],"observations":[],"quotes":[],"doNotMention":[]}'::jsonb, '[]'::jsonb)$$,
+    values ('69000000-1000-4000-8000-000000000001', '69000000-1100-4000-8000-000000000001', 'match_result', '69000000-0000-4000-8000-000000000001', 'match_result', 'inform', '["feed_image"]'::jsonb, '{"facts":[],"observations":[],"quotes":[],"forbiddenTopics":[]}'::jsonb, '[]'::jsonb)$$,
   '23514', null, 'source_prefill_snapshot rejects a non-object JSON value'
 );
 
 insert into public.submissions (id, organization_id, department_id, content_type, created_by, preset_slug, communication_goal, requested_formats, source_material, fixture_id) values
-  ('69000000-4000-4000-8000-000000000001', '69000000-1000-4000-8000-000000000001', '69000000-1100-4000-8000-000000000001', 'match_result', '69000000-0000-4000-8000-000000000001', 'match_result', 'inform', '["feed_image"]'::jsonb, '{"facts":[],"observations":[],"quotes":[],"doNotMention":[]}'::jsonb, '69000000-3000-4000-8000-000000000002');
+  ('69000000-4000-4000-8000-000000000001', '69000000-1000-4000-8000-000000000001', '69000000-1100-4000-8000-000000000001', 'match_result', '69000000-0000-4000-8000-000000000001', 'match_result', 'inform', '["feed_image"]'::jsonb, '{"facts":[],"observations":[],"quotes":[],"forbiddenTopics":[]}'::jsonb, '69000000-3000-4000-8000-000000000002');
 delete from public.fixtures where id = '69000000-3000-4000-8000-000000000002';
 select is((select count(*)::integer from public.submissions where id = '69000000-4000-4000-8000-000000000001'), 1,
   'deleting the fixture does not delete the submission that referenced it');
@@ -330,10 +330,10 @@ insert into public.club_events (id, organization_id, department_id, title, categ
   ('69000000-3100-4000-8000-000000000008', '69000000-1000-4000-8000-000000000001', '69000000-1100-4000-8000-000000000001', 'Trigger Test Termin', 'other', now() + interval '90 days');
 
 insert into public.submissions (id, organization_id, department_id, content_type, created_by, preset_slug, communication_goal, requested_formats, source_material, fixture_id) values
-  ('69000000-4000-4000-8000-000000000002', '69000000-1000-4000-8000-000000000001', '69000000-1100-4000-8000-000000000001', 'match_announcement', '69000000-0000-4000-8000-000000000001', 'match_announcement', 'inform', '["feed_image"]'::jsonb, '{"facts":[],"observations":[],"quotes":[],"doNotMention":[]}'::jsonb, '69000000-3000-4000-8000-000000000005'),
-  ('69000000-4000-4000-8000-000000000003', '69000000-1000-4000-8000-000000000001', '69000000-1100-4000-8000-000000000001', 'match_announcement', '69000000-0000-4000-8000-000000000001', 'match_announcement', 'inform', '["feed_image"]'::jsonb, '{"facts":[],"observations":[],"quotes":[],"doNotMention":[]}'::jsonb, '69000000-3000-4000-8000-000000000006');
+  ('69000000-4000-4000-8000-000000000002', '69000000-1000-4000-8000-000000000001', '69000000-1100-4000-8000-000000000001', 'match_announcement', '69000000-0000-4000-8000-000000000001', 'match_announcement', 'inform', '["feed_image"]'::jsonb, '{"facts":[],"observations":[],"quotes":[],"forbiddenTopics":[]}'::jsonb, '69000000-3000-4000-8000-000000000005'),
+  ('69000000-4000-4000-8000-000000000003', '69000000-1000-4000-8000-000000000001', '69000000-1100-4000-8000-000000000001', 'match_announcement', '69000000-0000-4000-8000-000000000001', 'match_announcement', 'inform', '["feed_image"]'::jsonb, '{"facts":[],"observations":[],"quotes":[],"forbiddenTopics":[]}'::jsonb, '69000000-3000-4000-8000-000000000006');
 insert into public.submissions (id, organization_id, department_id, content_type, created_by, preset_slug, communication_goal, requested_formats, source_material, club_event_id) values
-  ('69000000-4000-4000-8000-000000000004', '69000000-1000-4000-8000-000000000001', '69000000-1100-4000-8000-000000000001', 'event', '69000000-0000-4000-8000-000000000001', 'event', 'inform', '["feed_image"]'::jsonb, '{"facts":[],"observations":[],"quotes":[],"doNotMention":[]}'::jsonb, '69000000-3100-4000-8000-000000000008');
+  ('69000000-4000-4000-8000-000000000004', '69000000-1000-4000-8000-000000000001', '69000000-1100-4000-8000-000000000001', 'event', '69000000-0000-4000-8000-000000000001', 'event', 'inform', '["feed_image"]'::jsonb, '{"facts":[],"observations":[],"quotes":[],"forbiddenTopics":[]}'::jsonb, '69000000-3100-4000-8000-000000000008');
 
 insert into public.posts (id, organization_id, department_id, submission_id, status, created_by) values
   ('69000000-5000-4000-8000-000000000001', '69000000-1000-4000-8000-000000000001', '69000000-1100-4000-8000-000000000001', '69000000-4000-4000-8000-000000000002', 'draft', '69000000-0000-4000-8000-000000000001'),

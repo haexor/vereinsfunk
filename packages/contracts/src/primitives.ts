@@ -27,6 +27,14 @@ export const CountryCodeSchema = z.string().regex(/^[A-Z]{2}$/)
 export const SocialPlatformSchema = z.enum(['instagram', 'facebook', 'twitter', 'linkedin', 'website', 'plaintext'])
 export type SocialPlatform = z.infer<typeof SocialPlatformSchema>
 
+// Eine Quelle fuer 'plaintext ist exklusiv', geteilt von jeder Stelle, die eine Plattformliste
+// entgegennimmt (createTextGenerationSession, policy.ts defaultTargetPlatforms, der
+// save_content_brief-Bestaetigungspfad in apps/api/src/routes/agent.ts) -- vorher an mehreren
+// Stellen unabhaengig nachgebaut, teils gar nicht (Review PR #181).
+export function hasExclusivePlatformConflict(platforms: readonly SocialPlatform[]): boolean {
+  return platforms.includes('plaintext') && platforms.length > 1
+}
+
 // Paket 045: die Menge aller Plattformen, die ueberhaupt per OAuth verbunden werden -- Instagram und
 // Facebook laufen ueber den Meta-Adapter (MetaOAuthPlatformSchema in channels.ts), Twitter/LinkedIn
 // ueber eigene Adapter mit strukturell anderem Flow (PKCE bei Twitter, Organisations-Listing bei

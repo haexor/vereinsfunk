@@ -162,8 +162,9 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
       }
     }
 
-    // forbiddenTopics wird additiv zu doNotMention ergaenzt (Plan 011, "Durchsetzung an vier
-    // Stellen") -- die Content-Engine kennt beide nicht getrennt, nur eine gemeinsame Verbotsliste.
+    // forbiddenTopics (Plan 011, "Durchsetzung an vier Stellen") wird als eigenes Feld gespeichert
+    // und unten direkt an createGroundedContentBrief gereicht -- die Content-Engine kennt es nicht
+    // getrennt von anderen Verbotslisten, nur als eine gemeinsame prohibitedClaims-Menge.
     const insert = await client
       .from('submissions')
       .insert({
@@ -177,7 +178,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
         facts: input.sourceMaterial.facts,
         source_material: {
           ...input.sourceMaterial,
-          doNotMention: Array.from(new Set([...input.sourceMaterial.doNotMention, ...config.policies.forbiddenTopics])),
+          forbiddenTopics: Array.from(new Set(config.policies.forbiddenTopics)),
         },
         source_revision: input.sourceRevision,
         fixture_id: input.fixtureId ?? null,
@@ -192,14 +193,14 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (insert.error) throw insert.error
     const submissionId = insert.data.id as string
     const correlationId = request.id
-    const generated = await new FakeContentGenerator().generate(input)
+    const generated = await new FakeContentGenerator().generate(input, config.policies.forbiddenTopics)
     let draft: { postId: string; postVersionId: string } | null = null
     if (generated.missingFacts.length === 0) {
       // Schliesst die seit den Paketen 011/012/014/015/019 dokumentierte Luecke: bis hierhin
       // entstand nie ein post/post_version aus einer submission (plans/025). assertGroundedPost
       // setzt die in Plan 001 nur definierte, nie durchgesetzte Invariante erstmals durch --
       // mit FakeContentGenerator deterministisch nie verletzt, aber kein stilles Sicherheitsnetz.
-      assertGroundedPost(generated, createGroundedContentBrief(input))
+      assertGroundedPost(generated, createGroundedContentBrief(input, config.policies.forbiddenTopics))
 
       // Geflacht, NICHT die unveraenderte EffectiveConfig-Verschachtelung: schedule_publication
       // und GET /v1/post-versions/:id/available-channels lesen bereits heute

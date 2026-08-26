@@ -38,7 +38,7 @@ insert into public.post_versions (id, organization_id, post_id, version_number, 
 
 insert into public.submissions (id, organization_id, department_id, content_type, preset_slug, communication_goal, requested_formats, source_material, created_by) values
   ('64000000-2500-4000-8000-000000000001', '64000000-1000-4000-8000-000000000001', '64000000-1100-4000-8000-000000000001', 'training_insight', 'training_insight', 'inform',
-   '["feed_image"]'::jsonb, '{"facts":{},"observations":[],"quotes":[],"doNotMention":[]}'::jsonb, '64000000-0000-4000-8000-000000000001');
+   '["feed_image"]'::jsonb, '{"facts":{},"observations":[],"quotes":[],"forbiddenTopics":[]}'::jsonb, '64000000-0000-4000-8000-000000000001');
 
 insert into public.media_assets (id, organization_id, department_id, bucket_id, object_path, mime_type, byte_size, created_by) values
   ('64000000-2600-4000-8000-000000000001', '64000000-1000-4000-8000-000000000001', '64000000-1100-4000-8000-000000000001', 'raw-media', 'orgs/route/asset.jpg', 'image/jpeg', 1024, '64000000-0000-4000-8000-000000000001');

@@ -99,14 +99,13 @@ const RESPONSE_TOOLS = [
       properties: {
         communicationGoal: { type: 'string', enum: ['inform', 'inspire', 'thank', 'invite', 'recruit', 'educate', 'strengthen_community'] },
         systemStyleProfileSlug: { type: 'string', enum: ['klar_erklaerend', 'warm_gemeinschaftlich', 'lebendig_sportlich', 'leicht_humorvoll', 'feierlich_wertschaetzend'] },
-        targetPlatforms: { type: 'array', items: { type: 'string', enum: ['instagram', 'facebook', 'twitter', 'linkedin', 'website'] } },
+        targetPlatforms: { type: 'array', items: { type: 'string', enum: ['instagram', 'facebook', 'twitter', 'linkedin', 'website', 'plaintext'] } },
         sourceMaterial: {
-          type: 'object', additionalProperties: false, required: ['facts', 'observations', 'quotes', 'doNotMention'],
+          type: 'object', additionalProperties: false, required: ['facts', 'observations', 'quotes'],
           properties: {
             facts: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key', 'value'], properties: { key: { type: 'string' }, value: { type: ['string', 'number', 'boolean'] } } } },
             observations: { type: 'array', items: { type: 'string' } },
             quotes: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['text', 'attribution', 'approved'], properties: { text: { type: 'string' }, attribution: { type: 'string' }, approved: { type: 'boolean' } } } },
-            doNotMention: { type: 'array', items: { type: 'string' } },
           },
         },
       },
@@ -119,14 +118,13 @@ const RESPONSE_TOOLS = [
       properties: {
         communicationGoal: { type: 'string', enum: ['inform', 'inspire', 'thank', 'invite', 'recruit', 'educate', 'strengthen_community'] },
         systemStyleProfileSlug: { type: 'string', enum: ['klar_erklaerend', 'warm_gemeinschaftlich', 'lebendig_sportlich', 'leicht_humorvoll', 'feierlich_wertschaetzend'] },
-        targetPlatforms: { type: 'array', items: { type: 'string', enum: ['instagram', 'facebook', 'twitter', 'linkedin', 'website'] } },
+        targetPlatforms: { type: 'array', items: { type: 'string', enum: ['instagram', 'facebook', 'twitter', 'linkedin', 'website', 'plaintext'] } },
         sourceMaterial: {
-          type: 'object', additionalProperties: false, required: ['facts', 'observations', 'quotes', 'doNotMention'],
+          type: 'object', additionalProperties: false, required: ['facts', 'observations', 'quotes'],
           properties: {
             facts: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key', 'value'], properties: { key: { type: 'string' }, value: { type: ['string', 'number', 'boolean'] } } } },
             observations: { type: 'array', items: { type: 'string' } },
             quotes: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['text', 'attribution', 'approved'], properties: { text: { type: 'string' }, attribution: { type: 'string' }, approved: { type: 'boolean' } } } },
-            doNotMention: { type: 'array', items: { type: 'string' } },
           },
         },
       },

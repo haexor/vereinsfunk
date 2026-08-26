@@ -19,6 +19,7 @@ import {
   CreateAgentConversationSchema,
   CreateAgentActionProposalSchema,
   CreateAgentMessageSchema,
+  hasExclusivePlatformConflict,
   TextWorkshopDraftPayloadSchema,
   UuidSchema,
   type AgentConversation,
@@ -527,14 +528,12 @@ function toTextWorkshopDraftPayload(input: z.infer<typeof AgentContentBriefPropo
     .map((quote) => `Zitat: ${quote.text}${quote.attribution ? ` (${quote.attribution})` : ''}`)
   const factsText = Object.entries(input.sourceMaterial.facts).map(([key, value]) => `${key}: ${String(value)}`).join('\n')
   const observation = [...input.sourceMaterial.observations, ...approvedQuotes].join('\n')
-  const doNotMention = input.sourceMaterial.doNotMention.join('\n')
   // SourceMaterialSchema erlaubt längere Ableitungen als TextWorkshopDraftPayloadSchema; kürzen
   // statt den Entwurf ungeprüft zu schreiben und erst beim Rücklesen scheitern zu lassen.
   return TextWorkshopDraftPayloadSchema.parse({
     communicationGoal: input.communicationGoal,
     factsText: factsText.slice(0, 10_000),
     observation: observation.slice(0, 5_000),
-    doNotMention: doNotMention.slice(0, 5_000),
     selectedProfile: input.systemStyleProfileSlug,
     temperature: 0.6 as const,
     selectedPlatforms: input.targetPlatforms,
@@ -849,6 +848,14 @@ export function registerAgentRoutes(
           }
           resultId = z.object({ approvalRequestId: UuidSchema.nullable().optional(), postId: UuidSchema }).parse(approval.data).approvalRequestId ?? approvalTarget!.postId
         } else if (contentBriefInput) {
+          // Derselbe Ausschluss wie createTextGenerationSession (textGenerationSessions.ts) --
+          // ohne ihn wuerde ein vom Agenten vorgeschlagener Entwurf mit z. B. ['plaintext',
+          // 'instagram'] kommentarlos gespeichert und erst beim spaeteren Oeffnen in erstellen.vue
+          // (resolveExclusivePlatforms) stillschweigend auf 'plaintext' reduziert -- widerspruechlich
+          // zu dem, was die Bestaetigung dem Nutzer als gespeichert meldet (Review PR #181).
+          if (hasExclusivePlatformConflict(contentBriefInput.targetPlatforms)) {
+            throw new AgentProposalExecutionError(422, 'platform_combination_not_allowed')
+          }
           const draft = await saveTextWorkshopDraft(service, {
             id: randomUUID(), organizationId: scope.organizationId, departmentId: scope.departmentId!, teamId: scope.teamId ?? null,
             actorUserId: request.auth!.userId, payload: toTextWorkshopDraftPayload(contentBriefInput!),

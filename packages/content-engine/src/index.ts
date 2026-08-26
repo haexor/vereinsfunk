@@ -12,7 +12,7 @@ export interface GroundedContentBrief { allowedClaims: readonly { sourceId: stri
 // haengende Pflichtfakten-Pruefung (missingFacts) oder Formatvarianten (requestedFormats) -- ein
 // Omit statt einer zweiten, von Hand parallel gepflegten Feldliste.
 export type TextGroundedContentBrief = Omit<GroundedContentBrief, 'missingFacts' | 'requestedFormats' | 'presetSlug'>
-export interface ContentGenerator { generate(input: CreateSubmission): Promise<GeneratedPost> }
+export interface ContentGenerator { generate(input: CreateSubmission, forbiddenTopics: readonly string[]): Promise<GeneratedPost> }
 
 /** Claims/Zitate sind fuer Foto- und Text-Briefs identisch aus dem Quellmaterial abgeleitet. */
 function claimsFromSourceMaterial(sourceMaterial: CreateSubmission['sourceMaterial']) {
@@ -24,10 +24,10 @@ function claimsFromSourceMaterial(sourceMaterial: CreateSubmission['sourceMateri
   return { allowedClaims, approvedQuotes }
 }
 
-export function createGroundedContentBrief(input: CreateSubmission): GroundedContentBrief {
+export function createGroundedContentBrief(input: CreateSubmission, forbiddenTopics: readonly string[]): GroundedContentBrief {
   const preset = getPreset(input.presetSlug)
   const { allowedClaims, approvedQuotes } = claimsFromSourceMaterial(input.sourceMaterial)
-  return { allowedClaims, approvedQuotes, missingFacts: validateSourceMaterial(preset, input.sourceMaterial), prohibitedClaims: input.sourceMaterial.doNotMention, goal: input.communicationGoal, requestedFormats: input.requestedFormats, presetSlug: input.presetSlug }
+  return { allowedClaims, approvedQuotes, missingFacts: validateSourceMaterial(preset, input.sourceMaterial), prohibitedClaims: forbiddenTopics, goal: input.communicationGoal, requestedFormats: input.requestedFormats, presetSlug: input.presetSlug }
 }
 
 /**
@@ -37,15 +37,15 @@ export function createGroundedContentBrief(input: CreateSubmission): GroundedCon
  * bleibt unveraendert die source_material-CHECK (mindestens ein Fakt/eine Beobachtung/ein Zitat)
  * und assertGroundedPost() gegen die bestaetigten Quellen.
  */
-export function createTextGroundedContentBrief(input: Pick<CreateSubmission, 'communicationGoal' | 'sourceMaterial'>): TextGroundedContentBrief {
+export function createTextGroundedContentBrief(input: Pick<CreateSubmission, 'communicationGoal' | 'sourceMaterial'>, forbiddenTopics: readonly string[]): TextGroundedContentBrief {
   const { allowedClaims, approvedQuotes } = claimsFromSourceMaterial(input.sourceMaterial)
-  return { allowedClaims, approvedQuotes, prohibitedClaims: input.sourceMaterial.doNotMention, goal: input.communicationGoal }
+  return { allowedClaims, approvedQuotes, prohibitedClaims: forbiddenTopics, goal: input.communicationGoal }
 }
 
 function layoutFor(slug: string): PlatformVariant['layoutFamily'] { if (slug.includes('training') || slug.includes('children')) return 'training'; if (slug === 'volunteering') return 'thanks'; if (slug === 'event' || slug === 'new_offer') return 'invitation'; if (slug.includes('match')) return 'result'; return 'photo_moment' }
 export class FakeContentGenerator implements ContentGenerator {
-  async generate(input: CreateSubmission): Promise<GeneratedPost> {
-    const brief = createGroundedContentBrief(input)
+  async generate(input: CreateSubmission, forbiddenTopics: readonly string[]): Promise<GeneratedPost> {
+    const brief = createGroundedContentBrief(input, forbiddenTopics)
     const claims = [...brief.allowedClaims, ...brief.approvedQuotes]
     const first = claims[0]?.text ?? 'Deine Geschichte braucht noch einen bestätigten Moment.'
     const headline = first.length <= 80 ? first : first.slice(0, 77) + '…'

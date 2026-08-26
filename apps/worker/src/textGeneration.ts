@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { AnthropicStructuredContentGenerator, ContentGenerationError, OpenAiCompatibleStructuredContentGenerator, TEXT_PROMPT_TEMPLATE_VERSION, createTextGroundedContentBrief, type StructuredContentGenerator } from '@vereinsfunk/content-engine'
-import { deriveTextGenerationMaxOutputTokens, providerSendsTemperature, SourceMaterialSchema, StyleProfileSnapshotSchema, UuidSchema, type GeneratedPost, type WorkflowPayload } from '@vereinsfunk/contracts'
+import { deriveTextGenerationMaxOutputTokens, providerSendsTemperature, StoredSourceMaterialSchema, StyleProfileSnapshotSchema, UuidSchema, type GeneratedPost, type WorkflowPayload } from '@vereinsfunk/contracts'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
 import { openProviderSecret } from './providerSecrets.js'
 import { WorkflowExecutionError } from './workflows.js'
@@ -72,7 +72,8 @@ export class TextGenerationExecutor {
       const generator = this.generator ?? GENERATORS[provider.protocol]
       if (!generator || !provider.structured_output_required) throw new WorkflowExecutionError('unsupported_provider_configuration', false)
       const style = StyleProfileSnapshotSchema.parse(session.style_profile_snapshot)
-      const brief = createTextGroundedContentBrief({ communicationGoal: session.communication_goal, sourceMaterial: SourceMaterialSchema.parse(session.source_material) })
+      const storedSourceMaterial = StoredSourceMaterialSchema.parse(session.source_material)
+      const brief = createTextGroundedContentBrief({ communicationGoal: session.communication_goal, sourceMaterial: storedSourceMaterial }, storedSourceMaterial.forbiddenTopics)
       const apiKey = openProviderSecret(this.config, provider.api_key_ciphertext, provider.key_version, provider.id)
       // Belegzahl aus dem Brief, nicht aus dem Rohmaterial: assertGroundedPost prueft gegen genau
       // diese Menge, und sie ist es, die die Antwort ueber verifiedFacts/generatedClaims verlaengert.

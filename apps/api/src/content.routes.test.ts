@@ -277,7 +277,7 @@ describe('POST /v1/text-workshop/sessions', () => {
   // beide Plattformen deshalb explizit, damit die uebrigen Faelle unten unveraendert bleiben.
   const basePayload = {
     organizationId: ORGANIZATION_ID, departmentId: DEPARTMENT_ID, communicationGoal: 'inform',
-    requestedFormats: ['text_post'], sourceMaterial: { facts: { title: 'Training' }, observations: [], quotes: [], doNotMention: [] },
+    requestedFormats: ['text_post'], sourceMaterial: { facts: { title: 'Training' }, observations: [], quotes: [] },
     targetPlatforms: ['instagram', 'facebook'],
   }
 
@@ -676,7 +676,7 @@ describe('GET /v1/text-workshop/sessions', () => {
   const SESSION_ROW = {
     id: '3c000000-0000-4000-8000-000000000001', organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: null,
     status: 'accepted', communication_goal: 'inform',
-    source_material: { facts: { title: 'Training' }, observations: [], quotes: [], doNotMention: [] },
+    source_material: { facts: { title: 'Training' }, observations: [], quotes: [] },
     style_profile_id: null,
     style_profile_snapshot: { name: 'Klar erklärend', description: 'Sachlich.', styleRules: STYLE_RULES, avoidRules: [], doRules: [], slug: 'klar_erklaerend' },
     target_platforms: ['instagram'], max_characters: 2200, temperature: 0.6, created_at: '2026-08-09T10:00:00+00:00',
@@ -1349,7 +1349,7 @@ describe('text workshop drafts', () => {
   const POST_ID = '3f000000-0000-4000-8000-000000000002'
   const SESSION_ID = '3f000000-0000-4000-8000-000000000003'
   const CANDIDATE_ID = '3f000000-0000-4000-8000-000000000004'
-  const draftPayload = { communicationGoal: 'inform', factsText: 'Übung: Passen', observation: '', doNotMention: '', selectedProfile: 'klar_erklaerend', temperature: 0.6, selectedPlatforms: [], maxCharactersOverride: '' }
+  const draftPayload = { communicationGoal: 'inform', factsText: 'Übung: Passen', observation: '', selectedProfile: 'klar_erklaerend', temperature: 0.6, selectedPlatforms: [], maxCharactersOverride: '' }
 
   it('audits a successfully saved draft without its raw input', async () => {
     const auditRows: Record<string, unknown>[] = []

@@ -35,7 +35,7 @@ insert into public.media_assets (id, organization_id, department_id, bucket_id, 
   ('46000000-2000-4000-8000-000000000003', '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', 'raw-media', 'organizations/x/departments/y/assets/3/c.jpg', 'image/jpeg', 1000, 'clean', 'ready', 'valid', now(), '46000000-0000-4000-8000-000000000001');
 
 insert into public.composition_sessions (id, organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values
-  ('46000000-3000-4000-8000-000000000001', '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('a', 64), '46000000-0000-4000-8000-000000000001');
+  ('46000000-3000-4000-8000-000000000001', '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"forbiddenTopics":[]}', '{}', 1, repeat('a', 64), '46000000-0000-4000-8000-000000000001');
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '46000000-0000-4000-8000-000000000002', true);
@@ -204,7 +204,7 @@ select lives_ok(
 -- FRESH session/attachment, never accepted: the main session above now has post_generation_provenance
 -- rows, and those are immutable even under an ON DELETE SET NULL cascade from composition_sessions.
 insert into public.composition_sessions (id, organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values
-  ('46000000-3000-4000-8000-000000000002', '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('2', 64), '46000000-0000-4000-8000-000000000001');
+  ('46000000-3000-4000-8000-000000000002', '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"forbiddenTopics":[]}', '{}', 1, repeat('2', 64), '46000000-0000-4000-8000-000000000001');
 insert into public.composition_session_post_media (organization_id, composition_session_id, media_asset_id, created_by) values
   ('46000000-1000-4000-8000-000000000001', '46000000-3000-4000-8000-000000000002', '46000000-2000-4000-8000-000000000001', '46000000-0000-4000-8000-000000000001');
 select is((select count(*)::integer from public.composition_session_post_media where composition_session_id = '46000000-3000-4000-8000-000000000002'), 1, 'the attachment row still exists before the session is deleted');
@@ -219,7 +219,7 @@ set local role postgres;
 insert into public.media_assets (id, organization_id, department_id, bucket_id, object_path, mime_type, byte_size, scan_status, upload_status, structural_validation_status, people_reviewed_at, created_by) values
   ('46000000-2000-4000-8000-000000000004', '46000000-1000-4000-8000-000000000001', null, 'raw-media', 'organizations/x/assets/4/d.jpg', 'image/jpeg', 1000, 'clean', 'ready', 'valid', now(), '46000000-0000-4000-8000-000000000003');
 insert into public.composition_sessions (id, organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, created_by) values
-  ('46000000-3000-4000-8000-000000000003', '46000000-1000-4000-8000-000000000001', null, 'inform', '["text_post"]', '{"facts":{"title":"Vereinsfest"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('3', 64), '46000000-0000-4000-8000-000000000003');
+  ('46000000-3000-4000-8000-000000000003', '46000000-1000-4000-8000-000000000001', null, 'inform', '["text_post"]', '{"facts":{"title":"Vereinsfest"},"observations":[],"quotes":[],"forbiddenTopics":[]}', '{}', 1, repeat('3', 64), '46000000-0000-4000-8000-000000000003');
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '46000000-0000-4000-8000-000000000003', true);

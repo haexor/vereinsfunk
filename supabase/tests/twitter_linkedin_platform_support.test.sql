@@ -79,7 +79,7 @@ select throws_ok(
 -- 9: composition_sessions.target_platforms accepts twitter/linkedin.
 select lives_ok(
   $$insert into public.composition_sessions (organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, target_platforms, created_by) values
-    ('78000000-1000-4000-8000-000000000001', '78000000-1100-4000-8000-000000000001', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('b', 64), array['twitter', 'linkedin'], '78000000-0000-4000-8000-000000000001')$$,
+    ('78000000-1000-4000-8000-000000000001', '78000000-1100-4000-8000-000000000001', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"forbiddenTopics":[]}', '{}', 1, repeat('b', 64), array['twitter', 'linkedin'], '78000000-0000-4000-8000-000000000001')$$,
   'composition_sessions accepts twitter and linkedin as target_platforms'
 );
 

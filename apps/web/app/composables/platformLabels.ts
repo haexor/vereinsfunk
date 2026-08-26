@@ -1,4 +1,4 @@
-import type { SocialPlatform } from '@vereinsfunk/contracts'
+import { hasExclusivePlatformConflict, type SocialPlatform } from '@vereinsfunk/contracts'
 
 // Paket 045: vorher vier identische Kopien (PlatformIcon.vue, DefaultTargetPlatformsPicker.vue,
 // erstellen.vue, plattform-admin/llm.vue) -- eine Quelle, damit eine neue Plattform nicht an vier
@@ -10,6 +10,20 @@ export const platformLabels: Record<SocialPlatform, string> = {
   linkedin: 'LinkedIn',
   website: 'Eigene Website',
   plaintext: 'Nur Text',
+}
+
+// 'plaintext' ist exklusiv (primitives.ts, createTextGenerationSession) -- eine Quelle fuer jede
+// Stelle, die eine bestehende Auswahl um eine Plattform aus zuvor gespeicherten/vorgegebenen Daten
+// ergaenzt, statt die Regel an mehreren Stellen unabhaengig nachzubauen (Review PR #181).
+export function resolveExclusivePlatforms(platforms: SocialPlatform[]): SocialPlatform[] {
+  return platforms.includes('plaintext') ? ['plaintext'] : platforms
+}
+// Wie resolveExclusivePlatforms, aber fuer einen einzelnen Klick auf `next`: haelt die bisherige
+// Auswahl, entfernt aber die jeweils andere Seite des Ausschlusses statt sie zu verwerfen.
+export function toggleExclusivePlatform(current: SocialPlatform[], next: SocialPlatform): SocialPlatform[] {
+  if (current.includes(next)) return current.filter((entry) => entry !== next)
+  const candidate = [...current.filter((entry) => entry !== 'plaintext'), next]
+  return hasExclusivePlatformConflict(candidate) ? [next] : candidate
 }
 
 export const platformColors: Record<SocialPlatform, string> = {

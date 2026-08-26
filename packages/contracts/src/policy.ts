@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { ContentPresetSlugSchema, MediaGateBlockerSchema, OutputFormatSchema, UuidSchema } from './content.js'
-import { OAuthPlatformSchema, SocialPlatformSchema } from './primitives.js'
+import { hasExclusivePlatformConflict, OAuthPlatformSchema, SocialPlatformSchema } from './primitives.js'
 import { AssignableRoleSchema, ScopeLevelSchema } from './structure.js'
 
 // Richtlinien mit Vererbung (Paket 023): zwei boolesche Felder je Ebene, `null` heisst "von oben
@@ -95,7 +95,10 @@ export const PolicyRuleValuesSchema = z.object({
   // Plan 044: null = geerbt, [] = ausdruecklich keine Vorauswahl -- anders als die drei Felder
   // oben ersetzt ein gesetzter Wert die Vorgabe der aeusseren Ebene komplett (packages/domain,
   // mergeReplaceableList), statt sie nur einzuengen.
-  defaultTargetPlatforms: z.array(SocialPlatformSchema).nullable(),
+  defaultTargetPlatforms: z.array(SocialPlatformSchema).nullable().refine(
+    (platforms) => platforms === null || !hasExclusivePlatformConflict(platforms),
+    { message: "defaultTargetPlatforms must not combine 'plaintext' with other platforms" },
+  ),
   forbiddenTopics: z.array(z.string().trim().min(1).max(200)),
   requiredHashtags: z.array(z.string().regex(/^#[\p{L}\p{N}_]+$/u)),
 })

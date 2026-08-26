@@ -17,7 +17,7 @@ insert into public.departments (id, organization_id, name, slug) values
 -- 1: composition_sessions.target_platforms accepts a plaintext-only selection.
 select lives_ok(
   $$insert into public.composition_sessions (organization_id, department_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, target_platforms, created_by) values
-    ('79000000-1000-4000-8000-000000000001', '79000000-1100-4000-8000-000000000001', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"doNotMention":[]}', '{}', 1, repeat('c', 64), array['plaintext'], '79000000-0000-4000-8000-000000000001')$$,
+    ('79000000-1000-4000-8000-000000000001', '79000000-1100-4000-8000-000000000001', 'inform', '["text_post"]', '{"facts":{"title":"Training"},"observations":[],"quotes":[],"forbiddenTopics":[]}', '{}', 1, repeat('c', 64), array['plaintext'], '79000000-0000-4000-8000-000000000001')$$,
   'composition_sessions accepts plaintext as the sole target_platform'
 );
 

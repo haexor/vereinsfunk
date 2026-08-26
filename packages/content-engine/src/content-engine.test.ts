@@ -10,10 +10,10 @@ describe('fake content generator', () => {
       presetSlug: 'match_result',
       communicationGoal: 'inform',
       requestedFormats: ['feed_image'],
-      sourceMaterial: { facts: { homeTeam: 'SV Nord' }, observations: [], quotes: [], doNotMention: [] },
+      sourceMaterial: { facts: { homeTeam: 'SV Nord' }, observations: [], quotes: [] },
       sourceRevision: 1,
       priority: 40,
-    })
+    }, [])
     expect(result.missingFacts).toEqual(['awayTeam', 'homeScore', 'awayScore'])
     expect(result.safetyFlags).toContain('uncertain_fact')
   })
@@ -23,9 +23,9 @@ describe('structured content generator', () => {
   const source = {
     organizationId: '11111111-1111-4111-8111-111111111111', departmentId: '22222222-2222-4222-8222-222222222222',
     presetSlug: 'training', communicationGoal: 'inform' as const, requestedFormats: ['feed_image'] as ('feed_image')[],
-    sourceMaterial: { facts: { topic: 'Passen' }, observations: ['Die Gruppe trainierte Passen.'], quotes: [], doNotMention: ['Sponsor X'] }, sourceRevision: 1, priority: 40,
+    sourceMaterial: { facts: { topic: 'Passen' }, observations: ['Die Gruppe trainierte Passen.'], quotes: [] }, sourceRevision: 1, priority: 40,
   }
-  const input = { brief: createGroundedContentBrief(source), styleProfile: { name: 'Klar', description: 'Kurz', styleRules: { toneTags: ['klar'], catchphrases: [], examples: [], additionalInstructions: '' }, avoidRules: [], doRules: [] }, model: 'synthetic', baseUrl: 'https://provider.example/v1', apiKey: 'secret', temperature: 0.2, maxOutputTokens: 400 }
+  const input = { brief: createGroundedContentBrief(source, ['Sponsor X']), styleProfile: { name: 'Klar', description: 'Kurz', styleRules: { toneTags: ['klar'], catchphrases: [], examples: [], additionalInstructions: '' }, avoidRules: [], doRules: [] }, model: 'synthetic', baseUrl: 'https://provider.example/v1', apiKey: 'secret', temperature: 0.2, maxOutputTokens: 400 }
   const grounded = { verifiedFacts: ['topic: Passen'], missingFacts: [], headline: 'Passen', caption: 'Passen', shortCaption: 'Passen', callToAction: '', hashtags: [], altText: 'Passen', templateId: 'v1', safetyFlags: [], generatedClaims: [{ sourceId: 'fact:topic', text: 'topic: Passen' }], variants: [] }
   it('states the complete JSON output contract and keeps few-shot output as a prose style example', () => {
     const prompt = buildStructuredTextPrompt({

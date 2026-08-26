@@ -106,7 +106,7 @@ function sourceMaterial() {
     rest = rest.slice(boundary).trim()
   }
   if (rest) observations.push(rest.slice(0, 500))
-  return { facts: {}, observations, quotes: [], doNotMention: [] }
+  return { facts: {}, observations, quotes: [] }
 }
 function persistDraft() {
   if (restoringDraft || !import.meta.client || !draftKey.value) return
@@ -116,7 +116,7 @@ function clearDraft() { if (import.meta.client && draftKey.value) localStorage.r
 function draftPayload() {
   // Die persistierte Vertragsform bleibt vorerst kompatibel zu bestehenden Entwürfen. Das UI
   // schreibt nur noch den Rohtext in observation; die früheren Spezialfelder bleiben leer.
-  return { communicationGoal: communicationGoal.value, factsText: '', observation: contentText.value, doNotMention: '', selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }
+  return { communicationGoal: communicationGoal.value, factsText: '', observation: contentText.value, selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }
 }
 function hasDraftContent() {
   const payload = draftPayload()
@@ -344,17 +344,8 @@ const candidateFinished = computed(() => candidate.value?.status === 'ready' || 
 const showCreateCandidateFab = computed(() => !sessionId.value)
 usePageSaveFab({ label: 'Textkandidaten erzeugen', save: createCandidate, saving: submitting, visible: showCreateCandidateFab, icon: Sparkles, savingLabel: 'Textkandidaten werden erzeugt …' })
 const unavailableReasons = computed(() => [...new Set(platforms.value.filter((entry) => !entry.available).map((entry) => entry.reason))].filter((reason): reason is PlatformUnavailableReason => reason !== undefined))
-// 'plaintext' ist exklusiv (primitives.ts, createTextGenerationSession) -- sonst zoege die
-// serverseitige Minimumbildung seine grosszuegige Zeichengrenze sinnlos auf die knappste andere
-// gewaehlte Plattform herunter. Wird von jeder Stelle genutzt, die selectedPlatforms aus zuvor
-// gespeicherten/vorgegebenen Daten befuellt, nicht nur von togglePlatform.
-function resolveExclusivePlatforms(platforms: SocialPlatform[]): SocialPlatform[] {
-  return platforms.includes('plaintext') ? ['plaintext'] : platforms
-}
 function togglePlatform(platform: SocialPlatform) {
-  if (selectedPlatforms.value.includes(platform)) { selectedPlatforms.value = selectedPlatforms.value.filter((entry) => entry !== platform); return }
-  if (platform === 'plaintext') { selectedPlatforms.value = ['plaintext']; return }
-  selectedPlatforms.value = [...selectedPlatforms.value.filter((entry) => entry !== 'plaintext'), platform]
+  selectedPlatforms.value = toggleExclusivePlatform(selectedPlatforms.value, platform)
 }
 async function reviseCandidate() {
   if (!sessionId.value || !revisionInstruction.value.trim()) return
