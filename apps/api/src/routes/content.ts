@@ -9,6 +9,7 @@ import {
   GeneratedPostSchema,
   GenerationCandidateStatusSchema,
   MaxCharactersSchema,
+  MediaAssetSummarySchema,
   PreviewCustomStyleProfileRequestSchema,
   SocialPlatformSchema,
   SourceMaterialSchema,
@@ -31,12 +32,12 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import { CLUB_EVENT_COLUMNS, FIXTURE_COLUMNS, mapClubEventRow, mapFixtureRow, mapTeamRow } from '../apiMappers.js'
+import { CLUB_EVENT_COLUMNS, FIXTURE_COLUMNS, MEDIA_ASSET_SUMMARY_COLUMNS, mapClubEventRow, mapFixtureRow, mapMediaAssetSummaryRow, mapTeamRow } from '../apiMappers.js'
 import { ensurePassThroughDerivative } from '../passThroughDerivative.js'
 import { saveTextWorkshopDraft } from '../services/textWorkshopDrafts.js'
 import { createTextGenerationSession, isStyleProfileUsableInScope, SYSTEM_STYLE_PROFILES } from '../services/textGenerationSessions.js'
 import type { ApiRouteContext } from './context.js'
-import { buildStyleProfilePromptPreview, checkRateLimit, createAuditRecorder, fetchMemberTrust, previewStyleProfile, resolveDirectoryScope, resolvePreviewIdempotencyKey, resolveScopedEffectiveConfig, resolveTextGenerationPlatformAvailability, resolveTextGenerationProviderConfigurationIds, toPermissionScope } from './shared.js'
+import { buildStyleProfilePromptPreview, checkRateLimit, createAuditRecorder, fetchMemberTrust, isAnyMemberOfOrganization, previewStyleProfile, resolveDirectoryScope, resolvePreviewIdempotencyKey, resolveScopedEffectiveConfig, resolveTextGenerationPlatformAvailability, resolveTextGenerationProviderConfigurationIds, toPermissionScope } from './shared.js'
 
 // Plan 033 text-only workshop. Diese Routen rufen kein LLM auf: sie schreiben Sitzung und einen
 // reinen ID-Umschlag ueber eine service-only RPC, die der Worker spaeter ausfuehrt.
@@ -772,6 +773,76 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (!(await requirePermission(request, reply, 'post.edit', toPermissionScope(parsedAsset.organization_id, parsedAsset.department_id)))) return
     return reply.code(202).send(await uploads.complete({ ...params, ...body }))
   })
+  // Medien-/Postuebersicht: Galerie bereits erzeugter Fotos/Videos, plus Auswahlquelle fuer die
+  // Wiederverwendung in einem neuen Beitrag und fuer den Chat-Anhang-Picker. Reiner authentifizierter
+  // Read, RLS (media_assets_select) traegt die Sichtbarkeit -- gleiches Muster wie
+  // GET /v1/organizations/:id/directory-people.
+  const MediaAssetListQuerySchema = z.object({
+    organizationId: UuidSchema,
+    departmentId: UuidSchema.optional(),
+    mimeTypePrefix: z.enum(['image/', 'video/', 'audio/']).optional(),
+    createdBy: z.literal('me').optional(),
+    // reviewedOnly=true grenzt auf Assets ein, deren Personen-/Einwilligungspruefung bereits
+    // bestaetigt ist (people_reviewed_at gesetzt) -- Voraussetzung fuer die Wiederverwendung in
+    // einem neuen Beitrag, siehe PhotoAttachment.vue. z.stringbool() statt z.coerce.boolean():
+    // letzteres macht jeden nicht-leeren String wahr (siehe directory.ts isMinor-Kommentar).
+    reviewedOnly: z.stringbool().optional(),
+  })
+  app.get('/v1/media-assets', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const query = MediaAssetListQuerySchema.parse(request.query)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const validatedScope = await resolveDirectoryScope(client, query.organizationId, query.departmentId ?? null, null)
+    if (!validatedScope || !(await isAnyMemberOfOrganization(client, request.auth!.userId, query.organizationId))) {
+      return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    }
+    let builder = client
+      .from('media_assets')
+      .select(MEDIA_ASSET_SUMMARY_COLUMNS)
+      .eq('organization_id', query.organizationId)
+      .eq('upload_status', 'ready')
+    if (query.departmentId !== undefined) builder = builder.eq('department_id', query.departmentId)
+    if (query.mimeTypePrefix) builder = builder.like('mime_type', `${query.mimeTypePrefix}%`)
+    if (query.createdBy === 'me') builder = builder.eq('created_by', request.auth!.userId)
+    if (query.reviewedOnly) builder = builder.not('people_reviewed_at', 'is', null)
+    const result = await builder.order('created_at', { ascending: false }).limit(60)
+    if (result.error) throw result.error
+    const rows = (result.data ?? []) as Record<string, unknown>[]
+    // Signed URLs koennen nicht ueber den Nutzer-Client erzeugt werden (kein Storage-Grant fuer
+    // authenticated auf rendered-media/raw-media) -- derselbe Service-Client wie in
+    // photoLayout.ts:222. Nur fuer Bilder: es gibt keine Video-/Audio-Vorschau-Pipeline.
+    const service = supabaseClients.forService()
+    const summaries = await Promise.all(rows.map(async (row) => {
+      const mimeType = row.mime_type as string
+      if (!mimeType.startsWith('image/')) return mapMediaAssetSummaryRow(row, null)
+      const signed = await service.storage.from(row.bucket_id as string).createSignedUrl(row.object_path as string, 600)
+      return mapMediaAssetSummaryRow(row, signed.data?.signedUrl ?? null)
+    }))
+    return reply.code(200).send(z.array(MediaAssetSummarySchema).parse(summaries))
+  })
+
+  // Einzelabruf fuer die Wiederverwendung eines bestehenden Fotos in PhotoAttachment.vue: dort ist
+  // nur die Asset-ID bekannt (aus dem mediaAssetId-Query-Parameter von erstellen.vue), nicht der
+  // volle Scope. RLS entscheidet Sichtbarkeit -- ein unbekanntes oder unsichtbares Asset ergibt
+  // denselben not_found wie ein tatsaechlich fehlendes, kein Unterschied nach aussen.
+  app.get('/v1/media-assets/:id', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const found = await client.from('media_assets').select(MEDIA_ASSET_SUMMARY_COLUMNS).eq('id', params.id).eq('upload_status', 'ready').maybeSingle()
+    if (found.error) throw found.error
+    if (!found.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const row = found.data as Record<string, unknown>
+    const mimeType = row.mime_type as string
+    let signedUrl: string | null = null
+    if (mimeType.startsWith('image/')) {
+      const service = supabaseClients.forService()
+      const signed = await service.storage.from(row.bucket_id as string).createSignedUrl(row.object_path as string, 600)
+      signedUrl = signed.data?.signedUrl ?? null
+    }
+    return reply.code(200).send(mapMediaAssetSummaryRow(row, signedUrl))
+  })
+
   app.post('/v1/media/gate', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     // Keine requirePermission-Pruefung: reine, zustandslose Regelauswertung ohne Scope-Bezug

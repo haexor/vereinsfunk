@@ -624,6 +624,30 @@ export function registerAgentRoutes(
     return reply.code(201).send(AgentConversationSchema.parse(conversation))
   })
 
+  // Konversationshistorie: die 50 zuletzt aktiven, nicht archivierten Unterhaltungen desselben
+  // Scopes. RLS (agent_conversations_select) beschraenkt das Ergebnis bereits auf created_by =
+  // auth.uid() -- Unterhaltungen sind privat, siehe Migration 2026082404. Bounded query statt
+  // fetchAllRows: die 90-Tage-Retention haelt das Volumen von Natur aus klein.
+  app.get('/v1/agent/conversations', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const scope = AgentScopeSchema.parse(request.query)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const validatedScope = await resolveDirectoryScope(client, scope.organizationId, scope.departmentId ?? null, scope.teamId ?? null)
+    if (!validatedScope || !(await isAnyMemberOfOrganization(client, request.auth!.userId, scope.organizationId))) {
+      return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    }
+    let query = client
+      .from('agent_conversations')
+      .select('id, organization_id, department_id, team_id, created_by, title, last_activity_at, archived_at, retention_expires_at, created_at, updated_at')
+      .eq('organization_id', scope.organizationId)
+      .is('archived_at', null)
+    if (scope.departmentId !== undefined) query = query.eq('department_id', scope.departmentId ?? null)
+    if (scope.teamId !== undefined) query = query.eq('team_id', scope.teamId ?? null)
+    const rows = await query.order('last_activity_at', { ascending: false }).limit(50)
+    if (rows.error) throw rows.error
+    return reply.code(200).send((rows.data ?? []).map(mapConversation))
+  })
+
   app.get('/v1/agent/conversations/:id', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)

@@ -369,9 +369,11 @@ await Promise.all([loadProfiles(), loadPlatformAvailability()])
 const resumePostId = UuidSchema.safeParse(route.query.postId)
 const resumeDraftId = UuidSchema.safeParse(route.query.draftId)
 const resumeSessionId = UuidSchema.safeParse(route.query.sessionId)
+const resumeMediaAssetId = UuidSchema.safeParse(route.query.mediaAssetId)
 if (resumeDraftId.success) await loadServerDraft(resumeDraftId.data)
 else if (resumePostId.success) await loadDraftFromPost(resumePostId.data)
 else if (resumeSessionId.success) await loadExistingSession(resumeSessionId.data)
+else if (resumeMediaAssetId.success) { /* PhotoAttachmentList fuellt sich selbst ueber initial-media-asset-ids */ }
 else {
   if (route.query.postId !== undefined || route.query.draftId !== undefined || route.query.sessionId !== undefined) notice.value = 'Der Link zum Entwurf ist ungültig.'
   restoreDraft()
@@ -393,7 +395,7 @@ onBeforeUnmount(() => { if (hasDraftContent()) void saveServerDraft() })
         <legend class="mb-2 text-xs font-semibold">Anhänge</legend>
         <p class="mb-3 text-xs text-[#727a75]">Ein Bild macht deinen Beitrag meist direkt lebendig.</p>
         <template v-if="scope?.organizationId">
-          <PhotoAttachmentList v-if="additionalMediaAssetIds.length < 10" :key="`${scope.organizationId}:${scope.departmentId ?? 'org'}`" v-model:media-asset-ids="mediaAssetIds" :organization-id="scope.organizationId" :department-id="scope.departmentId" :max="10 - additionalMediaAssetIds.length" />
+          <PhotoAttachmentList v-if="additionalMediaAssetIds.length < 10" :key="`${scope.organizationId}:${scope.departmentId ?? 'org'}`" v-model:media-asset-ids="mediaAssetIds" :organization-id="scope.organizationId" :department-id="scope.departmentId" :max="10 - additionalMediaAssetIds.length" :initial-media-asset-ids="resumeMediaAssetId.success ? [resumeMediaAssetId.data] : undefined" />
           <p v-else class="text-xs text-[#727a75]">Die maximale Anzahl von zehn Anhängen ist erreicht.</p>
           <div class="mt-3 border-t border-[#e7e8e1] pt-3">
             <MediaAttachmentUpload :key="`other-media:${scope.organizationId}:${scope.departmentId ?? 'org'}`" v-model="additionalMediaAssetIds" :organization-id="scope.organizationId" :department-id="scope.departmentId" :max="10 - mediaAssetIds.length" :allow-images="false" review-videos />
