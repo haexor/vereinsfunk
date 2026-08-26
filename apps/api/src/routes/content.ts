@@ -773,6 +773,22 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (!(await requirePermission(request, reply, 'post.edit', toPermissionScope(parsedAsset.organization_id, parsedAsset.department_id)))) return
     return reply.code(202).send(await uploads.complete({ ...params, ...body }))
   })
+  // Nur Bild/Video durchlaufen ueberhaupt eine Personen-Pruefung -- deckungsgleich mit dem Gate in
+  // textGenerationSessions.ts:100.
+  function needsPeopleReview(row: Record<string, unknown>): boolean {
+    const mimeType = row.mime_type as string
+    return mimeType.startsWith('image/') || mimeType.startsWith('video/')
+  }
+  // Signed URLs koennen nicht ueber den Nutzer-Client erzeugt werden (kein Storage-Grant fuer
+  // authenticated auf rendered-media/raw-media) -- derselbe Service-Client wie in photoLayout.ts:222.
+  // Nur fuer Bilder: es gibt keine Video-/Audio-Vorschau-Pipeline.
+  async function signMediaAssetSummary(service: SupabaseClient, row: Record<string, unknown>) {
+    const mimeType = row.mime_type as string
+    if (!mimeType.startsWith('image/')) return mapMediaAssetSummaryRow(row, null)
+    const signed = await service.storage.from(row.bucket_id as string).createSignedUrl(row.object_path as string, 600)
+    if (signed.error) throw signed.error
+    return mapMediaAssetSummaryRow(row, signed.data.signedUrl)
+  }
   // Medien-/Postuebersicht: Galerie bereits erzeugter Fotos/Videos, plus Auswahlquelle fuer die
   // Wiederverwendung in einem neuen Beitrag und fuer den Chat-Anhang-Picker. Reiner authentifizierter
   // Read, RLS (media_assets_select) traegt die Sichtbarkeit -- gleiches Muster wie
@@ -804,20 +820,16 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (query.departmentId !== undefined) builder = builder.eq('department_id', query.departmentId)
     if (query.mimeTypePrefix) builder = builder.like('mime_type', `${query.mimeTypePrefix}%`)
     if (query.createdBy === 'me') builder = builder.eq('created_by', request.auth!.userId)
-    if (query.reviewedOnly) builder = builder.not('people_reviewed_at', 'is', null)
     const result = await builder.order('created_at', { ascending: false }).limit(60)
     if (result.error) throw result.error
-    const rows = (result.data ?? []) as Record<string, unknown>[]
-    // Signed URLs koennen nicht ueber den Nutzer-Client erzeugt werden (kein Storage-Grant fuer
-    // authenticated auf rendered-media/raw-media) -- derselbe Service-Client wie in
-    // photoLayout.ts:222. Nur fuer Bilder: es gibt keine Video-/Audio-Vorschau-Pipeline.
+    let rows = (result.data ?? []) as Record<string, unknown>[]
+    // reviewedOnly gilt nur fuer Bild/Video: nur diese beiden durchlaufen ueberhaupt eine
+    // Personen-Pruefung (people_reviewed_at), siehe textGenerationSessions.ts:100. Ein SQL-Filter
+    // auf "people_reviewed_at is not null" wuerde Audio-Assets, deren Spalte nie gesetzt wird,
+    // faelschlich dauerhaft ausschliessen.
+    if (query.reviewedOnly) rows = rows.filter((row) => !needsPeopleReview(row) || row.people_reviewed_at !== null)
     const service = supabaseClients.forService()
-    const summaries = await Promise.all(rows.map(async (row) => {
-      const mimeType = row.mime_type as string
-      if (!mimeType.startsWith('image/')) return mapMediaAssetSummaryRow(row, null)
-      const signed = await service.storage.from(row.bucket_id as string).createSignedUrl(row.object_path as string, 600)
-      return mapMediaAssetSummaryRow(row, signed.data?.signedUrl ?? null)
-    }))
+    const summaries = await Promise.all(rows.map((row) => signMediaAssetSummary(service, row)))
     return reply.code(200).send(z.array(MediaAssetSummarySchema).parse(summaries))
   })
 
@@ -832,15 +844,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     const found = await client.from('media_assets').select(MEDIA_ASSET_SUMMARY_COLUMNS).eq('id', params.id).eq('upload_status', 'ready').maybeSingle()
     if (found.error) throw found.error
     if (!found.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
-    const row = found.data as Record<string, unknown>
-    const mimeType = row.mime_type as string
-    let signedUrl: string | null = null
-    if (mimeType.startsWith('image/')) {
-      const service = supabaseClients.forService()
-      const signed = await service.storage.from(row.bucket_id as string).createSignedUrl(row.object_path as string, 600)
-      signedUrl = signed.data?.signedUrl ?? null
-    }
-    return reply.code(200).send(mapMediaAssetSummaryRow(row, signedUrl))
+    return reply.code(200).send(await signMediaAssetSummary(supabaseClients.forService(), found.data as Record<string, unknown>))
   })
 
   app.post('/v1/media/gate', async (request, reply) => {

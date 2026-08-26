@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Check, FileAudio, FileVideo, Images, ImagePlus, LoaderCircle, Paperclip, Trash2 } from '@lucide/vue'
+import { Check, Images, LoaderCircle, Paperclip, Trash2 } from '@lucide/vue'
 import { MediaAssetSummarySchema, type MediaAssetSummary } from '@vereinsfunk/contracts'
 import { z } from 'zod'
 
@@ -53,11 +53,6 @@ function mimeTypeOf(attachment: PendingAttachment) {
 }
 function nameOf(attachment: PendingAttachment) {
   return attachment.file?.name ?? attachment.existingLabel ?? 'Datei'
-}
-function iconFor(mimeType: string) {
-  if (mimeType.startsWith('video/')) return FileVideo
-  if (mimeType.startsWith('audio/')) return FileAudio
-  return ImagePlus
 }
 async function sha256Hex(file: File) {
   const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
@@ -181,13 +176,13 @@ watch(mediaAssetIds, (ids) => {
           @click="pickExisting(asset)"
         >
           <img v-if="asset.signedUrl" :src="asset.signedUrl" class="h-full w-full object-cover" alt="" />
-          <span v-else class="grid h-full w-full place-items-center bg-[#f2f4ee] text-[#727a75]"><component :is="iconFor(asset.mimeType)" :size="20" /></span>
+          <span v-else class="grid h-full w-full place-items-center bg-[#f2f4ee] text-[#727a75]"><component :is="iconForMimeType(asset.mimeType)" :size="20" /></span>
         </button>
       </div>
     </template>
     <ul v-if="attachments.length" class="space-y-2">
       <li v-for="attachment in attachments" :key="attachment.id" class="flex items-center gap-2 rounded-xl bg-[#f2f4ee] px-3 py-2 text-xs text-[#435047]">
-        <component :is="iconFor(mimeTypeOf(attachment))" :size="16" class="shrink-0 text-forest" />
+        <component :is="iconForMimeType(mimeTypeOf(attachment))" :size="16" class="shrink-0 text-forest" />
         <span class="min-w-0 flex-1 truncate font-semibold">{{ nameOf(attachment) }}</span>
         <span v-if="attachment.state === 'uploading'" class="inline-flex items-center gap-1 text-[#727a75]"><LoaderCircle :size="13" class="animate-spin" /> Lädt hoch</span>
         <button v-else-if="attachment.state === 'review'" type="button" class="rounded-lg bg-forest px-2 py-1 text-[11px] font-semibold text-white" @click="confirmVideoReview(attachment)">Video geprüft: keine Personen</button>

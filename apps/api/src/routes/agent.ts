@@ -104,6 +104,9 @@ class AgentProposalExecutionError extends Error {
   }
 }
 
+const AGENT_CONVERSATION_COLUMNS =
+  'id, organization_id, department_id, team_id, created_by, title, last_activity_at, archived_at, retention_expires_at, created_at, updated_at'
+
 function mapConversation(row: unknown): AgentConversation {
   const parsed = ConversationRowSchema.parse(row)
   return AgentConversationSchema.parse({
@@ -410,7 +413,7 @@ async function loadWorkspaceOrEmpty(
 async function loadConversation(client: SupabaseClient, id: string): Promise<AgentConversation | null> {
   const result = await client
     .from('agent_conversations')
-    .select('id, organization_id, department_id, team_id, created_by, title, last_activity_at, archived_at, retention_expires_at, created_at, updated_at')
+    .select(AGENT_CONVERSATION_COLUMNS)
     .eq('id', id)
     .is('archived_at', null)
     .maybeSingle()
@@ -612,7 +615,7 @@ export function registerAgentRoutes(
       department_id: input.departmentId ?? null,
       team_id: input.teamId ?? null,
       created_by: request.auth!.userId,
-    }).select('id, organization_id, department_id, team_id, created_by, title, last_activity_at, archived_at, retention_expires_at, created_at, updated_at').single()
+    }).select(AGENT_CONVERSATION_COLUMNS).single()
     if (created.error) throw created.error
     const conversation = mapConversation(created.data)
     await recordAuditEvent(request, {
@@ -636,14 +639,19 @@ export function registerAgentRoutes(
     if (!validatedScope || !(await isAnyMemberOfOrganization(client, request.auth!.userId, scope.organizationId))) {
       return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     }
-    let query = client
+    // department_id/team_id immer konkret filtern (?? null statt bedingt) -- eine Unterhaltung
+    // wird beim Anlegen ebenso konkret gespeichert (siehe POST oben: input.departmentId ?? null),
+    // nie mit "beliebig". Ein fehlender Query-Parameter bedeutet Vereins-Scope (toAgentScopeRequest
+    // im Frontend), nicht "ueber alle Abteilungen hinweg" -- sonst mischen sich fremde
+    // Abteilungs-Unterhaltungen in den Verlauf, obwohl der Kommentar oben "desselben Scopes" verspricht.
+    const rows = await client
       .from('agent_conversations')
-      .select('id, organization_id, department_id, team_id, created_by, title, last_activity_at, archived_at, retention_expires_at, created_at, updated_at')
+      .select(AGENT_CONVERSATION_COLUMNS)
       .eq('organization_id', scope.organizationId)
+      .eq('department_id', scope.departmentId ?? null)
+      .eq('team_id', scope.teamId ?? null)
       .is('archived_at', null)
-    if (scope.departmentId !== undefined) query = query.eq('department_id', scope.departmentId ?? null)
-    if (scope.teamId !== undefined) query = query.eq('team_id', scope.teamId ?? null)
-    const rows = await query.order('last_activity_at', { ascending: false }).limit(50)
+      .order('last_activity_at', { ascending: false }).limit(50)
     if (rows.error) throw rows.error
     return reply.code(200).send((rows.data ?? []).map(mapConversation))
   })

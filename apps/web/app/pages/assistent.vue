@@ -109,7 +109,7 @@ await initialize()
 watch(scopeInput, () => void initialize(), { deep: true })
 
 async function switchConversation(id: string) {
-  if (id === conversation.value?.id || switchingConversationId.value || startingNewConversation.value) return
+  if (id === conversation.value?.id || switchingConversationId.value || startingNewConversation.value || sending.value) return
   const run = ++initializeRun
   const expectedScopeKey = scopeKey.value
   const isCurrent = () => run === initializeRun && expectedScopeKey === scopeKey.value
@@ -135,7 +135,7 @@ async function switchConversation(id: string) {
 
 async function startNewConversation() {
   const input = scopeInput.value
-  if (!input || switchingConversationId.value || startingNewConversation.value) return
+  if (!input || switchingConversationId.value || startingNewConversation.value || sending.value) return
   const run = ++initializeRun
   const expectedScopeKey = scopeKey.value
   const isCurrent = () => run === initializeRun && expectedScopeKey === scopeKey.value
@@ -326,14 +326,14 @@ function formatDate(value: string | null) {
         <section class="card p-5">
           <div class="mb-4 flex items-center justify-between gap-2">
             <div class="flex items-center gap-2"><History :size="17" class="text-forest" /><h2 class="font-display text-base font-bold">Verlauf</h2></div>
-            <button type="button" class="focus-ring inline-flex items-center gap-1 rounded-lg border border-[#dfe2da] px-2 py-1 text-xs font-semibold text-[#435047] disabled:opacity-50" :disabled="startingNewConversation" @click="startNewConversation"><Plus :size="13" /> Neu</button>
+            <button type="button" class="focus-ring inline-flex items-center gap-1 rounded-lg border border-[#dfe2da] px-2 py-1 text-xs font-semibold text-[#435047] disabled:opacity-50" :disabled="startingNewConversation || sending" @click="startNewConversation"><Plus :size="13" /> Neu</button>
           </div>
           <div v-if="conversations.length" class="space-y-1.5">
             <button
               v-for="entry in conversations" :key="entry.id" type="button"
               class="focus-ring flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-xs transition"
               :class="entry.id === conversation?.id ? 'bg-forest text-white' : 'text-[#435047] hover:bg-[#f2f4ee]'"
-              :disabled="switchingConversationId !== null || startingNewConversation"
+              :disabled="switchingConversationId !== null || startingNewConversation || sending"
               @click="switchConversation(entry.id)"
             >
               <span class="min-w-0 flex-1 truncate">{{ entry.title || formatDate(entry.lastActivityAt) }}</span>

@@ -58,8 +58,13 @@ onMounted(async () => {
   phase.value = 'hydrating'
   try {
     const asset = await api.request(`/v1/media-assets/${props.initialMediaAssetId}`, {}, MediaAssetSummarySchema)
+    if (asset.organizationId !== props.organizationId || asset.departmentId !== props.departmentId) {
+      phase.value = 'failed'
+      errorMessage.value = 'Dieses Foto gehört zu einem anderen Bereich und kann hier nicht verwendet werden.'
+      return
+    }
     if (!asset.mimeType.startsWith('image/') || !asset.peopleReviewedAt || !asset.signedUrl) {
-      phase.value = 'idle'
+      phase.value = 'failed'
       errorMessage.value = 'Dieses Foto wurde noch nicht geprüft und kann nicht wiederverwendet werden.'
       return
     }
@@ -70,7 +75,7 @@ onMounted(async () => {
     mediaAssetId.value = asset.id
     phase.value = 'reviewed'
   } catch {
-    phase.value = 'idle'
+    phase.value = 'failed'
     errorMessage.value = 'Das Foto konnte nicht geladen werden.'
   }
 })

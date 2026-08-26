@@ -15,10 +15,13 @@ interface Slot { id: number; value: string | null; initialMediaAssetId: string |
 let nextSlotId = 1
 // initialMediaAssetIds wird nur beim Erzeugen der Komponente ausgewertet (Wiederverwendung eines
 // Fotos aus der Medienuebersicht per Query-Parameter in erstellen.vue) -- kein reaktiver Watcher,
-// derselbe Zeitpunkt wie die Query-Parameter-Auswertung dort.
+// derselbe Zeitpunkt wie die Query-Parameter-Auswertung dort. value startet trotzdem bei null:
+// PhotoAttachment.vue setzt es erst nach erfolgreicher Hydration auf die Asset-ID. Waere es hier
+// schon vorbelegt, wäre diese spätere Zuweisung ein No-Op (identischer Wert) und der deep watch
+// unten würde nie feuern -- das wiederverwendete Foto käme nie in mediaAssetIds an.
 const slots = ref<Slot[]>(
   props.initialMediaAssetIds?.length
-    ? props.initialMediaAssetIds.slice(0, effectiveMax.value).map((assetId) => ({ id: nextSlotId++, value: assetId, initialMediaAssetId: assetId }))
+    ? props.initialMediaAssetIds.slice(0, effectiveMax.value).map((assetId) => ({ id: nextSlotId++, value: null, initialMediaAssetId: assetId }))
     : [{ id: 0, value: null, initialMediaAssetId: null }],
 )
 

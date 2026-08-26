@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { MediaAssetSummarySchema, TextWorkshopDraftRowSchema, type MediaAssetSummary } from '@vereinsfunk/contracts'
-import { FileAudio, FileVideo, ImagePlus } from '@lucide/vue'
 import { z } from 'zod'
 const scope = await useScope()
 const api = useApiClient()
@@ -14,11 +13,6 @@ const mediaAssets = ref<MediaAssetSummary[]>([])
 const mediaLoading = ref(false)
 const mediaError = ref<string | null>(null)
 const onlyMyMedia = ref(false)
-function mediaIconFor(mimeType: string) {
-  if (mimeType.startsWith('video/')) return FileVideo
-  if (mimeType.startsWith('audio/')) return FileAudio
-  return ImagePlus
-}
 async function loadMedia() {
   if (!scope.value?.organizationId) return
   mediaLoading.value = true
@@ -156,7 +150,7 @@ async function deleteWorkshopDraft(draft: z.infer<typeof TextWorkshopDraftRowSch
       <div v-else class="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
         <div v-for="asset in mediaAssets" :key="asset.id" class="group relative aspect-square overflow-hidden rounded-xl border border-[#e1e2db]">
           <img v-if="asset.signedUrl" :src="asset.signedUrl" class="h-full w-full object-cover" alt="" />
-          <span v-else class="grid h-full w-full place-items-center bg-[#f2f4ee] text-[#727a75]"><component :is="mediaIconFor(asset.mimeType)" :size="24" /></span>
+          <span v-else class="grid h-full w-full place-items-center bg-[#f2f4ee] text-[#727a75]"><component :is="iconForMimeType(asset.mimeType)" :size="24" /></span>
           <NuxtLink
             v-if="asset.mimeType.startsWith('image/')" :to="`/erstellen?mediaAssetId=${asset.id}`"
             class="absolute inset-x-0 bottom-0 bg-black/60 px-2 py-1.5 text-center text-[11px] font-semibold text-white opacity-0 transition group-hover:opacity-100"
