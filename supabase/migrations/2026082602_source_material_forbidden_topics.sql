@@ -50,6 +50,15 @@ alter table public.composition_sessions add constraint composition_sessions_sour
 ) not valid;
 alter table public.composition_sessions validate constraint composition_sessions_source_material_check;
 
+-- Anders als bei composition_sessions oben muss der alte Constraint hier VOR dem UPDATE fallen:
+-- submissions_material_check verlangt (seit 202608030001) noch das Feld doNotMention, und das
+-- UPDATE unten baut source_material per jsonb_build_object() komplett neu auf, ohne dieses Feld --
+-- jede Zeile, die das UPDATE trifft, wuerde sonst den waehrend des UPDATEs noch aktiven alten
+-- Constraint verletzen (denselben Typ-Pruefungen wie composition_sessions unterworfen, vorher liess
+-- submissions_material_check z. B. einen String statt eines Arrays fuer forbiddenTopics unbemerkt
+-- durch).
+alter table public.submissions drop constraint submissions_material_check;
+
 update public.submissions
 set source_material = jsonb_build_object(
   'facts', case when jsonb_typeof(source_material->'facts') = 'object' then source_material->'facts' else '{}'::jsonb end,
@@ -70,9 +79,6 @@ where not (
   and jsonb_typeof(source_material->'forbiddenTopics') = 'array'
 );
 
--- Denselben Typ-Prüfungen wie composition_sessions unterworfen (vorher liess submissions_material_check
--- z. B. einen String statt eines Arrays fuer forbiddenTopics unbemerkt durch).
-alter table public.submissions drop constraint submissions_material_check;
 alter table public.submissions add constraint submissions_material_check check (
   jsonb_typeof(source_material) = 'object'
   and source_material ?& array['facts', 'observations', 'quotes', 'forbiddenTopics']
