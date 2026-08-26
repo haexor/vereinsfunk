@@ -23,7 +23,9 @@ const supabase = useSupabaseClient()
 const phase = ref<Phase>('idle')
 const errorMessage = ref('')
 const previewUrl = ref('')
-const previewIsObjectUrl = ref(false)
+// Nur ein frisch hochgeladenes Foto laeuft ueber createObjectURL -- ein wiederverwendetes/signiertes
+// Foto bekommt immer eine echte https-URL. Aus dem URL-Schema ableitbar statt separat mitgefuehrt.
+const previewIsObjectUrl = computed(() => previewUrl.value.startsWith('blob:'))
 const boxes = ref<FaceBox[]>([])
 const consents = ref<ConsentOption[]>([])
 const imageEl = useTemplateRef<HTMLImageElement>('imageEl')
@@ -46,7 +48,6 @@ const hasUndecidedBox = computed(() => boxes.value.some((box) => box.decision ==
 function resetPreview() {
   if (previewIsObjectUrl.value && previewUrl.value) URL.revokeObjectURL(previewUrl.value)
   previewUrl.value = ''
-  previewIsObjectUrl.value = false
 }
 function reset() {
   phase.value = 'idle'; errorMessage.value = ''; boxes.value = []; mediaAssetId.value = null; isHydratedExternalAsset.value = false; resetPreview()
@@ -69,7 +70,6 @@ onMounted(async () => {
       return
     }
     previewUrl.value = asset.signedUrl
-    previewIsObjectUrl.value = false
     currentAssetId.value = asset.id
     isHydratedExternalAsset.value = true
     mediaAssetId.value = asset.id
@@ -106,7 +106,6 @@ async function onFileSelected(event: Event) {
     if (asset.error) throw asset.error
     if (asset.data.upload_status !== 'ready') { phase.value = 'failed'; errorMessage.value = 'Das Foto konnte nicht verarbeitet werden. Bitte ein anderes Bild versuchen.'; return }
     previewUrl.value = URL.createObjectURL(file)
-    previewIsObjectUrl.value = true
     boxes.value = []
     currentAssetId.value = initiated.assetId
     phase.value = 'marking'

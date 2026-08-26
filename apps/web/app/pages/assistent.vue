@@ -160,7 +160,7 @@ async function startNewConversation() {
 
 async function send() {
   const content = prompt.value.trim()
-  if (!content || !conversation.value || sending.value) return
+  if (!content || !conversation.value || sending.value || switchingConversationId.value || startingNewConversation.value) return
   const run = ++sendRun
   const expectedInitializeRun = initializeRun
   const expectedScopeKey = scopeKey.value
@@ -315,9 +315,9 @@ function formatDate(value: string | null) {
           <label class="sr-only" for="assistant-prompt">Nachricht an den Assistenten</label>
           <div class="flex items-end gap-2 rounded-2xl border border-[#dfe2da] bg-white p-2 focus-within:ring-2 focus-within:ring-forest/30">
             <textarea id="assistant-prompt" v-model="prompt" maxlength="4000" rows="2" class="min-h-12 flex-1 resize-none border-0 bg-transparent px-2 py-1 text-sm outline-none" placeholder="Zum Beispiel: Welche Freigaben sind offen?" @keydown.enter.exact.prevent="send" />
-            <button type="submit" :disabled="!prompt.trim() || sending" class="focus-ring grid h-10 w-10 place-items-center rounded-xl bg-forest text-white disabled:cursor-not-allowed disabled:opacity-50" aria-label="Nachricht senden"><ArrowUp :size="18" /></button>
+            <button type="submit" :disabled="!prompt.trim() || sending || switchingConversationId !== null || startingNewConversation" class="focus-ring grid h-10 w-10 place-items-center rounded-xl bg-forest text-white disabled:cursor-not-allowed disabled:opacity-50" aria-label="Nachricht senden"><ArrowUp :size="18" /></button>
           </div>
-          <MediaAttachmentUpload v-if="scope?.organizationId" v-model="messageMediaAssetIds" class="mt-3 px-2" :organization-id="scope.organizationId" :department-id="scope.departmentId ?? null" :max="10" />
+          <MediaAttachmentUpload v-if="scope?.organizationId" :key="`${scope.organizationId}:${scope.departmentId ?? 'org'}`" v-model="messageMediaAssetIds" class="mt-3 px-2" :organization-id="scope.organizationId" :department-id="scope.departmentId ?? null" :max="10" />
           <p class="mt-2 px-2 text-[11px] text-[#7a827c]">Anhänge bleiben privat. Sie werden nicht automatisch an das Textmodell gesendet; eine Bildbearbeitung braucht immer einen eigenen bestätigten Auftrag. Termine und Einladungen werden als Karte vorbereitet und erst nach deiner Bestätigung ausgeführt.</p>
         </form>
       </section>

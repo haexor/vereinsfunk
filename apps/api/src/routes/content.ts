@@ -773,21 +773,39 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (!(await requirePermission(request, reply, 'post.edit', toPermissionScope(parsedAsset.organization_id, parsedAsset.department_id)))) return
     return reply.code(202).send(await uploads.complete({ ...params, ...body }))
   })
-  // Nur Bild/Video durchlaufen ueberhaupt eine Personen-Pruefung -- deckungsgleich mit dem Gate in
-  // textGenerationSessions.ts:100.
-  function needsPeopleReview(row: Record<string, unknown>): boolean {
-    const mimeType = row.mime_type as string
-    return mimeType.startsWith('image/') || mimeType.startsWith('video/')
-  }
   // Signed URLs koennen nicht ueber den Nutzer-Client erzeugt werden (kein Storage-Grant fuer
   // authenticated auf rendered-media/raw-media) -- derselbe Service-Client wie in photoLayout.ts:222.
-  // Nur fuer Bilder: es gibt keine Video-/Audio-Vorschau-Pipeline.
+  // Nur fuer Bilder: es gibt keine Video-/Audio-Vorschau-Pipeline. Ein einzelner fehlgeschlagener
+  // Storage-Aufruf (z. B. ein geloeschtes/inkonsistentes Objekt) faellt auf signedUrl: null zurueck
+  // statt die ganze Liste per throw abzureissen -- die Aufrufer zeigen fehlendes signedUrl bereits
+  // als Icon-Platzhalter bzw. lehnen die Wiederverwendung sauber ab (PhotoAttachment.vue).
   async function signMediaAssetSummary(service: SupabaseClient, row: Record<string, unknown>) {
     const mimeType = row.mime_type as string
     if (!mimeType.startsWith('image/')) return mapMediaAssetSummaryRow(row, null)
     const signed = await service.storage.from(row.bucket_id as string).createSignedUrl(row.object_path as string, 600)
-    if (signed.error) throw signed.error
-    return mapMediaAssetSummaryRow(row, signed.data.signedUrl)
+    return mapMediaAssetSummaryRow(row, signed.error ? null : signed.data.signedUrl)
+  }
+  // Fuer eine ganze Liste: ein createSignedUrl-Aufruf je Bild-Zeile waere bei der Galerie (bis zu 60
+  // Zeilen) bis zu 60 einzelne Storage-Roundtrips. Bild-Zeilen nach bucket_id gruppieren (raw-media
+  // vs. rendered-media) und je Bucket createSignedUrls (Plural, ein Aufruf fuer alle Pfade) nutzen.
+  async function signMediaAssetSummaries(service: SupabaseClient, rows: Record<string, unknown>[]) {
+    const rowsByBucket = new Map<string, Record<string, unknown>[]>()
+    for (const row of rows) {
+      if (!(row.mime_type as string).startsWith('image/')) continue
+      const bucketId = row.bucket_id as string
+      const bucketRows = rowsByBucket.get(bucketId) ?? []
+      bucketRows.push(row)
+      rowsByBucket.set(bucketId, bucketRows)
+    }
+    const signedUrlByKey = new Map<string, string>()
+    await Promise.all([...rowsByBucket.entries()].map(async ([bucketId, bucketRows]) => {
+      const signed = await service.storage.from(bucketId).createSignedUrls(bucketRows.map((row) => row.object_path as string), 600)
+      if (signed.error) return
+      for (const entry of signed.data) {
+        if (entry.path && entry.signedUrl) signedUrlByKey.set(`${bucketId}:${entry.path}`, entry.signedUrl)
+      }
+    }))
+    return rows.map((row) => mapMediaAssetSummaryRow(row, signedUrlByKey.get(`${row.bucket_id as string}:${row.object_path as string}`) ?? null))
   }
   // Medien-/Postuebersicht: Galerie bereits erzeugter Fotos/Videos, plus Auswahlquelle fuer die
   // Wiederverwendung in einem neuen Beitrag und fuer den Chat-Anhang-Picker. Reiner authentifizierter
@@ -820,16 +838,17 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (query.departmentId !== undefined) builder = builder.eq('department_id', query.departmentId)
     if (query.mimeTypePrefix) builder = builder.like('mime_type', `${query.mimeTypePrefix}%`)
     if (query.createdBy === 'me') builder = builder.eq('created_by', request.auth!.userId)
+    // reviewedOnly gilt nur fuer Bild/Video: nur diese beiden durchlaufen ueberhaupt eine
+    // Personen-Pruefung (people_reviewed_at), siehe textGenerationSessions.ts:100. "people_reviewed_at
+    // is not null" allein wuerde Audio-Assets, deren Spalte nie gesetzt wird, faelschlich dauerhaft
+    // ausschliessen -- deshalb die Bild/Video-Ausnahme mit in den SQL-Filter. Muss VOR limit(60)
+    // angewendet werden: ein Filter nach dem Abruf wuerde die bereits gedeckelte Seite weiter
+    // ausduennen, statt die 60 relevantesten Treffer zu liefern.
+    if (query.reviewedOnly) builder = builder.or('and(mime_type.not.like.image/*,mime_type.not.like.video/*),people_reviewed_at.not.is.null')
     const result = await builder.order('created_at', { ascending: false }).limit(60)
     if (result.error) throw result.error
-    let rows = (result.data ?? []) as Record<string, unknown>[]
-    // reviewedOnly gilt nur fuer Bild/Video: nur diese beiden durchlaufen ueberhaupt eine
-    // Personen-Pruefung (people_reviewed_at), siehe textGenerationSessions.ts:100. Ein SQL-Filter
-    // auf "people_reviewed_at is not null" wuerde Audio-Assets, deren Spalte nie gesetzt wird,
-    // faelschlich dauerhaft ausschliessen.
-    if (query.reviewedOnly) rows = rows.filter((row) => !needsPeopleReview(row) || row.people_reviewed_at !== null)
-    const service = supabaseClients.forService()
-    const summaries = await Promise.all(rows.map((row) => signMediaAssetSummary(service, row)))
+    const rows = (result.data ?? []) as Record<string, unknown>[]
+    const summaries = await signMediaAssetSummaries(supabaseClients.forService(), rows)
     return reply.code(200).send(z.array(MediaAssetSummarySchema).parse(summaries))
   })
 

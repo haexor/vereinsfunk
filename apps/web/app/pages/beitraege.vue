@@ -152,7 +152,7 @@ async function deleteWorkshopDraft(draft: z.infer<typeof TextWorkshopDraftRowSch
           <img v-if="asset.signedUrl" :src="asset.signedUrl" class="h-full w-full object-cover" alt="" />
           <span v-else class="grid h-full w-full place-items-center bg-[#f2f4ee] text-[#727a75]"><component :is="iconForMimeType(asset.mimeType)" :size="24" /></span>
           <NuxtLink
-            v-if="asset.mimeType.startsWith('image/')" :to="`/erstellen?mediaAssetId=${asset.id}`"
+            v-if="asset.mimeType.startsWith('image/') && asset.peopleReviewedAt" :to="`/erstellen?mediaAssetId=${asset.id}`"
             class="absolute inset-x-0 bottom-0 bg-black/60 px-2 py-1.5 text-center text-[11px] font-semibold text-white opacity-0 transition group-hover:opacity-100"
           >
             In neuem Beitrag verwenden

@@ -364,6 +364,11 @@ async function reviseCandidate() {
 // flush: 'sync' also noch VOR restoreDraft() -- und legte den noch leeren Formularzustand ueber den
 // gespeicherten Entwurf. Nach jedem Neuladen war das getippte Quellmaterial damit still verloren
 // (Review von Paket 044 PR 1; bestand schon vorher, faellt hier nur an derselben Zeile auf).
+// Nur fuer den Scope gueltig, mit dem die Seite geladen wurde -- ein Foto aus dem mediaAssetId-Link
+// gehoert zu genau diesem Bereich. Der Scope-Wechsel-Watcher oben remountet PhotoAttachmentList per
+// :key, ohne resumeMediaAssetId (siehe unten) neu auszuwerten; ohne diesen Vergleich wuerde jeder
+// Scope-Wechsel erneut versuchen, dasselbe (dann falsch-bereichte) Foto zu laden.
+const resumeMediaAssetScopeKey = `${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`
 restoringDraft = true
 await Promise.all([loadProfiles(), loadPlatformAvailability()])
 const resumePostId = UuidSchema.safeParse(route.query.postId)
@@ -375,7 +380,7 @@ else if (resumePostId.success) await loadDraftFromPost(resumePostId.data)
 else if (resumeSessionId.success) await loadExistingSession(resumeSessionId.data)
 else if (resumeMediaAssetId.success) { /* PhotoAttachmentList fuellt sich selbst ueber initial-media-asset-ids */ }
 else {
-  if (route.query.postId !== undefined || route.query.draftId !== undefined || route.query.sessionId !== undefined) notice.value = 'Der Link zum Entwurf ist ungültig.'
+  if (route.query.postId !== undefined || route.query.draftId !== undefined || route.query.sessionId !== undefined || route.query.mediaAssetId !== undefined) notice.value = 'Der Link zum Entwurf ist ungültig.'
   restoreDraft()
 }
 restoringDraft = false
@@ -395,7 +400,7 @@ onBeforeUnmount(() => { if (hasDraftContent()) void saveServerDraft() })
         <legend class="mb-2 text-xs font-semibold">Anhänge</legend>
         <p class="mb-3 text-xs text-[#727a75]">Ein Bild macht deinen Beitrag meist direkt lebendig.</p>
         <template v-if="scope?.organizationId">
-          <PhotoAttachmentList v-if="additionalMediaAssetIds.length < 10" :key="`${scope.organizationId}:${scope.departmentId ?? 'org'}`" v-model:media-asset-ids="mediaAssetIds" :organization-id="scope.organizationId" :department-id="scope.departmentId" :max="10 - additionalMediaAssetIds.length" :initial-media-asset-ids="resumeMediaAssetId.success ? [resumeMediaAssetId.data] : undefined" />
+          <PhotoAttachmentList v-if="additionalMediaAssetIds.length < 10" :key="`${scope.organizationId}:${scope.departmentId ?? 'org'}`" v-model:media-asset-ids="mediaAssetIds" :organization-id="scope.organizationId" :department-id="scope.departmentId" :max="10 - additionalMediaAssetIds.length" :initial-media-asset-ids="resumeMediaAssetId.success && `${scope.organizationId}:${scope.departmentId ?? ''}` === resumeMediaAssetScopeKey ? [resumeMediaAssetId.data] : undefined" />
           <p v-else class="text-xs text-[#727a75]">Die maximale Anzahl von zehn Anhängen ist erreicht.</p>
           <div class="mt-3 border-t border-[#e7e8e1] pt-3">
             <MediaAttachmentUpload :key="`other-media:${scope.organizationId}:${scope.departmentId ?? 'org'}`" v-model="additionalMediaAssetIds" :organization-id="scope.organizationId" :department-id="scope.departmentId" :max="10 - mediaAssetIds.length" :allow-images="false" review-videos />

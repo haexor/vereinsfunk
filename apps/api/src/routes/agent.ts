@@ -639,21 +639,23 @@ export function registerAgentRoutes(
     if (!validatedScope || !(await isAnyMemberOfOrganization(client, request.auth!.userId, scope.organizationId))) {
       return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     }
-    // department_id/team_id immer konkret filtern (?? null statt bedingt) -- eine Unterhaltung
+    // department_id/team_id immer konkret filtern (eq bei Wert, is bei null) -- eine Unterhaltung
     // wird beim Anlegen ebenso konkret gespeichert (siehe POST oben: input.departmentId ?? null),
     // nie mit "beliebig". Ein fehlender Query-Parameter bedeutet Vereins-Scope (toAgentScopeRequest
     // im Frontend), nicht "ueber alle Abteilungen hinweg" -- sonst mischen sich fremde
     // Abteilungs-Unterhaltungen in den Verlauf, obwohl der Kommentar oben "desselben Scopes" verspricht.
-    const rows = await client
+    // .eq(col, null) waere hier falsch: PostgREST versucht dann, den literalen String "null" in den
+    // uuid-Spaltentyp zu casten, statt IS NULL zu pruefen -- derselbe Fallstrick, den .is() bereits
+    // an anderer Stelle vermeidet (siehe text-workshop/drafts weiter unten in content.ts).
+    let rows = client
       .from('agent_conversations')
       .select(AGENT_CONVERSATION_COLUMNS)
       .eq('organization_id', scope.organizationId)
-      .eq('department_id', scope.departmentId ?? null)
-      .eq('team_id', scope.teamId ?? null)
-      .is('archived_at', null)
-      .order('last_activity_at', { ascending: false }).limit(50)
-    if (rows.error) throw rows.error
-    return reply.code(200).send((rows.data ?? []).map(mapConversation))
+    rows = (scope.departmentId ? rows.eq('department_id', scope.departmentId) : rows.is('department_id', null)) as typeof rows
+    rows = (scope.teamId ? rows.eq('team_id', scope.teamId) : rows.is('team_id', null)) as typeof rows
+    const result = await rows.is('archived_at', null).order('last_activity_at', { ascending: false }).limit(50)
+    if (result.error) throw result.error
+    return reply.code(200).send((result.data ?? []).map(mapConversation))
   })
 
   app.get('/v1/agent/conversations/:id', async (request, reply) => {
