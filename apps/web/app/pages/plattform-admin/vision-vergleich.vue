@@ -12,9 +12,14 @@ const websiteUrl = ref('')
 const submitting = ref(false)
 const submitError = ref('')
 
-let pollTimer: ReturnType<typeof setTimeout> | undefined
+// Ein Cron-Poll im Worker (nicht workflow_outbox) startet einen Lauf erst innerhalb der naechsten
+// Minute (siehe createVisionProviderComparisonScanWorkflow) -- die Seite pollt deshalb, statt auf
+// eine sofortige Antwort zu warten.
+function hasUnfinishedRun(): boolean {
+  return runs.value.some((run) => run.status === 'pending' || run.status === 'running')
+}
 
-async function loadRuns() {
+const { refresh: loadRuns } = usePolling(async () => {
   errorMessage.value = ''
   try {
     const headers = await useAuthHeader()
@@ -25,29 +30,8 @@ async function loadRuns() {
   } finally {
     loading.value = false
   }
-}
+}, hasUnfinishedRun)
 await loadRuns()
-
-// Ein Cron-Poll im Worker (nicht workflow_outbox) startet einen Lauf erst innerhalb der naechsten
-// Minute (siehe createVisionProviderComparisonScanWorkflow) -- die Seite pollt deshalb, statt auf
-// eine sofortige Antwort zu warten.
-function hasUnfinishedRun(): boolean {
-  return runs.value.some((run) => run.status === 'pending' || run.status === 'running')
-}
-
-function ensurePolling() {
-  // Diese Seite laedt ihre Laeufe per Top-Level-await, das laeuft auch waehrend SSR -- ohne den
-  // client-Guard wuerde der Timer serverseitig gestartet, obwohl onUnmounted() dort nie feuert.
-  if (!import.meta.client || pollTimer || !hasUnfinishedRun()) return
-  pollTimer = setTimeout(async function poll() {
-    await loadRuns()
-    // Erst nach Abschluss des laufenden Requests neu planen statt per setInterval parallel
-    // loszuschicken -- sonst koennten Antworten in falscher Reihenfolge eintreffen.
-    pollTimer = hasUnfinishedRun() ? setTimeout(poll, 4000) : undefined
-  }, 4000)
-}
-ensurePolling()
-onUnmounted(() => { if (pollTimer) clearTimeout(pollTimer) })
 
 async function submitRun() {
   if (!websiteUrl.value.trim()) return
@@ -59,7 +43,6 @@ async function submitRun() {
     await $fetch(`${config.public.apiBase}/v1/vision-provider-comparisons`, { method: 'POST', headers, body })
     websiteUrl.value = ''
     await loadRuns()
-    ensurePolling()
   } catch (error) {
     const code = (error as { data?: { error?: string } })?.data?.error
     submitError.value = code === 'website_url_not_allowed'
