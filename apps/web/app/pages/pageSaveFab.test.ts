@@ -12,14 +12,24 @@ describe('Seitenaktions-FAB', () => {
     expect(composable).toContain('activeAction.value === registeredAction')
   })
 
-  it('zeigt im Eingabeschritt der Textwerkstatt die Kandidatenerzeugung als primäre Aktion', () => {
+  it('zeigt die Kandidatenerzeugung vor der ersten Sitzung und nach einem fehlgeschlagenen Versuch als primäre Aktion', () => {
     const page = readFileSync(join(appDirectory, 'pages/erstellen.vue'), 'utf8')
     const fab = readFileSync(join(appDirectory, 'components/PageSaveFab.vue'), 'utf8')
 
     expect(page).toContain("usePageSaveFab({ label: 'Textkandidaten erzeugen', save: createCandidate")
     expect(page).toContain('visible: showCreateCandidateFab')
-    expect(page).toContain('const showCreateCandidateFab = computed(() => !sessionId.value)')
+    expect(page).toContain("const showCreateCandidateFab = computed(() => (!sessionId.value && !candidate.value) || candidate.value?.status === 'failed')")
     expect(page).not.toContain('@click="createCandidate"')
     expect(fab).toContain('v-if="action && isVisible"')
+  })
+
+  it('haelt das Eingabeformular sichtbar, auch waehrend/nach einer Kandidatenerzeugung', () => {
+    const page = readFileSync(join(appDirectory, 'pages/erstellen.vue'), 'utf8')
+
+    // Fehlschlaegt eine Generierung, muss ein Weg zurueck ins Formular bestehen -- vorher blendete
+    // v-if="!sessionId" das Formular aus und liess nur die Sackgassen-Fehlermeldung stehen.
+    expect(page).not.toContain('<section v-if="!sessionId"')
+    expect(page).toContain('<section class="card grid gap-5 p-5 sm:p-7">')
+    expect(page).toContain('<section v-if="sessionId" class="card mt-6 p-5 sm:p-7">')
   })
 })
