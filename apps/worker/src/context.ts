@@ -2,7 +2,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { z } from 'zod'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
 import { hashLogoBuffer } from '@vereinsfunk/brand-assets'
-import { CommunicationGoalSchema, MaxCharactersSchema, SocialPlatformSchema, SourceMaterialSchema, TextGenerationTemperatureSchema, UuidSchema, WorkflowNameSchema, WorkflowPayloadSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
+import { CommunicationGoalSchema, MaxCharactersSchema, SocialPlatformSchema, TextGenerationTemperatureSchema, UuidSchema, WorkflowNameSchema, WorkflowPayloadSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
 import type { WorkflowOutboxRepository } from '@vereinsfunk/orchestration'
 import type { BrandAnalysisJobRow, BrandWebsiteAnalysisRepository, VisionProviderRow } from './brandWebsiteAnalysis.js'
 import { WorkflowExecutionError, type WorkflowExecutionRepository, type WorkflowRunAcquireResult } from './workflows.js'
@@ -10,14 +10,19 @@ import type { CandidateRow, ProviderRow, SessionRow, TextGenerationRepository } 
 import type { GenerationRecoveryRepository, RecoverableSessionRow, StalledCandidateRow } from './generationRecovery.js'
 import type { VisionComparisonProviderRow, VisionProviderComparisonRepository } from './visionProviderComparison.js'
 
-// style_profile_snapshot stays unvalidated here: a pre-migration snapshot in the old dial shape
-// must not fail loadSession() before acquirePendingCandidate() runs, or a stuck 'pending'
-// candidate could never be reclaimed by recovery (which only reclaims 'generating' rows).
-// textGeneration.ts's execute() is the single place that parses it, inside its try/catch, where
-// a schema mismatch is properly classified and the candidate is marked failed.
+// style_profile_snapshot und source_material bleiben hier unvalidiert: ein Snapshot in einer
+// aelteren Form darf loadSession() nicht scheitern lassen, bevor acquirePendingCandidate()
+// laeuft, sonst waere ein haengender 'pending'-Kandidat nie durch die Recovery reklamierbar
+// (die nur 'generating'-Zeilen reklamiert). textGeneration.ts's execute() ist die einzige
+// Stelle, die source_material parst (StoredSourceMaterialSchema), innerhalb ihres try/catch, wo
+// eine Schema-Abweichung sauber klassifiziert und der Kandidat als fehlgeschlagen markiert wird.
+// SourceMaterialSchema (statt z.unknown()) wuerde hier faelschlich bereits greifen: als reines
+// z.object() ohne .passthrough() entfernt sein .parse() unbekannte Schluessel -- forbiddenTopics
+// (nur in StoredSourceMaterialSchema deklariert) ginge hier still verloren, bevor execute() es je
+// zu Gesicht bekommt.
 const SessionRowSchema = z.object({
   id: UuidSchema, organization_id: UuidSchema, department_id: UuidSchema.nullable(), team_id: UuidSchema.nullable(),
-  communication_goal: CommunicationGoalSchema, source_material: SourceMaterialSchema,
+  communication_goal: CommunicationGoalSchema, source_material: z.unknown(),
   style_profile_snapshot: z.unknown(), max_characters: z.coerce.number().pipe(MaxCharactersSchema), temperature: z.coerce.number().pipe(TextGenerationTemperatureSchema),
 }) satisfies z.ZodType<SessionRow>
 // Aus dem Schema abgeleitet statt als zweiter, von Hand parallel gepflegter String: composition_sessions.preset_slug
