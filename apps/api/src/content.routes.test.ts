@@ -694,10 +694,11 @@ describe('GET /v1/text-workshop/sessions', () => {
   // wuerde der round_input_hash-Filter in einer echten Datenbank auch leisten.
   it("resumes a draft by post id, returning only the latest round's candidates", async () => {
     let candidateCallCount = 0
-    // Faengt den Filterwert der zweiten Abfrage ab: chain() ignoriert .eq() sonst (Review dieses
+    // Faengt die Filterwerte der zweiten Abfrage ab: chain() ignoriert .eq() sonst (Review dieses
     // PRs) -- ohne diese Erfassung wuerde der Test weiterhin bestehen, selbst wenn der
-    // round_input_hash-Filter entfernt oder auf den falschen Wert gesetzt wuerde.
+    // round_input_hash/round_attempt-Filter entfernt oder auf den falschen Wert gesetzt wuerde.
     let roundInputHashFilter: unknown
+    let roundAttemptFilter: unknown
     const clients: SupabaseClientFactory = {
       forUser: () =>
         ({
@@ -705,11 +706,12 @@ describe('GET /v1/text-workshop/sessions', () => {
             if (table === 'composition_sessions') return chain({ data: SESSION_ROW, error: null })
             if (table === 'generation_candidates') {
               candidateCallCount += 1
-              if (candidateCallCount === 1) return chain({ data: { round_input_hash: 'a'.repeat(64) }, error: null })
+              if (candidateCallCount === 1) return chain({ data: { round_input_hash: 'a'.repeat(64), round_attempt: 2 }, error: null })
               const builder = chain({ data: [CANDIDATE_ROW], error: null })
               const baseEq = builder.eq as (...args: unknown[]) => unknown
               builder.eq = (column: string, value: unknown) => {
                 if (column === 'round_input_hash') roundInputHashFilter = value
+                if (column === 'round_attempt') roundAttemptFilter = value
                 return baseEq(column, value)
               }
               return builder
@@ -729,6 +731,7 @@ describe('GET /v1/text-workshop/sessions', () => {
     expect(body.candidates[0]).toMatchObject({ id: CANDIDATE_ROW.id, status: 'accepted' })
     expect(candidateCallCount).toBe(2)
     expect(roundInputHashFilter).toBe('a'.repeat(64))
+    expect(roundAttemptFilter).toBe(2)
   })
 
   it('returns an empty candidate list when the session has no candidates at all', async () => {

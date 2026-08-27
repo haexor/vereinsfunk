@@ -7,6 +7,18 @@
 -- mindestens ein Kandidat der Runde NICHT 'failed' ist (echtes Duplikat einer laufenden/erfolgreichen
 -- Runde) -- eine Runde, in der alle Kandidaten terminal fehlgeschlagen sind, faellt stattdessen in
 -- denselben Pfad wie eine neue "revise"-Runde und erzeugt frische Kandidaten fuer dieselbe Sitzung.
+--
+-- round_attempt zaehlt, wie oft unter demselben round_input_hash bereits eine Runde angelegt wurde
+-- (Review-Fund): round_input_hash bleibt ueber alle Retries eines unveraenderten Inhalts identisch,
+-- also braeuchte eine frische Runde nach einem Komplettfehlschlag sonst denselben
+-- candidate_row_hash wie ihr fehlgeschlagener Vorgaenger -- das verletzt sofort
+-- unique(composition_session_id, input_hash) und der Retry, den dieses Paket erst ermoeglicht,
+-- schluege mit einer DB-Exception fehl. round_attempt fliesst deshalb in candidate_row_hash ein und
+-- grenzt die Duplikatspruefung unten auf die jeweils juengste Runde ein, statt alte fehlgeschlagene
+-- Kandidaten mit den frischen zu vermischen (der Lesepfad in content.ts filtert seit diesem Paket
+-- ebenfalls danach).
+alter table public.generation_candidates add column round_attempt integer not null default 1;
+
 create or replace function public.create_text_generation_session(
   p_organization_id uuid, p_department_id uuid, p_team_id uuid,
   p_communication_goal text, p_requested_formats jsonb, p_source_material jsonb,
@@ -28,6 +40,8 @@ declare
   new_candidate_id uuid;
   workflow_purpose text;
   department_concurrency_key text := coalesce(p_department_id::text, 'org');
+  latest_attempt_number integer;
+  attempt_number integer;
 begin
   if p_generation_intent not in ('initial', 'revise') then raise exception 'invalid_generation_intent'; end if;
   if p_generation_intent = 'initial' and p_revision_instruction is not null then raise exception 'initial_generation_has_instruction'; end if;
@@ -39,8 +53,14 @@ begin
   select * into session_row from public.composition_sessions
     where organization_id = p_organization_id and input_hash = p_input_hash for update;
   if found and p_triggered_by = 'automatic_recovery' then
+    -- Recovery haengt GENAU EINEN Ersatzkandidaten an die bestehende Runde (round_hash ist hier der
+    -- explizit uebergebene round_input_hash des festgefahrenen Kandidaten) -- sie startet nie eine
+    -- neue Runde, uebernimmt also deren attempt_number statt sie zu erhoehen.
+    select max(round_attempt) into latest_attempt_number from public.generation_candidates
+      where composition_session_id = session_row.id and round_input_hash = round_hash;
+    attempt_number := coalesce(latest_attempt_number, 1);
     provider_id := p_provider_configuration_ids[1];
-    candidate_row_hash := encode(extensions.digest(p_candidate_input_hash || ':' || provider_id::text, 'sha256'), 'hex');
+    candidate_row_hash := encode(extensions.digest(p_candidate_input_hash || ':' || provider_id::text || ':' || attempt_number::text, 'sha256'), 'hex');
     select id into new_candidate_id from public.generation_candidates
       where composition_session_id = session_row.id and input_hash = candidate_row_hash;
     if new_candidate_id is not null then return jsonb_build_object('sessionId', session_row.id, 'candidateIds', array[new_candidate_id]); end if;
@@ -48,10 +68,10 @@ begin
     update public.composition_sessions set candidate_count = candidate_count + 1 where id = session_row.id;
     insert into public.generation_candidates (
       organization_id, composition_session_id, generation_intent, revision_instruction, status,
-      input_hash, round_input_hash, provider_configuration_id, triggered_by
+      input_hash, round_input_hash, round_attempt, provider_configuration_id, triggered_by
     ) values (
       p_organization_id, session_row.id, p_generation_intent, p_revision_instruction, 'pending',
-      candidate_row_hash, round_hash, provider_id, p_triggered_by
+      candidate_row_hash, round_hash, attempt_number, provider_id, p_triggered_by
     ) returning id into new_candidate_id;
     workflow_purpose := p_generation_intent || ':' || new_candidate_id::text;
     insert into public.workflow_outbox (
@@ -68,21 +88,28 @@ begin
     update public.composition_sessions set status = 'queued', updated_at = now() where id = session_row.id;
     return jsonb_build_object('sessionId', session_row.id, 'candidateIds', array[new_candidate_id]);
   elsif found then
-    select array_agg(id) into existing_ids from public.generation_candidates
+    -- Nur die jeweils juengste Runde dieses round_hash ist ein Dedup-Kandidat (Review-Fund): sonst
+    -- wuerde ein zweiter Aufruf, der nach einem Komplettfehlschlag bereits eine frische Runde
+    -- angelegt hat, hier die alten fehlgeschlagenen UND die neuen Kandidaten gemeinsam zurueckgeben.
+    select max(round_attempt) into latest_attempt_number from public.generation_candidates
       where composition_session_id = session_row.id and round_input_hash = round_hash;
-    -- Nur bei mindestens einem nicht-'failed'-Kandidaten ist das ein echtes Duplikat (laufende oder
-    -- bereits erfolgreiche Runde) -- sonst faellt die Pruefung unten durch und erzeugt eine frische
-    -- Runde, statt den alten Fehlschlag unveraendert zurueckzugeben.
-    if existing_ids is not null and exists (
-      select 1 from public.generation_candidates where id = any(existing_ids) and status <> 'failed'
-    ) then
-      return jsonb_build_object('sessionId', session_row.id, 'candidateIds', existing_ids);
+    if latest_attempt_number is not null then
+      select array_agg(id) into existing_ids from public.generation_candidates
+        where composition_session_id = session_row.id and round_input_hash = round_hash and round_attempt = latest_attempt_number;
+      -- Nur bei mindestens einem nicht-'failed'-Kandidaten ist das ein echtes Duplikat (laufende oder
+      -- bereits erfolgreiche Runde) -- sonst faellt die Pruefung unten durch und erzeugt eine frische
+      -- Runde, statt den alten Fehlschlag unveraendert zurueckzugeben.
+      if exists (select 1 from public.generation_candidates where id = any(existing_ids) and status <> 'failed') then
+        return jsonb_build_object('sessionId', session_row.id, 'candidateIds', existing_ids);
+      end if;
     end if;
-    if existing_ids is null and p_generation_intent = 'initial' then raise exception 'composition_session_generation_conflict'; end if;
+    if latest_attempt_number is null and p_generation_intent = 'initial' then raise exception 'composition_session_generation_conflict'; end if;
     if session_row.candidate_count + round_size > 8 then raise exception 'composition_session_candidate_limit_reached'; end if;
     update public.composition_sessions set candidate_count = candidate_count + round_size where id = session_row.id;
+    attempt_number := coalesce(latest_attempt_number, 0) + 1;
   else
     if round_size > 8 then raise exception 'composition_session_candidate_limit_reached'; end if;
+    attempt_number := 1;
     insert into public.composition_sessions (
       organization_id, department_id, team_id, communication_goal, requested_formats,
       source_material, style_profile_id, style_profile_snapshot, effective_config_snapshot,
@@ -97,13 +124,13 @@ begin
   end if;
 
   foreach provider_id in array p_provider_configuration_ids loop
-    candidate_row_hash := encode(extensions.digest(p_candidate_input_hash || ':' || provider_id::text, 'sha256'), 'hex');
+    candidate_row_hash := encode(extensions.digest(p_candidate_input_hash || ':' || provider_id::text || ':' || attempt_number::text, 'sha256'), 'hex');
     insert into public.generation_candidates (
       organization_id, composition_session_id, generation_intent, revision_instruction, status,
-      input_hash, round_input_hash, provider_configuration_id, triggered_by
+      input_hash, round_input_hash, round_attempt, provider_configuration_id, triggered_by
     ) values (
       p_organization_id, session_row.id, p_generation_intent, p_revision_instruction, 'pending',
-      candidate_row_hash, round_hash, provider_id, p_triggered_by
+      candidate_row_hash, round_hash, attempt_number, provider_id, p_triggered_by
     ) returning id into new_candidate_id;
     new_ids := array_append(new_ids, new_candidate_id);
 

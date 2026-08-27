@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(30);
+select plan(33);
 
 -- Paket 046: mehrere LLM-Provider koennen gleichzeitig einen Vorschlag liefern.
 -- create_text_generation_session erzeugt dafuer eine ganze Runde (mehrere generation_candidates,
@@ -156,12 +156,16 @@ select is((select count(*)::integer from public.generation_candidates where comp
 -- Fehlschlag mit unveraendertem Text/Einstellungen erneut auf "Textkandidaten erzeugen" klickt,
 -- schickt denselben round hash wie zuvor -- bislang gab die Runden-Dedup-Pruefung dann einfach die
 -- alten, bereits fehlgeschlagenen Kandidaten zurueck, ohne je eine neue Generierung anzustossen.
--- ===========================================================================================
+--
+-- Die Fixture-Hashes unten sind absichtlich mit derselben Formel gebildet, die die Funktion selbst
+-- fuer round_attempt 1 verwendet (Review-Fund): mit einem Fixture-Hash nach anderem Muster wuerde
+-- dieser Test nie kollidieren und den urspruenglichen unique(composition_session_id, input_hash)-
+-- Crash des Review-Funds gar nicht erst pruefen koennen.
 insert into public.composition_sessions (id, organization_id, department_id, team_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, status, candidate_count, created_by) values
   ('46000000-5000-4000-8000-000000000001', '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', null, 'inform', '["text_post"]', '{"facts":{"title":"Fehlschlagtraining"},"observations":[],"quotes":[],"forbiddenTopics":[]}', '{}', 1, encode(sha256('retry-after-failure-session'::bytea), 'hex'), 'failed', 2, '46000000-0000-4000-8000-000000000001');
 insert into public.generation_candidates (id, organization_id, composition_session_id, generation_intent, status, failure_code, input_hash, round_input_hash, provider_configuration_id) values
-  ('46000000-5010-4000-8000-000000000001', '46000000-1000-4000-8000-000000000001', '46000000-5000-4000-8000-000000000001', 'initial', 'failed', 'generation_validation', encode(sha256('retry-after-failure-candidate:a'::bytea), 'hex'), encode(sha256('retry-after-failure-candidate'::bytea), 'hex'), '46000000-4000-4000-8000-000000000001'),
-  ('46000000-5011-4000-8000-000000000001', '46000000-1000-4000-8000-000000000001', '46000000-5000-4000-8000-000000000001', 'initial', 'failed', 'generation_validation', encode(sha256('retry-after-failure-candidate:b'::bytea), 'hex'), encode(sha256('retry-after-failure-candidate'::bytea), 'hex'), '46000000-4000-4000-8000-000000000002');
+  ('46000000-5010-4000-8000-000000000001', '46000000-1000-4000-8000-000000000001', '46000000-5000-4000-8000-000000000001', 'initial', 'failed', 'generation_validation', encode(extensions.digest(encode(sha256('retry-after-failure-candidate'::bytea), 'hex') || ':46000000-4000-4000-8000-000000000001:1', 'sha256'), 'hex'), encode(sha256('retry-after-failure-candidate'::bytea), 'hex'), '46000000-4000-4000-8000-000000000001'),
+  ('46000000-5011-4000-8000-000000000001', '46000000-1000-4000-8000-000000000001', '46000000-5000-4000-8000-000000000001', 'initial', 'failed', 'generation_validation', encode(extensions.digest(encode(sha256('retry-after-failure-candidate'::bytea), 'hex') || ':46000000-4000-4000-8000-000000000002:1', 'sha256'), 'hex'), encode(sha256('retry-after-failure-candidate'::bytea), 'hex'), '46000000-4000-4000-8000-000000000002');
 select lives_ok(
   $$select public.create_text_generation_session(
     '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', null,
@@ -171,12 +175,30 @@ select lives_ok(
     '46000000-0000-4000-8000-000000000001', gen_random_uuid(), 'retry-after-failure-attempt',
     array['46000000-4000-4000-8000-000000000001', '46000000-4000-4000-8000-000000000002']::uuid[]
   )$$,
-  'a member retry with unchanged input succeeds when every candidate of the matching round already failed'
+  'a member retry with unchanged input succeeds when every candidate of the matching round already failed, despite sharing the round_attempt-1 candidates'' exact provider/content-derived hash inputs'
 );
 select is((select count(*)::integer from public.generation_candidates where composition_session_id = '46000000-5000-4000-8000-000000000001'), 4, 'the retry adds a fresh round instead of returning the two failed candidates');
 select is((select count(*)::integer from public.generation_candidates where composition_session_id = '46000000-5000-4000-8000-000000000001' and status = 'pending'), 2, 'the new candidates start pending, not failed');
 select is((select status::text from public.composition_sessions where id = '46000000-5000-4000-8000-000000000001'), 'queued', 'the session leaves its terminal failed status behind once a fresh round is queued');
 select is((select candidate_count from public.composition_sessions where id = '46000000-5000-4000-8000-000000000001'), 4, 'candidate_count accounts for both the failed and the fresh round');
+select is((select count(*)::integer from public.generation_candidates where composition_session_id = '46000000-5000-4000-8000-000000000001' and round_attempt = 2), 2, 'the fresh candidates are tagged as round_attempt 2, distinct from the failed round_attempt-1 siblings');
+
+-- A further retry with the same unchanged content, while the fresh round_attempt-2 candidates are
+-- still pending (not yet terminal), stays idempotent -- and, unlike before this fix, returns ONLY
+-- the round_attempt-2 pair instead of mixing them with the stale round_attempt-1 failures (the
+-- content.ts read path applies this same round_attempt scoping to what a member actually sees).
+select lives_ok(
+  $$select public.create_text_generation_session(
+    '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', null,
+    'inform', '["text_post"]'::jsonb, '{"facts":{"title":"Fehlschlagtraining"},"observations":[],"quotes":[],"forbiddenTopics":[]}'::jsonb,
+    null, '{}'::jsonb, '{}'::jsonb, array['instagram']::text[], 2200, 0.6, 1,
+    encode(sha256('retry-after-failure-session'::bytea), 'hex'), encode(sha256('retry-after-failure-candidate'::bytea), 'hex'), 'initial', null,
+    '46000000-0000-4000-8000-000000000001', gen_random_uuid(), 'retry-after-failure-double-click',
+    array['46000000-4000-4000-8000-000000000001', '46000000-4000-4000-8000-000000000002']::uuid[]
+  )$$,
+  'a double-click while the fresh round_attempt-2 candidates are still pending stays idempotent on that round alone'
+);
+select is((select count(*)::integer from public.generation_candidates where composition_session_id = '46000000-5000-4000-8000-000000000001'), 4, 'the idempotent double-click creates no third round');
 
 -- ===========================================================================================
 -- Recovery-Sonderfall: p_triggered_by = 'automatic_recovery' darf eine 'initial'-Runde auf einer
