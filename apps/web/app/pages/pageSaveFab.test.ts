@@ -18,7 +18,7 @@ describe('Seitenaktions-FAB', () => {
 
     expect(page).toContain("usePageSaveFab({ label: 'Textkandidaten erzeugen', save: createCandidate")
     expect(page).toContain('visible: showCreateCandidateFab')
-    expect(page).toContain("const showCreateCandidateFab = computed(() => !candidate.value || candidate.value.status === 'failed')")
+    expect(page).toContain("const showCreateCandidateFab = computed(() => (!sessionId.value && !candidate.value) || candidate.value?.status === 'failed')")
     expect(page).not.toContain('@click="createCandidate"')
     expect(fab).toContain('v-if="action && isVisible"')
   })

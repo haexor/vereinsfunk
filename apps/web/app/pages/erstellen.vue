@@ -343,7 +343,7 @@ const candidateFinished = computed(() => candidate.value?.status === 'ready' || 
 // fehlgeschlagenen Versuch (sonst keine Möglichkeit, aus der Fehlermeldung heraus weiterzumachen).
 // Waehrend ein Kandidat noch erzeugt wird oder bereits fertig/uebernommen ist, bestimmt die
 // Kandidatenansicht ihre eigenen Folgeaktionen (ueberarbeiten/uebernehmen).
-const showCreateCandidateFab = computed(() => !candidate.value || candidate.value.status === 'failed')
+const showCreateCandidateFab = computed(() => (!sessionId.value && !candidate.value) || candidate.value?.status === 'failed')
 usePageSaveFab({ label: 'Textkandidaten erzeugen', save: createCandidate, saving: submitting, visible: showCreateCandidateFab, icon: Sparkles, savingLabel: 'Textkandidaten werden erzeugt …' })
 const unavailableReasons = computed(() => [...new Set(platforms.value.filter((entry) => !entry.available).map((entry) => entry.reason))].filter((reason): reason is PlatformUnavailableReason => reason !== undefined))
 function togglePlatform(platform: SocialPlatform) {
