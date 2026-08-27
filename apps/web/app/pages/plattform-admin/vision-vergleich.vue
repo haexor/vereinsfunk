@@ -12,7 +12,7 @@ const websiteUrl = ref('')
 const submitting = ref(false)
 const submitError = ref('')
 
-let pollTimer: ReturnType<typeof setInterval> | undefined
+let pollTimer: ReturnType<typeof setTimeout> | undefined
 
 async function loadRuns() {
   errorMessage.value = ''
@@ -36,17 +36,18 @@ function hasUnfinishedRun(): boolean {
 }
 
 function ensurePolling() {
-  if (pollTimer || !hasUnfinishedRun()) return
-  pollTimer = setInterval(async () => {
+  // Diese Seite laedt ihre Laeufe per Top-Level-await, das laeuft auch waehrend SSR -- ohne den
+  // client-Guard wuerde der Timer serverseitig gestartet, obwohl onUnmounted() dort nie feuert.
+  if (!import.meta.client || pollTimer || !hasUnfinishedRun()) return
+  pollTimer = setTimeout(async function poll() {
     await loadRuns()
-    if (!hasUnfinishedRun() && pollTimer) {
-      clearInterval(pollTimer)
-      pollTimer = undefined
-    }
+    // Erst nach Abschluss des laufenden Requests neu planen statt per setInterval parallel
+    // loszuschicken -- sonst koennten Antworten in falscher Reihenfolge eintreffen.
+    pollTimer = hasUnfinishedRun() ? setTimeout(poll, 4000) : undefined
   }, 4000)
 }
 ensurePolling()
-onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
+onUnmounted(() => { if (pollTimer) clearTimeout(pollTimer) })
 
 async function submitRun() {
   if (!websiteUrl.value.trim()) return
