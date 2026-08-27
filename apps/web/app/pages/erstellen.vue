@@ -90,6 +90,7 @@ const draftSaveState = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
 const draftKey = computed(() => session.value && scope.value?.organizationId ? `vf:text-draft:${session.value.userId}:${scope.value.organizationId}:${scope.value.departmentId ?? 'org'}` : null)
 let restoringDraft = false
 let draftSaveTimer: ReturnType<typeof setTimeout> | undefined
+let pollTimer: ReturnType<typeof setInterval> | undefined
 let serverDraftSaveChain: Promise<void> = Promise.resolve()
 let latestServerDraftSave = 0
 
@@ -198,7 +199,22 @@ async function refreshSession() {
   if (!sessionId.value) return
   const response = await api.request(`/v1/text-workshop/sessions/${sessionId.value}`, {}, z.object({ candidates: z.array(CandidateSchema) }).passthrough())
   candidate.value = response.candidates[0] ?? null
+  ensurePolling()
 }
+function hasUnfinishedCandidate(): boolean {
+  return candidate.value !== null && !candidateFinished.value && candidate.value.status !== 'failed'
+}
+// Derselbe 4s-Poll wie plattform-admin/vision-vergleich.vue: der Worker verarbeitet die
+// Generierung im Hintergrund, diese Seite hat sonst keinen Weg, von "pending"/"generating" zu
+// erfahren, ohne dass die Person selbst auf "Aktualisieren" klickt.
+function ensurePolling() {
+  if (pollTimer || !hasUnfinishedCandidate()) return
+  pollTimer = setInterval(async () => {
+    await refreshSession()
+    if (!hasUnfinishedCandidate() && pollTimer) { clearInterval(pollTimer); pollTimer = undefined }
+  }, 4000)
+}
+onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 async function loadExistingSession(id: string) {
   try {
     sessionId.value = id
@@ -244,6 +260,7 @@ async function loadDraftFromPost(postId: string) {
     // faelschlich eine eigene Grenze vortaeuschen, die nie gesetzt wurde.
     sessionId.value = draftSession.id
     candidate.value = candidates[0] ?? null
+    ensurePolling()
   } catch {
     notice.value = 'Der bisherige Bearbeitungsstand konnte nicht geladen werden. Du kannst hier einen neuen Entwurf beginnen.'
   }
