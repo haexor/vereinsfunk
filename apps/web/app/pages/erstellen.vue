@@ -90,6 +90,8 @@ const draftSaveState = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
 const draftKey = computed(() => session.value && scope.value?.organizationId ? `vf:text-draft:${session.value.userId}:${scope.value.organizationId}:${scope.value.departmentId ?? 'org'}` : null)
 let restoringDraft = false
 let draftSaveTimer: ReturnType<typeof setTimeout> | undefined
+let pollTimer: ReturnType<typeof setTimeout> | undefined
+let pollCancelled = false
 let serverDraftSaveChain: Promise<void> = Promise.resolve()
 let latestServerDraftSave = 0
 
@@ -196,9 +198,45 @@ async function loadPlatformAvailability() {
 }
 async function refreshSession() {
   if (!sessionId.value) return
-  const response = await api.request(`/v1/text-workshop/sessions/${sessionId.value}`, {}, z.object({ candidates: z.array(CandidateSchema) }).passthrough())
-  candidate.value = response.candidates[0] ?? null
+  try {
+    const response = await api.request(`/v1/text-workshop/sessions/${sessionId.value}`, {}, z.object({ candidates: z.array(CandidateSchema) }).passthrough())
+    candidate.value = response.candidates[0] ?? null
+  } finally {
+    // Auch bei einem fehlgeschlagenen Refresh pollen, solange der zuletzt bekannte Kandidat noch
+    // unfertig ist -- sonst bleibt er nach createCandidate()/reviseCandidate() ohne automatische
+    // Wiederholung im Ladezustand haengen.
+    ensurePolling()
+  }
 }
+// Nur pending/generating gelten als unfertig -- ready/accepted/failed sowie die von
+// GenerationCandidateStatusSchema ebenfalls vorgesehenen abandoned/expired sind damit automatisch
+// terminal, ohne dass diese Liste bei einem neuen Statuswert nachgezogen werden muss.
+function hasUnfinishedCandidate(): boolean {
+  return candidate.value !== null && (candidate.value.status === 'pending' || candidate.value.status === 'generating')
+}
+// Derselbe 4s-Poll wie plattform-admin/vision-vergleich.vue: der Worker verarbeitet die
+// Generierung im Hintergrund, diese Seite hat sonst keinen Weg, von "pending"/"generating" zu
+// erfahren, ohne dass die Person selbst auf "Aktualisieren" klickt.
+function ensurePolling() {
+  // Sitzungen/Entwuerfe laden per Top-Level-await, das laeuft auch waehrend SSR -- ohne den
+  // client-Guard wuerde der Timer serverseitig gestartet, obwohl onUnmounted() dort nie feuert.
+  if (!import.meta.client || pollCancelled || pollTimer || !hasUnfinishedCandidate()) return
+  pollTimer = setTimeout(async function poll() {
+    // Ein einzelner Fehlschlag beim Hintergrund-Poll bleibt still, der naechste Versuch folgt in
+    // 4s -- ohne den try/catch wuerde eine abgelehnte Promise hier unbehandelt bleiben.
+    try { await refreshSession() } catch { /* naechster Versuch folgt automatisch */ }
+    // onUnmounted() kann den bereits feuernden Timer nicht mehr per clearTimeout abbrechen, waehrend
+    // der obige await laeuft -- ohne diese Pruefung wuerde nach dem Verlassen der Seite trotzdem ein
+    // neuer Timeout geplant und der Poll liefe unbegrenzt weiter.
+    if (pollCancelled) { pollTimer = undefined; return }
+    pollTimer = hasUnfinishedCandidate() ? setTimeout(poll, 4000) : undefined
+  }, 4000)
+}
+onUnmounted(() => {
+  pollCancelled = true
+  if (pollTimer) clearTimeout(pollTimer)
+  pollTimer = undefined
+})
 async function loadExistingSession(id: string) {
   try {
     sessionId.value = id
@@ -244,6 +282,7 @@ async function loadDraftFromPost(postId: string) {
     // faelschlich eine eigene Grenze vortaeuschen, die nie gesetzt wurde.
     sessionId.value = draftSession.id
     candidate.value = candidates[0] ?? null
+    ensurePolling()
   } catch {
     notice.value = 'Der bisherige Bearbeitungsstand konnte nicht geladen werden. Du kannst hier einen neuen Entwurf beginnen.'
   }
@@ -339,6 +378,10 @@ async function acceptCandidate() {
 // Kandidat einer wiedereroeffneten Sitzung traegt diesen Status, zeigt aber denselben fertigen
 // Text wie 'ready'. Ohne diese Erweiterung behauptete die Ueberschrift faelschlich "wird erzeugt".
 const candidateFinished = computed(() => candidate.value?.status === 'ready' || candidate.value?.status === 'accepted')
+// Deckt dieselben Statuswerte ab, bei denen hasUnfinishedCandidate() das Polling bereits beendet
+// (alles ausser pending/generating) und die noch nicht erfolgreich fertig sind -- ohne diese
+// Ergaenzung behauptete die Ansicht bei abandoned/expired weiterhin "Text wird erzeugt".
+const candidateErrored = computed(() => candidate.value?.status === 'failed' || candidate.value?.status === 'abandoned' || candidate.value?.status === 'expired')
 // Die globale Primäraktion erzeugt neue Kandidaten: vor der ersten Sitzung, und erneut nach einem
 // fehlgeschlagenen Versuch (sonst keine Möglichkeit, aus der Fehlermeldung heraus weiterzumachen).
 // Waehrend ein Kandidat noch erzeugt wird oder bereits fertig/uebernommen ist, bestimmt die
@@ -461,7 +504,7 @@ onBeforeUnmount(() => { if (hasDraftContent()) void saveServerDraft() })
       </details>
       <div class="flex flex-wrap items-center gap-3"><button class="inline-flex items-center justify-center gap-2 rounded-xl border border-forest px-5 py-3 text-sm font-bold text-forest disabled:opacity-60" :disabled="submitting || draftSaveState === 'saving'" @click="saveServerDraft({ explicit: true })"><LoaderCircle v-if="draftSaveState === 'saving'" class="animate-spin" :size="16" /><Save v-else :size="16" /> Als Entwurf speichern</button><span v-if="draftSaveState === 'saved'" class="text-xs text-[#727a75]">Entwurf gespeichert</span><span v-else-if="draftSaveState === 'error'" class="text-xs text-amber-800">Lokale Sicherung aktiv</span></div>
     </section>
-    <section v-if="sessionId" class="card mt-6 p-5 sm:p-7"><div class="flex items-center justify-between"><h2 class="font-display text-xl font-bold">{{ candidateFinished ? 'Textkandidat bereit' : 'Text wird erzeugt' }}</h2><button class="rounded-lg border px-3 py-2 text-xs" @click="refreshSession"><RefreshCw :size="14" /> Aktualisieren</button></div><p v-if="candidate && !candidateFinished" class="mt-4 text-sm text-[#727a75]">Der Worker verarbeitet die Anfrage im Hintergrund. Diese Seite enthält keinen Prompt und keine Providerdaten.</p><p v-if="candidate?.triggered_by === 'automatic_recovery'" class="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-900">Diese Version wurde nach einem technischen Fehler automatisch neu erzeugt.</p><template v-if="candidate?.generated_content"><textarea :value="candidate.generated_content.caption" readonly rows="10" class="mt-5 w-full rounded-xl border p-3 text-sm" /><div class="mt-3 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-900">{{ candidate.generated_content.verifiedFacts.length }} belegte Angaben · {{ candidate.generated_content.missingFacts.length }} offene Angaben</div><label class="mt-5 block"><span class="mb-1 block text-xs font-semibold">Überarbeitungswunsch</span><textarea v-model="revisionInstruction" rows="2" maxlength="500" class="w-full rounded-xl border p-3 text-sm" placeholder="z. B. kürzer und mit direkter Einladung" /></label><button class="mt-3 rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-60" :disabled="submitting || !revisionInstruction.trim()" @click="reviseCandidate"><RefreshCw :size="15" class="mr-1 inline" /> Überarbeiten</button><button class="mt-5 inline-flex items-center gap-2 rounded-xl bg-forest px-5 py-3 text-sm font-bold text-white disabled:opacity-60" :disabled="submitting" @click="acceptCandidate"><LoaderCircle v-if="submitting" class="animate-spin" :size="16" /><Check v-else :size="16" /> Übernehmen und zur Freigabe</button></template><p v-if="candidate?.status === 'failed'" class="mt-4 text-sm text-red-700">Die Anfrage konnte nicht verarbeitet werden. Bitte prüfe deine Angaben und erzeuge die Textkandidaten erneut.</p></section>
+    <section v-if="sessionId" class="card mt-6 p-5 sm:p-7"><div class="flex items-center justify-between"><h2 class="font-display text-xl font-bold">{{ candidateFinished ? 'Textkandidat bereit' : candidateErrored ? 'Textkandidat fehlgeschlagen' : 'Text wird erzeugt' }}</h2><button class="rounded-lg border px-3 py-2 text-xs" @click="refreshSession"><RefreshCw :size="14" /> Aktualisieren</button></div><p v-if="candidate && !candidateFinished && !candidateErrored" class="mt-4 text-sm text-[#727a75]">Der Worker verarbeitet die Anfrage im Hintergrund. Diese Seite enthält keinen Prompt und keine Providerdaten.</p><p v-if="candidate?.triggered_by === 'automatic_recovery'" class="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-900">Diese Version wurde nach einem technischen Fehler automatisch neu erzeugt.</p><template v-if="candidate?.generated_content"><textarea :value="candidate.generated_content.caption" readonly rows="10" class="mt-5 w-full rounded-xl border p-3 text-sm" /><div class="mt-3 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-900">{{ candidate.generated_content.verifiedFacts.length }} belegte Angaben · {{ candidate.generated_content.missingFacts.length }} offene Angaben</div><label class="mt-5 block"><span class="mb-1 block text-xs font-semibold">Überarbeitungswunsch</span><textarea v-model="revisionInstruction" rows="2" maxlength="500" class="w-full rounded-xl border p-3 text-sm" placeholder="z. B. kürzer und mit direkter Einladung" /></label><button class="mt-3 rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-60" :disabled="submitting || !revisionInstruction.trim()" @click="reviseCandidate"><RefreshCw :size="15" class="mr-1 inline" /> Überarbeiten</button><button class="mt-5 inline-flex items-center gap-2 rounded-xl bg-forest px-5 py-3 text-sm font-bold text-white disabled:opacity-60" :disabled="submitting" @click="acceptCandidate"><LoaderCircle v-if="submitting" class="animate-spin" :size="16" /><Check v-else :size="16" /> Übernehmen und zur Freigabe</button></template><p v-if="candidateErrored" class="mt-4 text-sm text-red-700">Die Anfrage konnte nicht verarbeitet werden. Bitte prüfe deine Angaben und erzeuge die Textkandidaten erneut.</p></section>
     <p v-if="notice" class="mt-4 text-sm text-amber-800">{{ notice }}</p>
   </div>
 </template>
