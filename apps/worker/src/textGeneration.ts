@@ -2,8 +2,11 @@ import { createHash } from 'node:crypto'
 import { AnthropicStructuredContentGenerator, ContentGenerationError, OpenAiCompatibleStructuredContentGenerator, TEXT_PROMPT_TEMPLATE_VERSION, createTextGroundedContentBrief, type StructuredContentGenerator } from '@vereinsfunk/content-engine'
 import { deriveTextGenerationMaxOutputTokens, providerSendsTemperature, StoredSourceMaterialSchema, StyleProfileSnapshotSchema, UuidSchema, type GeneratedPost, type WorkflowPayload } from '@vereinsfunk/contracts'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
+import { createLogger } from '@vereinsfunk/observability'
 import { openProviderSecret } from './providerSecrets.js'
 import { WorkflowExecutionError } from './workflows.js'
+
+const logger = createLogger({ name: 'worker' })
 
 export type SessionRow = { id: string; organization_id: string; department_id: string | null; team_id: string | null; communication_goal: 'inform' | 'inspire' | 'thank' | 'invite' | 'recruit' | 'educate' | 'strengthen_community'; source_material: unknown; style_profile_snapshot: unknown; max_characters: number; temperature: number }
 // provider_configuration_id ist ab Paket 046 fest zugewiesen (create_text_generation_session
@@ -107,6 +110,10 @@ export class TextGenerationExecutor {
       await this.repository.markReady(candidate.id, session.id, candidate.lease_token, post, { providerConfigurationId: provider.id, providerModelId: provider.model, providerParameterHash: parameterHash(provider, session, maxOutputTokens), promptTemplateVersion: TEXT_PROMPT_TEMPLATE_VERSION })
     } catch (error) {
       const classified = error instanceof ContentGenerationError ? error : error instanceof WorkflowExecutionError ? error : new WorkflowExecutionError('generation_validation', false)
+      // Nur die Fehlerklasse ueberlebt in Supabase/Hatchet (kein Prompt/keine Providerdaten im
+      // Envelope, siehe Klassenkommentar oben) -- ohne diesen Log-Eintrag ist die eigentliche
+      // Ursache nirgends mehr nachvollziehbar, sobald der Worker-Container neu startet.
+      logger.error({ err: error, candidateId: candidate.id, sessionId: session.id, errorClass: classified.errorClass }, 'text generation failed')
       if (classified.retryable) await this.repository.releaseCandidate(candidate.id, session.id, candidate.lease_token)
       else await this.repository.markFailed(candidate.id, session.id, candidate.lease_token, classified.errorClass)
       throw new WorkflowExecutionError(classified.errorClass, classified.retryable)
