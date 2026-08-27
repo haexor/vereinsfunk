@@ -605,11 +605,16 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     // Paket 046: ein Klick auf Generieren/Ueberarbeiten kann mehrere Kandidaten gleichzeitig
     // anlegen (eine "Runde", gruppiert ueber round_input_hash). Erst die juengste Runde ermitteln,
     // dann alle ihre Kandidaten laden -- vor Paket 046 war das immer genau einer, .limit(1) reichte.
-    const latestRound = await client.from('generation_candidates').select('round_input_hash').eq('composition_session_id', sessionRow.id).order('created_at', { ascending: false }).limit(1).maybeSingle()
+    //
+    // round_attempt zusaetzlich zu round_input_hash (Review-Fund, 2026082701): ein Retry nach einem
+    // Komplettfehlschlag legt eine frische Runde unter demselben round_input_hash an (unveraenderter
+    // Inhalt hasht identisch) -- ohne den Attempt-Filter kaemen die laengst fehlgeschlagenen
+    // Geschwister-Kandidaten der alten Runde bei jedem Laden wieder mit zurueck.
+    const latestRound = await client.from('generation_candidates').select('round_input_hash, round_attempt').eq('composition_session_id', sessionRow.id).order('created_at', { ascending: false }).limit(1).maybeSingle()
     if (latestRound.error) throw latestRound.error
     if (!latestRound.data) return reply.send({ session: sessionRow, candidates: [] })
-    const roundInputHash = z.object({ round_input_hash: z.string().regex(/^[a-f0-9]{64}$/) }).parse(latestRound.data).round_input_hash
-    const candidates = await client.from('generation_candidates').select('id, status, generated_content, quality_flags, failure_code, triggered_by, accepted_post_version_id, created_at').eq('composition_session_id', sessionRow.id).eq('round_input_hash', roundInputHash).order('created_at', { ascending: true })
+    const latestRoundKey = z.object({ round_input_hash: z.string().regex(/^[a-f0-9]{64}$/), round_attempt: z.number().int().positive() }).parse(latestRound.data)
+    const candidates = await client.from('generation_candidates').select('id, status, generated_content, quality_flags, failure_code, triggered_by, accepted_post_version_id, created_at').eq('composition_session_id', sessionRow.id).eq('round_input_hash', latestRoundKey.round_input_hash).eq('round_attempt', latestRoundKey.round_attempt).order('created_at', { ascending: true })
     if (candidates.error) throw candidates.error
     return reply.send({ session: sessionRow, candidates: z.array(TextWorkshopCandidateSchema).parse(candidates.data) })
   }
