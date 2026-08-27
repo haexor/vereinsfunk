@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(23);
+select plan(30);
 
 -- Paket 046: mehrere LLM-Provider koennen gleichzeitig einen Vorschlag liefern.
 -- create_text_generation_session erzeugt dafuer eine ganze Runde (mehrere generation_candidates,
@@ -129,6 +129,54 @@ select is((select status::text from public.composition_sessions where id = :'ens
 select public.acquire_generation_candidate(:'status_c_id', :'ensemble_session_id', '46000000-1000-4000-8000-000000000001');
 select public.mark_generation_candidate_failed(:'status_c_id'::uuid, :'ensemble_session_id'::uuid, (select generation_lease_token from public.generation_candidates where id = :'status_c_id'), 'provider_error');
 select is((select status::text from public.composition_sessions where id = :'ensemble_session_id'), 'candidate_ready', 'once every candidate of the round is terminal and at least one is ready, the session becomes candidate_ready');
+
+-- ===========================================================================================
+-- Retry-Dedup bleibt ein echtes Duplikat, solange mindestens ein Kandidat der Runde NICHT
+-- fehlgeschlagen ist (hier: ein ready- und zwei failed-Kandidaten aus dem Status-Aggregat-Block
+-- oben) -- nur eine Runde, in der ALLE Kandidaten fehlgeschlagen sind, darf eine frische Runde
+-- ausloesen (naechster Block).
+-- ===========================================================================================
+select lives_ok(
+  $$select public.create_text_generation_session(
+    '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', null,
+    'inform', '["text_post"]'::jsonb,
+    '{"facts":{"title":"Ensembletraining"},"observations":[],"quotes":[],"forbiddenTopics":[]}'::jsonb,
+    null, '{}'::jsonb, '{}'::jsonb, array['instagram']::text[], 2200, 0.6, 1,
+    encode(sha256('ensemble-fan-out'::bytea), 'hex'), encode(sha256('ensemble-fan-out-candidate'::bytea), 'hex'), 'initial', null,
+    '46000000-0000-4000-8000-000000000001', gen_random_uuid(), 'ensemble-fan-out-retry-mixed',
+    array['46000000-4000-4000-8000-000000000001', '46000000-4000-4000-8000-000000000002', '46000000-4000-4000-8000-000000000003']::uuid[]
+  )$$,
+  'retrying a round that already has one ready sibling is still idempotent, despite two failed siblings'
+);
+select is((select count(*)::integer from public.generation_candidates where composition_session_id = :'ensemble_session_id'), 3, 'a round with at least one ready candidate is not duplicated even after some siblings failed');
+
+-- ===========================================================================================
+-- Retry nach vollstaendigem Fehlschlag (der in diesem Paket gefundene Bug): eine Runde, in der
+-- ALLE Kandidaten terminal 'failed' sind, ist kein Duplikat mehr. Ein Mitglied, das nach einem
+-- Fehlschlag mit unveraendertem Text/Einstellungen erneut auf "Textkandidaten erzeugen" klickt,
+-- schickt denselben round hash wie zuvor -- bislang gab die Runden-Dedup-Pruefung dann einfach die
+-- alten, bereits fehlgeschlagenen Kandidaten zurueck, ohne je eine neue Generierung anzustossen.
+-- ===========================================================================================
+insert into public.composition_sessions (id, organization_id, department_id, team_id, communication_goal, requested_formats, source_material, style_profile_snapshot, source_revision, input_hash, status, candidate_count, created_by) values
+  ('46000000-5000-4000-8000-000000000001', '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', null, 'inform', '["text_post"]', '{"facts":{"title":"Fehlschlagtraining"},"observations":[],"quotes":[],"forbiddenTopics":[]}', '{}', 1, encode(sha256('retry-after-failure-session'::bytea), 'hex'), 'failed', 2, '46000000-0000-4000-8000-000000000001');
+insert into public.generation_candidates (id, organization_id, composition_session_id, generation_intent, status, failure_code, input_hash, round_input_hash, provider_configuration_id) values
+  ('46000000-5010-4000-8000-000000000001', '46000000-1000-4000-8000-000000000001', '46000000-5000-4000-8000-000000000001', 'initial', 'failed', 'generation_validation', encode(sha256('retry-after-failure-candidate:a'::bytea), 'hex'), encode(sha256('retry-after-failure-candidate'::bytea), 'hex'), '46000000-4000-4000-8000-000000000001'),
+  ('46000000-5011-4000-8000-000000000001', '46000000-1000-4000-8000-000000000001', '46000000-5000-4000-8000-000000000001', 'initial', 'failed', 'generation_validation', encode(sha256('retry-after-failure-candidate:b'::bytea), 'hex'), encode(sha256('retry-after-failure-candidate'::bytea), 'hex'), '46000000-4000-4000-8000-000000000002');
+select lives_ok(
+  $$select public.create_text_generation_session(
+    '46000000-1000-4000-8000-000000000001', '46000000-1100-4000-8000-000000000001', null,
+    'inform', '["text_post"]'::jsonb, '{"facts":{"title":"Fehlschlagtraining"},"observations":[],"quotes":[],"forbiddenTopics":[]}'::jsonb,
+    null, '{}'::jsonb, '{}'::jsonb, array['instagram']::text[], 2200, 0.6, 1,
+    encode(sha256('retry-after-failure-session'::bytea), 'hex'), encode(sha256('retry-after-failure-candidate'::bytea), 'hex'), 'initial', null,
+    '46000000-0000-4000-8000-000000000001', gen_random_uuid(), 'retry-after-failure-attempt',
+    array['46000000-4000-4000-8000-000000000001', '46000000-4000-4000-8000-000000000002']::uuid[]
+  )$$,
+  'a member retry with unchanged input succeeds when every candidate of the matching round already failed'
+);
+select is((select count(*)::integer from public.generation_candidates where composition_session_id = '46000000-5000-4000-8000-000000000001'), 4, 'the retry adds a fresh round instead of returning the two failed candidates');
+select is((select count(*)::integer from public.generation_candidates where composition_session_id = '46000000-5000-4000-8000-000000000001' and status = 'pending'), 2, 'the new candidates start pending, not failed');
+select is((select status::text from public.composition_sessions where id = '46000000-5000-4000-8000-000000000001'), 'queued', 'the session leaves its terminal failed status behind once a fresh round is queued');
+select is((select candidate_count from public.composition_sessions where id = '46000000-5000-4000-8000-000000000001'), 4, 'candidate_count accounts for both the failed and the fresh round');
 
 -- ===========================================================================================
 -- Recovery-Sonderfall: p_triggered_by = 'automatic_recovery' darf eine 'initial'-Runde auf einer
