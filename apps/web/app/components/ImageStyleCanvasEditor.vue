@@ -245,6 +245,18 @@ async function applyBackgroundImage(dataUrl: string) {
   const width = image.width ?? fabricCanvas.width
   const height = image.height ?? fabricCanvas.height
   fabricCanvas.setDimensions({ width, height })
+  // Ein BackgroundImage übernimmt die Maße seines dekodierten HTMLImage-Elements, nicht die
+  // des Canvas. Bei einer skalierten/erneut dekodierten WebP-Vorschau waren beide Werte bisher
+  // gelegentlich verschieden: Der Canvas war groß, das Bild blieb links oben klein stehen.
+  // Die Skalierung wird deshalb ausdrücklich aus beiden Größen abgeleitet.
+  image.set({
+    left: 0,
+    top: 0,
+    originX: 'left',
+    originY: 'top',
+    scaleX: width / (image.width || width),
+    scaleY: height / (image.height || height),
+  })
   fabricCanvas.backgroundImage = image
   fabricCanvas.renderAll()
   refreshLogoHandle()
