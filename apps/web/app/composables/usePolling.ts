@@ -5,6 +5,7 @@
 // Fehlversuchs-Limit dazu, die dieser einfache Fall nicht braucht.
 export function usePolling(load: () => Promise<void>, hasUnfinishedWork: () => boolean, intervalMs = 4000) {
   let timer: ReturnType<typeof setTimeout> | undefined
+  let cancelled = false
 
   async function refresh() {
     try {
@@ -21,18 +22,24 @@ export function usePolling(load: () => Promise<void>, hasUnfinishedWork: () => b
     // Aufrufer laden ihren Zustand teils per Top-Level-await, das laeuft auch waehrend SSR --
     // ohne den client-Guard wuerde der Timer serverseitig gestartet, obwohl onUnmounted() dort
     // nie feuert.
-    if (!import.meta.client || timer || !hasUnfinishedWork()) return
+    if (!import.meta.client || cancelled || timer || !hasUnfinishedWork()) return
     timer = setTimeout(async function poll() {
       // Ein einzelner Fehlschlag bleibt still, der naechste Versuch folgt in intervalMs -- ohne
       // den try/catch wuerde eine abgelehnte Promise hier unbehandelt bleiben.
       try { await refresh() } catch { /* naechster Versuch folgt automatisch */ }
-      // Erst nach Abschluss des laufenden Requests neu planen statt per setInterval parallel
-      // loszuschicken -- sonst koennten Antworten in falscher Reihenfolge eintreffen.
+      // onUnmounted() kann den bereits feuernden Timer nicht mehr per clearTimeout abbrechen,
+      // waehrend der obige await laeuft -- ohne diese Pruefung wuerde nach dem Verlassen der
+      // Seite trotzdem ein neuer Timeout geplant und der Poll liefe unbegrenzt weiter.
+      if (cancelled) { timer = undefined; return }
       timer = hasUnfinishedWork() ? setTimeout(poll, intervalMs) : undefined
     }, intervalMs)
   }
 
-  onUnmounted(() => { if (timer) clearTimeout(timer) })
+  onUnmounted(() => {
+    cancelled = true
+    if (timer) clearTimeout(timer)
+    timer = undefined
+  })
 
   return { refresh, ensurePolling }
 }
