@@ -2,6 +2,7 @@ import { ObscuringStyleSchema, type FaceDecision } from '@vereinsfunk/contracts'
 
 export {
   GmicCliImageEffectProvider,
+  GmicImageEffectError,
   type CuratedGmicEffect,
   type GmicCommandExecutor,
   type ImageEffectProvider,

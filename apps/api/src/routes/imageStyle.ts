@@ -32,6 +32,7 @@ import {
   mapTeamBrandRow,
 } from '../apiMappers.js'
 import { hashLogoBuffer } from '@vereinsfunk/brand-assets'
+import { GmicImageEffectError } from '@vereinsfunk/media-processing'
 import { GmicNotEnabledError, renderImageStyle } from '../imageStyle.js'
 import type { ApiRouteContext } from './context.js'
 import { loadSelectableBrandAsset, LOGO_ASSET_KINDS } from './brand.js'
@@ -276,7 +277,8 @@ async function previewImageStyleFilters(
         const preview = await encodePreview(rendered.buffer, 360)
         return { available: true as const, filter, imageBase64: preview.buffer.toString('base64'), contentType: 'image/webp' as const, filterProvider: rendered.filterProvider }
       } catch (error) {
-        if (error instanceof GmicNotEnabledError) return { available: false as const, filter }
+        if (error instanceof GmicNotEnabledError || error instanceof GmicImageEffectError)
+          return { available: false as const, filter }
         throw error
       }
     }))

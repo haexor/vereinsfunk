@@ -13,6 +13,19 @@ describe('standard app page layout', () => {
     )
   })
 
+  it('keeps all image-style grid columns shrinkable', () => {
+    const imageStylePage = readFileSync(join(appDirectory, 'pages/bildstil.vue'), 'utf8')
+
+    expect(imageStylePage).toContain(
+      'class="grid min-w-0 items-start gap-5 2xl:grid-cols-[minmax(0,.85fr)_minmax(0,1.75fr)_minmax(0,.8fr)]"',
+    )
+    expect(imageStylePage).toContain(
+      'class="min-w-0 space-y-5 2xl:sticky 2xl:top-6 2xl:max-h-[calc(100vh-3rem)] 2xl:overflow-y-auto 2xl:pr-1"',
+    )
+    expect(imageStylePage).toContain('<div class="min-w-0 2xl:sticky 2xl:top-6 2xl:self-start">')
+    expect(imageStylePage).toContain('<div class="min-w-0 space-y-5">')
+  })
+
   it('defers the authenticated app shell until client session data is available', () => {
     const layout = readFileSync(join(appDirectory, 'layouts/default.vue'), 'utf8')
 
