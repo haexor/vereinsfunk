@@ -36,8 +36,14 @@ function imageDataUrl(imageBase64: string): string {
 }
 
 async function loadPreviews() {
-  if (!props.organizationId || import.meta.server) return
   const load = ++latestLoad
+  previewByFilter.value = {}
+  unavailableFilters.value = new Set<ImageStyleFilter>()
+  if (!props.organizationId || import.meta.server) {
+    loading.value = false
+    loadError.value = false
+    return
+  }
   loading.value = true
   loadError.value = false
   try {
