@@ -149,7 +149,10 @@ function selectTool(tool: EditorTool) {
 }
 function updateOutputWidth(value: string) {
   const width = readOutputDimension(value)
-  if (!width) return
+  if (!width) {
+    exportError.value = 'Die Breite muss eine positive Zahl sein.'
+    return
+  }
   const dimensions = cropDimensions()
   const height =
     keepAspectRatio.value && dimensions.width
@@ -160,7 +163,10 @@ function updateOutputWidth(value: string) {
 }
 function updateOutputHeight(value: string) {
   const height = readOutputDimension(value)
-  if (!height) return
+  if (!height) {
+    exportError.value = 'Die Höhe muss eine positive Zahl sein.'
+    return
+  }
   const dimensions = cropDimensions()
   const width =
     keepAspectRatio.value && dimensions.height
