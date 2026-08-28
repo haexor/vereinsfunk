@@ -304,7 +304,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="card flex min-h-[min(72vh,820px)] flex-col p-4 sm:p-6">
+  <section class="card flex w-full min-w-0 min-h-[min(72vh,820px)] flex-col p-4 sm:p-6">
     <div class="flex items-start justify-between gap-4">
       <div>
         <h2 class="font-display text-base font-bold">Live-Vorschau</h2>
@@ -318,7 +318,7 @@ onBeforeUnmount(() => {
     </div>
     <div
       ref="canvasHost"
-      class="relative mt-4 flex min-h-[440px] flex-1 items-center justify-center overflow-hidden rounded-2xl border border-[#e9ebe4] bg-[#f8f9f6] p-4"
+      class="relative mt-4 flex min-h-[min(440px,calc(100vw-4rem))] w-full min-w-0 flex-1 items-center justify-center overflow-hidden rounded-2xl border border-[#e9ebe4] bg-[#f8f9f6] p-4"
     >
       <canvas ref="canvasEl" class="block" />
       <div

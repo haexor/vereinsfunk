@@ -13,6 +13,13 @@ describe('standard app page layout', () => {
     )
   })
 
+  it('keeps all image-style grid columns shrinkable', () => {
+    const imageStylePage = readFileSync(join(appDirectory, 'pages/bildstil.vue'), 'utf8')
+
+    expect(imageStylePage).toContain('grid min-w-0 items-start')
+    expect(imageStylePage).toContain('minmax(0,1.75fr)')
+  })
+
   it('defers the authenticated app shell until client session data is available', () => {
     const layout = readFileSync(join(appDirectory, 'layouts/default.vue'), 'utf8')
 

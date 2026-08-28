@@ -397,10 +397,10 @@ async function deletePreset(preset: ImageStylePreset) {
     </div>
     <template v-else>
       <div
-        class="grid items-start gap-5 2xl:grid-cols-[minmax(18rem,.85fr)_minmax(34rem,1.75fr)_minmax(17rem,.8fr)]"
+        class="grid min-w-0 items-start gap-5 2xl:grid-cols-[minmax(0,.85fr)_minmax(0,1.75fr)_minmax(0,.8fr)]"
       >
         <div
-          class="space-y-5 2xl:sticky 2xl:top-6 2xl:max-h-[calc(100vh-3rem)] 2xl:overflow-y-auto 2xl:pr-1"
+          class="min-w-0 space-y-5 2xl:sticky 2xl:top-6 2xl:max-h-[calc(100vh-3rem)] 2xl:overflow-y-auto 2xl:pr-1"
         >
           <section v-if="!canManageActiveLevel" class="card p-6 text-center text-sm text-[#7b827d]">
             Du hast auf dieser Ebene keine Berechtigung, Bildstil-Presets zu verwalten.
@@ -464,7 +464,7 @@ async function deletePreset(preset: ImageStylePreset) {
           </template>
         </div>
 
-        <div class="2xl:sticky 2xl:top-6 2xl:self-start">
+        <div class="min-w-0 2xl:sticky 2xl:top-6 2xl:self-start">
           <ImageStyleCanvasEditor
             v-model:draft="activeDraft"
             :logo-url="signedUrlFor(logoAssets, activeDraft.logoBrandAssetId)"
@@ -474,7 +474,7 @@ async function deletePreset(preset: ImageStylePreset) {
           />
         </div>
 
-        <div class="space-y-5">
+        <div class="min-w-0 space-y-5">
           <section class="card p-6">
             <h2 class="mb-4 font-display text-base font-bold">
               Presets dieser Ebene ({{ ownPresets.length }})
