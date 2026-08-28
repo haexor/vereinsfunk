@@ -14,6 +14,12 @@ import {
   X,
 } from '@lucide/vue'
 import { Cropper } from 'vue-advanced-cropper'
+import {
+  MAX_OUTPUT_DIMENSION,
+  outputSizeError,
+  readOutputDimension,
+  type ImageDimensions,
+} from '~/utils/imageOutputDimensions'
 import 'vue-advanced-cropper/dist/style.css'
 
 const props = defineProps<{ file: File }>()
@@ -81,11 +87,23 @@ const sourceDimensions = computed(() =>
     : 'Bild wird geladen …',
 )
 
-function cropDimensions() {
+function cropDimensions(): ImageDimensions {
   const canvas = cropper.value?.getResult().canvas
   return canvas?.width && canvas.height
     ? { width: canvas.width, height: canvas.height }
     : { width: sourceWidth.value, height: sourceHeight.value }
+}
+
+function setOutputDimensions(dimensions: ImageDimensions) {
+  const error = outputSizeError(dimensions)
+  if (error) {
+    exportError.value = error
+    return false
+  }
+  outputWidth.value = dimensions.width
+  outputHeight.value = dimensions.height
+  exportError.value = ''
+  return true
 }
 
 function updateSourceUrl(file: File) {
@@ -126,27 +144,30 @@ function reset() {
 }
 function selectTool(tool: EditorTool) {
   activeTool.value = tool
-  if (tool === 'resize') {
-    const dimensions = cropDimensions()
-    outputWidth.value = dimensions.width
-    outputHeight.value = dimensions.height
-  }
+  if (tool === 'resize' && (!outputWidth.value || !outputHeight.value))
+    setOutputDimensions(cropDimensions())
 }
 function updateOutputWidth(value: string) {
-  const width = Math.max(1, Math.round(Number(value) || 0))
+  const width = readOutputDimension(value)
   if (!width) return
-  outputWidth.value = width
   const dimensions = cropDimensions()
-  if (keepAspectRatio.value && dimensions.width)
-    outputHeight.value = Math.max(1, Math.round((width * dimensions.height) / dimensions.width))
+  const height =
+    keepAspectRatio.value && dimensions.width
+      ? Math.max(1, Math.round((width * dimensions.height) / dimensions.width))
+      : outputHeight.value
+  if (!height) return
+  setOutputDimensions({ width, height })
 }
 function updateOutputHeight(value: string) {
-  const height = Math.max(1, Math.round(Number(value) || 0))
+  const height = readOutputDimension(value)
   if (!height) return
-  outputHeight.value = height
   const dimensions = cropDimensions()
-  if (keepAspectRatio.value && dimensions.height)
-    outputWidth.value = Math.max(1, Math.round((height * dimensions.width) / dimensions.height))
+  const width =
+    keepAspectRatio.value && dimensions.height
+      ? Math.max(1, Math.round((height * dimensions.width) / dimensions.height))
+      : outputWidth.value
+  if (!width) return
+  setOutputDimensions({ width, height })
 }
 async function save() {
   const croppedCanvas = cropper.value?.getResult().canvas
@@ -154,12 +175,21 @@ async function save() {
     exportError.value = 'Der Bildausschnitt ist noch nicht bereit.'
     return
   }
+  const dimensions = {
+    width: outputWidth.value || croppedCanvas.width,
+    height: outputHeight.value || croppedCanvas.height,
+  }
+  const sizeError = outputSizeError(dimensions)
+  if (sizeError) {
+    exportError.value = sizeError
+    return
+  }
   exporting.value = true
   exportError.value = ''
   try {
     const canvas = document.createElement('canvas')
-    canvas.width = outputWidth.value || croppedCanvas.width
-    canvas.height = outputHeight.value || croppedCanvas.height
+    canvas.width = dimensions.width
+    canvas.height = dimensions.height
     const context = canvas.getContext('2d')
     if (!context) throw new Error('canvas_unavailable')
     context.filter = cssFilter.value
@@ -394,6 +424,7 @@ async function save() {
                 class="w-24 rounded-lg border border-[#dfe0d9] px-2 py-2 text-sm"
                 type="number"
                 min="1"
+                :max="MAX_OUTPUT_DIMENSION"
                 @input="updateOutputWidth(($event.target as HTMLInputElement).value)" /></label
             ><span class="mb-2 text-[#7a817c]">×</span
             ><label class="grid gap-1 text-xs font-semibold"
@@ -403,6 +434,7 @@ async function save() {
                 class="w-24 rounded-lg border border-[#dfe0d9] px-2 py-2 text-sm"
                 type="number"
                 min="1"
+                :max="MAX_OUTPUT_DIMENSION"
                 @input="updateOutputHeight(($event.target as HTMLInputElement).value)" /></label
             ><button
               type="button"
