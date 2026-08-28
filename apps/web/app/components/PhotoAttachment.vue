@@ -101,10 +101,21 @@ function onFileSelected(event: Event) {
 }
 
 async function uploadEditedFile(file: File) {
-  // Beim erneuten Zuschneiden darf die Ausgangsdatei bis zum erfolgreichen Upload erhalten
-  // bleiben. reset() entfernt aber weiterhin explizit gewählte Fotos aus dem Editor.
-  reset(false)
+  // Ein erneuter Zuschnitt darf ein bereits geprüftes Attachment nicht schon beim Starten des
+  // Ersatz-Uploads lösen. Während der Upload läuft, merken wir uns deshalb den kompletten
+  // sichtbaren Zustand und ersetzen ihn erst, wenn das neue Asset tatsächlich bereit ist.
+  const previous = {
+    phase: phase.value,
+    previewUrl: previewUrl.value,
+    boxes: boxes.value,
+    currentAssetId: currentAssetId.value,
+    mediaAssetId: mediaAssetId.value,
+    isHydratedExternalAsset: isHydratedExternalAsset.value,
+    editableLocalFile: editableLocalFile.value,
+  }
+  const replacesExistingPhoto = previous.phase === 'marking' || previous.phase === 'reviewed'
   phase.value = 'uploading'
+  errorMessage.value = ''
   try {
     const initiated = await api.request('/v1/media/uploads', {
       method: 'POST',
@@ -119,13 +130,28 @@ async function uploadEditedFile(file: File) {
     // kein Polling noetig.
     const asset = await supabase.from('media_assets').select('upload_status').eq('id', initiated.assetId).single()
     if (asset.error) throw asset.error
-    if (asset.data.upload_status !== 'ready') { phase.value = 'failed'; errorMessage.value = 'Das Foto konnte nicht verarbeitet werden. Bitte ein anderes Bild versuchen.'; return }
+    if (asset.data.upload_status !== 'ready') throw new Error('image_processing_failed')
+    // Erst hier wird die bisherige Vorschau (und damit eine eventuell bestehende Object-URL)
+    // verworfen. Das neue Asset muss anschließend wie jedes neue Foto erneut geprüft werden.
+    reset(false)
     previewUrl.value = URL.createObjectURL(file)
     boxes.value = []
     currentAssetId.value = initiated.assetId
+    editableLocalFile.value = file
     phase.value = 'marking'
     await loadConsents()
   } catch {
+    if (replacesExistingPhoto) {
+      phase.value = previous.phase
+      previewUrl.value = previous.previewUrl
+      boxes.value = previous.boxes
+      currentAssetId.value = previous.currentAssetId
+      mediaAssetId.value = previous.mediaAssetId
+      isHydratedExternalAsset.value = previous.isHydratedExternalAsset
+      editableLocalFile.value = previous.editableLocalFile
+      errorMessage.value = 'Die Bearbeitung konnte nicht übernommen werden. Das bisherige Foto bleibt angehängt.'
+      return
+    }
     phase.value = 'failed'
     errorMessage.value = 'Der Upload ist fehlgeschlagen. Bitte erneut versuchen.'
   }
@@ -133,7 +159,6 @@ async function uploadEditedFile(file: File) {
 
 async function acceptEditedFile(file: File) {
   pendingEditorFile.value = null
-  editableLocalFile.value = file
   await uploadEditedFile(file)
 }
 
@@ -304,6 +329,7 @@ function editAgain() { mediaAssetId.value = null; phase.value = 'marking' }
       <button v-if="editableLocalFile" type="button" class="text-xs text-forest underline" @click="reopenImageEditor">Foto bearbeiten</button>
       <button type="button" class="text-xs text-[#727a75] underline" @click="removePhoto">Entfernen</button>
     </div>
+    <p v-if="phase === 'reviewed' && errorMessage" class="mt-2 text-xs text-red-700">{{ errorMessage }}</p>
 
     <p v-if="phase === 'idle'" class="mt-1 inline-flex items-center gap-1 text-[11px] text-[#9aa096]"><ImagePlus :size="13" /> JPEG, PNG oder WebP · direkt danach zuschneiden, drehen und spiegeln.</p>
   </div>
