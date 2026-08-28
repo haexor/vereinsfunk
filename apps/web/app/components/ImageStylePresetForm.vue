@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { LoaderCircle } from '@lucide/vue'
 import type {
-  ImageStyleFilter,
   ImageStyleFrameStyle,
   ImageStyleFrameType,
   ImageStyleLogoPosition,
@@ -25,6 +24,9 @@ const props = withDefaults(
     logoAssets: AssetOption[]
     primaryColor: string
     accentColor: string
+    organizationId: string
+    departmentId: string | null
+    teamId: string | null
   }>(),
   {
     submitLabel: 'Anlegen',
@@ -36,60 +38,6 @@ const draft = defineModel<ImageStylePresetDraft>('draft', { required: true })
 
 const emit = defineEmits<{ save: []; cancel: [] }>()
 
-const FILTER_OPTIONS: {
-  value: ImageStyleFilter
-  label: string
-  description: string
-  css: string
-  effect?: 'comic' | 'konfetti'
-}[] = [
-  { value: 'original', label: 'Original', description: 'Unbearbeitet', css: 'none' },
-  {
-    value: 'schwarz_weiss',
-    label: 'Schwarz-Weiß',
-    description: 'Klar & zeitlos',
-    css: 'grayscale(1)',
-  },
-  {
-    value: 'kontrastreich',
-    label: 'Kontrast',
-    description: 'Mehr Energie',
-    css: 'contrast(1.35) saturate(1.2)',
-  },
-  { value: 'warm', label: 'Warm', description: 'Sanfte Töne', css: 'sepia(.35) saturate(1.15)' },
-  {
-    value: 'vereinsfarben_duoton',
-    label: 'Duoton',
-    description: 'In Vereinsfarben',
-    css: 'grayscale(1) contrast(1.1)',
-  },
-  {
-    value: 'comic',
-    label: 'Comic',
-    description: 'Pop-Art & Raster',
-    css: 'contrast(1.25) saturate(1.45)',
-    effect: 'comic',
-  },
-  {
-    value: 'konfetti',
-    label: 'Konfetti',
-    description: 'Jubel aufs Bild',
-    css: 'saturate(1.08)',
-    effect: 'konfetti',
-  },
-  {
-    value: 'gmic_vintage',
-    label: 'Vintage',
-    description: 'G’MIC · analog',
-    css: 'sepia(.68) contrast(.92) brightness(1.05)',
-  },
-  {
-    value: 'gmic_poster',
-    label: 'Poster',
-    description: 'G’MIC · Schablone',
-    css: 'contrast(1.7) saturate(.35) sepia(.2)',
-  },
-]
 const LOGO_POSITION_OPTIONS: { value: ImageStyleLogoPosition; label: string }[] = [
   { value: 'bottom_right', label: 'Unten rechts' },
   { value: 'bottom_left', label: 'Unten links' },
@@ -465,31 +413,12 @@ const isValid = computed(() => {
     </div>
 
     <div v-show="activeTab === 'filter'" class="mt-4">
-      <div class="grid grid-cols-2 gap-2 sm:grid-cols-3">
-        <button
-          v-for="option in FILTER_OPTIONS"
-          :key="option.value"
-          type="button"
-          class="focus-ring space-y-1 rounded-lg p-1.5 text-left"
-          :class="
-            draft.filter === option.value ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'
-          "
-          @click="draft.filter = option.value"
-        >
-          <ImageStyleFramePreview
-            :frame-style="null"
-            :photo-filter-css="option.css"
-            :photo-effect="option.effect"
-            class="rounded-md"
-          />
-          <span class="block text-center text-[10px] font-semibold">{{ option.label }}</span>
-          <span
-            class="block text-center text-[9px]"
-            :class="draft.filter === option.value ? 'text-white/75' : 'text-[#7a827b]'"
-            >{{ option.description }}</span
-          >
-        </button>
-      </div>
+      <ImageStyleFilterGallery
+        v-model:filter="draft.filter"
+        :organization-id="organizationId"
+        :department-id="departmentId"
+        :team-id="teamId"
+      />
     </div>
 
     <p v-if="error" class="mt-4 text-xs text-amber-800">{{ error }}</p>

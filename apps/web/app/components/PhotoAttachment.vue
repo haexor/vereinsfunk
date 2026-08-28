@@ -3,11 +3,9 @@ import { AlertTriangle, Check, ImagePlus, LoaderCircle, Trash2, X } from '@lucid
 import { MediaAssetSummarySchema } from '@vereinsfunk/contracts'
 import { z } from 'zod'
 
-// Plan 045, PR 0 Schritt 3: minimale Foto-Anhang-Steuerung fuer die Textwerkstatt. Rahmen, Logo
-// und Filter (Plan 045 PR 1-3) existieren hier noch nicht -- ein angehaengtes Foto geht
-// unveraendert (Pass-Through-Derivat) in den Beitrag. Bewusst hoechstens ein Foto (kein
-// Karussell, siehe plans/045 "Nicht enthalten"); decision='obscure'/'exclude' werden hier nicht
-// angeboten, weil ImageAnonymizer (Plan 003) nichts rendern kann, das sie umsetzt.
+// Foto-Anhang-Steuerung für die Textwerkstatt. Der lokale Editor läuft bewusst VOR dem Upload und
+// vor der Personenprüfung: Gesichtsfelder und Einwilligungen beziehen sich dadurch auf den
+// endgültigen Ausschnitt. Rahmen, Logo und Filter bleiben serverseitige, reproduzierbare Presets.
 const props = defineProps<{ organizationId: string; departmentId: string | null; initialMediaAssetId?: string | null }>()
 const mediaAssetId = defineModel<string | null>({ required: true })
 
@@ -23,6 +21,9 @@ const supabase = useSupabaseClient()
 const phase = ref<Phase>('idle')
 const errorMessage = ref('')
 const previewUrl = ref('')
+// Die Bearbeitung geschieht vor dem Upload und damit vor der Personenprüfung. So beziehen sich
+// Einwilligungs-Markierungen immer auf genau die Pixel, die später veröffentlicht werden.
+const pendingEditorFile = ref<File | null>(null)
 // Nur ein frisch hochgeladenes Foto laeuft ueber createObjectURL -- ein wiederverwendetes/signiertes
 // Foto bekommt immer eine echte https-URL. Aus dem URL-Schema ableitbar statt separat mitgefuehrt.
 const previewIsObjectUrl = computed(() => previewUrl.value.startsWith('blob:'))
@@ -85,9 +86,14 @@ async function sha256Hex(file: File): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
-async function onFileSelected(event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0]
+function onFileSelected(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0] ?? null
+  ;(event.target as HTMLInputElement).value = ''
   if (!file) return
+  pendingEditorFile.value = file
+}
+
+async function uploadEditedFile(file: File) {
   reset()
   phase.value = 'uploading'
   try {
@@ -113,9 +119,12 @@ async function onFileSelected(event: Event) {
   } catch {
     phase.value = 'failed'
     errorMessage.value = 'Der Upload ist fehlgeschlagen. Bitte erneut versuchen.'
-  } finally {
-    ;(event.target as HTMLInputElement).value = ''
   }
+}
+
+async function acceptEditedFile(file: File) {
+  pendingEditorFile.value = null
+  await uploadEditedFile(file)
 }
 
 async function loadConsents() {
@@ -206,6 +215,12 @@ function editAgain() { mediaAssetId.value = null; phase.value = 'marking' }
 
 <template>
   <div>
+    <PhotoImageEditor
+      v-if="pendingEditorFile"
+      :file="pendingEditorFile"
+      @save="acceptEditedFile"
+      @cancel="pendingEditorFile = null"
+    />
     <label class="mb-1 block text-xs font-semibold">Foto (optional)</label>
     <input v-if="phase === 'idle' || phase === 'failed'" type="file" accept="image/jpeg,image/png,image/webp" class="block w-full text-sm" @change="onFileSelected" />
     <p v-if="phase === 'uploading' || phase === 'processing'" class="mt-2 inline-flex items-center gap-2 text-sm text-[#727a75]"><LoaderCircle class="animate-spin" :size="16" /> {{ phase === 'uploading' ? 'Foto wird hochgeladen …' : 'Foto wird geprüft …' }}</p>
@@ -272,6 +287,6 @@ function editAgain() { mediaAssetId.value = null; phase.value = 'marking' }
       <button type="button" class="text-xs text-[#727a75] underline" @click="reset">Entfernen</button>
     </div>
 
-    <p v-if="phase === 'idle'" class="mt-1 inline-flex items-center gap-1 text-[11px] text-[#9aa096]"><ImagePlus :size="13" /> JPEG, PNG oder WebP.</p>
+    <p v-if="phase === 'idle'" class="mt-1 inline-flex items-center gap-1 text-[11px] text-[#9aa096]"><ImagePlus :size="13" /> JPEG, PNG oder WebP · vor der Prüfung zuschneiden und drehen.</p>
   </div>
 </template>

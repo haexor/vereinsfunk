@@ -168,6 +168,31 @@ export const PreviewImageStylePresetResponseSchema = z.object({
   filterProvider: z.string(),
 })
 
+// Die Filtergalerie verwendet dieselbe serverseitige Rendering-Pipeline wie die große
+// Vorschau. CSS-Annäherungen wären hier irreführend, insbesondere für die kuratierten
+// G'MIC-Effekte, die im Browser gar nicht ausgeführt werden.
+export const ImageStyleFilterPreviewsRequestSchema = z.object({
+  organizationId: UuidSchema,
+  departmentId: UuidSchema.optional(),
+  teamId: UuidSchema.optional(),
+}).superRefine((input, context) => {
+  if (input.teamId !== undefined && input.departmentId === undefined) {
+    context.addIssue({ code: 'custom', path: ['teamId'], message: 'teamId requires departmentId' })
+  }
+})
+
+export const ImageStyleFilterPreviewSchema = z.object({
+  filter: ImageStyleFilterSchema,
+  imageBase64: z.string().min(1),
+  contentType: z.literal('image/webp'),
+  filterProvider: z.string(),
+})
+
+export const ImageStyleFilterPreviewsResponseSchema = z.object({
+  previews: z.array(ImageStyleFilterPreviewSchema),
+  unavailableFilters: z.array(ImageStyleFilterSchema),
+})
+
 // Plan 045, PR 2: POST /v1/post-media/:postMediaId/style-render. Antwort trägt objectPath
 // zusätzlich zur signedUrl mit -- dieselbe Signatur wie marke.vue/bildstil.vue sie sich später
 // selbst über supabase.storage...createSignedUrl(objectPath, 600) neu holen können, ohne die
@@ -190,3 +215,5 @@ export type ApplyImageStyleRenderRequest = z.infer<typeof ApplyImageStyleRenderR
 export type ApplyImageStyleRenderResponse = z.infer<typeof ApplyImageStyleRenderResponseSchema>
 export type PreviewImageStylePresetRequest = z.infer<typeof PreviewImageStylePresetRequestSchema>
 export type PreviewImageStylePresetResponse = z.infer<typeof PreviewImageStylePresetResponseSchema>
+export type ImageStyleFilterPreviewsRequest = z.infer<typeof ImageStyleFilterPreviewsRequestSchema>
+export type ImageStyleFilterPreviewsResponse = z.infer<typeof ImageStyleFilterPreviewsResponseSchema>
