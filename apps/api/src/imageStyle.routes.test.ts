@@ -13,6 +13,7 @@ import {
 } from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
+import { ImageStyleFilterSchema } from '@vereinsfunk/contracts'
 
 const PRESET_ID = '47000000-0000-4000-8000-000000000001'
 const FRAME_ASSET_ID = '47000000-0000-4000-8000-000000000002'
@@ -386,12 +387,17 @@ describe('POST /v1/image-style-presets/preview', () => {
       payload: { organizationId: ORGANIZATION_ID },
     })
     expect(response.statusCode).toBe(200)
-    expect(response.json()).toMatchObject({
-      unavailableFilters: ['gmic_vintage', 'gmic_poster'],
-    })
-    expect(response.json().previews).toHaveLength(7)
+    const unavailableFilters = ImageStyleFilterSchema.options.filter((filter) =>
+      filter.startsWith('gmic_'),
+    )
+    expect(response.json()).toMatchObject({ unavailableFilters })
+    expect(response.json().previews).toHaveLength(
+      ImageStyleFilterSchema.options.length - unavailableFilters.length,
+    )
     expect(response.json().previews[0]).toMatchObject({
-      filter: 'original', contentType: 'image/webp', filterProvider: 'sharp',
+      filter: 'original',
+      contentType: 'image/webp',
+      filterProvider: 'sharp',
     })
   })
 

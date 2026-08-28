@@ -252,30 +252,37 @@ async function previewImageStyleFilters(
     context.samplePhotoLoader(),
     loadResolvedBrandColors(service, input.organizationId, scope.departmentId ?? null, scope.teamId ?? null),
   ])
+  // Der vollständige Katalog wird auf einem kleinen Eingangsfoto gerechnet. Die große
+  // Live-Vorschau verwendet weiterhin das hochauflösende Beispielbild.
+  const gallerySource = await sharp(sourceBuffer).resize({ width: 360, withoutEnlargement: true }).png().toBuffer()
   const previews: { filter: (typeof ImageStyleFilterSchema.options)[number]; imageBase64: string; contentType: 'image/webp'; filterProvider: string }[] = []
   const unavailableFilters: (typeof ImageStyleFilterSchema.options)[number][] = []
-  for (const filter of ImageStyleFilterSchema.options) {
-    try {
-      const rendered = await renderImageStyle({
-        sourceBuffer,
-        preset: {
-          frameType: 'none', frameStyle: null, frameColor: null, frameWidthPx: null,
-          frameCornerRadiusPx: null, logoEnabled: false, logoPosition: 'bottom_right',
-          logoSizePercent: null, logoMarginPercent: null, filter,
-        },
-        brandColors,
-        ...(context.imageEffects ? { imageEffects: context.imageEffects } : {}),
-      })
-      const preview = await encodePreview(rendered.buffer, 360)
-      previews.push({
-        filter,
-        imageBase64: preview.buffer.toString('base64'),
-        contentType: 'image/webp',
-        filterProvider: rendered.filterProvider,
-      })
-    } catch (error) {
-      if (error instanceof GmicNotEnabledError) unavailableFilters.push(filter)
-      else throw error
+  // Nie den kompletten Satz gleichzeitig starten: G'MIC läuft pro Rezept in einem eigenen
+  // Prozess. Dreier-Batches halten die Galerie zügig, ohne den API-Container zu überfahren.
+  for (let start = 0; start < ImageStyleFilterSchema.options.length; start += 3) {
+    const batch = ImageStyleFilterSchema.options.slice(start, start + 3)
+    const results = await Promise.all(batch.map(async (filter) => {
+      try {
+        const rendered = await renderImageStyle({
+          sourceBuffer: gallerySource,
+          preset: {
+            frameType: 'none', frameStyle: null, frameColor: null, frameWidthPx: null,
+            frameCornerRadiusPx: null, logoEnabled: false, logoPosition: 'bottom_right',
+            logoSizePercent: null, logoMarginPercent: null, filter,
+          },
+          brandColors,
+          ...(context.imageEffects ? { imageEffects: context.imageEffects } : {}),
+        })
+        const preview = await encodePreview(rendered.buffer, 360)
+        return { available: true as const, filter, imageBase64: preview.buffer.toString('base64'), contentType: 'image/webp' as const, filterProvider: rendered.filterProvider }
+      } catch (error) {
+        if (error instanceof GmicNotEnabledError) return { available: false as const, filter }
+        throw error
+      }
+    }))
+    for (const result of results) {
+      if (result.available) previews.push(result)
+      else unavailableFilters.push(result.filter)
     }
   }
   return { previews, unavailableFilters }

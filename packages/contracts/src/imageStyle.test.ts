@@ -129,8 +129,15 @@ describe('image style preset contracts (Plan 045, PR 1)', () => {
     }
   })
 
-  it("accepts the creative and G'MIC effects", () => {
-    for (const filter of ['comic', 'konfetti', 'gmic_vintage', 'gmic_poster'] as const) {
+  it("accepts the creative and expanded G'MIC effects", () => {
+    for (const filter of [
+      'comic',
+      'konfetti',
+      'gmic_vintage',
+      'gmic_poster',
+      'gmic_stained_glass',
+      'gmic_warhol',
+    ] as const) {
       expect(
         CreateImageStylePresetRequestSchema.safeParse({
           ...baseFields,

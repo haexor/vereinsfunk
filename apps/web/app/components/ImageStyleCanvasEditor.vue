@@ -25,7 +25,9 @@ const ERROR_MESSAGES: Record<string, string> = {
   invalid_asset_reference: 'Die gewählte Datei ist noch nicht bereit.',
 }
 const errorMessage = computed(() =>
-  errorCode.value ? (ERROR_MESSAGES[errorCode.value] ?? 'Die Vorschau konnte nicht geladen werden.') : '',
+  errorCode.value
+    ? (ERROR_MESSAGES[errorCode.value] ?? 'Die Vorschau konnte nicht geladen werden.')
+    : '',
 )
 
 // Spiegelt checkImageStylePresetFields (packages/contracts/src/imageStyle.ts) wie
@@ -109,8 +111,9 @@ let resizeObserver: ResizeObserver | null = null
 function syncCanvasCssSize() {
   if (!fabricCanvas || !canvasHost.value || !fabricCanvas.width || !fabricCanvas.height) return
   const availableWidth = canvasHost.value.clientWidth
-  if (availableWidth <= 0) return
-  const scale = Math.min(1, availableWidth / fabricCanvas.width)
+  const availableHeight = canvasHost.value.clientHeight
+  if (availableWidth <= 0 || availableHeight <= 0) return
+  const scale = Math.min(availableWidth / fabricCanvas.width, availableHeight / fabricCanvas.height)
   fabricCanvas.setDimensions(
     {
       width: `${Math.max(1, Math.round(fabricCanvas.width * scale))}px`,
@@ -122,7 +125,11 @@ function syncCanvasCssSize() {
 
 function refreshLogoHandle() {
   if (!fabricCanvas || !fabricModule) return
-  if (!draft.value.logoEnabled || draft.value.logoSizePercent === null || draft.value.logoMarginPercent === null) {
+  if (
+    !draft.value.logoEnabled ||
+    draft.value.logoSizePercent === null ||
+    draft.value.logoMarginPercent === null
+  ) {
     if (logoHandle) {
       fabricCanvas.remove(logoHandle)
       logoHandle = null
@@ -161,7 +168,14 @@ function refreshLogoHandle() {
     return
   }
   updatingFromCanvas = true
-  logoHandle.set({ left: rect.left, top: rect.top, width: rect.width, height: rect.height, scaleX: 1, scaleY: 1 })
+  logoHandle.set({
+    left: rect.left,
+    top: rect.top,
+    width: rect.width,
+    height: rect.height,
+    scaleX: 1,
+    scaleY: 1,
+  })
   logoHandle.setCoords()
   fabricCanvas.renderAll()
   updatingFromCanvas = false
@@ -226,12 +240,20 @@ async function applyBackgroundImage(dataUrl: string) {
 watch(imageDataUrl, (value) => {
   if (value) void applyBackgroundImage(value)
 })
-watch(() => props.logoUrl, async () => {
-  await loadLogoAspectRatio()
-  refreshLogoHandle()
-})
 watch(
-  () => [draft.value.logoEnabled, draft.value.logoPosition, draft.value.logoSizePercent, draft.value.logoMarginPercent],
+  () => props.logoUrl,
+  async () => {
+    await loadLogoAspectRatio()
+    refreshLogoHandle()
+  },
+)
+watch(
+  () => [
+    draft.value.logoEnabled,
+    draft.value.logoPosition,
+    draft.value.logoSizePercent,
+    draft.value.logoMarginPercent,
+  ],
   () => refreshLogoHandle(),
 )
 
@@ -255,10 +277,22 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="card p-6">
-    <h2 class="font-display text-base font-bold">Live-Vorschau</h2>
-    <p class="mt-1 text-[11px] text-[#9aa096]">Vorschau kann kurz nachladen.</p>
-    <div ref="canvasHost" class="relative mt-4 min-h-32 w-full overflow-hidden rounded-2xl border border-[#e9ebe4] bg-[#f8f9f6]">
+  <section class="card flex min-h-[min(72vh,820px)] flex-col p-4 sm:p-6">
+    <div class="flex items-start justify-between gap-4">
+      <div>
+        <h2 class="font-display text-base font-bold">Live-Vorschau</h2>
+        <p class="mt-1 text-[11px] text-[#7a817c]">
+          Logo direkt im Bild verschieben oder an den Ecken skalieren.
+        </p>
+      </div>
+      <span class="rounded-full bg-[#eef1ea] px-2.5 py-1 text-[10px] font-semibold text-[#5b625d]"
+        >Vollansicht</span
+      >
+    </div>
+    <div
+      ref="canvasHost"
+      class="relative mt-4 flex min-h-[440px] flex-1 items-center justify-center overflow-hidden rounded-2xl border border-[#e9ebe4] bg-[#f8f9f6] p-4"
+    >
       <canvas ref="canvasEl" class="block" />
       <div
         v-if="state === 'loading'"

@@ -211,6 +211,38 @@ async function applyFilter(
       return { buffer: await applyConfetti(buffer), provider: 'sharp' }
     case 'gmic_vintage':
     case 'gmic_poster':
+    case 'gmic_brushify':
+    case 'gmic_cartoon':
+    case 'gmic_color_ellipses':
+    case 'gmic_cubism':
+    case 'gmic_ellipsionism':
+    case 'gmic_fire_edges':
+    case 'gmic_fractalize':
+    case 'gmic_glow':
+    case 'gmic_halftone':
+    case 'gmic_hardsketchbw':
+    case 'gmic_hearts':
+    case 'gmic_houghsketchbw':
+    case 'gmic_lightrays':
+    case 'gmic_light_relief':
+    case 'gmic_linify':
+    case 'gmic_mosaic':
+    case 'gmic_pencilbw':
+    case 'gmic_pixelsort':
+    case 'gmic_polaroid':
+    case 'gmic_polygonize':
+    case 'gmic_poster_edges':
+    case 'gmic_rodilius':
+    case 'gmic_sketchbw':
+    case 'gmic_sponge':
+    case 'gmic_stained_glass':
+    case 'gmic_stars':
+    case 'gmic_stencil':
+    case 'gmic_stencilbw':
+    case 'gmic_tetris':
+    case 'gmic_warhol':
+    case 'gmic_weave':
+    case 'gmic_whirls':
       throw new GmicNotEnabledError()
   }
 }
