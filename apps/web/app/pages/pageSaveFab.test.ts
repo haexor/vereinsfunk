@@ -12,13 +12,15 @@ describe('Seitenaktions-FAB', () => {
     expect(composable).toContain('activeAction.value === registeredAction')
   })
 
-  it('zeigt die Kandidatenerzeugung vor der ersten Sitzung und nach einem fehlgeschlagenen Versuch als primäre Aktion', () => {
+  it('zeigt die Kandidatenerzeugung vor der ersten Sitzung, nach Fehlern und bei einem Stilwechsel als primäre Aktion', () => {
     const page = readFileSync(join(appDirectory, 'pages/erstellen.vue'), 'utf8')
     const fab = readFileSync(join(appDirectory, 'components/PageSaveFab.vue'), 'utf8')
 
     expect(page).toContain("usePageSaveFab({ label: 'Textkandidaten erzeugen', save: createCandidate")
     expect(page).toContain('visible: showCreateCandidateFab')
-    expect(page).toContain("const showCreateCandidateFab = computed(() => (!sessionId.value && !candidate.value) || candidate.value?.status === 'failed')")
+    expect(page).toContain("const DEFAULT_TEXT_WORKSHOP_PROFILE = 'lebendig_sportlich'")
+    expect(page).toContain('const selectedProfile = ref<string>(DEFAULT_TEXT_WORKSHOP_PROFILE)')
+    expect(page).toContain('const showCreateCandidateFab = computed(() => (!sessionId.value && !candidate.value) || candidate.value?.status === \'failed\' || (candidateFinished.value && sessionProfile.value !== null && selectedProfile.value !== sessionProfile.value))')
     expect(page).not.toContain('@click="createCandidate"')
     expect(fab).toContain('v-if="action && isVisible"')
   })
