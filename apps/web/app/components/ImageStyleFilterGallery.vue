@@ -1,8 +1,6 @@
 <script setup lang="ts">
-import {
-  ImageStyleFilterPreviewsResponseSchema,
-  type ImageStyleFilter,
-} from '@vereinsfunk/contracts'
+import type { ImageStyleFilter } from '@vereinsfunk/contracts'
+import { useImageStyleFilterPreviewCache } from '../composables/useImageStyleFilterPreviewCache'
 
 const props = defineProps<{
   organizationId: string
@@ -12,6 +10,8 @@ const props = defineProps<{
 
 const filter = defineModel<ImageStyleFilter>('filter', { required: true })
 const api = useApiClient()
+const { loading, loadError, previewByFilter, unavailableFilters, load } =
+  useImageStyleFilterPreviewCache({ api })
 
 const FILTER_OPTIONS: {
   value: ImageStyleFilter
@@ -113,52 +113,13 @@ const FILTER_OPTIONS: {
 ]
 const FILTER_GROUPS = ['Basis', 'G’MIC'] as const
 
-const loading = ref(false)
-const loadError = ref(false)
-const unavailableFilters = ref<Set<ImageStyleFilter>>(new Set())
-const previewByFilter = ref<Partial<Record<ImageStyleFilter, string>>>({})
-let latestLoad = 0
-
-function imageDataUrl(imageBase64: string): string {
-  return `data:image/webp;base64,${imageBase64}`
-}
-
 async function loadPreviews() {
-  const load = ++latestLoad
-  previewByFilter.value = {}
-  unavailableFilters.value = new Set<ImageStyleFilter>()
-  if (!props.organizationId || import.meta.server) {
-    loading.value = false
-    loadError.value = false
-    return
-  }
-  loading.value = true
-  loadError.value = false
-  try {
-    const result = await api.request(
-      '/v1/image-style-presets/filter-previews',
-      {
-        method: 'POST',
-        body: {
-          organizationId: props.organizationId,
-          ...(props.departmentId ? { departmentId: props.departmentId } : {}),
-          ...(props.teamId ? { teamId: props.teamId } : {}),
-        },
-      },
-      ImageStyleFilterPreviewsResponseSchema,
-    )
-    if (load !== latestLoad) return
-    previewByFilter.value = Object.fromEntries(
-      result.previews.map((preview) => [preview.filter, imageDataUrl(preview.imageBase64)]),
-    )
-    unavailableFilters.value = new Set(result.unavailableFilters)
-    if (unavailableFilters.value.has(filter.value)) filter.value = 'original'
-  } catch {
-    if (load !== latestLoad) return
-    loadError.value = true
-  } finally {
-    if (load === latestLoad) loading.value = false
-  }
+  await load({
+    organizationId: props.organizationId,
+    departmentId: props.departmentId,
+    teamId: props.teamId,
+  })
+  if (unavailableFilters.value.has(filter.value)) filter.value = 'original'
 }
 
 watch(

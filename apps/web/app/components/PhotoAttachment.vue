@@ -24,6 +24,11 @@ const previewUrl = ref('')
 // Die Bearbeitung geschieht vor dem Upload und damit vor der Personenprüfung. So beziehen sich
 // Einwilligungs-Markierungen immer auf genau die Pixel, die später veröffentlicht werden.
 const pendingEditorFile = ref<File | null>(null)
+// Die zuletzt übernommene lokale Datei bleibt nur während dieser Bearbeitungssitzung im Browser.
+// So ist der Bildeditor nicht nur beim ersten Dateiauswahldialog erreichbar: vor der
+// Personenprüfung kann der Ausschnitt jederzeit erneut geändert werden. Das Ergebnis wird als
+// neues privates Asset hochgeladen und muss anschließend bewusst erneut geprüft werden.
+const editableLocalFile = ref<File | null>(null)
 // Nur ein frisch hochgeladenes Foto laeuft ueber createObjectURL -- ein wiederverwendetes/signiertes
 // Foto bekommt immer eine echte https-URL. Aus dem URL-Schema ableitbar statt separat mitgefuehrt.
 const previewIsObjectUrl = computed(() => previewUrl.value.startsWith('blob:'))
@@ -50,9 +55,11 @@ function resetPreview() {
   if (previewIsObjectUrl.value && previewUrl.value) URL.revokeObjectURL(previewUrl.value)
   previewUrl.value = ''
 }
-function reset() {
+function reset(clearEditableFile = true) {
   phase.value = 'idle'; errorMessage.value = ''; boxes.value = []; mediaAssetId.value = null; isHydratedExternalAsset.value = false; resetPreview()
+  if (clearEditableFile) editableLocalFile.value = null
 }
+function removePhoto() { reset() }
 onBeforeUnmount(resetPreview)
 
 onMounted(async () => {
@@ -94,8 +101,21 @@ function onFileSelected(event: Event) {
 }
 
 async function uploadEditedFile(file: File) {
-  reset()
+  // Ein erneuter Zuschnitt darf ein bereits geprüftes Attachment nicht schon beim Starten des
+  // Ersatz-Uploads lösen. Während der Upload läuft, merken wir uns deshalb den kompletten
+  // sichtbaren Zustand und ersetzen ihn erst, wenn das neue Asset tatsächlich bereit ist.
+  const previous = {
+    phase: phase.value,
+    previewUrl: previewUrl.value,
+    boxes: boxes.value,
+    currentAssetId: currentAssetId.value,
+    mediaAssetId: mediaAssetId.value,
+    isHydratedExternalAsset: isHydratedExternalAsset.value,
+    editableLocalFile: editableLocalFile.value,
+  }
+  const replacesExistingPhoto = previous.phase === 'marking' || previous.phase === 'reviewed'
   phase.value = 'uploading'
+  errorMessage.value = ''
   try {
     const initiated = await api.request('/v1/media/uploads', {
       method: 'POST',
@@ -110,13 +130,28 @@ async function uploadEditedFile(file: File) {
     // kein Polling noetig.
     const asset = await supabase.from('media_assets').select('upload_status').eq('id', initiated.assetId).single()
     if (asset.error) throw asset.error
-    if (asset.data.upload_status !== 'ready') { phase.value = 'failed'; errorMessage.value = 'Das Foto konnte nicht verarbeitet werden. Bitte ein anderes Bild versuchen.'; return }
+    if (asset.data.upload_status !== 'ready') throw new Error('image_processing_failed')
+    // Erst hier wird die bisherige Vorschau (und damit eine eventuell bestehende Object-URL)
+    // verworfen. Das neue Asset muss anschließend wie jedes neue Foto erneut geprüft werden.
+    reset(false)
     previewUrl.value = URL.createObjectURL(file)
     boxes.value = []
     currentAssetId.value = initiated.assetId
+    editableLocalFile.value = file
     phase.value = 'marking'
     await loadConsents()
   } catch {
+    if (replacesExistingPhoto) {
+      phase.value = previous.phase
+      previewUrl.value = previous.previewUrl
+      boxes.value = previous.boxes
+      currentAssetId.value = previous.currentAssetId
+      mediaAssetId.value = previous.mediaAssetId
+      isHydratedExternalAsset.value = previous.isHydratedExternalAsset
+      editableLocalFile.value = previous.editableLocalFile
+      errorMessage.value = 'Die Bearbeitung konnte nicht übernommen werden. Das bisherige Foto bleibt angehängt.'
+      return
+    }
     phase.value = 'failed'
     errorMessage.value = 'Der Upload ist fehlgeschlagen. Bitte erneut versuchen.'
   }
@@ -125,6 +160,10 @@ async function uploadEditedFile(file: File) {
 async function acceptEditedFile(file: File) {
   pendingEditorFile.value = null
   await uploadEditedFile(file)
+}
+
+function reopenImageEditor() {
+  if (editableLocalFile.value) pendingEditorFile.value = editableLocalFile.value
 }
 
 async function loadConsents() {
@@ -240,7 +279,10 @@ function editAgain() { mediaAssetId.value = null; phase.value = 'marking' }
         <div v-if="drag" class="absolute border-2 border-dashed border-forest" :style="{ left: `${Math.min(drag.startX, drag.x) * 100}%`, top: `${Math.min(drag.startY, drag.y) * 100}%`, width: `${Math.abs(drag.x - drag.startX) * 100}%`, height: `${Math.abs(drag.y - drag.startY) * 100}%` }" />
       </div>
 
-      <button type="button" class="mt-2 rounded-xl border px-3 py-2 text-sm font-semibold" @click="addPersonBox">Person hinzufügen</button>
+      <div class="mt-2 flex flex-wrap items-center gap-3">
+        <button type="button" class="rounded-xl border px-3 py-2 text-sm font-semibold" @click="addPersonBox">Person hinzufügen</button>
+        <button v-if="editableLocalFile" type="button" class="text-xs text-forest underline" @click="reopenImageEditor">Foto zuschneiden, drehen oder spiegeln</button>
+      </div>
 
       <ul v-if="boxes.length" class="mt-3 grid gap-2">
         <li v-for="(box, index) in boxes" :key="box.id" class="flex flex-wrap items-center gap-2 rounded-lg border p-2 text-xs">
@@ -275,7 +317,7 @@ function editAgain() { mediaAssetId.value = null; phase.value = 'marking' }
       <div class="mt-3 flex flex-wrap items-center gap-3">
         <button v-if="!boxes.length" type="button" class="rounded-xl border px-4 py-2 text-sm font-semibold" @click="confirmReview(false)">Keine Personen erkennbar</button>
         <button v-else type="button" class="rounded-xl bg-forest px-4 py-2 text-sm font-bold text-white disabled:opacity-60" :disabled="hasUndecidedBox" :title="hasUndecidedBox ? 'Jede Markierung braucht eine verknüpfte Einwilligung.' : undefined" @click="confirmReview(true)">Personen-Prüfung bestätigen</button>
-        <button type="button" class="text-xs text-[#727a75] underline" @click="reset"><X :size="12" class="mr-1 inline" />Foto entfernen</button>
+        <button type="button" class="text-xs text-[#727a75] underline" @click="removePhoto"><X :size="12" class="mr-1 inline" />Foto entfernen</button>
       </div>
       <p v-if="errorMessage" class="mt-2 text-xs text-red-700">{{ errorMessage }}</p>
     </div>
@@ -284,9 +326,11 @@ function editAgain() { mediaAssetId.value = null; phase.value = 'marking' }
       <img :src="previewUrl" class="h-16 w-16 rounded-lg border object-cover" alt="Angehängtes Foto" />
       <span class="inline-flex items-center gap-1 text-sm text-emerald-700"><Check :size="16" /> {{ isHydratedExternalAsset ? 'Vorhandenes Foto angehängt' : 'Foto geprüft und angehängt' }}</span>
       <button v-if="!isHydratedExternalAsset" type="button" class="text-xs text-forest underline" @click="editAgain">Markierung bearbeiten</button>
-      <button type="button" class="text-xs text-[#727a75] underline" @click="reset">Entfernen</button>
+      <button v-if="editableLocalFile" type="button" class="text-xs text-forest underline" @click="reopenImageEditor">Foto bearbeiten</button>
+      <button type="button" class="text-xs text-[#727a75] underline" @click="removePhoto">Entfernen</button>
     </div>
+    <p v-if="phase === 'reviewed' && errorMessage" class="mt-2 text-xs text-red-700">{{ errorMessage }}</p>
 
-    <p v-if="phase === 'idle'" class="mt-1 inline-flex items-center gap-1 text-[11px] text-[#9aa096]"><ImagePlus :size="13" /> JPEG, PNG oder WebP · vor der Prüfung zuschneiden und drehen.</p>
+    <p v-if="phase === 'idle'" class="mt-1 inline-flex items-center gap-1 text-[11px] text-[#9aa096]"><ImagePlus :size="13" /> JPEG, PNG oder WebP · direkt danach zuschneiden, drehen und spiegeln.</p>
   </div>
 </template>
