@@ -103,15 +103,23 @@ let logoHandle: Fabric.Rect | null = null
 let updatingFromCanvas = false
 let logoAspectRatio = 1
 let latestBackgroundUrl = ''
+let latestLogoAspectRatioRequest = 0
 let resizeObserver: ResizeObserver | null = null
 
-// Fabric hält interne Pixelmaße und CSS-Maße getrennt. `height: auto` funktioniert für den von
-// Fabric erzeugten Canvas-Wrapper nicht verlässlich und zeigte deshalb nur einen Ausschnitt des
-// Fotos. Wir berechnen beide sichtbaren Maße aus dem tatsächlichen Seitenverhältnis.
+/**
+ * Fits Fabric's CSS canvas dimensions into the host's content box while retaining the image ratio.
+ */
 function syncCanvasCssSize() {
   if (!fabricCanvas || !canvasHost.value || !fabricCanvas.width || !fabricCanvas.height) return
-  const availableWidth = canvasHost.value.clientWidth
-  const availableHeight = canvasHost.value.clientHeight
+  const hostStyle = getComputedStyle(canvasHost.value)
+  const availableWidth =
+    canvasHost.value.clientWidth -
+    parseFloat(hostStyle.paddingLeft) -
+    parseFloat(hostStyle.paddingRight)
+  const availableHeight =
+    canvasHost.value.clientHeight -
+    parseFloat(hostStyle.paddingTop) -
+    parseFloat(hostStyle.paddingBottom)
   if (availableWidth <= 0 || availableHeight <= 0) return
   const scale = Math.min(availableWidth / fabricCanvas.width, availableHeight / fabricCanvas.height)
   fabricCanvas.setDimensions(
@@ -204,20 +212,27 @@ function onLogoHandleModified() {
   refreshLogoHandle()
 }
 
-async function loadLogoAspectRatio() {
-  if (!props.logoUrl) {
+/**
+ * Loads the current logo's aspect ratio without allowing an older request to overwrite it.
+ */
+async function loadLogoAspectRatio(logoUrl = props.logoUrl): Promise<boolean> {
+  const request = ++latestLogoAspectRatioRequest
+  if (!logoUrl) {
+    if (request !== latestLogoAspectRatioRequest || props.logoUrl !== logoUrl) return false
     logoAspectRatio = 1
-    return
+    return true
   }
-  await new Promise<void>((resolve) => {
+  const aspectRatio = await new Promise<number>((resolve) => {
     const image = new Image()
     image.onload = () => {
-      logoAspectRatio = image.naturalWidth > 0 ? image.naturalHeight / image.naturalWidth : 1
-      resolve()
+      resolve(image.naturalWidth > 0 ? image.naturalHeight / image.naturalWidth : 1)
     }
-    image.onerror = () => resolve()
-    image.src = props.logoUrl
+    image.onerror = () => resolve(1)
+    image.src = logoUrl
   })
+  if (request !== latestLogoAspectRatioRequest || props.logoUrl !== logoUrl) return false
+  logoAspectRatio = aspectRatio
+  return true
 }
 
 async function applyBackgroundImage(dataUrl: string) {
@@ -242,9 +257,8 @@ watch(imageDataUrl, (value) => {
 })
 watch(
   () => props.logoUrl,
-  async () => {
-    await loadLogoAspectRatio()
-    refreshLogoHandle()
+  async (logoUrl) => {
+    if (await loadLogoAspectRatio(logoUrl)) refreshLogoHandle()
   },
 )
 watch(
@@ -268,6 +282,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  latestLogoAspectRatioRequest += 1
   resizeObserver?.disconnect()
   resizeObserver = null
   logoHandle = null

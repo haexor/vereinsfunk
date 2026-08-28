@@ -56,13 +56,17 @@ function resetScopeDependentDraft() {
   // Anlage-Entwurf gewaehltes Rahmen-/Logo-Asset der alten Ebene kann in der neuen fehlen und
   // faellt sonst erst beim Speichern als invalid_asset_reference auf. Nur die betroffenen
   // Entwurfsfelder zuruecksetzen, nicht den ganzen Entwurf -- unabhaengige Eingaben (Name,
-  // Filter, ...) sollen einen bloßen Ebenenwechsel ueberleben. Eine laufende Bearbeitung
-  // (editingId/editDraft) bleibt unberuehrt: sie gehoert zu einem Preset der bisherigen Ebene
-  // und blendet sich ueber ownPresets ohnehin aus, sobald diese Ebene nicht mehr aktiv ist.
+  // Filter, ...) sollen einen bloßen Ebenenwechsel ueberleben.
   if (!selectableFrameAssets.value.some((asset) => asset.id === draft.value.frameBrandAssetId))
     draft.value.frameBrandAssetId = null
   if (!selectableLogoAssets.value.some((asset) => asset.id === draft.value.logoBrandAssetId))
     draft.value.logoBrandAssetId = null
+  // Der Canvas arbeitet immer mit activeDraft. Beim Ebenenwechsel darf er deshalb keinen
+  // unsichtbaren Entwurf eines Presets der vorherigen Ebene weiterbearbeiten.
+  if (editingId.value && !ownPresets.value.some((preset) => preset.id === editingId.value)) {
+    editingId.value = null
+    editError.value = ''
+  }
   createError.value = ''
   uploadError.value = ''
   deleteError.value = ''
