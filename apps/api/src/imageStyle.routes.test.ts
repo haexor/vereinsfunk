@@ -372,6 +372,29 @@ describe('POST /v1/image-style-presets/preview', () => {
     expect(response.json().filterProvider).toBe('fake-gmic')
   })
 
+  it('renders the filter gallery on the server and explicitly marks unavailable G’MIC effects', async () => {
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: noAssetClients(),
+      samplePhotoLoader: tinyImage,
+    })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/image-style-presets/filter-previews',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { organizationId: ORGANIZATION_ID },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({
+      unavailableFilters: ['gmic_vintage', 'gmic_poster'],
+    })
+    expect(response.json().previews).toHaveLength(7)
+    expect(response.json().previews[0]).toMatchObject({
+      filter: 'original', contentType: 'image/webp', filterProvider: 'sharp',
+    })
+  })
+
   it('rejects a frameBrandAssetId that is not a selectable, ready frame asset', async () => {
     const response = await preview(
       { frameType: 'custom', frameBrandAssetId: FRAME_ASSET_ID },

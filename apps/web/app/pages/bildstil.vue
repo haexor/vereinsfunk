@@ -403,6 +403,9 @@ async function deletePreset(preset: ImageStylePreset) {
               :logo-assets="selectableLogoAssets"
               :primary-color="orgColors.primaryColor"
               :accent-color="orgColors.accentColor"
+              :organization-id="organizationId ?? ''"
+              :department-id="activeDepartmentId ?? null"
+              :team-id="activeTeamId ?? null"
               submit-label="Preset anlegen"
               @save="createPreset"
             />
@@ -467,6 +470,9 @@ async function deletePreset(preset: ImageStylePreset) {
                   :logo-assets="selectableLogoAssets"
                   :primary-color="orgColors.primaryColor"
                   :accent-color="orgColors.accentColor"
+                  :organization-id="organizationId ?? ''"
+                  :department-id="activeDepartmentId ?? null"
+                  :team-id="activeTeamId ?? null"
                   submit-label="Speichern"
                   cancellable
                   @save="saveEdit"

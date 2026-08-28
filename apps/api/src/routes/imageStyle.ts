@@ -2,6 +2,9 @@ import {
   ApplyImageStyleRenderRequestSchema,
   ApplyImageStyleRenderResponseSchema,
   CreateImageStylePresetRequestSchema,
+  ImageStyleFilterPreviewsRequestSchema,
+  ImageStyleFilterPreviewsResponseSchema,
+  ImageStyleFilterSchema,
   ImageStylePresetSchema,
   PreviewImageStylePresetRequestSchema,
   PreviewImageStylePresetResponseSchema,
@@ -185,9 +188,12 @@ interface ImageStylePreviewResult {
 // Base64 und immer noch doppelt so breit wie die Editorspalte je darstellt (~600 CSS-px).
 const PREVIEW_MAX_WIDTH = 1200
 
-async function encodePreview(buffer: Buffer): Promise<{ buffer: Buffer; width: number; height: number }> {
+async function encodePreview(
+  buffer: Buffer,
+  maxWidth = PREVIEW_MAX_WIDTH,
+): Promise<{ buffer: Buffer; width: number; height: number }> {
   const encoded = await sharp(buffer)
-    .resize({ width: PREVIEW_MAX_WIDTH, withoutEnlargement: true })
+    .resize({ width: maxWidth, withoutEnlargement: true })
     .webp({ quality: 80 })
     .toBuffer({ resolveWithObject: true })
   return { buffer: encoded.data, width: encoded.info.width, height: encoded.info.height }
@@ -230,6 +236,49 @@ async function previewImageStyle(
     height: preview.height,
     filterProvider: rendered.filterProvider,
   }
+}
+
+// Die Galerie darf keine CSS-Näherungen verwenden: Gerade G'MIC wirkt erst nach dem
+// serverseitigen Rendern. Das Quellfoto und die Markenfarben werden einmal geladen, während
+// jeder Filter sein eigenes, kleines WebP erhält. Fehlendes G'MIC ist ein klarer
+// Umgebungszustand, kein Grund, einen ähnlich aussehenden Ersatz zu erfinden.
+async function previewImageStyleFilters(
+  service: SupabaseClient,
+  context: ApiRouteContext,
+  input: { organizationId: string; departmentId?: string | undefined; teamId?: string | undefined },
+  scope: { departmentId?: string; teamId?: string },
+): Promise<{ previews: { filter: (typeof ImageStyleFilterSchema.options)[number]; imageBase64: string; contentType: 'image/webp'; filterProvider: string }[]; unavailableFilters: (typeof ImageStyleFilterSchema.options)[number][] }> {
+  const [sourceBuffer, brandColors] = await Promise.all([
+    context.samplePhotoLoader(),
+    loadResolvedBrandColors(service, input.organizationId, scope.departmentId ?? null, scope.teamId ?? null),
+  ])
+  const previews: { filter: (typeof ImageStyleFilterSchema.options)[number]; imageBase64: string; contentType: 'image/webp'; filterProvider: string }[] = []
+  const unavailableFilters: (typeof ImageStyleFilterSchema.options)[number][] = []
+  for (const filter of ImageStyleFilterSchema.options) {
+    try {
+      const rendered = await renderImageStyle({
+        sourceBuffer,
+        preset: {
+          frameType: 'none', frameStyle: null, frameColor: null, frameWidthPx: null,
+          frameCornerRadiusPx: null, logoEnabled: false, logoPosition: 'bottom_right',
+          logoSizePercent: null, logoMarginPercent: null, filter,
+        },
+        brandColors,
+        ...(context.imageEffects ? { imageEffects: context.imageEffects } : {}),
+      })
+      const preview = await encodePreview(rendered.buffer, 360)
+      previews.push({
+        filter,
+        imageBase64: preview.buffer.toString('base64'),
+        contentType: 'image/webp',
+        filterProvider: rendered.filterProvider,
+      })
+    } catch (error) {
+      if (error instanceof GmicNotEnabledError) unavailableFilters.push(filter)
+      else throw error
+    }
+  }
+  return { previews, unavailableFilters }
 }
 
 // Plan 045, PR 1: CRUD fuer Bildstil-Presets. Eigenes Modul statt in brand.ts (Modulgrenze wie
@@ -397,6 +446,33 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
         return reply.code(422).send({ error: 'brand_asset_not_ready', correlationId: request.id })
       throw error
     }
+  })
+
+  // Eine Galerieanfrage statt neun Browser-Requests: die API darf die kuratierten Effekte
+  // kontrolliert ausführen, der Browser erhält ausschließlich kleine, fertige Vorschauen.
+  app.post('/v1/image-style-presets/filter-previews', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    if (!checkRateLimit(`image-style-filter-previews:${request.auth!.userId}`, 6, 60_000)) {
+      return reply.code(429).send({ error: 'rate_limited', correlationId: request.id })
+    }
+    const input = ImageStyleFilterPreviewsRequestSchema.parse(request.body)
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const resolvedScope = await resolveDirectoryScope(
+      client,
+      input.organizationId,
+      input.departmentId ?? null,
+      input.teamId ?? null,
+    )
+    if (resolvedScope === null)
+      return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'brand.manage', resolvedScope))) return
+    const result = await previewImageStyleFilters(
+      supabaseClients.forService(),
+      context,
+      input,
+      resolvedScope,
+    )
+    return reply.code(200).send(ImageStyleFilterPreviewsResponseSchema.parse(result))
   })
 
   // Scope ist unveraendlich und wird aus der bestehenden Zeile hergeleitet, nicht aus dem Body

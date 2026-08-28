@@ -91,6 +91,7 @@ watch(
 )
 
 const canvasEl = ref<HTMLCanvasElement | null>(null)
+const canvasHost = ref<HTMLDivElement | null>(null)
 // Ein einziger dynamischer Import (fabric laeuft nur im Browser), dessen Modul hier gehalten wird:
 // vorher legte refreshLogoHandle den Griff erst im .then() eines eigenen Imports an, wodurch eine
 // zwischenzeitliche Entwurfsaenderung mit veralteten Massen gewinnen konnte.
@@ -100,6 +101,24 @@ let logoHandle: Fabric.Rect | null = null
 let updatingFromCanvas = false
 let logoAspectRatio = 1
 let latestBackgroundUrl = ''
+let resizeObserver: ResizeObserver | null = null
+
+// Fabric hält interne Pixelmaße und CSS-Maße getrennt. `height: auto` funktioniert für den von
+// Fabric erzeugten Canvas-Wrapper nicht verlässlich und zeigte deshalb nur einen Ausschnitt des
+// Fotos. Wir berechnen beide sichtbaren Maße aus dem tatsächlichen Seitenverhältnis.
+function syncCanvasCssSize() {
+  if (!fabricCanvas || !canvasHost.value || !fabricCanvas.width || !fabricCanvas.height) return
+  const availableWidth = canvasHost.value.clientWidth
+  if (availableWidth <= 0) return
+  const scale = Math.min(1, availableWidth / fabricCanvas.width)
+  fabricCanvas.setDimensions(
+    {
+      width: `${Math.max(1, Math.round(fabricCanvas.width * scale))}px`,
+      height: `${Math.max(1, Math.round(fabricCanvas.height * scale))}px`,
+    },
+    { cssOnly: true },
+  )
+}
 
 function refreshLogoHandle() {
   if (!fabricCanvas || !fabricModule) return
@@ -197,15 +216,11 @@ async function applyBackgroundImage(dataUrl: string) {
   const width = image.width ?? fabricCanvas.width
   const height = image.height ?? fabricCanvas.height
   fabricCanvas.setDimensions({ width, height })
-  // setDimensions schreibt die Bildmasse zusaetzlich als Inline-CSS auf beide Canvas-Elemente UND
-  // auf den von fabric erzeugten Wrapper (CanvasDOMManager.setCSSDimensions) -- der traegt keine
-  // Tailwind-Klassen, ein 1200 px breites Vorschaubild sprengte damit die Editorspalte. Die
-  // Backstore-Groesse bleibt in Bildpixeln: fabric rechnet Zeigerpositionen ueber das Verhaeltnis
-  // von Canvas-Breite zu Bounding-Box um, die Griff-Mathematik stimmt also weiterhin.
-  fabricCanvas.setDimensions({ width: '100%', height: 'auto' }, { cssOnly: true })
   fabricCanvas.backgroundImage = image
   fabricCanvas.renderAll()
   refreshLogoHandle()
+  await nextTick()
+  syncCanvasCssSize()
 }
 
 watch(imageDataUrl, (value) => {
@@ -224,11 +239,15 @@ onMounted(async () => {
   fabricModule = await import('fabric')
   if (!canvasEl.value) return
   fabricCanvas = new fabricModule.Canvas(canvasEl.value, { selection: false })
+  resizeObserver = new ResizeObserver(syncCanvasCssSize)
+  if (canvasHost.value) resizeObserver.observe(canvasHost.value)
   await loadLogoAspectRatio()
   if (imageDataUrl.value) await applyBackgroundImage(imageDataUrl.value)
 })
 
 onBeforeUnmount(() => {
+  resizeObserver?.disconnect()
+  resizeObserver = null
   logoHandle = null
   void fabricCanvas?.dispose()
   fabricCanvas = null
@@ -239,8 +258,8 @@ onBeforeUnmount(() => {
   <section class="card p-6">
     <h2 class="font-display text-base font-bold">Live-Vorschau</h2>
     <p class="mt-1 text-[11px] text-[#9aa096]">Vorschau kann kurz nachladen.</p>
-    <div class="relative mt-4">
-      <canvas ref="canvasEl" class="max-w-full rounded-2xl border border-[#e9ebe4]" />
+    <div ref="canvasHost" class="relative mt-4 min-h-32 w-full overflow-hidden rounded-2xl border border-[#e9ebe4] bg-[#f8f9f6]">
+      <canvas ref="canvasEl" class="block" />
       <div
         v-if="state === 'loading'"
         class="absolute inset-0 flex items-center justify-center rounded-2xl bg-white/40"
