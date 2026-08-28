@@ -5,6 +5,7 @@ import { z } from 'zod'
 
 type Profile = { id: string | null; slug: string; kind: 'system' | 'persona' | 'custom'; name: string; description: string }
 type Candidate = { id: string; status: string; generated_content: { headline: string; caption: string; hashtags: string[]; verifiedFacts: string[]; missingFacts: string[] } | null; failure_code: string | null; triggered_by: 'member' | 'automatic_recovery' }
+const DEFAULT_TEXT_WORKSHOP_PROFILE = 'lebendig_sportlich'
 // Geteilt von refreshSession() und loadDraftFromPost() (Wiedereinstieg aus der Beitraege-Liste) --
 // dieselbe Kandidaten-Antwortform, einmal benannt statt zweimal inline dupliziert.
 const CandidateSchema = z.object({ id: z.string(), status: z.string(), generated_content: z.object({ headline: z.string(), caption: z.string(), hashtags: z.array(z.string()), verifiedFacts: z.array(z.string()), missingFacts: z.array(z.string()) }).nullable(), failure_code: z.string().nullable(), triggered_by: z.enum(['member', 'automatic_recovery']) })
@@ -47,9 +48,10 @@ const scope = await useScope()
 const notice = ref('')
 const submitting = ref(false)
 const sessionId = ref<string | null>(null)
+const sessionProfile = ref<string | null>(null)
 const candidate = ref<Candidate | null>(null)
 const profiles = ref<Profile[]>([])
-const selectedProfile = ref<string>('klar_erklaerend')
+const selectedProfile = ref<string>(DEFAULT_TEXT_WORKSHOP_PROFILE)
 const platforms = ref<TextGenerationPlatformAvailability[]>([])
 const selectedPlatforms = ref<SocialPlatform[]>([])
 const maxCharactersOverride = ref('')
@@ -120,7 +122,7 @@ function draftPayload() {
 }
 function hasDraftContent() {
   const payload = draftPayload()
-  return Boolean(payload.observation.trim() || payload.communicationGoal !== 'inform' || payload.selectedProfile !== 'klar_erklaerend' || payload.selectedPlatforms.length || payload.maxCharactersOverride.trim())
+  return Boolean(payload.observation.trim() || payload.communicationGoal !== 'inform' || payload.selectedProfile !== DEFAULT_TEXT_WORKSHOP_PROFILE || payload.selectedPlatforms.length || payload.maxCharactersOverride.trim())
 }
 async function saveServerDraft({ explicit = false, required = false }: { explicit?: boolean; required?: boolean } = {}): Promise<boolean> {
   if (draftSaveTimer) { clearTimeout(draftSaveTimer); draftSaveTimer = undefined }
@@ -173,7 +175,7 @@ function restoreDraft() {
   } catch { clearDraft() }
 }
 watch([communicationGoal, contentText, selectedProfile, selectedPlatforms, maxCharactersOverride], () => { persistDraft(); queueServerDraftSave() }, { flush: 'sync', deep: true })
-watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; communicationGoal.value = 'inform'; selectedProfile.value = 'klar_erklaerend'; contentText.value = ''; additionalMediaAssetIds.value = []; revisionInstruction.value = ''; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; mediaAssetIds.value = []; composedPhotoPreview.value = null; photoMode.value = 'carousel'; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
+watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; sessionProfile.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; communicationGoal.value = 'inform'; selectedProfile.value = DEFAULT_TEXT_WORKSHOP_PROFILE; contentText.value = ''; additionalMediaAssetIds.value = []; revisionInstruction.value = ''; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; mediaAssetIds.value = []; composedPhotoPreview.value = null; photoMode.value = 'carousel'; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
 
 async function loadProfiles() {
   if (!scope.value?.organizationId) return
@@ -205,7 +207,8 @@ function hasUnfinishedCandidate(): boolean {
 // erfahren, ohne dass die Person selbst auf "Aktualisieren" klickt.
 const { refresh: refreshSession, ensurePolling } = usePolling(async () => {
   if (!sessionId.value) return
-  const response = await api.request(`/v1/text-workshop/sessions/${sessionId.value}`, {}, z.object({ candidates: z.array(CandidateSchema) }).passthrough())
+  const response = await api.request(`/v1/text-workshop/sessions/${sessionId.value}`, {}, z.object({ session: CompositionSessionDraftSchema, candidates: z.array(CandidateSchema) }))
+  sessionProfile.value = response.session.style_profile_id ?? response.session.style_profile_snapshot.slug ?? DEFAULT_TEXT_WORKSHOP_PROFILE
   candidate.value = response.candidates[0] ?? null
 }, hasUnfinishedCandidate)
 async function loadExistingSession(id: string) {
@@ -243,7 +246,8 @@ async function loadDraftFromPost(postId: string) {
       ...draftSession.source_material.observations,
       ...draftSession.source_material.quotes.map((quote) => quote.text),
     ].join('\n')
-    selectedProfile.value = draftSession.style_profile_id ?? draftSession.style_profile_snapshot.slug ?? 'klar_erklaerend'
+    selectedProfile.value = draftSession.style_profile_id ?? draftSession.style_profile_snapshot.slug ?? DEFAULT_TEXT_WORKSHOP_PROFILE
+    sessionProfile.value = selectedProfile.value
     // Nur uebernehmen, was laut der zuletzt geladenen Verfuegbarkeit noch anhakbar ist -- derselbe
     // Filter wie in restoreDraft(), ein Kanal kann seither entfernt worden sein.
     selectedPlatforms.value = resolveExclusivePlatforms(draftSession.target_platforms.filter((platform) => platforms.value.some((entry) => entry.platform === platform && entry.available)))
@@ -279,7 +283,7 @@ async function createCandidate() {
   try {
     if (!(await saveServerDraft({ required: true }))) return
     const selected = profiles.value.find((profile) => (profile.id ?? profile.slug) === selectedProfile.value)
-    if (!selected) { selectedProfile.value = 'klar_erklaerend'; notice.value = 'Das gewählte Stilprofil ist nicht mehr verfügbar. Bitte wähle erneut.'; submitting.value = false; return }
+    if (!selected) { selectedProfile.value = DEFAULT_TEXT_WORKSHOP_PROFILE; notice.value = 'Das gewählte Stilprofil ist nicht mehr verfügbar. Bitte wähle erneut.'; submitting.value = false; return }
     const profileChoice = selected.kind === 'custom' ? { styleProfileId: selected.id } : selected.kind === 'persona' ? { personaSlug: selected.slug } : { systemStyleProfileSlug: selected.slug }
     const created = await api.request('/v1/text-workshop/sessions', {
       method: 'POST',
@@ -295,7 +299,7 @@ async function createCandidate() {
     // Paket 046: eine Anfrage kann mehrere Kandidaten gleichzeitig erzeugen (Ensemble-Groesse, vom
     // Plattform-Admin konfiguriert). Diese Seite zeigt bis zur eigenen Mehrfachauswahl-UI weiterhin
     // nur den ersten -- refreshSession() unten holt ohnehin die ganze Runde nach.
-    sessionId.value = created.sessionId; candidate.value = { id: created.candidateIds[0]!, status: 'pending', generated_content: null, failure_code: null, triggered_by: 'member' }
+    sessionId.value = created.sessionId; sessionProfile.value = selectedProfile.value; candidate.value = { id: created.candidateIds[0]!, status: 'pending', generated_content: null, failure_code: null, triggered_by: 'member' }
     await refreshSession()
   } catch (error) {
     const code = (error as { data?: { error?: string } })?.data?.error
@@ -357,7 +361,7 @@ const candidateErrored = computed(() => candidate.value?.status === 'failed' || 
 // fehlgeschlagenen Versuch (sonst keine Möglichkeit, aus der Fehlermeldung heraus weiterzumachen).
 // Waehrend ein Kandidat noch erzeugt wird oder bereits fertig/uebernommen ist, bestimmt die
 // Kandidatenansicht ihre eigenen Folgeaktionen (ueberarbeiten/uebernehmen).
-const showCreateCandidateFab = computed(() => (!sessionId.value && !candidate.value) || candidate.value?.status === 'failed')
+const showCreateCandidateFab = computed(() => (!sessionId.value && !candidate.value) || candidate.value?.status === 'failed' || (candidateFinished.value && sessionProfile.value !== null && selectedProfile.value !== sessionProfile.value))
 usePageSaveFab({ label: 'Textkandidaten erzeugen', save: createCandidate, saving: submitting, visible: showCreateCandidateFab, icon: Sparkles, savingLabel: 'Textkandidaten werden erzeugt …' })
 const unavailableReasons = computed(() => [...new Set(platforms.value.filter((entry) => !entry.available).map((entry) => entry.reason))].filter((reason): reason is PlatformUnavailableReason => reason !== undefined))
 function togglePlatform(platform: SocialPlatform) {
