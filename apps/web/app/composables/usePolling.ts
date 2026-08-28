@@ -6,16 +6,25 @@
 export function usePolling(load: () => Promise<void>, hasUnfinishedWork: () => boolean, intervalMs = 4000) {
   let timer: ReturnType<typeof setTimeout> | undefined
   let cancelled = false
+  let inFlight: Promise<void> | undefined
 
   async function refresh() {
-    try {
-      await load()
-    } finally {
-      // Auch nach einem fehlgeschlagenen Refresh weiterpollen, solange der zuletzt bekannte
-      // Zustand noch unfertig ist -- sonst bleibt er nach einem einzelnen Aussetzer ohne
-      // automatische Wiederholung haengen.
-      ensurePolling()
-    }
+    // Ohne diese Deduplizierung koennte ein direkter Aufruf (z. B. der manuelle
+    // "Aktualisieren"-Button) waehrend eines laufenden Poll-Requests einen zweiten parallelen
+    // Request ausloesen -- eine langsamere, aeltere Antwort ueberschriebe dann neueren Zustand.
+    if (inFlight) return inFlight
+    inFlight = (async () => {
+      try {
+        await load()
+      } finally {
+        inFlight = undefined
+        // Auch nach einem fehlgeschlagenen Refresh weiterpollen, solange der zuletzt bekannte
+        // Zustand noch unfertig ist -- sonst bleibt er nach einem einzelnen Aussetzer ohne
+        // automatische Wiederholung haengen.
+        ensurePolling()
+      }
+    })()
+    return inFlight
   }
 
   function ensurePolling() {
