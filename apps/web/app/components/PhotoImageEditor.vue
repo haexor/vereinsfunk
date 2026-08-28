@@ -26,7 +26,14 @@ const ASPECT_RATIOS: { label: string; value: number | undefined }[] = [
   { label: '16:9', value: 16 / 9 },
 ]
 
-onMounted(() => { sourceUrl.value = URL.createObjectURL(props.file) })
+function updateSourceUrl(file: File) {
+  const previousUrl = sourceUrl.value
+  sourceUrl.value = URL.createObjectURL(file)
+  if (previousUrl) URL.revokeObjectURL(previousUrl)
+}
+
+onMounted(() => { updateSourceUrl(props.file) })
+watch(() => props.file, updateSourceUrl)
 onBeforeUnmount(() => { if (sourceUrl.value) URL.revokeObjectURL(sourceUrl.value) })
 
 function rotate(angle: number) { cropper.value?.rotate(angle) }
