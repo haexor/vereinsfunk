@@ -24,6 +24,37 @@ describe('GmicCliImageEffectProvider', () => {
     expect(received!.args.at(-1)).toMatch(/output\.png$/)
   })
 
+  it('terminates defaulted custom commands before the output command', async () => {
+    let received: readonly string[] | undefined
+    const provider = new GmicCliImageEffectProvider({
+      execute: async (_binary, args, cwd) => {
+        received = args
+        await writeFile(`${cwd}/output.png`, Buffer.from([1, 2, 3]))
+      },
+    })
+
+    await provider.apply('gmic_cubism', Buffer.from('input'))
+
+    // A bare `cubism output output.png` treats the first `output` as the optional density
+    // argument. The comma is G'MIC's documented "use defaults" marker and lets output be parsed
+    // as the following command.
+    expect(received).toEqual(expect.arrayContaining(['cubism', ',', 'output']))
+  })
+
+  it('builds and removes the required brush image for brushify', async () => {
+    let received: readonly string[] | undefined
+    const provider = new GmicCliImageEffectProvider({
+      execute: async (_binary, args, cwd) => {
+        received = args
+        await writeFile(`${cwd}/output.png`, Buffer.from([1, 2, 3]))
+      },
+    })
+
+    await provider.apply('gmic_brushify', Buffer.from('input'))
+
+    expect(received).toEqual(expect.arrayContaining(['40,40', 'brushify[0]', '[1],1', 'remove[1]']))
+  })
+
   it("does not expose arbitrary G'MIC commands as effects", () => {
     const provider = new GmicCliImageEffectProvider()
     expect(provider.supports('exec rm -rf /')).toBe(false)

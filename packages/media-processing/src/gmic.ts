@@ -16,38 +16,54 @@ const CURATED_GMIC_RECIPES = {
   comic: ['cartoon', '3,50,10,0.25,3,16'],
   gmic_vintage: ['old_photo'],
   gmic_poster: ['poster_hope', '3'],
-  gmic_brushify: ['brushify'],
+  // G'MIC custom commands consume the following token as their optional-arguments string. Without
+  // the explicit `,`, the following `output` command becomes that arguments string and the
+  // command fails before creating its derivative. A comma asks G'MIC to use the documented
+  // defaults and, crucially, terminates the custom command.
+  //
+  // brushify is the exception: it requires a separate brush image. Build the small deterministic
+  // brush inline, apply it only to the source image, then remove it before writing the result.
+  gmic_brushify: [
+    '40,40',
+    'gaussian[-1]',
+    '10,4',
+    'spread[-1]',
+    '10,0',
+    'brushify[0]',
+    '[1],1',
+    'remove[1]',
+  ],
   gmic_cartoon: ['cartoon', '3,50,10,0.25,3,16'],
-  gmic_color_ellipses: ['color_ellipses'],
-  gmic_cubism: ['cubism'],
-  gmic_ellipsionism: ['ellipsionism'],
-  gmic_fire_edges: ['fire_edges'],
-  gmic_fractalize: ['fractalize'],
-  gmic_glow: ['glow'],
-  gmic_halftone: ['halftone'],
-  gmic_hardsketchbw: ['hardsketchbw'],
-  gmic_hearts: ['hearts'],
-  gmic_houghsketchbw: ['houghsketchbw'],
-  gmic_lightrays: ['lightrays'],
-  gmic_light_relief: ['light_relief'],
-  gmic_linify: ['linify'],
-  gmic_mosaic: ['mosaic'],
-  gmic_pencilbw: ['pencilbw'],
-  gmic_pixelsort: ['pixelsort'],
-  gmic_polaroid: ['polaroid'],
-  gmic_polygonize: ['polygonize'],
-  gmic_poster_edges: ['poster_edges'],
-  gmic_rodilius: ['rodilius'],
-  gmic_sketchbw: ['sketchbw'],
-  gmic_sponge: ['sponge'],
-  gmic_stained_glass: ['stained_glass'],
-  gmic_stars: ['stars'],
-  gmic_stencil: ['stencil'],
-  gmic_stencilbw: ['stencilbw'],
-  gmic_tetris: ['tetris'],
-  gmic_warhol: ['warhol'],
-  gmic_weave: ['weave'],
-  gmic_whirls: ['whirls'],
+  gmic_color_ellipses: ['color_ellipses', ','],
+  gmic_cubism: ['cubism', ','],
+  gmic_ellipsionism: ['ellipsionism', ','],
+  gmic_fire_edges: ['fire_edges', ','],
+  gmic_fractalize: ['fractalize', ','],
+  gmic_glow: ['glow', ','],
+  gmic_halftone: ['halftone', ','],
+  gmic_hardsketchbw: ['hardsketchbw', ','],
+  gmic_hearts: ['hearts', ','],
+  gmic_houghsketchbw: ['houghsketchbw', ','],
+  gmic_lightrays: ['lightrays', ','],
+  gmic_light_relief: ['light_relief', ','],
+  gmic_linify: ['linify', ','],
+  gmic_mosaic: ['mosaic', ','],
+  gmic_pencilbw: ['pencilbw', ','],
+  gmic_pixelsort: ['pixelsort', ','],
+  gmic_polaroid: ['polaroid', ','],
+  gmic_polygonize: ['polygonize', ','],
+  gmic_poster_edges: ['poster_edges', ','],
+  gmic_rodilius: ['rodilius', ','],
+  gmic_sketchbw: ['sketchbw', ','],
+  gmic_sponge: ['sponge', ','],
+  gmic_stained_glass: ['stained_glass', ','],
+  gmic_stars: ['stars', ','],
+  gmic_stencil: ['stencil', ','],
+  gmic_stencilbw: ['stencilbw', ','],
+  gmic_tetris: ['tetris', ','],
+  gmic_warhol: ['warhol', ','],
+  gmic_weave: ['weave', ','],
+  gmic_whirls: ['whirls', ','],
 } as const
 
 export type CuratedGmicEffect = keyof typeof CURATED_GMIC_RECIPES
@@ -60,6 +76,16 @@ export interface ImageEffectProvider {
 
 export interface GmicCommandExecutor {
   (binary: string, arguments_: readonly string[], cwd: string): Promise<void>
+}
+
+// The concrete CLI error intentionally stays server-side, but callers still need to distinguish
+// a failed optional effect from an image/Sharp failure. The filter gallery can then retain the
+// healthy previews and mark just this effect unavailable.
+export class GmicImageEffectError extends Error {
+  constructor(effect: CuratedGmicEffect, cause: unknown) {
+    super(`G'MIC image effect failed: ${effect}`, { cause })
+    this.name = 'GmicImageEffectError'
+  }
 }
 
 async function executeGmic(
@@ -112,7 +138,7 @@ export class GmicCliImageEffectProvider implements ImageEffectProvider {
     } catch (error) {
       // Stderr kann Dateinamen und interne G'MIC-Details enthalten; die API darf das nicht an
       // Mitglieder zurueckgeben. Der Error-Handler erzeugt eine korrelierbare, generische 500.
-      throw new Error(`G'MIC image effect failed: ${effect}`, { cause: error })
+      throw new GmicImageEffectError(effect, error)
     } finally {
       await rm(directory, { recursive: true, force: true })
     }

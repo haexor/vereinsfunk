@@ -401,6 +401,35 @@ describe('POST /v1/image-style-presets/preview', () => {
     })
   })
 
+  it('keeps healthy gallery previews when an individual G’MIC effect fails', async () => {
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: noAssetClients(),
+      samplePhotoLoader: tinyImage,
+      imageEffects: {
+        id: 'failing-gmic',
+        supports: (effect: string): effect is 'gmic_vintage' => effect === 'gmic_vintage',
+        apply: async () => {
+          const { GmicImageEffectError } = await import('@vereinsfunk/media-processing')
+          throw new GmicImageEffectError('gmic_vintage', new Error('CLI failure'))
+        },
+      },
+    })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/image-style-presets/filter-previews',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { organizationId: ORGANIZATION_ID },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json().unavailableFilters).toContain('gmic_vintage')
+    expect(response.json().previews).toEqual(
+      expect.arrayContaining([expect.objectContaining({ filter: 'original' })]),
+    )
+  })
+
   it('rejects a frameBrandAssetId that is not a selectable, ready frame asset', async () => {
     const response = await preview(
       { frameType: 'custom', frameBrandAssetId: FRAME_ASSET_ID },
