@@ -90,8 +90,6 @@ const draftSaveState = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
 const draftKey = computed(() => session.value && scope.value?.organizationId ? `vf:text-draft:${session.value.userId}:${scope.value.organizationId}:${scope.value.departmentId ?? 'org'}` : null)
 let restoringDraft = false
 let draftSaveTimer: ReturnType<typeof setTimeout> | undefined
-let pollTimer: ReturnType<typeof setTimeout> | undefined
-let pollCancelled = false
 let serverDraftSaveChain: Promise<void> = Promise.resolve()
 let latestServerDraftSave = 0
 
@@ -196,18 +194,6 @@ async function loadPlatformAvailability() {
     selectedPlatforms.value = resolveExclusivePlatforms(response.filter((entry) => entry.isDefault).map((entry) => entry.platform))
   } catch { notice.value = 'Zielplattformen konnten nicht geladen werden.' }
 }
-async function refreshSession() {
-  if (!sessionId.value) return
-  try {
-    const response = await api.request(`/v1/text-workshop/sessions/${sessionId.value}`, {}, z.object({ candidates: z.array(CandidateSchema) }).passthrough())
-    candidate.value = response.candidates[0] ?? null
-  } finally {
-    // Auch bei einem fehlgeschlagenen Refresh pollen, solange der zuletzt bekannte Kandidat noch
-    // unfertig ist -- sonst bleibt er nach createCandidate()/reviseCandidate() ohne automatische
-    // Wiederholung im Ladezustand haengen.
-    ensurePolling()
-  }
-}
 // Nur pending/generating gelten als unfertig -- ready/accepted/failed sowie die von
 // GenerationCandidateStatusSchema ebenfalls vorgesehenen abandoned/expired sind damit automatisch
 // terminal, ohne dass diese Liste bei einem neuen Statuswert nachgezogen werden muss.
@@ -217,26 +203,11 @@ function hasUnfinishedCandidate(): boolean {
 // Derselbe 4s-Poll wie plattform-admin/vision-vergleich.vue: der Worker verarbeitet die
 // Generierung im Hintergrund, diese Seite hat sonst keinen Weg, von "pending"/"generating" zu
 // erfahren, ohne dass die Person selbst auf "Aktualisieren" klickt.
-function ensurePolling() {
-  // Sitzungen/Entwuerfe laden per Top-Level-await, das laeuft auch waehrend SSR -- ohne den
-  // client-Guard wuerde der Timer serverseitig gestartet, obwohl onUnmounted() dort nie feuert.
-  if (!import.meta.client || pollCancelled || pollTimer || !hasUnfinishedCandidate()) return
-  pollTimer = setTimeout(async function poll() {
-    // Ein einzelner Fehlschlag beim Hintergrund-Poll bleibt still, der naechste Versuch folgt in
-    // 4s -- ohne den try/catch wuerde eine abgelehnte Promise hier unbehandelt bleiben.
-    try { await refreshSession() } catch { /* naechster Versuch folgt automatisch */ }
-    // onUnmounted() kann den bereits feuernden Timer nicht mehr per clearTimeout abbrechen, waehrend
-    // der obige await laeuft -- ohne diese Pruefung wuerde nach dem Verlassen der Seite trotzdem ein
-    // neuer Timeout geplant und der Poll liefe unbegrenzt weiter.
-    if (pollCancelled) { pollTimer = undefined; return }
-    pollTimer = hasUnfinishedCandidate() ? setTimeout(poll, 4000) : undefined
-  }, 4000)
-}
-onUnmounted(() => {
-  pollCancelled = true
-  if (pollTimer) clearTimeout(pollTimer)
-  pollTimer = undefined
-})
+const { refresh: refreshSession, ensurePolling } = usePolling(async () => {
+  if (!sessionId.value) return
+  const response = await api.request(`/v1/text-workshop/sessions/${sessionId.value}`, {}, z.object({ candidates: z.array(CandidateSchema) }).passthrough())
+  candidate.value = response.candidates[0] ?? null
+}, hasUnfinishedCandidate)
 async function loadExistingSession(id: string) {
   try {
     sessionId.value = id

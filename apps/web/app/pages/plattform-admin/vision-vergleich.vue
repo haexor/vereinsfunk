@@ -12,9 +12,14 @@ const websiteUrl = ref('')
 const submitting = ref(false)
 const submitError = ref('')
 
-let pollTimer: ReturnType<typeof setInterval> | undefined
+// Ein Cron-Poll im Worker (nicht workflow_outbox) startet einen Lauf erst innerhalb der naechsten
+// Minute (siehe createVisionProviderComparisonScanWorkflow) -- die Seite pollt deshalb, statt auf
+// eine sofortige Antwort zu warten.
+function hasUnfinishedRun(): boolean {
+  return runs.value.some((run) => run.status === 'pending' || run.status === 'running')
+}
 
-async function loadRuns() {
+const { refresh: loadRuns } = usePolling(async () => {
   errorMessage.value = ''
   try {
     const headers = await useAuthHeader()
@@ -25,28 +30,8 @@ async function loadRuns() {
   } finally {
     loading.value = false
   }
-}
+}, hasUnfinishedRun)
 await loadRuns()
-
-// Ein Cron-Poll im Worker (nicht workflow_outbox) startet einen Lauf erst innerhalb der naechsten
-// Minute (siehe createVisionProviderComparisonScanWorkflow) -- die Seite pollt deshalb, statt auf
-// eine sofortige Antwort zu warten.
-function hasUnfinishedRun(): boolean {
-  return runs.value.some((run) => run.status === 'pending' || run.status === 'running')
-}
-
-function ensurePolling() {
-  if (pollTimer || !hasUnfinishedRun()) return
-  pollTimer = setInterval(async () => {
-    await loadRuns()
-    if (!hasUnfinishedRun() && pollTimer) {
-      clearInterval(pollTimer)
-      pollTimer = undefined
-    }
-  }, 4000)
-}
-ensurePolling()
-onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 
 async function submitRun() {
   if (!websiteUrl.value.trim()) return
@@ -58,7 +43,6 @@ async function submitRun() {
     await $fetch(`${config.public.apiBase}/v1/vision-provider-comparisons`, { method: 'POST', headers, body })
     websiteUrl.value = ''
     await loadRuns()
-    ensurePolling()
   } catch (error) {
     const code = (error as { data?: { error?: string } })?.data?.error
     submitError.value = code === 'website_url_not_allowed'
