@@ -30,6 +30,38 @@ export const ImageStyleFilterSchema = z.enum([
   'konfetti',
   'gmic_vintage',
   'gmic_poster',
+  'gmic_brushify',
+  'gmic_cartoon',
+  'gmic_color_ellipses',
+  'gmic_cubism',
+  'gmic_ellipsionism',
+  'gmic_fire_edges',
+  'gmic_fractalize',
+  'gmic_glow',
+  'gmic_halftone',
+  'gmic_hardsketchbw',
+  'gmic_hearts',
+  'gmic_houghsketchbw',
+  'gmic_lightrays',
+  'gmic_light_relief',
+  'gmic_linify',
+  'gmic_mosaic',
+  'gmic_pencilbw',
+  'gmic_pixelsort',
+  'gmic_polaroid',
+  'gmic_polygonize',
+  'gmic_poster_edges',
+  'gmic_rodilius',
+  'gmic_sketchbw',
+  'gmic_sponge',
+  'gmic_stained_glass',
+  'gmic_stars',
+  'gmic_stencil',
+  'gmic_stencilbw',
+  'gmic_tetris',
+  'gmic_warhol',
+  'gmic_weave',
+  'gmic_whirls',
 ])
 export const ImageStyleLogoPositionSchema = z.enum([
   'bottom_right',
@@ -171,15 +203,21 @@ export const PreviewImageStylePresetResponseSchema = z.object({
 // Die Filtergalerie verwendet dieselbe serverseitige Rendering-Pipeline wie die große
 // Vorschau. CSS-Annäherungen wären hier irreführend, insbesondere für die kuratierten
 // G'MIC-Effekte, die im Browser gar nicht ausgeführt werden.
-export const ImageStyleFilterPreviewsRequestSchema = z.object({
-  organizationId: UuidSchema,
-  departmentId: UuidSchema.optional(),
-  teamId: UuidSchema.optional(),
-}).superRefine((input, context) => {
-  if (input.teamId !== undefined && input.departmentId === undefined) {
-    context.addIssue({ code: 'custom', path: ['teamId'], message: 'teamId requires departmentId' })
-  }
-})
+export const ImageStyleFilterPreviewsRequestSchema = z
+  .object({
+    organizationId: UuidSchema,
+    departmentId: UuidSchema.optional(),
+    teamId: UuidSchema.optional(),
+  })
+  .superRefine((input, context) => {
+    if (input.teamId !== undefined && input.departmentId === undefined) {
+      context.addIssue({
+        code: 'custom',
+        path: ['teamId'],
+        message: 'teamId requires departmentId',
+      })
+    }
+  })
 
 export const ImageStyleFilterPreviewSchema = z.object({
   filter: ImageStyleFilterSchema,
@@ -216,4 +254,6 @@ export type ApplyImageStyleRenderResponse = z.infer<typeof ApplyImageStyleRender
 export type PreviewImageStylePresetRequest = z.infer<typeof PreviewImageStylePresetRequestSchema>
 export type PreviewImageStylePresetResponse = z.infer<typeof PreviewImageStylePresetResponseSchema>
 export type ImageStyleFilterPreviewsRequest = z.infer<typeof ImageStyleFilterPreviewsRequestSchema>
-export type ImageStyleFilterPreviewsResponse = z.infer<typeof ImageStyleFilterPreviewsResponseSchema>
+export type ImageStyleFilterPreviewsResponse = z.infer<
+  typeof ImageStyleFilterPreviewsResponseSchema
+>

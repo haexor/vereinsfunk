@@ -26,7 +26,12 @@ interface BrandAssetOption {
 
 const api = useApiClient()
 const session = await useSession()
-const { organizationId, departmentId: activeDepartmentId, teamId: activeTeamId, level: activeLevel } = await useActiveScope()
+const {
+  organizationId,
+  departmentId: activeDepartmentId,
+  teamId: activeTeamId,
+  level: activeLevel,
+} = await useActiveScope()
 const supabase = useSupabaseClient()
 const activeOrganization = computed(
   () => session.value?.scopes.find((item) => item.organizationId === organizationId.value) ?? null,
@@ -51,13 +56,17 @@ function resetScopeDependentDraft() {
   // Anlage-Entwurf gewaehltes Rahmen-/Logo-Asset der alten Ebene kann in der neuen fehlen und
   // faellt sonst erst beim Speichern als invalid_asset_reference auf. Nur die betroffenen
   // Entwurfsfelder zuruecksetzen, nicht den ganzen Entwurf -- unabhaengige Eingaben (Name,
-  // Filter, ...) sollen einen bloßen Ebenenwechsel ueberleben. Eine laufende Bearbeitung
-  // (editingId/editDraft) bleibt unberuehrt: sie gehoert zu einem Preset der bisherigen Ebene
-  // und blendet sich ueber ownPresets ohnehin aus, sobald diese Ebene nicht mehr aktiv ist.
+  // Filter, ...) sollen einen bloßen Ebenenwechsel ueberleben.
   if (!selectableFrameAssets.value.some((asset) => asset.id === draft.value.frameBrandAssetId))
     draft.value.frameBrandAssetId = null
   if (!selectableLogoAssets.value.some((asset) => asset.id === draft.value.logoBrandAssetId))
     draft.value.logoBrandAssetId = null
+  // Der Canvas arbeitet immer mit activeDraft. Beim Ebenenwechsel darf er deshalb keinen
+  // unsichtbaren Entwurf eines Presets der vorherigen Ebene weiterbearbeiten.
+  if (editingId.value && !ownPresets.value.some((preset) => preset.id === editingId.value)) {
+    editingId.value = null
+    editError.value = ''
+  }
   createError.value = ''
   uploadError.value = ''
   deleteError.value = ''
@@ -168,29 +177,25 @@ async function loadAll() {
   loading.value = true
   loadError.value = false
   try {
-    const [brandAssetsResult, orgBrandResult, presetsResponse] =
-      await Promise.all([
-        supabase
-          .from('brand_assets')
-          .select('id, department_id, team_id, kind, object_path')
-          .eq('organization_id', organizationId.value)
-          .eq('status', 'ready')
-          .in('kind', ['frame', ...LOGO_ASSET_KINDS]),
-        supabase
-          .from('organization_brand_profiles')
-          .select('primary_color, accent_color')
-          .eq('organization_id', organizationId.value)
-          .maybeSingle(),
-        api.request(
-          '/v1/image-style-presets',
-          { query: { organizationId: organizationId.value } },
-          z.object({ presets: z.array(ImageStylePresetSchema) }),
-        ),
-      ])
-    if (
-      brandAssetsResult.error ||
-      orgBrandResult.error
-    ) {
+    const [brandAssetsResult, orgBrandResult, presetsResponse] = await Promise.all([
+      supabase
+        .from('brand_assets')
+        .select('id, department_id, team_id, kind, object_path')
+        .eq('organization_id', organizationId.value)
+        .eq('status', 'ready')
+        .in('kind', ['frame', ...LOGO_ASSET_KINDS]),
+      supabase
+        .from('organization_brand_profiles')
+        .select('primary_color, accent_color')
+        .eq('organization_id', organizationId.value)
+        .maybeSingle(),
+      api.request(
+        '/v1/image-style-presets',
+        { query: { organizationId: organizationId.value } },
+        z.object({ presets: z.array(ImageStylePresetSchema) }),
+      ),
+    ])
+    if (brandAssetsResult.error || orgBrandResult.error) {
       if (loadRun !== latestLoadRun) return
       loadError.value = true
       return
@@ -240,7 +245,9 @@ async function loadAll() {
   }
 }
 await loadAll()
-watch(organizationId, () => { void loadAll() })
+watch(organizationId, () => {
+  void loadAll()
+})
 watch([activeLevel, activeDepartmentId], resetScopeDependentDraft)
 
 // --- Bausteine hochladen (Rahmengrafik/Logo) ------------------------------------------------
@@ -389,8 +396,12 @@ async function deletePreset(preset: ImageStylePreset) {
       Die Bildstil-Presets konnten nicht geladen werden. Bitte lade die Seite neu.
     </div>
     <template v-else>
-      <div class="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
-        <div class="space-y-6">
+      <div
+        class="grid items-start gap-5 2xl:grid-cols-[minmax(18rem,.85fr)_minmax(34rem,1.75fr)_minmax(17rem,.8fr)]"
+      >
+        <div
+          class="space-y-5 2xl:sticky 2xl:top-6 2xl:max-h-[calc(100vh-3rem)] 2xl:overflow-y-auto 2xl:pr-1"
+        >
           <section v-if="!canManageActiveLevel" class="card p-6 text-center text-sm text-[#7b827d]">
             Du hast auf dieser Ebene keine Berechtigung, Bildstil-Presets zu verwalten.
           </section>
@@ -451,7 +462,19 @@ async function deletePreset(preset: ImageStylePreset) {
               <p v-if="uploadError" class="mt-2 text-[11px] text-amber-800">{{ uploadError }}</p>
             </section>
           </template>
+        </div>
 
+        <div class="2xl:sticky 2xl:top-6 2xl:self-start">
+          <ImageStyleCanvasEditor
+            v-model:draft="activeDraft"
+            :logo-url="signedUrlFor(logoAssets, activeDraft.logoBrandAssetId)"
+            :organization-id="organizationId ?? ''"
+            :department-id="activeDepartmentId ?? null"
+            :team-id="activeTeamId ?? null"
+          />
+        </div>
+
+        <div class="space-y-5">
           <section class="card p-6">
             <h2 class="mb-4 font-display text-base font-bold">
               Presets dieser Ebene ({{ ownPresets.length }})
@@ -525,16 +548,6 @@ async function deletePreset(preset: ImageStylePreset) {
           </section>
 
           <p v-if="deleteError" class="text-sm text-amber-800">{{ deleteError }}</p>
-        </div>
-
-        <div class="lg:sticky lg:top-6 lg:self-start">
-          <ImageStyleCanvasEditor
-            v-model:draft="activeDraft"
-            :logo-url="signedUrlFor(logoAssets, activeDraft.logoBrandAssetId)"
-            :organization-id="organizationId ?? ''"
-            :department-id="activeDepartmentId ?? null"
-            :team-id="activeTeamId ?? null"
-          />
         </div>
       </div>
     </template>
