@@ -7,8 +7,8 @@ export type ImageStylePreviewState = 'idle' | 'loading' | 'ready' | 'error'
 
 const DEBOUNCE_MS = 400
 
-// Debounce + Race-Guard fuer die Bildstil-Vorschau, getrennt von ImageStyleCanvasEditor.vue und
-// damit ohne fabric.js/Canvas-Mount testbar. Race-Guard nach demselben Muster wie erstellen.vues
+// Debounce + Race-Guard fuer die Bildstil-Vorschau, ohne UI- oder Canvas-Abhaengigkeit testbar.
+// Race-Guard nach demselben Muster wie erstellen.vues
 // latestServerDraftSave/saveNumber: jeder Aufruf traegt eine lokale Sequenznummer, eine Antwort
 // wird nur uebernommen, wenn zwischenzeitlich kein neuerer Aufruf gestartet wurde. Kein
 // AbortController zusaetzlich -- dafuer gibt es im Frontend keinen Praezedenzfall, und eine

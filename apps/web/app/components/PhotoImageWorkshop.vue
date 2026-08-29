@@ -39,15 +39,21 @@ const props = defineProps<{
   file: File
   organizationId: string
   departmentId: string | null
+  frameAssets?: BrandAsset[]
+  logoAssets?: BrandAsset[]
 }>()
 const emit = defineEmits<{ save: [file: File]; cancel: [] }>()
 
 type EditorTool = 'crop' | 'filters' | 'resize' | 'frame' | 'logo'
 type CropperController = {
-  getResult: () => { canvas?: HTMLCanvasElement }
+  getResult: () => {
+    canvas?: HTMLCanvasElement
+    coordinates: { width: number; height: number }
+  }
   rotate: (angle: number) => void
   flip: (horizontal: boolean, vertical: boolean) => void
   reset: () => void
+  refresh: () => void
 }
 type BrandAsset = { id: string; name: string; signedUrl: string }
 type LogoPosition = 'top_left' | 'top_right' | 'bottom_left' | 'bottom_right'
@@ -58,6 +64,8 @@ const cropper = ref<CropperController | null>(null)
 const sourceUrl = ref('')
 const sourceWidth = ref(0)
 const sourceHeight = ref(0)
+const croppedWidth = ref(0)
+const croppedHeight = ref(0)
 const aspectRatio = ref<number | undefined>(undefined)
 const activeTool = ref<EditorTool>('crop')
 const exporting = ref(false)
@@ -73,6 +81,9 @@ const selectedLogoId = ref<string | null>(null)
 const logoPosition = ref<LogoPosition>('bottom_right')
 let latestAssetLoadRun = 0
 const organizationId = computed(() => props.organizationId || null)
+const hasProvidedAssetLibrary = computed(
+  () => props.frameAssets !== undefined || props.logoAssets !== undefined,
+)
 const activeLevel = computed<BrandScopeLevel>(() =>
   props.departmentId ? 'department' : 'organization',
 )
@@ -160,8 +171,12 @@ function selectableAssetsToCards(list: typeof selectableFrameAssets.value): Bran
       : []
   })
 }
-const frames = computed(() => selectableAssetsToCards(selectableFrameAssets.value))
-const logos = computed(() => selectableAssetsToCards(selectableLogoAssets.value))
+// Die Bildstil-Seite hat die sichtbaren, signierten Brand Assets bereits geladen. Diese Liste
+// direkt weiterzugeben vermeidet einen zweiten asynchronen Abruf, durch den die Rahmenkacheln
+// beim Oeffnen der Werkstatt bislang leer bleiben konnten. Beim Foto-Anhang ohne diese Props
+// bleibt der mandantensichere Fallback ueber useBrandAssets bestehen.
+const frames = computed(() => props.frameAssets ?? selectableAssetsToCards(selectableFrameAssets.value))
+const logos = computed(() => props.logoAssets ?? selectableAssetsToCards(selectableLogoAssets.value))
 const currentFilterCss = computed(() => cssFilterForImageStyle(selectedFilter.value))
 const selectedFrame = computed(
   () => frames.value.find((frame) => frame.id === selectedFrameId.value) ?? null,
@@ -182,11 +197,21 @@ const logoPositionClass = computed<Record<LogoPosition, string>>(() => ({
 }))
 
 function cropDimensions(): ImageDimensions {
-  const canvas = cropper.value?.getResult().canvas
-  return canvas?.width && canvas.height
-    ? { width: canvas.width, height: canvas.height }
+  const result = cropper.value?.getResult()
+  return result?.coordinates.width && result.coordinates.height
+    ? { width: Math.round(result.coordinates.width), height: Math.round(result.coordinates.height) }
+    : croppedWidth.value && croppedHeight.value
+      ? { width: croppedWidth.value, height: croppedHeight.value }
     : { width: sourceWidth.value, height: sourceHeight.value }
 }
+const cropDimensionsLabel = computed(() => {
+  const dimensions = cropDimensions()
+  return dimensions.width && dimensions.height ? `${dimensions.width} × ${dimensions.height} px` : ''
+})
+const outputDimensionsLabel = computed(() => {
+  const dimensions = cropDimensions()
+  return `${outputWidth.value || dimensions.width} × ${outputHeight.value || dimensions.height} px`
+})
 function setOutputDimensions(dimensions: ImageDimensions) {
   const error = outputSizeError(dimensions)
   if (error) {
@@ -207,10 +232,19 @@ function updateSourceUrl(file: File) {
     if (image.src !== sourceUrl.value) return
     sourceWidth.value = image.naturalWidth
     sourceHeight.value = image.naturalHeight
+    croppedWidth.value = image.naturalWidth
+    croppedHeight.value = image.naturalHeight
     outputWidth.value = 0
     outputHeight.value = 0
   }
   image.src = sourceUrl.value
+}
+
+function onCropChange(result: { coordinates?: { width: number; height: number } }) {
+  const coordinates = result.coordinates
+  if (!coordinates?.width || !coordinates.height) return
+  croppedWidth.value = Math.round(coordinates.width)
+  croppedHeight.value = Math.round(coordinates.height)
 }
 
 function rotate(angle: number) {
@@ -327,18 +361,23 @@ async function save() {
 
 onMounted(() => {
   updateSourceUrl(props.file)
-  void loadBrandAssets()
+  if (!hasProvidedAssetLibrary.value) void loadBrandAssets()
 })
 watch(() => props.file, updateSourceUrl)
-watch([() => props.organizationId, () => props.departmentId], () => void loadBrandAssets())
+watch([() => props.organizationId, () => props.departmentId], () => {
+  if (!hasProvidedAssetLibrary.value) void loadBrandAssets()
+})
+watch(aspectRatio, async () => {
+  await nextTick()
+  cropper.value?.refresh()
+})
 onBeforeUnmount(() => {
   if (sourceUrl.value) URL.revokeObjectURL(sourceUrl.value)
 })
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50 bg-[#122820]/60 p-0 sm:flex sm:items-center sm:justify-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby="photo-workshop-title">
-    <section class="flex h-full w-full flex-col overflow-hidden bg-white shadow-2xl sm:h-[min(900px,calc(100vh-2rem))] sm:max-w-6xl sm:rounded-2xl">
+  <section class="flex min-h-[680px] w-full flex-col overflow-hidden rounded-xl border border-[#e9ebe4] bg-white" aria-labelledby="photo-workshop-title">
       <header class="flex shrink-0 items-center justify-between gap-3 border-b border-[#e9ebe4] px-4 py-3 sm:px-6">
         <div class="min-w-0"><h2 id="photo-workshop-title" class="font-display text-base font-bold sm:text-lg">Bildwerkstatt</h2><p class="hidden text-xs text-[#727a75] sm:block">Zuschnitt, Bildstil, Rahmen und Vereinslogo vor dem privaten Upload.</p></div>
         <span class="hidden text-sm font-medium text-[#84909c] md:block">{{ sourceDimensions }}</span>
@@ -346,26 +385,26 @@ onBeforeUnmount(() => {
       </header>
 
       <div class="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[112px_minmax(0,1fr)] lg:grid-rows-1">
-        <nav class="flex border-b border-[#e9ebe4] bg-white px-2 py-2 lg:flex-col lg:border-b-0 lg:border-r lg:px-2 lg:py-4" aria-label="Bildbearbeitung">
-          <button v-for="tool in TOOLS" :key="tool.id" type="button" class="focus-ring flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-lg px-2 py-2 text-[10px] font-semibold sm:text-[11px] lg:flex-none lg:py-3" :class="activeTool === tool.id ? 'bg-[#e8efff] text-[#3754c8]' : 'text-[#52606d] hover:bg-[#f4f6f2]'" @click="selectTool(tool.id)"><component :is="tool.icon" :size="21" stroke-width="1.7" /><span>{{ tool.label }}</span></button>
+        <nav class="flex overflow-x-auto border-b border-[#e9ebe4] bg-white px-2 py-2 [scrollbar-width:thin] lg:flex-col lg:overflow-x-visible lg:overflow-y-auto lg:border-b-0 lg:border-r lg:px-2 lg:py-4" aria-label="Bildbearbeitung">
+          <button v-for="tool in TOOLS" :key="tool.id" type="button" class="focus-ring flex min-w-[5.5rem] shrink-0 flex-1 flex-col items-center justify-center gap-1 rounded-lg px-2 py-2 text-[10px] font-semibold sm:text-[11px] lg:min-w-0 lg:flex-none lg:py-3" :class="activeTool === tool.id ? 'bg-[#e8efff] text-[#3754c8]' : 'text-[#52606d] hover:bg-[#f4f6f2]'" @click="selectTool(tool.id)"><component :is="tool.icon" :size="21" stroke-width="1.7" /><span>{{ tool.label }}</span></button>
         </nav>
 
         <div class="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] bg-[#f7f8f6]">
-          <main class="relative flex min-h-0 items-center justify-center p-3 sm:p-6">
+          <main class="relative flex min-h-[360px] items-center justify-center p-3 sm:p-6">
             <div class="relative flex h-full w-full items-center justify-center overflow-hidden rounded-xl bg-[#edf0ec] p-3 sm:p-5">
-              <Cropper ref="cropper" class="photo-workshop-cropper h-full w-full max-w-full" :style="{ filter: currentFilterCss || undefined }" :src="sourceUrl" :stencil-props="{ ...(aspectRatio ? { aspectRatio } : {}) }" :canvas="true" :check-orientation="true" image-restriction="stencil" />
+              <Cropper ref="cropper" class="photo-workshop-cropper h-full w-full max-w-full" :style="{ filter: currentFilterCss || undefined }" :src="sourceUrl" :stencil-props="{ ...(aspectRatio ? { aspectRatio } : {}) }" :canvas="true" :check-orientation="true" image-restriction="fit-area" @change="onCropChange" />
               <img v-if="selectedFrame" class="pointer-events-none absolute inset-3 h-[calc(100%-1.5rem)] w-[calc(100%-1.5rem)] object-fill sm:inset-5 sm:h-[calc(100%-2.5rem)] sm:w-[calc(100%-2.5rem)]" :src="selectedFrame.signedUrl" alt="" aria-hidden="true" />
               <img v-if="selectedLogo" class="pointer-events-none absolute z-10 h-auto w-[16%] max-w-32 object-contain drop-shadow-sm" :class="logoPositionClass[logoPosition]" :src="selectedLogo.signedUrl" alt="" aria-hidden="true" />
             </div>
-            <p class="absolute bottom-5 left-1/2 hidden -translate-x-1/2 rounded-full bg-[#122820]/70 px-3 py-1.5 text-[10px] font-medium text-white sm:block">Live-Vorschau · {{ sourceDimensions }}</p>
+            <p class="absolute bottom-5 left-1/2 hidden -translate-x-1/2 rounded-full bg-[#122820]/70 px-3 py-1.5 text-[10px] font-medium text-white sm:block">Live-Vorschau · {{ outputDimensionsLabel }}</p>
           </main>
 
           <section class="max-h-64 overflow-y-auto border-t border-[#e9ebe4] bg-white px-4 py-4 sm:px-6" aria-live="polite">
-            <div v-if="activeTool === 'crop'" class="space-y-3"><div><h3 class="text-sm font-bold">Zuschnitt</h3><p class="text-[11px] text-[#7a817c]">Ziehe den Bildausschnitt direkt in der Vorschau.</p></div><div class="flex flex-wrap items-center gap-2"><button v-for="option in ASPECT_RATIOS" :key="option.label" type="button" class="focus-ring rounded-lg px-3 py-2 text-xs font-semibold" :class="aspectRatio === option.value ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'" @click="aspectRatio = option.value">{{ option.label }}</button><span class="hidden h-7 border-l border-[#dfe0d9] sm:block" /><button type="button" class="focus-ring rounded-lg border border-[#dfe0d9] p-2 text-[#52606d]" aria-label="Nach links drehen" title="Nach links drehen" @click="rotate(-90)"><RotateCcw :size="17" /></button><button type="button" class="focus-ring rounded-lg border border-[#dfe0d9] p-2 text-[#52606d]" aria-label="Nach rechts drehen" title="Nach rechts drehen" @click="rotate(90)"><RotateCw :size="17" /></button><button type="button" class="focus-ring rounded-lg border border-[#dfe0d9] p-2 text-[#52606d]" aria-label="Horizontal spiegeln" title="Horizontal spiegeln" @click="flip(true, false)"><FlipHorizontal2 :size="17" /></button><button type="button" class="focus-ring rounded-lg border border-[#dfe0d9] p-2 text-[#52606d]" aria-label="Vertikal spiegeln" title="Vertikal spiegeln" @click="flip(false, true)"><FlipVertical2 :size="17" /></button></div></div>
+            <div v-if="activeTool === 'crop'" class="space-y-3"><div><h3 class="text-sm font-bold">Zuschnitt</h3><p class="text-[11px] text-[#7a817c]">Ziehe den Bildausschnitt direkt in der Vorschau. Aktueller Ausschnitt: {{ cropDimensionsLabel }}.</p></div><div class="flex flex-wrap items-center gap-2"><button v-for="option in ASPECT_RATIOS" :key="option.label" type="button" class="focus-ring rounded-lg px-3 py-2 text-xs font-semibold" :class="aspectRatio === option.value ? 'bg-forest text-white' : 'bg-[#eef1ea] text-[#5b625d]'" @click="aspectRatio = option.value">{{ option.label }}</button><span class="hidden h-7 border-l border-[#dfe0d9] sm:block" /><button type="button" class="focus-ring rounded-lg border border-[#dfe0d9] p-2 text-[#52606d]" aria-label="Nach links drehen" title="Nach links drehen" @click="rotate(-90)"><RotateCcw :size="17" /></button><button type="button" class="focus-ring rounded-lg border border-[#dfe0d9] p-2 text-[#52606d]" aria-label="Nach rechts drehen" title="Nach rechts drehen" @click="rotate(90)"><RotateCw :size="17" /></button><button type="button" class="focus-ring rounded-lg border border-[#dfe0d9] p-2 text-[#52606d]" aria-label="Horizontal spiegeln" title="Horizontal spiegeln" @click="flip(true, false)"><FlipHorizontal2 :size="17" /></button><button type="button" class="focus-ring rounded-lg border border-[#dfe0d9] p-2 text-[#52606d]" aria-label="Vertikal spiegeln" title="Vertikal spiegeln" @click="flip(false, true)"><FlipVertical2 :size="17" /></button></div></div>
 
             <div v-else-if="activeTool === 'filters'" class="space-y-4"><div><h3 class="text-sm font-bold">Filter</h3><p class="text-[11px] text-[#7a817c]">Alle derzeit verfügbaren Bildfilter; die Auswahl wird in die Datei übernommen.</p></div><div v-for="group in ['Basis', 'G’MIC'] as const" :key="group"><h4 class="mb-2 text-[10px] font-bold uppercase tracking-[.12em] text-[#5b625d]">{{ group }}</h4><div class="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-7"><button v-for="filter in IMAGE_STYLE_FILTER_OPTIONS.filter((item) => item.group === group)" :key="filter.value" type="button" class="focus-ring overflow-hidden rounded-lg p-1.5 text-left" :class="selectedFilter === filter.value ? 'bg-[#e8efff] text-[#3754c8]' : 'bg-[#eef1ea] text-[#5b625d]'" @click="selectedFilter = filter.value"><img :src="sourceUrl" alt="" aria-hidden="true" class="aspect-[4/3] w-full rounded object-cover" :style="{ filter: filter.cssFilter || undefined }" /><span class="mt-1 block truncate text-center text-[10px] font-semibold">{{ filter.label }}</span></button></div></div></div>
 
-            <div v-else-if="activeTool === 'resize'" class="flex flex-wrap items-end gap-3"><div class="mr-2"><h3 class="text-sm font-bold">Bildgröße</h3><p class="text-[11px] text-[#7a817c]">Das Bild wird beim Speichern skaliert.</p></div><label class="grid gap-1 text-xs font-semibold">Breite<input :value="outputWidth" class="w-28 rounded-lg border border-[#dfe0d9] px-2 py-2 text-sm" type="number" min="1" :max="MAX_OUTPUT_DIMENSION" @input="updateOutputWidth(($event.target as HTMLInputElement).value)" /></label><span class="mb-2 text-[#7a817c]">×</span><label class="grid gap-1 text-xs font-semibold">Höhe<input :value="outputHeight" class="w-28 rounded-lg border border-[#dfe0d9] px-2 py-2 text-sm" type="number" min="1" :max="MAX_OUTPUT_DIMENSION" @input="updateOutputHeight(($event.target as HTMLInputElement).value)" /></label><button type="button" class="focus-ring mb-0.5 inline-flex items-center gap-1 rounded-lg px-2 py-2 text-xs font-semibold text-[#52606d] hover:bg-[#f4f6f2]" :aria-pressed="keepAspectRatio" @click="keepAspectRatio = !keepAspectRatio"><Lock v-if="keepAspectRatio" :size="15" /><Unlock v-else :size="15" /> Verhältnis {{ keepAspectRatio ? 'fix' : 'frei' }}</button><span class="pb-2 text-[11px] text-[#7a817c]">px</span></div>
+            <div v-else-if="activeTool === 'resize'" class="flex flex-wrap items-end gap-3"><div class="mr-2"><h3 class="text-sm font-bold">Bildgröße</h3><p class="text-[11px] text-[#7a817c]">Ausgabe: {{ outputDimensionsLabel }}. Das Bild wird beim Speichern skaliert.</p></div><label class="grid gap-1 text-xs font-semibold">Breite<input :value="outputWidth" class="w-28 rounded-lg border border-[#dfe0d9] px-2 py-2 text-sm" type="number" min="1" :max="MAX_OUTPUT_DIMENSION" @input="updateOutputWidth(($event.target as HTMLInputElement).value)" /></label><span class="mb-2 text-[#7a817c]">×</span><label class="grid gap-1 text-xs font-semibold">Höhe<input :value="outputHeight" class="w-28 rounded-lg border border-[#dfe0d9] px-2 py-2 text-sm" type="number" min="1" :max="MAX_OUTPUT_DIMENSION" @input="updateOutputHeight(($event.target as HTMLInputElement).value)" /></label><button type="button" class="focus-ring mb-0.5 inline-flex items-center gap-1 rounded-lg px-2 py-2 text-xs font-semibold text-[#52606d] hover:bg-[#f4f6f2]" :aria-pressed="keepAspectRatio" @click="keepAspectRatio = !keepAspectRatio"><Lock v-if="keepAspectRatio" :size="15" /><Unlock v-else :size="15" /> Verhältnis {{ keepAspectRatio ? 'fix' : 'frei' }}</button><span class="pb-2 text-[11px] text-[#7a817c]">px</span></div>
 
             <div v-else-if="activeTool === 'frame'" class="space-y-3"><div><h3 class="text-sm font-bold">Rahmen</h3><p class="text-[11px] text-[#7a817c]">Wähle einen Rahmen aus euren hinterlegten Marken-Assets.</p></div><p v-if="loadingAssets" class="text-xs text-[#7a817c]">Rahmen werden geladen …</p><div v-else class="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6"><button type="button" class="focus-ring rounded-lg p-2 text-left text-xs font-semibold" :class="selectedFrameId === null ? 'bg-[#e8efff] text-[#3754c8]' : 'bg-[#eef1ea] text-[#5b625d]'" @click="selectedFrameId = null"><span class="flex aspect-[4/3] items-center justify-center rounded border border-dashed border-current">Ohne Rahmen</span><span class="mt-1 block text-center">Keiner</span></button><button v-for="frame in frames" :key="frame.id" type="button" class="focus-ring overflow-hidden rounded-lg p-1.5 text-left text-xs font-semibold" :class="selectedFrameId === frame.id ? 'bg-[#e8efff] text-[#3754c8]' : 'bg-[#eef1ea] text-[#5b625d]'" @click="selectedFrameId = frame.id"><img :src="frame.signedUrl" :alt="`${frame.name} auswählen`" class="aspect-[4/3] w-full rounded object-fill" /><span class="mt-1 block truncate text-center">{{ frame.name }}</span></button></div><p v-if="!loadingAssets && !frames.length" class="text-xs text-[#7a817c]">Es sind noch keine Rahmen hinterlegt.</p></div>
 
@@ -375,8 +414,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <footer class="flex shrink-0 items-center justify-between gap-3 border-t border-[#e9ebe4] bg-white px-4 py-3 sm:px-6"><button type="button" class="focus-ring text-xs font-semibold text-[#5c655f] underline" @click="emit('cancel')">Abbrechen</button><button type="button" :disabled="exporting" class="focus-ring inline-flex items-center gap-2 rounded-xl bg-forest px-4 py-2.5 text-xs font-bold text-white disabled:opacity-60" @click="save"><Check :size="15" />{{ exporting ? 'Wird übernommen …' : 'Foto übernehmen' }}</button></footer>
-    </section>
-  </div>
+  </section>
 </template>
 
 <style scoped>
