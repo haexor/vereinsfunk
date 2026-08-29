@@ -167,14 +167,14 @@ const selectableLogoAssets = computed(() =>
     .map(assetOption),
 )
 const workshopFrameAssets = computed(() =>
-  selectableFrameAssets.value.map((asset) => ({
+  selectableFrameAssets.value.filter((asset) => asset.signedUrl).map((asset) => ({
     id: asset.id,
     name: frameAssets.value.find((entry) => entry.id === asset.id)?.objectPath.split('/').at(-1) ?? 'Rahmen',
     signedUrl: asset.signedUrl,
   })),
 )
 const workshopLogoAssets = computed(() =>
-  selectableLogoAssets.value.map((asset) => ({
+  selectableLogoAssets.value.filter((asset) => asset.signedUrl).map((asset) => ({
     id: asset.id,
     name: logoAssets.value.find((entry) => entry.id === asset.id)?.objectPath.split('/').at(-1) ?? 'Logo',
     signedUrl: asset.signedUrl,
