@@ -285,8 +285,6 @@ function openPhotoWorkshop(event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0] ?? null
   ;(event.target as HTMLInputElement).value = ''
   if (!file) return
-  workshopResultFile.value = file
-  updateWorkshopPreview(file)
   workshopFile.value = file
 }
 function acceptWorkshopFile(file: File) {

@@ -10,4 +10,13 @@ describe('Bildstil photo workshop', () => {
     expect(page).toContain('@save="acceptWorkshopFile"')
     expect(page).not.toContain('<ImageStyleCanvasEditor')
   })
+
+  it('keeps the accepted preview unchanged until the workshop saves', () => {
+    const page = readFileSync(join(import.meta.dirname, 'bildstil.vue'), 'utf8')
+    const openWorkshop = page.match(/function openPhotoWorkshop[\s\S]*?\n}/)?.[0]
+
+    expect(openWorkshop).toContain('workshopFile.value = file')
+    expect(openWorkshop).not.toContain('workshopResultFile.value')
+    expect(openWorkshop).not.toContain('updateWorkshopPreview')
+  })
 })
