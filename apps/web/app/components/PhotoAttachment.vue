@@ -254,9 +254,11 @@ function editAgain() { mediaAssetId.value = null; phase.value = 'marking' }
 
 <template>
   <div>
-    <PhotoImageEditor
+    <PhotoImageWorkshop
       v-if="pendingEditorFile"
       :file="pendingEditorFile"
+      :organization-id="organizationId"
+      :department-id="departmentId"
       @save="acceptEditedFile"
       @cancel="pendingEditorFile = null"
     />

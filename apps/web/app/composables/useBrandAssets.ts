@@ -1,5 +1,7 @@
+import { BrandAssetSchema } from '@vereinsfunk/contracts'
 import { isBrandAssetSelectable } from '@vereinsfunk/domain'
 import type { ComputedRef, Ref } from 'vue'
+import { z } from 'zod'
 
 export type BrandScopeLevel = 'organization' | 'department' | 'team'
 
@@ -16,6 +18,24 @@ export interface BrandAssetRow {
   licenseHolder: string | null
   createdAt: string
 }
+
+// Supabase-Selects sind zur Laufzeit untypisiert. Dieses schmale Schema entspricht exakt den
+// Spalten aus fetchBrandAssets und verhindert, dass unvollständige Storage-Pfade in die UI gelangen.
+export const BrandAssetRowSchema = z.object({
+  id: BrandAssetSchema.shape.id,
+  department_id: BrandAssetSchema.shape.departmentId,
+  team_id: BrandAssetSchema.shape.teamId,
+  kind: BrandAssetSchema.shape.kind,
+  object_path: BrandAssetSchema.shape.objectPath,
+  status: BrandAssetSchema.shape.status,
+  font_family: BrandAssetSchema.shape.fontFamily,
+  font_weight: BrandAssetSchema.shape.fontWeight,
+  font_style: BrandAssetSchema.shape.fontStyle,
+  license_holder: BrandAssetSchema.shape.licenseHolder,
+  created_at: BrandAssetSchema.shape.createdAt,
+})
+
+export const SignedBrandAssetUrlSchema = z.object({ signedUrl: z.url() })
 
 export interface BrandLevelOverride {
   primaryColor: string | null
@@ -46,6 +66,39 @@ export interface BrandOrganizationState {
   lockedFields: string[]
 }
 
+/**
+ * Loads the tenant-scoped asset library. Consumers still decide which inherited assets are
+ * selectable through useBrandAssets, so every UI uses the same scope rules.
+ */
+export async function fetchBrandAssets({
+  supabase,
+  organizationId,
+}: {
+  supabase: ReturnType<typeof useSupabaseClient>
+  organizationId: string
+}): Promise<BrandAssetRow[]> {
+  const rows = await supabase
+    .from('brand_assets')
+    .select(
+      'id, department_id, team_id, kind, object_path, status, font_family, font_weight, font_style, license_holder, created_at',
+    )
+    .eq('organization_id', organizationId)
+  if (rows.error) throw rows.error
+  return BrandAssetRowSchema.array().parse(rows.data ?? []).map((asset) => ({
+    id: asset.id,
+    departmentId: asset.department_id,
+    teamId: asset.team_id,
+    kind: asset.kind,
+    objectPath: asset.object_path,
+    status: asset.status,
+    fontFamily: asset.font_family,
+    fontWeight: asset.font_weight,
+    fontStyle: asset.font_style,
+    licenseHolder: asset.license_holder,
+    createdAt: asset.created_at,
+  }))
+}
+
 export function useBrandAssets({
   api,
   supabase,
@@ -71,6 +124,7 @@ export function useBrandAssets({
 }) {
   const assets = ref<BrandAssetRow[]>([])
   const assetSignedUrls = ref<Record<string, string>>({})
+  const inFlightSignatures = new Map<string, Promise<void>>()
 
   function assetOrigin(asset: BrandAssetRow): string {
     if (asset.teamId) return 'aus dieser Mannschaft'
@@ -84,6 +138,23 @@ export function useBrandAssets({
         asset.status === 'ready' &&
         asset.kind !== 'font' &&
         asset.kind !== 'frame' &&
+        isBrandAssetSelectable(
+          {
+            scope: asset.teamId ? 'team' : asset.departmentId ? 'department' : 'organization',
+            departmentId: asset.departmentId ?? undefined,
+            teamId: asset.teamId ?? undefined,
+          },
+          activeLevel.value,
+          activeDepartmentId.value ?? undefined,
+          activeTeamId.value ?? undefined,
+        ),
+    ),
+  )
+  const selectableFrameAssets = computed(() =>
+    assets.value.filter(
+      (asset) =>
+        asset.status === 'ready' &&
+        asset.kind === 'frame' &&
         isBrandAssetSelectable(
           {
             scope: asset.teamId ? 'team' : asset.departmentId ? 'department' : 'organization',
@@ -145,10 +216,27 @@ export function useBrandAssets({
 
   async function signAsset(asset: BrandAssetRow) {
     if (assetSignedUrls.value[asset.id]) return
-    const signed = await supabase.storage
+    const inFlight = inFlightSignatures.get(asset.id)
+    if (inFlight) return inFlight
+    const signing = supabase.storage
       .from('brand-assets')
       .createSignedUrl(asset.objectPath, 600)
-    if (signed.data) assetSignedUrls.value[asset.id] = signed.data.signedUrl
+      .then((signed) => {
+        if (signed.error) throw signed.error
+        const { signedUrl } = SignedBrandAssetUrlSchema.parse(signed.data)
+        if (assets.value.some((current) => current.id === asset.id))
+          assetSignedUrls.value[asset.id] = signedUrl
+      })
+      .finally(() => inFlightSignatures.delete(asset.id))
+    inFlightSignatures.set(asset.id, signing)
+    return signing
+  }
+  async function signAssets(list = assets.value): Promise<void> {
+    await Promise.all(
+      list
+        .filter((asset) => asset.kind !== 'font' && asset.status === 'ready')
+        .map((asset) => signAsset(asset)),
+    )
   }
   // Nur 'ready' signieren: die Storage-RLS prueft den Asset-Status nicht, und ein Soft-Delete
   // entfernt das Storage-Objekt nicht -- eine tote Signed-URL fuer 'deleted'/'processing'/
@@ -165,7 +253,7 @@ export function useBrandAssets({
       )
       for (const id of Object.keys(assetSignedUrls.value))
         if (!signableIds.has(id)) delete assetSignedUrls.value[id]
-      for (const asset of list) if (signableIds.has(asset.id)) void signAsset(asset)
+      void signAssets(list).catch(() => {})
     },
     { immediate: true },
   )
@@ -295,6 +383,7 @@ export function useBrandAssets({
     assets,
     assetSignedUrls,
     selectableLogoAssets,
+    selectableFrameAssets,
     selectableFontAssets,
     ownFontAssets,
     pendingLicenseAssets,
@@ -304,6 +393,7 @@ export function useBrandAssets({
     licenseDrafts,
     confirmingLicense,
     assetOrigin,
+    signAssets,
     deletingAsset,
     deleteAssetError,
     deleteAsset,
