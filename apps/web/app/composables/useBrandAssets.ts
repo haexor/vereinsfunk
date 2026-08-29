@@ -1,5 +1,7 @@
+import { BrandAssetSchema } from '@vereinsfunk/contracts'
 import { isBrandAssetSelectable } from '@vereinsfunk/domain'
 import type { ComputedRef, Ref } from 'vue'
+import { z } from 'zod'
 
 export type BrandScopeLevel = 'organization' | 'department' | 'team'
 
@@ -16,6 +18,24 @@ export interface BrandAssetRow {
   licenseHolder: string | null
   createdAt: string
 }
+
+// Supabase-Selects sind zur Laufzeit untypisiert. Dieses schmale Schema entspricht exakt den
+// Spalten aus fetchBrandAssets und verhindert, dass unvollständige Storage-Pfade in die UI gelangen.
+export const BrandAssetRowSchema = z.object({
+  id: BrandAssetSchema.shape.id,
+  department_id: BrandAssetSchema.shape.departmentId,
+  team_id: BrandAssetSchema.shape.teamId,
+  kind: BrandAssetSchema.shape.kind,
+  object_path: BrandAssetSchema.shape.objectPath,
+  status: BrandAssetSchema.shape.status,
+  font_family: BrandAssetSchema.shape.fontFamily,
+  font_weight: BrandAssetSchema.shape.fontWeight,
+  font_style: BrandAssetSchema.shape.fontStyle,
+  license_holder: BrandAssetSchema.shape.licenseHolder,
+  created_at: BrandAssetSchema.shape.createdAt,
+})
+
+export const SignedBrandAssetUrlSchema = z.object({ signedUrl: z.url() })
 
 export interface BrandLevelOverride {
   primaryColor: string | null
@@ -64,7 +84,7 @@ export async function fetchBrandAssets({
     )
     .eq('organization_id', organizationId)
   if (rows.error) throw rows.error
-  return (rows.data ?? []).map((asset) => ({
+  return BrandAssetRowSchema.array().parse(rows.data ?? []).map((asset) => ({
     id: asset.id,
     departmentId: asset.department_id,
     teamId: asset.team_id,
@@ -202,7 +222,10 @@ export function useBrandAssets({
       .from('brand-assets')
       .createSignedUrl(asset.objectPath, 600)
       .then((signed) => {
-        if (signed.data) assetSignedUrls.value[asset.id] = signed.data.signedUrl
+        if (signed.error) throw signed.error
+        const { signedUrl } = SignedBrandAssetUrlSchema.parse(signed.data)
+        if (assets.value.some((current) => current.id === asset.id))
+          assetSignedUrls.value[asset.id] = signedUrl
       })
       .finally(() => inFlightSignatures.delete(asset.id))
     inFlightSignatures.set(asset.id, signing)
@@ -230,7 +253,7 @@ export function useBrandAssets({
       )
       for (const id of Object.keys(assetSignedUrls.value))
         if (!signableIds.has(id)) delete assetSignedUrls.value[id]
-      void signAssets(list)
+      void signAssets(list).catch(() => {})
     },
     { immediate: true },
   )

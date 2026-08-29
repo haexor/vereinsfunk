@@ -71,6 +71,7 @@ const assetError = ref('')
 const selectedFrameId = ref<string | null>(null)
 const selectedLogoId = ref<string | null>(null)
 const logoPosition = ref<LogoPosition>('bottom_right')
+let latestAssetLoadRun = 0
 const organizationId = computed(() => props.organizationId || null)
 const activeLevel = computed<BrandScopeLevel>(() =>
   props.departmentId ? 'department' : 'organization',
@@ -109,16 +110,33 @@ const TOOLS: { id: EditorTool; label: string; icon: typeof Crop }[] = [
   { id: 'logo', label: 'Logo', icon: Image },
 ]
 async function loadBrandAssets() {
-  if (!organizationId.value || import.meta.server) return
+  const loadRun = ++latestAssetLoadRun
+  const requestedOrganizationId = organizationId.value
+  const requestedDepartmentId = activeDepartmentId.value
+  selectedFrameId.value = null
+  selectedLogoId.value = null
+  assets.value = []
+  if (!requestedOrganizationId || import.meta.server) {
+    loadingAssets.value = false
+    return
+  }
   loadingAssets.value = true
   assetError.value = ''
   try {
-    assets.value = await fetchBrandAssets({ supabase, organizationId: organizationId.value })
+    const loadedAssets = await fetchBrandAssets({ supabase, organizationId: requestedOrganizationId })
+    if (
+      loadRun !== latestAssetLoadRun ||
+      requestedOrganizationId !== organizationId.value ||
+      requestedDepartmentId !== activeDepartmentId.value
+    )
+      return
+    assets.value = loadedAssets
     await signAssets()
   } catch {
-    assetError.value = 'Rahmen und Logos konnten nicht geladen werden.'
+    if (loadRun === latestAssetLoadRun)
+      assetError.value = 'Rahmen und Logos konnten nicht geladen werden.'
   } finally {
-    loadingAssets.value = false
+    if (loadRun === latestAssetLoadRun) loadingAssets.value = false
   }
 }
 const { assets, assetSignedUrls, selectableFrameAssets, selectableLogoAssets, signAssets } =
