@@ -166,6 +166,20 @@ const selectableLogoAssets = computed(() =>
     )
     .map(assetOption),
 )
+const workshopFrameAssets = computed(() =>
+  selectableFrameAssets.value.filter((asset) => asset.signedUrl).map((asset) => ({
+    id: asset.id,
+    name: frameAssets.value.find((entry) => entry.id === asset.id)?.objectPath.split('/').at(-1) ?? 'Rahmen',
+    signedUrl: asset.signedUrl,
+  })),
+)
+const workshopLogoAssets = computed(() =>
+  selectableLogoAssets.value.filter((asset) => asset.signedUrl).map((asset) => ({
+    id: asset.id,
+    name: logoAssets.value.find((entry) => entry.id === asset.id)?.objectPath.split('/').at(-1) ?? 'Logo',
+    signedUrl: asset.signedUrl,
+  })),
+)
 
 async function loadAll() {
   const loadRun = ++latestLoadRun
@@ -409,14 +423,6 @@ onBeforeUnmount(() => {
       Die Bildstil-Presets konnten nicht geladen werden. Bitte lade die Seite neu.
     </div>
     <template v-else>
-      <PhotoImageWorkshop
-        v-if="workshopFile"
-        :file="workshopFile"
-        :organization-id="organizationId ?? ''"
-        :department-id="activeDepartmentId ?? null"
-        @save="acceptWorkshopFile"
-        @cancel="closePhotoWorkshop"
-      />
       <div
         class="grid min-w-0 items-start gap-5 2xl:grid-cols-[minmax(0,.85fr)_minmax(0,1.75fr)_minmax(0,.8fr)]"
       >
@@ -516,8 +522,18 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <div class="bg-[#f7f8f6] p-4">
+              <PhotoImageWorkshop
+                v-if="workshopFile"
+                :file="workshopFile"
+                :organization-id="organizationId ?? ''"
+                :department-id="activeDepartmentId ?? null"
+                :frame-assets="workshopFrameAssets"
+                :logo-assets="workshopLogoAssets"
+                @save="acceptWorkshopFile"
+                @cancel="closePhotoWorkshop"
+              />
               <img
-                v-if="workshopPreviewUrl"
+                v-else-if="workshopPreviewUrl"
                 :src="workshopPreviewUrl"
                 alt="Vorschau des bearbeiteten Testfotos"
                 class="mx-auto max-h-[min(60vh,720px)] w-full rounded-xl object-contain"
@@ -526,7 +542,7 @@ onBeforeUnmount(() => {
                 v-else
                 class="flex min-h-72 items-center justify-center rounded-xl border border-dashed border-[#cfd5ce] px-6 text-center text-sm text-[#7a817c]"
               >
-                Wähle ein Testfoto aus, um die neue Bildwerkstatt zu öffnen.
+                Wähle ein Testfoto aus, um es direkt in der Bildwerkstatt zu bearbeiten.
               </div>
             </div>
           </section>

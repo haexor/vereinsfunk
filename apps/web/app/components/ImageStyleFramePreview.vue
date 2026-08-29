@@ -19,8 +19,7 @@ const props = withDefaults(
 // Rein kosmetische CSS-Naeherung (Rahmen/Filter entstehen serverseitig per Sharp, siehe
 // apps/api/src/imageStyle.ts). Das bereitgestellte Mannschaftsfoto macht die Filterwirkung statt
 // eines abstrakten Platzhalters sichtbar. Genutzt fuer die kleinen Rahmenstil-/Filter-Galerie-
-// Kacheln in ImageStylePresetForm.vue -- die grosse Vorschau zeigt seit ImageStyleCanvasEditor.vue
-// das echte, serverseitig gerenderte Ergebnis statt dieser Annaeherung.
+// Kacheln in ImageStylePresetForm.vue; das echte Rendering erfolgt serverseitig.
 const outerStyle = computed(() => ({
   borderRadius: props.cornerRadiusPx ? `${props.cornerRadiusPx}px` : undefined,
 }))
