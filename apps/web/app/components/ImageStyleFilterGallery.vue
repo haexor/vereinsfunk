@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ImageStyleFilter } from '@vereinsfunk/contracts'
 import { useImageStyleFilterPreviewCache } from '../composables/useImageStyleFilterPreviewCache'
+import { IMAGE_STYLE_FILTER_OPTIONS } from '../utils/imageStyleFilterCatalog'
 
 const props = defineProps<{
   organizationId: string
@@ -13,104 +14,6 @@ const api = useApiClient()
 const { loading, loadError, previewByFilter, unavailableFilters, load } =
   useImageStyleFilterPreviewCache({ api })
 
-const FILTER_OPTIONS: {
-  value: ImageStyleFilter
-  label: string
-  description: string
-  group: 'Basis' | 'G’MIC'
-}[] = [
-  { value: 'original', label: 'Original', description: 'Unbearbeitet', group: 'Basis' },
-  { value: 'schwarz_weiss', label: 'Schwarz-Weiß', description: 'Klar & zeitlos', group: 'Basis' },
-  { value: 'kontrastreich', label: 'Kontrast', description: 'Mehr Energie', group: 'Basis' },
-  { value: 'warm', label: 'Warm', description: 'Sanfte Töne', group: 'Basis' },
-  {
-    value: 'vereinsfarben_duoton',
-    label: 'Duoton',
-    description: 'In Vereinsfarben',
-    group: 'Basis',
-  },
-  { value: 'comic', label: 'Comic', description: 'Pop-Art & Raster', group: 'Basis' },
-  { value: 'konfetti', label: 'Konfetti', description: 'Jubel aufs Bild', group: 'Basis' },
-  { value: 'gmic_vintage', label: 'Vintage', description: 'Analogfoto', group: 'G’MIC' },
-  { value: 'gmic_poster', label: 'Hope Poster', description: 'Schablonendruck', group: 'G’MIC' },
-  { value: 'gmic_brushify', label: 'Brushify', description: 'Pinselstruktur', group: 'G’MIC' },
-  { value: 'gmic_cartoon', label: 'Cartoon', description: 'Illustrierte Flächen', group: 'G’MIC' },
-  {
-    value: 'gmic_color_ellipses',
-    label: 'Farbellipsen',
-    description: 'Abstrakte Formen',
-    group: 'G’MIC',
-  },
-  { value: 'gmic_cubism', label: 'Kubismus', description: 'Geometrische Flächen', group: 'G’MIC' },
-  {
-    value: 'gmic_ellipsionism',
-    label: 'Ellipsionismus',
-    description: 'Punktmalerei',
-    group: 'G’MIC',
-  },
-  {
-    value: 'gmic_fire_edges',
-    label: 'Feuerkanten',
-    description: 'Leuchtende Konturen',
-    group: 'G’MIC',
-  },
-  {
-    value: 'gmic_fractalize',
-    label: 'Fraktal',
-    description: 'Organische Struktur',
-    group: 'G’MIC',
-  },
-  { value: 'gmic_glow', label: 'Glow', description: 'Weiches Leuchten', group: 'G’MIC' },
-  { value: 'gmic_halftone', label: 'Halbton', description: 'Druckraster', group: 'G’MIC' },
-  {
-    value: 'gmic_hardsketchbw',
-    label: 'Harte Skizze',
-    description: 'Kräftiges Schwarzweiß',
-    group: 'G’MIC',
-  },
-  { value: 'gmic_hearts', label: 'Herzen', description: 'Dekoratives Muster', group: 'G’MIC' },
-  {
-    value: 'gmic_houghsketchbw',
-    label: 'Linien-Skizze',
-    description: 'Technische Konturen',
-    group: 'G’MIC',
-  },
-  {
-    value: 'gmic_lightrays',
-    label: 'Lichtstrahlen',
-    description: 'Sonnenstrahlen',
-    group: 'G’MIC',
-  },
-  { value: 'gmic_light_relief', label: 'Relief', description: 'Plastische Kanten', group: 'G’MIC' },
-  { value: 'gmic_linify', label: 'Linien', description: 'Grafische Zeichnung', group: 'G’MIC' },
-  { value: 'gmic_mosaic', label: 'Mosaik', description: 'Farbflächen', group: 'G’MIC' },
-  { value: 'gmic_pencilbw', label: 'Bleistift', description: 'Feine Skizze', group: 'G’MIC' },
-  { value: 'gmic_pixelsort', label: 'Pixelsort', description: 'Digitale Streifen', group: 'G’MIC' },
-  { value: 'gmic_polaroid', label: 'Polaroid', description: 'Sofortbildlook', group: 'G’MIC' },
-  { value: 'gmic_polygonize', label: 'Polygone', description: 'Facetten', group: 'G’MIC' },
-  {
-    value: 'gmic_poster_edges',
-    label: 'Poster-Kanten',
-    description: 'Grafische Ränder',
-    group: 'G’MIC',
-  },
-  { value: 'gmic_rodilius', label: 'Rodilius', description: 'Fraktale Linien', group: 'G’MIC' },
-  { value: 'gmic_sketchbw', label: 'Skizze', description: 'Handgezeichnet', group: 'G’MIC' },
-  { value: 'gmic_sponge', label: 'Schwamm', description: 'Körnige Textur', group: 'G’MIC' },
-  { value: 'gmic_stained_glass', label: 'Buntglas', description: 'Glasfragmente', group: 'G’MIC' },
-  { value: 'gmic_stars', label: 'Sterne', description: 'Lichtpunkte', group: 'G’MIC' },
-  { value: 'gmic_stencil', label: 'Schablone', description: 'Zweifarbige Flächen', group: 'G’MIC' },
-  {
-    value: 'gmic_stencilbw',
-    label: 'Schablone SW',
-    description: 'Harter Kontrast',
-    group: 'G’MIC',
-  },
-  { value: 'gmic_tetris', label: 'Tetris', description: 'Blockmuster', group: 'G’MIC' },
-  { value: 'gmic_warhol', label: 'Warhol', description: 'Pop-Art-Raster', group: 'G’MIC' },
-  { value: 'gmic_weave', label: 'Gewebe', description: 'Geflochtene Struktur', group: 'G’MIC' },
-  { value: 'gmic_whirls', label: 'Wirbel', description: 'Dynamische Drehung', group: 'G’MIC' },
-]
 const FILTER_GROUPS = ['Basis', 'G’MIC'] as const
 
 async function loadPreviews() {
@@ -142,7 +45,7 @@ watch(
       </div>
       <div class="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
         <button
-          v-for="option in FILTER_OPTIONS.filter((item) => item.group === group)"
+          v-for="option in IMAGE_STYLE_FILTER_OPTIONS.filter((item) => item.group === group)"
           :key="option.value"
           type="button"
           :disabled="unavailableFilters.has(option.value)"
