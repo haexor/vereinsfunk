@@ -46,6 +46,9 @@ const presets = ref<ImageStylePreset[]>([])
 const frameAssets = ref<BrandAssetOption[]>([])
 const logoAssets = ref<BrandAssetOption[]>([])
 const orgColors = reactive({ primaryColor: '#163a2c', accentColor: '#caff4a' })
+const workshopFile = ref<File | null>(null)
+const workshopResultFile = ref<File | null>(null)
+const workshopPreviewUrl = ref('')
 
 // Die technische Liste enthält Altwerte für wiederhergestellte Daten; im Produkt werden sie alle
 // als einheitliches Logo behandelt. Neue Uploads nutzen logo_primary.
@@ -164,10 +167,6 @@ const selectableLogoAssets = computed(() =>
     .map(assetOption),
 )
 
-function signedUrlFor(assets: BrandAssetOption[], assetId: string | null): string {
-  return assets.find((asset) => asset.id === assetId)?.signedUrl ?? ''
-}
-
 async function loadAll() {
   const loadRun = ++latestLoadRun
   if (!organizationId.value) {
@@ -278,6 +277,30 @@ async function uploadBrandAsset(event: Event, kind: 'frame' | 'logo_primary') {
   }
 }
 
+function updateWorkshopPreview(file: File) {
+  if (workshopPreviewUrl.value) URL.revokeObjectURL(workshopPreviewUrl.value)
+  workshopPreviewUrl.value = URL.createObjectURL(file)
+}
+function openPhotoWorkshop(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0] ?? null
+  ;(event.target as HTMLInputElement).value = ''
+  if (!file) return
+  workshopResultFile.value = file
+  updateWorkshopPreview(file)
+  workshopFile.value = file
+}
+function acceptWorkshopFile(file: File) {
+  workshopResultFile.value = file
+  updateWorkshopPreview(file)
+  workshopFile.value = null
+}
+function closePhotoWorkshop() {
+  workshopFile.value = null
+}
+function reopenPhotoWorkshop() {
+  if (workshopResultFile.value) workshopFile.value = workshopResultFile.value
+}
+
 // --- Anlage ------------------------------------------------------------------------------
 
 const draft = ref<ImageStylePresetDraft>(emptyImageStylePresetDraft())
@@ -310,18 +333,6 @@ const editingId = ref<string | null>(null)
 const editDraft = ref<ImageStylePresetDraft>(emptyImageStylePresetDraft())
 const editSaving = ref(false)
 const editError = ref('')
-
-// ImageStyleCanvasEditor schreibt Logo-Aenderungen aus dem Ziehgriff in den Entwurf zurueck --
-// dafuer braucht es ein v-model, und ein Ternary wie "editingId ? editDraft : draft" ist kein
-// gueltiges v-model-Ziel. Dieser Computed macht denselben "wer ist gerade aktiv"-Wechsel wie unten
-// im Template (:frame-type="(editingId ? editDraft : draft).frameType" etc.) v-model-faehig.
-const activeDraft = computed<ImageStylePresetDraft>({
-  get: () => (editingId.value ? editDraft.value : draft.value),
-  set: (value) => {
-    if (editingId.value) editDraft.value = value
-    else draft.value = value
-  },
-})
 
 function startEdit(preset: ImageStylePreset) {
   editingId.value = preset.id
@@ -379,6 +390,10 @@ async function deletePreset(preset: ImageStylePreset) {
     deletingId.value = null
   }
 }
+
+onBeforeUnmount(() => {
+  if (workshopPreviewUrl.value) URL.revokeObjectURL(workshopPreviewUrl.value)
+})
 </script>
 
 <template>
@@ -396,6 +411,14 @@ async function deletePreset(preset: ImageStylePreset) {
       Die Bildstil-Presets konnten nicht geladen werden. Bitte lade die Seite neu.
     </div>
     <template v-else>
+      <PhotoImageWorkshop
+        v-if="workshopFile"
+        :file="workshopFile"
+        :organization-id="organizationId ?? ''"
+        :department-id="activeDepartmentId ?? null"
+        @save="acceptWorkshopFile"
+        @cancel="closePhotoWorkshop"
+      />
       <div
         class="grid min-w-0 items-start gap-5 2xl:grid-cols-[minmax(0,.85fr)_minmax(0,1.75fr)_minmax(0,.8fr)]"
       >
@@ -465,13 +488,50 @@ async function deletePreset(preset: ImageStylePreset) {
         </div>
 
         <div class="min-w-0 2xl:sticky 2xl:top-6 2xl:self-start">
-          <ImageStyleCanvasEditor
-            v-model:draft="activeDraft"
-            :logo-url="signedUrlFor(logoAssets, activeDraft.logoBrandAssetId)"
-            :organization-id="organizationId ?? ''"
-            :department-id="activeDepartmentId ?? null"
-            :team-id="activeTeamId ?? null"
-          />
+          <section class="card overflow-hidden">
+            <div class="border-b border-[#e9ebe4] p-6">
+              <h2 class="font-display text-base font-bold">Bildwerkstatt</h2>
+              <p class="mt-1 text-xs text-[#7a817c]">
+                Testfoto auswählen und Zuschnitt, Filter, Rahmen oder Logo direkt ausprobieren.
+              </p>
+              <div class="mt-4 flex flex-wrap gap-2">
+                <label
+                  class="focus-ring inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-forest px-3 py-2 text-xs font-semibold text-white"
+                >
+                  <Upload :size="14" />
+                  Testfoto auswählen
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    class="sr-only"
+                    @change="openPhotoWorkshop"
+                  />
+                </label>
+                <button
+                  v-if="workshopResultFile"
+                  type="button"
+                  class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-2 text-xs font-semibold"
+                  @click="reopenPhotoWorkshop"
+                >
+                  Erneut bearbeiten
+                </button>
+              </div>
+            </div>
+            <div class="bg-[#f7f8f6] p-4">
+              <img
+                v-if="workshopPreviewUrl"
+                :src="workshopPreviewUrl"
+                alt="Vorschau des bearbeiteten Testfotos"
+                class="mx-auto max-h-[min(60vh,720px)] w-full rounded-xl object-contain"
+              />
+              <div
+                v-else
+                class="flex min-h-72 items-center justify-center rounded-xl border border-dashed border-[#cfd5ce] px-6 text-center text-sm text-[#7a817c]"
+              >
+                Wähle ein Testfoto aus, um die neue Bildwerkstatt zu öffnen.
+              </div>
+            </div>
+          </section>
         </div>
 
         <div class="min-w-0 space-y-5">
