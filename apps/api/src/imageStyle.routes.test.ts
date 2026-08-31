@@ -408,6 +408,50 @@ describe('POST /v1/image-style-presets/preview', () => {
     expect(await sharp(response.rawPayload).metadata()).toMatchObject({ width: 4, height: 4 })
   })
 
+  it('renders all uploaded workshop filter thumbnails through one gallery request', async () => {
+    const boundary = 'workshop-gmic-filter-previews'
+    const source = await tinyImage()
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="organizationId"\r\n\r\n${ORGANIZATION_ID}\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="crop.png"\r\nContent-Type: image/png\r\n\r\n`),
+      source,
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ])
+    let applied = 0
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: noAssetClients(),
+      imageEffects: {
+        id: 'fake-gmic',
+        supports: (effect: string): effect is 'gmic_vintage' => effect === 'gmic_vintage',
+        apply: async (_effect: string, buffer: Buffer) => {
+          applied += 1
+          return buffer
+        },
+      },
+    })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/image-style-workshop/filter-previews',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': `multipart/form-data; boundary=${boundary}`,
+      },
+      payload: body,
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json().previews).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ filter: 'original', contentType: 'image/webp' }),
+        expect.objectContaining({ filter: 'gmic_vintage', filterProvider: 'fake-gmic' }),
+      ]),
+    )
+    expect(response.json().unavailableFilters).toContain('gmic_poster')
+    expect(applied).toBe(1)
+  })
+
   it('renders the filter gallery on the server and explicitly marks unavailable G’MIC effects', async () => {
     const app = await startApp({
       roleProvider: organizationManagerRoleProvider,

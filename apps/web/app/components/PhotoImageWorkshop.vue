@@ -15,7 +15,7 @@ import {
   Unlock,
   X,
 } from '@lucide/vue'
-import type { ImageStyleFilter } from '@vereinsfunk/contracts'
+import { ImageStyleFilterPreviewsResponseSchema, type ImageStyleFilter } from '@vereinsfunk/contracts'
 import { Cropper } from 'vue-advanced-cropper'
 import {
   fetchBrandAssets,
@@ -33,6 +33,7 @@ import {
 import {
   IMAGE_STYLE_FILTER_OPTIONS,
 } from '~/utils/imageStyleFilterCatalog'
+import { ApiRequestError } from '~/utils/apiClient'
 import 'vue-advanced-cropper/dist/style.css'
 
 const props = defineProps<{
@@ -365,6 +366,17 @@ async function renderGmicFilterBlob(source: Blob, filter: ImageStyleFilter): Pro
   if (!response.ok) throw new Error(response.status === 422 ? 'gmic_not_enabled' : 'filter_render_failed')
   return response.blob()
 }
+async function renderGmicFilterThumbnails(source: Blob) {
+  const body = new FormData()
+  body.append('organizationId', props.organizationId)
+  if (props.departmentId) body.append('departmentId', props.departmentId)
+  body.append('file', new File([source], 'bild.jpg', { type: 'image/jpeg' }))
+  return api.request(
+    '/v1/image-style-workshop/filter-previews',
+    { method: 'POST', body },
+    ImageStyleFilterPreviewsResponseSchema,
+  )
+}
 async function renderGmicFilter(
   canvas: HTMLCanvasElement,
   maxSide?: number,
@@ -398,6 +410,7 @@ async function refreshFilterThumbnails() {
   clearFilterThumbnailUrls()
   const filters = workshopFilters.value.filter((filter) => filter.value !== 'original')
   filterThumbnailStatuses.value = Object.fromEntries(filters.map((filter) => [filter.value, 'loading']))
+  filterError.value = ''
   let source: Blob
   try {
     source = await canvasBlob(canvas, 360)
@@ -405,35 +418,26 @@ async function refreshFilterThumbnails() {
     filterError.value = 'Die Filtervorschauen konnten nicht vorbereitet werden.'
     return
   }
-  const queue = [...filters]
-  const renderNext = async () => {
-    while (queue.length) {
-      const filter = queue.shift()
-      if (!filter) return
-      try {
-        const url = URL.createObjectURL(await renderGmicFilterBlob(source, filter.value))
-        if (run !== filterThumbnailRun) {
-          URL.revokeObjectURL(url)
-          return
-        }
-        filterThumbnailUrls.value = { ...filterThumbnailUrls.value, [filter.value]: url }
-        const remainingStatuses = { ...filterThumbnailStatuses.value }
-        delete remainingStatuses[filter.value]
-        filterThumbnailStatuses.value = remainingStatuses
-      } catch (error) {
-        if (run !== filterThumbnailRun) return
-        filterThumbnailStatuses.value = {
-          ...filterThumbnailStatuses.value,
-          [filter.value]: 'unavailable',
-        }
-        if (error instanceof Error && error.message === 'gmic_not_enabled')
-          filterError.value = 'G’MIC ist auf dem Server nicht verfügbar.'
-      }
-    }
+  try {
+    const result = await renderGmicFilterThumbnails(source)
+    if (run !== filterThumbnailRun) return
+    filterThumbnailUrls.value = Object.fromEntries(
+      result.previews
+        .filter((preview) => preview.filter !== 'original')
+        .map((preview) => [preview.filter, `data:image/webp;base64,${preview.imageBase64}`]),
+    )
+    filterThumbnailStatuses.value = Object.fromEntries(
+      result.unavailableFilters.map((filter) => [filter, 'unavailable']),
+    )
+    if (result.unavailableFilters.some((filter) => filter.startsWith('gmic_')))
+      filterError.value = 'G’MIC ist auf dem Server nicht verfügbar.'
+  } catch (error) {
+    if (run !== filterThumbnailRun) return
+    filterThumbnailStatuses.value = Object.fromEntries(filters.map((filter) => [filter.value, 'unavailable']))
+    filterError.value = error instanceof ApiRequestError && error.code === 'rate_limited'
+      ? 'Die Filtervorschauen sind momentan ausgelastet. Bitte kurz warten und erneut öffnen.'
+      : 'Die Filtervorschauen konnten nicht geladen werden.'
   }
-  // Zwei parallele, kleine G’MIC-Prozesse liefern laufend Kacheln nach, ohne die API oder den
-  // Editor während des Öffnens zu blockieren.
-  await Promise.all([renderNext(), renderNext()])
 }
 async function refreshFilterPreview() {
   const canvas = cropper.value?.getResult().canvas
