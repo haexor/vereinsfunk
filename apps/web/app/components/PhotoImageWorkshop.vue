@@ -115,6 +115,7 @@ let previewRenderRun = 0
 let filterPreviewRenderRun = 0
 let latestAssetLoadRun = 0
 let filterThumbnailRun = 0
+const filterRequestController = new AbortController()
 let filterThumbnailTimer: ReturnType<typeof setTimeout> | undefined
 let filterThumbnailsDirty = true
 const organizationId = computed(() => props.organizationId || null)
@@ -359,6 +360,7 @@ async function renderGmicFilterBlob(source: Blob, filter: ImageStyleFilter): Pro
     method: 'POST',
     headers: await useAuthHeader(),
     body,
+    signal: filterRequestController.signal,
   })
   if (!response.ok) throw new Error(response.status === 422 ? 'gmic_not_enabled' : 'filter_render_failed')
   return response.blob()
@@ -415,7 +417,8 @@ async function refreshFilterThumbnails() {
           return
         }
         filterThumbnailUrls.value = { ...filterThumbnailUrls.value, [filter.value]: url }
-        const { [filter.value]: _status, ...remainingStatuses } = filterThumbnailStatuses.value
+        const remainingStatuses = { ...filterThumbnailStatuses.value }
+        delete remainingStatuses[filter.value]
         filterThumbnailStatuses.value = remainingStatuses
       } catch (error) {
         if (run !== filterThumbnailRun) return
@@ -754,6 +757,11 @@ watch(aspectRatio, async () => {
   cropper.value?.refresh()
 })
 onBeforeUnmount(() => {
+  filterRequestController.abort()
+  previewRenderRun += 1
+  filterPreviewRenderRun += 1
+  latestAssetLoadRun += 1
+  filterThumbnailRun += 1
   if (sourceUrl.value) URL.revokeObjectURL(sourceUrl.value)
   if (croppedPreviewUrl.value) URL.revokeObjectURL(croppedPreviewUrl.value)
   if (filteredPreviewUrl.value) URL.revokeObjectURL(filteredPreviewUrl.value)

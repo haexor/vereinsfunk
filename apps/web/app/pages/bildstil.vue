@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Upload } from '@lucide/vue'
 import { z } from 'zod'
+import { sha256Hex } from '~/utils/sha256'
 
 const {
   organizationId,
@@ -43,10 +44,6 @@ function reopenPhotoWorkshop() {
   if (workshopResultFile.value) workshopFile.value = workshopResultFile.value
 }
 
-async function sha256Hex(file: File): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
-}
 async function saveWorkshopResult() {
   if (!workshopResultFile.value || !organizationId.value || savingWorkshopResult.value) return
   savingWorkshopResult.value = true
@@ -62,14 +59,18 @@ async function saveWorkshopResult() {
         mimeType: file.type,
         byteSize: file.size,
       },
-    }, z.object({ assetId: z.string().uuid(), uploadUrl: z.string().url() }))
+    }, z.object({ assetId: z.uuid(), uploadUrl: z.url() }))
     const uploaded = await fetch(initiated.uploadUrl, {
       method: 'PUT', body: file, headers: { 'content-type': file.type },
     })
     if (!uploaded.ok) throw new Error('upload_failed')
-    await api.request(`/v1/media/${initiated.assetId}/complete`, {
+    const completed = await api.request(`/v1/media/${initiated.assetId}/complete`, {
       method: 'POST', body: { sha256: await sha256Hex(file) },
-    }, z.object({ accepted: z.boolean() }))
+    }, z.object({
+      accepted: z.literal(true),
+      uploadStatus: z.enum(['initiated', 'uploaded', 'normalizing', 'ready', 'quarantined', 'failed', 'deleted']),
+    }))
+    if (completed.uploadStatus !== 'ready') throw new Error('image_processing_failed')
     savedWorkshopAssetId.value = initiated.assetId
   } catch {
     saveWorkshopError.value = 'Das bearbeitete Bild konnte nicht gespeichert werden.'

@@ -33,7 +33,7 @@ import {
 } from '../apiMappers.js'
 import { hashLogoBuffer } from '@vereinsfunk/brand-assets'
 import { GmicImageEffectError } from '@vereinsfunk/media-processing'
-import { GmicNotEnabledError, renderImageStyle } from '../imageStyle.js'
+import { GmicNotEnabledError, MAX_IMAGE_STYLE_INPUT_PIXELS, renderImageStyle } from '../imageStyle.js'
 import type { ApiRouteContext } from './context.js'
 import { loadSelectableBrandAsset, LOGO_ASSET_KINDS } from './brand.js'
 import {
@@ -306,6 +306,9 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
   // das bereits lokal zugeschnittene Bild; die Bytes werden nicht gespeichert oder geloggt.
   app.post('/v1/image-style-workshop/filter', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
+    if (!checkRateLimit(`image-style-workshop-filter:${request.auth!.userId}`, 30, 60_000)) {
+      return reply.code(429).send({ error: 'rate_limited', correlationId: request.id })
+    }
     const filePart = await request.file({ limits: { fileSize: 100 * 1024 * 1024 } })
     if (!filePart)
       return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
@@ -324,7 +327,9 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
       )
       if (!['image/jpeg', 'image/png', 'image/webp'].includes(filePart.mimetype))
         return reply.code(400).send({ error: 'unsupported_image_type', correlationId: request.id })
-      await sharp(sourceBuffer).metadata()
+      const metadata = await sharp(sourceBuffer, { limitInputPixels: MAX_IMAGE_STYLE_INPUT_PIXELS }).metadata()
+      if (!metadata.width || !metadata.height || metadata.width * metadata.height > MAX_IMAGE_STYLE_INPUT_PIXELS)
+        return reply.code(413).send({ error: 'image_too_large', correlationId: request.id })
     } catch (error) {
       if (error instanceof Error && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE')
         return reply.code(413).send({ error: 'file_too_large', correlationId: request.id })
