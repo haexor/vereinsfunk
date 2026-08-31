@@ -41,6 +41,100 @@ describe('GmicCliImageEffectProvider', () => {
     expect(received).toEqual(expect.arrayContaining(['cubism', ',', 'output']))
   })
 
+  it('uses a softened, source-preserving Hope poster pipeline', async () => {
+    let received: readonly string[] | undefined
+    const provider = new GmicCliImageEffectProvider({
+      execute: async (_binary, args, cwd) => {
+        received = args
+        await writeFile(`${cwd}/output.png`, Buffer.from([1, 2, 3]))
+      },
+    })
+
+    await provider.apply('gmic_poster', Buffer.from('input'))
+
+    expect(received).toEqual([
+      expect.stringMatching(/input\.img$/),
+      '[0]',
+      'poster_hope[1]',
+      '5',
+      'blur[1]',
+      '0.75',
+      'blend[0,1]',
+      'alpha,0.55',
+      'output',
+      expect.stringMatching(/output\.png$/),
+    ])
+  })
+
+  it('uses a source-preserving hard sketch pipeline', async () => {
+    let received: readonly string[] | undefined
+    const provider = new GmicCliImageEffectProvider({
+      execute: async (_binary, args, cwd) => {
+        received = args
+        await writeFile(`${cwd}/output.png`, Buffer.from([1, 2, 3]))
+      },
+    })
+
+    await provider.apply('gmic_hardsketchbw', Buffer.from('input'))
+
+    expect(received).toEqual([
+      expect.stringMatching(/input\.img$/),
+      '[0]',
+      'hardsketchbw[1]',
+      '200,70,0.08,12,1',
+      'blend[0,1]',
+      'alpha,0.4',
+      'output',
+      expect.stringMatching(/output\.png$/),
+    ])
+  })
+
+  it('uses a source-preserving Hough line sketch pipeline', async () => {
+    let received: readonly string[] | undefined
+    const provider = new GmicCliImageEffectProvider({
+      execute: async (_binary, args, cwd) => {
+        received = args
+        await writeFile(`${cwd}/output.png`, Buffer.from([1, 2, 3]))
+      },
+    })
+
+    await provider.apply('gmic_houghsketchbw', Buffer.from('input'))
+
+    expect(received).toEqual([
+      expect.stringMatching(/input\.img$/),
+      '[0]',
+      'houghsketchbw[1]',
+      '35,4,55,0.05,50%',
+      'blend[0,1]',
+      'alpha,0.38',
+      'output',
+      expect.stringMatching(/output\.png$/),
+    ])
+  })
+
+  it('uses a source-preserving sketch pipeline', async () => {
+    let received: readonly string[] | undefined
+    const provider = new GmicCliImageEffectProvider({
+      execute: async (_binary, args, cwd) => {
+        received = args
+        await writeFile(`${cwd}/output.png`, Buffer.from([1, 2, 3]))
+      },
+    })
+
+    await provider.apply('gmic_sketchbw', Buffer.from('input'))
+
+    expect(received).toEqual([
+      expect.stringMatching(/input\.img$/),
+      '[0]',
+      'sketchbw[1]',
+      ',',
+      'blend[0,1]',
+      'alpha,0.35',
+      'output',
+      expect.stringMatching(/output\.png$/),
+    ])
+  })
+
   it('builds and removes the required brush image for brushify', async () => {
     let received: readonly string[] | undefined
     const provider = new GmicCliImageEffectProvider({

@@ -7,6 +7,12 @@ import type {
 import type { ImageEffectProvider } from '@vereinsfunk/media-processing'
 import sharp from 'sharp'
 
+export const MAX_IMAGE_STYLE_INPUT_PIXELS = 40_000_000
+
+function limitedSharp(input: Buffer, options: Parameters<typeof sharp>[1] = {}) {
+  return sharp(input, { ...options, limitInputPixels: MAX_IMAGE_STYLE_INPUT_PIXELS })
+}
+
 export interface BrandColors {
   primaryColor: string
   accentColor: string
@@ -70,7 +76,7 @@ function resolveFrameColorHex(frameColor: string | null, brandColors: BrandColor
 // .linear(a, b): output = input * a + b. a > 1 spreizt die Werte um den Mittelpunkt (128) --
 // b haelt ihn fix, damit das Bild dabei nicht insgesamt heller/dunkler wird.
 async function applyHighContrast(buffer: Buffer): Promise<Buffer> {
-  return sharp(buffer)
+  return limitedSharp(buffer)
     .linear(1.15, -(128 * 0.15))
     .modulate({ saturation: 1.15 })
     .toBuffer()
@@ -82,7 +88,7 @@ async function applyHighContrast(buffer: Buffer): Promise<Buffer> {
 // eine Verschiebung je Kanal: Rot leicht anheben, Gruen halten, Blau absenken -- Farben bleiben
 // erhalten, das Gesamtbild kippt Richtung Amber.
 async function applyWarm(buffer: Buffer): Promise<Buffer> {
-  return sharp(buffer).linear([1.06, 1.0, 0.94], [10, 2, -8]).toBuffer()
+  return limitedSharp(buffer).linear([1.06, 1.0, 0.94], [10, 2, -8]).toBuffer()
 }
 
 // sharp kennt keinen Gradient-Map-Filter: Graustufen-Luminanz je Pixel wird hier von Hand
@@ -96,7 +102,7 @@ async function applyDuotone(
 ): Promise<Buffer> {
   const shadow = hexToRgb(primaryColor)
   const highlight = hexToRgb(accentColor)
-  const { data, info } = await sharp(buffer).greyscale().raw().toBuffer({ resolveWithObject: true })
+  const { data, info } = await limitedSharp(buffer).greyscale().raw().toBuffer({ resolveWithObject: true })
   const rgb = Buffer.alloc(info.width * info.height * 3)
   for (let pixel = 0; pixel < info.width * info.height; pixel++) {
     const luminance = data[pixel * info.channels]! / 255
@@ -104,7 +110,7 @@ async function applyDuotone(
     rgb[pixel * 3 + 1] = Math.round(shadow.g + (highlight.g - shadow.g) * luminance)
     rgb[pixel * 3 + 2] = Math.round(shadow.b + (highlight.b - shadow.b) * luminance)
   }
-  return sharp(rgb, { raw: { width: info.width, height: info.height, channels: 3 } })
+  return limitedSharp(rgb, { raw: { width: info.width, height: info.height, channels: 3 } })
     .png()
     .toBuffer()
 }
@@ -114,7 +120,7 @@ async function applyDuotone(
 // ergeben einen klaren Editorial-/Comic-Look, ohne ein Spielerfoto an einen externen Anbieter zu
 // senden oder Personen im Bild künstlich zu verändern.
 async function applyComic(buffer: Buffer): Promise<Buffer> {
-  const prepared = await sharp(buffer)
+  const prepared = await limitedSharp(buffer)
     .modulate({ saturation: 1.42, brightness: 1.04 })
     .sharpen({ sigma: 1.15 })
     .ensureAlpha()
@@ -129,7 +135,7 @@ async function applyComic(buffer: Buffer): Promise<Buffer> {
         Math.round((data[offset + channel]! / 255) * (levels - 1)) * (255 / (levels - 1))
     }
   }
-  const posterized = await sharp(data, {
+  const posterized = await limitedSharp(data, {
     raw: { width: info.width, height: info.height, channels: info.channels },
   })
     .png()
@@ -137,7 +143,7 @@ async function applyComic(buffer: Buffer): Promise<Buffer> {
   const dots = Buffer.from(
     `<svg width="${info.width}" height="${info.height}"><defs><pattern id="comic-dots" width="18" height="18" patternUnits="userSpaceOnUse"><circle cx="3" cy="3" r="1.15" fill="#10251e" fill-opacity=".18"/></pattern></defs><rect width="100%" height="100%" fill="url(#comic-dots)"/></svg>`,
   )
-  return sharp(posterized)
+  return limitedSharp(posterized)
     .composite([{ input: dots, blend: 'over' }])
     .png()
     .toBuffer()
@@ -173,10 +179,10 @@ function createConfettiOverlay(width: number, height: number): Buffer {
 }
 
 async function applyConfetti(buffer: Buffer): Promise<Buffer> {
-  const metadata = await sharp(buffer).metadata()
+  const metadata = await limitedSharp(buffer).metadata()
   if (!metadata.width || !metadata.height)
     throw new Error('cannot determine image dimensions for confetti overlay')
-  return sharp(buffer)
+  return limitedSharp(buffer)
     .composite([{ input: createConfettiOverlay(metadata.width, metadata.height), blend: 'over' }])
     .png()
     .toBuffer()
@@ -195,7 +201,7 @@ async function applyFilter(
     case 'original':
       return { buffer, provider: 'sharp' }
     case 'schwarz_weiss':
-      return { buffer: await sharp(buffer).greyscale().toBuffer(), provider: 'sharp' }
+      return { buffer: await limitedSharp(buffer).greyscale().toBuffer(), provider: 'sharp' }
     case 'kontrastreich':
       return { buffer: await applyHighContrast(buffer), provider: 'sharp' }
     case 'warm':
@@ -248,14 +254,14 @@ async function applyFilter(
 }
 
 async function applyRoundedCorners(buffer: Buffer, radiusPx: number): Promise<Buffer> {
-  const metadata = await sharp(buffer).metadata()
+  const metadata = await limitedSharp(buffer).metadata()
   const width = metadata.width
   const height = metadata.height
   if (!width || !height) throw new Error('cannot determine image dimensions for corner rounding')
   const mask = Buffer.from(
     `<svg width="${width}" height="${height}"><rect x="0" y="0" width="${width}" height="${height}" rx="${radiusPx}" ry="${radiusPx}" fill="#fff"/></svg>`,
   )
-  return sharp(buffer)
+  return limitedSharp(buffer)
     .composite([{ input: mask, blend: 'dest-in' }])
     .png()
     .toBuffer()
@@ -267,7 +273,7 @@ async function applySolidFrameStyle(
   widthPx: number,
 ): Promise<Buffer> {
   const color = hexToRgb(colorHex)
-  return sharp(buffer)
+  return limitedSharp(buffer)
     .extend({
       top: widthPx,
       bottom: widthPx,
@@ -287,7 +293,7 @@ async function applyDoubleFrameStyle(
   colorHex: string,
   widthPx: number,
 ): Promise<Buffer> {
-  const extended = await sharp(buffer)
+  const extended = await limitedSharp(buffer)
     .extend({
       top: widthPx,
       bottom: widthPx,
@@ -296,7 +302,7 @@ async function applyDoubleFrameStyle(
       background: { r: 0, g: 0, b: 0, alpha: 0 },
     })
     .toBuffer()
-  const metadata = await sharp(extended).metadata()
+  const metadata = await limitedSharp(extended).metadata()
   const width = metadata.width
   const height = metadata.height
   if (!width || !height) throw new Error('cannot determine image dimensions for double frame')
@@ -313,7 +319,7 @@ async function applyDoubleFrameStyle(
     `<path fill-rule="evenodd" fill="${colorHex}" d="${ringPath(0, ringThickness)}"/>` +
     `<path fill-rule="evenodd" fill="${colorHex}" d="${ringPath(ringThickness + gap, widthPx - ringThickness - gap)}"/>` +
     `</svg>`
-  return sharp(extended)
+  return limitedSharp(extended)
     .composite([{ input: Buffer.from(svg), blend: 'over' }])
     .png()
     .toBuffer()
@@ -326,7 +332,7 @@ async function applyCornerMarksFrameStyle(
   colorHex: string,
   widthPx: number,
 ): Promise<Buffer> {
-  const metadata = await sharp(buffer).metadata()
+  const metadata = await limitedSharp(buffer).metadata()
   const width = metadata.width
   const height = metadata.height
   if (!width || !height) throw new Error('cannot determine image dimensions for corner-marks frame')
@@ -350,7 +356,7 @@ async function applyCornerMarksFrameStyle(
     rect(width - legLength, height - thickness, legLength, thickness) +
     rect(width - thickness, height - legLength, thickness, legLength) +
     `</svg>`
-  return sharp(buffer)
+  return limitedSharp(buffer)
     .composite([{ input: Buffer.from(svg), blend: 'over' }])
     .png()
     .toBuffer()
@@ -363,7 +369,7 @@ async function applyBottomBarFrameStyle(
   widthPx: number,
 ): Promise<Buffer> {
   const color = hexToRgb(colorHex)
-  return sharp(buffer)
+  return limitedSharp(buffer)
     .extend({
       top: widthPx,
       bottom: widthPx * 4,
@@ -387,7 +393,7 @@ function beadOffsets(length: number, spacing: number): number[] {
 // Voluten. Er bleibt fest golden statt frameColor, damit ein Siegerfoto unabhängig vom
 // Vereins-Branding sofort als Auszeichnung erkennbar ist.
 async function applyFestlichFrameStyle(buffer: Buffer, widthPx: number): Promise<Buffer> {
-  const extended = await sharp(buffer)
+  const extended = await limitedSharp(buffer)
     .extend({
       top: widthPx,
       bottom: widthPx,
@@ -396,7 +402,7 @@ async function applyFestlichFrameStyle(buffer: Buffer, widthPx: number): Promise
       background: { r: 0, g: 0, b: 0, alpha: 0 },
     })
     .toBuffer()
-  const metadata = await sharp(extended).metadata()
+  const metadata = await limitedSharp(extended).metadata()
   const width = metadata.width
   const height = metadata.height
   if (!width || !height) throw new Error('cannot determine image dimensions for festlich frame')
@@ -439,7 +445,7 @@ async function applyFestlichFrameStyle(buffer: Buffer, widthPx: number): Promise
     `<svg width="${width}" height="${height}">` +
     `<defs><linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#604515"/><stop offset="16%" stop-color="#c79929"/><stop offset="40%" stop-color="#fff3bd"/><stop offset="60%" stop-color="#d4af37"/><stop offset="100%" stop-color="#6b4c14"/></linearGradient><clipPath id="frame-area" clipPathUnits="userSpaceOnUse"><path fill-rule="evenodd" clip-rule="evenodd" d="${ringPath}"/></clipPath></defs>` +
     `<path fill-rule="evenodd" fill="url(#gold)" d="${ringPath}"/><rect x="${inset}" y="${inset}" width="${width - 2 * inset}" height="${height - 2 * inset}" fill="none" stroke="#725418" stroke-width="${Math.max(1, widthPx * 0.1)}"/><rect x="${widthPx - inset}" y="${widthPx - inset}" width="${width - 2 * (widthPx - inset)}" height="${height - 2 * (widthPx - inset)}" fill="none" stroke="#fff0a8" stroke-width="${Math.max(1, widthPx * 0.08)}"/>${beads}<g clip-path="url(#frame-area)">${corners}</g></svg>`
-  return sharp(extended)
+  return limitedSharp(extended)
     .composite([{ input: Buffer.from(svg), blend: 'over' }])
     .png()
     .toBuffer()
@@ -470,14 +476,14 @@ async function applyParametricFrame(
 // dass hochgeladene Rahmengrafiken einen durchsichtigen Bereich passend zum spaeter angehaengten
 // Foto haben; dieselbe Annahme wie bei jedem "Rahmen als PNG-Overlay"-Muster.
 async function applyCustomFrame(buffer: Buffer, frameAssetBuffer: Buffer): Promise<Buffer> {
-  const metadata = await sharp(buffer).metadata()
+  const metadata = await limitedSharp(buffer).metadata()
   const width = metadata.width
   const height = metadata.height
   if (!width || !height) throw new Error('cannot determine image dimensions for custom frame')
-  const resizedFrame = await sharp(frameAssetBuffer)
+  const resizedFrame = await limitedSharp(frameAssetBuffer)
     .resize({ width, height, fit: 'fill' })
     .toBuffer()
-  return sharp(buffer)
+  return limitedSharp(buffer)
     .composite([{ input: resizedFrame, gravity: 'center' }])
     .png()
     .toBuffer()
@@ -501,7 +507,7 @@ async function applyLogoWatermark(
   sizePercent: number,
   marginPercent: number,
 ): Promise<Buffer> {
-  const metadata = await sharp(buffer).metadata()
+  const metadata = await limitedSharp(buffer).metadata()
   const width = metadata.width
   const height = metadata.height
   if (!width || !height) throw new Error('cannot determine image dimensions for logo placement')
@@ -511,23 +517,23 @@ async function applyLogoWatermark(
     Math.min(Math.round((width * sizePercent) / 100), width - 2 * margin),
   )
   const boxHeight = Math.max(1, height - 2 * margin)
-  const resizedLogo = await sharp(logoAssetBuffer)
+  const resizedLogo = await limitedSharp(logoAssetBuffer)
     .resize({ width: boxWidth, height: boxHeight, fit: 'inside' })
     .toBuffer()
 
   if (position === 'center') {
-    return sharp(buffer)
+    return limitedSharp(buffer)
       .composite([{ input: resizedLogo, gravity: 'center' }])
       .png()
       .toBuffer()
   }
 
-  const logoMetadata = await sharp(resizedLogo).metadata()
+  const logoMetadata = await limitedSharp(resizedLogo).metadata()
   const logoActualWidth = logoMetadata.width ?? boxWidth
   const logoActualHeight = logoMetadata.height ?? boxHeight
   const top = LOGO_TOP_ALIGNED.has(position) ? margin : height - logoActualHeight - margin
   const left = LOGO_LEFT_ALIGNED.has(position) ? margin : width - logoActualWidth - margin
-  return sharp(buffer)
+  return limitedSharp(buffer)
     .composite([{ input: resizedLogo, top, left }])
     .png()
     .toBuffer()
@@ -549,13 +555,13 @@ async function encodeResult(
   buffer: Buffer,
   sourceFormat: string | undefined,
 ): Promise<ImageStyleRenderResult> {
-  const metadata = await sharp(buffer).metadata()
+  const metadata = await limitedSharp(buffer).metadata()
   const lossless = metadata.hasAlpha === true || sourceFormat === 'png'
   const targetFormat = lossless ? 'png' : 'jpeg'
   const encoded =
     metadata.format === targetFormat
       ? buffer
-      : await (lossless ? sharp(buffer).png() : sharp(buffer).jpeg({ quality: 90 })).toBuffer()
+      : await (lossless ? limitedSharp(buffer).png() : limitedSharp(buffer).jpeg({ quality: 90 })).toBuffer()
   return {
     buffer: encoded,
     contentType: lossless ? 'image/png' : 'image/jpeg',
@@ -569,7 +575,10 @@ export async function renderImageStyle(
   input: ImageStyleRenderInput,
 ): Promise<ImageStyleRenderResult> {
   const { preset } = input
-  const sourceFormat = (await sharp(input.sourceBuffer).metadata()).format
+  const sourceMetadata = await limitedSharp(input.sourceBuffer).metadata()
+  if (!sourceMetadata.width || !sourceMetadata.height || sourceMetadata.width * sourceMetadata.height > MAX_IMAGE_STYLE_INPUT_PIXELS)
+    throw new Error('image_too_large')
+  const sourceFormat = sourceMetadata.format
   const filtered = await applyFilter(
     input.sourceBuffer,
     preset.filter,

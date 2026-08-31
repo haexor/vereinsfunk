@@ -2,6 +2,7 @@
 import { AlertTriangle, Check, ImagePlus, LoaderCircle, Trash2, X } from '@lucide/vue'
 import { MediaAssetSummarySchema } from '@vereinsfunk/contracts'
 import { z } from 'zod'
+import { sha256Hex } from '~/utils/sha256'
 
 // Foto-Anhang-Steuerung für die Textwerkstatt. Der lokale Editor läuft bewusst VOR dem Upload und
 // vor der Personenprüfung: Gesichtsfelder und Einwilligungen beziehen sich dadurch auf den
@@ -13,6 +14,16 @@ type Phase = 'idle' | 'uploading' | 'processing' | 'failed' | 'marking' | 'revie
 type FaceBox = { id: string; x: number; y: number; width: number; height: number; subjectKind: 'adult' | 'minor' | 'unknown'; decision: 'pending' | 'consented'; consentRecordId: string | null }
 type ConsentOption = { id: string; label: string }
 const FaceRegionInsertSchema = z.object({ id: z.string().uuid() })
+const FaceRegionRowSchema = z.object({
+  id: z.string().uuid(),
+  x: z.number(),
+  y: z.number(),
+  width: z.number(),
+  height: z.number(),
+  subject_kind: z.enum(['adult', 'minor', 'unknown']),
+  decision: z.enum(['pending', 'consented']),
+  consent_record_id: z.string().uuid().nullable(),
+})
 const PeopleReviewSchema = z.object({ id: z.string().uuid() })
 
 const api = useApiClient()
@@ -72,26 +83,45 @@ onMounted(async () => {
       errorMessage.value = 'Dieses Foto gehört zu einem anderen Bereich und kann hier nicht verwendet werden.'
       return
     }
-    if (!asset.mimeType.startsWith('image/') || !asset.peopleReviewedAt || !asset.signedUrl) {
+    if (!asset.mimeType.startsWith('image/') || !asset.signedUrl) {
       phase.value = 'failed'
-      errorMessage.value = 'Dieses Foto wurde noch nicht geprüft und kann nicht wiederverwendet werden.'
+      errorMessage.value = 'Dieses Foto kann nicht wiederverwendet werden.'
       return
     }
     previewUrl.value = asset.signedUrl
     currentAssetId.value = asset.id
-    isHydratedExternalAsset.value = true
-    mediaAssetId.value = asset.id
-    phase.value = 'reviewed'
+    if (asset.peopleReviewedAt) {
+      isHydratedExternalAsset.value = true
+      mediaAssetId.value = asset.id
+      phase.value = 'reviewed'
+    } else {
+      const faceRegions = await supabase
+        .from('face_regions')
+        .select('id, x, y, width, height, subject_kind, decision, consent_record_id')
+        .eq('organization_id', props.organizationId)
+        .eq('media_asset_id', asset.id)
+      if (faceRegions.error) throw faceRegions.error
+      boxes.value = z.array(FaceRegionRowSchema).parse(faceRegions.data).map((region) => ({
+        id: region.id,
+        x: region.x,
+        y: region.y,
+        width: region.width,
+        height: region.height,
+        subjectKind: region.subject_kind,
+        decision: region.decision,
+        consentRecordId: region.consent_record_id,
+      }))
+      // Ein in der Bildwerkstatt gespeichertes Bild ist privat und bereits technisch bereit,
+      // aber noch nicht für einen Beitrag freigegeben. Es wird hier wie ein frischer Upload in
+      // die verpflichtende Personen-Prüfung geführt; erst confirmReview() setzt den Modelwert.
+      phase.value = 'marking'
+      await loadConsents()
+    }
   } catch {
     phase.value = 'failed'
     errorMessage.value = 'Das Foto konnte nicht geladen werden.'
   }
 })
-
-async function sha256Hex(file: File): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
-}
 
 function onFileSelected(event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0] ?? null

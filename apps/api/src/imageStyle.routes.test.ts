@@ -373,6 +373,41 @@ describe('POST /v1/image-style-presets/preview', () => {
     expect(response.json().filterProvider).toBe('fake-gmic')
   })
 
+  it('renders an uploaded workshop crop through the injected G’MIC provider', async () => {
+    const boundary = 'workshop-gmic-filter'
+    const source = await tinyImage()
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="organizationId"\r\n\r\n${ORGANIZATION_ID}\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="filter"\r\n\r\ngmic_vintage\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="crop.png"\r\nContent-Type: image/png\r\n\r\n`),
+      source,
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ])
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: noAssetClients(),
+      imageEffects: {
+        id: 'fake-gmic',
+        supports: (effect: string): effect is 'gmic_vintage' => effect === 'gmic_vintage',
+        apply: async (_effect: string, buffer: Buffer) => buffer,
+      },
+    })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/image-style-workshop/filter',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': `multipart/form-data; boundary=${boundary}`,
+      },
+      payload: body,
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.headers['content-type']).toContain('image/png')
+    expect(await sharp(response.rawPayload).metadata()).toMatchObject({ width: 4, height: 4 })
+  })
+
   it('renders the filter gallery on the server and explicitly marks unavailable G’MIC effects', async () => {
     const app = await startApp({
       roleProvider: organizationManagerRoleProvider,
