@@ -43,6 +43,9 @@ services:
       API_PORT: 4201
       LOG_LEVEL: ${LOG_LEVEL:-info}
       SUPABASE_URL: http://host.docker.internal:4260
+      # Die Migrationsprüfung beim API-Start verbindet sich direkt mit Postgres. Ein in .env
+      # übliches 127.0.0.1 zeigt im Container auf ihn selbst, daher über das Host-Gateway.
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql://postgres:postgres@host.docker.internal:4261/postgres?sslmode=disable}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-replace-with-local-service-role-key}
       HATCHET_CLIENT_TOKEN: ${HATCHET_CLIENT_TOKEN:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}

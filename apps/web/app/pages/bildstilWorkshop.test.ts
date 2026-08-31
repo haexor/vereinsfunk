@@ -3,15 +3,14 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 describe('Bildstil photo workshop', () => {
-  it('uses the photo workshop instead of the legacy canvas editor', () => {
+  it('keeps the page focused on the photo workshop instead of legacy preset cards', () => {
     const page = readFileSync(join(import.meta.dirname, 'bildstil.vue'), 'utf8')
 
     expect(page).toContain('<PhotoImageWorkshop')
-    expect(page).toContain(':frame-assets="workshopFrameAssets"')
-    expect(page).toContain('selectableFrameAssets.value.filter((asset) => asset.signedUrl)')
-    expect(page).toContain('selectableLogoAssets.value.filter((asset) => asset.signedUrl)')
     expect(page).toContain('@save="acceptWorkshopFile"')
     expect(page).not.toContain('<ImageStyleCanvasEditor')
+    expect(page).not.toContain('<ImageStylePresetForm')
+    expect(page).not.toContain('Bausteine für diese Ebene')
   })
 
   it('keeps the accepted preview unchanged until the workshop saves', () => {

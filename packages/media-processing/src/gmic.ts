@@ -15,7 +15,20 @@ const CURATED_GMIC_RECIPES = {
   // benannte G'MIC-Variante `gmic_cartoon`.
   comic: ['cartoon', '3,50,10,0.25,3,16'],
   gmic_vintage: ['old_photo'],
-  gmic_poster: ['poster_hope', '3'],
+  // `poster_hope` allein ist fuer echte Vereinsfotos zu hart: Die Standardstufe 3 erzeugt
+  // grosse, flache Farbinseln und sichtbare Rasterstreifen. Die etwas niedrigere Stufe 5 trennt
+  // die Farbflächen klarer, ein kleines G'MIC-Blur beruhigt die Hochfrequenz-Artefakte und eine
+  // 55%-Mischung mit dem Original hält Gesichter, Trikots und Hintergrund lesbar. `[0]` fuegt eine
+  // Kopie des Eingangsbildes hinzu; der Effekt laeuft gezielt nur auf dieser Kopie.
+  gmic_poster: [
+    '[0]',
+    'poster_hope[1]',
+    '5',
+    'blur[1]',
+    '0.75',
+    'blend[0,1]',
+    'alpha,0.55',
+  ],
   // G'MIC custom commands consume the following token as their optional-arguments string. Without
   // the explicit `,`, the following `output` command becomes that arguments string and the
   // command fails before creating its derivative. A comma asks G'MIC to use the documented
@@ -41,9 +54,27 @@ const CURATED_GMIC_RECIPES = {
   gmic_fractalize: ['fractalize', ','],
   gmic_glow: ['glow', ','],
   gmic_halftone: ['halftone', ','],
-  gmic_hardsketchbw: ['hardsketchbw', ','],
+  // Die G'MIC-Standardeinstellungen erzeugen ein fast vollflaechiges Kreuzschraffur-Bild.
+  // Eine Kopie des Originals bleibt deshalb als Basis erhalten; die weichere Skizze wird nur
+  // mit 40% Deckkraft daruebergelegt. So bleiben Gesichter und Bildaufbau erkennbar.
+  gmic_hardsketchbw: [
+    '[0]',
+    'hardsketchbw[1]',
+    '200,70,0.08,12,1',
+    'blend[0,1]',
+    'alpha,0.4',
+  ],
   gmic_hearts: ['hearts', ','],
-  gmic_houghsketchbw: ['houghsketchbw', ','],
+  // Houghsketchbw arbeitet standardmaessig mit sehr vielen Abstimmungslinien und verliert dabei
+  // das Motiv. Weniger Dichte plus eine transparente Mischung liefert technische Konturen, ohne
+  // das Foto in ein reines Linienraster zu verwandeln.
+  gmic_houghsketchbw: [
+    '[0]',
+    'houghsketchbw[1]',
+    '35,4,55,0.05,50%',
+    'blend[0,1]',
+    'alpha,0.38',
+  ],
   gmic_lightrays: ['lightrays', ','],
   gmic_light_relief: ['light_relief', ','],
   gmic_linify: ['linify', ','],
@@ -54,7 +85,9 @@ const CURATED_GMIC_RECIPES = {
   gmic_polygonize: ['polygonize', ','],
   gmic_poster_edges: ['poster_edges', ','],
   gmic_rodilius: ['rodilius', ','],
-  gmic_sketchbw: ['sketchbw', ','],
+  // `sketchbw` liefert allein eine helle Zeichenflaeche mit feinen Linien und verwirft das Foto.
+  // Die Skizze wird deshalb auf einer Kopie erzeugt und mit 35% Deckkraft ueber das Original gelegt.
+  gmic_sketchbw: ['[0]', 'sketchbw[1]', ',', 'blend[0,1]', 'alpha,0.35'],
   gmic_sponge: ['sponge', ','],
   gmic_stained_glass: ['stained_glass', ','],
   gmic_stars: ['stars', ','],

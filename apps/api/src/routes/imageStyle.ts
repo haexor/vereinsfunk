@@ -70,6 +70,11 @@ const SourceAssetRowSchema = z.object({
     .nullable(),
 })
 const BrandAssetPathRowSchema = z.object({ object_path: z.string().min(1) })
+const WorkshopFilterFieldsSchema = z.object({
+  organizationId: UuidSchema,
+  departmentId: UuidSchema.nullable().optional(),
+  filter: ImageStyleFilterSchema,
+})
 
 // apply_image_style_render meldet die Faelle, die es selbst noch einmal prueft, per
 // `raise exception`. Ohne diese Zuordnung landen sie im generischen Fastify-Fehlerhandler
@@ -295,6 +300,69 @@ async function previewImageStyleFilters(
 export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
+
+  // Der Upload-Editor darf G'MIC nicht durch CSS imitieren: die Ergebnisse wären irreführend
+  // und das gespeicherte Bild sähe anders aus als die Vorschau. Der Browser übergibt hier nur
+  // das bereits lokal zugeschnittene Bild; die Bytes werden nicht gespeichert oder geloggt.
+  app.post('/v1/image-style-workshop/filter', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const filePart = await request.file({ limits: { fileSize: 100 * 1024 * 1024 } })
+    if (!filePart)
+      return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+
+    let input: z.infer<typeof WorkshopFilterFieldsSchema>
+    let sourceBuffer: Buffer
+    try {
+      sourceBuffer = await filePart.toBuffer()
+      input = WorkshopFilterFieldsSchema.parse(
+        Object.fromEntries(
+          Object.entries(filePart.fields).map(([key, field]) => [
+            key,
+            field && 'value' in field ? field.value : undefined,
+          ]),
+        ),
+      )
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(filePart.mimetype))
+        return reply.code(400).send({ error: 'unsupported_image_type', correlationId: request.id })
+      await sharp(sourceBuffer).metadata()
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE')
+        return reply.code(413).send({ error: 'file_too_large', correlationId: request.id })
+      if (error instanceof z.ZodError)
+        return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+      return reply.code(422).send({ error: 'invalid_image', correlationId: request.id })
+    }
+
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const resolvedScope = await resolveDirectoryScope(client, input.organizationId, input.departmentId ?? null, null)
+    if (resolvedScope === null)
+      return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'post.create', resolvedScope))) return
+
+    try {
+      const brandColors = await loadResolvedBrandColors(
+        supabaseClients.forService(),
+        input.organizationId,
+        resolvedScope.departmentId ?? null,
+        null,
+      )
+      const rendered = await renderImageStyle({
+        sourceBuffer,
+        preset: {
+          frameType: 'none', frameStyle: null, frameColor: null, frameWidthPx: null,
+          frameCornerRadiusPx: null, logoEnabled: false, logoPosition: 'bottom_right',
+          logoSizePercent: null, logoMarginPercent: null, filter: input.filter,
+        },
+        brandColors,
+        ...(context.imageEffects ? { imageEffects: context.imageEffects } : {}),
+      })
+      return reply.type(rendered.contentType).send(rendered.buffer)
+    } catch (error) {
+      if (error instanceof GmicNotEnabledError || error instanceof GmicImageEffectError)
+        return reply.code(422).send({ error: 'gmic_not_enabled', correlationId: request.id })
+      throw error
+    }
+  })
 
   // Sichtbarkeit ist allein RLS' Sache (image_style_presets_select, dieselbe Abschottung wie
   // brand_assets): kein zusaetzliches Berechtigungsgate hier, sonst saehe ein Mitglied ohne

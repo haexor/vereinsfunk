@@ -72,16 +72,24 @@ onMounted(async () => {
       errorMessage.value = 'Dieses Foto gehört zu einem anderen Bereich und kann hier nicht verwendet werden.'
       return
     }
-    if (!asset.mimeType.startsWith('image/') || !asset.peopleReviewedAt || !asset.signedUrl) {
+    if (!asset.mimeType.startsWith('image/') || !asset.signedUrl) {
       phase.value = 'failed'
-      errorMessage.value = 'Dieses Foto wurde noch nicht geprüft und kann nicht wiederverwendet werden.'
+      errorMessage.value = 'Dieses Foto kann nicht wiederverwendet werden.'
       return
     }
     previewUrl.value = asset.signedUrl
     currentAssetId.value = asset.id
-    isHydratedExternalAsset.value = true
-    mediaAssetId.value = asset.id
-    phase.value = 'reviewed'
+    if (asset.peopleReviewedAt) {
+      isHydratedExternalAsset.value = true
+      mediaAssetId.value = asset.id
+      phase.value = 'reviewed'
+    } else {
+      // Ein in der Bildwerkstatt gespeichertes Bild ist privat und bereits technisch bereit,
+      // aber noch nicht für einen Beitrag freigegeben. Es wird hier wie ein frischer Upload in
+      // die verpflichtende Personen-Prüfung geführt; erst confirmReview() setzt den Modelwert.
+      phase.value = 'marking'
+      await loadConsents()
+    }
   } catch {
     phase.value = 'failed'
     errorMessage.value = 'Das Foto konnte nicht geladen werden.'
