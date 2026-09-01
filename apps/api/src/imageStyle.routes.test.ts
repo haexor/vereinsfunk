@@ -418,14 +418,16 @@ describe('POST /v1/image-style-presets/preview', () => {
       Buffer.from(`\r\n--${boundary}--\r\n`),
     ])
     let applied = 0
+    let renderSignal: AbortSignal | undefined
     const app = await startApp({
       roleProvider: organizationManagerRoleProvider,
       supabaseClients: noAssetClients(),
       imageEffects: {
         id: 'fake-gmic',
         supports: (effect: string): effect is 'gmic_vintage' => effect === 'gmic_vintage',
-        apply: async (_effect: string, buffer: Buffer) => {
+        apply: async (_effect: string, buffer: Buffer, signal?: AbortSignal) => {
           applied += 1
+          renderSignal = signal
           return buffer
         },
       },
@@ -450,6 +452,7 @@ describe('POST /v1/image-style-presets/preview', () => {
     )
     expect(response.json().unavailableFilters).toContain('gmic_poster')
     expect(applied).toBe(1)
+    expect(renderSignal).toBeInstanceOf(AbortSignal)
   })
 
   it('rejects unsupported workshop image MIME types through the Zod multipart schema', async () => {

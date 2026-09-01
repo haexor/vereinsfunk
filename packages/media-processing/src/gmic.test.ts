@@ -149,6 +149,21 @@ describe('GmicCliImageEffectProvider', () => {
     expect(received).toEqual(expect.arrayContaining(['40,40', 'brushify[0]', '[1],1', 'remove[1]']))
   })
 
+  it('passes an abort signal to the G’MIC command executor', async () => {
+    let receivedSignal: AbortSignal | undefined
+    const provider = new GmicCliImageEffectProvider({
+      execute: async (_binary, _args, cwd, signal) => {
+        receivedSignal = signal
+        await writeFile(`${cwd}/output.png`, Buffer.from([1, 2, 3]))
+      },
+    })
+    const controller = new AbortController()
+
+    await provider.apply('gmic_vintage', Buffer.from('input'), controller.signal)
+
+    expect(receivedSignal).toBe(controller.signal)
+  })
+
   it("does not expose arbitrary G'MIC commands as effects", () => {
     const provider = new GmicCliImageEffectProvider()
     expect(provider.supports('exec rm -rf /')).toBe(false)

@@ -22,7 +22,7 @@ import {
   type OrganizationBrandLevel,
 } from '@vereinsfunk/domain'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import sharp from 'sharp'
 import { z } from 'zod'
 import {
@@ -262,6 +262,7 @@ async function renderImageStyleFilterPreviews(
   context: ApiRouteContext,
   sourceBuffer: Buffer,
   brandColors: { primaryColor: string; accentColor: string },
+  signal?: AbortSignal,
 ): Promise<FilterPreviewsResult> {
   // Der vollständige Katalog wird auf einem kleinen Eingangsfoto gerechnet. Die große
   // Live-Vorschau verwendet weiterhin das hochauflösende Beispielbild.
@@ -271,6 +272,7 @@ async function renderImageStyleFilterPreviews(
   // Nie den kompletten Satz gleichzeitig starten: G'MIC läuft pro Rezept in einem eigenen
   // Prozess. Dreier-Batches halten die Galerie zügig, ohne den API-Container zu überfahren.
   for (let start = 0; start < ImageStyleFilterSchema.options.length; start += 3) {
+    signal?.throwIfAborted()
     const batch = ImageStyleFilterSchema.options.slice(start, start + 3)
     const results = await Promise.all(batch.map(async (filter) => {
       try {
@@ -282,6 +284,7 @@ async function renderImageStyleFilterPreviews(
             logoSizePercent: null, logoMarginPercent: null, filter,
           },
           brandColors,
+          ...(signal ? { signal } : {}),
           ...(context.imageEffects ? { imageEffects: context.imageEffects } : {}),
         })
         const preview = await encodePreview(rendered.buffer, 360)
@@ -321,6 +324,7 @@ async function previewWorkshopImageStyleFilters(
   sourceBuffer: Buffer,
   input: { organizationId: string },
   scope: { departmentId?: string; teamId?: string },
+  signal?: AbortSignal,
 ): ReturnType<typeof previewImageStyleFilters> {
   const brandColors = await loadResolvedBrandColors(
     service,
@@ -328,7 +332,28 @@ async function previewWorkshopImageStyleFilters(
     scope.departmentId ?? null,
     scope.teamId ?? null,
   )
-  return renderImageStyleFilterPreviews(context, sourceBuffer, brandColors)
+  return renderImageStyleFilterPreviews(context, sourceBuffer, brandColors, signal)
+}
+
+function createRequestAbortController(request: FastifyRequest): {
+  signal: AbortSignal
+  dispose: () => void
+} {
+  const controller = new AbortController()
+  if (request.raw.aborted || (request.raw.destroyed && !request.raw.complete)) controller.abort()
+  const abortOnDisconnect = () => controller.abort()
+  const abortOnClose = () => {
+    if (request.raw.aborted || !request.raw.complete) abortOnDisconnect()
+  }
+  request.raw.once('aborted', abortOnDisconnect)
+  request.raw.once('close', abortOnClose)
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      request.raw.off('aborted', abortOnDisconnect)
+      request.raw.off('close', abortOnClose)
+    },
+  }
 }
 
 // Plan 045, PR 1: CRUD fuer Bildstil-Presets. Eigenes Modul statt in brand.ts (Modulgrenze wie
@@ -462,14 +487,24 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
       return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     if (!(await requirePermission(request, reply, 'post.create', resolvedScope))) return
 
-    const result = await previewWorkshopImageStyleFilters(
-      supabaseClients.forService(),
-      context,
-      sourceBuffer,
-      input,
-      resolvedScope,
-    )
-    return reply.code(200).send(ImageStyleFilterPreviewsResponseSchema.parse(result))
+    const requestAbort = createRequestAbortController(request)
+    try {
+      const result = await previewWorkshopImageStyleFilters(
+        supabaseClients.forService(),
+        context,
+        sourceBuffer,
+        input,
+        resolvedScope,
+        requestAbort.signal,
+      )
+      if (requestAbort.signal.aborted) return
+      return reply.code(200).send(ImageStyleFilterPreviewsResponseSchema.parse(result))
+    } catch (error) {
+      if (requestAbort.signal.aborted) return
+      throw error
+    } finally {
+      requestAbort.dispose()
+    }
   })
 
   // Sichtbarkeit ist allein RLS' Sache (image_style_presets_select, dieselbe Abschottung wie

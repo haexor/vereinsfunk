@@ -47,6 +47,7 @@ export interface ImageStyleRenderInput {
   logoAssetBuffer?: Buffer
   brandColors: BrandColors
   imageEffects?: ImageEffectProvider
+  signal?: AbortSignal
 }
 
 export interface ImageStyleRenderResult {
@@ -193,9 +194,10 @@ async function applyFilter(
   filter: ImageStyleFilter,
   brandColors: BrandColors,
   imageEffects?: ImageEffectProvider,
+  signal?: AbortSignal,
 ): Promise<{ buffer: Buffer; provider: string }> {
   if (imageEffects?.supports(filter)) {
-    return { buffer: await imageEffects.apply(filter, buffer), provider: imageEffects.id }
+    return { buffer: await imageEffects.apply(filter, buffer, signal), provider: imageEffects.id }
   }
   switch (filter) {
     case 'original':
@@ -584,6 +586,7 @@ export async function renderImageStyle(
     preset.filter,
     input.brandColors,
     input.imageEffects,
+    input.signal,
   )
   let current = filtered.buffer
 

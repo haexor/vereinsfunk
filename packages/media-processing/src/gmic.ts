@@ -104,11 +104,11 @@ export type CuratedGmicEffect = keyof typeof CURATED_GMIC_RECIPES
 export interface ImageEffectProvider {
   readonly id: string
   supports(effect: string): effect is CuratedGmicEffect
-  apply(effect: CuratedGmicEffect, sourceBuffer: Buffer): Promise<Buffer>
+  apply(effect: CuratedGmicEffect, sourceBuffer: Buffer, signal?: AbortSignal): Promise<Buffer>
 }
 
 export interface GmicCommandExecutor {
-  (binary: string, arguments_: readonly string[], cwd: string): Promise<void>
+  (binary: string, arguments_: readonly string[], cwd: string, signal?: AbortSignal): Promise<void>
 }
 
 // The concrete CLI error intentionally stays server-side, but callers still need to distinguish
@@ -125,6 +125,7 @@ async function executeGmic(
   binary: string,
   arguments_: readonly string[],
   cwd: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   // Nie ueber eine Shell ausfuehren. Argumente, Pfade und Pipeline stammen alle entweder aus
   // diesem Modul oder aus mkdtemp(), also nicht aus einem Preset, Upload-Dateinamen oder Request.
@@ -133,6 +134,7 @@ async function executeGmic(
     timeout: 30_000,
     maxBuffer: 1024 * 1024,
     windowsHide: true,
+    ...(signal ? { signal } : {}),
   })
 }
 
@@ -154,23 +156,27 @@ export class GmicCliImageEffectProvider implements ImageEffectProvider {
     return Object.hasOwn(CURATED_GMIC_RECIPES, effect)
   }
 
-  async apply(effect: CuratedGmicEffect, sourceBuffer: Buffer): Promise<Buffer> {
+  async apply(effect: CuratedGmicEffect, sourceBuffer: Buffer, signal?: AbortSignal): Promise<Buffer> {
     const directory = await mkdtemp(join(tmpdir(), 'vereinsfunk-gmic-'))
     const inputPath = join(directory, 'input.img')
     const outputPath = join(directory, 'output.png')
     try {
       await writeFile(inputPath, sourceBuffer, { flag: 'wx' })
+      signal?.throwIfAborted()
       // Die offizielle CLI-Syntax ist: input command [args] output output.png. PNG fixiert das
       // Zwischenformat, damit Sharp anschliessend Dimensionen/Alpha sicher pruefen kann.
       await this.execute(
         this.binary,
         [inputPath, ...CURATED_GMIC_RECIPES[effect], 'output', outputPath],
         directory,
+        signal,
       )
+      signal?.throwIfAborted()
       return await readFile(outputPath)
     } catch (error) {
       // Stderr kann Dateinamen und interne G'MIC-Details enthalten; die API darf das nicht an
       // Mitglieder zurueckgeben. Der Error-Handler erzeugt eine korrelierbare, generische 500.
+      if (signal?.aborted) throw error
       throw new GmicImageEffectError(effect, error)
     } finally {
       await rm(directory, { recursive: true, force: true })

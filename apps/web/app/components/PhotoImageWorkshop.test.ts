@@ -78,6 +78,9 @@ describe('PhotoImageWorkshop layout', () => {
     expect(component).toContain(
       'filters.every((filter) => result.unavailableFilters.includes(filter.value))',
     )
+    expect(component).toContain('const resumeThumbnails = filterThumbnailController !== undefined')
+    expect(component).toContain('{ method: \'POST\', body, signal }')
+    expect(component).toContain('previewRun !== filterPreviewRenderRun')
     expect(component).not.toContain(
       "result.unavailableFilters.some((filter) => filter.startsWith('gmic_'))",
     )
