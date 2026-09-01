@@ -366,6 +366,7 @@ async function renderGmicFilterBlob(source: Blob, filter: ImageStyleFilter): Pro
   if (!response.ok) throw new Error(response.status === 422 ? 'gmic_not_enabled' : 'filter_render_failed')
   return response.blob()
 }
+/** Requests all server-rendered G’MIC thumbnails for the current cropped image. */
 async function renderGmicFilterThumbnails(source: Blob) {
   const body = new FormData()
   body.append('organizationId', props.organizationId)
@@ -402,6 +403,7 @@ function scheduleFilterThumbnails(delay = 450) {
     void refreshFilterThumbnails()
   }, delay)
 }
+/** Refreshes gallery tiles and keeps transient preparation failures out of the loading state. */
 async function refreshFilterThumbnails() {
   const canvas = cropper.value?.getResult().canvas
   if (!canvas || !filterThumbnailsDirty) return
@@ -415,6 +417,9 @@ async function refreshFilterThumbnails() {
   try {
     source = await canvasBlob(canvas, 360)
   } catch {
+    filterThumbnailStatuses.value = Object.fromEntries(
+      filters.map((filter) => [filter.value, 'unavailable']),
+    )
     filterError.value = 'Die Filtervorschauen konnten nicht vorbereitet werden.'
     return
   }
@@ -429,7 +434,10 @@ async function refreshFilterThumbnails() {
     filterThumbnailStatuses.value = Object.fromEntries(
       result.unavailableFilters.map((filter) => [filter, 'unavailable']),
     )
-    if (result.unavailableFilters.some((filter) => filter.startsWith('gmic_')))
+    if (
+      filters.length > 0 &&
+      filters.every((filter) => result.unavailableFilters.includes(filter.value))
+    )
       filterError.value = 'G’MIC ist auf dem Server nicht verfügbar.'
   } catch (error) {
     if (run !== filterThumbnailRun) return

@@ -73,6 +73,14 @@ describe('PhotoImageWorkshop layout', () => {
     expect(component).toContain('ImageStyleFilterPreviewsResponseSchema')
     expect(component).not.toContain('await Promise.all([renderNext(), renderNext()])')
     expect(component).toContain('filterThumbnailUrls[filter.value]')
+    expect(component).toContain('filterThumbnailStatuses.value = Object.fromEntries')
+    expect(component).toContain("filters.map((filter) => [filter.value, 'unavailable'])")
+    expect(component).toContain(
+      'filters.every((filter) => result.unavailableFilters.includes(filter.value))',
+    )
+    expect(component).not.toContain(
+      "result.unavailableFilters.some((filter) => filter.startsWith('gmic_'))",
+    )
     expect(component).not.toContain(':disabled="applyingFilter"')
     expect(component).not.toContain(':src="croppedPreviewUrl || sourceUrl" alt="" aria-hidden="true" class="aspect-[4/3] w-full rounded object-cover" /><span class="mt-1 block truncate text-center text-[10px] font-semibold">{{ filter.label }}</span>')
   })

@@ -76,6 +76,13 @@ const WorkshopFilterFieldsSchema = z.object({
   filter: ImageStyleFilterSchema,
 })
 const WorkshopFilterPreviewsFieldsSchema = WorkshopFilterFieldsSchema.omit({ filter: true })
+const WorkshopImageMimeTypeSchema = z.enum(['image/jpeg', 'image/png', 'image/webp'])
+const WorkshopFilterMultipartSchema = WorkshopFilterFieldsSchema.extend({
+  mimetype: WorkshopImageMimeTypeSchema,
+})
+const WorkshopFilterPreviewsMultipartSchema = WorkshopFilterPreviewsFieldsSchema.extend({
+  mimetype: WorkshopImageMimeTypeSchema,
+})
 
 // apply_image_style_render meldet die Faelle, die es selbst noch einmal prueft, per
 // `raise exception`. Ohne diese Zuordnung landen sie im generischen Fastify-Fehlerhandler
@@ -250,9 +257,7 @@ type FilterPreviewsResult = {
   unavailableFilters: (typeof ImageStyleFilterSchema.options)[number][]
 }
 
-// Die Galerie darf keine CSS-Näherungen verwenden: Gerade G'MIC wirkt erst nach dem
-// serverseitigen Rendern. Jeder Filter erhält ein eigenes, kleines WebP. Fehlendes G'MIC ist ein
-// klarer Umgebungszustand, kein Grund, einen ähnlich aussehenden Ersatz zu erfinden.
+/** Renders each gallery filter server-side and reports unavailable provider effects separately. */
 async function renderImageStyleFilterPreviews(
   context: ApiRouteContext,
   sourceBuffer: Buffer,
@@ -295,6 +300,7 @@ async function renderImageStyleFilterPreviews(
   return { previews, unavailableFilters }
 }
 
+/** Loads the sample image and resolved brand colors before rendering the preset gallery. */
 async function previewImageStyleFilters(
   service: SupabaseClient,
   context: ApiRouteContext,
@@ -308,9 +314,7 @@ async function previewImageStyleFilters(
   return renderImageStyleFilterPreviews(context, sourceBuffer, brandColors)
 }
 
-// Der Upload-Workshop verwendet im Gegensatz zur Bildstil-Seite nicht das feste Beispielfoto.
-// Die Kachel-Galerie bekommt deshalb den bereits zugeschnittenen, kleinen Browser-Puffer in einem
-// einzigen Multipart-Request und nutzt ansonsten exakt dieselbe Rendering-Pipeline.
+/** Resolves brand colors for an uploaded crop and renders its complete filter gallery. */
 async function previewWorkshopImageStyleFilters(
   service: SupabaseClient,
   context: ApiRouteContext,
@@ -349,16 +353,23 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
     let sourceBuffer: Buffer
     try {
       sourceBuffer = await filePart.toBuffer()
-      input = WorkshopFilterFieldsSchema.parse(
+      const parsed = WorkshopFilterMultipartSchema.safeParse(
         Object.fromEntries(
-          Object.entries(filePart.fields).map(([key, field]) => [
-            key,
-            field && 'value' in field ? field.value : undefined,
-          ]),
+          [...Object.entries(filePart.fields), ['mimetype', filePart.mimetype]].map(
+            ([key, field]) => [
+              key,
+              field && typeof field === 'object' && 'value' in field ? field.value : field,
+            ],
+          ),
         ),
       )
-      if (!['image/jpeg', 'image/png', 'image/webp'].includes(filePart.mimetype))
+      if (
+        !parsed.success &&
+        parsed.error.issues.some((issue) => issue.path[0] === 'mimetype')
+      )
         return reply.code(400).send({ error: 'unsupported_image_type', correlationId: request.id })
+      if (!parsed.success) throw parsed.error
+      input = parsed.data
       const metadata = await sharp(sourceBuffer, { limitInputPixels: MAX_IMAGE_STYLE_INPUT_PIXELS }).metadata()
       if (!metadata.width || !metadata.height || metadata.width * metadata.height > MAX_IMAGE_STYLE_INPUT_PIXELS)
         return reply.code(413).send({ error: 'image_too_large', correlationId: request.id })
@@ -417,16 +428,23 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
     let sourceBuffer: Buffer
     try {
       sourceBuffer = await filePart.toBuffer()
-      input = WorkshopFilterPreviewsFieldsSchema.parse(
+      const parsed = WorkshopFilterPreviewsMultipartSchema.safeParse(
         Object.fromEntries(
-          Object.entries(filePart.fields).map(([key, field]) => [
-            key,
-            field && 'value' in field ? field.value : undefined,
-          ]),
+          [...Object.entries(filePart.fields), ['mimetype', filePart.mimetype]].map(
+            ([key, field]) => [
+              key,
+              field && typeof field === 'object' && 'value' in field ? field.value : field,
+            ],
+          ),
         ),
       )
-      if (!['image/jpeg', 'image/png', 'image/webp'].includes(filePart.mimetype))
+      if (
+        !parsed.success &&
+        parsed.error.issues.some((issue) => issue.path[0] === 'mimetype')
+      )
         return reply.code(400).send({ error: 'unsupported_image_type', correlationId: request.id })
+      if (!parsed.success) throw parsed.error
+      input = parsed.data
       const metadata = await sharp(sourceBuffer, { limitInputPixels: MAX_IMAGE_STYLE_INPUT_PIXELS }).metadata()
       if (!metadata.width || !metadata.height || metadata.width * metadata.height > MAX_IMAGE_STYLE_INPUT_PIXELS)
         return reply.code(413).send({ error: 'image_too_large', correlationId: request.id })
