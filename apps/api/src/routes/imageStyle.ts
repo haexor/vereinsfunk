@@ -22,7 +22,7 @@ import {
   type OrganizationBrandLevel,
 } from '@vereinsfunk/domain'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import sharp from 'sharp'
 import { z } from 'zod'
 import {
@@ -74,6 +74,14 @@ const WorkshopFilterFieldsSchema = z.object({
   organizationId: UuidSchema,
   departmentId: UuidSchema.nullable().optional(),
   filter: ImageStyleFilterSchema,
+})
+const WorkshopFilterPreviewsFieldsSchema = WorkshopFilterFieldsSchema.omit({ filter: true })
+const WorkshopImageMimeTypeSchema = z.enum(['image/jpeg', 'image/png', 'image/webp'])
+const WorkshopFilterMultipartSchema = WorkshopFilterFieldsSchema.extend({
+  mimetype: WorkshopImageMimeTypeSchema,
+})
+const WorkshopFilterPreviewsMultipartSchema = WorkshopFilterPreviewsFieldsSchema.extend({
+  mimetype: WorkshopImageMimeTypeSchema,
 })
 
 // apply_image_style_render meldet die Faelle, die es selbst noch einmal prueft, per
@@ -244,28 +252,27 @@ async function previewImageStyle(
   }
 }
 
-// Die Galerie darf keine CSS-Näherungen verwenden: Gerade G'MIC wirkt erst nach dem
-// serverseitigen Rendern. Das Quellfoto und die Markenfarben werden einmal geladen, während
-// jeder Filter sein eigenes, kleines WebP erhält. Fehlendes G'MIC ist ein klarer
-// Umgebungszustand, kein Grund, einen ähnlich aussehenden Ersatz zu erfinden.
-async function previewImageStyleFilters(
-  service: SupabaseClient,
+type FilterPreviewsResult = {
+  previews: { filter: (typeof ImageStyleFilterSchema.options)[number]; imageBase64: string; contentType: 'image/webp'; filterProvider: string }[]
+  unavailableFilters: (typeof ImageStyleFilterSchema.options)[number][]
+}
+
+/** Renders each gallery filter server-side and reports unavailable provider effects separately. */
+async function renderImageStyleFilterPreviews(
   context: ApiRouteContext,
-  input: { organizationId: string; departmentId?: string | undefined; teamId?: string | undefined },
-  scope: { departmentId?: string; teamId?: string },
-): Promise<{ previews: { filter: (typeof ImageStyleFilterSchema.options)[number]; imageBase64: string; contentType: 'image/webp'; filterProvider: string }[]; unavailableFilters: (typeof ImageStyleFilterSchema.options)[number][] }> {
-  const [sourceBuffer, brandColors] = await Promise.all([
-    context.samplePhotoLoader(),
-    loadResolvedBrandColors(service, input.organizationId, scope.departmentId ?? null, scope.teamId ?? null),
-  ])
+  sourceBuffer: Buffer,
+  brandColors: { primaryColor: string; accentColor: string },
+  signal?: AbortSignal,
+): Promise<FilterPreviewsResult> {
   // Der vollständige Katalog wird auf einem kleinen Eingangsfoto gerechnet. Die große
   // Live-Vorschau verwendet weiterhin das hochauflösende Beispielbild.
   const gallerySource = await sharp(sourceBuffer).resize({ width: 360, withoutEnlargement: true }).png().toBuffer()
-  const previews: { filter: (typeof ImageStyleFilterSchema.options)[number]; imageBase64: string; contentType: 'image/webp'; filterProvider: string }[] = []
-  const unavailableFilters: (typeof ImageStyleFilterSchema.options)[number][] = []
+  const previews: FilterPreviewsResult['previews'] = []
+  const unavailableFilters: FilterPreviewsResult['unavailableFilters'] = []
   // Nie den kompletten Satz gleichzeitig starten: G'MIC läuft pro Rezept in einem eigenen
   // Prozess. Dreier-Batches halten die Galerie zügig, ohne den API-Container zu überfahren.
   for (let start = 0; start < ImageStyleFilterSchema.options.length; start += 3) {
+    signal?.throwIfAborted()
     const batch = ImageStyleFilterSchema.options.slice(start, start + 3)
     const results = await Promise.all(batch.map(async (filter) => {
       try {
@@ -277,6 +284,7 @@ async function previewImageStyleFilters(
             logoSizePercent: null, logoMarginPercent: null, filter,
           },
           brandColors,
+          ...(signal ? { signal } : {}),
           ...(context.imageEffects ? { imageEffects: context.imageEffects } : {}),
         })
         const preview = await encodePreview(rendered.buffer, 360)
@@ -293,6 +301,59 @@ async function previewImageStyleFilters(
     }
   }
   return { previews, unavailableFilters }
+}
+
+/** Loads the sample image and resolved brand colors before rendering the preset gallery. */
+async function previewImageStyleFilters(
+  service: SupabaseClient,
+  context: ApiRouteContext,
+  input: { organizationId: string; departmentId?: string | undefined; teamId?: string | undefined },
+  scope: { departmentId?: string; teamId?: string },
+): Promise<FilterPreviewsResult> {
+  const [sourceBuffer, brandColors] = await Promise.all([
+    context.samplePhotoLoader(),
+    loadResolvedBrandColors(service, input.organizationId, scope.departmentId ?? null, scope.teamId ?? null),
+  ])
+  return renderImageStyleFilterPreviews(context, sourceBuffer, brandColors)
+}
+
+/** Resolves brand colors for an uploaded crop and renders its complete filter gallery. */
+async function previewWorkshopImageStyleFilters(
+  service: SupabaseClient,
+  context: ApiRouteContext,
+  sourceBuffer: Buffer,
+  input: { organizationId: string },
+  scope: { departmentId?: string; teamId?: string },
+  signal?: AbortSignal,
+): ReturnType<typeof previewImageStyleFilters> {
+  const brandColors = await loadResolvedBrandColors(
+    service,
+    input.organizationId,
+    scope.departmentId ?? null,
+    scope.teamId ?? null,
+  )
+  return renderImageStyleFilterPreviews(context, sourceBuffer, brandColors, signal)
+}
+
+function createRequestAbortController(request: FastifyRequest): {
+  signal: AbortSignal
+  dispose: () => void
+} {
+  const controller = new AbortController()
+  if (request.raw.aborted || (request.raw.destroyed && !request.raw.complete)) controller.abort()
+  const abortOnDisconnect = () => controller.abort()
+  const abortOnClose = () => {
+    if (request.raw.aborted || !request.raw.complete) abortOnDisconnect()
+  }
+  request.raw.once('aborted', abortOnDisconnect)
+  request.raw.once('close', abortOnClose)
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      request.raw.off('aborted', abortOnDisconnect)
+      request.raw.off('close', abortOnClose)
+    },
+  }
 }
 
 // Plan 045, PR 1: CRUD fuer Bildstil-Presets. Eigenes Modul statt in brand.ts (Modulgrenze wie
@@ -317,16 +378,23 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
     let sourceBuffer: Buffer
     try {
       sourceBuffer = await filePart.toBuffer()
-      input = WorkshopFilterFieldsSchema.parse(
+      const parsed = WorkshopFilterMultipartSchema.safeParse(
         Object.fromEntries(
-          Object.entries(filePart.fields).map(([key, field]) => [
-            key,
-            field && 'value' in field ? field.value : undefined,
-          ]),
+          [...Object.entries(filePart.fields), ['mimetype', filePart.mimetype]].map(
+            ([key, field]) => [
+              key,
+              field && typeof field === 'object' && 'value' in field ? field.value : field,
+            ],
+          ),
         ),
       )
-      if (!['image/jpeg', 'image/png', 'image/webp'].includes(filePart.mimetype))
+      if (
+        !parsed.success &&
+        parsed.error.issues.some((issue) => issue.path[0] === 'mimetype')
+      )
         return reply.code(400).send({ error: 'unsupported_image_type', correlationId: request.id })
+      if (!parsed.success) throw parsed.error
+      input = parsed.data
       const metadata = await sharp(sourceBuffer, { limitInputPixels: MAX_IMAGE_STYLE_INPUT_PIXELS }).metadata()
       if (!metadata.width || !metadata.height || metadata.width * metadata.height > MAX_IMAGE_STYLE_INPUT_PIXELS)
         return reply.code(413).send({ error: 'image_too_large', correlationId: request.id })
@@ -366,6 +434,76 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
       if (error instanceof GmicNotEnabledError || error instanceof GmicImageEffectError)
         return reply.code(422).send({ error: 'gmic_not_enabled', correlationId: request.id })
       throw error
+    }
+  })
+
+  // Die Vorschaukacheln gehören zum selben Upload-Workshop, sind aber ein eigener, teurer
+  // Galerie-Request. Ein eigener Bucket verhindert, dass die vielen internen G'MIC-Berechnungen
+  // das Rate-Limit des interaktiven Einzel-Filter-Requests oben aufbrauchen.
+  app.post('/v1/image-style-workshop/filter-previews', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    if (!checkRateLimit(`image-style-workshop-filter-previews:${request.auth!.userId}`, 6, 60_000)) {
+      return reply.code(429).send({ error: 'rate_limited', correlationId: request.id })
+    }
+    const filePart = await request.file({ limits: { fileSize: 100 * 1024 * 1024 } })
+    if (!filePart)
+      return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+
+    let input: z.infer<typeof WorkshopFilterPreviewsFieldsSchema>
+    let sourceBuffer: Buffer
+    try {
+      sourceBuffer = await filePart.toBuffer()
+      const parsed = WorkshopFilterPreviewsMultipartSchema.safeParse(
+        Object.fromEntries(
+          [...Object.entries(filePart.fields), ['mimetype', filePart.mimetype]].map(
+            ([key, field]) => [
+              key,
+              field && typeof field === 'object' && 'value' in field ? field.value : field,
+            ],
+          ),
+        ),
+      )
+      if (
+        !parsed.success &&
+        parsed.error.issues.some((issue) => issue.path[0] === 'mimetype')
+      )
+        return reply.code(400).send({ error: 'unsupported_image_type', correlationId: request.id })
+      if (!parsed.success) throw parsed.error
+      input = parsed.data
+      const metadata = await sharp(sourceBuffer, { limitInputPixels: MAX_IMAGE_STYLE_INPUT_PIXELS }).metadata()
+      if (!metadata.width || !metadata.height || metadata.width * metadata.height > MAX_IMAGE_STYLE_INPUT_PIXELS)
+        return reply.code(413).send({ error: 'image_too_large', correlationId: request.id })
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE')
+        return reply.code(413).send({ error: 'file_too_large', correlationId: request.id })
+      if (error instanceof z.ZodError)
+        return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+      return reply.code(422).send({ error: 'invalid_image', correlationId: request.id })
+    }
+
+    const client = supabaseClients.forUser(request.auth!.accessToken)
+    const resolvedScope = await resolveDirectoryScope(client, input.organizationId, input.departmentId ?? null, null)
+    if (resolvedScope === null)
+      return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'post.create', resolvedScope))) return
+
+    const requestAbort = createRequestAbortController(request)
+    try {
+      const result = await previewWorkshopImageStyleFilters(
+        supabaseClients.forService(),
+        context,
+        sourceBuffer,
+        input,
+        resolvedScope,
+        requestAbort.signal,
+      )
+      if (requestAbort.signal.aborted) return
+      return reply.code(200).send(ImageStyleFilterPreviewsResponseSchema.parse(result))
+    } catch (error) {
+      if (requestAbort.signal.aborted) return
+      throw error
+    } finally {
+      requestAbort.dispose()
     }
   })
 

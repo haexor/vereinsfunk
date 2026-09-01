@@ -5,6 +5,7 @@ export type ApiRequestOptions = {
   query?: Record<string, string | number | boolean | null | undefined>
   body?: Record<string, unknown> | BodyInit | null
   headers?: Record<string, string>
+  signal?: AbortSignal
   authenticate?: boolean
 }
 

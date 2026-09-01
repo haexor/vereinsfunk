@@ -68,4 +68,14 @@ describe('createApiClient', () => {
       method: 'PATCH', body: { purpose: 'Hauptkanal' }, headers: { authorization: 'Bearer current-token' },
     }))
   })
+
+  it('forwards an abort signal to the underlying fetch', async () => {
+    const fetch = vi.fn().mockResolvedValue({ ok: true })
+    const client = createApiClient({ fetch, getAuthHeaders: vi.fn().mockResolvedValue({}) })
+    const controller = new AbortController()
+
+    await client.request('/v1/abortable', { signal: controller.signal })
+
+    expect(fetch).toHaveBeenCalledWith('/v1/abortable', expect.objectContaining({ signal: controller.signal }))
+  })
 })

@@ -15,7 +15,7 @@ import {
   Unlock,
   X,
 } from '@lucide/vue'
-import type { ImageStyleFilter } from '@vereinsfunk/contracts'
+import { ImageStyleFilterPreviewsResponseSchema, type ImageStyleFilter } from '@vereinsfunk/contracts'
 import { Cropper } from 'vue-advanced-cropper'
 import {
   fetchBrandAssets,
@@ -33,6 +33,7 @@ import {
 import {
   IMAGE_STYLE_FILTER_OPTIONS,
 } from '~/utils/imageStyleFilterCatalog'
+import { ApiRequestError } from '~/utils/apiClient'
 import 'vue-advanced-cropper/dist/style.css'
 
 const props = defineProps<{
@@ -116,6 +117,7 @@ let filterPreviewRenderRun = 0
 let latestAssetLoadRun = 0
 let filterThumbnailRun = 0
 const filterRequestController = new AbortController()
+let filterThumbnailController: AbortController | undefined
 let filterThumbnailTimer: ReturnType<typeof setTimeout> | undefined
 let filterThumbnailsDirty = true
 const organizationId = computed(() => props.organizationId || null)
@@ -365,6 +367,18 @@ async function renderGmicFilterBlob(source: Blob, filter: ImageStyleFilter): Pro
   if (!response.ok) throw new Error(response.status === 422 ? 'gmic_not_enabled' : 'filter_render_failed')
   return response.blob()
 }
+/** Requests all server-rendered G’MIC thumbnails for the current cropped image. */
+async function renderGmicFilterThumbnails(source: Blob, signal: AbortSignal) {
+  const body = new FormData()
+  body.append('organizationId', props.organizationId)
+  if (props.departmentId) body.append('departmentId', props.departmentId)
+  body.append('file', new File([source], 'bild.jpg', { type: 'image/jpeg' }))
+  return api.request(
+    '/v1/image-style-workshop/filter-previews',
+    { method: 'POST', body, signal },
+    ImageStyleFilterPreviewsResponseSchema,
+  )
+}
 async function renderGmicFilter(
   canvas: HTMLCanvasElement,
   maxSide?: number,
@@ -377,9 +391,14 @@ function clearFilterThumbnailUrls() {
   filterThumbnailUrls.value = {}
   filterThumbnailStatuses.value = {}
 }
+function cancelFilterThumbnailRequest() {
+  filterThumbnailController?.abort()
+  filterThumbnailController = undefined
+  filterThumbnailRun += 1
+}
 function markFilterThumbnailsDirty() {
   filterThumbnailsDirty = true
-  filterThumbnailRun += 1
+  cancelFilterThumbnailRequest()
   if (filterThumbnailTimer) clearTimeout(filterThumbnailTimer)
 }
 function scheduleFilterThumbnails(delay = 450) {
@@ -390,55 +409,79 @@ function scheduleFilterThumbnails(delay = 450) {
     void refreshFilterThumbnails()
   }, delay)
 }
+/** Refreshes gallery tiles and keeps transient preparation failures out of the loading state. */
 async function refreshFilterThumbnails() {
   const canvas = cropper.value?.getResult().canvas
   if (!canvas || !filterThumbnailsDirty) return
+  cancelFilterThumbnailRequest()
+  const controller = new AbortController()
+  filterThumbnailController = controller
   const run = ++filterThumbnailRun
+  const previewRun = filterPreviewRenderRun
   filterThumbnailsDirty = false
   clearFilterThumbnailUrls()
   const filters = workshopFilters.value.filter((filter) => filter.value !== 'original')
   filterThumbnailStatuses.value = Object.fromEntries(filters.map((filter) => [filter.value, 'loading']))
+  filterError.value = ''
   let source: Blob
   try {
     source = await canvasBlob(canvas, 360)
   } catch {
+    if (
+      run !== filterThumbnailRun ||
+      previewRun !== filterPreviewRenderRun ||
+      controller.signal.aborted
+    ) {
+      if (filterThumbnailController === controller) filterThumbnailController = undefined
+      return
+    }
+    filterThumbnailStatuses.value = Object.fromEntries(
+      filters.map((filter) => [filter.value, 'unavailable']),
+    )
     filterError.value = 'Die Filtervorschauen konnten nicht vorbereitet werden.'
+    if (filterThumbnailController === controller) filterThumbnailController = undefined
     return
   }
-  const queue = [...filters]
-  const renderNext = async () => {
-    while (queue.length) {
-      const filter = queue.shift()
-      if (!filter) return
-      try {
-        const url = URL.createObjectURL(await renderGmicFilterBlob(source, filter.value))
-        if (run !== filterThumbnailRun) {
-          URL.revokeObjectURL(url)
-          return
-        }
-        filterThumbnailUrls.value = { ...filterThumbnailUrls.value, [filter.value]: url }
-        const remainingStatuses = { ...filterThumbnailStatuses.value }
-        delete remainingStatuses[filter.value]
-        filterThumbnailStatuses.value = remainingStatuses
-      } catch (error) {
-        if (run !== filterThumbnailRun) return
-        filterThumbnailStatuses.value = {
-          ...filterThumbnailStatuses.value,
-          [filter.value]: 'unavailable',
-        }
-        if (error instanceof Error && error.message === 'gmic_not_enabled')
-          filterError.value = 'G’MIC ist auf dem Server nicht verfügbar.'
-      }
-    }
+  try {
+    const result = await renderGmicFilterThumbnails(source, controller.signal)
+    if (
+      run !== filterThumbnailRun ||
+      previewRun !== filterPreviewRenderRun ||
+      controller.signal.aborted
+    ) return
+    filterThumbnailUrls.value = Object.fromEntries(
+      result.previews
+        .filter((preview) => preview.filter !== 'original')
+        .map((preview) => [preview.filter, `data:image/webp;base64,${preview.imageBase64}`]),
+    )
+    filterThumbnailStatuses.value = Object.fromEntries(
+      result.unavailableFilters.map((filter) => [filter, 'unavailable']),
+    )
+    if (
+      filters.length > 0 &&
+      filters.every((filter) => result.unavailableFilters.includes(filter.value))
+    )
+      filterError.value = 'G’MIC ist auf dem Server nicht verfügbar.'
+  } catch (error) {
+    if (
+      run !== filterThumbnailRun ||
+      previewRun !== filterPreviewRenderRun ||
+      controller.signal.aborted
+    ) return
+    filterThumbnailStatuses.value = Object.fromEntries(filters.map((filter) => [filter.value, 'unavailable']))
+    filterError.value = error instanceof ApiRequestError && error.code === 'rate_limited'
+      ? 'Die Filtervorschauen sind momentan ausgelastet. Bitte kurz warten und erneut öffnen.'
+      : 'Die Filtervorschauen konnten nicht geladen werden.'
+  } finally {
+    if (filterThumbnailController === controller) filterThumbnailController = undefined
   }
-  // Zwei parallele, kleine G’MIC-Prozesse liefern laufend Kacheln nach, ohne die API oder den
-  // Editor während des Öffnens zu blockieren.
-  await Promise.all([renderNext(), renderNext()])
 }
 async function refreshFilterPreview() {
   const canvas = cropper.value?.getResult().canvas
   const filter = selectedFilter.value
   if (!canvas || filter === 'original') return
+  const resumeThumbnails = filterThumbnailController !== undefined
+  cancelFilterThumbnailRequest()
   const renderRun = ++filterPreviewRenderRun
   applyingFilter.value = true
   filterError.value = ''
@@ -458,6 +501,10 @@ async function refreshFilterPreview() {
       : 'Der G’MIC-Filter konnte nicht gerendert werden.'
   } finally {
     if (renderRun === filterPreviewRenderRun) applyingFilter.value = false
+    if (resumeThumbnails) {
+      filterThumbnailsDirty = true
+      scheduleFilterThumbnails()
+    }
   }
 }
 
@@ -758,10 +805,10 @@ watch(aspectRatio, async () => {
 })
 onBeforeUnmount(() => {
   filterRequestController.abort()
+  cancelFilterThumbnailRequest()
   previewRenderRun += 1
   filterPreviewRenderRun += 1
   latestAssetLoadRun += 1
-  filterThumbnailRun += 1
   if (sourceUrl.value) URL.revokeObjectURL(sourceUrl.value)
   if (croppedPreviewUrl.value) URL.revokeObjectURL(croppedPreviewUrl.value)
   if (filteredPreviewUrl.value) URL.revokeObjectURL(filteredPreviewUrl.value)

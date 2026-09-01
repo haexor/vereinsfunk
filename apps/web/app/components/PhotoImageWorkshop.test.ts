@@ -69,8 +69,21 @@ describe('PhotoImageWorkshop layout', () => {
     expect(component).toContain('focus-ring w-28 shrink-0 overflow-hidden')
     expect(component).toContain('function scheduleFilterThumbnails')
     expect(component).toContain('function refreshFilterThumbnails')
-    expect(component).toContain('await Promise.all([renderNext(), renderNext()])')
+    expect(component).toContain('/v1/image-style-workshop/filter-previews')
+    expect(component).toContain('ImageStyleFilterPreviewsResponseSchema')
+    expect(component).not.toContain('await Promise.all([renderNext(), renderNext()])')
     expect(component).toContain('filterThumbnailUrls[filter.value]')
+    expect(component).toContain('filterThumbnailStatuses.value = Object.fromEntries')
+    expect(component).toContain("filters.map((filter) => [filter.value, 'unavailable'])")
+    expect(component).toContain(
+      'filters.every((filter) => result.unavailableFilters.includes(filter.value))',
+    )
+    expect(component).toContain('const resumeThumbnails = filterThumbnailController !== undefined')
+    expect(component).toContain('{ method: \'POST\', body, signal }')
+    expect(component).toContain('previewRun !== filterPreviewRenderRun')
+    expect(component).not.toContain(
+      "result.unavailableFilters.some((filter) => filter.startsWith('gmic_'))",
+    )
     expect(component).not.toContain(':disabled="applyingFilter"')
     expect(component).not.toContain(':src="croppedPreviewUrl || sourceUrl" alt="" aria-hidden="true" class="aspect-[4/3] w-full rounded object-cover" /><span class="mt-1 block truncate text-center text-[10px] font-semibold">{{ filter.label }}</span>')
   })
