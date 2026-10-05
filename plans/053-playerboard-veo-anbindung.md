@@ -47,7 +47,7 @@ Schlägt der Abruf der Spielerwerte fehl, wird das Spiel in diesem Lauf gar nich
 
 ### Öffentliche Veo-Werte
 
-Opt-in je Mannschaft über `playerboard_veo_links.public_stats_enabled`, nur wirksam bei `playerboard_settings.public_ranking_allowed` entlang des ganzen Pfads (dieselbe „nur verschärfen“-Regel wie die öffentliche Rangliste aus 052). Ausgegeben werden nur Werte nach Rückennummer, nie Namen. Gleicher Auslieferungsweg wie die öffentliche Rangliste, als zweiter Reiter auf `/rangliste/[orgSlug]/[teamSlug]`.
+Teil der öffentlichen Mannschaftsseite aus 052: Der Trainer schaltet `playerboard_settings.public_veo_stats_enabled`, wirksam nur bei `public_sharing_allowed` entlang des ganzen Pfads. Öffentlich sind Spiele mit Gegner, Datum und Ergebnis, die Mannschaftswerte und die Spielerwerte. Spieler erscheinen nur über `playerboard_public_label` als Rückennummer und Initialen („#7 M. K.“), nie mit Klarnamen. Nicht zugeordnete Rückennummern erscheinen als „#7“. Ausgeliefert über `public.playerboard_public_veo_stats(org_slug, public_slug, from, to)` (`security definer`, nur `service_role`) als Reiter „Veo“ auf `/mannschaft/[orgSlug]/[teamSlug]`.
 
 ## Datenmodell
 
@@ -59,7 +59,6 @@ create table public.playerboard_veo_links (
   organization_id uuid not null, department_id uuid not null,
   integration_source_id uuid not null,
   veo_club_slug text not null, veo_team_slug text not null,
-  public_stats_enabled boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   foreign key (organization_id, department_id, team_id)
@@ -114,7 +113,7 @@ Das Session-Cookie liegt verschlüsselt über `integration_sources.credentials_s
 - `/playerboard/veo`: verbinden, Mannschaft wählen, letzter Lauf, neu verbinden
 - Spielliste und Spieldetail mit Mannschafts- und Spielerwerten; Zuordnung der Rückennummern je Spiel (einzeln und gesammelt, wie playerboard `player-assignment-bulk`)
 - Saisonübersicht je Spieler auf `/playerboard` (kumulierte Werte im Saisonzeitraum aus `playerboard_settings.season_start`)
-- Reiter „Veo“ auf der öffentlichen Ranglistenseite
+- Reiter „Veo“ auf der öffentlichen Mannschaftsseite `/mannschaft/[orgSlug]/[teamSlug]`, Schalter dafür in `/playerboard/einstellungen`
 - Spiele aus Veo erscheinen ohne weiteres Zutun im Rahmen-Kalender
 
 ### PR 4 – playerboard abschalten
@@ -131,6 +130,7 @@ Erst wenn 052 und 053 im Produktivbetrieb laufen:
 - pgTAP: Isolation, `matched_manually` bleibt nach erneutem Sync erhalten, ein Kader-Eintrag kann nicht zwei Rückennummern im selben Spiel haben.
 - Worker-Test: Spielerwerte schlagen fehl → kein `fixtures`-Update und keine Mannschaftswerte für dieses Spiel; zwei parallele Läufe → genau einer läuft (026).
 - Zusammenführung: vorhandenes iCal-Spiel bekommt Ergebnis und Statistik, kein Duplikat; mehrdeutiger Treffer erzeugt einen Konflikt.
+- Öffentliche Veo-Werte: ohne Schalter oder bei `public_sharing_allowed = false` leer; die Ausgabe enthält keine Klarnamen (Test sucht die Namen der Testpersonen im JSON).
 - Manuell gegen den echten Veo-Account des Vereins (wie playerboard am 2026-09-25), weil es keine Testumgebung von Veo gibt.
 
 ## Risiken und offene Entscheidungen

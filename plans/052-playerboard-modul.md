@@ -2,7 +2,7 @@
 
 ## Ergebnis
 
-Trainerinnen und Trainer erfassen nach dem Training auf dem Handy Punkte je Spieler und je konfigurierbarer Kategorie (z. B. Trainingsleistung, Fairness, Anwesenheit). Spielerinnen und Spieler sehen die Trainings und die Rangliste ihrer Mannschaft. Ein Verein oder eine Abteilung kann Kategorien und die Saison vorgeben, die alle Mannschaften darunter übernehmen müssen, sofern die obere Ebene das Übersteuern nicht ausdrücklich freigibt. Eine Mannschaft kann ihre Rangliste ohne Namen öffentlich zeigen, wenn Verein und Abteilung das erlauben.
+Trainerinnen und Trainer erfassen nach dem Training auf dem Handy Punkte je Spieler und je konfigurierbarer Kategorie (z. B. Trainingsleistung, Fairness, Anwesenheit). Spielerinnen und Spieler sehen die Trainings und die Rangliste ihrer Mannschaft. Ein Verein oder eine Abteilung kann Kategorien und die Saison vorgeben, die alle Mannschaften darunter übernehmen müssen, sofern die obere Ebene das Übersteuern nicht ausdrücklich freigibt. Eine Mannschaft kann ihre Punkte und Veo-Werte öffentlich zeigen, mit Spielern nur als Rückennummer und Initialen, auf Wunsch auch die Trainingsfotos, wenn Verein und Abteilung das erlauben.
 
 Das ist der fachliche Umfang der bisher eigenständigen Anwendung `haexhub/playerboard` (Features 001, 002 teilweise, 006, 015) als Modul `playerboard` innerhalb von Vereinsfunk. Die Veo-Anbindung folgt in Paket 053.
 
@@ -12,7 +12,7 @@ Das ist der fachliche Umfang der bisher eigenständigen Anwendung `haexhub/playe
 
 Geplant auf `e3fb52d` am 2026-10-05, gegen playerboard `66f3879` (Release 0.5.0).
 
-- **Voraussetzung**: Paket 051 (Modulrahmen) — `public.app_module` mit Wert `playerboard`, `authz.module_enabled`, `permissionModule`, modulfähige Navigation.
+- **Voraussetzungen**: Paket 051 (Modulrahmen) — `public.app_module` mit Wert `playerboard`, `authz.module_enabled`, `permissionModule`, modulfähige Navigation. Paket 054 (Verzeichnis ohne Elternkontakt, eigene E-Mail je Person).
 - playerboard ist eine Nuxt-App mit direktem Supabase-Zugriff aus dem Browser und Nitro-Serverrouten, Schema über Drizzle. Mandant ist dort ausschließlich das Team (`teams` + `memberships(role: trainer|player)`, RLS über `public.is_member(team_id)`/`public.is_trainer(team_id)`).
 - Vereinsfunk besitzt für fast jede playerboard-Tabelle bereits einen Rahmen-Gegenpart:
 
@@ -22,12 +22,12 @@ Geplant auf `e3fb52d` am 2026-10-05, gegen playerboard `66f3879` (Release 0.5.0)
 | `memberships` (trainer/player) | `team_memberships` | `team_manager` = Trainer, neue Team-Rolle `player` |
 | `invitations` (+ `player_id`) | `invitations` | um `directory_person_id` erweitert |
 | `user_profiles` (Name, Avatar) | `profiles` (`display_name`, `avatar_path`) | wiederverwendet |
-| `players` | `directory_people` + neuer Kader-Eintrag | siehe „Spieler sind Verzeichnispersonen“ |
+| `players` (+ E-Mail aus Feature 006) | `directory_people` (+ `email` aus Paket 054) + neuer Kader-Eintrag | siehe „Spieler sind Verzeichnispersonen“ |
 | `players.photo_consent` | `consent_records` (Zweck `internal`, Kontext `training`) | wiederverwendet |
 | `teams.timezone` | `organizations.timezone` | wiederverwendet (Zeitzone je Verein reicht) |
 | `team_settings.season_start` | — | neu, vererbbar |
 | `point_categories`, `trainings`, `point_entries`, `training_photos` | — | neu, mandantenfähig |
-| `get_public_ranking(slug)` | Muster: öffentliches Impressum `GET /v1/organizations/:id/imprint` | neu über die API |
+| `get_public_ranking(slug)`, öffentlicher Veo-Tab (005) | Muster: öffentliches Impressum `GET /v1/organizations/:id/imprint` | neu über die API, erweitert um Initialen und Fotos |
 | `pending_account_deletions`, Letzter-Trainer-Schutz, Profilmoderation | Kontolöschung/`prevent_last_owner_removal` des Rahmens | **nicht übernommen**, siehe unten |
 
 - Beide Oberflächen nutzen Nuxt 4, Tailwind 4 und `reka-ui`; playerboards Komponenten (insbesondere die mobile Punkteeingabe `trainings/[id].vue`) lassen sich übernehmen, ihr Datenzugriff muss aber auf `useApiClient` umgestellt werden.
@@ -37,7 +37,7 @@ Geplant auf `e3fb52d` am 2026-10-05, gegen playerboard `66f3879` (Release 0.5.0)
 
 ### Spieler sind Verzeichnispersonen
 
-Ein Kader-Eintrag (`playerboard_players`) verweist **zwingend** auf eine `directory_people`-Zeile und trägt nur die PlayerBoard-eigenen Angaben (Rückennummer, Position, aktiv). Name, Geburtsjahr, Minderjährigkeit, Erziehungsberechtigte und Kontoverknüpfung (`profile_id`) bleiben im Verzeichnis.
+Ein Kader-Eintrag (`playerboard_players`) verweist **zwingend** auf eine `directory_people`-Zeile und trägt nur die PlayerBoard-eigenen Angaben (Rückennummer, Position, aktiv). Name, Geburtsjahr, Minderjährigkeit, E-Mail und Kontoverknüpfung (`profile_id`) bleiben im Verzeichnis.
 
 Begründung, warum nicht ein freier Namenseintrag wie in playerboard:
 
@@ -45,23 +45,17 @@ Begründung, warum nicht ein freier Namenseintrag wie in playerboard:
 - Aufbewahrung (Paket 020) und Austritt (`directory_people.left_at`, `consentExpiresOnLeave`) wirken dann ohne Zusatzlogik.
 - Ein Verein pflegt seine Mitglieder einmal; der Import aus dem Integrationsrahmen (014) füllt auch den PlayerBoard-Kader.
 
-### Keine Pflicht zur Eltern-E-Mail
+### Trainer legen Spieler selbst an
 
-**Betreiberentscheidung 2026-10-05:** Wer einem Verein beitritt, hat die Erlaubnis der Eltern. Die Einwilligung zu Fotos geben die Eltern beim Eintritt ab oder eben nicht. Das reicht. Eine Eltern-E-Mail ist deshalb keine Voraussetzung mehr dafür, eine minderjährige Person aktiv im Verzeichnis zu führen.
+**Betreiberentscheidung 2026-10-05/06:** Trainer bauen ihren Kader selbst auf. Im Kader legen sie eine Person direkt an: Vorname, Nachname, optional Geburtsjahr, Rückennummer, Position und E-Mail. Die Verzeichnisperson entsteht dabei im Hintergrund in ihrer Mannschaft. Alternativ übernehmen sie eine Person, die schon im Verzeichnis ihrer Mannschaft steht.
 
-Das ändert den Rahmen, nicht nur das Modul, und gehört deshalb in PR 1 dieses Pakets:
+Dafür braucht es kein neues Recht: `POST /v1/organizations/:id/directory-people` verlangt heute `directory.read` im Ziel-Scope, und das hat `team_manager` für die eigene Mannschaft. Bisher scheiterte es nur bei aktiven Minderjährigen an der Pflicht zur Eltern-E-Mail. Die entfällt mit Paket 054.
 
-- Check `not is_minor or guardian_email is not null or status <> 'active'` auf `directory_people` entfernen (`2026080703_integration_framework.sql:188`).
-- `recompute_directory_minor_status()` darf danach in beide Richtungen schreiben; die Begründung im Kommentar (`:203-211`) entfällt mit dem Check.
-- Personen-Import (`apps/api/src/services/sync/people.ts:124`, `:186`): kein `invalid_record`-Konflikt mehr für fehlende `guardianEmail`.
-- Filter `missingGuardian` in `GET …/directory` und die Anzeige „Keine E-Mail hinterlegt“ auf `/verzeichnis` entfernen.
-- `guardian_name`/`guardian_email` bleiben als freiwillige Felder mit ihren Spaltenrechten bestehen.
+Die E-Mail ist optional und kann jederzeit ergänzt werden. Eingeladen wird ein Spieler, wann der Trainer will: beim Anlegen, später aus dem Kader heraus oder nie. Ohne Konto taucht ein Spieler trotzdem in Punkten, Rangliste und Veo-Werten auf.
 
-Die Einwilligung bei Eintritt wird als `consent_records` mit `origin = 'paper'` und `signer_role = 'guardian'` erfasst. Diesen Weg gibt es schon (Paket 015), er braucht keine E-Mail-Adresse. Die Regel, dass bei Minderjährigen die Erziehungsberechtigten unterschreiben, bleibt unverändert.
+### Kein Elternkontakt, keine Elternkonten
 
-### Keine Elternkonten
-
-**Betreiberentscheidung 2026-10-05:** Es gibt keine Elternkonten. Ein Konto gehört der Person im Kader (`directory_people.profile_id`); eine Einladung geht an diese Person.
+**Betreiberentscheidung 2026-10-05/06:** Es gibt weder eine Eltern-E-Mail noch Elternkonten. Wer einem Verein beitritt, hat die Erlaubnis der Eltern. Die Einwilligung zu Fotos geben die Eltern beim Eintritt ab oder eben nicht. Erfasst wird das als `consent_records` mit `origin = 'paper'` und `signer_role = 'guardian'` (Paket 015, braucht keine E-Mail). Die Elternfelder verschwinden komplett aus dem Verzeichnis (Paket 054). Ein Konto gehört der Person im Kader (`directory_people.profile_id`); eine Einladung geht an deren eigene E-Mail.
 
 ### Rollen und Rechte
 
@@ -71,7 +65,7 @@ Neue Permissions, alle dem Modul `playerboard` zugeordnet:
 |---|---|
 | `training.view` | gespeicherte Trainings, Punkte und Rangliste der Mannschaft sehen |
 | `training.manage` | Kader pflegen, Trainings anlegen, Punkte erfassen, Fotos hochladen |
-| `playerboard.manage` | Kategorien und PlayerBoard-Einstellungen der eigenen Ebene verwalten, öffentliche Rangliste schalten |
+| `playerboard.manage` | Kategorien und PlayerBoard-Einstellungen der eigenen Ebene verwalten, öffentliche Mannschaftsseite schalten |
 
 | Rolle | erhält |
 |---|---|
@@ -96,7 +90,7 @@ Ob die Werte einer Mannschaft **darüber hinaus** sichtbar sind, legt die Hierar
 
 Der Wert vererbt sich nach der Regel unten. Setzt der Verein `organization`, ist das für alle Mannschaften verbindlich, es sei denn, er gibt das Feld frei. Dann kann eine Abteilung oder Mannschaft enger oder weiter wählen.
 
-Nicht betroffen sind Trainingsnotizen und Trainingsfotos. Sie bleiben mannschaftsintern, weil sie keine Kennzahlen sind. Die öffentliche Rangliste für Menschen ohne Konto ist davon getrennt (siehe unten).
+Nicht betroffen sind Trainingsnotizen und Trainingsfotos. Sie bleiben im Verein mannschaftsintern, weil sie keine Kennzahlen sind. Die öffentliche Mannschaftsseite für Menschen ohne Konto ist davon getrennt (siehe unten).
 
 ### Vererbung: Vorgabe von oben, Übersteuern nur mit Freigabe
 
@@ -106,7 +100,7 @@ Zwei Regelarten, beide bereits im Projekt etabliert:
 |---|---|---|
 | `season_start`, `stats_visibility` | **ersetzbar** (Muster `resolveBrand`) | Ein auf einer Ebene gesetzter Wert ist für alle Ebenen darunter verbindlich, **es sei denn**, die Ebene gibt das Feld über `overridable_fields` frei. Eine Freigabe reicht nur eine Ebene tief: Die Abteilung kann ein vom Verein freigegebenes Feld für ihre Mannschaften wieder sperren, aber kein vom Verein gesperrtes freigeben. |
 | `team_categories_allowed` | **nur verschärfen** (Muster `resolve_policy_flag`) | `true → false`, nie zurück. `null` = erben, Standard `true`. |
-| `public_ranking_allowed` | **nur verschärfen** | wie oben, Standard `true`. Schützt Daten Minderjähriger: Ein Verein, der keine öffentlichen Ranglisten will, wird von keiner Mannschaft unterlaufen. |
+| `public_sharing_allowed` | **nur verschärfen** | wie oben, Standard `true`. Schützt Daten Minderjähriger: Ein Verein, der keine öffentlichen Mannschaftsseiten will, wird von keiner Mannschaft unterlaufen. |
 
 **Abweichung von `resolveBrand`, bewusst:** Dort ist ein Feld frei, bis die obere Ebene es sperrt (`lockedFields`). Hier ist ein gesetztes Feld gesperrt, bis die obere Ebene es freigibt (`overridable_fields`). Für Vorgaben wie „Saisonbeginn 1. Juli für den ganzen Verein“ ist verbindlich der erwartbare Normalfall; eine Freigabe ist die Ausnahme, die jemand bewusst trifft.
 
@@ -124,11 +118,35 @@ Vorgegebene Kategorien kann eine Mannschaft **nicht** ausblenden — das ist der
 
 Fotos sind mannschaftsintern und gehen **nicht** durch die Medien-Pipeline des Social-Media-Moduls (kein Gesichtsscan, keine Derivate). Eigener privater Bucket `playerboard-training-photos`, Pfad `{organization_id}/{team_id}/{training_id}/{uuid}`, Lesezugriff mit `training.view` auf gespeicherte Trainings.
 
-Einwilligung: Für jede aktive Person im Kader ohne gültigen `consent_records`-Eintrag mit Zweck `internal` und Kontext `training` zeigt die Trainingsseite einen Hinweis. Der Upload wird nicht blockiert, weil ein Mannschaftsfoto keiner Person automatisch zugeordnet ist. Ein Trainingsfoto als Beitrag zu veröffentlichen ist ein modulübergreifender Ablauf und **nicht** Teil dieses Pakets.
+Einwilligung: Für jede aktive Person im Kader ohne gültigen `consent_records`-Eintrag mit Zweck `internal` und Kontext `training` zeigt die Trainingsseite einen Hinweis. Der Upload wird nicht blockiert, weil ein Mannschaftsfoto keiner Person automatisch zugeordnet ist. Ein Trainingsfoto als Social-Media-Beitrag zu veröffentlichen ist ein modulübergreifender Ablauf und **nicht** Teil dieses Pakets. Öffentlich sichtbar werden Fotos nur über die öffentliche Mannschaftsseite (unten).
 
-### Öffentliche Rangliste
+### Öffentliche Mannschaftsseite
 
-Wie playerboard-Vertrag `public-ranking.md`: Rang, Rückennummer und Summe je Kategorie, nie Namen, Positionen, IDs oder Fotos. URL `/rangliste/{vereins-slug}/{public_slug}`. Ausgeliefert über einen anonymen API-Endpunkt mit Service-Rolle und einer `security definer`-Funktion, die nur aggregierte Werte zurückgibt (Muster öffentliches Impressum, Paket 020).
+**Betreiberentscheidung 2026-10-06:** Punkte und Veo-Werte einer Mannschaft sollen auch ohne Anmeldung sichtbar sein können. Spieler erscheinen dort **nie mit Klarnamen**, sondern nur als Rückennummer und Initialen („#7 M. K.“). Trainingsfotos sind öffentlich, wenn der Trainer das eingestellt hat.
+
+Der Trainer schaltet drei Teile einzeln (`playerboard.manage` auf der Mannschaft):
+
+| Schalter | zeigt öffentlich |
+|---|---|
+| `public_points_enabled` | Rangliste und Summen je Kategorie im gewählten Zeitraum |
+| `public_veo_stats_enabled` | Spiele mit Ergebnis, Mannschafts- und Spielerwerte aus Veo (Paket 053) |
+| `public_photos_enabled` | Fotos gespeicherter Trainings, soweit nicht einzeln ausgenommen (siehe unten) |
+
+Jeder Schalter wirkt nur, wenn `public_sharing_allowed` entlang des ganzen Pfads nicht `false` ist und das Modul aktiv ist.
+
+Darstellung von Spielern:
+
+- Initialen werden **in der Datenbank** gebildet (erster Buchstabe von Vor- und Nachname, „M. K.“). Klarnamen, Geburtsjahr, IDs, Positionen und E-Mail verlassen die `security definer`-Funktion nie.
+- Ohne Rückennummer erscheint nur „M. K.“. Bei gleichen Initialen unterscheidet die Rückennummer. Zwei Spieler ohne Nummer mit gleichen Initialen werden bewusst nicht weiter aufgelöst.
+- Trainingsnotizen sind nie öffentlich.
+
+Fotos:
+
+- Die Fotos werden über kurzlebige, signierte URLs ausgeliefert, die der anonyme API-Endpunkt mit Service-Rolle erzeugt (Muster Medien-Grant aus Paket 025). Der Bucket selbst bleibt privat.
+- Einzelne Fotos kann der Trainer über `playerboard_training_photos.public = false` ausnehmen.
+- Beim Einschalten von `public_photos_enabled` und beim Hochladen zeigt die Oberfläche alle aktiven Spieler ohne gültige Einwilligung mit Zweck `website` und Kontext `training`. So weiß der Trainer, wer auf öffentlichen Fotos nicht zu sehen sein darf. Gesperrt wird nichts, weil ein Foto keiner Person automatisch zugeordnet ist.
+
+URL `/mannschaft/{vereins-slug}/{public_slug}` mit Reitern Rangliste, Veo und Fotos (nur die eingeschalteten). Ausgeliefert über anonyme API-Endpunkte mit Service-Rolle und `security definer`-Funktionen, die nur `service_role` ausführen darf (Muster öffentliches Impressum, Paket 020).
 
 ## Datenmodell
 
@@ -150,14 +168,18 @@ create table public.playerboard_settings (
   overridable_fields text[] not null default '{}'
     check (overridable_fields <@ array['season_start', 'stats_visibility']),
   team_categories_allowed boolean,                     -- null = erben
-  public_ranking_allowed boolean,                      -- null = erben
-  public_ranking_enabled boolean,                      -- nur scope = 'team'
+  public_sharing_allowed boolean,                      -- null = erben
+  -- nur scope = 'team':
+  public_points_enabled boolean,
+  public_veo_stats_enabled boolean,
+  public_photos_enabled boolean,
   public_slug text check (public_slug ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'),
   updated_by uuid not null references public.profiles(id),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   -- Scope-Check, Unique-Indizes je Ebene und Fremdschlüssel wie policy_settings (Paket 023)
-  check (scope = 'team' or (public_ranking_enabled is null and public_slug is null)),
+  check (scope = 'team' or (public_points_enabled is null and public_veo_stats_enabled is null
+                            and public_photos_enabled is null and public_slug is null)),
   unique (organization_id, public_slug)
 );
 
@@ -228,6 +250,7 @@ create table public.playerboard_training_photos (
   organization_id uuid not null, training_id uuid not null,
   storage_path text not null unique,
   content_type text not null, size_bytes integer not null,
+  public boolean not null default true,                -- wirkt nur bei public_photos_enabled
   uploaded_by uuid references public.profiles(id) on delete set null,
   uploaded_at timestamptz not null default now()
 );
@@ -235,6 +258,7 @@ create table public.playerboard_training_photos (
 alter table public.invitations add column directory_person_id uuid;
 -- accept_invitation(): bei gesetzter directory_person_id und Rolle 'player'
 -- directory_people.profile_id setzen (nur wenn null) und Team-Mitgliedschaft anlegen.
+-- Vorbelegt wird die Einladungsadresse aus directory_people.email (Paket 054).
 ```
 
 Funktionen:
@@ -243,7 +267,8 @@ Funktionen:
 - `authz.can_view_playerboard_stats(team_id)`: `training.view` auf die Mannschaft **oder** wirksame `stats_visibility` = `department` und Mitglied der Abteilung bzw. einer ihrer Mannschaften **oder** = `organization` und `is_any_member_of_organization`. Wird in den Lese-Policies von `playerboard_point_entries`, gespeicherten `playerboard_trainings` (nur Datum, Titel, Status; Notiz und Fotos weiter nur mit `training.view`), `playerboard_players` (Rückennummer und Name über das Verzeichnis) und den Veo-Tabellen aus 053 verwendet, jeweils zusammen mit `module_enabled`.
 - `public.playerboard_effective_categories(team_id)`: wirksame Kategorien nach obiger Regel.
 - `public.playerboard_team_ranking(team_id, from, to)`: `security invoker`, Rangliste für Berechtigte.
-- `public.playerboard_public_ranking(org_slug, public_slug, from, to)`: `security definer`, nur Aggregate, prüft `public_ranking_enabled` **und** `public_ranking_allowed` **und** `module_enabled`; nur `service_role` darf sie ausführen.
+- `public.playerboard_public_label(directory_person_id, jersey_number)`: bildet „#7 M. K.“; einzige Stelle, an der öffentliche Spielerbezeichnungen entstehen.
+- `public.playerboard_public_ranking(org_slug, public_slug, from, to)` und `public.playerboard_public_photos(org_slug, public_slug, from, to)`: `security definer`, prüfen den jeweiligen Schalter **und** `public_sharing_allowed` **und** `module_enabled`, geben Spieler nur über `playerboard_public_label` aus; nur `service_role` darf sie ausführen. Die öffentlichen Veo-Werte folgen in 053 demselben Muster.
 
 Speicherverbrauch der Fotos zählt auf das Speicherkontingent des Vereins (Paket 021).
 
@@ -251,35 +276,37 @@ Speicherverbrauch der Fotos zählt auf das Speicherkontingent des Vereins (Paket
 
 ### PR 1 – Schema, RLS, pgTAP
 
-Vorab die Rahmenänderung „Keine Pflicht zur Eltern-E-Mail“ (eigene Migration, plus Import, Verzeichnis-API und `/verzeichnis`; pgTAP: aktive minderjährige Person ohne `guardian_email` ist gültig, `recompute_directory_minor_status` schreibt in beide Richtungen). Danach die Migration wie oben, Bucket mit Policies, Trigger. pgTAP mit positiven **und** negativen Isolationstests (AGENTS.md):
+Migration wie oben (setzt 054 voraus), Bucket mit Policies, Trigger. pgTAP mit positiven **und** negativen Isolationstests (AGENTS.md):
 
 - fremder Verein, fremde Mannschaft derselben Abteilung, Modul aus (Verein, Abteilung, Mannschaft je einzeln)
 - `player` sieht keine Entwürfe, kann nichts schreiben, sieht aber alle Punkte der eigenen Mannschaft
 - `stats_visibility`: Spieler einer Nachbarmannschaft sieht bei `team` nichts, bei `department` Punkte, aber keine Trainingsnotizen oder Fotos; Mitglied einer anderen Abteilung sieht erst bei `organization` etwas; vom Verein verbindlich gesetztes `organization` ist von der Mannschaft nicht zu verengen, nach Freigabe schon
 - Punkte mit Spieler einer anderen Mannschaft oder nicht wirksamer Kategorie werden abgelehnt
 - Vererbung: Saisonbeginn verbindlich/freigegeben/von der Abteilung wieder gesperrt; `team_categories_allowed = false` auf Vereinsebene schlägt `true` darunter
-- Öffentliche Rangliste liefert nichts, wenn eine der drei Bedingungen fehlt, und nie Namen oder IDs
+- Öffentliche Funktionen liefern nichts, wenn Schalter, `public_sharing_allowed` oder Modul fehlen; die Ausgabe enthält nie Vor- oder Nachnamen, IDs, Geburtsjahre, E-Mails oder Notizen (Test sucht die Klarnamen der Testpersonen im JSON); ausgenommene Fotos (`public = false`) erscheinen nicht
 
 ### PR 2 – Domain, Verträge, API
 
 - `packages/domain/src/playerboard.ts`: `resolvePlayerboardSettings`, `effectiveCategories` (TS-Spiegel der SQL-Funktionen, für die Oberflächenzustände geerbt/eigener Wert/gesperrt), Rangberechnung mit geteilten Rängen (1, 2, 2, 4).
 - `packages/authorization`: drei Permissions, Rolle `player`, `roleRank` und `authz.role_rank` gemeinsam anpassen (bestehende Regel).
-- `apps/api/src/routes/playerboard/`: `players.ts`, `categories.ts`, `trainings.ts`, `pointEntries.ts` (Bulk-Upsert je Training, wie die mobile Eingabe speichert), `photos.ts` (signierte Upload- und Lese-URLs), `ranking.ts`, `settings.ts`, `public.ts` (anonym).
-- Einladung mit `directoryPersonId` in `POST /v1/invitations` (ersetzt playerboards vereinheitlichten Einladungsdialog aus Feature 015).
+- `apps/api/src/routes/playerboard/`: `players.ts`, `categories.ts`, `trainings.ts`, `pointEntries.ts` (Bulk-Upsert je Training, wie die mobile Eingabe speichert), `photos.ts` (signierte Upload- und Lese-URLs, Ausnehmen einzelner Fotos), `ranking.ts`, `settings.ts`, `public.ts` (anonym: Rangliste, Fotos; kurzlebige signierte Foto-URLs).
+- `POST /v1/playerboard/players` legt Verzeichnisperson und Kader-Eintrag in einem Schritt an (eine Transaktion, Rechteprüfung `training.manage` auf der Mannschaft); alternativ mit `directoryPersonId` für eine vorhandene Person.
+- Einladung mit `directoryPersonId` in `POST /v1/invitations`, Adresse aus `directory_people.email` vorbelegt (ersetzt playerboards vereinheitlichten Einladungsdialog aus Feature 015). Fehlt die E-Mail, fragt der Dialog sie ab und speichert sie an der Person.
 
 ### PR 3 – Oberfläche Trainer
 
 Seiten unter `/playerboard/` im Modul-Registry aus 051, Mannschaft aus dem aktiven Scope (`useActiveScope`); auf Abteilungs- oder Vereinsebene zuerst eine Mannschaftsauswahl.
 
-- `/playerboard/kader`: aus dem Verzeichnis der Mannschaft hinzufügen, Rückennummer und Position, Einladung an den Spieler bzw. die Spielerin
+- `/playerboard/kader`: Spieler neu anlegen (Name, optional Geburtsjahr, Rückennummer, Position, E-Mail) oder aus dem Verzeichnis der Mannschaft übernehmen; E-Mail später ergänzen; „Einladen“ jederzeit, sobald eine E-Mail vorliegt
 - `/playerboard/trainings`, `/playerboard/trainings/neu`, `/playerboard/trainings/[id]`: mobile Punkteeingabe aus playerboard übernehmen (Zielgruppe ist der Platzrand: ≥ 44 px Touchziele, 360 px Breite), Fotos, Einwilligungshinweis
 - `/playerboard/kategorien`: eigene und geerbte Kategorien, geerbte schreibgeschützt mit Herkunftsebene
-- `/playerboard/einstellungen`: Saisonbeginn, Sichtbarkeit der Werte (`stats_visibility`), Freigaben, öffentliche Rangliste — Zustände **geerbt**, **eigener Wert**, **gesperrt** wie `PolicyFlagToggles.vue`
+- `/playerboard/einstellungen`: Saisonbeginn, Sichtbarkeit der Werte (`stats_visibility`), Freigaben, öffentliche Mannschaftsseite (drei Schalter, Link zum Teilen, Liste der Spieler ohne Einwilligung für öffentliche Fotos) — Zustände **geerbt**, **eigener Wert**, **gesperrt** wie `PolicyFlagToggles.vue`
 
 ### PR 4 – Spieleransicht, Rangliste, Übersicht
 
 - `/playerboard` und `/playerboard/rangliste` für `player` und Trainer, Zeitraumfilter (Saison, Monat, frei)
-- öffentliche Seite `/rangliste/[orgSlug]/[teamSlug]` im `auth`-Layout, mit Vereinsmarke aus `resolveBrand`
+- öffentliche Seite `/mannschaft/[orgSlug]/[teamSlug]` im `auth`-Layout mit den Reitern Rangliste und Fotos (Veo folgt in 053), Vereinsmarke aus `resolveBrand`
+- bei jedem Trainingsfoto: Schalter „nicht öffentlich“
 - PlayerBoard-Kachel auf der Übersicht (`index.vue`), eingehängt über das Modul-Registry
 
 ## Bewusst nicht übernommen
@@ -293,13 +320,13 @@ Seiten unter `/playerboard/` im Modul-Registry aus 051, Mannschaft aus dem aktiv
 
 - pgTAP wie unter PR 1, nach frischem `supabase db reset`.
 - API-Tests je Route inklusive `403 module_disabled` und `403 forbidden` für `player` auf Schreibrouten.
-- Playwright auf 360 px Breite: Training anlegen, Punkte für zehn Spieler erfassen, speichern, als `player` Rangliste prüfen, öffentliche Rangliste ohne Anmeldung aufrufen und auf das Fehlen von Namen prüfen.
+- Playwright auf 360 px Breite: Training anlegen, Punkte für zehn Spieler erfassen, speichern, als `player` Rangliste prüfen, öffentliche Mannschaftsseite ohne Anmeldung aufrufen: nur „#Nr Initialen“, keine Klarnamen; Fotos nur bei eingeschaltetem Schalter und ohne ausgenommene Fotos.
 - `pnpm lint`, `typecheck`, `test`, `build`, `db:test` grün.
 
 ## Risiken und offene Entscheidungen
 
-- **Wer legt Verzeichnispersonen an?** Heute hat `team_manager` nur `directory.read`. Ohne Schreibrecht kann ein Trainer seinen Kader nicht selbst aufbauen, bis die Abteilung oder ein Import die Personen anlegt. Empfehlung: neues Recht `directory.write` für `team_manager`, beschränkt auf Personen der eigenen Mannschaft. Seit dem Wegfall der Eltern-E-Mail-Pflicht reichen dafür Name, Geburtsjahr und Mannschaft.
+- **Initialen sind kein vollständiger Schutz.** In einer kleinen Mannschaft lassen „#7 M. K.“ und ein öffentliches Foto auf eine Person schließen. Das ist mit der Betreiberentscheidung bewusst in Kauf genommen. Die Vereinsebene kann `public_sharing_allowed` jederzeit für alle abschalten.
 - **Bewertungsdaten von Kindern in der Verarbeitungsdokumentation.** Punkte und Veo-Werte sind bewusst offen (siehe „Sichtbarkeit der Werte“). Sie gehören trotzdem als eigene Verarbeitung mit Zweck „Trainingsbewertung und Spielanalyse“ in die Verarbeitungsdokumentation (Paket 020), samt der gewählten `stats_visibility`.
 - **`team_manager` als einzige Trainerrolle.** Wer nur Punkte erfassen, aber keine Beiträge schreiben soll (Co-Trainer), bekommt dieselbe Rolle. Bei Bedarf später eine Team-Rolle `coach` mit nur `training.*`.
 
-Entschieden (Betreiber, 2026-10-05): keine Pflicht zur Eltern-E-Mail, keine Elternkonten, Punkte und Veo-Werte innerhalb der Mannschaft für alle sichtbar, Sichtbarkeit darüber hinaus je Ebene über `stats_visibility`.
+Entschieden (Betreiber, 2026-10-05/06): kein Elternkontakt und keine Elternkonten; Trainer legen Spieler selbst an, E-Mail optional, Einladung jederzeit; Punkte und Veo-Werte innerhalb der Mannschaft für alle sichtbar, vereinsintern darüber hinaus je Ebene über `stats_visibility`; öffentliche Mannschaftsseite mit Rückennummer und Initialen, Fotos auf Wunsch des Trainers.

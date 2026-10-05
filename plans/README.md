@@ -143,10 +143,11 @@ Stand: 2026-10-05, geplant auf `e3fb52d`. **Betreiberentscheidung 2026-10-05:** 
 | Nr. | Arbeitspaket | Abhängigkeiten | Status |
 |---|---|---|---|
 | 051 | [Modulrahmen: Vereinsfunk als Rahmenanwendung mit buchbaren Modulen](051-modulrahmen.md) | 021, 023 | bereit |
-| 052 | [PlayerBoard-Modul: Trainings, Punkte, Rangliste und Trainingsfotos](052-playerboard-modul.md) | 051, 014, 015 | bereit; enthält als Rahmenänderung den Wegfall der Eltern-E-Mail-Pflicht im Verzeichnis; offen: Schreibrecht auf das Verzeichnis für `team_manager` |
+| 054 | [Verzeichnis ohne Elternkontakt, eigene E-Mail je Person](054-verzeichnis-ohne-elternkontakt.md) | 014 | bereit; Rahmenänderung, entfernt `guardian_name`/`guardian_email` unumkehrbar (Betreiberentscheidung 2026-10-06); ersetzt die Elternkontakt-Teile von 014/015/019 |
+| 052 | [PlayerBoard-Modul: Trainings, Punkte, Rangliste und Trainingsfotos](052-playerboard-modul.md) | 051, 054, 014, 015 | bereit; Trainer legen Spieler selbst an; öffentliche Mannschaftsseite mit Rückennummer und Initialen, Fotos auf Wunsch |
 | 053 | [PlayerBoard: Veo-Anbindung, Spielstatistiken und öffentliche Veo-Werte](053-playerboard-veo-anbindung.md) | 052, 019, 026 | bereit; für jeden Verein mit PlayerBoard freigeschaltet (Betreiberentscheidung trotz inoffizieller Veo-API); PR 4 schaltet playerboard ab |
 
-Reihenfolge: 051 zuerst und vollständig. Der Rahmen darf das Verhalten des Social-Media-Moduls nicht verändern, und das muss vor dem ersten neuen Modul nachgewiesen sein. Danach 052 (PR 1–4) und 053. playerboard läuft bis zum Abschluss von 053 PR 3 unverändert weiter.
+Reihenfolge: 051 zuerst und vollständig. Der Rahmen darf das Verhalten des Social-Media-Moduls nicht verändern, und das muss vor dem ersten neuen Modul nachgewiesen sein. 054 ist unabhängig von 051 und kann parallel laufen, muss aber vor 052 fertig sein. Danach 052 (PR 1–4) und 053. playerboard läuft bis zum Abschluss von 053 PR 3 unverändert weiter.
 
 ## Rückbau-Inventar: jeder Prototyp-Datensatz und sein Ersatz
 
