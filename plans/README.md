@@ -136,6 +136,18 @@ Sechster Befund, gefunden beim Code-Review von PR #40 (Paket 032), betrifft Pake
 
 Siebter Befund, wie der sechste beim Code-Review zu PR #40 gefunden, betrifft ebenfalls Paket 015: `organization_consent_texts_immutable` war identisch fehlerhaft angelegt (`before update or delete`) und blockierte damit dieselbe `ON DELETE CASCADE`-Kaskade beim Löschen einer Organisation mit vorhandenem Einwilligungstext. **✓ Behoben in Paket 015**: Trigger auf `before update` beschränkt, die Löschsemantik trägt der Fremdschlüssel; zwei pgTAP-Assertions in `consent_management.test.sql` beweisen die erfolgreiche Kaskade.
 
+## Sechste Serie: Rahmenanwendung und Module
+
+Stand: 2026-10-05, geplant auf `e3fb52d`. **Betreiberentscheidung 2026-10-05:** Vereinsfunk wird zur Rahmenanwendung für den digitalen Vereinsbetrieb. Verein, Struktur, Mitglieder, Verzeichnis, Einwilligungen, Marke, Spielplan, Integrationen, Recht und Tarif gehören dem Rahmen; fachliche Anwendungen sind Module, die ein Verein über seinen Tarif bucht und je Abteilung oder Mannschaft abwählen kann. Die bisherige Social-Media-Werkstatt wird zum Modul `social_media`. Als zweites Modul zieht die bislang eigenständige Anwendung `haexhub/playerboard` (Trainingspunkte, Rangliste, Veo-Statistiken) als `playerboard` ein — neu aufgebaut, ohne Datenumzug, weil die playerboard-Datenbank keine relevanten Nutzerdaten enthält.
+
+| Nr. | Arbeitspaket | Abhängigkeiten | Status |
+|---|---|---|---|
+| 051 | [Modulrahmen: Vereinsfunk als Rahmenanwendung mit buchbaren Modulen](051-modulrahmen.md) | 021, 023 | bereit |
+| 052 | [PlayerBoard-Modul: Trainings, Punkte, Rangliste und Trainingsfotos](052-playerboard-modul.md) | 051, 014, 015 | bereit; enthält als Rahmenänderung den Wegfall der Eltern-E-Mail-Pflicht im Verzeichnis; offen: Schreibrecht auf das Verzeichnis für `team_manager` |
+| 053 | [PlayerBoard: Veo-Anbindung, Spielstatistiken und öffentliche Veo-Werte](053-playerboard-veo-anbindung.md) | 052, 019, 026 | bereit; für jeden Verein mit PlayerBoard freigeschaltet (Betreiberentscheidung trotz inoffizieller Veo-API); PR 4 schaltet playerboard ab |
+
+Reihenfolge: 051 zuerst und vollständig. Der Rahmen darf das Verhalten des Social-Media-Moduls nicht verändern, und das muss vor dem ersten neuen Modul nachgewiesen sein. Danach 052 (PR 1–4) und 053. playerboard läuft bis zum Abschluss von 053 PR 3 unverändert weiter.
+
 ## Rückbau-Inventar: jeder Prototyp-Datensatz und sein Ersatz
 
 Vollständige Liste der erfundenen Daten im Anwendungscode, mit dem Paket, das sie ersetzt. Kein Eintrag darf ohne Ersatz verschwinden und keiner ohne Rückbau bleiben.
