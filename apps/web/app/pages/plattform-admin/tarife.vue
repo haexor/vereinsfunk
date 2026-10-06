@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import {
+  AppModuleSchema,
   CreateSubscriptionPlanRequestSchema,
   MediaOriginSchema,
   SetSubscriptionPlanContentLimitsRequestSchema,
   SubscriptionPlanSchema,
   UpdateSubscriptionPlanRequestSchema,
+  type AppModule,
   type MediaOrigin,
   type SubscriptionPlan,
 } from '@vereinsfunk/contracts'
@@ -17,6 +19,10 @@ definePageMeta({ layout: 'admin' })
 const MEDIA_ORIGINS: readonly MediaOrigin[] = MediaOriginSchema.options
 const MEDIA_ORIGIN_LABELS: Record<MediaOrigin, string> = { own_upload: 'Eigene Beiträge', ai_image: 'KI-Bilder', ai_video: 'KI-Videos' }
 const BYTES_PER_MB = 1024 * 1024
+// Paket 051: welche Module ein Tarif enthaelt. Ein Verein, eine Abteilung oder Mannschaft kann
+// daraus nur abwaehlen, nie etwas hinzunehmen.
+const APP_MODULES: readonly AppModule[] = AppModuleSchema.options
+const APP_MODULE_LABELS: Record<AppModule, string> = { social_media: 'Social Media', playerboard: 'PlayerBoard' }
 
 const api = useApiClient()
 const loading = ref(true)
@@ -32,6 +38,7 @@ function emptyContentLimits(): Record<MediaOrigin, { maxPerMonth: string; maxDur
 
 const newPlan = reactive({
   key: '', displayName: '', monthlyPriceCents: '', currency: 'EUR', storageMegabytes: '', maxTeams: '', maxDepartments: '', isSelfServiceable: true, sortOrder: 0, availableFrom: '', availableUntil: '',
+  includedModules: ['social_media'] as AppModule[],
   contentLimits: emptyContentLimits(),
 })
 
@@ -77,6 +84,7 @@ function resetPlanForm() {
   newPlan.sortOrder = 0
   newPlan.availableFrom = ''
   newPlan.availableUntil = ''
+  newPlan.includedModules = ['social_media']
   newPlan.contentLimits = emptyContentLimits()
 }
 
@@ -93,6 +101,7 @@ function editPlan(plan: SubscriptionPlan) {
   newPlan.sortOrder = plan.sortOrder
   newPlan.availableFrom = plan.availableFrom ?? ''
   newPlan.availableUntil = plan.availableUntil ?? ''
+  newPlan.includedModules = [...plan.includedModules]
   const limits = emptyContentLimits()
   for (const limit of plan.contentLimits) limits[limit.mediaOrigin] = { maxPerMonth: limit.maxPerMonth?.toString() ?? '', maxDurationSeconds: limit.maxDurationSeconds?.toString() ?? '' }
   newPlan.contentLimits = limits
@@ -113,6 +122,8 @@ async function savePlan() {
       maxDepartments: newPlan.maxDepartments.trim() ? Number(newPlan.maxDepartments) : null,
       isSelfServiceable: newPlan.isSelfServiceable, sortOrder: newPlan.sortOrder,
       availableFrom: newPlan.availableFrom || null, availableUntil: newPlan.availableUntil || null,
+      // In der festen Reihenfolge des Enums statt in Klickreihenfolge.
+      includedModules: APP_MODULES.filter((module) => newPlan.includedModules.includes(module)),
     }
     const contentLimits = toContentLimitsPayload(newPlan.contentLimits)
     if (editingPlanKey.value) {
@@ -201,6 +212,15 @@ function formatPrice(cents: number | null, currency: string): string {
           </label>
 
           <fieldset class="sm:col-span-2">
+            <legend class="mb-2 text-xs font-semibold text-[#5c655f]">Enthaltene Module</legend>
+            <div class="flex flex-wrap gap-4">
+              <label v-for="module in APP_MODULES" :key="module" class="flex items-center gap-2 text-xs font-semibold text-[#5c655f]">
+                <input v-model="newPlan.includedModules" :value="module" type="checkbox" class="accent-forest" /> {{ APP_MODULE_LABELS[module] }}
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset class="sm:col-span-2">
             <legend class="mb-2 text-xs font-semibold text-[#5c655f]">Beitragskontingente je Monat (leer = unbegrenzt)</legend>
             <div class="grid gap-3 sm:grid-cols-3">
               <div v-for="mediaOrigin in MEDIA_ORIGINS" :key="mediaOrigin">
@@ -230,6 +250,7 @@ function formatPrice(cents: number | null, currency: string): string {
               <th class="pb-2 pr-4 font-semibold">Speicher</th>
               <th class="pb-2 pr-4 font-semibold">Mannschaften</th>
               <th class="pb-2 pr-4 font-semibold">Abteilungen</th>
+              <th class="pb-2 pr-4 font-semibold">Module</th>
               <th class="pb-2 pr-4 font-semibold">Buchbar bis</th>
               <th class="pb-2 font-semibold" />
             </tr>
@@ -242,6 +263,7 @@ function formatPrice(cents: number | null, currency: string): string {
                 <td class="py-2 pr-4">{{ formatBytes(plan.storageBytes) }}</td>
                 <td class="py-2 pr-4">{{ plan.maxTeams ?? 'unbegrenzt' }}</td>
                 <td class="py-2 pr-4">{{ plan.maxDepartments ?? 'unbegrenzt' }}</td>
+                <td class="py-2 pr-4">{{ plan.includedModules.map((module) => APP_MODULE_LABELS[module]).join(', ') || 'keine' }}</td>
                 <td class="py-2 pr-4">{{ plan.availableUntil ?? '—' }}</td>
                 <td class="py-2 text-right">
                   <button type="button" class="focus-ring rounded-lg px-2 py-1 text-[11px] font-semibold text-forest hover:bg-[#f1f6f2]" :disabled="saving" @click="editPlan(plan)">

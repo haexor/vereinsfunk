@@ -11,12 +11,16 @@ import {
   type PlatformAdminProvider,
   type RoleProvider,
 } from './auth.js'
+import type { ModuleStatusProvider } from './moduleStatus.js'
 import { resolveRolesForScopes } from './routes/shared.js'
 import { fetchAllRowsForIds } from './supabase.js'
 
 const roleProvider: RoleProvider = { async rolesForScope() { return [] } }
 const platformAdminProvider: PlatformAdminProvider = {
   async statusFor() { return { isPlatformAdmin: false, isDefaultAdmin: false } },
+}
+const moduleStatusProvider: ModuleStatusProvider = {
+  async modulesForScope() { return { enabled: ['social_media', 'playerboard'], blockedBy: {} } },
 }
 
 function fakeRequest(accessToken?: string): FastifyRequest {
@@ -55,7 +59,7 @@ describe('createAuthGuards JWKS verification', () => {
       .sign(privateKey)
 
     const environment = parseApiEnvironment({ SUPABASE_URL })
-    const { requireAuth } = createAuthGuards(environment, roleProvider, platformAdminProvider, { jwksFetch })
+    const { requireAuth } = createAuthGuards(environment, roleProvider, platformAdminProvider, moduleStatusProvider, { jwksFetch })
 
     const request = fakeRequest(token)
     const reply = fakeReply()
@@ -84,7 +88,7 @@ describe('createAuthGuards JWKS verification', () => {
       .sign(otherPrivateKey)
 
     const environment = parseApiEnvironment({ SUPABASE_URL })
-    const { requireAuth } = createAuthGuards(environment, roleProvider, platformAdminProvider, { jwksFetch })
+    const { requireAuth } = createAuthGuards(environment, roleProvider, platformAdminProvider, moduleStatusProvider, { jwksFetch })
 
     const request = fakeRequest(forgedToken)
     const reply = fakeReply()

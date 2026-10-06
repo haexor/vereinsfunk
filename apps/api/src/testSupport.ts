@@ -6,6 +6,8 @@ import { buildApp, type BuildAppOptions } from './app.js'
 
 export { buildApp }
 import type { PlatformAdminProvider, RoleProvider } from './auth.js'
+import type { ModuleStatusProvider } from './moduleStatus.js'
+import { appModules, type AppModule } from '@vereinsfunk/domain'
 
 export const TEST_JWT_SECRET = 'test-only-secret-at-least-32-characters-long'
 export const USER_ID = '10000000-0000-4000-8000-000000000001'
@@ -169,8 +171,20 @@ export const nonAdminProvider: PlatformAdminProvider = { async statusFor() { ret
 export const adminProvider: PlatformAdminProvider = { async statusFor() { return { isPlatformAdmin: true, isDefaultAdmin: false } } }
 export const defaultAdminProvider: PlatformAdminProvider = { async statusFor() { return { isPlatformAdmin: true, isDefaultAdmin: true } } }
 
+// Paket 051: Route-Tests laufen standardmaessig mit allen Modulen aktiv -- ihre Supabase-Fakes
+// muessten sonst organization_subscriptions/policy_settings fuer die Modulpruefung mitbedienen.
+// Tests der Modulpruefung selbst setzen moduleStatusProvider ausdruecklich.
+export function moduleStatusProviderWith(enabled: readonly AppModule[]): ModuleStatusProvider {
+  return {
+    async modulesForScope() {
+      return { enabled, blockedBy: Object.fromEntries(appModules.filter((module) => !enabled.includes(module)).map((module) => [module, 'organization'])) }
+    },
+  }
+}
+export const allModulesEnabledProvider = moduleStatusProviderWith(appModules)
+
 export async function startApp(options: BuildAppOptions = {}) {
-  const app = await buildApp({ logger: false, ...options })
+  const app = await buildApp({ logger: false, moduleStatusProvider: allModulesEnabledProvider, ...options })
   apps.push(app)
   return app
 }

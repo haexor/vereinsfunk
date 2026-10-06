@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { DEPARTMENT_ID, ORGANIZATION_ID, USER_ID, chain, denyingRoleProvider, organizationManagerRoleProvider, signAccessToken, startApp } from './testSupport.js'
+import { DEPARTMENT_ID, ORGANIZATION_ID, USER_ID, chain, denyingRoleProvider, moduleStatusProviderWith, organizationManagerRoleProvider, signAccessToken, startApp } from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { MetaPublishError } from '@vereinsfunk/publishing'
 import type { PublicationInput, SocialPublisher } from '@vereinsfunk/publishing'
@@ -171,17 +171,39 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
     })
 
     it('rejects with 409 invalid_status when the compare-and-set loses the race', async () => {
-      // status ist bereits nicht mehr 'queued' (paralleler Aufruf/frueherer Versuch) -- die
-      // Update-Eq-Kette (status='queued') trifft dann keine Zeile.
+      // status ist bereits nicht mehr 'queued' (paralleler Aufruf/frueherer Versuch) -- der Claim
+      // (claim_publication_for_execution, Paket 051) meldet dann invalid_status.
       const clients: SupabaseClientFactory = {
         ...readOnlyClients(),
-        forService: () => ({ from: (table: string) => { const gate = mediaGateTables(table); if (gate) return gate; if (table === 'publications') return { update: () => chain({ data: null, error: null }) }; throw new Error(`unexpected table in service fake: ${table}`) } }) as unknown as SupabaseClient,
+        forService: () => ({ rpc: async () => ({ data: 'invalid_status', error: null }), from: (table: string) => { const gate = mediaGateTables(table); if (gate) return gate; throw new Error(`unexpected table in service fake: ${table}`) } }) as unknown as SupabaseClient,
       }
       const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
       const token = await signAccessToken(USER_ID)
       const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
       expect(response.statusCode).toBe(409)
       expect(response.json()).toMatchObject({ error: 'invalid_status' })
+    })
+
+    it('rejects with 403 module_disabled when social_media was switched off before the claim', async () => {
+      // Paket 051: requirePermission sah das Modul noch aktiv, der Claim unter dem Modul-Lock nicht
+      // mehr -- die Veroeffentlichung ist dann abgebrochen, nichts geht nach aussen.
+      const clients: SupabaseClientFactory = {
+        ...readOnlyClients(),
+        forService: () => ({ rpc: async () => ({ data: 'module_disabled', error: null }), from: (table: string) => { const gate = mediaGateTables(table); if (gate) return gate; throw new Error(`unexpected table in service fake: ${table}`) } }) as unknown as SupabaseClient,
+      }
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
+      expect(response.statusCode).toBe(403)
+      expect(response.json()).toMatchObject({ error: 'module_disabled', module: 'social_media' })
+    })
+
+    it('rejects with 403 module_disabled before loading anything else when social_media is off for the post', async () => {
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: readOnlyClients(), moduleStatusProvider: moduleStatusProviderWith(['playerboard']) })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
+      expect(response.statusCode).toBe(403)
+      expect(response.json()).toMatchObject({ error: 'module_disabled', module: 'social_media' })
     })
 
     it('rejects with 422 when the post version has no approved media derivative yet (Instagram)', async () => {
@@ -195,6 +217,7 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
         ...readOnlyClients({ platform: 'instagram' }),
         forService: () =>
           ({
+            rpc: async () => ({ data: 'claimed', error: null }),
             from: (table: string) => {
               // post_media kommt hier leer zurueck -- dieselbe Antwort bedient den Gate-Check davor
               // und die Medienauflistung fuer den Publisher danach.
@@ -228,6 +251,7 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
         ...readOnlyClients(),
         forService: () =>
           ({
+            rpc: async () => ({ data: 'claimed', error: null }),
             from: (table: string) => {
               const gate = mediaGateTables(table)
               if (gate) return gate
@@ -261,6 +285,7 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
           ...readOnlyClients(),
           forService: () =>
             ({
+              rpc: async () => ({ data: 'claimed', error: null }),
               from: (table: string) => {
                 // Ein Medium, das beide Leser bedient: den Gate-Check davor (media_asset_id ->
                 // scan_status='clean', kein face_regions-Eintrag, Derivat 'ready') und die
@@ -323,6 +348,7 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
           ...readOnlyClients(),
           forService: () =>
             ({
+              rpc: async () => ({ data: 'claimed', error: null }),
               from: (table: string) => {
                 const gate = mediaGateTables(table, {
                   postMedia: [
@@ -390,6 +416,7 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
         ...readOnlyClients(),
         forService: () =>
           ({
+            rpc: async () => ({ data: 'claimed', error: null }),
             from: (table: string) => {
               const gate = mediaGateTables(table)
               if (gate) return gate
@@ -431,6 +458,7 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
         ...readOnlyClients(),
         forService: () =>
           ({
+            rpc: async () => ({ data: 'claimed', error: null }),
             from: (table: string) => {
               const gate = mediaGateTables(table)
               if (gate) return gate

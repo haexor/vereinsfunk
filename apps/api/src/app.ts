@@ -31,6 +31,7 @@ import {
   type RoleProvider,
 } from './auth.js'
 import { createEmailSender, type EmailSender } from './email.js'
+import { SupabaseModuleStatusProvider, type ModuleStatusProvider } from './moduleStatus.js'
 import { SupabaseUploadService } from './mediaUpload.js'
 import { createServiceClient, createUserClient } from './supabase.js'
 import { registerAnalyticsRoutes } from './routes/analytics.js'
@@ -59,6 +60,7 @@ import { registerOrganizationRoutes } from './routes/organization.js'
 import { registerPlatformAdminRoutes } from './routes/platformAdmin.js'
 import { registerPlatformPersonaRoutes } from './routes/platformPersonas.routes.js'
 import { registerPolicyRoutes } from './routes/policies.js'
+import { registerModuleRoutes } from './routes/modules.js'
 import { registerPublishingRoutes } from './routes/publishing.js'
 import { registerRetentionRoutes } from './routes/retention.js'
 import { registerStructureRoutes } from './routes/structure.js'
@@ -87,6 +89,9 @@ export interface BuildAppOptions {
   roleProvider?: RoleProvider
   supabaseClients?: SupabaseClientFactory
   platformAdminProvider?: PlatformAdminProvider
+  // Paket 051: welche Module im Scope aktiv sind. testSupport.startApp setzt standardmaessig einen
+  // Provider mit allen Modulen ein, damit Route-Tests ihre Supabase-Fakes nicht erweitern muessen.
+  moduleStatusProvider?: ModuleStatusProvider
   emailSender?: EmailSender
   metaOAuthClient?: MetaOAuthClient
   twitterOAuthClient?: TwitterOAuthClient
@@ -168,6 +173,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const platformAdminProvider =
     options.platformAdminProvider ??
     new SupabasePlatformAdminProvider(() => supabaseClients.forService())
+  const moduleStatusProvider =
+    options.moduleStatusProvider ??
+    new SupabaseModuleStatusProvider(() => supabaseClients.forService())
   const useFakePublishing = environment.PUBLISHING_MODE === 'fake'
   async function loadMetaConfiguration(): Promise<{
     clientId: string
@@ -279,7 +287,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     },
   }
   const { requireAuth, requirePermission, requirePermissionAnyOf, requirePlatformAdmin } =
-    createAuthGuards(environment, roleProvider, platformAdminProvider)
+    createAuthGuards(environment, roleProvider, platformAdminProvider, moduleStatusProvider)
 
   // Paket 025: ein MetaPublisher braucht das entschluesselte Token GENAU dieser Social-Connection
   // (anders als metaOAuthClient oben, das appId/appSecret-Ebene bleibt) -- deshalb keine einmalige
@@ -314,6 +322,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     supabaseClients,
     roleProvider,
     platformAdminProvider,
+    moduleStatusProvider,
     emailSender,
     ...(imageEffects ? { imageEffects } : {}),
     samplePhotoLoader,
@@ -372,6 +381,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   registerMemberRoutes(app, context)
   registerInvitationRoutes(app, context)
   registerPolicyRoutes(app, context)
+  registerModuleRoutes(app, context)
   registerApprovalRoutes(app, context)
   registerPublishingRoutes(app, context)
   registerChannelQuotaRoutes(app, context)
