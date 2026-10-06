@@ -1,8 +1,9 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(16);
+select plan(18);
 
 set local role postgres;
+select set_config('request.jwt.claim.sub', '51000000-0000-4000-8000-000000000001', true);
 
 -- Paket 051: Modulrahmen. Zwei Vereine: 1 ohne Abo (der Tarif schraenkt nichts ein), 2 mit einem
 -- eigenen Tarif, der nur social_media enthaelt.
@@ -21,7 +22,8 @@ insert into public.teams (id, organization_id, department_id, name) values
   ('51000000-1200-4000-8000-000000000001', '51000000-1000-4000-8000-000000000001', '51000000-1100-4000-8000-000000000001', 'Team X'),
   ('51000000-1200-4000-8000-000000000002', '51000000-1000-4000-8000-000000000001', '51000000-1100-4000-8000-000000000002', 'Team Y');
 insert into public.organization_memberships (organization_id, user_id, role) values
-  ('51000000-1000-4000-8000-000000000001', '51000000-0000-4000-8000-000000000001', 'organization_owner');
+  ('51000000-1000-4000-8000-000000000001', '51000000-0000-4000-8000-000000000001', 'organization_owner'),
+  ('51000000-1000-4000-8000-000000000002', '51000000-0000-4000-8000-000000000001', 'organization_owner');
 
 -- 1: Bestand -- jeder vor dieser Migration vorhandene Tarif enthaelt beide Module.
 select is(
@@ -92,13 +94,21 @@ select lives_ok(
   'authenticated can select the enabled_modules column'
 );
 
--- 15: authenticated darf policy_settings.enabled_modules nicht direkt schreiben (nur ueber die API).
+-- 15-16: Mitglieder duerfen den Modulstatus ihres Vereins fuer RLS-Policies abfragen,
+-- Nichtmitglieder aber nicht den Status fremder Vereine per direktem RPC-Aufruf.
+select ok(authz.module_enabled('51000000-1000-4000-8000-000000000001', null, null, 'playerboard'),
+  'an authenticated organization member can query its organization module status');
+select set_config('request.jwt.claim.sub', '51000000-0000-4000-8000-000000000099', true);
+select ok(not authz.module_enabled('51000000-1000-4000-8000-000000000001', null, null, 'playerboard'),
+  'an authenticated non-member cannot query another organization module status');
+
+-- 17: authenticated darf policy_settings.enabled_modules nicht direkt schreiben (nur ueber die API).
 select throws_ok(
   $$update public.policy_settings set enabled_modules = '{}' where organization_id = '51000000-1000-4000-8000-000000000001'$$,
   '42501', null, 'authenticated cannot write enabled_modules directly'
 );
 
--- 16: anon darf authz.module_enabled nicht ausfuehren.
+-- 18: anon darf authz.module_enabled nicht ausfuehren.
 set local role anon;
 select throws_ok(
   $$select authz.module_enabled('51000000-1000-4000-8000-000000000001', null, null, 'playerboard')$$,

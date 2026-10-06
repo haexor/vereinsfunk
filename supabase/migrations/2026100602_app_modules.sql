@@ -38,7 +38,13 @@ stable
 security definer
 set search_path = public, pg_temp
 as $$
-  select (
+  select
+      -- Die Funktion ist fuer RLS-Policies fuer authenticated freigegeben. Ohne diese
+      -- Mitgliedschaftspruefung koennte jeder eingeloggte Nutzer den Tarifstatus eines
+      -- fremden Vereins per direktem RPC-Aufruf abfragen. Service-Role-Aufrufe kommen aus
+      -- der API und duerfen organisationsuebergreifend arbeiten.
+      (coalesce(auth.role(), '') = 'service_role' or authz.is_any_member_of_organization(target_organization_id))
+    and (
       not exists (select 1 from public.organization_subscriptions s where s.organization_id = target_organization_id)
       or exists (
         select 1
