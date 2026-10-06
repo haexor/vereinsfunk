@@ -108,7 +108,7 @@ export function registerSubscriptionRoutes(app: FastifyInstance, context: ApiRou
     const today = new Date().toISOString().slice(0, 10)
     const plans = await service
       .from('subscription_plans')
-      .select('key, display_name, monthly_price_cents, currency, storage_bytes, max_teams, max_departments, is_self_serviceable, sort_order, available_from, available_until')
+      .select('key, display_name, monthly_price_cents, currency, storage_bytes, max_teams, max_departments, is_self_serviceable, sort_order, available_from, available_until, included_modules')
       .eq('is_self_serviceable', true)
       .or(`available_from.is.null,available_from.lte.${today}`)
       .or(`available_until.is.null,available_until.gte.${today}`)
@@ -125,6 +125,7 @@ export function registerSubscriptionRoutes(app: FastifyInstance, context: ApiRou
           key: row.key, displayName: row.display_name, monthlyPriceCents: row.monthly_price_cents, currency: row.currency,
           storageBytes: row.storage_bytes, maxTeams: row.max_teams, maxDepartments: row.max_departments,
           isSelfServiceable: row.is_self_serviceable, sortOrder: row.sort_order, availableFrom: row.available_from, availableUntil: row.available_until,
+          includedModules: row.included_modules,
           contentLimits: contentLimits.data
             .filter((limit) => limit.plan_key === row.key)
             .map((limit) => ({ mediaOrigin: limit.media_origin, maxPerMonth: limit.max_per_month, maxDurationSeconds: limit.max_duration_seconds })),

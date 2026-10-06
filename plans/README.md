@@ -142,8 +142,8 @@ Stand: 2026-10-05, geplant auf `e3fb52d`. **Betreiberentscheidung 2026-10-05:** 
 
 | Nr. | Arbeitspaket | Abhängigkeiten | Status |
 |---|---|---|---|
-| 051 | [Modulrahmen: Vereinsfunk als Rahmenanwendung mit buchbaren Modulen](051-modulrahmen.md) | 021, 023 | bereit |
-| 054 | [Verzeichnis ohne Elternkontakt, eigene E-Mail je Person](054-verzeichnis-ohne-elternkontakt.md) | 014 | umgesetzt, PR offen; Rahmenänderung, entfernt `guardian_name`/`guardian_email` unumkehrbar (Betreiberentscheidung 2026-10-06); ersetzt die Elternkontakt-Teile von 014/015/019; Trainer können damit auch aktive minderjährige Spieler selbst anlegen |
+| 051 | [Modulrahmen: Vereinsfunk als Rahmenanwendung mit buchbaren Modulen](051-modulrahmen.md) | 021, 023 | PR 1 (Datenmodell, Domain, Verträge) umgesetzt, PR offen; PR 2 und 3 offen |
+| 054 | [Verzeichnis ohne Elternkontakt, eigene E-Mail je Person](054-verzeichnis-ohne-elternkontakt.md) | 014 | umgesetzt (PR #205); Rahmenänderung, entfernt `guardian_name`/`guardian_email` unumkehrbar (Betreiberentscheidung 2026-10-06); ersetzt die Elternkontakt-Teile von 014/015/019; Trainer können damit auch aktive minderjährige Spieler selbst anlegen |
 | 052 | [PlayerBoard-Modul: Trainings, Punkte, Rangliste und Trainingsfotos](052-playerboard-modul.md) | 051, 054, 014, 015 | bereit; Trainer legen Spieler selbst an; öffentliche Mannschaftsseite mit Rückennummer und Initialen, Fotos auf Wunsch |
 | 053 | [PlayerBoard: Veo-Anbindung, Spielstatistiken und öffentliche Veo-Werte](053-playerboard-veo-anbindung.md) | 052, 019, 026 | bereit; für jeden Verein mit PlayerBoard freigeschaltet (Betreiberentscheidung trotz inoffizieller Veo-API); PR 4 schaltet playerboard ab |
 

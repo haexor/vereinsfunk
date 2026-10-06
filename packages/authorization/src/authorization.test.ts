@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canAssignRole, canRemoveRole, hasPermission } from './index.js'
+import { canAssignRole, canRemoveRole, hasPermission, permissionModule, permissions } from './index.js'
 
 describe('authorization', () => {
   it('lets editors edit but not approve', () => {
@@ -96,5 +96,18 @@ describe('canRemoveRole', () => {
 
   it('returns false for no roles at all', () => {
     expect(canRemoveRole([], 'viewer')).toBe(false)
+  })
+})
+
+describe('permissionModule', () => {
+  it('assigns every permission to exactly one module or the core', () => {
+    expect(Object.keys(permissionModule).sort()).toEqual([...permissions].sort())
+  })
+
+  it('keeps the framework permissions in the core, so switching a module off never locks out administration', () => {
+    for (const permission of ['organization.manage', 'department.manage', 'team.manage', 'member.invite', 'directory.read', 'consent.manage', 'fixture.manage'] as const) {
+      expect(permissionModule[permission]).toBe('core')
+    }
+    expect(permissionModule['post.publish']).toBe('social_media')
   })
 })

@@ -31,10 +31,11 @@ export type ConfigOverride = Partial<Omit<EffectiveConfig, 'policies'>> & {
   policies?: Partial<EffectiveConfig['policies']>
 }
 
-function mergeAllowedList(
-  current: readonly string[] | null,
-  next: readonly string[] | null | undefined,
-): readonly string[] | null {
+// Exportiert seit Paket 051: die Modulauswahl je Ebene (modules.ts) folgt derselben Regel.
+export function mergeAllowedList<T extends string>(
+  current: readonly T[] | null,
+  next: readonly T[] | null | undefined,
+): readonly T[] | null {
   // undefined (Feld auf dieser Ebene gar nicht gesetzt) und null (Ebene schraenkt nicht ein)
   // verhalten sich hier identisch: beide sind ein No-op fuer den Merge. Keine Ebene kann eine
   // Einschraenkung einer aeusseren Ebene wieder aufheben -- das waere eine Lockerung.

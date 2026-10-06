@@ -47,13 +47,14 @@ function platformAdminInvitationUrls(webBaseUrl: string, rawToken: string): { ac
 // ohne dass SubscriptionPlanSchema.parse() das erkennen wuerde (es prueft die Form, nicht ob eine
 // Stelle ein Feld unterschlaegt). Jetzt eine Zuordnung.
 function toSubscriptionPlanDto(
-  row: { key: string; display_name: string; monthly_price_cents: number | null; currency: string; storage_bytes: number; max_teams: number | null; max_departments: number | null; is_self_serviceable: boolean; sort_order: number; available_from: string | null; available_until: string | null },
+  row: { key: string; display_name: string; monthly_price_cents: number | null; currency: string; storage_bytes: number; max_teams: number | null; max_departments: number | null; is_self_serviceable: boolean; sort_order: number; available_from: string | null; available_until: string | null; included_modules: string[] },
   contentLimits: readonly { media_origin: string; max_per_month: number | null; max_duration_seconds: number | null }[],
 ) {
   return SubscriptionPlanSchema.parse({
     key: row.key, displayName: row.display_name, monthlyPriceCents: row.monthly_price_cents, currency: row.currency,
     storageBytes: row.storage_bytes, maxTeams: row.max_teams, maxDepartments: row.max_departments,
     isSelfServiceable: row.is_self_serviceable, sortOrder: row.sort_order, availableFrom: row.available_from, availableUntil: row.available_until,
+    includedModules: row.included_modules,
     contentLimits: contentLimits.map((limit) => ({ mediaOrigin: limit.media_origin, maxPerMonth: limit.max_per_month, maxDurationSeconds: limit.max_duration_seconds })),
   })
 }
@@ -604,7 +605,7 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
     const service = supabaseClients.forService()
     const plans = await service
       .from('subscription_plans')
-      .select('key, display_name, monthly_price_cents, currency, storage_bytes, max_teams, max_departments, is_self_serviceable, sort_order, available_from, available_until')
+      .select('key, display_name, monthly_price_cents, currency, storage_bytes, max_teams, max_departments, is_self_serviceable, sort_order, available_from, available_until, included_modules')
       .order('sort_order')
     if (plans.error) throw plans.error
     const contentLimits = await service.from('subscription_plan_content_limits').select('plan_key, media_origin, max_per_month, max_duration_seconds')
@@ -625,6 +626,7 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
         key: input.key, display_name: input.displayName, monthly_price_cents: input.monthlyPriceCents, currency: input.currency,
         storage_bytes: input.storageBytes, max_teams: input.maxTeams, max_departments: input.maxDepartments,
         is_self_serviceable: input.isSelfServiceable, sort_order: input.sortOrder, available_from: input.availableFrom, available_until: input.availableUntil,
+        included_modules: input.includedModules,
       })
       .select('key')
       .single()
@@ -645,7 +647,7 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
       throw limitsInsert.error
     }
     return reply.code(201).send(toSubscriptionPlanDto(
-      { key: input.key, display_name: input.displayName, monthly_price_cents: input.monthlyPriceCents, currency: input.currency, storage_bytes: input.storageBytes, max_teams: input.maxTeams, max_departments: input.maxDepartments, is_self_serviceable: input.isSelfServiceable, sort_order: input.sortOrder, available_from: input.availableFrom, available_until: input.availableUntil },
+      { key: input.key, display_name: input.displayName, monthly_price_cents: input.monthlyPriceCents, currency: input.currency, storage_bytes: input.storageBytes, max_teams: input.maxTeams, max_departments: input.maxDepartments, is_self_serviceable: input.isSelfServiceable, sort_order: input.sortOrder, available_from: input.availableFrom, available_until: input.availableUntil, included_modules: [...input.includedModules] },
       input.contentLimits.map((limit) => ({ media_origin: limit.mediaOrigin, max_per_month: limit.maxPerMonth, max_duration_seconds: limit.maxDurationSeconds })),
     ))
   })
@@ -667,11 +669,12 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
     if (input.sortOrder !== undefined) payload.sort_order = input.sortOrder
     if (input.availableFrom !== undefined) payload.available_from = input.availableFrom
     if (input.availableUntil !== undefined) payload.available_until = input.availableUntil
+    if (input.includedModules !== undefined) payload.included_modules = input.includedModules
     const update = await service
       .from('subscription_plans')
       .update(payload)
       .eq('key', params.key)
-      .select('key, display_name, monthly_price_cents, currency, storage_bytes, max_teams, max_departments, is_self_serviceable, sort_order, available_from, available_until')
+      .select('key, display_name, monthly_price_cents, currency, storage_bytes, max_teams, max_departments, is_self_serviceable, sort_order, available_from, available_until, included_modules')
       .maybeSingle()
     if (update.error) throw update.error
     if (!update.data) return reply.code(404).send({ error: 'plan_not_found', correlationId: request.id })
