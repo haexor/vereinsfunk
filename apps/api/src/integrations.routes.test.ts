@@ -9,8 +9,8 @@ describe('Paket 014: Integrationsrahmen und Mitgliederverzeichnis', () => {
   const RUN_ID = '14000000-4000-4000-8000-000000000001'
   const PERSON_ID = '14000000-3000-4000-8000-000000000001'
 
-  // team_manager traegt directory.read, aber nicht department.manage -- die genaue Trennung, die
-  // das Rechtekonzept aus plans/014 verlangt (Basisfelder lesen/schreiben ja, Elternkontakt nein).
+  // team_manager traegt directory.read, aber nicht department.manage -- damit pflegt ein Trainer die
+  // Personen seiner Mannschaft (plans/014, seit plans/054 ohne Elternkontakt).
   const directoryReaderRoleProvider: RoleProvider = { async rolesForScope() { return ['team_manager'] } }
 
   // Fuer eine ablehnende Berechtigungspruefung ohne departmentId/teamId im Request beruehrt der
@@ -349,48 +349,10 @@ describe('Paket 014: Integrationsrahmen und Mitgliederverzeichnis', () => {
     expect(response.statusCode).toBe(403)
   })
 
-  it('lets a team_manager create a directory person without guardian fields', async () => {
+  it('lets a team_manager create an active minor without any guardian contact, with an optional normalized email', async () => {
+    // Paket 054: Trainer legen Spieler selbst an; eine Eltern-E-Mail gibt es nicht mehr, die eigene
+    // Adresse der Person ist optional und wird getrimmt und klein geschrieben gespeichert.
     const audit: Record<string, unknown>[] = []
-    const clients: SupabaseClientFactory = {
-      forUser: () => ({ from: () => { throw new Error('no lookup expected for an organization-scoped person') } }) as unknown as SupabaseClient,
-      forService: () =>
-        ({
-          from: (table: string) => {
-            if (table === 'directory_people') {
-              return {
-                insert: () =>
-                  chain({
-                    data: {
-                      id: PERSON_ID, organization_id: ORGANIZATION_ID, department_id: null, team_id: null, first_name: 'Mia', last_name: 'Muster',
-                      birth_year: null, is_minor: false, status: 'active', left_at: null, joined_at: null, profile_id: null, became_adult_at: null,
-                      source_id: null, created_at: new Date().toISOString(),
-                    },
-                    error: null,
-                  }),
-              }
-            }
-            if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { audit.push(row); return { error: null } } }
-            throw new Error(`unexpected table in service test fake: ${table}`)
-          },
-        }) as unknown as SupabaseClient,
-    }
-    const app = await startApp({ roleProvider: directoryReaderRoleProvider, supabaseClients: clients })
-    const token = await signAccessToken(USER_ID)
-    const response = await app.inject({
-      method: 'POST',
-      url: `/v1/organizations/${ORGANIZATION_ID}/directory-people`,
-      headers: { authorization: `Bearer ${token}` },
-      payload: { firstName: 'Mia', lastName: 'Muster' },
-    })
-    expect(response.statusCode).toBe(201)
-    expect(response.json()).toMatchObject({ firstName: 'Mia', lastName: 'Muster', isMinor: false })
-    expect(audit).toHaveLength(1)
-  })
-
-  it('does not let the caller declare a person with a minor birth year an adult', async () => {
-    // isMinor darf den Schutz nur anheben: sonst umginge ein Aufrufer mit `isMinor: false` sowohl
-    // den CHECK auf einen Elternkontakt als auch die strengere Freigaberoute (derselbe
-    // wiederkehrende Fund wie bei den security-definer-RPCs aus 011/012).
     let capturedInsert: Record<string, unknown> | null = null
     const clients: SupabaseClientFactory = {
       forUser: () => ({ from: () => { throw new Error('no lookup expected for an organization-scoped person') } }) as unknown as SupabaseClient,
@@ -404,7 +366,64 @@ describe('Paket 014: Integrationsrahmen und Mitgliederverzeichnis', () => {
                   return chain({
                     data: {
                       id: PERSON_ID, organization_id: ORGANIZATION_ID, department_id: null, team_id: null, first_name: 'Mia', last_name: 'Muster',
-                      birth_year: 2015, is_minor: true, status: 'active', left_at: null, joined_at: null, profile_id: null, became_adult_at: null,
+                      birth_year: 2015, is_minor: true, status: 'active', left_at: null, joined_at: null, email: 'mia@example.com', profile_id: null,
+                      became_adult_at: null, source_id: null, created_at: new Date().toISOString(),
+                    },
+                    error: null,
+                  })
+                },
+              }
+            }
+            if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { audit.push(row); return { error: null } } }
+            throw new Error(`unexpected table in service test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: directoryReaderRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${ORGANIZATION_ID}/directory-people`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { firstName: 'Mia', lastName: 'Muster', birthYear: 2015, email: '  Mia@Example.com ' },
+    })
+    expect(response.statusCode).toBe(201)
+    expect(capturedInsert).toMatchObject({ is_minor: true, email: 'mia@example.com' })
+    expect(capturedInsert).not.toHaveProperty('guardian_email')
+    expect(response.json()).toMatchObject({ firstName: 'Mia', lastName: 'Muster', isMinor: true, email: 'mia@example.com' })
+    expect(audit).toHaveLength(1)
+  })
+
+  it('rejects an invalid person email', async () => {
+    const app = await startApp({ roleProvider: directoryReaderRoleProvider, supabaseClients: noDbClients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/organizations/${ORGANIZATION_ID}/directory-people`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { firstName: 'Mia', lastName: 'Muster', email: 'keine-adresse' },
+    })
+    expect(response.statusCode).toBe(400)
+  })
+
+  it('does not let the caller declare a person with a minor birth year an adult', async () => {
+    // isMinor darf den Schutz nur anheben: sonst umginge ein Aufrufer mit `isMinor: false` die
+    // strengere Freigaberoute (derselbe wiederkehrende Fund wie bei den security-definer-RPCs aus
+    // 011/012).
+    let capturedInsert: Record<string, unknown> | null = null
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ from: () => { throw new Error('no lookup expected for an organization-scoped person') } }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'directory_people') {
+              return {
+                insert: (row: Record<string, unknown>) => {
+                  capturedInsert = row
+                  return chain({
+                    data: {
+                      id: PERSON_ID, organization_id: ORGANIZATION_ID, department_id: null, team_id: null, first_name: 'Mia', last_name: 'Muster',
+                      birth_year: 2015, is_minor: true, status: 'active', left_at: null, joined_at: null, email: null, profile_id: null, became_adult_at: null,
                       source_id: null, created_at: new Date().toISOString(),
                     },
                     error: null,
@@ -423,7 +442,7 @@ describe('Paket 014: Integrationsrahmen und Mitgliederverzeichnis', () => {
       method: 'POST',
       url: `/v1/organizations/${ORGANIZATION_ID}/directory-people`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { firstName: 'Mia', lastName: 'Muster', birthYear: 2015, isMinor: false, guardianEmail: 'eltern@example.com' },
+      payload: { firstName: 'Mia', lastName: 'Muster', birthYear: 2015, isMinor: false },
     })
     expect(response.statusCode).toBe(201)
     expect(capturedInsert).toMatchObject({ is_minor: true })
@@ -452,7 +471,7 @@ describe('Paket 014: Integrationsrahmen und Mitgliederverzeichnis', () => {
                   return chain({
                     data: {
                       id: PERSON_ID, organization_id: ORGANIZATION_ID, department_id: null, team_id: null, first_name: 'Mia', last_name: 'Musterfrau',
-                      birth_year: null, is_minor: false, status: 'active', left_at: null, joined_at: null, profile_id: null, became_adult_at: null,
+                      birth_year: null, is_minor: false, status: 'active', left_at: null, joined_at: null, email: null, profile_id: null, became_adult_at: null,
                       source_id: '68000000-2000-4000-8000-000000000001', created_at: new Date().toISOString(),
                     },
                     error: null,
@@ -489,71 +508,19 @@ describe('Paket 014: Integrationsrahmen und Mitgliederverzeichnis', () => {
     })
     expect(irrelevantResponse.statusCode).toBe(200)
     expect(capturedUpdate).not.toHaveProperty('source_updated_at')
-  })
 
-  it('rejects setting a guardian contact without department.manage, even with directory.read', async () => {
-    const app = await startApp({ roleProvider: directoryReaderRoleProvider, supabaseClients: noDbClients })
-    const token = await signAccessToken(USER_ID)
-    const response = await app.inject({
-      method: 'POST',
-      url: `/v1/organizations/${ORGANIZATION_ID}/directory-people`,
+    // Die E-Mail vergleicht planSync seit Paket 054 mit -- eine manuelle Korrektur muss deshalb
+    // ebenfalls gegen einen aelteren Sync-Lauf geschuetzt sein.
+    capturedUpdate = null
+    const emailResponse = await app.inject({
+      method: 'PATCH',
+      url: `/v1/directory-people/${PERSON_ID}`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { firstName: 'Mia', lastName: 'Muster', guardianEmail: 'eltern@example.com' },
+      payload: { email: ' Mia@Example.com' },
     })
-    expect(response.statusCode).toBe(403)
-  })
-
-  it('rejects reading the guardian contact without department.manage', async () => {
-    const clients: SupabaseClientFactory = {
-      forUser: () =>
-        ({
-          from: (table: string) => {
-            if (table === 'directory_people') return chain({ data: { organization_id: ORGANIZATION_ID, department_id: null, team_id: null }, error: null })
-            throw new Error(`unexpected table in test fake: ${table}`)
-          },
-        }) as unknown as SupabaseClient,
-      forService: () => ({}) as unknown as SupabaseClient,
-    }
-    const app = await startApp({ roleProvider: directoryReaderRoleProvider, supabaseClients: clients })
-    const token = await signAccessToken(USER_ID)
-    const response = await app.inject({
-      method: 'GET',
-      url: `/v1/directory-people/${PERSON_ID}/guardian-contact`,
-      headers: { authorization: `Bearer ${token}` },
-    })
-    expect(response.statusCode).toBe(403)
-  })
-
-  it('returns the guardian contact for a caller with department.manage, and audits the read', async () => {
-    const audit: Record<string, unknown>[] = []
-    const clients: SupabaseClientFactory = {
-      forUser: () =>
-        ({
-          from: (table: string) => {
-            if (table === 'directory_people') return chain({ data: { organization_id: ORGANIZATION_ID, department_id: null, team_id: null }, error: null })
-            throw new Error(`unexpected table in test fake: ${table}`)
-          },
-        }) as unknown as SupabaseClient,
-      forService: () =>
-        ({
-          from: (table: string) => {
-            if (table === 'directory_people') return chain({ data: { guardian_name: 'Erika Muster', guardian_email: 'eltern@example.com' }, error: null })
-            if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { audit.push(row); return { error: null } } }
-            throw new Error(`unexpected table in service test fake: ${table}`)
-          },
-        }) as unknown as SupabaseClient,
-    }
-    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
-    const token = await signAccessToken(USER_ID)
-    const response = await app.inject({
-      method: 'GET',
-      url: `/v1/directory-people/${PERSON_ID}/guardian-contact`,
-      headers: { authorization: `Bearer ${token}` },
-    })
-    expect(response.statusCode).toBe(200)
-    expect(response.json()).toEqual({ guardianName: 'Erika Muster', guardianEmail: 'eltern@example.com' })
-    expect(audit).toHaveLength(1)
-    expect(audit[0]?.action).toBe('directory_person.guardian_read')
+    expect(emailResponse.statusCode).toBe(200)
+    expect(capturedUpdate).toMatchObject({ email: 'mia@example.com' })
+    expect(typeof readField(capturedUpdate, 'source_updated_at')).toBe('string')
   })
 
   it('reads and updates the caller\'s own profile display name, self-service, without touching organization data', async () => {

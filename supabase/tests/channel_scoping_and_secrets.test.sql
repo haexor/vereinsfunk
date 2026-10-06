@@ -308,10 +308,10 @@ insert into public.post_media (id, organization_id, post_version_id, media_deriv
   ('65000000-6400-4000-8000-000000000005', '65000000-1000-4000-8000-000000000001', '65000000-3000-4000-8000-000000000011', '65000000-6300-4000-8000-000000000005', 0, 'primary'),
   ('65000000-6400-4000-8000-000000000006', '65000000-1000-4000-8000-000000000001', '65000000-3000-4000-8000-000000000012', '65000000-6300-4000-8000-000000000006', 0, 'primary');
 
--- Eine minderjaehrige Verzeichnisperson fuer den Guardian-Fall -- die CHECK-Constraint auf
--- directory_people verlangt bei is_minor + status='active' eine guardian_email.
-insert into public.directory_people (id, organization_id, first_name, last_name, is_minor, guardian_email) values
-  ('65000000-6600-4000-8000-000000000001', '65000000-1000-4000-8000-000000000001', 'Mia', 'Minderjaehrig', true, 'guardian@pgtap-channels.local');
+-- Eine minderjaehrige Verzeichnisperson fuer den Fall "Einwilligung ohne Unterschrift der
+-- Erziehungsberechtigten".
+insert into public.directory_people (id, organization_id, first_name, last_name, is_minor) values
+  ('65000000-6600-4000-8000-000000000001', '65000000-1000-4000-8000-000000000001', 'Mia', 'Minderjaehrig', true);
 
 insert into public.consent_records (id, organization_id, pseudonymous_subject_ref, scope, evidence_path, created_by, revoked_at, signer_role, directory_person_id) values
   ('65000000-6500-4000-8000-000000000001', '65000000-1000-4000-8000-000000000001', 'pgtap-media-gate-revoked-subject', 'Instagram-Post', null, '65000000-0000-4000-8000-000000000001', now() - interval '1 day', null, null),

@@ -41,9 +41,14 @@ describe('integration and directory contracts (Paket 014)', () => {
     ).toBe(false)
   })
 
-  it('keeps guardian contact fields out of the base directory person schema -- data minimization at the contract boundary', () => {
+  it('has no guardian contact fields at all -- removed in plan 054', () => {
     expect(Object.keys(DirectoryPersonSchema.shape)).not.toContain('guardianName')
     expect(Object.keys(DirectoryPersonSchema.shape)).not.toContain('guardianEmail')
+    const result = CreateDirectoryPersonRequestSchema.safeParse({
+      firstName: 'Mia', lastName: 'Muster', guardianEmail: 'eltern@beispiel.de',
+    })
+    expect(result.success).toBe(true)
+    if (result.success) expect('guardianEmail' in result.data).toBe(false)
   })
 
   it('rejects fields the plan explicitly excludes from the directory, such as an address', () => {
@@ -62,12 +67,21 @@ describe('integration and directory contracts (Paket 014)', () => {
     expect(UpdateDirectoryPersonRequestSchema.safeParse({}).success).toBe(false)
   })
 
-  it('normalizes guardianEmail to lowercase like other email fields in this project', () => {
+  it('trims and lowercases the optional person email before validating it', () => {
     const result = CreateDirectoryPersonRequestSchema.safeParse({
-      firstName: 'Mia', lastName: 'Muster', guardianEmail: 'Eltern@Beispiel.de',
+      firstName: 'Mia', lastName: 'Muster', email: '  Mia.Muster@Beispiel.de ',
     })
     expect(result.success).toBe(true)
-    if (result.success) expect(result.data.guardianEmail).toBe('eltern@beispiel.de')
+    if (result.success) expect(result.data.email).toBe('mia.muster@beispiel.de')
+    const update = UpdateDirectoryPersonRequestSchema.safeParse({ email: ' Mia@Beispiel.DE' })
+    expect(update.success).toBe(true)
+    if (update.success) expect(update.data.email).toBe('mia@beispiel.de')
+  })
+
+  it('rejects an invalid person email and allows clearing it with null', () => {
+    expect(CreateDirectoryPersonRequestSchema.safeParse({ firstName: 'Mia', lastName: 'Muster', email: 'keine-adresse' }).success).toBe(false)
+    expect(UpdateDirectoryPersonRequestSchema.safeParse({ email: 'keine-adresse' }).success).toBe(false)
+    expect(UpdateDirectoryPersonRequestSchema.safeParse({ email: null }).success).toBe(true)
   })
 })
 

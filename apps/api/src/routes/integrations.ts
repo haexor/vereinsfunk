@@ -10,7 +10,6 @@ import {
   type IntegrationDomain,
   type SyncMode,
 } from '@vereinsfunk/contracts'
-import { hasPermission } from '@vereinsfunk/authorization'
 import { FileSourceTransport, IcalSourceTransport } from '@vereinsfunk/integrations'
 import { fetchPublicUrl, isAllowedOutboundUrl, OutboundFetchError } from '@vereinsfunk/outbound-fetch'
 import type { FastifyInstance } from 'fastify'
@@ -33,7 +32,7 @@ import type { ApiRouteContext } from './context.js'
 import { createAuditRecorder, resolveDirectoryScope, toPermissionScope } from './shared.js'
 
 export function registerIntegrationRoutes(app: FastifyInstance, context: ApiRouteContext): void {
-  const { requireAuth, requirePermission, supabaseClients, roleProvider } = context
+  const { requireAuth, requirePermission, supabaseClients } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
 
   app.get('/v1/organizations/:id/integration-sources', async (request, reply) => {
@@ -242,13 +241,6 @@ export function registerIntegrationRoutes(app: FastifyInstance, context: ApiRout
     const scope = toPermissionScope(organizationId, sourceDepartmentId)
     if (!(await requirePermission(request, reply, 'integration.manage', scope))) return
     if (!source.data.enabled) return reply.code(409).send({ error: 'source_disabled', correlationId: request.id })
-    // integration.manage und department.manage sind heute deckungsgleich (department_admin und
-    // Organisationsrollen haben beide), aber nur zufaellig -- ohne diese eigene Pruefung koennte
-    // eine kuenftige, engere Rolle mit nur integration.manage ueber einen Sync-Lauf Elternkontakte
-    // schreiben, obwohl das Rechtekonzept dafuer ausdruecklich department.manage verlangt (beim
-    // adversarialen Review als Haertungsluecke benannt). Import-Zeilen ohne Elternkontaktfelder
-    // sind davon nicht betroffen.
-    const canWriteGuardianContact = hasPermission(await roleProvider.rolesForScope(request.auth!, scope), 'department.manage')
 
     let mode: SyncMode
     let domain: IntegrationDomain
@@ -380,7 +372,7 @@ export function registerIntegrationRoutes(app: FastifyInstance, context: ApiRout
       //
       // Personen zuerst: nur die drei terminbehafteten Bereiche brauchen die Vereinszeitzone,
       // deshalb steht deren Abruf hinter dieser Verzweigung (unveraendert gegenueber vorher).
-      if (domain === 'people') return await handlePeopleSync({ ...baseContext, canWriteGuardianContact })
+      if (domain === 'people') return await handlePeopleSync(baseContext)
       const organizationRow = await service.from('organizations').select('timezone').eq('id', organizationId).single()
       if (organizationRow.error) throw organizationRow.error
       const syncContext: SyncDomainContext = { ...baseContext, organizationTimezone: organizationRow.data.timezone as string }

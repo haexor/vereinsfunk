@@ -377,7 +377,7 @@ describe('Paket 020: Rechtliche Pflichten und Datenschutzbetrieb', () => {
             return chain({
               data: {
                 organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: null, first_name: 'Max', last_name: 'Mustermann',
-                birth_year: 2010, is_minor: true, status: 'active', joined_at: null, left_at: null, guardian_name: 'Erika Mustermann', guardian_email: 'eltern@example.local',
+                birth_year: 2010, is_minor: true, status: 'active', joined_at: null, left_at: null, email: 'max@example.local',
                 ...extra,
               },
               error: null,
@@ -398,6 +398,7 @@ describe('Paket 020: Rechtliche Pflichten und Datenschutzbetrieb', () => {
 
     it('bundles consents, media usages and the access log into a signed export link', async () => {
       let uploadedPath: string | undefined
+      let uploadedBundle: Record<string, unknown> | undefined
       const clients: SupabaseClientFactory = {
         forUser: () => directoryPersonUserClient(),
         forService: () =>
@@ -410,7 +411,7 @@ describe('Paket 020: Rechtliche Pflichten und Datenschutzbetrieb', () => {
             },
             storage: {
               from: () => ({
-                upload: async (path: string) => { uploadedPath = path; return { error: null } },
+                upload: async (path: string, body: Buffer) => { uploadedPath = path; uploadedBundle = JSON.parse(body.toString('utf8')) as Record<string, unknown>; return { error: null } },
                 createSignedUrl: async () => ({ data: { signedUrl: 'https://signed.example/export.json' }, error: null }),
               }),
             },
@@ -422,6 +423,9 @@ describe('Paket 020: Rechtliche Pflichten und Datenschutzbetrieb', () => {
       expect(response.statusCode).toBe(200)
       expect(response.json()).toMatchObject({ signedUrl: 'https://signed.example/export.json' })
       expect(uploadedPath).toContain(`organizations/${ORGANIZATION_ID}/exports/`)
+      // Paket 054: die eigene Adresse der Person gehoert in die Auskunft, einen Elternkontakt gibt es nicht mehr.
+      expect(uploadedBundle?.person).toMatchObject({ email: 'max@example.local' })
+      expect(uploadedBundle).not.toHaveProperty('guardianContact')
     })
 
     it('erases the directory entry, anonymizes linked consent evidence, and names what is retained and why', async () => {
@@ -452,6 +456,8 @@ describe('Paket 020: Rechtliche Pflichten und Datenschutzbetrieb', () => {
       expect(consentRecordsAnonymized).toMatchObject({ pseudonymous_subject_ref: null, signer_name: null })
       const body = response.json() as { erased: string[]; retained: { category: string }[] }
       expect(body.erased).toContain('Verzeichniseintrag')
+      expect(body.erased).toContain('E-Mail-Adresse')
+      expect(body.erased).not.toContain('Elternkontakt')
       expect(body.retained.map((entry) => entry.category)).toContain('Einwilligungsnachweise')
     })
   })
@@ -853,4 +859,3 @@ describe('Paket 020: Rechtliche Pflichten und Datenschutzbetrieb', () => {
     })
   })
 })
-

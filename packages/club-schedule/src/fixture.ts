@@ -16,7 +16,7 @@ export const ExternalFixtureSchema = z.object({
   competition: z.string().trim().min(1).max(120).optional(),
   // z.union([z.boolean(), z.stringbool()]) statt z.coerce.boolean(): letzteres ist Boolean(value) --
   // ein Datei-Wert "false" waere ein nicht-leerer String und damit truthy (derselbe Fund wie bei
-  // isMinor/missingGuardian in Paket 014, siehe apps/api/src/app.ts). Ein XLSX-Boolean-Zellwert
+  // isMinor in Paket 014, siehe apps/api/src/routes/directory.ts). Ein XLSX-Boolean-Zellwert
   // kommt bereits als echtes boolean an, eine CSV-/iCal-Zeile als String -- beide bleiben erlaubt.
   isHome: z.union([z.boolean(), z.stringbool()]).optional(),
   kickoffAt: z.string().trim().min(1).optional(),

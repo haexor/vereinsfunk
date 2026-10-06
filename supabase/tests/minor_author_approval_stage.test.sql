@@ -31,9 +31,9 @@ insert into public.department_memberships (organization_id, department_id, user_
   ('69000000-1000-4000-8000-000000000001', '69000000-1100-4000-8000-000000000001', '69000000-0000-4000-8000-000000000005', 'department_admin');
 
 -- Verzeichnis: der Autor UND die Person mit Vereinsrolle sind beide minderjaehrig.
-insert into public.directory_people (organization_id, first_name, last_name, is_minor, guardian_email, profile_id) values
-  ('69000000-1000-4000-8000-000000000001', 'Mia', 'Minderjaehrig', true, 'eltern-mia@example.local', '69000000-0000-4000-8000-000000000001'),
-  ('69000000-1000-4000-8000-000000000001', 'Timo', 'Rollentraeger', true, 'eltern-timo@example.local', '69000000-0000-4000-8000-000000000003');
+insert into public.directory_people (organization_id, first_name, last_name, is_minor, profile_id) values
+  ('69000000-1000-4000-8000-000000000001', 'Mia', 'Minderjaehrig', true, '69000000-0000-4000-8000-000000000001'),
+  ('69000000-1000-4000-8000-000000000001', 'Timo', 'Rollentraeger', true, '69000000-0000-4000-8000-000000000003');
 
 -- Kein policy_settings-Eintrag auf irgendeiner Ebene: review_required ist ueberall NULL/false.
 -- Trotzdem muss die Minderjaehrige-Verfasser:in-Stufe erscheinen (feste Plattformregel).

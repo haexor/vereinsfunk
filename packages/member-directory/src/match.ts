@@ -16,6 +16,7 @@ export interface DirectoryPersonLocal {
   readonly firstName: string
   readonly lastName: string
   readonly birthYear: number | null
+  readonly email: string | null
   readonly departmentId: string | null
   readonly teamId: string | null
   readonly status: DirectoryPersonStatus
@@ -62,6 +63,7 @@ export function createPeopleMatchStrategy(resolver: DepartmentResolver): MatchSt
           firstName: entity.firstName,
           lastName: entity.lastName,
           birthYear: entity.birthYear,
+          email: entity.email,
           departmentId: entity.departmentId,
           teamId: entity.teamId,
           status: entity.status,
@@ -77,6 +79,7 @@ export function createPeopleMatchStrategy(resolver: DepartmentResolver): MatchSt
         firstName: entity.firstName,
         lastName: entity.lastName,
         birthYear: entity.birthYear,
+        email: entity.email,
         departmentId,
         teamId,
         status: entity.status,

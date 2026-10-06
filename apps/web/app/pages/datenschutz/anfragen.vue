@@ -218,7 +218,7 @@ const eraseError = ref('')
 const eraseResults = reactive<Record<string, DataSubjectEraseResponse>>({})
 async function erasePerson(request: DataSubjectRequest) {
   if (!request.directoryPersonId) return
-  if (!confirm(`"${personLabel(request.directoryPersonId)}" wirklich aus dem Verzeichnis löschen? Das umfasst Verzeichniseintrag, Elternkontakt und Gesichtszuordnung und lässt sich nicht zurücknehmen.`)) return
+  if (!confirm(`"${personLabel(request.directoryPersonId)}" wirklich aus dem Verzeichnis löschen? Das umfasst Verzeichniseintrag, E-Mail-Adresse und Gesichtszuordnung und lässt sich nicht zurücknehmen.`)) return
   erasingId.value = request.id
   eraseError.value = ''
   try {

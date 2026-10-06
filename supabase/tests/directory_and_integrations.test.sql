@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(55);
+select plan(58);
 
 set local role postgres;
 
@@ -56,16 +56,18 @@ insert into public.integration_sources (id, organization_id, transport, provider
 insert into public.integration_sources (id, organization_id, transport, provider_key, display_name, enabled_domains, created_by) values
   ('68000000-2000-4000-8000-000000000009', '68000000-1000-4000-8000-000000000002', 'file', 'csv', 'Fremdverein-Import', array['people']::public.integration_domain[], '68000000-0000-4000-8000-000000000007');
 
--- 2: eine aktive minderjaehrige Person braucht einen Elternkontakt.
-select throws_ok(
-  $$insert into public.directory_people (organization_id, department_id, first_name, last_name, is_minor, status)
-    values ('68000000-1000-4000-8000-000000000001', '68000000-1100-4000-8000-000000000001', 'Ohne', 'Kontakt', true, 'active')$$,
-  '23514', null, 'an active minor without a guardian_email violates the CHECK constraint'
+-- 2: seit Paket 054 braucht eine aktive minderjaehrige Person keinen Elternkontakt mehr; die
+-- eigene, optionale E-Mail muss klein geschrieben gespeichert sein.
+select lives_ok(
+  $$insert into public.directory_people (id, organization_id, department_id, first_name, last_name, is_minor, status, email)
+    values ('68000000-3000-4000-8000-000000000001', '68000000-1000-4000-8000-000000000001', '68000000-1100-4000-8000-000000000001', 'Mia', 'Muster', true, 'active', 'mia@example.com')$$,
+  'an active minor without any guardian contact can be created'
 );
-
-insert into public.directory_people (id, organization_id, department_id, first_name, last_name, is_minor, status, guardian_name, guardian_email) values
-  ('68000000-3000-4000-8000-000000000001', '68000000-1000-4000-8000-000000000001', '68000000-1100-4000-8000-000000000001', 'Mia', 'Muster', true, 'active', 'Erika Muster', 'eltern@example.com');
-select ok(true, 'an active minor with a guardian_email can be created');
+select throws_ok(
+  $$insert into public.directory_people (organization_id, department_id, first_name, last_name, is_minor, status, email)
+    values ('68000000-1000-4000-8000-000000000001', '68000000-1100-4000-8000-000000000001', 'Gross', 'Schreibung', false, 'active', 'Gross@Example.com')$$,
+  '23514', null, 'a person email that is not lowercase violates the CHECK constraint'
+);
 
 insert into public.directory_people (id, organization_id, department_id, team_id, first_name, last_name, is_minor, status) values
   ('68000000-3000-4000-8000-000000000002', '68000000-1000-4000-8000-000000000001', '68000000-1100-4000-8000-000000000001', '68000000-1200-4000-8000-000000000001', 'Team', 'A-Spieler', false, 'active');
@@ -78,8 +80,12 @@ insert into public.directory_people (id, organization_id, department_id, first_n
 -- 3: fast volljaehrig -- Geburtsjahr so gewaehlt, dass die Person laut der 2026-08-07 getroffenen
 -- Entscheidung (ganzes Jahr des 18. Geburtstags gilt noch als minderjaehrig) inzwischen erwachsen
 -- sein muesste.
-insert into public.directory_people (id, organization_id, department_id, first_name, last_name, birth_year, is_minor, status, guardian_name, guardian_email) values
-  ('68000000-3000-4000-8000-000000000005', '68000000-1000-4000-8000-000000000001', '68000000-1100-4000-8000-000000000001', 'Fast', 'Volljaehrig', extract(year from now())::int - 19, true, 'active', 'Elternteil', 'fast-volljaehrig@example.com');
+insert into public.directory_people (id, organization_id, department_id, first_name, last_name, birth_year, is_minor, status) values
+  ('68000000-3000-4000-8000-000000000005', '68000000-1000-4000-8000-000000000001', '68000000-1100-4000-8000-000000000001', 'Fast', 'Volljaehrig', extract(year from now())::int - 19, true, 'active');
+-- Gegenrichtung (Paket 054): als volljaehrig gefuehrt, laut Geburtsjahr aber minderjaehrig -- etwa
+-- nach einer Korrektur des Geburtsjahrs, die nicht ueber die API lief.
+insert into public.directory_people (id, organization_id, department_id, first_name, last_name, birth_year, is_minor, status, became_adult_at) values
+  ('68000000-3000-4000-8000-000000000010', '68000000-1000-4000-8000-000000000001', '68000000-1100-4000-8000-000000000001', 'Doch', 'Minderjaehrig', extract(year from now())::int - 10, false, 'active', now());
 insert into public.directory_people (id, organization_id, first_name, last_name, is_minor, status) values
   ('68000000-3000-4000-8000-000000000009', '68000000-1000-4000-8000-000000000002', 'Fremd', 'Verein', false, 'active');
 
@@ -112,17 +118,20 @@ select throws_ok(
   '42501', null, 'authenticated cannot insert into directory_people even with directory.read'
 );
 
--- 11-12: Spaltenrechte -- credentials_secret_id und guardian_email sind nicht Teil des
--- Standard-Grants, unabhaengig von der Berechtigung auf der Zeile selbst.
+-- 11-13: Spaltenrechte -- credentials_secret_id ist nicht Teil des Standard-Grants, unabhaengig
+-- von der Berechtigung auf der Zeile selbst. Die E-Mail einer Person (Paket 054) lesen alle, die die
+-- Person sehen duerfen; ein fremder Verein sieht weder Person noch Adresse.
 select throws_ok(
   $$select credentials_secret_id from public.integration_sources where id = '68000000-2000-4000-8000-000000000001'$$,
   '42501', null, 'authenticated cannot select credentials_secret_id even as the organization admin'
 );
 select set_config('request.jwt.claim.sub', '68000000-0000-4000-8000-000000000002', true);
-select throws_ok(
-  $$select guardian_email from public.directory_people where id = '68000000-3000-4000-8000-000000000001'$$,
-  '42501', null, 'authenticated cannot select guardian_email even as the department admin with department.manage'
-);
+select is((select email from public.directory_people where id = '68000000-3000-4000-8000-000000000001'), 'mia@example.com',
+  'the department admin with directory.read reads the person email');
+select set_config('request.jwt.claim.sub', '68000000-0000-4000-8000-000000000007', true);
+select is((select count(*)::integer from public.directory_people where id = '68000000-3000-4000-8000-000000000001'), 0,
+  'an admin of another club sees neither the person nor their email');
+select set_config('request.jwt.claim.sub', '68000000-0000-4000-8000-000000000002', true);
 
 -- 13-16: Sichtbarkeit von integration_sources -- Abteilungsscope, Aufsicht von oben,
 -- Mandantentrennung.
@@ -153,7 +162,7 @@ select set_config('request.jwt.claim.sub', '68000000-0000-4000-8000-000000000006
 select is((select count(*)::integer from public.directory_people where organization_id = '68000000-1000-4000-8000-000000000001'), 0,
   'a contributor without directory.read sees no directory row at all');
 select set_config('request.jwt.claim.sub', '68000000-0000-4000-8000-000000000002', true);
-select is((select count(*)::integer from public.directory_people where department_id = '68000000-1100-4000-8000-000000000001'), 4,
+select is((select count(*)::integer from public.directory_people where department_id = '68000000-1100-4000-8000-000000000001'), 5,
   'the Fussball department admin sees every Fussball-scoped person, including the one also assigned to Team A');
 select is((select count(*)::integer from public.directory_people where id = '68000000-3000-4000-8000-000000000004'), 0,
   'the Fussball department admin does not see the Handball-scoped person');
@@ -163,7 +172,7 @@ select is((select count(*)::integer from public.directory_people where id = '680
 select is((select count(*)::integer from public.directory_people where id = '68000000-3000-4000-8000-000000000001'), 0,
   'the Team A manager does not see a Fussball-scoped person who is not on their team (no department-level role)');
 select set_config('request.jwt.claim.sub', '68000000-0000-4000-8000-000000000001', true);
-select is((select count(*)::integer from public.directory_people where organization_id = '68000000-1000-4000-8000-000000000001'), 6,
+select is((select count(*)::integer from public.directory_people where organization_id = '68000000-1000-4000-8000-000000000001'), 7,
   'the organization admin sees every person of their club, department-scoped, team-scoped, or organization-only');
 select set_config('request.jwt.claim.sub', '68000000-0000-4000-8000-000000000008', true);
 select is((select count(*)::integer from public.directory_people where organization_id = '68000000-1000-4000-8000-000000000001'), 0,
@@ -229,8 +238,8 @@ select throws_ok(
   '23505', null, 'the same fingerprint cannot be ignored twice for the same source'
 );
 
--- 34-36: taeglicher Minderjaehrigkeits-Abgleich -- nur die Richtung minderjaehrig -> volljaehrig,
--- nur mit gesetztem Geburtsjahr.
+-- 34-38: taeglicher Minderjaehrigkeits-Abgleich -- seit Paket 054 in beide Richtungen, nur mit
+-- gesetztem Geburtsjahr.
 select public.recompute_directory_minor_status();
 select is((select is_minor from public.directory_people where id = '68000000-3000-4000-8000-000000000005'), false,
   'recompute_directory_minor_status flips is_minor to false once the year of the 18th birthday has passed');
@@ -238,6 +247,10 @@ select isnt((select became_adult_at from public.directory_people where id = '680
   'recompute_directory_minor_status records when the transition happened');
 select is((select is_minor from public.directory_people where id = '68000000-3000-4000-8000-000000000001'), true,
   'recompute_directory_minor_status leaves a manually-set minor without a birth_year untouched');
+select is((select is_minor from public.directory_people where id = '68000000-3000-4000-8000-000000000010'), true,
+  'recompute_directory_minor_status flips a person back to minor when the birth_year says so');
+select is((select became_adult_at from public.directory_people where id = '68000000-3000-4000-8000-000000000010'), null,
+  'recompute_directory_minor_status clears became_adult_at when flipping back to minor');
 
 -- 37: der Uebergang wird auditiert.
 select is((select count(*)::integer from public.audit_events where action = 'directory_person.became_adult' and entity_id = '68000000-3000-4000-8000-000000000005'), 1,

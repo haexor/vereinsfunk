@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import {
-  DirectoryPersonGuardianContactSchema,
   DirectoryPersonSchema,
   type DirectoryPerson,
-  type DirectoryPersonGuardianContact,
   type DirectoryPersonStatus,
 } from '@vereinsfunk/contracts'
 
@@ -39,10 +37,6 @@ function teamName(departmentId: string | null, teamId: string | null): string {
   if (!departmentId || !teamId) return '–'
   return organization.value?.departments.find((department) => department.id === departmentId)?.teams.find((team) => team.id === teamId)?.name ?? '–'
 }
-function canManageGuardianContact(person: { departmentId: string | null }): boolean {
-  return useCan('department.manage', { organizationId: organizationId.value ?? '', ...(person.departmentId ? { departmentId: person.departmentId } : {}) })
-}
-
 const STATUS_LABELS: Record<DirectoryPersonStatus, string> = { active: 'Aktiv', inactive: 'Inaktiv', left: 'Ausgetreten', unknown: 'Unbekannt' }
 
 // --- Filter ----------------------------------------------------------------------------
@@ -50,7 +44,6 @@ const STATUS_LABELS: Record<DirectoryPersonStatus, string> = { active: 'Aktiv', 
 const filterDepartmentId = ref('')
 const filterTeamId = ref('')
 const filterMinor = ref(false)
-const filterMissingGuardian = ref(false)
 const filterLeft = ref(false)
 
 // Voreinstellung: die aktive Sidebar-Abteilung, wenn lesbar -- sonst die erste lesbare
@@ -93,7 +86,6 @@ async function loadPeople() {
     if (filterDepartmentId.value) query.departmentId = filterDepartmentId.value
     if (filterTeamId.value) query.teamId = filterTeamId.value
     if (filterMinor.value) query.isMinor = 'true'
-    if (filterMissingGuardian.value) query.missingGuardian = 'true'
     if (filterLeft.value) query.status = 'left'
     const response = await $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/directory-people`, { headers, query })
     people.value = DirectoryPersonSchema.array().parse(response)
@@ -104,33 +96,12 @@ async function loadPeople() {
   }
 }
 await loadPeople()
-watch([organizationId, filterDepartmentId, filterTeamId, filterMinor, filterMissingGuardian, filterLeft], () => { void loadPeople() })
-
-// --- Elternkontakt (nur mit department.manage, jeder Lesezugriff wird protokolliert) -----
-
-const guardianContacts = reactive<Record<string, DirectoryPersonGuardianContact>>({})
-const guardianLoadingId = ref<string | null>(null)
-const guardianError = ref('')
-
-async function toggleGuardianContact(person: DirectoryPerson) {
-  if (guardianContacts[person.id]) { delete guardianContacts[person.id]; return }
-  guardianLoadingId.value = person.id
-  guardianError.value = ''
-  try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/directory-people/${person.id}/guardian-contact`, { headers })
-    guardianContacts[person.id] = DirectoryPersonGuardianContactSchema.parse(response)
-  } catch {
-    guardianError.value = 'Der Elternkontakt konnte nicht geladen werden.'
-  } finally {
-    guardianLoadingId.value = null
-  }
-}
+watch([organizationId, filterDepartmentId, filterTeamId, filterMinor, filterLeft], () => { void loadPeople() })
 
 // --- Anlegen -----------------------------------------------------------------------------
 
 const createForm = reactive({
-  firstName: '', lastName: '', departmentId: '', teamId: '', birthYear: '', status: 'active' as DirectoryPersonStatus, joinedAt: '', guardianName: '', guardianEmail: '',
+  firstName: '', lastName: '', departmentId: '', teamId: '', birthYear: '', status: 'active' as DirectoryPersonStatus, joinedAt: '', email: '',
 })
 const createSubmitting = ref(false)
 const createError = ref('')
@@ -149,7 +120,6 @@ const teamOptionsForCreate = computed(() => {
   return canReadDepartment(department.id) ? department.teams : department.teams.filter((team) => canReadTeam(department.id, team.id))
 })
 watch(() => createForm.departmentId, () => { createForm.teamId = '' })
-const canEditGuardianOnCreate = computed(() => canManageGuardianContact({ departmentId: createForm.departmentId || null }))
 
 const createFormDepartmentIdModel = computed({
   get: () => createForm.departmentId || '__none__',
@@ -175,19 +145,13 @@ async function createPerson() {
     if (createForm.teamId) body.teamId = createForm.teamId
     if (createForm.birthYear) body.birthYear = Number(createForm.birthYear)
     if (createForm.joinedAt) body.joinedAt = createForm.joinedAt
-    if (canEditGuardianOnCreate.value) {
-      if (createForm.guardianName.trim()) body.guardianName = createForm.guardianName.trim()
-      if (createForm.guardianEmail.trim()) body.guardianEmail = createForm.guardianEmail.trim()
-    }
+    if (createForm.email.trim()) body.email = createForm.email.trim()
     const response = await $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/directory-people`, { method: 'POST', headers, body })
     people.value = [...people.value, DirectoryPersonSchema.parse(response)]
-    createForm.firstName = ''; createForm.lastName = ''; createForm.birthYear = ''; createForm.joinedAt = ''; createForm.guardianName = ''; createForm.guardianEmail = ''
+    createForm.firstName = ''; createForm.lastName = ''; createForm.birthYear = ''; createForm.joinedAt = ''; createForm.email = ''
     createForm.status = 'active'
-  } catch (error) {
-    const code = (error as { data?: { error?: string } })?.data?.error
-    createError.value = code === 'guardian_contact_required'
-      ? 'Für eine minderjährige, aktive Person ist eine Eltern-E-Mail-Adresse erforderlich.'
-      : 'Die Person konnte nicht angelegt werden.'
+  } catch {
+    createError.value = 'Die Person konnte nicht angelegt werden.'
   } finally {
     createSubmitting.value = false
   }
@@ -197,7 +161,7 @@ async function createPerson() {
 
 const editingPersonId = ref<string | null>(null)
 const editForm = reactive({
-  firstName: '', lastName: '', departmentId: '', teamId: '', birthYear: '', status: 'active' as DirectoryPersonStatus, joinedAt: '', leftAt: '', guardianName: '', guardianEmail: '',
+  firstName: '', lastName: '', departmentId: '', teamId: '', birthYear: '', status: 'active' as DirectoryPersonStatus, joinedAt: '', leftAt: '', email: '',
 })
 const editSubmitting = ref(false)
 const editError = ref('')
@@ -212,11 +176,7 @@ function startEdit(person: DirectoryPerson) {
   editForm.status = person.status
   editForm.joinedAt = person.joinedAt ?? ''
   editForm.leftAt = person.leftAt ?? ''
-  // Elternkontakt wird beim Bearbeiten bewusst nicht vorbefuellt (das waere ein weiterer,
-  // hier nicht angefragter protokollierter Lesezugriff) -- "Elternkontakt anzeigen" in der
-  // Zeile zeigt den aktuellen Wert. Ein leeres Feld hier laesst den bestehenden Wert unveraendert.
-  editForm.guardianName = ''
-  editForm.guardianEmail = ''
+  editForm.email = person.email ?? ''
   editError.value = ''
 }
 const teamOptionsForEdit = computed(() => {
@@ -248,20 +208,14 @@ async function saveEdit(person: DirectoryPerson) {
       birthYear: editForm.birthYear ? Number(editForm.birthYear) : null,
       joinedAt: editForm.joinedAt || null,
       leftAt: editForm.leftAt || null,
-    }
-    if (canManageGuardianContact(person)) {
-      if (editForm.guardianName.trim()) body.guardianName = editForm.guardianName.trim()
-      if (editForm.guardianEmail.trim()) body.guardianEmail = editForm.guardianEmail.trim()
+      email: editForm.email.trim() || null,
     }
     const response = await $fetch<unknown>(`${config.public.apiBase}/v1/directory-people/${person.id}`, { method: 'PATCH', headers, body })
     const updated = DirectoryPersonSchema.parse(response)
     people.value = people.value.map((item) => (item.id === updated.id ? updated : item))
     editingPersonId.value = null
-  } catch (error) {
-    const code = (error as { data?: { error?: string } })?.data?.error
-    editError.value = code === 'guardian_contact_required'
-      ? 'Für eine minderjährige, aktive Person ist eine Eltern-E-Mail-Adresse erforderlich.'
-      : 'Die Änderungen konnten nicht gespeichert werden.'
+  } catch {
+    editError.value = 'Die Änderungen konnten nicht gespeichert werden.'
   } finally {
     editSubmitting.value = false
   }
@@ -302,7 +256,6 @@ async function saveEdit(person: DirectoryPerson) {
             </SelectContent>
           </Select>
           <label class="flex items-center gap-1.5 text-xs"><input v-model="filterMinor" type="checkbox" /> Minderjährig</label>
-          <label class="flex items-center gap-1.5 text-xs"><input v-model="filterMissingGuardian" type="checkbox" /> Ohne Elternkontakt</label>
           <label class="flex items-center gap-1.5 text-xs"><input v-model="filterLeft" type="checkbox" /> Ausgetreten</label>
         </div>
       </section>
@@ -317,6 +270,7 @@ async function saveEdit(person: DirectoryPerson) {
                 <span v-if="person.birthYear"> · Jahrgang {{ person.birthYear }}</span>
                 · {{ STATUS_LABELS[person.status] }}
               </p>
+              <p v-if="person.email" class="mt-1 text-[11px] text-[#9aa096]">{{ person.email }}</p>
               <p v-if="person.joinedAt || person.leftAt" class="mt-1 text-[11px] text-[#9aa096]">
                 <span v-if="person.joinedAt">Dabei seit {{ new Date(person.joinedAt).toLocaleDateString('de-DE') }}</span>
                 <span v-if="person.joinedAt && person.leftAt"> · </span>
@@ -325,17 +279,6 @@ async function saveEdit(person: DirectoryPerson) {
               <div class="mt-1.5 flex flex-wrap gap-1.5">
                 <span v-if="person.isMinor" class="inline-flex items-center rounded-full bg-[#eef1ea] px-2.5 py-1 text-[10px] font-semibold text-[#3d453f]">Minderjährig</span>
                 <span v-if="person.becameAdultAt" class="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-semibold text-amber-800">Kürzlich volljährig geworden</span>
-              </div>
-              <div v-if="canManageGuardianContact(person)" class="mt-2">
-                <button type="button" class="focus-ring text-[11px] font-semibold text-forest" :disabled="guardianLoadingId === person.id" @click="toggleGuardianContact(person)">
-                  {{ guardianContacts[person.id] ? 'Elternkontakt ausblenden' : 'Elternkontakt anzeigen' }}
-                </button>
-                <div v-if="guardianContacts[person.id]" class="mt-1.5 rounded-lg bg-[#f7f8f4] p-2 text-[11px]">
-                  <p>{{ guardianContacts[person.id]!.guardianName ?? 'Kein Name hinterlegt' }}</p>
-                  <p>{{ guardianContacts[person.id]!.guardianEmail ?? 'Keine E-Mail hinterlegt' }}</p>
-                  <p class="mt-1 text-[#9aa096]">Dieser Zugriff wird protokolliert.</p>
-                </div>
-                <p v-if="guardianError" class="mt-1 text-[11px] text-amber-800">{{ guardianError }}</p>
               </div>
             </div>
             <button type="button" class="focus-ring shrink-0 rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-[11px] font-semibold" @click="startEdit(person)">Bearbeiten</button>
@@ -390,14 +333,9 @@ async function saveEdit(person: DirectoryPerson) {
             <label><span class="mb-1 block text-xs font-semibold">Ausgetreten am</span>
               <input v-model="editForm.leftAt" type="date" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" />
             </label>
-            <template v-if="canManageGuardianContact(person)">
-              <label><span class="mb-1 block text-xs font-semibold">Name Erziehungsberechtigte:r</span>
-                <input v-model="editForm.guardianName" maxlength="160" placeholder="leer lassen: unverändert" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" />
-              </label>
-              <label><span class="mb-1 block text-xs font-semibold">E-Mail Erziehungsberechtigte:r</span>
-                <input v-model="editForm.guardianEmail" type="email" placeholder="leer lassen: unverändert" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" />
-              </label>
-            </template>
+            <label><span class="mb-1 block text-xs font-semibold">E-Mail (optional)</span>
+              <input v-model="editForm.email" type="email" maxlength="254" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-xs" />
+            </label>
             <p v-if="editError" class="text-xs text-amber-800 sm:col-span-2">{{ editError }}</p>
             <div class="flex gap-2 sm:col-span-2">
               <button type="button" :disabled="editSubmitting" class="focus-ring rounded-lg bg-forest px-3 py-2 text-[11px] font-bold text-white disabled:opacity-60" @click="saveEdit(person)">
@@ -454,14 +392,9 @@ async function saveEdit(person: DirectoryPerson) {
           <label><span class="mb-1 block text-xs font-semibold">Dabei seit</span>
             <input v-model="createForm.joinedAt" type="date" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm" />
           </label>
-          <template v-if="canEditGuardianOnCreate">
-            <label><span class="mb-1 block text-xs font-semibold">Name Erziehungsberechtigte:r</span>
-              <input v-model="createForm.guardianName" maxlength="160" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm" />
-            </label>
-            <label><span class="mb-1 block text-xs font-semibold">E-Mail Erziehungsberechtigte:r</span>
-              <input v-model="createForm.guardianEmail" type="email" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm" />
-            </label>
-          </template>
+          <label><span class="mb-1 block text-xs font-semibold">E-Mail (optional)</span>
+            <input v-model="createForm.email" type="email" maxlength="254" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm" />
+          </label>
 
           <div class="sm:col-span-2">
             <p v-if="createError" class="mb-2 text-xs text-amber-800">{{ createError }}</p>
