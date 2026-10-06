@@ -30,10 +30,6 @@ const manageableDepartments = computed(() =>
 const canManageAnything = computed(() => canManageOrgWide.value || manageableDepartments.value.length > 0)
 const departmentOptionsForCreate = computed(() => (canManageOrgWide.value ? (organization.value?.departments ?? []) : manageableDepartments.value))
 
-function canManageDepartment(departmentId: string | null): boolean {
-  return useCan('integration.manage', { organizationId: organizationId.value ?? '', ...(departmentId ? { departmentId } : {}) })
-}
-
 async function load() {
   if (!organizationId.value) { loading.value = false; return }
   loading.value = true
@@ -98,13 +94,10 @@ const FIELD_MAPPING_BASE_TARGETS = [
   { value: 'status', label: 'Status' },
   { value: 'joinedAt', label: 'Beitrittsdatum' },
   { value: 'leftAt', label: 'Austrittsdatum' },
+  { value: 'email', label: 'E-Mail' },
 ]
-const GUARDIAN_MAPPING_TARGETS = [
-  { value: 'guardianName', label: 'Name Erziehungsberechtigte:r' },
-  { value: 'guardianEmail', label: 'E-Mail Erziehungsberechtigte:r' },
-]
-function mappingTargetsFor(departmentId: string | null): typeof FIELD_MAPPING_BASE_TARGETS {
-  return canManageDepartment(departmentId) ? [...FIELD_MAPPING_BASE_TARGETS, ...GUARDIAN_MAPPING_TARGETS] : FIELD_MAPPING_BASE_TARGETS
+function mappingTargetsFor(): typeof FIELD_MAPPING_BASE_TARGETS {
+  return FIELD_MAPPING_BASE_TARGETS
 }
 
 function addMappingRow() { mappingRows.value.push({ column: '', field: '' }) }

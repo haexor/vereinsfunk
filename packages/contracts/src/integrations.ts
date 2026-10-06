@@ -124,17 +124,13 @@ export const DirectoryPersonSchema = z.object({
   status: DirectoryPersonStatusSchema,
   leftAt: IsoDateSchema.nullable(),
   joinedAt: IsoDateSchema.nullable(),
+  // Eigene Adresse der Person (Paket 054), z. B. fuer eine spaetere Einladung. Einen
+  // Elternkontakt gibt es seit Paket 054 nicht mehr.
+  email: z.string().nullable(),
   profileId: UuidSchema.nullable(),
   becameAdultAt: z.iso.datetime({ offset: true }).nullable(),
   sourceId: UuidSchema.nullable(),
   createdAt: z.iso.datetime({ offset: true }),
-})
-
-// Nur ueber einen eigenen Endpunkt erreichbar (department.manage oder hoeher, mit Audit-Eintrag) --
-// niemals Teil von DirectoryPersonSchema, siehe plans/014 "Rechtekonzept".
-export const DirectoryPersonGuardianContactSchema = z.object({
-  guardianName: z.string().nullable(),
-  guardianEmail: z.string().nullable(),
 })
 
 const DirectoryPersonFieldsSchema = z.object({
@@ -144,8 +140,7 @@ const DirectoryPersonFieldsSchema = z.object({
   isMinor: z.boolean().optional(),
   status: DirectoryPersonStatusSchema.optional(),
   joinedAt: IsoDateSchema.nullable().optional(),
-  guardianName: z.string().trim().min(1).max(160).nullable().optional(),
-  guardianEmail: z.string().trim().toLowerCase().pipe(z.email()).nullable().optional(),
+  email: z.string().trim().toLowerCase().pipe(z.email()).nullable().optional(),
   profileId: UuidSchema.nullable().optional(),
 })
 export const CreateDirectoryPersonRequestSchema = DirectoryPersonFieldsSchema.extend({
@@ -187,7 +182,6 @@ export type ResolveSyncConflictRequest = z.infer<typeof ResolveSyncConflictReque
 export type SyncSourceResponse = z.infer<typeof SyncSourceResponseSchema>
 export type DirectoryPersonStatus = z.infer<typeof DirectoryPersonStatusSchema>
 export type DirectoryPerson = z.infer<typeof DirectoryPersonSchema>
-export type DirectoryPersonGuardianContact = z.infer<typeof DirectoryPersonGuardianContactSchema>
 export type CreateDirectoryPersonRequest = z.infer<typeof CreateDirectoryPersonRequestSchema>
 export type UpdateDirectoryPersonRequest = z.infer<typeof UpdateDirectoryPersonRequestSchema>
 export type Profile = z.infer<typeof ProfileSchema>

@@ -70,3 +70,17 @@ grant select (email) on public.directory_people to authenticated;
 ## Risiken
 
 - Ältere Pläne (014, 015, 019) beschreiben den Elternkontakt weiter. Sie bleiben als historischer Planungsstand stehen; `plans/README.md` verweist auf dieses Paket.
+
+## Umsetzung: Ergebnis und Abweichungen vom Plan
+
+Umgesetzt am 2026-10-06 in Migration `2026100601_directory_without_guardian_contact.sql` plus Verträgen, Import, API und Oberfläche wie oben beschrieben. Verifiziert: `pnpm lint`, `typecheck`, `test` (bis auf die Ausnahme unten), `build` grün; `pnpm db:test` nach frischem `supabase db reset` grün (45 Dateien, 1147 Assertions). Der `grep` aus „Verifikation“ findet nur noch die Negativ-Assertions, die das Fehlen der Felder prüfen.
+
+Abweichungen:
+
+- **Kein ausdrückliches `drop constraint`.** `DROP COLUMN guardian_email` entfernt den unbenannten Tabellen-Check automatisch, weil er die Spalte verwendet. Der vermutete Constraint-Name muss dafür nicht stimmen.
+- **Der E-Mail-Check ist strenger als geplant:** Er verlangt neben Kleinschreibung auch eine getrimmte Adresse mit 3 bis 254 Zeichen. Schreibende Pfade normalisieren ohnehin vorher.
+- **`email` nimmt am Sync-Abgleich teil** (`createPeopleMatchStrategy.fieldsOf`, `DirectoryPersonLocal.email`). Ohne das würde eine geänderte Adresse in der Quelle nie übernommen, solange sich sonst nichts ändert. Folgerichtig setzt eine manuelle Änderung der E-Mail über `PATCH /v1/directory-people/:id` `source_updated_at`, wie die übrigen abgeglichenen Felder. Eine Quelle ohne E-Mail-Spalte lässt die lokale Adresse unverändert.
+- **Rückrichtung im Minderjährigkeitsabgleich** wird als eigenes Audit-Ereignis `directory_person.minor_status_corrected` protokolliert und setzt `became_adult_at` zurück.
+- **Der Personen-Import kennt keine Sonderbehandlung mehr** für fehlgeschlagene Updates (Code `23514`). Diesen Fehler konnte nur der entfernte Check auslösen; jeder andere Fehler bricht den Lauf wie zuvor ab.
+- **Nicht manuell im Browser geprüft.** „Als `team_manager` einen minderjährigen Spieler ohne E-Mail anlegen“ ist über einen API-Test abgedeckt (`integrations.routes.test.ts`), nicht über einen Durchlauf in der echten Oberfläche.
+- **Lokal nicht lauffähig:** `apps/worker/src/websiteRenderer.logoScoring.test.ts` braucht einen installierten Playwright-Chromium und scheitert ohne ihn. Das ist unabhängig von diesem Paket.

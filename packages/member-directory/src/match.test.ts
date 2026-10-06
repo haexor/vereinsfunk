@@ -21,6 +21,7 @@ function localPerson(overrides: Partial<DirectoryPersonLocal> = {}): DirectoryPe
     firstName: 'Anna',
     lastName: 'Beck',
     birthYear: 2010,
+    email: null,
     departmentId: DEPARTMENT_FUSSBALL,
     teamId: null,
     status: 'active',
@@ -46,6 +47,40 @@ describe('createPeopleMatchStrategy with planSync', () => {
     if (plan.aborted) return
     expect(plan.updated).toHaveLength(1)
     expect(plan.updated[0]?.changedFields).toContain('lastName')
+  })
+
+  it('detects a changed email, normalized, but leaves it alone when the source has no email column', () => {
+    const withEmail = PersonExternalSchema.parse({
+      externalId: 'ext-1', firstName: 'Anna', lastName: 'Beck', departmentName: 'Fußball', email: ' Anna.Beck@Example.com ',
+      sourceUpdatedAt: '2026-02-01T00:00:00Z',
+    })
+    expect(withEmail.email).toBe('anna.beck@example.com')
+    const changed = planSync({
+      existing: [localPerson()],
+      incoming: [withEmail],
+      match: createPeopleMatchStrategy(resolver()),
+      policy: { lossThresholdPercent: 30 },
+    })
+    expect(changed.aborted).toBe(false)
+    if (changed.aborted) return
+    expect(changed.updated[0]?.changedFields).toEqual(['email'])
+
+    const withoutEmail = PersonExternalSchema.parse({
+      externalId: 'ext-1', firstName: 'Anna', lastName: 'Beck', departmentName: 'Fußball', sourceUpdatedAt: '2026-02-01T00:00:00Z',
+    })
+    const unchanged = planSync({
+      existing: [localPerson({ email: 'anna@example.com' })],
+      incoming: [withoutEmail],
+      match: createPeopleMatchStrategy(resolver()),
+      policy: { lossThresholdPercent: 30 },
+    })
+    expect(unchanged.aborted).toBe(false)
+    if (unchanged.aborted) return
+    expect(unchanged.updated).toHaveLength(0)
+  })
+
+  it('rejects an invalid email in an import row', () => {
+    expect(PersonExternalSchema.safeParse({ firstName: 'Anna', lastName: 'Beck', email: 'keine-adresse' }).success).toBe(false)
   })
 
   it('resolves a known team once the department is also known', () => {

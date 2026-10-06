@@ -3,7 +3,8 @@ import { z } from 'zod'
 
 // Erlaubte Felder, vollstaendig (plans/014, "Mitgliederverzeichnis"): Vorname, Nachname,
 // Geburtsjahr, Abteilung/Mannschaft (als Name -- die Aufloesung zur ID passiert in match.ts,
-// dieses Package kennt keine Datenbank), Status/Austrittsdatum, Elternkontakt. Alles andere --
+// dieses Package kennt keine Datenbank), Status/Austrittsdatum, eigene E-Mail (Paket 054; einen
+// Elternkontakt gibt es seitdem nicht mehr). Alles andere --
 // Adresse, IBAN, Geschlecht, Nationalitaet, Gesundheitsdaten, volles Geburtsdatum, Freitext --
 // existiert hier nicht: das Schema selbst ist die Datenminimierung. normalize() unten kopiert nur
 // gemappte Felder, und parse() wirft unbekannte Schluessel ohnehin weg -- eine falsch benannte
@@ -18,8 +19,7 @@ export const PersonExternalSchema = z.object({
   status: z.enum(['active', 'inactive', 'left']).optional(),
   joinedAt: z.string().trim().min(1).optional(),
   leftAt: z.string().trim().min(1).optional(),
-  guardianName: z.string().trim().min(1).max(160).optional(),
-  guardianEmail: z.string().trim().toLowerCase().pipe(z.email()).optional(),
+  email: z.string().trim().toLowerCase().pipe(z.email()).optional(),
   sourceUpdatedAt: z.string().trim().min(1).optional(),
 })
 export type PersonExternal = z.infer<typeof PersonExternalSchema>

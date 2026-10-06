@@ -428,6 +428,7 @@ export function mapDirectoryPersonRow(row: Record<string, unknown>) {
     status: row.status,
     leftAt: row.left_at,
     joinedAt: row.joined_at,
+    email: row.email,
     profileId: row.profile_id,
     becameAdultAt: row.became_adult_at,
     sourceId: row.source_id,
@@ -465,6 +466,6 @@ export const SYNC_RUN_COLUMNS =
 export const SYNC_CONFLICT_COLUMNS =
   'id, organization_id, sync_run_id, source_id, domain, external_id, local_id, label, field, current_value, incoming_value, kind, resolution, resolved_at, created_at'
 export const DIRECTORY_PERSON_COLUMNS =
-  'id, organization_id, department_id, team_id, first_name, last_name, birth_year, is_minor, status, left_at, joined_at, profile_id, became_adult_at, source_id, created_at'
+  'id, organization_id, department_id, team_id, first_name, last_name, birth_year, is_minor, status, left_at, joined_at, email, profile_id, became_adult_at, source_id, created_at'
 export const MEDIA_ASSET_SUMMARY_COLUMNS =
   'id, organization_id, department_id, bucket_id, object_path, mime_type, byte_size, width, height, duration_ms, created_by, created_at, people_reviewed_at'

@@ -28,9 +28,9 @@ insert into public.department_memberships (organization_id, department_id, user_
   ('70000000-1000-4000-8000-000000000001', '70000000-1100-4000-8000-000000000001', '70000000-0000-4000-8000-000000000002', 'department_admin'),
   ('70000000-1000-4000-8000-000000000001', '70000000-1100-4000-8000-000000000001', '70000000-0000-4000-8000-000000000003', 'editor');
 
-insert into public.directory_people (id, organization_id, department_id, first_name, last_name, is_minor, status, guardian_email) values
-  ('70000000-1300-4000-8000-000000000001', '70000000-1000-4000-8000-000000000001', '70000000-1100-4000-8000-000000000001', 'Lisa', 'Meier', true, 'active', 'eltern@pgtap-consent.local'),
-  ('70000000-1300-4000-8000-000000000002', '70000000-1000-4000-8000-000000000001', '70000000-1100-4000-8000-000000000001', 'Max', 'Schmidt', false, 'active', null);
+insert into public.directory_people (id, organization_id, department_id, first_name, last_name, is_minor, status) values
+  ('70000000-1300-4000-8000-000000000001', '70000000-1000-4000-8000-000000000001', '70000000-1100-4000-8000-000000000001', 'Lisa', 'Meier', true, 'active'),
+  ('70000000-1300-4000-8000-000000000002', '70000000-1000-4000-8000-000000000001', '70000000-1100-4000-8000-000000000001', 'Max', 'Schmidt', false, 'active');
 
 -- 1-2: consent_records-Grundzustand -- guardian_confirmed=false bei signer_role='guardian'
 -- verletzt den neuen CHECK (Plan 015, "Fachliches Modell").

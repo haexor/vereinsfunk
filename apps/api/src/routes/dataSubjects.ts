@@ -128,7 +128,7 @@ export function registerDataSubjectRoutes(app: FastifyInstance, context: ApiRout
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ personId: UuidSchema }).parse(request.params)
     const client = supabaseClients.forUser(request.auth!.accessToken)
-    const person = await client.from('directory_people').select('organization_id, department_id, team_id, first_name, last_name, birth_year, is_minor, status, joined_at, left_at, guardian_name, guardian_email').eq('id', params.personId).maybeSingle()
+    const person = await client.from('directory_people').select('organization_id, department_id, team_id, first_name, last_name, birth_year, is_minor, status, joined_at, left_at, email').eq('id', params.personId).maybeSingle()
     if (person.error) throw person.error
     if (!person.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     const organizationId = person.data.organization_id as string
@@ -159,8 +159,8 @@ export function registerDataSubjectRoutes(app: FastifyInstance, context: ApiRout
       person: {
         firstName: person.data.first_name, lastName: person.data.last_name, birthYear: person.data.birth_year,
         isMinor: person.data.is_minor, status: person.data.status, joinedAt: person.data.joined_at, leftAt: person.data.left_at,
+        email: person.data.email,
       },
-      guardianContact: { name: person.data.guardian_name, email: person.data.guardian_email },
       consents: consents.data.map((row) => ({ id: row.id, scope: row.scope, origin: row.origin, signedAt: row.signed_at, validUntil: row.valid_until, revokedAt: row.revoked_at, supersededBy: row.superseded_by })),
       mediaUsages: mediaUsages.map((row) => ({ mediaAssetId: row.media_asset_id, decision: row.decision, obscuringStyle: row.obscuring_style, createdAt: row.created_at })),
       accessLog: accessLog.data.map((row) => ({ action: row.action, occurredAt: row.created_at })),
