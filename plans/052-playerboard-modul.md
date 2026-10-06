@@ -144,7 +144,7 @@ Fotos:
 
 - Die Fotos werden über kurzlebige, signierte URLs ausgeliefert, die der anonyme API-Endpunkt mit Service-Rolle erzeugt (Muster Medien-Grant aus Paket 025). Der Bucket selbst bleibt privat.
 - Einzelne Fotos kann der Trainer über `playerboard_training_photos.public = false` ausnehmen.
-- Beim Einschalten von `public_photos_enabled` und beim Hochladen zeigt die Oberfläche alle aktiven Spieler ohne gültige Einwilligung mit Zweck `website` und Kontext `training`. So weiß der Trainer, wer auf öffentlichen Fotos nicht zu sehen sein darf. Gesperrt wird nichts, weil ein Foto keiner Person automatisch zugeordnet ist.
+- Jedes Foto startet privat mit `consent_review_status = 'pending'`; der Upload selbst bleibt möglich. Vor einer öffentlichen Freigabe führt ein Trainer oder eine dazu berechtigte Einwilligungsprüfung einen verbindlichen Einzelbild-Review durch: Er listet jede erkennbare Person über `directory_person_id`, bestätigt ausdrücklich, dass keine weitere erkennbare Person übersehen wurde, und ordnet jeder gelisteten Person eine zum Prüfzeitpunkt gültige Einwilligung für Zweck `website` und Kontext `training` zu. Unbekannte, nicht gelistete oder nicht gültig eingewilligte erkennbare Personen blockieren die Freigabe. Erst eine transaktionale Prüfung aller Zuordnungen setzt `consent_review_status = 'approved'` und darf `public = true` setzen; der anonyme Endpunkt und die signierte URL-Ausgabe liefern ausschließlich Fotos mit diesem Status. Widerruf, Ablauf oder Ablösung einer Einwilligung setzt betroffene Fotos wieder auf `blocked` und macht sie privat. Die bloße Anzeige betroffener Spieler ohne diese Bestätigung reicht nicht aus.
 
 URL `/mannschaft/{vereins-slug}/{public_slug}` mit Reitern Rangliste, Veo und Fotos (nur die eingeschalteten). Ausgeliefert über anonyme API-Endpunkte mit Service-Rolle und `security definer`-Funktionen, die nur `service_role` ausführen darf (Muster öffentliches Impressum, Paket 020).
 
@@ -239,7 +239,9 @@ create table public.playerboard_point_entries (
   created_by uuid references public.profiles(id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (training_id, player_id, category_id)
+  unique (training_id, player_id, category_id),
+  foreign key (organization_id, player_id)
+    references public.playerboard_players(organization_id, id) on delete cascade
   -- Trigger: Spieler gehört zur Mannschaft des Trainings, Kategorie ist für diese
   -- Mannschaft wirksam, value liegt in [value_min, value_max]
   -- (Gegenstück zu enforce_point_entry_team_consistency aus playerboard).
@@ -250,9 +252,28 @@ create table public.playerboard_training_photos (
   organization_id uuid not null, training_id uuid not null,
   storage_path text not null unique,
   content_type text not null, size_bytes integer not null,
-  public boolean not null default true,                -- wirkt nur bei public_photos_enabled
+  public boolean not null default false,               -- wirkt nur bei public_photos_enabled und consent_review_status = 'approved'
+  consent_review_status text not null default 'pending'
+    check (consent_review_status in ('pending', 'approved', 'blocked')),
+  all_recognizable_people_listed boolean not null default false,
+  consent_reviewed_by uuid references public.profiles(id) on delete set null,
+  consent_reviewed_at timestamptz,
   uploaded_by uuid references public.profiles(id) on delete set null,
-  uploaded_at timestamptz not null default now()
+  uploaded_at timestamptz not null default now(),
+  unique (organization_id, id)
+);
+
+create table public.playerboard_training_photo_people (
+  organization_id uuid not null, photo_id uuid not null, directory_person_id uuid not null,
+  consent_record_id uuid not null,
+  created_at timestamptz not null default now(),
+  primary key (photo_id, directory_person_id),
+  foreign key (organization_id, photo_id)
+    references public.playerboard_training_photos(organization_id, id) on delete cascade,
+  foreign key (organization_id, directory_person_id)
+    references public.directory_people(organization_id, id) on delete cascade,
+  foreign key (organization_id, consent_record_id)
+    references public.consent_records(organization_id, id) on delete restrict
 );
 
 alter table public.invitations add column directory_person_id uuid;
@@ -268,7 +289,7 @@ Funktionen:
 - `public.playerboard_effective_categories(team_id)`: wirksame Kategorien nach obiger Regel.
 - `public.playerboard_team_ranking(team_id, from, to)`: `security invoker`, Rangliste für Berechtigte.
 - `public.playerboard_public_label(directory_person_id, jersey_number)`: bildet „#7 M. K.“; einzige Stelle, an der öffentliche Spielerbezeichnungen entstehen.
-- `public.playerboard_public_ranking(org_slug, public_slug, from, to)` und `public.playerboard_public_photos(org_slug, public_slug, from, to)`: `security definer`, prüfen den jeweiligen Schalter **und** `public_sharing_allowed` **und** `module_enabled`, geben Spieler nur über `playerboard_public_label` aus; nur `service_role` darf sie ausführen. Die öffentlichen Veo-Werte folgen in 053 demselben Muster.
+- `public.playerboard_public_ranking(org_slug, public_slug, from, to)` und `public.playerboard_public_photos(org_slug, public_slug, from, to)`: `security definer`, prüfen den jeweiligen Schalter **und** `public_sharing_allowed` **und** `module_enabled`; Fotos zusätzlich nur mit `consent_review_status = 'approved'`, `public = true`, vollständiger Personenliste und aktuell gültigen Einwilligungen. Spieler werden nur über `playerboard_public_label` ausgegeben; nur `service_role` darf sie ausführen. Die öffentlichen Veo-Werte folgen in 053 demselben Muster.
 
 Speicherverbrauch der Fotos zählt auf das Speicherkontingent des Vereins (Paket 021).
 
@@ -283,7 +304,7 @@ Migration wie oben (setzt 054 voraus), Bucket mit Policies, Trigger. pgTAP mit p
 - `stats_visibility`: Spieler einer Nachbarmannschaft sieht bei `team` nichts, bei `department` Punkte, aber keine Trainingsnotizen oder Fotos; Mitglied einer anderen Abteilung sieht erst bei `organization` etwas; vom Verein verbindlich gesetztes `organization` ist von der Mannschaft nicht zu verengen, nach Freigabe schon
 - Punkte mit Spieler einer anderen Mannschaft oder nicht wirksamer Kategorie werden abgelehnt
 - Vererbung: Saisonbeginn verbindlich/freigegeben/von der Abteilung wieder gesperrt; `team_categories_allowed = false` auf Vereinsebene schlägt `true` darunter
-- Öffentliche Funktionen liefern nichts, wenn Schalter, `public_sharing_allowed` oder Modul fehlen; die Ausgabe enthält nie Vor- oder Nachnamen, IDs, Geburtsjahre, E-Mails oder Notizen (Test sucht die Klarnamen der Testpersonen im JSON); ausgenommene Fotos (`public = false`) erscheinen nicht
+- Öffentliche Funktionen liefern nichts, wenn Schalter, `public_sharing_allowed` oder Modul fehlen; die Ausgabe enthält nie Vor- oder Nachnamen, IDs, Geburtsjahre, E-Mails oder Notizen (Test sucht die Klarnamen der Testpersonen im JSON); Fotos mit `public = false`, ausstehender/gescheiterter Einwilligungsprüfung, unvollständiger Personenliste oder ungültiger Einwilligung erscheinen nicht
 
 ### PR 2 – Domain, Verträge, API
 
@@ -305,7 +326,7 @@ Seiten unter `/playerboard/` im Modul-Registry aus 051, Mannschaft aus dem aktiv
 ### PR 4 – Spieleransicht, Rangliste, Übersicht
 
 - `/playerboard` und `/playerboard/rangliste` für `player` und Trainer, Zeitraumfilter (Saison, Monat, frei)
-- öffentliche Seite `/mannschaft/[orgSlug]/[teamSlug]` im `auth`-Layout mit den Reitern Rangliste und Fotos (Veo folgt in 053), Vereinsmarke aus `resolveBrand`
+- öffentliche Seite `/mannschaft/[orgSlug]/[teamSlug]` im `auth`-Layout mit den Reitern Rangliste und Fotos (Veo folgt in 053), Vereinsmarke aus `resolveBrand`; die globale Auth-Middleware lässt ausschließlich das Muster `/mannschaft/[^/]+/[^/]+` ohne Anmeldung passieren, nicht leere Segmente, zusätzliche Segmente oder andere Routen
 - bei jedem Trainingsfoto: Schalter „nicht öffentlich“
 - PlayerBoard-Kachel auf der Übersicht (`index.vue`), eingehängt über das Modul-Registry
 
@@ -320,7 +341,7 @@ Seiten unter `/playerboard/` im Modul-Registry aus 051, Mannschaft aus dem aktiv
 
 - pgTAP wie unter PR 1, nach frischem `supabase db reset`.
 - API-Tests je Route inklusive `403 module_disabled` und `403 forbidden` für `player` auf Schreibrouten.
-- Playwright auf 360 px Breite: Training anlegen, Punkte für zehn Spieler erfassen, speichern, als `player` Rangliste prüfen, öffentliche Mannschaftsseite ohne Anmeldung aufrufen: nur „#Nr Initialen“, keine Klarnamen; Fotos nur bei eingeschaltetem Schalter und ohne ausgenommene Fotos.
+- Playwright auf 360 px Breite: Training anlegen, Punkte für zehn Spieler erfassen, speichern, als `player` Rangliste prüfen, öffentliche Mannschaftsseite ohne Anmeldung aufrufen: nur „#Nr Initialen“, keine Klarnamen; Fotos nur bei eingeschaltetem Schalter, `approved`-Einwilligungsprüfung, vollständiger Personenliste und ohne ausgenommene Fotos.
 - `pnpm lint`, `typecheck`, `test`, `build`, `db:test` grün.
 
 ## Risiken und offene Entscheidungen

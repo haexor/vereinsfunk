@@ -32,7 +32,7 @@ Was der Integrationsrahmen **nicht** abdeckt, ergänzt eine PlayerBoard-Tabelle:
 Pro Veo-Spiel:
 
 1. `fixtures` mit `source_id = Veo-Quelle` und `external_id = Veo-Spiel-ID` vorhanden → aktualisieren.
-2. Sonst ein Spiel derselben Mannschaft aus einer anderen Quelle oder ohne Quelle suchen (`fixtureMatch`: Anstoßtag, Gegner, Heim/Auswärts). Bei eindeutigem Treffer **Ergebnis und Statistiken daran hängen**, ohne Stammdaten zu überschreiben, die eine andere Quelle verwaltet.
+2. Wenn kein Fixture mit dieser Veo-ID existiert, führt der Worker einen expliziten Veo-Fallback-Abgleich aus (eigener Worker-Schritt oder Erweiterung von `planSync`/`fixtureMatch`): Er bestimmt Kandidaten derselben Mannschaft anhand von Anstoßdatum, Gegner und Heim/Auswärts-Status. Nur bei genau einem Treffer werden **Ergebnis und Statistiken daran gehängt**, ohne Stammdaten zu überschreiben, die eine andere Quelle verwaltet. Bei mehreren Treffern wird ein `integration_sync_conflicts`-Eintrag angelegt; bei keinem Treffer greift Schritt 3.
 3. Sonst ein neues `fixtures`-Spiel mit Status `played` anlegen.
 
 Mehrdeutige Treffer werden zu einem `integration_sync_conflicts`-Eintrag statt zu einer Vermutung — dasselbe Verhalten wie beim iCal-Import.
@@ -77,17 +77,29 @@ create table public.playerboard_veo_match_stats (
     references public.fixtures(organization_id, id) on delete cascade
 );
 
-create table public.playerboard_veo_player_stats (
+create table public.playerboard_veo_player_assignments (
+  id uuid primary key default gen_random_uuid(),
   organization_id uuid not null, fixture_id uuid not null,
-  veo_jersey_number integer not null, stat_type text not null,
-  player_id uuid,                                       -- playerboard_players, null = nicht zugeordnet
+  veo_jersey_number integer not null,
+  player_id uuid,                                       -- null = nicht zugeordnet
   matched_manually boolean not null default false,
-  category text not null, value numeric not null,
-  primary key (fixture_id, veo_jersey_number, stat_type),
+  unique (organization_id, id),
+  unique (organization_id, fixture_id, veo_jersey_number),
+  unique (organization_id, fixture_id, player_id),   -- null darf für nicht zugeordnete Zeilen mehrfach vorkommen
   foreign key (organization_id, fixture_id)
     references public.fixtures(organization_id, id) on delete cascade,
   foreign key (organization_id, player_id)
-    references public.playerboard_players(organization_id, id) on delete set null (player_id)
+    references public.playerboard_players(organization_id, id) on delete set null (player_id),
+  unique (organization_id, fixture_id, id)
+);
+
+create table public.playerboard_veo_player_stats (
+  organization_id uuid not null, assignment_id uuid not null,
+  fixture_id uuid not null, stat_type text not null,
+  category text not null, value numeric not null,
+  primary key (assignment_id, stat_type),
+  foreign key (organization_id, fixture_id, assignment_id)
+    references public.playerboard_veo_player_assignments(organization_id, fixture_id, id) on delete cascade
 );
 ```
 

@@ -136,13 +136,13 @@ Kein eigener Katalog-Table: Die Modulmenge ist Code (Routen, Seiten, Worker), ni
 ## Verifikation
 
 - pgTAP für `authz.module_enabled` (Matrix oben) und für die Schreibvalidierung der Policy-Settings.
-- API-Tests: jede bestehende `requirePermission`-Route liefert bei abgeschaltetem `social_media` `403 module_disabled`; Rahmen-Routen (Struktur, Mitglieder, Kalender, Einwilligungen) funktionieren weiter.
+- API-Tests: jede bestehende `requirePermission`-Route, deren Permission dem Modul `social_media` zugeordnet ist, liefert bei abgeschaltetem `social_media` `403 module_disabled`; Core-Routen des Rahmens (Struktur, Mitglieder, Kalender, Einwilligungen) funktionieren weiter.
 - Ein Durchlauf aller bestehenden API-Tests mit `social_media` aktiv ist grün und unverändert — der Rahmen darf das heutige Verhalten nicht ändern.
 - Playwright: Navigation zeigt bei abgeschaltetem Modul keine Social-Media-Einträge; Direktaufruf von `/beitraege` landet auf der Erklärseite.
 
 ## Risiken und offene Entscheidungen
 
-- **Eingeplante Veröffentlichungen beim Abschalten** (Betreiberentscheidung offen). Empfehlung: Abschalten verweigern, solange `scheduled`-Publikationen im Scope existieren, mit Liste der betroffenen Beiträge. Alternative „laufen lassen“ widerspricht der Erwartung, dass „aus“ wirklich aus heißt.
+- **Eingeplante Veröffentlichungen beim Abschalten (Betreiberentscheidung 2026-10-06):** Das Abschalten von `social_media` wird verweigert, solange im betroffenen Scope oder darunter Publikationen den Status `scheduled` oder `running` haben. Die API antwortet mit `409 module_has_active_publications` und listet die betroffenen Publikations- und Beitrags-IDs; erst nach Abbruch oder Abschluss kann abgeschaltet werden. Deaktivierung und Workerstart verwenden je Organisations-Scope denselben transaktionalen Advisory-Lock: Der Worker prüft unter diesem Lock den Modulstatus und setzt die Publikation erst danach auf `running`; ist das Modul bereits aus, wird sie mit `cancelled` und dem Grund `module_disabled` beendet und nicht erneut versucht. Die Deaktivierung kann daher nicht zwischen Prüfung und Start eines Jobs committen, und nach ihrem Commit veröffentlicht kein neuer Workerjob mehr.
 - **Keine RLS-Nachrüstung für Social-Media-Tabellen.** Der Modulschalter ist eine Produkt- und Tarifgrenze, keine Vertraulichkeitsgrenze: Die Daten bleiben durch die bestehenden Rollen-Policies geschützt. Rund 40 bestehende Policies nachzurüsten wäre großes Risiko für wenig Schutzgewinn. Neue Module (ab 052) bekommen `authz.module_enabled` von Anfang an in ihre Policies, weil es dort nichts kostet.
 - **`analytics.view` ist heute Social-Media-spezifisch**, der Name klingt aber modulübergreifend. PlayerBoard bekommt eigene Rechte (052) statt `analytics.view` mitzubenutzen; eine Umbenennung in `post.analytics.view` ist nicht Teil dieses Pakets.
 - **Rollen und Rang** (`authz.role_rank`) bleiben modulübergreifend. Ein künftiges Modul mit eigener Rollenhierarchie würde dieses Modell sprengen — bewusst nicht vorweggenommen.

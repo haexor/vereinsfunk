@@ -46,7 +46,8 @@ grant select (email) on public.directory_people to authenticated;
 
 - Alle `guardianName`/`guardianEmail`-Felder, `DirectoryPersonGuardianContactSchema`, der Endpunkt `…/guardian-contact`, der Filter `missingGuardian`, die `department.manage`-Sonderprüfung und der Fehlercode `guardian_contact_required` entfallen.
 - Import: kein `invalid_record`-Konflikt mehr für fehlenden Elternkontakt, `canWriteGuardianContact` entfällt. Neues optionales Zielfeld `email` in der Feldzuordnung.
-- `email` in Create/Update der Verzeichnisperson (gleiche Rechte wie die übrigen Felder: `directory.read` im Ziel-Scope).
+- `email` in Create/Update der Verzeichnisperson (gleiche Rechte wie die übrigen Felder: `directory.read` im Ziel-Scope). `CreateDirectoryPersonRequestSchema` und `UpdateDirectoryPersonRequestSchema` normalisieren die optionale Adresse mit `z.string().trim().toLowerCase().pipe(z.email())` vor der Formatprüfung.
+- `PersonExternalSchema` validiert und normalisiert das optionale Importfeld `email` mit `z.string().trim().toLowerCase().pipe(z.email())`; ungültige Werte werden als `invalid_record`-Importkonflikt abgewiesen.
 - Auskunftsexport: `guardianContact` raus, `email` rein.
 
 ### Oberfläche
@@ -57,12 +58,13 @@ grant select (email) on public.directory_people to authenticated;
 ### Tests
 
 - pgTAP: aktive minderjährige Person ohne Kontakt ist gültig; `recompute_directory_minor_status` macht eine volljährig geführte Person nach Korrektur des Geburtsjahrs wieder minderjährig; `email` wird klein geschrieben erzwungen; `authenticated` mit `directory.read` liest `email`, ohne Recht nicht.
+- API- und Importtests weisen ungültige `email`-Werte zurück und bestätigen, dass gültige Adressen vor dem Speichern getrimmt und kleingeschrieben werden.
 - Testdaten, die `guardian_email` nur für den Check gesetzt haben, entfernen; Tests für Elternkontakt-Endpunkt und -Rechte entfallen ersatzlos.
 
 ## Verifikation
 
 - `pnpm lint`, `typecheck`, `test`, `build`, `db:test` grün nach frischem `supabase db reset`.
-- `grep -rni guardian_email\|guardianEmail\|guardian_name\|guardianName` über `apps`, `packages`, `supabase/migrations` neuer als diese Migration und `supabase/tests` findet nichts mehr. Ältere Migrationen bleiben unverändert (bereits angewendet).
+- `grep -rniE 'guardian_email|guardianEmail|guardian_name|guardianName'` über `apps`, `packages`, `supabase/migrations` neuer als diese Migration und `supabase/tests` findet nichts mehr. Ältere Migrationen bleiben unverändert (bereits angewendet).
 - Manuell: Als `team_manager` einen minderjährigen Spieler ohne E-Mail anlegen, E-Mail später ergänzen.
 
 ## Risiken
