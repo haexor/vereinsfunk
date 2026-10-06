@@ -146,3 +146,14 @@ Kein eigener Katalog-Table: Die Modulmenge ist Code (Routen, Seiten, Worker), ni
 - **Keine RLS-Nachrüstung für Social-Media-Tabellen.** Der Modulschalter ist eine Produkt- und Tarifgrenze, keine Vertraulichkeitsgrenze: Die Daten bleiben durch die bestehenden Rollen-Policies geschützt. Rund 40 bestehende Policies nachzurüsten wäre großes Risiko für wenig Schutzgewinn. Neue Module (ab 052) bekommen `authz.module_enabled` von Anfang an in ihre Policies, weil es dort nichts kostet.
 - **`analytics.view` ist heute Social-Media-spezifisch**, der Name klingt aber modulübergreifend. PlayerBoard bekommt eigene Rechte (052) statt `analytics.view` mitzubenutzen; eine Umbenennung in `post.analytics.view` ist nicht Teil dieses Pakets.
 - **Rollen und Rang** (`authz.role_rank`) bleiben modulübergreifend. Ein künftiges Modul mit eigener Rollenhierarchie würde dieses Modell sprengen — bewusst nicht vorweggenommen.
+
+## Umsetzung PR 1: Ergebnis und Abweichungen vom Plan
+
+Umgesetzt am 2026-10-06 in Migration `2026100602_app_modules.sql` plus `packages/domain/src/modules.ts`, `permissionModule` in `packages/authorization` und `packages/contracts/src/modules.ts`. Verifiziert: `pnpm lint`, `typecheck`, `build` grün; `pnpm test` grün bis auf `apps/worker/src/websiteRenderer.logoScoring.test.ts`, das lokal mangels Playwright-Chromium nicht startet (unabhängig von diesem Paket); `pnpm db:test` nach frischem `supabase db reset` grün (46 Dateien, 1163 Assertions, davon 16 in `app_modules.test.sql`).
+
+Abweichungen:
+
+- **Modulauswahl als eigener Vertrag statt in den Policy-Settings-Verträgen.** `ModuleSelectionSchema`, `ScopeModulesSchema` und `UpdateScopeModulesRequestSchema` stehen in `contracts/src/modules.ts`, nicht in `PolicyRuleValues`. Die Freigaberegeln gehören fachlich zum Modul `social_media`; läge die Modulauswahl darin, hinge das Wiedereinschalten eines Moduls an einem Endpunkt, den das abgeschaltete Modul selbst sperrt. Gespeichert wird weiterhin in `policy_settings.enabled_modules`.
+- **`includedModules` in der Tarif-API schon in PR 1.** Lesen und Schreiben in `routes/platformAdmin.ts` und `routes/subscriptions.ts` sind bereits enthalten, weil das Tarif-DTO das Feld mit dem Vertrag ohnehin führen muss. Der Tarif-Editor in der Oberfläche bleibt in PR 2.
+- **`mergeAllowedList` ist jetzt exportiert und generisch** (`<T extends string>`), damit `resolveEnabledModules` dieselbe Schnittmengenregel nutzt wie `allowedChannelIds`. `resolveEnabledModules` liefert zusätzlich `blockedBy` (äußerste sperrende Stelle je Modul) für die Zustände „abgewählt“ und „gesperrt“ in PR 3.
+- **Konsistenztest statt Typtest allein.** `apps/api/src/modules.test.ts` prüft, dass SQL-Enum-Spiegel `AppModuleSchema`, `appModules` und die Modulwerte von `permissionModule` übereinstimmen.

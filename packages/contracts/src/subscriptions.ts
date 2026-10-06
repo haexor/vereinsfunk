@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { UuidSchema } from './content.js'
+import { AppModuleSchema, UniqueAppModulesSchema } from './modules.js'
 
 // Plan 021: Tarife, Speicherkontingent und Beitragskontingente nach Medienherkunft.
 export const MediaOriginSchema = z.enum(['own_upload', 'ai_image', 'ai_video'])
@@ -40,6 +41,8 @@ export const SubscriptionPlanSchema = z.object({
   sortOrder: z.int(),
   availableFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
   availableUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+  // Paket 051: welche Module ein Verein mit diesem Tarif nutzen darf.
+  includedModules: z.array(AppModuleSchema),
   contentLimits: z.array(SubscriptionPlanContentLimitSchema),
 })
 
@@ -123,6 +126,8 @@ export const CreateSubscriptionPlanRequestSchema = z.object({
   sortOrder: z.int().default(0),
   availableFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
   availableUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
+  // Default wie die Spalte subscription_plans.included_modules.
+  includedModules: UniqueAppModulesSchema.default(['social_media']),
   contentLimits: z.array(SubscriptionPlanContentLimitSchema).length(3).refine(hasExactlyOneRowPerMediaOrigin, { message: 'exactly one row per media origin is required' }),
 })
 export const UpdateSubscriptionPlanRequestSchema = z.object({
@@ -136,6 +141,7 @@ export const UpdateSubscriptionPlanRequestSchema = z.object({
   sortOrder: z.int().optional(),
   availableFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   availableUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  includedModules: UniqueAppModulesSchema.optional(),
 })
 export const SetSubscriptionPlanContentLimitsRequestSchema = z.object({
   contentLimits: z.array(SubscriptionPlanContentLimitSchema).length(3).refine(hasExactlyOneRowPerMediaOrigin, { message: 'exactly one row per media origin is required' }),

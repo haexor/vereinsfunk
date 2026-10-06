@@ -97,6 +97,34 @@ export const rolePermissions: Readonly<Record<Role, ReadonlySet<Permission>>> = 
   ]),
 }
 
+// Paket 051: jede Permission gehoert genau einem Modul oder dem Rahmen ('core'). requirePermission
+// prueft damit zusaetzlich, ob das Modul im Ziel-Scope aktiv ist. Die Modulschluessel spiegeln
+// public.app_module (Migration 2026100602_app_modules.sql) und appModules in packages/domain --
+// dieses Paket haengt bewusst von keinem anderen ab, ein Test in apps/api haelt die Listen
+// deckungsgleich. Record<Permission, ...> erzwingt zur Kompilierzeit, dass keine Permission fehlt.
+export type PermissionModule = 'core' | 'social_media' | 'playerboard'
+export const permissionModule: Readonly<Record<Permission, PermissionModule>> = {
+  'organization.manage': 'core',
+  'department.manage': 'core',
+  'team.manage': 'core',
+  'member.invite': 'core',
+  'member.remove': 'core',
+  'brand.manage': 'core',
+  'billing.manage': 'core',
+  'directory.read': 'core',
+  'integration.manage': 'core',
+  'fixture.manage': 'core',
+  'event.manage': 'core',
+  'consent.manage': 'core',
+  'post.create': 'social_media',
+  'post.edit': 'social_media',
+  'post.submit': 'social_media',
+  'post.approve': 'social_media',
+  'post.publish': 'social_media',
+  'social_account.manage': 'social_media',
+  'analytics.view': 'social_media',
+}
+
 export function hasPermission(roles: readonly Role[], permission: Permission): boolean {
   return roles.some((role) => rolePermissions[role].has(permission))
 }
