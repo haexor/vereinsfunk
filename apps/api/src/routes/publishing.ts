@@ -113,7 +113,7 @@ export function registerPublishingRoutes(app: FastifyInstance, context: ApiRoute
     // Nutzer-Client kaeme die Verzeichnisperson leer zurueck, computeMediaGateBlockersForPostVersion
     // leitet daraus subjectIsMinor=false und personLeft=false ab und die Pruefung faellt still
     // offen -- ausgerechnet fuer die beiden Faelle, die zwischen Freigabe und Ausfuehrung neu
-    // entstehen koennen (Minderjaehrige ohne Guardian, ausgetretene Person bei
+    // entstehen koennen (Minderjaehrige ohne bestaetigte Einwilligung, ausgetretene Person bei
     // consentExpiresOnLeave). requirePermission oben hat den Aufrufer bereits autorisiert, und nach
     // aussen geht nur die Liste der Blocker-Namen, keine Verzeichnisdaten -- dasselbe Muster wie das
     // Lesen von social_connection_secrets ueber den Service-Client.

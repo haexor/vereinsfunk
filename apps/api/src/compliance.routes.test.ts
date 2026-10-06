@@ -456,6 +456,8 @@ describe('Paket 020: Rechtliche Pflichten und Datenschutzbetrieb', () => {
       expect(consentRecordsAnonymized).toMatchObject({ pseudonymous_subject_ref: null, signer_name: null })
       const body = response.json() as { erased: string[]; retained: { category: string }[] }
       expect(body.erased).toContain('Verzeichniseintrag')
+      expect(body.erased).toContain('E-Mail-Adresse')
+      expect(body.erased).not.toContain('Elternkontakt')
       expect(body.retained.map((entry) => entry.category)).toContain('Einwilligungsnachweise')
     })
   })
@@ -857,4 +859,3 @@ describe('Paket 020: Rechtliche Pflichten und Datenschutzbetrieb', () => {
     })
   })
 })
-

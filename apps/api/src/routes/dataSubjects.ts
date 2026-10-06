@@ -174,7 +174,7 @@ export function registerDataSubjectRoutes(app: FastifyInstance, context: ApiRout
     return reply.code(200).send(DataSubjectExportResponseSchema.parse({ signedUrl: signed.data.signedUrl, expiresAt: new Date(Date.now() + 300_000).toISOString() }))
   })
 
-  // Loeschung: entfernt den Verzeichniseintrag samt Elternkontakt. consent_records_person_fk ist seit
+  // Loeschung: entfernt den Verzeichniseintrag samt eigener E-Mail-Adresse. consent_records_person_fk ist seit
   // dieser Migration ON DELETE SET NULL -- der Einwilligungsnachweis bleibt bestehen, nur die
   // identifizierende Verknuepfung verschwindet, was auch die Gesichtszuordnung (face_regions ->
   // consent_record_id) von der Person entkoppelt, ohne die Mediendatei selbst anzufassen.
@@ -216,7 +216,7 @@ export function registerDataSubjectRoutes(app: FastifyInstance, context: ApiRout
     retained.push({ category: 'Veröffentlichte Beiträge', reason: 'Löschung auf der Plattform ist eine Handlung des Vereins, nicht des Systems' })
     return reply.code(200).send(
       DataSubjectEraseResponseSchema.parse({
-        erased: ['Verzeichniseintrag', 'Elternkontakt', 'Gesichtszuordnung (Verknüpfung zur Person)', 'Pseudonym und Name der unterzeichnenden Person in verknüpften Einwilligungsnachweisen'],
+        erased: ['Verzeichniseintrag', 'E-Mail-Adresse', 'Gesichtszuordnung (Verknüpfung zur Person)', 'Pseudonym und Name der unterzeichnenden Person in verknüpften Einwilligungsnachweisen'],
         retained,
       }),
     )

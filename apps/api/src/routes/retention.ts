@@ -196,7 +196,7 @@ export function registerRetentionRoutes(app: FastifyInstance, context: ApiRouteC
       results.push({ ruleKey: 'media_derivatives', entityType: 'media_derivatives', entityCount: derivativeRows.length, cutoffDate: derivativeCutoff.toISOString().slice(0, 10) })
     }
 
-    // Audit-Events: Einwilligungs-/Elternkontakt-bezogene Ereignisse werden nicht dauerhaft
+    // Audit-Events: Einwilligungsbezogene Ereignisse werden nicht dauerhaft
     // ausgenommen, sondern erst nach der laengeren consent_evidence_years-Frist geloescht (Plan,
     // Tabelle in Abschnitt "1." -- "werden ueber consent_evidence_years gehalten", nicht "nie").
     // Filterung in JS statt per PostgREST-like-Operator, um keine Verwechslung zwischen SQL- und
@@ -291,7 +291,7 @@ export function registerRetentionRoutes(app: FastifyInstance, context: ApiRouteC
     results.push({ ruleKey: 'expired_tokens', entityType: 'multiple', entityCount: expiredTokenCount, cutoffDate: nowIso.slice(0, 10) })
 
     // Auskunftsbuendel (GET /v1/data-subjects/:personId/export) sind keiner Tabelle zugeordnet --
-    // ohne diese Regel blieben vollstaendige Personendatensaetze (Name, Elternkontakt,
+    // ohne diese Regel blieben vollstaendige Personendatensaetze (Name, eigene E-Mail-Adresse,
     // Einwilligungen) unbegrenzt im Storage liegen, auch nach einer Loeschung der Person selbst
     // (adversariale Pruefung). Fester, nicht konfigurierbarer Vorlauf von 7 Tagen: der Link ist nur
     // 300 Sekunden gueltig und soll sofort abgeholt werden, die Datei ist ein technisches

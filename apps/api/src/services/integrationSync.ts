@@ -96,8 +96,8 @@ export function buildPendingConflicts<TLocal extends { id: string }, TExternal>(
   return pendingConflicts
 }
 
-// Ein Konflikt, den erst der Schreibpfad bemerkt (fehlende Abteilung, unaufloesbares Datum,
-// Minderjaehrige ohne Elternkontakt) -- nur anlegen, wenn derselbe Fingerabdruck nicht schon in
+// Ein Konflikt, den erst der Schreibpfad bemerkt (fehlende Abteilung, unaufloesbares Datum) -- nur
+// anlegen, wenn derselbe Fingerabdruck nicht schon in
 // dieser Liste steht. Dreimal wortgleich in den Domaenenhandlern, deshalb hier einmal.
 export function addUniquePendingConflict(pendingConflicts: PendingConflict[], conflict: PendingConflict): void {
   if (pendingConflicts.some((existing) => existing.fingerprint === conflict.fingerprint)) return
@@ -332,4 +332,3 @@ export interface SyncDomainContext {
   rawRows: readonly Readonly<Record<string, unknown>>[]
   organizationTimezone: string
 }
-
