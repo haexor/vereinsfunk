@@ -86,7 +86,7 @@ const RESPONSE_TOOLS = [
   },
   {
     type: 'function', name: 'create_invitation', description: 'Bereitet eine Mitglieder-Einladung vor, die der Nutzer anschließend bestätigen muss.', strict: true,
-    parameters: { type: 'object', additionalProperties: false, required: ['email', 'role'], properties: { email: { type: 'string' }, role: { type: 'string', enum: ['organization_admin', 'social_manager', 'billing_admin', 'organization_viewer', 'department_admin', 'editor', 'approver', 'contributor', 'viewer', 'team_manager'] } } },
+    parameters: { type: 'object', additionalProperties: false, required: ['email', 'role'], properties: { email: { type: 'string' }, role: { type: 'string', enum: ['organization_admin', 'social_manager', 'billing_admin', 'organization_viewer', 'department_admin', 'editor', 'approver', 'contributor', 'viewer', 'team_manager', 'player'] } } },
   },
   {
     type: 'function', name: 'request_approval', description: 'Bereitet die Freigabe einer im Workspace genannten aktuellen Beitragsversion vor. Der Nutzer muss anschließend bestätigen.', strict: true,

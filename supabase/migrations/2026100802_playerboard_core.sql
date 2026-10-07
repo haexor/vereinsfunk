@@ -364,7 +364,8 @@ security definer
 set search_path = public, pg_temp
 as $$
   select case
-    when coalesce(auth.role(), '') = 'service_role' or authz.is_any_member_of_organization(target_organization_id)
+    when (coalesce(auth.role(), '') = 'service_role' or authz.is_any_member_of_organization(target_organization_id))
+      and authz.module_enabled(target_organization_id, target_department_id, target_team_id, 'playerboard')
       then authz.resolve_playerboard_setting(target_organization_id, target_department_id, target_team_id, field)
   end;
 $$;
@@ -610,7 +611,10 @@ create trigger playerboard_training_photos_insert_defaults
 -- Einstellungen: vereinsweit lesbar (wie policy_settings), damit jede Ebene ihre Vererbung
 -- einordnen kann; schreiben mit playerboard.manage auf genau dieser Ebene.
 create policy playerboard_settings_select on public.playerboard_settings for select to authenticated
-  using (authz.is_any_member_of_organization(organization_id));
+  using (
+    authz.module_enabled(organization_id, department_id, team_id, 'playerboard')
+    and authz.is_any_member_of_organization(organization_id)
+  );
 create policy playerboard_settings_insert on public.playerboard_settings for insert to authenticated
   with check (updated_by = auth.uid() and authz.can_manage_playerboard_level(organization_id, scope, department_id, team_id));
 create policy playerboard_settings_update on public.playerboard_settings for update to authenticated
@@ -638,7 +642,10 @@ create policy playerboard_players_delete on public.playerboard_players for delet
 -- Kategorien: Namen und Wertebereiche sind nicht sensibel, vereinsweit lesbar; geschrieben mit
 -- playerboard.manage auf der eigenen Ebene, Mannschaftskategorien nur bei team_categories_allowed.
 create policy playerboard_point_categories_select on public.playerboard_point_categories for select to authenticated
-  using (authz.is_any_member_of_organization(organization_id));
+  using (
+    authz.module_enabled(organization_id, department_id, team_id, 'playerboard')
+    and authz.is_any_member_of_organization(organization_id)
+  );
 create policy playerboard_point_categories_insert on public.playerboard_point_categories for insert to authenticated
   with check (
     authz.can_manage_playerboard_level(organization_id, scope, department_id, team_id)
@@ -730,8 +737,14 @@ create policy playerboard_training_photos_delete on public.playerboard_training_
 
 create policy playerboard_training_photo_people_select on public.playerboard_training_photo_people for select to authenticated
   using (exists (
-    select 1 from public.playerboard_training_photos photo
-     where photo.organization_id = playerboard_training_photo_people.organization_id and photo.id = playerboard_training_photo_people.photo_id
+    select 1
+      from public.playerboard_training_photos photo
+      join public.playerboard_trainings training
+        on training.organization_id = photo.organization_id and training.id = photo.training_id
+     where photo.organization_id = playerboard_training_photo_people.organization_id
+       and photo.id = playerboard_training_photo_people.photo_id
+       and ((training.status = 'saved' and authz.has_playerboard_team_permission(training.team_id, 'training.view'))
+            or authz.has_playerboard_team_permission(training.team_id, 'training.manage'))
   ));
 
 grant select, insert, update, delete on public.playerboard_settings, public.playerboard_players,
@@ -824,7 +837,7 @@ begin
   if not coalesce(all_recognizable_people_listed, false) then
     raise exception 'recognizable_people_not_confirmed';
   end if;
-  if jsonb_typeof(target_people) <> 'array' then
+  if coalesce(jsonb_typeof(target_people), '') <> 'array' then
     raise exception 'invalid_people';
   end if;
 
