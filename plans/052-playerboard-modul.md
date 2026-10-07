@@ -409,3 +409,61 @@ Abweichungen:
   - Die Rangliste liefert Kategorien mit Namen statt IDs.
   - Die Fotofunktion gibt den Speicherpfad nur an die API, die daraus kurzlebige signierte URLs macht.
   - In der Rangliste erscheinen aktive Spieler auch mit 0 Punkten, inaktive nur mit Punkten im Zeitraum.
+
+## Umsetzung PR 2: Ergebnis und Abweichungen vom Plan
+
+Umgesetzt am 2026-10-08:
+- `packages/domain/src/playerboard.ts`: Vererbung mit Zustand „gesperrt“, wirksame Kategorien, geteilte Ränge, Saisonbeginn als Zeitraumanfang.
+- `packages/contracts/src/playerboard.ts`.
+- Routen unter `apps/api/src/routes/playerboard/` (`players`, `categories`, `trainings` mit Punkten und Rangliste, `settings`, `photos`, `public`).
+- Ergänzungsmigration `2026100901_playerboard_api_support.sql`.
+- `directoryPersonId` in `POST /v1/invitations`.
+- Trainingsfotos in der Speicheraufschlüsselung (`/v1/storage/usage`, Seite „Tarif“).
+
+Verifiziert:
+- `pnpm lint`, `typecheck`, `test` (alle 38 Tasks) und `build` grün.
+- `pnpm db:test` nach frischem `supabase db reset` grün: 50 Dateien, 1277 Assertions, davon 14 in `playerboard_api_support.test.sql`.
+- API-Tests in `playerboard.routes.test.ts`: jede Schreibroute mit `403 forbidden` für `player` und `403 module_disabled`; Leserouten mit `403` ohne Sicht auf die Kennzahlen; Zuordnung der Trigger-Fehler, Einladung, öffentliche Seite.
+- Zusätzlich einmal gegen den lokalen Stack per HTTP durchgespielt, als Demo-Vereinsinhaberin:
+  - Spieler neu anlegen, Kategorie, Training (Zukunftsdatum → `422`), Punkte (außerhalb des Bereichs → `422`), speichern, Rangliste
+  - Einstellungen mit Vererbung (Saisonbeginn des Vereins sperrt die Abteilung)
+  - öffentliche Rangliste als „#7 M. K.“ / „J. A.“
+  - Foto: Reservierung, `complete` vor dem Hochladen → `409 upload_missing`, Upload über die signierte URL, Abschluss mit tatsächlicher Größe, Review, öffentliches Foto
+  - Einladung ohne E-Mail → `422 email_required`, mit E-Mail → Einladung mit Rolle `player`
+
+Endpunkte:
+
+| Zweck | Route |
+|---|---|
+| Kader | `GET /v1/playerboard/teams/:teamId/players`, `POST /v1/playerboard/players`, `PATCH`/`DELETE /v1/playerboard/players/:id`, `POST /v1/playerboard/players/:id/invite` |
+| Kategorien | `GET /v1/playerboard/categories?scope=&scopeId=`, `POST /v1/playerboard/categories`, `PATCH`/`DELETE /v1/playerboard/categories/:id` |
+| Trainings | `GET /v1/playerboard/teams/:teamId/trainings`, `POST /v1/playerboard/trainings`, `GET`/`PATCH`/`DELETE /v1/playerboard/trainings/:id`, `PUT /v1/playerboard/trainings/:id/points` |
+| Rangliste | `GET /v1/playerboard/teams/:teamId/ranking?from=&to=` |
+| Einstellungen | `GET /v1/organizations/:id/playerboard/settings`, `PUT /v1/playerboard/settings` |
+| Fotos | `GET`/`POST /v1/playerboard/trainings/:id/photos`, `POST /v1/playerboard/photos/:id/complete`, `POST /v1/playerboard/photos/:id/review`, `PUT /v1/playerboard/photos/:id/public`, `DELETE /v1/playerboard/photos/:id` |
+| Öffentlich | `GET /v1/public/playerboard/:orgSlug/:teamSlug`, `…/ranking`, `…/photos` |
+
+Abweichungen:
+
+- **Ergänzungsmigration.**
+  - `playerboard_create_player()` legt Verzeichnisperson und Kader-Eintrag in einer Transaktion an.
+  - `playerboard_set_training_points()` (`security invoker`) speichert alle Punkte eines Trainings, alles oder nichts.
+  - `playerboard_reserve_photo_upload()` reserviert unter derselben Kontingentsperre wie `reserve_storage_upload()`, mit Mannschaftsgrenze.
+  - Dazu `upload_completed_at` mit Prüfung im Review und im CHECK für `public`, `storage_usage_breakdown()` mit `training_photos` und `playerboard_can_view_stats()` für die API.
+- **Sicht auf Kennzahlen als eigene Prüfung.** Leserouten verlangen nicht `training.view`, sondern `authz.can_view_playerboard_stats`: eine Nachbarmannschaft mit passender `stats_visibility` darf lesen, hat aber kein `training.view`. Erst das Modul (`403 module_disabled`), dann die Sicht (`403 forbidden`); die Daten selbst kommen über den Nutzer-Client, RLS bleibt die zweite Prüfung. Fotos verlangen weiterhin `training.view`.
+- **Einladung aus dem Kader.**
+  - Zusätzlich `POST /v1/playerboard/players/:id/invite`: Adresse aus dem Verzeichnis; eine mitgegebene Adresse wird an der Person gespeichert und gilt.
+  - Ohne Adresse `422 email_required`, mit bestehendem Konto `409 player_has_account`.
+  - Der Trainer pflegt die E-Mail der Personen seines Kaders auch ohne `directory.read` auf deren Scope (`PATCH …/players/:id` mit `email`).
+  - `POST /v1/invitations` nimmt ebenfalls `directoryPersonId`, nur mit Mannschaft.
+- **E-Mail-Adressen im Kader** sehen nur Trainer (`training.manage`); Spieler sehen Namen und Rückennummern.
+- **Löschen nur ohne Punkte.**
+  - Kader-Einträge mit Punkten: `409 player_has_points`, dafür gibt es „inaktiv“.
+  - Kategorien mit Punkten: `409 category_in_use`, dafür gibt es „deaktivieren“.
+  - Beim Löschen eines Trainings entfernt die API auch die Fotodateien im Bucket.
+- **Fotos in drei Schritten.**
+  - Reservieren (Zeile und signierte Upload-URL), hochladen, `complete`. Erst danach erscheint das Foto und lässt sich prüfen.
+  - Die tatsächliche Dateigröße ersetzt die angekündigte.
+  - Prüfen darf auch die Einwilligungsverwaltung (`consent.manage`), wie in der RPC.
+  - Öffentliche Foto-URLs leben fünf Minuten, interne zehn.
+- **Offen für PR 3:** Die Liste der Spieler ohne gültige Einwilligung für öffentliche Fotos braucht einen eigenen Endpunkt und entsteht mit der Einstellungsseite.

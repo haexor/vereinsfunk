@@ -123,10 +123,11 @@ function formatPrice(cents: number | null, currency: string): string {
 
       <section v-if="storageBreakdown" class="card mb-6 p-6">
         <h2 class="mb-4 font-display text-base font-bold">Speicher nach Quelle</h2>
-        <dl class="grid gap-4 sm:grid-cols-3">
+        <dl class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div><dt class="text-xs text-[#727a75]">Eigene Beiträge</dt><dd class="mt-1 font-display text-lg font-bold">{{ formatBytes(storageBreakdown.breakdown.ownUploads) }}</dd></div>
           <div><dt class="text-xs text-[#727a75]">Gerenderte Medien</dt><dd class="mt-1 font-display text-lg font-bold">{{ formatBytes(storageBreakdown.breakdown.renderedMedia) }}</dd></div>
           <div><dt class="text-xs text-[#727a75]">Vereinsmarke</dt><dd class="mt-1 font-display text-lg font-bold">{{ formatBytes(storageBreakdown.breakdown.brandAssets) }}</dd></div>
+          <div><dt class="text-xs text-[#727a75]">Trainingsfotos</dt><dd class="mt-1 font-display text-lg font-bold">{{ formatBytes(storageBreakdown.breakdown.trainingPhotos) }}</dd></div>
         </dl>
       </section>
 

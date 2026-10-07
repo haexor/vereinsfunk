@@ -370,6 +370,11 @@ insert into public.playerboard_training_photos (id, organization_id, training_id
 select is((select consent_review_status || '/' || public::text from public.playerboard_training_photos where id = '52000000-7000-4000-8000-000000000001'),
   'pending/false', 'a new photo is pending and private');
 
+-- Paket 052, PR 2: ein Review setzt den abgeschlossenen Upload voraus (POST .../complete).
+set local role postgres;
+update public.playerboard_training_photos set upload_completed_at = now() where id = '52000000-7000-4000-8000-000000000001';
+set local role authenticated;
+
 -- 56-61: oeffentlich nur nach vollstaendigem Review mit gueltigen Einwilligungen.
 select throws_ok($$select public.playerboard_set_photo_public('52000000-7000-4000-8000-000000000001', true)$$,
   'P0001', 'photo_consent_not_approved', 'a photo cannot be made public before the consent review');

@@ -231,7 +231,7 @@ export function registerSubscriptionRoutes(app: FastifyInstance, context: ApiRou
     ])
     if (usage.error) throw usage.error
     if (breakdown.error) throw breakdown.error
-    const breakdownRow = breakdown.data[0] as { own_uploads: number; rendered_media: number; brand_assets: number }
+    const breakdownRow = breakdown.data[0] as { own_uploads: number; rendered_media: number; brand_assets: number; training_photos: number }
     let limitBytes: number | null
     if (targetTeam || targetDepartment) {
       // team_id ist in storage_limits nur bei scope='team' gesetzt -- ueber team_id allein
@@ -249,7 +249,7 @@ export function registerSubscriptionRoutes(app: FastifyInstance, context: ApiRou
     return reply.code(200).send(StorageUsageResponseSchema.parse({
       usedBytes: usage.data as number,
       limitBytes,
-      breakdown: { ownUploads: breakdownRow.own_uploads, renderedMedia: breakdownRow.rendered_media, brandAssets: breakdownRow.brand_assets },
+      breakdown: { ownUploads: breakdownRow.own_uploads, renderedMedia: breakdownRow.rendered_media, brandAssets: breakdownRow.brand_assets, trainingPhotos: breakdownRow.training_photos },
     }))
   })
 
