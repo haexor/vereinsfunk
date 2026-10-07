@@ -111,3 +111,32 @@ describe('permissionModule', () => {
     expect(permissionModule['post.publish']).toBe('social_media')
   })
 })
+
+describe('Paket 052: PlayerBoard roles', () => {
+  it('gives a player read access to trainings only', () => {
+    expect(hasPermission(['player'], 'training.view')).toBe(true)
+    for (const permission of ['training.manage', 'playerboard.manage', 'post.create', 'member.invite', 'directory.read'] as const) {
+      expect(hasPermission(['player'], permission)).toBe(false)
+    }
+  })
+
+  it('makes team_manager the coach and department_admin the youth lead', () => {
+    for (const role of ['team_manager', 'department_admin', 'organization_admin', 'organization_owner'] as const) {
+      expect(hasPermission([role], 'training.view')).toBe(true)
+      expect(hasPermission([role], 'training.manage')).toBe(true)
+      expect(hasPermission([role], 'playerboard.manage')).toBe(true)
+    }
+    expect(hasPermission(['editor'], 'training.view')).toBe(false)
+  })
+
+  it('assigns the PlayerBoard permissions to the playerboard module', () => {
+    expect(permissionModule['training.view']).toBe('playerboard')
+    expect(permissionModule['training.manage']).toBe('playerboard')
+    expect(permissionModule['playerboard.manage']).toBe('playerboard')
+  })
+
+  it('ranks player like viewer, so a team_manager may invite players but a player nobody', () => {
+    expect(canAssignRole(['team_manager'], 'player')).toBe(true)
+    expect(canAssignRole(['player'], 'team_manager')).toBe(false)
+  })
+})
