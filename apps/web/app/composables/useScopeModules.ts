@@ -11,21 +11,28 @@ export async function useScopeModules() {
   // <script setup> nicht mehr verfuegbar (NUXT_E1001, siehe useScope()).
   const entries = useState<ScopeModules[] | null>('vf-scope-modules', () => null)
   const loadedFor = useState<string | null>('vf-scope-modules-organization', () => null)
+  const refreshGeneration = useState<number>('vf-scope-modules-refresh-generation', () => 0)
   const api = useApiClient()
   const scope = await useScope()
 
   async function refresh(): Promise<void> {
     const organizationId = scope.value?.organizationId ?? null
     if (import.meta.server || !organizationId) return
+    const generation = ++refreshGeneration.value
+    // Do not let the previous organization's modules affect navigation while this request is
+    // in flight. This also makes an organization switch fail open (unknown) as documented.
+    entries.value = null
     try {
       const result = await api.request(`/v1/organizations/${organizationId}/scope-modules`, {}, ScopeModulesSchema.array())
-      // Ein spaet zurueckkehrender Lauf fuer einen inzwischen verlassenen Verein darf nichts setzen.
-      if (scope.value?.organizationId !== organizationId) return
+      // A late response for an earlier organization, or for an earlier A -> B -> A request,
+      // must not overwrite the newest selection in the shared state.
+      if (generation !== refreshGeneration.value || scope.value?.organizationId !== organizationId) return
       entries.value = result
     } catch {
-      if (scope.value?.organizationId !== organizationId) return
+      if (generation !== refreshGeneration.value || scope.value?.organizationId !== organizationId) return
       entries.value = null
     }
+    if (generation !== refreshGeneration.value || scope.value?.organizationId !== organizationId) return
     loadedFor.value = organizationId
   }
 
