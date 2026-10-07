@@ -10,4 +10,5 @@ export const roleLabels: Record<string, string> = {
   contributor: 'Mitwirkende',
   viewer: 'Betrachterin',
   team_manager: 'Teamleitung',
+  player: 'Spielerin/Spieler',
 }

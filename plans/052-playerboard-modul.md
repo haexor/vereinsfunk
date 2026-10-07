@@ -351,3 +351,61 @@ Seiten unter `/playerboard/` im Modul-Registry aus 051, Mannschaft aus dem aktiv
 - **`team_manager` als einzige Trainerrolle.** Wer nur Punkte erfassen, aber keine Beiträge schreiben soll (Co-Trainer), bekommt dieselbe Rolle. Bei Bedarf später eine Team-Rolle `coach` mit nur `training.*`.
 
 Entschieden (Betreiber, 2026-10-05/06): kein Elternkontakt und keine Elternkonten; Trainer legen Spieler selbst an, E-Mail optional, Einladung jederzeit; Punkte und Veo-Werte innerhalb der Mannschaft für alle sichtbar, vereinsintern darüber hinaus je Ebene über `stats_visibility`; öffentliche Mannschaftsseite mit Rückennummer und Initialen, Fotos auf Wunsch des Trainers.
+
+## Umsetzung PR 1: Ergebnis und Abweichungen vom Plan
+
+Umgesetzt am 2026-10-08:
+- Migrationen `2026100801_team_role_player.sql` (Enum-Wert vorab) und `2026100802_playerboard_core.sql`.
+- `packages/authorization`: drei Permissions, Rolle `player`, Rang, Modulzuordnung.
+- `packages/contracts`: `player` in `RoleSchema`, `AssignableRoleSchema` und `TEAM_SCOPED_ROLES`; dazu das Label in der Weboberfläche.
+
+Verifiziert:
+- `pnpm lint`, `typecheck` und `build` grün.
+- `pnpm test` grün bis auf den bekannten lokalen Chromium-Ausfall in `websiteRenderer.logoScoring.test.ts`.
+- `pnpm db:test` nach frischem `supabase db reset` grün: 49 Dateien, 1256 Assertions, davon 62 in `playerboard_core.test.sql`.
+
+Abgedeckt sind alle unter „PR 1“ verlangten Fälle:
+- fremder Verein und Nachbarmannschaft
+- Modul aus auf jeder Ebene einzeln
+- `player` ohne Entwürfe und Schreibrechte
+- `stats_visibility` `team`/`department`/`organization`, verbindlich und freigegeben
+- Punkte mit fremdem Spieler, fremder Kategorie oder außerhalb des Wertebereichs
+- Vererbung des Saisonbeginns, `team_categories_allowed`
+- öffentliche Ausgabe ohne Klarnamen, Geburtsjahre oder IDs
+- Fotos ohne Review, mit unvollständiger Personenliste, mit ungültiger oder widerrufener Einwilligung sowie ausgenommene Fotos
+
+Abweichungen:
+
+- **Rollen und Rechte schon in PR 1.** Rolle `player`, die drei Permissions, Rang und Modulzuordnung in `packages/authorization` sowie `player` in den Rollen-Verträgen stehen hier statt in PR 2. Die SQL-Rechtelisten ändern sich in dieser Migration, und TS und SQL bleiben nach der bestehenden Regel gemeinsam gepflegt.
+- **Trainingsnotizen in eigener Tabelle `playerboard_training_notes`.** Wer die Werte nur über `stats_visibility` sieht, darf Datum, Titel und Status lesen, die Notiz aber nicht. RLS schützt Zeilen, keine Spalten. Spaltenweise Grants hätten jedes `select *` gebrochen.
+- **Namen über Funktionen.**
+  - Spieler haben kein `directory.read`. Kader und Rangliste mit Namen liefern deshalb `playerboard_team_roster(team)` und `playerboard_team_ranking(team, von, bis)` als `security definer` mit expliziter Prüfung `authz.can_view_playerboard_stats`.
+  - Die Rangliste ist entgegen dem Plan nicht `security invoker`. Die Wirkung ist dieselbe, aber ohne verschachtelte RLS über Verzeichnis, Kader, Punkte und Trainings.
+- **Interne und abgesicherte Funktionen getrennt.** `authz` ist per PostgREST erreichbar.
+  - Die Auflösung der Einstellungen (`authz.resolve_playerboard_setting`) und der wirksamen Kategorien (`authz.playerboard_effective_categories`) laufen intern ohne Mitgliedschaftsprüfung und ohne Grant.
+  - Nach außen gehen `authz.playerboard_setting` und `public.playerboard_effective_categories`. Ein Nichtmitglied bekommt dort `null` bzw. nichts (Muster `authz.module_enabled`).
+  - Ohne diese Trennung scheiterte der Punkte-Trigger in Wartungs- und Service-Kontexten.
+- **Vererbung, Regel präzisiert.**
+  - Eine Ebene ist für ein ersetzbares Feld frei, solange oben noch nichts gesetzt ist, oder wenn die direkt übergeordnete Ebene selbst frei ist und das Feld in `overridable_fields` freigibt.
+  - Daraus folgen beide Plan-Fälle: Eine Abteilung kann ein freigegebenes Feld wieder sperren, ein gesperrtes aber nicht freigeben.
+  - Ohne Wert: `stats_visibility` ist `team`, `season_start` bleibt `null` (die Oberfläche entscheidet über einen Standard).
+- **Fotos.**
+  - `public`, `consent_review_status` und die Personenliste ändern ausschließlich die RPCs `playerboard_review_photo_consent()` und `playerboard_set_photo_public()`.
+  - Einfügen ist nur spaltenweise erlaubt, ein Trigger setzt jedes neue Foto auf privat und `pending`. Ein CHECK verbietet `public` ohne `approved` und vollständige Personenliste.
+  - Der Speicherpfad muss zur Mannschaft und zum Training passen.
+  - Prüfen dürfen `training.manage` auf der Mannschaft oder `consent.manage` in der Abteilung.
+- **Einwilligung in SQL.** `authz.playerboard_photo_consent_valid()` spiegelt `evaluateConsent()` für Zweck `website`, Medienart `photo`, Kontext `training` und die Abteilung der Mannschaft. Ausgetretene Personen zählen für die öffentliche Seite immer als ungültig, unabhängig von `consentExpiresOnLeave`.
+  - Widerruf, Ablösung und Änderungen an Gültigkeit oder Umfang sperren betroffene Fotos sofort per Trigger.
+  - Ein bloßer Ablauf fängt `playerboard_public_photos()` bei jedem Abruf ab.
+- **Bucket ohne Policies für `authenticated`.** `playerboard-training-photos` ist privat; Hoch- und Herunterladen nur über signierte URLs der API (PR 2), nach deren eigener Rechteprüfung.
+- **Kader.** Ein Trainer nimmt nur Personen auf, die er über die RLS von `directory_people` selbst lesen darf (`directory.read` in deren Scope). Mannschaft und Person einer Kaderzeile sind unveränderlich.
+- **Einladung.**
+  - `create_invitation()` hat einen optionalen siebten Parameter `target_directory_person_id`; die Person muss im Kader genau dieser Mannschaft stehen.
+  - `accept_invitation()` verknüpft das Konto mit der Person, wenn diese noch keines hat.
+  - Die Rolle `player` ist als Team-Rolle einladbar.
+- **Speicherkontingent.** `storage_usage_bytes()` zählt Trainingsfotos mit (je Abteilung und Mannschaft über das Training). `storage_usage_breakdown()` folgt mit dem Upload in PR 2.
+- **Öffentliche Funktionen.**
+  - Zusätzlich `playerboard_public_team_info()` für Vereins- und Mannschaftsname und die eingeschalteten Reiter.
+  - Die Rangliste liefert Kategorien mit Namen statt IDs.
+  - Die Fotofunktion gibt den Speicherpfad nur an die API, die daraus kurzlebige signierte URLs macht.
+  - In der Rangliste erscheinen aktive Spieler auch mit 0 Punkten, inaktive nur mit Punkten im Zeitraum.

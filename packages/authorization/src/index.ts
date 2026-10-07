@@ -18,6 +18,10 @@ export const permissions = [
   'fixture.manage',
   'event.manage',
   'consent.manage',
+  // Paket 052: Modul PlayerBoard.
+  'training.view',
+  'training.manage',
+  'playerboard.manage',
 ] as const
 
 export type Permission = (typeof permissions)[number]
@@ -33,6 +37,7 @@ export type Role =
   | 'contributor'
   | 'viewer'
   | 'team_manager'
+  | 'player'
 
 const allPermissions = new Set<Permission>(permissions)
 
@@ -78,6 +83,10 @@ export const rolePermissions: Readonly<Record<Role, ReadonlySet<Permission>>> = 
     // Paket 015: Einwilligungen betreffen Elternkontakt und Rechtsnachweise, dieselbe
     // Sensitivitaet wie der Elternkontakt aus Paket 014 -- ebenfalls nicht bei team_manager.
     'consent.manage',
+    // Paket 052: PlayerBoard aller Mannschaften der Abteilung (Jugendleitung).
+    'training.view',
+    'training.manage',
+    'playerboard.manage',
   ]),
   editor: new Set(['post.create', 'post.edit', 'post.submit', 'analytics.view']),
   approver: new Set(['post.approve', 'analytics.view']),
@@ -94,7 +103,13 @@ export const rolePermissions: Readonly<Record<Role, ReadonlySet<Permission>>> = 
     'brand.manage',
     // Paket 014: Mitgliederverzeichnis der eigenen Mannschaft lesen.
     'directory.read',
+    // Paket 052: Trainer der Mannschaft -- Kader, Trainings, Punkte, Fotos, Einstellungen.
+    'training.view',
+    'training.manage',
+    'playerboard.manage',
   ]),
+  // Paket 052: sieht gespeicherte Trainings, Punkte und Rangliste der eigenen Mannschaft.
+  player: new Set(['training.view']),
 }
 
 // Paket 051: jede Permission gehoert genau einem Modul oder dem Rahmen ('core'). requirePermission
@@ -123,6 +138,9 @@ export const permissionModule: Readonly<Record<Permission, PermissionModule>> = 
   'post.publish': 'social_media',
   'social_account.manage': 'social_media',
   'analytics.view': 'social_media',
+  'training.view': 'playerboard',
+  'training.manage': 'playerboard',
+  'playerboard.manage': 'playerboard',
 }
 
 export function hasPermission(roles: readonly Role[], permission: Permission): boolean {
@@ -146,6 +164,7 @@ const roleRank: Readonly<Record<Role, number>> = {
   contributor: 10,
   organization_viewer: 5,
   viewer: 5,
+  player: 5,
 }
 
 function actorMaxRank(actorRoles: readonly Role[]): number {

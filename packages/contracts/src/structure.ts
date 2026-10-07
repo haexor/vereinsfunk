@@ -8,13 +8,15 @@ export const ScopeLevelSchema = z.enum(['organization', 'department', 'team'])
 export const RoleSchema = z.enum([
   'organization_owner', 'organization_admin', 'social_manager', 'billing_admin', 'organization_viewer',
   'department_admin', 'editor', 'approver', 'contributor', 'viewer', 'team_manager',
+  // Paket 052: Spielerin/Spieler einer Mannschaft im Modul PlayerBoard.
+  'player',
 ])
 // organization_owner ist nie ueber diese Schemas vergebbar -- nur einladbar/zuweisbar sind
 // die uebrigen Rollen (siehe invitations_role_matches_scope und authz.can_assign_role in
 // 2026080601_structure_and_invitations.sql, sowie canAssignRole in packages/authorization).
 export const AssignableRoleSchema = z.enum([
   'organization_admin', 'social_manager', 'billing_admin', 'organization_viewer',
-  'department_admin', 'editor', 'approver', 'contributor', 'viewer', 'team_manager',
+  'department_admin', 'editor', 'approver', 'contributor', 'viewer', 'team_manager', 'player',
 ])
 
 export const DepartmentSchema = z.object({
@@ -58,7 +60,7 @@ export const UpdateTeamRequestSchema = z.object({
 // in 2026080601_structure_and_invitations.sql fuer das SQL-Gegenstueck).
 export const ORGANIZATION_SCOPED_ROLES: readonly AssignableRole[] = ['organization_admin', 'social_manager', 'billing_admin', 'organization_viewer']
 export const DEPARTMENT_SCOPED_ROLES: readonly AssignableRole[] = ['department_admin', 'editor', 'approver', 'contributor', 'viewer']
-export const TEAM_SCOPED_ROLES: readonly AssignableRole[] = ['team_manager', 'contributor', 'viewer']
+export const TEAM_SCOPED_ROLES: readonly AssignableRole[] = ['team_manager', 'contributor', 'viewer', 'player']
 export function rolesForScopeLevel(scope: ScopeLevel): readonly AssignableRole[] {
   return scope === 'organization' ? ORGANIZATION_SCOPED_ROLES : scope === 'department' ? DEPARTMENT_SCOPED_ROLES : TEAM_SCOPED_ROLES
 }
