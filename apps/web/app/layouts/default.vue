@@ -8,7 +8,7 @@ const mobileOpen = ref(false)
 const route = useRoute()
 const session = await useSession()
 const scope = await useScope()
-const { enabled: enabledModules, isEnabled: isModuleEnabled, refresh: refreshModules } = await useScopeModules()
+const { enabled: enabledModules, isEnabled: isModuleEnabled, ensureLoaded: ensureScopeModulesLoaded } = await useScopeModules()
 
 watch(() => route.path, () => { mobileOpen.value = false })
 
@@ -179,7 +179,7 @@ const organizationOnlyRoutes = new Set(organizationNav.filter((item) => item.org
 // der offenen Seite aus ist, fuehrt das auf die Erklaerseite -- wie ein Direktaufruf
 // (middleware/module.global.ts); umgekehrt fuehrt die Erklaerseite selbst zurueck, sobald es wirkt.
 watch(() => scope.value?.organizationId, (organizationId, previous) => {
-  if (organizationId && previous && organizationId !== previous) void refreshModules()
+  if (organizationId && previous && organizationId !== previous) void ensureScopeModulesLoaded()
 })
 watch(
   () => [enabledModules.value, route.path] as const,
