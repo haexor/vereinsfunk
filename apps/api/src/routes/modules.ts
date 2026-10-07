@@ -81,8 +81,13 @@ export function registerModuleRoutes(app: FastifyInstance, context: ApiRouteCont
     if (organization.error) throw organization.error
     if (!organization.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     const [departments, teams, settings] = await Promise.all([
-      client.from('departments').select('id, name').eq('organization_id', params.id).order('name'),
-      client.from('teams').select('id, name, department_id').eq('organization_id', params.id).order('name'),
+      // Die RLS-Policies fuer departments/teams erlauben einem reinen Teammitglied keinen
+      // Struktur-Select (sie pruefen die Abteilungsmitgliedschaft). Der Endpunkt ist aber
+      // vereinsweit lesbar und soll auch fuer diese Mitglieder alle Ebenen samt effektivem
+      // Modulstatus liefern. Die Vereinsmitgliedschaft ist oben bereits mit dem User-Client
+      // bestaetigt; Schreibrechte werden weiter unten separat ueber Rollen und die RPC geprueft.
+      service.from('departments').select('id, name').eq('organization_id', params.id).order('name'),
+      service.from('teams').select('id, name, department_id').eq('organization_id', params.id).order('name'),
       loadOrganizationModuleSettings(service, params.id),
     ])
     if (departments.error) throw departments.error
@@ -112,7 +117,10 @@ export function registerModuleRoutes(app: FastifyInstance, context: ApiRouteCont
     if (!(await requireAuth(request, reply))) return
     const input = UpdateScopeModulesRequestSchema.parse(request.body)
     const client = supabaseClients.forUser(request.auth!.accessToken)
-    const scope = await resolveMembershipScope(client, input.scope, input.scopeId)
+    // Ein reines Teammitglied kann die Teamzeile wegen der bestehenden RLS-Policy nicht ueber
+    // den User-Client lesen. Die Aufloesung liefert nur den Scope-Pfad; die nachfolgende
+    // Rollenpruefung und set_scope_enabled_modules() bleiben die unabhaengigen Autorisierungstore.
+    const scope = await resolveMembershipScope(supabaseClients.forService(), input.scope, input.scopeId)
     if (!scope) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     if (!(await requirePermission(request, reply, POLICY_MANAGE_PERMISSION[input.scope], scope))) return
     const rpc = await client.rpc('set_scope_enabled_modules', {
@@ -147,8 +155,8 @@ export function registerModuleRoutes(app: FastifyInstance, context: ApiRouteCont
       input.scope === 'organization'
         ? await service.from('organizations').select('name').eq('id', scope.organizationId).single()
         : input.scope === 'department'
-          ? await client.from('departments').select('name').eq('id', scope.departmentId!).single()
-          : await client.from('teams').select('name').eq('id', scope.teamId!).single()
+          ? await service.from('departments').select('name').eq('id', scope.departmentId!).single()
+          : await service.from('teams').select('name').eq('id', scope.teamId!).single()
     if (nameQuery.error) throw nameQuery.error
     const settings = await loadOrganizationModuleSettings(service, scope.organizationId)
     // canEdit ist hier immer true: requirePermission oben hat genau diese Ebene bestaetigt.

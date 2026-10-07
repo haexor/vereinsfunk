@@ -186,6 +186,28 @@ describe('module selection routes', () => {
     expect(audit).toEqual([expect.objectContaining({ action: 'scope_modules.changed', metadata: { scope: 'department', scopeId: DEPARTMENT_ID, enabledModules: ['social_media'] } })])
   })
 
+  it('resolves and names a team through the service client for team-only managers', async () => {
+    const base = clients()
+    const service = base.forService()
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: {
+        // A pure team member cannot read the team row through the user client because the
+        // existing teams_select_member policy requires department membership. The route must
+        // therefore resolve the scope and the response name through the service client.
+        forUser: () => ({ rpc: async () => ({ data: { id: 'policy-settings-id' }, error: null }) }) as unknown as SupabaseClient,
+        forService: () => service,
+      },
+    })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PUT', url: '/v1/scope-modules', headers: { authorization: `Bearer ${token}` },
+      payload: { scope: 'team', scopeId: TEAM_ID, enabledModules: ['social_media'] },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ scope: 'team', scopeId: TEAM_ID, name: 'U13', canEdit: true })
+  })
+
   it('answers 409 with the blocking publications when social_media still has active publications', async () => {
     const publications = [{ publicationId: '51000000-9000-4000-8000-000000000001', postId: '51000000-2000-4000-8000-000000000001' }]
     const app = await startApp({
