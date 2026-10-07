@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { BarChart3, BookUser, Bot, Building2, CalendarDays, CheckCircle2, CreditCard, Feather, FileSignature, FileText, Frame, LayoutDashboard, LayoutGrid, LogOut, Menu, Palette, Plug, Plus, Scale, Settings, Share2, ShieldCheck, Users, UserRound, UserSearch, X } from '@lucide/vue'
+import { Blocks, BookUser, Building2, CalendarDays, CreditCard, LayoutDashboard, LogOut, Menu, Palette, Plug, Plus, Scale, Settings, ShieldCheck, Users, UserRound, UserSearch, X } from '@lucide/vue'
+import { appModuleOrder, appModuleRegistry, moduleForPath } from '../modules/registry'
 import { deriveSidebarPalette } from '../utils/sidebarBrand'
 import { resolveSidebarLogoAsset, type SidebarLogoAsset } from '../utils/sidebarLogo'
 
@@ -7,6 +8,7 @@ const mobileOpen = ref(false)
 const route = useRoute()
 const session = await useSession()
 const scope = await useScope()
+const { enabled: enabledModules, isEnabled: isModuleEnabled, ensureLoaded: ensureScopeModulesLoaded } = await useScopeModules()
 
 watch(() => route.path, () => { mobileOpen.value = false })
 
@@ -139,33 +141,53 @@ async function logout() {
   await navigateTo('/anmelden')
 }
 
+// Paket 051, PR 3: die Shell besteht aus Rahmen-Eintraegen (immer sichtbar) und den Eintraegen der
+// im Arbeitsbereich wirksamen Module, gruppiert nach Modul (modules/registry.ts). Solange die
+// Modulauswahl unbekannt ist (enabled = null: laedt noch oder Ladefehler), zeigt sie alle Module --
+// die API setzt die Auswahl ohnehin selbst durch.
 const navigation: { label: string; to: string; icon: typeof LayoutDashboard; badge?: number }[] = [
   { label: 'Übersicht', to: '/', icon: LayoutDashboard },
-  { label: 'Assistent', to: '/assistent', icon: Bot },
-  { label: 'Beiträge', to: '/beitraege', icon: FileText },
-  { label: 'Freigaben', to: '/freigaben', icon: CheckCircle2 },
   { label: 'Kalender', to: '/kalender', icon: CalendarDays },
-  { label: 'Auswertung', to: '/auswertung', icon: BarChart3 },
 ]
+const moduleGroups = computed(() =>
+  appModuleOrder
+    .filter((module) => isModuleEnabled(module) && appModuleRegistry[module].navigation.length > 0)
+    .map((module) => appModuleRegistry[module]),
+)
 const organizationNav: { label: string; to: string; icon: typeof LayoutDashboard; organizationOnly?: boolean }[] = [
   { label: 'Marke', to: '/marke', icon: Palette },
-  { label: 'Bildstil', to: '/bildstil', icon: Frame },
-  { label: 'Bildkomposition', to: '/bildkomposition', icon: LayoutGrid },
-  { label: 'Stilprofile', to: '/stilprofile', icon: Feather },
-  { label: 'Textbausteine', to: '/textbausteine', icon: FileSignature },
   { label: 'Struktur', to: '/struktur', icon: Building2 },
   { label: 'Mitglieder', to: '/mitglieder', icon: Users },
   { label: 'Verzeichnis', to: '/verzeichnis', icon: BookUser },
   { label: 'Einwilligungen', to: '/einwilligungen', icon: ShieldCheck },
-  { label: 'Kanäle', to: '/kanaele', icon: Share2 },
   { label: 'Integrationen', to: '/integrationen', icon: Plug },
+  { label: 'Module', to: '/einstellungen/module', icon: Blocks },
   { label: 'Einstellungen', to: '/einstellungen', icon: Settings },
   { label: 'Tarif', to: '/einstellungen/tarif', icon: CreditCard, organizationOnly: true },
   { label: 'Recht & Datenschutz', to: '/einstellungen/recht', icon: Scale, organizationOnly: true },
   { label: 'Betroffenenanfragen', to: '/datenschutz/anfragen', icon: UserSearch, organizationOnly: true },
 ]
 const visibleOrganizationNav = computed(() => organizationNav.filter((item) => !item.organizationOnly || !scope.value?.departmentId))
+const moduleManagementNav = computed(() =>
+  appModuleOrder
+    .filter((module) => isModuleEnabled(module) && appModuleRegistry[module].managementNavigation.length > 0)
+    .map((module) => appModuleRegistry[module]),
+)
 const organizationOnlyRoutes = new Set(organizationNav.filter((item) => item.organizationOnly).map((item) => item.to))
+
+// Wechsel des Vereins laedt dessen Modulauswahl neu. Wird ein Bereich gewaehlt, in dem das Modul
+// der offenen Seite aus ist, fuehrt das auf die Erklaerseite -- wie ein Direktaufruf
+// (middleware/module.global.ts); umgekehrt fuehrt die Erklaerseite selbst zurueck, sobald es wirkt.
+watch(() => scope.value?.organizationId, (organizationId, previous) => {
+  if (organizationId && previous && organizationId !== previous) void ensureScopeModulesLoaded()
+})
+watch(
+  () => [enabledModules.value, route.path] as const,
+  ([, path]) => {
+    const module = moduleForPath(path)
+    if (module && !isModuleEnabled(module)) void navigateTo({ path: '/modul-inaktiv', query: { modul: module, von: route.fullPath } })
+  },
+)
 
 // Vereinsweite Vertrags- und Datenschutzthemen dürfen nicht im Arbeitsbereich einer
 // Abteilung offen bleiben, auch nicht über einen alten Tab oder einen Direktlink.
@@ -239,7 +261,7 @@ watch(
         </template>
       </div>
 
-      <NuxtLink to="/erstellen" class="focus-ring mb-6 flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold transition hover:-translate-y-0.5" :style="accentStyle">
+      <NuxtLink v-if="isModuleEnabled('social_media')" to="/erstellen" class="focus-ring mb-6 flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold transition hover:-translate-y-0.5" :style="accentStyle">
         <Plus :size="17" stroke-width="2.5" /> Beitrag erstellen
       </NuxtLink>
 
@@ -251,12 +273,31 @@ watch(
         </NuxtLink>
       </nav>
 
+      <template v-for="group in moduleGroups" :key="group.key">
+        <div class="mb-2 mt-7 px-3 text-[10px] font-bold uppercase tracking-[.14em]" :class="sidebarClasses.quiet">{{ group.label }}</div>
+        <nav class="space-y-1" :aria-label="group.label">
+          <NuxtLink v-for="item in group.navigation" :key="item.to" :to="item.to" class="focus-ring group flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition" :class="sidebarClasses.nav" :active-class="sidebarClasses.activeNav">
+            <component :is="item.icon" :size="17" />
+            <span class="flex-1">{{ item.label }}</span>
+          </NuxtLink>
+        </nav>
+      </template>
+
       <div class="mb-2 mt-7 px-3 text-[10px] font-bold uppercase tracking-[.14em]" :class="sidebarClasses.quiet">Verein verwalten</div>
       <nav class="space-y-1" aria-label="Vereinsverwaltung">
         <NuxtLink v-for="item in visibleOrganizationNav" :key="item.to" :to="item.to" class="focus-ring flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition" :class="sidebarClasses.nav" :active-class="sidebarClasses.activeNav">
           <component :is="item.icon" :size="17" />{{ item.label }}
         </NuxtLink>
       </nav>
+
+      <template v-for="group in moduleManagementNav" :key="`manage-${group.key}`">
+        <div class="mb-2 mt-7 px-3 text-[10px] font-bold uppercase tracking-[.14em]" :class="sidebarClasses.quiet">{{ group.label }} verwalten</div>
+        <nav class="space-y-1" :aria-label="`${group.label} verwalten`">
+          <NuxtLink v-for="item in group.managementNavigation" :key="item.to" :to="item.to" class="focus-ring flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition" :class="sidebarClasses.nav" :active-class="sidebarClasses.activeNav">
+            <component :is="item.icon" :size="17" />{{ item.label }}
+          </NuxtLink>
+        </nav>
+      </template>
 
       <div class="mt-auto flex items-center gap-3 border-t px-2 pt-4" :class="sidebarClasses.footer">
         <span class="grid h-9 w-9 place-items-center rounded-full bg-[#d2c7ff] text-xs font-bold text-[#3c3260]">{{ userInitials }}</span>

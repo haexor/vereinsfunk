@@ -1,10 +1,15 @@
 <script setup lang="ts">
-import { ArrowRight, CalendarDays, CheckCircle2, Clock3, FileText, Palette, Plus, ShieldCheck, X } from '@lucide/vue'
+import { ArrowRight, Blocks, CalendarDays, CheckCircle2, Clock3, FileText, Palette, Plus, ShieldCheck, X } from '@lucide/vue'
 import { ContentSuggestionsResponseSchema, type ContentSuggestion } from '@vereinsfunk/contracts'
 
 const config = useRuntimeConfig()
 const session = await useSession()
 const scope = await useScope()
+// Paket 051, PR 3: Kennzahlen, Beitragsliste, Redaktionsplan und Anlassvorschlaege gehoeren zum
+// Modul social_media. Eine modulübergreifende Kachel-API gibt es bewusst nicht; PlayerBoard haengt
+// in Paket 052 seine eigene Kachel hier direkt ein.
+const { isEnabled: isModuleEnabled } = await useScopeModules()
+const socialMediaActive = computed(() => isModuleEnabled('social_media'))
 
 const activeOrganization = computed(() => session.value?.scopes.find((item) => item.organizationId === scope.value?.organizationId) ?? null)
 const department = computed(() => activeOrganization.value?.departments.find((item) => item.id === scope.value?.departmentId)?.name ?? activeOrganization.value?.organizationName ?? '')
@@ -130,7 +135,7 @@ async function loadSuggestions() {
   if (import.meta.server) return
   const organizationId = scope.value?.organizationId
   const departmentId = scope.value?.departmentId
-  if (!organizationId || !departmentId || !useCan('post.create', { organizationId, departmentId })) return
+  if (!organizationId || !departmentId || !socialMediaActive.value || !useCan('post.create', { organizationId, departmentId })) return
   try {
     const response = await $fetch<unknown>(`${config.public.apiBase}/v1/departments/${departmentId}/content-suggestions`, { headers: await useAuthHeader() })
     suggestions.value = ContentSuggestionsResponseSchema.parse(response).suggestions
@@ -152,15 +157,15 @@ await Promise.all([loadDashboard(), loadSuggestions()])
         <h1 class="font-display text-3xl font-extrabold tracking-[-.045em] text-ink sm:text-[38px]">Guten Tag, {{ firstName }}.</h1>
         <p class="mt-2 text-sm text-[#6c756f]">Was möchtest du heute für euren Verein bewegen?</p>
       </div>
-      <NuxtLink to="/erstellen" class="focus-ring inline-flex items-center justify-center gap-2 rounded-xl bg-forest px-5 py-3 text-sm font-bold text-white shadow-xs transition hover:-translate-y-0.5 hover:bg-[#1d4b39]">
+      <NuxtLink v-if="socialMediaActive" to="/erstellen" class="focus-ring inline-flex items-center justify-center gap-2 rounded-xl bg-forest px-5 py-3 text-sm font-bold text-white shadow-xs transition hover:-translate-y-0.5 hover:bg-[#1d4b39]">
         <Plus :size="17" /> Neuer Beitrag
       </NuxtLink>
     </header>
 
-    <section v-if="dashboardError" class="card mb-7 p-5 text-sm font-semibold text-red-700">
+    <section v-if="socialMediaActive && dashboardError" class="card mb-7 p-5 text-sm font-semibold text-red-700">
       Die Kennzahlen konnten nicht geladen werden. Bitte lade die Seite neu.
     </section>
-    <section v-else-if="!loadingDashboard && stats" class="mb-7 grid grid-cols-1 gap-3 sm:grid-cols-3" aria-label="Kennzahlen">
+    <section v-else-if="socialMediaActive && !loadingDashboard && stats" class="mb-7 grid grid-cols-1 gap-3 sm:grid-cols-3" aria-label="Kennzahlen">
       <article class="card p-4 sm:p-5">
         <div class="mb-5 flex items-start justify-between"><span class="grid h-9 w-9 place-items-center rounded-xl bg-emerald-100 text-emerald-700"><CheckCircle2 :size="17" /></span></div>
         <div class="font-display text-2xl font-extrabold tracking-[-.04em] sm:text-[29px]">{{ stats.published }}</div>
@@ -179,7 +184,15 @@ await Promise.all([loadDashboard(), loadSuggestions()])
     </section>
 
     <section class="grid gap-7 xl:grid-cols-[minmax(0,1.55fr)_minmax(310px,.75fr)]">
-      <div class="space-y-7">
+      <div v-if="!socialMediaActive" class="space-y-7">
+        <article class="card p-8 text-center">
+          <Blocks :size="22" class="mx-auto mb-2 text-forest" />
+          <p class="text-sm font-semibold text-ink">In {{ department }} ist Social Media nicht aktiviert.</p>
+          <p class="mt-1 text-xs text-[#7b827d]">Beiträge, Freigaben und Redaktionsplan erscheinen hier, sobald das Modul aktiv ist. Welche Module zur Verfügung stehen, legt die Vereins- oder Abteilungsverwaltung fest.</p>
+          <NuxtLink to="/einstellungen/module" class="focus-ring mt-4 inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-forest hover:bg-stone-100">Module ansehen <ArrowRight :size="13" /></NuxtLink>
+        </article>
+      </div>
+      <div v-else class="space-y-7">
         <article class="card overflow-hidden">
           <div class="flex flex-col items-start gap-3 border-b border-[#e7e7df] px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
             <div class="min-w-0"><h2 class="font-display text-base font-bold tracking-[-.02em]">Aktuelle Beiträge</h2><p class="mt-0.5 text-[11px] text-[#7a817d]">Eure nächsten Inhalte auf einen Blick</p></div>

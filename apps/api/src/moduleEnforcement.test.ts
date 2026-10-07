@@ -265,3 +265,30 @@ describe('module selection routes', () => {
     expect(response.statusCode).toBe(400)
   })
 })
+
+describe('plan change guard (Paket 051, PR 3)', () => {
+  it('maps the organization_subscriptions trigger to 409 with the blocking publications', async () => {
+    const publications = [{ publicationId: '51000000-9000-4000-8000-000000000001', postId: '51000000-2000-4000-8000-000000000001' }]
+    const service = {
+      from: (table: string) => {
+        if (table === 'subscription_plans') return chain({ data: { key: 'board_only' }, error: null })
+        if (table === 'organization_subscriptions') {
+          return {
+            ...chain({ data: { plan_key: 'social' }, error: null }),
+            update: () => chain({ data: null, error: { message: 'module_has_active_publications', details: JSON.stringify(publications) } }),
+          }
+        }
+        throw new Error(`unexpected table in service fake: ${table}`)
+      },
+    } as unknown as SupabaseClient
+    const ownerRoles: RoleProvider = { async rolesForScope() { return ['organization_owner'] } }
+    const app = await startApp({ roleProvider: ownerRoles, supabaseClients: { forUser: () => service, forService: () => service } })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST', url: '/v1/subscription/plan', headers: { authorization: `Bearer ${token}` },
+      payload: { organizationId: ORGANIZATION_ID, planKey: 'board_only' },
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'module_has_active_publications', publications })
+  })
+})

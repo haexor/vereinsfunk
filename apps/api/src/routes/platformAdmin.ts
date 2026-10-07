@@ -4,7 +4,6 @@ import {
   ContentLimitOverrideSchema,
   CreateSubscriptionPlanRequestSchema,
   JsonValueSchema,
-  ModuleBlockingPublicationSchema,
   OrganizationSubscriptionSchema,
   PlatformAdminInvitationSchema,
   PlatformAdminOrganizationDetailSchema,
@@ -36,6 +35,7 @@ import { generateInvitationToken, invitationCallbackUrls, sendInvitationThroughS
 import type { ApiRouteContext } from './context.js'
 import { createAuditRecorder, fetchAllRows } from './shared.js'
 import { ciphertextToBytea, createSecretBoxFromEnvironment } from '../secretBox.js'
+import { parseBlockingPublications } from '../moduleStatus.js'
 
 // Analog invitationUrls() in routes/invitations.ts, aber mit dem Annahme-Pfad fuer
 // Plattform-Admins statt fuer Vereinsmitglieder.
@@ -58,15 +58,6 @@ function toSubscriptionPlanDto(
     includedModules: row.included_modules,
     contentLimits: contentLimits.map((limit) => ({ mediaOrigin: limit.media_origin, maxPerMonth: limit.max_per_month, maxDurationSeconds: limit.max_duration_seconds })),
   })
-}
-
-function parseBlockingPublications(details: string | undefined) {
-  try {
-    const parsed = z.array(ModuleBlockingPublicationSchema).safeParse(JSON.parse(details ?? ''))
-    return parsed.success ? parsed.data : []
-  } catch {
-    return []
-  }
 }
 
 type CalendarDate = { year: number; month: number; day: number }
@@ -776,6 +767,11 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
       .single()
     if (upsert.error) {
       if (upsert.error.code === '23503') return reply.code(404).send({ error: 'organization_not_found', correlationId: request.id })
+      // Paket 051: Trigger organization_subscriptions_module_guard -- der neue Tarif nimmt dem
+      // Verein social_media, waehrend noch Veroeffentlichungen aktiv sind.
+      if (upsert.error.message.includes('module_has_active_publications')) {
+        return reply.code(409).send({ error: 'module_has_active_publications', publications: parseBlockingPublications(upsert.error.details), correlationId: request.id })
+      }
       throw upsert.error
     }
     await recordAuditEvent(request, {

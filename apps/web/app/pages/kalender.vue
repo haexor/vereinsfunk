@@ -3,6 +3,10 @@ import { CalendarDays, ChevronLeft, ChevronRight } from '@lucide/vue'
 
 const session = await useSession()
 const scope = await useScope()
+// Paket 051, PR 3: der Kalender gehoert zum Rahmen (Spiele, Veranstaltungen). Geplante Beitraege
+// und der Sprung zur Beitragserstellung gehoeren zu social_media und erscheinen nur, wenn es wirkt.
+const { isEnabled: isModuleEnabled } = await useScopeModules()
+const socialMediaActive = computed(() => isModuleEnabled('social_media'))
 const activeOrganization = computed(() => session.value?.scopes.find((item) => item.organizationId === scope.value?.organizationId) ?? null)
 const timezone = computed(() => activeOrganization.value?.organizationTimezone ?? 'Europe/Berlin')
 
@@ -39,7 +43,7 @@ function resetCalendar() { postsByDay.value = {}; fixturesByDay.value = {}; even
 function fixtureTitle(fixture: CalendarFixtureDay) {
   const parts: string[] = []
   if (!fixture.kickoffTimeConfirmed) parts.push('Anstoßzeit unbestätigt')
-  if (!fixture.hasSubmission) parts.push('Kein Beitrag – zur Erstellung')
+  if (socialMediaActive.value && !fixture.hasSubmission) parts.push('Kein Beitrag – zur Erstellung')
   return parts.join(' · ') || undefined
 }
 
@@ -149,9 +153,9 @@ const hasAnyItem = computed(() => Object.keys(postsByDay.value).length > 0 || Ob
         <div v-for="blank in leadingBlanks" :key="`b${blank}`" class="min-h-24 border-b border-r border-[#e9eae3] bg-[#fafaf7] sm:min-h-32" />
         <div v-for="day in daysInMonth" :key="day" class="min-h-24 border-b border-r border-[#e9eae3] p-2 sm:min-h-32">
           <span class="text-xs font-semibold">{{ day }}</span>
-          <div v-for="post in postsByDay[day] || []" :key="post.id" class="mt-2 rounded-lg bg-[#eef1e9] p-2 text-[9px] font-semibold text-forest">Beitrag geplant</div>
+          <div v-for="post in socialMediaActive ? postsByDay[day] || [] : []" :key="post.id" class="mt-2 rounded-lg bg-[#eef1e9] p-2 text-[9px] font-semibold text-forest">Beitrag geplant</div>
           <div v-for="fixture in fixturesByDay[day] || []" :key="fixture.id">
-            <NuxtLink v-if="!fixture.hasSubmission" :to="`/erstellen?fixtureId=${fixture.id}`" :title="fixtureTitle(fixture)" class="focus-ring mt-2 block rounded-lg border border-dashed border-sky-400 bg-sky-50 p-2 text-[9px] font-semibold text-sky-700">{{ fixture.kickoffTimeConfirmed ? '' : '~' }}{{ fixture.opponentName ?? 'Spiel' }}</NuxtLink>
+            <NuxtLink v-if="socialMediaActive && !fixture.hasSubmission" :to="`/erstellen?fixtureId=${fixture.id}`" :title="fixtureTitle(fixture)" class="focus-ring mt-2 block rounded-lg border border-dashed border-sky-400 bg-sky-50 p-2 text-[9px] font-semibold text-sky-700">{{ fixture.kickoffTimeConfirmed ? '' : '~' }}{{ fixture.opponentName ?? 'Spiel' }}</NuxtLink>
             <div v-else :title="fixtureTitle(fixture)" class="mt-2 rounded-lg bg-sky-100 p-2 text-[9px] font-semibold text-sky-700">{{ fixture.kickoffTimeConfirmed ? '' : '~' }}{{ fixture.opponentName ?? 'Spiel' }}</div>
           </div>
           <div v-for="event in eventsByDay[day] || []" :key="event.id" class="mt-2 truncate rounded-lg bg-amber-100 p-2 text-[9px] font-semibold text-amber-700">{{ event.title }}</div>

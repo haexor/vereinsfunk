@@ -28,6 +28,9 @@ export const ScopeModulesSchema = z.object({
   scope: ScopeLevelSchema,
   scopeId: UuidSchema,
   name: z.string(),
+  // Abteilung der Ebene: null beim Verein, die eigene ID bei einer Abteilung, die uebergeordnete
+  // bei einer Mannschaft -- damit die Oberflaeche Mannschaften unter ihrer Abteilung zeigen kann.
+  departmentId: UuidSchema.nullable(),
   own: ModuleSelectionSchema,
   modules: z.array(ModuleStateSchema),
   canEdit: z.boolean(),
