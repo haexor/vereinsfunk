@@ -4,6 +4,7 @@ import {
   ContentLimitOverrideSchema,
   CreateSubscriptionPlanRequestSchema,
   JsonValueSchema,
+  ModuleBlockingPublicationSchema,
   OrganizationSubscriptionSchema,
   PlatformAdminInvitationSchema,
   PlatformAdminOrganizationDetailSchema,
@@ -57,6 +58,15 @@ function toSubscriptionPlanDto(
     includedModules: row.included_modules,
     contentLimits: contentLimits.map((limit) => ({ mediaOrigin: limit.media_origin, maxPerMonth: limit.max_per_month, maxDurationSeconds: limit.max_duration_seconds })),
   })
+}
+
+function parseBlockingPublications(details: string | undefined) {
+  try {
+    const parsed = z.array(ModuleBlockingPublicationSchema).safeParse(JSON.parse(details ?? ''))
+    return parsed.success ? parsed.data : []
+  } catch {
+    return []
+  }
 }
 
 type CalendarDate = { year: number; month: number; day: number }
@@ -670,13 +680,14 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
     if (input.availableFrom !== undefined) payload.available_from = input.availableFrom
     if (input.availableUntil !== undefined) payload.available_until = input.availableUntil
     if (input.includedModules !== undefined) payload.included_modules = input.includedModules
-    const update = await service
-      .from('subscription_plans')
-      .update(payload)
-      .eq('key', params.key)
-      .select('key, display_name, monthly_price_cents, currency, storage_bytes, max_teams, max_departments, is_self_serviceable, sort_order, available_from, available_until, included_modules')
-      .maybeSingle()
-    if (update.error) throw update.error
+    const update = await service.rpc('update_subscription_plan', { target_plan_key: params.key, target_patch: payload })
+    if (update.error) {
+      if (update.error.message.includes('plan_not_found')) return reply.code(404).send({ error: 'plan_not_found', correlationId: request.id })
+      if (update.error.message.includes('module_has_active_publications')) {
+        return reply.code(409).send({ error: 'module_has_active_publications', publications: parseBlockingPublications(update.error.details), correlationId: request.id })
+      }
+      throw update.error
+    }
     if (!update.data) return reply.code(404).send({ error: 'plan_not_found', correlationId: request.id })
     const contentLimits = await service.from('subscription_plan_content_limits').select('media_origin, max_per_month, max_duration_seconds').eq('plan_key', params.key)
     if (contentLimits.error) throw contentLimits.error

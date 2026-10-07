@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(20);
+select plan(22);
 
 set local role postgres;
 
@@ -14,6 +14,12 @@ values
 
 insert into public.organizations (id, name, slug) values
   ('51010000-1000-4000-8000-000000000001', 'PGTAP Moduldurchsetzung', 'pgtap-moduldurchsetzung');
+insert into public.subscription_plans
+  (key, display_name, monthly_price_cents, storage_bytes, included_modules)
+values
+  ('module_enforcement', 'Modul-Enforcement', 0, 1000000, '{social_media,playerboard}');
+insert into public.organization_subscriptions (organization_id, plan_key)
+values ('51010000-1000-4000-8000-000000000001', 'module_enforcement');
 insert into public.departments (id, organization_id, name, slug) values
   ('51010000-1100-4000-8000-000000000001', '51010000-1000-4000-8000-000000000001', 'Abteilung A', 'abteilung-a'),
   ('51010000-1100-4000-8000-000000000002', '51010000-1000-4000-8000-000000000001', 'Abteilung B', 'abteilung-b');
@@ -47,7 +53,20 @@ select throws_ok(
 
 select set_config('request.jwt.claim.sub', '51010000-0000-4000-8000-000000000001', true);
 
--- 2: Scope-IDs, die nicht zum Verein passen, werden abgelehnt (statt still eine fremde Zeile anzulegen).
+-- 2-3: Ein Tarif darf social_media nicht aus einem Verein mit aktiven Veroeffentlichungen
+-- entfernen; die Aenderung bleibt atomar unveraendert.
+set local role service_role;
+select throws_ok(
+  $$select public.update_subscription_plan('module_enforcement', '{"included_modules":["playerboard"]}'::jsonb)$$,
+  'P0001', 'module_has_active_publications', 'a plan cannot remove social_media while publications are active'
+);
+select is(
+  (select included_modules from public.subscription_plans where key = 'module_enforcement'),
+  '{social_media,playerboard}'::public.app_module[], 'a rejected plan change leaves included_modules unchanged'
+);
+set local role authenticated;
+
+-- 4: Scope-IDs, die nicht zum Verein passen, werden abgelehnt (statt still eine fremde Zeile anzulegen).
 select throws_ok(
   $$select public.set_scope_enabled_modules('51010000-1000-4000-8000-000000000001', 'team', '51010000-1100-4000-8000-000000000002', '51010000-1200-4000-8000-000000000001', '{}')$$,
   'P0001', 'invalid_scope', 'a team under the wrong department is rejected'

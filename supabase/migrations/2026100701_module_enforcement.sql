@@ -188,6 +188,129 @@ $$;
 revoke all on function public.set_scope_enabled_modules(uuid, text, uuid, uuid, public.app_module[]) from public;
 grant execute on function public.set_scope_enabled_modules(uuid, text, uuid, uuid, public.app_module[]) to authenticated;
 
+-- Aenderungen am Tarif wirken auf alle Vereine, die ihn verwenden. Deshalb darf der
+-- Plattform-Admin included_modules nicht per einfachem PATCH aendern: das koennte
+-- social_media fuer mehrere Vereine gleichzeitig abschalten, waehrend deren Veroeffentlichungen
+-- noch queued/uploading/processing sind. Die Funktion nimmt den kompletten PATCH als JSONB an,
+-- damit auch die uebrigen Tariffelder in derselben Transaktion aktualisiert werden koennen.
+create or replace function public.update_subscription_plan(
+  target_plan_key text, target_patch jsonb
+) returns public.subscription_plans
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  current_plan public.subscription_plans;
+  result public.subscription_plans;
+  requested_modules public.app_module[];
+  affected jsonb := '[]'::jsonb;
+  organization_affected jsonb;
+  organization_id uuid;
+  patch_display_name text;
+  patch_monthly_price_cents integer;
+  patch_currency text;
+  patch_storage_bytes bigint;
+  patch_max_teams integer;
+  patch_max_departments integer;
+  patch_is_self_serviceable boolean;
+  patch_sort_order integer;
+  patch_available_from date;
+  patch_available_until date;
+begin
+  if jsonb_typeof(target_patch) <> 'object' then
+    raise exception 'invalid_plan_patch';
+  end if;
+
+  select * into current_plan
+    from public.subscription_plans
+   where key = target_plan_key
+   for update;
+  if not found then
+    raise exception 'plan_not_found';
+  end if;
+
+  select patch.display_name, patch.monthly_price_cents, patch.currency, patch.storage_bytes,
+         patch.max_teams, patch.max_departments, patch.is_self_serviceable, patch.sort_order,
+         patch.available_from, patch.available_until
+    into patch_display_name, patch_monthly_price_cents, patch_currency, patch_storage_bytes,
+         patch_max_teams, patch_max_departments, patch_is_self_serviceable, patch_sort_order,
+         patch_available_from, patch_available_until
+    from jsonb_to_record(target_patch) as patch(
+      display_name text,
+      monthly_price_cents integer,
+      currency text,
+      storage_bytes bigint,
+      max_teams integer,
+      max_departments integer,
+      is_self_serviceable boolean,
+      sort_order integer,
+      available_from date,
+      available_until date
+    );
+
+  if target_patch ? 'included_modules' then
+    if jsonb_typeof(target_patch->'included_modules') <> 'array' then
+      raise exception 'invalid_plan_patch';
+    end if;
+    select coalesce(array_agg(distinct entry.value::public.app_module order by entry.value::public.app_module), '{}')
+      into requested_modules
+      from jsonb_array_elements_text(target_patch->'included_modules') entry(value);
+  end if;
+
+  if target_patch ? 'included_modules'
+     and 'social_media' = any(current_plan.included_modules)
+     and not ('social_media' = any(requested_modules)) then
+    -- Alle Organisationen werden in stabiler Reihenfolge gesperrt, damit parallele Claims
+    -- entweder vor dieser Pruefung fertig werden oder danach den neuen Tarif sehen.
+    for organization_id in
+      select subscription.organization_id
+        from public.organization_subscriptions subscription
+       where subscription.plan_key = target_plan_key
+       order by subscription.organization_id
+    loop
+      perform authz.lock_organization_modules(organization_id);
+    end loop;
+
+    for organization_id in
+      select subscription.organization_id
+        from public.organization_subscriptions subscription
+       where subscription.plan_key = target_plan_key
+       order by subscription.organization_id
+    loop
+      select coalesce(jsonb_agg(jsonb_build_object('publicationId', active.publication_id, 'postId', active.post_id) order by active.publication_id), '[]'::jsonb)
+        into organization_affected
+        from authz.active_social_publications(organization_id, 'organization', null, null) active;
+      affected := affected || organization_affected;
+    end loop;
+
+    if jsonb_array_length(affected) > 0 then
+      raise exception 'module_has_active_publications' using detail = affected::text;
+    end if;
+  end if;
+
+  update public.subscription_plans set
+    display_name = case when target_patch ? 'display_name' then patch_display_name else display_name end,
+    monthly_price_cents = case when target_patch ? 'monthly_price_cents' then patch_monthly_price_cents else monthly_price_cents end,
+    currency = case when target_patch ? 'currency' then patch_currency else currency end,
+    storage_bytes = case when target_patch ? 'storage_bytes' then patch_storage_bytes else storage_bytes end,
+    max_teams = case when target_patch ? 'max_teams' then patch_max_teams else max_teams end,
+    max_departments = case when target_patch ? 'max_departments' then patch_max_departments else max_departments end,
+    is_self_serviceable = case when target_patch ? 'is_self_serviceable' then patch_is_self_serviceable else is_self_serviceable end,
+    sort_order = case when target_patch ? 'sort_order' then patch_sort_order else sort_order end,
+    available_from = case when target_patch ? 'available_from' then patch_available_from else available_from end,
+    available_until = case when target_patch ? 'available_until' then patch_available_until else available_until end,
+    included_modules = case when target_patch ? 'included_modules' then requested_modules else included_modules end,
+    updated_at = now()
+   where key = target_plan_key
+   returning * into result;
+
+  return result;
+end;
+$$;
+revoke all on function public.update_subscription_plan(text, jsonb) from public;
+grant execute on function public.update_subscription_plan(text, jsonb) to service_role;
+
 -- Ersetzt das Compare-and-Set queued -> uploading in POST /v1/publications/:id/execute.
 -- Ergebnis: 'claimed', 'module_disabled' (Veroeffentlichung auf cancelled gesetzt, Versuch mit
 -- error_class module_disabled protokolliert, kein erneuter Versuch), 'invalid_status' oder
