@@ -136,6 +136,87 @@ $$;
 revoke all on function public.playerboard_reserve_photo_upload(uuid, uuid, text, integer, uuid) from public;
 grant execute on function public.playerboard_reserve_photo_upload(uuid, uuid, text, integer, uuid) to service_role;
 
+-- 2b. Upload-Abschluss mit Ist-Groesse und erneuter Kontingentpruefung ----------------------------
+-- Die Reservierung bleibt bis zum Abschluss in size_bytes. Der Abschluss laeuft deshalb unter
+-- derselben Vereins-Sperre, ersetzt die Reservierung nur innerhalb ihrer Grenze und prueft die
+-- drei Kontingentebenen erneut. So kann ein Upload weder die Reservierung vergroessern noch eine
+-- zwischenzeitlich verbrauchte Grenze umgehen.
+create or replace function public.playerboard_complete_photo_upload(target_photo_id uuid, actual_size integer)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  photo public.playerboard_training_photos;
+  training public.playerboard_trainings;
+  effective record;
+  department_limit_bytes bigint;
+  team_limit_bytes bigint;
+  used bigint;
+begin
+  if actual_size is null or actual_size <= 0 then
+    raise exception 'invalid_upload_size';
+  end if;
+
+  select * into photo from public.playerboard_training_photos where id = target_photo_id;
+  if not found then
+    raise exception 'photo_not_found';
+  end if;
+  select * into training from public.playerboard_trainings
+   where organization_id = photo.organization_id and id = photo.training_id;
+  if not found then
+    raise exception 'training_not_found';
+  end if;
+
+  perform pg_advisory_xact_lock(hashtextextended(photo.organization_id::text, 2));
+  select * into photo from public.playerboard_training_photos where id = target_photo_id for update;
+  if photo.upload_completed_at is not null then
+    return false;
+  end if;
+  if actual_size > photo.size_bytes then
+    raise exception 'photo_size_exceeds_reservation';
+  end if;
+
+  if exists (select 1 from public.organization_subscriptions where organization_id = photo.organization_id) then
+    select storage_bytes into effective from public.effective_limits(photo.organization_id);
+
+    select storage_bytes into team_limit_bytes from public.storage_limits
+     where organization_id = photo.organization_id and scope = 'team' and team_id = training.team_id;
+    if team_limit_bytes is not null then
+      used := public.storage_usage_bytes(photo.organization_id, training.department_id, training.team_id)
+        - photo.size_bytes + actual_size;
+      if used > team_limit_bytes then
+        raise exception 'storage_limit_reached: team/%/%', team_limit_bytes, used;
+      end if;
+    end if;
+
+    select storage_bytes into department_limit_bytes from public.storage_limits
+     where organization_id = photo.organization_id and scope = 'department'
+       and department_id = training.department_id and team_id is null;
+    if department_limit_bytes is not null then
+      used := public.storage_usage_bytes(photo.organization_id, training.department_id, null)
+        - photo.size_bytes + actual_size;
+      if used > department_limit_bytes then
+        raise exception 'storage_limit_reached: department/%/%', department_limit_bytes, used;
+      end if;
+    end if;
+
+    used := public.storage_usage_bytes(photo.organization_id, null, null) - photo.size_bytes + actual_size;
+    if used > effective.storage_bytes then
+      raise exception 'storage_limit_reached: organization/%/%', effective.storage_bytes, used;
+    end if;
+  end if;
+
+  update public.playerboard_training_photos
+     set size_bytes = actual_size, upload_completed_at = now()
+   where id = photo.id;
+  return true;
+end;
+$$;
+revoke all on function public.playerboard_complete_photo_upload(uuid, integer) from public;
+grant execute on function public.playerboard_complete_photo_upload(uuid, integer) to service_role;
+
 -- 3. Spieler neu anlegen: Verzeichnisperson und Kader-Eintrag in einer Transaktion ---------------
 -- Nur fuer die API (service_role), die training.manage auf der Mannschaft vorher prueft und
 -- is_minor serverseitig aus dem Geburtsjahr herleitet (wie POST .../directory-people).

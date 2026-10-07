@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(14);
+select plan(17);
 
 set local role postgres;
 
@@ -82,7 +82,13 @@ select is(
 select is((select training_photos from public.storage_usage_breakdown('52100000-1000-4000-8000-000000000001', null, '52100000-1200-4000-8000-000000000001')), 2048::bigint,
   'the reserved bytes count as training photos in the storage breakdown');
 
--- 12: ein Review vor abgeschlossenem Upload scheitert.
+-- 12: ein zu grosser Abschluss scheitert.
+select throws_ok(
+  $$select public.playerboard_complete_photo_upload('52100000-7000-4000-8000-000000000001', 2049)$$,
+  'P0001', 'photo_size_exceeds_reservation', 'an upload cannot exceed its reserved size'
+);
+
+-- 13: ein Review vor abgeschlossenem Upload scheitert.
 set local role authenticated;
 select set_config('request.jwt.claim.role', 'authenticated', true);
 select set_config('request.jwt.claim.sub', '52100000-0000-4000-8000-000000000001', true);
@@ -91,9 +97,19 @@ select throws_ok(
   'P0001', 'photo_upload_incomplete', 'a photo cannot be reviewed before its upload is complete'
 );
 
--- 13-14: nach Abschluss geht der Review; oeffentlich nur mit allem zusammen.
-set local role postgres;
-update public.playerboard_training_photos set upload_completed_at = now() where id = '52100000-7000-4000-8000-000000000001';
+-- 14-15: der Abschluss prueft die Reservierung und ein zweiter Aufruf bleibt idempotent.
+set local role service_role;
+select set_config('request.jwt.claim.role', 'service_role', true);
+select is(
+  public.playerboard_complete_photo_upload('52100000-7000-4000-8000-000000000001', 2048),
+  true, 'the upload is completed after the verified size check'
+);
+select is(
+  public.playerboard_complete_photo_upload('52100000-7000-4000-8000-000000000001', 1024),
+  false, 'a repeated completion does not update the upload again'
+);
+
+-- 16-17: nach Abschluss geht der Review; oeffentlich nur mit allem zusammen.
 set local role authenticated;
 select is(
   (select consent_review_status from public.playerboard_review_photo_consent('52100000-7000-4000-8000-000000000001', '[]', true, true)),

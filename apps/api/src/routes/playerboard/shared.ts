@@ -69,6 +69,8 @@ const triggerErrors: Readonly<Record<string, number>> = {
   photo_consent_invalid: 422,
   photo_consent_not_approved: 409,
   photo_upload_incomplete: 409,
+  photo_size_exceeds_reservation: 409,
+  invalid_upload_size: 409,
   recognizable_people_not_confirmed: 422,
   invalid_people: 400,
   photo_not_found: 404,

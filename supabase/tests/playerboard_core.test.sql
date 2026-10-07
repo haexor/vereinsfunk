@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(69);
+select plan(70);
 
 set local role postgres;
 
@@ -143,6 +143,12 @@ select throws_ok(
   $$insert into public.playerboard_players (organization_id, department_id, team_id, directory_person_id)
     values ('52000000-1000-4000-8000-000000000001', '52000000-1100-4000-8000-00000000000a', '52000000-1200-4000-8000-0000000000a2', '52000000-2000-4000-8000-000000000001')$$,
   '42501', null, 'a coach cannot write into the squad of a neighboring team'
+);
+select set_config('request.jwt.claim.sub', '52000000-0000-4000-8000-000000000001', true);
+select throws_ok(
+  $$insert into public.playerboard_players (organization_id, department_id, team_id, directory_person_id)
+    values ('52000000-1000-4000-8000-000000000001', '52000000-1100-4000-8000-00000000000a', '52000000-1200-4000-8000-0000000000a2', '52000000-2000-4000-8000-000000000001')$$,
+  '42501', null, 'even an organization admin cannot move a person into a different team'
 );
 
 -- --- Sichtbarkeit ueber die Mannschaft hinaus -------------------------------------------------

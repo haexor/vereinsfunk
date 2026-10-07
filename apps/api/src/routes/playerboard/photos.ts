@@ -126,8 +126,8 @@ export function registerPlayerboardPhotoRoutes(app: FastifyInstance, context: Ap
     }))
   })
 
-  // Abschluss: erst wenn die Datei wirklich im Bucket liegt, erscheint das Foto. Die gemeldete Groesse
-  // ersetzt die angekuendigte (beide zaehlen aufs Kontingent).
+  // Abschluss: erst wenn die Datei wirklich im Bucket liegt, erscheint das Foto. Die Datenbank-RPC
+  // ersetzt die Reservierung atomar durch die Ist-Groesse und prueft die Kontingente erneut.
   app.post('/v1/playerboard/photos/:id/complete', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
@@ -135,6 +135,10 @@ export function registerPlayerboardPhotoRoutes(app: FastifyInstance, context: Ap
     if (!loaded) return
     if (!(await requirePermission(request, reply, 'training.manage', loaded.scope))) return
     const service = supabaseClients.forService()
+    // Ein wiederholter Abschluss ist idempotent und darf weder Storage noch Audit erneut anfassen.
+    if (loaded.row.upload_completed_at !== null) {
+      return reply.code(200).send(await photoResponse(request, params.id))
+    }
     const slash = loaded.row.storage_path.lastIndexOf('/')
     const listing = await service.storage.from(PLAYERBOARD_PHOTO_BUCKET).list(loaded.row.storage_path.slice(0, slash), {
       search: loaded.row.storage_path.slice(slash + 1), limit: 1,
@@ -142,14 +146,26 @@ export function registerPlayerboardPhotoRoutes(app: FastifyInstance, context: Ap
     if (listing.error) throw listing.error
     const object = listing.data.find((entry) => entry.name === loaded.row.storage_path.slice(slash + 1))
     if (!object) return reply.code(409).send({ error: 'upload_missing', correlationId: request.id })
-    const actualSize = Number((object.metadata as { size?: number } | null)?.size ?? loaded.row.size_bytes)
-    const update = await service.from('playerboard_training_photos')
-      .update({ upload_completed_at: new Date().toISOString(), ...(actualSize > 0 ? { size_bytes: actualSize } : {}) })
-      .eq('id', params.id).is('upload_completed_at', null)
-    if (update.error) throw update.error
-    await recordAuditEvent(request, {
-      organizationId: loaded.scope.organizationId, action: 'playerboard_photo.uploaded', entityType: 'playerboard_training_photos', entityId: params.id,
-    })
+    const actualSize = Number((object.metadata as { size?: number | string } | null)?.size)
+    if (!Number.isSafeInteger(actualSize) || actualSize <= 0) {
+      const removed = await service.storage.from(PLAYERBOARD_PHOTO_BUCKET).remove([loaded.row.storage_path])
+      if (removed.error) request.log.error({ err: removed.error, correlationId: request.id }, 'playerboard photo cleanup failed')
+      return reply.code(409).send({ error: 'invalid_upload_size', correlationId: request.id })
+    }
+    const completed = await service.rpc('playerboard_complete_photo_upload', { target_photo_id: params.id, actual_size: actualSize })
+    if (completed.error) {
+      if (completed.error.message.includes('photo_size_exceeds_reservation') || completed.error.message.startsWith('storage_limit_reached') || completed.error.message.includes('invalid_upload_size')) {
+        const removed = await service.storage.from(PLAYERBOARD_PHOTO_BUCKET).remove([loaded.row.storage_path])
+        if (removed.error) request.log.error({ err: removed.error, correlationId: request.id }, 'playerboard photo cleanup failed')
+      }
+      if (sendDatabaseError(request, reply, completed.error)) return
+      throw completed.error
+    }
+    if (completed.data === true) {
+      await recordAuditEvent(request, {
+        organizationId: loaded.scope.organizationId, action: 'playerboard_photo.uploaded', entityType: 'playerboard_training_photos', entityId: params.id,
+      })
+    }
     return reply.code(200).send(await photoResponse(request, params.id))
   })
 

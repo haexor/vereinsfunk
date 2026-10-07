@@ -105,4 +105,9 @@ describe('currentSeasonStart', () => {
     expect(currentSeasonStart('2020-08-15', '2026-08-15')).toBe('2026-08-15')
     expect(currentSeasonStart(null, '2026-10-08')).toBeNull()
   })
+
+  it('clamps a February 29 season start in non-leap years', () => {
+    expect(currentSeasonStart('2024-02-29', '2025-03-01')).toBe('2025-02-28')
+    expect(currentSeasonStart('2024-02-29', '2025-02-27')).toBe('2024-02-29')
+  })
 })

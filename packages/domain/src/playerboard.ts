@@ -103,8 +103,13 @@ export function competitionRanks(totals: readonly number[]): number[] {
 /** Saisonbeginn als Zeitraumanfang: letzter Saisonstart (Monat/Tag) am oder vor `today`. */
 export function currentSeasonStart(seasonStart: string | null, today: string): string | null {
   if (!seasonStart) return null
-  const monthDay = seasonStart.slice(5)
+  const month = Number(seasonStart.slice(5, 7))
+  const day = Number(seasonStart.slice(8, 10))
+  const dateOnYear = (year: number) => {
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate()
+    return `${year}-${String(month).padStart(2, '0')}-${String(Math.min(day, lastDay)).padStart(2, '0')}`
+  }
   const year = Number(today.slice(0, 4))
-  const candidate = `${year}-${monthDay}`
-  return candidate <= today ? candidate : `${year - 1}-${monthDay}`
+  const candidate = dateOnYear(year)
+  return candidate <= today ? candidate : dateOnYear(year - 1)
 }
