@@ -16,12 +16,18 @@ const ParamsSchema = z.object({ orgSlug: SlugSchema, teamSlug: SlugSchema })
 // dauerhaft auf die Datei zeigen (Muster Medien-Grant, Paket 025).
 const PUBLIC_PHOTO_URL_SECONDS = 300
 
-// Paket 052: oeffentliche Mannschaftsseite ohne Anmeldung (Muster oeffentliches Impressum, Paket 020).
-// Alles laeuft ueber security-definer-Funktionen, die nur service_role ausfuehren darf; sie pruefen
-// Schalter, public_sharing_allowed und Modul selbst und geben Spieler nur als "#7 M. K." aus.
+/**
+ * Paket 052: oeffentliche Mannschaftsseite ohne Anmeldung (Muster oeffentliches Impressum, Paket 020).
+ * Alles laeuft ueber security-definer-Funktionen, die nur service_role ausfuehren darf; sie pruefen
+ * Schalter, public_sharing_allowed und Modul selbst und geben Spieler nur als "#7 M. K." aus.
+ */
 export function registerPlayerboardPublicRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { supabaseClients } = context
 
+  /**
+   * Prueft IP-Rate-Limit und Slugs und laedt die oeffentlich freigegebene Mannschaft per RPC.
+   * Sendet bei Ablehnung 429 bzw. 404 und liefert null.
+   */
   async function loadTeam(request: FastifyRequest, reply: FastifyReply) {
     if (!checkRateLimit(`playerboard-public:${request.ip}`, 120, 60_000)) {
       reply.code(429).send({ error: 'rate_limited', correlationId: request.id })

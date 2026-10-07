@@ -54,6 +54,7 @@ async function loadContentQuotaUsage(service: SupabaseClient, organizationId: st
   }))
 }
 
+/** Registriert berechtigungsgepruefte Routen fuer Tarife, Kontingente sowie Speicher- und Veroeffentlichungsnutzung. */
 export function registerSubscriptionRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, roleProvider, supabaseClients } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)

@@ -9,6 +9,7 @@ export class InvitationCreationError extends Error {
   }
 }
 
+/** Wirft fuer bekannte RPC- und Integritaetsfehler einen fachlichen Einladungsfehler, sonst den Originalfehler. */
 function mapCreateInvitationError(error: { code?: string | null; message?: string | null }): never {
   const message = error.message ?? ''
   if (message.includes('invitation_already_open')) throw new InvitationCreationError('invitation_already_open')

@@ -7,6 +7,7 @@ import {
   type PlayerboardSettingsLevel,
 } from './playerboard.js'
 
+/** Erstellt eine Einstellungsebene ohne eigene Werte und wendet die gewuenschten Test-Overrides an. */
 function level(overrides: Partial<PlayerboardSettingsLevel>): PlayerboardSettingsLevel {
   return { seasonStart: null, statsVisibility: null, overridableFields: [], teamCategoriesAllowed: null, publicSharingAllowed: null, ...overrides }
 }

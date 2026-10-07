@@ -10,12 +10,14 @@ import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { PermissionScope } from '../../auth.js'
 import type { ApiRouteContext } from '../context.js'
 
-// Paket 052: gemeinsame Bausteine der PlayerBoard-Routen.
-//
-// Mannschaften werden ueber den Service-Client aufgeloest: teams_select_member verlangt eine
-// Abteilungsmitgliedschaft, ein Spieler (reines Mannschaftsmitglied) saehe seine eigene Mannschaft
-// sonst als "not found" (derselbe Fund wie in routes/modules.ts). Die Aufloesung liefert nur den
-// Scope-Pfad; Berechtigung pruefen requirePermission bzw. requireStatsAccess danach.
+/**
+ * Paket 052: gemeinsame Bausteine der PlayerBoard-Routen.
+ *
+ * Mannschaften werden ueber den Service-Client aufgeloest: teams_select_member verlangt eine
+ * Abteilungsmitgliedschaft, ein Spieler (reines Mannschaftsmitglied) saehe seine eigene Mannschaft
+ * sonst als "not found" (derselbe Fund wie in routes/modules.ts). Die Aufloesung liefert nur den
+ * Scope-Pfad; Berechtigung pruefen requirePermission bzw. requireStatsAccess danach.
+ */
 export async function loadTeamScope(service: SupabaseClient, teamId: string): Promise<Required<PermissionScope> | null> {
   const team = await service.from('teams').select('organization_id, department_id').eq('id', teamId).maybeSingle()
   if (team.error) throw team.error
@@ -23,10 +25,12 @@ export async function loadTeamScope(service: SupabaseClient, teamId: string): Pr
   return { organizationId: team.data.organization_id as string, departmentId: team.data.department_id as string, teamId }
 }
 
-// Lesen der Kennzahlen einer Mannschaft: training.view ODER die wirksame stats_visibility
-// (authz.can_view_playerboard_stats). Kein requirePermission, weil ein Mitglied einer
-// Nachbarmannschaft training.view gerade nicht hat. Erst das Modul (403 module_disabled, wie
-// requirePermission), dann die Sicht (403 forbidden).
+/**
+ * Lesen der Kennzahlen einer Mannschaft: training.view ODER die wirksame stats_visibility
+ * (authz.can_view_playerboard_stats). Kein requirePermission, weil ein Mitglied einer
+ * Nachbarmannschaft training.view gerade nicht hat. Erst das Modul (403 module_disabled, wie
+ * requirePermission), dann die Sicht (403 forbidden).
+ */
 export async function requireStatsAccess(
   context: ApiRouteContext,
   request: FastifyRequest,
@@ -50,6 +54,7 @@ export async function requireStatsAccess(
 
 export const TRAINING_COLUMNS = 'id, organization_id, department_id, team_id, training_date, title, status, created_at'
 
+/** Validiert eine Trainingszeile und die separat geladene, fuer den Nutzer sichtbare Notiz als API-Antwort. */
 export function mapTrainingRow(row: Record<string, unknown>, note: string | null) {
   return PlayerboardTrainingSchema.parse({
     id: row.id, teamId: row.team_id, trainingDate: row.training_date, title: row.title ?? null,
@@ -77,6 +82,10 @@ const triggerErrors: Readonly<Record<string, number>> = {
   insufficient_permission: 403,
 }
 
+/**
+ * Sendet fuer bekannte Trigger-, RPC-, RLS- und Kontingentfehler eine fachliche HTTP-Fehlerantwort.
+ * Liefert true bei gesendeter Antwort, sonst false zur weiteren Fehlerbehandlung durch den Aufrufer.
+ */
 export function sendDatabaseError(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -125,8 +134,10 @@ export interface OrganizationPlayerboardSettings {
   teamById: ReadonlyMap<string, PlayerboardSettingsRow>
 }
 
-// Alle Einstellungszeilen eines Vereins in einer Abfrage, ueber den Service-Client: die Policy
-// verlangt das aktive Modul je Zeile, die Aufrufer pruefen Modul und Mitgliedschaft vorher selbst.
+/**
+ * Alle Einstellungszeilen eines Vereins in einer Abfrage, ueber den Service-Client: die Policy
+ * verlangt das aktive Modul je Zeile, die Aufrufer pruefen Modul und Mitgliedschaft vorher selbst.
+ */
 export async function loadOrganizationPlayerboardSettings(service: SupabaseClient, organizationId: string): Promise<OrganizationPlayerboardSettings> {
   const rows = await service.from('playerboard_settings').select(SETTINGS_COLUMNS).eq('organization_id', organizationId)
   if (rows.error) throw rows.error
@@ -138,6 +149,7 @@ export async function loadOrganizationPlayerboardSettings(service: SupabaseClien
   }
 }
 
+/** Uebertraegt vererbbare Datenbankfelder in eine Domain-Einstellungsebene; fehlende Zeilen ergeben null. */
 export function toSettingsLevel(row: PlayerboardSettingsRow | null | undefined): PlayerboardSettingsLevel | null {
   if (!row) return null
   return {
@@ -146,6 +158,10 @@ export function toSettingsLevel(row: PlayerboardSettingsRow | null | undefined):
   }
 }
 
+/**
+ * Loest Einstellungen entlang des uebergebenen Vereins-, Abteilungs- und Mannschaftspfads auf.
+ * Fuer eine Mannschaft muss der Scope auch deren Abteilungs-ID enthalten.
+ */
 export function resolveSettingsFor(settings: OrganizationPlayerboardSettings, scope: { departmentId?: string | null; teamId?: string | null }) {
   const target = scope.teamId ? 'team' : scope.departmentId ? 'department' : 'organization'
   return resolvePlayerboardSettings({
@@ -155,7 +171,9 @@ export function resolveSettingsFor(settings: OrganizationPlayerboardSettings, sc
   }, target)
 }
 
-// Modul aktiv im Scope? Fuer Routen ohne requirePermission (Lesen fuer alle Mitglieder).
+/**
+ * Modul aktiv im Scope? Fuer Routen ohne requirePermission (Lesen fuer alle Mitglieder).
+ */
 export async function requirePlayerboardModule(
   context: ApiRouteContext, request: FastifyRequest, reply: FastifyReply, scope: PermissionScope,
 ): Promise<boolean> {

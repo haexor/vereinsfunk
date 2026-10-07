@@ -20,12 +20,14 @@ type RosterRow = {
   jersey_number: number | null; position: string | null; active: boolean; has_account: boolean
 }
 
+/** Laedt den ueber den uebergebenen Client sichtbaren Mannschaftskader; RPC-Fehler werden weitergeworfen. */
 async function loadRoster(client: SupabaseClient, teamId: string): Promise<RosterRow[]> {
   const roster = await client.rpc('playerboard_team_roster', { target_team_id: teamId })
   if (roster.error) throw roster.error
   return (roster.data ?? []) as RosterRow[]
 }
 
+/** Validiert einen Kader-Eintrag als API-Antwort; die E-Mail wird nur bei expliziter Uebergabe aufgenommen. */
 function mapRosterRow(teamId: string, row: RosterRow, email?: string | null) {
   return PlayerboardPlayerSchema.parse({
     id: row.player_id, teamId, directoryPersonId: row.directory_person_id, firstName: row.first_name, lastName: row.last_name,
@@ -34,12 +36,15 @@ function mapRosterRow(teamId: string, row: RosterRow, email?: string | null) {
   })
 }
 
+/** Registriert Kaderabfrage, Spielerpflege und Einladungen mit Scope- und Berechtigungspruefung. */
 export function registerPlayerboardPlayerRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients, roleProvider, environment } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
 
-  // Einzelner Kader-Eintrag fuer Schreibrouten: Mannschaft ueber den Service-Client (siehe
-  // loadTeamScope), Recht danach per requirePermission.
+  /**
+   * Einzelner Kader-Eintrag fuer Schreibrouten: Mannschaft ueber den Service-Client (siehe
+   * loadTeamScope), Recht danach per requirePermission.
+   */
   async function loadPlayer(request: FastifyRequest, reply: FastifyReply, playerId: string) {
     const player = await supabaseClients.forService().from('playerboard_players')
       .select('id, organization_id, department_id, team_id, directory_person_id').eq('id', playerId).maybeSingle()
@@ -55,6 +60,10 @@ export function registerPlayerboardPlayerRoutes(app: FastifyInstance, context: A
     }
   }
 
+  /**
+   * Laedt einen Kader-Eintrag nach autorisiertem Schreiben erneut und ergaenzt die Verzeichnis-E-Mail.
+   * Wirft einen Fehler, wenn der Spieler fuer den Nutzer nicht sichtbar ist.
+   */
   async function playerResponse(request: FastifyRequest, teamId: string, playerId: string) {
     const client = supabaseClients.forUser(request.auth!.accessToken)
     const row = (await loadRoster(client, teamId)).find((candidate) => candidate.player_id === playerId)

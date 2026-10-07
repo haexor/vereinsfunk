@@ -25,6 +25,7 @@ import {
   type PlayerboardSettingsRow,
 } from './shared.js'
 
+/** Validiert eigene, wirksame und gesperrte Einstellungen einer Ebene samt uebergebenem Bearbeitungsrecht. */
 function buildEntry(
   settings: OrganizationPlayerboardSettings,
   scope: ScopeLevel,
@@ -73,7 +74,9 @@ const patchColumns: Readonly<Record<string, string>> = {
   publicSlug: 'public_slug',
 }
 
-// Paket 052: vererbbare PlayerBoard-Einstellungen je Ebene, Muster GET .../scope-modules.
+/**
+ * Paket 052: vererbbare PlayerBoard-Einstellungen je Ebene, Muster GET .../scope-modules.
+ */
 export function registerPlayerboardSettingsRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients, roleProvider } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
