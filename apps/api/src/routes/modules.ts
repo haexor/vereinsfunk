@@ -1,7 +1,6 @@
 import { hasPermission } from '@vereinsfunk/authorization'
 import {
   AppModuleSchema,
-  ModuleBlockingPublicationSchema,
   ScopeModulesSchema,
   UpdateScopeModulesRequestSchema,
   UuidSchema,
@@ -11,7 +10,7 @@ import { appModules, resolveEnabledModules, type AppModule } from '@vereinsfunk/
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { permissionScopeKey } from '../auth.js'
-import { loadOrganizationModuleSettings, moduleLayersFor, type OrganizationModuleSettings } from '../moduleStatus.js'
+import { loadOrganizationModuleSettings, moduleLayersFor, parseBlockingPublications, type OrganizationModuleSettings } from '../moduleStatus.js'
 import type { ApiRouteContext } from './context.js'
 import {
   createAuditRecorder,
@@ -38,7 +37,7 @@ function buildScopeModules(
         : (settings.teamById.get(scopeId) ?? null)
   const { enabled, blockedBy } = resolveEnabledModules(moduleLayersFor(settings, { departmentId, teamId }))
   return ScopeModulesSchema.parse({
-    scope, scopeId, name,
+    scope, scopeId, name, departmentId,
     own: own ? [...own] : null,
     modules: appModules.map((module) => ({ module, enabled: enabled.includes(module), blockedBy: blockedBy[module] ?? null })),
     canEdit,
@@ -142,7 +141,7 @@ export function registerModuleRoutes(app: FastifyInstance, context: ApiRouteCont
         return reply.code(422).send({ error: 'module_not_available', modules, correlationId: request.id })
       }
       if (rpc.error.message.includes('module_has_active_publications')) {
-        const publications = parseDetail(z.array(ModuleBlockingPublicationSchema), rpc.error.details) ?? []
+        const publications = parseBlockingPublications(rpc.error.details)
         return reply.code(409).send({ error: 'module_has_active_publications', publications, correlationId: request.id })
       }
       throw rpc.error

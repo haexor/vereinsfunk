@@ -14,6 +14,7 @@ import { hasPermission } from '@vereinsfunk/authorization'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
+import { parseBlockingPublications } from '../moduleStatus.js'
 import type { ApiRouteContext } from './context.js'
 import { createAuditRecorder, isAnyMemberOfOrganization, POLICY_MANAGE_PERMISSION, resolveMembershipScope } from './shared.js'
 
@@ -157,7 +158,14 @@ export function registerSubscriptionRoutes(app: FastifyInstance, context: ApiRou
     const previous = await service.from('organization_subscriptions').select('plan_key').eq('organization_id', body.organizationId).maybeSingle()
     if (previous.error) throw previous.error
     const update = await service.from('organization_subscriptions').update({ plan_key: body.planKey }).eq('organization_id', body.organizationId).select('organization_id').maybeSingle()
-    if (update.error) throw update.error
+    if (update.error) {
+      // Paket 051: Trigger organization_subscriptions_module_guard -- der Wechsel nimmt dem Verein
+      // social_media, waehrend noch Veroeffentlichungen eingeplant sind oder laufen.
+      if (update.error.message.includes('module_has_active_publications')) {
+        return reply.code(409).send({ error: 'module_has_active_publications', publications: parseBlockingPublications(update.error.details), correlationId: request.id })
+      }
+      throw update.error
+    }
     if (!update.data) return reply.code(404).send({ error: 'subscription_not_found', correlationId: request.id })
     await recordAuditEvent(request, {
       organizationId: body.organizationId, action: 'subscription.plan_changed', entityType: 'organization_subscriptions', entityId: body.organizationId,

@@ -1,4 +1,4 @@
-import { AppModuleSchema } from '@vereinsfunk/contracts'
+import { AppModuleSchema, ModuleBlockingPublicationSchema, type ModuleBlockingPublication } from '@vereinsfunk/contracts'
 import { resolveEnabledModules, type AppModule, type ModuleLayers, type ResolvedModules } from '@vereinsfunk/domain'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { z } from 'zod'
@@ -85,5 +85,17 @@ export class SupabaseModuleStatusProvider implements ModuleStatusProvider {
     }
     const settings = await loadOrganizationModuleSettings(client, scope.organizationId)
     return resolveEnabledModules(moduleLayersFor(settings, { departmentId, teamId: scope.teamId ?? null }))
+  }
+}
+
+// DETAIL von module_has_active_publications ist eine JSON-Liste {publicationId, postId} -- geworfen
+// von set_scope_enabled_modules(), update_subscription_plan() und dem Trigger auf
+// organization_subscriptions. Faellt das Parsen aus, bleibt es bei der Ablehnung ohne Liste.
+export function parseBlockingPublications(details: string | undefined): ModuleBlockingPublication[] {
+  try {
+    const parsed = z.array(ModuleBlockingPublicationSchema).safeParse(JSON.parse(details ?? ''))
+    return parsed.success ? parsed.data : []
+  } catch {
+    return []
   }
 }

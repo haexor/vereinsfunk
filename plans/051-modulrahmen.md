@@ -173,3 +173,44 @@ Abweichungen:
 - **Reihenfolge der Prüfungen.** Die Modulprüfung läuft erst nach der Rollenprüfung. Wer die Rolle nicht hat, sieht weiter `403 forbidden` und erfährt nichts über die Modulauswahl. Rahmen-Permissions (`core`) lösen keine Abfrage aus. `requirePermissionAnyOf` lässt durch, sobald eine gewährte Alternative zum Rahmen oder zu einem aktiven Modul gehört.
 - **Grenze der Durchsetzung.** `requirePermission` prüft das Modul auf dem Scope, den die Route übergibt. Social-Media-Routen prüfen Beiträge meist auf Abteilungsebene; dort wirkt eine Abwahl auf Mannschaftsebene noch nicht. Veröffentlicht wird trotzdem nichts, weil der Claim die Mannschaft des Beitrags berücksichtigt. Lesende Routen ohne `requirePermission` bleiben wie im Plan vorgesehen erreichbar (keine RLS-Nachrüstung). Die Oberfläche blendet sie in PR 3 aus.
 - **Tests.** `testSupport.startApp` setzt standardmäßig einen Provider mit allen Modulen ein, damit bestehende Route-Tests ihre Supabase-Fakes nicht um `organization_subscriptions`/`policy_settings` erweitern müssen. Die Modulprüfung selbst testet `moduleEnforcement.test.ts`.
+
+## Umsetzung PR 3: Ergebnis und Abweichungen vom Plan
+
+Umgesetzt am 2026-10-07:
+- Registry: `apps/web/app/modules/registry.ts`
+- Modulauswahl laden: `composables/useScopeModules.ts`
+- Weiterleitung inaktiver Routen: `middleware/module.global.ts`
+- Erklärseite: `pages/modul-inaktiv.vue`
+- Einstellungsseite: `pages/einstellungen/module.vue`
+- Umbau der Sidebar in `layouts/default.vue`
+- Modulabhängige Kacheln in `pages/index.vue` und `pages/kalender.vue`
+- Tarifwechsel-Schutz: Migration `2026100702_subscription_module_guard.sql`
+
+Verifiziert:
+- `pnpm lint`, `typecheck` und `build` grün.
+- `pnpm test` grün bis auf den bekannten lokalen Chromium-Ausfall in `websiteRenderer.logoScoring.test.ts`.
+- `pnpm db:test` nach frischem `supabase db reset` grün: 48 Dateien, 1194 Assertions, davon 7 in `subscription_module_guard.test.sql`.
+- Einmal im Browser durchgespielt (Headless-Chromium gegen den lokalen Stack, Demo-Verein „SV Nordstadt“):
+  - Die Sidebar ist nach Modulen gruppiert.
+  - Social Media lässt sich auf der Seite „Module“ für eine Abteilung abwählen.
+  - Der Wechsel in diese Abteilung führt von `/beitraege` auf die Erklärseite, ebenso der Direktaufruf von `/freigaben`.
+  - Die Übersicht der Abteilung zeigt den Hinweis statt der Social-Media-Kacheln.
+  - Im Verein ist `/beitraege` wieder erreichbar.
+
+Abweichungen:
+
+- **Navigation in zwei Gruppen je Modul.**
+  - Die Registry führt je Modul `navigation` (Arbeitsseiten, als Gruppe unter dem Modulnamen) und `managementNavigation` (Einstellungen, als Gruppe „<Modul> verwalten“ unter „Verein verwalten“).
+  - Rahmen-Einträge bleiben immer sichtbar: Übersicht, Kalender, Marke, Struktur, Mitglieder, Verzeichnis, Einwilligungen, Integrationen, Module, Einstellungen, Tarif, Recht.
+  - Die URLs sind unverändert.
+  - „Beitrag erstellen“ erscheint nur bei aktivem Social Media.
+- **Kalender bleibt Rahmen.** Spiele und Veranstaltungen bleiben sichtbar. Geplante Beiträge und der Sprung zur Beitragserstellung erscheinen nur bei aktivem Social Media.
+- **Modulstatus „unbekannt“ öffnet statt zu sperren.** Solange `GET …/scope-modules` lädt oder fehlschlägt, zeigt die Shell alle Module. Die API setzt die Auswahl ohnehin selbst durch; ein Netzwerkfehler soll niemanden aus seinen Seiten aussperren.
+- **Bereichswechsel.** Wechselt man auf einer Modulseite in einen Bereich, in dem das Modul aus ist, führt die Shell ebenfalls auf die Erklärseite. Umgekehrt kehrt die Erklärseite zur ursprünglichen Seite zurück, sobald das Modul im gewählten Bereich wirkt.
+- **`ScopeModules.departmentId`.** Neues Feld im Vertrag, damit die Einstellungsseite Mannschaften unter ihrer Abteilung zeigt. Es ist `null` beim Verein, die eigene ID bei einer Abteilung und die Abteilung der Mannschaft bei einer Mannschaft.
+- **Tarifwechsel eines Vereins abgesichert.** Diese Lücke aus PR 2 ist hier mit erledigt.
+  - Der Trigger `organization_subscriptions_module_guard` verweigert einen Wechsel, der dem Verein Social Media nimmt, solange Veröffentlichungen aktiv sind. Das gilt für Self-Service-Wechsel und Zuweisung durch den Plattform-Admin, auch für die erste Zuweisung.
+  - Er nutzt denselben Lock wie der Claim.
+  - Beide Routen antworten `409 module_has_active_publications`. Den Parser für die Konfliktliste teilen sich jetzt alle drei Stellen (`parseBlockingPublications` in `moduleStatus.ts`).
+- **Kein Playwright-Test im Repo.** Das Repo hat keine E2E-Suite für die Weboberfläche. Abgedeckt ist das Verhalten durch Unit-Tests der Registry (Routenzuordnung, Zustände, nächste Auswahl), Quelltext-Tests der Shell und den einmaligen Durchlauf oben. Eine E2E-Suite wäre ein eigenes Paket.
+- **Mannschaften in der Shell.** Die Sidebar kennt weiter nur Verein und Abteilung als Arbeitsbereich. Eine Abwahl auf Mannschaftsebene zeigt die Einstellungsseite an; in der Navigation wirkt sie erst, wenn es einen Mannschaftsbereich gibt. Das wird für PlayerBoard in 052 relevant.
