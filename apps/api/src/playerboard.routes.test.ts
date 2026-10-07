@@ -15,6 +15,7 @@ const PERSON_ID = '52000000-2000-4000-8000-000000000001'
 const PHOTO_ID = '52000000-7000-4000-8000-000000000001'
 const CATEGORY_ID = '52000000-4000-4000-8000-000000000001'
 
+/** Erstellt einen Rollen-Provider, der fuer jeden abgefragten Scope dieselben Testrollen liefert. */
 function rolesProvider(roles: Role[]): RoleProvider {
   return { async rolesForScope() { return roles } }
 }
@@ -27,6 +28,10 @@ interface FakeOptions {
   audit?: Record<string, unknown>[]
 }
 
+/**
+ * Erstellt getrennte Nutzer- und Service-Fakes mit expliziten Tabellen- und RPC-Antworten.
+ * Unbekannte Zugriffe werfen; Audit-Eintraege werden optional gesammelt.
+ */
 function clients(options: FakeOptions = {}): SupabaseClientFactory {
   const baseService: Record<string, unknown> = {
     teams: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID },
@@ -57,6 +62,7 @@ function clients(options: FakeOptions = {}): SupabaseClientFactory {
   }
 }
 
+/** Sendet eine injizierte HTTP-Testanfrage mit einem signierten Token fuer USER_ID und optionalem Payload. */
 async function call(app: Awaited<ReturnType<typeof startApp>>, method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', url: string, payload?: unknown) {
   const token = await signAccessToken(USER_ID)
   return app.inject({ method, url, headers: { authorization: `Bearer ${token}` }, ...(payload !== undefined ? { payload: payload as Record<string, unknown> } : {}) })
@@ -252,6 +258,7 @@ describe('PlayerBoard coach flows', () => {
 })
 
 describe('PlayerBoard public team page', () => {
+  /** Erstellt Service-RPC-Fakes fuer die oeffentliche Mannschaftsinfo und optionale weitere Antworten. */
   function publicClients(info: unknown[], extra: Record<string, { data: unknown; error: unknown }> = {}) {
     return clients({ serviceRpc: { playerboard_public_team_info: { data: info, error: null }, ...extra } })
   }

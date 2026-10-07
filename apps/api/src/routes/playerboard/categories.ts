@@ -20,10 +20,12 @@ type CategoryRow = {
   name: string; active: boolean; sort_order: number; value_min: number; value_max: number
 }
 
+/** Liefert die ID der Vereins-, Abteilungs- oder Mannschaftsebene einer Kategorie. */
 function scopeIdOf(row: CategoryRow): string {
   return row.scope === 'organization' ? row.organization_id : row.scope === 'department' ? row.department_id! : row.team_id!
 }
 
+/** Registriert das Lesen eigener und geerbter Kategorien sowie deren berechtigungsgepruefte Pflege. */
 export function registerPlayerboardCategoryRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients, roleProvider } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
@@ -99,6 +101,10 @@ export function registerPlayerboardCategoryRoutes(app: FastifyInstance, context:
     }))
   })
 
+  /**
+   * Laedt Kategorie und Berechtigungsscope per Service-Client; liefert null bei fehlender Kategorie.
+   * Die aufrufende Route prueft anschliessend die Schreibberechtigung.
+   */
   async function loadCategoryScope(categoryId: string) {
     const row = await supabaseClients.forService().from('playerboard_point_categories').select(CATEGORY_COLUMNS).eq('id', categoryId).maybeSingle()
     if (row.error) throw row.error

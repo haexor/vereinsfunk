@@ -25,6 +25,10 @@ type PhotoRow = {
 
 const PeopleDetailSchema = z.array(z.object({ directoryPersonId: z.string(), consentRecordId: z.string() }))
 
+/**
+ * Ergaenzt Fotozeilen um sichtbare Personen und fuer zehn Minuten signierte URLs.
+ * Validiert die Antworten und laesst Fotos ohne signierte URL aus.
+ */
 async function mapPhotos(client: SupabaseClient, service: SupabaseClient, rows: readonly PhotoRow[]) {
   if (rows.length === 0) return []
   const [people, signed] = await Promise.all([
@@ -47,13 +51,16 @@ async function mapPhotos(client: SupabaseClient, service: SupabaseClient, rows: 
   })
 }
 
-// Paket 052: Trainingsfotos. Der Bucket ist privat und hat keine Policies fuer authenticated --
-// Hoch- und Herunterladen laufen ausschliesslich ueber signierte URLs, die diese Routen nach eigener
-// Rechtepruefung ausstellen. Freigabe und "oeffentlich" aendern nur die RPCs der Migration.
+/**
+ * Paket 052: Trainingsfotos. Der Bucket ist privat und hat keine Policies fuer authenticated --
+ * Hoch- und Herunterladen laufen ausschliesslich ueber signierte URLs, die diese Routen nach eigener
+ * Rechtepruefung ausstellen. Freigabe und "oeffentlich" aendern nur die RPCs der Migration.
+ */
 export function registerPlayerboardPhotoRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, requirePermissionAnyOf, supabaseClients } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
 
+  /** Laedt den Mannschaftsscope eines Trainings vor der Rechtepruefung; sendet bei Fehlen 404 und liefert null. */
   async function trainingScope(request: FastifyRequest, reply: FastifyReply, trainingId: string) {
     const training = await supabaseClients.forService().from('playerboard_trainings').select('team_id').eq('id', trainingId).maybeSingle()
     if (training.error) throw training.error
@@ -62,6 +69,7 @@ export function registerPlayerboardPhotoRoutes(app: FastifyInstance, context: Ap
     return scope
   }
 
+  /** Laedt Foto und Trainingsscope per Service-Client vor der Rechtepruefung; sendet bei Fehlen 404 und liefert null. */
   async function loadPhoto(request: FastifyRequest, reply: FastifyReply, photoId: string) {
     const photo = await supabaseClients.forService().from('playerboard_training_photos').select(PHOTO_COLUMNS).eq('id', photoId).maybeSingle()
     if (photo.error) throw photo.error
@@ -74,6 +82,10 @@ export function registerPlayerboardPhotoRoutes(app: FastifyInstance, context: Ap
     return scope ? { row, scope } : null
   }
 
+  /**
+   * Laedt ein Foto nach dem Schreiben mit dem Nutzer-Client und ergaenzt Personen und signierte URL.
+   * Liefert undefined, wenn keine signierte URL verfuegbar ist.
+   */
   async function photoResponse(request: FastifyRequest, photoId: string) {
     const client = supabaseClients.forUser(request.auth!.accessToken)
     const row = await client.from('playerboard_training_photos').select(PHOTO_COLUMNS).eq('id', photoId).single()

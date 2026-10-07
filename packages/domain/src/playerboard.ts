@@ -33,6 +33,10 @@ export interface ResolvedPlayerboardSettings {
 
 const levelOrder: readonly ScopeLevelName[] = ['organization', 'department', 'team']
 
+/**
+ * Loest ein ersetzbares Feld bis zur Zielebene auf und meldet, ob ein Vorfahr dort Aenderungen sperrt.
+ * Ein gesetzter Wert bleibt bindend, sobald eine Ebene die weitere Ueberschreibung nicht freigibt.
+ */
 function resolveReplaceable<T>(
   path: PlayerboardSettingsPath,
   target: ScopeLevelName,

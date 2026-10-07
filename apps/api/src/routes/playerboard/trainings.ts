@@ -19,12 +19,15 @@ const PHOTO_BUCKET = 'playerboard-training-photos'
 
 type EntryRow = { player_id: string; category_id: string; value: number }
 
+/** Uebertraegt Punktezeilen in validierte API-Eintraege mit Spieler- und Kategorie-ID. */
 function mapEntries(rows: readonly EntryRow[]) {
   return rows.map((row) => PlayerboardPointEntrySchema.parse({ playerId: row.player_id, categoryId: row.category_id, value: row.value }))
 }
 
-// Notizen kommen ueber den Nutzer-Client: die Policy liefert sie nur mannschaftsintern
-// (training.view), nie an Mitlesende ueber stats_visibility.
+/**
+ * Notizen kommen ueber den Nutzer-Client: die Policy liefert sie nur mannschaftsintern
+ * (training.view), nie an Mitlesende ueber stats_visibility.
+ */
 async function loadNotes(client: SupabaseClient, trainingIds: readonly string[]): Promise<Map<string, string>> {
   if (trainingIds.length === 0) return new Map()
   const notes = await client.from('playerboard_training_notes').select('training_id, note').in('training_id', trainingIds)
@@ -32,10 +35,12 @@ async function loadNotes(client: SupabaseClient, trainingIds: readonly string[])
   return new Map(notes.data.map((row) => [row.training_id as string, row.note as string]))
 }
 
+/** Registriert Trainingspflege, atomare Punktevergabe und Ranglisten mit Scope- und Berechtigungspruefung. */
 export function registerPlayerboardTrainingRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
 
+  /** Laedt den Mannschaftsscope eines Trainings vor der Rechtepruefung; sendet bei Fehlen 404 und liefert null. */
   async function loadTraining(request: FastifyRequest, reply: FastifyReply, trainingId: string) {
     const training = await supabaseClients.forService().from('playerboard_trainings').select('id, team_id').eq('id', trainingId).maybeSingle()
     if (training.error) throw training.error
@@ -47,6 +52,10 @@ export function registerPlayerboardTrainingRoutes(app: FastifyInstance, context:
     return scope
   }
 
+  /**
+   * Laedt Training, Punkte und sichtbare Notiz mit dem uebergebenen Nutzer-Client und validiert die Antwort.
+   * Liefert null, wenn das Training nicht sichtbar oder nicht vorhanden ist.
+   */
   async function trainingDetail(client: SupabaseClient, trainingId: string) {
     const [training, entries, notes] = await Promise.all([
       client.from('playerboard_trainings').select(TRAINING_COLUMNS).eq('id', trainingId).maybeSingle(),
