@@ -354,15 +354,15 @@ Entschieden (Betreiber, 2026-10-05/06): kein Elternkontakt und keine Elternkonte
 
 ## Umsetzung PR 1: Ergebnis und Abweichungen vom Plan
 
-Umgesetzt am 2026-10-08:
+Umgesetzt am 2026-10-07:
 - Migrationen `2026100801_team_role_player.sql` (Enum-Wert vorab) und `2026100802_playerboard_core.sql`.
 - `packages/authorization`: drei Permissions, Rolle `player`, Rang, Modulzuordnung.
 - `packages/contracts`: `player` in `RoleSchema`, `AssignableRoleSchema` und `TEAM_SCOPED_ROLES`; dazu das Label in der Weboberfläche.
 
 Verifiziert:
 - `pnpm lint`, `typecheck` und `build` grün.
-- `pnpm test` grün bis auf den bekannten lokalen Chromium-Ausfall in `websiteRenderer.logoScoring.test.ts`.
-- `pnpm db:test` nach frischem `supabase db reset` grün: 49 Dateien, 1256 Assertions, davon 62 in `playerboard_core.test.sql`.
+- `pnpm test` grün: 38 Tasks, einschließlich `websiteRenderer.logoScoring.test.ts`.
+- `playerboard_core.test.sql` nach frischem `supabase db reset` grün: 69 Assertions; der vollständige Teststand umfasst damit 1261 Assertions in 49 Dateien.
 
 Abgedeckt sind alle unter „PR 1“ verlangten Fälle:
 - fremder Verein und Nachbarmannschaft

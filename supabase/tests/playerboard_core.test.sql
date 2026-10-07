@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(67);
+select plan(69);
 
 set local role postgres;
 
@@ -92,7 +92,7 @@ select results_eq(
 -- --- Trainer -----------------------------------------------------------------------------------
 select set_config('request.jwt.claim.sub', '52000000-0000-4000-8000-000000000002', true);
 
--- 9-14: Entwuerfe, Schreibrechte und Konsistenz der Punkte.
+-- 9-15: Entwuerfe, Schreibrechte und Konsistenz der Punkte.
 select is((select count(*)::integer from public.playerboard_trainings where team_id = '52000000-1200-4000-8000-0000000000a1'), 2,
   'a coach also sees drafts');
 select lives_ok(
@@ -120,8 +120,20 @@ select throws_ok(
     values ('52000000-1000-4000-8000-000000000001', '52000000-1100-4000-8000-00000000000a', '52000000-1200-4000-8000-0000000000a1', current_date + 2, '52000000-0000-4000-8000-000000000002')$$,
   'P0001', 'training_date_in_future', 'a training in the future is rejected'
 );
+set local role service_role;
+select set_config('request.jwt.claim.role', 'service_role', true);
+select throws_ok(
+  $$update public.playerboard_trainings
+       set organization_id = '52000000-1000-4000-8000-000000000001',
+           department_id = '52000000-1100-4000-8000-00000000000a',
+           team_id = '52000000-1200-4000-8000-0000000000a2'
+     where id = '52000000-5000-4000-8000-000000000001'$$,
+  'P0001', 'playerboard_training_identity_immutable', 'a training cannot move between teams'
+);
+set local role authenticated;
+select set_config('request.jwt.claim.role', 'authenticated', true);
 
--- 15-16: der Trainer holt keine Person in den Kader, die er nicht lesen darf, und keine in eine fremde Mannschaft.
+-- 16-17: der Trainer holt keine Person in den Kader, die er nicht lesen darf, und keine in eine fremde Mannschaft.
 select throws_ok(
   $$insert into public.playerboard_players (organization_id, department_id, team_id, directory_person_id)
     values ('52000000-1000-4000-8000-000000000001', '52000000-1100-4000-8000-00000000000a', '52000000-1200-4000-8000-0000000000a1', '52000000-2000-4000-8000-000000000004')$$,
@@ -136,7 +148,7 @@ select throws_ok(
 -- --- Sichtbarkeit ueber die Mannschaft hinaus -------------------------------------------------
 select set_config('request.jwt.claim.sub', '52000000-0000-4000-8000-000000000004', true);
 
--- 17: Standard 'team': die Nachbarmannschaft sieht nichts.
+-- 18: Standard 'team': die Nachbarmannschaft sieht nichts.
 select is((select count(*)::integer from public.playerboard_point_entries), 0,
   'with stats_visibility team a neighboring team sees no points');
 
@@ -145,7 +157,7 @@ insert into public.playerboard_settings (organization_id, scope, department_id, 
   ('52000000-1000-4000-8000-000000000001', 'department', '52000000-1100-4000-8000-00000000000a', 'department', '52000000-0000-4000-8000-000000000001');
 set local role authenticated;
 
--- 18-21: 'department': Punkte und gespeicherte Trainings ja, Notizen und Entwuerfe nicht.
+-- 19-22: 'department': Punkte und gespeicherte Trainings ja, Notizen und Entwuerfe nicht.
 select is((select count(*)::integer from public.playerboard_point_entries where training_id = '52000000-5000-4000-8000-000000000001'), 2,
   'with stats_visibility department a neighboring team sees the points');
 select is((select count(*)::integer from public.playerboard_trainings where team_id = '52000000-1200-4000-8000-0000000000a1'), 1,
@@ -155,12 +167,12 @@ select is((select count(*)::integer from public.playerboard_training_notes), 0,
 select is((select count(*)::integer from public.playerboard_team_ranking('52000000-1200-4000-8000-0000000000a1')), 2,
   'with stats_visibility department a neighboring team sees the ranking');
 
--- 22: ein Mitglied einer anderen Abteilung sieht bei 'department' nichts.
+-- 23: ein Mitglied einer anderen Abteilung sieht bei 'department' nichts.
 select set_config('request.jwt.claim.sub', '52000000-0000-4000-8000-000000000005', true);
 select is((select count(*)::integer from public.playerboard_point_entries), 0,
   'with stats_visibility department another department sees nothing');
 
--- 23-25: verbindliches 'organization' vom Verein schlaegt 'team' der Mannschaft, bis der Verein freigibt.
+-- 24-26: verbindliches 'organization' vom Verein schlaegt 'team' der Mannschaft, bis der Verein freigibt.
 set local role postgres;
 insert into public.playerboard_settings (organization_id, scope, stats_visibility, updated_by) values
   ('52000000-1000-4000-8000-000000000001', 'organization', 'organization', '52000000-0000-4000-8000-000000000001');
@@ -192,7 +204,7 @@ update public.playerboard_settings set season_start = null, overridable_fields =
 update public.playerboard_settings set season_start = '2026-08-01'
  where organization_id = '52000000-1000-4000-8000-000000000001' and scope = 'team';
 
--- 26-29: Saisonbeginn verbindlich, freigegeben, von der Abteilung wieder gesperrt, gesperrt nicht freigebbar.
+-- 27-30: Saisonbeginn verbindlich, freigegeben, von der Abteilung wieder gesperrt, gesperrt nicht freigebbar.
 select is(authz.playerboard_setting('52000000-1000-4000-8000-000000000001', '52000000-1100-4000-8000-00000000000a', '52000000-1200-4000-8000-0000000000a1', 'season_start'),
   '2026-07-01', 'a season start set by the organization binds every team');
 update public.playerboard_settings set overridable_fields = '{season_start}'
@@ -210,7 +222,7 @@ update public.playerboard_settings set overridable_fields = '{}'
 select is(authz.playerboard_setting('52000000-1000-4000-8000-000000000001', '52000000-1100-4000-8000-00000000000a', '52000000-1200-4000-8000-0000000000a1', 'season_start'),
   '2026-07-01', 'a department cannot release a field the organization locked');
 
--- 30-32: team_categories_allowed nur verschaerfen.
+-- 31-33: team_categories_allowed nur verschaerfen.
 update public.playerboard_settings set team_categories_allowed = false
  where organization_id = '52000000-1000-4000-8000-000000000001' and scope = 'organization';
 update public.playerboard_settings set team_categories_allowed = true
@@ -232,7 +244,7 @@ update public.playerboard_settings set team_categories_allowed = null
  where organization_id = '52000000-1000-4000-8000-000000000001' and scope = 'organization';
 
 -- --- Modul aus --------------------------------------------------------------------------------
--- 33-38: je Ebene einzeln (Verein, Abteilung, Mannschaft) sieht der Spieler nichts mehr, der Trainer
+-- 34-40: je Ebene einzeln (Verein, Abteilung, Mannschaft) sieht der Spieler nichts mehr, der Trainer
 -- schreibt nichts mehr.
 insert into public.policy_settings (organization_id, scope, enabled_modules, updated_by) values
   ('52000000-1000-4000-8000-000000000001', 'organization', '{social_media}', '52000000-0000-4000-8000-000000000001');
@@ -267,7 +279,7 @@ set local role postgres;
 update public.policy_settings set enabled_modules = null where organization_id = '52000000-1000-4000-8000-000000000001' and scope = 'team';
 
 -- --- Fremder Verein ---------------------------------------------------------------------------
--- 37-40
+-- 41-44
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '52000000-0000-4000-8000-000000000006', true);
 select is((select count(*)::integer from public.playerboard_trainings), 0, 'a foreign organization sees no trainings');
@@ -280,7 +292,7 @@ select is(authz.playerboard_setting('52000000-1000-4000-8000-000000000001', null
 set local role service_role;
 select set_config('request.jwt.claim.role', 'service_role', true);
 
--- 41: ohne Slug und Schalter gibt es keine oeffentliche Seite.
+-- 45: ohne Slug und Schalter gibt es keine oeffentliche Seite.
 select is((select count(*)::integer from public.playerboard_public_team_info('pgtap-playerboard', 'u13')), 0,
   'without a public slug there is no public team page');
 
@@ -289,7 +301,7 @@ update public.playerboard_settings set public_slug = 'u13', public_points_enable
  where organization_id = '52000000-1000-4000-8000-000000000001' and scope = 'team';
 set local role service_role;
 
--- 42-45: Rangliste nur mit Rueckennummer und Initialen.
+-- 46-49: Rangliste nur mit Rueckennummer und Initialen.
 select results_eq(
   $$select rank, label, total from public.playerboard_public_ranking('pgtap-playerboard', 'u13')$$,
   $$values (1::bigint, '#7 M. K.'::text, 5::bigint), (2::bigint, 'J. A.'::text, 3::bigint)$$,
@@ -307,7 +319,7 @@ select is(
 select is((select photos_enabled from public.playerboard_public_team_info('pgtap-playerboard', 'u13')), false,
   'public photos stay off until the coach enables them');
 
--- 46-47: public_sharing_allowed = false oder Modul aus schliesst die Seite.
+-- 50-51: public_sharing_allowed = false oder Modul aus schliesst die Seite.
 set local role postgres;
 update public.playerboard_settings set public_sharing_allowed = false
  where organization_id = '52000000-1000-4000-8000-000000000001' and scope = 'department';
@@ -324,7 +336,7 @@ select is((select count(*)::integer from public.playerboard_public_ranking('pgta
 set local role postgres;
 update public.policy_settings set enabled_modules = null where organization_id = '52000000-1000-4000-8000-000000000001' and scope = 'team';
 
--- 48-49: weder anon noch angemeldete Nutzer rufen die oeffentlichen Funktionen direkt auf.
+-- 52-53: weder anon noch angemeldete Nutzer rufen die oeffentlichen Funktionen direkt auf.
 set local role anon;
 select throws_ok($$select * from public.playerboard_public_ranking('pgtap-playerboard', 'u13')$$, '42501', null,
   'anon cannot execute the public ranking function');
@@ -346,7 +358,7 @@ update public.playerboard_settings set public_photos_enabled = true
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '52000000-0000-4000-8000-000000000002', true);
 
--- 50-51: ein Foto startet privat und ungeprueft; "public" laesst sich beim Einfuegen gar nicht setzen.
+-- 54-55: ein Foto startet privat und ungeprueft; "public" laesst sich beim Einfuegen gar nicht setzen.
 select throws_ok(
   $$insert into public.playerboard_training_photos (organization_id, training_id, storage_path, content_type, size_bytes, uploaded_by, public)
     values ('52000000-1000-4000-8000-000000000001', '52000000-5000-4000-8000-000000000001', '52000000-1000-4000-8000-000000000001/52000000-1200-4000-8000-0000000000a1/52000000-5000-4000-8000-000000000001/x.jpg', 'image/jpeg', 1000, '52000000-0000-4000-8000-000000000002', true)$$,
@@ -358,12 +370,17 @@ insert into public.playerboard_training_photos (id, organization_id, training_id
 select is((select consent_review_status || '/' || public::text from public.playerboard_training_photos where id = '52000000-7000-4000-8000-000000000001'),
   'pending/false', 'a new photo is pending and private');
 
--- 53-59: oeffentlich nur nach vollstaendigem Review mit gueltigen Einwilligungen.
+-- 56-61: oeffentlich nur nach vollstaendigem Review mit gueltigen Einwilligungen.
 select throws_ok($$select public.playerboard_set_photo_public('52000000-7000-4000-8000-000000000001', true)$$,
   'P0001', 'photo_consent_not_approved', 'a photo cannot be made public before the consent review');
 select throws_ok(
   $$select public.playerboard_review_photo_consent('52000000-7000-4000-8000-000000000001', null, true, true)$$,
   'P0001', 'invalid_people', 'the photo review requires a JSON array of people');
+select throws_ok(
+  $$select public.playerboard_review_photo_consent('52000000-7000-4000-8000-000000000001',
+    '[{"directoryPersonId": "52000000-2000-4000-8000-000000000001", "consentRecordId": "52000000-6000-4000-8000-000000000001"},
+      {"directoryPersonId": "52000000-2000-4000-8000-000000000001", "consentRecordId": "52000000-6000-4000-8000-000000000001"}]', true, true)$$,
+  'P0001', 'invalid_people', 'the photo review rejects duplicate people');
 select throws_ok(
   $$select public.playerboard_review_photo_consent('52000000-7000-4000-8000-000000000001',
     '[{"directoryPersonId": "52000000-2000-4000-8000-000000000001", "consentRecordId": "52000000-6000-4000-8000-000000000001"}]', false, true)$$,
@@ -381,13 +398,13 @@ select is(
   'approved/true', 'a complete review with valid consents approves and publishes the photo'
 );
 
--- 56-57: die Nachbarmannschaft sieht Fotos und Personenlisten auch bei weiter gefasster Sichtbarkeit nicht.
+-- 62-63: die Nachbarmannschaft sieht Fotos und Personenlisten auch bei weiter gefasster Sichtbarkeit nicht.
 select set_config('request.jwt.claim.sub', '52000000-0000-4000-8000-000000000004', true);
 select is((select count(*)::integer from public.playerboard_training_photos), 0, 'training photos stay internal to the team');
 select is((select count(*)::integer from public.playerboard_training_photo_people), 0,
   'photo person links stay internal to the team');
 
--- 62-65: oeffentliche Fotos, Ausnehmen, Widerruf.
+-- 64-67: oeffentliche Fotos, Ausnehmen, Widerruf.
 set local role service_role;
 select set_config('request.jwt.claim.role', 'service_role', true);
 select is((select count(*)::integer from public.playerboard_public_photos('pgtap-playerboard', 'u13')), 1,
@@ -408,7 +425,7 @@ select is((select consent_review_status || '/' || public::text from public.playe
   'blocked/false', 'revoking a consent blocks the photo and makes it private');
 
 -- --- Einladung eines Kaderspielers ------------------------------------------------------------
--- 62-63
+-- 68-69
 set local role authenticated;
 select set_config('request.jwt.claim.role', 'authenticated', true);
 select set_config('request.jwt.claim.sub', '52000000-0000-4000-8000-000000000002', true);

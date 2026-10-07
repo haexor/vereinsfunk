@@ -525,6 +525,23 @@ create trigger playerboard_trainings_date_guard
   before insert or update of training_date on public.playerboard_trainings
   for each row execute function public.playerboard_training_date_guard();
 
+create or replace function public.playerboard_training_identity_immutable_guard() returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  if new.organization_id is distinct from old.organization_id
+     or new.department_id is distinct from old.department_id
+     or new.team_id is distinct from old.team_id then
+    raise exception 'playerboard_training_identity_immutable';
+  end if;
+  return new;
+end;
+$$;
+create trigger playerboard_trainings_immutable_guard
+  before update on public.playerboard_trainings
+  for each row execute function public.playerboard_training_identity_immutable_guard();
+
 -- Punkte: Spieler gehoert zur Mannschaft des Trainings, Kategorie ist fuer diese Mannschaft wirksam
 -- (bei einer bestehenden Zeile mit unveraenderter Kategorie genuegt, dass sie zur Mannschaft
 -- gehoert -- eine spaeter deaktivierte Kategorie bleibt korrigierbar), value im Wertebereich.
@@ -838,6 +855,10 @@ begin
     raise exception 'recognizable_people_not_confirmed';
   end if;
   if coalesce(jsonb_typeof(target_people), '') <> 'array' then
+    raise exception 'invalid_people';
+  end if;
+  if (select count(*) from jsonb_array_elements(target_people)) <>
+     (select count(distinct value->>'directoryPersonId') from jsonb_array_elements(target_people)) then
     raise exception 'invalid_people';
   end if;
 
