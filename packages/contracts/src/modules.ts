@@ -27,6 +27,7 @@ export const ModuleStateSchema = z.object({
 export const ScopeModulesSchema = z.object({
   scope: ScopeLevelSchema,
   scopeId: UuidSchema,
+  name: z.string(),
   own: ModuleSelectionSchema,
   modules: z.array(ModuleStateSchema),
   canEdit: z.boolean(),
@@ -38,8 +39,16 @@ export const UpdateScopeModulesRequestSchema = z.object({
   enabledModules: ModuleSelectionSchema,
 })
 
+// 409 module_has_active_publications: diese Veroeffentlichungen laufen noch oder sind eingeplant
+// und verloeren durch die Aenderung social_media. Erst nach Abbruch oder Abschluss abschaltbar.
+export const ModuleBlockingPublicationSchema = z.object({
+  publicationId: UuidSchema,
+  postId: UuidSchema,
+})
+
 export type AppModule = z.infer<typeof AppModuleSchema>
 export type ModuleBlockSource = z.infer<typeof ModuleBlockSourceSchema>
 export type ModuleState = z.infer<typeof ModuleStateSchema>
 export type ScopeModules = z.infer<typeof ScopeModulesSchema>
 export type UpdateScopeModulesRequest = z.infer<typeof UpdateScopeModulesRequestSchema>
+export type ModuleBlockingPublication = z.infer<typeof ModuleBlockingPublicationSchema>

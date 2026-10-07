@@ -9,6 +9,10 @@ import { computeMediaGateBlockersForPostVersion, HARD_PUBLISH_BLOCKERS } from '.
 import type { ApiRouteContext } from './context.js'
 import { checkRateLimit, computeRuleEntry, createAuditRecorder, fetchPolicyRuleRows } from './shared.js'
 
+/**
+ * Registriert Planung und Ausfuehrung von Veroeffentlichungen mit Berechtigungs- und Medienpruefung.
+ * Die Ausfuehrung beansprucht die Veroeffentlichung atomar per RPC und lehnt deaktivierte Module ab.
+ */
 export function registerPublishingRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients, environment, createPublisherForConnection } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
@@ -130,9 +134,16 @@ export function registerPublishingRoutes(app: FastifyInstance, context: ApiRoute
     // update keine Zeile, hat ein gleichzeitiger Aufruf bereits gewonnen -- kein automatischer
     // Retry hier, ein fehlgeschlagener/bereits laufender Versuch braucht eine bewusste
     // Neuveroeffentlichung (aus Scope, siehe plans/025).
-    const claim = await service.from('publications').update({ status: 'uploading' }).eq('id', params.id).eq('status', 'queued').select('id').maybeSingle()
+    //
+    // Paket 051: der Claim laeuft als RPC unter demselben Advisory-Lock wie das Abschalten eines
+    // Moduls (set_scope_enabled_modules) und prueft dort erneut, ob social_media fuer den Beitrag
+    // noch aktiv ist. Ist es inzwischen aus, ist die Veroeffentlichung abgebrochen (cancelled,
+    // Versuch mit error_class module_disabled) und wird nicht erneut versucht.
+    const claim = await service.rpc('claim_publication_for_execution', { target_publication_id: params.id })
     if (claim.error) throw claim.error
-    if (!claim.data) return reply.code(409).send({ error: 'invalid_status', correlationId: request.id })
+    if (claim.data === 'not_found') return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (claim.data === 'module_disabled') return reply.code(403).send({ error: 'module_disabled', module: 'social_media', correlationId: request.id })
+    if (claim.data !== 'claimed') return reply.code(409).send({ error: 'invalid_status', correlationId: request.id })
 
     // Nach dem CAS ist die Zeile beansprucht -- jeder Abbruch vor publisher.publish() muss sie
     // wieder freigeben, sonst haengt sie dauerhaft in 'uploading' und ist per CAS nie wieder

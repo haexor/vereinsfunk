@@ -13,6 +13,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { EmailSender } from '../email.js'
 import type { PermissionScope, PlatformAdminProvider, RoleProvider } from '../auth.js'
+import type { ModuleStatusProvider } from '../moduleStatus.js'
 
 // All privileged dependencies are created exactly once by buildApp and supplied to route
 // modules explicitly. Keeping this type close to the route boundary makes accidental module
@@ -57,6 +58,7 @@ export interface ApiRouteContext extends ApiRouteGuards {
   supabaseClients: SupabaseClientFactory
   roleProvider: RoleProvider
   platformAdminProvider: PlatformAdminProvider
+  moduleStatusProvider: ModuleStatusProvider
   emailSender: EmailSender
   imageEffects?: ImageEffectProvider
   // Bildstil-Vorschau (POST /v1/image-style-presets/preview) rendert immer gegen dasselbe

@@ -1,8 +1,9 @@
-import { hasPermission, type Permission, type Role } from '@vereinsfunk/authorization'
+import { hasPermission, permissionModule, type Permission, type Role } from '@vereinsfunk/authorization'
 import type { ApiEnvironment } from '@vereinsfunk/config'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import { createRemoteJWKSet, customFetch, jwtVerify, type FetchImplementation, type JWTVerifyGetKey } from 'jose'
+import type { ModuleStatusProvider } from './moduleStatus.js'
 import { createUserClient, fetchAllRowsForIds } from './supabase.js'
 
 declare module 'fastify' {
@@ -184,10 +185,12 @@ export class SupabasePlatformAdminProvider implements PlatformAdminProvider {
   }
 }
 
+/** Erstellt Authentifizierungs-, Rollen- und Modulpruefungen mit gemeinsamem JWKS-Cache. */
 export function createAuthGuards(
   environment: ApiEnvironment,
   roleProvider: RoleProvider,
   platformAdminProvider: PlatformAdminProvider,
+  moduleStatusProvider: ModuleStatusProvider,
   // jwksFetch: gleiches Injektionsmuster wie fetchImpl in @vereinsfunk/outbound-fetch, hier fuers Ersetzen des
   // JWKS-Abrufs in Tests -- keine echte Supabase-Instanz noetig, um die Verifikation zu pruefen.
   options: { jwksFetch?: FetchImplementation } = {},
@@ -219,6 +222,7 @@ export function createAuthGuards(
     }
   }
 
+  /** Prueft Anmeldung, Scope-Rolle und Modul; sendet bei Ablehnung 401 oder 403 und liefert false. */
   const requirePermission = async (
     request: FastifyRequest,
     reply: FastifyReply,
@@ -234,13 +238,35 @@ export function createAuthGuards(
       reply.code(403).send({ error: 'forbidden', correlationId: request.id })
       return false
     }
-    return true
+    return requireModulesOf(request, reply, [permission], scope)
+  }
+
+  /**
+   * Prueft fuer bereits per Rolle gewaehrte Permissions die Module im Scope
+   * (Tarif ∩ Verein ∩ Abteilung ∩ Mannschaft). Erst nach der Rollenpruefung aufrufen,
+   * damit Unberechtigte nichts ueber die Modulauswahl erfahren.
+   * Eine Rahmen-Permission erlaubt den Aufruf ohne Abfrage; sonst muss mindestens ein Modul
+   * aktiv sein. Bei Ablehnung wird 403 module_disabled gesendet und false geliefert.
+   */
+  const requireModulesOf = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+    grantedPermissions: readonly Permission[],
+    scope: PermissionScope,
+  ): Promise<boolean> => {
+    const modules = grantedPermissions.map((permission) => permissionModule[permission])
+    if (modules.includes('core')) return true
+    const { enabled } = await moduleStatusProvider.modulesForScope(scope)
+    if (modules.some((module) => (enabled as readonly string[]).includes(module))) return true
+    reply.code(403).send({ error: 'module_disabled', module: modules[0], correlationId: request.id })
+    return false
   }
 
   // Plan 045, PR 0 Schritt 3: GET /v1/consents braucht ein zweites, aehnlich strenges Tor --
   // wer ein Foto anhaengen und eine Box markieren darf (post.edit), muss beim Verknuepfen auch
   // sehen koennen, welche Einwilligungen fuer diese Abteilung ueberhaupt existieren, nicht nur
   // eine Vereinsverwaltung (consent.manage). Betreiberentscheidung, siehe Migrationskommentar.
+  /** Erlaubt den Aufruf, wenn mindestens eine Alternative sowohl per Rolle als auch Modul gilt. */
   const requirePermissionAnyOf = async (
     request: FastifyRequest,
     reply: FastifyReply,
@@ -252,11 +278,12 @@ export function createAuthGuards(
       return false
     }
     const roles = await roleProvider.rolesForScope(request.auth, scope)
-    if (!permissions.some((permission) => hasPermission(roles, permission))) {
+    const granted = permissions.filter((permission) => hasPermission(roles, permission))
+    if (granted.length === 0) {
       reply.code(403).send({ error: 'forbidden', correlationId: request.id })
       return false
     }
-    return true
+    return requireModulesOf(request, reply, granted, scope)
   }
 
   const requirePlatformAdmin = async (request: FastifyRequest, reply: FastifyReply): Promise<boolean> => {
