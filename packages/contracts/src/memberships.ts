@@ -66,9 +66,15 @@ export const CreateInvitationRequestSchema = z.object({
   teamId: UuidSchema.nullable().optional(),
   email: z.string().trim().toLowerCase().pipe(z.email()),
   role: AssignableRoleSchema,
+  // Paket 052: Einladung einer Person aus dem PlayerBoard-Kader dieser Mannschaft. Beim Annehmen
+  // wird das Konto mit der Verzeichnisperson verknuepft.
+  directoryPersonId: UuidSchema.nullable().optional(),
 }).superRefine((value, context) => {
   if (value.teamId && !value.departmentId) {
     context.addIssue({ code: 'custom', message: 'a team-scoped invitation requires departmentId' })
+  }
+  if (value.directoryPersonId && !value.teamId) {
+    context.addIssue({ code: 'custom', message: 'a directory person can only be invited into a team' })
   }
   if (value.teamId && !TEAM_SCOPED_ROLES.includes(value.role)) {
     context.addIssue({ code: 'custom', message: `role must be one of ${TEAM_SCOPED_ROLES.join(', ')} for a team-scoped invitation` })

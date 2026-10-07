@@ -648,7 +648,13 @@ create policy playerboard_players_select on public.playerboard_players for selec
 create policy playerboard_players_insert on public.playerboard_players for insert to authenticated
   with check (
     authz.has_playerboard_team_permission(team_id, 'training.manage')
-    and exists (select 1 from public.directory_people person where person.organization_id = playerboard_players.organization_id and person.id = playerboard_players.directory_person_id)
+    and exists (
+      select 1
+        from public.directory_people person
+       where person.organization_id = playerboard_players.organization_id
+         and person.id = playerboard_players.directory_person_id
+         and person.team_id = playerboard_players.team_id
+    )
   );
 create policy playerboard_players_update on public.playerboard_players for update to authenticated
   using (authz.has_playerboard_team_permission(team_id, 'training.manage'))

@@ -9,12 +9,14 @@ export class InvitationCreationError extends Error {
   }
 }
 
+/** Wirft fuer bekannte RPC- und Integritaetsfehler einen fachlichen Einladungsfehler, sonst den Originalfehler. */
 function mapCreateInvitationError(error: { code?: string | null; message?: string | null }): never {
   const message = error.message ?? ''
   if (message.includes('invitation_already_open')) throw new InvitationCreationError('invitation_already_open')
   if (message.includes('resend_limit_reached')) throw new InvitationCreationError('resend_limit_reached')
   if (message.includes('resent at most once per hour')) throw new InvitationCreationError('resend_rate_limited')
   if (message.includes('insufficient_permission')) throw new InvitationCreationError('invite_not_allowed')
+  if (message.includes('directory_person_not_in_team')) throw new InvitationCreationError('invalid_request')
   if (error.code === '23514' || error.code === '23503') throw new InvitationCreationError('invalid_request')
   throw error
 }
@@ -47,6 +49,9 @@ export async function createInvitation(
     target_email: invitation.email,
     target_role: invitation.role,
     target_token_hash: tokenHash,
+    // Paket 052: Einladung einer Person aus dem PlayerBoard-Kader; die RPC prueft, dass sie im
+    // Kader genau dieser Mannschaft steht.
+    target_directory_person_id: invitation.directoryPersonId ?? null,
   })
   if (created.error) mapCreateInvitationError(created.error)
 

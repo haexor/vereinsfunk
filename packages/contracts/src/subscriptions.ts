@@ -104,6 +104,8 @@ export const StorageUsageBreakdownSchema = z.object({
   ownUploads: z.int().min(0),
   renderedMedia: z.int().min(0),
   brandAssets: z.int().min(0),
+  // Paket 052: Trainingsfotos aus PlayerBoard.
+  trainingPhotos: z.int().min(0).default(0),
 })
 export const StorageUsageResponseSchema = z.object({
   usedBytes: z.int().min(0),

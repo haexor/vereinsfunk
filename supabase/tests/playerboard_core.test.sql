@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(69);
+select plan(70);
 
 set local role postgres;
 
@@ -143,6 +143,12 @@ select throws_ok(
   $$insert into public.playerboard_players (organization_id, department_id, team_id, directory_person_id)
     values ('52000000-1000-4000-8000-000000000001', '52000000-1100-4000-8000-00000000000a', '52000000-1200-4000-8000-0000000000a2', '52000000-2000-4000-8000-000000000001')$$,
   '42501', null, 'a coach cannot write into the squad of a neighboring team'
+);
+select set_config('request.jwt.claim.sub', '52000000-0000-4000-8000-000000000001', true);
+select throws_ok(
+  $$insert into public.playerboard_players (organization_id, department_id, team_id, directory_person_id)
+    values ('52000000-1000-4000-8000-000000000001', '52000000-1100-4000-8000-00000000000a', '52000000-1200-4000-8000-0000000000a2', '52000000-2000-4000-8000-000000000001')$$,
+  '42501', null, 'even an organization admin cannot move a person into a different team'
 );
 
 -- --- Sichtbarkeit ueber die Mannschaft hinaus -------------------------------------------------
@@ -369,6 +375,11 @@ insert into public.playerboard_training_photos (id, organization_id, training_id
           '52000000-1000-4000-8000-000000000001/52000000-1200-4000-8000-0000000000a1/52000000-5000-4000-8000-000000000001/p1.jpg', 'image/jpeg', 1000, '52000000-0000-4000-8000-000000000002');
 select is((select consent_review_status || '/' || public::text from public.playerboard_training_photos where id = '52000000-7000-4000-8000-000000000001'),
   'pending/false', 'a new photo is pending and private');
+
+-- Paket 052, PR 2: ein Review setzt den abgeschlossenen Upload voraus (POST .../complete).
+set local role postgres;
+update public.playerboard_training_photos set upload_completed_at = now() where id = '52000000-7000-4000-8000-000000000001';
+set local role authenticated;
 
 -- 56-61: oeffentlich nur nach vollstaendigem Review mit gueltigen Einwilligungen.
 select throws_ok($$select public.playerboard_set_photo_public('52000000-7000-4000-8000-000000000001', true)$$,
