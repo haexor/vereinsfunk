@@ -185,6 +185,7 @@ export class SupabasePlatformAdminProvider implements PlatformAdminProvider {
   }
 }
 
+/** Erstellt Authentifizierungs-, Rollen- und Modulpruefungen mit gemeinsamem JWKS-Cache. */
 export function createAuthGuards(
   environment: ApiEnvironment,
   roleProvider: RoleProvider,
@@ -221,6 +222,7 @@ export function createAuthGuards(
     }
   }
 
+  /** Prueft Anmeldung, Scope-Rolle und Modul; sendet bei Ablehnung 401 oder 403 und liefert false. */
   const requirePermission = async (
     request: FastifyRequest,
     reply: FastifyReply,
@@ -239,11 +241,13 @@ export function createAuthGuards(
     return requireModulesOf(request, reply, [permission], scope)
   }
 
-  // Paket 051, PR 2: eine Permission eines Moduls gilt nur, wenn das Modul im Scope aktiv ist
-  // (Tarif ∩ Verein ∩ Abteilung ∩ Mannschaft). Erst NACH der Rollenpruefung, damit ein
-  // Nichtberechtigter weiter 403 forbidden sieht und nichts ueber die Modulauswahl erfaehrt.
-  // Rahmen-Permissions (core) kosten keine Abfrage. Reicht von mehreren gewaehrten Permissions
-  // eine aus einem aktiven Modul (oder aus dem Rahmen), ist der Aufruf erlaubt.
+  /**
+   * Prueft fuer bereits per Rolle gewaehrte Permissions die Module im Scope
+   * (Tarif ∩ Verein ∩ Abteilung ∩ Mannschaft). Erst nach der Rollenpruefung aufrufen,
+   * damit Unberechtigte nichts ueber die Modulauswahl erfahren.
+   * Eine Rahmen-Permission erlaubt den Aufruf ohne Abfrage; sonst muss mindestens ein Modul
+   * aktiv sein. Bei Ablehnung wird 403 module_disabled gesendet und false geliefert.
+   */
   const requireModulesOf = async (
     request: FastifyRequest,
     reply: FastifyReply,
@@ -262,6 +266,7 @@ export function createAuthGuards(
   // wer ein Foto anhaengen und eine Box markieren darf (post.edit), muss beim Verknuepfen auch
   // sehen koennen, welche Einwilligungen fuer diese Abteilung ueberhaupt existieren, nicht nur
   // eine Vereinsverwaltung (consent.manage). Betreiberentscheidung, siehe Migrationskommentar.
+  /** Erlaubt den Aufruf, wenn mindestens eine Alternative sowohl per Rolle als auch Modul gilt. */
   const requirePermissionAnyOf = async (
     request: FastifyRequest,
     reply: FastifyReply,

@@ -135,6 +135,10 @@ const AgentLlmProviderConfigurationRowSchema = z.object({
   llm_provider_secrets: EmbeddedProviderSecretSchema,
 })
 
+/**
+ * Erstellt die Fastify-App mit Routen und injizierbaren Providern, ohne einen Port zu binden.
+ * Ohne Modulstatus-Override wird die Modulauswahl ueber den Supabase-Service-Client geprueft.
+ */
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
   const environment = parseApiEnvironment()
   const fastifyOptions: FastifyServerOptions = {

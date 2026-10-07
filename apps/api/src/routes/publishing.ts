@@ -9,6 +9,10 @@ import { computeMediaGateBlockersForPostVersion, HARD_PUBLISH_BLOCKERS } from '.
 import type { ApiRouteContext } from './context.js'
 import { checkRateLimit, computeRuleEntry, createAuditRecorder, fetchPolicyRuleRows } from './shared.js'
 
+/**
+ * Registriert Planung und Ausfuehrung von Veroeffentlichungen mit Berechtigungs- und Medienpruefung.
+ * Die Ausfuehrung beansprucht die Veroeffentlichung atomar per RPC und lehnt deaktivierte Module ab.
+ */
 export function registerPublishingRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients, environment, createPublisherForConnection } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)

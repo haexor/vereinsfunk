@@ -174,8 +174,10 @@ export const defaultAdminProvider: PlatformAdminProvider = { async statusFor() {
 // Paket 051: Route-Tests laufen standardmaessig mit allen Modulen aktiv -- ihre Supabase-Fakes
 // muessten sonst organization_subscriptions/policy_settings fuer die Modulpruefung mitbedienen.
 // Tests der Modulpruefung selbst setzen moduleStatusProvider ausdruecklich.
+/** Erstellt einen Scope-unabhaengigen Testprovider; abgewahlte Module gelten als im Verein gesperrt. */
 export function moduleStatusProviderWith(enabled: readonly AppModule[]): ModuleStatusProvider {
   return {
+    /** Liefert die vorgegebene Auswahl und markiert die uebrigen Module als im Verein gesperrt. */
     async modulesForScope() {
       return { enabled, blockedBy: Object.fromEntries(appModules.filter((module) => !enabled.includes(module)).map((module) => [module, 'organization'])) }
     },
@@ -183,6 +185,7 @@ export function moduleStatusProviderWith(enabled: readonly AppModule[]): ModuleS
 }
 export const allModulesEnabledProvider = moduleStatusProviderWith(appModules)
 
+/** Erstellt eine Test-App mit allen Modulen als Default und registriert sie fuer das afterEach-Cleanup. */
 export async function startApp(options: BuildAppOptions = {}) {
   const app = await buildApp({ logger: false, moduleStatusProvider: allModulesEnabledProvider, ...options })
   apps.push(app)

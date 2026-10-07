@@ -23,15 +23,18 @@ import {
 const platformAdminProvider: PlatformAdminProvider = { async statusFor() { return { isPlatformAdmin: false, isDefaultAdmin: false } } }
 const adminRoles: RoleProvider = { async rolesForScope() { return ['organization_admin'] } }
 
+/** Erstellt einen Request mit bereits gesetztem Test-Nutzer fuer die Berechtigungspruefung. */
 function authedRequest(): FastifyRequest {
   return { id: 'test-request', headers: {}, auth: { userId: USER_ID, accessToken: 'token' } } as unknown as FastifyRequest
 }
 
+/** Erstellt einen verkettbaren Fastify-Reply-Fake mit Spies fuer Status und Antwort. */
 function fakeReply() {
   const reply = { code: vi.fn(() => reply), send: vi.fn(() => reply) }
   return reply as unknown as FastifyReply & { code: typeof reply.code; send: typeof reply.send }
 }
 
+/** Erstellt Guards mit injizierten Rollen und Modulen sowie deaktiviertem Plattform-Adminstatus. */
 function guardsWith(roleProvider: RoleProvider, moduleStatusProvider: ModuleStatusProvider) {
   return createAuthGuards(parseApiEnvironment({ SUPABASE_URL: 'https://project-ref.supabase.co' }), roleProvider, platformAdminProvider, moduleStatusProvider)
 }
@@ -82,6 +85,7 @@ describe('requirePermission module check', () => {
 })
 
 describe('SupabaseModuleStatusProvider', () => {
+  /** Liefert vorbereitete Tabellendaten, protokolliert Zugriffe und lehnt unbekannte Tabellen ab. */
   function serviceClient(tables: Record<string, unknown>, seen: string[] = []): SupabaseClient {
     return {
       from: (table: string) => {
@@ -125,12 +129,15 @@ describe('SupabaseModuleStatusProvider', () => {
 })
 
 describe('module selection routes', () => {
+  /** Erstellt Supabase-Fakes fuer Modulrouten mit konfigurierbaren RPC-Ergebnissen und Audit-Erfassung. */
   function clients(options: { rpc?: { data: unknown; error: unknown }; policyRows?: unknown[]; subscription?: unknown; audit?: Record<string, unknown>[] } = {}): SupabaseClientFactory {
     // Listen fuer GET, die erste Zeile fuer .single()/.maybeSingle() (Scope- und Namensauflosung).
+    /** Liefert Listen fuer normale Abfragen und die erste Zeile fuer single/maybeSingle. */
     const rows = (data: Record<string, unknown>[]) => {
       const first = chain({ data: data[0], error: null })
       return Object.assign(chain({ data, error: null }), { maybeSingle: first.maybeSingle, single: first.single, select: () => rows(data), eq: () => rows(data) })
     }
+    /** Ordnet Tabellen ihren Testdaten zu und erfasst Audit-Inserts, sofern angefordert. */
     const tables = (table: string) => {
       if (table === 'organizations') return chain({ data: { name: 'SV Test' }, error: null })
       if (table === 'departments') return rows([{ id: DEPARTMENT_ID, name: 'Fussball', organization_id: ORGANIZATION_ID }])

@@ -22,6 +22,7 @@ import {
   toPermissionScope,
 } from './shared.js'
 
+/** Baut und validiert die Scope-Antwort mit eigener Auswahl, wirksamen Modulen und Schreibrecht. */
 function buildScopeModules(
   settings: OrganizationModuleSettings,
   scope: ScopeLevel,
@@ -44,8 +45,10 @@ function buildScopeModules(
   })
 }
 
-// DETAIL der RPC-Exceptions ist JSON (siehe 2026100701_module_enforcement.sql). Faellt das Parsen
-// aus, bleibt es beim Fehlercode ohne Liste -- die Ablehnung selbst haengt nicht daran.
+/**
+ * Liest schema-validiertes JSON aus dem DETAIL einer RPC-Exception.
+ * Liefert bei fehlendem, ungueltigem oder schemafremdem JSON undefined fuer den Fehlercode-Fallback.
+ */
 function parseDetail<T>(schema: z.ZodType<T>, details: string | undefined): T | undefined {
   try {
     const result = schema.safeParse(JSON.parse(details ?? ''))
@@ -55,10 +58,11 @@ function parseDetail<T>(schema: z.ZodType<T>, details: string | undefined): T | 
   }
 }
 
-// Paket 051, PR 2: Modulauswahl je Ebene. Eigene Routen statt eines Felds in /v1/policy-rules,
-// weil jene Regeln dem Modul social_media gehoeren -- die Modulauswahl gehoert dem Rahmen und muss
-// auch erreichbar sein, wenn social_media aus ist. Rechte wie bei den Richtlinien
-// (POLICY_MANAGE_PERMISSION); beide sind Rahmen-Permissions, die Modulpruefung greift hier also nie.
+/**
+ * Registriert Lesen und Aendern der Modulauswahl je Ebene, auch bei deaktiviertem social_media.
+ * Mitglieder lesen alle Ebenen; Schreiben erfordert POLICY_MANAGE_PERMISSION im Ziel-Scope
+ * und die Freigabe der RPC. Erfolgreiche Aenderungen werden auditiert.
+ */
 export function registerModuleRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients, roleProvider } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
@@ -99,6 +103,7 @@ export function registerModuleRoutes(app: FastifyInstance, context: ApiRouteCont
       ...teams.data.map((team) => toPermissionScope(params.id, team.department_id as string, team.id as string)),
     ]
     const rolesByScopeKey = await resolveRolesForScopes(roleProvider, request.auth!, scopes)
+    /** Prueft das Verwaltungsrecht einer Ebene anhand der bereits geladenen Scope-Rollen. */
     const canEditFor = (scope: ScopeLevel, departmentId: string | null, teamId: string | null) =>
       hasPermission(rolesByScopeKey.get(permissionScopeKey(toPermissionScope(params.id, departmentId, teamId))) ?? [], POLICY_MANAGE_PERMISSION[scope])
 

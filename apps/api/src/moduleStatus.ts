@@ -25,6 +25,11 @@ const ModuleRowSchema = z.object({
   enabled_modules: ModuleListSchema,
 })
 
+/**
+ * Laedt und validiert Tarif und explizite Modulauswahl aller Ebenen eines Vereins.
+ * Fehlendes Abo und fehlende Auswahl bleiben null bzw. fehlen in den Maps (keine Einschraenkung).
+ * Datenbank- und Schemafehler werden an den Aufrufer weitergegeben.
+ */
 export async function loadOrganizationModuleSettings(client: SupabaseClient, organizationId: string): Promise<OrganizationModuleSettings> {
   const [subscription, rows] = await Promise.all([
     client.from('organization_subscriptions').select('subscription_plans(included_modules)').eq('organization_id', organizationId).maybeSingle(),
@@ -41,7 +46,10 @@ export async function loadOrganizationModuleSettings(client: SupabaseClient, org
   }
 }
 
-// Die Schichten einer Ebene. Eine Mannschaft braucht ihre Abteilung, sonst fehlte deren Auswahl.
+/**
+ * Stellt die Modulschichten eines Scopes zusammen; fehlende Auswahlen werden als null vererbt.
+ * Bei einer Mannschaft muss der Aufrufer deren departmentId mitgeben, damit ihre Auswahl gilt.
+ */
 export function moduleLayersFor(settings: OrganizationModuleSettings, scope: { departmentId?: string | null; teamId?: string | null }): ModuleLayers {
   return {
     planModules: settings.planModules,
@@ -52,6 +60,7 @@ export function moduleLayersFor(settings: OrganizationModuleSettings, scope: { d
 }
 
 export interface ModuleStatusProvider {
+  /** Liefert aktive Module und die jeweils erste blockierende Ebene fuer den Scope. */
   modulesForScope(scope: PermissionScope): Promise<ResolvedModules>
 }
 
@@ -59,8 +68,13 @@ export interface ModuleStatusProvider {
 // Abteilungs- und Mannschaftsrollen nicht lesbar, die Modulpruefung muss fuer sie aber genauso
 // greifen. Aufgerufen wird erst, nachdem requirePermission die Rolle im Scope bestaetigt hat.
 export class SupabaseModuleStatusProvider implements ModuleStatusProvider {
+  /** Uebernimmt die Service-Client-Fabrik fuer Modulabfragen nach erfolgreicher Rollenpruefung. */
   constructor(private readonly forService: () => SupabaseClient) {}
 
+  /**
+   * Schneidet die Modulauswahl aller Scope-Ebenen ueber den Service-Client.
+   * Loest bei einem Team ohne departmentId zuerst dessen Abteilung innerhalb des Vereins auf.
+   */
   async modulesForScope(scope: PermissionScope): Promise<ResolvedModules> {
     const client = this.forService()
     let departmentId = scope.departmentId ?? null
