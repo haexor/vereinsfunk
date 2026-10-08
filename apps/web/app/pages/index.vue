@@ -459,7 +459,7 @@ await Promise.all([loadDashboard(), loadSuggestions()])
             </li>
           </ul>
         </article>
-        <article v-else-if="!loadingDashboard" class="card p-5 text-center">
+        <article v-else-if="socialMediaActive && !loadingDashboard" class="card p-5 text-center">
           <CheckCircle2 :size="22" class="mx-auto mb-2 text-forest" />
           <p class="text-xs font-semibold">Startklar. Alle Einrichtungsschritte sind erledigt.</p>
         </article>
