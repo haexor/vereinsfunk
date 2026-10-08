@@ -33,6 +33,7 @@ function buildEntry(
   name: string,
   departmentId: string | null,
   canEdit: boolean,
+  organizationSlug: string,
 ) {
   const teamId = scope === 'team' ? scopeId : null
   const own: PlayerboardSettingsRow | null =
@@ -59,6 +60,7 @@ function buildEntry(
     },
     locked: resolved.locked,
     canEdit,
+    publicPath: scope === 'team' && own?.public_slug ? `/mannschaft/${organizationSlug}/${own.public_slug}` : null,
   })
 }
 
@@ -92,7 +94,7 @@ export function registerPlayerboardSettingsRoutes(app: FastifyInstance, context:
     // ein reines Mannschaftsmitglied sieht Abteilungen und Mannschaften per RLS nicht.
     const service = supabaseClients.forService()
     const [organization, departments, teams, settings] = await Promise.all([
-      service.from('organizations').select('name').eq('id', params.id).maybeSingle(),
+      service.from('organizations').select('name, slug').eq('id', params.id).maybeSingle(),
       service.from('departments').select('id, name').eq('organization_id', params.id).is('archived_at', null).order('name'),
       service.from('teams').select('id, name, department_id').eq('organization_id', params.id).is('archived_at', null).order('name'),
       loadOrganizationPlayerboardSettings(service, params.id),
@@ -111,12 +113,13 @@ export function registerPlayerboardSettingsRoutes(app: FastifyInstance, context:
     const canEditFor = (departmentId: string | null, teamId: string | null) =>
       hasPermission(rolesByScopeKey.get(permissionScopeKey(toPermissionScope(params.id, departmentId, teamId))) ?? [], 'playerboard.manage')
 
+    const organizationSlug = organization.data.slug as string
     return reply.code(200).send([
-      buildEntry(settings, 'organization', params.id, organization.data.name as string, null, canEditFor(null, null)),
+      buildEntry(settings, 'organization', params.id, organization.data.name as string, null, canEditFor(null, null), organizationSlug),
       ...departments.data.map((department) =>
-        buildEntry(settings, 'department', department.id as string, department.name as string, department.id as string, canEditFor(department.id as string, null))),
+        buildEntry(settings, 'department', department.id as string, department.name as string, department.id as string, canEditFor(department.id as string, null), organizationSlug)),
       ...teams.data.map((team) =>
-        buildEntry(settings, 'team', team.id as string, team.name as string, team.department_id as string, canEditFor(team.department_id as string, team.id as string))),
+        buildEntry(settings, 'team', team.id as string, team.name as string, team.department_id as string, canEditFor(team.department_id as string, team.id as string), organizationSlug)),
     ])
   })
 
@@ -159,14 +162,18 @@ export function registerPlayerboardSettingsRoutes(app: FastifyInstance, context:
       metadata: { scope: input.scope, scopeId: input.scopeId, patch: input.patch },
     })
 
-    const nameQuery =
-      input.scope === 'organization'
-        ? await service.from('organizations').select('name').eq('id', scope.organizationId).single()
-        : input.scope === 'department'
-          ? await service.from('departments').select('name').eq('id', scope.departmentId!).single()
-          : await service.from('teams').select('name').eq('id', scope.teamId!).single()
-    if (nameQuery.error) throw nameQuery.error
+    const [organization, nameQuery] = await Promise.all([
+      service.from('organizations').select('name, slug').eq('id', scope.organizationId).single(),
+      input.scope === 'department'
+        ? service.from('departments').select('name').eq('id', scope.departmentId!).single()
+        : input.scope === 'team'
+          ? service.from('teams').select('name').eq('id', scope.teamId!).single()
+          : null,
+    ])
+    if (organization.error) throw organization.error
+    if (nameQuery?.error) throw nameQuery.error
+    const name = (nameQuery?.data?.name ?? organization.data.name) as string
     const settings = await loadOrganizationPlayerboardSettings(service, scope.organizationId)
-    return reply.code(200).send(buildEntry(settings, input.scope, input.scopeId, nameQuery.data.name as string, scope.departmentId ?? null, true))
+    return reply.code(200).send(buildEntry(settings, input.scope, input.scopeId, name, scope.departmentId ?? null, true, organization.data.slug as string))
   })
 }

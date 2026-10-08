@@ -255,6 +255,50 @@ describe('PlayerBoard coach flows', () => {
     const response = await call(app, 'POST', `/v1/playerboard/photos/${PHOTO_ID}/review`, { people: [], allRecognizablePeopleListed: false, makePublic: true })
     expect(response.statusCode).toBe(400)
   })
+
+  // Paket 052, PR 3: Einwilligungsstand des Kaders fuer die Trainer-Oberflaeche.
+  it('lists the photo consent of the squad for coaches only', async () => {
+    const consents = { data: [
+      { player_id: PLAYER_ID, directory_person_id: PERSON_ID, consent_record_id: '52000000-6000-4000-8000-000000000001' },
+      { player_id: '52000000-3000-4000-8000-000000000002', directory_person_id: '52000000-2000-4000-8000-000000000002', consent_record_id: null },
+    ], error: null }
+    const fakes = clients({ serviceRpc: { playerboard_team_photo_consents: consents } })
+    const url = `/v1/playerboard/teams/${TEAM_ID}/photo-consents`
+
+    const asPlayer = await call(await startApp({ roleProvider: rolesProvider(['player']), supabaseClients: fakes }), 'GET', url)
+    expect(asPlayer.statusCode).toBe(403)
+    const moduleOff = await call(await startApp({ roleProvider: rolesProvider(['team_manager']), supabaseClients: fakes, moduleStatusProvider: moduleStatusProviderWith(['social_media']) }), 'GET', url)
+    expect(moduleOff.json()).toMatchObject({ error: 'module_disabled' })
+    const asCoach = await call(await startApp({ roleProvider: rolesProvider(['team_manager']), supabaseClients: fakes }), 'GET', url)
+    expect(asCoach.statusCode).toBe(200)
+    expect(asCoach.json()).toEqual([
+      { playerId: PLAYER_ID, directoryPersonId: PERSON_ID, consentRecordId: '52000000-6000-4000-8000-000000000001' },
+      { playerId: '52000000-3000-4000-8000-000000000002', directoryPersonId: '52000000-2000-4000-8000-000000000002', consentRecordId: null },
+    ])
+  })
+
+  it('returns the share path of a team with a public slug', async () => {
+    const empty = { public_points_enabled: null, public_veo_stats_enabled: null, public_photos_enabled: null, public_slug: null }
+    const app = await startApp({
+      roleProvider: rolesProvider(['team_manager']),
+      supabaseClients: clients({
+        userTables: { organization_memberships: [], department_memberships: [], team_memberships: [{ id: 'membership' }] },
+        serviceTables: {
+          organizations: { name: 'SV Beispiel', slug: 'sv-beispiel' },
+          departments: [{ id: DEPARTMENT_ID, name: 'Fussball' }],
+          teams: [{ id: TEAM_ID, name: 'U13', department_id: DEPARTMENT_ID }],
+          playerboard_settings: [
+            { scope: 'organization', department_id: null, team_id: null, season_start: null, stats_visibility: null, overridable_fields: [], team_categories_allowed: null, public_sharing_allowed: null, ...empty },
+            { scope: 'team', department_id: DEPARTMENT_ID, team_id: TEAM_ID, season_start: null, stats_visibility: null, overridable_fields: [], team_categories_allowed: null, public_sharing_allowed: null, ...empty, public_slug: 'u13' },
+          ],
+        },
+      }),
+    })
+    const response = await call(app, 'GET', `/v1/organizations/${ORGANIZATION_ID}/playerboard/settings`)
+    expect(response.statusCode).toBe(200)
+    const entries = response.json() as { scope: string; publicPath: string | null; canEdit: boolean }[]
+    expect(entries.map((entry) => [entry.scope, entry.publicPath])).toEqual([['organization', null], ['department', null], ['team', '/mannschaft/sv-beispiel/u13']])
+  })
 })
 
 describe('PlayerBoard public team page', () => {

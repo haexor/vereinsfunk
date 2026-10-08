@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { AppModuleSchema, type ScopeModules } from '@vereinsfunk/contracts'
 import { describe, expect, it } from 'vitest'
@@ -52,7 +52,10 @@ describe('module registry', () => {
     const pagesDirectory = join(import.meta.dirname, '..', 'pages')
     for (const module of appModuleOrder) {
       for (const item of [...appModuleRegistry[module].navigation, ...appModuleRegistry[module].managementNavigation]) {
-        expect(() => readFileSync(join(pagesDirectory, `${item.to.slice(1)}.vue`))).not.toThrow()
+        // Eine Route ist entweder eine Datei (/kanaele -> kanaele.vue) oder ein Ordner mit index.vue
+        // (/playerboard/trainings -> playerboard/trainings/index.vue).
+        const candidates = [`${item.to.slice(1)}.vue`, `${item.to.slice(1)}/index.vue`]
+        expect(candidates.some((candidate) => existsSync(join(pagesDirectory, candidate))), item.to).toBe(true)
       }
     }
   })

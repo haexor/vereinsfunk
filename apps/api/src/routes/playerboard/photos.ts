@@ -1,5 +1,6 @@
 import {
   CreatePlayerboardPhotoUploadRequestSchema,
+  PlayerboardPhotoConsentSchema,
   PlayerboardPhotoSchema,
   PlayerboardPhotoUploadSchema,
   ReviewPlayerboardPhotoRequestSchema,
@@ -12,7 +13,7 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { ApiRouteContext } from '../context.js'
 import { createAuditRecorder } from '../shared.js'
-import { loadTeamScope, sendDatabaseError } from './shared.js'
+import { loadTeamScope, requirePlayerboardModule, sendDatabaseError } from './shared.js'
 
 export const PLAYERBOARD_PHOTO_BUCKET = 'playerboard-training-photos'
 const SIGNED_URL_SECONDS = 600
@@ -179,6 +180,23 @@ export function registerPlayerboardPhotoRoutes(app: FastifyInstance, context: Ap
       })
     }
     return reply.code(200).send(await photoResponse(request, params.id))
+  })
+
+  // Einwilligungsstand des Kaders fuer oeffentliche Fotos: Hinweis an der Punkteeingabe, Liste auf
+  // der Einstellungsseite, Vorauswahl im Review. Dieselben Rechte wie der Review.
+  app.get('/v1/playerboard/teams/:teamId/photo-consents', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ teamId: UuidSchema }).parse(request.params)
+    const scope = await loadTeamScope(supabaseClients.forService(), params.teamId)
+    if (!scope) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePlayerboardModule(context, request, reply, scope))) return
+    if (!(await requirePermissionAnyOf(request, reply, ['training.manage', 'consent.manage'], scope))) return
+    const rows = await supabaseClients.forService().rpc('playerboard_team_photo_consents', { target_team_id: params.teamId })
+    if (rows.error) throw rows.error
+    return reply.code(200).send(((rows.data ?? []) as { player_id: string; directory_person_id: string; consent_record_id: string | null }[])
+      .map((row) => PlayerboardPhotoConsentSchema.parse({
+        playerId: row.player_id, directoryPersonId: row.directory_person_id, consentRecordId: row.consent_record_id,
+      })))
   })
 
   // Verbindlicher Einzelbild-Review (Plan 052, "Fotos"): Trainer oder Einwilligungsverwaltung.
