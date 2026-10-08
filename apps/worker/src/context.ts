@@ -9,6 +9,7 @@ import { WorkflowExecutionError, type WorkflowExecutionRepository, type Workflow
 import type { CandidateRow, ProviderRow, SessionRow, TextGenerationRepository } from './textGeneration.js'
 import type { GenerationRecoveryRepository, RecoverableSessionRow, StalledCandidateRow } from './generationRecovery.js'
 import type { VisionComparisonProviderRow, VisionProviderComparisonRepository } from './visionProviderComparison.js'
+import type { VeoApplyResult, VeoSyncRepository } from './veoSync.js'
 
 // style_profile_snapshot und source_material bleiben hier unvalidiert: ein Snapshot in einer
 // aelteren Form darf loadSession() nicht scheitern lassen, bevor acquirePendingCandidate()
@@ -372,6 +373,80 @@ export function createVisionProviderComparisonRepository(config: WorkerEnvironme
     async markFailed(runId, errorReason) {
       const { error } = await client.from('vision_provider_comparison_runs').update({ status: 'failed', error_reason: errorReason }).eq('id', runId)
       if (error) throw error
+    },
+  }
+}
+
+const VeoApplyResultSchema: z.ZodType<VeoApplyResult> = z.enum(['created', 'updated', 'conflict', 'ignored'])
+const VeoRunRowSchema = z.object({ source_id: UuidSchema, status: z.string().min(1) })
+const VeoLinkRowSchema = z.object({ team_id: UuidSchema, veo_club_slug: z.string().min(1), veo_team_slug: z.string().min(1) })
+const VeoTeamRowSchema = z.object({ name: z.string().min(1) })
+const VeoSecretRowSchema = z.object({ secret_ciphertext: z.string(), key_version: z.string().min(1) })
+
+/** Paket 053: Daten des Veo-Abgleichs. Das versiegelte Cookie verlaesst diese Schicht nur als Ciphertext. */
+export function createVeoSyncRepository(config: WorkerEnvironment): VeoSyncRepository & { enqueueScheduled(): Promise<number> } {
+  const client = createClient(config.SUPABASE_URL, config.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  return {
+    async loadRun(runId, organizationId) {
+      const { data, error } = await client.from('integration_sync_runs').select('source_id, status').eq('id', runId).eq('organization_id', organizationId).maybeSingle()
+      if (error) throw error
+      const row = data ? VeoRunRowSchema.parse(data) : null
+      return row ? { sourceId: row.source_id, status: row.status } : null
+    },
+    async loadSource(sourceId) {
+      const link = await client.from('playerboard_veo_links').select('team_id, veo_club_slug, veo_team_slug').eq('integration_source_id', sourceId).maybeSingle()
+      if (link.error) throw link.error
+      if (!link.data) return null
+      const linkRow = VeoLinkRowSchema.parse(link.data)
+      const team = await client.from('teams').select('name').eq('id', linkRow.team_id).single()
+      if (team.error) throw team.error
+      const teamRow = VeoTeamRowSchema.parse(team.data)
+      const secret = await client.from('integration_source_secrets').select('secret_ciphertext, key_version').eq('source_id', sourceId).maybeSingle()
+      if (secret.error) throw secret.error
+      const secretRow = secret.data ? VeoSecretRowSchema.parse(secret.data) : null
+      const ciphertext = secretRow?.secret_ciphertext
+      return {
+        teamId: linkRow.team_id,
+        teamName: teamRow.name,
+        veoClubSlug: linkRow.veo_club_slug,
+        veoTeamSlug: linkRow.veo_team_slug,
+        // bytea kommt ueber PostgREST als Hex-Escape (\x...), siehe apps/api/src/secretBox.ts.
+        secret: ciphertext?.startsWith('\\x')
+          ? { ciphertext: Buffer.from(ciphertext.slice(2), 'hex'), keyVersion: secretRow!.key_version }
+          : null,
+      }
+    },
+    async applyMatch(runId, match) {
+      const { data, error } = await client.rpc('playerboard_veo_apply_match', { p_run_id: runId, p_match: match })
+      if (error) throw error
+      return VeoApplyResultSchema.parse(data)
+    },
+    async finish(runId, outcome) {
+      const { data, error } = await client.rpc('playerboard_veo_finish_sync', {
+        p_run_id: runId, p_status: outcome.status, p_error_class: outcome.errorClass,
+        p_created: outcome.created, p_updated: outcome.updated, p_skipped: outcome.skipped, p_conflicts: outcome.conflicts,
+      })
+      if (error) throw error
+      const row = z.object({ team_id: UuidSchema, notify: z.boolean() }).array().parse(data ?? [])[0]
+      return row ? { teamId: row.team_id, notify: row.notify } : null
+    },
+    async failureRecipients(teamId) {
+      const memberships = await client.from('team_memberships').select('user_id')
+        .eq('team_id', teamId).eq('role', 'team_manager')
+        .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
+      if (memberships.error) throw memberships.error
+      const emails: string[] = []
+      for (const membership of memberships.data as { user_id: string }[]) {
+        const user = await client.auth.admin.getUserById(membership.user_id)
+        if (user.error) throw user.error
+        if (user.data.user?.email) emails.push(user.data.user.email)
+      }
+      return emails
+    },
+    async enqueueScheduled() {
+      const { data, error } = await client.rpc('playerboard_veo_enqueue_scheduled_syncs')
+      if (error) throw error
+      return z.number().int().parse(data)
     },
   }
 }

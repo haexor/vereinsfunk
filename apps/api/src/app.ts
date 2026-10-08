@@ -31,6 +31,7 @@ import {
   type RoleProvider,
 } from './auth.js'
 import { createEmailSender, type EmailSender } from './email.js'
+import { launchVeoLoginBrowser } from './veoBrowser.js'
 import { SupabaseModuleStatusProvider, type ModuleStatusProvider } from './moduleStatus.js'
 import { SupabaseUploadService } from './mediaUpload.js'
 import { createServiceClient, createUserClient } from './supabase.js'
@@ -70,6 +71,7 @@ import type {
   ApiRouteContext,
   MediaUploadService,
   SupabaseClientFactory,
+  VeoAccess,
 } from './routes/context.js'
 
 export type { MediaUploadService, SupabaseClientFactory } from './routes/context.js'
@@ -94,6 +96,8 @@ export interface BuildAppOptions {
   // Provider mit allen Modulen ein, damit Route-Tests ihre Supabase-Fakes nicht erweitern muessen.
   moduleStatusProvider?: ModuleStatusProvider
   emailSender?: EmailSender
+  // Paket 053: Fakes fuer Veo-Anmeldung und Veos Web-API in Route-Tests.
+  veo?: Partial<VeoAccess>
   metaOAuthClient?: MetaOAuthClient
   twitterOAuthClient?: TwitterOAuthClient
   linkedinOAuthClient?: LinkedInOAuthClient
@@ -329,6 +333,10 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     platformAdminProvider,
     moduleStatusProvider,
     emailSender,
+    veo: {
+      launchBrowser: options.veo?.launchBrowser ?? launchVeoLoginBrowser,
+      fetch: options.veo?.fetch ?? ((input, init) => fetch(input, init)),
+    },
     ...(imageEffects ? { imageEffects } : {}),
     samplePhotoLoader,
     getMetaOAuthClient,

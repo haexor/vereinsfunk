@@ -11,6 +11,7 @@ import type {
 } from '@vereinsfunk/publishing'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyReply, FastifyRequest } from 'fastify'
+import type { FetchLike, LoginBrowser } from '@vereinsfunk/veo-client'
 import type { EmailSender } from '../email.js'
 import type { PermissionScope, PlatformAdminProvider, RoleProvider } from '../auth.js'
 import type { ModuleStatusProvider } from '../moduleStatus.js'
@@ -33,6 +34,11 @@ export interface MediaUploadService {
     byteSize: number
   }): Promise<{ uploadUrl: string; objectPath: string; expiresAt: string }>
   complete(input: { assetId: string; sha256: string }): Promise<{ accepted: true; uploadStatus?: string; mimeType?: string | null }>
+}
+
+export interface VeoAccess {
+  launchBrowser(): Promise<LoginBrowser>
+  fetch: FetchLike
 }
 
 export interface ApiRouteGuards {
@@ -60,6 +66,8 @@ export interface ApiRouteContext extends ApiRouteGuards {
   platformAdminProvider: PlatformAdminProvider
   moduleStatusProvider: ModuleStatusProvider
   emailSender: EmailSender
+  // Paket 053: Browser fuer die Veo-Anmeldung und fetch fuer Veos Web-API; Tests setzen Fakes ein.
+  veo: VeoAccess
   imageEffects?: ImageEffectProvider
   // Bildstil-Vorschau (POST /v1/image-style-presets/preview) rendert immer gegen dasselbe
   // Beispielfoto -- anders als imageEffects (echt fehlend im 'sharp'-Modus) hat das immer einen

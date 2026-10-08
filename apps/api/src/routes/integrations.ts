@@ -23,6 +23,7 @@ import {
   SYNC_CONFLICT_COLUMNS,
   SYNC_RUN_COLUMNS,
 } from '../apiMappers.js'
+import { enqueueIntegrationSync, isSourceDisabledError } from '../services/integrationQueue.js'
 import { collectRows, failSyncRun, loadSyncSourceResponse, type SyncDomainContext } from '../services/integrationSync.js'
 import { handleEventsSync } from '../services/sync/events.js'
 import { handleFixturesSync } from '../services/sync/fixtures.js'
@@ -226,7 +227,7 @@ export function registerIntegrationRoutes(app: FastifyInstance, context: ApiRout
     const client = supabaseClients.forUser(request.auth!.accessToken)
     const source = await client
       .from('integration_sources')
-      .select('organization_id, department_id, transport, endpoint_url, enabled_domains, field_mapping, loss_threshold_percent, enabled')
+      .select('organization_id, department_id, transport, provider_key, endpoint_url, enabled_domains, field_mapping, loss_threshold_percent, enabled')
       .eq('id', params.id)
       .maybeSingle()
     if (source.error) throw source.error
@@ -274,8 +275,12 @@ export function registerIntegrationRoutes(app: FastifyInstance, context: ApiRout
       mode = body.data.mode
       domain = body.data.domain
       if (!sourceEndpointUrl) return reply.code(409).send({ error: 'source_missing_endpoint', correlationId: request.id })
+    } else if (sourceTransport === 'http' && source.data.provider_key === 'veo') {
+      // Paket 053: Veo gleicht nur Spielplaene ab und laeuft im Worker (siehe unten).
+      mode = 'apply'
+      domain = 'fixtures'
     } else {
-      // http/webhook: kein Adapter in diesem Paket (plans/014, "Entscheidungen vor der Umsetzung").
+      // Andere http-Quellen und webhook: kein Adapter (plans/014, "Entscheidungen vor der Umsetzung").
       return reply.code(400).send({ error: 'transport_not_implemented', correlationId: request.id })
     }
 
@@ -304,6 +309,27 @@ export function registerIntegrationRoutes(app: FastifyInstance, context: ApiRout
       if (domain === 'fixtures' && !sourceDepartmentId) {
         return reply.code(409).send({ error: 'source_missing_department', correlationId: request.id })
       }
+    }
+
+    // HTTP-Quellen reiht die API nur ein; Abruf und Schreiben macht der Worker (Paket 053).
+    if (sourceTransport === 'http') {
+      let queued: Awaited<ReturnType<typeof enqueueIntegrationSync>>
+      try {
+        queued = await enqueueIntegrationSync(service, {
+          organizationId, sourceId: params.id, idempotencyKey, triggeredBy: request.auth!.userId,
+        })
+      } catch (error) {
+        // Die Vorabpruefung oben schliesst den Normalfall aus; die RPC-Pruefung deckt das
+        // Deaktivieren zwischen Leseabfrage und Queue atomar ab.
+        if (isSourceDisabledError(error)) {
+          return reply.code(409).send({ error: 'source_disabled', correlationId: request.id })
+        }
+        throw error
+      }
+      if (queued.result === 'already_running') {
+        return reply.code(409).send({ error: 'sync_already_running', correlationId: request.id, idempotencyKey })
+      }
+      return reply.code(queued.result === 'replay' ? 200 : 202).send({ runId: queued.runId, state: queued.result === 'replay' ? 'replay' : 'queued', idempotencyKey })
     }
 
     // Atomar vor jedem iCal-Abruf und jeder fachlichen Leseabfrage: dieselbe RPC muss der

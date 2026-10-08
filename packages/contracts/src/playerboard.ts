@@ -312,6 +312,68 @@ export const PublicPlayerboardPhotoSchema = z.object({
   trainingDate: DateSchema,
 })
 
+// --- Veo (Paket 053) ------------------------------------------------------------------------------
+
+// E-Mail und Passwort dienen nur der einmaligen Anmeldung bei Veo und werden nie gespeichert.
+export const PlayerboardVeoLoginRequestSchema = z.object({
+  teamId: UuidSchema,
+  email: z.string().trim().min(3).max(254),
+  password: z.string().min(1).max(200),
+}).strict()
+
+const VeoSlugSchema = z.string().trim().min(1).max(200)
+
+export const PlayerboardVeoClubSchema = z.object({
+  slug: VeoSlugSchema,
+  name: z.string().min(1).max(200),
+  teams: z.array(z.object({ slug: VeoSlugSchema, name: z.string().min(1).max(200) })),
+})
+
+// linkToken: das verschluesselte Session-Cookie fuer den folgenden Link-Aufruf, kurz gueltig und
+// an Mannschaft und Person gebunden. Der Browser kann es nicht entschluesseln.
+export const PlayerboardVeoLoginResponseSchema = z.object({
+  linkToken: z.string().min(1),
+  clubs: z.array(PlayerboardVeoClubSchema),
+})
+
+export const PlayerboardVeoLinkRequestSchema = z.object({
+  teamId: UuidSchema,
+  linkToken: z.string().min(1).max(16_384),
+  veoClubSlug: VeoSlugSchema,
+  veoTeamSlug: VeoSlugSchema,
+}).strict()
+
+export const PlayerboardVeoSyncRunSchema = z.object({
+  id: UuidSchema,
+  status: z.enum(['running', 'succeeded', 'failed', 'cancelled', 'aborted_loss_threshold']),
+  startedAt: z.string(),
+  finishedAt: z.string().nullable(),
+  createdCount: z.number().int(),
+  updatedCount: z.number().int(),
+  skippedCount: z.number().int(),
+  conflictCount: z.number().int(),
+  errorClass: z.string().nullable(),
+})
+
+export const PlayerboardVeoStatusSchema = z.object({
+  teamId: UuidSchema,
+  linked: z.boolean(),
+  veoClubName: z.string().nullable(),
+  veoTeamName: z.string().nullable(),
+  consecutiveFailures: z.number().int(),
+  lastErrorCode: z.string().nullable(),
+  // Veo nimmt das gespeicherte Cookie nicht mehr an; nur eine neue Anmeldung hilft.
+  needsReconnect: z.boolean(),
+  runs: z.array(PlayerboardVeoSyncRunSchema),
+})
+
+export const PlayerboardVeoSyncRequestSchema = z.object({ teamId: UuidSchema }).strict()
+
+export const PlayerboardVeoSyncAcceptedSchema = z.object({
+  runId: UuidSchema,
+  state: z.enum(['queued', 'already_running', 'replay']),
+})
+
 export type PlayerboardStatsVisibility = z.infer<typeof PlayerboardStatsVisibilitySchema>
 export type PlayerboardOverridableField = z.infer<typeof PlayerboardOverridableFieldSchema>
 export type PlayerboardPlayer = z.infer<typeof PlayerboardPlayerSchema>
@@ -337,3 +399,8 @@ export type ReviewPlayerboardPhotoRequest = z.infer<typeof ReviewPlayerboardPhot
 export type PublicPlayerboardTeam = z.infer<typeof PublicPlayerboardTeamSchema>
 export type PublicPlayerboardRankingEntry = z.infer<typeof PublicPlayerboardRankingEntrySchema>
 export type PublicPlayerboardPhoto = z.infer<typeof PublicPlayerboardPhotoSchema>
+export type PlayerboardVeoLoginRequest = z.infer<typeof PlayerboardVeoLoginRequestSchema>
+export type PlayerboardVeoLoginResponse = z.infer<typeof PlayerboardVeoLoginResponseSchema>
+export type PlayerboardVeoLinkRequest = z.infer<typeof PlayerboardVeoLinkRequestSchema>
+export type PlayerboardVeoStatus = z.infer<typeof PlayerboardVeoStatusSchema>
+export type PlayerboardVeoSyncAccepted = z.infer<typeof PlayerboardVeoSyncAcceptedSchema>

@@ -3,6 +3,7 @@ import {
   IntegrationSourceSchema,
   IntegrationSyncConflictSchema,
   IntegrationSyncRunSchema,
+  PlayerboardVeoSyncAcceptedSchema,
   SyncSourceResponseSchema,
   type IntegrationSource,
   type IntegrationSyncConflict,
@@ -205,6 +206,7 @@ const SYNC_ERROR_MESSAGES: Record<string, string> = {
   domain_not_enabled: 'Dieser Bereich ist für diese Quelle nicht aktiviert.',
   file_too_large: 'Die Datei ist zu groß (max. 8 MB).',
   invalid_request: 'Die Anfrage ist ungültig.',
+  sync_already_running: 'Für diese Quelle läuft bereits ein Abgleich.',
 }
 
 const syncingSourceId = ref<string | null>(null)
@@ -213,6 +215,8 @@ const syncFile = ref<File | null>(null)
 const syncFileInputKey = ref(0)
 const syncSubmitting = ref(false)
 const syncError = ref('')
+// HTTP-Quellen (Veo, Paket 053) laufen im Worker: die Antwort bestaetigt nur das Einreihen.
+const syncNotice = ref('')
 const syncResults = reactive<Record<string, { run: IntegrationSyncRun; conflicts: IntegrationSyncConflict[] }>>({})
 
 function openSync(source: IntegrationSource) {
@@ -221,6 +225,7 @@ function openSync(source: IntegrationSource) {
   syncFile.value = null
   syncFileInputKey.value += 1
   syncError.value = ''
+  syncNotice.value = ''
 }
 function onFileChange(event: Event) {
   syncFile.value = (event.target as HTMLInputElement).files?.[0] ?? null
@@ -233,7 +238,23 @@ async function runSync(source: IntegrationSource) {
   }
   syncSubmitting.value = true
   syncError.value = ''
+  syncNotice.value = ''
   try {
+    if (source.transport === 'http') {
+      const queued = PlayerboardVeoSyncAcceptedSchema.parse(await api.request(`/v1/integration-sources/${source.id}/sync`, { method: 'POST', body: {} }))
+      syncNotice.value = 'Abgleich gestartet. Das Ergebnis erscheint gleich im Verlauf.'
+      if (historySourceId.value === source.id) {
+        while (historySourceId.value === source.id) {
+          const loaded = await loadHistory(source.id)
+          if (!loaded) break
+          const run = historyRuns.value.find((item) => item.id === queued.runId)
+          if (run && run.status !== 'running') break
+          await new Promise((resolve) => setTimeout(resolve, 1000))
+        }
+      }
+      await load()
+      return
+    }
     let response: unknown
     if (source.transport === 'file') {
       const formData = new FormData()
@@ -262,12 +283,14 @@ const historySourceId = ref<string | null>(null)
 const historyRuns = ref<IntegrationSyncRun[]>([])
 const historyLoading = ref(false)
 
-async function loadHistory(sourceId: string) {
+async function loadHistory(sourceId: string): Promise<boolean> {
   historyLoading.value = true
   try {
     historyRuns.value = await api.request(`/v1/integration-sources/${sourceId}/sync-runs`, {}, IntegrationSyncRunSchema.array())
+    return true
   } catch {
     historyRuns.value = []
+    return false
   } finally {
     historyLoading.value = false
   }
@@ -373,14 +396,16 @@ async function resolveConflict(conflict: IntegrationSyncConflict, resolution: 'k
 
         <div v-if="syncingSourceId === source.id" class="mt-4 rounded-xl border border-[#e8e9e2] bg-[#f7f8f4] p-4">
           <p class="mb-3 text-xs font-semibold">Sync ausführen</p>
-          <div class="flex flex-wrap items-center gap-4">
+          <div v-if="source.transport !== 'http'" class="flex flex-wrap items-center gap-4">
             <label class="flex items-center gap-1.5 text-xs"><input v-model="syncMode" type="radio" value="dry_run" /> Trockenlauf</label>
             <label class="flex items-center gap-1.5 text-xs"><input v-model="syncMode" type="radio" value="apply" /> Übernehmen</label>
           </div>
           <div v-if="source.transport === 'file'" class="mt-3">
             <input :key="syncFileInputKey" type="file" accept=".csv,.xlsx,.xls" class="text-xs" @change="onFileChange" />
           </div>
+          <p v-if="source.transport === 'http'" class="text-xs text-[#7b827d]">Holt neue Spiele und Werte im Hintergrund ab.</p>
           <p v-if="syncError" class="mt-2 text-xs text-amber-800">{{ syncError }}</p>
+          <p v-if="syncNotice" class="mt-2 text-xs text-forest">{{ syncNotice }}</p>
           <div class="mt-3 flex items-center gap-2">
             <button type="button" :disabled="syncSubmitting" class="focus-ring rounded-lg bg-forest px-3 py-2 text-[11px] font-bold text-white disabled:opacity-60" @click="runSync(source)">
               {{ syncSubmitting ? 'Läuft …' : 'Ausführen' }}

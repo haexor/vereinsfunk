@@ -190,3 +190,103 @@ Abweichungen:
   - Spielerwerte kommen mit genau einem Spiel je Aufruf, weil Veo bei `group_by: player` über alle übergebenen Spiele zusammenfasst (`cross_match`).
 - **Kaderzuordnung nicht im Paket.** `parsePlayerStats()` liefert Werte je Rückennummer. Die Zuordnung zu `playerboard_players` samt `matched_manually` gehört zum Sync (PR 2).
 - **Aufnahmen anonymisiert.** Veo-IDs, Vereins- und Gegnernamen sind ersetzt (`packages/veo-client/src/__fixtures__`); Struktur und Werte sind unverändert.
+
+## Umsetzung PR 2: Ergebnis und Abweichungen vom Plan
+
+Umgesetzt am 2026-10-08.
+
+**Datenbank** (`2026101201_playerboard_veo.sql`):
+- **Tabellen:**
+  - `integration_source_secrets`
+  - `playerboard_veo_links`
+  - `playerboard_veo_matches`
+  - `playerboard_veo_match_stats`
+  - `playerboard_veo_player_assignments`
+  - `playerboard_veo_player_stats`
+- **Funktionen**, jeweils nur für `service_role`:
+  - `playerboard_veo_link_team`
+  - `enqueue_integration_sync`
+  - `playerboard_veo_enqueue_scheduled_syncs`
+  - `playerboard_veo_apply_match`
+  - `playerboard_veo_finish_sync`
+
+**API:**
+- `POST /v1/playerboard/veo/login` und `POST /v1/playerboard/veo/link` (beide `playerboard.manage`);
+- `GET /v1/playerboard/veo/status` (`training.view`);
+- `POST /v1/playerboard/veo/sync` (`playerboard.manage`, `Idempotency-Key`).
+
+**Worker:**
+- `VeoSyncExecutor` für den bisher nur reservierten Workflow `sync-integration-source`;
+- Cron `playerboard-veo-sync-schedule`.
+
+**Neues Paket:** `packages/mailer`.
+
+Verifiziert:
+- **pgTAP** `playerboard_veo.test.sql` (24 Fälle):
+  - Verbinden legt Quelle, Geheimnis und Verbindung an; neu verbinden behält die Quelle.
+  - Genau ein aktiver Lauf, der Auftrag trägt nur IDs.
+  - Ein vorhandenes Spiel bekommt das Ergebnis ohne Duplikat und ohne geänderte Stammdaten.
+  - Ein neues Spiel gehört der Veo-Quelle; ein mehrdeutiger Treffer wird zum Konflikt.
+  - Rückennummern werden gegen den Kader zugeordnet; `matched_manually` überlebt den nächsten Abgleich.
+  - Ein Kader-Eintrag hat je Spiel nur eine Nummer.
+  - Spieler sehen die Werte, die Nachbarmannschaft nicht, das Geheimnis niemand.
+  - Hinweis genau beim dritten Fehllauf; ein Erfolg setzt die Serie zurück.
+- **Worker-Tests** (7):
+  - Alles oder nichts je Spiel bei fehlgeschlagenem Spielerabruf.
+  - Ein abgelaufenes Cookie beendet den Lauf und benachrichtigt; Mail und Log enthalten kein Cookie.
+  - Eine geänderte Antwortform bricht den Lauf ab.
+  - Ein beendeter Lauf bleibt unberührt.
+- **API-Tests** (14):
+  - Rechte, falsches Passwort, Veo nicht erreichbar.
+  - Link-Token fremder Person, abgelaufen oder manipuliert.
+  - Das Cookie ist mit der Quellen-ID versiegelt.
+  - Veo-Quelle über den Integrationsendpunkt.
+- `pnpm lint`, `typecheck`, `test` (42 Tasks), `build` und alle pgTAP-Dateien (53 Dateien, 1315 Fälle) grün.
+- **Live gegen den Veo-Account des Vereins** (2026-10-08, lokaler Stack, nur Anzahlen ausgegeben):
+  - Anmeldung über die lokale API in 6,3 s: 1 Verein, 8 Mannschaften.
+  - Verbinden mit der C-Jugend und erster Abgleich mit dem echten Worker-Code: 7 Spiele angelegt (alle mit Ergebnis), 210 Mannschaftswerte, 23 Rückennummern, 918 Spielerwerte.
+  - Alle 5 Kader-Nummern der Testmannschaft wurden automatisch zugeordnet.
+  - Ein zweiter, manueller Abgleich aktualisierte dieselben 7 Spiele ohne Duplikat.
+  - Das Cookie liegt nur verschlüsselt in der Datenbank.
+  - Das Spiel erscheint im Rahmen-Kalender.
+  - Hatchet lief lokal nicht. Der Executor wurde deshalb direkt mit der Lauf-ID aufgerufen; der Weg über `workflow_outbox` ist durch pgTAP und Unit-Tests abgedeckt.
+
+Abweichungen:
+
+- **Anmeldung in der API.** Wie in playerboard startet die API für den Login ein unsichtbares Chromium; das API-Image installiert es wie der Worker (`PLAYWRIGHT_BROWSERS_PATH=/ms-playwright`).
+  - Es laufen höchstens zwei Anmeldungen gleichzeitig, sonst `503 veo_login_busy`.
+  - Zwischen Login und Auswahl der Veo-Mannschaft trägt der Browser das Cookie als SecretBox-Token: 15 Minuten gültig, an Mannschaft und Person gebunden, mit der Liste der bei der Anmeldung gesehenen Veo-Mannschaften.
+- **Geheimnis in eigener Tabelle.** Einen allgemeinen Secret-Speicher gab es nicht. `integration_source_secrets` hängt an der Quelle; `credentials_secret_id` zeigt auf die Zeile. Das AAD ist `integration-source:<id>`.
+- **Eigene Zuordnung Veo-Spiel ↔ Spielplan** (`playerboard_veo_matches`) statt `fixtures.external_id`.
+  - Grund: Ein angehängtes iCal-Spiel behält seine Quelle und wird trotzdem beim nächsten Lauf wiedergefunden.
+  - Die Zuordnung hängt an der Mannschaft. Wer Veo neu verbindet, findet dieselben Spiele wieder.
+  - Die Werte-Tabellen tragen `team_id` mit, damit die Policies ohne Join auskommen.
+- **Zusammenführung strenger als geplant.**
+  - Kandidaten: dieselbe Mannschaft, ±3 Stunden um den Veo-Start, Heim/Auswärts passend. Bei mehreren entscheidet der Gegnername.
+  - Ein fremdes Spiel bekommt nur ein *fehlendes* Ergebnis. Ein eingetragenes Ergebnis und die Stammdaten bleiben unangetastet.
+  - Ein mehrdeutiger Treffer wird zum Konflikt `ambiguous_match`, und das Spiel bleibt in diesem Lauf weg. Eine Auswahl des passenden Spiels fehlt noch (PR 3); bis dahin lässt sich ein solcher Konflikt nur dauerhaft ignorieren.
+  - Veo legt Spiele an, nimmt aber nie welche aus dem Spielplan.
+  - Der Schalter „nur zu vorhandenen Spielen zuordnen“ ist nicht gebaut.
+- **Nur analysierte Spiele mit Endstand** werden übernommen (wie playerboard); die übrigen zählen als übersprungen.
+- **Rückennummern:**
+  - Offene, nicht von Hand gesetzte Nummern werden bei jedem Lauf erneut gegen den Kader geprüft. playerboard prüfte nur beim ersten Mal; ein später nachgetragener Kader greift also auch für alte Spiele.
+  - Haben zwei aktive Spieler dieselbe Nummer, bleibt sie offen.
+  - Liefert Veo eine Nummer nicht mehr, verschwindet sie samt Werten.
+- **Lauf im Worker:**
+  - `enqueue_integration_sync` belegt den Lauf-Slot (026) und schreibt den ID-only-Auftrag in derselben Transaktion; API und Cron nutzen dieselbe Funktion.
+  - Täglicher Abgleich um 05:00 UTC über einen eigenen Cron statt einer Auswertung von `sync_cron`. Die Quelle trägt `0 5 * * *` nur zur Anzeige.
+  - Läufe, die länger als zwei Stunden hängen, gibt der Cron als `stale_run` frei.
+  - Verbindungen mit `auth_expired` lässt der Cron aus, bis neu verbunden wird.
+  - Scheitert ein einzelnes Spiel, werden die übrigen trotzdem geschrieben und der Lauf endet als `failed` (wie playerboard). `auth_expired` und `upstream_changed` brechen den ganzen Lauf ab.
+  - Fachliche Fehler lassen den Workflow nicht scheitern, weil eine Wiederholung durch Hatchet an einem abgelaufenen Cookie nichts ändert.
+- **Benachrichtigung per Mail** über denselben SMTP-Server wie die API.
+  - Der Versand liegt jetzt in `packages/mailer`.
+  - Der Worker liest `EMAIL_PROVIDER`, `SMTP_*` und `WEB_BASE_URL`. **Für das Deployment müssen diese Variablen auch beim Worker gesetzt werden**; ohne `smtp` landet nur der Betreff im Log.
+  - Beim dritten Fehllauf in Folge geht genau eine Mail an die `team_manager` der Mannschaft, die nächste erst nach einem erfolgreichen Lauf.
+  - Der Link in der Mail zeigt auf `/playerboard/veo` (PR 3).
+- **Integrationsseite:** Der bestehende Sync-Endpunkt reiht Veo-Quellen für den Worker ein (`202`). `/integrationen` zeigt dafür „Abgleich gestartet“ statt Trockenlauf und Übernehmen.
+- **Noch nicht in PR 2:**
+  - Korrektur der Zuordnung per API (Policy und Spaltenrecht sind angelegt);
+  - die öffentliche Funktion `playerboard_public_veo_stats`;
+  - die vereinsübergreifende Sicht des Plattform-Admins auf fehlschlagende Veo-Läufe.
+

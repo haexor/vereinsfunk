@@ -155,6 +155,45 @@ describe('Paket 014: Integrationsrahmen und Mitgliederverzeichnis', () => {
     expect(response.json()).toMatchObject({ error: 'transport_not_implemented' })
   })
 
+  it('queues a Veo source for the worker instead of syncing inline', async () => {
+    const rpcCalls: { name: string; args: Record<string, unknown> }[] = []
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'integration_sources') {
+              return chain({
+                data: {
+                  organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, transport: 'http', provider_key: 'veo', endpoint_url: null,
+                  enabled_domains: ['fixtures'], field_mapping: {}, loss_threshold_percent: 30, enabled: true,
+                },
+                error: null,
+              })
+            }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          rpc: async (name: string, args: Record<string, unknown>) => {
+            rpcCalls.push({ name, args })
+            return { data: [{ result: 'acquired', run_id: '53000000-6000-4000-8000-000000000001' }], error: null }
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/integration-sources/${SOURCE_ID}/sync`,
+      headers: { authorization: `Bearer ${token}`, 'idempotency-key': 'veo-1' },
+      payload: {},
+    })
+    expect(response.statusCode).toBe(202)
+    expect(response.json()).toMatchObject({ runId: '53000000-6000-4000-8000-000000000001', state: 'queued' })
+    expect(rpcCalls).toEqual([{ name: 'enqueue_integration_sync', args: expect.objectContaining({ target_source_id: SOURCE_ID, target_request_idempotency_key: 'veo-1' }) }])
+  })
+
   it('runs a CSV dry-run sync end to end: new people are proposed, nothing is written', async () => {
     const clients: SupabaseClientFactory = {
       forUser: () =>

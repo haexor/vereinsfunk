@@ -6,6 +6,7 @@ import { registerPlayerboardPlayerRoutes } from './players.js'
 import { registerPlayerboardPublicRoutes } from './public.js'
 import { registerPlayerboardSettingsRoutes } from './settings.js'
 import { registerPlayerboardTrainingRoutes } from './trainings.js'
+import { registerPlayerboardVeoRoutes } from './veo.js'
 
 /**
  * Paket 052: Modul PlayerBoard. Jede Permission dieser Routen gehoert dem Modul 'playerboard'
@@ -18,4 +19,5 @@ export function registerPlayerboardRoutes(app: FastifyInstance, context: ApiRout
   registerPlayerboardSettingsRoutes(app, context)
   registerPlayerboardPhotoRoutes(app, context)
   registerPlayerboardPublicRoutes(app, context)
+  registerPlayerboardVeoRoutes(app, context)
 }
