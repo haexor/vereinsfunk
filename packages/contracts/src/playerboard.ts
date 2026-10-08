@@ -67,6 +67,10 @@ export const InvitePlayerboardPlayerRequestSchema = z.object({
   email: OptionalEmailSchema.optional(),
 }).strict()
 
+export const PlayerboardInviteResponseSchema = z.object({
+  emailDelivered: z.boolean(),
+})
+
 // --- Kategorien ---------------------------------------------------------------------------------
 
 export const PlayerboardCategorySchema = z.object({
@@ -202,6 +206,8 @@ export const ScopePlayerboardSettingsSchema = z.object({
   // Ersetzbare Felder, die auf dieser Ebene keine Wirkung haben, weil oben verbindlich gesetzt.
   locked: z.object({ seasonStart: z.boolean(), statsVisibility: z.boolean() }),
   canEdit: z.boolean(),
+  // Nur Mannschaft mit Slug: Pfad der oeffentlichen Mannschaftsseite (/mannschaft/{verein}/{mannschaft}).
+  publicPath: z.string().nullable(),
 })
 
 const PublicSlugSchema = z.string().trim().toLowerCase().max(80).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
@@ -269,6 +275,14 @@ export const ReviewPlayerboardPhotoRequestSchema = z.object({
 
 export const SetPlayerboardPhotoPublicRequestSchema = z.object({ public: z.boolean() }).strict()
 
+// Einwilligungsstand je Kaderspieler fuer oeffentliche Trainingsfotos: die juengste Einwilligung,
+// die der Foto-Review akzeptieren wuerde, oder null.
+export const PlayerboardPhotoConsentSchema = z.object({
+  playerId: UuidSchema,
+  directoryPersonId: UuidSchema,
+  consentRecordId: UuidSchema.nullable(),
+})
+
 // --- Oeffentliche Mannschaftsseite --------------------------------------------------------------
 
 export const PublicPlayerboardTeamSchema = z.object({
@@ -295,6 +309,7 @@ export type PlayerboardOverridableField = z.infer<typeof PlayerboardOverridableF
 export type PlayerboardPlayer = z.infer<typeof PlayerboardPlayerSchema>
 export type CreatePlayerboardPlayerRequest = z.infer<typeof CreatePlayerboardPlayerRequestSchema>
 export type UpdatePlayerboardPlayerRequest = z.infer<typeof UpdatePlayerboardPlayerRequestSchema>
+export type PlayerboardInviteResponse = z.infer<typeof PlayerboardInviteResponseSchema>
 export type PlayerboardCategory = z.infer<typeof PlayerboardCategorySchema>
 export type CreatePlayerboardCategoryRequest = z.infer<typeof CreatePlayerboardCategoryRequestSchema>
 export type UpdatePlayerboardCategoryRequest = z.infer<typeof UpdatePlayerboardCategoryRequestSchema>
@@ -309,6 +324,7 @@ export type ScopePlayerboardSettings = z.infer<typeof ScopePlayerboardSettingsSc
 export type UpdatePlayerboardSettingsRequest = z.infer<typeof UpdatePlayerboardSettingsRequestSchema>
 export type PlayerboardPhoto = z.infer<typeof PlayerboardPhotoSchema>
 export type PlayerboardPhotoUpload = z.infer<typeof PlayerboardPhotoUploadSchema>
+export type PlayerboardPhotoConsent = z.infer<typeof PlayerboardPhotoConsentSchema>
 export type ReviewPlayerboardPhotoRequest = z.infer<typeof ReviewPlayerboardPhotoRequestSchema>
 export type PublicPlayerboardTeam = z.infer<typeof PublicPlayerboardTeamSchema>
 export type PublicPlayerboardRankingEntry = z.infer<typeof PublicPlayerboardRankingEntrySchema>

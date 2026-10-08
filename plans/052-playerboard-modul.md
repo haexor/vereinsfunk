@@ -467,3 +467,50 @@ Abweichungen:
   - Prüfen darf auch die Einwilligungsverwaltung (`consent.manage`), wie in der RPC.
   - Öffentliche Foto-URLs leben fünf Minuten, interne zehn.
 - **Offen für PR 3:** Die Liste der Spieler ohne gültige Einwilligung für öffentliche Fotos braucht einen eigenen Endpunkt und entsteht mit der Einstellungsseite.
+
+## Umsetzung PR 3: Ergebnis und Abweichungen vom Plan
+
+Umgesetzt am 2026-10-08:
+- Seiten unter `apps/web/app/pages/playerboard/`: `kader.vue`, `trainings/index.vue`, `trainings/neu.vue`, `trainings/[id].vue`, `kategorien.vue`, `einstellungen.vue`.
+- Komponenten: `PlayerboardTeamPicker`, `PlayerboardTeamEmpty`, `PlayerboardLevelTabs`, `PlayerboardPointEntry`, `PlayerboardTrainingPhotos`.
+- Composable `usePlayerboardTeam` (Mannschaft aus dem Arbeitsbereich, Ebenen für Kategorien und Einstellungen).
+- Logik ohne Vue in `utils/playerboardTeams.ts`, `utils/playerboardPoints.ts` (Speicherwarteschlange der Punkteeingabe), `utils/playerboardSettings.ts` und `utils/playerboardErrors.ts`, jeweils mit Tests.
+- Modul-Registry: „Trainings“ und „Kader“ unter PlayerBoard, „Kategorien“ und „Einstellungen“ unter „PlayerBoard verwalten“.
+- Ergänzungsmigration `2026101001_playerboard_photo_consents.sql` mit `playerboard_team_photo_consents()` und Route `GET /v1/playerboard/teams/:teamId/photo-consents`.
+- `publicPath` in den Einstellungen je Mannschaft.
+
+Verifiziert:
+- `pnpm lint`, `typecheck`, `test` (alle 38 Tasks) und `build` grün.
+- `pnpm db:test` nach frischem `supabase db reset` grün: 51 Dateien, 1288 Assertions, davon 7 in `playerboard_photo_consents.test.sql`.
+- API-Tests: Einwilligungsliste (`403` für `player`, `403 module_disabled`, Zuordnung für Trainer) und `publicPath`.
+- Im Browser auf 360 px Breite gegen den lokalen Stack, als Demo-Vereinsinhaberin:
+  - Mannschaft wählen, zehn Spieler anlegen.
+  - Kategorie des Vereins (in der Mannschaft geerbt und gesperrt) und eine eigene der Mannschaft.
+  - Training anlegen, Punkte für alle zehn Spieler per Plus und Zahlenfeld erfassen. Die Werte sind nach dem Neuladen da; ein Wert außerhalb des Bereichs wird markiert und nicht gesendet.
+  - Training abschließen.
+  - Foto hochladen und prüfen, öffentlich schalten. Die Prüfung mit einer Person ohne Einwilligung ist gesperrt.
+  - Öffentliche Seite der Mannschaft einschalten, Link erscheint.
+  - Liste der Spieler ohne Einwilligung.
+  - Einladung aus dem Kader. Entfernen eines Spielers mit Punkten wird mit Hinweis auf „inaktiv“ abgelehnt.
+  - Keine Seite scrollt horizontal.
+
+Abweichungen:
+
+- **Punkteeingabe als Karten statt Tabelle.** Die Tabelle aus playerboard mit Schiebereglern ist auf 360 px nur seitlich scrollbar. Jetzt gibt es je Spieler eine Karte mit „−“, Zahlenfeld und „+“ je Kategorie (44-px-Ziele) und der Summe des Trainings.
+  - Änderungen sammeln sich 0,7 s und gehen dann gemeinsam an `PUT …/points`, statt je Zelle einzeln.
+  - Scheitert das Speichern, bleiben die Werte offen; „Erneut senden“ schickt sie nach.
+  - Beim Verlassen der Seite wird Offenes noch gesendet, sonst fragt die Seite nach.
+  - Ein leeres Feld startet bei 0 (bzw. an der nächsten Grenze), damit der erste Tipp auf „+“ eine 1 ergibt.
+- **Einwilligungsstand als eigene Datenbankfunktion.** `playerboard_team_photo_consents()` liefert je Kaderspieler die jüngste Einwilligung, die der Foto-Review akzeptieren würde, mit derselben Prüfung (`authz.playerboard_photo_consent_valid`). Die Regeln stehen damit nicht ein zweites Mal in TypeScript.
+  - Rechte wie beim Review: `training.manage` oder `consent.manage`.
+  - Genutzt für den Hinweis an der Punkteeingabe, die Liste auf der Einstellungsseite und die Prüfung eines Fotos.
+- **Prüfung im Browser vorab.** Ist eine ausgewählte Person ohne gültige Einwilligung, lässt sich das Foto gar nicht erst zur Prüfung absenden; die Seite nennt die betroffenen Spieler. Erkennbare Personen außerhalb des Kaders lassen sich nicht auswählen; der Hinweis sagt, das Foto dann nicht freizugeben.
+- **Schalter „öffentlich / nicht öffentlich“ je Foto schon in PR 3** (Plan: PR 4), weil er zur Prüfung gehört. PR 4 behält die Spieleransicht.
+- **Mannschaft aus dem Arbeitsbereich.** Die Sidebar kennt keine Mannschaft als Arbeitsbereich. `usePlayerboardTeam` bietet die Mannschaften der aktiven Abteilung bzw. auf Vereinsebene alle sichtbaren an und merkt sich die Wahl (Cookie). Bei genau einer Mannschaft entfällt die Auswahl.
+  - Ein Training bestimmt seine Mannschaft selbst, ein Link darauf funktioniert unabhängig von der Auswahl.
+- **Kategorien und Einstellungen je Ebene über Reiter** (Verein, Abteilung, gewählte Mannschaft) statt eines Baums aller Ebenen.
+  - Die Einstellungen speichern über die Seiten-Schaltfläche nur geänderte Felder und laden danach alle Ebenen neu, weil eine Änderung nach unten wirkt.
+  - Auf Vereinsebene heißt der Ausgangswert „Standard“, darunter „geerbt“.
+- **Link zum Teilen** kommt als `publicPath` aus der API (der Vereins-Slug ist im Browser nicht bekannt). Die Seite dahinter entsteht mit PR 4.
+- **Der Schalter für öffentliche Veo-Werte fehlt** auf der Einstellungsseite. Er folgt mit 053, solange gibt es keine Werte.
+- **Registry-Test:** Eine Navigationsroute darf auch ein Ordner mit `index.vue` sein (`/playerboard/trainings`).
