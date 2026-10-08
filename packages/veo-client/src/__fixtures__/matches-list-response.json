@@ -1,0 +1,54 @@
+[
+  {
+    "id": "00000000-0000-4000-8000-000000000001",
+    "identifier": "00000000-0000-4000-8000-000000000001",
+    "slug": "20260923-testverein-u14-vs-gegner-nord-u14-v0001",
+    "url": "/matches/20260923-testverein-u14-vs-gegner-nord-u14-v0001/",
+    "title": "Testverein U14 vs. Gegner Nord U14",
+    "created": "2026-09-23T21:11:07.927733+02:00",
+    "start": "2026-09-23T16:54:40.829405+02:00",
+    "own_team_home_or_away": "home",
+    "opponent_club_name": "Gegner Nord U14",
+    "opponent_team_name": "Gegner Nord U14",
+    "has_analytics_enabled": true,
+    "analytics_version": "2",
+    "team": {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "slug": "testverein-u14-0001",
+      "name": "Testverein U14"
+    },
+    "info": {
+      "age_group": "U15",
+      "stats": {
+        "score": { "own": null, "opponent": null },
+        "score_aggregated": { "own": 7, "opponent": 5 }
+      }
+    }
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000003",
+    "identifier": "00000000-0000-4000-8000-000000000003",
+    "slug": "20260909-testverein-u14-vs-gegner-sued-u14-v0002",
+    "url": "/matches/20260909-testverein-u14-vs-gegner-sued-u14-v0002/",
+    "title": "Testverein U14 vs. Gegner Süd U14",
+    "created": "2026-09-09T20:38:48.977012+02:00",
+    "start": "2026-09-09T17:12:35.202964+02:00",
+    "own_team_home_or_away": "home",
+    "opponent_club_name": "Gegner Süd U14",
+    "opponent_team_name": "Gegner Süd U14",
+    "has_analytics_enabled": true,
+    "analytics_version": "2",
+    "team": {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "slug": "testverein-u14-0001",
+      "name": "Testverein U14"
+    },
+    "info": {
+      "age_group": "U15",
+      "stats": {
+        "score": { "own": null, "opponent": null },
+        "score_aggregated": { "own": 9, "opponent": 0 }
+      }
+    }
+  }
+]

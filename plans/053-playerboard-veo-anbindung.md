@@ -151,3 +151,42 @@ Erst wenn 052 und 053 im Produktivbetrieb laufen:
 - **Wer verbindet Veo?** In playerboard tut es der Trainer. In Vereinsfunk gehören Integrationsquellen der Abteilung (`integration.manage` hat nur `department_admin`). Empfehlung: Trainer dürfen über `playerboard.manage` genau eine Veo-Quelle für die eigene Mannschaft anlegen; andere Integrationsarten bleiben bei der Abteilung.
 - **Veo-Spiele ohne Gegenstück im Spielplan** legen neue `fixtures` an. Ein Verein, der seinen Spielplan sorgfältig per iCal pflegt, will vielleicht nur zusammenführen und nie anlegen. Empfehlung: Schalter an der Quelle „nur zu vorhandenen Spielen zuordnen“, Standard aus.
 - **Alte öffentliche URLs** (`/public/<slug>/ranking` auf haex.space). Da es keine relevanten Nutzer gibt, reicht vermutlich eine pauschale Weiterleitung auf die Vereinsfunk-Startseite.
+
+## Umsetzung PR 1: Ergebnis und Abweichungen vom Plan
+
+Umgesetzt am 2026-10-08: `packages/veo-client`, ohne Aufrufer.
+- **`captureSessionViaLogin()`:** Anmeldung über Veos Login-Seite im Browser, Ergebnis ist das Session-Cookie.
+- **`exchangeSessionCookieForToken()`:** stille OIDC-Anmeldung mit PKCE.
+- **Listen:** `listOwnClubs()`, `listClubTeams()`, `listMatches()`.
+- **Werte:** `fetchTeamStats()`, `fetchPlayerStats()`.
+- **Parser:** `parseMatchList()`, `parseTeamStats()`, `parsePlayerStats()`, jeweils mit Zod-Schema.
+- **Fehler** als `VeoError` mit fachlichem Code:
+  - `login_failed`;
+  - `auth_expired` (Cookie erneuert sich nicht, Token abgelehnt, HTTP 401/403);
+  - `upstream_changed` (Antwortform geändert, Login-Formular fehlt);
+  - `upstream_error` (sonstige HTTP-Fehler, Netzwerk, Zeitüberschreitung nach 30 s).
+- **Ausgehende Aufrufe** gehen nur per HTTPS an `auth.veo.co` und `app.veo.co`. Weiterleitungen werden nicht verfolgt (`redirect: 'manual'`).
+
+Verifiziert:
+- 23 Vitest-Fälle gegen die aus playerboard übernommenen Aufnahmen und gegen Fakes für OIDC, API und Browser.
+- Alle Fälle der playerboard-Tests sind übernommen: verschachtelte `team.id`, kuratierte Spielerwerte, führende Nullen und ungültige Rückennummern, doppelte Einträge, geerbte Schlüssel, `team_id` im Spieleraufruf.
+- `pnpm lint`, `typecheck`, `test` (alle 39 Tasks) und `build` grün.
+- **Gegen den echten Veo-Account des Vereins geprüft** (2026-10-08). Das Skript lag außerhalb des Repositorys, die Zugangsdaten kamen aus der lokalen `.env` von playerboard und nichts davon wurde ausgegeben. Alle Schritte erfolgreich:
+  - Anmeldung im Browser (Chromium, etwa 6 s) und Token-Tausch;
+  - 1 Verein, 8 Mannschaften;
+  - 9 Spiele, alle mit Analyse und Ergebnis;
+  - Mannschaftswerte eines Spiels (30 Werte, beide Seiten, Spiel-ID aus der Antwort passt);
+  - Spielerwerte eines Spiels (24 Rückennummern, jeweils alle 9 kuratierten Werte).
+
+Abweichungen:
+
+- **Browser von außen.** Veo hat keine Login-API; playerboard steuert dafür Chromium mit Playwright. Das Paket bekommt den Browser als Funktion übergeben (`LoginBrowser`, der benutzte Ausschnitt der Playwright-API) und hängt selbst nicht an Playwright. Wo die Anmeldung läuft (API oder Worker, der schon Chromium mitbringt), entscheidet PR 2.
+- **Strengere Erfolgsprüfung beim Login.** Die Anmeldung gilt erst als erfolgreich, wenn die Seite auf `app.veo.co` außerhalb von `/accounts/login` landet (playerboard prüfte nur den Host).
+- **Ganze Historie seitenweise.** playerboard las nur die ersten 50 Spiele. `listMatches()` blättert mit `page`, bis eine Seite kürzer ist, nichts Neues bringt oder Veo mit `404` antwortet.
+  - Live belegt: Mit 5 Spielen je Seite liefern zwei Seiten dieselben 9 Spiele wie eine Seite mit 50. Veo wertet `page` also aus, und der erste Sync holt wirklich die ganze Historie.
+  - Würde Veo den Parameter künftig ignorieren, endet die Schleife nach der ersten Seite; das Verhalten wäre dann dasselbe wie in playerboard.
+- **Werte je Spiel.**
+  - Mannschaftswerte werden der `match_id` der Antwort zugeordnet statt einer vom Aufrufer übergebenen Spiel-ID.
+  - Spielerwerte kommen mit genau einem Spiel je Aufruf, weil Veo bei `group_by: player` über alle übergebenen Spiele zusammenfasst (`cross_match`).
+- **Kaderzuordnung nicht im Paket.** `parsePlayerStats()` liefert Werte je Rückennummer. Die Zuordnung zu `playerboard_players` samt `matched_manually` gehört zum Sync (PR 2).
+- **Aufnahmen anonymisiert.** Veo-IDs, Vereins- und Gegnernamen sind ersetzt (`packages/veo-client/src/__fixtures__`); Struktur und Werte sind unverändert.

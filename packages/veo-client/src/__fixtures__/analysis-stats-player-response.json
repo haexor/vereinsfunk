@@ -1,0 +1,47 @@
+{
+  "items": [
+    {
+      "type": "cross_match_player",
+      "team_id": "00000000-0000-4000-8000-000000000002",
+      "match_ids": ["00000000-0000-4000-8000-000000000005"],
+      "player_id": "00000000-0000-4000-8000-000000000006",
+      "jersey_number": "7",
+      "stats": [
+        { "type": "distance_total_meters", "value": 8532.4, "unit": "meter" },
+        { "type": "sprints_total", "value": 14, "unit": "count" },
+        { "type": "top_speed_kmh", "value": 27.8, "unit": "kilometer_per_hour" },
+        { "type": "average_speed_kmh", "value": 7.6, "unit": "kilometer_per_hour" },
+        { "type": "high_intensity_runs_total", "value": 9, "unit": "count" },
+        { "type": "seconds_played_total", "value": 5400, "unit": "second" },
+        { "type": "football_shots_total", "value": 3, "unit": "count" },
+        { "type": "football_goal_total", "value": 1, "unit": "count" },
+        { "type": "football_goal_involvement_total", "value": 2, "unit": "count" },
+        { "type": "football_touches_total", "value": 41, "unit": "count" }
+      ]
+    },
+    {
+      "type": "cross_match_player",
+      "team_id": "00000000-0000-4000-8000-000000000002",
+      "match_ids": ["00000000-0000-4000-8000-000000000005"],
+      "player_id": null,
+      "jersey_number": "10",
+      "stats": [
+        { "type": "distance_total_meters", "value": 7210.9, "unit": "meter" },
+        { "type": "sprints_total", "value": 8, "unit": "count" },
+        { "type": "seconds_played_total", "value": 5100, "unit": "second" }
+      ]
+    },
+    {
+      "type": "cross_match_player",
+      "team_id": "00000000-0000-4000-8000-000000000002",
+      "match_ids": ["00000000-0000-4000-8000-000000000005"],
+      "player_id": null,
+      "jersey_number": "99",
+      "stats": [
+        { "type": "distance_total_meters", "value": 3000, "unit": "meter" },
+        { "type": "sprints_total", "value": 2, "unit": "count" }
+      ]
+    }
+  ],
+  "meta": {}
+}

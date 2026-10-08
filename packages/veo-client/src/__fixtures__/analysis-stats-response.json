@@ -1,0 +1,245 @@
+{
+  "items": [
+    {
+      "type": "team_match_association",
+      "team_id": "00000000-0000-4000-8000-000000000002",
+      "match_id": "00000000-0000-4000-8000-000000000004",
+      "team_association": "own",
+      "stats": [
+        {
+          "category": { "id": "attacking", "label": "Angriff", "translation_key": "stat_category.attacking" },
+          "unit": "count",
+          "value": 2,
+          "periods": [{ "period": 1, "value": 0 }, { "period": 2, "value": 2 }],
+          "type": "football_goal_total",
+          "event_type": "FootballGoal"
+        },
+        {
+          "category": { "id": "attacking", "label": "Angriff", "translation_key": "stat_category.attacking" },
+          "unit": "count",
+          "value": 8,
+          "periods": [{ "period": 1, "value": 1 }, { "period": 2, "value": 7 }],
+          "type": "football_shots_total",
+          "computed_type": "MissedShots"
+        },
+        {
+          "category": { "id": "attacking", "label": "Angriff", "translation_key": "stat_category.attacking" },
+          "unit": "count",
+          "value": 10,
+          "periods": [{ "period": 1, "value": 1 }, { "period": 2, "value": 9 }],
+          "type": "football_attempts_total",
+          "event_type": "FootballShot"
+        },
+        {
+          "category": { "id": "set_pieces", "label": "Standardsituationen", "translation_key": "stat_category.set_pieces" },
+          "unit": "count",
+          "value": 0,
+          "periods": [{ "period": 1, "value": 0 }],
+          "type": "football_corner_total",
+          "event_type": "FootballCornerKick"
+        },
+        {
+          "category": { "id": "set_pieces", "label": "Standardsituationen", "translation_key": "stat_category.set_pieces" },
+          "unit": "count",
+          "value": 7,
+          "periods": [{ "period": 1, "value": 3 }, { "period": 2, "value": 4 }],
+          "type": "football_free_kick_total",
+          "event_type": "FootballFreeKick"
+        },
+        {
+          "category": { "id": "set_pieces", "label": "Standardsituationen", "translation_key": "stat_category.set_pieces" },
+          "unit": "count",
+          "value": 4,
+          "periods": [{ "period": 1, "value": 3 }, { "period": 2, "value": 1 }],
+          "type": "football_goal_kick_total",
+          "event_type": "FootballGoalKick"
+        },
+        {
+          "category": { "id": "set_pieces", "label": "Standardsituationen", "translation_key": "stat_category.set_pieces" },
+          "unit": "count",
+          "value": 2,
+          "periods": [{ "period": 1, "value": 0 }, { "period": 2, "value": 2 }],
+          "type": "football_throw_in_total",
+          "event_type": "FootballThrowIn"
+        },
+        {
+          "category": { "id": "discipline", "label": "Disziplin", "translation_key": "stat_category.discipline" },
+          "unit": "count",
+          "value": 2,
+          "periods": [{ "period": 1, "value": 0 }, { "period": 2, "value": 2 }],
+          "type": "football_foul_total",
+          "event_type": "FootballFoul"
+        },
+        {
+          "category": { "id": "set_pieces", "label": "Standardsituationen", "translation_key": "stat_category.set_pieces" },
+          "unit": "count",
+          "value": 0,
+          "periods": [],
+          "type": "football_penalty_total",
+          "event_type": "FootballPenaltyKick"
+        },
+        {
+          "category": { "id": "defending", "label": "Verteidigung", "translation_key": "stat_category.defending" },
+          "unit": "count",
+          "value": 24,
+          "periods": [{ "period": 1, "value": 6 }, { "period": 2, "value": 18 }],
+          "type": "football_tackle_total",
+          "event_type": "tackle"
+        },
+        {
+          "category": { "id": "attacking", "label": "Angriff", "translation_key": "stat_category.attacking" },
+          "unit": "count",
+          "value": 9,
+          "periods": [{ "period": 1, "value": 3 }, { "period": 2, "value": 6 }],
+          "type": "football_dribble_total",
+          "event_type": "dribble"
+        },
+        {
+          "category": { "id": "defending", "label": "Verteidigung", "translation_key": "stat_category.defending" },
+          "unit": "count",
+          "value": 11,
+          "periods": [{ "period": 1, "value": 6 }, { "period": 2, "value": 5 }],
+          "type": "football_interception_total",
+          "event_type": "interception"
+        },
+        {
+          "category": { "id": "defending", "label": "Verteidigung", "translation_key": "stat_category.defending" },
+          "unit": "count",
+          "value": 15,
+          "periods": [{ "period": 1, "value": 5 }, { "period": 2, "value": 10 }],
+          "type": "football_loose_total",
+          "event_type": "loose"
+        },
+        {
+          "category": { "id": "goalkeeping", "label": "Torwartspiel", "translation_key": "stat_category.goalkeeping" },
+          "unit": "count",
+          "value": 1,
+          "periods": [{ "period": 1, "value": 0 }, { "period": 2, "value": 1 }],
+          "type": "football_save_total",
+          "event_type": "save"
+        }
+      ]
+    },
+    {
+      "type": "team_match_association",
+      "team_id": "00000000-0000-4000-8000-000000000002",
+      "match_id": "00000000-0000-4000-8000-000000000004",
+      "team_association": "opponent",
+      "stats": [
+        {
+          "category": { "id": "attacking", "label": "Angriff", "translation_key": "stat_category.attacking" },
+          "unit": "count",
+          "value": 2,
+          "periods": [{ "period": 1, "value": 1 }, { "period": 2, "value": 1 }],
+          "type": "football_goal_total",
+          "event_type": "FootballGoal"
+        },
+        {
+          "category": { "id": "attacking", "label": "Angriff", "translation_key": "stat_category.attacking" },
+          "unit": "count",
+          "value": 3,
+          "periods": [{ "period": 1, "value": 2 }, { "period": 2, "value": 1 }],
+          "type": "football_shots_total",
+          "computed_type": "MissedShots"
+        },
+        {
+          "category": { "id": "attacking", "label": "Angriff", "translation_key": "stat_category.attacking" },
+          "unit": "count",
+          "value": 5,
+          "periods": [{ "period": 1, "value": 3 }, { "period": 2, "value": 2 }],
+          "type": "football_attempts_total",
+          "event_type": "FootballShot"
+        },
+        {
+          "category": { "id": "set_pieces", "label": "Standardsituationen", "translation_key": "stat_category.set_pieces" },
+          "unit": "count",
+          "value": 1,
+          "periods": [{ "period": 1, "value": 1 }],
+          "type": "football_corner_total",
+          "event_type": "FootballCornerKick"
+        },
+        {
+          "category": { "id": "set_pieces", "label": "Standardsituationen", "translation_key": "stat_category.set_pieces" },
+          "unit": "count",
+          "value": 2,
+          "periods": [{ "period": 1, "value": 0 }, { "period": 2, "value": 2 }],
+          "type": "football_free_kick_total",
+          "event_type": "FootballFreeKick"
+        },
+        {
+          "category": { "id": "set_pieces", "label": "Standardsituationen", "translation_key": "stat_category.set_pieces" },
+          "unit": "count",
+          "value": 5,
+          "periods": [{ "period": 1, "value": 2 }, { "period": 2, "value": 3 }],
+          "type": "football_goal_kick_total",
+          "event_type": "FootballGoalKick"
+        },
+        {
+          "category": { "id": "set_pieces", "label": "Standardsituationen", "translation_key": "stat_category.set_pieces" },
+          "unit": "count",
+          "value": 12,
+          "periods": [{ "period": 1, "value": 5 }, { "period": 2, "value": 7 }],
+          "type": "football_throw_in_total",
+          "event_type": "FootballThrowIn"
+        },
+        {
+          "category": { "id": "discipline", "label": "Disziplin", "translation_key": "stat_category.discipline" },
+          "unit": "count",
+          "value": 1,
+          "periods": [{ "period": 1, "value": 1 }, { "period": 2, "value": 0 }],
+          "type": "football_foul_total",
+          "event_type": "FootballFoul"
+        },
+        {
+          "category": { "id": "set_pieces", "label": "Standardsituationen", "translation_key": "stat_category.set_pieces" },
+          "unit": "count",
+          "value": 0,
+          "periods": [],
+          "type": "football_penalty_total",
+          "event_type": "FootballPenaltyKick"
+        },
+        {
+          "category": { "id": "defending", "label": "Verteidigung", "translation_key": "stat_category.defending" },
+          "unit": "count",
+          "value": 28,
+          "periods": [{ "period": 1, "value": 7 }, { "period": 2, "value": 21 }],
+          "type": "football_tackle_total",
+          "event_type": "tackle"
+        },
+        {
+          "category": { "id": "attacking", "label": "Angriff", "translation_key": "stat_category.attacking" },
+          "unit": "count",
+          "value": 27,
+          "periods": [{ "period": 1, "value": 6 }, { "period": 2, "value": 21 }],
+          "type": "football_dribble_total",
+          "event_type": "dribble"
+        },
+        {
+          "category": { "id": "defending", "label": "Verteidigung", "translation_key": "stat_category.defending" },
+          "unit": "count",
+          "value": 15,
+          "periods": [{ "period": 1, "value": 7 }, { "period": 2, "value": 8 }],
+          "type": "football_interception_total",
+          "event_type": "interception"
+        },
+        {
+          "category": { "id": "defending", "label": "Verteidigung", "translation_key": "stat_category.defending" },
+          "unit": "count",
+          "value": 14,
+          "periods": [{ "period": 1, "value": 4 }, { "period": 2, "value": 10 }],
+          "type": "football_loose_total",
+          "event_type": "loose"
+        },
+        {
+          "category": { "id": "goalkeeping", "label": "Torwartspiel", "translation_key": "stat_category.goalkeeping" },
+          "unit": "count",
+          "value": 5,
+          "periods": [{ "period": 1, "value": 1 }, { "period": 2, "value": 4 }],
+          "type": "football_save_total",
+          "event_type": "save"
+        }
+      ]
+    }
+  ],
+  "meta": {}
+}
