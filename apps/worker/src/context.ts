@@ -378,6 +378,10 @@ export function createVisionProviderComparisonRepository(config: WorkerEnvironme
 }
 
 const VeoApplyResultSchema: z.ZodType<VeoApplyResult> = z.enum(['created', 'updated', 'conflict', 'ignored'])
+const VeoRunRowSchema = z.object({ source_id: UuidSchema, status: z.string().min(1) })
+const VeoLinkRowSchema = z.object({ team_id: UuidSchema, veo_club_slug: z.string().min(1), veo_team_slug: z.string().min(1) })
+const VeoTeamRowSchema = z.object({ name: z.string().min(1) })
+const VeoSecretRowSchema = z.object({ secret_ciphertext: z.string(), key_version: z.string().min(1) })
 
 /** Paket 053: Daten des Veo-Abgleichs. Das versiegelte Cookie verlaesst diese Schicht nur als Ciphertext. */
 export function createVeoSyncRepository(config: WorkerEnvironment): VeoSyncRepository & { enqueueScheduled(): Promise<number> } {
@@ -386,25 +390,29 @@ export function createVeoSyncRepository(config: WorkerEnvironment): VeoSyncRepos
     async loadRun(runId, organizationId) {
       const { data, error } = await client.from('integration_sync_runs').select('source_id, status').eq('id', runId).eq('organization_id', organizationId).maybeSingle()
       if (error) throw error
-      return data ? { sourceId: data.source_id as string, status: data.status as string } : null
+      const row = data ? VeoRunRowSchema.parse(data) : null
+      return row ? { sourceId: row.source_id, status: row.status } : null
     },
     async loadSource(sourceId) {
       const link = await client.from('playerboard_veo_links').select('team_id, veo_club_slug, veo_team_slug').eq('integration_source_id', sourceId).maybeSingle()
       if (link.error) throw link.error
       if (!link.data) return null
-      const team = await client.from('teams').select('name').eq('id', link.data.team_id as string).single()
+      const linkRow = VeoLinkRowSchema.parse(link.data)
+      const team = await client.from('teams').select('name').eq('id', linkRow.team_id).single()
       if (team.error) throw team.error
+      const teamRow = VeoTeamRowSchema.parse(team.data)
       const secret = await client.from('integration_source_secrets').select('secret_ciphertext, key_version').eq('source_id', sourceId).maybeSingle()
       if (secret.error) throw secret.error
-      const ciphertext = secret.data?.secret_ciphertext as string | undefined
+      const secretRow = secret.data ? VeoSecretRowSchema.parse(secret.data) : null
+      const ciphertext = secretRow?.secret_ciphertext
       return {
-        teamId: link.data.team_id as string,
-        teamName: team.data.name as string,
-        veoClubSlug: link.data.veo_club_slug as string,
-        veoTeamSlug: link.data.veo_team_slug as string,
+        teamId: linkRow.team_id,
+        teamName: teamRow.name,
+        veoClubSlug: linkRow.veo_club_slug,
+        veoTeamSlug: linkRow.veo_team_slug,
         // bytea kommt ueber PostgREST als Hex-Escape (\x...), siehe apps/api/src/secretBox.ts.
         secret: ciphertext?.startsWith('\\x')
-          ? { ciphertext: Buffer.from(ciphertext.slice(2), 'hex'), keyVersion: secret.data!.key_version as string }
+          ? { ciphertext: Buffer.from(ciphertext.slice(2), 'hex'), keyVersion: secretRow!.key_version }
           : null,
       }
     },

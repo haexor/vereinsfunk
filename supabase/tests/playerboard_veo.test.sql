@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(25);
+select plan(26);
 
 set local role postgres;
 
@@ -142,6 +142,12 @@ select results_eq(
       from public.integration_sync_conflicts where sync_run_id = (select run_id from veo_run)$$,
   $$values ('ambiguous_match'::text, 'match-c'::text, 0)$$,
   'the conflict is recorded and the match is not mapped'
+);
+select is(
+  public.playerboard_veo_apply_match((select run_id from veo_run), jsonb_build_object(
+    'veoMatchId', 'match-c', 'veoTeamId', 'veo-team', 'start', '2026-09-19T10:30:00Z', 'opponentName', 'Gamma',
+    'isHome', true, 'ownScore', 2, 'opponentScore', 2, 'teamStats', '[]'::jsonb, 'players', '[]'::jsonb)),
+  'conflict', 'a repeated ambiguous match does not create a duplicate conflict'
 );
 
 -- 15-17: Spieler sieht die Werte, Nachbarmannschaft nicht, das Geheimnis niemand.

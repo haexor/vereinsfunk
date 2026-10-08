@@ -180,6 +180,7 @@ declare
   team_row public.teams;
   existing public.playerboard_veo_links;
   secret_id uuid;
+  linked_team_id uuid;
 begin
   select * into team_row from public.teams where id = p_team_id;
   if not found then raise exception 'team_not_found' using errcode = 'P0002'; end if;
@@ -218,7 +219,13 @@ begin
   on conflict (team_id) do update set
     veo_club_slug = excluded.veo_club_slug, veo_club_name = excluded.veo_club_name,
     veo_team_slug = excluded.veo_team_slug, veo_team_name = excluded.veo_team_name,
-    linked_by = excluded.linked_by, consecutive_failures = 0, last_error_code = null, failure_notified_at = null;
+    linked_by = excluded.linked_by, consecutive_failures = 0, last_error_code = null, failure_notified_at = null
+    where playerboard_veo_links.integration_source_id = excluded.integration_source_id
+  returning team_id into linked_team_id;
+
+  if linked_team_id is null then
+    raise exception 'veo_link_changed' using errcode = '40001';
+  end if;
 
   return p_source_id;
 end;
@@ -409,6 +416,11 @@ begin
                   where organization_id = veo.organization_id and source_id = veo.integration_source_id
                     and fingerprint = v_fingerprint and resolution = 'ignore_permanently') then
         return 'ignored';
+      end if;
+      if exists (select 1 from public.integration_sync_conflicts
+                  where organization_id = veo.organization_id and source_id = veo.integration_source_id
+                    and fingerprint = v_fingerprint and resolution = 'pending') then
+        return 'conflict';
       end if;
       select timezone into org_timezone from public.organizations where id = veo.organization_id;
       insert into public.integration_sync_conflicts (

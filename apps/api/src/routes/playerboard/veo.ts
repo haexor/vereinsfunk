@@ -60,7 +60,15 @@ async function loadLink(service: SupabaseClient, teamId: string): Promise<LinkRo
     .eq('team_id', teamId)
     .maybeSingle()
   if (link.error) throw link.error
-  return (link.data as LinkRow | null) ?? null
+  return link.data ? z.object({
+    team_id: UuidSchema,
+    organization_id: UuidSchema,
+    integration_source_id: UuidSchema,
+    veo_club_name: z.string().min(1),
+    veo_team_name: z.string().min(1),
+    consecutive_failures: z.number().int().nonnegative(),
+    last_error_code: z.string().nullable(),
+  }).parse(link.data) : null
 }
 
 /** Baut den Verbindungsstatus samt der letzten zehn Laeufe. */

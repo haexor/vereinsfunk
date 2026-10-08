@@ -3,6 +3,7 @@ import {
   IntegrationSourceSchema,
   IntegrationSyncConflictSchema,
   IntegrationSyncRunSchema,
+  PlayerboardVeoSyncAcceptedSchema,
   SyncSourceResponseSchema,
   type IntegrationSource,
   type IntegrationSyncConflict,
@@ -240,9 +241,18 @@ async function runSync(source: IntegrationSource) {
   syncNotice.value = ''
   try {
     if (source.transport === 'http') {
-      await api.request(`/v1/integration-sources/${source.id}/sync`, { method: 'POST', body: {} })
+      const queued = PlayerboardVeoSyncAcceptedSchema.parse(await api.request(`/v1/integration-sources/${source.id}/sync`, { method: 'POST', body: {} }))
       syncNotice.value = 'Abgleich gestartet. Das Ergebnis erscheint gleich im Verlauf.'
-      if (historySourceId.value === source.id) await loadHistory(source.id)
+      if (historySourceId.value === source.id) {
+        while (historySourceId.value === source.id) {
+          const loaded = await loadHistory(source.id)
+          if (!loaded) break
+          const run = historyRuns.value.find((item) => item.id === queued.runId)
+          if (run && run.status !== 'running') break
+          await new Promise((resolve) => setTimeout(resolve, 1000))
+        }
+      }
+      await load()
       return
     }
     let response: unknown
@@ -273,12 +283,14 @@ const historySourceId = ref<string | null>(null)
 const historyRuns = ref<IntegrationSyncRun[]>([])
 const historyLoading = ref(false)
 
-async function loadHistory(sourceId: string) {
+async function loadHistory(sourceId: string): Promise<boolean> {
   historyLoading.value = true
   try {
     historyRuns.value = await api.request(`/v1/integration-sources/${sourceId}/sync-runs`, {}, IntegrationSyncRunSchema.array())
+    return true
   } catch {
     historyRuns.value = []
+    return false
   } finally {
     historyLoading.value = false
   }
