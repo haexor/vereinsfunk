@@ -147,6 +147,7 @@ Stand: 2026-10-05, geplant auf `e3fb52d`. **Betreiberentscheidung 2026-10-05:** 
 | 052 | [PlayerBoard-Modul: Trainings, Punkte, Rangliste und Trainingsfotos](052-playerboard-modul.md) | 051, 054, 014, 015 | umgesetzt (#209, #210, #211, #212); Trainer legen Spieler selbst an; öffentliche Mannschaftsseite mit Rückennummer und Initialen, Fotos auf Wunsch |
 | 053 | [PlayerBoard: Veo-Anbindung, Spielstatistiken und öffentliche Veo-Werte](053-playerboard-veo-anbindung.md) | 052, 019, 026 | bereit; für jeden Verein mit PlayerBoard freigeschaltet (Betreiberentscheidung trotz inoffizieller Veo-API); PR 4 schaltet playerboard ab |
 | 055 | [Modulsichtbarkeit nach Mitgliedschaft und Rechten](055-modulsichtbarkeit-nach-mitgliedschaft.md) | 051, 052 | umgesetzt, PR offen; Betreiberentscheidung 2026-10-08: Verein legt Module je Abteilung fest, Abteilung und Mannschaft schränken weiter ein; die Oberfläche wertet das je Person nach Mitgliedschaft und Rechten aus |
+| 056 | [Rahmen-Navigation nach Rechten](056-rahmen-navigation-nach-rechten.md) | 055 | umgesetzt, PR offen (auf #213 aufgesetzt); „Verein verwalten“ zeigt nur Einträge, auf denen die Person etwas sehen oder tun kann (Betreiberentscheidung 2026-10-08) |
 
 Reihenfolge: 051 zuerst und vollständig. Der Rahmen darf das Verhalten des Social-Media-Moduls nicht verändern, und das muss vor dem ersten neuen Modul nachgewiesen sein. 054 ist unabhängig von 051 und kann parallel laufen, muss aber vor 052 fertig sein. Danach 052 (PR 1–4) und 053. playerboard läuft bis zum Abschluss von 053 PR 3 unverändert weiter.
 
