@@ -40,6 +40,7 @@ describe('useScopeModules', () => {
     vi.stubGlobal('computed', computed)
     vi.stubGlobal('useApiClient', () => api)
     vi.stubGlobal('useScope', async () => scope)
+    vi.stubGlobal('useSession', async () => ref(null))
 
     const modules = await useScopeModules()
     expect(modules.entries.value?.[0]?.scopeId).toBe(ORGANIZATION_A)

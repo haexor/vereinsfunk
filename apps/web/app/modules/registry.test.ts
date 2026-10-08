@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { AppModuleSchema, type ScopeModules } from '@vereinsfunk/contracts'
 import { describe, expect, it } from 'vitest'
-import { appModuleOrder, appModuleRegistry, enabledModulesOf, moduleForPath, moduleToggleState, nextModuleSelection, scopeModulesFor } from './registry'
+import { anchorScopes, appModuleOrder, appModuleRegistry, canUsePermission, enabledModulesOf, moduleAvailability, moduleForPath, moduleToggleState, nextModuleSelection, scopeModulesFor, type MembershipScopeLike } from './registry'
 
 const ORG = '10000000-1000-4000-8000-000000000001'
 const DEPT = '10000000-1100-4000-8000-000000000001'
@@ -122,7 +122,7 @@ describe('app shell wiring', () => {
   it('builds the sidebar from the registry and hides post creation without social media', () => {
     const layout = readFileSync(join(appDirectory, 'layouts/default.vue'), 'utf8')
     expect(layout).toContain('appModuleRegistry[module].navigation')
-    expect(layout).toContain(`v-if="isModuleEnabled('social_media')" to="/erstellen"`)
+    expect(layout).toContain(`v-if="isModuleEnabled('social_media') && canUse('post.create')" to="/erstellen"`)
     expect(layout).not.toContain("to: '/beitraege'")
   })
 
@@ -130,5 +130,82 @@ describe('app shell wiring', () => {
     const middleware = readFileSync(join(appDirectory, 'middleware/module.global.ts'), 'utf8')
     expect(middleware).toContain('moduleForPath(to.path)')
     expect(middleware).toContain("path: '/modul-inaktiv'")
+  })
+})
+
+// Paket 055: Sichtbarkeit je Person nach Mitgliedschaft und Rechten.
+describe('module availability per person', () => {
+  const OTHER_DEPT = '10000000-1100-4000-8000-000000000002'
+  const both = [{ module: 'social_media' as const, enabled: true, blockedBy: null }, { module: 'playerboard' as const, enabled: true, blockedBy: null }]
+  const entries = [
+    entry({ scope: 'organization', scopeId: ORG, name: 'SV', departmentId: null, modules: both }),
+    entry({ scope: 'department', scopeId: DEPT, name: 'Fussball', departmentId: DEPT, modules: both }),
+    entry({ scope: 'department', scopeId: OTHER_DEPT, name: 'Handball', departmentId: OTHER_DEPT, modules: [
+      { module: 'social_media', enabled: false, blockedBy: 'department' }, { module: 'playerboard', enabled: true, blockedBy: null },
+    ] }),
+    // Die Abteilung hat Social Media fuer die U13 abgewaehlt.
+    entry({ scope: 'team', scopeId: TEAM, name: 'U13', departmentId: DEPT, modules: [
+      { module: 'social_media', enabled: false, blockedBy: 'team' }, { module: 'playerboard', enabled: true, blockedBy: null },
+    ] }),
+  ]
+  /** Sitzungs-Scope mit Rollen auf Verein, Fussball (DEPT), Handball und der U13. */
+  function membership(roles: { organization?: MembershipScopeLike['organizationRoles']; department?: MembershipScopeLike['organizationRoles']; otherDepartment?: MembershipScopeLike['organizationRoles']; team?: MembershipScopeLike['organizationRoles'] }): MembershipScopeLike {
+    return {
+      organizationId: ORG,
+      organizationRoles: roles.organization ?? [],
+      departments: [
+        { id: DEPT, roles: roles.department ?? [], teams: [{ id: TEAM, roles: roles.team ?? [] }] },
+        { id: OTHER_DEPT, roles: roles.otherDepartment ?? [], teams: [] },
+      ],
+    }
+  }
+  const atOrganization = { organizationId: ORG, departmentId: null }
+
+  it('leaves an organization role unchanged', () => {
+    const anchors = anchorScopes(membership({ organization: ['organization_admin'] }), atOrganization)
+    expect(moduleAvailability(entries, anchors, 'social_media').state).toBe('visible')
+    expect(moduleAvailability(entries, anchors, 'playerboard').state).toBe('visible')
+  })
+
+  it('hides social media from a player even where it is active', () => {
+    const anchors = anchorScopes(membership({ team: ['player'] }), atOrganization)
+    expect(anchors.map((anchor) => anchor.scope)).toEqual(['team'])
+    expect(moduleAvailability(entries, anchors, 'social_media').state).toBe('no_access')
+    expect(moduleAvailability(entries, anchors, 'playerboard').state).toBe('visible')
+    expect(canUsePermission(entries, anchors, 'post.create')).toBe(false)
+  })
+
+  it('applies a team-level deselection to a team-only member in the organization working area', () => {
+    const anchors = anchorScopes(membership({ team: ['team_manager'] }), atOrganization)
+    const result = moduleAvailability(entries, anchors, 'social_media')
+    expect(result.state).toBe('disabled')
+    expect(result.explanation?.scopeId).toBe(TEAM)
+    expect(canUsePermission(entries, anchors, 'post.create')).toBe(false)
+    expect(canUsePermission(entries, anchors, 'training.manage')).toBe(true)
+  })
+
+  it('takes the department where a department admin holds the role, not the organization', () => {
+    const anchors = anchorScopes(membership({ otherDepartment: ['department_admin'] }), atOrganization)
+    expect(moduleAvailability(entries, anchors, 'social_media').state).toBe('disabled')
+    expect(moduleAvailability(entries, anchors, 'playerboard').state).toBe('visible')
+  })
+
+  it('treats an organization member working in a department as a member of that department', () => {
+    const anchors = anchorScopes(membership({ organization: ['social_manager'] }), { organizationId: ORG, departmentId: OTHER_DEPT })
+    expect(anchors).toEqual([{ scope: 'department', scopeId: OTHER_DEPT, roles: ['social_manager'] }])
+    expect(moduleAvailability(entries, anchors, 'social_media').state).toBe('disabled')
+  })
+
+  it('keeps permissions in force while the module list is unknown', () => {
+    const player = anchorScopes(membership({ team: ['player'] }), atOrganization)
+    expect(moduleAvailability(null, player, 'social_media').state).toBe('no_access')
+    expect(moduleAvailability(null, player, 'playerboard').state).toBe('visible')
+    const coach = anchorScopes(membership({ team: ['team_manager'] }), atOrganization)
+    expect(canUsePermission(null, coach, 'post.create')).toBe(true)
+  })
+
+  it('shows PlayerBoard management only with playerboard.manage', () => {
+    const management = appModuleRegistry.playerboard.managementNavigation
+    expect(management.every((item) => item.permissions?.includes('playerboard.manage'))).toBe(true)
   })
 })

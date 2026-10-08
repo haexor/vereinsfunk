@@ -8,8 +8,14 @@ const scope = await useScope()
 // Paket 051, PR 3: Kennzahlen, Beitragsliste, Redaktionsplan und Anlassvorschlaege gehoeren zum
 // Modul social_media. Eine modulübergreifende Kachel-API gibt es bewusst nicht; PlayerBoard haengt
 // in Paket 052 seine eigene Kachel hier direkt ein.
-const { isEnabled: isModuleEnabled } = await useScopeModules()
+const { isEnabled: isModuleEnabled, availability: moduleAvailability, canUse, explanation: moduleExplanation } = await useScopeModules()
 const socialMediaActive = computed(() => isModuleEnabled('social_media'))
+// Paket 055: ohne Social-Media-Recht (z. B. Spieler) gibt es hier weder Kacheln noch den Hinweis
+// "nicht aktiviert" -- das Modul betrifft die Person schlicht nicht.
+const socialMediaRelevant = computed(() => moduleAvailability('social_media') !== 'no_access')
+const canCreatePost = computed(() => socialMediaActive.value && canUse('post.create'))
+// Die Ebene, auf der Social Media fuer diese Person abgewaehlt ist (z. B. ihre Mannschaft).
+const socialMediaBlockedIn = computed(() => moduleExplanation('social_media').explanation?.name ?? department.value)
 // Paket 052, PR 4: die PlayerBoard-Kachel nur, wenn es im Arbeitsbereich eine Mannschaft gibt --
 // ein Verein ohne Mannschaften soll keine leere Kachel sehen.
 const { teams: playerboardTeams } = await usePlayerboardTeam()
@@ -60,7 +66,8 @@ function buildWeek(timeZone: string, posts: readonly DashboardPost[]): WeekDay[]
 async function loadDashboard() {
   if (import.meta.server) return
   const organizationId = scope.value?.organizationId
-  if (!organizationId) { loadingDashboard.value = false; return }
+  // Paket 055: Kennzahlen, Beitraege und Einrichtungsschritte gehoeren zu Social Media.
+  if (!organizationId || !socialMediaActive.value) { loadingDashboard.value = false; return }
   const departmentId = scope.value?.departmentId
   const supabase = useSupabaseClient()
 
@@ -161,7 +168,7 @@ await Promise.all([loadDashboard(), loadSuggestions()])
         <h1 class="font-display text-3xl font-extrabold tracking-[-.045em] text-ink sm:text-[38px]">Guten Tag, {{ firstName }}.</h1>
         <p class="mt-2 text-sm text-[#6c756f]">Was möchtest du heute für euren Verein bewegen?</p>
       </div>
-      <NuxtLink v-if="socialMediaActive" to="/erstellen" class="focus-ring inline-flex items-center justify-center gap-2 rounded-xl bg-forest px-5 py-3 text-sm font-bold text-white shadow-xs transition hover:-translate-y-0.5 hover:bg-[#1d4b39]">
+      <NuxtLink v-if="canCreatePost" to="/erstellen" class="focus-ring inline-flex items-center justify-center gap-2 rounded-xl bg-forest px-5 py-3 text-sm font-bold text-white shadow-xs transition hover:-translate-y-0.5 hover:bg-[#1d4b39]">
         <Plus :size="17" /> Neuer Beitrag
       </NuxtLink>
     </header>
@@ -191,11 +198,11 @@ await Promise.all([loadDashboard(), loadSuggestions()])
       </article>
     </section>
 
-    <section class="grid gap-7 xl:grid-cols-[minmax(0,1.55fr)_minmax(310px,.75fr)]">
+    <section v-if="socialMediaRelevant" class="grid gap-7 xl:grid-cols-[minmax(0,1.55fr)_minmax(310px,.75fr)]">
       <div v-if="!socialMediaActive" class="space-y-7">
         <article class="card p-8 text-center">
           <Blocks :size="22" class="mx-auto mb-2 text-forest" />
-          <p class="text-sm font-semibold text-ink">In {{ department }} ist Social Media nicht aktiviert.</p>
+          <p class="text-sm font-semibold text-ink">In {{ socialMediaBlockedIn }} ist Social Media nicht aktiviert.</p>
           <p class="mt-1 text-xs text-[#7b827d]">Beiträge, Freigaben und Redaktionsplan erscheinen hier, sobald das Modul aktiv ist. Welche Module zur Verfügung stehen, legt die Vereins- oder Abteilungsverwaltung fest.</p>
           <NuxtLink to="/einstellungen/module" class="focus-ring mt-4 inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-forest hover:bg-stone-100">Module ansehen <ArrowRight :size="13" /></NuxtLink>
         </article>

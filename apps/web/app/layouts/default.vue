@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Blocks, BookUser, Building2, CalendarDays, CreditCard, LayoutDashboard, LogOut, Menu, Palette, Plug, Plus, Scale, Settings, ShieldCheck, Users, UserRound, UserSearch, X } from '@lucide/vue'
-import { appModuleOrder, appModuleRegistry, moduleForPath } from '../modules/registry'
+import { appModuleOrder, appModuleRegistry, moduleForPath, type ModuleNavItem } from '../modules/registry'
 import { deriveSidebarPalette } from '../utils/sidebarBrand'
 import { resolveSidebarLogoAsset, type SidebarLogoAsset } from '../utils/sidebarLogo'
 
@@ -8,7 +8,7 @@ const mobileOpen = ref(false)
 const route = useRoute()
 const session = await useSession()
 const scope = await useScope()
-const { enabled: enabledModules, isEnabled: isModuleEnabled, ensureLoaded: ensureScopeModulesLoaded } = await useScopeModules()
+const { enabled: enabledModules, isEnabled: isModuleEnabled, canUse, ensureLoaded: ensureScopeModulesLoaded } = await useScopeModules()
 
 watch(() => route.path, () => { mobileOpen.value = false })
 
@@ -149,10 +149,14 @@ const navigation: { label: string; to: string; icon: typeof LayoutDashboard; bad
   { label: 'Übersicht', to: '/', icon: LayoutDashboard },
   { label: 'Kalender', to: '/kalender', icon: CalendarDays },
 ]
+// Paket 055: Eintraege mit permissions nur mit einem dieser Rechte; Gruppen ohne sichtbaren Eintrag
+// entfallen ganz.
+const navItemVisible = (item: ModuleNavItem) => !item.permissions || item.permissions.some((permission) => canUse(permission))
 const moduleGroups = computed(() =>
   appModuleOrder
-    .filter((module) => isModuleEnabled(module) && appModuleRegistry[module].navigation.length > 0)
-    .map((module) => appModuleRegistry[module]),
+    .filter((module) => isModuleEnabled(module))
+    .map((module) => ({ ...appModuleRegistry[module], navigation: appModuleRegistry[module].navigation.filter(navItemVisible) }))
+    .filter((group) => group.navigation.length > 0),
 )
 const organizationNav: { label: string; to: string; icon: typeof LayoutDashboard; organizationOnly?: boolean }[] = [
   { label: 'Marke', to: '/marke', icon: Palette },
@@ -170,8 +174,9 @@ const organizationNav: { label: string; to: string; icon: typeof LayoutDashboard
 const visibleOrganizationNav = computed(() => organizationNav.filter((item) => !item.organizationOnly || !scope.value?.departmentId))
 const moduleManagementNav = computed(() =>
   appModuleOrder
-    .filter((module) => isModuleEnabled(module) && appModuleRegistry[module].managementNavigation.length > 0)
-    .map((module) => appModuleRegistry[module]),
+    .filter((module) => isModuleEnabled(module))
+    .map((module) => ({ ...appModuleRegistry[module], managementNavigation: appModuleRegistry[module].managementNavigation.filter(navItemVisible) }))
+    .filter((group) => group.managementNavigation.length > 0),
 )
 const organizationOnlyRoutes = new Set(organizationNav.filter((item) => item.organizationOnly).map((item) => item.to))
 
@@ -261,7 +266,7 @@ watch(
         </template>
       </div>
 
-      <NuxtLink v-if="isModuleEnabled('social_media')" to="/erstellen" class="focus-ring mb-6 flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold transition hover:-translate-y-0.5" :style="accentStyle">
+      <NuxtLink v-if="isModuleEnabled('social_media') && canUse('post.create')" to="/erstellen" class="focus-ring mb-6 flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold transition hover:-translate-y-0.5" :style="accentStyle">
         <Plus :size="17" stroke-width="2.5" /> Beitrag erstellen
       </NuxtLink>
 

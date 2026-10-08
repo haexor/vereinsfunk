@@ -1,4 +1,5 @@
 import { BarChart3, Bot, CheckCircle2, ClipboardList, Feather, FileSignature, FileText, Frame, LayoutGrid, Medal, Megaphone, Share2, SlidersHorizontal, Tags, Trophy, Users } from '@lucide/vue'
+import { hasPermission, permissionModule, permissions, type Permission, type Role } from '@vereinsfunk/authorization'
 import type { AppModule, ModuleBlockSource, ScopeLevel, ScopeModules } from '@vereinsfunk/contracts'
 import type { Component } from 'vue'
 
@@ -13,6 +14,9 @@ export interface ModuleNavItem {
   label: string
   to: string
   icon: Component
+  // Paket 055: nur mit einem dieser Rechte sichtbar (fehlt das Feld, erscheint der Eintrag mit
+  // dem Modul).
+  permissions?: readonly Permission[]
 }
 
 export interface AppModuleDefinition {
@@ -59,8 +63,8 @@ export const appModuleRegistry: Readonly<Record<AppModule, AppModuleDefinition>>
       { label: 'Kader', to: '/playerboard/kader', icon: Users },
     ],
     managementNavigation: [
-      { label: 'Kategorien', to: '/playerboard/kategorien', icon: Tags },
-      { label: 'Einstellungen', to: '/playerboard/einstellungen', icon: SlidersHorizontal },
+      { label: 'Kategorien', to: '/playerboard/kategorien', icon: Tags, permissions: ['playerboard.manage'] },
+      { label: 'Einstellungen', to: '/playerboard/einstellungen', icon: SlidersHorizontal, permissions: ['playerboard.manage'] },
     ],
     extraRoutes: [],
   },
@@ -89,6 +93,84 @@ export function scopeModulesFor(entries: readonly ScopeModules[], scope: { organ
 
 export function enabledModulesOf(entry: ScopeModules | null): AppModule[] {
   return entry ? entry.modules.filter((state) => state.enabled).map((state) => state.module) : []
+}
+
+// --- Paket 055: Sichtbarkeit je Person ----------------------------------------------------------
+
+// Was die Auswertung aus der Sitzung braucht (SessionScope aus useSession()).
+export interface MembershipScopeLike {
+  organizationId: string
+  organizationRoles: readonly Role[]
+  departments: readonly { id: string; roles: readonly Role[]; teams: readonly { id: string; roles: readonly Role[] }[] }[]
+}
+
+// Eine Ebene im Arbeitsbereich, auf der die Person eine eigene Rolle hat. roles enthaelt wie bei
+// useCan() auch die Rollen der Ebenen darueber.
+export interface AnchorScope {
+  scope: ScopeLevel
+  scopeId: string
+  roles: readonly Role[]
+}
+
+/**
+ * Ankerebenen der Person im Arbeitsbereich: Verein (mit Vereinsrolle), Abteilungen mit eigener
+ * Rolle (im Arbeitsbereich einer Abteilung auch ueber eine Vereinsrolle) und Mannschaften mit
+ * eigener Rolle.
+ */
+export function anchorScopes(membership: MembershipScopeLike | null, active: { organizationId: string; departmentId: string | null }): AnchorScope[] {
+  if (!membership || membership.organizationId !== active.organizationId) return []
+  const anchors: AnchorScope[] = []
+  const organizationRoles = membership.organizationRoles
+  if (!active.departmentId && organizationRoles.length > 0) {
+    anchors.push({ scope: 'organization', scopeId: membership.organizationId, roles: organizationRoles })
+  }
+  const departments = active.departmentId ? membership.departments.filter((department) => department.id === active.departmentId) : membership.departments
+  for (const department of departments) {
+    const departmentRoles = [...organizationRoles, ...department.roles]
+    const ownRoles = active.departmentId ? departmentRoles : department.roles
+    if (ownRoles.length > 0) anchors.push({ scope: 'department', scopeId: department.id, roles: departmentRoles })
+    for (const team of department.teams) {
+      if (team.roles.length > 0) anchors.push({ scope: 'team', scopeId: team.id, roles: [...departmentRoles, ...team.roles] })
+    }
+  }
+  return anchors
+}
+
+/** Hat eine der Rollen ein Recht, das zu diesem Modul gehoert? */
+function hasModulePermission(roles: readonly Role[], module: AppModule): boolean {
+  return permissions.some((permission) => permissionModule[permission] === module && hasPermission(roles, permission))
+}
+
+/** Wirkt das Modul auf der Ankerebene? Unbekannte Modulliste oder fehlender Eintrag: ja (fail open, wie 051). */
+function moduleActiveAt(entries: readonly ScopeModules[] | null, anchor: AnchorScope, module: AppModule): boolean {
+  const entry = entries?.find((item) => item.scope === anchor.scope && item.scopeId === anchor.scopeId)
+  if (!entry) return true
+  return entry.modules.some((state) => state.module === module && state.enabled)
+}
+
+export type ModuleAvailability = 'visible' | 'disabled' | 'no_access'
+
+/**
+ * Sichtbarkeit eines Moduls fuer eine Person: sichtbar, wenn es auf einer Ankerebene wirkt und sie
+ * dort ein Recht des Moduls hat; "disabled", wenn sie Rechte haette, das Modul aber auf keiner ihrer
+ * Ankerebenen wirkt (explanation ist dann der Eintrag der ersten solchen Ebene); sonst "no_access".
+ */
+export function moduleAvailability(
+  entries: readonly ScopeModules[] | null,
+  anchors: readonly AnchorScope[],
+  module: AppModule,
+): { state: ModuleAvailability; explanation: ScopeModules | null } {
+  const permitted = anchors.filter((anchor) => hasModulePermission(anchor.roles, module))
+  if (permitted.length === 0) return { state: 'no_access', explanation: null }
+  if (permitted.some((anchor) => moduleActiveAt(entries, anchor, module))) return { state: 'visible', explanation: null }
+  const first = permitted[0]!
+  return { state: 'disabled', explanation: entries?.find((item) => item.scope === first.scope && item.scopeId === first.scopeId) ?? null }
+}
+
+/** Darf die Person die Aktion irgendwo im Arbeitsbereich ausfuehren, wo das Modul des Rechts wirkt? */
+export function canUsePermission(entries: readonly ScopeModules[] | null, anchors: readonly AnchorScope[], permission: Permission): boolean {
+  const module = permissionModule[permission]
+  return anchors.some((anchor) => hasPermission(anchor.roles, permission) && (module === 'core' || moduleActiveAt(entries, anchor, module)))
 }
 
 // --- Einstellungsseite "Module" ---------------------------------------------------------------
