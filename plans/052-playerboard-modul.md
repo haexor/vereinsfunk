@@ -527,11 +527,11 @@ Umgesetzt am 2026-10-08:
 - API:
   - `isSelf` im Kader.
   - `seasonFrom` und `brand` (wirksame Vereinsfarben über `resolveBrand`) in `GET /v1/public/playerboard/:orgSlug/:teamSlug`.
-- Migration `2026101101_playerboard_public_ranking_order.sql`.
+- Migration `2026101101_playerboard_ranking_places.sql`.
 
 Verifiziert:
 - `pnpm lint`, `typecheck`, `test` (alle 38 Tasks) und `build` grün.
-- `pnpm db:test` nach frischem `supabase db reset` grün: 51 Dateien, 1288 Assertions.
+- `pnpm db:test` nach frischem `supabase db reset` grün: 52 Dateien, 1291 Assertions, davon 3 in `playerboard_ranking_places.test.sql`.
 - API-Tests: `isSelf` für die verknüpfte Person ohne E-Mail für Spieler; öffentliche Mannschaftsinfo mit Saisonanfang und Vereinsfarben.
 - Im Browser auf 360 px gegen den lokalen Stack:
   - **Trainer:** Kachel auf der Startseite. Übersicht und Rangliste mit Saison (Saisonbeginn des Vereins 1. August), Monat und Aufklappen der Kategorien.
@@ -553,6 +553,10 @@ Abweichungen:
 - **Vereinsfarben, kein Logo.** Die öffentliche Seite übernimmt Primär- und Akzentfarbe; Textfarben werden wie in der Seitenleiste nach Kontrast gewählt. Das Logo bräuchte eine weitere öffentliche, signierte Datei-URL und fehlt bewusst.
 - **Rangliste als aufklappbare Liste** statt Tabelle mit Spalte je Kategorie, damit sie auf 360 px ohne seitliches Scrollen auskommt.
 - **Kachel ohne Registry-Hook.** Wie in `index.vue` vorgesehen (keine modulübergreifende Kachel-API), direkt eingehängt; sie erscheint nur, wenn PlayerBoard wirkt und es im Arbeitsbereich eine Mannschaft gibt.
-- **Öffentliche Rangliste bei geteilten Plätzen nach Rückennummer**, wie intern (Migration `2026101101`). Bisher entschied der Text des Kürzels („#10“ vor „#3“).
+- **Dichte Plätze statt Plätzen mit Lücke** (Betreiberentscheidung 2026-10-08, ändert PR 2).
+  - Bei Gleichstand teilen sich Spieler einen Platz, der nächste folgt ohne Lücke: 1, 1, 2, 2, 2, 2, 3, 3, 3, 4 statt 1, 1, 3, 3, 3, 3, 7, 7, 7, 10.
+  - So sind Gold, Silber und Bronze immer die Plätze 1 bis 3, und diese Zeilen haben einen Hintergrund in ihrer Medaillenfarbe.
+  - `dense_rank()` in `authz.playerboard_ranking_rows` (intern und öffentlich); im Domain-Paket ersetzt `denseRanks` die frühere `competitionRanks`.
+- **Öffentliche Rangliste bei geteilten Plätzen nach Rückennummer**, wie intern (ebenfalls Migration `2026101101`). Bisher entschied der Text des Kürzels („#10“ vor „#3“).
 - **Schalter „nicht öffentlich“ je Foto** ist schon mit PR 3 gekommen.
 - **Nebenbefund außerhalb des Pakets:** Die Startseite fragt für reine Mannschaftsmitglieder `GET /v1/onboarding` an und bekommt `404` (Konsolenfehler, keine sichtbare Folge). Das gehört zum Social-Media-Teil der Startseite und ist hier nicht geändert.

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ChevronDown } from '@lucide/vue'
-import { placementBadgeClass, type RankingListItem } from '../utils/playerboardRanking'
+import { placementBadgeClass, placementRowClass, type RankingListItem } from '../utils/playerboardRanking'
 
 // Paket 052, PR 4: Rangliste als Liste, die auf 360 px ohne seitliches Scrollen auskommt. Intern
 // mit Namen, oeffentlich nur mit "#7 M. K." -- die Seiten bilden ihre Eintraege auf diese Form ab.
@@ -18,7 +18,14 @@ function toggle(key: string) {
 <template>
   <p v-if="items.length === 0" class="card p-6 text-center text-sm text-[#6c756f]">{{ emptyText }}</p>
   <ol v-else class="card divide-y divide-[#ecece5]" data-testid="ranking-list">
-    <li v-for="item in items" :key="item.key" :class="item.highlight ? 'bg-[#f2f9e4]' : ''">
+    <!-- Plaetze 1 bis 3 in ihrer Medaillenfarbe; die eigene Zeile zusaetzlich mit Balken links, damit
+         sich beide Hervorhebungen nicht ueberdecken. -->
+    <li
+      v-for="item in items"
+      :key="item.key"
+      class="first:rounded-t-[inherit] last:rounded-b-[inherit]"
+      :class="[placementRowClass(item.rank), item.highlight ? 'shadow-[inset_4px_0_0_var(--color-forest)]' : '']"
+    >
       <button
         type="button"
         class="focus-ring flex min-h-14 w-full items-center gap-3 px-3 py-2 text-left sm:px-4"

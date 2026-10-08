@@ -99,9 +99,13 @@ export function isPlayerboardCategoryEffective(
   return teamCategoriesAllowed && category.teamId === team.teamId
 }
 
-/** Geteilte Raenge nach Summe (1, 2, 2, 4), in der Reihenfolge der Eingabe gemeldet. */
-export function competitionRanks(totals: readonly number[]): number[] {
-  return totals.map((total) => totals.filter((other) => other > total).length + 1)
+/**
+ * Dichte Plaetze nach Summe (1, 2, 2, 3), in der Reihenfolge der Eingabe gemeldet -- Spiegel von
+ * dense_rank() in authz.playerboard_ranking_rows: Gleichstand teilt den Platz, ohne Luecke danach.
+ */
+export function denseRanks(totals: readonly number[]): number[] {
+  const distinct = [...new Set(totals)].sort((a, b) => b - a)
+  return totals.map((total) => distinct.indexOf(total) + 1)
 }
 
 /** Saisonbeginn als Zeitraumanfang: letzter Saisonstart (Monat/Tag) am oder vor `today`. */

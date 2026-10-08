@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  competitionRanks,
+  denseRanks,
   currentSeasonStart,
   isPlayerboardCategoryEffective,
   resolvePlayerboardSettings,
@@ -92,10 +92,11 @@ describe('isPlayerboardCategoryEffective', () => {
   })
 })
 
-describe('competitionRanks', () => {
-  it('shares ranks and skips the following ones', () => {
-    expect(competitionRanks([10, 8, 8, 3])).toEqual([1, 2, 2, 4])
-    expect(competitionRanks([])).toEqual([])
+describe('denseRanks', () => {
+  it('shares places without a gap after a tie', () => {
+    expect(denseRanks([10, 8, 8, 3])).toEqual([1, 2, 2, 3])
+    expect(denseRanks([7, 7, 5, 5, 5, 5, 3, 3, 3, 1])).toEqual([1, 1, 2, 2, 2, 2, 3, 3, 3, 4])
+    expect(denseRanks([])).toEqual([])
   })
 })
 

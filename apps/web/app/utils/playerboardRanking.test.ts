@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { monthRange, placementBadgeClass, rankingRange } from './playerboardRanking'
+import { monthRange, placementBadgeClass, placementRowClass, rankingRange } from './playerboardRanking'
 
 const base = { seasonFrom: '2026-08-01', month: '2026-02', customFrom: '', customTo: '' }
 
@@ -31,10 +31,13 @@ describe('rankingRange', () => {
   })
 })
 
-describe('placementBadgeClass', () => {
-  it('highlights shared places one to three', () => {
-    expect(placementBadgeClass(1)).not.toBe(placementBadgeClass(4))
-    expect(placementBadgeClass(3)).not.toBe(placementBadgeClass(4))
+describe('placement colours', () => {
+  it('gives gold, silver and bronze to places one to three and nothing to the rest', () => {
+    const badges = [1, 2, 3].map(placementBadgeClass)
+    expect(new Set(badges).size).toBe(3)
+    expect(badges).not.toContain(placementBadgeClass(4))
     expect(placementBadgeClass(7)).toBe(placementBadgeClass(4))
+    expect(new Set([1, 2, 3].map(placementRowClass)).size).toBe(3)
+    expect(placementRowClass(4)).toBe('')
   })
 })

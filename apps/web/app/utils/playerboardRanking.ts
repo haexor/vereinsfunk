@@ -40,10 +40,21 @@ export function rankingRange(kind: RankingPeriodKind, options: { seasonFrom: str
   }
 }
 
-/** Farbe des Platzierungsabzeichens: Gold, Silber, Bronze fuer geteilte Plaetze 1 bis 3. */
+/**
+ * Farbe des Platzierungsabzeichens: Gold, Silber, Bronze fuer die Plaetze 1 bis 3. Die Plaetze sind
+ * dicht (1, 1, 2, 3, ...), ein Gleichstand teilt also die Medaille.
+ */
 export function placementBadgeClass(rank: number): string {
   if (rank === 1) return 'bg-[#f5c542] text-[#4a3500]'
   if (rank === 2) return 'bg-[#cfd5dc] text-[#2c3640]'
   if (rank === 3) return 'bg-[#dfa16a] text-[#4a2608]'
   return 'bg-[#eef1ea] text-[#5b625d]'
+}
+
+/** Dezenter Zeilenhintergrund in der Medaillenfarbe, damit sich die Plaetze 1 bis 3 vom Rest abheben. */
+export function placementRowClass(rank: number): string {
+  if (rank === 1) return 'bg-[#fdf5d8]'
+  if (rank === 2) return 'bg-[#f1f3f6]'
+  if (rank === 3) return 'bg-[#fbeee3]'
+  return ''
 }
