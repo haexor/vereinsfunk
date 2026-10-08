@@ -60,6 +60,10 @@ create trigger set_playerboard_veo_links_updated_at before update on public.play
 -- Quelle, bekommt aber Ergebnis und Werte aus Veo. Ohne diese Zeile faende der naechste Lauf es nur
 -- erneut ueber die Zeit-Heuristik. Haengt an der Mannschaft, nicht an der Quelle: wer Veo neu
 -- verbindet, findet dieselben Spiele wieder.
+-- Ziel des zusammengesetzten Fremdschluessels unten: teams kannte bisher nur
+-- (organization_id, department_id, id). Eindeutig ist (organization_id, id) ohnehin, weil id es ist.
+alter table public.teams add constraint teams_organization_id_id_key unique (organization_id, id);
+
 create table public.playerboard_veo_matches (
   fixture_id uuid primary key,
   organization_id uuid not null,
