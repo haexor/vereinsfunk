@@ -15,14 +15,19 @@ const errorMessage = ref('')
 async function load() {
   trainings.value = []
   errorMessage.value = ''
-  if (!teamId.value) return
+  const requestedTeamId = teamId.value
+  if (!requestedTeamId) {
+    loading.value = false
+    return
+  }
   loading.value = true
   try {
-    trainings.value = await api.request(`/v1/playerboard/teams/${teamId.value}/trainings`, {}, PlayerboardTrainingSchema.array())
+    const result = await api.request(`/v1/playerboard/teams/${requestedTeamId}/trainings`, {}, PlayerboardTrainingSchema.array())
+    if (teamId.value === requestedTeamId) trainings.value = result
   } catch (error) {
-    errorMessage.value = playerboardErrorMessage(error, 'Die Trainings konnten nicht geladen werden.')
+    if (teamId.value === requestedTeamId) errorMessage.value = playerboardErrorMessage(error, 'Die Trainings konnten nicht geladen werden.')
   } finally {
-    loading.value = false
+    if (teamId.value === requestedTeamId) loading.value = false
   }
 }
 await load()

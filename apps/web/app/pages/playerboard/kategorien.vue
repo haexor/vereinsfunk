@@ -20,25 +20,32 @@ const categories = ref<PlayerboardCategory[]>([])
 const loading = ref(false)
 const errorMessage = ref('')
 const actionError = ref('')
+const loadGeneration = ref(0)
+const mutationGeneration = ref(0)
 
 async function load() {
+  const generation = ++loadGeneration.value
+  const requested = level.value
   categories.value = []
   errorMessage.value = ''
-  if (!level.value) return
+  if (!requested) {
+    loading.value = false
+    return
+  }
+  const isCurrent = () => generation === loadGeneration.value
+    && level.value?.scope === requested.scope
+    && level.value?.scopeId === requested.scopeId
   loading.value = true
   try {
-    categories.value = await api.request('/v1/playerboard/categories', { query: { scope: level.value.scope, scopeId: level.value.scopeId } }, PlayerboardCategorySchema.array())
+    const result = await api.request('/v1/playerboard/categories', { query: { scope: requested.scope, scopeId: requested.scopeId } }, PlayerboardCategorySchema.array())
+    if (isCurrent()) categories.value = result
   } catch (error) {
-    errorMessage.value = playerboardErrorMessage(error, 'Die Kategorien konnten nicht geladen werden.')
+    if (isCurrent()) errorMessage.value = playerboardErrorMessage(error, 'Die Kategorien konnten nicht geladen werden.')
   } finally {
-    loading.value = false
+    if (isCurrent()) loading.value = false
   }
 }
 await load()
-watch(() => level.value && `${level.value.scope}:${level.value.scopeId}`, () => {
-  editingId.value = null
-  void load()
-})
 
 const inherited = computed(() => categories.value.filter((category) => category.inherited))
 const own = computed(() => categories.value.filter((category) => !category.inherited))
@@ -50,23 +57,30 @@ const createForm = reactive({ name: '', valueMin: '0', valueMax: '10' })
 const creating = ref(false)
 
 async function create() {
-  if (!level.value) return
+  const requested = level.value
+  if (!requested) return
+  const generation = mutationGeneration.value
+  const isCurrent = () => generation === mutationGeneration.value
+    && level.value?.scope === requested.scope
+    && level.value?.scopeId === requested.scopeId
   creating.value = true
   actionError.value = ''
   try {
     const created = await api.request('/v1/playerboard/categories', {
       method: 'POST',
       body: {
-        scope: level.value.scope, scopeId: level.value.scopeId, name: createForm.name.trim(),
+        scope: requested.scope, scopeId: requested.scopeId, name: createForm.name.trim(),
         valueMin: Number(createForm.valueMin), valueMax: Number(createForm.valueMax), sortOrder: own.value.length * 10,
       },
     }, PlayerboardCategorySchema)
-    categories.value = [...categories.value, created]
-    createForm.name = ''
+    if (isCurrent()) {
+      categories.value = [...categories.value, created]
+      createForm.name = ''
+    }
   } catch (error) {
-    actionError.value = playerboardErrorMessage(error, 'Die Kategorie konnte nicht angelegt werden.')
+    if (isCurrent()) actionError.value = playerboardErrorMessage(error, 'Die Kategorie konnte nicht angelegt werden.')
   } finally {
-    creating.value = false
+    if (isCurrent()) creating.value = false
   }
 }
 
@@ -83,18 +97,31 @@ function startEdit(category: PlayerboardCategory) {
 }
 
 async function update(category: PlayerboardCategory, body: Record<string, unknown>) {
+  const requested = level.value
+  if (!requested) return false
+  const generation = mutationGeneration.value
+  const isCurrent = () => generation === mutationGeneration.value
+    && level.value?.scope === requested.scope
+    && level.value?.scopeId === requested.scopeId
   busyId.value = category.id
   actionError.value = ''
   try {
     const updated = await api.request(`/v1/playerboard/categories/${category.id}`, { method: 'PATCH', body }, PlayerboardCategorySchema)
+    if (!isCurrent()) return false
     categories.value = categories.value.map((item) => (item.id === updated.id ? updated : item))
     return true
   } catch (error) {
-    actionError.value = playerboardErrorMessage(error, 'Die Kategorie konnte nicht gespeichert werden.')
+    if (isCurrent()) actionError.value = playerboardErrorMessage(error, 'Die Kategorie konnte nicht gespeichert werden.')
     return false
   } finally {
-    busyId.value = null
+    if (isCurrent()) busyId.value = null
   }
+}
+
+async function toggleActive(category: PlayerboardCategory, event: Event) {
+  const input = event.target as HTMLInputElement
+  const saved = await update(category, { active: input.checked })
+  if (!saved) input.checked = category.active
 }
 
 async function saveEdit(category: PlayerboardCategory) {
@@ -104,17 +131,32 @@ async function saveEdit(category: PlayerboardCategory) {
 
 async function remove(category: PlayerboardCategory) {
   if (!window.confirm(`Kategorie „${category.name}“ löschen?`)) return
+  const requested = level.value
+  if (!requested) return
+  const generation = mutationGeneration.value
+  const isCurrent = () => generation === mutationGeneration.value
+    && level.value?.scope === requested.scope
+    && level.value?.scopeId === requested.scopeId
   busyId.value = category.id
   actionError.value = ''
   try {
     await api.request(`/v1/playerboard/categories/${category.id}`, { method: 'DELETE' })
-    categories.value = categories.value.filter((item) => item.id !== category.id)
+    if (isCurrent()) categories.value = categories.value.filter((item) => item.id !== category.id)
   } catch (error) {
-    actionError.value = playerboardErrorMessage(error, 'Die Kategorie konnte nicht gelöscht werden.')
+    if (isCurrent()) actionError.value = playerboardErrorMessage(error, 'Die Kategorie konnte nicht gelöscht werden.')
   } finally {
-    busyId.value = null
+    if (isCurrent()) busyId.value = null
   }
 }
+
+watch(() => level.value && `${level.value.scope}:${level.value.scopeId}`, () => {
+  loadGeneration.value += 1
+  mutationGeneration.value += 1
+  editingId.value = null
+  creating.value = false
+  busyId.value = null
+  void load()
+})
 
 const inputClass = 'focus-ring h-11 w-full rounded-xl border border-[#dfe0d9] bg-white px-3 text-sm text-ink'
 const labelClass = 'grid gap-1.5 text-xs font-semibold text-[#5b625d]'
@@ -136,7 +178,7 @@ const labelClass = 'grid gap-1.5 text-xs font-semibold text-[#5b625d]'
     <p v-if="actionError" class="mb-4 text-sm font-semibold text-amber-800" role="alert">{{ actionError }}</p>
     <p v-if="loading" class="text-xs text-[#7b827d]">Wird geladen …</p>
     <p v-else-if="errorMessage" class="text-sm text-amber-800">{{ errorMessage }}</p>
-    <template v-else-if="level">
+    <div v-else-if="level" :id="`playerboard-level-panel-${level.scope}`" role="tabpanel" :aria-labelledby="`playerboard-level-tab-${level.scope}`" tabindex="0">
       <section v-if="inherited.length > 0" class="mb-6" aria-labelledby="inherited-heading">
         <h2 id="inherited-heading" class="mb-2 text-[11px] font-bold uppercase tracking-[.12em] text-[#7b827d]">Geerbt</h2>
         <ul class="card divide-y divide-[#ecece5]">
@@ -164,7 +206,7 @@ const labelClass = 'grid gap-1.5 text-xs font-semibold text-[#5b625d]'
               </span>
               <template v-if="category.canEdit">
                 <label class="flex min-h-11 cursor-pointer items-center gap-2 text-xs font-semibold text-ink">
-                  <input type="checkbox" class="h-5 w-5 accent-forest" :checked="category.active" :disabled="busyId !== null" @change="update(category, { active: ($event.target as HTMLInputElement).checked })" /> aktiv
+                  <input type="checkbox" class="h-5 w-5 accent-forest" :checked="category.active" :disabled="busyId !== null" @change="toggleActive(category, $event)" /> aktiv
                 </label>
                 <button type="button" class="focus-ring grid min-h-11 w-11 place-items-center rounded-xl border border-[#dfe0d9] text-ink" :aria-label="`${category.name} bearbeiten`" @click="startEdit(category)"><Pencil :size="15" /></button>
                 <button type="button" class="focus-ring grid min-h-11 w-11 place-items-center rounded-xl border border-[#dfe0d9] text-[#8a4b3c] disabled:opacity-60" :disabled="busyId !== null" :aria-label="`${category.name} löschen`" @click="remove(category)"><Trash2 :size="15" /></button>
@@ -196,6 +238,6 @@ const labelClass = 'grid gap-1.5 text-xs font-semibold text-[#5b625d]'
           </div>
         </form>
       </section>
-    </template>
+    </div>
   </div>
 </template>

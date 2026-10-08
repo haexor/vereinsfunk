@@ -67,6 +67,10 @@ export const InvitePlayerboardPlayerRequestSchema = z.object({
   email: OptionalEmailSchema.optional(),
 }).strict()
 
+export const PlayerboardInviteResponseSchema = z.object({
+  emailDelivered: z.boolean(),
+})
+
 // --- Kategorien ---------------------------------------------------------------------------------
 
 export const PlayerboardCategorySchema = z.object({
@@ -305,6 +309,7 @@ export type PlayerboardOverridableField = z.infer<typeof PlayerboardOverridableF
 export type PlayerboardPlayer = z.infer<typeof PlayerboardPlayerSchema>
 export type CreatePlayerboardPlayerRequest = z.infer<typeof CreatePlayerboardPlayerRequestSchema>
 export type UpdatePlayerboardPlayerRequest = z.infer<typeof UpdatePlayerboardPlayerRequestSchema>
+export type PlayerboardInviteResponse = z.infer<typeof PlayerboardInviteResponseSchema>
 export type PlayerboardCategory = z.infer<typeof PlayerboardCategorySchema>
 export type CreatePlayerboardCategoryRequest = z.infer<typeof CreatePlayerboardCategoryRequestSchema>
 export type UpdatePlayerboardCategoryRequest = z.infer<typeof UpdatePlayerboardCategoryRequestSchema>

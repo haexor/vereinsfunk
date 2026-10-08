@@ -170,7 +170,7 @@ const inputClass = 'focus-ring h-11 rounded-xl border border-[#dfe0d9] bg-white 
     <p v-if="loading && entries.length === 0" class="text-xs text-[#7b827d]">Wird geladen …</p>
     <p v-else-if="errorMessage" class="text-sm text-amber-800">{{ errorMessage }}</p>
     <p v-else-if="!entry || !draft" class="card p-6 text-sm text-[#6c756f]">Für diese Ebene liegen keine Einstellungen vor.</p>
-    <template v-else>
+    <div v-else :id="`playerboard-level-panel-${selectedScope}`" role="tabpanel" :aria-labelledby="`playerboard-level-tab-${selectedScope}`" tabindex="0">
       <p v-if="!canEdit" class="mb-4 text-xs text-[#6c756f]">Du kannst die Einstellungen dieser Ebene ansehen, aber nicht ändern.</p>
       <p v-if="saveError" class="mb-4 text-sm font-semibold text-amber-800" role="alert">{{ saveError }}</p>
       <p v-if="notice && !dirty" class="mb-4 text-sm font-semibold text-forest" role="status">{{ notice }}</p>
@@ -322,6 +322,6 @@ const inputClass = 'focus-ring h-11 rounded-xl border border-[#dfe0d9] bg-white 
           </template>
         </div>
       </section>
-    </template>
+    </div>
   </div>
 </template>

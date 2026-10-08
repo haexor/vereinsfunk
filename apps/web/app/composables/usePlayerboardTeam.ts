@@ -1,4 +1,4 @@
-import type { ScopeLevel } from '@vereinsfunk/contracts'
+import { UuidSchema, type ScopeLevel } from '@vereinsfunk/contracts'
 import { resolveTeamSelection, teamsInScope, type PlayerboardTeamOption } from '../utils/playerboardTeams'
 
 export interface PlayerboardLevel {
@@ -16,12 +16,18 @@ export async function usePlayerboardTeam() {
   // Nuxt-Zustand vor dem ersten await (NUXT_E1001, siehe useScope()).
   const selected = useState<string | null>('vf-playerboard-team', () => null)
   const remembered = useCookie<string | null>('vf-playerboard-team', { default: () => null, sameSite: 'lax' })
-  const session = await useSession()
-  const scope = await useScope()
+  const sessionPromise = useSession()
+  const scopePromise = useScope()
+  const [session, scope] = await Promise.all([sessionPromise, scopePromise])
+
+  const rememberedTeamId = computed(() => {
+    const parsed = UuidSchema.safeParse(remembered.value)
+    return parsed.success ? parsed.data : null
+  })
 
   const teams = computed<PlayerboardTeamOption[]>(() => teamsInScope(session.value?.scopes ?? [], scope.value))
   const teamId = computed<string | null>({
-    get: () => resolveTeamSelection(teams.value, selected.value, remembered.value),
+    get: () => resolveTeamSelection(teams.value, selected.value, rememberedTeamId.value),
     set: (value) => {
       selected.value = value
       remembered.value = value

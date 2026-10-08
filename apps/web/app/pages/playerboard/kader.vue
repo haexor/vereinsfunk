@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Mail, Pencil, Trash2, UserPlus } from '@lucide/vue'
-import { DirectoryPersonSchema, PlayerboardPlayerSchema, type DirectoryPerson, type PlayerboardPlayer } from '@vereinsfunk/contracts'
+import { DirectoryPersonSchema, PlayerboardInviteResponseSchema, PlayerboardPlayerSchema, type DirectoryPerson, type PlayerboardPlayer } from '@vereinsfunk/contracts'
 import { playerboardErrorMessage } from '../../utils/playerboardErrors'
 
 // Paket 052, PR 3: Kader der gewaehlten Mannschaft. Trainer legen Spieler selbst an (die
@@ -21,18 +21,24 @@ const notice = ref('')
 async function load() {
   players.value = []
   errorMessage.value = ''
-  if (!teamId.value) return
+  const requestedTeamId = teamId.value
+  if (!requestedTeamId) {
+    loading.value = false
+    return
+  }
   loading.value = true
   try {
-    players.value = await api.request(`/v1/playerboard/teams/${teamId.value}/players`, {}, PlayerboardPlayerSchema.array())
+    const result = await api.request(`/v1/playerboard/teams/${requestedTeamId}/players`, {}, PlayerboardPlayerSchema.array())
+    if (teamId.value === requestedTeamId) players.value = result
   } catch (error) {
-    errorMessage.value = playerboardErrorMessage(error, 'Der Kader konnte nicht geladen werden.')
+    if (teamId.value === requestedTeamId) errorMessage.value = playerboardErrorMessage(error, 'Der Kader konnte nicht geladen werden.')
   } finally {
-    loading.value = false
+    if (teamId.value === requestedTeamId) loading.value = false
   }
 }
 await load()
 watch(teamId, () => {
+  createMode.value = 'new'
   directoryPeople.value = null
   editingId.value = null
   invitingId.value = null
@@ -43,6 +49,7 @@ const activePlayers = computed(() => players.value.filter((player) => player.act
 const inactivePlayers = computed(() => players.value.filter((player) => !player.active))
 
 function replacePlayer(player: PlayerboardPlayer) {
+  if (player.teamId !== teamId.value) return
   players.value = players.value.some((item) => item.id === player.id)
     ? players.value.map((item) => (item.id === player.id ? player : item))
     : [...players.value, player]
@@ -66,12 +73,17 @@ const directoryCandidates = computed(() => {
 })
 
 async function loadDirectory() {
-  if (!organizationId.value || !teamId.value || directoryPeople.value) return
+  const requestedOrganizationId = organizationId.value
+  const requestedTeamId = teamId.value
+  if (!requestedOrganizationId || !requestedTeamId || directoryPeople.value) return
   try {
-    directoryPeople.value = await api.request(`/v1/organizations/${organizationId.value}/directory-people`, { query: { teamId: teamId.value } }, DirectoryPersonSchema.array())
+    const result = await api.request(`/v1/organizations/${requestedOrganizationId}/directory-people`, { query: { teamId: requestedTeamId } }, DirectoryPersonSchema.array())
+    if (organizationId.value === requestedOrganizationId && teamId.value === requestedTeamId) directoryPeople.value = result
   } catch {
-    directoryPeople.value = []
-    actionError.value = 'Das Verzeichnis der Mannschaft konnte nicht geladen werden.'
+    if (organizationId.value === requestedOrganizationId && teamId.value === requestedTeamId) {
+      directoryPeople.value = null
+      actionError.value = 'Das Verzeichnis der Mannschaft konnte nicht geladen werden.'
+    }
   }
 }
 watch(createMode, (mode) => { if (mode === 'directory') void loadDirectory() })
@@ -166,9 +178,9 @@ async function sendInvite(player: PlayerboardPlayer) {
   actionError.value = ''
   try {
     const email = inviteEmail.value.trim()
-    const response = await api.request<{ emailDelivered?: boolean }>(`/v1/playerboard/players/${player.id}/invite`, {
+    const response = await api.request(`/v1/playerboard/players/${player.id}/invite`, {
       method: 'POST', body: email && email !== player.email ? { email } : {},
-    })
+    }, PlayerboardInviteResponseSchema)
     // Die API meldet einen gescheiterten Mailversand mit 201 und emailDelivered: false (wie /mitglieder).
     notice.value = response?.emailDelivered === false
       ? `Die Einladung für ${player.firstName} ist angelegt, die E-Mail konnte aber nicht zugestellt werden. Du kannst sie unter „Mitglieder“ erneut senden.`
