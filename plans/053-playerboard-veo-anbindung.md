@@ -356,3 +356,26 @@ Abweichungen und Funde:
 - **Feste Mannschaftskennzahlen:** Auf einen Blick zeigt die Saison Bilanz, Tore, Schüsse und Fouls; alle übrigen Werte stehen im Spiel. Die Mannschaftswerte der Saison sind Summen; eine Gegenüberstellung mit dem Gegner gibt es nur je Spiel.
 - **Layout-Fund:** Die öffentliche Seite bemisst ihre Breite nach dem Inhalt. Breite Tabellen und Auswahlfelder trugen deshalb zur Mindestbreite bei und schoben die Seite auf. Die Tabelle scrollt jetzt in sich (`w-0 min-w-full`), die Spielauswahl ist schrumpffähig.
 
+## PR 4: Vorbereitung und Entscheidungen
+
+Stand 2026-10-09. Vorbereitet, aber nicht ausgeführt: Die Mannschaft nutzt in Produktion noch playerboard (Betreiber, 2026-10-09).
+
+**Betreiberentscheidungen (2026-10-09):**
+- **Daten:** Vor dem Entfernen werden ein Datenbank-Dump (`pg_dump`, Custom-Format) und ein Archiv der Trainingsfotos nach `~/backups/playerboard` auf haex.space gesichert. Es gibt weiterhin keinen Datenumzug.
+- **Alte Adressen:** `playerboard.de` leitet pauschal und dauerhaft (301) auf `https://vereinsfunk.haex.space/` weiter. Die Supabase-Subdomains entfallen.
+- **Repository:** `haexhub/playerboard` bekommt einen Hinweis im README und wird danach archiviert.
+
+**Vorbereitet:**
+- haexhub/ansible#148 (sofort mergebar): Der Vereinsfunk-Worker bekommt `EMAIL_PROVIDER`, `SMTP_*` und `WEB_BASE_URL`. Ohne sie würde der Veo-Hinweis aus PR 2 in Produktion nur ins Log geschrieben.
+- haexhub/ansible#149 (Entwurf): Schalter `playerboard_retired`.
+  - Sichert die Daten und bricht ohne nicht-leeren Dump ab.
+  - Entfernt den Veo-Cron, stoppt App- und Supabase-Stack und startet die Weiterleitung.
+  - `playerboard_purge_data` löscht Volumes und Verzeichnisse erst in einem eigenen Lauf, nachdem der Dump geprüft ist.
+- haexhub/playerboard#86 (Entwurf): Hinweis im README.
+
+**Reihenfolge beim Umstieg:**
+1. Die Mannschaft legt in Vereinsfunk Kader und Kategorien an und verbindet Veo; der erste Abgleich holt die ganze Spielhistorie.
+2. #149 und #86 mergen, Playbook für haex.space ausführen, Dump prüfen (`pg_restore --list`).
+3. Repository archivieren.
+4. In einem späteren Lauf `playerboard_purge_data: true`.
+
