@@ -1,4 +1,4 @@
-import { BarChart3, Bot, CheckCircle2, ClipboardList, Feather, FileSignature, FileText, Frame, LayoutGrid, Megaphone, Share2, SlidersHorizontal, Tags, Trophy, Users } from '@lucide/vue'
+import { BarChart3, Bot, CheckCircle2, ClipboardList, Feather, FileSignature, FileText, Frame, LayoutGrid, Medal, Megaphone, Share2, SlidersHorizontal, Tags, Trophy, Users } from '@lucide/vue'
 import type { AppModule, ModuleBlockSource, ScopeLevel, ScopeModules } from '@vereinsfunk/contracts'
 import type { Component } from 'vue'
 
@@ -51,8 +51,10 @@ export const appModuleRegistry: Readonly<Record<AppModule, AppModuleDefinition>>
     key: 'playerboard',
     label: 'PlayerBoard',
     icon: Trophy,
-    // Paket 052, PR 3: Trainer-Oberflaeche. Uebersicht und Rangliste folgen mit PR 4.
+    // Paket 052: Uebersicht und Rangliste fuer alle (PR 4), Trainings und Kader fuer Trainer (PR 3).
     navigation: [
+      { label: 'Übersicht', to: '/playerboard', icon: Trophy },
+      { label: 'Rangliste', to: '/playerboard/rangliste', icon: Medal },
       { label: 'Trainings', to: '/playerboard/trainings', icon: ClipboardList },
       { label: 'Kader', to: '/playerboard/kader', icon: Users },
     ],
@@ -60,7 +62,7 @@ export const appModuleRegistry: Readonly<Record<AppModule, AppModuleDefinition>>
       { label: 'Kategorien', to: '/playerboard/kategorien', icon: Tags },
       { label: 'Einstellungen', to: '/playerboard/einstellungen', icon: SlidersHorizontal },
     ],
-    extraRoutes: ['/playerboard'],
+    extraRoutes: [],
   },
 }
 

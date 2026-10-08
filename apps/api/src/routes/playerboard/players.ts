@@ -27,11 +27,24 @@ async function loadRoster(client: SupabaseClient, teamId: string): Promise<Roste
   return (roster.data ?? []) as RosterRow[]
 }
 
-/** Validiert einen Kader-Eintrag als API-Antwort; die E-Mail wird nur bei expliziter Uebergabe aufgenommen. */
-function mapRosterRow(teamId: string, row: RosterRow, email?: string | null) {
+type PersonRow = { id: string; email: string | null; profile_id: string | null }
+
+/** Laedt E-Mail und verknuepftes Konto der Verzeichnispersonen eines Kaders per Service-Client. */
+async function loadPeople(service: SupabaseClient, rows: readonly RosterRow[]): Promise<Map<string, PersonRow>> {
+  if (rows.length === 0) return new Map()
+  const people = await service.from('directory_people').select('id, email, profile_id').in('id', rows.map((row) => row.directory_person_id))
+  if (people.error) throw people.error
+  return new Map((people.data as PersonRow[]).map((person) => [person.id, person]))
+}
+
+/**
+ * Validiert einen Kader-Eintrag als API-Antwort. isSelf markiert den Eintrag der aufrufenden Person;
+ * die E-Mail wird nur bei expliziter Uebergabe aufgenommen.
+ */
+function mapRosterRow(teamId: string, row: RosterRow, isSelf: boolean, email?: string | null) {
   return PlayerboardPlayerSchema.parse({
     id: row.player_id, teamId, directoryPersonId: row.directory_person_id, firstName: row.first_name, lastName: row.last_name,
-    jerseyNumber: row.jersey_number, position: row.position, active: row.active, hasAccount: row.has_account,
+    jerseyNumber: row.jersey_number, position: row.position, active: row.active, hasAccount: row.has_account, isSelf,
     ...(email !== undefined ? { email } : {}),
   })
 }
@@ -68,9 +81,8 @@ export function registerPlayerboardPlayerRoutes(app: FastifyInstance, context: A
     const client = supabaseClients.forUser(request.auth!.accessToken)
     const row = (await loadRoster(client, teamId)).find((candidate) => candidate.player_id === playerId)
     if (!row) throw new Error('player not visible after write')
-    const person = await supabaseClients.forService().from('directory_people').select('email').eq('id', row.directory_person_id).maybeSingle()
-    if (person.error) throw person.error
-    return mapRosterRow(teamId, row, (person.data?.email as string | null | undefined) ?? null)
+    const person = (await loadPeople(supabaseClients.forService(), [row])).get(row.directory_person_id)
+    return mapRosterRow(teamId, row, person?.profile_id === request.auth!.userId, person?.email ?? null)
   }
 
   app.get('/v1/playerboard/teams/:teamId/players', async (request, reply) => {
@@ -82,14 +94,12 @@ export function registerPlayerboardPlayerRoutes(app: FastifyInstance, context: A
     const rows = await loadRoster(supabaseClients.forUser(request.auth!.accessToken), params.teamId)
     // E-Mail-Adressen nur fuer Trainer: Spieler und Mitlesende sehen Namen und Rueckennummern.
     const canManage = hasPermission(await roleProvider.rolesForScope(request.auth!, scope), 'training.manage')
-    if (!canManage) return reply.code(200).send(rows.map((row) => mapRosterRow(params.teamId, row)))
-    const emails = new Map<string, string | null>()
-    if (rows.length > 0) {
-      const people = await supabaseClients.forService().from('directory_people').select('id, email').in('id', rows.map((row) => row.directory_person_id))
-      if (people.error) throw people.error
-      for (const person of people.data) emails.set(person.id as string, (person.email as string | null) ?? null)
-    }
-    return reply.code(200).send(rows.map((row) => mapRosterRow(params.teamId, row, emails.get(row.directory_person_id) ?? null)))
+    const people = await loadPeople(supabaseClients.forService(), rows)
+    return reply.code(200).send(rows.map((row) => {
+      const person = people.get(row.directory_person_id)
+      const isSelf = person?.profile_id === request.auth!.userId
+      return canManage ? mapRosterRow(params.teamId, row, isSelf, person?.email ?? null) : mapRosterRow(params.teamId, row, isSelf)
+    }))
   })
 
   app.post('/v1/playerboard/players', async (request, reply) => {

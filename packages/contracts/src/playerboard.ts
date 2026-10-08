@@ -29,6 +29,9 @@ export const PlayerboardPlayerSchema = z.object({
   position: z.string().nullable(),
   active: z.boolean(),
   hasAccount: z.boolean(),
+  // Der Kader-Eintrag der aufrufenden Person (ihr Konto ist mit der Verzeichnisperson verknuepft):
+  // die Spieleransicht hebt die eigene Zeile hervor.
+  isSelf: z.boolean(),
   // Nur fuer Trainer (training.manage) -- Spieler sehen keine E-Mail-Adressen ihrer Mitspieler.
   email: z.string().nullable().optional(),
 })
@@ -289,6 +292,11 @@ export const PublicPlayerboardTeamSchema = z.object({
   organizationName: z.string(),
   teamName: z.string(),
   tabs: z.object({ points: z.boolean(), veoStats: z.boolean(), photos: z.boolean() }),
+  // Anfang der laufenden Saison (wirksamer Saisonbeginn der Mannschaft), null ohne Saisonbeginn:
+  // die oeffentliche Rangliste zeigt dann die gesamte Zeit.
+  seasonFrom: DateSchema.nullable(),
+  // Wirksame Vereinsfarben der Mannschaft (resolveBrand).
+  brand: z.object({ primaryColor: z.string(), accentColor: z.string() }),
 })
 
 export const PublicPlayerboardRankingEntrySchema = z.object({

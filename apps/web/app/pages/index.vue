@@ -10,6 +10,10 @@ const scope = await useScope()
 // in Paket 052 seine eigene Kachel hier direkt ein.
 const { isEnabled: isModuleEnabled } = await useScopeModules()
 const socialMediaActive = computed(() => isModuleEnabled('social_media'))
+// Paket 052, PR 4: die PlayerBoard-Kachel nur, wenn es im Arbeitsbereich eine Mannschaft gibt --
+// ein Verein ohne Mannschaften soll keine leere Kachel sehen.
+const { teams: playerboardTeams } = await usePlayerboardTeam()
+const playerboardActive = computed(() => isModuleEnabled('playerboard') && playerboardTeams.value.length > 0)
 
 const activeOrganization = computed(() => session.value?.scopes.find((item) => item.organizationId === scope.value?.organizationId) ?? null)
 const department = computed(() => activeOrganization.value?.departments.find((item) => item.id === scope.value?.departmentId)?.name ?? activeOrganization.value?.organizationName ?? '')
@@ -161,6 +165,10 @@ await Promise.all([loadDashboard(), loadSuggestions()])
         <Plus :size="17" /> Neuer Beitrag
       </NuxtLink>
     </header>
+
+    <div v-if="playerboardActive" class="mb-7">
+      <PlayerboardSeasonSummary compact />
+    </div>
 
     <section v-if="socialMediaActive && dashboardError" class="card mb-7 p-5 text-sm font-semibold text-red-700">
       Die Kennzahlen konnten nicht geladen werden. Bitte lade die Seite neu.
