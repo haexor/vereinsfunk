@@ -2,10 +2,10 @@
 import { ArrowRight, ClipboardList, Plus, Trophy } from '@lucide/vue'
 import { PlayerboardTrainingSchema, type PlayerboardTraining } from '@vereinsfunk/contracts'
 import { playerboardErrorMessage } from '../utils/playerboardErrors'
-import { placementBadgeClass, type RankingListItem } from '../utils/playerboardRanking'
+import { placementBadgeClass, placementRowClass, type RankingListItem } from '../utils/playerboardRanking'
 
 // Paket 052, PR 4: Saison der gewaehlten Mannschaft auf einen Blick -- eigener Platz (fuer
-// Spieler mit verknuepftem Kader-Eintrag), die ersten drei und die letzten Trainings. Ausfuehrlich
+// Spieler mit verknuepftem Kader-Eintrag), die ganze Rangliste und die letzten Trainings. Ausfuehrlich
 // auf /playerboard, kompakt als Kachel auf der Startseite.
 const props = defineProps<{ compact?: boolean }>()
 
@@ -60,7 +60,6 @@ watch(teamId, () => {
 })
 
 const self = computed(() => items.value.find((item) => item.highlight) ?? null)
-const podium = computed(() => items.value.filter((item) => item.rank <= 3))
 const dateFormat = new Intl.DateTimeFormat('de-DE', {
   weekday: 'short',
   day: 'numeric',
@@ -129,12 +128,13 @@ const seasonLabel = computed(() =>
       </div>
 
       <div>
-        <h3 class="mb-2 text-[11px] font-bold uppercase tracking-[.12em] text-[#7b827d]">Vorne</h3>
-        <p v-if="podium.length === 0" class="text-sm text-[#6c756f]">
+        <h3 class="mb-2 text-[11px] font-bold uppercase tracking-[.12em] text-[#7b827d]">Rangliste</h3>
+        <p v-if="items.length === 0" class="text-sm text-[#6c756f]">
           Noch keine Punkte aus abgeschlossenen Trainings.
         </p>
-        <ol v-else class="space-y-1.5">
-          <li v-for="item in podium" :key="item.key" class="flex items-center gap-2">
+        <!-- Betreiberentscheidung 2026-10-08: immer alle Spieler, die Plaetze 1 bis 3 in Medaillenfarben. -->
+        <ol v-else class="-mx-2 space-y-0.5">
+          <li v-for="item in items" :key="item.key" class="flex items-center gap-2 rounded-lg px-2 py-1" :class="placementRowClass(item.rank)">
             <span
               class="grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-extrabold"
               :class="placementBadgeClass(item.rank)"
@@ -151,7 +151,7 @@ const seasonLabel = computed(() =>
         <NuxtLink
           to="/playerboard/rangliste"
           class="focus-ring mt-2 inline-flex min-h-11 items-center gap-1 rounded-lg text-xs font-semibold text-forest"
-          >Ganze Rangliste <ArrowRight :size="13"
+          >Kategorien und Zeiträume <ArrowRight :size="13"
         /></NuxtLink>
       </div>
 
