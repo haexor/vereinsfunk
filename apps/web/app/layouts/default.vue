@@ -9,15 +9,44 @@ const mobileOpen = ref(false)
 const route = useRoute()
 const session = await useSession()
 const scope = await useScope()
-const { enabled: enabledModules, isEnabled: isModuleEnabled, canUse, ensureLoaded: ensureScopeModulesLoaded } = await useScopeModules()
+const {
+  enabled: enabledModules,
+  isEnabled: isModuleEnabled,
+  canUse,
+  canUseAtActiveScope,
+  ensureLoaded: ensureScopeModulesLoaded,
+} = await useScopeModules()
 
-watch(() => route.path, () => { mobileOpen.value = false })
+watch(
+  () => route.path,
+  () => {
+    mobileOpen.value = false
+  },
+)
 
-const activeOrganization = computed(() => session.value?.scopes.find((item) => item.organizationId === scope.value?.organizationId) ?? null)
-const activeDepartment = computed(() => activeOrganization.value?.departments.find((item) => item.id === scope.value?.departmentId) ?? null)
-const activeScopeName = computed(() => activeDepartment.value?.name ?? activeOrganization.value?.organizationName ?? '')
-const activeScopeKind = computed(() => activeDepartment.value ? 'Abteilung' : 'Verein')
-const scopeInitials = computed(() => activeScopeName.value.split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join('').toUpperCase())
+const activeOrganization = computed(
+  () =>
+    session.value?.scopes.find((item) => item.organizationId === scope.value?.organizationId) ??
+    null,
+)
+const activeDepartment = computed(
+  () =>
+    activeOrganization.value?.departments.find((item) => item.id === scope.value?.departmentId) ??
+    null,
+)
+const activeScopeName = computed(
+  () => activeDepartment.value?.name ?? activeOrganization.value?.organizationName ?? '',
+)
+const activeScopeKind = computed(() => (activeDepartment.value ? 'Abteilung' : 'Verein'))
+const scopeInitials = computed(() =>
+  activeScopeName.value
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0])
+    .join('')
+    .toUpperCase(),
+)
 const { revision: brandRevision } = useBrandRevision()
 
 // Paket 013, Rueckbau: das Vereinslogo ersetzt die Initialen dort, wo der Verein tatsaechlich
@@ -81,30 +110,47 @@ watch(
       .order('created_at', { ascending: false })
     if (run !== latestScopeBrandRun || logoAssets.error || !logoAssets.data) return
     const asset = resolveSidebarLogoAsset(
-      logoAssets.data.map((item) => ({
-        id: item.id as string,
-        departmentId: item.department_id as string | null,
-        teamId: item.team_id as string | null,
-        kind: item.kind as string,
-        objectPath: item.object_path as string,
-        status: item.status as string,
-      } satisfies SidebarLogoAsset)),
+      logoAssets.data.map(
+        (item) =>
+          ({
+            id: item.id as string,
+            departmentId: item.department_id as string | null,
+            teamId: item.team_id as string | null,
+            kind: item.kind as string,
+            objectPath: item.object_path as string,
+            status: item.status as string,
+          }) satisfies SidebarLogoAsset,
+      ),
       departmentId ?? null,
       brand.logoAssetId,
     )
     if (!asset) return
-    const signed = await supabase.storage.from('brand-assets').createSignedUrl(asset.objectPath, 600)
+    const signed = await supabase.storage
+      .from('brand-assets')
+      .createSignedUrl(asset.objectPath, 600)
     if (run !== latestScopeBrandRun) return
     scopeLogoUrl.value = signed.data?.signedUrl ?? ''
   },
   { immediate: true },
 )
-const activeDepartmentRoles = computed(() => activeOrganization.value?.departments.find((item) => item.id === scope.value?.departmentId)?.roles ?? [])
+const activeDepartmentRoles = computed(
+  () =>
+    activeOrganization.value?.departments.find((item) => item.id === scope.value?.departmentId)
+      ?.roles ?? [],
+)
 const topRoleLabel = computed(() => {
   const role = activeOrganization.value?.organizationRoles[0] ?? activeDepartmentRoles.value[0]
-  return role ? roleLabels[role] ?? role : ''
+  return role ? (roleLabels[role] ?? role) : ''
 })
-const userInitials = computed(() => (session.value?.displayName ?? '').split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join('').toUpperCase())
+const userInitials = computed(() =>
+  (session.value?.displayName ?? '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0])
+    .join('')
+    .toUpperCase(),
+)
 
 function selectOrganization(organizationId: string) {
   const organization = session.value?.scopes.find((item) => item.organizationId === organizationId)
@@ -112,7 +158,8 @@ function selectOrganization(organizationId: string) {
 }
 
 const scopeSelection = computed({
-  get: () => scope.value?.departmentId ? `department:${scope.value.departmentId}` : 'organization',
+  get: () =>
+    scope.value?.departmentId ? `department:${scope.value.departmentId}` : 'organization',
   set: (value: string) => {
     if (!scope.value) return
     scope.value = {
@@ -122,18 +169,40 @@ const scopeSelection = computed({
   },
 })
 
-const sidebarPalette = computed(() => deriveSidebarPalette(scopeBrand.value.primaryColor, scopeBrand.value.accentColor))
-const sidebarStyle = computed(() => ({ backgroundColor: sidebarPalette.value.surface, color: sidebarPalette.value.onSurface }))
-const accentStyle = computed(() => ({ backgroundColor: sidebarPalette.value.actionSurface, color: sidebarPalette.value.onAction }))
+const sidebarPalette = computed(() =>
+  deriveSidebarPalette(scopeBrand.value.primaryColor, scopeBrand.value.accentColor),
+)
+const sidebarStyle = computed(() => ({
+  backgroundColor: sidebarPalette.value.surface,
+  color: sidebarPalette.value.onSurface,
+}))
+const accentStyle = computed(() => ({
+  backgroundColor: sidebarPalette.value.actionSurface,
+  color: sidebarPalette.value.onAction,
+}))
 const sidebarClasses = computed(() =>
   sidebarPalette.value.onSurface === '#ffffff'
     ? {
-        text: 'text-white', muted: 'text-white', quiet: 'text-white', panel: 'border-white/30 bg-white/[.06]', divider: 'bg-white/30',
-        select: 'text-white [&_svg]:text-white', nav: 'text-white hover:bg-white/[.07]', activeNav: '!bg-white/[.11] !text-white', footer: 'border-white/30',
+        text: 'text-white',
+        muted: 'text-white',
+        quiet: 'text-white',
+        panel: 'border-white/30 bg-white/[.06]',
+        divider: 'bg-white/30',
+        select: 'text-white [&_svg]:text-white',
+        nav: 'text-white hover:bg-white/[.07]',
+        activeNav: '!bg-white/[.11] !text-white',
+        footer: 'border-white/30',
       }
     : {
-        text: 'text-ink', muted: 'text-ink', quiet: 'text-ink', panel: 'border-ink/30 bg-ink/[.05]', divider: 'bg-ink/30',
-        select: 'text-ink [&_svg]:text-ink', nav: 'text-ink hover:bg-ink/[.07]', activeNav: '!bg-ink/[.11] !text-ink', footer: 'border-ink/30',
+        text: 'text-ink',
+        muted: 'text-ink',
+        quiet: 'text-ink',
+        panel: 'border-ink/30 bg-ink/[.05]',
+        divider: 'bg-ink/30',
+        select: 'text-ink [&_svg]:text-ink',
+        nav: 'text-ink hover:bg-ink/[.07]',
+        activeNav: '!bg-ink/[.11] !text-ink',
+        footer: 'border-ink/30',
       },
 )
 
@@ -152,11 +221,15 @@ const navigation: { label: string; to: string; icon: typeof LayoutDashboard; bad
 ]
 // Paket 055: Eintraege mit permissions nur mit einem dieser Rechte; Gruppen ohne sichtbaren Eintrag
 // entfallen ganz.
-const navItemVisible = (item: ModuleNavItem) => !item.permissions || item.permissions.some((permission) => canUse(permission))
+const navItemVisible = (item: ModuleNavItem) =>
+  !item.permissions || item.permissions.some((permission) => canUse(permission))
 const moduleGroups = computed(() =>
   appModuleOrder
     .filter((module) => isModuleEnabled(module))
-    .map((module) => ({ ...appModuleRegistry[module], navigation: appModuleRegistry[module].navigation.filter(navItemVisible) }))
+    .map((module) => ({
+      ...appModuleRegistry[module],
+      navigation: appModuleRegistry[module].navigation.filter(navItemVisible),
+    }))
     .filter((group) => group.navigation.length > 0),
 )
 // Paket 056: "Verein verwalten" nur mit den Rechten, die die jeweilige Seite braucht
@@ -169,7 +242,10 @@ const visibleOrganizationNav = computed(() => visibleFrameworkNavigation(framewo
 const moduleManagementNav = computed(() =>
   appModuleOrder
     .filter((module) => isModuleEnabled(module))
-    .map((module) => ({ ...appModuleRegistry[module], managementNavigation: appModuleRegistry[module].managementNavigation.filter(navItemVisible) }))
+    .map((module) => ({
+      ...appModuleRegistry[module],
+      managementNavigation: appModuleRegistry[module].managementNavigation.filter(navItemVisible),
+    }))
     .filter((group) => group.managementNavigation.length > 0),
 )
 const organizationOnlyRoutes = new Set(frameworkNavigation.filter((item) => item.organizationOnly).map((item) => item.to))
@@ -177,14 +253,18 @@ const organizationOnlyRoutes = new Set(frameworkNavigation.filter((item) => item
 // Wechsel des Vereins laedt dessen Modulauswahl neu. Wird ein Bereich gewaehlt, in dem das Modul
 // der offenen Seite aus ist, fuehrt das auf die Erklaerseite -- wie ein Direktaufruf
 // (middleware/module.global.ts); umgekehrt fuehrt die Erklaerseite selbst zurueck, sobald es wirkt.
-watch(() => scope.value?.organizationId, (organizationId, previous) => {
-  if (organizationId && previous && organizationId !== previous) void ensureScopeModulesLoaded()
-})
+watch(
+  () => scope.value?.organizationId,
+  (organizationId, previous) => {
+    if (organizationId && previous && organizationId !== previous) void ensureScopeModulesLoaded()
+  },
+)
 watch(
   () => [enabledModules.value, route.path] as const,
   ([, path]) => {
     const module = moduleForPath(path)
-    if (module && !isModuleEnabled(module)) void navigateTo({ path: '/modul-inaktiv', query: { modul: module, von: route.fullPath } })
+    if (module && !isModuleEnabled(module))
+      void navigateTo({ path: '/modul-inaktiv', query: { modul: module, von: route.fullPath } })
   },
 )
 
@@ -206,113 +286,258 @@ watch(
     which differs from the first client render and causes Vue hydration mismatches.
   -->
   <ClientOnly>
-  <div class="min-h-screen bg-oat lg:flex lg:h-screen lg:overflow-hidden">
-    <header class="sticky top-0 z-40 flex h-16 items-center justify-between px-4 lg:hidden" :style="sidebarStyle">
-      <AppLogo :text-class="sidebarClasses.text" />
-      <button class="focus-ring rounded-lg p-2" :class="sidebarClasses.text" aria-label="Navigation öffnen" @click="mobileOpen = !mobileOpen">
-        <X v-if="mobileOpen" :size="22" />
-        <Menu v-else :size="22" />
-      </button>
-    </header>
+    <div class="min-h-screen bg-oat lg:flex lg:h-screen lg:overflow-hidden">
+      <header
+        class="sticky top-0 z-40 flex h-16 items-center justify-between px-4 lg:hidden"
+        :style="sidebarStyle"
+      >
+        <AppLogo :text-class="sidebarClasses.text" />
+        <button
+          class="focus-ring rounded-lg p-2"
+          :class="sidebarClasses.text"
+          aria-label="Navigation öffnen"
+          @click="mobileOpen = !mobileOpen"
+        >
+          <X v-if="mobileOpen" :size="22" />
+          <Menu v-else :size="22" />
+        </button>
+      </header>
 
-    <div v-if="mobileOpen" class="fixed inset-0 z-30 bg-ink/40 backdrop-blur-sm lg:hidden" @click="mobileOpen = false" />
-    <aside
-      class="fixed bottom-0 left-0 top-0 z-30 flex w-[268px] flex-col overflow-y-auto px-4 py-5 transition-transform duration-200 lg:sticky lg:h-screen lg:min-h-0 lg:translate-x-0"
-      :class="mobileOpen ? 'translate-x-0 pt-20' : '-translate-x-full'"
-      :style="sidebarStyle"
-    >
-      <div class="hidden px-2 pb-7 lg:block"><AppLogo :text-class="sidebarClasses.text" /></div>
+      <div
+        v-if="mobileOpen"
+        class="fixed inset-0 z-30 bg-ink/40 backdrop-blur-sm lg:hidden"
+        @click="mobileOpen = false"
+      />
+      <aside
+        class="fixed bottom-0 left-0 top-0 z-30 flex w-[268px] flex-col overflow-y-auto px-4 py-5 transition-transform duration-200 lg:sticky lg:h-screen lg:min-h-0 lg:translate-x-0"
+        :class="mobileOpen ? 'translate-x-0 pt-20' : '-translate-x-full'"
+        :style="sidebarStyle"
+      >
+        <div class="hidden px-2 pb-7 lg:block"><AppLogo :text-class="sidebarClasses.text" /></div>
 
-      <div v-if="activeOrganization" class="mb-5 rounded-2xl border p-2" :class="sidebarClasses.panel">
-        <div class="flex w-full items-center gap-3 p-2 text-left">
-          <img v-if="scopeLogoUrl" :src="scopeLogoUrl" :alt="`${activeScopeName} Logo`" class="h-10 w-10 shrink-0 rounded-xl border border-black/5 bg-white p-1.5 shadow-sm" @error="scopeLogoUrl = ''" />
-          <span v-else class="grid h-9 w-9 shrink-0 place-items-center rounded-xl font-display text-sm font-extrabold" :style="accentStyle">{{ scopeInitials }}</span>
-          <span v-if="(session?.scopes.length ?? 0) <= 1" class="min-w-0 flex-1">
-            <span class="block truncate text-sm font-semibold">{{ activeScopeName }}</span>
-            <span class="block text-[11px]" :class="sidebarClasses.muted">{{ activeScopeKind }}</span>
-          </span>
-          <div v-else class="relative block min-w-0 flex-1">
-            <Select :model-value="scope?.organizationId ?? ''" @update:model-value="(value: unknown) => selectOrganization(value as string)">
-              <SelectTrigger aria-label="Verein auswählen" class="border-0 py-1 pr-6 pl-0 text-sm font-semibold" :class="sidebarClasses.select">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem v-for="item in session?.scopes" :key="item.organizationId" :value="item.organizationId">{{ item.organizationName }}</SelectItem>
-              </SelectContent>
-            </Select>
-            <span class="block text-[11px]" :class="sidebarClasses.muted">{{ activeScopeKind }}</span>
+        <div
+          v-if="activeOrganization"
+          class="mb-5 rounded-2xl border p-2"
+          :class="sidebarClasses.panel"
+        >
+          <div class="flex w-full items-center gap-3 p-2 text-left">
+            <img
+              v-if="scopeLogoUrl"
+              :src="scopeLogoUrl"
+              :alt="`${activeScopeName} Logo`"
+              class="h-10 w-10 shrink-0 rounded-xl border border-black/5 bg-white p-1.5 shadow-sm"
+              @error="scopeLogoUrl = ''"
+            />
+            <span
+              v-else
+              class="grid h-9 w-9 shrink-0 place-items-center rounded-xl font-display text-sm font-extrabold"
+              :style="accentStyle"
+              >{{ scopeInitials }}</span
+            >
+            <span v-if="(session?.scopes.length ?? 0) <= 1" class="min-w-0 flex-1">
+              <span class="block truncate text-sm font-semibold">{{ activeScopeName }}</span>
+              <span class="block text-[11px]" :class="sidebarClasses.muted">{{
+                activeScopeKind
+              }}</span>
+            </span>
+            <div v-else class="relative block min-w-0 flex-1">
+              <Select
+                :model-value="scope?.organizationId ?? ''"
+                @update:model-value="(value: unknown) => selectOrganization(value as string)"
+              >
+                <SelectTrigger
+                  aria-label="Verein auswählen"
+                  class="border-0 py-1 pr-6 pl-0 text-sm font-semibold"
+                  :class="sidebarClasses.select"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem
+                    v-for="item in session?.scopes"
+                    :key="item.organizationId"
+                    :value="item.organizationId"
+                    >{{ item.organizationName }}</SelectItem
+                  >
+                </SelectContent>
+              </Select>
+              <span class="block text-[11px]" :class="sidebarClasses.muted">{{
+                activeScopeKind
+              }}</span>
+            </div>
           </div>
+          <template v-if="activeOrganization.departments.length">
+            <div class="mx-2 my-1 h-px" :class="sidebarClasses.divider" />
+            <div class="relative block">
+              <p
+                class="px-2 pt-2 text-[10px] font-bold uppercase tracking-[.12em]"
+                :class="sidebarClasses.quiet"
+              >
+                Arbeitsbereich
+              </p>
+              <Select v-model="scopeSelection">
+                <SelectTrigger
+                  aria-label="Verein oder Abteilung auswählen"
+                  class="border-0 py-2 pr-8 pl-2 text-xs font-medium"
+                  :class="sidebarClasses.select"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="organization"
+                    >{{ activeOrganization.organizationName }} · Verein</SelectItem
+                  >
+                  <SelectItem
+                    v-for="item in activeOrganization.departments"
+                    :key="item.id"
+                    :value="`department:${item.id}`"
+                    >{{ item.name }} · Abteilung</SelectItem
+                  >
+                </SelectContent>
+              </Select>
+            </div>
+          </template>
         </div>
-        <template v-if="activeOrganization.departments.length">
-          <div class="mx-2 my-1 h-px" :class="sidebarClasses.divider" />
-          <div class="relative block">
-            <p class="px-2 pt-2 text-[10px] font-bold uppercase tracking-[.12em]" :class="sidebarClasses.quiet">Arbeitsbereich</p>
-            <Select v-model="scopeSelection">
-              <SelectTrigger aria-label="Verein oder Abteilung auswählen" class="border-0 py-2 pr-8 pl-2 text-xs font-medium" :class="sidebarClasses.select">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="organization">{{ activeOrganization.organizationName }} · Verein</SelectItem>
-                <SelectItem v-for="item in activeOrganization.departments" :key="item.id" :value="`department:${item.id}`">{{ item.name }} · Abteilung</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </template>
-      </div>
 
-      <NuxtLink v-if="isModuleEnabled('social_media') && canUse('post.create')" to="/erstellen" class="focus-ring mb-6 flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold transition hover:-translate-y-0.5" :style="accentStyle">
-        <Plus :size="17" stroke-width="2.5" /> Beitrag erstellen
-      </NuxtLink>
-
-      <nav class="space-y-1" aria-label="Hauptnavigation">
-        <NuxtLink v-for="item in navigation" :key="item.to" :to="item.to" class="focus-ring group flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition" :class="sidebarClasses.nav" :active-class="sidebarClasses.activeNav">
-          <component :is="item.icon" :size="17" />
-          <span class="flex-1">{{ item.label }}</span>
-          <span v-if="item.badge" class="grid h-5 min-w-5 place-items-center rounded-full bg-coral px-1 text-[10px] font-bold text-ink">{{ item.badge }}</span>
+        <NuxtLink
+          v-if="isModuleEnabled('social_media') && canUseAtActiveScope('post.create')"
+          to="/erstellen"
+          class="focus-ring mb-6 flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold transition hover:-translate-y-0.5"
+          :style="accentStyle"
+        >
+          <Plus :size="17" stroke-width="2.5" /> Beitrag erstellen
         </NuxtLink>
-      </nav>
 
-      <template v-for="group in moduleGroups" :key="group.key">
-        <div class="mb-2 mt-7 px-3 text-[10px] font-bold uppercase tracking-[.14em]" :class="sidebarClasses.quiet">{{ group.label }}</div>
-        <nav class="space-y-1" :aria-label="group.label">
-          <NuxtLink v-for="item in group.navigation" :key="item.to" :to="item.to" class="focus-ring group flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition" :class="sidebarClasses.nav" :active-class="sidebarClasses.activeNav">
+        <nav class="space-y-1" aria-label="Hauptnavigation">
+          <NuxtLink
+            v-for="item in navigation"
+            :key="item.to"
+            :to="item.to"
+            class="focus-ring group flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition"
+            :class="sidebarClasses.nav"
+            :active-class="sidebarClasses.activeNav"
+          >
             <component :is="item.icon" :size="17" />
             <span class="flex-1">{{ item.label }}</span>
+            <span
+              v-if="item.badge"
+              class="grid h-5 min-w-5 place-items-center rounded-full bg-coral px-1 text-[10px] font-bold text-ink"
+              >{{ item.badge }}</span
+            >
           </NuxtLink>
         </nav>
-      </template>
 
-      <div v-if="visibleOrganizationNav.length > 0" class="mb-2 mt-7 px-3 text-[10px] font-bold uppercase tracking-[.14em]" :class="sidebarClasses.quiet">Verein verwalten</div>
-      <nav v-if="visibleOrganizationNav.length > 0" class="space-y-1" aria-label="Vereinsverwaltung">
-        <NuxtLink v-for="item in visibleOrganizationNav" :key="item.to" :to="item.to" class="focus-ring flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition" :class="sidebarClasses.nav" :active-class="sidebarClasses.activeNav">
-          <component :is="item.icon" :size="17" />{{ item.label }}
-        </NuxtLink>
-      </nav>
+        <template v-for="group in moduleGroups" :key="group.key">
+          <div
+            class="mb-2 mt-7 px-3 text-[10px] font-bold uppercase tracking-[.14em]"
+            :class="sidebarClasses.quiet"
+          >
+            {{ group.label }}
+          </div>
+          <nav class="space-y-1" :aria-label="group.label">
+            <NuxtLink
+              v-for="item in group.navigation"
+              :key="item.to"
+              :to="item.to"
+              class="focus-ring group flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition"
+              :class="sidebarClasses.nav"
+              :active-class="sidebarClasses.activeNav"
+            >
+              <component :is="item.icon" :size="17" />
+              <span class="flex-1">{{ item.label }}</span>
+            </NuxtLink>
+          </nav>
+        </template>
 
-      <template v-for="group in moduleManagementNav" :key="`manage-${group.key}`">
-        <div class="mb-2 mt-7 px-3 text-[10px] font-bold uppercase tracking-[.14em]" :class="sidebarClasses.quiet">{{ group.label }} verwalten</div>
-        <nav class="space-y-1" :aria-label="`${group.label} verwalten`">
-          <NuxtLink v-for="item in group.managementNavigation" :key="item.to" :to="item.to" class="focus-ring flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition" :class="sidebarClasses.nav" :active-class="sidebarClasses.activeNav">
+        <template v-if="visibleOrganizationNav.length > 0">
+        <div
+          class="mb-2 mt-7 px-3 text-[10px] font-bold uppercase tracking-[.14em]"
+          :class="sidebarClasses.quiet"
+        >
+          Verein verwalten
+        </div>
+        <nav class="space-y-1" aria-label="Vereinsverwaltung">
+          <NuxtLink
+            v-for="item in visibleOrganizationNav"
+            :key="item.to"
+            :to="item.to"
+            class="focus-ring flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition"
+            :class="sidebarClasses.nav"
+            :active-class="sidebarClasses.activeNav"
+          >
             <component :is="item.icon" :size="17" />{{ item.label }}
           </NuxtLink>
         </nav>
-      </template>
+        </template>
 
-      <div class="mt-auto flex items-center gap-3 border-t px-2 pt-4" :class="sidebarClasses.footer">
-        <span class="grid h-9 w-9 place-items-center rounded-full bg-[#d2c7ff] text-xs font-bold text-[#3c3260]">{{ userInitials }}</span>
-        <span class="min-w-0 flex-1"><span class="block truncate text-xs font-semibold">{{ session?.displayName }}</span><span class="block text-[10px]" :class="sidebarClasses.quiet">{{ topRoleLabel }}</span></span>
-        <NuxtLink to="/profil" class="focus-ring rounded-lg p-1.5" :class="sidebarClasses.muted" aria-label="Profil"><UserRound :size="15" /></NuxtLink>
-        <button class="focus-ring rounded-lg p-1.5" :class="sidebarClasses.muted" aria-label="Abmelden" @click="logout"><LogOut :size="15" /></button>
-      </div>
-    </aside>
+        <template v-for="group in moduleManagementNav" :key="`manage-${group.key}`">
+          <div
+            class="mb-2 mt-7 px-3 text-[10px] font-bold uppercase tracking-[.14em]"
+            :class="sidebarClasses.quiet"
+          >
+            {{ group.label }} verwalten
+          </div>
+          <nav class="space-y-1" :aria-label="`${group.label} verwalten`">
+            <NuxtLink
+              v-for="item in group.managementNavigation"
+              :key="item.to"
+              :to="item.to"
+              class="focus-ring flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition"
+              :class="sidebarClasses.nav"
+              :active-class="sidebarClasses.activeNav"
+            >
+              <component :is="item.icon" :size="17" />{{ item.label }}
+            </NuxtLink>
+          </nav>
+        </template>
 
-    <main class="min-w-0 flex-1 lg:h-screen lg:min-h-0 lg:overflow-y-auto">
-      <div class="mx-auto w-full px-5 py-8 sm:px-10" :class="route.path === '/bildstil' ? 'max-w-[1800px] lg:px-6' : 'max-w-[1280px]'"><slot /></div>
-    </main>
-    <PageSaveFab />
-  </div>
+        <div
+          class="mt-auto flex items-center gap-3 border-t px-2 pt-4"
+          :class="sidebarClasses.footer"
+        >
+          <span
+            class="grid h-9 w-9 place-items-center rounded-full bg-[#d2c7ff] text-xs font-bold text-[#3c3260]"
+            >{{ userInitials }}</span
+          >
+          <span class="min-w-0 flex-1"
+            ><span class="block truncate text-xs font-semibold">{{ session?.displayName }}</span
+            ><span class="block text-[10px]" :class="sidebarClasses.quiet">{{
+              topRoleLabel
+            }}</span></span
+          >
+          <NuxtLink
+            to="/profil"
+            class="focus-ring rounded-lg p-1.5"
+            :class="sidebarClasses.muted"
+            aria-label="Profil"
+            ><UserRound :size="15"
+          /></NuxtLink>
+          <button
+            class="focus-ring rounded-lg p-1.5"
+            :class="sidebarClasses.muted"
+            aria-label="Abmelden"
+            @click="logout"
+          >
+            <LogOut :size="15" />
+          </button>
+        </div>
+      </aside>
+
+      <main class="min-w-0 flex-1 lg:h-screen lg:min-h-0 lg:overflow-y-auto">
+        <div
+          class="mx-auto w-full px-5 py-8 sm:px-10"
+          :class="route.path === '/bildstil' ? 'max-w-[1800px] lg:px-6' : 'max-w-[1280px]'"
+        >
+          <slot />
+        </div>
+      </main>
+      <PageSaveFab />
+    </div>
     <template #fallback>
-      <main class="grid min-h-screen place-items-center bg-oat px-5 text-sm text-[#7b827d]" aria-busy="true">
+      <main
+        class="grid min-h-screen place-items-center bg-oat px-5 text-sm text-[#7b827d]"
+        aria-busy="true"
+      >
         Anwendung wird geladen …
       </main>
     </template>
