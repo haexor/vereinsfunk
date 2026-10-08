@@ -267,6 +267,9 @@ describe('PlayerBoard coach flows', () => {
 
     const asPlayer = await call(await startApp({ roleProvider: rolesProvider(['player']), supabaseClients: fakes }), 'GET', url)
     expect(asPlayer.statusCode).toBe(403)
+    const playerModuleOff = await call(await startApp({ roleProvider: rolesProvider(['player']), supabaseClients: fakes, moduleStatusProvider: moduleStatusProviderWith([]) }), 'GET', url)
+    expect(playerModuleOff.statusCode).toBe(403)
+    expect(playerModuleOff.json()).toMatchObject({ error: 'forbidden' })
     const moduleOff = await call(await startApp({ roleProvider: rolesProvider(['team_manager']), supabaseClients: fakes, moduleStatusProvider: moduleStatusProviderWith(['social_media']) }), 'GET', url)
     expect(moduleOff.json()).toMatchObject({ error: 'module_disabled' })
     const asCoach = await call(await startApp({ roleProvider: rolesProvider(['team_manager']), supabaseClients: fakes }), 'GET', url)

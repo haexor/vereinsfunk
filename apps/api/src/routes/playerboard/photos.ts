@@ -189,8 +189,8 @@ export function registerPlayerboardPhotoRoutes(app: FastifyInstance, context: Ap
     const params = z.object({ teamId: UuidSchema }).parse(request.params)
     const scope = await loadTeamScope(supabaseClients.forService(), params.teamId)
     if (!scope) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
-    if (!(await requirePlayerboardModule(context, request, reply, scope))) return
     if (!(await requirePermissionAnyOf(request, reply, ['training.manage', 'consent.manage'], scope))) return
+    if (!(await requirePlayerboardModule(context, request, reply, scope))) return
     const rows = await supabaseClients.forService().rpc('playerboard_team_photo_consents', { target_team_id: params.teamId })
     if (rows.error) throw rows.error
     return reply.code(200).send(((rows.data ?? []) as { player_id: string; directory_person_id: string; consent_record_id: string | null }[])

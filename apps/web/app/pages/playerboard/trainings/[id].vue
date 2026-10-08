@@ -183,7 +183,9 @@ const formattedDate = computed(() => (detail.value ? dateFormat.format(new Date(
         :missing-consent="missingConsent"
       />
 
-      <PlayerboardTrainingPhotos :training-id="detail.training.id" :players="activePlayers" :consents="consents" :can-manage="canManage" />
+      <!-- Foto-Reviews muessen auch bereits zugeordnete, inzwischen inaktive Personen erneut
+           anbieten koennen; sonst wuerde ein erneutes Speichern ihre Zuordnung entfernen. -->
+      <PlayerboardTrainingPhotos :training-id="detail.training.id" :players="players" :consents="consents" :can-manage="canManage" />
     </template>
   </div>
 </template>
