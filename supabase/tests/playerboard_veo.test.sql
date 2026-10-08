@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(24);
+select plan(25);
 
 set local role postgres;
 
@@ -73,7 +73,15 @@ select is(
   'already_running', 'a second request while the run is active does not start another one'
 );
 
--- 7-9: Veo-Spiel A haengt an das vorhandene Spiel 1 an: Ergebnis ja, Stammdaten und Quelle bleiben.
+-- 7: Eine deaktivierte Quelle darf auch ueber den speziellen Veo-Endpunkt keinen Lauf belegen.
+update public.integration_sources set enabled = false where id = '53200000-2000-4000-8000-000000000001';
+select throws_ok(
+  $$select public.enqueue_integration_sync('53200000-1000-4000-8000-000000000001', '53200000-2000-4000-8000-000000000001', 'manual-disabled', gen_random_uuid(), null)$$,
+  '22023', 'source_disabled', 'a disabled Veo source cannot be queued'
+);
+update public.integration_sources set enabled = true where id = '53200000-2000-4000-8000-000000000001';
+
+-- 8-10: Veo-Spiel A haengt an das vorhandene Spiel 1 an: Ergebnis ja, Stammdaten und Quelle bleiben.
 select is(
   public.playerboard_veo_apply_match((select run_id from veo_run), jsonb_build_object(
     'veoMatchId', 'match-a', 'veoTeamId', 'veo-team', 'start', '2026-09-05T10:12:00Z', 'opponentName', 'Gegner Nord U13',

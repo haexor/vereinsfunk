@@ -70,7 +70,7 @@ create table public.playerboard_veo_matches (
   unique (team_id, veo_match_id),
   unique (organization_id, team_id, fixture_id),
   foreign key (organization_id, fixture_id) references public.fixtures(organization_id, id) on delete cascade,
-  foreign key (team_id) references public.teams(id) on delete cascade
+  foreign key (organization_id, team_id) references public.teams(organization_id, id) on delete cascade
 );
 create index playerboard_veo_matches_team_idx on public.playerboard_veo_matches (organization_id, team_id);
 
@@ -105,7 +105,7 @@ create table public.playerboard_veo_player_assignments (
   unique (fixture_id, veo_jersey_number),
   -- Ein Kader-Eintrag hat je Spiel hoechstens eine Rueckennummer; null mehrfach erlaubt.
   unique (fixture_id, player_id),
-  unique (organization_id, fixture_id, id),
+  unique (organization_id, team_id, fixture_id, id),
   foreign key (organization_id, team_id, fixture_id)
     references public.playerboard_veo_matches(organization_id, team_id, fixture_id) on delete cascade,
   -- Nur Spieler derselben Mannschaft; Loeschen aus dem Kader macht die Nummer wieder unzugeordnet.
@@ -124,8 +124,8 @@ create table public.playerboard_veo_player_stats (
   category text not null check (char_length(category) between 1 and 120),
   value numeric not null,
   primary key (assignment_id, stat_type),
-  foreign key (organization_id, fixture_id, assignment_id)
-    references public.playerboard_veo_player_assignments(organization_id, fixture_id, id) on delete cascade
+  foreign key (organization_id, team_id, fixture_id, assignment_id)
+    references public.playerboard_veo_player_assignments(organization_id, team_id, fixture_id, id) on delete cascade
 );
 create index playerboard_veo_player_stats_fixture_idx on public.playerboard_veo_player_stats (organization_id, fixture_id);
 
@@ -248,6 +248,9 @@ begin
   end if;
   if source_row.transport <> 'http' or source_row.department_id is null then
     raise exception 'source_not_queueable' using errcode = '22023';
+  end if;
+  if not source_row.enabled then
+    raise exception 'source_disabled' using errcode = '22023';
   end if;
 
   select * into acquired from public.acquire_integration_sync_run(

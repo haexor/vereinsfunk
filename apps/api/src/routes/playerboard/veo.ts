@@ -14,7 +14,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { ciphertextToBytea, createSecretBoxFromEnvironment } from '../../secretBox.js'
-import { enqueueIntegrationSync } from '../../services/integrationQueue.js'
+import { enqueueIntegrationSync, isSourceDisabledError } from '../../services/integrationQueue.js'
 import type { ApiRouteContext } from '../context.js'
 import { createAuditRecorder } from '../shared.js'
 import { loadTeamScope } from './shared.js'
@@ -207,9 +207,17 @@ export function registerPlayerboardVeoRoutes(app: FastifyInstance, context: ApiR
     const link = await loadLink(service, input.teamId)
     if (!link) return reply.code(404).send({ error: 'veo_not_linked', correlationId: request.id })
 
-    const queued = await enqueueIntegrationSync(service, {
-      organizationId: scope.organizationId, sourceId: link.integration_source_id, idempotencyKey, triggeredBy: request.auth!.userId,
-    })
+    let queued: Awaited<ReturnType<typeof enqueueIntegrationSync>>
+    try {
+      queued = await enqueueIntegrationSync(service, {
+        organizationId: scope.organizationId, sourceId: link.integration_source_id, idempotencyKey, triggeredBy: request.auth!.userId,
+      })
+    } catch (error) {
+      if (isSourceDisabledError(error)) {
+        return reply.code(409).send({ error: 'source_disabled', correlationId: request.id })
+      }
+      throw error
+    }
     if (queued.result === 'already_running') {
       return reply.code(409).send({ error: 'sync_already_running', runId: queued.runId, correlationId: request.id })
     }

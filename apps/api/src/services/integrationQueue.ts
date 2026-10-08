@@ -3,6 +3,15 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 export type QueuedSyncResult = 'acquired' | 'replay' | 'already_running'
 
+export function isSourceDisabledError(error: unknown): boolean {
+  const message = error instanceof Error
+    ? error.message
+    : typeof error === 'object' && error !== null && 'message' in error
+      ? String(error.message)
+      : ''
+  return message.includes('source_disabled')
+}
+
 /**
  * Paket 053: reiht einen Abgleich einer HTTP-Quelle fuer den Worker ein (public.enqueue_integration_sync).
  * Belegt atomar den Lauf-Slot aus Paket 026 und schreibt den ID-only-Auftrag in workflow_outbox.

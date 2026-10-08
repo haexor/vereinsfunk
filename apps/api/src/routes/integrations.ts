@@ -23,7 +23,7 @@ import {
   SYNC_CONFLICT_COLUMNS,
   SYNC_RUN_COLUMNS,
 } from '../apiMappers.js'
-import { enqueueIntegrationSync } from '../services/integrationQueue.js'
+import { enqueueIntegrationSync, isSourceDisabledError } from '../services/integrationQueue.js'
 import { collectRows, failSyncRun, loadSyncSourceResponse, type SyncDomainContext } from '../services/integrationSync.js'
 import { handleEventsSync } from '../services/sync/events.js'
 import { handleFixturesSync } from '../services/sync/fixtures.js'
@@ -313,9 +313,19 @@ export function registerIntegrationRoutes(app: FastifyInstance, context: ApiRout
 
     // HTTP-Quellen reiht die API nur ein; Abruf und Schreiben macht der Worker (Paket 053).
     if (sourceTransport === 'http') {
-      const queued = await enqueueIntegrationSync(service, {
-        organizationId, sourceId: params.id, idempotencyKey, triggeredBy: request.auth!.userId,
-      })
+      let queued: Awaited<ReturnType<typeof enqueueIntegrationSync>>
+      try {
+        queued = await enqueueIntegrationSync(service, {
+          organizationId, sourceId: params.id, idempotencyKey, triggeredBy: request.auth!.userId,
+        })
+      } catch (error) {
+        // Die Vorabpruefung oben schliesst den Normalfall aus; die RPC-Pruefung deckt das
+        // Deaktivieren zwischen Leseabfrage und Queue atomar ab.
+        if (isSourceDisabledError(error)) {
+          return reply.code(409).send({ error: 'source_disabled', correlationId: request.id })
+        }
+        throw error
+      }
       if (queued.result === 'already_running') {
         return reply.code(409).send({ error: 'sync_already_running', correlationId: request.id, idempotencyKey })
       }

@@ -196,6 +196,16 @@ describe('POST /v1/playerboard/veo/sync', () => {
     expect(response.json()).toMatchObject({ error: 'sync_already_running', runId: RUN_ID })
   })
 
+  it('does not queue a disabled source', async () => {
+    const app = await startApp({
+      roleProvider: rolesProvider(['team_manager']),
+      supabaseClients: clients({ link, rpc: { enqueue_integration_sync: { data: null, error: { message: 'source_disabled' } } } }),
+    })
+    const response = await call(app, 'POST', '/v1/playerboard/veo/sync', { teamId: TEAM_ID })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'source_disabled' })
+  })
+
   it('rejects a player', async () => {
     const app = await startApp({ roleProvider: rolesProvider(['player']), supabaseClients: clients({ link }) })
     const response = await call(app, 'POST', '/v1/playerboard/veo/sync', { teamId: TEAM_ID })
