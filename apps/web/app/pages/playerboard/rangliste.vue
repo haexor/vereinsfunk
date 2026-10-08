@@ -36,14 +36,16 @@ async function loadSeason(): Promise<boolean> {
   if (!organizationId.value || !teamId.value) return true
   const requestedOrganizationId = organizationId.value
   const requestedTeamId = teamId.value
+  const requestedTimezone = organizationTimezone.value
   try {
-    seasonFrom.value = await loadSeasonFrom(
-      requestedOrganizationId,
-      requestedTeamId,
-      organizationTimezone.value,
-    )
+    const from = await loadSeasonFrom(requestedOrganizationId, requestedTeamId, requestedTimezone)
+    if (organizationId.value !== requestedOrganizationId || teamId.value !== requestedTeamId)
+      return false
+    seasonFrom.value = from
     return true
   } catch (error) {
+    if (organizationId.value !== requestedOrganizationId || teamId.value !== requestedTeamId)
+      return false
     seasonLoadError.value = true
     errorMessage.value = playerboardErrorMessage(error, 'Die Saison konnte nicht geladen werden.')
     return false
