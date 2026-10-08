@@ -78,6 +78,9 @@ const {
 // Fotos erst beim Oeffnen des Reiters: die signierten Links leben nur fuenf Minuten.
 const photos = ref<PublicPlayerboardPhoto[] | null>(null)
 const photosError = ref(false)
+// Vollbild mit Wischen durch alle freigegebenen Fotos.
+const photoGallery = ref<HTMLElement | null>(null)
+usePhotoSwipe(photoGallery)
 /** Laedt die freigegebenen Fotos mit frischen, kurzlebigen Links. */
 async function loadPhotos() {
   photosError.value = false
@@ -224,18 +227,20 @@ useHead({
         </p>
         <p v-else-if="photos === null" class="text-xs text-[#7b827d]">Wird geladen …</p>
         <p v-else-if="photos.length === 0" class="text-sm text-[#6c756f]">Noch keine Fotos.</p>
-        <ul v-else class="grid grid-cols-2 gap-2">
+        <ul v-else ref="photoGallery" class="grid grid-cols-2 gap-2">
           <li
             v-for="photo in photos"
             :key="photo.url"
             class="overflow-hidden rounded-xl bg-[#eef1ea]"
           >
-            <img
-              :src="photo.url"
-              :alt="`Trainingsfoto vom ${formatDate(photo.trainingDate)}`"
-              class="aspect-square w-full object-cover"
-              loading="lazy"
-            />
+            <a :href="photo.url" data-pswp class="focus-ring block" :aria-label="`Trainingsfoto vom ${formatDate(photo.trainingDate)} groß anzeigen`">
+              <img
+                :src="photo.url"
+                :alt="`Trainingsfoto vom ${formatDate(photo.trainingDate)}`"
+                class="aspect-square w-full object-cover"
+                loading="lazy"
+              />
+            </a>
             <p class="px-2 py-1 text-[10px] text-[#6c756f]">{{ formatDate(photo.trainingDate) }}</p>
           </li>
         </ul>

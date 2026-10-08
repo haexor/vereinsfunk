@@ -22,6 +22,7 @@
     "fabric": "^7.4.0",
     "markdown-it": "^15.0.0",
     "nuxt": "^4.5.1",
+    "photoswipe": "^5.4.4",
     "reka-ui": "^2.10.3",
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4.3.3",

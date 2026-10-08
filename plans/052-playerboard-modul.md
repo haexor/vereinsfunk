@@ -557,6 +557,9 @@ Abweichungen:
   - Bei Gleichstand teilen sich Spieler einen Platz, der nächste folgt ohne Lücke: 1, 1, 2, 2, 2, 2, 3, 3, 3, 4 statt 1, 1, 3, 3, 3, 3, 7, 7, 7, 10.
   - So sind Gold, Silber und Bronze immer die Plätze 1 bis 3, und diese Zeilen haben einen Hintergrund in ihrer Medaillenfarbe.
   - `dense_rank()` in `authz.playerboard_ranking_rows` (intern und öffentlich); im Domain-Paket ersetzt `denseRanks` die frühere `competitionRanks`.
+- **Fotos im Vollbild mit Wischen** (Betreiberwunsch 2026-10-08): PhotoSwipe 5 (`photoswipe`, MIT, ohne eigene Abhängigkeiten) über `composables/usePhotoSwipe.ts`.
+  - Gilt für die Trainingsfotos intern und auf der öffentlichen Seite; PhotoSwipe wird erst beim ersten Öffnen geladen.
+  - Die Bildmaße kommen vom geladenen Vorschaubild und werden nach dem Laden in der Vollansicht korrigiert, weil die API sie nicht kennt.
 - **Übersicht und Kachel zeigen immer alle Spieler** (Betreiberentscheidung 2026-10-08) statt nur der Plätze 1 bis 3; die Plätze 1 bis 3 sind wie in der Rangliste farbig hinterlegt.
 - **Öffentliche Rangliste bei geteilten Plätzen nach Rückennummer**, wie intern (ebenfalls Migration `2026101101`). Bisher entschied der Text des Kürzels („#10“ vor „#3“).
 - **Schalter „nicht öffentlich“ je Foto** ist schon mit PR 3 gekommen.
