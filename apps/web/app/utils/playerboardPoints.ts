@@ -2,6 +2,7 @@
 
 export type PointKey = `${string}:${string}`
 
+/** Verbindet Spieler- und Kategorie-ID zum Schluessel einer Punktezelle. */
 export function pointKey(playerId: string, categoryId: string): PointKey {
   return `${playerId}:${categoryId}`
 }
@@ -53,6 +54,7 @@ export function createPointSaveQueue(options: {
   let running: Promise<void> | null = null
   let disposed = false
 
+  /** Setzt die Wartezeit zurueck und plant das Speichern der offenen Zellen. */
   function schedule() {
     if (timer !== null) clearTimer(timer)
     timer = setTimer(() => {
@@ -61,6 +63,7 @@ export function createPointSaveQueue(options: {
     }, delayMs)
   }
 
+  /** Speichert offene Zellen in Folge; bei einem Fehler bleiben sie fuer den naechsten Versuch offen. */
   async function run(): Promise<void> {
     while (dirty.size > 0 && !disposed) {
       const keys = [...dirty]
@@ -77,6 +80,7 @@ export function createPointSaveQueue(options: {
     if (!disposed) options.onState(dirty.size > 0 ? 'pending' : 'saved')
   }
 
+  /** Bricht den Timer ab, wartet auf laufendes Speichern und sendet danach noch offene Zellen. */
   async function flush(): Promise<void> {
     if (timer !== null) {
       clearTimer(timer)

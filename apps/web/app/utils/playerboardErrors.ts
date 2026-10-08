@@ -31,6 +31,7 @@ const messages: Readonly<Record<string, string>> = {
   recognizable_people_not_confirmed: 'Bestätige, dass alle erkennbaren Personen ausgewählt sind.',
 }
 
+/** Liefert Klartext fuer bekannte API-Fehlercodes, sonst die Ersatzmeldung der Seite. */
 export function playerboardErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiRequestError) return messages[error.code] ?? fallback
   return fallback

@@ -4,6 +4,7 @@ import { replaceableState, restrictionState, settingsPatch, suggestPublicSlug } 
 
 const ID = '10000000-1200-4000-8000-000000000001'
 
+/** Erstellt Mannschaftseinstellungen fuer Tests und ersetzt gezielt eigene, wirksame oder gesperrte Werte. */
 function entry(overrides: { own?: Partial<ScopePlayerboardSettings['own']>; effective?: Partial<ScopePlayerboardSettings['effective']>; locked?: Partial<ScopePlayerboardSettings['locked']> } = {}): ScopePlayerboardSettings {
   return {
     scope: 'team', scopeId: ID, name: 'U13', departmentId: ID, canEdit: true, publicPath: null,

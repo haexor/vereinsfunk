@@ -14,6 +14,7 @@ interface ScopeLike {
   departments: readonly { id: string; name: string; teams: readonly { id: string; name: string }[] }[]
 }
 
+/** Listet sichtbare Mannschaften des aktiven Vereins bzw. der Abteilung; ohne passenden Verein bleibt die Liste leer. */
 export function teamsInScope(scopes: readonly ScopeLike[], active: { organizationId: string; departmentId: string | null } | null): PlayerboardTeamOption[] {
   if (!active) return []
   const organization = scopes.find((item) => item.organizationId === active.organizationId)

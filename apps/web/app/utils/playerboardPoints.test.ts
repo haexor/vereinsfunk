@@ -44,6 +44,7 @@ describe('createPointSaveQueue', () => {
   })
   afterEach(() => { vi.useRealTimers() })
 
+  /** Erstellt eine Testwarteschlange mit den Zellwerten, Zustandsprotokoll und 500 ms Wartezeit. */
   function queue(save: (entries: { key: PointKey; value: number | null }[]) => Promise<void>) {
     return createPointSaveQueue({ read: (key) => values.get(key) ?? null, save, onState: (state) => states.push(state), delayMs: 500 })
   }

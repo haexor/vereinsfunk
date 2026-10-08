@@ -6,6 +6,7 @@ import type { PlayerboardSettingsValues, ScopePlayerboardSettings } from '@verei
 // geerbt (kein eigener Wert) oder eigener Wert.
 export type ReplaceableState = 'inherited' | 'own' | 'locked'
 
+/** Bestimmt den Feldzustand: Eine Sperre hat Vorrang, sonst bedeutet null einen geerbten Wert. */
 export function replaceableState(entry: ScopePlayerboardSettings, field: 'seasonStart' | 'statsVisibility'): ReplaceableState {
   if (entry.locked[field]) return 'locked'
   return entry.own[field] === null ? 'inherited' : 'own'
@@ -15,6 +16,7 @@ export function replaceableState(entry: ScopePlayerboardSettings, field: 'season
 // ohne eigenes Verbot -> hier wirkungslos, deshalb gesperrt) oder erlaubt.
 export type RestrictionState = 'allowed' | 'restricted' | 'locked'
 
+/** Unterscheidet ein eigenes Verbot von einer geerbten Sperre oder einer wirksamen Erlaubnis. */
 export function restrictionState(entry: ScopePlayerboardSettings, field: 'teamCategoriesAllowed' | 'publicSharingAllowed'): RestrictionState {
   if (entry.own[field] === false) return 'restricted'
   return entry.effective[field] ? 'allowed' : 'locked'
