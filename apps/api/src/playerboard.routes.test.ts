@@ -361,5 +361,22 @@ describe('PlayerBoard public team page', () => {
     expect(ranking.json()).toEqual([{ rank: 1, label: '#7 M. K.', total: 5, categories: [{ category: 'Fairness', points: 5 }] }])
     const photos = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/u13/photos' })
     expect(photos.statusCode).toBe(404)
+    const veo = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/u13/veo' })
+    expect(veo.statusCode).toBe(404)
+  })
+
+  it('serves Veo matches with labels and the club timezone when the tab is on', async () => {
+    const info = [{ organization_name: 'SV Nordstadt', team_name: 'U13', points_enabled: false, veo_stats_enabled: true, photos_enabled: false }]
+    const match = {
+      kickoffAt: '2026-09-05T10:00:00+00:00', opponentName: 'Gegner', isHome: false, ownScore: 1, opponentScore: 3,
+      teamStats: [{ teamAssociation: 'own', statType: 'football_shots_total', category: 'attacking', value: 9 }],
+      players: [{ jerseyNumber: 7, label: '#7 M. K.', stats: [{ statType: 'sprints_total', category: 'physical', value: 4 }] }],
+    }
+    const app = await startApp({ supabaseClients: publicClients(info, { playerboard_public_veo_stats: { data: [match], error: null } }) })
+    const team = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/u13' })
+    expect(team.json()).toMatchObject({ tabs: { points: false, veoStats: true, photos: false }, timezone: 'Europe/Berlin' })
+    const veo = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/u13/veo' })
+    expect(veo.statusCode).toBe(200)
+    expect(veo.json()).toEqual([match])
   })
 })

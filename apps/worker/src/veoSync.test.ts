@@ -52,7 +52,7 @@ function executor(repository: VeoSyncRepository) {
   const mails: { to: string; subject: string; text: string }[] = []
   const logs: unknown[] = []
   const instance = new VeoSyncExecutor({
-    repository, secretBox: box, fetch: vi.fn(), webBaseUrl: 'https://app.example.local',
+    repository, secretBox: box, fetch: vi.fn(), webBaseUrl: 'https://app.example.local', retryDelayMs: 0,
     emailSender: { send: async (message) => { mails.push(message) } },
     log: (fields, message) => { logs.push({ fields, message }) },
   })
@@ -84,7 +84,21 @@ describe('VeoSyncExecutor', () => {
     expect(finished).toEqual([{ status: 'succeeded', errorClass: null, created: 0, updated: 1, skipped: 1, conflicts: 0 }])
   })
 
-  it('leaves a match out completely when its player values fail and still writes the others', async () => {
+  it('retries a match once when Veo answers with a server error', async () => {
+    veo.listMatches.mockResolvedValue([match('a')])
+    veo.fetchPlayerStats
+      .mockRejectedValueOnce(new VeoError('upstream_error', 'Veo request failed with HTTP 502', 502))
+      .mockResolvedValueOnce([])
+    const { repository, applied, finished } = fakeRepository()
+    const { instance, logs } = executor(repository)
+    await instance.execute(payload)
+
+    expect(applied.map((write) => write.veoMatchId)).toEqual(['a'])
+    expect(finished[0]).toMatchObject({ status: 'succeeded', updated: 1 })
+    expect(logs).toEqual([{ fields: { runId: RUN_ID, status: 502 }, message: 'veo match request retried' }])
+  })
+
+  it('leaves a match out completely when its player values fail twice and still writes the others', async () => {
     veo.listMatches.mockResolvedValue([match('a'), match('b')])
     veo.fetchPlayerStats.mockImplementation(async (_token: string, params: { veoMatchId: string }) => {
       if (params.veoMatchId === 'a') throw new VeoError('upstream_error', 'Veo request failed with HTTP 502', 502)
@@ -93,7 +107,7 @@ describe('VeoSyncExecutor', () => {
     const { repository, applied, finished } = fakeRepository()
     await executor(repository).instance.execute(payload)
 
-    expect(veo.fetchTeamStats).toHaveBeenCalledTimes(2)
+    expect(veo.fetchTeamStats).toHaveBeenCalledTimes(3)
     expect(applied.map((write) => write.veoMatchId)).toEqual(['b'])
     expect(finished).toEqual([{ status: 'failed', errorClass: 'upstream_error', created: 0, updated: 1, skipped: 1, conflicts: 0 }])
   })

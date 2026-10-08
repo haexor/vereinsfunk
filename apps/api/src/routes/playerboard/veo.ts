@@ -1,11 +1,17 @@
 import { randomUUID } from 'node:crypto'
 import {
+  AssignPlayerboardVeoJerseyRequestSchema,
+  AssignPlayerboardVeoJerseyResponseSchema,
+  PlayerboardRankingQuerySchema,
+  PlayerboardVeoConflictSchema,
   PlayerboardVeoLinkRequestSchema,
+  PlayerboardVeoMatchSchema,
   PlayerboardVeoLoginRequestSchema,
   PlayerboardVeoLoginResponseSchema,
   PlayerboardVeoStatusSchema,
   PlayerboardVeoSyncAcceptedSchema,
   PlayerboardVeoSyncRequestSchema,
+  ResolvePlayerboardVeoConflictRequestSchema,
   SyncIdempotencyKeySchema,
   UuidSchema,
 } from '@vereinsfunk/contracts'
@@ -17,7 +23,7 @@ import { ciphertextToBytea, createSecretBoxFromEnvironment } from '../../secretB
 import { enqueueIntegrationSync, isSourceDisabledError } from '../../services/integrationQueue.js'
 import type { ApiRouteContext } from '../context.js'
 import { createAuditRecorder } from '../shared.js'
-import { loadTeamScope } from './shared.js'
+import { loadTeamScope, requireStatsAccess, sendDatabaseError } from './shared.js'
 import { openVeoLinkToken, sealVeoLinkToken, type VeoTeamChoice } from './veoLinkToken.js'
 
 // Paket 053, PR 2: Veo verbinden und abgleichen. Der Trainer (playerboard.manage auf der
@@ -107,6 +113,44 @@ function readIdempotencyKey(request: FastifyRequest): string | undefined {
   if (Array.isArray(header)) return undefined
   const parsed = SyncIdempotencyKeySchema.safeParse(typeof header === 'string' ? header : randomUUID())
   return parsed.success ? parsed.data : undefined
+}
+
+type ConflictRow = { id: string; source_id: string; label: string; current_value: string | null; incoming_value: string | null }
+
+/** Offene mehrdeutige Veo-Spiele einer Quelle samt der Spielplan-Kandidaten, die der Abgleich gefunden hat. */
+async function loadConflicts(service: SupabaseClient, sourceId: string) {
+  const conflicts = await service
+    .from('integration_sync_conflicts')
+    .select('id, source_id, label, current_value, incoming_value')
+    .eq('source_id', sourceId)
+    .eq('kind', 'ambiguous_match')
+    .eq('resolution', 'pending')
+    .order('created_at', { ascending: true })
+  if (conflicts.error) throw conflicts.error
+  const rows = conflicts.data as ConflictRow[]
+  const candidateIds = [...new Set(rows.flatMap((row) => (row.current_value ?? '').split(',').filter((id) => UuidSchema.safeParse(id).success)))]
+  const fixtures = new Map<string, { id: string; kickoff_at: string | null; opponent_name: string | null; is_home: boolean | null }>()
+  if (candidateIds.length) {
+    // Bereits einem anderen Veo-Spiel zugeordnete Kandidaten fallen weg.
+    const loaded = await service.from('fixtures').select('id, kickoff_at, opponent_name, is_home').in('id', candidateIds)
+    if (loaded.error) throw loaded.error
+    const mapped = await service.from('playerboard_veo_matches').select('fixture_id').in('fixture_id', candidateIds)
+    if (mapped.error) throw mapped.error
+    const taken = new Set((mapped.data as { fixture_id: string }[]).map((row) => row.fixture_id))
+    for (const fixture of loaded.data as { id: string; kickoff_at: string | null; opponent_name: string | null; is_home: boolean | null }[]) {
+      if (!taken.has(fixture.id)) fixtures.set(fixture.id, fixture)
+    }
+  }
+  return rows.map((row) => PlayerboardVeoConflictSchema.parse({
+    id: row.id,
+    label: row.label,
+    // Aeltere Konflikte (vor PR 3) tragen hier noch die Veo-Spiel-ID statt des Starts.
+    veoStart: row.incoming_value && !Number.isNaN(Date.parse(row.incoming_value)) ? row.incoming_value : null,
+    candidates: (row.current_value ?? '').split(',').flatMap((id) => {
+      const fixture = fixtures.get(id)
+      return fixture ? [{ fixtureId: fixture.id, kickoffAt: fixture.kickoff_at, opponentName: fixture.opponent_name, isHome: fixture.is_home }] : []
+    }),
+  }))
 }
 
 /** Registriert Anmeldung, Verbindung, Status und manuellen Abgleich der Veo-Anbindung. */
@@ -200,6 +244,96 @@ export function registerPlayerboardVeoRoutes(app: FastifyInstance, context: ApiR
     if (!scope) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     if (!(await requirePermission(request, reply, 'training.view', scope))) return
     return reply.send(await loadStatus(service, query.teamId))
+  })
+
+  // Spiele mit Veo-Werten im Zeitraum, fuer alle, die die Kennzahlen der Mannschaft sehen.
+  app.get('/v1/playerboard/teams/:teamId/veo/matches', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ teamId: UuidSchema }).parse(request.params)
+    const query = PlayerboardRankingQuerySchema.parse(request.query)
+    const scope = await loadTeamScope(supabaseClients.forService(), params.teamId)
+    if (!scope) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requireStatsAccess(context, request, reply, scope))) return
+    const matches = await supabaseClients.forUser(request.auth!.accessToken).rpc('playerboard_veo_team_matches', {
+      target_team_id: params.teamId, from_date: query.from ?? null, to_date: query.to ?? null,
+    })
+    if (matches.error) {
+      if (sendDatabaseError(request, reply, matches.error)) return
+      throw matches.error
+    }
+    return reply.send(z.array(PlayerboardVeoMatchSchema).parse(matches.data ?? []))
+  })
+
+  // Rueckennummer eines Spiels einem Kader-Eintrag zuordnen (oder bewusst offen lassen).
+  app.put('/v1/playerboard/veo/assignments', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const input = AssignPlayerboardVeoJerseyRequestSchema.parse(request.body)
+    const service = supabaseClients.forService()
+    const mapped = await service.from('playerboard_veo_matches').select('team_id').eq('fixture_id', input.fixtureId).maybeSingle()
+    if (mapped.error) throw mapped.error
+    if (!mapped.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const scope = await loadTeamScope(service, mapped.data.team_id as string)
+    if (!scope) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'training.manage', scope))) return
+    const assigned = await supabaseClients.forUser(request.auth!.accessToken).rpc('playerboard_veo_assign_jersey', {
+      p_fixture_id: input.fixtureId, p_jersey_number: input.jerseyNumber, p_player_id: input.playerId, p_apply_to_unassigned: input.applyToUnassigned,
+    })
+    if (assigned.error) {
+      if (sendDatabaseError(request, reply, assigned.error)) return
+      throw assigned.error
+    }
+    return reply.send(AssignPlayerboardVeoJerseyResponseSchema.parse({ changed: assigned.data }))
+  })
+
+  app.get('/v1/playerboard/veo/conflicts', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const query = z.object({ teamId: UuidSchema }).parse(request.query)
+    const service = supabaseClients.forService()
+    const scope = await loadTeamScope(service, query.teamId)
+    if (!scope) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'playerboard.manage', scope))) return
+    const link = await loadLink(service, query.teamId)
+    return reply.send(link ? await loadConflicts(service, link.integration_source_id) : [])
+  })
+
+  // Mehrdeutiges Spiel aufloesen und gleich neu abgleichen, damit die Werte erscheinen.
+  app.post('/v1/playerboard/veo/conflicts/:id/resolve', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const input = ResolvePlayerboardVeoConflictRequestSchema.parse(request.body)
+    const service = supabaseClients.forService()
+    const conflict = await service.from('integration_sync_conflicts').select('source_id').eq('id', params.id).maybeSingle()
+    if (conflict.error) throw conflict.error
+    if (!conflict.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const link = await service.from('playerboard_veo_links').select('team_id').eq('integration_source_id', conflict.data.source_id as string).maybeSingle()
+    if (link.error) throw link.error
+    if (!link.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const scope = await loadTeamScope(service, link.data.team_id as string)
+    if (!scope) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requirePermission(request, reply, 'playerboard.manage', scope))) return
+
+    const resolved = await service.rpc('playerboard_veo_resolve_conflict', {
+      p_conflict_id: params.id, p_action: input.action, p_fixture_id: input.action === 'fixture' ? input.fixtureId : null, p_user_id: request.auth!.userId,
+    })
+    if (resolved.error) {
+      if (sendDatabaseError(request, reply, resolved.error)) return
+      throw resolved.error
+    }
+    await recordAuditEvent(request, {
+      organizationId: scope.organizationId, action: 'playerboard.veo_conflict_resolved', entityType: 'integration_sync_conflict', entityId: params.id,
+      metadata: { action: input.action },
+    })
+    if (input.action === 'ignore') return reply.code(204).send()
+    try {
+      const queued = await enqueueIntegrationSync(service, {
+        organizationId: scope.organizationId, sourceId: conflict.data.source_id as string, idempotencyKey: `resolve:${params.id}`, triggeredBy: request.auth!.userId,
+      })
+      return reply.code(202).send(PlayerboardVeoSyncAcceptedSchema.parse({ runId: queued.runId, state: queued.result === 'acquired' ? 'queued' : queued.result }))
+    } catch (error) {
+      // Die Aufloesung bleibt gespeichert; der naechste Abgleich wendet sie an.
+      if (isSourceDisabledError(error)) return reply.code(204).send()
+      throw error
+    }
   })
 
   // Manueller Abgleich; derselbe Idempotency-Key liefert denselben Lauf (Paket 026).

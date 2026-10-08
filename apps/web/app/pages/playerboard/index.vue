@@ -14,6 +14,9 @@ const { team } = await usePlayerboardTeam()
       <PlayerboardTeamPicker />
     </header>
     <PlayerboardTeamEmpty v-if="!team" />
-    <PlayerboardSeasonSummary v-else />
+    <template v-else>
+      <PlayerboardSeasonSummary />
+      <PlayerboardVeoOverview />
+    </template>
   </div>
 </template>

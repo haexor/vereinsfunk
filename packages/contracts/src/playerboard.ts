@@ -297,6 +297,8 @@ export const PublicPlayerboardTeamSchema = z.object({
   seasonFrom: DateSchema.nullable(),
   // Wirksame Vereinsfarben der Mannschaft (resolveBrand).
   brand: z.object({ primaryColor: z.string(), accentColor: z.string() }),
+  // Zeitzone des Vereins fuer Anstosszeiten der Spiele (Paket 053).
+  timezone: z.string().min(1),
 })
 
 export const PublicPlayerboardRankingEntrySchema = z.object({
@@ -374,6 +376,70 @@ export const PlayerboardVeoSyncAcceptedSchema = z.object({
   state: z.enum(['queued', 'already_running', 'replay']),
 })
 
+// Spiele mit Veo-Werten (PR 3). value ist Veos Rohwert: Meter, Sekunden, km/h oder eine Anzahl.
+export const PlayerboardVeoStatSchema = z.object({
+  statType: z.string().min(1),
+  category: z.string().min(1),
+  value: z.number(),
+})
+export const PlayerboardVeoTeamStatSchema = PlayerboardVeoStatSchema.extend({
+  teamAssociation: z.enum(['own', 'opponent']),
+})
+const VeoMatchBaseSchema = z.object({
+  kickoffAt: z.string(),
+  opponentName: z.string().nullable(),
+  isHome: z.boolean().nullable(),
+  ownScore: z.number().int().nullable(),
+  opponentScore: z.number().int().nullable(),
+  teamStats: z.array(PlayerboardVeoTeamStatSchema),
+})
+export const PlayerboardVeoMatchSchema = VeoMatchBaseSchema.extend({
+  fixtureId: UuidSchema,
+  players: z.array(z.object({
+    jerseyNumber: z.number().int(),
+    playerId: UuidSchema.nullable(),
+    name: z.string().nullable(),
+    matchedManually: z.boolean(),
+    stats: z.array(PlayerboardVeoStatSchema),
+  })),
+})
+// Oeffentlich: keine IDs, Spieler nur als "#7 M. K." bzw. "#7".
+export const PublicPlayerboardVeoMatchSchema = VeoMatchBaseSchema.extend({
+  players: z.array(z.object({
+    jerseyNumber: z.number().int(),
+    label: z.string(),
+    stats: z.array(PlayerboardVeoStatSchema),
+  })),
+})
+
+export const AssignPlayerboardVeoJerseyRequestSchema = z.object({
+  fixtureId: UuidSchema,
+  jerseyNumber: z.number().int().min(0),
+  // null = bewusst nicht zugeordnet.
+  playerId: UuidSchema.nullable(),
+  // Dieselbe Nummer in allen Spielen uebernehmen, in denen sie noch offen ist.
+  applyToUnassigned: z.boolean().default(false),
+}).strict()
+export const AssignPlayerboardVeoJerseyResponseSchema = z.object({ changed: z.number().int() })
+
+// Ein Veo-Spiel, das der Abgleich keinem Spiel im Spielplan eindeutig zuordnen konnte.
+export const PlayerboardVeoConflictSchema = z.object({
+  id: UuidSchema,
+  label: z.string(),
+  veoStart: z.string().nullable(),
+  candidates: z.array(z.object({
+    fixtureId: UuidSchema,
+    kickoffAt: z.string().nullable(),
+    opponentName: z.string().nullable(),
+    isHome: z.boolean().nullable(),
+  })),
+})
+export const ResolvePlayerboardVeoConflictRequestSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('fixture'), fixtureId: UuidSchema }).strict(),
+  z.object({ action: z.literal('create') }).strict(),
+  z.object({ action: z.literal('ignore') }).strict(),
+])
+
 export type PlayerboardStatsVisibility = z.infer<typeof PlayerboardStatsVisibilitySchema>
 export type PlayerboardOverridableField = z.infer<typeof PlayerboardOverridableFieldSchema>
 export type PlayerboardPlayer = z.infer<typeof PlayerboardPlayerSchema>
@@ -404,3 +470,11 @@ export type PlayerboardVeoLoginResponse = z.infer<typeof PlayerboardVeoLoginResp
 export type PlayerboardVeoLinkRequest = z.infer<typeof PlayerboardVeoLinkRequestSchema>
 export type PlayerboardVeoStatus = z.infer<typeof PlayerboardVeoStatusSchema>
 export type PlayerboardVeoSyncAccepted = z.infer<typeof PlayerboardVeoSyncAcceptedSchema>
+export type PlayerboardVeoStat = z.infer<typeof PlayerboardVeoStatSchema>
+export type PlayerboardVeoTeamStat = z.infer<typeof PlayerboardVeoTeamStatSchema>
+export type PlayerboardVeoMatch = z.infer<typeof PlayerboardVeoMatchSchema>
+export type PublicPlayerboardVeoMatch = z.infer<typeof PublicPlayerboardVeoMatchSchema>
+export type AssignPlayerboardVeoJerseyRequest = z.infer<typeof AssignPlayerboardVeoJerseyRequestSchema>
+export type PlayerboardVeoConflict = z.infer<typeof PlayerboardVeoConflictSchema>
+export type ResolvePlayerboardVeoConflictRequest = z.infer<typeof ResolvePlayerboardVeoConflictRequestSchema>
+export type PlayerboardVeoSyncRun = z.infer<typeof PlayerboardVeoSyncRunSchema>

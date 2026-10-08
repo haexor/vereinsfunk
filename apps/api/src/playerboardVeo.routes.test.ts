@@ -25,11 +25,18 @@ function rolesProvider(roles: Role[]): RoleProvider {
 type RpcCall = { name: string; args: Record<string, unknown> }
 
 /** Service-Fake mit Mannschaft, optionaler Veo-Verbindung und aufgezeichneten RPC-Aufrufen. */
-function clients(options: { link?: Record<string, unknown> | null; rpc?: Record<string, { data: unknown; error: unknown }>; calls?: RpcCall[] } = {}): SupabaseClientFactory {
+function clients(options: {
+  link?: Record<string, unknown> | null
+  rpc?: Record<string, { data: unknown; error: unknown }>
+  userRpc?: Record<string, { data: unknown; error: unknown }>
+  tables?: Record<string, unknown>
+  calls?: RpcCall[]
+} = {}): SupabaseClientFactory {
   const tables: Record<string, unknown> = {
     teams: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID },
     playerboard_veo_links: options.link ?? null,
     integration_sync_runs: [],
+    ...options.tables,
   }
   const service = {
     from: (name: string) => {
@@ -44,8 +51,16 @@ function clients(options: { link?: Record<string, unknown> | null; rpc?: Record<
       return result
     },
   }
+  const user = {
+    rpc: async (name: string, args: Record<string, unknown>) => {
+      options.calls?.push({ name, args })
+      const result = options.userRpc?.[name]
+      if (!result) throw new Error(`unexpected user rpc in test fake: ${name}`)
+      return result
+    },
+  }
   return {
-    forUser: () => { throw new Error('no user client expected') },
+    forUser: () => user as unknown as SupabaseClient,
     forService: () => service as unknown as SupabaseClient,
   }
 }
@@ -83,7 +98,7 @@ const veoFetch: FetchLike = async (input) => {
 }
 
 /** Sendet eine Anfrage mit Token fuer USER_ID. */
-async function call(app: Awaited<ReturnType<typeof startApp>>, method: 'GET' | 'POST', url: string, payload?: unknown, headers: Record<string, string> = {}) {
+async function call(app: Awaited<ReturnType<typeof startApp>>, method: 'GET' | 'POST' | 'PUT', url: string, payload?: unknown, headers: Record<string, string> = {}) {
   const token = await signAccessToken(USER_ID)
   return app.inject({ method, url, headers: { authorization: `Bearer ${token}`, ...headers }, ...(payload !== undefined ? { payload: payload as Record<string, unknown> } : {}) })
 }
@@ -222,6 +237,112 @@ describe('GET /v1/playerboard/veo/status', () => {
     const response = await call(app, 'GET', `/v1/playerboard/veo/status?teamId=${TEAM_ID}`)
     expect(response.statusCode).toBe(200)
     expect(response.json()).toMatchObject({ linked: true, veoTeamName: 'TSV U13', needsReconnect: true, consecutiveFailures: 3, runs: [] })
+  })
+})
+
+describe('GET /v1/playerboard/teams/:teamId/veo/matches', () => {
+  const match = {
+    fixtureId: '53000000-3000-4000-8000-000000000001', kickoffAt: '2026-09-05T10:00:00+00:00', opponentName: 'Gegner', isHome: true, ownScore: 2, opponentScore: 1,
+    teamStats: [], players: [{ jerseyNumber: 7, playerId: null, name: null, matchedManually: false, stats: [] }],
+  }
+
+  it('needs sight of the team stats', async () => {
+    const app = await startApp({ roleProvider: rolesProvider(['player']), supabaseClients: clients({ userRpc: { playerboard_can_view_stats: { data: false, error: null } } }) })
+    const response = await call(app, 'GET', `/v1/playerboard/teams/${TEAM_ID}/veo/matches`)
+    expect(response.statusCode).toBe(403)
+  })
+
+  it('passes the range to the database and returns the matches', async () => {
+    const calls: RpcCall[] = []
+    const app = await startApp({
+      roleProvider: rolesProvider(['player']),
+      supabaseClients: clients({ calls, userRpc: { playerboard_can_view_stats: { data: true, error: null }, playerboard_veo_team_matches: { data: [match], error: null } } }),
+    })
+    const response = await call(app, 'GET', `/v1/playerboard/teams/${TEAM_ID}/veo/matches?from=2026-08-01`)
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual([match])
+    expect(calls.find((entry) => entry.name === 'playerboard_veo_team_matches')!.args).toEqual({ target_team_id: TEAM_ID, from_date: '2026-08-01', to_date: null })
+  })
+})
+
+describe('PUT /v1/playerboard/veo/assignments', () => {
+  const body = { fixtureId: '53000000-3000-4000-8000-000000000001', jerseyNumber: 7, playerId: '53000000-4000-4000-8000-000000000001', applyToUnassigned: true }
+  const tables = { playerboard_veo_matches: { team_id: TEAM_ID } }
+
+  it('rejects a player', async () => {
+    const app = await startApp({ roleProvider: rolesProvider(['player']), supabaseClients: clients({ tables }) })
+    const response = await call(app, 'PUT', '/v1/playerboard/veo/assignments', body)
+    expect(response.statusCode).toBe(403)
+  })
+
+  it('assigns through the database function and reports how many matches changed', async () => {
+    const calls: RpcCall[] = []
+    const app = await startApp({ roleProvider: rolesProvider(['team_manager']), supabaseClients: clients({ calls, tables, userRpc: { playerboard_veo_assign_jersey: { data: 3, error: null } } }) })
+    const response = await call(app, 'PUT', '/v1/playerboard/veo/assignments', body)
+    expect(response.json()).toEqual({ changed: 3 })
+    expect(calls[0]!.args).toEqual({ p_fixture_id: body.fixtureId, p_jersey_number: 7, p_player_id: body.playerId, p_apply_to_unassigned: true })
+  })
+
+  it('answers a player who already has a number with 409', async () => {
+    const app = await startApp({
+      roleProvider: rolesProvider(['team_manager']),
+      supabaseClients: clients({ tables, userRpc: { playerboard_veo_assign_jersey: { data: null, error: { message: 'player_already_assigned', code: '23505' } } } }),
+    })
+    const response = await call(app, 'PUT', '/v1/playerboard/veo/assignments', body)
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'player_already_assigned' })
+  })
+})
+
+describe('Veo conflicts', () => {
+  const link = { team_id: TEAM_ID, organization_id: ORGANIZATION_ID, integration_source_id: SOURCE_ID, veo_club_name: 'TSV', veo_team_name: 'TSV U13', consecutive_failures: 0, last_error_code: null }
+  const CONFLICT_ID = '53000000-7000-4000-8000-000000000001'
+  const FREE = '53000000-3000-4000-8000-000000000001'
+  const TAKEN = '53000000-3000-4000-8000-000000000002'
+
+  it('lists open conflicts with the candidates that are still free', async () => {
+    const app = await startApp({
+      roleProvider: rolesProvider(['team_manager']),
+      supabaseClients: clients({
+        link,
+        tables: {
+          integration_sync_conflicts: [{ id: CONFLICT_ID, source_id: SOURCE_ID, label: 'Gamma am 19.09.2026 12:30', current_value: `${FREE},${TAKEN}`, incoming_value: '2026-09-19T10:30:00Z' }],
+          fixtures: [{ id: FREE, kickoff_at: '2026-09-19T10:00:00+00:00', opponent_name: 'Alpha', is_home: null }, { id: TAKEN, kickoff_at: '2026-09-19T11:00:00+00:00', opponent_name: 'Beta', is_home: true }],
+          playerboard_veo_matches: [{ fixture_id: TAKEN }],
+        },
+      }),
+    })
+    const response = await call(app, 'GET', `/v1/playerboard/veo/conflicts?teamId=${TEAM_ID}`)
+    expect(response.json()).toEqual([{
+      id: CONFLICT_ID, label: 'Gamma am 19.09.2026 12:30', veoStart: '2026-09-19T10:30:00Z',
+      candidates: [{ fixtureId: FREE, kickoffAt: '2026-09-19T10:00:00+00:00', opponentName: 'Alpha', isHome: null }],
+    }])
+  })
+
+  it('resolves to a fixture and starts a sync right away', async () => {
+    const calls: RpcCall[] = []
+    const app = await startApp({
+      roleProvider: rolesProvider(['team_manager']),
+      supabaseClients: clients({
+        calls,
+        link,
+        tables: { integration_sync_conflicts: { source_id: SOURCE_ID } },
+        rpc: {
+          playerboard_veo_resolve_conflict: { data: null, error: null },
+          enqueue_integration_sync: { data: [{ result: 'acquired', run_id: RUN_ID }], error: null },
+        },
+      }),
+    })
+    const response = await call(app, 'POST', `/v1/playerboard/veo/conflicts/${CONFLICT_ID}/resolve`, { action: 'fixture', fixtureId: FREE })
+    expect(response.statusCode).toBe(202)
+    expect(calls.map((entry) => entry.name)).toEqual(['playerboard_veo_resolve_conflict', 'enqueue_integration_sync'])
+    expect(calls[0]!.args).toMatchObject({ p_conflict_id: CONFLICT_ID, p_action: 'fixture', p_fixture_id: FREE, p_user_id: USER_ID })
+  })
+
+  it('rejects a player', async () => {
+    const app = await startApp({ roleProvider: rolesProvider(['player']), supabaseClients: clients({ link, tables: { integration_sync_conflicts: { source_id: SOURCE_ID } } }) })
+    const response = await call(app, 'POST', `/v1/playerboard/veo/conflicts/${CONFLICT_ID}/resolve`, { action: 'ignore' })
+    expect(response.statusCode).toBe(403)
   })
 })
 

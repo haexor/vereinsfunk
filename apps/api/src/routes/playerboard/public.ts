@@ -3,6 +3,7 @@ import {
   PublicPlayerboardPhotoSchema,
   PublicPlayerboardRankingEntrySchema,
   PublicPlayerboardTeamSchema,
+  PublicPlayerboardVeoMatchSchema,
 } from '@vereinsfunk/contracts'
 import { currentSeasonStart } from '@vereinsfunk/domain'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
@@ -65,8 +66,9 @@ export function registerPlayerboardPublicRoutes(app: FastifyInstance, context: A
     if (!team?.team_id || !team.department_id) throw new Error('public team without settings row')
     const scope = { departmentId: team.department_id, teamId: team.team_id }
     const brand = await loadResolvedBrandColors(service, organizationId, scope.departmentId, scope.teamId)
-    const today = new Intl.DateTimeFormat('en-CA', { timeZone: (organization.data.timezone as string | null) ?? 'Europe/Berlin', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
-    return { seasonFrom: currentSeasonStart(resolveSettingsFor(settings, scope).seasonStart, today), brand }
+    const timezone = (organization.data.timezone as string | null) ?? 'Europe/Berlin'
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+    return { seasonFrom: currentSeasonStart(resolveSettingsFor(settings, scope).seasonStart, today), brand, timezone }
   }
 
   app.get('/v1/public/playerboard/:orgSlug/:teamSlug', async (request, reply) => {
@@ -94,6 +96,19 @@ export function registerPlayerboardPublicRoutes(app: FastifyInstance, context: A
       rank: Number(row.rank), label: row.label, total: Number(row.total),
       categories: (row.category_totals ?? []).map((entry) => ({ category: entry.category, points: Number(entry.points) })),
     })))
+  })
+
+  // Paket 053: Spiele mit Mannschafts- und Spielerwerten, Spieler nur als "#7 M. K.".
+  app.get('/v1/public/playerboard/:orgSlug/:teamSlug/veo', async (request, reply) => {
+    const team = await loadTeam(request, reply)
+    if (!team) return
+    if (!team.row.veo_stats_enabled) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const query = PlayerboardRankingQuerySchema.parse(request.query)
+    const matches = await supabaseClients.forService().rpc('playerboard_public_veo_stats', {
+      org_slug: team.orgSlug, team_slug: team.teamSlug, from_date: query.from ?? null, to_date: query.to ?? null,
+    })
+    if (matches.error) throw matches.error
+    return reply.code(200).send(z.array(PublicPlayerboardVeoMatchSchema).parse(matches.data ?? []))
   })
 
   app.get('/v1/public/playerboard/:orgSlug/:teamSlug/photos', async (request, reply) => {
