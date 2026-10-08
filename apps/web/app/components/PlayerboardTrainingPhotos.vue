@@ -31,6 +31,9 @@ const loadError = ref('')
 const actionError = ref('')
 const uploads = ref<{ id: string; name: string }[]>([])
 const busyPhotoId = ref<string | null>(null)
+// Vollbild mit Wischen durch die Fotos des Trainings.
+const photoGallery = ref<HTMLElement | null>(null)
+usePhotoSwipe(photoGallery)
 
 async function load() {
   loading.value = true
@@ -184,12 +187,12 @@ function statusClass(photo: PlayerboardPhoto): string {
       <Camera :size="16" class="mr-1 inline text-[#9aa096]" /> Noch keine Fotos zu diesem Training.
     </p>
 
-    <ul class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+    <ul ref="photoGallery" class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
       <li v-for="upload in uploads" :key="upload.id" class="card grid aspect-square place-items-center p-3 text-center text-xs text-[#6c756f]">
         <span><LoaderCircle :size="18" class="mx-auto mb-2 animate-spin" />{{ upload.name }}</span>
       </li>
       <li v-for="photo in photos" :key="photo.id" class="card overflow-hidden" :data-testid="`photo-${photo.id}`">
-        <a :href="photo.url" target="_blank" rel="noopener" class="block aspect-square bg-[#eef1ea]">
+        <a :href="photo.url" data-pswp class="focus-ring block aspect-square bg-[#eef1ea]" aria-label="Trainingsfoto groß anzeigen">
           <img :src="photo.url" alt="Trainingsfoto" class="h-full w-full object-cover" loading="lazy" />
         </a>
         <div class="space-y-2 p-2">

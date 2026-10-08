@@ -4,11 +4,14 @@ import {
   PublicPlayerboardRankingEntrySchema,
   PublicPlayerboardTeamSchema,
 } from '@vereinsfunk/contracts'
+import { currentSeasonStart } from '@vereinsfunk/domain'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import type { ApiRouteContext } from '../context.js'
+import { loadResolvedBrandColors } from '../imageStyle.js'
 import { checkRateLimit } from '../shared.js'
 import { PLAYERBOARD_PHOTO_BUCKET } from './photos.js'
+import { loadOrganizationPlayerboardSettings, resolveSettingsFor } from './shared.js'
 
 const SlugSchema = z.string().max(80).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
 const ParamsSchema = z.object({ orgSlug: SlugSchema, teamSlug: SlugSchema })
@@ -48,12 +51,32 @@ export function registerPlayerboardPublicRoutes(app: FastifyInstance, context: A
     return { ...params.data, row }
   }
 
+  /**
+   * Saisonanfang und Vereinsfarben einer bereits als oeffentlich bestaetigten Mannschaft. Die IDs
+   * bleiben in der API; nach aussen gehen nur das Datum und zwei Farben.
+   */
+  async function loadTeamPresentation(orgSlug: string, teamSlug: string) {
+    const service = supabaseClients.forService()
+    const organization = await service.from('organizations').select('id, timezone').eq('slug', orgSlug).single()
+    if (organization.error) throw organization.error
+    const organizationId = organization.data.id as string
+    const settings = await loadOrganizationPlayerboardSettings(service, organizationId)
+    const team = [...settings.teamById.values()].find((row) => row.public_slug === teamSlug)
+    if (!team?.team_id || !team.department_id) throw new Error('public team without settings row')
+    const scope = { departmentId: team.department_id, teamId: team.team_id }
+    const brand = await loadResolvedBrandColors(service, organizationId, scope.departmentId, scope.teamId)
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: (organization.data.timezone as string | null) ?? 'Europe/Berlin', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+    return { seasonFrom: currentSeasonStart(resolveSettingsFor(settings, scope).seasonStart, today), brand }
+  }
+
   app.get('/v1/public/playerboard/:orgSlug/:teamSlug', async (request, reply) => {
     const team = await loadTeam(request, reply)
     if (!team) return
+    const presentation = await loadTeamPresentation(team.orgSlug, team.teamSlug)
     return reply.code(200).send(PublicPlayerboardTeamSchema.parse({
       organizationName: team.row.organization_name, teamName: team.row.team_name,
       tabs: { points: team.row.points_enabled, veoStats: team.row.veo_stats_enabled, photos: team.row.photos_enabled },
+      ...presentation,
     }))
   })
 

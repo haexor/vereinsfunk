@@ -1,3 +1,5 @@
+import { isPublicTeamPagePath } from '../utils/publicTeamPage'
+
 // /einladung ist bewusst oeffentlich: die Seite selbst entscheidet je nach Session, ob sie
 // sofort annimmt oder zu /registrieren bzw. /anmelden weiterleitet (siehe pages/einladung.vue).
 // /plattform-admin-einladung ist aus demselben Grund oeffentlich (siehe
@@ -15,9 +17,10 @@ const publicPaths = new Set(['/anmelden', '/registrieren', '/passwort-vergessen'
 // oeffentliche Impressum eines einzelnen Vereins, verlinkt aus dessen Instagram-/Facebook-Bio --
 // ebenfalls ohne Vereinskonto als Zielgruppe.
 const publicPathPrefixes = ['/einwilligung/', '/impressum/']
+// Paket 052, PR 4: die oeffentliche Mannschaftsseite -- exaktes Muster, siehe utils/publicTeamPage.ts.
 
 export default defineNuxtRouteMiddleware(async (to) => {
-  if (publicPaths.has(to.path) || publicPathPrefixes.some((prefix) => to.path.startsWith(prefix))) return
+  if (publicPaths.has(to.path) || publicPathPrefixes.some((prefix) => to.path.startsWith(prefix)) || isPublicTeamPagePath(to.path)) return
 
   // Nur ein Hinweis, keine Sicherheitspruefung -- siehe supabase.client.ts. Echte
   // Durchsetzung liegt in RLS und in der Fastify-API.

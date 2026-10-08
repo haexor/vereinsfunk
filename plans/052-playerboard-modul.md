@@ -514,3 +514,53 @@ Abweichungen:
 - **Link zum Teilen** kommt als `publicPath` aus der API (der Vereins-Slug ist im Browser nicht bekannt). Die Seite dahinter entsteht mit PR 4.
 - **Der Schalter für öffentliche Veo-Werte fehlt** auf der Einstellungsseite. Er folgt mit 053, solange gibt es keine Werte.
 - **Registry-Test:** Eine Navigationsroute darf auch ein Ordner mit `index.vue` sein (`/playerboard/trainings`).
+
+## Umsetzung PR 4: Ergebnis und Abweichungen vom Plan
+
+Umgesetzt am 2026-10-08:
+- Seiten `apps/web/app/pages/playerboard/index.vue` (Übersicht mit eigenem Platz, ganzer Rangliste der Saison und letzten Trainings) und `rangliste.vue` für Spieler und Trainer.
+- Öffentliche Seite `pages/mannschaft/[orgSlug]/[teamSlug].vue` im `auth`-Layout mit den Reitern Rangliste und Fotos.
+- Komponenten `PlayerboardRankingList` (intern und öffentlich) und `PlayerboardSeasonSummary` (Übersicht und Kachel).
+- Composable `usePlayerboardRanking`; `utils/playerboardRanking.ts` und `utils/publicTeamPage.ts`, jeweils mit Tests.
+- PlayerBoard-Kachel auf der Startseite (`index.vue`).
+- Navigation: „Übersicht“ und „Rangliste“ vor „Trainings“ und „Kader“.
+- API:
+  - `isSelf` im Kader.
+  - `seasonFrom` und `brand` (wirksame Vereinsfarben über `resolveBrand`) in `GET /v1/public/playerboard/:orgSlug/:teamSlug`.
+- Migration `2026101101_playerboard_ranking_places.sql`.
+
+Verifiziert:
+- `pnpm lint`, `typecheck`, `test` (alle 38 Tasks) und `build` grün.
+- `pnpm db:test` nach frischem `supabase db reset` grün: 52 Dateien, 1291 Assertions, davon 3 in `playerboard_ranking_places.test.sql`.
+- API-Tests: `isSelf` für die verknüpfte Person ohne E-Mail für Spieler; öffentliche Mannschaftsinfo mit Saisonanfang und Vereinsfarben.
+- Im Browser auf 360 px gegen den lokalen Stack:
+  - **Trainer:** Kachel auf der Startseite. Übersicht und Rangliste mit Saison (Saisonbeginn des Vereins 1. August), Monat und Aufklappen der Kategorien.
+  - **Spielerin** (Konto mit ihrem Kader-Eintrag verknüpft):
+    - eigener Platz auf der Übersicht, „Du“ in der Rangliste;
+    - im Kader keine E-Mail-Adressen und kein Anlegeformular;
+    - im Training keine Eingabeknöpfe.
+  - **Ohne Anmeldung:**
+    - `/mannschaft/sv-nordstadt/u13` zeigt die Rangliste nur mit „#Nr Initialen“; weder im HTML noch in der API-Antwort steht einer der zwölf Vor- oder Nachnamen.
+    - Das geprüfte Foto erscheint unter „Fotos“; `robots` steht auf `noindex, nofollow`.
+    - `/mannschaft/sv-nordstadt`, `/mannschaft/sv-nordstadt/u13/fotos` und `/playerboard/rangliste` führen zur Anmeldung.
+    - Eine unbekannte Mannschaft zeigt „Seite nicht gefunden“.
+  - Keine Seite scrollt horizontal.
+
+Abweichungen:
+
+- **`noindex` auf der öffentlichen Seite.** Anders als das öffentliche Impressum: In Jugendmannschaften sind die Spieler Kinder, die Seite ist zum Teilen gedacht, nicht für Suchmaschinen.
+- **Öffentliche Rangliste ab Saisonbeginn.** Die API liefert den Anfang der laufenden Saison (`seasonFrom`) mit; ohne Saisonbeginn gilt die gesamte Zeit. Einen Zeitraumfilter hat die öffentliche Seite nicht.
+- **Vereinsfarben, kein Logo.** Die öffentliche Seite übernimmt Primär- und Akzentfarbe; Textfarben werden wie in der Seitenleiste nach Kontrast gewählt. Das Logo bräuchte eine weitere öffentliche, signierte Datei-URL und fehlt bewusst.
+- **Rangliste als aufklappbare Liste** statt Tabelle mit Spalte je Kategorie, damit sie auf 360 px ohne seitliches Scrollen auskommt.
+- **Kachel ohne Registry-Hook.** Wie in `index.vue` vorgesehen (keine modulübergreifende Kachel-API), direkt eingehängt; sie erscheint nur, wenn PlayerBoard wirkt und es im Arbeitsbereich eine Mannschaft gibt.
+- **Dichte Plätze statt Plätzen mit Lücke** (Betreiberentscheidung 2026-10-08, ändert PR 2).
+  - Bei Gleichstand teilen sich Spieler einen Platz, der nächste folgt ohne Lücke: 1, 1, 2, 2, 2, 2, 3, 3, 3, 4 statt 1, 1, 3, 3, 3, 3, 7, 7, 7, 10.
+  - So sind Gold, Silber und Bronze immer die Plätze 1 bis 3, und diese Zeilen haben einen Hintergrund in ihrer Medaillenfarbe.
+  - `dense_rank()` in `authz.playerboard_ranking_rows` (intern und öffentlich); im Domain-Paket ersetzt `denseRanks` die frühere `competitionRanks`.
+- **Fotos im Vollbild mit Wischen** (Betreiberwunsch 2026-10-08): PhotoSwipe 5 (`photoswipe`, MIT, ohne eigene Abhängigkeiten) über `composables/usePhotoSwipe.ts`.
+  - Gilt für die Trainingsfotos intern und auf der öffentlichen Seite; PhotoSwipe wird erst beim ersten Öffnen geladen.
+  - Die Bildmaße kommen vom geladenen Vorschaubild und werden nach dem Laden in der Vollansicht korrigiert, weil die API sie nicht kennt.
+- **Übersicht und Kachel zeigen immer alle Spieler** (Betreiberentscheidung 2026-10-08) statt nur der Plätze 1 bis 3; die Plätze 1 bis 3 sind wie in der Rangliste farbig hinterlegt.
+- **Öffentliche Rangliste bei geteilten Plätzen nach Rückennummer**, wie intern (ebenfalls Migration `2026101101`). Bisher entschied der Text des Kürzels („#10“ vor „#3“).
+- **Schalter „nicht öffentlich“ je Foto** ist schon mit PR 3 gekommen.
+- **Nebenbefund außerhalb des Pakets:** Die Startseite fragt für reine Mannschaftsmitglieder `GET /v1/onboarding` an und bekommt `404` (Konsolenfehler, keine sichtbare Folge). Das gehört zum Social-Media-Teil der Startseite und ist hier nicht geändert.
