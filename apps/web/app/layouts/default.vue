@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { Blocks, BookUser, Building2, CalendarDays, CreditCard, LayoutDashboard, LogOut, Menu, Palette, Plug, Plus, Scale, Settings, ShieldCheck, Users, UserRound, UserSearch, X } from '@lucide/vue'
+import { CalendarDays, LayoutDashboard, LogOut, Menu, Plus, UserRound, X } from '@lucide/vue'
+import { frameworkNavigation, visibleFrameworkNavigation } from '../modules/frameworkNavigation'
 import { appModuleOrder, appModuleRegistry, moduleForPath, type ModuleNavItem } from '../modules/registry'
 import { deriveSidebarPalette } from '../utils/sidebarBrand'
 import { resolveSidebarLogoAsset, type SidebarLogoAsset } from '../utils/sidebarLogo'
@@ -158,27 +159,20 @@ const moduleGroups = computed(() =>
     .map((module) => ({ ...appModuleRegistry[module], navigation: appModuleRegistry[module].navigation.filter(navItemVisible) }))
     .filter((group) => group.navigation.length > 0),
 )
-const organizationNav: { label: string; to: string; icon: typeof LayoutDashboard; organizationOnly?: boolean }[] = [
-  { label: 'Marke', to: '/marke', icon: Palette },
-  { label: 'Struktur', to: '/struktur', icon: Building2 },
-  { label: 'Mitglieder', to: '/mitglieder', icon: Users },
-  { label: 'Verzeichnis', to: '/verzeichnis', icon: BookUser },
-  { label: 'Einwilligungen', to: '/einwilligungen', icon: ShieldCheck },
-  { label: 'Integrationen', to: '/integrationen', icon: Plug },
-  { label: 'Module', to: '/einstellungen/module', icon: Blocks },
-  { label: 'Einstellungen', to: '/einstellungen', icon: Settings },
-  { label: 'Tarif', to: '/einstellungen/tarif', icon: CreditCard, organizationOnly: true },
-  { label: 'Recht & Datenschutz', to: '/einstellungen/recht', icon: Scale, organizationOnly: true },
-  { label: 'Betroffenenanfragen', to: '/datenschutz/anfragen', icon: UserSearch, organizationOnly: true },
-]
-const visibleOrganizationNav = computed(() => organizationNav.filter((item) => !item.organizationOnly || !scope.value?.departmentId))
+// Paket 056: "Verein verwalten" nur mit den Rechten, die die jeweilige Seite braucht
+// (modules/frameworkNavigation.ts); ohne einen Eintrag entfaellt die Ueberschrift.
+const visibleOrganizationNav = computed(() => visibleFrameworkNavigation(frameworkNavigation, {
+  inDepartment: Boolean(scope.value?.departmentId),
+  canUse,
+  isModuleVisible: isModuleEnabled,
+}))
 const moduleManagementNav = computed(() =>
   appModuleOrder
     .filter((module) => isModuleEnabled(module))
     .map((module) => ({ ...appModuleRegistry[module], managementNavigation: appModuleRegistry[module].managementNavigation.filter(navItemVisible) }))
     .filter((group) => group.managementNavigation.length > 0),
 )
-const organizationOnlyRoutes = new Set(organizationNav.filter((item) => item.organizationOnly).map((item) => item.to))
+const organizationOnlyRoutes = new Set(frameworkNavigation.filter((item) => item.organizationOnly).map((item) => item.to))
 
 // Wechsel des Vereins laedt dessen Modulauswahl neu. Wird ein Bereich gewaehlt, in dem das Modul
 // der offenen Seite aus ist, fuehrt das auf die Erklaerseite -- wie ein Direktaufruf
@@ -288,8 +282,8 @@ watch(
         </nav>
       </template>
 
-      <div class="mb-2 mt-7 px-3 text-[10px] font-bold uppercase tracking-[.14em]" :class="sidebarClasses.quiet">Verein verwalten</div>
-      <nav class="space-y-1" aria-label="Vereinsverwaltung">
+      <div v-if="visibleOrganizationNav.length > 0" class="mb-2 mt-7 px-3 text-[10px] font-bold uppercase tracking-[.14em]" :class="sidebarClasses.quiet">Verein verwalten</div>
+      <nav v-if="visibleOrganizationNav.length > 0" class="space-y-1" aria-label="Vereinsverwaltung">
         <NuxtLink v-for="item in visibleOrganizationNav" :key="item.to" :to="item.to" class="focus-ring flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition" :class="sidebarClasses.nav" :active-class="sidebarClasses.activeNav">
           <component :is="item.icon" :size="17" />{{ item.label }}
         </NuxtLink>
