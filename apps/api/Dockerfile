@@ -34,8 +34,14 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends gmic \
  && rm -rf /var/lib/apt/lists/*
 ENV IMAGE_EFFECTS_PROVIDER=gmic
+# Paket 053: Chromium fuer die einmalige Veo-Anmeldung (POST /v1/playerboard/veo/login), gleicher
+# world-readable Browser-Pfad wie im Worker (Paket 048).
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 WORKDIR /app
 COPY --from=build --chown=node:node /out ./
+# Muss vor dem USER-Wechsel laufen: --with-deps installiert Systembibliotheken per apt-get. Die
+# Playwright-Version kommt aus den eben kopierten node_modules, passt also zur Laufzeit-Bibliothek.
+RUN npx playwright install --with-deps chromium && chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH"
 # Plan 036: der Migrations-Boot-Hook (packages/db-migrate, aufgerufen aus server.ts vor jeder
 # Route-Registrierung) braucht die Migrationsdateien selbst zur Laufzeit, nicht nur zur Build-Zeit
 # -- `pnpm deploy` oben kopiert nur Node-Pakete, keine losen Repo-Ordner wie supabase/migrations.

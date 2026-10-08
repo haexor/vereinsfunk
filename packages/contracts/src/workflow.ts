@@ -1,10 +1,9 @@
 import { z } from 'zod'
 import { UuidSchema } from './content.js'
 
-// 'sync-integration-source' ist wie 'collect-analytics' reserviert, aber nicht verdrahtet: Paket
-// 014 fuehrt einen Sync-Lauf synchron in der API-Anfrage aus (siehe apps/api), weil Paket 004
-// (Hatchet-Produktionsintegration) weiterhin "in Arbeit" ist. Der Name bleibt fuer die kuenftige
-// geplante/automatische Ausfuehrung ueber sync_cron vorgesehen. 'enforce-retention' (Paket 020)
+// 'sync-integration-source' fuehrt seit Paket 053 die HTTP-Quellen (bisher nur Veo) im Worker aus,
+// eingereiht ueber public.enqueue_integration_sync; Datei- und iCal-Syncs laufen weiter synchron in
+// der API-Anfrage (Paket 014). 'enforce-retention' (Paket 020)
 // folgt demselben Muster: POST /v1/organizations/:id/retention/run fuehrt den Lauf synchron aus.
 // 'aggregate-metrics' (Paket 016) ist ebenfalls nur reserviert: GET /v1/analytics/* berechnet jede
 // Kennzahl live aus den Rohtabellen, es gibt bislang keinen Lauf, den ein Cron ausloesen wuerde --

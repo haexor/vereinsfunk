@@ -281,4 +281,10 @@ describe('WorkerEnvironmentSchema', () => {
   ])('rejects an invalid worker %s value', (key, value) => {
     expect(WorkerEnvironmentSchema.safeParse({ ...requiredWorkerEnvironment, [key]: value }).success).toBe(false)
   })
+
+  it('defaults to the logging mail provider and requires the SMTP fields for smtp', () => {
+    expect(WorkerEnvironmentSchema.parse(requiredWorkerEnvironment).EMAIL_PROVIDER).toBe('fake')
+    const missing = WorkerEnvironmentSchema.safeParse({ ...requiredWorkerEnvironment, EMAIL_PROVIDER: 'smtp', SMTP_HOST: 'smtp.example.org' })
+    expect(missing.success ? [] : missing.error.issues.map((issue) => issue.path[0])).toEqual(['SMTP_USER', 'SMTP_PASSWORD', 'SMTP_FROM'])
+  })
 })

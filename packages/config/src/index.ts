@@ -248,6 +248,21 @@ export const WorkerEnvironmentSchema = z.object({
   HATCHET_WORKER_SLOTS: z.coerce.number().int().positive().default(8),
   SECRET_BOX_KEYS: z.string().min(1),
   SECRET_BOX_CURRENT_KEY_VERSION: z.string().min(1),
+  // Paket 053: Hinweis an den Trainer, wenn der Veo-Abgleich wiederholt scheitert. Dieselben
+  // Variablen und derselbe SMTP-Server wie in der API; ohne smtp landet der Hinweis nur im Log.
+  EMAIL_PROVIDER: z.enum(['fake', 'smtp']).default('fake'),
+  SMTP_HOST: optionalSecret,
+  SMTP_PORT: z.coerce.number().int().min(1).max(65_535).default(587),
+  SMTP_USER: optionalSecret,
+  SMTP_PASSWORD: optionalSecret,
+  SMTP_FROM: optionalSecret,
+  // Basis-URL des Nuxt-Frontends fuer Links in diesen Mails.
+  WEB_BASE_URL: optionalUrl,
+}).superRefine((environment, context) => {
+  if (environment.EMAIL_PROVIDER !== 'smtp') return
+  for (const key of ['SMTP_HOST', 'SMTP_USER', 'SMTP_PASSWORD', 'SMTP_FROM'] as const) {
+    if (!environment[key]) context.addIssue({ code: 'custom', path: [key], message: `${key} is required when EMAIL_PROVIDER=smtp` })
+  }
 })
 
 export type WorkerEnvironment = z.infer<typeof WorkerEnvironmentSchema>

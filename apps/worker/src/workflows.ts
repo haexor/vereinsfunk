@@ -16,6 +16,9 @@ export const concurrency = {
   // allein diese Jobs alle Slots des Workers mit Browsern belegen und ihn per OOM mitsamt aller
   // laufenden Textgenerierungen beenden.
   browser: { global: 2, organization: 1, department: 1 },
+  // Paket 053: Abgleich externer Quellen (Veo) -- reine HTTP-Aufrufe, aber viele je Lauf; je
+  // Abteilung einer nach dem anderen, damit ein Verein Veo nicht mit parallelen Laeufen flutet.
+  integration: { global: 4, organization: 2, department: 1 },
 } as const
 
 export type WorkflowRunAcquireResult =
@@ -47,7 +50,8 @@ function concurrencyFor(workflow: WorkflowName) {
   const limits = workflow === 'render-content' ? concurrency.image
     : workflow === 'publish-content' ? concurrency.publishing
       : workflow === 'anonymize-media' ? concurrency.image
-        : workflow === 'analyze-website-branding' ? concurrency.browser : concurrency.llm
+        : workflow === 'analyze-website-branding' ? concurrency.browser
+          : workflow === 'sync-integration-source' ? concurrency.integration : concurrency.llm
   return [
     // departmentConcurrencyKey, not departmentId: an organization-level job (null departmentId)
     // gets its own 'org' lane instead of silently sharing a real department's round-robin group.
@@ -133,6 +137,21 @@ export function createVisionProviderComparisonScanWorkflow(client: HatchetClient
   })
 }
 
+/**
+ * Paket 053: taeglicher Veo-Abgleich. Reiht ueber playerboard_veo_enqueue_scheduled_syncs je
+ * Verbindung einen Lauf ein; ausgefuehrt wird er ueber den normalen 'sync-integration-source'-Pfad.
+ * Ein Schluessel je Kalendertag macht doppelte oder wiederholte Ticks harmlos.
+ */
+export function createVeoSyncScheduleWorkflow(client: HatchetClient<WorkflowPayload>, schedule: { enqueueScheduled(): Promise<number> }) {
+  return client.task({
+    name: 'playerboard-veo-sync-schedule',
+    onCrons: ['0 5 * * *'],
+    inputValidator: z.object({}),
+    executionTimeout: '5m',
+    fn: async () => { await schedule.enqueueScheduled() },
+  })
+}
+
 /** Creates a real SDK worker and registers all bounded technical workflow envelopes. */
 export async function createHatchetWorker(
   config: WorkerEnvironment,
@@ -140,6 +159,7 @@ export async function createHatchetWorker(
   executor: ProductWorkflowExecutor,
   recovery: GenerationRecoveryRepository,
   visionComparisons: VisionProviderComparisonExecutor,
+  veoSchedule: { enqueueScheduled(): Promise<number> },
 ): Promise<Worker> {
   const client = HatchetClient.init<WorkflowPayload>({
     token: config.HATCHET_CLIENT_TOKEN,
@@ -152,6 +172,7 @@ export async function createHatchetWorker(
     ...createWorkflowDefinitions(client, runs, executor),
     createGenerationRecoveryScanWorkflow(client, recovery),
     createVisionProviderComparisonScanWorkflow(client, visionComparisons),
+    createVeoSyncScheduleWorkflow(client, veoSchedule),
   ])
   return worker
 }

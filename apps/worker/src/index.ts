@@ -2,13 +2,16 @@ import { parseWorkerEnvironment } from '@vereinsfunk/config'
 import { runPendingMigrations } from '@vereinsfunk/db-migrate'
 import { createLogger } from '@vereinsfunk/observability'
 import { WorkflowOutboxDispatcher } from '@vereinsfunk/orchestration'
-import { createBrandWebsiteAnalysisRepository, createGenerationRecoveryRepository, createTextGenerationRepository, createVisionProviderComparisonRepository, createWorkflowExecutionRepository, createWorkflowOutboxRepository } from './context.js'
+import { createEmailSender } from '@vereinsfunk/mailer'
+import { createSecretBox } from '@vereinsfunk/secrets'
+import { createBrandWebsiteAnalysisRepository, createGenerationRecoveryRepository, createTextGenerationRepository, createVeoSyncRepository, createVisionProviderComparisonRepository, createWorkflowExecutionRepository, createWorkflowOutboxRepository } from './context.js'
 import { createHatchetClient, HatchetOrchestrator } from './hatchet.js'
 import { concurrency, createHatchetWorker, WorkflowExecutionError, type ProductWorkflowExecutor } from './workflows.js'
 import { TextGenerationExecutor } from './textGeneration.js'
 import { BrandWebsiteAnalysisExecutor } from './brandWebsiteAnalysis.js'
 import { VisionProviderComparisonExecutor } from './visionProviderComparison.js'
 import { PlaywrightWebsiteRenderer } from './websiteRenderer.js'
+import { VeoSyncExecutor } from './veoSync.js'
 
 const logger = createLogger({ name: 'worker' })
 const WORKER_READY_TIMEOUT_MS = 30_000
@@ -68,14 +71,26 @@ async function main(): Promise<void> {
   const textGeneration = new TextGenerationExecutor(config, createTextGenerationRepository(config))
   const brandWebsiteAnalysis = new BrandWebsiteAnalysisExecutor(config, createBrandWebsiteAnalysisRepository(config), new PlaywrightWebsiteRenderer())
   const visionProviderComparison = new VisionProviderComparisonExecutor(config, createVisionProviderComparisonRepository(config), new PlaywrightWebsiteRenderer())
+  const veoSyncRepository = createVeoSyncRepository(config)
+  const veoSync = new VeoSyncExecutor({
+    repository: veoSyncRepository,
+    secretBox: createSecretBox(JSON.parse(config.SECRET_BOX_KEYS) as Record<string, string>, config.SECRET_BOX_CURRENT_KEY_VERSION),
+    // Ohne SMTP landet nur der Betreff im Log -- der Text nennt keine Geheimnisse, aber Adressen
+    // gehoeren nicht ins Log.
+    emailSender: createEmailSender(config, (message) => logger.info({ subject: message.subject }, 'veo failure notification (fake provider)')),
+    fetch: (input, init) => fetch(input, init),
+    webBaseUrl: config.WEB_BASE_URL,
+    log: (fields, message) => logger.warn(fields, message),
+  })
   const executor: ProductWorkflowExecutor = {
     async execute(workflow, payload) {
       if (workflow === 'generate-text-post') return textGeneration.execute(payload)
       if (workflow === 'analyze-website-branding') return brandWebsiteAnalysis.execute(payload)
+      if (workflow === 'sync-integration-source') return veoSync.execute(payload)
       throw new WorkflowExecutionError('product_executor_unavailable', false, `no product executor is configured for ${workflow}`)
     },
   }
-  const createdWorker = await createHatchetWorker(config, runs, executor, createGenerationRecoveryRepository(config), visionProviderComparison)
+  const createdWorker = await createHatchetWorker(config, runs, executor, createGenerationRecoveryRepository(config), visionProviderComparison, veoSyncRepository)
   worker = createdWorker
   if (stopping) return stopWorker()
 
