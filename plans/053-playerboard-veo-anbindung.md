@@ -290,3 +290,69 @@ Abweichungen:
   - die öffentliche Funktion `playerboard_public_veo_stats`;
   - die vereinsübergreifende Sicht des Plattform-Admins auf fehlschlagende Veo-Läufe.
 
+## Umsetzung PR 3: Ergebnis und Abweichungen vom Plan
+
+Umgesetzt am 2026-10-08.
+
+**Datenbank** (`2026101301_playerboard_veo_views.sql`):
+- `playerboard_veo_team_matches` liefert alle Spiele einer Mannschaft samt Mannschafts- und Spielerwerten als ein JSON, mit Namen; Zugriff wie die übrigen Kennzahlen.
+- `playerboard_public_veo_stats` liefert dasselbe öffentlich: ohne IDs, Spieler nur als „#7 M. K.“ bzw. „#7“.
+- `playerboard_veo_assign_jersey` ordnet eine Nummer zu, auf Wunsch auch in allen Spielen, in denen sie noch offen ist.
+- `playerboard_veo_resolve_conflict` löst ein mehrdeutiges Spiel auf.
+- `playerboard_veo_apply_match` beachtet aufgelöste Konflikte und merkt sich Kandidaten und Veo-Start.
+
+**API:**
+- `GET /v1/playerboard/teams/:teamId/veo/matches`
+- `PUT /v1/playerboard/veo/assignments`
+- `GET /v1/playerboard/veo/conflicts`
+- `POST /v1/playerboard/veo/conflicts/:id/resolve`
+- `GET /v1/public/playerboard/:orgSlug/:teamSlug/veo`
+- Die öffentliche Mannschaftsinfo trägt jetzt die Zeitzone des Vereins.
+
+**Web:**
+- `/playerboard/spiele` für alle mit Einblick in die Kennzahlen:
+  - Saisonbilanz, Tore, Schüsse, Fouls;
+  - Werte je Spieler über die Saison;
+  - Spielauswahl mit Mannschaftswerten (wir/Gegner nach Kategorie) und Spielerwerten;
+  - für Trainer die Zuordnung der Rückennummern direkt in der Tabelle.
+- `/playerboard/veo` für `playerboard.manage`:
+  - Status, Anmelden, Auswahl der Veo-Mannschaft, neu verbinden, „Jetzt abgleichen“ (verfolgt den Lauf), Verlauf;
+  - mehrdeutige Spiele zuordnen, neu anlegen oder auslassen.
+- Abschnitt „Spiele der Saison · Veo“ auf `/playerboard`.
+- Reiter „Spiele“ auf der öffentlichen Mannschaftsseite.
+- Schalter „Spiele und Veo-Werte zeigen“ in den Einstellungen.
+- Navigation: „Spiele“ für alle, „Veo“ unter Verwaltung.
+
+Verifiziert:
+- **pgTAP** `playerboard_veo_views.test.sql` (16 Fälle):
+  - Sicht und Zeitraum; das Ergebnis erscheint aus eigener Sicht, auch auswärts.
+  - Die Nachbarmannschaft liest nichts; Spieler dürfen nicht zuordnen.
+  - Zuordnung für alle offenen Spiele; ein Spieler hat je Spiel nur eine Nummer.
+  - Manuelle Zuordnung und manuelles Lösen überleben den Abgleich.
+  - Öffentlich nur mit Schalter, ohne Namen und IDs.
+  - Kandidaten und Start im Konflikt; die Auflösung hängt das Spiel beim nächsten Lauf an.
+- **API-Tests:** 9 neue Fälle zu Rechten, Zeitraum, Zuordnung inklusive 409, Konflikten und öffentlichen Veo-Werten.
+- **Web:** Unit-Tests zu Bilanz, Saisonwerten (Summe, Maximum, Mittel), Einheiten und Gegenüberstellung.
+- **Gesamtlauf:** `pnpm lint`, `typecheck`, `test` (42 Tasks), `build` grün; alle pgTAP-Dateien grün (54 Dateien, 1333 Fälle).
+- **Browser** mit echten Veo-Daten der C-Jugend (lokal):
+  - Spiele, Veo-Status, Übersicht und öffentlicher Reiter laden.
+  - Die Zuordnung „#1 → Emil“ wurde in 5 Spielen übernommen und ließ sich wieder lösen.
+  - Die öffentliche Seite zeigt keine Namen (9 Kürzel).
+  - Bei 390 px gibt es kein seitliches Scrollen.
+
+Abweichungen und Funde:
+
+- **Hotfix vorab (#217):** Die beim Review von #216 geänderte Migration verwies auf `teams(organization_id, id)` ohne passenden Schlüssel und ließ sich auf keiner Datenbank einspielen. Der Fix ergänzt den Schlüssel in derselben Migration. Dieser PR baut darauf auf.
+- **Ein zweiter Versuch je Spiel bei `upstream_error`.**
+  - Live antwortete Veo beim Abruf einzelner Spiele sporadisch mit einem Serverfehler, jedes Mal bei einem anderen Spiel.
+  - Alles-oder-nichts griff korrekt, aber fast jeder Lauf endete als fehlgeschlagen, und nach drei Läufen wäre eine Mail an den Trainer gegangen.
+  - Jetzt wartet der Worker 2 s und versucht das Spiel einmal neu. Ins Log kommt nur der HTTP-Status.
+- **Lesen per Funktion statt per Tabellenabfragen:** ein JSON je Mannschaft statt vieler PostgREST-Abfragen mit 1000-Zeilen-Grenze. Eine Saison hat schnell mehr als 1000 Spielerwerte.
+- **Mehrdeutige Spiele** werden über den vorhandenen Konflikt aufgelöst (`resolution`, `local_id`), ohne neue Tabelle:
+  - Die Kandidaten stehen in `current_value`, der Veo-Start in `incoming_value`.
+  - Ältere Konflikte aus PR 2 haben keine Kandidaten. Sie lassen sich als neues Spiel anlegen oder auslassen.
+- **Saisonwerte je Spieler nur für zugeordnete Nummern** (wie playerboard). Die Seite nennt die Zahl der offenen Nummern. Öffentlich erscheinen auch offene Nummern als „#7“.
+- **Saisonübersicht:** Wie im Plan steht sie auf `/playerboard`. Ausführlich mit Spieldetails liegt sie auf der neuen Seite `/playerboard/spiele`.
+- **Feste Mannschaftskennzahlen:** Auf einen Blick zeigt die Saison Bilanz, Tore, Schüsse und Fouls; alle übrigen Werte stehen im Spiel. Die Mannschaftswerte der Saison sind Summen; eine Gegenüberstellung mit dem Gegner gibt es nur je Spiel.
+- **Layout-Fund:** Die öffentliche Seite bemisst ihre Breite nach dem Inhalt. Breite Tabellen und Auswahlfelder trugen deshalb zur Mindestbreite bei und schoben die Seite auf. Die Tabelle scrollt jetzt in sich (`w-0 min-w-full`), die Spielauswahl ist schrumpffähig.
+

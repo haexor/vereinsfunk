@@ -7,6 +7,7 @@ import {
   FileSignature,
   FileText,
   Frame,
+  Goal,
   LayoutGrid,
   Medal,
   Megaphone,
@@ -15,6 +16,7 @@ import {
   Tags,
   Trophy,
   Users,
+  Video,
 } from '@lucide/vue'
 import {
   hasPermission,
@@ -82,6 +84,7 @@ export const appModuleRegistry: Readonly<Record<AppModule, AppModuleDefinition>>
     navigation: [
       { label: 'Übersicht', to: '/playerboard', icon: Trophy },
       { label: 'Rangliste', to: '/playerboard/rangliste', icon: Medal },
+      { label: 'Spiele', to: '/playerboard/spiele', icon: Goal },
       { label: 'Trainings', to: '/playerboard/trainings', icon: ClipboardList },
       { label: 'Kader', to: '/playerboard/kader', icon: Users },
     ],
@@ -90,6 +93,12 @@ export const appModuleRegistry: Readonly<Record<AppModule, AppModuleDefinition>>
         label: 'Kategorien',
         to: '/playerboard/kategorien',
         icon: Tags,
+        permissions: ['playerboard.manage'],
+      },
+      {
+        label: 'Veo',
+        to: '/playerboard/veo',
+        icon: Video,
         permissions: ['playerboard.manage'],
       },
       {

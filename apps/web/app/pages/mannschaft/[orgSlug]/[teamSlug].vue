@@ -1,12 +1,17 @@
 <script setup lang="ts">
-import { AlertTriangle, Camera, LoaderCircle, Trophy } from '@lucide/vue'
+import { AlertTriangle, Camera, Goal, LoaderCircle, Trophy } from '@lucide/vue'
 import {
   PublicPlayerboardPhotoSchema,
   PublicPlayerboardRankingEntrySchema,
   PublicPlayerboardTeamSchema,
+  PublicPlayerboardVeoMatchSchema,
   type PublicPlayerboardPhoto,
   type PublicPlayerboardTeam,
+  type PublicPlayerboardVeoMatch,
 } from '@vereinsfunk/contracts'
+import type { VeoCardMatch } from '../../../components/PlayerboardVeoMatchCard.vue'
+import type { VeoSeasonMatch } from '../../../components/PlayerboardVeoSeason.vue'
+import { scoreLabel } from '../../../utils/playerboardVeo'
 import type { RankingListItem } from '../../../utils/playerboardRanking'
 import { PublicTeamRouteParamsSchema } from '../../../utils/publicTeamPage'
 import { deriveSidebarPalette } from '../../../utils/sidebarBrand'
@@ -39,11 +44,20 @@ const {
   return PublicPlayerboardTeamSchema.parse(response)
 })
 
-const tab = ref<'ranking' | 'photos'>('ranking')
+type PublicTab = 'ranking' | 'veo' | 'photos'
+const tabItems = computed(() => {
+  if (!team.value) return []
+  return [
+    { key: 'ranking' as const, label: 'Rangliste', icon: Trophy, enabled: team.value.tabs.points },
+    { key: 'veo' as const, label: 'Spiele', icon: Goal, enabled: team.value.tabs.veoStats },
+    { key: 'photos' as const, label: 'Fotos', icon: Camera, enabled: team.value.tabs.photos },
+  ].filter((item) => item.enabled)
+})
+const tab = ref<PublicTab>('ranking')
 watch(
-  team,
-  (value) => {
-    if (value && !value.tabs.points && value.tabs.photos) tab.value = 'photos'
+  tabItems,
+  (items) => {
+    if (items.length && !items.some((item) => item.key === tab.value)) tab.value = items[0]!.key
   },
   { immediate: true },
 )
@@ -75,6 +89,31 @@ const {
   { watch: [team] },
 )
 
+// Spiele mit Veo-Werten der Saison, beim ersten Oeffnen des Reiters geladen.
+const veoMatches = ref<PublicPlayerboardVeoMatch[] | null>(null)
+const veoError = ref(false)
+const veoSelected = ref(0)
+/** Laedt die oeffentlichen Spiele der laufenden Saison. */
+async function loadVeo() {
+  if (veoMatches.value) return
+  veoError.value = false
+  try {
+    veoMatches.value = PublicPlayerboardVeoMatchSchema.array().parse(await $fetch(`${basePath}/veo`, {
+      query: team.value?.seasonFrom ? { from: team.value.seasonFrom } : {},
+    }))
+  } catch {
+    veoError.value = true
+  }
+}
+const veoSeasonMatches = computed<VeoSeasonMatch[]>(() => (veoMatches.value ?? []).map((match) => ({
+  ownScore: match.ownScore,
+  opponentScore: match.opponentScore,
+  teamStats: match.teamStats,
+  players: match.players.map((player) => ({ key: player.label, label: player.label, jerseyNumber: player.jerseyNumber, stats: player.stats })),
+})))
+const veoSelectedMatch = computed<VeoCardMatch | null>(() => veoMatches.value?.[veoSelected.value] ?? null)
+const veoDate = computed(() => new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: team.value?.timezone ?? 'Europe/Berlin' }))
+
 // Fotos erst beim Oeffnen des Reiters: die signierten Links leben nur fuenf Minuten.
 const photos = ref<PublicPlayerboardPhoto[] | null>(null)
 const photosError = ref(false)
@@ -94,6 +133,7 @@ watch(
   tab,
   (value) => {
     if (value === 'photos' && import.meta.client) void loadPhotos()
+    if (value === 'veo' && import.meta.client) void loadVeo()
   },
   { immediate: true },
 )
@@ -166,16 +206,13 @@ useHead({
       </header>
 
       <div
-        v-if="team.tabs.points && team.tabs.photos"
+        v-if="tabItems.length > 1"
         class="mb-4 flex gap-2"
         role="tablist"
         aria-label="Inhalt"
       >
         <button
-          v-for="item in [
-            { key: 'ranking', label: 'Rangliste', icon: Trophy },
-            { key: 'photos', label: 'Fotos', icon: Camera },
-          ] as const"
+          v-for="item in tabItems"
           :id="`public-team-tab-${item.key}`"
           :key="item.key"
           type="button"
@@ -217,6 +254,34 @@ useHead({
       </section>
 
       <section
+        v-if="tab === 'veo' && team.tabs.veoStats"
+        id="public-team-panel-veo"
+        role="tabpanel"
+        aria-labelledby="public-team-tab-veo"
+        class="space-y-5"
+      >
+        <p class="text-xs text-[#6c756f]">
+          {{ team.seasonFrom ? `Saison seit ${formatDate(team.seasonFrom)}` : 'Gesamte Zeit' }} · Werte aus der Veo-Kamera
+        </p>
+        <p v-if="veoError" class="text-sm text-amber-800">Die Spiele konnten nicht geladen werden.</p>
+        <p v-else-if="veoMatches === null" class="text-xs text-[#7b827d]">Wird geladen …</p>
+        <p v-else-if="veoMatches.length === 0" class="text-sm text-[#6c756f]">In dieser Saison gibt es noch keine Spiele mit Veo-Werten.</p>
+        <template v-else>
+          <PlayerboardVeoSeason :matches="veoSeasonMatches" />
+          <label class="grid min-w-0 gap-1 text-xs font-semibold text-[#5b625d]">
+            Spiel
+            <!-- min-w-0: ein Auswahlfeld ist sonst so breit wie sein laengster Eintrag und schiebt die Seite auf. -->
+            <select v-model="veoSelected" class="focus-ring h-11 w-full min-w-0 rounded-xl border border-[#dfe0d9] bg-white px-3 text-sm text-ink">
+              <option v-for="(match, index) in veoMatches" :key="index" :value="index">
+                {{ veoDate.format(new Date(match.kickoffAt)) }} · {{ match.opponentName ?? 'unbekannt' }} · {{ scoreLabel(match) }}
+              </option>
+            </select>
+          </label>
+          <PlayerboardVeoMatchCard v-if="veoSelectedMatch" :match="veoSelectedMatch" :timezone="team.timezone" />
+        </template>
+      </section>
+
+      <section
         v-if="tab === 'photos' && team.tabs.photos"
         id="public-team-panel-photos"
         role="tabpanel"
@@ -246,7 +311,7 @@ useHead({
         </ul>
       </section>
 
-      <p v-if="!team.tabs.points && !team.tabs.photos" class="text-sm text-[#6c756f]">
+      <p v-if="tabItems.length === 0" class="text-sm text-[#6c756f]">
         Diese Mannschaft zeigt gerade nichts öffentlich.
       </p>
     </template>

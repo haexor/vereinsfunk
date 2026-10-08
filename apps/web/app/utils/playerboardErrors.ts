@@ -29,6 +29,22 @@ const messages: Readonly<Record<string, string>> = {
   photo_consent_not_approved: 'Das Foto muss zuerst geprüft und freigegeben werden.',
   photo_upload_incomplete: 'Das Foto ist noch nicht vollständig hochgeladen.',
   recognizable_people_not_confirmed: 'Bestätige, dass alle erkennbaren Personen ausgewählt sind.',
+  // Paket 053: Veo
+  veo_login_failed: 'Veo hat die Anmeldung abgelehnt. Prüfe E-Mail und Passwort.',
+  veo_login_busy: 'Gerade melden sich mehrere Mannschaften bei Veo an. Bitte versuche es gleich noch einmal.',
+  veo_unavailable: 'Veo ist gerade nicht erreichbar. Bitte versuche es später noch einmal.',
+  veo_upstream_changed: 'Veo hat seine Schnittstelle geändert. Wir kümmern uns darum.',
+  invalid_link_token: 'Die Anmeldung ist abgelaufen. Bitte melde dich erneut bei Veo an.',
+  veo_team_not_available: 'Diese Veo-Mannschaft gehört nicht zu deinem Veo-Account.',
+  veo_link_changed: 'Die Verbindung wurde gerade anderweitig geändert. Bitte lade die Seite neu.',
+  veo_not_linked: 'Diese Mannschaft ist noch nicht mit Veo verbunden.',
+  sync_already_running: 'Es läuft bereits ein Abgleich.',
+  source_disabled: 'Die Veo-Quelle ist unter Integrationen deaktiviert.',
+  player_already_assigned: 'Dieser Spieler hat in diesem Spiel schon eine andere Rückennummer.',
+  player_not_in_team: 'Dieser Spieler gehört nicht zur Mannschaft.',
+  assignment_not_found: 'Diese Rückennummer gibt es in dem Spiel nicht mehr.',
+  fixture_not_available: 'Dieses Spiel ist schon einem anderen Veo-Spiel zugeordnet.',
+  conflict_not_pending: 'Dieses Spiel wurde bereits zugeordnet.',
 }
 
 /** Liefert Klartext fuer bekannte API-Fehlercodes, sonst die Ersatzmeldung der Seite. */

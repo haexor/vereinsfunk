@@ -82,6 +82,12 @@ const triggerErrors: Readonly<Record<string, number>> = {
   training_not_found: 404,
   team_not_found: 404,
   insufficient_permission: 403,
+  // Paket 053, PR 3: Veo-Zuordnung und mehrdeutige Spiele.
+  assignment_not_found: 404,
+  player_not_in_team: 422,
+  player_already_assigned: 409,
+  fixture_not_available: 422,
+  conflict_not_pending: 409,
 }
 
 /**

@@ -284,6 +284,10 @@ const inputClass = 'focus-ring h-11 rounded-xl border border-[#dfe0d9] bg-white 
               <input type="checkbox" class="h-5 w-5 accent-forest" :checked="draft.publicPhotosEnabled === true" :disabled="!canEdit" @change="draft.publicPhotosEnabled = ($event.target as HTMLInputElement).checked" />
               Geprüfte Trainingsfotos zeigen
             </label>
+            <label class="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-ink">
+              <input type="checkbox" class="h-5 w-5 accent-forest" :checked="draft.publicVeoStatsEnabled === true" :disabled="!canEdit" @change="draft.publicVeoStatsEnabled = ($event.target as HTMLInputElement).checked" />
+              Spiele und Veo-Werte zeigen
+            </label>
           </div>
           <label class="mt-3 grid max-w-md gap-1.5 text-xs font-semibold text-[#5b625d]">
             Adresse der Seite

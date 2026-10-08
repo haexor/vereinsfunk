@@ -64,6 +64,8 @@ export interface VeoSyncRepository {
 
 export interface VeoSyncOptions {
   repository: VeoSyncRepository
+  // Wartezeit vor dem zweiten Versuch eines Spiels; Tests setzen 0.
+  retryDelayMs?: number
   secretBox: SecretBox
   emailSender: EmailSender
   fetch: FetchLike
@@ -72,6 +74,11 @@ export interface VeoSyncOptions {
 }
 
 const RUN_ABORTING_CODES = new Set(['auth_expired', 'upstream_changed'])
+
+/** HTTP-Status eines Veo-Fehlers fuers Log; nie Inhalte der Antwort. */
+function errorStatus(error: unknown): number | undefined {
+  return error instanceof VeoError ? error.status : undefined
+}
 
 /** Text des Hinweises an den Trainer, je nach Grund der Fehlerserie. */
 export function failureMailText(teamName: string, errorClass: string | null, webBaseUrl: string | undefined): { subject: string; text: string } {
@@ -139,8 +146,10 @@ export class VeoSyncExecutor {
           continue
         }
         try {
-          const teamStats = await fetchTeamStats(accessToken, { veoTeamId: match.veoTeamId, veoMatchIds: [match.veoMatchId] }, http)
-          const players = await fetchPlayerStats(accessToken, { veoTeamId: match.veoTeamId, veoMatchId: match.veoMatchId }, http)
+          const { teamStats, players } = await this.withRetry(runId, async () => ({
+            teamStats: await fetchTeamStats(accessToken, { veoTeamId: match.veoTeamId, veoMatchIds: [match.veoMatchId] }, http),
+            players: await fetchPlayerStats(accessToken, { veoTeamId: match.veoTeamId, veoMatchId: match.veoMatchId }, http),
+          }))
           const result = await repository.applyMatch(runId, toMatchWrite(match, teamStats, players))
           if (result === 'created') outcome.created += 1
           else if (result === 'updated') outcome.updated += 1
@@ -151,15 +160,31 @@ export class VeoSyncExecutor {
           outcome.skipped += 1
           outcome.status = 'failed'
           outcome.errorClass ??= error instanceof VeoError ? error.code : 'apply_failed'
-          this.options.log({ runId, errorClass: outcome.errorClass, errorName: error instanceof Error ? error.name : 'unknown' }, 'veo match skipped')
+          this.options.log({ runId, errorClass: outcome.errorClass, status: errorStatus(error), errorName: error instanceof Error ? error.name : 'unknown' }, 'veo match skipped')
         }
       }
     } catch (error) {
       outcome.status = 'failed'
       outcome.errorClass = error instanceof VeoError ? error.code : 'internal_error'
-      this.options.log({ runId, errorClass: outcome.errorClass, errorName: error instanceof Error ? error.name : 'unknown' }, 'veo sync failed')
+      this.options.log({ runId, errorClass: outcome.errorClass, status: errorStatus(error), errorName: error instanceof Error ? error.name : 'unknown' }, 'veo sync failed')
     }
     await this.finish(runId, source, outcome)
+  }
+
+  /**
+   * Ein zweiter Versuch nach kurzer Pause, nur bei upstream_error: Veo antwortet beim Abruf einzelner
+   * Spiele gelegentlich mit einem Serverfehler, der beim naechsten Aufruf weg ist (live gesehen am
+   * 2026-10-08). Ohne Wiederholung endete fast jeder Lauf als fehlgeschlagen.
+   */
+  private async withRetry<T>(runId: string, attempt: () => Promise<T>): Promise<T> {
+    try {
+      return await attempt()
+    } catch (error) {
+      if (!(error instanceof VeoError) || error.code !== 'upstream_error') throw error
+      this.options.log({ runId, status: error.status }, 'veo match request retried')
+      await new Promise((resolve) => setTimeout(resolve, this.options.retryDelayMs ?? 2_000))
+      return attempt()
+    }
   }
 
   /** Schliesst den Lauf ab und benachrichtigt die Trainer beim dritten Fehllauf in Folge. */
