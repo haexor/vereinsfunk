@@ -80,6 +80,11 @@ describe('listMatches', () => {
     expect(await listMatches('token', { veoClubSlug: 'club', veoTeamSlug: 'team' }, { fetch, pageSize: 2 })).toHaveLength(2)
   })
 
+  it('fails closed instead of silently truncating a full history at maxPages', async () => {
+    const { fetch } = fakeFetch(json(page))
+    await expect(listMatches('token', { veoClubSlug: 'club', veoTeamSlug: 'team' }, { fetch, pageSize: 2, maxPages: 1 })).rejects.toMatchObject({ code: 'upstream_error' })
+  })
+
   it('reports a rejected token as auth_expired and a server error as upstream_error', async () => {
     await expect(listMatches('token', { veoClubSlug: 'c', veoTeamSlug: 't' }, { fetch: fakeFetch(json({}, 401)).fetch })).rejects.toMatchObject({ code: 'auth_expired' })
     await expect(listMatches('token', { veoClubSlug: 'c', veoTeamSlug: 't' }, { fetch: fakeFetch(json({}, 502)).fetch })).rejects.toMatchObject({ code: 'upstream_error' })
@@ -163,6 +168,15 @@ describe('host allowlist', () => {
     const { veoRequest } = await import('./http.js')
     await expect(veoRequest('https://example.com/', {}, { fetch })).rejects.toThrow(/non-Veo host/)
     await expect(veoRequest('http://app.veo.co/', {}, { fetch })).rejects.toThrow(/non-Veo host/)
+    await expect(veoRequest('https://app.veo.co:8443/', {}, { fetch })).rejects.toThrow(/non-Veo host/)
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('does not allow callers to enable automatic redirects', async () => {
+    const fetch = vi.fn<FetchLike>(async (_input, init) => {
+      expect(init?.redirect).toBe('manual')
+      return new Response(null, { status: 204 })
+    })
+    await import('./http.js').then(({ veoRequest }) => veoRequest('https://app.veo.co/', { redirect: 'follow' }, { fetch }))
   })
 })

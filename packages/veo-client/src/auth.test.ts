@@ -4,13 +4,18 @@ import type { FetchLike } from './http.js'
 import { captureSessionViaLogin, type LoginBrowser, type LoginLocator, type LoginPage } from './login.js'
 
 /** Fake fuer auth.veo.co: authorize leitet mit oder ohne Code weiter, token antwortet wie angegeben. */
-function oidcFake(options: { code: string | null; tokenStatus?: number; tokenBody?: unknown }) {
+function oidcFake(options: { code: string | null; state?: 'echo' | 'missing' | 'wrong'; tokenStatus?: number; tokenBody?: unknown }) {
   const calls: { url: URL; init: RequestInit | undefined }[] = []
   const fetch: FetchLike = async (input, init) => {
     const url = new URL(input)
     calls.push({ url, init })
     if (url.pathname === '/oidc/auth') {
-      const location = options.code ? `https://app.veo.co/signin-redirect/?code=${options.code}` : 'https://app.veo.co/signin-redirect/?error=login_required'
+      const returnedState = options.state === 'missing' ? null : options.state === 'wrong' ? 'wrong' : url.searchParams.get('state')
+      const redirect = new URL('https://app.veo.co/signin-redirect/')
+      if (options.code) redirect.searchParams.set('code', options.code)
+      if (returnedState) redirect.searchParams.set('state', returnedState)
+      if (!options.code) redirect.searchParams.set('error', 'login_required')
+      const location = redirect.toString()
       return new Response(null, { status: 303, headers: { location } })
     }
     return new Response(JSON.stringify(options.tokenBody ?? { access_token: 'access', expires_in: 3600, token_type: 'Bearer' }), { status: options.tokenStatus ?? 200 })
@@ -37,6 +42,11 @@ describe('exchangeSessionCookieForToken', () => {
   it('reports a session that no longer renews as auth_expired', async () => {
     await expect(exchangeSessionCookieForToken('old', { fetch: oidcFake({ code: null }).fetch })).rejects.toMatchObject({ code: 'auth_expired' })
     await expect(exchangeSessionCookieForToken('old', { fetch: oidcFake({ code: 'x', tokenStatus: 400 }).fetch })).rejects.toMatchObject({ code: 'auth_expired' })
+  })
+
+  it('rejects an authorization response with a missing or mismatched state', async () => {
+    await expect(exchangeSessionCookieForToken('old', { fetch: oidcFake({ code: 'x', state: 'missing' }).fetch })).rejects.toMatchObject({ code: 'auth_expired' })
+    await expect(exchangeSessionCookieForToken('old', { fetch: oidcFake({ code: 'x', state: 'wrong' }).fetch })).rejects.toMatchObject({ code: 'auth_expired' })
   })
 
   it('reports a changed token response as upstream_changed', async () => {

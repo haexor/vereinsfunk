@@ -30,7 +30,7 @@ async function veoApi(accessToken: string, path: string, init: RequestInit, opti
 /** Wie veoApi, wirft aber bei jedem Fehlerstatus. */
 async function veoApiOk(accessToken: string, path: string, init: RequestInit, options: VeoHttpOptions): Promise<unknown> {
   const result = await veoApi(accessToken, path, init, options)
-  if (result.status >= 400) throw new VeoError('upstream_error', `Veo API request failed: ${init.method ?? 'GET'} ${path.split('?')[0]} -> ${result.status}`, result.status)
+  if (result.status >= 300) throw new VeoError('upstream_error', `Veo API request failed: ${init.method ?? 'GET'} ${path.split('?')[0]} -> ${result.status}`, result.status)
   return result.json
 }
 
@@ -134,11 +134,14 @@ export async function listMatches(
     const result = await veoApi(accessToken, `/matches/?${query}`, {}, options)
     // Eine Seite hinter dem Ende beantwortet Django REST Framework mit 404.
     if (page > 1 && result.status === 404) break
-    if (result.status >= 400) throw new VeoError('upstream_error', `Veo matches request failed -> ${result.status}`, result.status)
+    if (result.status >= 300) throw new VeoError('upstream_error', `Veo matches request failed -> ${result.status}`, result.status)
     const matches = parseMatchList(result.json)
     const fresh = matches.filter((match) => !seen.has(match.veoMatchId))
     for (const match of fresh) seen.set(match.veoMatchId, match)
     if (matches.length < pageSize || fresh.length === 0) break
+    if (page === maxPages) {
+      throw new VeoError('upstream_error', `Veo matches history exceeds the configured page limit (${maxPages})`)
+    }
   }
   return [...seen.values()]
 }

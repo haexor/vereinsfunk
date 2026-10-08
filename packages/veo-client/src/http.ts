@@ -18,15 +18,15 @@ const DEFAULT_TIMEOUT_MS = 30_000
 /** Ruft eine Veo-URL auf; andere Hosts und Weiterleitungen auf andere Hosts werden abgelehnt. */
 export async function veoRequest(url: string | URL, init: RequestInit, options: VeoHttpOptions = {}): Promise<Response> {
   const target = new URL(url)
-  if (target.protocol !== 'https:' || !VEO_HOSTS.has(target.hostname)) {
+  if (target.protocol !== 'https:' || !VEO_HOSTS.has(target.hostname) || (target.port !== '' && target.port !== '443')) {
     throw new Error(`refusing request to non-Veo host ${target.hostname}`)
   }
   const fetchImpl = options.fetch ?? fetch
   try {
     return await fetchImpl(target, {
-      // Weiterleitungen folgt nur, wer sie ausdruecklich will (Token-Tausch liest "location").
-      redirect: 'manual',
       ...init,
+      // Weiterleitungen werden nie automatisch verfolgt; der Token-Tausch liest "location" selbst.
+      redirect: 'manual',
       signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     })
   } catch (error) {

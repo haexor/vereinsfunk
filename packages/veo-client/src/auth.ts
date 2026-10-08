@@ -35,20 +35,38 @@ export async function exchangeSessionCookieForToken(sessionCookie: string, optio
   const verifier = base64url(randomBytes(32))
   const challenge = base64url(createHash('sha256').update(verifier).digest())
   const authorizeUrl = new URL(`${AUTH_BASE}/auth`)
+  const state = base64url(randomBytes(16))
   authorizeUrl.search = new URLSearchParams({
     response_type: 'code',
     client_id: CLIENT_ID,
     redirect_uri: REDIRECT_URI,
     scope: 'openid email phone address profile',
     prompt: 'none',
-    state: base64url(randomBytes(16)),
+    state,
     code_challenge: challenge,
     code_challenge_method: 'S256',
   }).toString()
 
   const authorize = await veoRequest(authorizeUrl, { headers: { cookie: sessionCookie } }, options)
+  if (authorize.status >= 400) {
+    if (authorize.status === 401 || authorize.status === 403) {
+      throw new VeoError('auth_expired', `Veo authorization rejected: ${authorize.status}`, authorize.status)
+    }
+    throw new VeoError('upstream_error', `Veo authorization failed: ${authorize.status}`, authorize.status)
+  }
   const location = authorize.headers.get('location')
-  const code = location ? new URL(location, REDIRECT_URI).searchParams.get('code') : null
+  let redirect: URL | null = null
+  if (location) {
+    try {
+      redirect = new URL(location, REDIRECT_URI)
+    } catch {
+      redirect = null
+    }
+  }
+  const expectedRedirect = new URL(REDIRECT_URI)
+  const code = redirect && redirect.origin === expectedRedirect.origin && redirect.pathname === expectedRedirect.pathname && redirect.searchParams.get('state') === state
+    ? redirect.searchParams.get('code')
+    : null
   // Ohne Code (z. B. error=login_required) erneuert sich die Sitzung nicht mehr.
   if (!code) throw new VeoError('auth_expired', 'Veo silent re-authentication failed', authorize.status)
 

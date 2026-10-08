@@ -37,8 +37,9 @@ export interface LoginBrowser {
 
 /** Meldet sich mit E-Mail und Passwort bei Veo an und liefert das Session-Cookie (`name=value; ...`). */
 export async function captureSessionViaLogin(email: string, password: string, launchBrowser: () => Promise<LoginBrowser>): Promise<string> {
-  const browser = await launchBrowser()
+  let browser: LoginBrowser | undefined
   try {
+    browser = await launchBrowser()
     const context = await browser.newContext()
     const page = await context.newPage()
     await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: LOGIN_TIMEOUT_MS })
@@ -69,7 +70,11 @@ export async function captureSessionViaLogin(email: string, password: string, la
     const cookies = await context.cookies('https://auth.veo.co')
     if (cookies.length === 0) throw new VeoError('login_failed', 'Veo login set no auth.veo.co session cookie')
     return cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join('; ')
+  } catch (error) {
+    if (error instanceof VeoError) throw error
+    const errorName = error instanceof Error ? error.name : 'unknown'
+    throw new VeoError('upstream_error', `Veo login request failed (${errorName})`)
   } finally {
-    await browser.close()
+    if (browser) await browser.close().catch(() => undefined)
   }
 }
