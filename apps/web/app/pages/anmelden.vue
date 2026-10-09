@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { LoaderCircle, MailCheck } from '@lucide/vue'
+import { z } from 'zod'
 
 // Paket 057: Anmeldung per Link in der E-Mail statt Passwort (wie playerboard). Ob es zur Adresse
 // ein Konto gibt, verraet die Seite nicht -- sie bestaetigt immer gleich; nur das Mail-Limit von
@@ -11,6 +12,7 @@ const email = ref('')
 const loading = ref(false)
 const sent = ref(false)
 const errorMessage = ref('')
+const LoginInputSchema = z.object({ email: z.string().trim().pipe(z.email()) })
 
 /** Schickt einen Anmeldelink; der Link fuehrt ueber /auth/callback zum urspruenglichen Ziel. */
 async function submit() {
@@ -18,11 +20,12 @@ async function submit() {
   loading.value = true
   try {
     const supabase = useSupabaseClient()
+    const input = LoginInputSchema.parse({ email: email.value })
     const emailRedirectTo = new URL('/auth/callback', window.location.origin)
     const redirectTarget = resolveSafeRedirect(route.query.redirect)
     if (redirectTarget !== '/') emailRedirectTo.searchParams.set('redirect', redirectTarget)
     const { error } = await supabase.auth.signInWithOtp({
-      email: email.value.trim(),
+      email: input.email,
       options: { shouldCreateUser: false, emailRedirectTo: emailRedirectTo.toString() },
     })
     if (error?.status === 429) {
