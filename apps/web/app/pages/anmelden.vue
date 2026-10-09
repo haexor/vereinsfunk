@@ -22,7 +22,10 @@ async function submit() {
     const supabase = useSupabaseClient()
     const input = LoginInputSchema.parse({ email: email.value })
     const emailRedirectTo = new URL('/auth/callback', window.location.origin)
-    const redirectTarget = resolveSafeRedirect(route.query.redirect)
+    const redirectQuery = z.string().optional().safeParse(route.query.redirect)
+    const redirectTarget = resolveSafeRedirect(
+      redirectQuery.success ? redirectQuery.data : undefined,
+    )
     if (redirectTarget !== '/') emailRedirectTo.searchParams.set('redirect', redirectTarget)
     const { error } = await supabase.auth.signInWithOtp({
       email: input.email,

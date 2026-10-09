@@ -28,7 +28,10 @@ async function submit() {
     })
     // Traegt einen Einladungslink (siehe /einladung) ueber die E-Mail-Bestaetigung hinweg
     // weiter -- auth/callback.vue leitet redirect bereits generisch weiter.
-    const redirectTarget = resolveSafeRedirect(route.query.redirect)
+    const redirectQuery = z.string().optional().safeParse(route.query.redirect)
+    const redirectTarget = resolveSafeRedirect(
+      redirectQuery.success ? redirectQuery.data : undefined,
+    )
     const emailRedirectTo = new URL('/auth/callback', window.location.origin)
     if (redirectTarget !== '/') emailRedirectTo.searchParams.set('redirect', redirectTarget)
     // Paket 057: ohne Passwort -- der Link in der Mail bestaetigt die Adresse und meldet an.
