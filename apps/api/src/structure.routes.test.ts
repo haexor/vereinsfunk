@@ -220,8 +220,7 @@ describe('structure, memberships and invitations', () => {
     // Der Token reist nur als verschachtelter Auth-Redirect zu Supabase, nie als API-Antwort.
     // Supabase sendet den eigentlichen Invite-Link ueber den zentral konfigurierten Mailer.
     expect(authRedirects).toHaveLength(1)
-    const passwordRedirect = new URL(authRedirects[0]!).searchParams.get('redirect')
-    const acceptRedirect = new URL(passwordRedirect!, 'http://localhost').searchParams.get('redirect')
+    const acceptRedirect = new URL(authRedirects[0]!).searchParams.get('redirect')
     const acceptUrlMatch = acceptRedirect?.match(/token=([a-f0-9]+)/)
     expect(acceptUrlMatch).not.toBeNull()
     expect(JSON.stringify(body)).not.toContain(acceptUrlMatch![1]!)
@@ -669,10 +668,8 @@ describe('structure, memberships and invitations', () => {
     })
     expect(response.statusCode).toBe(201)
     expect(response.json()).toMatchObject({ id: INVITATION_ID, teamId: TEAM_ID, emailDelivered: true })
-    // Das neue Konto landet erst beim Passwortsetzen und danach bei der fachlichen Einladung.
-    const passwordRedirect = new URL(authRedirects[0]!).searchParams.get('redirect')
-    const acceptRedirect = new URL(passwordRedirect!, 'http://localhost').searchParams.get('redirect')
-    expect(passwordRedirect).toContain('/passwort-neu?redirect=')
+    // Paket 057: ohne Passwoerter fuehrt der Link aus der Mail direkt zur fachlichen Einladung.
+    const acceptRedirect = new URL(authRedirects[0]!).searchParams.get('redirect')
     expect(acceptRedirect).toMatch(/^\/einladung\?token=[a-f0-9]+$/)
   })
 

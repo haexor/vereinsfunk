@@ -6,6 +6,10 @@ export default defineNuxtConfig({
   // Tailwind 4 laeuft als Vite-Plugin. @nuxtjs/tailwindcss gibt es nur fuer v3.
   vite: { plugins: [tailwindcss()] },
   css: ['~/assets/css/main.css'],
+  // Paket 057: Anmeldung per Link, ohne Passwoerter -- alte Lesezeichen landen auf der Anmeldung.
+  routeRules: {
+    '/passwort-vergessen': { redirect: { to: '/anmelden', statusCode: 301 } },
+  },
   // components/ui haelt die shadcn-vue-Bausteine; ohne pathPrefix: false hiesse
   // <SelectTrigger> sonst <UiSelectSelectTrigger> (Ordnerpfad wird sonst zum Praefix).
   // extensions: ['vue'] haelt *.ts-Dateien aus dem Component-Scan raus -- Nuxt wuerde sonst

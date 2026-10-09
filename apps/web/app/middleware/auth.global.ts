@@ -9,7 +9,7 @@ import { isPublicTeamPagePath } from '../utils/publicTeamPage'
 // Paket 020: /impressum und /datenschutz sind die Rechtstexte von Vereinsfunk als Produkt --
 // exakter Pfad, damit /datenschutz/anfragen (die authentifizierte Betroffenenanfragen-Seite)
 // weiterhin geschuetzt bleibt.
-const publicPaths = new Set(['/anmelden', '/registrieren', '/passwort-vergessen', '/passwort-neu', '/auth/callback', '/einladung', '/plattform-admin-einladung', '/impressum', '/datenschutz'])
+const publicPaths = new Set(['/anmelden', '/registrieren', '/passwort-neu', '/auth/callback', '/einladung', '/plattform-admin-einladung', '/impressum', '/datenschutz'])
 // Paket 015: /einwilligung/[token] und /einwilligung/widerruf/[token] haben kein Vereinskonto als
 // Zielgruppe (Erziehungsberechtigte) -- Praefix statt exaktem Pfad, weil das Token Teil der Route ist.
 // Mit Schraegstrich, sonst trifft das Praefix auch /einwilligungen (die authentifizierte

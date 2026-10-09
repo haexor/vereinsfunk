@@ -8,7 +8,7 @@ import { createInvitation, InvitationCreationError } from '../services/invitatio
 import type { ApiRouteContext } from './context.js'
 import { createAuditRecorder, resolveInvitationScope, toPermissionScope } from './shared.js'
 
-function invitationUrls(webBaseUrl: string, rawToken: string): { accept: string; setPassword: string } {
+function invitationUrls(webBaseUrl: string, rawToken: string): { accept: string } {
   return invitationCallbackUrls(webBaseUrl, `/einladung?token=${encodeURIComponent(rawToken)}`)
 }
 

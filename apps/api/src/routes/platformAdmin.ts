@@ -39,7 +39,7 @@ import { parseBlockingPublications } from '../moduleStatus.js'
 
 // Analog invitationUrls() in routes/invitations.ts, aber mit dem Annahme-Pfad fuer
 // Plattform-Admins statt fuer Vereinsmitglieder.
-function platformAdminInvitationUrls(webBaseUrl: string, rawToken: string): { accept: string; setPassword: string } {
+function platformAdminInvitationUrls(webBaseUrl: string, rawToken: string): { accept: string } {
   return invitationCallbackUrls(webBaseUrl, `/plattform-admin-einladung?token=${encodeURIComponent(rawToken)}`)
 }
 

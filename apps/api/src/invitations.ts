@@ -20,13 +20,10 @@ export function authCallbackUrl(webBaseUrl: string, redirect: string): string {
 
 // Gemeinsame Grundlage fuer invitationUrls() (Vereinsmitglieder) und platformAdminInvitationUrls()
 // (Plattform-Admins) in den beiden Routendateien -- beide unterscheiden sich nur im Annahme-Pfad.
-export function invitationCallbackUrls(webBaseUrl: string, acceptPath: string): { accept: string; setPassword: string } {
-  const passwordSetup = new URL('/passwort-neu', webBaseUrl)
-  passwordSetup.searchParams.set('redirect', acceptPath)
-  return {
-    accept: authCallbackUrl(webBaseUrl, acceptPath),
-    setPassword: authCallbackUrl(webBaseUrl, `${passwordSetup.pathname}${passwordSetup.search}`),
-  }
+// Seit Paket 057 gibt es keine Passwoerter mehr: der Link aus der Mail meldet an und fuehrt direkt
+// zur fachlichen Einladung, ohne Zwischenschritt "Passwort festlegen".
+export function invitationCallbackUrls(webBaseUrl: string, acceptPath: string): { accept: string } {
+  return { accept: authCallbackUrl(webBaseUrl, acceptPath) }
 }
 
 export function isExistingAccountError(error: { code?: string | null | undefined; message?: string | undefined } | null): boolean {
@@ -52,17 +49,17 @@ function withTimeout<T>(promise: PromiseLike<T>, ms: number, label: string): Pro
 }
 
 // Supabase Auth ist der eine Mail-Provider fuer Account-Einladungen (Vereinsmitglieder und
-// Plattform-Admins gleichermassen). Damit verwendet dieser Pfad dieselbe Brevo-Konfiguration wie
-// Registrierung und Passwort-Reset, ohne SMTP-Secrets in der API zu duplizieren. Ein existierendes
+// Plattform-Admins gleichermassen). Damit verwendet dieser Pfad denselben Versand wie Registrierung
+// und Anmeldelinks, ohne SMTP-Secrets in der API zu duplizieren. Ein existierendes
 // Konto kann nicht erneut per `inviteUserByEmail` eingeladen werden; ein Magic Link beweist dort
 // dieselbe E-Mail-Inhaberschaft und leitet zur fachlichen Einladung weiter.
 export async function sendInvitationThroughSupabaseAuth(
   service: SupabaseClient,
   email: string,
-  urls: { accept: string; setPassword: string },
+  urls: { accept: string },
 ): Promise<void> {
   const invite = await withTimeout(
-    service.auth.admin.inviteUserByEmail(email, { redirectTo: urls.setPassword }),
+    service.auth.admin.inviteUserByEmail(email, { redirectTo: urls.accept }),
     SUPABASE_AUTH_TIMEOUT_MS,
     'inviteUserByEmail',
   )
