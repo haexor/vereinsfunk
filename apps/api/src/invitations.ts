@@ -18,10 +18,10 @@ export function authCallbackUrl(webBaseUrl: string, redirect: string): string {
   return callback.toString()
 }
 
-// Gemeinsame Grundlage fuer invitationUrls() (Vereinsmitglieder) und platformAdminInvitationUrls()
-// (Plattform-Admins) in den beiden Routendateien -- beide unterscheiden sich nur im Annahme-Pfad.
-// Seit Paket 057 gibt es keine Passwoerter mehr: der Link aus der Mail meldet an und fuehrt direkt
-// zur fachlichen Einladung, ohne Zwischenschritt "Passwort festlegen".
+/**
+ * Erstellt den Auth-Callback zur direkten Annahme einer Vereins- oder Plattform-Admin-Einladung.
+ * Der Link aus der Mail meldet an und fuehrt zu acceptPath, ohne Passwort-Zwischenschritt.
+ */
 export function invitationCallbackUrls(webBaseUrl: string, acceptPath: string): { accept: string } {
   return { accept: authCallbackUrl(webBaseUrl, acceptPath) }
 }
@@ -48,11 +48,11 @@ function withTimeout<T>(promise: PromiseLike<T>, ms: number, label: string): Pro
   ])
 }
 
-// Supabase Auth ist der eine Mail-Provider fuer Account-Einladungen (Vereinsmitglieder und
-// Plattform-Admins gleichermassen). Damit verwendet dieser Pfad denselben Versand wie Registrierung
-// und Anmeldelinks, ohne SMTP-Secrets in der API zu duplizieren. Ein existierendes
-// Konto kann nicht erneut per `inviteUserByEmail` eingeladen werden; ein Magic Link beweist dort
-// dieselbe E-Mail-Inhaberschaft und leitet zur fachlichen Einladung weiter.
+/**
+ * Verschickt Einladungen ueber Supabase Auth mit demselben Mail-Versand wie Registrierung und Anmeldung.
+ * Bestehende Konten erhalten stattdessen einen Magic Link; beide Wege fuehren zu urls.accept.
+ * Wirft bei Versandfehlern oder wenn ein Auth-Aufruf das Zeitlimit ueberschreitet.
+ */
 export async function sendInvitationThroughSupabaseAuth(
   service: SupabaseClient,
   email: string,

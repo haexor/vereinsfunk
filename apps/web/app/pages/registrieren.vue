@@ -11,6 +11,7 @@ const loading = ref(false)
 const errorMessage = ref('')
 const registered = ref(false)
 
+/** Fordert einen Registrierungslink mit Anzeigenamen an und erhaelt das sichere Weiterleitungsziel. */
 async function submit() {
   errorMessage.value = ''
   loading.value = true

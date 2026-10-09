@@ -8,6 +8,7 @@ import { createInvitation, InvitationCreationError } from '../services/invitatio
 import type { ApiRouteContext } from './context.js'
 import { createAuditRecorder, resolveInvitationScope, toPermissionScope } from './shared.js'
 
+/** Erstellt den Auth-Callback zur Vereinseinladung mit dem URL-kodierten Einladungstoken. */
 function invitationUrls(webBaseUrl: string, rawToken: string): { accept: string } {
   return invitationCallbackUrls(webBaseUrl, `/einladung?token=${encodeURIComponent(rawToken)}`)
 }

@@ -37,8 +37,7 @@ import { createAuditRecorder, fetchAllRows } from './shared.js'
 import { ciphertextToBytea, createSecretBoxFromEnvironment } from '../secretBox.js'
 import { parseBlockingPublications } from '../moduleStatus.js'
 
-// Analog invitationUrls() in routes/invitations.ts, aber mit dem Annahme-Pfad fuer
-// Plattform-Admins statt fuer Vereinsmitglieder.
+/** Erstellt den Auth-Callback zur Plattform-Admin-Einladung mit dem URL-kodierten Einladungstoken. */
 function platformAdminInvitationUrls(webBaseUrl: string, rawToken: string): { accept: string } {
   return invitationCallbackUrls(webBaseUrl, `/plattform-admin-einladung?token=${encodeURIComponent(rawToken)}`)
 }
