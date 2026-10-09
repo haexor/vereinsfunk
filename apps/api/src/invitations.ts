@@ -18,15 +18,12 @@ export function authCallbackUrl(webBaseUrl: string, redirect: string): string {
   return callback.toString()
 }
 
-// Gemeinsame Grundlage fuer invitationUrls() (Vereinsmitglieder) und platformAdminInvitationUrls()
-// (Plattform-Admins) in den beiden Routendateien -- beide unterscheiden sich nur im Annahme-Pfad.
-export function invitationCallbackUrls(webBaseUrl: string, acceptPath: string): { accept: string; setPassword: string } {
-  const passwordSetup = new URL('/passwort-neu', webBaseUrl)
-  passwordSetup.searchParams.set('redirect', acceptPath)
-  return {
-    accept: authCallbackUrl(webBaseUrl, acceptPath),
-    setPassword: authCallbackUrl(webBaseUrl, `${passwordSetup.pathname}${passwordSetup.search}`),
-  }
+/**
+ * Erstellt den Auth-Callback zur direkten Annahme einer Vereins- oder Plattform-Admin-Einladung.
+ * Der Link aus der Mail meldet an und fuehrt zu acceptPath, ohne Passwort-Zwischenschritt.
+ */
+export function invitationCallbackUrls(webBaseUrl: string, acceptPath: string): { accept: string } {
+  return { accept: authCallbackUrl(webBaseUrl, acceptPath) }
 }
 
 export function isExistingAccountError(error: { code?: string | null | undefined; message?: string | undefined } | null): boolean {
@@ -51,18 +48,18 @@ function withTimeout<T>(promise: PromiseLike<T>, ms: number, label: string): Pro
   ])
 }
 
-// Supabase Auth ist der eine Mail-Provider fuer Account-Einladungen (Vereinsmitglieder und
-// Plattform-Admins gleichermassen). Damit verwendet dieser Pfad dieselbe Brevo-Konfiguration wie
-// Registrierung und Passwort-Reset, ohne SMTP-Secrets in der API zu duplizieren. Ein existierendes
-// Konto kann nicht erneut per `inviteUserByEmail` eingeladen werden; ein Magic Link beweist dort
-// dieselbe E-Mail-Inhaberschaft und leitet zur fachlichen Einladung weiter.
+/**
+ * Verschickt Einladungen ueber Supabase Auth mit demselben Mail-Versand wie Registrierung und Anmeldung.
+ * Bestehende Konten erhalten stattdessen einen Magic Link; beide Wege fuehren zu urls.accept.
+ * Wirft bei Versandfehlern oder wenn ein Auth-Aufruf das Zeitlimit ueberschreitet.
+ */
 export async function sendInvitationThroughSupabaseAuth(
   service: SupabaseClient,
   email: string,
-  urls: { accept: string; setPassword: string },
+  urls: { accept: string },
 ): Promise<void> {
   const invite = await withTimeout(
-    service.auth.admin.inviteUserByEmail(email, { redirectTo: urls.setPassword }),
+    service.auth.admin.inviteUserByEmail(email, { redirectTo: urls.accept }),
     SUPABASE_AUTH_TIMEOUT_MS,
     'inviteUserByEmail',
   )

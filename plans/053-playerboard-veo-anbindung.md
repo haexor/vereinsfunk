@@ -356,3 +356,28 @@ Abweichungen und Funde:
 - **Feste Mannschaftskennzahlen:** Auf einen Blick zeigt die Saison Bilanz, Tore, Schüsse und Fouls; alle übrigen Werte stehen im Spiel. Die Mannschaftswerte der Saison sind Summen; eine Gegenüberstellung mit dem Gegner gibt es nur je Spiel.
 - **Layout-Fund:** Die öffentliche Seite bemisst ihre Breite nach dem Inhalt. Breite Tabellen und Auswahlfelder trugen deshalb zur Mindestbreite bei und schoben die Seite auf. Die Tabelle scrollt jetzt in sich (`w-0 min-w-full`), die Spielauswahl ist schrumpffähig.
 
+## Umsetzung PR 4: Ergebnis (2026-10-09)
+
+Abweichend vom Plan entschied der Betreiber am 2026-10-09:
+- Vereinsfunk übernimmt **sofort** `playerboard.de` (API `api.playerboard.de`).
+- Vereinsfunk läuft auf einer **selbst gehosteten Supabase** (`sb.playerboard.de`) statt auf Supabase Cloud. Das Studio liegt hinter Authentik, das dafür auch auf haex.space läuft.
+- Die aktive Mannschaft **C1** zieht **mit ihren Daten** in den Verein „TSV Ifa“ um. Damit gilt „kein Datenumzug“ für C1 nicht mehr.
+
+Vor dem Abbau:
+- Dump und Foto-Archiv werden gesichert.
+- Das Repository wird archiviert.
+- Eine Weiterleitung braucht es nicht, weil `playerboard.de` schon Vereinsfunk ist.
+
+Erledigt (haexhub/ansible #148, #150, #151):
+- **Ausrollen:** Hatchet, Postgres, Authentik, `vereinsfunk-supabase` und Vereinsfunk auf haex.space. Alle 128 Migrationen sind eingespielt, der Worker ist mit Hatchet verbunden.
+- **Umzug von C1** per einmaligem Skript, in einer Transaktion nach einem Probelauf:
+  - 4 Konten samt Identitäten; martin.drechsel@ok.de ist Eigentümer, die 3 Trainer sind `team_manager`, ein Spielerkonto ist mit seinem Kadereintrag verknüpft;
+  - 18 Spieler; Namen ohne Nachnamen bekommen „–“, der Trainer ergänzt;
+  - die Kategorie (vereinsweit), das Training mit 9 Punkten und der Saisonbeginn;
+  - das Foto, ungeprüft und nicht öffentlich. Die Häkchen „Foto-Einwilligung“ aus playerboard gelten nicht als förmliche Einwilligung.
+- **Veo** über die Produktions-API verbunden. Der erste Abgleich lief über Outbox, Hatchet und Worker: 7 Spiele, 918 Spielerwerte, 88 Rückennummern automatisch zugeordnet.
+- **playerboard abgebaut:**
+  - Dump und Foto-Archiv liegen unter `~/backups/playerboard`; der Dump ist mit `pg_restore --list` geprüft.
+  - Container, Volumes, Verzeichnisse, Netz, Cron und App-Image sind entfernt, die Rollen aus dem ansible-Repo gelöscht.
+- **Magic Links:** playerboard meldete per Magic Link an, ohne Passwörter. Vereinsfunk macht das seit Paket 057 genauso.
+
