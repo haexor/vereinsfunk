@@ -523,7 +523,9 @@ watch(
         </div>
       </aside>
 
-      <main class="min-w-0 flex-1 lg:h-screen lg:min-h-0 lg:overflow-y-auto">
+      <!-- relative: absolut positionierte Inhalte (sr-only, versteckte Datei-Inputs) muessen in
+           main bleiben; sonst verlaengern sie das Dokument und die Shell scrollt als Ganzes. -->
+      <main class="relative min-w-0 flex-1 lg:h-screen lg:min-h-0 lg:overflow-y-auto">
         <div
           class="mx-auto w-full px-5 py-8 sm:px-10"
           :class="route.path === '/bildstil' ? 'max-w-[1800px] lg:px-6' : 'max-w-[1280px]'"
