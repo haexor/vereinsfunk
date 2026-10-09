@@ -29,3 +29,19 @@ Vereinsfunk kennt keine Passwörter mehr. Wer sich anmeldet, gibt nur die E-Mail
 
 - **Passwort-Anmeldung bei Supabase Auth bleibt technisch aktiv.** GoTrue kann sie nicht einzeln abschalten. Ohne Passwortfeld in der Oberfläche und ohne gesetzte Passwörter ist sie aber nicht nutzbar.
 - **Lokale Entwicklung:** Die Supabase CLI verschickt weiter ihre englischen Standardmails. Die Vorlagen greifen nur auf der selbst gehosteten Instanz.
+
+## Nachtrag: alte playerboard-Adressen (2026-10-09)
+
+- **Fehler nach dem Go-live:** Wer über ein altes playerboard-Lesezeichen (`/login?redirect=/`) kam, landete nach dem Klick auf den Anmeldelink auf einer 404.
+  - Die Anmeldung selbst klappte.
+  - `/anmelden` übernahm `/login?redirect=/` als Ziel. Mit gesetzter Sitzung ließ die Middleware den Pfad durch, und Vereinsfunk hat keine solche Seite.
+- **Lösung:** `routeRules` in `apps/web/nuxt.config.ts` leiten die alten Adressen dauerhaft (301) weiter:
+
+  | Alte Adresse | Ziel |
+  | --- | --- |
+  | `/login`, `/callback`, `/start`, `/invite/**` | `/` (ohne Sitzung weiter auf `/anmelden`) |
+  | `/profile` | `/profil` |
+  | `/t/**` | `/playerboard` |
+
+- **Nicht weitergeleitet:** Die alte öffentliche Rangliste `/public/{slug}/ranking` bleibt hinter der Anmeldung. Die neue öffentliche Seite braucht einen Verein- und einen Mannschafts-Slug und muss zuerst freigegeben werden.
+- **Geprüft:** Lokal leiten alle Adressen mit und ohne Sitzungs-Cookie weiter. Vorher lieferte playerboard.de für `/login` mit Cookie eine 404.

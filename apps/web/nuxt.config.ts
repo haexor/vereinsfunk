@@ -7,8 +7,17 @@ export default defineNuxtConfig({
   vite: { plugins: [tailwindcss()] },
   css: ['~/assets/css/main.css'],
   // Paket 057: Anmeldung per Link, ohne Passwoerter -- alte Lesezeichen landen auf der Anmeldung.
+  // Paket 053, PR 4: playerboard.de war vorher das eigenstaendige playerboard -- dessen Adressen
+  // stecken noch in Lesezeichen und als redirect-Ziel in Anmeldelinks. Ohne Weiterleitung endet die
+  // Anmeldung angemeldet auf einer 404 (die Middleware laesst den Pfad mit Sitzung durch).
   routeRules: {
     '/passwort-vergessen': { redirect: { to: '/anmelden', statusCode: 301 } },
+    '/login': { redirect: { to: '/', statusCode: 301 } },
+    '/callback': { redirect: { to: '/', statusCode: 301 } },
+    '/start': { redirect: { to: '/', statusCode: 301 } },
+    '/profile': { redirect: { to: '/profil', statusCode: 301 } },
+    '/invite/**': { redirect: { to: '/', statusCode: 301 } },
+    '/t/**': { redirect: { to: '/playerboard', statusCode: 301 } },
   },
   // components/ui haelt die shadcn-vue-Bausteine; ohne pathPrefix: false hiesse
   // <SelectTrigger> sonst <UiSelectSelectTrigger> (Ordnerpfad wird sonst zum Praefix).
