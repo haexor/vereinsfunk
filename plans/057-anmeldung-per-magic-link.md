@@ -37,11 +37,13 @@ Vereinsfunk kennt keine Passwörter mehr. Wer sich anmeldet, gibt nur die E-Mail
   - `/anmelden` übernahm `/login?redirect=/` als Ziel. Mit gesetzter Sitzung ließ die Middleware den Pfad durch, und Vereinsfunk hat keine solche Seite.
 - **Lösung:** `routeRules` in `apps/web/nuxt.config.ts` leiten die alten Adressen dauerhaft (301) weiter:
 
-  | Alte Adresse | Ziel |
-  | --- | --- |
-  | `/login`, `/callback`, `/start`, `/invite/**` | `/` (ohne Sitzung weiter auf `/anmelden`) |
-  | `/profile` | `/profil` |
-  | `/t/**` | `/playerboard` |
+  | Alte Adresse       | Ziel                                      |
+  | ------------------ | ----------------------------------------- |
+  | `/login`, `/start` | `/` (ohne Sitzung weiter auf `/anmelden`) |
+  | `/callback`        | `/auth/callback`                          |
+  | `/profile`         | `/profil`                                 |
+  | `/invite/<token>`  | `/einladung?token=<token>`                |
+  | `/t/**`            | `/playerboard`                            |
 
 - **Nicht weitergeleitet:** Die alte öffentliche Rangliste `/public/{slug}/ranking` bleibt hinter der Anmeldung. Die neue öffentliche Seite braucht einen Verein- und einen Mannschafts-Slug und muss zuerst freigegeben werden.
 - **Geprüft:** Lokal leiten alle Adressen mit und ohne Sitzungs-Cookie weiter. Vorher lieferte playerboard.de für `/login` mit Cookie eine 404.

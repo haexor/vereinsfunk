@@ -13,10 +13,10 @@ export default defineNuxtConfig({
   routeRules: {
     '/passwort-vergessen': { redirect: { to: '/anmelden', statusCode: 301 } },
     '/login': { redirect: { to: '/', statusCode: 301 } },
-    '/callback': { redirect: { to: '/', statusCode: 301 } },
+    '/callback': { redirect: { to: '/auth/callback', statusCode: 301 } },
     '/start': { redirect: { to: '/', statusCode: 301 } },
     '/profile': { redirect: { to: '/profil', statusCode: 301 } },
-    '/invite/**': { redirect: { to: '/', statusCode: 301 } },
+    '/invite': { redirect: { to: '/', statusCode: 301 } },
     '/t/**': { redirect: { to: '/playerboard', statusCode: 301 } },
   },
   // components/ui haelt die shadcn-vue-Bausteine; ohne pathPrefix: false hiesse
