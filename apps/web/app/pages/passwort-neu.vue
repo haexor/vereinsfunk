@@ -5,7 +5,9 @@
 definePageMeta({ layout: 'auth' })
 
 const route = useRoute()
-await navigateTo(resolveSafeRedirect(route.query.redirect), { replace: true })
+// resolveSafeRedirect() prüft gegen die Browser-Origin und darf deshalb nicht während SSR laufen.
+if (import.meta.client)
+  await navigateTo(resolveSafeRedirect(route.query.redirect), { replace: true })
 </script>
 
 <template>
