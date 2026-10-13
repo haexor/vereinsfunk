@@ -14,3 +14,16 @@ graphify-out
 *.log
 .DS_Store
 .playwright-mcp
+# Spec Kit agent skills are generated per developer by `spaex install`.
+.agents/skills/speckit-*/
+.claude/skills/speckit-*/
+.specify/integrations/claude.manifest.json
+.specify/integrations/codex.manifest.json
+
+# spaex per-developer state
+.spaex/manifest.json.lock
+.spaex/install.lock
+.spaex/composer.log
+
+# Repository-local git worktrees
+.worktrees/

@@ -17,6 +17,8 @@ reviews:
     - "!**/dist/**"
     - "!**/.output/**"
     - "!**/.nuxt/**"
+    - "!.specify/**" # GitHub Spec Kit, managed by the official specify CLI
+    - "!.spaex/**" # spaex: composed constitution, fragments, generated files
   path_instructions:
     - path: "packages/**"
       instructions: >
