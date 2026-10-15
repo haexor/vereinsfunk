@@ -15,6 +15,7 @@ import {
 import { useBrandOverrides } from '../composables/useBrandOverrides'
 import { useBrandWebsiteAnalysis } from '../composables/useBrandWebsiteAnalysis'
 import { ApiRequestError } from '../utils/apiClient'
+import { brandAnalysisFailureMessage } from '../utils/brandAnalysisFailure'
 import { BrandPageRowsSchema } from '../utils/brandPageRows'
 
 // Genau BRAND_LOCKABLE_FIELDS aus packages/domain, nur mit deutschem Etikett: eine Sperre wirkt
@@ -376,17 +377,11 @@ const detectedFontNotice = computed(() => {
     ? `Auf der Webseite erkannt: „${detected}“ — kann aus Datenschutzgründen nicht automatisch übernommen werden; bei Bedarf oben als eigene Schriftdatei mit Lizenzbestätigung hochladen.`
     : ''
 })
-// Bildet die technischen error_reason-Werte des Workers (z.B. "provider_rate_limit",
-// "secret_configuration") auf wenige verständliche Gründe ab, statt sie roh anzuzeigen --
-// siehe Plandokument 048, Abschnitt "Abweichungen".
-const websiteAnalysisFailureMessage = computed(() => {
-  if (websiteAnalysisStatus.value !== 'failed') return ''
-  const reason = websiteAnalysisErrorReason.value
-  if (reason === 'timeout') return 'Die Analyse hat zu lange gedauert. Bitte erneut versuchen.'
-  if (reason === 'website_unreachable' || reason === 'blocked_url')
-    return 'Die Webseite konnte nicht geladen werden. Bitte die Adresse prüfen und erneut versuchen.'
-  return 'Die Analyse ist fehlgeschlagen. Bitte später erneut versuchen.'
-})
+const websiteAnalysisFailureMessage = computed(() =>
+  websiteAnalysisStatus.value === 'failed'
+    ? brandAnalysisFailureMessage(websiteAnalysisErrorReason.value)
+    : '',
+)
 
 // Genau die Formate, die der Logo-Upload akzeptiert, und das multipart-Limit der API
 // (apps/api/src/app.ts, fileSize 8 MiB): ein Vorschlag, den der Speicherpfad ohnehin ablehnen
