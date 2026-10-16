@@ -40,7 +40,7 @@ const analysis = {
 }
 const renderResult = {
   screenshotBase64: 'ZmFrZS1wbmc=',
-  screenshotMediaType: 'image/jpeg' as const,
+  screenshotMediaType: 'image/png' as const,
   logoCandidates: [] as LogoCandidate[],
   detectedFontFamily: 'Roboto, sans-serif',
 }
