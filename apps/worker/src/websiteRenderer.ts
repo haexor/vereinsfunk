@@ -212,10 +212,30 @@ export function scoreLogoCandidates(): LogoCandidate[] {
     ranked.push({ url: ogImage, score: -100 })
     seen.add(ogImage)
   }
-  const iconRaw =
-    document.querySelector<HTMLLinkElement>('link[rel~="icon"]')?.getAttribute('href') ?? null
-  const icon = iconRaw ? normalize(iconRaw) : null
-  if (icon && !seen.has(icon)) ranked.push({ url: icon, score: -101 })
+  // Alle Icon-Links, die groesste deklarierte Kantenlaenge zuerst. Das erste `rel~=icon` ist auf
+  // vielen Seiten ein 16x16/32x32-Favicon, waehrend ein apple-touch-icon (meist 180x180) oder ein
+  // groesseres PNG-Icon als Wappen deutlich schaerfer ist; zu kleine Dateien lehnt ohnehin
+  // processBrandLogoUpload ab (Mindestkante), der Downloader probiert dann den naechsten.
+  const iconLinks = Array.from(
+    document.querySelectorAll<HTMLLinkElement>(
+      'link[rel~="icon"], link[rel~="apple-touch-icon"], link[rel~="apple-touch-icon-precomposed"]',
+    ),
+  )
+    .map((link, index) => {
+      const sizes = (link.getAttribute('sizes') ?? '').toLowerCase()
+      let edge = sizes.includes('any') ? 10_000 : 0
+      for (const match of sizes.matchAll(/(\d+)x(\d+)/g)) edge = Math.max(edge, Number(match[1]))
+      if (edge === 0 && /apple-touch-icon/i.test(link.getAttribute('rel') ?? '')) edge = 180
+      return { href: link.getAttribute('href'), edge, index }
+    })
+    .sort((a, b) => b.edge - a.edge || a.index - b.index)
+  let iconRank = 0
+  for (const link of iconLinks) {
+    const icon = link.href ? normalize(link.href) : null
+    if (!icon || seen.has(icon)) continue
+    ranked.push({ url: icon, score: -101 - iconRank++ })
+    seen.add(icon)
+  }
 
   // Verteidigung in der Tiefe: page.evaluate() laeuft in der Haupt-Welt der fremden Seite, nicht
   // isoliert -- ein Skript dieser Seite kann globale Built-ins wie Map/Array.from ueberschreiben

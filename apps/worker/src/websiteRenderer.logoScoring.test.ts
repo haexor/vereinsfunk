@@ -175,6 +175,43 @@ describe('scoreLogoCandidates', () => {
     expect(candidates[0]?.url).toBe(withHomeLink?.url)
   })
 
+  it('bevorzugt unter den Icon-Links das groesste (apple-touch-icon) vor dem 32x32-Favicon', async () => {
+    const candidates = await scoreFixture(`
+      <html>
+        <head>
+          <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+          <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+          <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+        </head>
+        <body><p>Keine Bilder</p></body>
+      </html>
+    `)
+    expect(candidates.map((candidate) => candidate.url)).toEqual([
+      `${FIXTURE_ORIGIN}/apple-touch-icon.png`,
+      `${FIXTURE_ORIGIN}/favicon-32x32.png`,
+      `${FIXTURE_ORIGIN}/favicon-16x16.png`,
+    ])
+    expect(candidates.map((candidate) => candidate.score)).toEqual([-101, -102, -103])
+  })
+
+  it('behandelt ein apple-touch-icon ohne sizes als 180 px und ein Icon mit sizes="any" als vektoriell', async () => {
+    const candidates = await scoreFixture(`
+      <html>
+        <head>
+          <link rel="icon" sizes="48x48" href="/small.png">
+          <link rel="apple-touch-icon" href="/touch.png">
+          <link rel="icon" sizes="any" type="image/svg+xml" href="/icon.svg">
+        </head>
+        <body><p>Keine Bilder</p></body>
+      </html>
+    `)
+    expect(candidates.map((candidate) => candidate.url)).toEqual([
+      `${FIXTURE_ORIGIN}/icon.svg`,
+      `${FIXTURE_ORIGIN}/touch.png`,
+      `${FIXTURE_ORIGIN}/small.png`,
+    ])
+  })
+
   it('faellt auf og:image und Favicon zurueck, wenn kein DOM-Kandidat existiert, in dieser Reihenfolge', async () => {
     const candidates = await scoreFixture(`
       <html>
