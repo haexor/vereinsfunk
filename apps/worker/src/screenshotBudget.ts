@@ -1,7 +1,8 @@
-// haex-claude-proxy gibt das Bild im Abo-Modus als @path-Erwaehnung an die Claude-CLI weiter, und
-// die CLI liest nur Dateien bis etwa 256 KB ein. Ein groesseres PNG (ein 1280x900-Screenshot einer
-// bebilderten Vereinsseite hat schnell ueber 500 KB) endet als Prosa "kein Lesezugriff" ohne
-// tool_use-Block und scheitert als provider_schema. Die Grenze liegt bewusst darunter.
+// Empirisch gemessen gegen haex-claude-proxy im Abo-Modus (Bild als @path-Erwaehnung an die
+// Claude-CLI): Screenshots bis ca. 200 KB werden gelesen, ein PNG ab ca. 460 KB endet als Prosa
+// "kein Lesezugriff" ohne tool_use-Block und scheitert als provider_schema. Der genaue Mechanismus
+// im Proxy ist nicht geklaert -- die CLI selbst liest auch groessere Dateien, wenn man sie direkt
+// aufruft. Das Budget liegt deshalb mit Abstand unter der kleinsten gescheiterten Groesse.
 export const SCREENSHOT_MAX_BYTES = 200_000
 
 const JPEG_QUALITIES = [80, 60, 40, 25] as const
