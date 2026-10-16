@@ -82,7 +82,7 @@ export class VisionProviderComparisonExecutor {
 
   private async analyzeWithProvider(
     provider: VisionComparisonProviderRow,
-    render: { screenshotBase64: string; screenshotMediaType: 'image/png'; detectedFontFamily: string | null },
+    render: { screenshotBase64: string; screenshotMediaType: 'image/jpeg'; detectedFontFamily: string | null },
   ): Promise<VisionComparisonResultEntry> {
     const generator = VISION_GENERATORS[provider.protocol]
     if (!generator) return { providerConfigurationId: provider.id, providerLabel: provider.label, status: 'failed', errorReason: 'unsupported_provider_configuration' }

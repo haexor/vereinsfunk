@@ -2,6 +2,7 @@ import { OutboundFetchError } from '@vereinsfunk/outbound-fetch'
 import { chromium } from 'playwright'
 import { z } from 'zod'
 import { assertNavigableUrl, guardOutboundRequests } from './browserGuard.js'
+import { captureScreenshotWithinBudget } from './screenshotBudget.js'
 import { WorkflowExecutionError } from './workflows.js'
 
 export interface LogoCandidate {
@@ -29,7 +30,7 @@ const LogoCandidatesSchema = z.array(LogoCandidateSchema)
 
 export interface WebsiteRenderResult {
   screenshotBase64: string
-  screenshotMediaType: 'image/png'
+  screenshotMediaType: 'image/jpeg'
   /** Nach Score absteigend sortiert (siehe scoreLogoCandidates). og:image/Favicon sind reine
    *  Fallback-Kandidaten mit einem fixen, niedrigen Score und stehen immer am Ende, unabhaengig
    *  vom Score echter DOM-Treffer. Der Aufrufer versucht der Reihe nach, bis eine Datei
@@ -256,7 +257,9 @@ export class PlaywrightWebsiteRenderer implements WebsiteRenderer {
       // Above-the-fold layout/Web-Fonts brauchen nach domcontentloaded noch einen Moment.
       await page.waitForTimeout(500)
 
-      const screenshotBuffer = await page.screenshot({ type: 'png' })
+      const screenshotBuffer = await captureScreenshotWithinBudget((quality) =>
+        page.screenshot({ type: 'jpeg', quality }),
+      )
       const rawLogoCandidates = await page.evaluate(scoreLogoCandidates)
       const parsedLogoCandidates = LogoCandidatesSchema.safeParse(rawLogoCandidates)
       const logoCandidates = parsedLogoCandidates.success ? parsedLogoCandidates.data : []
@@ -267,7 +270,7 @@ export class PlaywrightWebsiteRenderer implements WebsiteRenderer {
 
       return {
         screenshotBase64: screenshotBuffer.toString('base64'),
-        screenshotMediaType: 'image/png',
+        screenshotMediaType: 'image/jpeg',
         logoCandidates: logoCandidates.slice(0, MAX_LOGO_CANDIDATES_TO_ATTEMPT),
         detectedFontFamily,
       }
