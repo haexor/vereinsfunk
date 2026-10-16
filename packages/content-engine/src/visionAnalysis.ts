@@ -87,7 +87,11 @@ function parsePairingKey(value: unknown, options: readonly FontPairingOption[]):
   return options.some((option) => option.key === value) ? (value as string) : null
 }
 
-const ANTHROPIC_OUTPUT_TOOL_NAME = 'brand_color_analysis'
+// Muss 'final_result' heissen, wie in index.ts: haex-claude-proxy verdrahtet im Abo-Modus nur dieses
+// Werkzeug als strukturierte Ausgabe. Ein anderer Name liefert eine reine Textantwort ohne
+// tool_use-Block, die hier als provider_schema scheitert. Bewusst nicht aus index.ts importiert --
+// index.ts re-exportiert dieses Modul.
+const ANTHROPIC_OUTPUT_TOOL_NAME = 'final_result'
 
 function jsonSchemaFor(input: VisionAnalysisInput) {
   const fontPairingEnum = [...input.fontPairingOptions.map((option) => option.key), NO_FONT_PAIRING_MATCH]
