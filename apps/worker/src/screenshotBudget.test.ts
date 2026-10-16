@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { captureScreenshotWithinBudget } from './screenshotBudget'
+import { captureScreenshotWithinBudget } from './screenshotBudget.js'
 
 const shotOf = (bytes: number) => Buffer.alloc(bytes)
 
