@@ -231,14 +231,15 @@ function statusClass(photo: PlayerboardPhoto): string {
         <li v-for="player in players" :key="player.id">
           <label class="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg px-2 hover:bg-[#f6f8f3]">
             <input v-model="reviewPeople" type="checkbox" :value="player.id" class="h-5 w-5 accent-forest" />
-            <span class="min-w-0 flex-1 truncate text-sm text-ink">{{ player.firstName }} {{ player.lastName }}</span>
+            <!-- Neuer Tab: ein Klick mitten in der Pruefung darf die ausgewaehlten Personen nicht verwerfen. -->
+            <span class="min-w-0 flex-1 truncate text-sm text-ink"><PersonLink :person-id="player.directoryPersonId" target="_blank" rel="noopener">{{ player.firstName }} {{ player.lastName }}</PersonLink></span>
             <span v-if="consentByPlayer.get(player.id)?.consentRecordId" class="text-[10px] font-semibold text-forest">Einwilligung liegt vor</span>
             <span v-else class="text-[10px] font-semibold text-amber-800">keine Einwilligung</span>
           </label>
         </li>
       </ul>
       <p v-if="reviewMissingConsent.length > 0" class="mt-3 text-sm font-semibold text-amber-800" role="alert">
-        Ohne gültige Einwilligung: {{ reviewMissingConsent.map((player) => `${player.firstName} ${player.lastName}`).join(', ') }}. Das Foto bleibt intern; hole die Einwilligung unter „Einwilligungen“ ein.
+        Ohne gültige Einwilligung: <template v-for="(player, index) in reviewMissingConsent" :key="player.id"><PersonLink :person-id="player.directoryPersonId" target="_blank" rel="noopener">{{ player.firstName }} {{ player.lastName }}</PersonLink><template v-if="index < reviewMissingConsent.length - 1">, </template></template>. Das Foto bleibt intern; hole die Einwilligung unter „Einwilligungen“ ein.
       </p>
       <label class="mt-4 flex min-h-11 cursor-pointer items-center gap-3">
         <input v-model="reviewAllListed" type="checkbox" class="h-5 w-5 accent-forest" />
