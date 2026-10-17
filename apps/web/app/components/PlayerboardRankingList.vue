@@ -26,20 +26,24 @@ function toggle(key: string) {
       class="first:rounded-t-[inherit] last:rounded-b-[inherit]"
       :class="[placementRowClass(item.rank), item.highlight ? 'shadow-[inset_4px_0_0_var(--color-forest)]' : '']"
     >
-      <button
-        type="button"
-        class="focus-ring flex min-h-14 w-full items-center gap-3 px-3 py-2 text-left sm:px-4"
-        :aria-expanded="expanded === item.key"
-        :disabled="item.categories.length === 0"
-        @click="toggle(item.key)"
-      >
-        <span class="grid h-9 w-9 shrink-0 place-items-center rounded-full text-sm font-extrabold" :class="placementBadgeClass(item.rank)" :aria-label="`Platz ${item.rank}`">{{ item.rank }}</span>
-        <span class="min-w-0 flex-1 truncate text-sm font-semibold text-ink">
-          {{ item.label }}<span v-if="item.highlight" class="ml-2 rounded-full bg-forest px-2 py-0.5 text-[10px] font-bold text-white">Du</span>
+      <!-- Ein Link darf nicht in einem Button stehen: der Aufklapp-Button liegt als Flaeche hinter der
+           Zeile (die ganze Zeile bleibt Klickziel), nur der Namenslink liegt darueber. -->
+      <div class="relative flex min-h-14 w-full items-center gap-3 px-3 py-2 sm:px-4">
+        <button
+          type="button"
+          class="focus-ring absolute inset-0 rounded-[inherit]"
+          :aria-expanded="expanded === item.key"
+          :aria-label="`Punkte je Kategorie von ${item.label}`"
+          :disabled="item.categories.length === 0"
+          @click="toggle(item.key)"
+        />
+        <span class="pointer-events-none relative grid h-9 w-9 shrink-0 place-items-center rounded-full text-sm font-extrabold" :class="placementBadgeClass(item.rank)" :aria-label="`Platz ${item.rank}`">{{ item.rank }}</span>
+        <span class="pointer-events-none relative min-w-0 flex-1 truncate text-sm font-semibold text-ink">
+          <PersonLink :person-id="item.personId" class="pointer-events-auto">{{ item.label }}</PersonLink><span v-if="item.highlight" class="ml-2 rounded-full bg-forest px-2 py-0.5 text-[10px] font-bold text-white">Du</span>
         </span>
-        <span class="shrink-0 font-display text-lg font-extrabold tabular-nums text-ink">{{ item.total }}</span>
-        <ChevronDown v-if="item.categories.length > 0" :size="16" class="shrink-0 text-[#9aa096] transition" :class="expanded === item.key ? 'rotate-180' : ''" aria-hidden="true" />
-      </button>
+        <span class="pointer-events-none relative shrink-0 font-display text-lg font-extrabold tabular-nums text-ink">{{ item.total }}</span>
+        <ChevronDown v-if="item.categories.length > 0" :size="16" class="pointer-events-none relative shrink-0 text-[#9aa096] transition" :class="expanded === item.key ? 'rotate-180' : ''" aria-hidden="true" />
+      </div>
       <dl v-if="expanded === item.key" class="grid grid-cols-2 gap-x-4 gap-y-1 px-4 pb-3 pl-15 text-xs sm:grid-cols-3">
         <div v-for="category in item.categories" :key="category.name" class="flex justify-between gap-2">
           <dt class="truncate text-[#6c756f]">{{ category.name }}</dt>

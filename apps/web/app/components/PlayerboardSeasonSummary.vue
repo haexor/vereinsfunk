@@ -143,7 +143,7 @@ const seasonLabel = computed(() =>
             <span
               class="min-w-0 flex-1 truncate text-sm"
               :class="item.highlight ? 'font-bold text-forest' : 'text-ink'"
-              >{{ item.label }}</span
+              ><PersonLink :person-id="item.personId">{{ item.label }}</PersonLink></span
             >
             <span class="text-sm font-bold tabular-nums text-ink">{{ item.total }}</span>
           </li>
