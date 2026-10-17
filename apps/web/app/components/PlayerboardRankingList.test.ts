@@ -26,6 +26,6 @@ describe('PlayerboardRankingList', () => {
 
   it('lets clicks on the row reach the expand button, but not on the name link', () => {
     expect(source).toContain('pointer-events-none')
-    expect(source).toContain('class="pointer-events-auto"')
+    expect(source).toContain(":class=\"item.personId ? 'pointer-events-auto' : undefined\"")
   })
 })
