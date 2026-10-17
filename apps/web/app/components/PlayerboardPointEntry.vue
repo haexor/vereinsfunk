@@ -142,7 +142,7 @@ onBeforeUnmount(() => {
       <li v-for="player in players" :key="player.id" class="card p-3 sm:p-4" :data-testid="`points-${player.id}`">
         <div class="mb-2 flex items-center gap-2">
           <span class="grid h-9 min-w-9 shrink-0 place-items-center rounded-lg bg-[#eef1ea] px-1 text-xs font-bold text-forest">{{ jersey(player) }}</span>
-          <span class="min-w-0 flex-1 truncate text-sm font-semibold text-ink">{{ player.firstName }} {{ player.lastName }}</span>
+          <span class="min-w-0 flex-1 truncate text-sm font-semibold text-ink"><PersonLink :person-id="player.directoryPersonId">{{ player.firstName }} {{ player.lastName }}</PersonLink></span>
           <span v-if="missingConsent?.has(player.id)" class="text-amber-700" title="Keine Einwilligung für öffentliche Fotos">
             <CameraOff :size="16" aria-hidden="true" /><span class="sr-only">Keine Einwilligung für öffentliche Fotos</span>
           </span>
