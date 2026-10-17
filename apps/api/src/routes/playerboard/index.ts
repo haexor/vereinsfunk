@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import type { ApiRouteContext } from '../context.js'
 import { registerPlayerboardCategoryRoutes } from './categories.js'
+import { registerPersonProfileRoutes } from './personProfile.js'
 import { registerPlayerboardPhotoRoutes } from './photos.js'
 import { registerPlayerboardPlayerRoutes } from './players.js'
 import { registerPlayerboardPublicRoutes } from './public.js'
@@ -20,4 +21,5 @@ export function registerPlayerboardRoutes(app: FastifyInstance, context: ApiRout
   registerPlayerboardPhotoRoutes(app, context)
   registerPlayerboardPublicRoutes(app, context)
   registerPlayerboardVeoRoutes(app, context)
+  registerPersonProfileRoutes(app, context)
 }
