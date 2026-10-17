@@ -46,6 +46,11 @@ Spec, Plan und Aufgaben: `specs/001-spielerprofil/`.
 - **Lösung (c912d99):** `pointer-events-auto` nur setzen, wenn eine Person-Id und damit ein Link existiert.
 - **Warum nicht früher gefunden:** Die Browserprüfung klickte auf die Summe der Zeile, nicht auf den Namen, und prüfte die öffentliche Seite nur auf fehlende Links. Der Quelltext-Test prüft die Struktur, nicht das Klickverhalten; bei der öffentlichen Rangliste braucht es dafür einen Klick auf den Namen im Browser.
 
+## Nachtrag: veralteter Ladefehler auf der Profilseite
+
+- **Fehler:** Wechselte man den Zeitraum, während die vorige Anfrage noch lief und scheiterte, konnte deren Fehler die Anzeige des neuen Zeitraums überschreiben. Die Seite prüfte im Fehlerfall nur die Person, nicht den Zeitraum.
+- **Lösung (2ed26c0):** Im Fehlerfall greift dieselbe Prüfung wie im Erfolgsfall (Person **und** Zeitraum), plus ein Quelltext-Test.
+
 ## Abweichungen und offene Punkte
 
 - **Kein Geburtsjahr im Profil**, auch nicht für Trainer (Spec FR-009 damit ohne Sonderfall erfüllt); es bleibt im Kader und im Verzeichnis.
