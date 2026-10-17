@@ -256,7 +256,7 @@ const labelClass = 'grid gap-1.5 text-xs font-semibold text-[#5b625d]'
                 <div class="flex flex-wrap items-center gap-3">
                   <span class="grid h-10 min-w-10 shrink-0 place-items-center rounded-xl bg-[#eef1ea] px-1 text-sm font-bold text-forest">{{ player.jerseyNumber ?? '–' }}</span>
                   <span class="min-w-0 flex-1">
-                    <span class="block truncate text-sm font-semibold text-ink">{{ player.firstName }} {{ player.lastName }}</span>
+                    <span class="block truncate text-sm font-semibold text-ink"><PersonLink :person-id="player.directoryPersonId">{{ player.firstName }} {{ player.lastName }}</PersonLink></span>
                     <span class="block truncate text-xs text-[#6c756f]">
                       {{ [player.position, canManage ? (player.email ?? 'keine E-Mail') : null, player.hasAccount ? 'Konto verbunden' : null].filter(Boolean).join(' · ') || '–' }}
                     </span>
