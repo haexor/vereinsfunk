@@ -40,6 +40,12 @@ Spec, Plan und Aufgaben: `specs/001-spielerprofil/`.
   - Alle Ansichten (Rangliste, Übersicht, Startseite, Kader, Einstellungen, Foto-Prüfung, Spiele als Spieler): Namen sind Links; öffentliche Mannschaftsseite abgemeldet ohne Links und ohne Person-Id im Quelltext.
   - 360 px ohne Querscrollen, Trefferfläche 46 px, Tab erreicht Namenslink und Aufklapp-Knopf getrennt.
 
+## Nachtrag: Klick auf Namen der öffentlichen Rangliste
+
+- **Fehler:** Auf der öffentlichen Mannschaftsseite ließ sich eine Ranglistenzeile nicht mehr über den Namen aufklappen. Dort hat der Name keine Person-Id und wird ohne Link als `<span>` gerendert, trug aber `pointer-events-auto`; der Klick erreichte den Aufklapp-Button hinter der Zeile nicht.
+- **Lösung (c912d99):** `pointer-events-auto` nur setzen, wenn eine Person-Id und damit ein Link existiert.
+- **Warum nicht früher gefunden:** Die Browserprüfung klickte auf die Summe der Zeile, nicht auf den Namen, und prüfte die öffentliche Seite nur auf fehlende Links. Der Quelltext-Test prüft die Struktur, nicht das Klickverhalten; bei der öffentlichen Rangliste braucht es dafür einen Klick auf den Namen im Browser.
+
 ## Abweichungen und offene Punkte
 
 - **Kein Geburtsjahr im Profil**, auch nicht für Trainer (Spec FR-009 damit ohne Sonderfall erfüllt); es bleibt im Kader und im Verzeichnis.
