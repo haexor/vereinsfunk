@@ -11,6 +11,7 @@ export interface VeoCardPlayer {
   jerseyNumber: number
   label: string
   playerId?: string | null
+  personId?: string
   stats: readonly { statType: string; category: string; value: number }[]
 }
 export interface VeoCardMatch {
@@ -41,6 +42,7 @@ const categories = computed(() => teamStatsByCategory(props.match.teamStats))
 const rows = computed<VeoPlayerTableRow[]>(() => props.match.players.map((player) => ({
   key: `${player.jerseyNumber}`,
   label: player.label,
+  ...(player.personId ? { personId: player.personId } : {}),
   values: statValues(player.stats),
   muted: player.playerId === null,
 })))

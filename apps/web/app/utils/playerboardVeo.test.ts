@@ -51,4 +51,11 @@ describe('playerboardVeo', () => {
     ])
     expect(rows).toEqual([{ key: 'p1', label: '#7 Anton Test', jerseyNumber: 7, games: 2, values: { sprints_total: 8, top_speed_kmh: 28, average_speed_kmh: 7 } }])
   })
+
+  it('keeps the person id of a season row for the profile link and leaves it out when unknown', () => {
+    const row = (key: string, personId?: string) => ({ key, label: key, jerseyNumber: 1, ...(personId ? { personId } : {}), stats: [{ statType: 'sprints_total', category: 'physical', value: 1 }] })
+    const rows = playerSeasonRows([{ players: [row('p1', 'person-1'), row('p2')] }, { players: [row('p1', 'person-1')] }])
+    expect(rows.find((entry) => entry.key === 'p1')?.personId).toBe('person-1')
+    expect(rows.find((entry) => entry.key === 'p2')).not.toHaveProperty('personId')
+  })
 })

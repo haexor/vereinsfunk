@@ -6,6 +6,8 @@ import { formatStatValue, PLAYER_STAT_ORDER, statLabel } from '../utils/playerbo
 export interface VeoPlayerTableRow {
   key: string
   label: string
+  // Verzeichnisperson fuer den Link auf das Profil; ohne sie bleibt der Name Text (z. B. nicht zugeordnet, oeffentliche Seite).
+  personId?: string | null
   values: Record<string, number>
   games?: number
   muted?: boolean
@@ -33,7 +35,7 @@ const columns = computed(() => PLAYER_STAT_ORDER.filter((statType) => props.rows
       <tbody>
         <tr v-for="row in rows" :key="row.key" class="border-t border-[#eef0ea]" :class="row.muted ? 'text-[#7b827d]' : 'text-ink'">
           <th scope="row" class="sticky left-0 z-10 bg-white px-3 py-2 font-semibold">
-            <slot name="label" :row="row">{{ row.label }}</slot>
+            <slot name="label" :row="row"><PersonLink :person-id="row.personId">{{ row.label }}</PersonLink></slot>
           </th>
           <td v-if="showGames" class="px-3 py-2 text-right tabular-nums">{{ row.games ?? '' }}</td>
           <td v-for="column in columns" :key="column" class="whitespace-nowrap px-3 py-2 text-right tabular-nums">

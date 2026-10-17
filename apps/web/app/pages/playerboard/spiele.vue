@@ -37,7 +37,12 @@ async function load(keepSelection = false) {
     const range = period.value === 'season' && seasonFrom.value ? { from: seasonFrom.value } : {}
     const [loaded, players] = await Promise.all([
       loadMatches(requestedTeamId, range),
-      canManage.value ? api.request(`/v1/playerboard/teams/${requestedTeamId}/players`, {}, PlayerboardPlayerSchema.array()) : Promise.resolve(undefined),
+      // Den Kader brauchen alle fuer die Profil-Links; nur Trainer ordnen damit Rueckennummern zu. Faellt er fuer
+      // andere aus, fehlen nur die Links.
+      api.request(`/v1/playerboard/teams/${requestedTeamId}/players`, {}, PlayerboardPlayerSchema.array()).catch((error) => {
+        if (canManage.value) throw error
+        return undefined
+      }),
     ])
     if (request !== latestRequest) return
     matches.value = loaded
@@ -52,13 +57,21 @@ async function load(keepSelection = false) {
 await load()
 watch([teamId, period], () => { void load() })
 
+const personByPlayer = computed(() => new Map((roster.value ?? []).map((player) => [player.id, player.directoryPersonId])))
+
+/** Person-Id einer zugeordneten Veo-Zeile fuer den Profil-Link; ohne Kader oder Zuordnung leer. */
+function personIdOf(playerId: string | null): { personId?: string } {
+  const personId = playerId ? personByPlayer.value.get(playerId) : undefined
+  return personId ? { personId } : {}
+}
+
 // Saison: nur zugeordnete Nummern, damit jeder Spieler eine Zeile ueber alle Spiele hat.
 const seasonMatches = computed<VeoSeasonMatch[]>(() => matches.value.map((match) => ({
   ownScore: match.ownScore,
   opponentScore: match.opponentScore,
   teamStats: match.teamStats,
   players: match.players.flatMap((player) => player.playerId && player.name
-    ? [{ key: player.playerId, label: player.name, jerseyNumber: player.jerseyNumber, stats: player.stats }]
+    ? [{ key: player.playerId, label: player.name, jerseyNumber: player.jerseyNumber, ...personIdOf(player.playerId), stats: player.stats }]
     : []),
 })))
 const selectedMatch = computed<VeoCardMatch | null>(() => {
@@ -70,6 +83,7 @@ const selectedMatch = computed<VeoCardMatch | null>(() => {
       jerseyNumber: player.jerseyNumber,
       playerId: player.playerId,
       label: `#${player.jerseyNumber} ${player.name ?? '· nicht zugeordnet'}`,
+      ...personIdOf(player.playerId),
       stats: player.stats,
     })),
   }

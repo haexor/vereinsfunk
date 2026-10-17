@@ -142,6 +142,8 @@ export interface PlayerStatRowInput {
   key: string
   label: string
   jerseyNumber: number
+  // Verzeichnisperson fuer den Link auf ihr Profil; fehlt auf der oeffentlichen Seite.
+  personId?: string
   stats: readonly PlayerboardVeoStat[]
 }
 
@@ -149,6 +151,7 @@ export interface PlayerSeasonRow {
   key: string
   label: string
   jerseyNumber: number
+  personId?: string
   games: number
   values: Record<string, number>
 }
@@ -162,7 +165,7 @@ export function playerSeasonRows(matches: readonly { players: readonly PlayerSta
   for (const match of matches) {
     for (const player of match.players) {
       if (player.stats.length === 0) continue
-      const row = rows.get(player.key) ?? { key: player.key, label: player.label, jerseyNumber: player.jerseyNumber, games: 0, values: {}, means: {} }
+      const row = rows.get(player.key) ?? { key: player.key, label: player.label, jerseyNumber: player.jerseyNumber, ...(player.personId ? { personId: player.personId } : {}), games: 0, values: {}, means: {} }
       rows.set(player.key, row)
       row.games += 1
       for (const stat of player.stats) {
@@ -180,7 +183,7 @@ export function playerSeasonRows(matches: readonly { players: readonly PlayerSta
     }
   }
   return [...rows.values()]
-    .map((row) => ({ key: row.key, label: row.label, jerseyNumber: row.jerseyNumber, games: row.games, values: row.values }))
+    .map((row) => ({ key: row.key, label: row.label, jerseyNumber: row.jerseyNumber, ...(row.personId ? { personId: row.personId } : {}), games: row.games, values: row.values }))
     .sort((a, b) => a.jerseyNumber - b.jerseyNumber || a.label.localeCompare(b.label, 'de'))
 }
 
