@@ -114,6 +114,14 @@ describe('structured content generator', () => {
     const generator = new OpenAiCompatibleStructuredContentGenerator()
     await expect(generator.generateText({ ...input, baseUrl: 'https://169.254.169.254/v1' })).rejects.toMatchObject({ errorClass: 'provider_configuration', retryable: false } satisfies Partial<ContentGenerationError>)
   })
+  it('classifies a rejected key or unknown model as permanent provider_configuration for both adapters', async () => {
+    for (const status of [401, 403, 404]) {
+      const openAi = new OpenAiCompatibleStructuredContentGenerator(async () => new Response('', { status }))
+      await expect(openAi.generateText(input)).rejects.toMatchObject({ errorClass: 'provider_configuration', retryable: false } satisfies Partial<ContentGenerationError>)
+      const anthropic = new AnthropicStructuredContentGenerator(async () => new Response('', { status }))
+      await expect(anthropic.generateText(input)).rejects.toMatchObject({ errorClass: 'provider_configuration', retryable: false } satisfies Partial<ContentGenerationError>)
+    }
+  })
   it('bounds a provider request and classifies an abort as retryable network failure', async () => {
     const generator = new OpenAiCompatibleStructuredContentGenerator(async (_url, init) => new Promise((_resolve, reject) => {
       init.signal?.addEventListener('abort', () => reject(new Error('aborted')))

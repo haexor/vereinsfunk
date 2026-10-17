@@ -1,6 +1,7 @@
 import { GeneratedPostSchema, PlatformVariantSchema, SafetyFlagSchema, type CreateSubmission, type GeneratedPost, type PlatformVariant, type StyleProfileSnapshot } from '@vereinsfunk/contracts'
 import { createGuardedFetch, OutboundFetchError } from '@vereinsfunk/outbound-fetch'
 import { getPreset, validateSourceMaterial } from './presets.js'
+import { classifyProviderStatus } from './providerStatus.js'
 
 export { factsFromFixture, factsFromClubEvent } from './schedule.js'
 export type { FactsFromScheduleResult } from './schedule.js'
@@ -199,9 +200,10 @@ export class OpenAiCompatibleStructuredContentGenerator implements StructuredCon
       if (error instanceof OutboundFetchError) throw new ContentGenerationError('provider_configuration', false)
       throw new ContentGenerationError('provider_network', true)
     } finally { clearTimeout(timeout) }
-    if (response.status === 429) throw new ContentGenerationError('provider_rate_limit', true)
-    if (response.status >= 500) throw new ContentGenerationError('provider_server', true)
-    if (!response.ok) throw new ContentGenerationError('provider_schema', false)
+    if (!response.ok) {
+      const { errorClass, retryable } = classifyProviderStatus(response.status)
+      throw new ContentGenerationError(errorClass, retryable)
+    }
     let content: unknown
     try {
       const body = await response.json() as { choices?: Array<{ message?: { content?: unknown } }> }
@@ -265,9 +267,10 @@ export class AnthropicStructuredContentGenerator implements StructuredContentGen
       if (error instanceof OutboundFetchError) throw new ContentGenerationError('provider_configuration', false)
       throw new ContentGenerationError('provider_network', true)
     } finally { clearTimeout(timeout) }
-    if (response.status === 429) throw new ContentGenerationError('provider_rate_limit', true)
-    if (response.status >= 500) throw new ContentGenerationError('provider_server', true)
-    if (!response.ok) throw new ContentGenerationError('provider_schema', false)
+    if (!response.ok) {
+      const { errorClass, retryable } = classifyProviderStatus(response.status)
+      throw new ContentGenerationError(errorClass, retryable)
+    }
     try {
       const body = await response.json() as { stop_reason?: unknown; content?: Array<{ type?: unknown; name?: unknown; input?: unknown }> }
       // Eine Ablehnung durch die Sicherheitsklassifikatoren kommt als HTTP 200 ohne Werkzeugaufruf
