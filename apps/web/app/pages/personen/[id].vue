@@ -34,7 +34,7 @@ async function load() {
     const result = await api.request(`/v1/people/${requestedId}/profile`, { query: { period: requestedPeriod } }, PersonProfileSchema)
     if (personId.value === requestedId && period.value === requestedPeriod) profile.value = result
   } catch (error) {
-    if (personId.value !== requestedId) return
+    if (personId.value !== requestedId || period.value !== requestedPeriod) return
     if (error instanceof ApiRequestError && error.code === 'not_found') notFound.value = true
     else loadError.value = playerboardErrorMessage(error, 'Das Profil konnte nicht geladen werden.')
   }

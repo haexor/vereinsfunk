@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { personProfilePath } from './personProfile'
 
 const PERSON_ID = '58000000-1000-4000-8000-000000000001'
+const profilePage = readFileSync(join(import.meta.dirname, '../pages/personen/[id].vue'), 'utf8')
 
 describe('personProfilePath', () => {
   it('points at the club-level profile page of the person', () => {
@@ -34,5 +35,11 @@ describe('PersonLink', () => {
 
   it('opens the profile in the same tab', () => {
     expect(source).not.toContain('target=')
+  })
+})
+
+describe('person profile loading', () => {
+  it('ignores stale errors after the selected period changes', () => {
+    expect(profilePage).toContain('if (personId.value !== requestedId || period.value !== requestedPeriod) return')
   })
 })
