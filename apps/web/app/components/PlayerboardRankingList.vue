@@ -39,7 +39,7 @@ function toggle(key: string) {
         />
         <span class="pointer-events-none relative grid h-9 w-9 shrink-0 place-items-center rounded-full text-sm font-extrabold" :class="placementBadgeClass(item.rank)" :aria-label="`Platz ${item.rank}`">{{ item.rank }}</span>
         <span class="pointer-events-none relative min-w-0 flex-1 truncate text-sm font-semibold text-ink">
-          <PersonLink :person-id="item.personId" class="pointer-events-auto">{{ item.label }}</PersonLink><span v-if="item.highlight" class="ml-2 rounded-full bg-forest px-2 py-0.5 text-[10px] font-bold text-white">Du</span>
+          <PersonLink :person-id="item.personId" :class="item.personId ? 'pointer-events-auto' : undefined">{{ item.label }}</PersonLink><span v-if="item.highlight" class="ml-2 rounded-full bg-forest px-2 py-0.5 text-[10px] font-bold text-white">Du</span>
         </span>
         <span class="pointer-events-none relative shrink-0 font-display text-lg font-extrabold tabular-nums text-ink">{{ item.total }}</span>
         <ChevronDown v-if="item.categories.length > 0" :size="16" class="pointer-events-none relative shrink-0 text-[#9aa096] transition" :class="expanded === item.key ? 'rotate-180' : ''" aria-hidden="true" />
