@@ -32,10 +32,12 @@ export function usePlayerboardRanking() {
       api.request(`/v1/playerboard/teams/${teamId}/players`, {}, PlayerboardPlayerSchema.array()),
     ])
     const selfId = players.find((player) => player.isSelf)?.id ?? null
+    const personByPlayer = new Map(players.map((player) => [player.id, player.directoryPersonId]))
     const items = ranking.map((entry) => ({
       key: entry.playerId,
       rank: entry.rank,
       label: `${entry.jerseyNumber !== null ? `#${entry.jerseyNumber} ` : ''}${entry.firstName} ${entry.lastName}`,
+      ...(personByPlayer.has(entry.playerId) ? { personId: personByPlayer.get(entry.playerId)! } : {}),
       total: entry.total,
       highlight: entry.playerId === selfId,
       categories: categories

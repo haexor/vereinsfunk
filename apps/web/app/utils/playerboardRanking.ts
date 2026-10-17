@@ -5,6 +5,8 @@ export interface RankingListItem {
   key: string
   rank: number
   label: string
+  // Verzeichnisperson fuer den Link auf das Profil; die oeffentliche Rangliste setzt sie nie.
+  personId?: string
   total: number
   highlight?: boolean
   categories: readonly { name: string; points: number }[]
