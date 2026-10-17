@@ -1,4 +1,5 @@
 import { createGuardedFetch, OutboundFetchError } from '@vereinsfunk/outbound-fetch'
+import { classifyProviderStatus } from './providerStatus.js'
 
 /**
  * Paket 048: Vision-Analyse eines Website-Screenshots fuer die KI-Markenerkennung. Bewusst ein
@@ -134,9 +135,10 @@ export class AnthropicVisionAnalysisGenerator implements VisionAnalysisGenerator
       if (error instanceof OutboundFetchError) throw new VisionAnalysisError('provider_configuration', false)
       throw new VisionAnalysisError('provider_network', true)
     } finally { clearTimeout(timeout) }
-    if (response.status === 429) throw new VisionAnalysisError('provider_rate_limit', true)
-    if (response.status >= 500) throw new VisionAnalysisError('provider_server', true)
-    if (!response.ok) throw new VisionAnalysisError('provider_schema', false)
+    if (!response.ok) {
+      const { errorClass, retryable } = classifyProviderStatus(response.status)
+      throw new VisionAnalysisError(errorClass, retryable)
+    }
     try {
       const body = await response.json() as { stop_reason?: unknown; content?: Array<{ type?: unknown; name?: unknown; input?: unknown }> }
       if (body.stop_reason === 'refusal') throw new VisionAnalysisError('provider_schema', false)
@@ -179,9 +181,10 @@ export class OpenAiCompatibleVisionAnalysisGenerator implements VisionAnalysisGe
       if (error instanceof OutboundFetchError) throw new VisionAnalysisError('provider_configuration', false)
       throw new VisionAnalysisError('provider_network', true)
     } finally { clearTimeout(timeout) }
-    if (response.status === 429) throw new VisionAnalysisError('provider_rate_limit', true)
-    if (response.status >= 500) throw new VisionAnalysisError('provider_server', true)
-    if (!response.ok) throw new VisionAnalysisError('provider_schema', false)
+    if (!response.ok) {
+      const { errorClass, retryable } = classifyProviderStatus(response.status)
+      throw new VisionAnalysisError(errorClass, retryable)
+    }
     try {
       const body = await response.json() as { choices?: Array<{ message?: { content?: unknown } }> }
       const raw = body.choices?.[0]?.message?.content

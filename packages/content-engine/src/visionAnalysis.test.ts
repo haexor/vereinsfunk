@@ -74,6 +74,15 @@ describe('AnthropicVisionAnalysisGenerator', () => {
     await expect(generator.analyzeBrand(input)).resolves.toEqual(validResult satisfies VisionAnalysisResult)
   })
 
+  it('reports a rejected key or an unknown model as a permanent provider_configuration, not as a bad answer', async () => {
+    for (const status of [401, 403, 404]) {
+      const generator = new AnthropicVisionAnalysisGenerator(async () => new Response('', { status }))
+      await expect(generator.analyzeBrand(input)).rejects.toMatchObject({ errorClass: 'provider_configuration', retryable: false } satisfies Partial<VisionAnalysisError>)
+    }
+    const openAi = new OpenAiCompatibleVisionAnalysisGenerator(async () => new Response('', { status: 401 }))
+    await expect(openAi.analyzeBrand(input)).rejects.toMatchObject({ errorClass: 'provider_configuration', retryable: false })
+  })
+
   it('does not retry an anthropic refusal', async () => {
     const generator = new AnthropicVisionAnalysisGenerator(async () => new Response(JSON.stringify({ stop_reason: 'refusal', content: [] }), { status: 200 }))
     await expect(generator.analyzeBrand(input)).rejects.toMatchObject({ errorClass: 'provider_schema', retryable: false } satisfies Partial<VisionAnalysisError>)
