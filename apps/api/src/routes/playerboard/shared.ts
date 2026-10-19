@@ -1,13 +1,16 @@
-import { PlayerboardTrainingSchema } from '@vereinsfunk/contracts'
 import {
-  resolvePlayerboardSettings,
-  type PlayerboardReplaceableField,
-  type PlayerboardSettingsLevel,
-  type PlayerboardStatsVisibility,
-} from '@vereinsfunk/domain'
+  PlayerboardOverridableFieldSchema,
+  PlayerboardStatsVisibilitySchema,
+  PlayerboardTrainingSchema,
+  ScopeLevelSchema,
+  UuidSchema,
+} from '@vereinsfunk/contracts'
+import { resolvePlayerboardSettings, type PlayerboardSettingsLevel } from '@vereinsfunk/domain'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyReply, FastifyRequest } from 'fastify'
+import { z } from 'zod'
 import type { PermissionScope } from '../../auth.js'
+import { parseSupabaseData } from '../../supabase.js'
 import type { ApiRouteContext } from '../context.js'
 
 /**
@@ -121,20 +124,21 @@ export function sendDatabaseError(
 
 export const SETTINGS_COLUMNS = 'scope, department_id, team_id, season_start, stats_visibility, overridable_fields, team_categories_allowed, public_sharing_allowed, public_points_enabled, public_veo_stats_enabled, public_photos_enabled, public_slug'
 
-export interface PlayerboardSettingsRow {
-  scope: 'organization' | 'department' | 'team'
-  department_id: string | null
-  team_id: string | null
-  season_start: string | null
-  stats_visibility: PlayerboardStatsVisibility | null
-  overridable_fields: PlayerboardReplaceableField[]
-  team_categories_allowed: boolean | null
-  public_sharing_allowed: boolean | null
-  public_points_enabled: boolean | null
-  public_veo_stats_enabled: boolean | null
-  public_photos_enabled: boolean | null
-  public_slug: string | null
-}
+const PlayerboardSettingsRowSchema = z.object({
+  scope: ScopeLevelSchema,
+  department_id: UuidSchema.nullable(),
+  team_id: UuidSchema.nullable(),
+  season_start: z.iso.date().nullable(),
+  stats_visibility: PlayerboardStatsVisibilitySchema.nullable(),
+  overridable_fields: z.array(PlayerboardOverridableFieldSchema),
+  team_categories_allowed: z.boolean().nullable(),
+  public_sharing_allowed: z.boolean().nullable(),
+  public_points_enabled: z.boolean().nullable(),
+  public_veo_stats_enabled: z.boolean().nullable(),
+  public_photos_enabled: z.boolean().nullable(),
+  public_slug: z.string().nullable(),
+})
+export type PlayerboardSettingsRow = z.infer<typeof PlayerboardSettingsRowSchema>
 
 export interface OrganizationPlayerboardSettings {
   organization: PlayerboardSettingsRow | null
@@ -149,7 +153,7 @@ export interface OrganizationPlayerboardSettings {
 export async function loadOrganizationPlayerboardSettings(service: SupabaseClient, organizationId: string): Promise<OrganizationPlayerboardSettings> {
   const rows = await service.from('playerboard_settings').select(SETTINGS_COLUMNS).eq('organization_id', organizationId)
   if (rows.error) throw rows.error
-  const typed = rows.data as unknown as PlayerboardSettingsRow[]
+  const typed = parseSupabaseData(z.array(PlayerboardSettingsRowSchema), rows.data)
   return {
     organization: typed.find((row) => row.scope === 'organization') ?? null,
     departmentById: new Map(typed.filter((row) => row.scope === 'department').map((row) => [row.department_id!, row])),
@@ -161,7 +165,7 @@ export async function loadOrganizationPlayerboardSettings(service: SupabaseClien
 export function toSettingsLevel(row: PlayerboardSettingsRow | null | undefined): PlayerboardSettingsLevel | null {
   if (!row) return null
   return {
-    seasonStart: row.season_start, statsVisibility: row.stats_visibility, overridableFields: row.overridable_fields ?? [],
+    seasonStart: row.season_start, statsVisibility: row.stats_visibility, overridableFields: row.overridable_fields,
     teamCategoriesAllowed: row.team_categories_allowed, publicSharingAllowed: row.public_sharing_allowed,
   }
 }
