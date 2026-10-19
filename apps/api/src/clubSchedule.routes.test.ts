@@ -88,6 +88,23 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
     } as unknown as SupabaseClient
   }
 
+  // Bildet PostgREST' max_rows=1000 nach: ohne range() liefert eine Abfrage hoechstens 1000 Zeilen,
+  // mit range() genau das angefragte Fenster. chain() ignoriert beides und koennte eine fehlende
+  // Bloetterung deshalb nie zeigen.
+  function maxRowsTable(rows: readonly Record<string, unknown>[]) {
+    let window = { from: 0, to: 999 }
+    const builder: Record<string, unknown> = {
+      select: () => builder, eq: () => builder, is: () => builder, or: () => builder, order: () => builder,
+      range: (from: number, to: number) => { window = { from, to: Math.min(to, from + 999) }; return builder },
+      then: (resolve: (value: { data: unknown; error: unknown }) => unknown) => {
+        const page = rows.slice(window.from, window.to + 1)
+        window = { from: 0, to: 999 }
+        return resolve({ data: page, error: null })
+      },
+    }
+    return builder
+  }
+
   describe('teams sync', () => {
     it('creates a new team via dry-run and apply: name, resolved department, ageGroup/competition pass through', async () => {
       const csv = 'Name,Abteilung,Altersklasse,Liga\r\nErste Mannschaft,Fußball,Herren,Kreisliga A\r\n'
@@ -237,6 +254,26 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
       expect(response.statusCode).toBe(500)
       expect(runUpdates).toHaveLength(1)
       expect(runUpdates[0]).toMatchObject({ status: 'failed' })
+    })
+    it('reads every existing team past PostgREST max_rows, so the 1001st is matched instead of re-created', async () => {
+      const existingTeamRows = Array.from({ length: 1001 }, (_, index) => ({
+        id: `19000000-3000-4000-8000-${String(index).padStart(12, '0')}`, name: `Team ${index}`, department_id: DEPARTMENT_ID,
+        age_group: null, competition: null, source_id: SOURCE_ID, external_id: `t-${index}`, source_updated_at: null, updated_at: '2026-08-01T00:00:00Z',
+      }))
+      const csv = 'Name,ExterneId\r\n' + existingTeamRows.map((row) => `${row.name},${row.external_id}`).join('\r\n') + '\r\n'
+      const clients: SupabaseClientFactory = {
+        forUser: () => sourceOnlyUserClient(integrationSource({ department_id: DEPARTMENT_ID, enabled_domains: ['teams'], field_mapping: { Name: 'name', ExterneId: 'externalId' } })),
+        forService: () => syncServiceClient({ teams: maxRowsTable(existingTeamRows), departments: chain({ data: [{ id: DEPARTMENT_ID, name: 'Fußball' }], error: null }) }),
+      }
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      const { boundary, body } = syncMultipartBody('dry_run', 'teams', csv)
+      const response = await app.inject({
+        method: 'POST', url: `/v1/integration-sources/${SOURCE_ID}/sync`,
+        headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` }, payload: body,
+      })
+      expect(response.statusCode).toBe(200)
+      expect(response.json().run).toMatchObject({ createdCount: 0, skippedCount: 1001 })
     })
   })
 
@@ -448,6 +485,28 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
       expect(json.run).toMatchObject({ createdCount: 0 })
       expect(json.conflicts).toHaveLength(1)
       expect(json.conflicts[0]).toMatchObject({ kind: 'invalid_record', field: 'startsAt' })
+    })
+
+    it('reads every existing club event past PostgREST max_rows, so the 1001st is matched instead of re-created', async () => {
+      const existingEventRows = Array.from({ length: 1001 }, (_, index) => ({
+        id: `19000000-7100-4000-8000-${String(index).padStart(12, '0')}`, external_id: `e-${index}`, recurrence_key: null, source_id: SOURCE_ID,
+        title: `Termin ${index}`, description: null, category: 'other', starts_at: '2026-09-01T19:00:00Z', ends_at: null, all_day: false,
+        location_name: null, location_address: null, registration_url: null, status: 'scheduled', source_updated_at: null, updated_at: '2026-08-01T00:00:00Z',
+      }))
+      const csv = 'Titel,Beginn,ExterneId\r\n' + existingEventRows.map((row) => `${row.title},${row.starts_at},${row.external_id}`).join('\r\n') + '\r\n'
+      const clients: SupabaseClientFactory = {
+        forUser: () => sourceOnlyUserClient(integrationSource({ department_id: DEPARTMENT_ID, enabled_domains: ['events'], field_mapping: { Titel: 'title', Beginn: 'startsAt', ExterneId: 'externalId' } })),
+        forService: () => syncServiceClient({ club_events: maxRowsTable(existingEventRows) }),
+      }
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      const { boundary, body } = syncMultipartBody('dry_run', 'events', csv)
+      const response = await app.inject({
+        method: 'POST', url: `/v1/integration-sources/${SOURCE_ID}/sync`,
+        headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` }, payload: body,
+      })
+      expect(response.statusCode).toBe(200)
+      expect(response.json().run).toMatchObject({ createdCount: 0, retiredCount: 0 })
     })
   })
 

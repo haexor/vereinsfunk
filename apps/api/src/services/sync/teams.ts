@@ -2,6 +2,7 @@ import { createTeamMatchStrategy, ExternalTeamSchema, teamDomainAdapter, type Ex
 import { planSync } from '@vereinsfunk/integrations'
 import type { FastifyReply } from 'fastify'
 import { addUniquePendingConflict, buildPendingConflicts, conflictFingerprint, finishSyncRun, handleAbortedSync, loadIgnoredFingerprints, normalizeStructureName, parseIncomingRows, type SyncDomainContext } from '../integrationSync.js'
+import { fetchAllRows } from '../../routes/shared.js'
 
 export async function handleTeamsSync(ctx: SyncDomainContext): Promise<FastifyReply> {
   const { request, reply, service, organizationId, sourceDepartmentId, sourceId, sourceFieldMapping, sourceLossThresholdPercent, mode, domain, runId, idempotencyKey, rawRows } = ctx
@@ -14,15 +15,19 @@ export async function handleTeamsSync(ctx: SyncDomainContext): Promise<FastifyRe
   // aendert -- der 014-Review-Fund "eigene Quellzeile verschwindet aus dem naechsten existing"
   // wurde deshalb bewusst NICHT auf teams uebertragen; die Ausgangslage, die ihn ausloeste, gibt
   // es hier nicht.
-  let existingQuery = service
-    .from('teams')
-    .select('id, name, department_id, age_group, competition, source_id, external_id, source_updated_at, updated_at')
-    .eq('organization_id', organizationId)
-    .or(`source_id.is.null,source_id.eq.${sourceId}`)
-  if (sourceDepartmentId) existingQuery = existingQuery.eq('department_id', sourceDepartmentId)
-  const existingRows = await existingQuery
-  if (existingRows.error) throw existingRows.error
-  const existingLocals: TeamLocal[] = existingRows.data.map((row) => ({
+  // fetchAllRows aus demselben Grund wie in handlePeopleSync: ohne Bloetterung haette PostgREST'
+  // max_rows=1000 den Bestand still gekappt, planSync die fehlenden Mannschaften als neu bewertet
+  // und der Insert waere bei jedem Lauf in teams_external_unique gelaufen.
+  const existingRows = await fetchAllRows<Record<string, unknown>>((from, to) => {
+    let query = service
+      .from('teams')
+      .select('id, name, department_id, age_group, competition, source_id, external_id, source_updated_at, updated_at')
+      .eq('organization_id', organizationId)
+      .or(`source_id.is.null,source_id.eq.${sourceId}`)
+    if (sourceDepartmentId) query = query.eq('department_id', sourceDepartmentId)
+    return query.order('id', { ascending: true }).range(from, to)
+  })
+  const existingLocals: TeamLocal[] = existingRows.map((row) => ({
     id: row.id as string, externalId: row.external_id as string | null, sourceId: row.source_id as string | null,
     name: row.name as string, departmentId: row.department_id as string, ageGroup: row.age_group as string | null,
     competition: row.competition as string | null,
