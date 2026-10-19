@@ -23,28 +23,24 @@ const composingId = ref<string | null>(null)
 const error = ref('')
 const loadError = ref(false)
 
-// Sichert die Antworten gegen Ueberholen ab -- wenn organizationId schnell wechselt (Watch unten),
-// soll nicht eine aeltere Antwort eine bereits neuere ueberschreiben.
-let loadToken = 0
-
-async function loadPresets() {
-  const token = ++loadToken
+// Sichert die Antworten gegen Ueberholen ab -- wenn organizationId schnell wechselt, soll nicht
+// eine aeltere Antwort eine bereits neuere ueberschreiben.
+const { ready } = useScopedLoad(() => props.organizationId, async (organizationId, isLatest) => {
   loading.value = true
   loadError.value = false
   try {
-    const response = await api.request('/v1/photo-layout-presets', { query: { organizationId: props.organizationId } }, z.object({ presets: z.array(PhotoLayoutPresetSchema) }))
-    if (token !== loadToken) return
+    const response = await api.request('/v1/photo-layout-presets', { query: { organizationId } }, z.object({ presets: z.array(PhotoLayoutPresetSchema) }))
+    if (!isLatest()) return
     presets.value = response.presets.filter((preset) => preset.isActive)
   } catch {
-    if (token !== loadToken) return
+    if (!isLatest()) return
     presets.value = []
     loadError.value = true
   } finally {
-    if (token === loadToken) loading.value = false
+    if (isLatest()) loading.value = false
   }
-}
-await loadPresets()
-watch(() => props.organizationId, loadPresets)
+})
+await ready
 
 // Nur die department-eigenen und vererbten Presets -- die Foto-Anhang-UI kennt keine
 // Mannschaftsebene, dieselbe Grenze wie die Render-Route selbst durchsetzt.

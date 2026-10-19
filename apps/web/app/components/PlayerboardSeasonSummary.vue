@@ -20,21 +20,18 @@ const loading = ref(false)
 const errorMessage = ref('')
 
 /** Laedt Saisonanfang, Rangliste der Saison und die letzten Trainings der gewaehlten Mannschaft. */
-let latestRequest = 0
-async function load() {
-  const request = ++latestRequest
+const { ready } = useScopedLoad(() => teamId.value, async (requestedTeamId, isLatest) => {
   errorMessage.value = ''
   items.value = []
   trainings.value = []
   seasonFrom.value = null
-  if (!organizationId.value || !teamId.value) return
+  if (!organizationId.value || !requestedTeamId) return
   const requestedOrganizationId = organizationId.value
-  const requestedTeamId = teamId.value
   const requestedTimezone = organizationTimezone.value
   loading.value = true
   try {
     const from = await loadSeasonFrom(requestedOrganizationId, requestedTeamId, requestedTimezone)
-    if (request !== latestRequest) return
+    if (!isLatest()) return
     const [ranking, recent] = await Promise.all([
       loadRankingItems(requestedTeamId, from ? { from } : {}),
       api.request(
@@ -43,21 +40,18 @@ async function load() {
         PlayerboardTrainingSchema.array(),
       ),
     ])
-    if (request !== latestRequest) return
+    if (!isLatest()) return
     seasonFrom.value = from
     items.value = ranking.items
     trainings.value = recent.slice(0, props.compact ? 1 : 3)
   } catch (error) {
-    if (request === latestRequest)
+    if (isLatest())
       errorMessage.value = playerboardErrorMessage(error, 'Die Saison konnte nicht geladen werden.')
   } finally {
-    if (request === latestRequest) loading.value = false
+    if (isLatest()) loading.value = false
   }
-}
-await load()
-watch(teamId, () => {
-  void load()
 })
+await ready
 
 const self = computed(() => items.value.find((item) => item.highlight) ?? null)
 const dateFormat = new Intl.DateTimeFormat('de-DE', {

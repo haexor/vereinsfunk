@@ -56,15 +56,15 @@ const { revision: brandRevision } = useBrandRevision()
 // fachlich falsch, es ist die Produktmarke "vereinsfunk", nicht die des Vereins.
 const scopeLogoUrl = ref('')
 const scopeBrand = ref({ primaryColor: '#163a2c', accentColor: '#caff4a' })
-// Lauf-ID statt reiner organizationId-Pruefung: bei A -> B -> A stimmt organizationId beim
+// Lauf-Pruefung statt reiner organizationId-Pruefung: bei A -> B -> A stimmt organizationId beim
 // dritten Lauf wieder mit dem ersten ueberein, ein spaet zurueckkehrender erster Lauf wuerde die
 // Pruefung also bestehen und das (moeglicherweise veraltete) Ergebnis des dritten Laufs
-// ueberschreiben. Die Lauf-ID ist bei jedem Watcher-Aufruf eindeutig, unabhaengig vom Zielverein.
-let latestScopeBrandRun = 0
+// ueberschreiben. Jeder Watcher-Aufruf beginnt einen eigenen Lauf, unabhaengig vom Zielverein.
+const scopeBrandRuns = useLatestRequest()
 watch(
   () => [scope.value?.organizationId, scope.value?.departmentId, brandRevision.value] as const,
   async ([organizationId, departmentId]) => {
-    const run = ++latestScopeBrandRun
+    const isLatest = scopeBrandRuns.begin()
     scopeLogoUrl.value = ''
     scopeBrand.value = { primaryColor: '#163a2c', accentColor: '#caff4a' }
     if (!organizationId) return
@@ -74,7 +74,7 @@ watch(
       .select('primary_color, accent_color, logo_asset_id')
       .eq('organization_id', organizationId)
       .maybeSingle()
-    if (run !== latestScopeBrandRun || !organizationBrand.data) return
+    if (!isLatest() || !organizationBrand.data) return
     let brand = {
       primaryColor: organizationBrand.data.primary_color as string,
       accentColor: organizationBrand.data.accent_color as string,
@@ -86,7 +86,7 @@ watch(
         .select('primary_color, accent_color, logo_asset_id')
         .eq('department_id', departmentId)
         .maybeSingle()
-      if (run !== latestScopeBrandRun) return
+      if (!isLatest()) return
       if (departmentBrand.data) {
         brand = {
           ...brand,
@@ -108,7 +108,7 @@ watch(
       .eq('status', 'ready')
       .in('kind', ['logo_primary', 'logo_light', 'logo_dark', 'logo_mark'])
       .order('created_at', { ascending: false })
-    if (run !== latestScopeBrandRun || logoAssets.error || !logoAssets.data) return
+    if (!isLatest() || logoAssets.error || !logoAssets.data) return
     const asset = resolveSidebarLogoAsset(
       logoAssets.data.map(
         (item) =>
@@ -128,7 +128,7 @@ watch(
     const signed = await supabase.storage
       .from('brand-assets')
       .createSignedUrl(asset.objectPath, 600)
-    if (run !== latestScopeBrandRun) return
+    if (!isLatest()) return
     scopeLogoUrl.value = signed.data?.signedUrl ?? ''
   },
   { immediate: true },

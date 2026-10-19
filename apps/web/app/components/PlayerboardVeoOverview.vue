@@ -15,29 +15,25 @@ const matches = ref<PlayerboardVeoMatch[]>([])
 const roster = ref<PlayerboardPlayer[]>([])
 
 /** Laedt die Spiele der laufenden Saison; spaete Antworten frueherer Mannschaften verfallen. */
-let latestRequest = 0
-async function load() {
-  const request = ++latestRequest
+const { ready } = useScopedLoad(() => teamId.value, async (requestedTeamId, isLatest) => {
   matches.value = []
   roster.value = []
-  if (!teamId.value || !organizationId.value) return
+  if (!requestedTeamId || !organizationId.value) return
   try {
-    const requestedTeamId = teamId.value
     const from = await loadSeasonFrom(organizationId.value, requestedTeamId, organizationTimezone.value)
     const [loaded, players] = await Promise.all([
       loadMatches(requestedTeamId, from ? { from } : {}),
       api.request(`/v1/playerboard/teams/${requestedTeamId}/players`, {}, PlayerboardPlayerSchema.array()).catch(() => [] as PlayerboardPlayer[]),
     ])
-    if (request === latestRequest) {
+    if (isLatest()) {
       matches.value = loaded
       roster.value = players
     }
   } catch {
-    if (request === latestRequest) matches.value = []
+    if (isLatest()) matches.value = []
   }
-}
-await load()
-watch(teamId, () => { void load() })
+})
+await ready
 
 const personByPlayer = computed(() => new Map(roster.value.map((player) => [player.id, player.directoryPersonId])))
 
