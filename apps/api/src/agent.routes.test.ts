@@ -192,4 +192,30 @@ describe('agent routes', () => {
     expect(messages.slice(-3).map((message) => message.content)).toEqual(['Nachricht 99', 'Neue Frage', 'Antwort'])
     expect(seen[0]!.slice(-2)).toEqual(['Nachricht 99', 'Neue Frage'])
   })
+
+  it('keeps a club-level post without a department in the workspace', async () => {
+    // Seit Migration 2026082504 darf posts.department_id null sein. Frueher verwarf das Schema die
+    // gesamte Uebersicht und der Assistent antwortete mit einem leeren Arbeitsplatz.
+    const postRow = { id: '10000000-8000-4000-8000-000000000001', department_id: null, status: 'draft', current_version_id: null, scheduled_for: null, updated_at: '2026-08-24T10:00:00+00:00' }
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({
+        from: (table: string) => {
+          if (table === 'organization_memberships') return membershipRowsStub([{ id: MEMBERSHIP_ID }])
+          if (table === 'department_memberships' || table === 'team_memberships') return membershipRowsStub([])
+          if (table === 'posts') return chain({ data: [postRow], error: null })
+          if (WORKSPACE_TABLES.includes(table)) return chain({ data: [], error: null })
+          throw new Error(`unexpected table in agent workspace test: ${table}`)
+        },
+      }) as unknown as SupabaseClient,
+      forService: () => ({}) as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/agent/workspace?organizationId=${ORGANIZATION_ID}`,
+      headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json().posts).toEqual([expect.objectContaining({ id: postRow.id, departmentId: null })])
+  })
 })

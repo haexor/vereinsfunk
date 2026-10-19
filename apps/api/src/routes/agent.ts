@@ -266,7 +266,7 @@ async function loadWorkspace(
     : await client.from('posts').select('id, department_id, team_id').in('id', approvalPostIds)
   if (approvalPostsResult.error) throw approvalPostsResult.error
   const scopeByApprovalPostId = new Map((approvalPostsResult.data ?? []).map((row) => [row.id as string, {
-    departmentId: row.department_id as string,
+    departmentId: row.department_id as string | null,
     teamId: row.team_id as string | null,
   }]))
   const approvalVersionIds = [...new Set((requestsResult.data ?? []).map((row) => row.post_version_id as string))]
@@ -291,7 +291,7 @@ async function loadWorkspace(
       const session = candidateSessionById.get(row.composition_session_id as string)
       const content = z.object({ headline: z.string() }).nullable().safeParse(row.generated_content)
       if (!session || !content.success || content.data === null) return []
-      return [{ id: row.id as string, sessionId: row.composition_session_id as string, departmentId: session.department_id as string, teamId: session.team_id as string | null, headline: content.data.headline.slice(0, 200) }]
+      return [{ id: row.id as string, sessionId: row.composition_session_id as string, departmentId: session.department_id as string | null, teamId: session.team_id as string | null, headline: content.data.headline.slice(0, 200) }]
     })
   } catch (error) {
     logger.warn({ err: error }, 'ready text candidates unavailable, degrading to empty list')
@@ -321,7 +321,7 @@ async function loadWorkspace(
       const version = versionById.get(publication.post_version_id as string)
       const post = version ? postById.get(version.post_id as string) : undefined
       if (!version || !post || (scope.departmentId && scope.departmentId !== post.department_id) || (scope.teamId && scope.teamId !== post.team_id)) return []
-      return [{ id: publication.id as string, postVersionId: version.id as string, departmentId: post.department_id as string, teamId: post.team_id as string | null, title: (version.title as string).slice(0, 200), platform: OAuthPlatformSchema.parse(publication.platform), scheduledFor: publication.scheduled_for as string | null }]
+      return [{ id: publication.id as string, postVersionId: version.id as string, departmentId: post.department_id as string | null, teamId: post.team_id as string | null, title: (version.title as string).slice(0, 200), platform: OAuthPlatformSchema.parse(publication.platform), scheduledFor: publication.scheduled_for as string | null }]
     })
     const failedPublicationIds = failedPublications.map((publication) => publication.id as string)
     const attempts = failedPublicationIds.length === 0
@@ -336,7 +336,7 @@ async function loadWorkspace(
       const version = versionById.get(publication.post_version_id as string)
       const post = version ? postById.get(version.post_id as string) : undefined
       if (!version || !post || (scope.departmentId && scope.departmentId !== post.department_id) || (scope.teamId && scope.teamId !== post.team_id)) return []
-      return [{ id: publication.id as string, departmentId: post.department_id as string, teamId: post.team_id as string | null, title: (version.title as string).slice(0, 200), platform: OAuthPlatformSchema.parse(publication.platform), status: z.enum(['action_required', 'failed']).parse(publication.status), errorClass: z.enum(['validation', 'non_retryable', 'retryable', 'unknown']).nullable().parse(errorClassByPublicationId.get(publication.id as string) ?? null) }]
+      return [{ id: publication.id as string, departmentId: post.department_id as string | null, teamId: post.team_id as string | null, title: (version.title as string).slice(0, 200), platform: OAuthPlatformSchema.parse(publication.platform), status: z.enum(['action_required', 'failed']).parse(publication.status), errorClass: z.enum(['validation', 'non_retryable', 'retryable', 'unknown']).nullable().parse(errorClassByPublicationId.get(publication.id as string) ?? null) }]
     })
   } catch (error) {
     logger.warn({ err: error }, 'publication workspace summaries unavailable, degrading to empty lists')
@@ -455,8 +455,9 @@ async function loadMessages(client: SupabaseClient, conversation: AgentConversat
   return rows.map((row) => mapMessage(row, mediaAssetIdsByMessageId.get(row.id as string) ?? []))
 }
 
-type ApprovalTarget = { organizationId: string; departmentId: string; teamId: string | null; postId: string }
-type TextCandidateTarget = { organizationId: string; departmentId: string; teamId: string | null; sessionId: string }
+// departmentId null = Beitrag bzw. Sitzung auf Vereinsebene (Migration 2026082504).
+type ApprovalTarget = { organizationId: string; departmentId: string | null; teamId: string | null; postId: string }
+type TextCandidateTarget = { organizationId: string; departmentId: string | null; teamId: string | null; sessionId: string }
 type ScheduleTarget = ApprovalTarget & { socialConnectionId: string }
 type PublicationTarget = ApprovalTarget & { publicationId: string }
 
@@ -467,7 +468,7 @@ async function loadApprovalTarget(client: SupabaseClient, postVersionId: string)
   const post = await client.from('posts').select('id, organization_id, department_id, team_id').eq('id', version.data.post_id as string).maybeSingle()
   if (post.error) throw post.error
   if (!post.data) return null
-  return { organizationId: post.data.organization_id as string, departmentId: post.data.department_id as string, teamId: post.data.team_id as string | null, postId: post.data.id as string }
+  return { organizationId: post.data.organization_id as string, departmentId: post.data.department_id as string | null, teamId: post.data.team_id as string | null, postId: post.data.id as string }
 }
 
 async function loadTextCandidateTarget(client: SupabaseClient, candidateId: string): Promise<TextCandidateTarget | null> {
@@ -477,7 +478,7 @@ async function loadTextCandidateTarget(client: SupabaseClient, candidateId: stri
   const session = await client.from('composition_sessions').select('organization_id, department_id, team_id').eq('id', candidate.data.composition_session_id as string).maybeSingle()
   if (session.error) throw session.error
   if (!session.data || session.data.organization_id !== candidate.data.organization_id) return null
-  return { organizationId: session.data.organization_id as string, departmentId: session.data.department_id as string, teamId: session.data.team_id as string | null, sessionId: candidate.data.composition_session_id as string }
+  return { organizationId: session.data.organization_id as string, departmentId: session.data.department_id as string | null, teamId: session.data.team_id as string | null, sessionId: candidate.data.composition_session_id as string }
 }
 
 async function loadScheduleTarget(client: SupabaseClient, input: z.infer<typeof AgentSchedulePublicationProposalInputSchema>): Promise<ScheduleTarget | null> {
@@ -518,12 +519,12 @@ async function loadPublicationTarget(client: SupabaseClient, publicationId: stri
   const post = await client.from('posts').select('id, organization_id, department_id, team_id').eq('id', version.data.post_id as string).maybeSingle()
   if (post.error) throw post.error
   if (!post.data || post.data.organization_id !== publication.data.organization_id) return null
-  return { publicationId: publication.data.id as string, postId: post.data.id as string, organizationId: post.data.organization_id as string, departmentId: post.data.department_id as string, teamId: post.data.team_id as string | null }
+  return { publicationId: publication.data.id as string, postId: post.data.id as string, organizationId: post.data.organization_id as string, departmentId: post.data.department_id as string | null, teamId: post.data.team_id as string | null }
 }
 
 function matchesScope(scope: AgentScope, target: Pick<ApprovalTarget, 'organizationId' | 'departmentId' | 'teamId'>): boolean {
   return scope.organizationId === target.organizationId
-    && scope.departmentId === target.departmentId
+    && (scope.departmentId ?? null) === target.departmentId
     && (scope.teamId ?? null) === target.teamId
 }
 

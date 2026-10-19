@@ -125,9 +125,11 @@ export const AgentActionProposalSchema = z.discriminatedUnion('toolName', [
   AgentActionProposalBaseSchema.extend({ toolName: z.literal('execute_publication'), input: AgentPublicationExecutionProposalInputSchema }),
 ])
 
+// departmentId null = Beitrag auf Vereinsebene (seit Migration 2026082504 zulaessig). Ein einziger
+// solcher Datensatz darf die Uebersicht nicht ungueltig machen.
 export const AgentPostSummarySchema = z.object({
   id: UuidSchema,
-  departmentId: UuidSchema,
+  departmentId: UuidSchema.nullable(),
   title: z.string().trim().max(200),
   status: z.string().trim().min(1).max(80),
   scheduledFor: z.iso.datetime({ offset: true }).nullable(),
@@ -147,7 +149,7 @@ export const AgentApprovalSummarySchema = z.object({
   stageId: UuidSchema,
   postId: UuidSchema,
   postVersionId: UuidSchema,
-  departmentId: UuidSchema,
+  departmentId: UuidSchema.nullable(),
   title: z.string().trim().max(200),
   label: z.string().trim().min(1).max(200),
   deadlineAt: z.iso.datetime({ offset: true }).nullable(),
@@ -156,14 +158,14 @@ export const AgentApprovalSummarySchema = z.object({
 export const AgentTextCandidateSummarySchema = z.object({
   id: UuidSchema,
   sessionId: UuidSchema,
-  departmentId: UuidSchema,
+  departmentId: UuidSchema.nullable(),
   teamId: UuidSchema.nullable(),
   headline: z.string().trim().max(200),
 })
 export const AgentDuePublicationSummarySchema = z.object({
   id: UuidSchema,
   postVersionId: UuidSchema,
-  departmentId: UuidSchema,
+  departmentId: UuidSchema.nullable(),
   teamId: UuidSchema.nullable(),
   title: z.string().trim().max(200),
   platform: OAuthPlatformSchema,
@@ -171,7 +173,7 @@ export const AgentDuePublicationSummarySchema = z.object({
 })
 export const AgentPublicationActivitySummarySchema = z.object({
   id: UuidSchema,
-  departmentId: UuidSchema,
+  departmentId: UuidSchema.nullable(),
   teamId: UuidSchema.nullable(),
   title: z.string().trim().max(200),
   platform: OAuthPlatformSchema,
