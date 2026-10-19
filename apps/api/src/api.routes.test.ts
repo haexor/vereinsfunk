@@ -172,6 +172,8 @@ describe('api', () => {
     const snapshot = captured.versionRow!.effective_config_snapshot as { config: Record<string, unknown> }
     expect(snapshot.config).toHaveProperty('allowedChannelIds')
     expect(snapshot.config).not.toHaveProperty('policies')
+    // Ohne Verfasserin liefen Selbstfreigabe-Sperre und Minderjaehrigenstufe in SQL ins Leere.
+    expect(captured.versionRow).toMatchObject({ created_by_type: 'llm', created_by_user_id: USER_ID })
   })
 
   // Paket 025: nur der vollstaendige Fall (keine missingFacts) legt einen Entwurf an --

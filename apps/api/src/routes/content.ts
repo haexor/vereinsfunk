@@ -231,7 +231,10 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
             source_facts_snapshot: input.sourceMaterial, effective_config_snapshot: effectiveConfigSnapshot,
             title: generated.headline, caption: generated.caption, call_to_action: generated.callToAction,
             hashtags: generated.hashtags, alt_text: generated.altText, safety_flags: generated.safetyFlags,
-            created_by_type: 'llm',
+            // Die Verfasserin traegt die Freigabepruefung: can_decide_stage schliesst sie ueber
+            // created_by_user_id von der Selbstfreigabe aus, is_profile_minor erzwingt darueber die
+            // Minderjaehrigenstufe. Ohne den Wert waere sie fuer beide Pruefungen unbekannt.
+            created_by_type: 'llm', created_by_user_id: request.auth!.userId,
           })
           .select('id')
           .single()
