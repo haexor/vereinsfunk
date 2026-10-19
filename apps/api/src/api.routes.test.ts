@@ -67,6 +67,19 @@ describe('api', () => {
     expect(response.json()).toMatchObject({ error: 'invalid_request' })
   })
 
+  // request.id landet in uuid-Spalten (audit_events.correlation_id u. a.) -- ein beliebiger
+  // Header-String darf nicht zur Korrelations-ID werden, eine gueltige UUID schon.
+  it('adopts only a UUID x-correlation-id header as the request id', async () => {
+    const app = await startApp()
+    const forwarded = '5f0c2d3e-8b1a-4c6d-9e7f-0a1b2c3d4e5f'
+    const kept = await app.inject({ method: 'POST', url: '/v1/submissions', headers: { 'x-correlation-id': forwarded }, payload: {} })
+    expect(kept.json()).toMatchObject({ correlationId: forwarded })
+    const replaced = await app.inject({ method: 'POST', url: '/v1/submissions', headers: { 'x-correlation-id': 'not-a-uuid' }, payload: {} })
+    const replacedId = (replaced.json() as { correlationId: string }).correlationId
+    expect(replacedId).not.toBe('not-a-uuid')
+    expect(replacedId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+  })
+
   it('rejects a request with a forged signature', async () => {
     const app = await startApp()
     const forged = await new SignJWT({ aud: 'authenticated', role: 'authenticated' })

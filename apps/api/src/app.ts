@@ -148,8 +148,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const environment = parseApiEnvironment()
   const fastifyOptions: FastifyServerOptions = {
     logController: new LogController({ disableRequestLogging: environment.NODE_ENV === 'test' }),
-    requestIdHeader: 'x-correlation-id',
-    genReqId: () => randomUUID(),
+    // Den x-correlation-id-Header nur uebernehmen, wenn er eine UUID ist: request.id landet in
+    // uuid-Spalten (audit_events.correlation_id, workflow_outbox, ...). Mit requestIdHeader haette
+    // ein beliebiger Header-String jeden Audit-Insert still scheitern lassen.
+    requestIdHeader: false,
+    genReqId: (request) => {
+      const header = request.headers['x-correlation-id']
+      return typeof header === 'string' && UuidSchema.safeParse(header).success ? header : randomUUID()
+    },
     logger:
       options.logger === false
         ? false
