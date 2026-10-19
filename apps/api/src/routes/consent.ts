@@ -12,8 +12,8 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import {
   ALLOWED_EVIDENCE_MIME,
-  addMonthsToIsoDate,
   buildConsentRequestEmail,
+  computeConsentValidity,
   currentOrganizationConsentText,
   CONSENT_REQUEST_SELECT,
   departmentOfDirectoryPerson,
@@ -21,7 +21,6 @@ import {
   loadConsentRecordForScope,
   mapConsentRecordRow,
   mapConsentRequestRow,
-  resolveConsentValidityMonths,
   shortPersonLabel,
   type ConsentRequestRow,
 } from '../services/consent.js'
@@ -127,8 +126,7 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
     const scope = toPermissionScope(fields.organizationId, departmentId)
     if (!(await requirePermission(request, reply, 'consent.manage', scope))) return
 
-    const validityMonths = await resolveConsentValidityMonths(client, fields.organizationId, departmentId)
-    const validUntil = validityMonths === null ? null : addMonthsToIsoDate(fields.signedAt, validityMonths)
+    const validity = await computeConsentValidity(client, fields.organizationId, departmentId, fields.signedAt)
 
     const service = supabaseClients.forService()
     const consentId = randomUUID()
@@ -155,7 +153,8 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
         signer_name: fields.signerName,
         signer_role: fields.signerRole,
         guardian_confirmed: fields.guardianConfirmed,
-        valid_until: validUntil,
+        valid_from: validity.validFrom,
+        valid_until: validity.validUntil,
         created_by: request.auth!.userId,
       })
       .select(CONSENT_RECORD_SELECT)
@@ -292,6 +291,7 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
       }
     }
 
+    const validity = await computeConsentValidity(client, loaded.row.organization_id, loaded.scope.departmentId ?? null, input.signedAt)
     const service = supabaseClients.forService()
     const evidenceOfOriginal = await service.from('consent_records').select('evidence_bucket, evidence_path').eq('id', params.id).single()
     if (evidenceOfOriginal.error) throw evidenceOfOriginal.error
@@ -316,6 +316,8 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
         signer_name: input.signerName,
         signer_role: input.signerRole,
         guardian_confirmed: input.guardianConfirmed,
+        valid_from: validity.validFrom,
+        valid_until: validity.validUntil,
         created_by: request.auth!.userId,
       })
       .select(CONSENT_RECORD_SELECT)

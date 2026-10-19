@@ -108,8 +108,8 @@ function mapConfigToRuleValues(config: ReturnType<typeof resolveEffectiveConfig>
     mediaRequiresConsentCheck: config.policies.mediaRequiresConsentCheck,
     consentExpiresOnLeave: config.policies.consentExpiresOnLeave,
     // Knotenlokal wie reviewMinimumApprovals (own-Zeile, keine Vererbung ueber Ebenen) --
-    // die echte Abteilungs-/Vereins-Rueckfallkette fuer die Registratur-Vorbelegung loest
-    // resolveConsentValidityMonths separat auf (POST /v1/consents), nicht hier.
+    // die echte Abteilungs-/Vereins-Rueckfallkette fuer neue Einwilligungen loest
+    // computeConsentValidity (services/consent.ts) separat auf, nicht hier.
     consentValidityMonths: ownRow?.consent_validity_months ?? null,
     allowedPresets: config.policies.allowedPresets ? [...config.policies.allowedPresets] : null,
     allowedFormats: config.policies.allowedFormats ? ([...config.policies.allowedFormats] as OutputFormat[]) : null,

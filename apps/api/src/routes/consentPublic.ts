@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import {
   CONSENT_TOKEN_INVALID_RESPONSE,
+  computeConsentValidity,
   currentOrganizationConsentText,
   describeConsentScope,
   findConsentRecordByRevocationToken,
@@ -87,6 +88,8 @@ export function registerConsentPublicRoutes(app: FastifyInstance, context: ApiRo
 
     const person = await service.from('directory_people').select('is_minor').eq('id', row.directory_person_id).single()
     if (person.error) throw person.error
+    const signedAt = new Date().toISOString().slice(0, 10)
+    const validity = await computeConsentValidity(service, row.organization_id, row.department_id, signedAt)
     const { rawToken: revocationRawToken, tokenHash: revocationTokenHash } = generatePublicToken()
     const consentId = randomUUID()
     const consentInsert = await service
@@ -105,10 +108,12 @@ export function registerConsentPublicRoutes(app: FastifyInstance, context: ApiRo
         // erfundenen Dateiobjekts. Ehrliche Einordnung in der Oberfläche (Plan, Abschnitt 3):
         // ein E-Mail-Link belegt nicht die Identitaet des Erziehungsberechtigten.
         evidence_path: `digital-consent-requests/${row.id}`,
-        signed_at: new Date().toISOString().slice(0, 10),
+        signed_at: signedAt,
         signer_name: null,
         signer_role: row.recipient_role,
         guardian_confirmed: row.recipient_role === 'guardian',
+        valid_from: validity.validFrom,
+        valid_until: validity.validUntil,
         source_id: null,
         revocation_token_hash: revocationTokenHash,
         created_by: row.created_by,

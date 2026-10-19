@@ -192,7 +192,7 @@ export async function departmentOfDirectoryPerson(
 // "Aufbewahrungsfrist"-artiger Vorbelegungswert, anders als reviewMinimumApprovals, das
 // bewusst knotenlokal bleibt) -- nur fuer die Vorbelegung neuer Einwilligungen gebraucht, nicht
 // Teil der generischen Policy-Anzeige.
-export async function resolveConsentValidityMonths(
+async function resolveConsentValidityMonths(
   client: SupabaseClient, organizationId: string, departmentId: string | null,
 ): Promise<number | null> {
   const rows = await client.from('policy_settings').select('scope, department_id, consent_validity_months').eq('organization_id', organizationId)
@@ -201,6 +201,19 @@ export async function resolveConsentValidityMonths(
   const orgValue = data.find((row) => row.scope === 'organization')?.consent_validity_months ?? null
   const deptValue = departmentId ? data.find((row) => row.scope === 'department' && row.department_id === departmentId)?.consent_validity_months ?? null : null
   return deptValue ?? orgValue
+}
+
+// Eine Einwilligung gilt ab ihrer Unterschrift (signed_at), nicht ab ihrer Erfassung: valid_until
+// rechnet die Richtliniendauer ab signed_at, also braucht valid_from denselben Anker -- mit dem
+// Default now() verletzte eine nachgetragene alte Papiererklaerung den CHECK
+// valid_until > valid_from und endete als 500; jetzt ist sie ehrlich 'expired'. Dieselbe Rechnung
+// fuer Registratur, Abloesung und digitale Zustimmung, sonst blieben die beiden letzten trotz
+// Richtlinie unbefristet gueltig.
+export async function computeConsentValidity(
+  client: SupabaseClient, organizationId: string, departmentId: string | null, signedAt: string,
+): Promise<{ validFrom: string; validUntil: string | null }> {
+  const validityMonths = await resolveConsentValidityMonths(client, organizationId, departmentId)
+  return { validFrom: `${signedAt}T00:00:00.000Z`, validUntil: validityMonths === null ? null : addMonthsToIsoDate(signedAt, validityMonths) }
 }
 
 export async function loadConsentRecordForScope(

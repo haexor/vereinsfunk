@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { DEPARTMENT_ID, ORGANIZATION_ID, USER_ID, chain, denyingRoleProvider, grantingRoleProvider, organizationManagerRoleProvider, signAccessToken, startApp } from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
-import { hashPublicToken } from './services/consent.js'
+import { addMonthsToIsoDate, hashPublicToken } from './services/consent.js'
 
 describe('Paket 015: Einwilligungsverwaltung', () => {
   const CONSENT_ID = '15000000-4000-4000-8000-000000000001'
@@ -250,6 +250,85 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
     expect(response.json()).toMatchObject({ error: 'already_revoked' })
   })
 
+  const TWELVE_MONTH_POLICY = { data: [{ scope: 'organization', department_id: null, consent_validity_months: 12 }], error: null }
+
+  it('registers an old paper form with its validity window anchored on the signature date', async () => {
+    let insertedRow: Record<string, unknown> | undefined
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'directory_people') return chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, is_minor: false }, error: null })
+            if (table === 'policy_settings') return chain(TWELVE_MONTH_POLICY)
+            throw new Error(`unexpected table: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          storage: { from: () => ({ upload: async () => ({ error: null }) }) },
+          from: (table: string) => {
+            if (table === 'consent_records') return { insert: (row: Record<string, unknown>) => { insertedRow = row; return chain({ data: consentRecordRow({ id: row.id, signed_at: row.signed_at, valid_from: row.valid_from, valid_until: row.valid_until }), error: null }) } }
+            if (table === 'audit_events') return { insert: async () => ({ error: null }) }
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const { boundary, body } = consentUploadBody({ ...consentScopeAndFields(), signedAt: '2020-03-15' })
+    const response = await app.inject({
+      method: 'POST', url: '/v1/consents',
+      headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` },
+      payload: body,
+    })
+    // Mit valid_from = now() verletzte valid_until (Unterschrift + 12 Monate) den CHECK
+    // valid_until > valid_from und endete als 500.
+    expect(response.statusCode).toBe(201)
+    expect(insertedRow).toMatchObject({ valid_from: '2020-03-15T00:00:00.000Z', valid_until: '2021-03-15T00:00:00.000Z' })
+    expect(response.json()).toMatchObject({ status: 'expired' })
+  })
+
+  it('applies the consent validity policy to a superseding version', async () => {
+    let insertedRow: Record<string, unknown> | undefined
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'consent_records') return chain({ data: consentRecordRow(), error: null })
+            if (table === 'directory_people') return chain({ data: { department_id: DEPARTMENT_ID, is_minor: false }, error: null })
+            if (table === 'policy_settings') return chain(TWELVE_MONTH_POLICY)
+            throw new Error(`unexpected table: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'consent_records') {
+              return {
+                select: () => chain({ data: { evidence_bucket: 'raw-media', evidence_path: `organizations/${ORGANIZATION_ID}/consents/${CONSENT_ID}/nachweis` }, error: null }),
+                insert: (row: Record<string, unknown>) => { insertedRow = row; return chain({ data: consentRecordRow({ id: row.id, valid_from: row.valid_from, valid_until: row.valid_until }), error: null }) },
+                update: () => chain({ data: { id: CONSENT_ID }, error: null }),
+              }
+            }
+            if (table === 'audit_events') return { insert: async () => ({ error: null }) }
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST', url: `/v1/consents/${CONSENT_ID}/supersede`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        scope: 'Fotos fuer Social Media', scopeStructured: { purposes: ['social_media'], platforms: null, mediaKinds: ['photo'], contexts: null, namingAllowed: false, departmentIds: null },
+        signedAt: '2026-08-01', signerName: 'Erika Musterfrau', signerRole: 'guardian', guardianConfirmed: true,
+      },
+    })
+    expect(response.statusCode).toBe(201)
+    expect(insertedRow).toMatchObject({ valid_from: '2026-08-01T00:00:00.000Z', valid_until: '2027-08-01T00:00:00.000Z' })
+  })
+
   it('rejects updating the organization consent text without organization.manage', async () => {
     const app = await startApp({ roleProvider: denyingRoleProvider })
     const token = await signAccessToken(USER_ID)
@@ -403,6 +482,7 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
               }
             }
             if (table === 'directory_people') return { select: () => chain({ data: { is_minor: false }, error: null }) }
+            if (table === 'policy_settings') return chain({ data: [], error: null })
             if (table === 'consent_records') {
               return {
                 insert: () => chain({ data: { id: CONSENT_RECORD_ID, organization_id: ORGANIZATION_ID }, error: null }),
@@ -418,6 +498,40 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
     expect(response.statusCode).toBe(404)
     expect(response.json()).toMatchObject({ error: 'invalid_or_expired' })
     expect(deletedConsentIds).toHaveLength(1)
+  })
+
+  function openConsentRequestRow(overrides: Record<string, unknown> = {}) {
+    return {
+      id: CONSENT_REQUEST_ID, organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, directory_person_id: DIRECTORY_PERSON_ID, recipient_email: 'x@example.local',
+      recipient_role: 'guardian', requested_scope: { purposes: ['social_media'], platforms: null, mediaKinds: ['photo'], contexts: null, namingAllowed: false },
+      text_version: 'default-template', status: 'sent', expires_at: '2099-01-01T00:00:00Z', responded_at: null, consent_record_id: null, send_count: 1,
+      last_sent_at: '2026-08-01T00:00:00Z', created_at: '2026-08-01T00:00:00Z', created_by: USER_ID,
+      ...overrides,
+    }
+  }
+
+  function grantingServiceClient(captured: { consentRow?: Record<string, unknown>; auditRows: Record<string, unknown>[] }, options: { isMinor?: boolean; requestRow?: Record<string, unknown> } = {}) {
+    return {
+      from: (table: string) => {
+        if (table === 'consent_requests') return { select: () => chain({ data: options.requestRow ?? openConsentRequestRow(), error: null }), update: () => chain({ data: { id: CONSENT_REQUEST_ID }, error: null }) }
+        if (table === 'directory_people') return { select: () => chain({ data: { is_minor: options.isMinor ?? false }, error: null }) }
+        if (table === 'policy_settings') return chain({ data: [{ scope: 'organization', department_id: null, consent_validity_months: 12 }], error: null })
+        if (table === 'consent_records') {
+          return { insert: (row: Record<string, unknown>) => { captured.consentRow = row; return chain({ data: { id: row.id, organization_id: ORGANIZATION_ID }, error: null }) } }
+        }
+        if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { captured.auditRows.push(row); return { error: null } } }
+        throw new Error(`unexpected table in service fake: ${table}`)
+      },
+    } as unknown as SupabaseClient
+  }
+
+  it('applies the consent validity policy to a digitally granted consent', async () => {
+    const captured: { consentRow?: Record<string, unknown>; auditRows: Record<string, unknown>[] } = { auditRows: [] }
+    const app = await startApp({ supabaseClients: { forUser: () => ({}) as unknown as SupabaseClient, forService: () => grantingServiceClient(captured) } })
+    const response = await app.inject({ method: 'POST', url: '/v1/consent-requests/by-token/grant-token/respond', payload: { decision: 'granted' } })
+    expect(response.statusCode).toBe(200)
+    const today = new Date().toISOString().slice(0, 10)
+    expect(captured.consentRow).toMatchObject({ signed_at: today, valid_until: addMonthsToIsoDate(today, 12) })
   })
 
   it('rate-limits repeated public respond attempts from the same client', async () => {
