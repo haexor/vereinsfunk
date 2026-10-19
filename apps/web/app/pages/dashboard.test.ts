@@ -24,4 +24,11 @@ describe('Dashboard', () => {
     expect(page).not.toContain('console.error(error)')
     expect(page).toContain("console.error('Anlassvorschlag konnte nicht verworfen werden', (error as { statusCode?: number })?.statusCode)")
   })
+
+  it('prueft die Onboarding-Antwort am Vertrag statt sie nur zu casten', () => {
+    const page = readFileSync(join(PAGES_DIR, 'index.vue'), 'utf8')
+
+    expect(page).not.toContain('$fetch<{ completedSteps: string[] }>')
+    expect(page).toContain('.then((response) => OnboardingStateSchema.parse(response))')
+  })
 })

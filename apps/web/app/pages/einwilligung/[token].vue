@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { AlertTriangle, CheckCircle2, LoaderCircle, XCircle } from '@lucide/vue'
 import { PublicConsentRequestViewSchema } from '@vereinsfunk/contracts'
+import { z } from 'zod'
 
 definePageMeta({ layout: 'auth' })
 
@@ -43,13 +44,22 @@ async function load() {
   }
 }
 
+// revocationUrl landet in einem <a :href> dieser oeffentlichen Seite -- nur http(s), damit eine
+// fehlerhafte Antwort keinen javascript:-Link einschleusen kann. Die Einwilligung ist an dieser
+// Stelle bereits erteilt; eine unbrauchbare Adresse wird deshalb nur nicht verlinkt, statt die
+// Antwort als Fehler darzustellen.
+const RespondResponseSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('granted'), revocationUrl: z.url({ protocol: /^https?$/ }).optional().catch(undefined) }),
+  z.object({ status: z.literal('declined') }),
+])
+
 async function respond(decision: 'granted' | 'declined') {
   status.value = 'submitting'
   try {
-    const response = await $fetch<{ status: string; revocationUrl?: string }>(
+    const response = RespondResponseSchema.parse(await $fetch<unknown>(
       `${config.public.apiBase}/v1/consent-requests/by-token/${encodedToken}/respond`,
       { method: 'POST', body: { decision } },
-    )
+    ))
     if (response.status === 'granted') {
       revocationUrl.value = response.revocationUrl ?? ''
       status.value = 'granted'

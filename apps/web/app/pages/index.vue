@@ -11,7 +11,12 @@ import {
   ShieldCheck,
   X,
 } from '@lucide/vue'
-import { ContentSuggestionsResponseSchema, type ContentSuggestion } from '@vereinsfunk/contracts'
+import {
+  ContentSuggestionsResponseSchema,
+  OnboardingStateSchema,
+  type ContentSuggestion,
+  type OnboardingStep,
+} from '@vereinsfunk/contracts'
 import type { PostStatus } from '@vereinsfunk/domain'
 import { localDateKey } from '../utils/memberDates'
 
@@ -170,13 +175,12 @@ async function loadDashboard() {
   }
   weekDays.value = buildWeek(timezone.value, posts)
 
-  const onboarding = await $fetch<{ completedSteps: string[] }>(
-    `${config.public.apiBase}/v1/onboarding`,
-    {
-      headers: await useAuthHeader(),
-      query: { organizationId },
-    },
-  ).catch(() => ({ completedSteps: [] as string[] }))
+  const onboarding = await $fetch<unknown>(`${config.public.apiBase}/v1/onboarding`, {
+    headers: await useAuthHeader(),
+    query: { organizationId },
+  })
+    .then((response) => OnboardingStateSchema.parse(response))
+    .catch(() => ({ completedSteps: [] as OnboardingStep[] }))
 
   const steps: { key: string; label: string; href: string }[] = []
   if (!brandResult.data?.logo_asset_id && !onboarding.completedSteps.includes('branding')) {
