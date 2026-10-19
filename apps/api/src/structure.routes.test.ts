@@ -822,4 +822,53 @@ describe('structure, memberships and invitations', () => {
     expect(response.statusCode).toBe(200)
     expect(response.json()).toMatchObject({ expiresAt: '2026-09-01T00:00:00+00:00' })
   })
+
+  // Regression: PATCH/DELETE /v1/memberships lasen auf jeder Ebene organization_id, department_id
+  // und team_id. organization_memberships hat die beiden letzten nicht, department_memberships kein
+  // team_id -- PostgREST antwortet darauf mit 42703, die Routen mit 500. Der Fake lehnt deshalb
+  // jede Spalte ab, die die jeweilige Tabelle nicht hat.
+  const membershipTableColumns: Record<string, string[]> = {
+    organization_memberships: ['id', 'organization_id', 'user_id', 'role', 'expires_at'],
+    department_memberships: ['id', 'organization_id', 'department_id', 'user_id', 'role', 'expires_at'],
+    team_memberships: ['id', 'organization_id', 'department_id', 'team_id', 'user_id', 'role', 'expires_at'],
+  }
+  const membershipLevels = [
+    { scope: 'organization', table: 'organization_memberships', scopeId: ORGANIZATION_ID, row: { organization_id: ORGANIZATION_ID, role: 'organization_viewer' } },
+    { scope: 'department', table: 'department_memberships', scopeId: DEPARTMENT_ID, row: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, role: 'viewer' } },
+    { scope: 'team', table: 'team_memberships', scopeId: TEAM_ID, row: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: TEAM_ID, role: 'player' } },
+  ] as const
+
+  it.each(membershipLevels)('reads only the columns of $table when setting a membership expiry', async ({ scope, table, scopeId, row }) => {
+    const stored: Record<string, unknown> = { id: MEMBERSHIP_ID, user_id: '10000000-0000-4000-8000-000000000099', expires_at: null, ...row }
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (name: string) => {
+            if (name !== table) throw new Error(`unexpected table in test fake: ${name}`)
+            return {
+              select: (columns: string) => {
+                const requested = columns.split(',').map((column) => column.trim())
+                const unknown = requested.find((column) => !membershipTableColumns[name]!.includes(column))
+                const result = unknown
+                  ? { data: null, error: { code: '42703', message: `column ${name}.${unknown} does not exist` } }
+                  : { data: Object.fromEntries(requested.map((column) => [column, stored[column]])), error: null }
+                return { eq: () => ({ maybeSingle: async () => result }) }
+              },
+            }
+          },
+          rpc: async () => ({ data: { membershipId: MEMBERSHIP_ID, expiresAt: '2026-09-01T00:00:00+00:00' }, error: null }),
+        }) as unknown as SupabaseClient,
+      forService: () => serviceClientCapturingAudit([]),
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PATCH',
+      url: `/v1/memberships/${MEMBERSHIP_ID}/expiry?scope=${scope}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { expiresAt: '2026-09-01T00:00:00+00:00' },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ scope, scopeId, role: row.role })
+  })
 })
