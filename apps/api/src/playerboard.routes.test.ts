@@ -174,6 +174,34 @@ describe('PlayerBoard read routes', () => {
     expect(response.json()[0]).toMatchObject({ isSelf: true })
     expect(response.json()[0]).not.toHaveProperty('email')
   })
+
+  // Regression: die Notizen aller Trainings einer Mannschaft gingen in EIN .in() -- nach einigen
+  // hundert Trainings riss die URL die Gateway-Grenze, die Liste antwortete mit 500.
+  it('loads the notes of a long training list in batches', async () => {
+    const trainings = Array.from({ length: 250 }, (_, index) => ({
+      id: `52000000-5000-4000-8000-${String(index).padStart(12, '0')}`, organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: TEAM_ID,
+      training_date: '2026-10-01', title: null, status: 'saved', created_at: '2026-10-01T10:00:00Z',
+    }))
+    const noteBatches: number[] = []
+    const fakes = clients({ userRpc: { playerboard_can_view_stats: { data: true, error: null } }, userTables: { playerboard_trainings: trainings } })
+    const user = fakes.forUser('token') as unknown as { from: (name: string) => unknown; rpc: unknown }
+    fakes.forUser = () => ({
+      rpc: user.rpc,
+      from: (name: string) => name === 'playerboard_training_notes'
+        ? { select: () => ({ in: (_column: string, ids: string[]) => {
+            noteBatches.push(ids.length)
+            return chain({ data: ids.map((id) => ({ training_id: id, note: `Notiz ${id.slice(-3)}` })), error: null })
+          } }) }
+        : user.from(name),
+    }) as unknown as SupabaseClient
+    const app = await startApp({ roleProvider: rolesProvider(['team_manager']), supabaseClients: fakes })
+    const response = await call(app, 'GET', `/v1/playerboard/teams/${TEAM_ID}/trainings`)
+    expect(response.statusCode).toBe(200)
+    expect(noteBatches).toEqual([100, 100, 50])
+    const body = response.json() as { id: string; note: string | null }[]
+    expect(body).toHaveLength(250)
+    expect(body.at(-1)).toMatchObject({ note: 'Notiz 249' })
+  })
 })
 
 describe('PlayerBoard coach flows', () => {

@@ -12,7 +12,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import type { ApiRouteContext } from '../context.js'
-import { createAuditRecorder } from '../shared.js'
+import { createAuditRecorder, fetchAllRowsForIds } from '../shared.js'
 import { loadTeamScope, mapTrainingRow, requireStatsAccess, sendDatabaseError, TRAINING_COLUMNS } from './shared.js'
 
 const PHOTO_BUCKET = 'playerboard-training-photos'
@@ -26,13 +26,14 @@ function mapEntries(rows: readonly EntryRow[]) {
 
 /**
  * Notizen kommen ueber den Nutzer-Client: die Policy liefert sie nur mannschaftsintern
- * (training.view), nie an Mitlesende ueber stats_visibility.
+ * (training.view), nie an Mitlesende ueber stats_visibility. In Bloecken, weil die Trainingsliste
+ * einer Mannschaft unbegrenzt waechst und ein einziges .in() die URL-Grenze des Gateways reisst.
  */
 async function loadNotes(client: SupabaseClient, trainingIds: readonly string[]): Promise<Map<string, string>> {
-  if (trainingIds.length === 0) return new Map()
-  const notes = await client.from('playerboard_training_notes').select('training_id, note').in('training_id', trainingIds)
-  if (notes.error) throw notes.error
-  return new Map(notes.data.map((row) => [row.training_id as string, row.note as string]))
+  const notes = await fetchAllRowsForIds<{ training_id: string; note: string }>(trainingIds, (batch, from, to) =>
+    client.from('playerboard_training_notes').select('training_id, note').in('training_id', batch).order('training_id').range(from, to),
+  )
+  return new Map(notes.map((row) => [row.training_id, row.note]))
 }
 
 /** Registriert Trainingspflege, atomare Punktevergabe und Ranglisten mit Scope- und Berechtigungspruefung. */
