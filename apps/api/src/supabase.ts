@@ -34,6 +34,15 @@ export async function fetchAllRowsForIds<T>(
   return rows
 }
 
+// Eine befristete Mitgliedschaft oder Befreiung ist nach expires_at wirkungslos. Jede Abfrage auf
+// organization_memberships/department_memberships/team_memberships/member_review_trust, deren
+// Ergebnis eine Berechtigung traegt, filtert damit -- dieselbe Bedingung, die die authz-Funktionen
+// in SQL verwenden ("expires_at is null or expires_at > now()"). Hier statt in routes/shared.ts,
+// weil auch auth.ts (SupabaseRoleProvider) sie braucht und shared.ts seinerseits auth.ts importiert.
+export function notExpiredFilter(): string {
+  return `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`
+}
+
 // Validates a Supabase/PostgREST payload at the trust boundary. Deliberately not a ZodError: the
 // global error handler answers a ZodError with 400, but an unexpected database shape is a 500.
 export function parseSupabaseData<T>(schema: z.ZodType<T>, data: unknown): T {

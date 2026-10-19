@@ -4,7 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import { createRemoteJWKSet, customFetch, jwtVerify, type FetchImplementation, type JWTVerifyGetKey } from 'jose'
 import type { ModuleStatusProvider } from './moduleStatus.js'
-import { createUserClient, fetchAllRowsForIds } from './supabase.js'
+import { createUserClient, fetchAllRowsForIds, notExpiredFilter } from './supabase.js'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -74,7 +74,7 @@ export class SupabaseRoleProvider implements RoleProvider {
 
   async rolesForScope(auth: { userId: string; accessToken: string }, scope: PermissionScope): Promise<readonly Role[]> {
     const client = this.clientFactory(this.environment, auth.accessToken)
-    const notExpired = `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`
+    const notExpired = notExpiredFilter()
     const roles: Role[] = []
 
     const organizationRoles = await client
@@ -120,7 +120,7 @@ export class SupabaseRoleProvider implements RoleProvider {
     scopes: readonly PermissionScope[],
   ): Promise<ReadonlyMap<string, readonly Role[]>> {
     const client = this.clientFactory(this.environment, auth.accessToken)
-    const notExpired = `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`
+    const notExpired = notExpiredFilter()
     const organizationIds = Array.from(new Set(scopes.map((scope) => scope.organizationId)))
     const departmentIds = Array.from(new Set(scopes.flatMap((scope) => (scope.departmentId ? [scope.departmentId] : []))))
     const teamIds = Array.from(new Set(scopes.flatMap((scope) => (scope.teamId ? [scope.teamId] : []))))

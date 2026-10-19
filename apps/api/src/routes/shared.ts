@@ -10,7 +10,8 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { permissionScopeKey, type PermissionScope, type RoleProvider } from '../auth.js'
 import { byteaToBuffer, createSecretBoxFromEnvironment, EmbeddedProviderSecretSchema, unwrapEmbeddedSecret } from '../secretBox.js'
-export { fetchAllRows, fetchAllRowsForIds } from '../supabase.js'
+import { notExpiredFilter } from '../supabase.js'
+export { fetchAllRows, fetchAllRowsForIds, notExpiredFilter } from '../supabase.js'
 import type { SupabaseClientFactory } from './context.js'
 
 // Von mehreren Route-Modulen und dem verbleibenden app.ts benoetigt (Richtlinien/Freigaben,
@@ -81,15 +82,6 @@ export async function resolveDirectoryScope(
     return { organizationId, departmentId }
   }
   return { organizationId }
-}
-
-// Eine befristete Mitgliedschaft oder Befreiung ist nach expires_at wirkungslos. Jede Abfrage auf
-// organization_memberships/department_memberships/team_memberships/member_review_trust, deren
-// Ergebnis eine Berechtigung traegt, filtert damit -- dieselbe Bedingung, die die authz-Funktionen
-// in SQL verwenden ("expires_at is null or expires_at > now()"). Als gemeinsamer Helfer, damit die
-// Stellen nicht auseinanderlaufen (beim Review dieses Pakets gefunden: drei Stellen ohne Filter).
-export function notExpiredFilter(): string {
-  return `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`
 }
 
 // Deckt dieselbe Mitgliedschaft ab wie authz.is_any_member_of_organization (RLS-Grundlage von

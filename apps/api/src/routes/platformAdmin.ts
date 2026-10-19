@@ -33,7 +33,7 @@ import { z } from 'zod'
 import { mapPlatformAdminInvitationRow } from '../apiMappers.js'
 import { generateInvitationToken, invitationCallbackUrls, sendInvitationThroughSupabaseAuth } from '../invitations.js'
 import type { ApiRouteContext } from './context.js'
-import { createAuditRecorder, fetchAllRows } from './shared.js'
+import { createAuditRecorder, fetchAllRows, notExpiredFilter } from './shared.js'
 import { ciphertextToBytea, createSecretBoxFromEnvironment } from '../secretBox.js'
 import { parseBlockingPublications } from '../moduleStatus.js'
 
@@ -467,7 +467,7 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
       .select('user_id')
       .eq('organization_id', params.id)
       .eq('role', 'organization_owner')
-      .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
+      .or(notExpiredFilter())
       .order('created_at')
       .limit(1)
       .maybeSingle()
