@@ -77,8 +77,7 @@ export function registerInvitationRoutes(app: FastifyInstance, context: ApiRoute
       return reply.code(201).send({ ...created.invitation, emailDelivered: created.emailDelivered })
     } catch (error) {
       if (error instanceof InvitationCreationError) {
-        const status = error.code === 'already_a_member' || error.code === 'invitation_already_open' ? 409 : error.code === 'resend_limit_reached' || error.code === 'resend_rate_limited' ? 429 : error.code === 'invite_not_allowed' ? 403 : 400
-        return reply.code(status).send({ error: error.code, correlationId: request.id })
+        return reply.code(error.status).send({ error: error.code, correlationId: request.id })
       }
       throw error
     }
