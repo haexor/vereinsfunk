@@ -136,7 +136,7 @@ export function registerDataSubjectRoutes(app: FastifyInstance, context: ApiRout
 
     const service = supabaseClients.forService()
     const [consents, accessLog] = await Promise.all([
-      service.from('consent_records').select('id, scope, origin, signed_at, valid_until, revoked_at, superseded_by').eq('directory_person_id', params.personId),
+      service.from('consent_records').select('id, scope, origin, signed_at, valid_until, revoked_at, superseded_by').eq('organization_id', organizationId).eq('directory_person_id', params.personId),
       // organization_id-Filter zusaetzlich zu entity_id, obwohl heute jeder Schreiber mit
       // entityType='directory_people' die Organisation bereits korrekt aus der Personenzeile
       // ableitet (adversariale Pruefung: kein aktuell ausnutzbarer Pfad, aber diese Zeile soll ihre
@@ -149,7 +149,7 @@ export function registerDataSubjectRoutes(app: FastifyInstance, context: ApiRout
     const mediaUsages = consentIds.length === 0
       ? []
       : await (async () => {
-          const result = await service.from('face_regions').select('media_asset_id, decision, obscuring_style, created_at').in('consent_record_id', consentIds)
+          const result = await service.from('face_regions').select('media_asset_id, decision, obscuring_style, created_at').eq('organization_id', organizationId).in('consent_record_id', consentIds)
           if (result.error) throw result.error
           return result.data
         })()
@@ -189,7 +189,7 @@ export function registerDataSubjectRoutes(app: FastifyInstance, context: ApiRout
     if (!(await requirePermission(request, reply, 'organization.manage', toPermissionScope(organizationId)))) return
 
     const service = supabaseClients.forService()
-    const consentCount = await service.from('consent_records').select('id', { count: 'exact', head: true }).eq('directory_person_id', params.personId)
+    const consentCount = await service.from('consent_records').select('id', { count: 'exact', head: true }).eq('organization_id', organizationId).eq('directory_person_id', params.personId)
     if (consentCount.error) throw consentCount.error
     // Identitaet ueberlebte bislang in zwei weiteren Spalten derselben Zeile, obwohl die Antwort
     // "Verknuepfung zur Person entfernt" das Gegenteil behauptete (adversariale Pruefung):
@@ -198,11 +198,11 @@ export function registerDataSubjectRoutes(app: FastifyInstance, context: ApiRout
     // der Person, sonst hat die FK bereits directory_person_id genullt und dieser Filter trifft
     // keine Zeile mehr.
     if ((consentCount.count ?? 0) > 0) {
-      const anonymized = await service.from('consent_records').update({ pseudonymous_subject_ref: null, signer_name: null }).eq('directory_person_id', params.personId)
+      const anonymized = await service.from('consent_records').update({ pseudonymous_subject_ref: null, signer_name: null }).eq('organization_id', organizationId).eq('directory_person_id', params.personId)
       if (anonymized.error) throw anonymized.error
     }
 
-    const deleted = await service.from('directory_people').delete().eq('id', params.personId)
+    const deleted = await service.from('directory_people').delete().eq('organization_id', organizationId).eq('id', params.personId)
     if (deleted.error) throw deleted.error
 
     await recordAuditEvent(request, { organizationId, action: 'data_subject.erased', entityType: 'directory_people', entityId: params.personId })

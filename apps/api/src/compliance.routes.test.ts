@@ -428,9 +428,21 @@ describe('Paket 020: Rechtliche Pflichten und Datenschutzbetrieb', () => {
       expect(uploadedBundle).not.toHaveProperty('guardianContact')
     })
 
+    // Protokolliert jede Schreiboperation samt Filtern -- die Service Role umgeht RLS, deshalb muss
+    // jede dieser Abfragen selbst auf organization_id eingeschraenkt sein.
+    function writeRecordingQuery(writes: { table: string; op: string; values?: Record<string, unknown>; filters: unknown[][] }[], table: string, op: string, values?: Record<string, unknown>) {
+      const entry: { table: string; op: string; values?: Record<string, unknown>; filters: unknown[][] } = { table, op, filters: [], ...(values ? { values } : {}) }
+      writes.push(entry)
+      const query: Record<string, unknown> = {
+        eq: (...args: unknown[]) => { entry.filters.push(['eq', ...args]); return query },
+        is: (...args: unknown[]) => { entry.filters.push(['is', ...args]); return query },
+        then: (resolve: (value: unknown) => unknown) => resolve({ error: null }),
+      }
+      return query
+    }
+
     it('erases the directory entry, anonymizes linked consent evidence, and names what is retained and why', async () => {
-      let directoryPeopleDeleted = false
-      let consentRecordsAnonymized: Record<string, unknown> | undefined
+      const writes: { table: string; op: string; values?: Record<string, unknown>; filters: unknown[][] }[] = []
       const clients: SupabaseClientFactory = {
         forUser: () => directoryPersonUserClient(),
         forService: () =>
@@ -439,10 +451,10 @@ describe('Paket 020: Rechtliche Pflichten und Datenschutzbetrieb', () => {
               if (table === 'consent_records') {
                 return {
                   select: () => chain({ data: null, error: null, count: 1 }),
-                  update: (row: Record<string, unknown>) => ({ eq: async () => { consentRecordsAnonymized = row; return { error: null } } }),
+                  update: (values: Record<string, unknown>) => writeRecordingQuery(writes, table, 'update', values),
                 }
               }
-              if (table === 'directory_people') return { delete: () => ({ eq: async () => { directoryPeopleDeleted = true; return { error: null } } }) }
+              if (table === 'directory_people') return { delete: () => writeRecordingQuery(writes, table, 'delete') }
               if (table === 'audit_events') return AUDIT_EVENTS_INSERT_OK
               throw new Error(`unexpected table: ${table}`)
             },
@@ -452,8 +464,10 @@ describe('Paket 020: Rechtliche Pflichten und Datenschutzbetrieb', () => {
       const token = await signAccessToken(USER_ID)
       const response = await app.inject({ method: 'POST', url: `/v1/data-subjects/${DIRECTORY_PERSON_ID}/erase`, headers: { authorization: `Bearer ${token}` } })
       expect(response.statusCode).toBe(200)
-      expect(directoryPeopleDeleted).toBe(true)
-      expect(consentRecordsAnonymized).toMatchObject({ pseudonymous_subject_ref: null, signer_name: null })
+      const anonymization = writes.find((write) => write.table === 'consent_records' && write.values && 'signer_name' in write.values)
+      expect(anonymization?.values).toEqual({ pseudonymous_subject_ref: null, signer_name: null })
+      expect(writes.find((write) => write.table === 'directory_people' && write.op === 'delete')).toBeDefined()
+      for (const write of writes) expect(write.filters).toContainEqual(['eq', 'organization_id', ORGANIZATION_ID])
       const body = response.json() as { erased: string[]; retained: { category: string }[] }
       expect(body.erased).toContain('Verzeichniseintrag')
       expect(body.erased).toContain('E-Mail-Adresse')
