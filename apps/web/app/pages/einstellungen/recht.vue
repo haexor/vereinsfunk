@@ -213,14 +213,18 @@ async function runRetention(dryRun: boolean) {
   if (dryRun) runningDry.value = true
   else runningReal.value = true
   runError.value = ''
+  // Ein scharfer Lauf hat unwiderruflich geloescht, sobald die erste Anfrage gelingt. Scheitert nur
+  // das Nachladen der Loeschliste, darf er nicht als fehlgeschlagen gemeldet werden.
+  let ran = false
   try {
     runResult.value = await api.request(`/v1/organizations/${organizationId.value}/retention/run`, { method: 'POST', body: { dryRun } }, RunRetentionResponseSchema)
     runWasDry.value = dryRun
+    ran = true
     if (!dryRun) {
       deletions.value = await api.request(`/v1/organizations/${organizationId.value}/retention-deletions`, {}, RetentionDeletionSchema.array())
     }
   } catch {
-    runError.value = 'Der Lauf konnte nicht ausgeführt werden.'
+    runError.value = ran ? 'Der Lauf wurde ausgeführt, die Löschliste konnte aber nicht aktualisiert werden. Bitte lade die Seite neu.' : 'Der Lauf konnte nicht ausgeführt werden.'
   } finally {
     runningDry.value = false
     runningReal.value = false

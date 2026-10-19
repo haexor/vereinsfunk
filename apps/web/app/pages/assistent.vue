@@ -172,6 +172,10 @@ async function send() {
   sending.value = true
   errorMessage.value = ''
   prompt.value = ''
+  // Ab hier ist die Nachricht gespeichert und der Agentenlauf erfolgt. Scheitert danach nur die
+  // Aktualisierung, darf die Seite den Text nicht als "keine Aktion ausgefuehrt" zuruecklegen --
+  // ein erneutes Senden verdoppelte Nachricht und Agentenlauf.
+  let delivered = false
   try {
     const detail = await api.request(
       `/v1/agent/conversations/${conversationId}/messages`,
@@ -179,6 +183,7 @@ async function send() {
       AgentConversationDetailSchema,
     )
     if (!isCurrent()) return
+    delivered = true
     conversation.value = detail.conversation
     conversations.value = [detail.conversation, ...conversations.value.filter((entry) => entry.id !== detail.conversation.id)]
     messages.value = detail.messages
@@ -193,8 +198,12 @@ async function send() {
     }
   } catch {
     if (!isCurrent()) return
-    prompt.value = content
-    errorMessage.value = 'Die Nachricht konnte nicht verarbeitet werden. Es wurde keine Aktion ausgeführt.'
+    if (delivered) {
+      errorMessage.value = 'Die Nachricht wurde verarbeitet, Vorschläge und Übersicht konnten aber nicht aktualisiert werden. Bitte lade die Seite neu.'
+    } else {
+      prompt.value = content
+      errorMessage.value = 'Die Nachricht konnte nicht verarbeitet werden. Es wurde keine Aktion ausgeführt.'
+    }
   } finally {
     if (isCurrent()) sending.value = false
   }
@@ -212,14 +221,26 @@ async function actOnProposal(proposal: AgentActionProposal, action: 'confirm' | 
   if (proposal.status !== 'pending' || actingProposalId.value) return
   actingProposalId.value = proposal.id
   errorMessage.value = ''
+  // Wie in send(): nach der Bestaetigung ist die Aktion ausgefuehrt. Ein Fehler der folgenden
+  // Aktualisierung darf sie nicht als "nicht bestaetigt" melden; die Karte uebernimmt deshalb sofort
+  // den zurueckgegebenen Stand, statt auf "offen" stehen zu bleiben.
+  let executed = false
   try {
-    await api.request(`/v1/agent/action-proposals/${proposal.id}/${action}`, { method: 'POST' }, AgentActionProposalSchema)
+    const updated = await api.request(`/v1/agent/action-proposals/${proposal.id}/${action}`, { method: 'POST' }, AgentActionProposalSchema)
+    executed = true
+    proposals.value = proposals.value.map((entry) => (entry.id === updated.id ? updated : entry))
     await Promise.all([
       refreshActionProposals(),
       scopeInput.value ? api.request('/v1/agent/workspace', { query: scopeInput.value }, AgentWorkspaceSchema).then((value) => { workspace.value = value }) : Promise.resolve(),
     ])
   } catch (error) {
-    errorMessage.value = action === 'confirm' ? actionConfirmationError(error) : 'Der Vorschlag konnte nicht verworfen werden.'
+    if (executed) {
+      errorMessage.value = action === 'confirm'
+        ? 'Die Aktion wurde bestätigt, die Übersicht konnte aber nicht aktualisiert werden. Bitte lade die Seite neu.'
+        : 'Der Vorschlag wurde verworfen, die Übersicht konnte aber nicht aktualisiert werden. Bitte lade die Seite neu.'
+    } else {
+      errorMessage.value = action === 'confirm' ? actionConfirmationError(error) : 'Der Vorschlag konnte nicht verworfen werden.'
+    }
   } finally {
     actingProposalId.value = null
   }
