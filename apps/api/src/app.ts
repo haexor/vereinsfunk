@@ -178,7 +178,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     forUser: (accessToken) => createUserClient(environment, accessToken),
     forService: () => createServiceClient(environment),
   }
-  const uploads = options.uploads ?? new SupabaseUploadService(() => supabaseClients.forService())
+  const uploads = options.uploads ?? new SupabaseUploadService(() => supabaseClients.forService(), app.log)
   const imageEffects =
     options.imageEffects ??
     (environment.IMAGE_EFFECTS_PROVIDER === 'gmic'
