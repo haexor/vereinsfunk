@@ -546,9 +546,13 @@ async function applyLogoWatermark(
 // rund zwoelfmal so gross zurueck (gemessen), und die Veroeffentlichungsziele deckeln Bilder bei
 // wenigen MB -- ausgerechnet die gestylten Fotos wuerden dort scheitern. Deshalb am Ende einmal
 // bewusst kodieren:
-//   - Alpha im Ergebnis (abgerundete Ecken, durchscheinende Rahmengrafik) -> PNG, alternativlos.
+//   - echte Transparenz im Ergebnis (abgerundete Ecken, Luecke im 'double'-Rahmen) -> PNG,
+//     alternativlos.
 //   - PNG-Quelle -> PNG, damit ein grafiknahes Original nicht in JPEG-Artefakte laeuft.
 //   - sonst JPEG.
+// Massgeblich ist, ob ein Pixel tatsaechlich durchscheint (stats().isOpaque), nicht hasAlpha:
+// jedes composite() (Logo, Rahmengrafik, Eckmarken, Konfetti) legt einen Alphakanal an, auch wenn
+// er ueberall deckend ist -- ein gerahmtes JPEG-Foto kam so als rund fuenfmal groesseres PNG zurueck.
 // Das macht das Ergebnis zugleich immer bucket-tauglich: 'rendered-media' laesst nur image/jpeg
 // und image/png zu, eine WebP-Quelle haette bis hierher ein image/webp-Upload und damit einen
 // Storage-Fehler ergeben. Liegt das Ergebnis schon im Zielformat vor, bleibt der Puffer wie er
@@ -558,7 +562,8 @@ async function encodeResult(
   sourceFormat: string | undefined,
 ): Promise<ImageStyleRenderResult> {
   const metadata = await limitedSharp(buffer).metadata()
-  const lossless = metadata.hasAlpha === true || sourceFormat === 'png'
+  const transparent = metadata.hasAlpha === true && !(await limitedSharp(buffer).stats()).isOpaque
+  const lossless = transparent || sourceFormat === 'png'
   const targetFormat = lossless ? 'png' : 'jpeg'
   const encoded =
     metadata.format === targetFormat

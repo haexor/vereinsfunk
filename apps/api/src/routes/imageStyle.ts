@@ -188,8 +188,8 @@ interface ImageStylePreviewResult {
 }
 
 // Die Vorschau wird angeschaut, nicht veroeffentlicht -- deshalb NICHT das Format aus encodeResult
-// (imageStyle.ts) uebernehmen: das waehlt fuer jedes Ergebnis mit Alpha (abgerundete Ecken,
-// 'double'/'festlich'-Rahmen, durchscheinende Rahmengrafik) verlustfreies PNG und liefert damit
+// (imageStyle.ts) uebernehmen: das waehlt fuer jedes Ergebnis mit echter Transparenz (abgerundete
+// Ecken, 'double'-Rahmen) und fuer jede PNG-Quelle verlustfreies PNG und liefert damit
 // gemessene 4,3 MB -- als Base64 im JSON-Body 5,7 MB, und das bei bis zu 30 Anfragen/Minute je
 // Nutzer. WebP q80 auf 1200 px Breite behaelt den Alphakanal, ist auf derselben Messung 0,26 MB
 // Base64 und immer noch doppelt so breit wie die Editorspalte je darstellt (~600 CSS-px).
