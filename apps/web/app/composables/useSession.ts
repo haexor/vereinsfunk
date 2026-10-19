@@ -1,3 +1,4 @@
+import { isAuthSessionMissingError } from '@supabase/supabase-js'
 import type { Role } from '@vereinsfunk/authorization'
 import { MembershipScopesSchema, PlatformAdminStatusSchema } from '@vereinsfunk/contracts'
 
@@ -63,7 +64,10 @@ function useSessionGeneration() {
 async function loadSession(state: ReturnType<typeof useSessionState>, generation: ReturnType<typeof useSessionGeneration>, expectedGeneration: number) {
   const supabase = useSupabaseClient()
   const { data: userResult, error: userError } = await supabase.auth.getUser()
-  if (userError) throw userError
+  // Ohne oder mit serverseitig beendeter Sitzung meldet auth-js AuthSessionMissingError statt eines
+  // leeren Ergebnisses. Das ist "abgemeldet", kein Ladefehler -- geworfen braeche die Middleware
+  // mit einem 500er ab, statt auf /anmelden weiterzuleiten.
+  if (userError && !isAuthSessionMissingError(userError)) throw userError
   if (!userResult.user) {
     if (generation.value === expectedGeneration) state.value = null
     return
