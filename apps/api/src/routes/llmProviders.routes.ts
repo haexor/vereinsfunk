@@ -229,7 +229,13 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
     const params = z.object({ id: UuidSchema }).parse(request.params)
     const service = supabaseClients.forService()
     const del = await service.from('llm_provider_configurations').delete().eq('id', params.id)
-    if (del.error) throw del.error
+    if (del.error) {
+      // generation_candidates und der Herkunftsnachweis der Beitragsfassungen verweisen mit on
+      // delete restrict auf die Konfiguration: ein bereits genutzter Provider laesst sich nur
+      // deaktivieren, nicht loeschen.
+      if (del.error.code === '23503') return reply.code(409).send({ error: 'llm_provider_in_use', correlationId: request.id })
+      throw del.error
+    }
     return reply.code(204).send()
   })
 

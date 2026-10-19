@@ -831,6 +831,27 @@ describe('platform administration', () => {
     expect(response.json()).toMatchObject({ protocol: 'anthropic', hasSecret: true })
   })
 
+  // generation_candidates und der Herkunftsnachweis halten die Konfiguration per on delete restrict.
+  it('maps deleting a provider that generated content to 409 instead of 500', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({
+        from: (table: string) => {
+          if (table !== 'llm_provider_configurations') throw new Error(`unexpected table in test fake: ${table}`)
+          return { delete: () => ({ eq: async () => ({ error: { code: '23503', message: 'update or delete on table "llm_provider_configurations" violates foreign key constraint' } }) }) }
+        },
+      }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'DELETE', url: '/v1/llm-providers/a0000000-0000-4000-8000-000000000001',
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'llm_provider_in_use' })
+  })
+
   it('refuses to list models behind a base url that points into the internal network', async () => {
     // Die Adresse kommt aus dem Formular: ohne diese Pruefung waere die Modell-Abfrage ein
     // Server-zu-Server-Proxy ins eigene Netz, auch fuer eine Plattform-Administration.
