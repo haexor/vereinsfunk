@@ -31,4 +31,15 @@ describe('Dashboard', () => {
     expect(page).not.toContain('$fetch<{ completedSteps: string[] }>')
     expect(page).toContain('.then((response) => OnboardingStateSchema.parse(response))')
   })
+
+  it('zeigt in "Aktuelle Beitraege" die geladenen Beitraege statt eines festen Leertexts', () => {
+    const page = readFileSync(join(PAGES_DIR, 'index.vue'), 'utf8')
+
+    // Die Karte behauptete immer "Es liegen noch keine Beitraege vor", auch bei vorhandenen.
+    expect(page).not.toContain('Diese Liste befüllt sich, sobald echte Beiträge')
+    expect(page).toContain("recentPosts.value = posts.slice(0, RECENT_POSTS_LIMIT)")
+    expect(page).toContain(".order('created_at', { ascending: false })")
+    expect(page).toContain('v-for="post in recentPosts"')
+    expect(page).toContain('v-else-if="!loadingDashboard"')
+  })
 })

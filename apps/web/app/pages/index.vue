@@ -82,7 +82,11 @@ interface DashboardPost {
   id: string
   status: PostStatus
   scheduled_for: string | null
+  created_at: string
 }
+// So viele der zuletzt angelegten Beitraege zeigt die Karte "Aktuelle Beitraege"; alle weiteren
+// stehen in /beitraege.
+const RECENT_POSTS_LIMIT = 5
 
 const loadingDashboard = ref(true)
 const dashboardError = ref(false)
@@ -90,6 +94,7 @@ const stats = ref<{ published: number; openApprovals: number; scheduledNext7Days
   null,
 )
 const weekDays = ref<WeekDay[]>([])
+const recentPosts = ref<DashboardPost[]>([])
 const nextSteps = ref<{ key: string; label: string; href: string }[]>([])
 const suggestions = ref<ContentSuggestion[]>([])
 const suggestionsLoaded = ref(false)
@@ -134,8 +139,9 @@ async function loadDashboard() {
 
   let postsQuery = supabase
     .from('posts')
-    .select('id, status, scheduled_for')
+    .select('id, status, scheduled_for, created_at')
     .eq('organization_id', organizationId)
+    .order('created_at', { ascending: false })
   if (departmentId) postsQuery = postsQuery.eq('department_id', departmentId)
 
   const [postsResult, brandResult, profileResult] = await Promise.all([
@@ -174,6 +180,7 @@ async function loadDashboard() {
     }).length,
   }
   weekDays.value = buildWeek(timezone.value, posts)
+  recentPosts.value = posts.slice(0, RECENT_POSTS_LIMIT)
 
   const onboarding = await $fetch<unknown>(`${config.public.apiBase}/v1/onboarding`, {
     headers: await useAuthHeader(),
@@ -367,7 +374,7 @@ await Promise.all([loadDashboard(), loadSuggestions()])
           >
             <div class="min-w-0">
               <h2 class="font-display text-base font-bold tracking-[-.02em]">Aktuelle Beiträge</h2>
-              <p class="mt-0.5 text-[11px] text-[#7a817d]">Eure nächsten Inhalte auf einen Blick</p>
+              <p class="mt-0.5 text-[11px] text-[#7a817d]">Eure zuletzt angelegten Inhalte auf einen Blick</p>
             </div>
             <NuxtLink
               to="/beitraege"
@@ -375,9 +382,26 @@ await Promise.all([loadDashboard(), loadSuggestions()])
               >Alle ansehen <ArrowRight :size="13"
             /></NuxtLink>
           </div>
-          <div class="break-words p-8 text-center text-xs text-[#7b827d]">
-            Es liegen noch keine Beiträge vor. Diese Liste befüllt sich, sobald echte Beiträge
-            erstellt werden.
+          <div v-if="dashboardError" class="p-8 text-center text-xs font-semibold text-red-700">
+            Die Beiträge konnten nicht geladen werden.
+          </div>
+          <ul v-else-if="recentPosts.length > 0" class="divide-y divide-[#ecece5]">
+            <li
+              v-for="post in recentPosts"
+              :key="post.id"
+              class="flex items-center justify-between gap-3 px-5 py-3 text-xs sm:px-6"
+            >
+              <span class="font-semibold capitalize text-ink">{{
+                post.status.replaceAll('_', ' ')
+              }}</span>
+              <span class="shrink-0 text-[#7b827d]">{{ occursLabel(post.created_at) }}</span>
+            </li>
+          </ul>
+          <div
+            v-else-if="!loadingDashboard"
+            class="break-words p-8 text-center text-xs text-[#7b827d]"
+          >
+            Es liegen noch keine Beiträge vor.
           </div>
         </article>
 
