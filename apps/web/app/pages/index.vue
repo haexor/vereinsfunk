@@ -12,6 +12,7 @@ import {
   X,
 } from '@lucide/vue'
 import { ContentSuggestionsResponseSchema, type ContentSuggestion } from '@vereinsfunk/contracts'
+import { localDateKey } from '../utils/memberDates'
 
 const config = useRuntimeConfig()
 const session = await useSession()
@@ -86,15 +87,6 @@ const weekDays = ref<WeekDay[]>([])
 const nextSteps = ref<{ key: string; label: string; href: string }[]>([])
 const suggestions = ref<ContentSuggestion[]>([])
 const suggestionsLoaded = ref(false)
-
-function localDateKey(date: Date, timeZone: string) {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(date)
-}
 
 function buildWeek(timeZone: string, posts: readonly DashboardPost[]): WeekDay[] {
   const todayKey = localDateKey(new Date(), timeZone)

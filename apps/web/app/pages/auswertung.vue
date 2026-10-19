@@ -14,6 +14,7 @@ import {
   type AnalyticsTimeseriesPoint,
 } from '@vereinsfunk/contracts'
 import { resolveAnalyticsRange, type AnalyticsRangePreset } from '../utils/analyticsRange'
+import { localDateKey } from '../utils/memberDates'
 
 // Paket 016: Auswertung: interne Kennzahlen. Alle vier Endpunkte berechnen live aus den
 // Rohtabellen (siehe plans/016-auswertung-interne-kennzahlen.md, "Abweichungen vom Plan" Punkt 4)
@@ -28,9 +29,6 @@ const activeOrganization = computed(() => session.value?.scopes.find((item) => i
 const timezone = computed(() => activeOrganization.value?.organizationTimezone ?? 'Europe/Berlin')
 const departmentName = computed(() => activeOrganization.value?.departments.find((item) => item.id === scope.value?.departmentId)?.name ?? null)
 
-function localDateKey(date: Date, timeZone: string): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date)
-}
 const rangePreset = ref<AnalyticsRangePreset>('30d')
 const customFrom = ref('')
 const customTo = ref('')
