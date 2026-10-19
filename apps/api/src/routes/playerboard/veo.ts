@@ -230,9 +230,15 @@ export function registerPlayerboardVeoRoutes(app: FastifyInstance, context: ApiR
       entityType: 'integration_source', entityId: sourceId,
       metadata: { teamId: input.teamId, veoClubSlug: choice.clubSlug, veoTeamSlug: choice.teamSlug },
     })
-    await enqueueIntegrationSync(service, {
-      organizationId: scope.organizationId, sourceId, idempotencyKey: `link:${randomUUID()}`, triggeredBy: request.auth!.userId,
-    })
+    // Die Verbindung ist bereits gespeichert und auditiert. Scheitert nur das Einreihen des ersten
+    // Abgleichs, bleibt es bei 201; der Abgleich laesst sich manuell nachholen.
+    try {
+      await enqueueIntegrationSync(service, {
+        organizationId: scope.organizationId, sourceId, idempotencyKey: `link:${randomUUID()}`, triggeredBy: request.auth!.userId,
+      })
+    } catch (error) {
+      request.log.error({ err: error, correlationId: request.id }, 'playerboard veo first sync could not be queued')
+    }
     return reply.code(201).send(await loadStatus(service, input.teamId))
   })
 
