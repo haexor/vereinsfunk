@@ -1620,7 +1620,7 @@ describe('POST /v1/media/:assetId/complete', () => {
     expect(response.json()).toMatchObject({ error: 'media_asset_not_found' })
   })
 
-  it('rejects completion without post.edit in the asset’s own department', async () => {
+  it('rejects completion without post.create in the asset’s own department', async () => {
     const clients: SupabaseClientFactory = {
       forUser: () => ({}) as unknown as SupabaseClient,
       forService: () => ({ from: (table: string) => {
@@ -1639,7 +1639,9 @@ describe('POST /v1/media/:assetId/complete', () => {
     expect(response.statusCode).toBe(403)
   })
 
-  it('delegates to uploads.complete once the asset’s own department grants post.edit', async () => {
+  // Regression: der Start verlangt post.create, der Abschluss verlangte post.edit -- ein contributor
+  // bekam die signierte URL, lud hoch und scheiterte danach mit 403.
+  it('delegates to uploads.complete for a contributor who may start uploads in the asset’s department', async () => {
     let completeCalledWith: unknown
     const clients: SupabaseClientFactory = {
       forUser: () => ({}) as unknown as SupabaseClient,
@@ -1649,7 +1651,7 @@ describe('POST /v1/media/:assetId/complete', () => {
       } }) as unknown as SupabaseClient,
     }
     const app = await startApp({
-      roleProvider: grantingRoleProvider, supabaseClients: clients,
+      roleProvider: { async rolesForScope() { return ['contributor'] } }, supabaseClients: clients,
       uploads: { create: async () => { throw new Error('create should not be reached') }, complete: async (input) => { completeCalledWith = input; return { accepted: true } } },
     })
     const response = await app.inject({

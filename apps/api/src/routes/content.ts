@@ -764,15 +764,16 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ assetId: UuidSchema }).parse(request.params); const body = z.object({ sha256: z.string().regex(/^[a-f0-9]{64}$/i) }).parse(request.body)
     // Zugehoerigkeit ausschliesslich per Service Client nachschlagen, nie per Nutzer-Client:
-    // media_assets_select gewaehrt nur is_department_member, waehrend das Abschliessen 'post.edit'
-    // verlangt -- reserve_storage_upload() legt die Zeile synchron an (Paket 021), assetId ist ab
-    // dann immer bekannt.
+    // media_assets_select gewaehrt nur is_department_member -- reserve_storage_upload() legt die
+    // Zeile synchron an (Paket 021), assetId ist ab dann immer bekannt. Dieselbe Berechtigung wie
+    // beim Start: mit 'post.edit' bekam ein contributor die signierte URL, scheiterte nach dem
+    // Hochladen aber mit 403, und das Asset blieb mit reserviertem Kontingent auf 'initiated'.
     const service = supabaseClients.forService()
     const asset = await service.from('media_assets').select('organization_id, department_id').eq('id', params.assetId).maybeSingle()
     if (asset.error) throw asset.error
     if (!asset.data) return reply.code(404).send({ error: 'media_asset_not_found', correlationId: request.id })
     const parsedAsset = parseSupabaseData(CompletionAssetScopeSchema, asset.data)
-    if (!(await requirePermission(request, reply, 'post.edit', toPermissionScope(parsedAsset.organization_id, parsedAsset.department_id)))) return
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(parsedAsset.organization_id, parsedAsset.department_id)))) return
     return reply.code(202).send(await uploads.complete({ ...params, ...body }))
   })
   // Signed URLs koennen nicht ueber den Nutzer-Client erzeugt werden (kein Storage-Grant fuer
