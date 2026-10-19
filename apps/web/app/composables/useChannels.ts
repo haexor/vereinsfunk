@@ -1,17 +1,21 @@
 import { z } from 'zod'
+import { ApiRequestError } from '../utils/apiClient'
 import { optionalNumber } from '../utils/numberInput'
 import {
   ChannelPolicySchema,
   MemberSchema,
   OAuthPendingConnectionSchema,
   SocialConnectionSchema,
+  UuidSchema,
   type ChannelOwnerScope,
   type SocialConnection,
   type SocialPlatform,
 } from '@vereinsfunk/contracts'
 
 const DepartmentRowSchema = z.object({ id: z.string(), name: z.string() })
-const AuthorizationUrlSchema = z.object({ authorizationUrl: z.url() })
+// Das Ziel landet ungeprueft in window.location.href -- nur https, sonst liefe etwa eine
+// javascript:-URL im Kontext der App.
+const AuthorizationUrlSchema = z.object({ authorizationUrl: z.url({ protocol: /^https$/ }) })
 
 export async function useChannels() {
   const api = useApiClient()
@@ -44,17 +48,20 @@ export async function useChannels() {
     return typeof code === 'string' ? (oauthErrorMessages[code] ?? 'Die Verbindung ist fehlgeschlagen.') : ''
   })
 
-  async function load() {
-    if (!organizationId.value) { loading.value = false; return }
+  // Latest-wins: ein Vereinswechsel A -> B laedt neu, und eine spaete Antwort fuer A darf weder
+  // A's Kanaele unter B zeigen noch B's Ladezustand vorzeitig beenden.
+  const { reload: load, ready } = useScopedLoad(() => organizationId.value, async (requestedOrganizationId, isLatest) => {
+    if (!requestedOrganizationId) { loading.value = false; return }
     loading.value = true
     errorMessage.value = ''
     try {
       const [channelsResponse, departmentsResult, policyResponse, membersResponse] = await Promise.all([
-        api.request(`/v1/organizations/${organizationId.value}/channels`, {}, SocialConnectionSchema.array()),
-        useSupabaseClient().from('departments').select('id, name').eq('organization_id', organizationId.value).is('archived_at', null).order('name'),
-        api.request(`/v1/organizations/${organizationId.value}/channel-policy`, {}, ChannelPolicySchema),
-        api.request(`/v1/organizations/${organizationId.value}/members`, {}, MemberSchema.array()),
+        api.request(`/v1/organizations/${requestedOrganizationId}/channels`, {}, SocialConnectionSchema.array()),
+        useSupabaseClient().from('departments').select('id, name').eq('organization_id', requestedOrganizationId).is('archived_at', null).order('name'),
+        api.request(`/v1/organizations/${requestedOrganizationId}/channel-policy`, {}, ChannelPolicySchema),
+        api.request(`/v1/organizations/${requestedOrganizationId}/members`, {}, MemberSchema.array()),
       ])
+      if (!isLatest()) return
       const parsedDepartments = DepartmentRowSchema.array().safeParse(departmentsResult.data)
       if (departmentsResult.error || !parsedDepartments.success) {
         errorMessage.value = 'Die Kanäle konnten nicht geladen werden.'
@@ -65,14 +72,14 @@ export async function useChannels() {
       channelPolicy.value = policyResponse
       members.value = membersResponse
     } catch {
-      errorMessage.value = 'Die Kanäle konnten nicht geladen werden.'
+      if (isLatest()) errorMessage.value = 'Die Kanäle konnten nicht geladen werden.'
     } finally {
-      loading.value = false
+      if (isLatest()) loading.value = false
     }
-  }
-  await load()
+  })
+  await ready
 
-  watch(organizationId, () => { actionError.value = ''; void load() })
+  watch(organizationId, () => { actionError.value = '' })
 
   function departmentName(departmentId: string | null): string {
     if (!departmentId) return 'Verein'
@@ -134,14 +141,19 @@ export async function useChannels() {
       websiteForm.maxCharacters = ''
       await load()
     } catch (error) {
-      actionError.value = errorCodeOf(error) === 'website_url_already_connected'
+      actionError.value = error instanceof ApiRequestError && error.code === 'website_url_already_connected'
         ? 'Diese Adresse ist bereits als Kanal verbunden.'
         : 'Der Kanal konnte nicht angelegt werden. Bitte Adresse prüfen.'
     } finally {
       creatingWebsite.value = false
     }
   }
-  const pendingId = computed(() => (typeof route.query.pending === 'string' ? route.query.pending : null))
+  // Landet als Pfadsegment in der API-URL -- ohne UUID-Pruefung lenkte ein praeparierter Link mit
+  // "../" den Aufruf samt Token auf eine andere Route.
+  const pendingId = computed(() => {
+    const parsed = UuidSchema.safeParse(route.query.pending)
+    return parsed.success ? parsed.data : null
+  })
   const pendingConnection = ref<z.infer<typeof OAuthPendingConnectionSchema> | null>(null)
   const pendingLoading = ref(false)
   const pendingSelecting = ref<string | null>(null)
@@ -241,9 +253,6 @@ export async function useChannels() {
     void updateChannel(channel, { purpose: value.length > 0 ? value : null })
   }
 
-  function errorCodeOf(error: unknown): string | undefined {
-    return (error as { data?: { error?: string } })?.data?.error
-  }
   const editorialImprintUrlDraft = reactive<Record<string, string>>({})
   const editorialPrivacyUrlDraft = reactive<Record<string, string>>({})
   const editorialResponsibleProfileIdDraft = reactive<Record<string, string>>({})
@@ -273,7 +282,7 @@ export async function useChannels() {
       })
       await load()
     } catch (error) {
-      editorialErrorByChannel[channel.id] = errorCodeOf(error) === 'editorial_responsible_not_a_member'
+      editorialErrorByChannel[channel.id] = error instanceof ApiRequestError && error.code === 'editorial_responsible_not_a_member'
         ? 'Diese Person ist kein Mitglied dieses Vereins.'
         : 'Die presserechtlichen Angaben konnten nicht gespeichert werden.'
     } finally {
