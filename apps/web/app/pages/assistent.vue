@@ -91,10 +91,15 @@ async function initialize() {
         cachedConversation.value = null
       }
     }
-    const createdConversation = await api.request('/v1/agent/conversations', { method: 'POST', body: input }, AgentConversationSchema)
+    // useState ueberlebt keinen vollen Seitenaufruf. Statt dann jedes Mal eine weitere leere
+    // Unterhaltung anzulegen (leere Eintraege im Verlauf), wird eine noch unbenutzte wieder
+    // aufgenommen: last_activity_at bleibt bis zur ersten Nachricht auf dem Anlagezeitpunkt
+    // (append_agent_conversation_messages setzt es auf den Zeitpunkt der Antwort).
+    const unusedConversation = loadedConversations.find((entry) => entry.lastActivityAt === entry.createdAt)
+    const createdConversation = unusedConversation ?? await api.request('/v1/agent/conversations', { method: 'POST', body: input }, AgentConversationSchema)
     if (!isCurrent()) return
     conversation.value = createdConversation
-    conversations.value = [createdConversation, ...conversations.value]
+    if (!unusedConversation) conversations.value = [createdConversation, ...conversations.value]
     cachedConversation.value = { scopeKey: expectedScopeKey, id: createdConversation.id }
     messages.value = [{ id: `welcome-${createdConversation.id}`, conversationId: createdConversation.id, organizationId: createdConversation.organizationId, role: 'assistant', content: `Hallo! Ich habe den Überblick zu ${scopeLabel.value} geladen. Wobei soll ich dir helfen?`, mediaAssetIds: [], createdAt: new Date().toISOString() }]
   } catch {
