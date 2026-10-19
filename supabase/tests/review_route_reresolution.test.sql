@@ -42,8 +42,8 @@ insert into public.policy_reviewers (organization_id, policy_settings_id, kind, 
    (select id from public.policy_settings where organization_id = '65000000-1000-4000-8000-000000000001' and scope = 'department'),
    'user', '65000000-0000-4000-8000-000000000002', '65000000-0000-4000-8000-000000000003');
 
-insert into public.posts (id, organization_id, department_id, status, created_by) values
-  ('65000000-2000-4000-8000-000000000001', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'draft_ready', '65000000-0000-4000-8000-000000000001');
+insert into public.posts (id, organization_id, department_id, status, created_by, current_version_id) values
+  ('65000000-2000-4000-8000-000000000001', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'draft_ready', '65000000-0000-4000-8000-000000000001', '65000000-3000-4000-8000-000000000001');
 insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type, created_by_user_id) values
   ('65000000-3000-4000-8000-000000000001', '65000000-1000-4000-8000-000000000001', '65000000-2000-4000-8000-000000000001', 1, '{}', '{}', 'user', '65000000-0000-4000-8000-000000000001');
 
@@ -127,8 +127,8 @@ select throws_ok(
 
 -- Ein zweiter Beitrag fuer den eigentlichen Neuaufloesungs-Testlauf.
 set local role postgres;
-insert into public.posts (id, organization_id, department_id, status, created_by) values
-  ('65000000-2000-4000-8000-000000000002', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'draft_ready', '65000000-0000-4000-8000-000000000001');
+insert into public.posts (id, organization_id, department_id, status, created_by, current_version_id) values
+  ('65000000-2000-4000-8000-000000000002', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'draft_ready', '65000000-0000-4000-8000-000000000001', '65000000-3000-4000-8000-000000000002');
 insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type, created_by_user_id) values
   ('65000000-3000-4000-8000-000000000002', '65000000-1000-4000-8000-000000000001', '65000000-2000-4000-8000-000000000002', 1, '{}', '{}', 'user', '65000000-0000-4000-8000-000000000001');
 set local role authenticated;
@@ -139,8 +139,8 @@ select public.request_approval('65000000-3000-4000-8000-000000000002');
 -- Einreichung DURCH die Abteilungsleitung selbst, damit department.manage tatsaechlich vorliegt und
 -- der Fehler nicht schon vorher an insufficient_permission haengen bleibt.
 set local role postgres;
-insert into public.posts (id, organization_id, department_id, status, created_by) values
-  ('65000000-2000-4000-8000-000000000007', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'draft_ready', '65000000-0000-4000-8000-000000000003');
+insert into public.posts (id, organization_id, department_id, status, created_by, current_version_id) values
+  ('65000000-2000-4000-8000-000000000007', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'draft_ready', '65000000-0000-4000-8000-000000000003', '65000000-3000-4000-8000-000000000007');
 insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type, created_by_user_id) values
   ('65000000-3000-4000-8000-000000000007', '65000000-1000-4000-8000-000000000001', '65000000-2000-4000-8000-000000000007', 1, '{}', '{}', 'user', '65000000-0000-4000-8000-000000000003');
 set local role authenticated;
@@ -223,8 +223,8 @@ select is(
 
 -- 19: eine rejected-Stufe schliesst die Neuaufloesung ganz aus.
 set local role postgres;
-insert into public.posts (id, organization_id, department_id, status, created_by) values
-  ('65000000-2000-4000-8000-000000000003', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'draft_ready', '65000000-0000-4000-8000-000000000001');
+insert into public.posts (id, organization_id, department_id, status, created_by, current_version_id) values
+  ('65000000-2000-4000-8000-000000000003', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'draft_ready', '65000000-0000-4000-8000-000000000001', '65000000-3000-4000-8000-000000000003');
 insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type, created_by_user_id) values
   ('65000000-3000-4000-8000-000000000003', '65000000-1000-4000-8000-000000000001', '65000000-2000-4000-8000-000000000003', 1, '{}', '{}', 'user', '65000000-0000-4000-8000-000000000001');
 set local role authenticated;
@@ -247,8 +247,8 @@ select throws_ok(
 -- 20-22: invalidated_at wirksam machen -- ein invalidierter Medien-Zustand macht eine sonst offene
 -- Stufe unentscheidbar, eine Neuaufloesung setzt invalidated_at zurueck.
 set local role postgres;
-insert into public.posts (id, organization_id, department_id, status, created_by) values
-  ('65000000-2000-4000-8000-000000000004', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'draft_ready', '65000000-0000-4000-8000-000000000001');
+insert into public.posts (id, organization_id, department_id, status, created_by, current_version_id) values
+  ('65000000-2000-4000-8000-000000000004', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'draft_ready', '65000000-0000-4000-8000-000000000001', '65000000-3000-4000-8000-000000000004');
 insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type, created_by_user_id) values
   ('65000000-3000-4000-8000-000000000004', '65000000-1000-4000-8000-000000000001', '65000000-2000-4000-8000-000000000004', 1, '{}', '{}', 'user', '65000000-0000-4000-8000-000000000001');
 set local role authenticated;
@@ -281,8 +281,8 @@ select ok(
 set local role postgres;
 update public.policy_settings set review_minimum_approvals = 2
   where organization_id = '65000000-1000-4000-8000-000000000001' and scope = 'department';
-insert into public.posts (id, organization_id, department_id, status, created_by) values
-  ('65000000-2000-4000-8000-000000000005', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'draft_ready', '65000000-0000-4000-8000-000000000001');
+insert into public.posts (id, organization_id, department_id, status, created_by, current_version_id) values
+  ('65000000-2000-4000-8000-000000000005', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'draft_ready', '65000000-0000-4000-8000-000000000001', '65000000-3000-4000-8000-000000000005');
 insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type, created_by_user_id) values
   ('65000000-3000-4000-8000-000000000005', '65000000-1000-4000-8000-000000000001', '65000000-2000-4000-8000-000000000005', 1, '{}', '{}', 'user', '65000000-0000-4000-8000-000000000001');
 -- Zweite benannte Pruefstelle: an dieser Stelle hat die verwaltende Person (...003, department_admin)
@@ -362,8 +362,8 @@ select throws_ok(
 -- 30-33: dieselbe Zuordnungsschluessel-Logik: eine im neuen Routing entfallene Ebene ohne
 -- Entscheidung verschwindet ersatzlos, eine neu hinzugekommene Ebene wird angelegt.
 set local role postgres;
-insert into public.posts (id, organization_id, department_id, status, created_by) values
-  ('65000000-2000-4000-8000-000000000006', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'draft_ready', '65000000-0000-4000-8000-000000000001');
+insert into public.posts (id, organization_id, department_id, status, created_by, current_version_id) values
+  ('65000000-2000-4000-8000-000000000006', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'draft_ready', '65000000-0000-4000-8000-000000000001', '65000000-3000-4000-8000-000000000006');
 insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type, created_by_user_id) values
   ('65000000-3000-4000-8000-000000000006', '65000000-1000-4000-8000-000000000001', '65000000-2000-4000-8000-000000000006', 1, '{}', '{}', 'user', '65000000-0000-4000-8000-000000000001');
 set local role authenticated;
@@ -401,8 +401,8 @@ select is(
 -- welche der beiden gemeint ist, sondern bricht ab (Plan, "Schluessel doppelt"). resolve_review_route
 -- kann so etwas selbst nicht erzeugen; von Hand simuliert, um den Abbruch zu pruefen.
 set local role postgres;
-insert into public.posts (id, organization_id, department_id, status, created_by) values
-  ('65000000-2000-4000-8000-000000000008', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'draft_ready', '65000000-0000-4000-8000-000000000001');
+insert into public.posts (id, organization_id, department_id, status, created_by, current_version_id) values
+  ('65000000-2000-4000-8000-000000000008', '65000000-1000-4000-8000-000000000001', '65000000-1100-4000-8000-000000000001', 'draft_ready', '65000000-0000-4000-8000-000000000001', '65000000-3000-4000-8000-000000000008');
 insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type, created_by_user_id) values
   ('65000000-3000-4000-8000-000000000008', '65000000-1000-4000-8000-000000000001', '65000000-2000-4000-8000-000000000008', 1, '{}', '{}', 'user', '65000000-0000-4000-8000-000000000001');
 set local role authenticated;
@@ -435,8 +435,8 @@ insert into public.policy_reviewers (organization_id, policy_settings_id, kind, 
   ('65000000-1000-4000-8000-000000000001',
    (select id from public.policy_settings where organization_id = '65000000-1000-4000-8000-000000000001' and scope = 'organization'),
    'user', '65000000-0000-4000-8000-000000000002', '65000000-0000-4000-8000-000000000004');
-insert into public.posts (id, organization_id, department_id, status, created_by) values
-  ('65000000-2000-4000-8000-000000000009', '65000000-1000-4000-8000-000000000001', null, 'draft_ready', '65000000-0000-4000-8000-000000000008');
+insert into public.posts (id, organization_id, department_id, status, created_by, current_version_id) values
+  ('65000000-2000-4000-8000-000000000009', '65000000-1000-4000-8000-000000000001', null, 'draft_ready', '65000000-0000-4000-8000-000000000008', '65000000-3000-4000-8000-000000000009');
 insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type, created_by_user_id) values
   ('65000000-3000-4000-8000-000000000009', '65000000-1000-4000-8000-000000000001', '65000000-2000-4000-8000-000000000009', 1, '{}', '{}', 'user', '65000000-0000-4000-8000-000000000008');
 set local role authenticated;

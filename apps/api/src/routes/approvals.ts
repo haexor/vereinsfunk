@@ -85,6 +85,8 @@ export function registerApprovalRoutes(app: FastifyInstance, context: ApiRouteCo
     if (rpc.error) {
       if (rpc.error.message.includes('insufficient_permission')) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
       if (rpc.error.message.includes('invalid_status')) return reply.code(409).send({ error: 'invalid_status', correlationId: request.id })
+      // 2026101910: eine alte Version darf keine Freigabe fuer den Post anstossen.
+      if (rpc.error.message.includes('version_not_current')) return reply.code(409).send({ error: 'version_not_current', correlationId: request.id })
       if (rpc.error.message.includes('minor_stage_required')) return reply.code(422).send({ error: 'minor_stage_required', correlationId: request.id })
       if (rpc.error.message.includes('review_required')) return reply.code(422).send({ error: 'review_required', correlationId: request.id })
       if (rpc.error.message.includes('invalid_reviewer_snapshot')) return reply.code(422).send({ error: 'invalid_reviewer_snapshot', correlationId: request.id })

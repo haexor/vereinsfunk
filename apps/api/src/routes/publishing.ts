@@ -41,6 +41,9 @@ export function registerPublishingRoutes(app: FastifyInstance, context: ApiRoute
       if (rpc.error.message.includes('insufficient_permission')) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
       if (rpc.error.message.includes('not_found')) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
       if (rpc.error.message.includes('invalid_status')) return reply.code(409).send({ error: 'invalid_status', correlationId: request.id })
+      // 2026101910: nur die aktuelle Version mit nicht invalidierter Freigabe ist einplanbar.
+      if (rpc.error.message.includes('version_not_current')) return reply.code(409).send({ error: 'version_not_current', correlationId: request.id })
+      if (rpc.error.message.includes('approval_invalidated')) return reply.code(409).send({ error: 'approval_invalidated', correlationId: request.id })
       if (rpc.error.message.includes('channel_not_allowed')) return reply.code(422).send({ error: 'channel_not_allowed', correlationId: request.id })
       // Plan 039: ein Blog-Kanal ist noch kein Veroeffentlichungsziel -- publications_platform_check
       // laesst 'website' bewusst nicht zu, bis das Auslieferungspaket ihn bespielen kann. Ohne
