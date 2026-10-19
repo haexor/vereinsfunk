@@ -1,4 +1,5 @@
 import {
+  AGENT_CONVERSATION_MESSAGE_WINDOW,
   AgentConversationDetailSchema,
   AgentConversationSchema,
   AgentActionProposalSchema,
@@ -424,16 +425,18 @@ async function loadConversation(client: SupabaseClient, id: string): Promise<Age
   return result.data ? mapConversation(result.data) : null
 }
 
+// Die juengsten Nachrichten, chronologisch sortiert. Absteigend laden und danach umdrehen: mit
+// aufsteigender Sortierung plus limit saehe eine lange Unterhaltung fuer immer nur ihren Anfang.
 async function loadMessages(client: SupabaseClient, conversation: AgentConversation): Promise<AgentMessage[]> {
   const result = await client
     .from('agent_messages')
     .select('id, organization_id, conversation_id, role, content, created_at')
     .eq('organization_id', conversation.organizationId)
     .eq('conversation_id', conversation.id)
-    .order('created_at', { ascending: true })
-    .limit(100)
+    .order('created_at', { ascending: false })
+    .limit(AGENT_CONVERSATION_MESSAGE_WINDOW)
   if (result.error) throw result.error
-  const rows = result.data ?? []
+  const rows = [...(result.data ?? [])].reverse()
   if (rows.length === 0) return []
   const references = await client
     .from('agent_message_media_references')
@@ -1084,7 +1087,7 @@ export function registerAgentRoutes(
     })
     return reply.code(201).send(AgentConversationDetailSchema.parse({
       conversation: { ...conversation, lastActivityAt: persistedRow.last_activity_at },
-      messages: [...existingMessages, mapMessage(persistedRow.user_message, input.mediaAssetIds), mapMessage(persistedRow.assistant_message)],
+      messages: [...existingMessages, mapMessage(persistedRow.user_message, input.mediaAssetIds), mapMessage(persistedRow.assistant_message)].slice(-AGENT_CONVERSATION_MESSAGE_WINDOW),
     }))
   })
 }

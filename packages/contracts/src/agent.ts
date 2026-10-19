@@ -188,9 +188,13 @@ export const AgentWorkspaceSchema = AgentScopeSchema.extend({
   publicationActivities: z.array(AgentPublicationActivitySummarySchema).max(20),
 })
 
+// Ein Verlauf wird immer als Fenster der juengsten Nachrichten geliefert. Laden und Antwort der API
+// nutzen dieselbe Grenze, sonst wuerde eine laengere Unterhaltung an diesem Schema scheitern.
+export const AGENT_CONVERSATION_MESSAGE_WINDOW = 100
+
 export const AgentConversationDetailSchema = z.object({
   conversation: AgentConversationSchema,
-  messages: z.array(AgentMessageSchema).max(100),
+  messages: z.array(AgentMessageSchema).max(AGENT_CONVERSATION_MESSAGE_WINDOW),
 })
 
 export type AgentScope = z.infer<typeof AgentScopeSchema>
