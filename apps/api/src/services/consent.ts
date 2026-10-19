@@ -147,11 +147,18 @@ export function describeConsentScope(scope: ConsentScope): string[] {
   return lines
 }
 
+// Die E-Mail nennt diese Frist -- Anlage UND erneuter Versand setzen expires_at daraus, sonst
+// verspraeche ein erneut gesendeter Link 14 Tage und waere schon abgelaufen.
+const CONSENT_REQUEST_VALID_DAYS = 14
+export function consentRequestExpiresAt(now: Date): string {
+  return new Date(now.getTime() + CONSENT_REQUEST_VALID_DAYS * 24 * 60 * 60 * 1000).toISOString()
+}
+
 export function buildConsentRequestEmail(options: { to: string; organizationName: string; personLabel: string; respondUrl: string }): EmailMessage {
   return {
     to: options.to,
     subject: `Einwilligung zur Veröffentlichung von Fotos/Videos – ${options.organizationName}`,
-    text: `${options.organizationName} bittet um Ihre Einwilligung zur Veröffentlichung von Fotos/Videos von ${options.personLabel} in sozialen Medien.\n\nZur Anfrage: ${options.respondUrl}\n\nDer Link ist 14 Tage gültig. Eine Einwilligung ist freiwillig und jederzeit für die Zukunft widerrufbar.`,
+    text: `${options.organizationName} bittet um Ihre Einwilligung zur Veröffentlichung von Fotos/Videos von ${options.personLabel} in sozialen Medien.\n\nZur Anfrage: ${options.respondUrl}\n\nDer Link ist ${CONSENT_REQUEST_VALID_DAYS} Tage gültig. Eine Einwilligung ist freiwillig und jederzeit für die Zukunft widerrufbar.`,
   }
 }
 

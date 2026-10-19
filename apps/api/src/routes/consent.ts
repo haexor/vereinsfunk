@@ -14,6 +14,7 @@ import {
   ALLOWED_EVIDENCE_MIME,
   buildConsentRequestEmail,
   computeConsentValidity,
+  consentRequestExpiresAt,
   currentOrganizationConsentText,
   CONSENT_REQUEST_SELECT,
   departmentOfDirectoryPerson,
@@ -369,6 +370,18 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
     }
 
     const service = supabaseClients.forService()
+    // consent_requests_open_unique gilt fuer status='sent'. Ohne Ablaufjob bliebe eine abgelaufene
+    // Anfrage dort fuer immer "offen", und jede neue Anfrage an dieselbe Adresse scheiterte an 409.
+    const now = new Date()
+    const expired = await service
+      .from('consent_requests')
+      .update({ status: 'expired' })
+      .eq('organization_id', input.organizationId)
+      .eq('directory_person_id', input.directoryPersonId)
+      .eq('recipient_email', input.recipientEmail)
+      .eq('status', 'sent')
+      .lt('expires_at', now.toISOString())
+    if (expired.error) throw expired.error
     const text = await currentOrganizationConsentText(service, input.organizationId)
     const { rawToken, tokenHash } = generatePublicToken()
     const insert = await service
@@ -382,7 +395,7 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
         requested_scope: input.requestedScope,
         text_version: text.id ?? 'default-template',
         token_hash: tokenHash,
-        expires_at: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+        expires_at: consentRequestExpiresAt(now),
         created_by: request.auth!.userId,
         correlation_id: request.id,
       })
@@ -444,16 +457,25 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
 
     const service = supabaseClients.forService()
     const { rawToken, tokenHash } = generatePublicToken()
+    const now = new Date()
+    // Compare-and-Set auf status und send_count: eine inzwischen beantwortete Anfrage bekommt
+    // keinen neuen Token, und zwei gleichzeitige Versendungen koennen nicht beide denselben
+    // gelesenen Zaehler hochsetzen und so am Limit (CHECK send_count <= 5) vorbeisenden. Der
+    // neue Link bekommt die volle Frist, die die E-Mail verspricht.
     const update = await service
       .from('consent_requests')
-      .update({ token_hash: tokenHash, send_count: row.send_count + 1, last_sent_at: new Date().toISOString() })
+      .update({ token_hash: tokenHash, send_count: row.send_count + 1, last_sent_at: now.toISOString(), expires_at: consentRequestExpiresAt(now) })
+      .eq('organization_id', row.organization_id)
       .eq('id', params.id)
+      .eq('status', 'sent')
+      .eq('send_count', row.send_count)
       .select(CONSENT_REQUEST_SELECT)
-      .single()
+      .maybeSingle()
     if (update.error) {
       if (update.error.code === '23514') return reply.code(409).send({ error: 'resend_limit_reached', correlationId: request.id })
       throw update.error
     }
+    if (!update.data) return reply.code(409).send({ error: 'request_not_open', correlationId: request.id })
     const [person, organizationName] = await Promise.all([
       service.from('directory_people').select('first_name, last_name').eq('id', row.directory_person_id).single(),
       service.from('organizations').select('name').eq('id', row.organization_id).single(),

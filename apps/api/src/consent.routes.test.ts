@@ -329,6 +329,96 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
     expect(insertedRow).toMatchObject({ valid_from: '2026-08-01T00:00:00.000Z', valid_until: '2027-08-01T00:00:00.000Z' })
   })
 
+  // Wie chain(), protokolliert aber jeden Aufruf samt Argumenten -- fuer Tests, die pruefen, WELCHE
+  // Filter eine Route an ein Update haengt.
+  function recordingChain(result: { data: unknown; error: unknown }, calls: unknown[][]) {
+    const builder: Record<string, unknown> = {}
+    for (const method of ['eq', 'is', 'in', 'lt', 'gte', 'order', 'limit', 'range', 'select']) {
+      builder[method] = (...args: unknown[]) => { calls.push([method, ...args]); return builder }
+    }
+    builder.maybeSingle = async () => result
+    builder.single = async () => result
+    builder.then = (resolve: (value: unknown) => unknown) => resolve(result)
+    return builder
+  }
+  const noopEmailSender = { send: async () => undefined }
+
+  it('retires an expired open request before creating a new one for the same address', async () => {
+    const events: string[] = []
+    const expireCalls: unknown[][] = []
+    let expireValues: Record<string, unknown> | undefined
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'directory_people') return chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, first_name: 'Max', last_name: 'Mustermann', is_minor: false }, error: null })
+            throw new Error(`unexpected table: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'consent_requests') {
+              return {
+                update: (values: Record<string, unknown>) => { events.push('expire'); expireValues = values; return recordingChain({ data: null, error: null }, expireCalls) },
+                insert: () => { events.push('insert'); return chain({ data: openConsentRequestRow(), error: null }) },
+              }
+            }
+            if (table === 'organization_consent_texts') return chain({ data: null, error: null })
+            if (table === 'organizations') return chain({ data: { name: 'TSV Musterstadt' }, error: null })
+            if (table === 'audit_events') return { insert: async () => ({ error: null }) }
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients, emailSender: noopEmailSender })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST', url: '/v1/consent-requests', headers: { authorization: `Bearer ${token}` },
+      payload: {
+        organizationId: ORGANIZATION_ID, directoryPersonId: DIRECTORY_PERSON_ID, recipientEmail: 'x@example.local', recipientRole: 'guardian',
+        requestedScope: { purposes: ['social_media'], platforms: null, mediaKinds: ['photo'], contexts: null, namingAllowed: false, departmentIds: null },
+      },
+    })
+    expect(response.statusCode).toBe(201)
+    expect(events).toEqual(['expire', 'insert'])
+    expect(expireValues).toEqual({ status: 'expired' })
+    expect(expireCalls).toEqual(expect.arrayContaining([
+      ['eq', 'organization_id', ORGANIZATION_ID], ['eq', 'directory_person_id', DIRECTORY_PERSON_ID], ['eq', 'recipient_email', 'x@example.local'], ['eq', 'status', 'sent'],
+    ]))
+    expect(expireCalls.some(([method, column]) => method === 'lt' && column === 'expires_at')).toBe(true)
+  })
+
+  it('gives a resent request a fresh expiry and guards the update against a concurrent answer or resend', async () => {
+    const updateCalls: unknown[][] = []
+    let updateValues: Record<string, unknown> | undefined
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'consent_requests') return chain({ data: openConsentRequestRow({ send_count: 2, expires_at: '2026-01-01T00:00:00Z' }), error: null })
+            throw new Error(`unexpected table: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            // Null getroffene Zeilen: eine gleichzeitige Antwort oder ein zweiter Versand war schneller.
+            if (table === 'consent_requests') return { update: (values: Record<string, unknown>) => { updateValues = values; return recordingChain({ data: null, error: null }, updateCalls) } }
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients, emailSender: noopEmailSender })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'POST', url: `/v1/consent-requests/${CONSENT_REQUEST_ID}/resend`, headers: { authorization: `Bearer ${token}` } })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'request_not_open' })
+    expect(updateValues).toMatchObject({ send_count: 3 })
+    expect(Date.parse(updateValues?.expires_at as string)).toBeGreaterThan(Date.now() + 13 * 24 * 60 * 60 * 1000)
+    expect(updateCalls).toEqual(expect.arrayContaining([['eq', 'status', 'sent'], ['eq', 'send_count', 2]]))
+  })
+
   it('rejects updating the organization consent text without organization.manage', async () => {
     const app = await startApp({ roleProvider: denyingRoleProvider })
     const token = await signAccessToken(USER_ID)
@@ -475,7 +565,7 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
             if (table === 'consent_requests') {
               return {
                 select: () => chain({
-                  data: { id: CONSENT_REQUEST_ID, organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, directory_person_id: DIRECTORY_PERSON_ID, recipient_email: 'x@example.local', recipient_role: 'guardian', requested_scope: { purposes: ['social_media'], platforms: null, mediaKinds: ['photo'], contexts: null, namingAllowed: false }, text_version: 'v1', status: 'sent', expires_at: '2099-01-01T00:00:00Z', responded_at: null, consent_record_id: null, send_count: 1, last_sent_at: '2026-08-01T00:00:00Z', created_at: '2026-08-01T00:00:00Z', created_by: USER_ID },
+                  data: { id: CONSENT_REQUEST_ID, organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, directory_person_id: DIRECTORY_PERSON_ID, recipient_email: 'x@example.local', recipient_role: 'guardian', requested_scope: { purposes: ['social_media'], platforms: null, mediaKinds: ['photo'], contexts: null, namingAllowed: false, departmentIds: null }, text_version: 'v1', status: 'sent', expires_at: '2099-01-01T00:00:00Z', responded_at: null, consent_record_id: null, send_count: 1, last_sent_at: '2026-08-01T00:00:00Z', created_at: '2026-08-01T00:00:00Z', created_by: USER_ID },
                   error: null,
                 }),
                 update: () => chain({ data: null, error: null }),
@@ -503,7 +593,7 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
   function openConsentRequestRow(overrides: Record<string, unknown> = {}) {
     return {
       id: CONSENT_REQUEST_ID, organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, directory_person_id: DIRECTORY_PERSON_ID, recipient_email: 'x@example.local',
-      recipient_role: 'guardian', requested_scope: { purposes: ['social_media'], platforms: null, mediaKinds: ['photo'], contexts: null, namingAllowed: false },
+      recipient_role: 'guardian', requested_scope: { purposes: ['social_media'], platforms: null, mediaKinds: ['photo'], contexts: null, namingAllowed: false, departmentIds: null },
       text_version: 'default-template', status: 'sent', expires_at: '2099-01-01T00:00:00Z', responded_at: null, consent_record_id: null, send_count: 1,
       last_sent_at: '2026-08-01T00:00:00Z', created_at: '2026-08-01T00:00:00Z', created_by: USER_ID,
       ...overrides,
