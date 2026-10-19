@@ -12,10 +12,11 @@ import {
   shortPersonLabel,
 } from '../services/consent.js'
 import type { ApiRouteContext } from './context.js'
-import { CONSENT_RECORD_SELECT, checkRateLimit, type ConsentRecordRow } from './shared.js'
+import { CONSENT_RECORD_SELECT, checkRateLimit, createExternalActionAuditRecorder, type ConsentRecordRow } from './shared.js'
 
 export function registerConsentPublicRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { supabaseClients, environment } = context
+  const recordExternalActionAuditEvent = createExternalActionAuditRecorder(supabaseClients)
 
   // --- Oeffentliche, unauthentifizierte Seiten (Plan 015, Abschnitt 3) ------------------------
   // Kein requireAuth: ein Erziehungsberechtigter hat kein Vereinskonto. Jede Antwort auf ein
@@ -189,11 +190,7 @@ export function registerConsentPublicRoutes(app: FastifyInstance, context: ApiRo
       .eq('id', found.data.id)
       .is('revoked_at', null)
     if (update.error) throw update.error
-    const audit = await service.from('audit_events').insert({
-      organization_id: found.data.organization_id, actor_user_id: null, action: 'consent.revoked_via_public_link',
-      entity_type: 'consent_records', entity_id: found.data.id, correlation_id: request.id,
-    })
-    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+    await recordExternalActionAuditEvent(request, null, { organizationId: found.data.organization_id, action: 'consent.revoked_via_public_link', entityType: 'consent_records', entityId: found.data.id })
     return reply.code(200).send({ status: 'revoked' })
   })
 }

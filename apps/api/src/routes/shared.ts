@@ -157,39 +157,24 @@ export function checkRateLimit(key: string, limit: number, windowMs: number): bo
   return true
 }
 
-// Dieselbe Form wie die inline geschriebenen audit_events-Inserts (Service-Client, weil
-// audit_events fuer authenticated keine INSERT-Policy hat; Fehler werden geloggt, nicht geworfen --
-// ein fehlgeschlagener Audit-Eintrag darf die bereits durchgefuehrte Aenderung nicht nachtraeglich
-// als Fehler ausgeben). Als Factory statt einer einzelnen Funktion, weil recordAuditEvent
-// supabaseClients aus der Closure von buildApp brauchte -- app.ts und jedes Route-Modul rufen
-// createAuditRecorder(supabaseClients) einmal auf und behalten den vertrauten Zwei-Parameter-Aufruf.
+type AuditEvent = { organizationId: string; action: string; entityType: string; entityId: string | null; metadata?: Record<string, unknown> }
+
+// Service-Client, weil audit_events fuer authenticated keine INSERT-Policy hat. Fehler werden
+// geloggt, nicht geworfen -- ein fehlgeschlagener Audit-Eintrag darf die bereits durchgefuehrte
+// Aenderung nicht nachtraeglich als Fehler ausgeben. Als Factory, weil der Recorder
+// supabaseClients aus der Closure von buildApp braucht; jedes Route-Modul ruft
+// createAuditRecorder(supabaseClients) einmal auf.
 export function createAuditRecorder(supabaseClients: SupabaseClientFactory) {
-  return async function recordAuditEvent(
-    request: FastifyRequest,
-    event: { organizationId: string; action: string; entityType: string; entityId: string | null; metadata?: Record<string, unknown> },
-  ): Promise<void> {
-    const audit = await supabaseClients.forService().from('audit_events').insert({
-      organization_id: event.organizationId,
-      actor_user_id: request.auth!.userId,
-      action: event.action,
-      entity_type: event.entityType,
-      entity_id: event.entityId,
-      correlation_id: request.id,
-      metadata: event.metadata ?? {},
-    })
-    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
-  }
+  const recordExternalActionAuditEvent = createExternalActionAuditRecorder(supabaseClients)
+  return (request: FastifyRequest, event: AuditEvent): Promise<void> =>
+    recordExternalActionAuditEvent(request, request.auth!.userId, event)
 }
 
-// OAuth-Callbacks kommen vom Provider und haben daher keinen request.auth-Kontext. Der beim Start
-// gespeicherte Nutzer ist dennoch der fachliche Akteur der externen Aktion; diese getrennte Factory
-// verhindert, dass Callback-Routen einen nicht vorhandenen Authorization-Kontext erzwingen.
+// OAuth-Callbacks und oeffentliche Token-Links (Einwilligung, Widerruf) haben keinen
+// request.auth-Kontext. Der Akteur kommt deshalb explizit: der beim OAuth-Start gespeicherte
+// Nutzer, oder null, wenn die handelnde Person kein Konto hat.
 export function createExternalActionAuditRecorder(supabaseClients: SupabaseClientFactory) {
-  return async function recordExternalActionAuditEvent(
-    request: FastifyRequest,
-    actorUserId: string,
-    event: { organizationId: string; action: string; entityType: string; entityId: string | null; metadata?: Record<string, unknown> },
-  ): Promise<void> {
+  return async function recordExternalActionAuditEvent(request: FastifyRequest, actorUserId: string | null, event: AuditEvent): Promise<void> {
     const audit = await supabaseClients.forService().from('audit_events').insert({
       organization_id: event.organizationId,
       actor_user_id: actorUserId,

@@ -44,7 +44,7 @@ import {
   UnsupportedLogoFormatError,
 } from '@vereinsfunk/brand-assets'
 import type { ApiRouteContext } from './context.js'
-import { toPermissionScope } from './shared.js'
+import { createAuditRecorder, toPermissionScope } from './shared.js'
 
 // Exportiert, weil apps/api/src/routes/imageStyle.ts (Plan 045, PR 1) dieselbe Waehlbarkeits-
 // Vorabpruefung fuer frame_brand_asset_id/logo_brand_asset_id braucht -- die DB-CHECK
@@ -100,6 +100,7 @@ const MAX_STORED_LOGO_CANDIDATES = 8
 
 export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients } = context
+  const recordAuditEvent = createAuditRecorder(supabaseClients)
 
   app.put('/v1/organizations/:id/brand', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
@@ -597,24 +598,11 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
       .single()
     if (insert.error) throw insert.error
 
-    const audit = await service.from('audit_events').insert({
-      organization_id: fields.organizationId,
-      actor_user_id: request.auth!.userId,
-      action: 'brand_asset.uploaded',
-      entity_type: 'brand_assets',
-      entity_id: insert.data.id,
-      correlation_id: request.id,
-      metadata: {
+    await recordAuditEvent(request, { organizationId: fields.organizationId, action: 'brand_asset.uploaded', entityType: 'brand_assets', entityId: insert.data.id, metadata: {
         kind: fields.kind,
         departmentId: fields.departmentId ?? null,
         teamId: fields.teamId ?? null,
-      },
-    })
-    if (audit.error)
-      request.log.error(
-        { err: audit.error, correlationId: request.id },
-        'audit_events insert failed',
-      )
+      } })
 
     // sanitized ist bewusst kein Feld von BrandAssetSchema (der persistierten Asset-Zeile), sondern
     // eine einmalige Nebeninformation dieser Antwort -- der Onboarding-Wizard zeigt damit denselben
@@ -674,20 +662,7 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
     if (!deletion.data)
       return reply.code(404).send({ error: 'not_found', correlationId: request.id })
 
-    const audit = await service.from('audit_events').insert({
-      organization_id: existing.data.organization_id,
-      actor_user_id: request.auth!.userId,
-      action: 'brand_asset.deleted',
-      entity_type: 'brand_assets',
-      entity_id: params.id,
-      correlation_id: request.id,
-      metadata: {},
-    })
-    if (audit.error)
-      request.log.error(
-        { err: audit.error, correlationId: request.id },
-        'audit_events insert failed',
-      )
+    await recordAuditEvent(request, { organizationId: existing.data.organization_id, action: 'brand_asset.deleted', entityType: 'brand_assets', entityId: params.id, metadata: {} })
 
     return reply.code(204).send()
   })
@@ -753,20 +728,7 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
       .single()
     if (update.error) throw update.error
 
-    const audit = await service.from('audit_events').insert({
-      organization_id: existing.data.organization_id,
-      actor_user_id: request.auth!.userId,
-      action: 'brand_asset.license_confirmed',
-      entity_type: 'brand_assets',
-      entity_id: params.id,
-      correlation_id: request.id,
-      metadata: { licenseHolder: input.licenseHolder },
-    })
-    if (audit.error)
-      request.log.error(
-        { err: audit.error, correlationId: request.id },
-        'audit_events insert failed',
-      )
+    await recordAuditEvent(request, { organizationId: existing.data.organization_id, action: 'brand_asset.license_confirmed', entityType: 'brand_assets', entityId: params.id, metadata: { licenseHolder: input.licenseHolder } })
 
     return reply.code(200).send(BrandAssetSchema.parse(mapBrandAssetRow(update.data)))
   })

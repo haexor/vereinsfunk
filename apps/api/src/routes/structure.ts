@@ -11,9 +11,11 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { mapDepartmentRow, mapTeamRow } from '../apiMappers.js'
 import type { ApiRouteContext } from './context.js'
+import { createAuditRecorder } from './shared.js'
 
 export function registerStructureRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients } = context
+  const recordAuditEvent = createAuditRecorder(supabaseClients)
 
 app.post('/v1/organizations/:orgId/departments', async (request, reply) => {
   if (!(await requireAuth(request, reply))) return
@@ -30,23 +32,7 @@ app.post('/v1/organizations/:orgId/departments', async (request, reply) => {
   }
   const department = await client.from('departments').select('id, organization_id, name, slug, archived_at, created_at').eq('id', rpc.data as string).single()
   if (department.error) throw department.error
-  // audit_events ist append-only und wird ausschliesslich privilegiert beschrieben ("Inserts
-  // happen through privileged API procedures", 202608020001_initial_tenant_foundation.sql):
-  // authenticated hat weder Insert-Grant noch Insert-Policy. Mit dem Nutzer-Client lief jeder
-  // dieser Inserts in "permission denied for table audit_events", wurde nur geloggt und der
-  // Request antwortete trotzdem mit 2xx -- der komplette Audit-Trail dieses Pakets war damit
-  // wirkungslos (im Nachfolge-Review dieses PRs gefunden). Gilt fuer alle audit_events-Inserts
-  // unten genauso; der Service-Client ist dasselbe Muster wie im Brand-Logo-Upload (Paket 022).
-  const audit = await supabaseClients.forService().from('audit_events').insert({
-    organization_id: params.orgId,
-    actor_user_id: request.auth!.userId,
-    action: 'department.created',
-    entity_type: 'departments',
-    entity_id: department.data.id,
-    correlation_id: request.id,
-    metadata: { name: input.name },
-  })
-  if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+  await recordAuditEvent(request, { organizationId: params.orgId, action: 'department.created', entityType: 'departments', entityId: department.data.id, metadata: { name: input.name } })
   return reply.code(201).send(DepartmentSchema.parse(mapDepartmentRow(department.data)))
 })
 
@@ -64,16 +50,7 @@ app.patch('/v1/departments/:id', async (request, reply) => {
   if (input.archived !== undefined) payload.archived_at = input.archived ? new Date().toISOString() : null
   const update = await client.from('departments').update(payload).eq('id', params.id).select('id, organization_id, name, slug, archived_at, created_at').single()
   if (update.error) throw update.error
-  const audit = await supabaseClients.forService().from('audit_events').insert({
-    organization_id: existing.data.organization_id,
-    actor_user_id: request.auth!.userId,
-    action: 'department.updated',
-    entity_type: 'departments',
-    entity_id: params.id,
-    correlation_id: request.id,
-    metadata: payload,
-  })
-  if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+  await recordAuditEvent(request, { organizationId: existing.data.organization_id, action: 'department.updated', entityType: 'departments', entityId: params.id, metadata: payload })
   return reply.code(200).send(DepartmentSchema.parse(mapDepartmentRow(update.data)))
 })
 
@@ -96,15 +73,7 @@ app.delete('/v1/departments/:id', async (request, reply) => {
   // returned row count, a caller without department.manage in this row's scope would see a
   // misleading 204 for a department that still exists (found in this package's review).
   if (del.data.length === 0) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
-  const audit = await supabaseClients.forService().from('audit_events').insert({
-    organization_id: existing.data.organization_id,
-    actor_user_id: request.auth!.userId,
-    action: 'department.deleted',
-    entity_type: 'departments',
-    entity_id: params.id,
-    correlation_id: request.id,
-  })
-  if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+  await recordAuditEvent(request, { organizationId: existing.data.organization_id, action: 'department.deleted', entityType: 'departments', entityId: params.id })
   return reply.code(204).send()
 })
 
@@ -126,16 +95,7 @@ app.post('/v1/departments/:id/teams', async (request, reply) => {
     if (insert.error.message.includes('structure limit reached')) return reply.code(409).send({ error: 'structure_limit_reached', correlationId: request.id })
     throw insert.error
   }
-  const audit = await supabaseClients.forService().from('audit_events').insert({
-    organization_id: department.data.organization_id,
-    actor_user_id: request.auth!.userId,
-    action: 'team.created',
-    entity_type: 'teams',
-    entity_id: insert.data.id,
-    correlation_id: request.id,
-    metadata: { name: input.name, departmentId: params.id },
-  })
-  if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+  await recordAuditEvent(request, { organizationId: department.data.organization_id, action: 'team.created', entityType: 'teams', entityId: insert.data.id, metadata: { name: input.name, departmentId: params.id } })
   return reply.code(201).send(TeamSchema.parse(mapTeamRow(insert.data)))
 })
 
@@ -153,16 +113,7 @@ app.patch('/v1/teams/:id', async (request, reply) => {
   if (input.archived !== undefined) payload.archived_at = input.archived ? new Date().toISOString() : null
   const update = await client.from('teams').update(payload).eq('id', params.id).select('id, organization_id, department_id, name, age_group, competition, source_id, archived_at, created_at').single()
   if (update.error) throw update.error
-  const audit = await supabaseClients.forService().from('audit_events').insert({
-    organization_id: existing.data.organization_id,
-    actor_user_id: request.auth!.userId,
-    action: 'team.updated',
-    entity_type: 'teams',
-    entity_id: params.id,
-    correlation_id: request.id,
-    metadata: payload,
-  })
-  if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+  await recordAuditEvent(request, { organizationId: existing.data.organization_id, action: 'team.updated', entityType: 'teams', entityId: params.id, metadata: payload })
   return reply.code(200).send(TeamSchema.parse(mapTeamRow(update.data)))
 })
 
@@ -180,15 +131,7 @@ app.delete('/v1/teams/:id', async (request, reply) => {
     throw del.error
   }
   if (del.data.length === 0) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
-  const audit = await supabaseClients.forService().from('audit_events').insert({
-    organization_id: existing.data.organization_id,
-    actor_user_id: request.auth!.userId,
-    action: 'team.deleted',
-    entity_type: 'teams',
-    entity_id: params.id,
-    correlation_id: request.id,
-  })
-  if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+  await recordAuditEvent(request, { organizationId: existing.data.organization_id, action: 'team.deleted', entityType: 'teams', entityId: params.id })
   return reply.code(204).send()
 })
 

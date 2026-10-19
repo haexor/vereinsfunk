@@ -232,16 +232,7 @@ export function registerPolicyRoutes(app: FastifyInstance, context: ApiRouteCont
       if (rpc.error.message.includes('organization_only_flag')) return reply.code(422).send({ error: 'organization_only_flag', correlationId: request.id })
       throw rpc.error
     }
-    const audit = await supabaseClients.forService().from('audit_events').insert({
-      organization_id: scope.organizationId,
-      actor_user_id: request.auth!.userId,
-      action: 'policy_setting.changed',
-      entity_type: 'policy_settings',
-      entity_id: rpc.data.id,
-      correlation_id: request.id,
-      metadata: { scope: input.scope, scopeId: input.scopeId, flag: input.flag, value: input.value },
-    })
-    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+    await recordAuditEvent(request, { organizationId: scope.organizationId, action: 'policy_setting.changed', entityType: 'policy_settings', entityId: rpc.data.id, metadata: { scope: input.scope, scopeId: input.scopeId, flag: input.flag, value: input.value } })
 
     // Service-Client aus demselben Grund wie im GET-Pendant oben: organizations_select_member
     // verlangt eine Organisationsrolle, die ein Abteilungs-/Team-Admin hier nicht hat.
@@ -369,12 +360,7 @@ export function registerPolicyRoutes(app: FastifyInstance, context: ApiRouteCont
       if (rpc.error.code === '23514') return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
       throw rpc.error
     }
-    const audit = await supabaseClients.forService().from('audit_events').insert({
-      organization_id: scope.organizationId, actor_user_id: request.auth!.userId, action: 'policy_rules.changed',
-      entity_type: 'policy_settings', entity_id: rpc.data.id, correlation_id: request.id,
-      metadata: { scope: input.scope, scopeId: input.scopeId, patch: input.patch },
-    })
-    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+    await recordAuditEvent(request, { organizationId: scope.organizationId, action: 'policy_rules.changed', entityType: 'policy_settings', entityId: rpc.data.id, metadata: { scope: input.scope, scopeId: input.scopeId, patch: input.patch } })
 
     const departmentIdForTeam = input.scope === 'team' ? scope.departmentId! : null
     const { ownRow, config } = computeRuleEntry(await fetchPolicyRuleRows(client, scope.organizationId), input.scope, input.scopeId, departmentIdForTeam)
@@ -523,12 +509,7 @@ export function registerPolicyRoutes(app: FastifyInstance, context: ApiRouteCont
       if (rpc.error.message.includes('user_not_a_member')) return reply.code(422).send({ error: 'user_not_a_member', correlationId: request.id })
       throw rpc.error
     }
-    const audit = await supabaseClients.forService().from('audit_events').insert({
-      organization_id: scope.organizationId, actor_user_id: request.auth!.userId, action: 'member_review_trust.changed',
-      entity_type: 'member_review_trust', entity_id: rpc.data.id, correlation_id: request.id,
-      metadata: { scope: input.scope, scopeId: input.scopeId, userId: input.userId, reviewRequirement: input.reviewRequirement },
-    })
-    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
+    await recordAuditEvent(request, { organizationId: scope.organizationId, action: 'member_review_trust.changed', entityType: 'member_review_trust', entityId: rpc.data.id, metadata: { scope: input.scope, scopeId: input.scopeId, userId: input.userId, reviewRequirement: input.reviewRequirement } })
     return reply.code(200).send(
       MemberReviewTrustSchema.parse({
         id: rpc.data.id, scope: input.scope, scopeId: input.scopeId, userId: input.userId,
