@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import { Check, LoaderCircle, RefreshCw, Save, Sparkles } from '@lucide/vue'
-import { MaxCharactersSchema, RequestApprovalResponseSchema, SocialPlatformSchema, SourceMaterialSchema, TEXT_GENERATION_DEFAULT_TEMPERATURE, TextGenerationPlatformAvailabilitySchema, TextWorkshopDraftRowSchema, UuidSchema, type SocialPlatform, type TextGenerationPlatformAvailability } from '@vereinsfunk/contracts'
+import { MaxCharactersSchema, RequestApprovalResponseSchema, SocialPlatformSchema, SourceMaterialSchema, TEXT_GENERATION_DEFAULT_TEMPERATURE, TextGenerationPlatformAvailabilitySchema, TextWorkshopDraftPayloadSchema, TextWorkshopDraftRowSchema, UuidSchema, type SocialPlatform, type TextGenerationPlatformAvailability } from '@vereinsfunk/contracts'
 import { z } from 'zod'
 import { optionalNumber } from '../utils/numberInput'
 
 type Profile = { id: string | null; slug: string; kind: 'system' | 'persona' | 'custom'; name: string; description: string }
 type Candidate = { id: string; status: string; generated_content: { headline: string; caption: string; hashtags: string[]; verifiedFacts: string[]; missingFacts: string[] } | null; failure_code: string | null; triggered_by: 'member' | 'automatic_recovery' }
 const DEFAULT_TEXT_WORKSHOP_PROFILE = 'lebendig_sportlich'
+// Der Rohtext landet unveraendert in payload.observation des Werkstatt-Entwurfs. Jede Generierung
+// setzt einen gespeicherten Entwurf voraus -- ein laengeres Feld liess die Speicherung am Vertrag
+// scheitern und blockierte damit still die Generierung.
+const CONTENT_TEXT_MAX_LENGTH = TextWorkshopDraftPayloadSchema.shape.observation.maxLength ?? 5_000
 // Geteilt von refreshSession() und loadDraftFromPost() (Wiedereinstieg aus der Beitraege-Liste) --
 // dieselbe Kandidaten-Antwortform, einmal benannt statt zweimal inline dupliziert.
 const CandidateSchema = z.object({ id: z.string(), status: z.string(), generated_content: z.object({ headline: z.string(), caption: z.string(), hashtags: z.array(z.string()), verifiedFacts: z.array(z.string()), missingFacts: z.array(z.string()) }).nullable(), failure_code: z.string().nullable(), triggered_by: z.enum(['member', 'automatic_recovery']) })
@@ -273,6 +277,8 @@ function parsedMaxCharactersOverride(): number | undefined | 'invalid' {
 async function createCandidate() {
   if (!scope.value?.organizationId) { notice.value = 'Bitte wähle einen Verein.'; return }
   if (!contentText.value.trim()) { notice.value = 'Schreibe kurz, worum es in deinem Beitrag geht.'; return }
+  // maxlength begrenzt nur das Tippen -- ein wiederaufgenommener Beitrag kann laenger sein.
+  if (contentText.value.length > CONTENT_TEXT_MAX_LENGTH) { notice.value = `Der Text darf höchstens ${CONTENT_TEXT_MAX_LENGTH.toLocaleString('de-DE')} Zeichen lang sein. Bitte kürze ihn.`; return }
   if (!selectedPlatforms.value.length) { notice.value = 'Bitte wähle mindestens eine Zielplattform.'; return }
   const maxCharacters = parsedMaxCharactersOverride()
   if (maxCharacters === 'invalid') { notice.value = 'Die maximale Länge muss zwischen 100 und 10.000 Zeichen liegen.'; return }
@@ -414,7 +420,8 @@ onBeforeUnmount(() => { if (hasDraftContent()) void saveServerDraft() })
     <section class="card grid gap-5 p-5 sm:p-7">
       <label>
         <span class="mb-2 block text-sm font-bold">Was möchtest du erzählen?</span>
-        <textarea v-model="contentText" rows="7" maxlength="10000" class="w-full resize-y rounded-2xl border border-[#dfe2da] bg-white p-4 text-sm leading-6 shadow-sm outline-none placeholder:text-[#929991] focus:border-forest focus:ring-2 focus:ring-forest/15" placeholder="Zum Beispiel: Heute hat unsere U12 im Training Passen geübt. Besonders schön war, wie sich alle gegenseitig unterstützt haben." />
+        <textarea v-model="contentText" rows="7" :maxlength="CONTENT_TEXT_MAX_LENGTH" class="w-full resize-y rounded-2xl border border-[#dfe2da] bg-white p-4 text-sm leading-6 shadow-sm outline-none placeholder:text-[#929991] focus:border-forest focus:ring-2 focus:ring-forest/15" placeholder="Zum Beispiel: Heute hat unsere U12 im Training Passen geübt. Besonders schön war, wie sich alle gegenseitig unterstützt haben." />
+        <p class="mt-1 text-[11px] text-[#9aa096]">{{ contentText.length }}/{{ CONTENT_TEXT_MAX_LENGTH }} Zeichen</p>
       </label>
       <fieldset>
         <legend class="mb-2 text-xs font-semibold">Anhänge</legend>
