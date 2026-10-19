@@ -12,6 +12,7 @@ import {
   X,
 } from '@lucide/vue'
 import { ContentSuggestionsResponseSchema, type ContentSuggestion } from '@vereinsfunk/contracts'
+import type { PostStatus } from '@vereinsfunk/domain'
 import { localDateKey } from '../utils/memberDates'
 
 const config = useRuntimeConfig()
@@ -74,7 +75,7 @@ interface WeekDay {
 }
 interface DashboardPost {
   id: string
-  status: string
+  status: PostStatus
   scheduled_for: string | null
 }
 
@@ -132,13 +133,8 @@ async function loadDashboard() {
     .eq('organization_id', organizationId)
   if (departmentId) postsQuery = postsQuery.eq('department_id', departmentId)
 
-  const [postsResult, approvalsResult, brandResult, profileResult] = await Promise.all([
+  const [postsResult, brandResult, profileResult] = await Promise.all([
     postsQuery,
-    supabase
-      .from('approval_requests')
-      .select('id', { count: 'exact', head: true })
-      .eq('organization_id', organizationId)
-      .is('invalidated_at', null),
     supabase
       .from('organization_brand_profiles')
       .select('logo_asset_id')
@@ -151,7 +147,7 @@ async function loadDashboard() {
       .maybeSingle(),
   ])
 
-  if (postsResult.error || approvalsResult.error) {
+  if (postsResult.error) {
     dashboardError.value = true
     loadingDashboard.value = false
     return
@@ -162,7 +158,10 @@ async function loadDashboard() {
   const in7Days = now + 7 * 24 * 60 * 60 * 1000
   stats.value = {
     published: posts.filter((post) => post.status === 'published').length,
-    openApprovals: approvalsResult.count ?? 0,
+    // approval_requests kennt keinen Status und keine Abteilung: gezaehlt wurden dort auch laengst
+    // entschiedene Anfragen des ganzen Vereins. Offen ist, was im gewaehlten Bereich auf eine
+    // Freigabe wartet.
+    openApprovals: posts.filter((post) => post.status === 'awaiting_approval').length,
     scheduledNext7Days: posts.filter((post) => {
       if (!post.scheduled_for) return false
       const time = new Date(post.scheduled_for).getTime()
