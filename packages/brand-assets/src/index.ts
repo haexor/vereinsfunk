@@ -20,9 +20,13 @@ const MIN_DIMENSION_PX = 32
 // unter 1 MB Dateigroesse (viel transparente Flaeche), wurde hier aber schon abgelehnt.
 const MAX_DIMENSION_PX = 8192
 
+// Illustrator und Inkscape schreiben vor <svg> haeufig einen Generator-Kommentar und eine DOCTYPE
+// ohne internen Subset -- beides laesst svg-safe zu, die Erkennung muss es also auch. Eine DOCTYPE
+// MIT internem Subset ("[") bleibt hier unerkannt, sie wuerde von sanitizeSvg ohnehin abgelehnt.
+// 4 KB statt 512 Bytes, weil Deklaration, Kommentar und DOCTYPE zusammen schnell darueber liegen.
 function looksLikeSvg(buffer: Buffer): boolean {
-  const head = buffer.subarray(0, 512).toString('utf8').trimStart()
-  return /^(<\?xml[\s\S]*?\?>)?\s*<svg[\s>]/i.test(head)
+  const head = buffer.subarray(0, 4096).toString('utf8').trimStart()
+  return /^(<\?xml[\s\S]*?\?>)?(\s*(<!--[\s\S]*?-->|<!doctype\s[^>[]*>))*\s*<svg[\s>]/i.test(head)
 }
 
 function detectRasterFormat(buffer: Buffer): 'png' | 'jpg' | null {
