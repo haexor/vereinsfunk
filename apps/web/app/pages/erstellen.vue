@@ -100,6 +100,10 @@ let restoringDraft = false
 let draftSaveTimer: ReturnType<typeof setTimeout> | undefined
 let serverDraftSaveChain: Promise<void> = Promise.resolve()
 let latestServerDraftSave = 0
+// Nach dem Einreichen gehoert der Formularinhalt zum Beitrag. Die Speicherung beim Verlassen der
+// Seite legte ihn sonst unter einer neuen ID erneut als Entwurf an -- jeder eingereichte Beitrag
+// hinterliess einen verwaisten Entwurf in /beitraege.
+let submittedForApproval = false
 
 function sourceMaterial() {
   const text = contentText.value.trim()
@@ -132,7 +136,7 @@ function hasDraftContent() {
 }
 async function saveServerDraft({ explicit = false, required = false }: { explicit?: boolean; required?: boolean } = {}): Promise<boolean> {
   if (draftSaveTimer) { clearTimeout(draftSaveTimer); draftSaveTimer = undefined }
-  if (restoringDraft || !scope.value?.organizationId || (!explicit && !hasDraftContent())) return false
+  if (submittedForApproval || restoringDraft || !scope.value?.organizationId || (!explicit && !hasDraftContent())) return false
   if (!hasDraftContent()) { notice.value = 'Gib zuerst etwas für den Entwurf ein.'; return false }
   if (!serverDraftId.value) serverDraftId.value = crypto.randomUUID()
   const draftId = serverDraftId.value
@@ -165,7 +169,7 @@ async function saveServerDraft({ explicit = false, required = false }: { explici
   return queuedSave
 }
 function queueServerDraftSave() {
-  if (restoringDraft || !hasDraftContent()) return
+  if (submittedForApproval || restoringDraft || !hasDraftContent()) return
   if (draftSaveTimer) clearTimeout(draftSaveTimer)
   draftSaveTimer = setTimeout(() => { void saveServerDraft() }, 900)
 }
@@ -181,7 +185,7 @@ function restoreDraft() {
   } catch { clearDraft() }
 }
 watch([communicationGoal, contentText, selectedProfile, selectedPlatforms, maxCharactersOverride], () => { persistDraft(); queueServerDraftSave() }, { flush: 'sync', deep: true })
-watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; sessionProfile.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; communicationGoal.value = 'inform'; selectedProfile.value = DEFAULT_TEXT_WORKSHOP_PROFILE; contentText.value = ''; additionalMediaAssetIds.value = []; revisionInstruction.value = ''; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; mediaAssetIds.value = []; composedPhotoPreview.value = null; photoMode.value = 'carousel'; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
+watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; submittedForApproval = false; sessionId.value = null; sessionProfile.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; communicationGoal.value = 'inform'; selectedProfile.value = DEFAULT_TEXT_WORKSHOP_PROFILE; contentText.value = ''; additionalMediaAssetIds.value = []; revisionInstruction.value = ''; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; mediaAssetIds.value = []; composedPhotoPreview.value = null; photoMode.value = 'carousel'; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
 
 async function loadProfiles() {
   if (!scope.value?.organizationId) return
@@ -348,6 +352,7 @@ async function acceptCandidate() {
     // ueber alreadyAccepted denselben postVersionId zurueck).
     try {
       await api.request(`/v1/post-versions/${accepted.postVersionId}/request-approval`, { method: 'POST' }, RequestApprovalResponseSchema)
+      submittedForApproval = true
       clearDraft()
       serverDraftId.value = null
       await navigateTo('/beitraege')

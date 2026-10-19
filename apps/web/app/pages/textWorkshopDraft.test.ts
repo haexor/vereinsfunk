@@ -17,4 +17,15 @@ describe('Textwerkstatt-Entwurf', () => {
     expect(page).toContain(':maxlength="CONTENT_TEXT_MAX_LENGTH"')
     expect(page).toContain('if (contentText.value.length > CONTENT_TEXT_MAX_LENGTH)')
   })
+
+  it('legt nach dem Einreichen beim Verlassen der Seite keinen neuen Entwurf an', () => {
+    const page = readFileSync(join(PAGES_DIR, 'erstellen.vue'), 'utf8')
+
+    // acceptCandidate setzt serverDraftId zurueck, behaelt aber den Formularinhalt -- ohne die
+    // Sperre speicherte onBeforeRouteLeave ihn unter einer frischen UUID als verwaisten Entwurf.
+    expect(page).toContain("RequestApprovalResponseSchema)\n      submittedForApproval = true\n      clearDraft()\n      serverDraftId.value = null\n      await navigateTo('/beitraege')")
+    expect(page).toContain('if (submittedForApproval || restoringDraft || !scope.value?.organizationId')
+    expect(page).toContain('if (submittedForApproval || restoringDraft || !hasDraftContent()) return')
+    expect(page).toContain('onBeforeRouteLeave(async () => { await saveServerDraft() })')
+  })
 })
