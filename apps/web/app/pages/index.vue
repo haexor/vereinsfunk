@@ -126,8 +126,21 @@ function buildWeek(timeZone: string, posts: readonly DashboardPost[]): WeekDay[]
   return days
 }
 
+// Die Sidebar wechselt Verein/Abteilung ohne Remount dieser Seite. Monoton steigende Ladezaehler
+// wie in kalender.vue: nur der zuletzt gestartete Lauf darf Kennzahlen, Listen und Vorschlaege
+// schreiben, sonst stuenden Daten des vorigen Bereichs unter dem neuen.
+let dashboardLoadRun = 0
+let suggestionsLoadRun = 0
+
 async function loadDashboard() {
   if (import.meta.server) return
+  const run = ++dashboardLoadRun
+  stats.value = null
+  weekDays.value = []
+  recentPosts.value = []
+  nextSteps.value = []
+  dashboardError.value = false
+  loadingDashboard.value = true
   const organizationId = scope.value?.organizationId
   // Paket 055: Kennzahlen, Beitraege und Einrichtungsschritte gehoeren zu Social Media.
   if (!organizationId || !socialMediaActive.value) {
@@ -157,6 +170,7 @@ async function loadDashboard() {
       .eq('organization_id', organizationId)
       .maybeSingle(),
   ])
+  if (run !== dashboardLoadRun) return
 
   if (postsResult.error) {
     dashboardError.value = true
@@ -188,6 +202,7 @@ async function loadDashboard() {
   })
     .then((response) => OnboardingStateSchema.parse(response))
     .catch(() => ({ completedSteps: [] as OnboardingStep[] }))
+  if (run !== dashboardLoadRun) return
 
   const steps: { key: string; label: string; href: string }[] = []
   if (!brandResult.data?.logo_asset_id && !onboarding.completedSteps.includes('branding')) {
@@ -240,12 +255,18 @@ async function dismissSuggestion(item: ContentSuggestion) {
     suggestions.value = suggestions.value.filter((suggestion) => suggestion !== item)
   } catch (error) {
     // Nur der Statuscode: der FetchError traegt in options.headers das Bearer-Token der Sitzung.
-    console.error('Anlassvorschlag konnte nicht verworfen werden', (error as { statusCode?: number })?.statusCode)
+    console.error(
+      'Anlassvorschlag konnte nicht verworfen werden',
+      (error as { statusCode?: number })?.statusCode,
+    )
   }
 }
 
 async function loadSuggestions() {
   if (import.meta.server) return
+  const run = ++suggestionsLoadRun
+  suggestions.value = []
+  suggestionsLoaded.value = false
   const organizationId = scope.value?.organizationId
   const departmentId = scope.value?.departmentId
   if (
@@ -260,6 +281,7 @@ async function loadSuggestions() {
       `${config.public.apiBase}/v1/departments/${departmentId}/content-suggestions`,
       { headers: await useAuthHeader() },
     )
+    if (run !== suggestionsLoadRun) return
     suggestions.value = ContentSuggestionsResponseSchema.parse(response).suggestions
     suggestionsLoaded.value = true
   } catch {
@@ -269,6 +291,15 @@ async function loadSuggestions() {
 }
 
 await Promise.all([loadDashboard(), loadSuggestions()])
+// socialMediaActive gehoert dazu: nach einem Vereinswechsel laedt useScopeModules die Module neu,
+// das Modul wird also womoeglich erst nach dem Bereichswechsel als aktiv erkannt.
+watch(
+  [() => scope.value?.organizationId, () => scope.value?.departmentId, socialMediaActive],
+  () => {
+    void loadDashboard()
+    void loadSuggestions()
+  },
+)
 </script>
 
 <template>
@@ -374,7 +405,9 @@ await Promise.all([loadDashboard(), loadSuggestions()])
           >
             <div class="min-w-0">
               <h2 class="font-display text-base font-bold tracking-[-.02em]">Aktuelle Beiträge</h2>
-              <p class="mt-0.5 text-[11px] text-[#7a817d]">Eure zuletzt angelegten Inhalte auf einen Blick</p>
+              <p class="mt-0.5 text-[11px] text-[#7a817d]">
+                Eure zuletzt angelegten Inhalte auf einen Blick
+              </p>
             </div>
             <NuxtLink
               to="/beitraege"

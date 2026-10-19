@@ -22,7 +22,7 @@ describe('Dashboard', () => {
 
     // Der FetchError von ofetch enthaelt options.headers.authorization mit dem Bearer-JWT.
     expect(page).not.toContain('console.error(error)')
-    expect(page).toContain("console.error('Anlassvorschlag konnte nicht verworfen werden', (error as { statusCode?: number })?.statusCode)")
+    expect(page).toContain("'Anlassvorschlag konnte nicht verworfen werden',\n      (error as { statusCode?: number })?.statusCode,")
   })
 
   it('prueft die Onboarding-Antwort am Vertrag statt sie nur zu casten', () => {
@@ -41,5 +41,17 @@ describe('Dashboard', () => {
     expect(page).toContain(".order('created_at', { ascending: false })")
     expect(page).toContain('v-for="post in recentPosts"')
     expect(page).toContain('v-else-if="!loadingDashboard"')
+  })
+
+  it('laedt Kennzahlen und Vorschlaege bei einem Bereichswechsel neu und verwirft veraltete Laeufe', () => {
+    const page = readFileSync(join(PAGES_DIR, 'index.vue'), 'utf8')
+
+    // Ohne NuxtPage-Key bleibt die Seite beim Wechsel in der Sidebar montiert; geladen wurde nur
+    // einmal beim Setup, die Kennzahlen gehoerten danach zum vorigen Bereich.
+    expect(page).toContain('[() => scope.value?.organizationId, () => scope.value?.departmentId, socialMediaActive]')
+    expect(page).toContain('const run = ++dashboardLoadRun')
+    expect(page).toContain('const run = ++suggestionsLoadRun')
+    expect(page.match(/if \(run !== dashboardLoadRun\) return/g)).toHaveLength(2)
+    expect(page).toContain('if (run !== suggestionsLoadRun) return')
   })
 })
