@@ -223,6 +223,32 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
     expect(response.statusCode).toBe(409)
   })
 
+  it('refuses to supersede a revoked consent record instead of silently undoing the revocation', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'consent_records') return chain({ data: consentRecordRow({ revoked_at: '2026-08-01T00:00:00Z', revoked_by: 'guardian' }), error: null })
+            if (table === 'directory_people') return chain({ data: { department_id: DEPARTMENT_ID }, error: null })
+            throw new Error(`unexpected table: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => { throw new Error('a revoked consent must not get a successor') },
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST', url: `/v1/consents/${CONSENT_ID}/supersede`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        scope: 'Fotos fuer Social Media', scopeStructured: { purposes: ['social_media'], platforms: null, mediaKinds: ['photo'], contexts: null, namingAllowed: false, departmentIds: null },
+        signedAt: '2026-08-01', signerName: 'Erika Musterfrau', signerRole: 'guardian', guardianConfirmed: true,
+      },
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'already_revoked' })
+  })
+
   it('rejects updating the organization consent text without organization.manage', async () => {
     const app = await startApp({ roleProvider: denyingRoleProvider })
     const token = await signAccessToken(USER_ID)

@@ -278,6 +278,9 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (loaded === 'not_found') return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     if (!(await requirePermission(request, reply, 'consent.manage', loaded.scope))) return
     if (loaded.row.superseded_by !== null) return reply.code(409).send({ error: 'already_superseded', correlationId: request.id })
+    // Eine widerrufene Einwilligung bleibt widerrufen: die Nachfolgerin truege keinen revoked_at
+    // und machte den Widerruf stillschweigend rueckgaengig ("Widerruf gewinnt immer", Plan 015).
+    if (loaded.row.revoked_at !== null) return reply.code(409).send({ error: 'already_revoked', correlationId: request.id })
 
     // Derselbe Fund/derselbe Guard wie bei POST /v1/consents und POST /v1/consent-requests: die
     // Abloesung darf eine minderjaehrige Person nicht nachtraeglich auf signerRole='self' setzen.
@@ -320,9 +323,18 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (insert.error) throw insert.error
 
     // Wie bei POST /v1/consents/:id/revoke: .is('superseded_by', null) macht die Verkettung atomar.
-    // Trifft sie keine Zeile, hat eine parallele Anfrage bereits abgeloest -- die eben angelegte
-    // Zeile wird dann verworfen, statt zwei Nachfolgerinnen fuer dieselbe Einwilligung zu erzeugen.
-    const linkBack = await service.from('consent_records').update({ superseded_by: newId }).eq('id', params.id).is('superseded_by', null).select('id').maybeSingle()
+    // Trifft sie keine Zeile, hat eine parallele Anfrage bereits abgeloest oder widerrufen -- die
+    // eben angelegte Zeile wird dann verworfen, statt zwei Nachfolgerinnen fuer dieselbe
+    // Einwilligung zu erzeugen oder einen gleichzeitigen Widerruf zu ueberholen.
+    const linkBack = await service
+      .from('consent_records')
+      .update({ superseded_by: newId })
+      .eq('organization_id', loaded.row.organization_id)
+      .eq('id', params.id)
+      .is('superseded_by', null)
+      .is('revoked_at', null)
+      .select('id')
+      .maybeSingle()
     if (linkBack.error) throw linkBack.error
     if (!linkBack.data) {
       await service.from('consent_records').delete().eq('id', newId)
