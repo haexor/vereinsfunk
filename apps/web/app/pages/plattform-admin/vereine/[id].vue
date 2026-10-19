@@ -11,6 +11,7 @@ import {
   type PlatformAdminOrganizationSubscription,
   type SubscriptionPlan,
 } from '@vereinsfunk/contracts'
+import { optionalNumber } from '../../../utils/numberInput'
 
 definePageMeta({ layout: 'admin' })
 
@@ -75,11 +76,12 @@ async function saveStructureOverride() {
   subscriptionError.value = ''
   try {
     const headers = await useAuthHeader()
+    const storageMegabytes = optionalNumber(structureOverride.storageMegabytes)
     const body = SetOrganizationSubscriptionRequestSchema.parse({
       planKey: selectedPlanKey.value,
-      maxTeamsOverride: structureOverride.maxTeams.trim() ? Number(structureOverride.maxTeams) : null,
-      maxDepartmentsOverride: structureOverride.maxDepartments.trim() ? Number(structureOverride.maxDepartments) : null,
-      storageBytesOverride: structureOverride.storageMegabytes.trim() ? Number(structureOverride.storageMegabytes) * BYTES_PER_MB : null,
+      maxTeamsOverride: optionalNumber(structureOverride.maxTeams),
+      maxDepartmentsOverride: optionalNumber(structureOverride.maxDepartments),
+      storageBytesOverride: storageMegabytes === null ? null : storageMegabytes * BYTES_PER_MB,
       overrideReason: structureOverride.reason,
     })
     await $fetch(`${config.public.apiBase}/v1/platform-admin/organizations/${route.params.id}/subscription`, { method: 'PUT', headers, body })
@@ -101,8 +103,8 @@ async function saveContentOverride(mediaOrigin: MediaOrigin) {
     const headers = await useAuthHeader()
     const body = SetContentLimitOverrideRequestSchema.parse({
       mediaOrigin,
-      maxPerMonth: form.maxPerMonth.trim() ? Number(form.maxPerMonth) : null,
-      maxDurationSeconds: form.maxDurationSeconds.trim() ? Number(form.maxDurationSeconds) : null,
+      maxPerMonth: optionalNumber(form.maxPerMonth),
+      maxDurationSeconds: optionalNumber(form.maxDurationSeconds),
       overrideReason: form.reason,
     })
     await $fetch(`${config.public.apiBase}/v1/platform-admin/organizations/${route.params.id}/content-limit-overrides`, { method: 'PUT', headers, body })

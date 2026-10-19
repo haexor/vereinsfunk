@@ -10,6 +10,7 @@ import {
   type MediaOrigin,
   type SubscriptionPlan,
 } from '@vereinsfunk/contracts'
+import { optionalNumber } from '../../utils/numberInput'
 
 // Plan 021: Tarif-Editor -- Tabellen-/Formular-Layout nach dem Vorbild von llm.vue (Liste,
 // Anlegen-Formular, Inline-Aktionen), aber useApiClient() statt useAuthHeader()+$fetch (siehe
@@ -58,12 +59,12 @@ await load()
 function toContentLimitsPayload(draft: Record<MediaOrigin, { maxPerMonth: string; maxDurationSeconds: string }>) {
   return MEDIA_ORIGINS.map((mediaOrigin) => ({
     mediaOrigin,
-    maxPerMonth: draft[mediaOrigin].maxPerMonth.trim() ? Number(draft[mediaOrigin].maxPerMonth) : null,
-    maxDurationSeconds: draft[mediaOrigin].maxDurationSeconds.trim() ? Number(draft[mediaOrigin].maxDurationSeconds) : null,
+    maxPerMonth: optionalNumber(draft[mediaOrigin].maxPerMonth),
+    maxDurationSeconds: optionalNumber(draft[mediaOrigin].maxDurationSeconds),
   }))
 }
 
-function storageBytesFromMegabytes(value: string): number {
+function storageBytesFromMegabytes(value: string | number): number {
   return Number(value) * BYTES_PER_MB
 }
 
@@ -110,16 +111,16 @@ function editPlan(plan: SubscriptionPlan) {
 }
 
 async function savePlan() {
-  if (!newPlan.key.trim() || !newPlan.displayName.trim() || !newPlan.storageMegabytes.trim()) return
+  if (!newPlan.key.trim() || !newPlan.displayName.trim() || optionalNumber(newPlan.storageMegabytes) === null) return
   saving.value = true
   errorMessage.value = ''
   try {
     const values = {
       displayName: newPlan.displayName,
-      monthlyPriceCents: newPlan.monthlyPriceCents.trim() ? Number(newPlan.monthlyPriceCents) : null,
+      monthlyPriceCents: optionalNumber(newPlan.monthlyPriceCents),
       currency: newPlan.currency, storageBytes: storageBytesFromMegabytes(newPlan.storageMegabytes),
-      maxTeams: newPlan.maxTeams.trim() ? Number(newPlan.maxTeams) : null,
-      maxDepartments: newPlan.maxDepartments.trim() ? Number(newPlan.maxDepartments) : null,
+      maxTeams: optionalNumber(newPlan.maxTeams),
+      maxDepartments: optionalNumber(newPlan.maxDepartments),
       isSelfServiceable: newPlan.isSelfServiceable, sortOrder: newPlan.sortOrder,
       availableFrom: newPlan.availableFrom || null, availableUntil: newPlan.availableUntil || null,
       // In der festen Reihenfolge des Enums statt in Klickreihenfolge.

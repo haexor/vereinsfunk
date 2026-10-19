@@ -2,6 +2,7 @@
 import { Check, LoaderCircle, RefreshCw, Save, Sparkles } from '@lucide/vue'
 import { MaxCharactersSchema, RequestApprovalResponseSchema, SocialPlatformSchema, SourceMaterialSchema, TEXT_GENERATION_DEFAULT_TEMPERATURE, TextGenerationPlatformAvailabilitySchema, TextWorkshopDraftRowSchema, UuidSchema, type SocialPlatform, type TextGenerationPlatformAvailability } from '@vereinsfunk/contracts'
 import { z } from 'zod'
+import { optionalNumber } from '../utils/numberInput'
 
 type Profile = { id: string | null; slug: string; kind: 'system' | 'persona' | 'custom'; name: string; description: string }
 type Candidate = { id: string; status: string; generated_content: { headline: string; caption: string; hashtags: string[]; verifiedFacts: string[]; missingFacts: string[] } | null; failure_code: string | null; triggered_by: 'member' | 'automatic_recovery' }
@@ -54,7 +55,8 @@ const profiles = ref<Profile[]>([])
 const selectedProfile = ref<string>(DEFAULT_TEXT_WORKSHOP_PROFILE)
 const platforms = ref<TextGenerationPlatformAvailability[]>([])
 const selectedPlatforms = ref<SocialPlatform[]>([])
-const maxCharactersOverride = ref('')
+// v-model auf type="number" schreibt eine Zahl hinein, ein geleertes Feld ''.
+const maxCharactersOverride = ref<string | number>('')
 // Plan 047, PR 0: mehrere Fotos moeglich (frueher hoechstens eines, Plan 045 PR 0 Schritt 3) --
 // nur reihum von PhotoAttachmentList befuellte Eintraege, die ihre Personen-Pruefung abgeschlossen haben.
 const mediaAssetIds = ref<string[]>([])
@@ -112,13 +114,13 @@ function sourceMaterial() {
 }
 function persistDraft() {
   if (restoringDraft || !import.meta.client || !draftKey.value) return
-  localStorage.setItem(draftKey.value, JSON.stringify({ communicationGoal: communicationGoal.value, contentText: contentText.value, selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }))
+  localStorage.setItem(draftKey.value, JSON.stringify({ communicationGoal: communicationGoal.value, contentText: contentText.value, selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: String(maxCharactersOverride.value) }))
 }
 function clearDraft() { if (import.meta.client && draftKey.value) localStorage.removeItem(draftKey.value) }
 function draftPayload() {
   // Die persistierte Vertragsform bleibt vorerst kompatibel zu bestehenden Entwürfen. Das UI
   // schreibt nur noch den Rohtext in observation; die früheren Spezialfelder bleiben leer.
-  return { communicationGoal: communicationGoal.value, factsText: '', observation: contentText.value, selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }
+  return { communicationGoal: communicationGoal.value, factsText: '', observation: contentText.value, selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: String(maxCharactersOverride.value) }
 }
 function hasDraftContent() {
   const payload = draftPayload()
@@ -263,9 +265,9 @@ async function loadDraftFromPost(postId: string) {
   }
 }
 function parsedMaxCharactersOverride(): number | undefined | 'invalid' {
-  const trimmed = maxCharactersOverride.value.trim()
-  if (!trimmed) return undefined
-  const parsed = MaxCharactersSchema.safeParse(Number(trimmed))
+  const value = optionalNumber(maxCharactersOverride.value)
+  if (value === null) return undefined
+  const parsed = MaxCharactersSchema.safeParse(value)
   return parsed.success ? parsed.data : 'invalid'
 }
 async function createCandidate() {

@@ -13,6 +13,7 @@ import {
   type RetentionSettings,
   type RunRetentionResponse,
 } from '@vereinsfunk/contracts'
+import { optionalNumber } from '../../utils/numberInput'
 
 // Paket 020: Rechtliche Pflichten und Datenschutzbetrieb -- Aufbewahrung, Betroffenenanfragen-
 // Verweis, Verarbeitungsdokumentation, Auftragsverarbeiter und der manipulationssichere
@@ -138,7 +139,7 @@ async function saveProfile() {
         contactEmail: blankToNull(profileDraft.value.contactEmail),
         contactPhone: blankToNull(profileDraft.value.contactPhone),
         websiteUrl: blankToNull(profileDraft.value.websiteUrl),
-        foundedYear: profileDraft.value.foundedYear.trim() ? Number(profileDraft.value.foundedYear) : null,
+        foundedYear: optionalNumber(profileDraft.value.foundedYear),
         responsiblePersonProfileId: profileDraft.value.responsiblePersonProfileId || null,
         imprintPublished: profileDraft.value.imprintPublished,
       },

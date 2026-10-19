@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { optionalNumber } from '../utils/numberInput'
 import {
   ChannelPolicySchema,
   MemberSchema,
@@ -115,7 +116,7 @@ export async function useChannels() {
     actionError.value = ''
     try {
       const ownerScope: ChannelOwnerScope = connectDepartmentId.value ? 'department' : 'organization'
-      const trimmedMax = websiteForm.maxCharacters.trim()
+      const maxCharacters = optionalNumber(websiteForm.maxCharacters)
       await api.request('/v1/channels', {
         method: 'POST',
         body: {
@@ -125,7 +126,7 @@ export async function useChannels() {
           websiteUrl: websiteForm.url.trim(),
           ownerScope,
           ownerDepartmentId: ownerScope === 'department' ? connectDepartmentId.value : null,
-          ...(trimmedMax ? { maxCharacters: Number(trimmedMax) } : {}),
+          ...(maxCharacters !== null ? { maxCharacters } : {}),
         },
       })
       websiteForm.displayName = ''
@@ -222,8 +223,7 @@ export async function useChannels() {
     }
   }, { immediate: true })
   function saveMaxCharacters(channel: SocialConnection) {
-    const raw = (maxCharactersDraft[channel.id] ?? '').trim()
-    const value = raw === '' ? null : Number(raw)
+    const value = optionalNumber(maxCharactersDraft[channel.id] ?? '')
     if (value === channel.maxCharacters) return
     if (value !== null && (!Number.isInteger(value) || value < 100 || value > 10_000)) return
     void updateChannel(channel, { maxCharacters: value })
