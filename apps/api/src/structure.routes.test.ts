@@ -692,9 +692,10 @@ describe('structure, memberships and invitations', () => {
             if (table === 'profiles') {
               return {
                 select: () => ({
-                  in: async (_column: string, values: string[]) => {
+                  in: (_column: string, values: string[]) => {
                     requestedChunkSizes.push(values.length)
-                    return { data: values.map((id) => ({ id, display_name: `Person ${id.slice(-4)}` })), error: null }
+                    const rows = values.map((id) => ({ id, display_name: `Person ${id.slice(-4)}` }))
+                    return { order: () => ({ range: async (from: number) => ({ data: from === 0 ? rows : [], error: null }) }) }
                   },
                 }),
               }
@@ -727,7 +728,7 @@ describe('structure, memberships and invitations', () => {
         ({
           from: (table: string) => {
             if (table === 'profiles') {
-              return { select: () => ({ in: async (_c: string, ids: string[]) => ({ data: ids.map((id) => ({ id, display_name: 'Person' })), error: null }) }) }
+              return { select: () => ({ in: (_c: string, ids: string[]) => ({ order: () => ({ range: async () => ({ data: ids.map((id) => ({ id, display_name: 'Person' })), error: null }) }) }) }) }
             }
             if (table === 'organization_memberships') {
               return { select: () => ({ eq: () => ({ order: () => ({ range: async (from: number) => ({ data: from === 0 ? [{ id: '10000000-3000-4000-8000-000000000101', user_id: ownerUserId, role: 'organization_owner', expires_at: null }] : [], error: null }) }) }) }) }

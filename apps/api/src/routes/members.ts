@@ -18,7 +18,7 @@ import { membershipTableFor } from '../apiMappers.js'
 import type { PermissionScope } from '../auth.js'
 import { parseSupabaseData } from '../supabase.js'
 import type { ApiRouteContext } from './context.js'
-import { createAuditRecorder, fetchAllRows, membershipCapabilities, resolveMembershipScope, resolveRolesForScopes, toPermissionScope } from './shared.js'
+import { createAuditRecorder, fetchAllRows, fetchAllRowsForIds, membershipCapabilities, resolveMembershipScope, resolveRolesForScopes, toPermissionScope } from './shared.js'
 
 // Jede Mitgliedschaftstabelle traegt nur die Scope-Spalten ihrer Ebene: organization_memberships
 // hat weder department_id noch team_id, department_memberships kein team_id. Eine gemeinsame
@@ -85,13 +85,10 @@ export function registerMemberRoutes(app: FastifyInstance, context: ApiRouteCont
     // Antwort (derselbe Grund wie bei fetchAllRows oben), und die IDs stehen als Query-String in
     // der URL, die schon bei einigen hundert UUIDs die Header-Grenze des Gateways reisst. Ohne
     // Bloecke fielen betroffene Mitglieder still auf "Unbekannt" zurueck.
-    const allUserIds = Array.from(userIds)
-    const displayNameById = new Map<string, string>()
-    for (let offset = 0; offset < allUserIds.length; offset += 100) {
-      const profiles = await client.from('profiles').select('id, display_name').in('id', allUserIds.slice(offset, offset + 100))
-      if (profiles.error) throw profiles.error
-      for (const row of profiles.data) displayNameById.set(row.id as string, row.display_name as string)
-    }
+    const profiles = await fetchAllRowsForIds<{ id: string; display_name: string }>(Array.from(userIds), (batch, from, to) =>
+      client.from('profiles').select('id, display_name').in('id', batch).order('id', { ascending: true }).range(from, to),
+    )
+    const displayNameById = new Map(profiles.map((row) => [row.id, row.display_name]))
 
     // Capability-Felder (Paket 023): fuer jede eindeutige Ebene in dieser Antwort einmal die
     // Rollen DES ANFRAGENDEN nachschlagen (nicht die des jeweiligen Mitglieds), dann daraus fuer
