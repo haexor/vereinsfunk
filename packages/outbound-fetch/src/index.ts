@@ -1,5 +1,5 @@
 import { lookup } from 'node:dns/promises'
-import { isIP } from 'node:net'
+import { BlockList, isIP } from 'node:net'
 
 /**
  * Abruf einer vom Verein selbst hinterlegten Adresse (heute: iCal-Feed einer Integrationsquelle).
@@ -21,38 +21,36 @@ export class OutboundFetchError extends Error {
   }
 }
 
-// IPv4-Bereiche, die nie ein oeffentliches Ziel sind (RFC 1918, Loopback, Link-Local inkl. des
-// Cloud-Metadatendienstes, CGNAT, "this host", Broadcast/reserviert).
-function isPrivateIpv4(address: string): boolean {
-  const parts = address.split('.').map(Number)
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true
-  const [a, b] = parts as [number, number, number, number]
-  if (a === 0 || a === 10 || a === 127) return true
-  if (a === 169 && b === 254) return true
-  if (a === 172 && b >= 16 && b <= 31) return true
-  if (a === 192 && b === 168) return true
-  if (a === 100 && b >= 64 && b <= 127) return true
-  if (a >= 224) return true
-  return false
-}
-
-function isPrivateIpv6(address: string): boolean {
-  const value = address.toLowerCase().replace(/^\[|]$/g, '')
-  if (value === '::' || value === '::1') return true
-  // ::ffff:10.0.0.1 -- IPv4 in IPv6-Schreibweise umgeht die IPv4-Pruefung sonst vollstaendig.
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(value)
-  if (mapped?.[1]) return isPrivateIpv4(mapped[1])
-  if (/^f[cd]/.test(value)) return true // fc00::/7, Unique Local
-  if (value.startsWith('fe80')) return true // Link-Local
-  if (value.startsWith('ff')) return true // Multicast
-  return false
-}
+// Bereiche, die nie ein oeffentliches Ziel sind. net.BlockList statt eigener Textvergleiche: sie
+// prueft IPv4-mapped IPv6 in jeder Schreibweise gegen die IPv4-Regeln -- die WHATWG-URL schreibt
+// [::ffff:127.0.0.1] zu [::ffff:7f00:1] um, woran der fruehere Vergleich auf die Punktschreibweise
+// vorbeiging (Loopback und Metadatendienst waren so erreichbar).
+const BLOCKED_ADDRESSES = new BlockList()
+for (const [network, prefix] of [
+  ['0.0.0.0', 8], // "this host"
+  ['10.0.0.0', 8], ['172.16.0.0', 12], ['192.168.0.0', 16], // RFC 1918
+  ['100.64.0.0', 10], // CGNAT
+  ['127.0.0.0', 8], // Loopback
+  ['169.254.0.0', 16], // Link-Local inkl. Cloud-Metadatendienst
+  ['192.0.0.0', 24], // IETF-Protokollzuweisungen
+  ['198.18.0.0', 15], // Benchmarking, in Rechenzentren oft intern geroutet
+  ['224.0.0.0', 3], // Multicast, reserviert, Broadcast
+] as const) BLOCKED_ADDRESSES.addSubnet(network, prefix, 'ipv4')
+for (const [network, prefix] of [
+  // Unspezifiziert, Loopback und das veraltete IPv4-kompatible Format (::7f00:1 = 127.0.0.1).
+  ['::', 96],
+  // NAT64 bettet eine IPv4-Adresse ein, die der Gateway dann anspricht. Ganz gesperrt statt die
+  // eingebettete Adresse zu pruefen: kein Ziel dieses Pakets ist nur ueber NAT64 erreichbar.
+  ['64:ff9b::', 96], ['64:ff9b:1::', 48],
+  ['fc00::', 7], // Unique Local
+  ['fe80::', 10], ['fec0::', 10], // Link-Local, veraltetes Site-Local
+  ['ff00::', 8], // Multicast
+] as const) BLOCKED_ADDRESSES.addSubnet(network, prefix, 'ipv6')
 
 export function isBlockedAddress(address: string): boolean {
   const family = isIP(address)
-  if (family === 4) return isPrivateIpv4(address)
-  if (family === 6) return isPrivateIpv6(address)
-  return true
+  if (family === 0) return true
+  return BLOCKED_ADDRESSES.check(address, family === 4 ? 'ipv4' : 'ipv6')
 }
 
 /**

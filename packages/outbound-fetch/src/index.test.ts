@@ -33,6 +33,25 @@ describe('isAllowedOutboundUrl', () => {
     expect(isBlockedAddress('::ffff:10.0.0.1')).toBe(true)
     expect(isBlockedAddress('::ffff:8.8.8.8')).toBe(false)
   })
+
+  // Die WHATWG-URL normalisiert [::ffff:127.0.0.1] zu [::ffff:7f00:1] -- in dieser Form ging die
+  // Adresse frueher an der Punktschreibweise-Pruefung vorbei.
+  it.each([
+    ['https://[::ffff:127.0.0.1]/', 'IPv4-mapped Loopback'],
+    ['https://[::ffff:169.254.169.254]/', 'IPv4-mapped Metadatendienst'],
+    ['https://[::7f00:1]/', 'IPv4-kompatibles Loopback'],
+    ['https://[64:ff9b::a9fe:a9fe]/', 'NAT64 auf den Metadatendienst'],
+    ['https://198.18.0.1/', 'Benchmarking-Netz'],
+    ['https://192.0.0.8/', 'IETF-Protokollzuweisung'],
+    ['https://[febf::1]/', 'Link-Local am Ende von fe80::/10'],
+  ])('rejects %s (%s)', (url) => {
+    expect(isAllowedOutboundUrl(url)).toBe(false)
+  })
+
+  it('still accepts public IPv4 and IPv6 literals', () => {
+    expect(isAllowedOutboundUrl('https://93.184.216.34/')).toBe(true)
+    expect(isAllowedOutboundUrl('https://[2001:4860:4860::8888]/')).toBe(true)
+  })
 })
 
 // Namensaufloesung im Test fest verdrahtet -- sonst haengen diese Tests am echten DNS.
@@ -66,6 +85,15 @@ describe('fetchPublicUrl', () => {
     await expect(
       fetchPublicUrl('https://feed.example.com/feed.ics', {
         lookupImpl: async () => ['127.0.0.1'],
+        fetchImpl: async () => response('secrets'),
+      }),
+    ).rejects.toMatchObject({ reason: 'blocked_url' })
+  })
+
+  it('refuses a name that resolves to an IPv4-mapped internal address in hex notation', async () => {
+    await expect(
+      fetchPublicUrl('https://feed.example.com/feed.ics', {
+        lookupImpl: async () => ['::ffff:a9fe:a9fe'],
         fetchImpl: async () => response('secrets'),
       }),
     ).rejects.toMatchObject({ reason: 'blocked_url' })
