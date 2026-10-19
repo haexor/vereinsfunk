@@ -97,7 +97,7 @@ export async function handlePeopleSync(ctx: PeopleSyncContext): Promise<FastifyR
   })
 
   if (plan.aborted) {
-    return reply.code(200).send(await handleAbortedSync({ service, runId, sourceId, idempotencyKey }))
+    return reply.code(200).send(await handleAbortedSync({ service, request, runId, sourceId, idempotencyKey }))
   }
 
   const ignoredFingerprints = await loadIgnoredFingerprints(service, sourceId)

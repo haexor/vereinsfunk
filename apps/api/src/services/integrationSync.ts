@@ -108,8 +108,19 @@ export async function loadIgnoredFingerprints(service: SupabaseClient, sourceId:
   return new Set(ignored.data.map((row) => row.fingerprint as string))
 }
 
+// Der Quellenstatus (last_sync_at/last_sync_status) ist nur eine Zusammenfassung des bereits
+// abgeschlossenen Laufs. Scheitert sein Update, wird es protokolliert statt geworfen -- wie der
+// Audit-Eintrag in finishSyncRun: ein Wurf liefe in den catch der Route, failSyncRun setzte die
+// Quelle dann auf 'failed', obwohl der Lauf selbst bereits endgueltig abgeschlossen ist, und der
+// Aufrufer bekaeme einen 500 fuer einen geschriebenen Lauf.
+async function recordSourceSyncStatus(input: { service: SupabaseClient; request: FastifyRequest; sourceId: string; status: 'succeeded' | 'aborted_loss_threshold' }) {
+  const source = await input.service.from('integration_sources').update({ last_sync_at: new Date().toISOString(), last_sync_status: input.status }).eq('id', input.sourceId)
+  if (source.error) input.request.log.error({ err: source.error, correlationId: input.request.id }, 'integration_sources status update failed')
+}
+
 export async function handleAbortedSync(input: {
   service: SupabaseClient
+  request: FastifyRequest
   runId: string
   sourceId: string
   idempotencyKey: string
@@ -124,7 +135,7 @@ export async function handleAbortedSync(input: {
     .select(SYNC_RUN_COLUMNS)
     .single()
   if (run.error) throw run.error
-  await input.service.from('integration_sources').update({ last_sync_at: new Date().toISOString(), last_sync_status: 'aborted_loss_threshold' }).eq('id', input.sourceId)
+  await recordSourceSyncStatus({ service: input.service, request: input.request, sourceId: input.sourceId, status: 'aborted_loss_threshold' })
   return SyncSourceResponseSchema.parse({ run: mapSyncRunRow(run.data), conflicts: [], idempotencyKey: input.idempotencyKey })
 }
 
@@ -172,7 +183,7 @@ export async function finishSyncRun(input: {
     .single()
   if (run.error) throw run.error
 
-  await input.service.from('integration_sources').update({ last_sync_at: new Date().toISOString(), last_sync_status: 'succeeded' }).eq('id', input.sourceId)
+  await recordSourceSyncStatus({ service: input.service, request: input.request, sourceId: input.sourceId, status: 'succeeded' })
   // Inline statt des createAuditRecorder-Helfers: der braucht die SupabaseClientFactory, diese
   // Funktion hat bereits den Service-Client, der alles ist, was der Audit-Eintrag benoetigt.
   const audit = await input.service.from('audit_events').insert({

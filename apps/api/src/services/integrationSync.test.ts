@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest'
-import { resolveScheduleDateTime } from './integrationSync.js'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import type { FastifyRequest } from 'fastify'
+import { describe, expect, it, vi } from 'vitest'
+import { finishSyncRun, handleAbortedSync, resolveScheduleDateTime } from './integrationSync.js'
 
 describe('resolveScheduleDateTime', () => {
   it('resolves an explicit Z-suffixed value as confirmed', () => {
@@ -54,5 +56,53 @@ describe('resolveScheduleDateTime', () => {
     ['kaputtes-datum', 'not a date at all'],
   ])('rejects %s instead of falling back to a process-timezone-dependent parse (%s)', (value) => {
     expect(resolveScheduleDateTime(value, undefined, 'Europe/Berlin')).toBeUndefined()
+  })
+})
+
+describe('sync run completion', () => {
+  const RUN_ID = '26000000-4000-4000-8000-000000000001'
+  const SOURCE_ID = '26000000-2000-4000-8000-000000000001'
+  const ORGANIZATION_ID = '26000000-1000-4000-8000-000000000001'
+
+  // Nur die Tabellen, die der Abschluss eines Laufs anfasst; das Quellen-Update scheitert.
+  function failingSourceStatusService(): SupabaseClient {
+    const runRow = (row: Record<string, unknown>) => ({
+      id: RUN_ID, organization_id: ORGANIZATION_ID, source_id: SOURCE_ID, domain: 'people', mode: 'apply',
+      created_count: 0, updated_count: 0, retired_count: 0, skipped_count: 0, conflict_count: 0, error_class: null,
+      started_at: '2026-10-01T10:00:00Z', finished_at: '2026-10-01T10:00:01Z', ...row,
+    })
+    return {
+      from: (table: string) => {
+        if (table === 'integration_sync_runs') {
+          return { update: (row: Record<string, unknown>) => ({ eq: () => ({ eq: () => ({ select: () => ({ single: async () => ({ data: runRow(row), error: null }) }) }) }) }) }
+        }
+        if (table === 'integration_sources') return { update: () => ({ eq: async () => ({ data: null, error: { message: 'connection reset' } }) }) }
+        if (table === 'audit_events') return { insert: async () => ({ error: null }) }
+        throw new Error(`unexpected table in test fake: ${table}`)
+      },
+    } as unknown as SupabaseClient
+  }
+
+  function loggingRequest() {
+    const error = vi.fn()
+    const request = { id: '26000000-9000-4000-8000-000000000001', auth: { userId: '26000000-8000-4000-8000-000000000001' }, log: { error } } as unknown as FastifyRequest
+    return { request, error }
+  }
+
+  it('logs a failed source status update after a succeeded run instead of dropping it', async () => {
+    const { request, error } = loggingRequest()
+    const response = await finishSyncRun({
+      service: failingSourceStatusService(), request, runId: RUN_ID, organizationId: ORGANIZATION_ID, sourceId: SOURCE_ID,
+      domain: 'people', mode: 'apply', idempotencyKey: 'key-1', createdCount: 0, updatedCount: 0, retiredCount: 0, skippedCount: 0, pendingConflicts: [],
+    })
+    expect(response.run.status).toBe('succeeded')
+    expect(error).toHaveBeenCalledWith(expect.objectContaining({ err: { message: 'connection reset' } }), 'integration_sources status update failed')
+  })
+
+  it('logs a failed source status update after a run aborted by the loss threshold', async () => {
+    const { request, error } = loggingRequest()
+    const response = await handleAbortedSync({ service: failingSourceStatusService(), request, runId: RUN_ID, sourceId: SOURCE_ID, idempotencyKey: 'key-1' })
+    expect(response.run.status).toBe('aborted_loss_threshold')
+    expect(error).toHaveBeenCalledWith(expect.objectContaining({ err: { message: 'connection reset' } }), 'integration_sources status update failed')
   })
 })

@@ -53,7 +53,7 @@ export async function handleFixturesSync(ctx: SyncDomainContext): Promise<Fastif
   const match = createFixtureMatchStrategy(resolver)
   const plan = planSync({ existing: existingLocals, incoming, match, policy: { lossThresholdPercent: sourceLossThresholdPercent } })
   if (plan.aborted) {
-    return reply.code(200).send(await handleAbortedSync({ service, runId, sourceId, idempotencyKey }))
+    return reply.code(200).send(await handleAbortedSync({ service, request, runId, sourceId, idempotencyKey }))
   }
 
   const ignoredFingerprints = await loadIgnoredFingerprints(service, sourceId)
