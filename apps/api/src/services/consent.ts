@@ -219,6 +219,29 @@ export async function loadConsentRecordForScope(
   return { row, scope: toPermissionScope(row.organization_id, departmentId) }
 }
 
+// Der Widerrufslink haengt an der Zeile, fuer die er ausgestellt wurde (revocation_token_hash ist
+// unique). Eine Abloesung legt eine neue Zeile ohne eigenen Token an -- massgeblich fuer Anzeige
+// und Widerruf ist deshalb das Ende der superseded_by-Kette, sonst widerriefe der Link die ohnehin
+// unwirksame alte Fassung, waehrend die gueltige Nachfolgerin bestehen bliebe.
+export async function findConsentRecordByRevocationToken(
+  service: SupabaseClient, rawToken: string,
+): Promise<{ tokenRow: ConsentRecordRow; head: ConsentRecordRow } | null> {
+  const found = await service.from('consent_records').select(CONSENT_RECORD_SELECT).eq('revocation_token_hash', hashPublicToken(rawToken)).maybeSingle()
+  if (found.error) throw found.error
+  if (!found.data) return null
+  const tokenRow = found.data as ConsentRecordRow
+  let head = tokenRow
+  // consent_records_superseded_unique und _not_self_superseded schliessen Verzweigungen und
+  // Selbstbezug aus; die Obergrenze bricht trotzdem jeden denkbaren Zyklus ab.
+  for (let hops = 0; head.superseded_by !== null; hops += 1) {
+    if (hops >= 100) throw new Error('consent supersede chain too long')
+    const next = await service.from('consent_records').select(CONSENT_RECORD_SELECT).eq('organization_id', head.organization_id).eq('id', head.superseded_by).single()
+    if (next.error) throw next.error
+    head = next.data as ConsentRecordRow
+  }
+  return { tokenRow, head }
+}
+
 export async function findOpenConsentRequestByToken(service: SupabaseClient, rawToken: string): Promise<ConsentRequestRow | null> {
   const found = await service.from('consent_requests').select(CONSENT_REQUEST_SELECT).eq('token_hash', hashPublicToken(rawToken)).maybeSingle()
   if (found.error) throw found.error

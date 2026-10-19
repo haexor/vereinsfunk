@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { DEPARTMENT_ID, ORGANIZATION_ID, USER_ID, chain, denyingRoleProvider, grantingRoleProvider, organizationManagerRoleProvider, signAccessToken, startApp } from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
+import { hashPublicToken } from './services/consent.js'
 
 describe('Paket 015: Einwilligungsverwaltung', () => {
   const CONSENT_ID = '15000000-4000-4000-8000-000000000001'
@@ -431,6 +432,63 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
       lastStatus = response.statusCode
     }
     expect(lastStatus).toBe(429)
+  })
+
+  // Filtert die Zeilen tatsaechlich nach eq()/is(), damit ein Test sehen kann, WELCHE Zeile eine
+  // Route liest oder aendert -- chain() ignoriert jeden Filter.
+  function filteringConsentRecordsTable(rows: Record<string, unknown>[], updates: { values: Record<string, unknown>; filters: Record<string, unknown> }[]) {
+    function builder(onResult: (filters: Record<string, unknown>) => unknown) {
+      const filters: Record<string, unknown> = {}
+      const query: Record<string, unknown> = {
+        eq: (column: string, value: unknown) => { filters[column] = value; return query },
+        is: (column: string, value: unknown) => { filters[column] = value; return query },
+        select: () => query,
+        maybeSingle: async () => ({ data: onResult(filters) ?? null, error: null }),
+        single: async () => ({ data: onResult(filters) ?? null, error: null }),
+      }
+      return query
+    }
+    const matches = (row: Record<string, unknown>, filters: Record<string, unknown>) => Object.entries(filters).every(([column, value]) => row[column] === value)
+    return {
+      select: () => builder((filters) => rows.find((row) => matches(row, filters))),
+      update: (values: Record<string, unknown>) => builder((filters) => {
+        const row = rows.find((candidate) => matches(candidate, filters))
+        if (!row) return null
+        updates.push({ values, filters })
+        Object.assign(row, values)
+        return { id: row.id }
+      }),
+    }
+  }
+
+  it('revokes the head of the supersede chain, not the superseded row the public link was issued for', async () => {
+    const SUCCESSOR_ID = '15000000-4000-4000-8000-000000000002'
+    const rows = [
+      consentRecordRow({ origin: 'digital', signer_role: 'self', guardian_confirmed: false, superseded_by: SUCCESSOR_ID, revocation_token_hash: hashPublicToken('revocation-token') }),
+      consentRecordRow({ id: SUCCESSOR_ID, origin: 'digital', signer_role: 'self', guardian_confirmed: false }),
+    ]
+    const updates: { values: Record<string, unknown>; filters: Record<string, unknown> }[] = []
+    const auditRows: Record<string, unknown>[] = []
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'consent_records') return filteringConsentRecordsTable(rows, updates)
+            if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { auditRows.push(row); return { error: null } } }
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const response = await app.inject({ method: 'POST', url: '/v1/consents/by-revocation-token/revocation-token' })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ status: 'revoked' })
+    expect(updates).toHaveLength(1)
+    expect(updates[0]?.filters).toMatchObject({ id: SUCCESSOR_ID, revoked_at: null, superseded_by: null })
+    // Die Anfrage ging an die volljaehrige Person selbst -- sie hat widerrufen, kein Elternteil.
+    expect(updates[0]?.values).toMatchObject({ revoked_by: 'self' })
+    expect(auditRows[0]).toMatchObject({ action: 'consent.revoked_via_public_link', actor_user_id: null, entity_id: SUCCESSOR_ID })
   })
 })
 

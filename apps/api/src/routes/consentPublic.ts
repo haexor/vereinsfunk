@@ -6,13 +6,13 @@ import {
   CONSENT_TOKEN_INVALID_RESPONSE,
   currentOrganizationConsentText,
   describeConsentScope,
+  findConsentRecordByRevocationToken,
   findOpenConsentRequestByToken,
   generatePublicToken,
-  hashPublicToken,
   shortPersonLabel,
 } from '../services/consent.js'
 import type { ApiRouteContext } from './context.js'
-import { CONSENT_RECORD_SELECT, checkRateLimit, createExternalActionAuditRecorder, type ConsentRecordRow } from './shared.js'
+import { CONSENT_RECORD_SELECT, checkRateLimit, createExternalActionAuditRecorder } from './shared.js'
 
 export function registerConsentPublicRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { supabaseClients, environment } = context
@@ -151,12 +151,10 @@ export function registerConsentPublicRoutes(app: FastifyInstance, context: ApiRo
       return reply.code(429).send({ error: 'rate_limited', correlationId: request.id })
     }
     const params = z.object({ token: z.string().min(1).max(200) }).parse(request.params)
-    const tokenHash = hashPublicToken(params.token)
     const service = supabaseClients.forService()
-    const found = await service.from('consent_records').select(CONSENT_RECORD_SELECT).eq('revocation_token_hash', tokenHash).maybeSingle()
-    if (found.error) throw found.error
-    if (!found.data) return reply.code(404).send({ ...CONSENT_TOKEN_INVALID_RESPONSE, correlationId: request.id })
-    const row = found.data as ConsentRecordRow
+    const found = await findConsentRecordByRevocationToken(service, params.token)
+    if (!found) return reply.code(404).send({ ...CONSENT_TOKEN_INVALID_RESPONSE, correlationId: request.id })
+    const row = found.head
     const [person, organizationName] = await Promise.all([
       service.from('directory_people').select('first_name, last_name').eq('id', row.directory_person_id).single(),
       service.from('organizations').select('name').eq('id', row.organization_id).single(),
@@ -177,20 +175,33 @@ export function registerConsentPublicRoutes(app: FastifyInstance, context: ApiRo
       return reply.code(429).send({ error: 'rate_limited', correlationId: request.id })
     }
     const params = z.object({ token: z.string().min(1).max(200) }).parse(request.params)
-    const tokenHash = hashPublicToken(params.token)
     const service = supabaseClients.forService()
-    const found = await service.from('consent_records').select('id, organization_id, revoked_at').eq('revocation_token_hash', tokenHash).maybeSingle()
-    if (found.error) throw found.error
-    if (!found.data) return reply.code(404).send({ ...CONSENT_TOKEN_INVALID_RESPONSE, correlationId: request.id })
-    if (found.data.revoked_at !== null) return reply.code(200).send({ status: 'already_revoked' })
-
-    const update = await service
-      .from('consent_records')
-      .update({ revoked_at: new Date().toISOString(), revoked_by: 'guardian', revocation_reason: 'Öffentlicher Widerrufslink' })
-      .eq('id', found.data.id)
-      .is('revoked_at', null)
-    if (update.error) throw update.error
-    await recordExternalActionAuditEvent(request, null, { organizationId: found.data.organization_id, action: 'consent.revoked_via_public_link', entityType: 'consent_records', entityId: found.data.id })
-    return reply.code(200).send({ status: 'revoked' })
+    // Der Compare-and-Set verlangt auch superseded_by = null: eine gleichzeitige Abloesung haengt
+    // sonst eine Nachfolgerin an die eben widerrufene Zeile, und der Link meldete "widerrufen",
+    // waehrend die neue Fassung gueltig bliebe. Trifft er keine Zeile, wird die Kette neu gelesen.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const found = await findConsentRecordByRevocationToken(service, params.token)
+      if (!found) return reply.code(404).send({ ...CONSENT_TOKEN_INVALID_RESPONSE, correlationId: request.id })
+      const { tokenRow, head } = found
+      if (head.revoked_at !== null) return reply.code(200).send({ status: 'already_revoked' })
+      // Der Link ging an die Empfaengerin der urspruenglichen Anfrage, deren recipient_role als
+      // signer_role auf der Token-Zeile steht -- bei 'self' widerruft die Person selbst.
+      const revokedBy = tokenRow.signer_role ?? 'guardian'
+      const update = await service
+        .from('consent_records')
+        .update({ revoked_at: new Date().toISOString(), revoked_by: revokedBy, revocation_reason: 'Öffentlicher Widerrufslink' })
+        .eq('organization_id', head.organization_id)
+        .eq('id', head.id)
+        .is('revoked_at', null)
+        .is('superseded_by', null)
+        .select('id')
+        .maybeSingle()
+      if (update.error) throw update.error
+      if (update.data) {
+        await recordExternalActionAuditEvent(request, null, { organizationId: head.organization_id, action: 'consent.revoked_via_public_link', entityType: 'consent_records', entityId: head.id, metadata: { revokedBy } })
+        return reply.code(200).send({ status: 'revoked' })
+      }
+    }
+    throw new Error('consent revocation lost repeated races against concurrent changes')
   })
 }
