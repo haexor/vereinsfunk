@@ -102,6 +102,28 @@ const ProposalRowSchema = z.object({
   updated_at: z.string(),
 })
 
+// Eingebettete Zeilen der Workspace-Abfragen (PostgREST liefert eine n:1-Einbettung als Objekt).
+// departmentId null = Beitrag auf Vereinsebene.
+const EmbeddedPostScopeSchema = z.object({ department_id: UuidSchema.nullable(), team_id: UuidSchema.nullable() })
+const ScopedApprovalStageRowSchema = z.object({
+  id: UuidSchema,
+  label: z.string(),
+  deadline_at: z.string().nullable(),
+  approval_requests: z.object({
+    post_id: UuidSchema,
+    post_version_id: UuidSchema,
+    post_versions: z.object({ title: z.string() }).nullable(),
+    posts: EmbeddedPostScopeSchema,
+  }),
+})
+const ScopedPublicationRowSchema = z.object({
+  id: UuidSchema,
+  platform: OAuthPlatformSchema,
+  status: z.string(),
+  scheduled_for: z.string().nullable(),
+  post_versions: z.object({ id: UuidSchema, title: z.string(), posts: EmbeddedPostScopeSchema }),
+})
+
 class AgentProposalExecutionError extends Error {
   constructor(readonly statusCode: 404 | 409 | 422 | 502 | 503, readonly errorCode: string) {
     super(errorCode)
@@ -199,15 +221,18 @@ async function loadWorkspace(
 
   // Nur offene Stufen, denen der aktuelle Nutzer tatsächlich zugeordnet ist. Das JSON-Containment
   // ergänzt die RLS-Sichtbarkeit; eine Organisationsrolle allein darf keine fremde Aufgabe in die
-  // Agentenantwort bringen.
-  const approvalsQuery = client
+  // Agentenantwort bringen. Abteilung und Mannschaft stehen erst am Beitrag: der Scope-Filter laeuft
+  // ueber die eingebetteten Zeilen (beide !inner) in der Abfrage selbst und damit vor dem limit.
+  let approvalsQuery = client
     .from('approval_stages')
-    .select('id, label, deadline_at, status, approval_request_id, reviewer_snapshot')
+    .select('id, label, deadline_at, approval_requests!inner(post_id, post_version_id, post_versions(title), posts!inner(department_id, team_id))')
     .eq('organization_id', scope.organizationId)
     .in('status', ['open', 'stalled'])
     .contains('reviewer_snapshot', [{ userId }])
     .order('deadline_at', { ascending: true })
     .limit(20)
+  if (scope.departmentId) approvalsQuery = approvalsQuery.eq('approval_requests.posts.department_id', scope.departmentId)
+  if (scope.teamId) approvalsQuery = approvalsQuery.eq('approval_requests.posts.team_id', scope.teamId)
 
   // Textkandidaten sind eine ergänzende Kachel und dürfen den Arbeitsplatz nie blockieren (siehe
   // Kommentar unten) -- die Abfrage läuft aber weiterhin in derselben Runde wie die drei
@@ -222,21 +247,35 @@ async function loadWorkspace(
   if (scope.departmentId) candidateSessionsQuery = candidateSessionsQuery.eq('department_id', scope.departmentId)
   if (scope.teamId) candidateSessionsQuery = candidateSessionsQuery.eq('team_id', scope.teamId)
 
-  const publicationsQuery = client
+  // publications kennt keine Abteilung: Version und Beitrag werden eingebettet (beide !inner), damit
+  // der Scope-Filter vor dem limit greift. Gefiltert nach dem limit fuellten fremde Abteilungen die
+  // 20 Plaetze, und eine Abteilungsunterhaltung sah ihre eigenen faelligen Veroeffentlichungen nicht.
+  // Der Hinweis auf den Fremdschluessel ist noetig, weil posts.current_version_id eine zweite
+  // Beziehung zwischen posts und post_versions bildet.
+  const publicationColumns = 'id, platform, status, scheduled_for, post_versions!inner(id, title, posts!post_versions_organization_id_post_id_fkey!inner(department_id, team_id))'
+  let publicationsQuery = client
     .from('publications')
-    .select('id, organization_id, post_version_id, platform, status, scheduled_for')
+    .select(publicationColumns)
     .eq('organization_id', scope.organizationId)
     .eq('status', 'queued')
     .or(`scheduled_for.is.null,scheduled_for.lte.${new Date().toISOString()}`)
     .order('scheduled_for', { ascending: true })
     .limit(20)
-  const publicationActivitiesQuery = client
+  let publicationActivitiesQuery = client
     .from('publications')
-    .select('id, organization_id, post_version_id, platform, status')
+    .select(publicationColumns)
     .eq('organization_id', scope.organizationId)
     .in('status', ['action_required', 'failed'])
     .order('updated_at', { ascending: false })
     .limit(20)
+  if (scope.departmentId) {
+    publicationsQuery = publicationsQuery.eq('post_versions.posts.department_id', scope.departmentId)
+    publicationActivitiesQuery = publicationActivitiesQuery.eq('post_versions.posts.department_id', scope.departmentId)
+  }
+  if (scope.teamId) {
+    publicationsQuery = publicationsQuery.eq('post_versions.posts.team_id', scope.teamId)
+    publicationActivitiesQuery = publicationActivitiesQuery.eq('post_versions.posts.team_id', scope.teamId)
+  }
 
   const [postsResult, eventsResult, approvalStagesResult, candidateSessionsResult, publicationsResult, publicationActivitiesResult] = await Promise.all([postsQuery, eventsQuery, approvalsQuery, candidateSessionsQuery, publicationsQuery, publicationActivitiesQuery])
   if (postsResult.error) throw postsResult.error
@@ -251,30 +290,7 @@ async function loadWorkspace(
   if (versionResult.error) throw versionResult.error
   const titleByVersionId = new Map((versionResult.data ?? []).map((row) => [row.id as string, row.title as string]))
 
-  const approvalStages = approvalStagesResult.data ?? []
-  const approvalRequestIds = approvalStages
-    .map((row) => row.approval_request_id as string | null)
-    .filter((id): id is string => id !== null)
-  const requestsResult = approvalRequestIds.length === 0
-    ? { data: [], error: null }
-    : await client.from('approval_requests').select('id, post_id, post_version_id').in('id', approvalRequestIds)
-  if (requestsResult.error) throw requestsResult.error
-  const requestById = new Map((requestsResult.data ?? []).map((row) => [row.id as string, row]))
-  const approvalPostIds = [...new Set((requestsResult.data ?? []).map((row) => row.post_id as string))]
-  const approvalPostsResult = approvalPostIds.length === 0
-    ? { data: [], error: null }
-    : await client.from('posts').select('id, department_id, team_id').in('id', approvalPostIds)
-  if (approvalPostsResult.error) throw approvalPostsResult.error
-  const scopeByApprovalPostId = new Map((approvalPostsResult.data ?? []).map((row) => [row.id as string, {
-    departmentId: row.department_id as string | null,
-    teamId: row.team_id as string | null,
-  }]))
-  const approvalVersionIds = [...new Set((requestsResult.data ?? []).map((row) => row.post_version_id as string))]
-  const approvalVersionsResult = approvalVersionIds.length === 0
-    ? { data: [], error: null }
-    : await client.from('post_versions').select('id, title').in('id', approvalVersionIds)
-  if (approvalVersionsResult.error) throw approvalVersionsResult.error
-  const approvalTitleByVersionId = new Map((approvalVersionsResult.data ?? []).map((row) => [row.id as string, row.title as string]))
+  const approvalStages = z.array(ScopedApprovalStageRowSchema).parse(approvalStagesResult.data ?? [])
   // Textkandidaten sind eine ergänzende Kachel. Ein unvollständiges Upgrade oder ein einzelner
   // fehlerhafter Datensatz darf nie den gesamten Chat-Arbeitsplatz blockieren (die drei
   // Kernübersichten oben bleiben dabei weiterhin strikt fehlerhaft, statt Daten zu verstecken).
@@ -302,28 +318,13 @@ async function loadWorkspace(
   try {
     if (publicationsResult.error) throw publicationsResult.error
     if (publicationActivitiesResult.error) throw publicationActivitiesResult.error
-    const queuedPublications = publicationsResult.data ?? []
-    const failedPublications = publicationActivitiesResult.data ?? []
-    const trackedPublications = [...queuedPublications, ...failedPublications]
-    const publicationVersionIds = [...new Set(trackedPublications.map((row) => row.post_version_id as string))]
-    const publicationVersions = publicationVersionIds.length === 0
-      ? { data: [], error: null }
-      : await client.from('post_versions').select('id, post_id, title').in('id', publicationVersionIds)
-    if (publicationVersions.error) throw publicationVersions.error
-    const versionById = new Map((publicationVersions.data ?? []).map((row) => [row.id as string, row]))
-    const publicationPostIds = [...new Set((publicationVersions.data ?? []).map((row) => row.post_id as string))]
-    const publicationPosts = publicationPostIds.length === 0
-      ? { data: [], error: null }
-      : await client.from('posts').select('id, department_id, team_id').in('id', publicationPostIds)
-    if (publicationPosts.error) throw publicationPosts.error
-    const postById = new Map((publicationPosts.data ?? []).map((row) => [row.id as string, row]))
-    duePublications = queuedPublications.flatMap((publication) => {
-      const version = versionById.get(publication.post_version_id as string)
-      const post = version ? postById.get(version.post_id as string) : undefined
-      if (!version || !post || (scope.departmentId && scope.departmentId !== post.department_id) || (scope.teamId && scope.teamId !== post.team_id)) return []
-      return [{ id: publication.id as string, postVersionId: version.id as string, departmentId: post.department_id as string | null, teamId: post.team_id as string | null, title: (version.title as string).slice(0, 200), platform: OAuthPlatformSchema.parse(publication.platform), scheduledFor: publication.scheduled_for as string | null }]
-    })
-    const failedPublicationIds = failedPublications.map((publication) => publication.id as string)
+    const queuedPublications = z.array(ScopedPublicationRowSchema).parse(publicationsResult.data ?? [])
+    const failedPublications = z.array(ScopedPublicationRowSchema).parse(publicationActivitiesResult.data ?? [])
+    duePublications = queuedPublications.map((publication) => ({
+      id: publication.id, postVersionId: publication.post_versions.id, departmentId: publication.post_versions.posts.department_id, teamId: publication.post_versions.posts.team_id,
+      title: publication.post_versions.title.slice(0, 200), platform: publication.platform, scheduledFor: publication.scheduled_for,
+    }))
+    const failedPublicationIds = failedPublications.map((publication) => publication.id)
     const attempts = failedPublicationIds.length === 0
       ? { data: [], error: null }
       : await client.from('publication_attempts').select('publication_id, error_class').in('publication_id', failedPublicationIds).order('attempt_number', { ascending: false })
@@ -332,12 +333,11 @@ async function loadWorkspace(
     for (const attempt of attempts.data ?? []) {
       if (!errorClassByPublicationId.has(attempt.publication_id as string) && attempt.error_class !== null) errorClassByPublicationId.set(attempt.publication_id as string, attempt.error_class as string)
     }
-    publicationActivities = failedPublications.flatMap((publication) => {
-      const version = versionById.get(publication.post_version_id as string)
-      const post = version ? postById.get(version.post_id as string) : undefined
-      if (!version || !post || (scope.departmentId && scope.departmentId !== post.department_id) || (scope.teamId && scope.teamId !== post.team_id)) return []
-      return [{ id: publication.id as string, departmentId: post.department_id as string | null, teamId: post.team_id as string | null, title: (version.title as string).slice(0, 200), platform: OAuthPlatformSchema.parse(publication.platform), status: z.enum(['action_required', 'failed']).parse(publication.status), errorClass: z.enum(['validation', 'non_retryable', 'retryable', 'unknown']).nullable().parse(errorClassByPublicationId.get(publication.id as string) ?? null) }]
-    })
+    publicationActivities = failedPublications.map((publication) => ({
+      id: publication.id, departmentId: publication.post_versions.posts.department_id, teamId: publication.post_versions.posts.team_id,
+      title: publication.post_versions.title.slice(0, 200), platform: publication.platform, status: z.enum(['action_required', 'failed']).parse(publication.status),
+      errorClass: z.enum(['validation', 'non_retryable', 'retryable', 'unknown']).nullable().parse(errorClassByPublicationId.get(publication.id) ?? null),
+    }))
   } catch (error) {
     logger.warn({ err: error }, 'publication workspace summaries unavailable, degrading to empty lists')
     duePublications = []
@@ -363,24 +363,16 @@ async function loadWorkspace(
       startsAt: row.starts_at,
       status: row.status,
     })),
-    pendingApprovals: approvalStages.flatMap((stage) => {
-      const request = requestById.get(stage.approval_request_id as string)
-      if (!request) return []
-      const postScope = scopeByApprovalPostId.get(request.post_id as string)
-      if (!postScope) return []
-      if (scope.departmentId && scope.departmentId !== postScope.departmentId) return []
-      if (scope.teamId && scope.teamId !== postScope.teamId) return []
-      return [{
-        stageId: stage.id,
-        postId: request.post_id,
-        postVersionId: request.post_version_id,
-        departmentId: postScope.departmentId,
-        title: approvalTitleByVersionId.get(request.post_version_id as string) ?? '',
-        label: stage.label,
-        deadlineAt: stage.deadline_at,
-        isOverdue: stage.deadline_at !== null && new Date(stage.deadline_at as string).getTime() < now,
-      }]
-    }),
+    pendingApprovals: approvalStages.map((stage) => ({
+      stageId: stage.id,
+      postId: stage.approval_requests.post_id,
+      postVersionId: stage.approval_requests.post_version_id,
+      departmentId: stage.approval_requests.posts.department_id,
+      title: stage.approval_requests.post_versions?.title ?? '',
+      label: stage.label,
+      deadlineAt: stage.deadline_at,
+      isOverdue: stage.deadline_at !== null && new Date(stage.deadline_at).getTime() < now,
+    })),
     readyTextCandidates,
     duePublications,
     publicationActivities,

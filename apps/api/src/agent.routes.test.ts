@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AgentResponder } from './agent.js'
 import type { SupabaseClientFactory } from './app.js'
-import { MEMBERSHIP_ID, ORGANIZATION_ID, USER_ID, chain, membershipRowsStub, signAccessToken, startApp } from './testSupport.js'
+import { DEPARTMENT_ID, MEMBERSHIP_ID, ORGANIZATION_ID, USER_ID, chain, membershipRowsStub, signAccessToken, startApp } from './testSupport.js'
 
 const CONVERSATION_ID = '10000000-4000-4000-8000-000000000001'
 const WORKSPACE_TABLES = ['posts', 'club_events', 'approval_stages', 'composition_sessions', 'publications']
@@ -217,5 +217,54 @@ describe('agent routes', () => {
     })
     expect(response.statusCode).toBe(200)
     expect(response.json().posts).toEqual([expect.objectContaining({ id: postRow.id, departmentId: null })])
+  })
+
+  it('filters due publications and pending approvals by department before the limit', async () => {
+    // publications und approval_stages tragen keine Abteilung. Frueher kamen die 20 neuesten Zeilen
+    // des ganzen Vereins zurueck und wurden erst danach gefiltert -- eine Abteilungsunterhaltung
+    // verlor so ihre eigenen Eintraege, sobald andere Abteilungen die 20 Plaetze belegten.
+    const filters: Record<string, unknown[][]> = {}
+    const publicationResults: unknown[][] = [[{
+      id: '10000000-9000-4000-8000-000000000001', platform: 'instagram', status: 'queued', scheduled_for: null,
+      post_versions: { id: '10000000-9100-4000-8000-000000000001', title: 'Spielbericht', posts: { department_id: DEPARTMENT_ID, team_id: null } },
+    }], []]
+    const stageRow = {
+      id: '10000000-9200-4000-8000-000000000001', label: 'Vorstand', deadline_at: null,
+      approval_requests: { post_id: '10000000-9300-4000-8000-000000000001', post_version_id: '10000000-9100-4000-8000-000000000002', post_versions: { title: 'Saisonstart' }, posts: { department_id: DEPARTMENT_ID, team_id: null } },
+    }
+    const recording = (table: string, data: unknown) => {
+      const builder = chain({ data, error: null })
+      builder.eq = (...args: unknown[]) => { (filters[table] ??= []).push(args); return builder }
+      return builder
+    }
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({
+        from: (table: string) => {
+          if (table === 'organization_memberships') return membershipRowsStub([{ id: MEMBERSHIP_ID }])
+          if (table === 'department_memberships' || table === 'team_memberships') return membershipRowsStub([])
+          if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
+          if (table === 'publications') return recording(table, publicationResults.shift())
+          if (table === 'approval_stages') return recording(table, [stageRow])
+          if (WORKSPACE_TABLES.includes(table)) return chain({ data: [], error: null })
+          throw new Error(`unexpected table in agent workspace test: ${table}`)
+        },
+      }) as unknown as SupabaseClient,
+      forService: () => ({}) as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/agent/workspace?organizationId=${ORGANIZATION_ID}&departmentId=${DEPARTMENT_ID}`,
+      headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(filters.publications?.filter(([column]) => column === 'post_versions.posts.department_id')).toEqual([
+      ['post_versions.posts.department_id', DEPARTMENT_ID], ['post_versions.posts.department_id', DEPARTMENT_ID],
+    ])
+    expect(filters.approval_stages).toContainEqual(['approval_requests.posts.department_id', DEPARTMENT_ID])
+    expect(response.json()).toMatchObject({
+      duePublications: [{ id: '10000000-9000-4000-8000-000000000001', postVersionId: '10000000-9100-4000-8000-000000000001', departmentId: DEPARTMENT_ID, title: 'Spielbericht' }],
+      pendingApprovals: [{ stageId: stageRow.id, postId: stageRow.approval_requests.post_id, departmentId: DEPARTMENT_ID, title: 'Saisonstart' }],
+    })
   })
 })
