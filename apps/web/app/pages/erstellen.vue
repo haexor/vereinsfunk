@@ -216,8 +216,13 @@ function hasUnfinishedCandidate(): boolean {
 // Generierung im Hintergrund, diese Seite hat sonst keinen Weg, von "pending"/"generating" zu
 // erfahren, ohne dass die Person selbst auf "Aktualisieren" klickt.
 const { refresh: refreshSession, ensurePolling } = usePolling(async () => {
-  if (!sessionId.value) return
-  const response = await api.request(`/v1/text-workshop/sessions/${sessionId.value}`, {}, z.object({ session: CompositionSessionDraftSchema, candidates: z.array(CandidateSchema) }))
+  const requestedSessionId = sessionId.value
+  if (!requestedSessionId) return
+  const response = await api.request(`/v1/text-workshop/sessions/${requestedSessionId}`, {}, z.object({ session: CompositionSessionDraftSchema, candidates: z.array(CandidateSchema) }))
+  // Ein Bereichswechsel oder eine neue Generierung ersetzt die Sitzung, waehrend diese Anfrage noch
+  // laeuft. Ihre Antwort schriebe sonst den alten Kandidaten zurueck -- bei ausgeblendeter
+  // Kandidatenansicht, ohne Erzeugen-Aktion und mit weiterlaufendem Poll.
+  if (sessionId.value !== requestedSessionId) return
   sessionProfile.value = response.session.style_profile_id ?? response.session.style_profile_snapshot.slug ?? DEFAULT_TEXT_WORKSHOP_PROFILE
   candidate.value = response.candidates[0] ?? null
 }, hasUnfinishedCandidate)

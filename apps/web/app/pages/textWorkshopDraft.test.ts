@@ -28,4 +28,14 @@ describe('Textwerkstatt-Entwurf', () => {
     expect(page).toContain('if (submittedForApproval || restoringDraft || !hasDraftContent()) return')
     expect(page).toContain('onBeforeRouteLeave(async () => { await saveServerDraft() })')
   })
+
+  it('verwirft eine Sitzungsantwort, deren Sitzung inzwischen ersetzt wurde', () => {
+    const page = readFileSync(join(PAGES_DIR, 'erstellen.vue'), 'utf8')
+
+    // Nach einem Bereichswechsel (sessionId = null) schrieb eine noch laufende Poll-Antwort den
+    // alten Kandidaten zurueck; der Poll lief dann unbegrenzt weiter.
+    expect(page).toContain('const requestedSessionId = sessionId.value')
+    expect(page).toContain('/v1/text-workshop/sessions/${requestedSessionId}')
+    expect(page).toContain('if (sessionId.value !== requestedSessionId) return\n  sessionProfile.value =')
+  })
 })
