@@ -1,5 +1,7 @@
+import type { AddressInfo } from 'node:net'
+import { connect } from 'node:net'
 import sharp from 'sharp'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   chain,
   DEPARTMENT_ID,
@@ -453,6 +455,52 @@ describe('POST /v1/image-style-presets/preview', () => {
     expect(response.json().unavailableFilters).toContain('gmic_poster')
     expect(applied).toBe(1)
     expect(renderSignal).toBeInstanceOf(AbortSignal)
+  })
+
+  // Echter Socket statt inject(): erst ein tatsaechlich geschlossener Client zeigt, ob der
+  // Abbruch nach dem vollstaendig gelesenen Multipart-Body noch ankommt.
+  it('aborts the gallery rendering once the client disconnects after the upload', async () => {
+    const boundary = 'workshop-gmic-filter-previews-disconnect'
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="organizationId"\r\n\r\n${ORGANIZATION_ID}\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="crop.png"\r\nContent-Type: image/png\r\n\r\n`),
+      await tinyImage(),
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ])
+    let renderSignal: AbortSignal | undefined
+    let markStarted = () => {}
+    const started = new Promise<void>((resolve) => (markStarted = resolve))
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: noAssetClients(),
+      imageEffects: {
+        id: 'slow-gmic',
+        supports: (effect: string): effect is 'gmic_vintage' => effect === 'gmic_vintage',
+        apply: async (_effect: string, buffer: Buffer, signal?: AbortSignal) => {
+          renderSignal = signal
+          markStarted()
+          await new Promise((resolve) => {
+            signal?.addEventListener('abort', resolve, { once: true })
+            setTimeout(resolve, 2000)
+          })
+          return buffer
+        },
+      },
+    })
+    await app.listen({ port: 0, host: '127.0.0.1' })
+    const { port } = app.server.address() as AddressInfo
+    const token = await signAccessToken(USER_ID)
+    const socket = connect(port, '127.0.0.1')
+    socket.on('error', () => {})
+    socket.write(
+      `POST /v1/image-style-workshop/filter-previews HTTP/1.1\r\nHost: 127.0.0.1\r\n` +
+        `Authorization: Bearer ${token}\r\nContent-Type: multipart/form-data; boundary=${boundary}\r\n` +
+        `Content-Length: ${body.length}\r\n\r\n`,
+    )
+    socket.write(body)
+    await started
+    socket.destroy()
+    await vi.waitFor(() => expect(renderSignal?.aborted).toBe(true), { timeout: 1500 })
   })
 
   it('rejects unsupported workshop image MIME types through the Zod multipart schema', async () => {

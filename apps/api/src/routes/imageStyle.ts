@@ -22,7 +22,7 @@ import {
   type OrganizationBrandLevel,
 } from '@vereinsfunk/domain'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { FastifyInstance, FastifyRequest } from 'fastify'
+import type { FastifyInstance, FastifyReply } from 'fastify'
 import sharp from 'sharp'
 import { z } from 'zod'
 import { parseSupabaseData } from '../supabase.js'
@@ -328,24 +328,23 @@ async function previewWorkshopImageStyleFilters(
   return renderImageStyleFilterPreviews(context, sourceBuffer, brandColors, signal)
 }
 
-function createRequestAbortController(request: FastifyRequest): {
+// Am Response-Stream statt am Request lauschen: der Multipart-Body ist hier bereits vollstaendig
+// gelesen, und danach feuert Node auf request.raw weder 'aborted' noch 'close' -- ein getrennter
+// Client liess die komplette G'MIC-Galerie trotzdem weiterrechnen. Ein 'close' der Antwort vor
+// ihrem Ende bedeutet dagegen immer, dass die Verbindung weg ist.
+function createRequestAbortController(reply: FastifyReply): {
   signal: AbortSignal
   dispose: () => void
 } {
   const controller = new AbortController()
-  if (request.raw.aborted || (request.raw.destroyed && !request.raw.complete)) controller.abort()
-  const abortOnDisconnect = () => controller.abort()
-  const abortOnClose = () => {
-    if (request.raw.aborted || !request.raw.complete) abortOnDisconnect()
+  const abortOnDisconnect = () => {
+    if (!reply.raw.writableEnded) controller.abort()
   }
-  request.raw.once('aborted', abortOnDisconnect)
-  request.raw.once('close', abortOnClose)
+  if (reply.raw.destroyed) abortOnDisconnect()
+  reply.raw.once('close', abortOnDisconnect)
   return {
     signal: controller.signal,
-    dispose: () => {
-      request.raw.off('aborted', abortOnDisconnect)
-      request.raw.off('close', abortOnClose)
-    },
+    dispose: () => reply.raw.off('close', abortOnDisconnect),
   }
 }
 
@@ -480,7 +479,7 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
       return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     if (!(await requirePermission(request, reply, 'post.create', resolvedScope))) return
 
-    const requestAbort = createRequestAbortController(request)
+    const requestAbort = createRequestAbortController(reply)
     try {
       const result = await previewWorkshopImageStyleFilters(
         supabaseClients.forService(),
