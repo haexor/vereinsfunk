@@ -44,7 +44,9 @@ app.patch('/v1/departments/:id', async (request, reply) => {
   const existing = await client.from('departments').select('organization_id').eq('id', params.id).maybeSingle()
   if (existing.error) throw existing.error
   if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
-  if (!(await requirePermission(request, reply, 'department.manage', { organizationId: existing.data.organization_id as string }))) return
+  // departmentId gehoert in den Scope: der RoleProvider liest Abteilungsrollen nur dann, und
+  // departments_update/_delete erlauben department_admin genau seine eigene Abteilung.
+  if (!(await requirePermission(request, reply, 'department.manage', { organizationId: existing.data.organization_id as string, departmentId: params.id }))) return
   const payload: Record<string, unknown> = {}
   if (input.name !== undefined) payload.name = input.name
   if (input.archived !== undefined) payload.archived_at = input.archived ? new Date().toISOString() : null
@@ -61,7 +63,7 @@ app.delete('/v1/departments/:id', async (request, reply) => {
   const existing = await client.from('departments').select('organization_id').eq('id', params.id).maybeSingle()
   if (existing.error) throw existing.error
   if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
-  if (!(await requirePermission(request, reply, 'department.manage', { organizationId: existing.data.organization_id as string }))) return
+  if (!(await requirePermission(request, reply, 'department.manage', { organizationId: existing.data.organization_id as string, departmentId: params.id }))) return
   const del = await client.from('departments').delete().eq('id', params.id).select('id')
   if (del.error) {
     if (del.error.message.includes('the last department')) return reply.code(409).send({ error: 'last_department_cannot_be_deleted', correlationId: request.id })

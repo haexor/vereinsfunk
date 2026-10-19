@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEPARTMENT_ID, INVITATION_ID, MEMBERSHIP_ID, ORGANIZATION_ID, TEAM_ID, USER_ID, denyingRoleProvider, organizationManagerRoleProvider, serviceClientCapturingAudit, signAccessToken, startApp } from './testSupport.js'
+import { DEPARTMENT_ID, INVITATION_ID, MEMBERSHIP_ID, ORGANIZATION_ID, TEAM_ID, USER_ID, chain, denyingRoleProvider, organizationManagerRoleProvider, serviceClientCapturingAudit, signAccessToken, startApp } from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
 import type { RoleProvider } from './auth.js'
@@ -34,6 +34,38 @@ describe('structure, memberships and invitations', () => {
     })
     expect(response.statusCode).toBe(403)
     expect(response.json()).toMatchObject({ error: 'forbidden' })
+  })
+
+  // Regression: PATCH/DELETE /v1/departments/:id pruefte department.manage nur mit organizationId.
+  // Der RoleProvider liest Abteilungsrollen aber nur mit departmentId -- ein department_admin bekam
+  // fuer seine eigene Abteilung 403, obwohl departments_update/_delete es ihm erlauben.
+  it('lets a department_admin rename their own department', async () => {
+    const ownDepartmentAdmin: RoleProvider = {
+      async rolesForScope(_auth, scope) {
+        return scope.departmentId === DEPARTMENT_ID ? ['department_admin'] : []
+      },
+    }
+    const departmentRow = { id: DEPARTMENT_ID, organization_id: ORGANIZATION_ID, name: 'Handball', slug: 'handball', archived_at: null, created_at: '2026-08-06T10:00:00+00:00' }
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table !== 'departments') throw new Error(`unexpected table in test fake: ${table}`)
+            return { select: () => chain({ data: { organization_id: ORGANIZATION_ID }, error: null }), update: () => chain({ data: departmentRow, error: null }) }
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => serviceClientCapturingAudit([]),
+    }
+    const app = await startApp({ roleProvider: ownDepartmentAdmin, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PATCH',
+      url: `/v1/departments/${DEPARTMENT_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'Handball' },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ id: DEPARTMENT_ID, name: 'Handball' })
   })
 
   it('creates a department via the create_department RPC', async () => {
