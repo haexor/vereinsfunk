@@ -41,6 +41,13 @@ describe('createSecretBox', () => {
     expect(() => box.open(tampered, keyVersion, 'config-1')).toThrow()
   })
 
+  it('rejects a ciphertext whose auth tag was truncated', () => {
+    const box = createSecretBox({ v1: key() }, 'v1')
+    const { ciphertext, keyVersion } = box.seal('', 'config-1')
+    // Nonce (12) + die ersten 4 Byte des Tags: ohne Laengenpruefung als gueltiger 4-Byte-Tag akzeptiert.
+    expect(() => box.open(ciphertext.subarray(0, 16), keyVersion, 'config-1')).toThrow()
+  })
+
   it('supports rotation: new seals use the current version, old ciphertexts still open', () => {
     const keys = { v1: key(), v2: key() }
     const oldSealed = createSecretBox(keys, 'v1').seal('rotated-secret', 'config-1')

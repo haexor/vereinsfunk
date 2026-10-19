@@ -35,10 +35,14 @@ export function createSecretBox(keys: Readonly<Record<string, string>>, currentK
       const encodedKey = keys[keyVersion]
       if (!encodedKey) throw new Error(`createSecretBox: no key configured for key version "${keyVersion}"`)
       const key = decodeKey(encodedKey, keyVersion)
+      // Ohne Laengenpruefung lieferte subarray() bei einem gekuerzten Ciphertext einen kuerzeren
+      // Auth-Tag, und GCM akzeptiert Tags ab 4 Byte -- ein 4-Byte-Tag ist mit 2^32 Versuchen
+      // faelschbar. authTagLength erzwingt zusaetzlich genau die Laenge, die seal() schreibt.
+      if (ciphertext.length < NONCE_LENGTH + AUTH_TAG_LENGTH) throw new Error('createSecretBox: ciphertext is too short')
       const nonce = ciphertext.subarray(0, NONCE_LENGTH)
       const authTag = ciphertext.subarray(NONCE_LENGTH, NONCE_LENGTH + AUTH_TAG_LENGTH)
       const encrypted = ciphertext.subarray(NONCE_LENGTH + AUTH_TAG_LENGTH)
-      const decipher = createDecipheriv('aes-256-gcm', key, nonce)
+      const decipher = createDecipheriv('aes-256-gcm', key, nonce, { authTagLength: AUTH_TAG_LENGTH })
       decipher.setAAD(Buffer.from(aad, 'utf8'))
       decipher.setAuthTag(authTag)
       return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8')
