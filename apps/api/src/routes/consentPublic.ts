@@ -89,8 +89,14 @@ export function registerConsentPublicRoutes(app: FastifyInstance, context: ApiRo
       return reply.code(200).send({ status: 'declined' })
     }
 
-    const person = await service.from('directory_people').select('is_minor').eq('id', row.directory_person_id).single()
+    const person = await service.from('directory_people').select('is_minor').eq('organization_id', row.organization_id).eq('id', row.directory_person_id).single()
     if (person.error) throw person.error
+    // Derselbe Guard wie bei POST /v1/consent-requests, hier zum Zeitpunkt der Zustimmung: ist die
+    // Person inzwischen als minderjaehrig erfasst (z. B. korrigiertes Geburtsjahr), darf eine an sie
+    // selbst gerichtete Anfrage keine Einwilligung ohne Erziehungsberechtigte mehr erzeugen.
+    if (person.data.is_minor && row.recipient_role !== 'guardian') {
+      return reply.code(400).send({ error: 'guardian_required_for_minor', correlationId: request.id })
+    }
     const signedAt = new Date().toISOString().slice(0, 10)
     const validity = await computeConsentValidity(service, row.organization_id, row.department_id, signedAt)
     const { rawToken: revocationRawToken, tokenHash: revocationTokenHash } = generatePublicToken()

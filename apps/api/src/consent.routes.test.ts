@@ -627,6 +627,16 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
     expect(captured.consentRow).toMatchObject({ signed_at: today, valid_until: addMonthsToIsoDate(today, 12) })
   })
 
+  it('refuses a self grant once the person is recorded as a minor', async () => {
+    const captured: { consentRow?: Record<string, unknown>; auditRows: Record<string, unknown>[] } = { auditRows: [] }
+    const service = grantingServiceClient(captured, { isMinor: true, requestRow: openConsentRequestRow({ recipient_role: 'self' }) })
+    const app = await startApp({ supabaseClients: { forUser: () => ({}) as unknown as SupabaseClient, forService: () => service } })
+    const response = await app.inject({ method: 'POST', url: '/v1/consent-requests/by-token/self-grant-token/respond', payload: { decision: 'granted' } })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ error: 'guardian_required_for_minor' })
+    expect(captured.consentRow).toBeUndefined()
+  })
+
   it('audits a public grant as an external action without an account', async () => {
     const captured: { consentRow?: Record<string, unknown>; auditRows: Record<string, unknown>[] } = { auditRows: [] }
     const app = await startApp({ supabaseClients: { forUser: () => ({}) as unknown as SupabaseClient, forService: () => grantingServiceClient(captured) } })
