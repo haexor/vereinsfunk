@@ -9,8 +9,10 @@ export async function handleFixturesSync(ctx: SyncDomainContext): Promise<Fastif
 
   // Ein Spiel braucht eine Abteilung (fixtures.department_id ist not null) und die Quelle liefert
   // keinen eigenen Abteilungsnamen (anders als teams/people) -- ohne abteilungsgebundene Quelle
-  // ist nicht entscheidbar, wohin ein synchronisiertes Spiel gehoert.
-  if (!sourceDepartmentId) return reply.code(409).send({ error: 'source_missing_department', correlationId: request.id })
+  // ist nicht entscheidbar, wohin ein synchronisiertes Spiel gehoert. Die Route weist diesen Fall
+  // schon vor acquire_integration_sync_run mit 409 ab; hier ist er ein Programmierfehler. Werfen
+  // statt antworten, damit der catch der Route den bereits belegten Lauf per failSyncRun schliesst.
+  if (!sourceDepartmentId) throw new Error('fixtures sync requires a department-bound source')
 
   // fetchAllRows aus demselben Grund wie in handlePeopleSync: ohne Bloetterung haette
   // PostgREST' max_rows=1000 den Spielbestand still gekappt.
@@ -51,7 +53,7 @@ export async function handleFixturesSync(ctx: SyncDomainContext): Promise<Fastif
   const match = createFixtureMatchStrategy(resolver)
   const plan = planSync({ existing: existingLocals, incoming, match, policy: { lossThresholdPercent: sourceLossThresholdPercent } })
   if (plan.aborted) {
-    return reply.code(200).send(await handleAbortedSync({ service, runId, organizationId, sourceId, domain, mode, idempotencyKey }))
+    return reply.code(200).send(await handleAbortedSync({ service, runId, sourceId, idempotencyKey }))
   }
 
   const ignoredFingerprints = await loadIgnoredFingerprints(service, sourceId)

@@ -7,8 +7,6 @@ import {
 } from '@vereinsfunk/contracts'
 import { resolveIcalDateTime, zonedWallTimeToUtcMs, type SourceTransport, type SyncPlanResult } from '@vereinsfunk/integrations'
 import {
-} from '@vereinsfunk/club-schedule'
-import {
   type DepartmentResolver,
   type PersonExternal,
 } from '@vereinsfunk/member-directory'
@@ -113,10 +111,7 @@ export async function loadIgnoredFingerprints(service: SupabaseClient, sourceId:
 export async function handleAbortedSync(input: {
   service: SupabaseClient
   runId: string
-  organizationId: string
   sourceId: string
-  domain: IntegrationDomain
-  mode: SyncMode
   idempotencyKey: string
 }) {
   const run = await input.service

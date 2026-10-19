@@ -52,7 +52,7 @@ export async function handleTeamsSync(ctx: SyncDomainContext): Promise<FastifyRe
   const match = createTeamMatchStrategy(resolver)
   const plan = planSync({ existing: existingLocals, incoming, match, policy: { lossThresholdPercent: sourceLossThresholdPercent } })
   if (plan.aborted) {
-    return reply.code(200).send(await handleAbortedSync({ service, runId, organizationId, sourceId, domain, mode, idempotencyKey }))
+    return reply.code(200).send(await handleAbortedSync({ service, runId, sourceId, idempotencyKey }))
   }
 
   const ignoredFingerprints = await loadIgnoredFingerprints(service, sourceId)
