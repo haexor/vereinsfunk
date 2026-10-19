@@ -627,6 +627,42 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
     expect(captured.consentRow).toMatchObject({ signed_at: today, valid_until: addMonthsToIsoDate(today, 12) })
   })
 
+  it('shows the consent text version the request was created with, not the current one', async () => {
+    const REQUESTED_TEXT_ID = '15000000-7000-4000-8000-000000000001'
+    const texts = [
+      { id: REQUESTED_TEXT_ID, body: 'Fassung bei Anlage der Anfrage', created_at: '2026-08-01T00:00:00Z' },
+      { id: '15000000-7000-4000-8000-000000000002', body: 'Spaeter ersetzte Fassung', created_at: '2026-09-01T00:00:00Z' },
+    ]
+    function consentTextsTable() {
+      const filters: Record<string, unknown> = {}
+      // Ohne id-Filter liefert die Abfrage die juengste Fassung, wie order(created_at desc).limit(1).
+      const result = async () => ({ data: (filters.id ? texts.find((text) => text.id === filters.id) : texts[1]) ?? null, error: null })
+      const query: Record<string, unknown> = {
+        select: () => query, order: () => query, limit: () => query,
+        eq: (column: string, value: unknown) => { filters[column] = value; return query },
+        single: result, maybeSingle: result,
+      }
+      return query
+    }
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'consent_requests') return chain({ data: openConsentRequestRow({ text_version: REQUESTED_TEXT_ID }), error: null })
+            if (table === 'directory_people') return chain({ data: { first_name: 'Max', last_name: 'Mustermann' }, error: null })
+            if (table === 'organizations') return chain({ data: { name: 'TSV Musterstadt' }, error: null })
+            if (table === 'organization_consent_texts') return consentTextsTable()
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const response = await app.inject({ method: 'GET', url: '/v1/consent-requests/by-token/view-token' })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ textVersion: REQUESTED_TEXT_ID, consentText: 'Fassung bei Anlage der Anfrage' })
+  })
+
   it('refuses a self grant once the person is recorded as a minor', async () => {
     const captured: { consentRow?: Record<string, unknown>; auditRows: Record<string, unknown>[] } = { auditRows: [] }
     const service = grantingServiceClient(captured, { isMinor: true, requestRow: openConsentRequestRow({ recipient_role: 'self' }) })

@@ -17,6 +17,7 @@ import {
   consentRequestExpiresAt,
   currentOrganizationConsentText,
   CONSENT_REQUEST_SELECT,
+  DEFAULT_CONSENT_TEXT_VERSION,
   departmentOfDirectoryPerson,
   generatePublicToken,
   loadConsentRecordForScope,
@@ -50,7 +51,7 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
     const text = await currentOrganizationConsentText(client, params.id)
     return reply.code(200).send(
       OrganizationConsentTextSchema.parse({
-        id: text.id ?? 'default-template', organizationId: params.id, body: text.body,
+        id: text.id ?? DEFAULT_CONSENT_TEXT_VERSION, organizationId: params.id, body: text.body,
         createdAt: text.createdAt, isDefaultTemplate: text.id === null,
       }),
     )
@@ -393,7 +394,7 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
         recipient_email: input.recipientEmail,
         recipient_role: input.recipientRole,
         requested_scope: input.requestedScope,
-        text_version: text.id ?? 'default-template',
+        text_version: text.id ?? DEFAULT_CONSENT_TEXT_VERSION,
         token_hash: tokenHash,
         expires_at: consentRequestExpiresAt(now),
         created_by: request.auth!.userId,

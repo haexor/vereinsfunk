@@ -5,7 +5,7 @@ import { z } from 'zod'
 import {
   CONSENT_TOKEN_INVALID_RESPONSE,
   computeConsentValidity,
-  currentOrganizationConsentText,
+  consentTextForVersion,
   describeConsentScope,
   findConsentRecordByRevocationToken,
   findOpenConsentRequestByToken,
@@ -32,10 +32,10 @@ export function registerConsentPublicRoutes(app: FastifyInstance, context: ApiRo
     const row = await findOpenConsentRequestByToken(service, params.token)
     if (!row) return reply.code(404).send({ ...CONSENT_TOKEN_INVALID_RESPONSE, correlationId: request.id })
 
-    const [person, organizationName, text] = await Promise.all([
+    const [person, organizationName, consentText] = await Promise.all([
       service.from('directory_people').select('first_name, last_name').eq('id', row.directory_person_id).single(),
       service.from('organizations').select('name').eq('id', row.organization_id).single(),
-      currentOrganizationConsentText(service, row.organization_id),
+      consentTextForVersion(service, row.organization_id, row.text_version),
     ])
     if (person.error) throw person.error
     if (organizationName.error) throw organizationName.error
@@ -44,7 +44,7 @@ export function registerConsentPublicRoutes(app: FastifyInstance, context: ApiRo
         organizationName: organizationName.data.name,
         personLabel: shortPersonLabel(person.data.first_name as string, person.data.last_name as string),
         textVersion: row.text_version,
-        consentText: text.body,
+        consentText,
         requestedScope: row.requested_scope,
         expiresAt: row.expires_at,
         status: row.status,

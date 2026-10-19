@@ -169,6 +169,19 @@ export function shortPersonLabel(firstName: string, lastName: string): string {
   return `${firstName} ${lastName.charAt(0)}.`
 }
 
+// text_version einer Anfrage, solange der Verein keinen eigenen Text hinterlegt hat.
+export const DEFAULT_CONSENT_TEXT_VERSION = 'default-template'
+
+// Der Nachweis einer digitalen Einwilligung ist, WELCHEN Text jemand bestaetigt hat (Plan 015) --
+// die oeffentliche Seite zeigt deshalb die bei Anlage der Anfrage festgehaltene Fassung, nicht
+// die inzwischen vielleicht ersetzte aktuelle. Fassungen sind append-only und damit stabil.
+export async function consentTextForVersion(client: SupabaseClient, organizationId: string, textVersion: string): Promise<string> {
+  if (textVersion === DEFAULT_CONSENT_TEXT_VERSION) return DEFAULT_CONSENT_TEXT_TEMPLATE
+  const text = await client.from('organization_consent_texts').select('body').eq('organization_id', organizationId).eq('id', textVersion).single()
+  if (text.error) throw text.error
+  return text.data.body as string
+}
+
 export async function currentOrganizationConsentText(
   client: SupabaseClient, organizationId: string,
 ): Promise<{ id: string | null; body: string; createdAt: string | null }> {
