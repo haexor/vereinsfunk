@@ -177,3 +177,15 @@ describe('createPeopleMatchStrategy with planSync', () => {
     expect(plan.skipped[0]?.reason).toBe('local_newer')
   })
 })
+
+describe('createPeopleMatchStrategy.identityOf', () => {
+  it('prefers the external id when present', () => {
+    const entity = PersonExternalSchema.parse({ externalId: 'ext-1', firstName: 'Anna', lastName: 'Beck' })
+    expect(createPeopleMatchStrategy(resolver()).identityOf(entity)).toEqual({ externalId: 'ext-1' })
+  })
+
+  it('falls back to a fuzzy key of name and birth year when there is no external id', () => {
+    const entity = PersonExternalSchema.parse({ firstName: 'Anna', lastName: 'Beck', birthYear: 2010 })
+    expect(createPeopleMatchStrategy(resolver()).identityOf(entity)).toEqual({ fuzzy: ['anna', 'beck', '2010'] })
+  })
+})

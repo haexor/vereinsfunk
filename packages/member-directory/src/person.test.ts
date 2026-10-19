@@ -34,15 +34,3 @@ describe('peopleDomainAdapter.normalize', () => {
     expect('iban' in parsed).toBe(false)
   })
 })
-
-describe('peopleDomainAdapter.identityOf', () => {
-  it('prefers the external id when present', () => {
-    const entity = PersonExternalSchema.parse({ externalId: 'ext-1', firstName: 'Anna', lastName: 'Beck' })
-    expect(peopleDomainAdapter.identityOf(entity)).toEqual({ externalId: 'ext-1' })
-  })
-
-  it('falls back to a fuzzy key of name and birth year when there is no external id', () => {
-    const entity = PersonExternalSchema.parse({ firstName: 'Anna', lastName: 'Beck', birthYear: 2010 })
-    expect(peopleDomainAdapter.identityOf(entity)).toEqual({ fuzzy: ['anna', 'beck', '2010'] })
-  })
-})

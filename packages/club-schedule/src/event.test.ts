@@ -45,15 +45,3 @@ describe('clubEventDomainAdapter.normalize', () => {
     expect(clubEventDomainAdapter.normalize({ Sonstiges: 'x' }, {})).toBeUndefined()
   })
 })
-
-describe('clubEventDomainAdapter.identityOf', () => {
-  it('prefers the external id when present', () => {
-    const entity = ExternalClubEventSchema.parse({ externalId: 'ext-1', title: 'Sommerfest', startsAt: '2026-08-20T16:00:00Z' })
-    expect(clubEventDomainAdapter.identityOf(entity)).toEqual({ externalId: 'ext-1' })
-  })
-
-  it('falls back to a fuzzy key of title and start time', () => {
-    const entity = ExternalClubEventSchema.parse({ title: 'Sommerfest', startsAt: '2026-08-20T16:00:00Z' })
-    expect(clubEventDomainAdapter.identityOf(entity)).toEqual({ fuzzy: ['sommerfest', '2026-08-20T16:00:00Z'] })
-  })
-})

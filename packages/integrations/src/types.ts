@@ -25,7 +25,6 @@ export interface DomainAdapter<TExternal> {
    * und gibt weiterhin immer ein Objekt zurueck.
    */
   normalize(raw: Readonly<Record<string, unknown>>, mapping: FieldMapping): Record<string, unknown> | undefined
-  identityOf(entity: TExternal): { externalId: string } | { fuzzy: string[] }
 }
 
 export interface SyncPolicy {
@@ -36,12 +35,16 @@ export interface SyncPolicy {
 export type SyncConflictKind = 'ambiguous_match' | 'unknown_structure' | 'value_conflict' | 'invalid_record'
 
 /**
- * Wie planSync einen TExternal-Eintrag gegen existing: TLocal[] abgleicht. Ein Bereichsadapter
- * implementiert diese Funktionen anhand seines eigenen DomainAdapter.identityOf und seiner
- * eigenen Feldnamen -- planSync selbst kennt weder Personen noch Termine.
+ * Wie planSync einen TExternal-Eintrag gegen existing: TLocal[] abgleicht. Ein Bereich
+ * implementiert diese Funktionen mit seinen eigenen Feldnamen -- planSync selbst kennt weder
+ * Personen noch Termine.
  */
 export interface MatchStrategy<TLocal, TExternal> {
-  /** Wie DomainAdapter.identityOf: externe ID, falls vorhanden, sonst Merkmale für den unscharfen Abgleich. */
+  /**
+   * Die einzige Identitaetsregel des Bereichs: externe ID, falls vorhanden, sonst Merkmale für den
+   * unscharfen Abgleich. Auch die Fingerabdruecke der Konfliktzeilen bauen darauf auf, damit
+   * Abgleich und ignore_permanently dieselbe Identitaet sehen.
+   */
   identityOf(entity: TExternal): { externalId: string } | { fuzzy: readonly string[] }
   /** Externe ID eines bereits synchronisierten Datensatzes; kein früherer Sync => undefined. */
   externalIdOf(local: TLocal): string | undefined

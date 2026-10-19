@@ -89,10 +89,11 @@ export async function handlePeopleSync(ctx: PeopleSyncContext): Promise<FastifyR
   const invalidRecords = parsedRows.invalidRecords
   const incoming = parsedRows.incoming
 
+  const match = createPeopleMatchStrategy(resolver)
   const plan = planSync({
     existing: existingLocals,
     incoming,
-    match: createPeopleMatchStrategy(resolver),
+    match,
     policy: { lossThresholdPercent: sourceLossThresholdPercent },
   })
 
@@ -102,7 +103,7 @@ export async function handlePeopleSync(ctx: PeopleSyncContext): Promise<FastifyR
 
   const ignoredFingerprints = await loadIgnoredFingerprints(service, sourceId)
   const pendingConflicts = buildPendingConflicts({
-    plan, sourceId, domain, identityOf: peopleDomainAdapter.identityOf, invalidRecords, ignoredFingerprints,
+    plan, sourceId, domain, identityOf: match.identityOf, invalidRecords, ignoredFingerprints,
   })
 
   if (mode === 'apply') {

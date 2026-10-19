@@ -52,15 +52,3 @@ describe('fixtureDomainAdapter.normalize', () => {
     expect(normalized.awayScore).toBe(1)
   })
 })
-
-describe('fixtureDomainAdapter.identityOf', () => {
-  it('prefers the external id when present', () => {
-    const entity = ExternalFixtureSchema.parse({ externalId: 'ext-1', opponentName: 'TSV Süd' })
-    expect(fixtureDomainAdapter.identityOf(entity)).toEqual({ externalId: 'ext-1' })
-  })
-
-  it('falls back to a fuzzy key of opponent and kickoff time', () => {
-    const entity = ExternalFixtureSchema.parse({ opponentName: 'TSV Süd', kickoffAt: '2026-08-15T15:00:00Z' })
-    expect(fixtureDomainAdapter.identityOf(entity)).toEqual({ fuzzy: ['tsv süd', '2026-08-15T15:00:00Z'] })
-  })
-})

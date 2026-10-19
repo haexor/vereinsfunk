@@ -57,7 +57,7 @@ export async function handleFixturesSync(ctx: SyncDomainContext): Promise<Fastif
   }
 
   const ignoredFingerprints = await loadIgnoredFingerprints(service, sourceId)
-  const pendingConflicts = buildPendingConflicts({ plan, sourceId, domain, identityOf: fixtureDomainAdapter.identityOf, invalidRecords, ignoredFingerprints })
+  const pendingConflicts = buildPendingConflicts({ plan, sourceId, domain, identityOf: match.identityOf, invalidRecords, ignoredFingerprints })
 
   let appliedUpdatedCount = plan.updated.length
   if (mode === 'apply') {

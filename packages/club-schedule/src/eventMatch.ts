@@ -42,8 +42,10 @@ export function createClubEventMatchStrategy(): MatchStrategy<ClubEventLocal, Ex
   // externalId allein identifiziert bei einer Serie nur die Serie (RFC 5545: UID ist seriengleich,
   // RECURRENCE-ID/recurrenceKey erst die Instanz) -- ohne recurrenceKey in der Identitaet wuerden
   // zwei verschiedene Termine derselben Serie faelschlich als derselbe Datensatz abgeglichen,
-  // waehrend club_events_external_unique sie als eigene Zeilen erwartet.
-  const compositeExternalId = (externalId: string, recurrenceKey: string | null | undefined) => [externalId, recurrenceKey ?? ''].join('\u0000')
+  // waehrend club_events_external_unique sie als eigene Zeilen erwartet. JSON statt eines
+  // NUL-Trenners: die Kennung landet ueber buildPendingConflicts auch in
+  // integration_sync_conflicts.external_id, und Postgres-text nimmt kein NUL-Zeichen an.
+  const compositeExternalId = (externalId: string, recurrenceKey: string | null | undefined) => (recurrenceKey ? JSON.stringify([externalId, recurrenceKey]) : externalId)
 
   return {
     identityOf(entity) {

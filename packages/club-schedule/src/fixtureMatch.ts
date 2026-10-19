@@ -97,6 +97,8 @@ export function createFixtureMatchStrategy(resolver: TeamNameResolver): MatchStr
   return {
     identityOf(entity) {
       if (entity.externalId) return { externalId: entity.externalId }
+      // Unscharfer Schluessel: Gegner (aufgeloest oder roh) plus Anstoßzeit -- zwei Spiele gegen
+      // denselben Gegner zu unterschiedlichen Zeiten sind keine Kandidaten fuereinander.
       return { fuzzy: [(entity.opponentName ?? entity.awayNameRaw ?? '').trim().toLowerCase(), entity.kickoffAt ? comparableKickoffAt(entity.kickoffAt, entity.kickoffAtTzid) : ''] }
     },
     externalIdOf(local) {

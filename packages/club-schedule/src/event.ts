@@ -1,4 +1,4 @@
-import type { DomainAdapter, FieldMapping } from '@vereinsfunk/integrations'
+import { applyFieldMapping, type DomainAdapter, type FieldMapping } from '@vereinsfunk/integrations'
 import { z } from 'zod'
 import { detectFixtureTitle } from './titleHeuristic.js'
 
@@ -29,7 +29,7 @@ export const ExternalClubEventSchema = z.object({
 export type ExternalClubEvent = z.infer<typeof ExternalClubEventSchema>
 
 /**
- * Wendet das FieldMapping wie bei person.ts an. title und startsAt werden danach unabhaengig
+ * Wendet das FieldMapping an (applyFieldMapping). title und startsAt werden danach unabhaengig
  * voneinander aus einem iCal-`summary`/`dtstart` ergaenzt, falls das FieldMapping das jeweilige
  * Feld nicht schon geliefert hat. Fehlt title noch und liegt ein `summary` vor, wird zuerst
  * geprueft, ob die Titelheuristik ein Spielmuster erkennt -- wenn ja, gehoert die Zeile zur
@@ -38,11 +38,7 @@ export type ExternalClubEvent = z.infer<typeof ExternalClubEventSchema>
  * uebernommen.
  */
 function normalize(raw: Readonly<Record<string, unknown>>, mapping: FieldMapping): Record<string, unknown> | undefined {
-  const result: Record<string, unknown> = {}
-  for (const [externalColumn, internalField] of Object.entries(mapping)) {
-    const value = raw[externalColumn]
-    if (value !== undefined && value !== null && value !== '') result[internalField] = value
-  }
+  const result = applyFieldMapping(raw, mapping)
 
   // title und startsAt unabhaengig voneinander aus der Quelle ergaenzen: eine Zuordnung, die
   // bereits per FieldMapping nur eines der beiden liefert (z. B. ein explizites Titel-Feld ohne
@@ -89,12 +85,10 @@ function normalize(raw: Readonly<Record<string, unknown>>, mapping: FieldMapping
   return result
 }
 
+// Die Identitaet steht in createClubEventMatchStrategy (eventMatch.ts) -- nur dort mit
+// recurrenceKey, ohne den alle Termine einer Serie denselben Konflikt-Fingerabdruck teilten.
 export const clubEventDomainAdapter: DomainAdapter<ExternalClubEvent> = {
   domain: 'events',
   schema: ExternalClubEventSchema,
   normalize,
-  identityOf(entity) {
-    if (entity.externalId) return { externalId: entity.externalId }
-    return { fuzzy: [entity.title.trim().toLowerCase(), entity.startsAt] }
-  },
 }

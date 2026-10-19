@@ -1,4 +1,4 @@
-import type { DomainAdapter, FieldMapping } from '@vereinsfunk/integrations'
+import { applyFieldMapping, type DomainAdapter, type FieldMapping } from '@vereinsfunk/integrations'
 import { z } from 'zod'
 import { detectFixtureTitle } from './titleHeuristic.js'
 
@@ -37,18 +37,14 @@ export const ExternalFixtureSchema = z.object({
 export type ExternalFixture = z.infer<typeof ExternalFixtureSchema>
 
 /**
- * Wendet das FieldMapping wie bei person.ts an. Fehlen danach sowohl opponentName als auch
+ * Wendet das FieldMapping an (applyFieldMapping). Fehlen danach sowohl opponentName als auch
  * teamReference und liegt ein iCal-`summary` vor, wird die Titelheuristik versucht: erkennt sie
  * kein Spielmuster, gehoert die Zeile nicht zu dieser Domaene (undefined -- die events-Domaene
  * bekommt die Chance). Erkennt sie eines, ergaenzt sie homeNameRaw/awayNameRaw plus die iCal-
  * Rohfelder, ohne bereits explizit gemappte Werte zu ueberschreiben (gemappt gewinnt vor erraten).
  */
 function normalize(raw: Readonly<Record<string, unknown>>, mapping: FieldMapping): Record<string, unknown> | undefined {
-  const result: Record<string, unknown> = {}
-  for (const [externalColumn, internalField] of Object.entries(mapping)) {
-    const value = raw[externalColumn]
-    if (value !== undefined && value !== null && value !== '') result[internalField] = value
-  }
+  const result = applyFieldMapping(raw, mapping)
 
   if (result.opponentName === undefined && result.teamReference === undefined) {
     const summary = raw['summary']
@@ -87,14 +83,9 @@ function normalize(raw: Readonly<Record<string, unknown>>, mapping: FieldMapping
   return result
 }
 
+// Die Identitaet steht in createFixtureMatchStrategy (fixtureMatch.ts), nicht hier.
 export const fixtureDomainAdapter: DomainAdapter<ExternalFixture> = {
   domain: 'fixtures',
   schema: ExternalFixtureSchema,
   normalize,
-  identityOf(entity) {
-    if (entity.externalId) return { externalId: entity.externalId }
-    // Unscharfer Schluessel: Gegner (aufgeloest oder roh) plus Anstoßzeit -- zwei Spiele gegen
-    // denselben Gegner zu unterschiedlichen Zeiten sind keine Kandidaten fuereinander.
-    return { fuzzy: [(entity.opponentName ?? entity.awayNameRaw ?? '').trim().toLowerCase(), entity.kickoffAt ?? ''] }
-  },
 }

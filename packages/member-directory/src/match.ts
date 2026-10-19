@@ -49,6 +49,8 @@ export function createPeopleMatchStrategy(resolver: DepartmentResolver): MatchSt
   return {
     identityOf(entity) {
       if (entity.externalId) return { externalId: entity.externalId }
+      // Unscharfer Schluessel: Name (kleingeschrieben) plus Geburtsjahr, falls vorhanden -- zwei
+      // gleichnamige Personen unterschiedlichen Jahrgangs sind keine Kandidaten fuereinander.
       return { fuzzy: [entity.firstName.trim().toLowerCase(), entity.lastName.trim().toLowerCase(), String(entity.birthYear ?? '')] }
     },
     externalIdOf(local) {

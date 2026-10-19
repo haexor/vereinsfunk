@@ -1,4 +1,4 @@
-import type { DomainAdapter, FieldMapping } from '@vereinsfunk/integrations'
+import { applyFieldMapping, type DomainAdapter } from '@vereinsfunk/integrations'
 import { z } from 'zod'
 
 // Erlaubte Felder, vollstaendig (plans/014, "Mitgliederverzeichnis"): Vorname, Nachname,
@@ -6,7 +6,7 @@ import { z } from 'zod'
 // dieses Package kennt keine Datenbank), Status/Austrittsdatum, eigene E-Mail (Paket 054; einen
 // Elternkontakt gibt es seitdem nicht mehr). Alles andere --
 // Adresse, IBAN, Geschlecht, Nationalitaet, Gesundheitsdaten, volles Geburtsdatum, Freitext --
-// existiert hier nicht: das Schema selbst ist die Datenminimierung. normalize() unten kopiert nur
+// existiert hier nicht: das Schema selbst ist die Datenminimierung. applyFieldMapping kopiert nur
 // gemappte Felder, und parse() wirft unbekannte Schluessel ohnehin weg -- eine falsch benannte
 // Zuordnung (z. B. auf 'iban') landet nie in einem PersonExternal.
 export const PersonExternalSchema = z.object({
@@ -24,31 +24,12 @@ export const PersonExternalSchema = z.object({
 })
 export type PersonExternal = z.infer<typeof PersonExternalSchema>
 
-/**
- * Wendet das FieldMapping (externe Spalte -> interner Feldname) auf eine rohe Zeile an. Das
- * Ergebnis ist bewusst ungeprueft -- der Aufrufer validiert es mit PersonExternalSchema.parse().
- * Werte, die keinem gemappten Feld zugeordnet sind, verschwinden einfach: dieses Package kopiert
- * nie das gesamte raw-Objekt durch.
- */
-function normalize(raw: Readonly<Record<string, unknown>>, mapping: FieldMapping): Record<string, unknown> {
-  const result: Record<string, unknown> = {}
-  for (const [externalColumn, internalField] of Object.entries(mapping)) {
-    const value = raw[externalColumn]
-    if (value !== undefined && value !== null && value !== '') result[internalField] = value
-  }
-  return result
-}
-
+// Die Identitaet (externe ID bzw. unscharfer Schluessel) steht nur in createPeopleMatchStrategy
+// (match.ts) -- eine zweite Kopie hier liefe beim naechsten Aendern auseinander.
 export const peopleDomainAdapter: DomainAdapter<PersonExternal> = {
   domain: 'people',
   schema: PersonExternalSchema,
-  normalize,
-  identityOf(entity) {
-    if (entity.externalId) return { externalId: entity.externalId }
-    // Unscharfer Schluessel: Name (kleingeschrieben) plus Geburtsjahr, falls vorhanden -- zwei
-    // gleichnamige Personen unterschiedlichen Jahrgangs sind keine Kandidaten fuereinander.
-    return { fuzzy: [entity.firstName.trim().toLowerCase(), entity.lastName.trim().toLowerCase(), String(entity.birthYear ?? '')] }
-  },
+  normalize: applyFieldMapping,
 }
 
 /**

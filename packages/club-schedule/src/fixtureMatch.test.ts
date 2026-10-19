@@ -100,3 +100,15 @@ describe('createFixtureMatchStrategy team resolution', () => {
     expect(plan.updated[0]?.changedFields).toEqual(['opponentName'])
   })
 })
+
+describe('createFixtureMatchStrategy.identityOf', () => {
+  it('prefers the external id when present', () => {
+    const entity = ExternalFixtureSchema.parse({ externalId: 'ext-1', opponentName: 'TSV Süd' })
+    expect(createFixtureMatchStrategy(resolver({})).identityOf(entity)).toEqual({ externalId: 'ext-1' })
+  })
+
+  it('falls back to a fuzzy key of opponent and kickoff time', () => {
+    const entity = ExternalFixtureSchema.parse({ opponentName: 'TSV Süd', kickoffAt: '2026-08-15T15:00:00Z' })
+    expect(createFixtureMatchStrategy(resolver({})).identityOf(entity)).toEqual({ fuzzy: ['tsv süd', '2026-08-15T15:00:00Z'] })
+  })
+})

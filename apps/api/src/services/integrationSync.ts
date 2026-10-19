@@ -60,7 +60,7 @@ export interface PendingConflict {
 
 // Baut die Konfliktzeilen aus einem SyncPlan -- gemeinsam fuer alle vier Bereiche (Personen,
 // Mannschaften, Spiele, Veranstaltungen; Paket 019 verallgemeinert, was Paket 014 nur fuer
-// Personen brauchte). identityOf ist die des jeweiligen DomainAdapter.
+// Personen brauchte). identityOf ist die der MatchStrategy, mit der planSync abgeglichen hat.
 export function buildPendingConflicts<TLocal extends { id: string }, TExternal>(input: {
   plan: SyncPlanResult<TLocal, TExternal>
   sourceId: string

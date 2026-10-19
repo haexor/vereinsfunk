@@ -35,13 +35,14 @@ export async function handleEventsSync(ctx: SyncDomainContext): Promise<FastifyR
     labelOf: (normalized, rowIndex) => (typeof normalized.title === 'string' ? normalized.title : `Zeile ${rowIndex}`),
   })
 
-  const plan = planSync({ existing: existingLocals, incoming, match: createClubEventMatchStrategy(), policy: { lossThresholdPercent: sourceLossThresholdPercent } })
+  const match = createClubEventMatchStrategy()
+  const plan = planSync({ existing: existingLocals, incoming, match, policy: { lossThresholdPercent: sourceLossThresholdPercent } })
   if (plan.aborted) {
     return reply.code(200).send(await handleAbortedSync({ service, request, runId, sourceId, idempotencyKey }))
   }
 
   const ignoredFingerprints = await loadIgnoredFingerprints(service, sourceId)
-  const pendingConflicts = buildPendingConflicts({ plan, sourceId, domain, identityOf: clubEventDomainAdapter.identityOf, invalidRecords, ignoredFingerprints })
+  const pendingConflicts = buildPendingConflicts({ plan, sourceId, domain, identityOf: match.identityOf, invalidRecords, ignoredFingerprints })
 
   // Eine Veranstaltung ohne aufloesbaren Start-Zeitpunkt (kaputtes Datumsformat) wuerde an der
   // not-null-Spalte starts_at scheitern -- als Konflikt behandeln statt ungefangen zu werfen.

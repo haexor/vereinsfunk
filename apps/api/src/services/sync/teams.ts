@@ -56,7 +56,7 @@ export async function handleTeamsSync(ctx: SyncDomainContext): Promise<FastifyRe
   }
 
   const ignoredFingerprints = await loadIgnoredFingerprints(service, sourceId)
-  const pendingConflicts = buildPendingConflicts({ plan, sourceId, domain, identityOf: teamDomainAdapter.identityOf, invalidRecords, ignoredFingerprints })
+  const pendingConflicts = buildPendingConflicts({ plan, sourceId, domain, identityOf: match.identityOf, invalidRecords, ignoredFingerprints })
 
   // Ein neu anzulegendes/zu aktualisierendes Team ohne aufloesbare Abteilung UND ohne
   // abteilungsgebundene Quelle haette keinen department_id-Wert -- die Spalte ist not null. Statt
