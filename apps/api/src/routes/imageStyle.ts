@@ -102,6 +102,7 @@ const RPC_ERROR_STATUS: Record<string, number> = {
   post_not_found: 404,
   post_not_editable: 409,
   post_media_changed: 409,
+  post_version_not_current: 409,
 }
 
 class BrandAssetNotReadyError extends Error {
@@ -887,6 +888,8 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
     // Veroeffentlichung. Ohne diese Pruefung koennte die postMediaId einer archivierten,
     // freigegebenen Fassung uebergeben werden und wuerde deren Bildstand nachtraeglich
     // umschreiben, obwohl publications und approval_media_snapshots weiter darauf zeigen.
+    // Vorabpruefung fuer eine fruehe Antwort; verbindlich prueft apply_image_style_render
+    // (2026101940) erneut, denn waehrend des Renderings kann eine neue Fassung entstehen.
     if (postRow.current_version_id !== mediaRow.post_version_id) {
       return reply.code(409).send({ error: 'post_version_not_current', correlationId: request.id })
     }

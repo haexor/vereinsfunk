@@ -1062,6 +1062,21 @@ describe('POST /v1/post-media/:postMediaId/style-render', () => {
     expect(response.json()).toMatchObject({ error: 'post_media_changed' })
   })
 
+  it('maps a post version that stopped being current during rendering to 409 instead of 201', async () => {
+    const sourcePhoto = await sharp({
+      create: { width: 40, height: 20, channels: 3, background: { r: 10, g: 20, b: 30 } },
+    })
+      .png()
+      .toBuffer()
+    const clients = styleRenderClients({
+      sourcePhoto,
+      rpc: { data: null, error: { message: 'post_version_not_current', code: 'P0001' } },
+    })
+    const response = await styleRender(clients)
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'post_version_not_current' })
+  })
+
   it('renders the preset onto the source photo and applies the new derivative to post_media', async () => {
     const sourcePhoto = await sharp({
       create: { width: 40, height: 20, channels: 3, background: { r: 10, g: 20, b: 30 } },
