@@ -275,6 +275,24 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
       expect(response.statusCode).toBe(200)
       expect(response.json().run).toMatchObject({ createdCount: 0, skippedCount: 1001 })
     })
+
+    it('rejects a stored field mapping with a non-string target before acquiring a run', async () => {
+      let acquired = false
+      const service = syncServiceClient({})
+      const clients: SupabaseClientFactory = {
+        forUser: () => sourceOnlyUserClient(integrationSource({ department_id: DEPARTMENT_ID, enabled_domains: ['teams'], field_mapping: { Name: 42 } })),
+        forService: () => ({ ...service, rpc: async () => { acquired = true; return { data: [{ result: 'acquired', run_id: RUN_ID }], error: null } } }) as unknown as SupabaseClient,
+      }
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      const { boundary, body } = syncMultipartBody('dry_run', 'teams', 'Name\r\nErste Mannschaft\r\n')
+      const response = await app.inject({
+        method: 'POST', url: `/v1/integration-sources/${SOURCE_ID}/sync`,
+        headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` }, payload: body,
+      })
+      expect(response.statusCode).toBe(500)
+      expect(acquired).toBe(false)
+    })
   })
 
   describe('fixtures sync', () => {

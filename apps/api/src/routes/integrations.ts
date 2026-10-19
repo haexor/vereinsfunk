@@ -1,12 +1,12 @@
 import {
   CreateIntegrationSourceRequestSchema,
+  FieldMappingSchema,
   IntegrationDomainSchema,
   ResolveSyncConflictRequestSchema,
   SyncIdempotencyKeySchema,
   SyncModeSchema,
   UpdateIntegrationSourceRequestSchema,
   UuidSchema,
-  type FieldMapping,
   type IntegrationDomain,
   type SyncMode,
 } from '@vereinsfunk/contracts'
@@ -31,6 +31,7 @@ import { handlePeopleSync } from '../services/sync/people.js'
 import { handleTeamsSync } from '../services/sync/teams.js'
 import type { ApiRouteContext } from './context.js'
 import { createAuditRecorder, resolveDirectoryScope, toPermissionScope } from './shared.js'
+import { parseSupabaseData } from '../supabase.js'
 
 export function registerIntegrationRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients } = context
@@ -237,7 +238,7 @@ export function registerIntegrationRoutes(app: FastifyInstance, context: ApiRout
     const sourceTransport = source.data.transport as string
     const sourceEndpointUrl = source.data.endpoint_url as string | null
     const sourceEnabledDomains = source.data.enabled_domains as string[]
-    const sourceFieldMapping = source.data.field_mapping as FieldMapping
+    const sourceFieldMapping = parseSupabaseData(FieldMappingSchema, source.data.field_mapping)
     const sourceLossThresholdPercent = source.data.loss_threshold_percent as number
     const scope = toPermissionScope(organizationId, sourceDepartmentId)
     if (!(await requirePermission(request, reply, 'integration.manage', scope))) return
