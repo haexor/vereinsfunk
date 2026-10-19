@@ -99,7 +99,7 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
     const input = UpdateLlmProviderConfigurationRequestSchema.parse(request.body)
     if (input.taskKind && !IMPLEMENTED_LLM_TASK_KINDS.has(input.taskKind)) return reply.code(422).send({ error: 'task_kind_not_implemented', taskKind: input.taskKind })
     const service = supabaseClients.forService()
-    const current = await service.from('llm_provider_configurations').select('protocol, task_kind, is_active').eq('id', params.id).maybeSingle()
+    const current = await service.from('llm_provider_configurations').select('id, label, protocol, base_url, model, purpose, task_kind, structured_output_required, is_active').eq('id', params.id).maybeSingle()
     if (current.error) throw current.error
     if (!current.data) return reply.code(404).send({ error: 'llm_provider_not_found' })
     const effectiveProtocol = input.protocol ?? current.data.protocol
@@ -119,13 +119,20 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
     if (input.taskKind !== undefined) payload.task_kind = input.taskKind
     if (input.structuredOutputRequired !== undefined) payload.structured_output_required = input.structuredOutputRequired
     if (input.isActive !== undefined) payload.is_active = input.isActive
-    const update = await service
-      .from('llm_provider_configurations')
-      .update(payload)
-      .eq('id', params.id)
-      .select('id, label, protocol, base_url, model, purpose, task_kind, structured_output_required, is_active')
-      .single()
-    if (update.error) throw update.error
+    // Ein reiner Schluesselwechsel ({ apiKey }) laesst die Zeile unveraendert: update({}) liefert
+    // keine Zeile zurueck, .single() scheiterte daran mit einem 500, bevor der neue Schluessel
+    // ueberhaupt gespeichert war.
+    let row = current.data
+    if (Object.keys(payload).length > 0) {
+      const update = await service
+        .from('llm_provider_configurations')
+        .update(payload)
+        .eq('id', params.id)
+        .select('id, label, protocol, base_url, model, purpose, task_kind, structured_output_required, is_active')
+        .single()
+      if (update.error) throw update.error
+      row = update.data
+    }
     if (input.apiKey !== undefined) {
       const sealed = createSecretBoxFromEnvironment(environment).seal(input.apiKey, params.id)
       const upsert = await service.from('llm_provider_secrets').upsert({
@@ -141,7 +148,7 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
       .eq('llm_provider_configuration_id', params.id)
       .maybeSingle()
     if (hasSecret.error) throw hasSecret.error
-    return reply.code(200).send(LlmProviderConfigurationSchema.parse(mapLlmProviderConfigurationRow(update.data, hasSecret.data !== null)))
+    return reply.code(200).send(LlmProviderConfigurationSchema.parse(mapLlmProviderConfigurationRow(row, hasSecret.data !== null)))
   })
 
   // Modellauswahl im Anlege-Formular. Der Schluessel kommt aus dem Request, weil beim Anlegen noch

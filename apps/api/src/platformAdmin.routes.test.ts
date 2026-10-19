@@ -831,6 +831,43 @@ describe('platform administration', () => {
     expect(response.json()).toMatchObject({ protocol: 'anthropic', hasSecret: true })
   })
 
+  it('rotates only the API key without an empty row update', async () => {
+    const configRow = {
+      id: 'a0000000-0000-4000-8000-000000000001', label: 'OpenAI', protocol: 'openai', base_url: 'https://api.openai.com/v1',
+      model: 'gpt-5-mini', purpose: 'default', task_kind: 'text_generation', structured_output_required: true, is_active: true,
+    }
+    let secretUpserted = false
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({
+        from: (table: string) => {
+          if (table === 'llm_provider_configurations') {
+            return {
+              select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: configRow, error: null }) }) }),
+              update: () => { throw new Error('a key-only patch must not update the configuration row') },
+            }
+          }
+          if (table === 'llm_provider_secrets') {
+            return {
+              upsert: async () => { secretUpserted = true; return { error: null } },
+              select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { llm_provider_configuration_id: configRow.id }, error: null }) }) }),
+            }
+          }
+          throw new Error(`unexpected table in test fake: ${table}`)
+        },
+      }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PATCH', url: `/v1/llm-providers/${configRow.id}`,
+      headers: { authorization: `Bearer ${token}` }, payload: { apiKey: 'rotated-secret' },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ id: configRow.id, label: 'OpenAI', hasSecret: true })
+    expect(secretUpserted).toBe(true)
+  })
+
   // generation_candidates und der Herkunftsnachweis halten die Konfiguration per on delete restrict.
   it('maps deleting a provider that generated content to 409 instead of 500', async () => {
     const clients: SupabaseClientFactory = {
