@@ -16,4 +16,12 @@ describe('Dashboard', () => {
     expect(page).toContain("openApprovals: posts.filter((post) => post.status === 'awaiting_approval').length")
     expect(page).toContain('status: PostStatus')
   })
+
+  it('protokolliert beim Verwerfen eines Vorschlags nur den Statuscode, nie den FetchError', () => {
+    const page = readFileSync(join(PAGES_DIR, 'index.vue'), 'utf8')
+
+    // Der FetchError von ofetch enthaelt options.headers.authorization mit dem Bearer-JWT.
+    expect(page).not.toContain('console.error(error)')
+    expect(page).toContain("console.error('Anlassvorschlag konnte nicht verworfen werden', (error as { statusCode?: number })?.statusCode)")
+  })
 })

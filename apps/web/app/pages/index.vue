@@ -228,7 +228,8 @@ async function dismissSuggestion(item: ContentSuggestion) {
     })
     suggestions.value = suggestions.value.filter((suggestion) => suggestion !== item)
   } catch (error) {
-    console.error(error)
+    // Nur der Statuscode: der FetchError traegt in options.headers das Bearer-Token der Sitzung.
+    console.error('Anlassvorschlag konnte nicht verworfen werden', (error as { statusCode?: number })?.statusCode)
   }
 }
 
