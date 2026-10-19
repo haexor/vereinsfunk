@@ -83,6 +83,9 @@ export function registerConsentPublicRoutes(app: FastifyInstance, context: ApiRo
         .maybeSingle()
       if (declined.error) throw declined.error
       if (!declined.data) return reply.code(404).send({ ...CONSENT_TOKEN_INVALID_RESPONSE, correlationId: request.id })
+      // Wie der Widerruf unten: die Antwort einer Person ohne Konto ist eine externe Aktion und
+      // braucht ihren eigenen Audit-Eintrag (actor null).
+      await recordExternalActionAuditEvent(request, null, { organizationId: row.organization_id, action: 'consent_request.declined_via_public_link', entityType: 'consent_requests', entityId: row.id })
       return reply.code(200).send({ status: 'declined' })
     }
 
@@ -143,6 +146,7 @@ export function registerConsentPublicRoutes(app: FastifyInstance, context: ApiRo
       await service.from('consent_records').delete().eq('id', consentId)
       return reply.code(404).send({ ...CONSENT_TOKEN_INVALID_RESPONSE, correlationId: request.id })
     }
+    await recordExternalActionAuditEvent(request, null, { organizationId: row.organization_id, action: 'consent.granted_via_public_link', entityType: 'consent_records', entityId: consentId, metadata: { consentRequestId: row.id } })
 
     return reply.code(200).send({
       status: 'granted',

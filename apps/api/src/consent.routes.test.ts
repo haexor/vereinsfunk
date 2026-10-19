@@ -495,8 +495,9 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
     expect(response.headers['x-robots-tag']).toBe('noindex, nofollow')
   })
 
-  it('records a decline without creating a consent record', async () => {
+  it('records and audits a decline without creating a consent record', async () => {
     let consentRecordsTouched = false
+    const auditRows: Record<string, unknown>[] = []
     const clients: SupabaseClientFactory = {
       forUser: () => ({}) as unknown as SupabaseClient,
       forService: () =>
@@ -515,6 +516,7 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
               }
             }
             if (table === 'consent_records') { consentRecordsTouched = true; throw new Error('must not be touched on decline') }
+            if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { auditRows.push(row); return { error: null } } }
             throw new Error(`unexpected table in service fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
@@ -524,6 +526,7 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
     expect(response.statusCode).toBe(200)
     expect(response.json()).toMatchObject({ status: 'declined' })
     expect(consentRecordsTouched).toBe(false)
+    expect(auditRows).toEqual([expect.objectContaining({ action: 'consent_request.declined_via_public_link', actor_user_id: null, entity_type: 'consent_requests', entity_id: CONSENT_REQUEST_ID })])
   })
 
   // Zwei gleichzeitige Antworten auf dieselbe Einwilligungsanfrage: die Verliererin des
@@ -622,6 +625,16 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
     expect(response.statusCode).toBe(200)
     const today = new Date().toISOString().slice(0, 10)
     expect(captured.consentRow).toMatchObject({ signed_at: today, valid_until: addMonthsToIsoDate(today, 12) })
+  })
+
+  it('audits a public grant as an external action without an account', async () => {
+    const captured: { consentRow?: Record<string, unknown>; auditRows: Record<string, unknown>[] } = { auditRows: [] }
+    const app = await startApp({ supabaseClients: { forUser: () => ({}) as unknown as SupabaseClient, forService: () => grantingServiceClient(captured) } })
+    const response = await app.inject({ method: 'POST', url: '/v1/consent-requests/by-token/grant-token/respond', payload: { decision: 'granted' } })
+    expect(response.statusCode).toBe(200)
+    expect(captured.auditRows).toEqual([
+      expect.objectContaining({ action: 'consent.granted_via_public_link', actor_user_id: null, entity_type: 'consent_records', entity_id: captured.consentRow?.id, metadata: { consentRequestId: CONSENT_REQUEST_ID } }),
+    ])
   })
 
   it('rate-limits repeated public respond attempts from the same client', async () => {
