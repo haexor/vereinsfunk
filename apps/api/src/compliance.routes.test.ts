@@ -441,7 +441,7 @@ describe('Paket 020: Rechtliche Pflichten und Datenschutzbetrieb', () => {
       return query
     }
 
-    it('erases the directory entry, anonymizes linked consent evidence, and names what is retained and why', async () => {
+    it('erases the directory entry, revokes and anonymizes linked consent evidence, and names what is retained and why', async () => {
       const writes: { table: string; op: string; values?: Record<string, unknown>; filters: unknown[][] }[] = []
       const clients: SupabaseClientFactory = {
         forUser: () => directoryPersonUserClient(),
@@ -466,6 +466,12 @@ describe('Paket 020: Rechtliche Pflichten und Datenschutzbetrieb', () => {
       expect(response.statusCode).toBe(200)
       const anonymization = writes.find((write) => write.table === 'consent_records' && write.values && 'signer_name' in write.values)
       expect(anonymization?.values).toEqual({ pseudonymous_subject_ref: null, signer_name: null })
+      // Der Widerruf laeuft vor dem Loeschen der Person -- danach hat die FK directory_person_id
+      // genullt, und der Filter traefe keine Zeile mehr.
+      const revocation = writes.findIndex((write) => write.table === 'consent_records' && write.values?.revoked_by === 'organization')
+      expect(revocation).toBeGreaterThanOrEqual(0)
+      expect(writes[revocation]?.filters).toEqual(expect.arrayContaining([['eq', 'directory_person_id', DIRECTORY_PERSON_ID], ['is', 'revoked_at', null]]))
+      expect(revocation).toBeLessThan(writes.findIndex((write) => write.table === 'directory_people' && write.op === 'delete'))
       expect(writes.find((write) => write.table === 'directory_people' && write.op === 'delete')).toBeDefined()
       for (const write of writes) expect(write.filters).toContainEqual(['eq', 'organization_id', ORGANIZATION_ID])
       const body = response.json() as { erased: string[]; retained: { category: string }[] }
