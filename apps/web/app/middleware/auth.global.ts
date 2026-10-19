@@ -22,14 +22,16 @@ const publicPathPrefixes = ['/einwilligung/', '/impressum/']
 export default defineNuxtRouteMiddleware(async (to) => {
   if (publicPaths.has(to.path) || publicPathPrefixes.some((prefix) => to.path.startsWith(prefix)) || isPublicTeamPagePath(to.path)) return
 
-  // Nur ein Hinweis, keine Sicherheitspruefung -- siehe supabase.client.ts. Echte
-  // Durchsetzung liegt in RLS und in der Fastify-API.
-  const hasSessionHint = useCookie<boolean | null>('sb-session').value
-  if (!hasSessionHint) return navigateTo({ path: '/anmelden', query: { redirect: to.fullPath } })
-
   // Die eigentliche Sitzung existiert nur clientseitig (supabase.client.ts). Serverseitig
-  // verlaesst sich die Middleware ausschliesslich auf den Cookie-Hinweis oben.
-  if (import.meta.server) return
+  // verlaesst sich die Middleware deshalb ausschliesslich auf den Cookie-Hinweis -- nur ein
+  // Hinweis, keine Sicherheitspruefung; echte Durchsetzung liegt in RLS und in der Fastify-API.
+  // Clientseitig zaehlt allein die echte Sitzung: der Hinweis wird dort erst nach dem naechsten
+  // Auth-Ereignis geschrieben und darf eine bestehende Sitzung nicht auf /anmelden umleiten.
+  if (import.meta.server) {
+    const hasSessionHint = useCookie<boolean | null>('sb-session').value
+    if (!hasSessionHint) return navigateTo({ path: '/anmelden', query: { redirect: to.fullPath } })
+    return
+  }
 
   const session = await useSession()
   if (!session.value) return navigateTo({ path: '/anmelden', query: { redirect: to.fullPath } })
