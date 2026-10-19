@@ -139,20 +139,28 @@ export function registerPlayerboardSettingsRoutes(app: FastifyInstance, context:
     // Die Zeile einer Ebene ist eindeutig (Unique-Indizes je Ebene). Suchen ueber den Service-Client,
     // schreiben mit dem Nutzer-Client, damit die Policy (playerboard.manage auf genau dieser Ebene)
     // als zweite Pruefung greift.
-    let existingQuery = service.from('playerboard_settings').select('id').eq('organization_id', scope.organizationId).eq('scope', input.scope)
-    existingQuery = scope.teamId ? existingQuery.eq('team_id', scope.teamId)
-      : scope.departmentId ? existingQuery.eq('department_id', scope.departmentId)
-        : existingQuery
-    const existing = await existingQuery.maybeSingle()
-    if (existing.error) throw existing.error
     const client = supabaseClients.forUser(request.auth!.accessToken)
-    const write = existing.data
-      ? await client.from('playerboard_settings').update(values).eq('id', existing.data.id as string).select('id')
-      : await client.from('playerboard_settings').insert({
-          organization_id: scope.organizationId, scope: input.scope, department_id: scope.departmentId ?? null, team_id: scope.teamId ?? null, ...values,
-        }).select('id')
+    const writeLevelRow = async () => {
+      let existingQuery = service.from('playerboard_settings').select('id').eq('organization_id', scope.organizationId).eq('scope', input.scope)
+      existingQuery = scope.teamId ? existingQuery.eq('team_id', scope.teamId)
+        : scope.departmentId ? existingQuery.eq('department_id', scope.departmentId)
+          : existingQuery
+      const existing = await existingQuery.maybeSingle()
+      if (existing.error) throw existing.error
+      return existing.data
+        ? await client.from('playerboard_settings').update(values).eq('id', existing.data.id as string).select('id')
+        : await client.from('playerboard_settings').insert({
+            organization_id: scope.organizationId, scope: input.scope, department_id: scope.departmentId ?? null, team_id: scope.teamId ?? null, ...values,
+          }).select('id')
+    }
+    // 23505 kommt vom Slug (playerboard_settings_organization_id_public_slug_key) oder vom
+    // Unique-Index der Ebene. Letzteres heisst: eine gleichzeitige erste Speicherung hat die Zeile
+    // eben angelegt -- dann in diese schreiben, statt faelschlich "Slug vergeben" zu melden.
+    const isSlugConflict = (error: { code?: string; message?: string }) => error.code === '23505' && (error.message ?? '').includes('public_slug')
+    let write = await writeLevelRow()
+    if (write.error?.code === '23505' && !isSlugConflict(write.error)) write = await writeLevelRow()
     if (write.error) {
-      if (write.error.code === '23505') return reply.code(409).send({ error: 'public_slug_taken', correlationId: request.id })
+      if (isSlugConflict(write.error)) return reply.code(409).send({ error: 'public_slug_taken', correlationId: request.id })
       if (sendDatabaseError(request, reply, write.error)) return
       throw write.error
     }

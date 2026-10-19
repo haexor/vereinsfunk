@@ -279,6 +279,61 @@ describe('PlayerBoard coach flows', () => {
     expect(response.statusCode).toBe(400)
   })
 
+  // Regression: jede 23505 beim ersten Speichern einer Ebene galt als "Slug vergeben". Zwei
+  // gleichzeitige erste Speicherungen derselben Mannschaft scheitern aber am Unique-Index der Ebene.
+  describe('saving team settings concurrently', () => {
+    const SETTINGS_ID = '52000000-8000-4000-8000-000000000001'
+    const teamSettings = {
+      scope: 'team', department_id: DEPARTMENT_ID, team_id: TEAM_ID, season_start: null, stats_visibility: null, overridable_fields: [],
+      team_categories_allowed: null, public_sharing_allowed: null, public_points_enabled: null, public_veo_stats_enabled: null, public_photos_enabled: null, public_slug: 'u13',
+    }
+
+    /** Erste Suche findet keine Zeile, die zweite die inzwischen angelegte; der Insert scheitert mit insertError. */
+    function racingClients(insertError: { code: string; message: string }, updates: unknown[]) {
+      const lookups: unknown[] = [null, { id: SETTINGS_ID }]
+      const fakes = clients({ serviceTables: { organizations: { name: 'SV Beispiel', slug: 'sv-beispiel' } } })
+      const service = fakes.forService() as unknown as { from: (name: string) => unknown; rpc: unknown }
+      fakes.forService = () => ({
+        rpc: service.rpc,
+        from: (name: string) => {
+          if (name !== 'playerboard_settings') return service.from(name)
+          const builder = chain({ data: [teamSettings], error: null })
+          builder.maybeSingle = async () => ({ data: lookups.shift() ?? null, error: null })
+          return builder
+        },
+      }) as unknown as SupabaseClient
+      fakes.forUser = () => ({
+        from: (name: string) => {
+          if (name !== 'playerboard_settings') throw new Error(`unexpected user table in test fake: ${name}`)
+          return {
+            insert: () => chain({ data: null, error: insertError }),
+            update: (values: unknown) => { updates.push(values); return chain({ data: [{ id: SETTINGS_ID }], error: null }) },
+          }
+        },
+      }) as unknown as SupabaseClient
+      return fakes
+    }
+
+    it('writes into the row a concurrent first save just created', async () => {
+      const updates: unknown[] = []
+      const fakes = racingClients({ code: '23505', message: 'duplicate key value violates unique constraint "playerboard_settings_team_unique"' }, updates)
+      const app = await startApp({ roleProvider: rolesProvider(['team_manager']), supabaseClients: fakes })
+      const response = await call(app, 'PUT', '/v1/playerboard/settings', { scope: 'team', scopeId: TEAM_ID, patch: { publicSlug: 'u13' } })
+      expect(response.statusCode).toBe(200)
+      expect(updates).toEqual([expect.objectContaining({ public_slug: 'u13' })])
+    })
+
+    it('still reports a slug used by another team', async () => {
+      const updates: unknown[] = []
+      const fakes = racingClients({ code: '23505', message: 'duplicate key value violates unique constraint "playerboard_settings_organization_id_public_slug_key"' }, updates)
+      const app = await startApp({ roleProvider: rolesProvider(['team_manager']), supabaseClients: fakes })
+      const response = await call(app, 'PUT', '/v1/playerboard/settings', { scope: 'team', scopeId: TEAM_ID, patch: { publicSlug: 'u13' } })
+      expect(response.statusCode).toBe(409)
+      expect(response.json()).toMatchObject({ error: 'public_slug_taken' })
+      expect(updates).toEqual([])
+    })
+  })
+
   it('reports invalid photo consents with the affected people', async () => {
     const invalid = [{ directoryPersonId: PERSON_ID, consentRecordId: '52000000-6000-4000-8000-000000000002' }]
     const app = await startApp({
