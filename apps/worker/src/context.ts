@@ -2,6 +2,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { z } from 'zod'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
 import { hashLogoBuffer } from '@vereinsfunk/brand-assets'
+import { byteaToBuffer, EmbeddedProviderSecretSchema, unwrapEmbeddedSecret } from '@vereinsfunk/secrets'
 import { CommunicationGoalSchema, MaxCharactersSchema, SocialPlatformSchema, TextGenerationTemperatureSchema, UuidSchema, WorkflowNameSchema, WorkflowPayloadSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
 import type { WorkflowOutboxRepository } from '@vereinsfunk/orchestration'
 import type { BrandAnalysisJobRow, BrandWebsiteAnalysisRepository, VisionProviderRow } from './brandWebsiteAnalysis.js'
@@ -139,12 +140,10 @@ export function createTextGenerationRepository(config: WorkerEnvironment): TextG
       if (data.length === 0) throw new Error('assigned text provider is missing')
       const row = z.object({
         id: UuidSchema, protocol: z.string(), base_url: z.url(), model: z.string().trim().min(1),
-        structured_output_required: z.boolean(), llm_provider_secrets: z.union([z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) }), z.array(z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) })).min(1)]),
+        structured_output_required: z.boolean(), llm_provider_secrets: EmbeddedProviderSecretSchema,
       }).parse(data[0])
-      const secret = row.llm_provider_secrets
-      const value = Array.isArray(secret) ? secret[0] : secret
-      if (!value) throw new Error('text provider secret missing')
-      return ProviderRowSchema.parse({ ...row, api_key_ciphertext: value.api_key_ciphertext, key_version: value.key_version })
+      const secret = unwrapEmbeddedSecret(row.llm_provider_secrets)
+      return ProviderRowSchema.parse({ ...row, api_key_ciphertext: secret.api_key_ciphertext, key_version: secret.key_version })
     },
     async markReady(candidateId, sessionId, leaseToken, generatedContent, metadata) {
       const { error } = await client.rpc('mark_generation_candidate_ready', {
@@ -240,12 +239,10 @@ export function createBrandWebsiteAnalysisRepository(config: WorkerEnvironment):
       if (data.length === 0) return null
       const row = z.object({
         id: UuidSchema, protocol: z.string(), base_url: z.url(), model: z.string().trim().min(1),
-        llm_provider_secrets: z.union([z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) }), z.array(z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) })).min(1)]),
+        llm_provider_secrets: EmbeddedProviderSecretSchema,
       }).parse(data[0])
-      const secret = row.llm_provider_secrets
-      const value = Array.isArray(secret) ? secret[0] : secret
-      if (!value) throw new Error('vision provider secret missing')
-      return VisionProviderRowSchema.parse({ ...row, api_key_ciphertext: value.api_key_ciphertext, key_version: value.key_version })
+      const secret = unwrapEmbeddedSecret(row.llm_provider_secrets)
+      return VisionProviderRowSchema.parse({ ...row, api_key_ciphertext: secret.api_key_ciphertext, key_version: secret.key_version })
     },
     // Staging-Pfad, kein brand_assets-Datenbankeintrag: der entsteht erst, wenn der Verein den
     // KI-Vorschlag tatsaechlich uebernimmt und auf marke.vue speichert (siehe Plandokument).
@@ -348,10 +345,8 @@ export function createVisionProviderComparisonRepository(config: WorkerEnvironme
         .eq('task_kind', 'vision_analysis').eq('is_active', true)
       if (error) throw error
       return data.map((row) => {
-        const secret = row.llm_provider_secrets as { api_key_ciphertext: string; key_version: string } | { api_key_ciphertext: string; key_version: string }[]
-        const value = Array.isArray(secret) ? secret[0] : secret
-        if (!value) throw new Error('vision provider secret missing')
-        return VisionComparisonProviderRowSchema.parse({ ...row, api_key_ciphertext: value.api_key_ciphertext, key_version: value.key_version })
+        const secret = unwrapEmbeddedSecret(EmbeddedProviderSecretSchema.parse(row.llm_provider_secrets))
+        return VisionComparisonProviderRowSchema.parse({ ...row, api_key_ciphertext: secret.api_key_ciphertext, key_version: secret.key_version })
       })
     },
     // Kein organizationId als Namensraum: dieses Werkzeug ist rein plattformbezogen, anders als
@@ -410,9 +405,10 @@ export function createVeoSyncRepository(config: WorkerEnvironment): VeoSyncRepos
         teamName: teamRow.name,
         veoClubSlug: linkRow.veo_club_slug,
         veoTeamSlug: linkRow.veo_team_slug,
-        // bytea kommt ueber PostgREST als Hex-Escape (\x...), siehe apps/api/src/secretBox.ts.
+        // bytea kommt ueber PostgREST als Hex-Escape (\x...). Eine andere Form gilt als fehlendes
+        // Geheimnis statt als Fehler, damit der Lauf trotzdem sauber als 'veo_link_missing' endet.
         secret: ciphertext?.startsWith('\\x')
-          ? { ciphertext: Buffer.from(ciphertext.slice(2), 'hex'), keyVersion: secretRow!.key_version }
+          ? { ciphertext: byteaToBuffer(ciphertext), keyVersion: secretRow!.key_version }
           : null,
       }
     },

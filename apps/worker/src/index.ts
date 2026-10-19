@@ -3,7 +3,7 @@ import { runPendingMigrations } from '@vereinsfunk/db-migrate'
 import { createLogger } from '@vereinsfunk/observability'
 import { WorkflowOutboxDispatcher } from '@vereinsfunk/orchestration'
 import { createEmailSender } from '@vereinsfunk/mailer'
-import { createSecretBox } from '@vereinsfunk/secrets'
+import { createSecretBox, parseSecretBoxKeys } from '@vereinsfunk/secrets'
 import { createBrandWebsiteAnalysisRepository, createGenerationRecoveryRepository, createTextGenerationRepository, createVeoSyncRepository, createVisionProviderComparisonRepository, createWorkflowExecutionRepository, createWorkflowOutboxRepository } from './context.js'
 import { createHatchetClient, HatchetOrchestrator } from './hatchet.js'
 import { concurrency, createHatchetWorker, WorkflowExecutionError, type ProductWorkflowExecutor } from './workflows.js'
@@ -74,7 +74,7 @@ async function main(): Promise<void> {
   const veoSyncRepository = createVeoSyncRepository(config)
   const veoSync = new VeoSyncExecutor({
     repository: veoSyncRepository,
-    secretBox: createSecretBox(JSON.parse(config.SECRET_BOX_KEYS) as Record<string, string>, config.SECRET_BOX_CURRENT_KEY_VERSION),
+    secretBox: createSecretBox(parseSecretBoxKeys(config.SECRET_BOX_KEYS), config.SECRET_BOX_CURRENT_KEY_VERSION),
     // Ohne SMTP landet nur der Betreff im Log -- der Text nennt keine Geheimnisse, aber Adressen
     // gehoeren nicht ins Log.
     emailSender: createEmailSender(config, (message) => logger.info({ subject: message.subject }, 'veo failure notification (fake provider)')),

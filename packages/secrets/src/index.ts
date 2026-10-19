@@ -1,4 +1,51 @@
 import { createCipheriv, createDecipheriv, createHmac, hkdfSync, randomBytes, timingSafeEqual } from 'node:crypto'
+import { z } from 'zod'
+
+const SecretBoxKeysSchema = z.record(z.string(), z.string())
+
+/**
+ * Liest SECRET_BOX_KEYS (JSON-Objekt Schluesselversion -> base64-Schluessel). API und Worker teilen
+ * diese eine Pruefung; der Worker castete den Wert zuvor an einer Stelle ungeprueft. Die
+ * Fehlermeldungen nennen den Wert nie -- er ist das Schluesselmaterial selbst.
+ */
+export function parseSecretBoxKeys(raw: string): Record<string, string> {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    throw new Error('SECRET_BOX_KEYS must be valid JSON')
+  }
+  const keys = SecretBoxKeysSchema.safeParse(parsed)
+  if (!keys.success) throw new Error('SECRET_BOX_KEYS must be a JSON object mapping key versions to base64-encoded keys')
+  return keys.data
+}
+
+// bytea-Spalten erwarten ueber PostgREST/supabase-js die Postgres-Hex-Escape-Form, kein
+// rohes Buffer-Objekt (das wuerde als {"type":"Buffer","data":[...]} serialisiert).
+export function ciphertextToBytea(ciphertext: Buffer): string {
+  return `\\x${ciphertext.toString('hex')}`
+}
+
+// Kehrseite von ciphertextToBytea -- gebraucht, wo ein gespeichertes Geheimnis wieder
+// entschluesselt wird (API-Routen und Worker).
+export function byteaToBuffer(value: string): Buffer {
+  if (!value.startsWith('\\x')) throw new Error('Unexpected bytea encoding')
+  return Buffer.from(value.slice(2), 'hex')
+}
+
+// llm_provider_secrets kommt ueber PostgREST' !inner-Embed entweder als Objekt oder als
+// Ein-Element-Array zurueck (PostgREST kann die Kardinalitaet der Beziehung nicht immer statisch
+// bestimmen) -- Form und Unwrap lagen zuvor getrennt in API und Worker.
+// Genau ein Element, nicht min(1): llm_provider_configuration_id ist in llm_provider_secrets
+// PRIMARY KEY, eine gueltige Antwort kann also nie mehr als eine Zeile enthalten.
+export const EmbeddedProviderSecretSchema = z.union([
+  z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) }),
+  z.array(z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) })).length(1),
+])
+
+export function unwrapEmbeddedSecret<T>(secret: T | T[]): T {
+  return Array.isArray(secret) ? secret[0]! : secret
+}
 
 export interface SecretBox {
   seal(plaintext: string, aad: string): { ciphertext: Buffer; keyVersion: string }

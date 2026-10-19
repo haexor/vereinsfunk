@@ -1,10 +1,28 @@
 import { randomBytes } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import { createChainSigner, createSecretBox } from './index.js'
+import { byteaToBuffer, ciphertextToBytea, createChainSigner, createSecretBox, parseSecretBoxKeys } from './index.js'
 
 function key(): string {
   return randomBytes(32).toString('base64')
 }
+
+describe('parseSecretBoxKeys', () => {
+  it('accepts a JSON object mapping key versions to keys', () => {
+    expect(parseSecretBoxKeys('{"v1":"a2V5"}')).toEqual({ v1: 'a2V5' })
+  })
+
+  it.each([['kein JSON', 'not-json'], ['ein Array', '["a2V5"]'], ['ein Nicht-String-Wert', '{"v1":1}']])('rejects %s without echoing the value', (_name, raw) => {
+    expect(() => parseSecretBoxKeys(raw)).toThrow(/^SECRET_BOX_KEYS must be/)
+  })
+})
+
+describe('bytea encoding', () => {
+  it('round-trips a ciphertext through the Postgres hex escape form', () => {
+    const ciphertext = randomBytes(40)
+    expect(byteaToBuffer(ciphertextToBytea(ciphertext))).toEqual(ciphertext)
+    expect(() => byteaToBuffer('deadbeef')).toThrow(/Unexpected bytea encoding/)
+  })
+})
 
 describe('createSecretBox', () => {
   it('throws when no key exists for the current key version', () => {
