@@ -41,21 +41,21 @@ export function registerApprovalRoutes(app: FastifyInstance, context: ApiRouteCo
     const ruleRows = await fetchPolicyRuleRows(client, post.data.organization_id)
     const orgRow = ruleRows.orgRow
     const config = computeRuleEntry(ruleRows, teamId ? 'team' : 'department', teamId ?? departmentId, departmentId).config
-    const stages = await buildStageDefinitions(client, ruleRows, post.data.organization_id, departmentId, teamId)
+    // Service-role-Client fuer alles, was den Pruefkreis oder die Verfasserin betrifft:
+    // organization/department/team_memberships_select zeigen einer einreichenden Person ohne
+    // *.manage per RLS nur ihre eigenen Mitgliedschaftszeilen. Mit dem Aufrufer-Client waere der
+    // Pruefkreis jeder Stufe fuer die meisten Einreichenden leer, und die Vorschau antwortete mit
+    // 422 empty_reviewer_pool, obwohl request_approval die Route erfolgreich angelegt haette.
+    // directory_people verlangt zusaetzlich directory.read (siehe Kommentar bei isAuthorMinor).
+    const service = supabaseClients.forService()
+    const stages = await buildStageDefinitions(service, ruleRows, post.data.organization_id, departmentId, teamId)
     const authorId = version.data.created_by_user_id as string
     const trust = await fetchMemberTrust(client, authorId, post.data.organization_id, departmentId, teamId)
     const containsMinors = ((version.data.safety_flags as string[]) ?? []).includes('minor')
-    // Service-role-Client: directory_people verlangt directory.read, das eine einreichende Person
-    // mit blosser post.submit-Rolle i.d.R. nicht haelt (siehe Kommentar bei isAuthorMinor).
-    const service = supabaseClients.forService()
     const authorIsMinor = await isAuthorMinor(service, post.data.organization_id, authorId)
-    // Ueber den Service-Client: organization_memberships_select zeigt einer einreichenden Person
-    // ohne organization.manage per RLS nur die eigene Mitgliedschaftszeile, nicht die anderer
-    // Genehmigender -- mit dem Aufrufer-Client waere der Pruefkreis dieser beiden unbefreibaren
-    // Vereinsstufen fuer die meisten Einreichenden faelschlich leer (422 trotz vorhandener
-    // erwachsener Genehmigender). Einmal geladen, fuer beide Minderjaehrigenstufen wiederverwendet
-    // -- beide fragen denselben vereinsweiten Genehmigungskreis ab, ein zweiter identischer Aufruf
-    // waere nur verschwendet.
+    // Einmal geladen, fuer beide unbefreibaren Minderjaehrigenstufen wiederverwendet -- beide fragen
+    // denselben vereinsweiten Genehmigungskreis ab, ein zweiter identischer Aufruf waere nur
+    // verschwendet.
     const orgApproverUserIds = containsMinors || authorIsMinor
       ? await membersWithApprovePermission(service, post.data.organization_id, 'organization', null, null)
       : []

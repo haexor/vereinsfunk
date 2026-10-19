@@ -405,18 +405,18 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
             if (table === 'policy_settings') {
               return chain({ data: [{ id: 'p1', scope: 'department', department_id: DEPARTMENT_ID, team_id: null, ...emptyPolicyRuleColumns(), review_required: true }], error: null })
             }
-            if (table === 'organization_memberships' || table === 'department_memberships' || table === 'team_memberships') return chain({ data: [], error: null })
             if (table === 'member_review_trust') return chain({ data: [], error: null })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
           rpc: async () => { throw new Error('request_approval should not be called for an unfulfillable route') },
         }) as unknown as SupabaseClient,
-      // isAuthorMinor liest ueber den Service-Client (siehe Kommentar dort) -- die Autorin ist hier
-      // nicht minderjaehrig, kein directory_people-Treffer.
+      // isAuthorMinor und der Pruefkreis lesen ueber den Service-Client (siehe Kommentar dort) --
+      // die Autorin ist hier nicht minderjaehrig, und niemand haelt post.approve.
       forService: () =>
         ({
           from: (table: string) => {
             if (table === 'directory_people') return chain({ data: [], error: null })
+            if (table === 'organization_memberships' || table === 'department_memberships' || table === 'team_memberships') return chain({ data: [], error: null })
             throw new Error(`unexpected table in service fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
@@ -459,7 +459,7 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
         ({
           from: (table: string) => {
             if (table === 'directory_people') return chain({ data: [{ profile_id: USER_ID }], error: null })
-            if (table === 'organization_memberships') return chain({ data: [], error: null })
+            if (table === 'organization_memberships' || table === 'department_memberships' || table === 'team_memberships') return chain({ data: [], error: null })
             throw new Error(`unexpected table in service fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
@@ -502,6 +502,7 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
           from: (table: string) => {
             if (table === 'directory_people') return chain({ data: [{ profile_id: USER_ID }], error: null })
             if (table === 'organization_memberships') return chain({ data: [{ user_id: OTHER_USER_ID, role: 'organization_admin' }], error: null })
+            if (table === 'department_memberships' || table === 'team_memberships') return chain({ data: [], error: null })
             throw new Error(`unexpected table in service fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
@@ -527,6 +528,11 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
     // Beobachtbar bleibt deshalb nur noch, DASS die Vorschau keinen Blocker meldet -- welche
     // reviewerUserIds sie konkret berechnet, deckt weiterhin resolveReviewRoute()/
     // buildStageDefinitions() in packages/domain bzw. den uebrigen API-Tests dieser Datei ab.
+    //
+    // Regression: der Pruefkreis wurde ueber den Aufrufer-Client geladen. Die Mitgliedschafts-
+    // Policies zeigen einer einreichenden Person ohne *.manage nur ihre eigenen Zeilen -- das
+    // forUser-Fake liefert deshalb wie RLS leere Listen, nur der Service-Client sieht die
+    // Vereinsleitung. Ueber den Aufrufer-Client meldete die Vorschau 422 empty_reviewer_pool.
     const rpcCalls: Record<string, unknown>[] = []
     const clients: SupabaseClientFactory = {
       forUser: () =>
@@ -537,8 +543,7 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
             if (table === 'policy_settings') {
               return chain({ data: [{ id: 'p1', scope: 'department', department_id: DEPARTMENT_ID, team_id: null, ...emptyPolicyRuleColumns(), review_required: true }], error: null })
             }
-            if (table === 'organization_memberships') return chain({ data: [{ user_id: OTHER_USER_ID, role: 'organization_admin' }], error: null })
-            if (table === 'department_memberships' || table === 'team_memberships') return chain({ data: [], error: null })
+            if (table === 'organization_memberships' || table === 'department_memberships' || table === 'team_memberships') return chain({ data: [], error: null })
             if (table === 'member_review_trust') return chain({ data: [], error: null })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
@@ -553,6 +558,8 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
         ({
           from: (table: string) => {
             if (table === 'directory_people') return chain({ data: [], error: null })
+            if (table === 'organization_memberships') return chain({ data: [{ user_id: OTHER_USER_ID, role: 'organization_admin' }], error: null })
+            if (table === 'department_memberships' || table === 'team_memberships') return chain({ data: [], error: null })
             throw new Error(`unexpected table in service fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
@@ -578,8 +585,7 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
             if (table === 'post_versions') return chain({ data: { id: POST_VERSION_ID, post_id: POST_ID, created_by_user_id: USER_ID, safety_flags: [] }, error: null })
             if (table === 'posts') return chain({ data: { id: POST_ID, organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: null, status: 'draft_ready' }, error: null })
             if (table === 'policy_settings') return chain({ data: [{ id: 'p1', scope: 'department', department_id: DEPARTMENT_ID, team_id: null, ...emptyPolicyRuleColumns(), review_required: true }], error: null })
-            if (table === 'organization_memberships') return chain({ data: [{ user_id: OTHER_USER_ID, role: 'organization_admin' }], error: null })
-            if (table === 'department_memberships' || table === 'team_memberships' || table === 'member_review_trust') return chain({ data: [], error: null })
+            if (table === 'member_review_trust') return chain({ data: [], error: null })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
           rpc: async () => {
@@ -594,6 +600,8 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
         ({
           from: (table: string) => {
             if (table === 'directory_people') return chain({ data: [], error: null })
+            if (table === 'organization_memberships') return chain({ data: [{ user_id: OTHER_USER_ID, role: 'organization_admin' }], error: null })
+            if (table === 'department_memberships' || table === 'team_memberships') return chain({ data: [], error: null })
             if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { auditRows.push(row); return { error: null } } }
             throw new Error(`unexpected table in service test fake: ${table}`)
           },
