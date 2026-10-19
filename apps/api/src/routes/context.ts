@@ -25,14 +25,9 @@ export interface SupabaseClientFactory {
 }
 
 export interface MediaUploadService {
-  create(input: {
-    organizationId: string
-    departmentId: string | null
-    assetId: string
-    filename: string
-    mimeType: string
-    byteSize: number
-  }): Promise<{ uploadUrl: string; objectPath: string; expiresAt: string }>
+  // objectPath vergibt POST /v1/media/uploads, weil reserve_storage_upload ihn schon vor dem
+  // Signieren in media_assets festhaelt -- complete() laedt genau diesen Pfad wieder herunter.
+  create(input: { objectPath: string }): Promise<{ uploadUrl: string; objectPath: string; expiresAt: string }>
   complete(input: { assetId: string; sha256: string }): Promise<{ accepted: true; uploadStatus?: string; mimeType?: string | null }>
 }
 

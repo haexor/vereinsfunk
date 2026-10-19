@@ -76,7 +76,7 @@ function fakeClient(options: {
 }
 
 describe('SupabaseUploadService.create', () => {
-  it('issues a signed upload URL under the department-scoped object path', async () => {
+  it('issues a signed upload URL for exactly the reserved object path', async () => {
     let requestedBucket: string | undefined
     let requestedPath: string | undefined
     const client = {
@@ -93,9 +93,10 @@ describe('SupabaseUploadService.create', () => {
       },
     } as unknown as SupabaseClient
     const service = new SupabaseUploadService(() => client)
-    const result = await service.create({ organizationId: ORGANIZATION_ID, departmentId: DEPARTMENT_ID, assetId: ASSET_ID, filename: 'foto.jpg', mimeType: 'image/jpeg', byteSize: 10 })
+    const objectPath = `organizations/${ORGANIZATION_ID}/departments/${DEPARTMENT_ID}/assets/${ASSET_ID}/foto.jpg`
+    const result = await service.create({ objectPath })
     expect(requestedBucket).toBe('raw-media')
-    expect(requestedPath).toBe(`organizations/${ORGANIZATION_ID}/departments/${DEPARTMENT_ID}/assets/${ASSET_ID}/foto.jpg`)
+    expect(requestedPath).toBe(objectPath)
     expect(result).toMatchObject({ uploadUrl: 'https://signed.example/x?token=abc', objectPath: requestedPath })
     expect(new Date(result.expiresAt).getTime()).toBeGreaterThan(Date.now())
   })

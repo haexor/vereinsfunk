@@ -49,17 +49,14 @@ export class SupabaseUploadService implements MediaUploadService {
     private readonly log?: Pick<FastifyBaseLogger, 'error'>,
   ) {}
 
-  async create(input: { organizationId: string; departmentId: string | null; assetId: string; filename: string; mimeType: string; byteSize: number }) {
-    const objectPath = input.departmentId
-      ? `organizations/${input.organizationId}/departments/${input.departmentId}/assets/${input.assetId}/${input.filename}`
-      : `organizations/${input.organizationId}/assets/${input.assetId}/${input.filename}`
+  async create(input: { objectPath: string }) {
     const service = this.getServiceClient()
-    const signed = await service.storage.from('raw-media').createSignedUploadUrl(objectPath)
+    const signed = await service.storage.from('raw-media').createSignedUploadUrl(input.objectPath)
     if (signed.error) throw signed.error
     const signedData = parseSupabaseData(SignedUploadDataSchema, signed.data)
     return {
       uploadUrl: signedData.signedUrl,
-      objectPath,
+      objectPath: input.objectPath,
       // Supabase's signed upload token has a fixed, non-configurable 2h server-side lifetime --
       // this is descriptive of that fact, not a value this code controls.
       expiresAt: new Date(Date.now() + 2 * 60 * 60_000).toISOString(),

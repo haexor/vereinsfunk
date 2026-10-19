@@ -742,8 +742,8 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     // enforce_structure_limit()/schedule_publication(): zwei parallele Uploads knapp unter der
     // Grenze duerfen sie nicht gemeinsam ueberschreiten -- eine getrennte TS-seitige Pruefung vor
     // einem ungesperrten insert liesse genau das zu, gefunden im eigenen Review dieser PR).
-    // object_path folgt demselben Muster wie LocalUploadService.create() unten, weil die echte
-    // Pfadvergabe dort passiert und hier noch nicht bekannt ist.
+    // Der Pfad entsteht nur hier: die Reservierung haelt ihn fest, uploads.create() signiert genau
+    // ihn, und /complete laedt ihn ueber media_assets.object_path wieder herunter.
     const objectPath = input.departmentId
       ? `organizations/${input.organizationId}/departments/${input.departmentId}/assets/${assetId}/${input.filename}`
       : `organizations/${input.organizationId}/assets/${assetId}/${input.filename}`
@@ -757,7 +757,7 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
       if (match) return reply.code(409).send({ error: 'storage_limit_reached', scope: match[1], limitBytes: Number(match[2]), usedBytes: Number(match[3]), correlationId: request.id })
       throw reservation.error
     }
-    const upload = await uploads.create({ ...input, assetId })
+    const upload = await uploads.create({ objectPath })
     return reply.code(201).send({ assetId, ...upload })
   })
   app.post('/v1/media/:assetId/complete', async (request, reply) => {
