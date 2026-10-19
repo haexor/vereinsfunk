@@ -14,4 +14,14 @@ describe('oeffentliche Seiten', () => {
     expect(page).toContain("revocationUrl: z.url({ protocol: /^https?$/ }).optional().catch(undefined)")
     expect(page).toContain('const response = RespondResponseSchema.parse(await $fetch<unknown>(')
   })
+
+  it('setzt nur eine UUID als Verein in den serverseitigen Impressums-Abruf ein', () => {
+    const page = readFileSync(join(PAGES_DIR, 'impressum/[organizationId].vue'), 'utf8')
+
+    // Der rohe Routenparameter landete waehrend SSR im API-Pfad (Pfad-Traversal per ../ und ?).
+    expect(page).not.toContain("typeof route.params.organizationId === 'string' ? route.params.organizationId : ''")
+    expect(page).toContain('const parsedOrganizationId = UuidSchema.safeParse(route.params.organizationId)')
+    expect(page).toContain("const organizationId = parsedOrganizationId.success ? parsedOrganizationId.data : ''")
+    expect(page).toContain("if (!organizationId) return 'not-found'")
+  })
 })
