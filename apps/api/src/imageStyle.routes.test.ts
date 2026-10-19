@@ -503,6 +503,35 @@ describe('POST /v1/image-style-presets/preview', () => {
     await vi.waitFor(() => expect(renderSignal?.aborted).toBe(true), { timeout: 1500 })
   })
 
+  // sharp setzt limitInputPixels schon beim Lesen der Kopfdaten durch -- frueher wurde daraus der
+  // generische 422 invalid_image statt der vorgesehenen 413.
+  it('rejects a workshop crop above the pixel limit with 413 image_too_large', async () => {
+    const boundary = 'workshop-oversized'
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="organizationId"\r\n\r\n${ORGANIZATION_ID}\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="filter"\r\n\r\noriginal\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="crop.png"\r\nContent-Type: image/png\r\n\r\n`),
+      Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="8000" height="8000"></svg>'),
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ])
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: noAssetClients(),
+    })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/image-style-workshop/filter',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': `multipart/form-data; boundary=${boundary}`,
+      },
+      payload: body,
+    })
+    expect(response.statusCode).toBe(413)
+    expect(response.json()).toMatchObject({ error: 'image_too_large' })
+  })
+
   it('rejects unsupported workshop image MIME types through the Zod multipart schema', async () => {
     const source = await tinyImage()
     const token = await signAccessToken(USER_ID)
@@ -989,6 +1018,33 @@ describe('POST /v1/post-media/:postMediaId/style-render', () => {
     )
     expect(response.statusCode).toBe(422)
     expect(response.json()).toMatchObject({ error: 'source_media_asset_not_an_image' })
+  })
+
+  // Ein SVG mit grossen Abmessungen statt eines echten 64-MP-Fotos: sharp liest die Masse, ohne
+  // zu rastern, und die Pixelgrenze in renderImageStyle greift genauso.
+  it('maps a source photo above the pixel limit to 413 instead of 500', async () => {
+    const response = await styleRender(
+      styleRenderClients({
+        sourcePhoto: Buffer.from(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="8000" height="8000"></svg>',
+        ),
+      }),
+    )
+    expect(response.statusCode).toBe(413)
+    expect(response.json()).toMatchObject({ error: 'image_too_large' })
+  })
+
+  it("maps a G'MIC preset without a configured provider to 422 instead of 500", async () => {
+    const sourcePhoto = await sharp({
+      create: { width: 40, height: 20, channels: 3, background: { r: 10, g: 20, b: 30 } },
+    })
+      .png()
+      .toBuffer()
+    const response = await styleRender(
+      styleRenderClients({ preset: { ...PRESET_ROW, filter: 'gmic_vintage' }, sourcePhoto }),
+    )
+    expect(response.statusCode).toBe(422)
+    expect(response.json()).toMatchObject({ error: 'gmic_not_enabled' })
   })
 
   it('maps a race lost inside apply_image_style_render to 409 instead of 500', async () => {

@@ -34,7 +34,13 @@ import {
 } from '../apiMappers.js'
 import { hashLogoBuffer } from '@vereinsfunk/brand-assets'
 import { GmicImageEffectError } from '@vereinsfunk/media-processing'
-import { GmicNotEnabledError, MAX_IMAGE_STYLE_INPUT_PIXELS, renderImageStyle } from '../imageStyle.js'
+import {
+  assertImageStyleInputSize,
+  GmicNotEnabledError,
+  ImageTooLargeError,
+  renderImageStyle,
+  type ImageStyleRenderResult,
+} from '../imageStyle.js'
 import type { ApiRouteContext } from './context.js'
 import { loadSelectableBrandAsset, LOGO_ASSET_KINDS } from './brand.js'
 import {
@@ -98,6 +104,22 @@ const RPC_ERROR_STATUS: Record<string, number> = {
   post_media_changed: 409,
 }
 
+class BrandAssetNotReadyError extends Error {
+  constructor() {
+    super('brand_asset_not_ready')
+  }
+}
+
+// Vorschau und style-render teilen dieselben erwartbaren Ablehnungen: G'MIC fehlt, die
+// referenzierte Rahmen-/Logografik ist zwischen Pruefung und Download nicht mehr 'ready', oder das
+// Foto ist zu gross. Ohne diese Zuordnung landeten sie im generischen Fehlerhandler als 500.
+function renderRejection(error: unknown): { status: number; error: string } | null {
+  if (error instanceof GmicNotEnabledError) return { status: 422, error: 'gmic_not_enabled' }
+  if (error instanceof BrandAssetNotReadyError) return { status: 422, error: 'brand_asset_not_ready' }
+  if (error instanceof ImageTooLargeError) return { status: 413, error: 'image_too_large' }
+  return null
+}
+
 async function downloadBrandAssetBuffer(
   service: SupabaseClient,
   organizationId: string,
@@ -111,7 +133,7 @@ async function downloadBrandAssetBuffer(
     .eq('status', 'ready')
     .maybeSingle()
   if (asset.error) throw asset.error
-  if (!asset.data) throw new Error('brand_asset_not_ready')
+  if (!asset.data) throw new BrandAssetNotReadyError()
   const download = await service.storage
     .from('brand-assets')
     .download(parseSupabaseData(BrandAssetPathRowSchema, asset.data).object_path)
@@ -387,10 +409,10 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
         return reply.code(400).send({ error: 'unsupported_image_type', correlationId: request.id })
       if (!parsed.success) throw parsed.error
       input = parsed.data
-      const metadata = await sharp(sourceBuffer, { limitInputPixels: MAX_IMAGE_STYLE_INPUT_PIXELS }).metadata()
-      if (!metadata.width || !metadata.height || metadata.width * metadata.height > MAX_IMAGE_STYLE_INPUT_PIXELS)
-        return reply.code(413).send({ error: 'image_too_large', correlationId: request.id })
+      await assertImageStyleInputSize(sourceBuffer)
     } catch (error) {
+      if (error instanceof ImageTooLargeError)
+        return reply.code(413).send({ error: 'image_too_large', correlationId: request.id })
       if (error instanceof Error && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE')
         return reply.code(413).send({ error: 'file_too_large', correlationId: request.id })
       if (error instanceof z.ZodError)
@@ -462,10 +484,10 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
         return reply.code(400).send({ error: 'unsupported_image_type', correlationId: request.id })
       if (!parsed.success) throw parsed.error
       input = parsed.data
-      const metadata = await sharp(sourceBuffer, { limitInputPixels: MAX_IMAGE_STYLE_INPUT_PIXELS }).metadata()
-      if (!metadata.width || !metadata.height || metadata.width * metadata.height > MAX_IMAGE_STYLE_INPUT_PIXELS)
-        return reply.code(413).send({ error: 'image_too_large', correlationId: request.id })
+      await assertImageStyleInputSize(sourceBuffer)
     } catch (error) {
+      if (error instanceof ImageTooLargeError)
+        return reply.code(413).send({ error: 'image_too_large', correlationId: request.id })
       if (error instanceof Error && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE')
         return reply.code(413).send({ error: 'file_too_large', correlationId: request.id })
       if (error instanceof z.ZodError)
@@ -652,11 +674,9 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
       const result = await previewImageStyle(supabaseClients.forService(), context, input, resolvedScope)
       return reply.code(200).send(PreviewImageStylePresetResponseSchema.parse(result))
     } catch (error) {
-      if (error instanceof GmicNotEnabledError)
-        return reply.code(422).send({ error: 'gmic_not_enabled', correlationId: request.id })
-      if (error instanceof Error && error.message === 'brand_asset_not_ready')
-        return reply.code(422).send({ error: 'brand_asset_not_ready', correlationId: request.id })
-      throw error
+      const rejection = renderRejection(error)
+      if (!rejection) throw error
+      return reply.code(rejection.status).send({ error: rejection.error, correlationId: request.id })
     }
   })
 
@@ -946,29 +966,35 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
     if (download.error) throw download.error
     const sourceBuffer = Buffer.from(await download.data.arrayBuffer())
 
-    const [frameAssetBuffer, logoAssetBuffer, brandColors] = await Promise.all([
-      preset.frameType === 'custom' && preset.frameBrandAssetId
-        ? downloadBrandAssetBuffer(service, organizationId, preset.frameBrandAssetId)
-        : Promise.resolve(undefined),
-      preset.logoEnabled && preset.logoBrandAssetId
-        ? downloadBrandAssetBuffer(service, organizationId, preset.logoBrandAssetId)
-        : Promise.resolve(undefined),
-      loadResolvedBrandColors(
-        service,
-        organizationId,
-        scope.departmentId ?? null,
-        scope.teamId ?? null,
-      ),
-    ])
-
-    const rendered = await renderImageStyle({
-      sourceBuffer,
-      preset,
-      brandColors,
-      ...(context.imageEffects ? { imageEffects: context.imageEffects } : {}),
-      ...(frameAssetBuffer ? { frameAssetBuffer } : {}),
-      ...(logoAssetBuffer ? { logoAssetBuffer } : {}),
-    })
+    let rendered: ImageStyleRenderResult
+    try {
+      const [frameAssetBuffer, logoAssetBuffer, brandColors] = await Promise.all([
+        preset.frameType === 'custom' && preset.frameBrandAssetId
+          ? downloadBrandAssetBuffer(service, organizationId, preset.frameBrandAssetId)
+          : Promise.resolve(undefined),
+        preset.logoEnabled && preset.logoBrandAssetId
+          ? downloadBrandAssetBuffer(service, organizationId, preset.logoBrandAssetId)
+          : Promise.resolve(undefined),
+        loadResolvedBrandColors(
+          service,
+          organizationId,
+          scope.departmentId ?? null,
+          scope.teamId ?? null,
+        ),
+      ])
+      rendered = await renderImageStyle({
+        sourceBuffer,
+        preset,
+        brandColors,
+        ...(context.imageEffects ? { imageEffects: context.imageEffects } : {}),
+        ...(frameAssetBuffer ? { frameAssetBuffer } : {}),
+        ...(logoAssetBuffer ? { logoAssetBuffer } : {}),
+      })
+    } catch (error) {
+      const rejection = renderRejection(error)
+      if (!rejection) throw error
+      return reply.code(rejection.status).send({ error: rejection.error, correlationId: request.id })
+    }
     const outputSha256 = hashLogoBuffer(rendered.buffer)
     // renderImageStyle liefert nur noch image/jpeg oder image/png -- genau die beiden Typen, die
     // der 'rendered-media'-Bucket zulaesst (202608020002_private_storage.sql).
