@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createHash } from 'node:crypto'
 import sharp from 'sharp'
 import { z } from 'zod'
+import { parseSupabaseData } from './supabase.js'
 import type { MediaUploadService } from './routes/context.js'
 
 type MediaMimeType = 'image/jpeg' | 'image/png' | 'image/webp' | 'video/mp4' | 'audio/mpeg' | 'audio/mp4'
@@ -15,14 +16,6 @@ const MediaAssetDataSchema = z.object({
 })
 const UploadStatusRowSchema = z.object({ upload_status: z.string().min(1) })
 const DownloadDataSchema = z.instanceof(Blob)
-
-function parseSupabaseData<T>(schema: z.ZodType<T>, data: unknown): T {
-  const parsed = schema.safeParse(data)
-  if (parsed.success) return parsed.data
-  const error = new Error('Unexpected Supabase response')
-  error.name = 'SupabaseResponseError'
-  throw error
-}
 
 /**
  * Byte-sniff, never trust the client-declared Content-Type -- same reasoning as

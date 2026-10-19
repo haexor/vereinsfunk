@@ -25,6 +25,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import sharp from 'sharp'
 import { z } from 'zod'
+import { parseSupabaseData } from '../supabase.js'
 import {
   mapBrandRow,
   mapDepartmentBrandRow,
@@ -95,14 +96,6 @@ const RPC_ERROR_STATUS: Record<string, number> = {
   post_not_found: 404,
   post_not_editable: 409,
   post_media_changed: 409,
-}
-
-function parseSupabaseData<T>(schema: z.ZodType<T>, data: unknown): T {
-  const parsed = schema.safeParse(data)
-  if (parsed.success) return parsed.data
-  const error = new Error('Unexpected Supabase response')
-  error.name = 'SupabaseResponseError'
-  throw error
 }
 
 async function downloadBrandAssetBuffer(

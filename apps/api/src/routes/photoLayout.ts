@@ -11,20 +11,13 @@ import { isBrandAssetSelectable } from '@vereinsfunk/domain'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
+import { parseSupabaseData } from '../supabase.js'
 import { mapPhotoLayoutPresetRow } from '../apiMappers.js'
 import { hashLogoBuffer } from '@vereinsfunk/brand-assets'
 import { computeTilePlacements, PHOTO_LAYOUT_CANVAS_SIZE_PX, renderPhotoLayout, transformFaceRegionsForTile, type SourceFaceRegion } from '../photoLayout.js'
 import type { ApiRouteContext } from './context.js'
 import { loadResolvedBrandColors } from './imageStyle.js'
 import { resolveDirectoryScope, toPermissionScope } from './shared.js'
-
-function parseSupabaseData<T>(schema: z.ZodType<T>, data: unknown): T {
-  const parsed = schema.safeParse(data)
-  if (parsed.success) return parsed.data
-  const error = new Error('Unexpected Supabase response')
-  error.name = 'SupabaseResponseError'
-  throw error
-}
 
 // Dieselbe Pruefung wie der mediaAssetIds-Loop in POST /v1/text-workshop/sessions
 // (routes/content.ts) -- absichtlich wortgleiche Fehlercodes, weil erstellen.vue deren

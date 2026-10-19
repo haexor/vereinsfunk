@@ -1,5 +1,6 @@
 import type { ApiEnvironment } from '@vereinsfunk/config'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import type { z } from 'zod'
 
 // Supabase caps a response at max_rows=1000. Every multi-page read must have a stable order,
 // otherwise concurrent writes can make page boundaries repeat or skip rows.
@@ -31,6 +32,16 @@ export async function fetchAllRowsForIds<T>(
     rows.push(...(await fetchAllRows<T>((from, to) => fetchPage(batch, from, to))))
   }
   return rows
+}
+
+// Validates a Supabase/PostgREST payload at the trust boundary. Deliberately not a ZodError: the
+// global error handler answers a ZodError with 400, but an unexpected database shape is a 500.
+export function parseSupabaseData<T>(schema: z.ZodType<T>, data: unknown): T {
+  const parsed = schema.safeParse(data)
+  if (parsed.success) return parsed.data
+  const error = new Error('Unexpected Supabase response')
+  error.name = 'SupabaseResponseError'
+  throw error
 }
 
 export function createUserClient(environment: ApiEnvironment, accessToken: string): SupabaseClient {

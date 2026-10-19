@@ -32,6 +32,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
+import { parseSupabaseData } from '../supabase.js'
 import { CLUB_EVENT_COLUMNS, FIXTURE_COLUMNS, MEDIA_ASSET_SUMMARY_COLUMNS, mapClubEventRow, mapFixtureRow, mapMediaAssetSummaryRow, mapTeamRow } from '../apiMappers.js'
 import { ensurePassThroughDerivative } from '../passThroughDerivative.js'
 import { saveTextWorkshopDraft } from '../services/textWorkshopDrafts.js'
@@ -45,14 +46,6 @@ const CUSTOM_STYLE_PROFILE_COLUMNS = 'id, organization_id, department_id, team_i
 const SessionAttachmentSchema = z.object({ media_asset_id: UuidSchema })
 const CompletionAssetScopeSchema = z.object({ organization_id: UuidSchema, department_id: UuidSchema.nullable() })
 const DeletableScopeSchema = z.object({ organization_id: UuidSchema, department_id: UuidSchema.nullable(), team_id: UuidSchema.nullable() })
-
-function parseSupabaseData<T>(schema: z.ZodType<T>, data: unknown): T {
-  const parsed = schema.safeParse(data)
-  if (parsed.success) return parsed.data
-  const error = new Error('Unexpected Supabase response')
-  error.name = 'SupabaseResponseError'
-  throw error
-}
 
 function mapCustomStyleProfileRow(row: Record<string, unknown>) {
   return {
