@@ -16,7 +16,8 @@ const saving = ref(false)
 let latestLoadRun = 0
 
 const presets = ref<PhotoLayoutPreset[]>([])
-const orgColors = reactive({ primaryColor: '#163a2c', accentColor: '#caff4a' })
+const DEFAULT_ORG_COLORS = { primaryColor: '#163a2c', accentColor: '#caff4a' }
+const orgColors = reactive({ ...DEFAULT_ORG_COLORS })
 
 const canManageActiveLevel = computed(() => {
   if (!organizationId.value) return false
@@ -60,10 +61,10 @@ async function loadAll() {
     ])
     if (loadRun !== latestLoadRun) return
     if (orgBrandResult.error) { loadError.value = true; return }
-    if (orgBrandResult.data) {
-      orgColors.primaryColor = orgBrandResult.data.primary_color
-      orgColors.accentColor = orgBrandResult.data.accent_color
-    }
+    // Ohne eigene Markenzeile gelten wieder die Vorgaben -- sonst zeigten die Vorschauen nach einem
+    // Vereinswechsel die Farben des vorigen Vereins.
+    orgColors.primaryColor = orgBrandResult.data?.primary_color ?? DEFAULT_ORG_COLORS.primaryColor
+    orgColors.accentColor = orgBrandResult.data?.accent_color ?? DEFAULT_ORG_COLORS.accentColor
     presets.value = presetsResponse.presets
   } catch {
     if (loadRun === latestLoadRun) loadError.value = true

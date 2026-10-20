@@ -76,12 +76,15 @@ const createSubmitting = ref(false)
 const createError = ref('')
 
 // Ohne vereinsweites integration.manage ist "Vereinsweit" keine gueltige Voreinstellung --
-// sonst zeigt das Formular eine Option, die die API mit 403 ablehnen wuerde.
+// sonst zeigt das Formular eine Option, die die API mit 403 ablehnen wuerde. Nach einem
+// Vereinswechsel stand ausserdem noch eine Abteilung des vorigen Vereins im Formular, auch bei
+// vereinsweitem Recht, und das Anlegen scheiterte.
 watch(
   departmentOptionsForCreate,
   (list) => {
-    if (canManageOrgWide.value) return
-    if (!list.some((department) => department.id === createForm.value.departmentId)) createForm.value.departmentId = list[0]?.id ?? ''
+    const current = createForm.value.departmentId
+    const stillValid = current ? list.some((department) => department.id === current) : canManageOrgWide.value
+    if (!stillValid) createForm.value.departmentId = canManageOrgWide.value ? '' : list[0]?.id ?? ''
   },
   { immediate: true },
 )
