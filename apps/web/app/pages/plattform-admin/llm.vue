@@ -4,16 +4,11 @@ import {
   ListLlmProviderModelsRequestSchema,
   ListLlmProviderModelsResponseSchema,
   LlmProviderConfigurationSchema,
-  SocialPlatformSchema,
-  TextGenerationPlatformDefaultSchema,
   UpdateLlmProviderConfigurationRequestSchema,
-  UpdateTextGenerationPlatformDefaultRequestSchema,
   UuidSchema,
   type LlmProviderConfigurationDto,
   type LlmProviderProtocol,
   type LlmTaskKind,
-  type SocialPlatform,
-  type TextGenerationPlatformDefault,
 } from '@vereinsfunk/contracts'
 import { ApiRequestError } from '../../utils/apiClient'
 
@@ -54,14 +49,6 @@ const loading = ref(true)
 const saving = ref(false)
 const errorMessage = ref('')
 const providers = ref<LlmProviderConfigurationDto[]>([])
-const taskAssignmentSaving = reactive<Partial<Record<string, boolean>>>({})
-const taskAssignmentError = ref('')
-
-const platformDefaults = ref<TextGenerationPlatformDefault[]>([])
-const platformDefaultsLoading = ref(true)
-const platformDefaultDrafts = reactive<Partial<Record<SocialPlatform, number>>>({})
-const platformDefaultSaving = reactive<Partial<Record<SocialPlatform, boolean>>>({})
-const platformDefaultErrors = reactive<Partial<Record<SocialPlatform, string>>>({})
 
 const availableModels = ref<string[]>([])
 const modelsLoading = ref(false)
@@ -181,73 +168,16 @@ async function load() {
 }
 await load()
 
-// Paket 050: welche konfigurierten Provider gerade fuer ihre Aufgabe genutzt werden, ist ausschliesslich
-// is_active -- diese Karte gruppiert dieselbe Liste wie oben nur nach Aufgabe und bedient denselben
-// PATCH-Endpunkt. Fuer text_generation bestimmt die Anzahl der hier aktivierten Provider zugleich die
-// Anzahl der Textvorschlaege (siehe resolveTextGenerationProviderConfigurationIds, apps/api).
-const providersByTaskKind = computed(() => {
-  const grouped = new Map<LlmTaskKind, LlmProviderConfigurationDto[]>()
-  for (const option of TASK_KIND_OPTIONS) grouped.set(option.value, [])
-  for (const provider of providers.value) grouped.get(provider.taskKind)?.push(provider)
-  return grouped
-})
+// Die Aufgaben-Zuordnung gruppiert dieselbe Liste nach Aufgabe (LlmTaskAssignmentCard).
+const taskAssignmentGroups = computed(() => TASK_KIND_OPTIONS.map((option) => ({
+  taskKind: option.value,
+  label: option.label,
+  providers: providers.value.filter((provider) => provider.taskKind === option.value),
+})))
 
-async function toggleProviderActive(provider: LlmProviderConfigurationDto) {
-  taskAssignmentSaving[provider.id] = true
-  taskAssignmentError.value = ''
-  try {
-    const body = UpdateLlmProviderConfigurationRequestSchema.parse({ isActive: !provider.isActive })
-    const updated = await api.request(`/v1/llm-providers/${provider.id}`, { method: 'PATCH', body }, LlmProviderConfigurationSchema)
-    const index = providers.value.findIndex((entry) => entry.id === provider.id)
-    if (index >= 0) providers.value[index] = updated
-  } catch {
-    taskAssignmentError.value = 'Der Aktiv-Status konnte nicht geändert werden.'
-  } finally {
-    taskAssignmentSaving[provider.id] = false
-  }
-}
-
-function platformDefaultUpdatedAt(platform: SocialPlatform): string {
-  const row = platformDefaults.value.find((entry) => entry.platform === platform)
-  return row ? new Date(row.updatedAt).toLocaleString('de-DE') : '–'
-}
-
-async function loadPlatformDefaults() {
-  platformDefaultsLoading.value = true
-  try {
-    platformDefaults.value = await api.request('/v1/text-generation-platform-defaults', {}, TextGenerationPlatformDefaultSchema.array())
-    for (const row of platformDefaults.value) platformDefaultDrafts[row.platform] = row.maxCharacters
-  } catch {
-    errorMessage.value = 'Zeichengrenzen konnten nicht geladen werden.'
-  } finally {
-    platformDefaultsLoading.value = false
-  }
-}
-await loadPlatformDefaults()
-
-// Der 404-Fall (text_generation_platform_default_not_found) tritt nur auf, wenn eine spaetere
-// Migration die Plattform-Menge erweitert, ohne die neue Zeile zu befuellen (siehe Plan 042,
-// STOP conditions) -- die Zeile fehlt dann auch schon beim Laden, nicht erst beim Speichern.
-async function savePlatformDefault(platform: SocialPlatform) {
-  const draft = platformDefaultDrafts[platform]
-  if (draft === undefined) return
-  platformDefaultSaving[platform] = true
-  platformDefaultErrors[platform] = ''
-  try {
-    const body = UpdateTextGenerationPlatformDefaultRequestSchema.parse({ maxCharacters: draft })
-    const updated = await api.request(`/v1/text-generation-platform-defaults/${platform}`, { method: 'PUT', body }, TextGenerationPlatformDefaultSchema)
-    const index = platformDefaults.value.findIndex((row) => row.platform === platform)
-    if (index >= 0) platformDefaults.value[index] = updated
-    else platformDefaults.value.push(updated)
-    platformDefaultDrafts[platform] = updated.maxCharacters
-  } catch (error) {
-    const code = error instanceof ApiRequestError ? error.code : undefined
-    platformDefaultErrors[platform] = code === 'text_generation_platform_default_not_found'
-      ? 'Für diese Plattform ist keine Vorgabe angelegt.'
-      : 'Zeichengrenze konnte nicht gespeichert werden.'
-  } finally {
-    platformDefaultSaving[platform] = false
-  }
+function replaceProvider(updated: LlmProviderConfigurationDto) {
+  const index = providers.value.findIndex((entry) => entry.id === updated.id)
+  if (index >= 0) providers.value[index] = updated
 }
 
 async function loadModels() {
@@ -449,126 +379,9 @@ async function removeProvider(id: string) {
         </form>
       </section>
 
-      <section class="card overflow-x-auto p-6">
-        <h2 class="mb-4 font-display text-base font-bold">Konfigurierte Provider</h2>
-        <table class="w-full text-left text-xs">
-          <thead>
-            <tr class="text-[#7b827d]">
-              <th class="pb-2 pr-4 font-semibold">Bezeichnung</th>
-              <th class="pb-2 pr-4 font-semibold">Protokoll</th>
-              <th class="pb-2 pr-4 font-semibold">Modell</th>
-              <th class="pb-2 pr-4 font-semibold">Aufgabe</th>
-              <th class="pb-2 pr-4 font-semibold">Schlüssel</th>
-              <th class="pb-2 pr-4 font-semibold">Aktiv</th>
-              <th class="pb-2 font-semibold" />
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="provider in providers" :key="provider.id" class="border-t border-[#e9ebe4]">
-              <td class="py-2 pr-4 font-medium">{{ provider.label }}</td>
-              <td class="py-2 pr-4">{{ provider.protocol }}</td>
-              <td class="py-2 pr-4">{{ provider.model }}</td>
-              <td class="py-2 pr-4">{{ provider.taskKind }}</td>
-              <td class="py-2 pr-4">{{ provider.hasSecret ? 'hinterlegt' : 'fehlt' }}</td>
-              <td class="py-2 pr-4">
-                <span :class="provider.isActive ? 'font-semibold text-forest' : 'text-[#9aa096]'">{{ provider.isActive ? 'Aktiv' : 'Inaktiv' }}</span>
-              </td>
-              <td class="py-2 text-right">
-                <button
-                  type="button"
-                  class="focus-ring rounded-lg px-3 py-1.5 text-[11px] font-semibold text-forest hover:bg-[#f1f6f2]"
-                  :disabled="saving"
-                  @click="editProvider(provider)"
-                >
-                  Bearbeiten
-                </button>
-                <button
-                  class="focus-ring ml-2 rounded-lg px-3 py-1.5 text-[11px] font-semibold text-amber-800 hover:bg-amber-50"
-                  :disabled="saving"
-                  @click="removeProvider(provider.id)"
-                >
-                  Entfernen
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-        <p v-if="!providers.length" class="py-4 text-center text-xs text-[#9aa096]">Noch kein Provider konfiguriert.</p>
-      </section>
-
-      <section class="card p-6">
-        <h2 class="mb-1 font-display text-base font-bold">Aufgaben-Zuordnung</h2>
-        <p class="mb-4 text-xs text-[#727a75]">
-          Welche der oben konfigurierten Provider gerade für ihre Aufgabe genutzt werden. Für Textgenerierung bestimmt die Anzahl aktivierter Provider zugleich, wie viele Textvorschläge gleichzeitig entstehen.
-        </p>
-        <div v-for="option in TASK_KIND_OPTIONS" :key="option.value" class="mb-5 last:mb-0">
-          <h3 class="mb-2 text-xs font-bold text-[#3c4238]">{{ option.label }}</h3>
-          <p v-if="!providersByTaskKind.get(option.value)?.length" class="text-xs text-[#9aa096]">Noch kein Provider für diese Aufgabe konfiguriert.</p>
-          <ul v-else class="space-y-1.5">
-            <li v-for="provider in providersByTaskKind.get(option.value)" :key="provider.id" class="flex items-center gap-2 text-xs">
-              <input
-                type="checkbox"
-                class="accent-forest"
-                :checked="provider.isActive"
-                :disabled="taskAssignmentSaving[provider.id]"
-                @change="toggleProviderActive(provider)"
-              />
-              <span :class="provider.isActive ? 'font-semibold text-forest' : 'text-[#5c655f]'">{{ provider.label }}</span>
-              <span class="text-[#9aa096]">({{ provider.model }})</span>
-            </li>
-          </ul>
-        </div>
-        <p v-if="taskAssignmentError" class="mt-2 text-[11px] font-normal text-amber-800">{{ taskAssignmentError }}</p>
-      </section>
-
-      <section class="card overflow-x-auto p-6">
-        <h2 class="mb-1 font-display text-base font-bold">Plattform-Vorgaben</h2>
-        <p class="mb-4 text-xs text-[#727a75]">
-          Obergrenze für die Länge eines erzeugten Textes je Plattform, in Zeichen. 2.200 entspricht Instagrams Bildtext-Grenze.
-        </p>
-        <div v-if="platformDefaultsLoading" class="p-4 text-center text-xs text-[#7b827d]">Wird geladen …</div>
-        <table v-else class="w-full text-left text-xs">
-          <thead>
-            <tr class="text-[#7b827d]">
-              <th class="pb-2 pr-4 font-semibold">Plattform</th>
-              <th class="pb-2 pr-4 font-semibold">Zeichengrenze</th>
-              <th class="pb-2 pr-4 font-semibold">Aktualisiert am</th>
-              <th class="pb-2 font-semibold" />
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="platform in SocialPlatformSchema.options" :key="platform" class="border-t border-[#e9ebe4]">
-              <td class="py-2 pr-4 font-medium">{{ platformLabels[platform] }}</td>
-              <td class="py-2 pr-4">
-                <input
-                  v-if="platformDefaultDrafts[platform] !== undefined"
-                  v-model.number="platformDefaultDrafts[platform]"
-                  type="number"
-                  min="100"
-                  max="10000"
-                  step="1"
-                  class="focus-ring w-28 rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-xs font-normal"
-                />
-                <span v-else class="text-[#9aa096]">Für diese Plattform ist keine Vorgabe angelegt.</span>
-              </td>
-              <td class="py-2 pr-4 text-[#7b827d]">{{ platformDefaultUpdatedAt(platform) }}</td>
-              <td class="py-2 text-right">
-                <button
-                  type="button"
-                  class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-[11px] font-semibold disabled:opacity-60"
-                  :disabled="platformDefaultSaving[platform] || platformDefaultDrafts[platform] === undefined"
-                  @click="savePlatformDefault(platform)"
-                >
-                  {{ platformDefaultSaving[platform] ? 'Speichert …' : 'Speichern' }}
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-        <p v-for="platform in SocialPlatformSchema.options" :key="`error-${platform}`" v-show="platformDefaultErrors[platform]" class="mt-2 text-[11px] font-normal text-amber-800">
-          {{ platformLabels[platform] }}: {{ platformDefaultErrors[platform] }}
-        </p>
-      </section>
+      <LlmProviderTable :providers="providers" :busy="saving" @edit="editProvider" @remove="removeProvider" />
+      <LlmTaskAssignmentCard :groups="taskAssignmentGroups" @updated="replaceProvider" />
+      <PlatformCharacterLimitsTable />
       <p v-if="errorMessage" class="mt-4 text-sm text-amber-800">{{ errorMessage }}</p>
     </template>
   </div>
