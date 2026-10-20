@@ -447,13 +447,16 @@ export function createVeoSyncRepository(config: WorkerEnvironment): VeoSyncRepos
         .eq('team_id', teamId).eq('role', 'team_manager')
         .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
       if (memberships.error) throw memberships.error
+      // Je Trainer statt fuer alle: ein einzelner fehlschlagender Abruf verhinderte sonst jeden
+      // Hinweis, und ein Retry kommt nicht mehr hierher (failure_notified_at ist schon gesetzt).
       const emails: string[] = []
+      let unresolved = 0
       for (const membership of memberships.data as { user_id: string }[]) {
-        const user = await client.auth.admin.getUserById(membership.user_id)
-        if (user.error) throw user.error
-        if (user.data.user?.email) emails.push(user.data.user.email)
+        const user = await client.auth.admin.getUserById(membership.user_id).catch(() => null)
+        if (!user || user.error) unresolved += 1
+        else if (user.data.user?.email) emails.push(user.data.user.email)
       }
-      return emails
+      return { emails, unresolved }
     },
     async enqueueScheduled() {
       const { data, error } = await client.rpc('playerboard_veo_enqueue_scheduled_syncs')

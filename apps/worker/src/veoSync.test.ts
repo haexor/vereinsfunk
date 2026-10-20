@@ -42,7 +42,7 @@ function fakeRepository(options: { runStatus?: string; notify?: boolean } = {}) 
     loadSource: async () => ({ teamId: TEAM_ID, teamName: 'U13', veoClubSlug: 'club', veoTeamSlug: 'u13', secret: { ciphertext: sealed.ciphertext, keyVersion: sealed.keyVersion } }),
     applyMatch: async (_runId, write) => { applied.push(write); return 'updated' },
     finish: async (_runId, outcome) => { finished.push(outcome); return { teamId: TEAM_ID, notify: options.notify ?? false } },
-    failureRecipients: async () => ['coach@example.local'],
+    failureRecipients: async () => ({ emails: ['coach@example.local'], unresolved: 0 }),
   }
   return { repository, applied, finished }
 }
@@ -125,6 +125,21 @@ describe('VeoSyncExecutor', () => {
     expect(mails[0]!.text).toContain('Bitte verbinde Veo im PlayerBoard neu')
     expect(mails[0]!.text).toContain('https://app.example.local/playerboard/veo')
     expect(JSON.stringify({ mails, logs })).not.toContain('very-secret')
+  })
+
+  // failure_notified_at ist nach finish() schon gesetzt: ein Wurf hier liesse Hatchet wiederholen,
+  // der Retry endet aber am beendeten Lauf -- der Hinweis waere fuer alle Trainer verloren.
+  it('still mails the resolvable coaches and does not throw when a recipient lookup fails', async () => {
+    veo.exchangeSessionCookieForToken.mockRejectedValue(new VeoError('auth_expired', 'Veo session no longer renews'))
+    const { repository } = fakeRepository({ notify: true })
+    repository.failureRecipients = async () => ({ emails: ['coach@example.local'], unresolved: 1 })
+    const { instance, mails, logs } = executor(repository)
+    await expect(instance.execute(payload)).resolves.toBeUndefined()
+    expect(mails.map((mail) => mail.to)).toEqual(['coach@example.local'])
+    expect(logs).toContainEqual({ fields: { runId: RUN_ID, unresolved: 1 }, message: 'veo failure notification recipients unresolved' })
+
+    repository.failureRecipients = async () => { throw new Error('auth admin unavailable') }
+    await expect(executor(repository).instance.execute(payload)).resolves.toBeUndefined()
   })
 
   it('stops after the first match when Veo changes its response shape', async () => {

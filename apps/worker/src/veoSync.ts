@@ -59,7 +59,8 @@ export interface VeoSyncRepository {
   loadSource(sourceId: string): Promise<VeoSyncSource | null>
   applyMatch(runId: string, match: VeoMatchWrite): Promise<VeoApplyResult>
   finish(runId: string, outcome: VeoSyncFinish): Promise<{ teamId: string; notify: boolean } | null>
-  failureRecipients(teamId: string): Promise<string[]>
+  /** `unresolved` zaehlt Trainer, deren Adresse nicht gelesen werden konnte -- sie fehlen in `emails`. */
+  failureRecipients(teamId: string): Promise<{ emails: string[]; unresolved: number }>
 }
 
 export interface VeoSyncOptions {
@@ -191,9 +192,18 @@ export class VeoSyncExecutor {
   private async finish(runId: string, source: VeoSyncSource | null, outcome: VeoSyncFinish): Promise<void> {
     const finished = await this.options.repository.finish(runId, outcome)
     if (!finished?.notify || !source) return
-    const recipients = await this.options.repository.failureRecipients(finished.teamId)
+    // finish() hat failure_notified_at bereits gesetzt, ein Hatchet-Retry endet an run.status --
+    // ein Fehler hier darf den Lauf deshalb nicht werfen, sonst ginge der Hinweis still verloren.
+    let recipients: { emails: string[]; unresolved: number }
+    try {
+      recipients = await this.options.repository.failureRecipients(finished.teamId)
+    } catch (error) {
+      this.options.log({ runId, errorName: error instanceof Error ? error.name : 'unknown' }, 'veo failure notification not sent')
+      return
+    }
+    if (recipients.unresolved > 0) this.options.log({ runId, unresolved: recipients.unresolved }, 'veo failure notification recipients unresolved')
     const mail = failureMailText(source.teamName, outcome.errorClass, this.options.webBaseUrl)
-    for (const to of recipients) {
+    for (const to of recipients.emails) {
       try {
         await this.options.emailSender.send({ to, ...mail })
       } catch (error) {
