@@ -2,6 +2,7 @@
 import { CalendarDays, LayoutDashboard, LogOut, Menu, Plus, UserRound, X } from '@lucide/vue'
 import { frameworkNavigation, visibleFrameworkNavigation } from '../modules/frameworkNavigation'
 import { appModuleOrder, appModuleRegistry, moduleForPath, type ModuleNavItem } from '../modules/registry'
+import { initialsOf } from '../utils/initials'
 import { deriveSidebarPalette } from '../utils/sidebarBrand'
 import { resolveSidebarLogoAsset, type SidebarLogoAsset } from '../utils/sidebarLogo'
 
@@ -38,15 +39,7 @@ const activeScopeName = computed(
   () => activeDepartment.value?.name ?? activeOrganization.value?.organizationName ?? '',
 )
 const activeScopeKind = computed(() => (activeDepartment.value ? 'Abteilung' : 'Verein'))
-const scopeInitials = computed(() =>
-  activeScopeName.value
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((word) => word[0])
-    .join('')
-    .toUpperCase(),
-)
+const scopeInitials = computed(() => initialsOf(activeScopeName.value))
 const { revision: brandRevision } = useBrandRevision()
 
 // Paket 013, Rueckbau: das Vereinslogo ersetzt die Initialen dort, wo der Verein tatsaechlich
@@ -142,15 +135,7 @@ const topRoleLabel = computed(() => {
   const role = activeOrganization.value?.organizationRoles[0] ?? activeDepartmentRoles.value[0]
   return role ? (roleLabels[role] ?? role) : ''
 })
-const userInitials = computed(() =>
-  (session.value?.displayName ?? '')
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((word) => word[0])
-    .join('')
-    .toUpperCase(),
-)
+const userInitials = computed(() => initialsOf(session.value?.displayName ?? ''))
 
 function selectOrganization(organizationId: string) {
   const organization = session.value?.scopes.find((item) => item.organizationId === organizationId)
@@ -205,11 +190,6 @@ const sidebarClasses = computed(() =>
         footer: 'border-ink/30',
       },
 )
-
-async function logout() {
-  await signOut()
-  await navigateTo('/anmelden')
-}
 
 // Paket 051, PR 3: die Shell besteht aus Rahmen-Eintraegen (immer sichtbar) und den Eintraegen der
 // im Arbeitsbereich wirksamen Module, gruppiert nach Modul (modules/registry.ts). Solange die
@@ -516,7 +496,7 @@ watch(
             class="focus-ring rounded-lg p-1.5"
             :class="sidebarClasses.muted"
             aria-label="Abmelden"
-            @click="logout"
+            @click="signOut()"
           >
             <LogOut :size="15" />
           </button>

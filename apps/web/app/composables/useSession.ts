@@ -141,9 +141,12 @@ export async function refreshSession() {
   return useSession()
 }
 
+// Abmelden endet immer auf /anmelden -- beide Shells (layouts/default.vue, layouts/admin.vue)
+// teilen sich diesen Ablauf.
 export async function signOut() {
   const supabase = useSupabaseClient()
   await supabase.auth.signOut()
   useSessionState().value = null
   useSessionLoad().value = null
+  await navigateTo('/anmelden')
 }

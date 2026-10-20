@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Bot, CreditCard, Cpu, Images, LayoutDashboard, LogOut, Menu, Settings, ShieldCheck, X } from '@lucide/vue'
+import { initialsOf } from '../utils/initials'
 
 const mobileOpen = ref(false)
 const route = useRoute()
@@ -7,12 +8,7 @@ const session = await useSession()
 
 watch(() => route.path, () => { mobileOpen.value = false })
 
-const userInitials = computed(() => (session.value?.displayName ?? '').split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join('').toUpperCase())
-
-async function logout() {
-  await signOut()
-  await navigateTo('/anmelden')
-}
+const userInitials = computed(() => initialsOf(session.value?.displayName ?? ''))
 
 const navigation: { label: string; to: string; icon: typeof LayoutDashboard }[] = [
   { label: 'Übersicht', to: '/plattform-admin', icon: LayoutDashboard },
@@ -57,7 +53,7 @@ const navigation: { label: string; to: string; icon: typeof LayoutDashboard }[] 
       <div class="mt-auto flex items-center gap-3 border-t border-white/10 px-2 pt-4">
         <span class="grid h-9 w-9 place-items-center rounded-full bg-[#d2c7ff] text-xs font-bold text-[#3c3260]">{{ userInitials }}</span>
         <span class="min-w-0 flex-1"><span class="block truncate text-xs font-semibold">{{ session?.displayName }}</span><span class="block text-[10px] text-white/45">Plattform-Administration</span></span>
-        <button class="focus-ring rounded-lg p-1.5 text-white/45 hover:text-white" aria-label="Abmelden" @click="logout"><LogOut :size="15" /></button>
+        <button class="focus-ring rounded-lg p-1.5 text-white/45 hover:text-white" aria-label="Abmelden" @click="signOut()"><LogOut :size="15" /></button>
       </div>
     </aside>
 

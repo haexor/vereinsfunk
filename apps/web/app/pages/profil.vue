@@ -52,7 +52,7 @@ async function save() {
 const saveDisabled = computed(() => !displayNameDraft.value.trim())
 usePageSaveFab({ label: 'Speichern', save, saving, disabled: saveDisabled })
 
-const initials = computed(() => (profile.value?.displayName ?? '').split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join('').toUpperCase())
+const initials = computed(() => initialsOf(profile.value?.displayName ?? ''))
 
 // Flache Liste aus Vereins-/Abteilungs-/Team-Rollen je Verein, damit das Template kein
 // verschachteltes v-for braucht (siehe scopeName()-Muster in mitglieder.vue).
