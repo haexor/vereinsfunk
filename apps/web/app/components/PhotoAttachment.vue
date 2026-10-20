@@ -325,7 +325,9 @@ function editAgain() { mediaAssetId.value = null; phase.value = 'marking' }
             <span class="inline-flex items-center gap-1 text-emerald-700"><Check :size="14" /> Einwilligung verknüpft</span>
           </template>
           <template v-else>
-            <Select @update:model-value="(value: unknown) => linkConsent(box, value as string)">
+            <!-- "Neu anlegen" oeffnet einen neuen Tab: beim Oeffnen der Auswahl neu laden, sonst fehlte
+                 die dort gerade angelegte Einwilligung bis zum Neuladen der Seite. -->
+            <Select @update:open="(open: boolean) => { if (open) void loadConsents() }" @update:model-value="(value: unknown) => linkConsent(box, value as string)">
               <SelectTrigger class="min-w-0 flex-1 rounded p-1"><SelectValue placeholder="Einwilligung verknüpfen …" /></SelectTrigger>
               <SelectContent>
                 <SelectItem v-for="consent in consents" :key="consent.id" :value="consent.id">{{ consent.label }}</SelectItem>
