@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { UuidSchema } from './content.js'
+import { UuidSchema } from './primitives.js'
 import { ChannelQuotaSchema } from './policy.js'
 
 // Paket 016: Auswertung: interne Kennzahlen -------------------------------------------------------

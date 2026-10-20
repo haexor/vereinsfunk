@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { UuidSchema } from './content.js'
+import { UuidSchema } from './primitives.js'
 import { DirectoryPersonStatusSchema } from './integrations.js'
 
 // --- Spielerprofil auf Vereinsebene --------------------------------------------------------------

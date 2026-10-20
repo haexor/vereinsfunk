@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { UuidSchema } from './content.js'
+import { UuidSchema } from './primitives.js'
 import { ScopeLevelSchema } from './structure.js'
 
 // --- Paket 052: Modul PlayerBoard ----------------------------------------------------------------

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { UuidSchema } from './content.js'
+import { UuidSchema } from './primitives.js'
 import { AppModuleSchema, UniqueAppModulesSchema } from './modules.js'
 
 // Plan 021: Tarife, Speicherkontingent und Beitragskontingente nach Medienherkunft.

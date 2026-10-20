@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { UuidSchema } from './content.js'
+import { UuidSchema } from './primitives.js'
 
 // 'sync-integration-source' fuehrt seit Paket 053 die HTTP-Quellen (bisher nur Veo) im Worker aus,
 // eingereiht ueber public.enqueue_integration_sync; Datei- und iCal-Syncs laufen weiter synchron in

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { UuidSchema } from './content.js'
+import { UuidSchema } from './primitives.js'
 
 // Plan 045, PR 1: Bildstil-Presets (Rahmen, Logo-Wasserzeichen, Filter) fuer Beitragsfotos --
 // mehrschichtig wie Marke (Verein/Abteilung/Mannschaft), aber ein eigener Datensatz je Preset

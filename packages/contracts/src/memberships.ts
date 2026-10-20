@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { UuidSchema } from './content.js'
+import { UuidSchema } from './primitives.js'
 import { AssignableRoleSchema, DEPARTMENT_SCOPED_ROLES, ORGANIZATION_SCOPED_ROLES, RoleSchema, ScopeLevelSchema, TEAM_SCOPED_ROLES, rolesForScopeLevel } from './structure.js'
 
 // Getrennt von UpdateMembershipRequestSchema (Paket 023): eine Befristung zu setzen ist kein
