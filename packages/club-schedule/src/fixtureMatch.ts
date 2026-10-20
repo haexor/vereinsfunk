@@ -134,7 +134,12 @@ export function createFixtureMatchStrategy(resolver: TeamNameResolver, schedule:
       }
     },
     labelOf(entity) {
-      return entity.opponentName ?? 'Spiel ohne Gegner'
+      if (entity.opponentName) return entity.opponentName
+      // Ein iCal-Spiel traegt nur die rohen Titelnamen. Ohne sie hiesse jede iCal-Konfliktzeile
+      // "Spiel ohne Gegner" -- und ohne UID teilten alle denselben Fingerabdruck, ein einziges
+      // ignore_permanently haette sie zusammen unterdrueckt.
+      if (!isLocal(entity) && (entity.homeNameRaw || entity.awayNameRaw)) return [entity.homeNameRaw, entity.awayNameRaw].filter(Boolean).join(' – ')
+      return 'Spiel ohne Gegner'
     },
     sourceUpdatedAtOf(entity) {
       return entity.sourceUpdatedAt ? new Date(entity.sourceUpdatedAt) : undefined

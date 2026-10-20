@@ -22,8 +22,14 @@ export function detectFixtureTitle(rawTitle: string): DetectedFixtureTitle | und
   const trimmed = rawTitle.trim()
   if (trimmed.length === 0) return undefined
 
-  const scoreMatch = trimmed.match(SCORE_SUFFIX_PATTERN)
-  const remainder = scoreMatch ? (scoreMatch[1] ?? '').trim() : trimmed
+  const suffixMatch = trimmed.match(SCORE_SUFFIX_PATTERN)
+  const remainder = suffixMatch ? (suffixMatch[1] ?? '').trim() : trimmed
+  // Eine zweistellige Zahl mit fuehrender Null ("15:00", "09:30") schreibt kein Ergebnis, nur eine
+  // Uhrzeit -- abtrennen, aber nie als 15:0 speichern. ponytail: "19:30" bleibt mehrdeutig
+  // (Handball-Ergebnis oder Anstoss) und wird weiter als Ergebnis gelesen; eindeutig wird das erst
+  // mit einem Abgleich gegen die Anstosszeit aus DTSTART.
+  const isClockTime = suffixMatch !== null && [suffixMatch[2], suffixMatch[3]].some((part) => part !== undefined && part.length === 2 && part.startsWith('0'))
+  const scoreMatch = isClockTime ? null : suffixMatch
 
   const parts = remainder.split(SEPARATOR_PATTERN)
   if (parts.length !== 2) return undefined

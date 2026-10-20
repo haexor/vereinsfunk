@@ -178,3 +178,10 @@ describe('createFixtureMatchStrategy retirement', () => {
     expect(plan.retired.map((local) => local.id)).toEqual(['local-1'])
   })
 })
+
+describe('createFixtureMatchStrategy.labelOf', () => {
+  it('labels an iCal fixture by its raw title names instead of "Spiel ohne Gegner"', () => {
+    const external = ExternalFixtureSchema.parse({ homeNameRaw: 'SV Nordstadt', awayNameRaw: 'TSV Süd' })
+    expect(createFixtureMatchStrategy(resolver({}), schedule).labelOf(external)).toBe('SV Nordstadt – TSV Süd')
+  })
+})
