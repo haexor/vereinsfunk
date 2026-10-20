@@ -204,6 +204,7 @@ export type AgentConversation = z.infer<typeof AgentConversationSchema>
 export type AgentMessage = z.infer<typeof AgentMessageSchema>
 export type AgentMessageRole = z.infer<typeof AgentMessageRoleSchema>
 export type AgentProposalStatus = z.infer<typeof AgentProposalStatusSchema>
+export type AgentProposalToolName = z.infer<typeof AgentProposalToolNameSchema>
 export type AgentEventProposalInput = z.infer<typeof AgentEventProposalInputSchema>
 export type AgentInvitationProposalInput = z.infer<typeof AgentInvitationProposalInputSchema>
 export type AgentApprovalProposalInput = z.infer<typeof AgentApprovalProposalInputSchema>

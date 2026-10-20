@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { CreateAgentActionProposalSchema, type CreateAgentActionProposal } from '@vereinsfunk/contracts'
 import type { AgentResponder } from './agent.js'
 import type { SupabaseClientFactory } from './app.js'
-import { DEPARTMENT_ID, MEMBERSHIP_ID, ORGANIZATION_ID, USER_ID, chain, membershipRowsStub, signAccessToken, startApp } from './testSupport.js'
+import { DEPARTMENT_ID, MEMBERSHIP_ID, ORGANIZATION_ID, USER_ID, chain, grantingRoleProvider, membershipRowsStub, moduleStatusProviderWith, organizationManagerRoleProvider, signAccessToken, startApp } from './testSupport.js'
 
 const CONVERSATION_ID = '10000000-4000-4000-8000-000000000001'
 const WORKSPACE_TABLES = ['posts', 'club_events', 'approval_stages', 'composition_sessions', 'publications']
@@ -43,6 +44,27 @@ function messagesServiceClient(captured: { proposals: unknown[] } = { proposals:
       }
     },
   } as unknown as SupabaseClient
+}
+
+const PERMISSION_FALLBACK_ANSWER = 'Dafür fehlen dir im aktuellen Bereich die nötigen Berechtigungen. Es wurde keine Aktion vorbereitet.'
+
+// Eine Unterhaltung ohne Verlauf und mit leerem Arbeitsplatz; der Responder liefert den Vorschlag.
+function conversationClients(departmentId: string | null, captured: { proposals: unknown[] }): SupabaseClientFactory {
+  return {
+    forUser: () => ({
+      from: (table: string) => {
+        if (table === 'agent_conversations') return chain({ data: conversationRow(departmentId), error: null })
+        if (table === 'agent_messages') return chain({ data: [], error: null })
+        if (WORKSPACE_TABLES.includes(table)) return chain({ data: [], error: null })
+        throw new Error(`unexpected table in agent messages test: ${table}`)
+      },
+    }) as unknown as SupabaseClient,
+    forService: () => messagesServiceClient(captured),
+  }
+}
+
+function proposingResponder(proposal: CreateAgentActionProposal): AgentResponder {
+  return { async respond() { return { content: 'Ich habe eine Aktion vorbereitet.', proposal, providerConfigured: true } } }
 }
 
 async function postMessage(options: Parameters<typeof startApp>[0], content = 'Wie geht es weiter?') {
@@ -266,5 +288,39 @@ describe('agent routes', () => {
       duePublications: [{ id: '10000000-9000-4000-8000-000000000001', postVersionId: '10000000-9100-4000-8000-000000000001', departmentId: DEPARTMENT_ID, title: 'Spielbericht' }],
       pendingApprovals: [{ stageId: stageRow.id, postId: stageRow.approval_requests.post_id, departmentId: DEPARTMENT_ID, title: 'Saisonstart' }],
     })
+  })
+
+  it('answers instead of failing when the model picks a role the scope cannot assign', async () => {
+    // Das Tool bietet jede Rolle an; 'editor' ist auf Vereinsebene nicht vergebbar. Frueher warf
+    // CreateInvitationRequestSchema.parse nach dem bezahlten Modellaufruf einen 400, und die
+    // Nachricht des Nutzers ging verloren.
+    const captured = { proposals: [] as unknown[] }
+    const response = await postMessage({
+      supabaseClients: conversationClients(null, captured),
+      roleProvider: organizationManagerRoleProvider,
+      agentResponder: proposingResponder({ toolName: 'create_invitation', input: { email: 'neu@example.org', role: 'editor' } }),
+    })
+    expect(response.statusCode).toBe(201)
+    expect(response.json().messages.at(-1)).toMatchObject({ role: 'assistant', content: PERMISSION_FALLBACK_ANSWER })
+    expect(captured.proposals).toEqual([])
+  })
+
+  it('does not propose an action whose module is switched off in the scope', async () => {
+    // Der Chat pruefte frueher nur die Rolle und legte einen Vorschlag an, der erst beim Bestaetigen
+    // an module_disabled scheiterte.
+    const captured = { proposals: [] as unknown[] }
+    const proposal = CreateAgentActionProposalSchema.parse({
+      toolName: 'save_content_brief',
+      input: { communicationGoal: 'inform', sourceMaterial: { facts: { ergebnis: '3:1' }, observations: [], quotes: [] }, targetPlatforms: ['instagram'] },
+    })
+    const response = await postMessage({
+      supabaseClients: conversationClients(DEPARTMENT_ID, captured),
+      roleProvider: grantingRoleProvider,
+      moduleStatusProvider: moduleStatusProviderWith(['playerboard']),
+      agentResponder: proposingResponder(proposal),
+    })
+    expect(response.statusCode).toBe(201)
+    expect(response.json().messages.at(-1)).toMatchObject({ role: 'assistant', content: PERMISSION_FALLBACK_ANSWER })
+    expect(captured.proposals).toEqual([])
   })
 })
