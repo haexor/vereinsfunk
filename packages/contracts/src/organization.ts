@@ -1,6 +1,5 @@
 import { z } from 'zod'
-import { UuidSchema } from './content.js'
-import { CountryCodeSchema } from './primitives.js'
+import { CountryCodeSchema, UuidSchema } from './primitives.js'
 
 const HexColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/)
 // Die Marken-Website wird fuer die automatische Analyse von unserem Server abgerufen. Deshalb

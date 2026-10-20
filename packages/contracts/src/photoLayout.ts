@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { UuidSchema } from './content.js'
+import { UuidSchema } from './primitives.js'
 
 // Plan 047, PR 1: "Bildkomposition" -- mehrere Fotos zu einem Layout zusammensetzen. Interne
 // Bezeichner heissen bewusst "photoLayout", nicht "composition"/"collage": beide Woerter sind im

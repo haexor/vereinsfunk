@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import { ContentPresetSlugSchema, MediaGateBlockerSchema, OutputFormatSchema, UuidSchema } from './content.js'
-import { hasExclusivePlatformConflict, OAuthPlatformSchema, SocialPlatformSchema } from './primitives.js'
+import { ContentPresetSlugSchema, MediaGateBlockerSchema, OutputFormatSchema } from './content.js'
+import { hasExclusivePlatformConflict, OAuthPlatformSchema, SocialPlatformSchema, UuidSchema } from './primitives.js'
 import { AssignableRoleSchema, ScopeLevelSchema } from './structure.js'
 
 // Richtlinien mit Vererbung (Paket 023): zwei boolesche Felder je Ebene, `null` heisst "von oben

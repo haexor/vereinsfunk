@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { UuidSchema } from './content.js'
+import { UuidSchema } from './primitives.js'
 
 // --- Paket 015: Einwilligungsverwaltung ---------------------------------------------------------
 

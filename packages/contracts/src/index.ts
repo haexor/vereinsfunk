@@ -1,5 +1,6 @@
 // Kompatibilitaetsgrenze: der oeffentliche Import bleibt `@vereinsfunk/contracts`.
 // Neue Vertraege gehoeren in das fachlich passende Modul, nicht hierher (plans/029).
+export { UuidSchema } from './primitives.js'
 export * from './content.js'
 export * from './consent.js'
 export * from './compliance.js'

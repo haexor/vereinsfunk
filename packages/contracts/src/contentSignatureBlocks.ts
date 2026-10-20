@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { UuidSchema } from './content.js'
+import { UuidSchema } from './primitives.js'
 
 // Paket B, PR 0: frei anlegbare Textbausteine (CTA/Footer/Signatur) -- kein team_id, siehe
 // supabase/migrations/2026082302_content_signature_blocks.sql.

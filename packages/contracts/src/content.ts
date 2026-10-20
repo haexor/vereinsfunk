@@ -1,7 +1,6 @@
 import { z } from 'zod'
-import { SocialPlatformSchema } from './primitives.js'
+import { SocialPlatformSchema, UuidSchema } from './primitives.js'
 
-export const UuidSchema = z.uuid()
 export const ContentPresetSlugSchema = z.string().regex(/^[a-z][a-z0-9]*(?:[_-][a-z0-9]+)*$/).max(64)
 export const CommunicationGoalSchema = z.enum([
   'inform', 'inspire', 'thank', 'invite', 'recruit', 'educate', 'strengthen_community',

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { UuidSchema } from './content.js'
+import { UuidSchema } from './primitives.js'
 
 // Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen.
 export const FixtureKindSchema = z.enum(['match', 'friendly', 'tournament', 'cup'])

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { UuidSchema } from './content.js'
+import { UuidSchema } from './primitives.js'
 
 // Integrationsrahmen und Mitgliederverzeichnis (Paket 014). HTTP- und Webhook-Transport sind nur
 // als Werte vorgesehen -- kein Adapter in diesem Paket, siehe plans/014.

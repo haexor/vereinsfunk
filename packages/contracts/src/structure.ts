@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { UuidSchema } from './content.js'
+import { UuidSchema } from './primitives.js'
 
 // Abteilungen, Teams, Mitgliedschaften und Einladungen (Paket 010).
 export const ScopeLevelSchema = z.enum(['organization', 'department', 'team'])

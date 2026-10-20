@@ -1,12 +1,14 @@
 import { z } from 'zod'
 
-// Kleine Bausteine, die mehrere Fachmodule teilen. Bewusst NICHT im Barrel: sie waren im
-// urspruenglichen index.ts modul-privat und sollen es nach der Aufteilung bleiben.
+// Kleine Bausteine, die mehrere Fachmodule teilen. Bewusst NICHT pauschal im Barrel: sie waren im
+// urspruenglichen index.ts modul-privat und sollen es nach der Aufteilung bleiben. Ausnahmen sind
+// Teil der oeffentlichen API und werden in index.ts einzeln exportiert.
+export const UuidSchema = z.uuid()
 export const CountryCodeSchema = z.string().regex(/^[A-Z]{2}$/)
 
 // Eine einzige Quelle fuer die Social-Media-Plattformen. Liegt hier und nicht in channels.ts, weil
-// content.ts sie ebenfalls braucht (Ziel-Plattformen eines Beitrags) und channels.ts UuidSchema aus
-// content.ts importiert -- ein Import in die andere Richtung waere ein Zyklus.
+// auch die Textwerkstatt sie braucht (Ziel-Plattformen eines Beitrags) und channels.ts von dort
+// MaxCharactersSchema importiert -- ein Import in die andere Richtung waere ein Zyklus.
 //
 // Bewusst EINE Menge fuer Kanaele und Textwerkstatt: auf welchen Plattformen ein Beitrag entstehen
 // darf, ist genau die Menge, auf die ueberhaupt veroeffentlicht werden kann. Eine getrennte

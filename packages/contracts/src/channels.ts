@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import { MaxCharactersSchema, UuidSchema } from './content.js'
-import { hasExclusivePlatformConflict, OAuthPlatformSchema, SocialPlatformSchema } from './primitives.js'
+import { MaxCharactersSchema } from './content.js'
+import { hasExclusivePlatformConflict, OAuthPlatformSchema, SocialPlatformSchema, UuidSchema } from './primitives.js'
 import { AssignableRoleSchema, ScopeLevelSchema, rolesForScopeLevel } from './structure.js'
 
 // Paket 012: Kanaele und Social-Accounts --------------------------------------------------------

@@ -1,7 +1,7 @@
 import { z } from 'zod'
-import { CommunicationGoalSchema, SourceMaterialSchema, SystemStyleProfileSlugSchema, UuidSchema } from './content.js'
+import { CommunicationGoalSchema, SourceMaterialSchema, SystemStyleProfileSlugSchema } from './content.js'
 import { ClubEventCategorySchema } from './clubSchedule.js'
-import { OAuthPlatformSchema, SocialPlatformSchema } from './primitives.js'
+import { OAuthPlatformSchema, SocialPlatformSchema, UuidSchema } from './primitives.js'
 import { AssignableRoleSchema } from './structure.js'
 
 // Der Agent kennt immer einen expliziten Verein. Abteilung und Mannschaft schraenken den
