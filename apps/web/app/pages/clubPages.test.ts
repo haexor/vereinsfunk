@@ -23,7 +23,7 @@ describe('Vereinsseiten', () => {
   it('verwirft im Verzeichnis spaete Antworten frueherer Filter', () => {
     const load = functionBody(read('verzeichnis.vue'), 'loadPeople')
 
-    expect(before(load, 'if (loadRun !== latestPeopleLoad) return', 'people.value = DirectoryPersonSchema.array().parse(response)')).toBe(true)
+    expect(before(load, 'if (!isLatest()) return', 'people.value = loaded')).toBe(true)
   })
 
   it('leert beim Abteilungswechsel im Bearbeiten-Formular das Team', () => {
@@ -35,13 +35,14 @@ describe('Vereinsseiten', () => {
   })
 
   it('verwirft nach einem Vereinswechsel spaete Antworten auf /mitglieder und /struktur', () => {
-    const members = functionBody(read('mitglieder.vue'), 'load')
-    expect(before(members, 'if (loadRun !== latestLoadRun) return', 'members.value = membersResponse')).toBe(true)
+    const membersPage = read('mitglieder.vue')
+    const members = membersPage.slice(membersPage.indexOf('useScopedLoad(() => organizationId.value'))
+    expect(before(members, 'if (!isLatest()) return', 'members.value = membersResponse')).toBe(true)
     expect(members).toContain('/v1/organizations/${requestedOrganizationId}/policy-settings')
-    expect(before(members.slice(members.indexOf('loadedPolicySettings')), 'if (loadRun !== latestLoadRun) return', 'policySettings.value = loadedPolicySettings')).toBe(true)
+    expect(before(members.slice(members.indexOf('loadedPolicySettings')), 'if (!isLatest()) return', 'policySettings.value = loadedPolicySettings')).toBe(true)
 
     const structure = functionBody(read('struktur.vue'), 'load')
-    expect(before(structure, 'if (loadRun !== latestLoadRun) return', 'departments.value = parsedDepartments.data')).toBe(true)
+    expect(before(structure, 'if (!isLatest()) return', 'departments.value = parsedDepartments.data')).toBe(true)
   })
 
   it('prueft die Antwort einer Einladung mit dem Vertragsschema', () => {

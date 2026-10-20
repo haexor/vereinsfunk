@@ -19,12 +19,7 @@ import {
 import { endOfDayIso, localDateKey } from '../utils/memberDates'
 
 const api = useApiClient()
-const session = await useSession()
-const scope = await useScope()
-
-const organizationId = computed(() => scope.value?.organizationId ?? null)
-const organization = computed(() => session.value?.scopes.find((item) => item.organizationId === organizationId.value) ?? null)
-const timezone = computed(() => organization.value?.organizationTimezone ?? 'Europe/Berlin')
+const { organizationId, organization, organizationTimezone: timezone } = await useActiveScope()
 
 const loading = ref(true)
 const errorMessage = ref('')
@@ -140,10 +135,7 @@ const availableRolesForInvite = computed(() => {
 
 // Ein Vereinswechsel waehrend eines Ladevorgangs (oder ein Neuladen nach einer Aktion) darf die
 // Liste nicht mit der Antwort des vorherigen Laufs ueberschreiben.
-let latestLoadRun = 0
-async function load() {
-  const loadRun = ++latestLoadRun
-  const requestedOrganizationId = organizationId.value
+const { reload: load, ready } = useScopedLoad(() => organizationId.value, async (requestedOrganizationId, isLatest) => {
   if (!requestedOrganizationId) { loading.value = false; return }
   loading.value = true
   errorMessage.value = ''
@@ -152,7 +144,7 @@ async function load() {
       api.request(`/v1/organizations/${requestedOrganizationId}/members`, {}, MemberSchema.array()),
       api.request(`/v1/organizations/${requestedOrganizationId}/invitations`, {}, InvitationSchema.array()),
     ])
-    if (loadRun !== latestLoadRun) return
+    if (!isLatest()) return
     members.value = membersResponse
     // Der Invitations-Endpunkt filtert nur accepted_at/revoked_at -- eine abgelaufene, aber noch
     // offene Einladung wuerde sonst weiter unter "Offene Einladungen" erscheinen, obwohl
@@ -166,24 +158,22 @@ async function load() {
       // "geerbt" (Paket 011).
       api.request(`/v1/organizations/${requestedOrganizationId}/member-review-trust`, {}, MemberReviewTrustSchema.array()).catch(() => []),
     ])
-    if (loadRun !== latestLoadRun) return
+    if (!isLatest()) return
     policySettings.value = loadedPolicySettings
     memberReviewTrust.value = loadedTrust
   } catch {
-    if (loadRun === latestLoadRun) errorMessage.value = 'Mitglieder und Einladungen konnten nicht geladen werden.'
+    if (isLatest()) errorMessage.value = 'Mitglieder und Einladungen konnten nicht geladen werden.'
   } finally {
-    if (loadRun === latestLoadRun) loading.value = false
+    if (isLatest()) loading.value = false
   }
-}
-await load()
+})
+await ready
 
-// Ein Wechsel des aktiven Vereins in der Sidebar aktualisierte diese Seite bisher nicht -- load()
-// lief nur einmal beim Setup (beim Review dieses Pakets gefunden).
+// Ein Vereinswechsel laedt ueber useScopedLoad neu; die Einladungsauswahl gehoerte zum alten Verein.
 watch(organizationId, () => {
   inviteScopeId.value = ''
   inviteRole.value = ''
   inviteSuccess.value = false
-  void load()
 })
 
 async function sendInvitation() {

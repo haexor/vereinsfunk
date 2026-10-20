@@ -10,8 +10,7 @@ type DepartmentRow = z.infer<typeof DepartmentRowSchema>
 type TeamRow = z.infer<typeof TeamRowSchema>
 
 const api = useApiClient()
-const scope = await useScope()
-const organizationId = computed(() => scope.value?.organizationId ?? null)
+const { organizationId, departmentId: activeDepartmentId } = await useActiveScope()
 
 const loading = ref(true)
 const errorMessage = ref('')
@@ -36,9 +35,9 @@ const renameDraft = reactive<Record<string, string>>({})
 
 // Nach einem Vereinswechsel darf eine spaeter eintreffende Antwort des alten Vereins dessen
 // Abteilungen nicht ueber die des neuen legen.
-let latestLoadRun = 0
+const loadRuns = useLatestRequest()
 async function load() {
-  const loadRun = ++latestLoadRun
+  const isLatest = loadRuns.begin()
   if (!organizationId.value) { loading.value = false; return }
   loading.value = true
   errorMessage.value = ''
@@ -57,12 +56,12 @@ async function load() {
       api.request(`/v1/organizations/${organizationId.value}/policy-settings`, {}, PolicySettingSchema.array()),
     ])
   } catch {
-    if (loadRun !== latestLoadRun) return
+    if (!isLatest()) return
     errorMessage.value = 'Die Vereinsstruktur konnte nicht geladen werden.'
     loading.value = false
     return
   }
-  if (loadRun !== latestLoadRun) return
+  if (!isLatest()) return
   if (departmentsResult.error || teamsResult.error) {
     errorMessage.value = 'Die Vereinsstruktur konnte nicht geladen werden.'
     loading.value = false
@@ -233,7 +232,7 @@ async function deleteTeam(team: TeamRow) {
 // Neue Abteilungen duerfen ausschliesslich Vereinsadmins und nur im Vereinsbereich anlegen.
 // In einem aktiven Abteilungsbereich darf auch ein Vereinsadmin keine neue Abteilung
 // versehentlich aus dem falschen Kontext heraus anlegen.
-const isOrganizationScope = computed(() => !scope.value?.departmentId)
+const isOrganizationScope = computed(() => !activeDepartmentId.value)
 const canManageOrganization = computed(() => (
   isOrganizationScope.value && useCan('organization.manage', { organizationId: organizationId.value ?? '' })
 ))

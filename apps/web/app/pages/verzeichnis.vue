@@ -6,11 +6,7 @@ import {
 } from '@vereinsfunk/contracts'
 
 const api = useApiClient()
-const session = await useSession()
-const scope = await useScope()
-
-const organizationId = computed(() => scope.value?.organizationId ?? null)
-const organization = computed(() => session.value?.scopes.find((item) => item.organizationId === organizationId.value) ?? null)
+const { organizationId, departmentId: activeDepartmentId, organization } = await useActiveScope()
 
 const loading = ref(true)
 const errorMessage = ref('')
@@ -52,7 +48,8 @@ watch(
   readableDepartments,
   (list) => {
     if (canReadOrgWide.value) {
-      if (scope.value?.departmentId && list.some((department) => department.id === scope.value?.departmentId)) filterDepartmentId.value = scope.value.departmentId
+      const departmentId = activeDepartmentId.value
+      if (departmentId && list.some((department) => department.id === departmentId)) filterDepartmentId.value = departmentId
       return
     }
     if (!list.some((department) => department.id === filterDepartmentId.value)) filterDepartmentId.value = list[0]?.id ?? ''
@@ -77,11 +74,11 @@ const filterTeamIdModel = computed({
 })
 
 // Jeder Filterwechsel laedt neu (ein Abteilungswechsel sogar zweimal, weil er den Team-Filter
-// leert) -- ohne Laufnummer koennte eine langsamere, aeltere Antwort die Liste zum sichtbaren
+// leert) -- ohne Latest-wins koennte eine langsamere, aeltere Antwort die Liste zum sichtbaren
 // Filter ueberschreiben.
-let latestPeopleLoad = 0
+const peopleLoads = useLatestRequest()
 async function loadPeople() {
-  const loadRun = ++latestPeopleLoad
+  const isLatest = peopleLoads.begin()
   if (!organizationId.value) { loading.value = false; return }
   loading.value = true
   errorMessage.value = ''
@@ -91,13 +88,13 @@ async function loadPeople() {
     if (filterTeamId.value) query.teamId = filterTeamId.value
     if (filterMinor.value) query.isMinor = 'true'
     if (filterLeft.value) query.status = 'left'
-    const response = await api.request(`/v1/organizations/${organizationId.value}/directory-people`, { query })
-    if (loadRun !== latestPeopleLoad) return
-    people.value = DirectoryPersonSchema.array().parse(response)
+    const loaded = await api.request(`/v1/organizations/${organizationId.value}/directory-people`, { query }, DirectoryPersonSchema.array())
+    if (!isLatest()) return
+    people.value = loaded
   } catch {
-    if (loadRun === latestPeopleLoad) errorMessage.value = 'Das Verzeichnis konnte nicht geladen werden.'
+    if (isLatest()) errorMessage.value = 'Das Verzeichnis konnte nicht geladen werden.'
   } finally {
-    if (loadRun === latestPeopleLoad) loading.value = false
+    if (isLatest()) loading.value = false
   }
 }
 await loadPeople()

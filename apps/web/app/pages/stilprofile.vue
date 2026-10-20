@@ -10,10 +10,8 @@ import {
 import { avoidRulesFromDraft, doRulesFromDraft, emptyStyleProfileDraft, styleProfileDraftFrom, styleRulesFromDraft } from '../utils/styleProfileDraft'
 
 const api = useApiClient()
-const session = await useSession()
-const { organizationId, departmentId: activeDepartmentId, teamId: activeTeamId, level: activeLevel } = await useActiveScope()
+const { organizationId, departmentId: activeDepartmentId, teamId: activeTeamId, level: activeLevel, organization: activeOrganization } = await useActiveScope()
 const supabase = useSupabaseClient()
-const activeOrganization = computed(() => session.value?.scopes.find((item) => item.organizationId === organizationId.value) ?? null)
 // Auch auf Vereinsebene verwaltbar (departmentId null): POST/PATCH /v1/content-style-profiles und
 // CreateCustomStyleProfileRequestSchema fuehren departmentId seit je nullable, nur diese Seite hat
 // eine Abteilung verlangt -- ein vereinsweites Stilprofil liess sich dadurch gar nicht anlegen.
@@ -69,8 +67,7 @@ const ownProfiles = computed(() =>
 )
 const inheritedProfiles = computed(() => visibleProfiles.value.filter((profile) => !ownProfiles.value.includes(profile)))
 
-async function load() {
-  const requestedOrganizationId = organizationId.value
+const { reload: load, ready } = useScopedLoad(() => organizationId.value, async (requestedOrganizationId, isLatest) => {
   if (!requestedOrganizationId) { loading.value = false; return }
   loading.value = true
   loadError.value = false
@@ -80,8 +77,7 @@ async function load() {
       .select('id, organization_id, department_id, team_id, slug, name, description, style_rules, avoid_rules, do_rules, is_active, created_by, created_at, updated_at')
       .eq('organization_id', requestedOrganizationId)
       .order('created_at', { ascending: false })
-    // Nach dem await pruefen, ob der Verein inzwischen gewechselt hat (Muster aus layouts/default.vue).
-    if (organizationId.value !== requestedOrganizationId) return
+    if (!isLatest()) return
     if (result.error) { loadError.value = true; return }
     profiles.value = result.data.map((row) => CustomStyleProfileSchema.parse({
       id: row.id, organizationId: row.organization_id, departmentId: row.department_id, teamId: row.team_id,
@@ -89,12 +85,13 @@ async function load() {
       styleRules: row.style_rules, avoidRules: row.avoid_rules, doRules: row.do_rules,
       isActive: row.is_active, createdBy: row.created_by, createdAt: row.created_at, updatedAt: row.updated_at,
     }))
+  } catch {
+    if (isLatest()) loadError.value = true
   } finally {
-    if (organizationId.value === requestedOrganizationId) loading.value = false
+    if (isLatest()) loading.value = false
   }
-}
-await load()
-watch(organizationId, () => { void load() })
+})
+await ready
 watch(activeDepartmentId, () => {
   editingId.value = null
   createError.value = ''
