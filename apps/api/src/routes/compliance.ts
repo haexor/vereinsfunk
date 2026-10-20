@@ -15,11 +15,11 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { createChainSignerFromEnvironment } from '../secretBox.js'
 import type { ApiRouteContext } from './context.js'
-import { checkRateLimit, createAuditRecorder } from './shared.js'
+import { createAuditRecorder } from './shared.js'
 import { toPermissionScope } from '../services/scopeAuthorization.js'
 
 export function registerComplianceRoutes(app: FastifyInstance, context: ApiRouteContext): void {
-  const { requireAuth, requirePermission, supabaseClients, environment } = context
+  const { requireAuth, requirePermission, supabaseClients, environment, checkRateLimit } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
 
 

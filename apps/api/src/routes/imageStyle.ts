@@ -13,7 +13,7 @@ import { z } from 'zod'
 import { mapImageStylePresetRow } from '../apiMappers.js'
 import type { ApiRouteContext } from './context.js'
 import { LOGO_ASSET_KINDS, validateBrandAssetReferences } from '../services/brandAssetSelection.js'
-import { checkRateLimit, createAuditRecorder } from './shared.js'
+import { createAuditRecorder } from './shared.js'
 import { resolveDirectoryScope, scopeLevelOf, toPermissionScope } from '../services/scopeAuthorization.js'
 import { previewImageStyle, previewImageStyleFilters, renderRejection } from '../services/imageStyleRendering.js'
 
@@ -34,7 +34,7 @@ function presetAssetReferences(input: {
 // Plan 045, PR 1: CRUD fuer Bildstil-Presets. Eigenes Modul statt in brand.ts (Modulgrenze wie
 // Plan 027) -- ein Preset ist kein brand_asset, sondern referenziert bis zu zwei davon.
 export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRouteContext): void {
-  const { requireAuth, requirePermission, supabaseClients } = context
+  const { requireAuth, requirePermission, supabaseClients, checkRateLimit } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
 
   // Sichtbarkeit ist allein RLS' Sache (image_style_presets_select, dieselbe Abschottung wie

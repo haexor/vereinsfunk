@@ -727,13 +727,18 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
       forUser: () => ({}) as unknown as SupabaseClient,
       forService: () => ({ from: () => chain({ data: null, error: null }) }) as unknown as SupabaseClient,
     }
+    const respond = (app: Awaited<ReturnType<typeof startApp>>) =>
+      app.inject({ method: 'POST', url: '/v1/consent-requests/by-token/rate-limit-token/respond', payload: { decision: 'declined' } })
     const app = await startApp({ supabaseClients: clients })
-    let lastStatus = 0
-    for (let attempt = 0; attempt < 11; attempt += 1) {
-      const response = await app.inject({ method: 'POST', url: '/v1/consent-requests/by-token/rate-limit-token/respond', payload: { decision: 'declined' } })
-      lastStatus = response.statusCode
-    }
-    expect(lastStatus).toBe(429)
+    const statuses: number[] = []
+    for (let attempt = 0; attempt < 11; attempt += 1) statuses.push((await respond(app)).statusCode)
+    expect(statuses.slice(0, 10)).not.toContain(429)
+    expect(statuses[10]).toBe(429)
+
+    // Jede App-Instanz hat ihren eigenen Zaehler; frueher setzte eine zweite Instanz im selben
+    // Prozess den Stand der ersten fort und andere Tests dieser Datei verschoben das Limit.
+    const freshApp = await startApp({ supabaseClients: clients })
+    expect((await respond(freshApp)).statusCode).not.toBe(429)
   })
 
   // Filtert die Zeilen tatsaechlich nach eq()/is(), damit ein Test sehen kann, WELCHE Zeile eine

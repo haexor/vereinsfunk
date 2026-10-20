@@ -696,9 +696,6 @@ describe('POST /v1/image-style-presets/preview', () => {
     expect(response.statusCode).toBe(403)
   })
 
-  // Eigene, sonst nirgends verwendete userId: checkRateLimit haelt seine Zaehler in einem
-  // Modul-Singleton (routes/shared.ts), geteilt mit jedem anderen Test dieser Datei -- eine fremde
-  // userId wuerde deren Zaehlerstand einfach fortsetzen statt bei 0 zu beginnen.
   it('rate-limits after too many preview requests from the same user', async () => {
     const rateLimitedUserId = '47000000-2000-4000-8000-000000000099'
     const app = await startApp({

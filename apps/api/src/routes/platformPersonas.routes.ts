@@ -8,7 +8,6 @@ import {
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ApiRouteContext } from './context.js'
-import { checkRateLimit } from './shared.js'
 import { buildStyleProfilePromptPreview, previewStyleProfile, resolvePreviewIdempotencyKey } from '../services/styleProfilePreview.js'
 
 const PERSONA_COLUMNS = 'id, slug, name, description, style_rules, avoid_rules, do_rules, is_active, created_by, created_at, updated_at'
@@ -34,7 +33,7 @@ function mapPersonaRow(row: Record<string, unknown>) {
 // audit_events-Eintrag: die gesamte Plattform-Administration hat bislang keinen eigenen
 // Audit-Trail, ein auf Personas beschraenkter Sonderweg waere selbst unvollstaendig.
 export function registerPlatformPersonaRoutes(app: FastifyInstance, context: ApiRouteContext): void {
-  const { environment, requireAuth, requirePlatformAdmin, supabaseClients, textGenerator } = context
+  const { environment, requireAuth, requirePlatformAdmin, supabaseClients, textGenerator, checkRateLimit } = context
 
   app.get('/v1/platform-style-personas', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return

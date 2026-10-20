@@ -11,7 +11,6 @@ import { GmicImageEffectError } from '@vereinsfunk/media-processing'
 import { renderImageStyle } from '../imageStyle.js'
 import { GmicNotEnabledError } from '../imageStyleFilters.js'
 import type { ApiRouteContext } from './context.js'
-import { checkRateLimit } from './shared.js'
 import { resolveDirectoryScope } from '../services/scopeAuthorization.js'
 import { loadResolvedBrandColors } from '../services/brandResolution.js'
 import { previewWorkshopImageStyleFilters } from '../services/imageStyleRendering.js'
@@ -76,7 +75,7 @@ async function readWorkshopUpload<Schema extends z.ZodType>(
 }
 
 export function registerImageStyleWorkshopRoutes(app: FastifyInstance, context: ApiRouteContext): void {
-  const { requireAuth, requirePermission, supabaseClients } = context
+  const { requireAuth, requirePermission, supabaseClients, checkRateLimit } = context
 
   // Der Upload-Editor darf G'MIC nicht durch CSS imitieren: die Ergebnisse wären irreführend
   // und das gespeicherte Bild sähe anders aus als die Vorschau. Der Browser übergibt hier nur

@@ -13,10 +13,10 @@ import {
   shortPersonLabel,
 } from '../services/consent.js'
 import type { ApiRouteContext } from './context.js'
-import { CONSENT_RECORD_SELECT, checkRateLimit, createExternalActionAuditRecorder } from './shared.js'
+import { CONSENT_RECORD_SELECT, createExternalActionAuditRecorder } from './shared.js'
 
 export function registerConsentPublicRoutes(app: FastifyInstance, context: ApiRouteContext): void {
-  const { supabaseClients, environment } = context
+  const { supabaseClients, environment, checkRateLimit } = context
   const recordExternalActionAuditEvent = createExternalActionAuditRecorder(supabaseClients)
 
   // --- Oeffentliche, unauthentifizierte Seiten (Plan 015, Abschnitt 3) ------------------------

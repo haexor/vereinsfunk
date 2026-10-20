@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { isStyleProfileUsableInScope, SYSTEM_STYLE_PROFILES } from '../services/textGenerationSessions.js'
 import type { ApiRouteContext } from './context.js'
-import { checkRateLimit, createAuditRecorder } from './shared.js'
+import { createAuditRecorder } from './shared.js'
 import { buildStyleProfilePromptPreview, previewStyleProfile, resolvePreviewIdempotencyKey } from '../services/styleProfilePreview.js'
 import { resolveDirectoryScope, scopeLevelOf, toPermissionScope } from '../services/scopeAuthorization.js'
 import { TextWorkshopScopeSchema } from './textWorkshop.js'
@@ -20,7 +20,7 @@ function mapCustomStyleProfileRow(row: Record<string, unknown>) {
 }
 
 export function registerContentStyleProfileRoutes(app: FastifyInstance, context: ApiRouteContext): void {
-  const { environment, requireAuth, requirePermission, supabaseClients, textGenerator } = context
+  const { environment, requireAuth, requirePermission, supabaseClients, textGenerator, checkRateLimit } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
 
   app.get('/v1/content-style-profiles', async (request, reply) => {
