@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ProfileSchema, type Profile } from '@vereinsfunk/contracts'
 
-const config = useRuntimeConfig()
+const api = useApiClient()
 const session = await useSession()
 
 const loading = ref(true)
@@ -16,9 +16,7 @@ async function load() {
   loading.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/me/profile`, { headers })
-    profile.value = ProfileSchema.parse(response)
+    profile.value = await api.request('/v1/me/profile', {}, ProfileSchema)
     displayNameDraft.value = profile.value.displayName
   } catch {
     errorMessage.value = 'Das Profil konnte nicht geladen werden.'
@@ -34,9 +32,7 @@ async function save() {
   actionError.value = ''
   saveSuccess.value = false
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/me/profile`, { method: 'PATCH', headers, body: { displayName: displayNameDraft.value.trim() } })
-    profile.value = ProfileSchema.parse(response)
+    profile.value = await api.request('/v1/me/profile', { method: 'PATCH', body: { displayName: displayNameDraft.value.trim() } }, ProfileSchema)
     saveSuccess.value = true
   } catch {
     actionError.value = 'Der Anzeigename konnte nicht gespeichert werden.'

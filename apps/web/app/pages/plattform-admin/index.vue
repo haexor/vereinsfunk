@@ -6,10 +6,11 @@ import {
   type PlatformAdminOrganizationSummary,
   type UsageMetricsBucket,
 } from '@vereinsfunk/contracts'
+import { ApiRequestError } from '../../utils/apiClient'
 
 definePageMeta({ layout: 'admin' })
 
-const config = useRuntimeConfig()
+const api = useApiClient()
 const loading = ref(true)
 const errorMessage = ref('')
 const organizations = ref<PlatformAdminOrganizationSummary[]>([])
@@ -19,20 +20,16 @@ async function load() {
   loading.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
     const to = new Date()
     const from = new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000)
-    const [orgsResponse, metricsResponse] = await Promise.all([
-      $fetch(`${config.public.apiBase}/v1/platform-admin/organizations`, { headers }),
-      $fetch(`${config.public.apiBase}/v1/platform-admin/usage-metrics`, {
-        headers,
-        query: { from: from.toISOString(), to: to.toISOString() },
-      }),
+    const [organizationList, metrics] = await Promise.all([
+      api.request('/v1/platform-admin/organizations', {}, PlatformAdminOrganizationSummarySchema.array()),
+      api.request('/v1/platform-admin/usage-metrics', { query: { from: from.toISOString(), to: to.toISOString() } }, UsageMetricsResponseSchema),
     ])
-    organizations.value = PlatformAdminOrganizationSummarySchema.array().parse(orgsResponse)
-    usage.value = UsageMetricsResponseSchema.parse(metricsResponse).buckets
+    organizations.value = organizationList
+    usage.value = metrics.buckets
   } catch (error) {
-    const status = (error as { statusCode?: number })?.statusCode
+    const status = error instanceof ApiRequestError ? error.statusCode : undefined
     errorMessage.value =
       status === 401 ? 'Du bist nicht angemeldet.' :
       status === 403 ? 'Du hast hier keine Berechtigung.' :

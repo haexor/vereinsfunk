@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { LlmProviderConfigurationSchema, PlatformSettingSchema, PlatformSettingValueSchemas, PublishingProviderConfigurationSchema, PublishingProviderSchema, UpdatePublishingProviderConfigurationRequestSchema, type LlmProviderConfigurationDto, type PublishingProvider, type PublishingProviderConfiguration } from '@vereinsfunk/contracts'
+import { ApiRequestError } from '../../utils/apiClient'
 
 definePageMeta({ layout: 'admin' })
 
-const config = useRuntimeConfig()
+const api = useApiClient()
 const loading = ref(true)
 const saving = ref(false)
 const errorMessage = ref('')
@@ -19,13 +20,11 @@ async function load() {
   loading.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
-    const [response, providerResponse, llmResponse] = await Promise.all([
-      $fetch(`${config.public.apiBase}/v1/platform-settings`, { headers }),
-      $fetch(`${config.public.apiBase}/v1/publishing-providers`, { headers }),
-      $fetch(`${config.public.apiBase}/v1/llm-providers`, { headers }),
+    const [settings, providers, llmProviders] = await Promise.all([
+      api.request('/v1/platform-settings', {}, PlatformSettingSchema.array()),
+      api.request('/v1/publishing-providers', {}, PublishingProviderConfigurationSchema.array()),
+      api.request('/v1/llm-providers', {}, LlmProviderConfigurationSchema.array()),
     ])
-    const settings = PlatformSettingSchema.array().parse(response)
     const limitSetting = settings.find((setting) => setting.key === 'max_organizations_per_owner')
     const limitValue = PlatformSettingValueSchemas.max_organizations_per_owner.safeParse(limitSetting?.value)
     if (limitValue.success) maxOrganizationsPerOwner.value = limitValue.data
@@ -35,8 +34,8 @@ async function load() {
     const agentLlmSetting = settings.find((setting) => setting.key === 'agent_llm_provider_configuration_id')
     const agentLlmValue = PlatformSettingValueSchemas.agent_llm_provider_configuration_id.safeParse(agentLlmSetting?.value)
     if (agentLlmValue.success) agentLlmProviderConfigurationId.value = agentLlmValue.data
-    providerConfigurations.value = PublishingProviderConfigurationSchema.array().parse(providerResponse)
-    llmProviderConfigurations.value = LlmProviderConfigurationSchema.array().parse(llmResponse)
+    providerConfigurations.value = providers
+    llmProviderConfigurations.value = llmProviders
   } catch {
     errorMessage.value = 'Einstellungen konnten nicht geladen werden.'
   } finally {
@@ -56,13 +55,12 @@ async function saveProviderConfiguration() {
   saving.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
     const body = UpdatePublishingProviderConfigurationRequestSchema.parse({
       clientId: providerDraft.clientId,
       clientSecret: providerDraft.clientSecret,
       graphVersion: providerDraft.provider === 'meta' ? providerDraft.graphVersion : null,
     })
-    await $fetch(`${config.public.apiBase}/v1/publishing-providers/${providerDraft.provider}`, { method: 'PUT', headers, body })
+    await api.request(`/v1/publishing-providers/${providerDraft.provider}`, { method: 'PUT', body })
     providerDraft.clientSecret = ''
     await load()
   } catch {
@@ -76,13 +74,10 @@ async function savePublishingEnabled() {
   saving.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
     const value = PlatformSettingValueSchemas.publishing_enabled.parse(publishingEnabled.value)
-    await $fetch(`${config.public.apiBase}/v1/platform-settings/publishing_enabled`, {
-      method: 'PUT', headers, body: { value },
-    })
+    await api.request('/v1/platform-settings/publishing_enabled', { method: 'PUT', body: { value } })
   } catch (error) {
-    const status = (error as { statusCode?: number })?.statusCode
+    const status = error instanceof ApiRequestError ? error.statusCode : undefined
     // Erst neu laden, dann die Meldung setzen: load() leert errorMessage, die 409-Erklaerung
     // waere sonst nie zu sehen.
     await load()
@@ -111,11 +106,8 @@ async function saveAgentLlmProvider() {
   saving.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
     const value = PlatformSettingValueSchemas.agent_llm_provider_configuration_id.parse(agentLlmProviderConfigurationId.value)
-    await $fetch(`${config.public.apiBase}/v1/platform-settings/agent_llm_provider_configuration_id`, {
-      method: 'PUT', headers, body: { value },
-    })
+    await api.request('/v1/platform-settings/agent_llm_provider_configuration_id', { method: 'PUT', body: { value } })
   } catch {
     // Wie in savePublishingEnabled(): load() leert errorMessage, deshalb danach setzen.
     await load()
@@ -130,13 +122,8 @@ async function saveLimit() {
   saving.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
     const value = PlatformSettingValueSchemas.max_organizations_per_owner.parse(maxOrganizationsPerOwner.value)
-    await $fetch(`${config.public.apiBase}/v1/platform-settings/max_organizations_per_owner`, {
-      method: 'PUT',
-      headers,
-      body: { value },
-    })
+    await api.request('/v1/platform-settings/max_organizations_per_owner', { method: 'PUT', body: { value } })
   } catch {
     errorMessage.value = 'Limit konnte nicht gespeichert werden.'
   } finally {

@@ -2,13 +2,14 @@
 import { Archive, ArchiveRestore, Plus, Trash2 } from '@lucide/vue'
 import { z } from 'zod'
 import { PolicySettingSchema, StorageUsageResponseSchema, type PolicyFlag, type PolicySetting, type ScopeLevel, type StorageUsageResponse } from '@vereinsfunk/contracts'
+import { ApiRequestError } from '../utils/apiClient'
 
 const DepartmentRowSchema = z.object({ id: z.string(), name: z.string(), slug: z.string(), archived_at: z.string().nullable() })
 const TeamRowSchema = z.object({ id: z.string(), name: z.string(), department_id: z.string(), archived_at: z.string().nullable() })
 type DepartmentRow = z.infer<typeof DepartmentRowSchema>
 type TeamRow = z.infer<typeof TeamRowSchema>
 
-const config = useRuntimeConfig()
+const api = useApiClient()
 const scope = await useScope()
 const organizationId = computed(() => scope.value?.organizationId ?? null)
 
@@ -42,18 +43,18 @@ async function load() {
   loading.value = true
   errorMessage.value = ''
   const supabase = useSupabaseClient()
-  let departmentsResult, teamsResult, policySettingsResponse
+  let departmentsResult, teamsResult, loadedPolicySettings
   try {
     // Ohne eigenes try/catch verwirft ein fehlschlagender Policy-Settings-Request den gesamten
     // Promise.all -- load() wuerde den Fehler weiterwerfen, loading bliebe aktiv, und await load()
     // koennte das Seiten-Setup abbrechen (beim Review gefunden).
-    ;[departmentsResult, teamsResult, policySettingsResponse] = await Promise.all([
+    ;[departmentsResult, teamsResult, loadedPolicySettings] = await Promise.all([
       supabase.from('departments').select('id, name, slug, archived_at').eq('organization_id', organizationId.value).order('name'),
       supabase.from('teams').select('id, name, department_id, archived_at').eq('organization_id', organizationId.value).order('name'),
       // Die Berechtigung (canEdit) und der geerbte/effektive Wert kommen fertig aus der API, damit
       // die Oberflaeche resolve_policy_flag()/die Manage-Permission nicht selbst nachbildet (Plan
       // 023, "eine Quelle, nicht aus zwei").
-      useAuthHeader().then((headers) => $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/policy-settings`, { headers })),
+      api.request(`/v1/organizations/${organizationId.value}/policy-settings`, {}, PolicySettingSchema.array()),
     ])
   } catch {
     if (loadRun !== latestLoadRun) return
@@ -69,15 +70,14 @@ async function load() {
   }
   const parsedDepartments = DepartmentRowSchema.array().safeParse(departmentsResult.data)
   const parsedTeams = TeamRowSchema.array().safeParse(teamsResult.data)
-  const parsedPolicySettings = PolicySettingSchema.array().safeParse(policySettingsResponse)
-  if (!parsedDepartments.success || !parsedTeams.success || !parsedPolicySettings.success) {
+  if (!parsedDepartments.success || !parsedTeams.success) {
     errorMessage.value = 'Die Vereinsstruktur konnte nicht geladen werden.'
     loading.value = false
     return
   }
   departments.value = parsedDepartments.data
   teams.value = parsedTeams.data
-  policySettings.value = parsedPolicySettings.data
+  policySettings.value = loadedPolicySettings
   for (const department of departments.value) renameDraft[department.id] ??= department.name
   for (const team of teams.value) renameDraft[team.id] ??= team.name
   loading.value = false
@@ -89,18 +89,15 @@ async function load() {
 // storage_usage_bytes() sie fuer den brand_assets-Teil der Aufschluesselung braucht.
 async function loadStorageUsage() {
   if (!organizationId.value) return
-  const headers = await useAuthHeader()
   await Promise.all([
     ...departments.value.map(async (department) => {
       try {
-        const response = await $fetch(`${config.public.apiBase}/v1/storage/usage`, { headers, query: { organizationId: organizationId.value, departmentId: department.id } })
-        storageUsageByDepartment[department.id] = StorageUsageResponseSchema.parse(response)
+        storageUsageByDepartment[department.id] = await api.request('/v1/storage/usage', { query: { organizationId: organizationId.value, departmentId: department.id } }, StorageUsageResponseSchema)
       } catch { /* Speicherbalken bleibt fuer diese Abteilung leer, der Rest der Seite bleibt nutzbar. */ }
     }),
     ...teams.value.map(async (team) => {
       try {
-        const response = await $fetch(`${config.public.apiBase}/v1/storage/usage`, { headers, query: { organizationId: organizationId.value, departmentId: team.department_id, teamId: team.id } })
-        storageUsageByTeam[team.id] = StorageUsageResponseSchema.parse(response)
+        storageUsageByTeam[team.id] = await api.request('/v1/storage/usage', { query: { organizationId: organizationId.value, departmentId: team.department_id, teamId: team.id } }, StorageUsageResponseSchema)
       } catch { /* Speicherbalken bleibt fuer dieses Team leer, der Rest der Seite bleibt nutzbar. */ }
     }),
   ])
@@ -139,12 +136,7 @@ async function createDepartment() {
   creatingDepartment.value = true
   actionError.value = ''
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/organizations/${organizationId.value}/departments`, {
-      method: 'POST',
-      headers,
-      body: { name: newDepartmentName.value.trim() },
-    })
+    await api.request(`/v1/organizations/${organizationId.value}/departments`, { method: 'POST', body: { name: newDepartmentName.value.trim() } })
     newDepartmentName.value = ''
     await reload()
   } catch {
@@ -160,8 +152,7 @@ async function createTeam(departmentId: string) {
   creatingTeamFor.value = departmentId
   actionError.value = ''
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/departments/${departmentId}/teams`, { method: 'POST', headers, body: { name } })
+    await api.request(`/v1/departments/${departmentId}/teams`, { method: 'POST', body: { name } })
     newTeamNameByDepartment[departmentId] = ''
     await reload()
   } catch {
@@ -175,8 +166,7 @@ async function renameDepartment(department: DepartmentRow) {
   const name = renameDraft[department.id]?.trim()
   if (!name || name === department.name) return
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/departments/${department.id}`, { method: 'PATCH', headers, body: { name } })
+    await api.request(`/v1/departments/${department.id}`, { method: 'PATCH', body: { name } })
     await reload()
   } catch {
     actionError.value = 'Die Abteilung konnte nicht umbenannt werden.'
@@ -185,8 +175,7 @@ async function renameDepartment(department: DepartmentRow) {
 
 async function toggleDepartmentArchived(department: DepartmentRow) {
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/departments/${department.id}`, { method: 'PATCH', headers, body: { archived: !department.archived_at } })
+    await api.request(`/v1/departments/${department.id}`, { method: 'PATCH', body: { archived: !department.archived_at } })
     await reload()
   } catch {
     actionError.value = 'Der Archivstatus konnte nicht geändert werden.'
@@ -196,11 +185,10 @@ async function toggleDepartmentArchived(department: DepartmentRow) {
 async function deleteDepartment(department: DepartmentRow) {
   if (!confirm(`"${department.name}" wirklich löschen? Das geht nur, wenn die Abteilung leer ist.`)) return
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/departments/${department.id}`, { method: 'DELETE', headers })
+    await api.request(`/v1/departments/${department.id}`, { method: 'DELETE' })
     await reload()
   } catch (error) {
-    const code = (error as { data?: { error?: string } })?.data?.error
+    const code = error instanceof ApiRequestError ? error.code : undefined
     actionError.value = code === 'last_department_cannot_be_deleted'
       ? 'Dies ist die letzte Abteilung im Verein und kann nicht gelöscht werden.'
       : code === 'department_delete_blocked'
@@ -213,8 +201,7 @@ async function renameTeam(team: TeamRow) {
   const name = renameDraft[team.id]?.trim()
   if (!name || name === team.name) return
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/teams/${team.id}`, { method: 'PATCH', headers, body: { name } })
+    await api.request(`/v1/teams/${team.id}`, { method: 'PATCH', body: { name } })
     await reload()
   } catch {
     actionError.value = 'Das Team konnte nicht umbenannt werden.'
@@ -223,8 +210,7 @@ async function renameTeam(team: TeamRow) {
 
 async function toggleTeamArchived(team: TeamRow) {
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/teams/${team.id}`, { method: 'PATCH', headers, body: { archived: !team.archived_at } })
+    await api.request(`/v1/teams/${team.id}`, { method: 'PATCH', body: { archived: !team.archived_at } })
     await reload()
   } catch {
     actionError.value = 'Der Archivstatus konnte nicht geändert werden.'
@@ -234,11 +220,10 @@ async function toggleTeamArchived(team: TeamRow) {
 async function deleteTeam(team: TeamRow) {
   if (!confirm(`"${team.name}" wirklich löschen? Das geht nur, wenn das Team leer ist.`)) return
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/teams/${team.id}`, { method: 'DELETE', headers })
+    await api.request(`/v1/teams/${team.id}`, { method: 'DELETE' })
     await reload()
   } catch (error) {
-    const code = (error as { data?: { error?: string } })?.data?.error
+    const code = error instanceof ApiRequestError ? error.code : undefined
     actionError.value = code === 'team_delete_blocked'
       ? 'Dieses Team enthält bereits Beiträge und kann nicht gelöscht werden. Bitte archivieren.'
       : 'Das Team konnte nicht gelöscht werden.'
@@ -271,10 +256,7 @@ async function updatePolicySetting(scopeLevel: ScopeLevel, scopeId: string, flag
   policyUpdating.value = scopeId
   actionError.value = ''
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/policy-settings`, {
-      method: 'PUT', headers, body: { scope: scopeLevel, scopeId, flag, value },
-    })
+    await api.request('/v1/policy-settings', { method: 'PUT', body: { scope: scopeLevel, scopeId, flag, value } })
     await load()
   } catch {
     actionError.value = 'Die Richtlinie konnte nicht geändert werden.'
