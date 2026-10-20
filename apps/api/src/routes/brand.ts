@@ -43,6 +43,7 @@ import {
   processBrandLogoUpload,
   UnsupportedLogoFormatError,
 } from '@vereinsfunk/brand-assets'
+import { readMultipartUpload } from '../multipartUpload.js'
 import type { ApiRouteContext } from './context.js'
 import { createAuditRecorder, toPermissionScope } from './shared.js'
 
@@ -391,32 +392,9 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
   app.post('/v1/brand/assets', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
 
-    const filePart = await request.file()
-    if (!filePart)
-      return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
-
-    let fields: z.infer<typeof CreateBrandAssetRequestSchema>
-    let buffer: Buffer
-    try {
-      // Wie beim Logo-Upload: die Datei zuerst vollstaendig lesen, danach die begleitenden
-      // multipart-Felder auswerten -- busboy fuellt filePart.fields erst, sobald der
-      // Datei-Stream durchgelaufen ist.
-      buffer = await filePart.toBuffer()
-      const rawFields = Object.fromEntries(
-        Object.entries(filePart.fields).map(([key, field]) => [
-          key,
-          field && 'value' in field ? field.value : undefined,
-        ]),
-      )
-      fields = CreateBrandAssetRequestSchema.parse(rawFields)
-    } catch (error) {
-      if (error instanceof Error && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE') {
-        return reply.code(413).send({ error: 'file_too_large', correlationId: request.id })
-      }
-      if (error instanceof z.ZodError)
-        return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
-      throw error
-    }
+    const upload = await readMultipartUpload(request, CreateBrandAssetRequestSchema)
+    if (!upload.ok) return reply.code(upload.status).send({ error: upload.error, correlationId: request.id })
+    const { buffer, fields } = upload
 
     const scope = toPermissionScope(fields.organizationId, fields.departmentId, fields.teamId)
     if (!(await requirePermission(request, reply, 'brand.manage', scope))) return
@@ -470,9 +448,6 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
               correlationId: request.id,
             })
         }
-        if (error instanceof Error && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE') {
-          return reply.code(413).send({ error: 'file_too_large', correlationId: request.id })
-        }
         throw error
       }
     } else {
@@ -483,9 +458,6 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
           return reply
             .code(400)
             .send({ error: 'invalid_logo', message: error.message, correlationId: request.id })
-        }
-        if (error instanceof Error && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE') {
-          return reply.code(413).send({ error: 'file_too_large', correlationId: request.id })
         }
         throw error
       }

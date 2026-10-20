@@ -22,9 +22,10 @@ import {
   type OrganizationBrandLevel,
 } from '@vereinsfunk/domain'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { FastifyInstance, FastifyReply } from 'fastify'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import sharp from 'sharp'
 import { z } from 'zod'
+import { readMultipartUpload, type MultipartUploadResult } from '../multipartUpload.js'
 import { parseSupabaseData } from '../supabase.js'
 import {
   mapBrandRow,
@@ -371,6 +372,27 @@ function createRequestAbortController(reply: FastifyReply): {
   }
 }
 
+// Beide Werkstatt-Routen nehmen dasselbe lokal zugeschnittene Foto entgegen. Eine Datei, die sharp
+// nicht lesen kann, ist 422 invalid_image; die Pixelgrenze gilt schon vor dem Berechtigungscheck,
+// damit kein Rendering an einem zu grossen Foto startet.
+async function readWorkshopUpload<Schema extends z.ZodType>(
+  request: FastifyRequest,
+  schema: Schema,
+): Promise<MultipartUploadResult<z.output<Schema>>> {
+  const upload = await readMultipartUpload(request, schema, {
+    fileSize: 100 * 1024 * 1024,
+    unsupportedMimetypeError: 'unsupported_image_type',
+  })
+  if (!upload.ok) return upload
+  try {
+    await assertImageStyleInputSize(upload.buffer)
+  } catch (error) {
+    if (error instanceof ImageTooLargeError) return { ok: false, status: 413, error: 'image_too_large' }
+    return { ok: false, status: 422, error: 'invalid_image' }
+  }
+  return upload
+}
+
 // Plan 045, PR 1: CRUD fuer Bildstil-Presets. Eigenes Modul statt in brand.ts (Modulgrenze wie
 // Plan 027) -- ein Preset ist kein brand_asset, sondern referenziert bis zu zwei davon.
 export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRouteContext): void {
@@ -385,41 +407,9 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
     if (!checkRateLimit(`image-style-workshop-filter:${request.auth!.userId}`, 30, 60_000)) {
       return reply.code(429).send({ error: 'rate_limited', correlationId: request.id })
     }
-    const filePart = await request.file({ limits: { fileSize: 100 * 1024 * 1024 } })
-    if (!filePart)
-      return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
-
-    let input: z.infer<typeof WorkshopFilterFieldsSchema>
-    let sourceBuffer: Buffer
-    try {
-      sourceBuffer = await filePart.toBuffer()
-      const parsed = WorkshopFilterMultipartSchema.safeParse(
-        Object.fromEntries(
-          [...Object.entries(filePart.fields), ['mimetype', filePart.mimetype]].map(
-            ([key, field]) => [
-              key,
-              field && typeof field === 'object' && 'value' in field ? field.value : field,
-            ],
-          ),
-        ),
-      )
-      if (
-        !parsed.success &&
-        parsed.error.issues.some((issue) => issue.path[0] === 'mimetype')
-      )
-        return reply.code(400).send({ error: 'unsupported_image_type', correlationId: request.id })
-      if (!parsed.success) throw parsed.error
-      input = parsed.data
-      await assertImageStyleInputSize(sourceBuffer)
-    } catch (error) {
-      if (error instanceof ImageTooLargeError)
-        return reply.code(413).send({ error: 'image_too_large', correlationId: request.id })
-      if (error instanceof Error && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE')
-        return reply.code(413).send({ error: 'file_too_large', correlationId: request.id })
-      if (error instanceof z.ZodError)
-        return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
-      return reply.code(422).send({ error: 'invalid_image', correlationId: request.id })
-    }
+    const upload = await readWorkshopUpload(request, WorkshopFilterMultipartSchema)
+    if (!upload.ok) return reply.code(upload.status).send({ error: upload.error, correlationId: request.id })
+    const { buffer: sourceBuffer, fields: input } = upload
 
     const client = supabaseClients.forUser(request.auth!.accessToken)
     const resolvedScope = await resolveDirectoryScope(client, input.organizationId, input.departmentId ?? null, null)
@@ -460,41 +450,9 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
     if (!checkRateLimit(`image-style-workshop-filter-previews:${request.auth!.userId}`, 6, 60_000)) {
       return reply.code(429).send({ error: 'rate_limited', correlationId: request.id })
     }
-    const filePart = await request.file({ limits: { fileSize: 100 * 1024 * 1024 } })
-    if (!filePart)
-      return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
-
-    let input: z.infer<typeof WorkshopFilterPreviewsFieldsSchema>
-    let sourceBuffer: Buffer
-    try {
-      sourceBuffer = await filePart.toBuffer()
-      const parsed = WorkshopFilterPreviewsMultipartSchema.safeParse(
-        Object.fromEntries(
-          [...Object.entries(filePart.fields), ['mimetype', filePart.mimetype]].map(
-            ([key, field]) => [
-              key,
-              field && typeof field === 'object' && 'value' in field ? field.value : field,
-            ],
-          ),
-        ),
-      )
-      if (
-        !parsed.success &&
-        parsed.error.issues.some((issue) => issue.path[0] === 'mimetype')
-      )
-        return reply.code(400).send({ error: 'unsupported_image_type', correlationId: request.id })
-      if (!parsed.success) throw parsed.error
-      input = parsed.data
-      await assertImageStyleInputSize(sourceBuffer)
-    } catch (error) {
-      if (error instanceof ImageTooLargeError)
-        return reply.code(413).send({ error: 'image_too_large', correlationId: request.id })
-      if (error instanceof Error && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE')
-        return reply.code(413).send({ error: 'file_too_large', correlationId: request.id })
-      if (error instanceof z.ZodError)
-        return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
-      return reply.code(422).send({ error: 'invalid_image', correlationId: request.id })
-    }
+    const upload = await readWorkshopUpload(request, WorkshopFilterPreviewsMultipartSchema)
+    if (!upload.ok) return reply.code(upload.status).send({ error: upload.error, correlationId: request.id })
+    const { buffer: sourceBuffer, fields: input } = upload
 
     const client = supabaseClients.forUser(request.auth!.accessToken)
     const resolvedScope = await resolveDirectoryScope(client, input.organizationId, input.departmentId ?? null, null)
