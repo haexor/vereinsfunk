@@ -12,10 +12,9 @@ const trainings = ref<PlayerboardTraining[]>([])
 const loading = ref(false)
 const errorMessage = ref('')
 
-async function load() {
+const { ready } = useScopedLoad(() => teamId.value, async (requestedTeamId, isLatest) => {
   trainings.value = []
   errorMessage.value = ''
-  const requestedTeamId = teamId.value
   if (!requestedTeamId) {
     loading.value = false
     return
@@ -23,15 +22,14 @@ async function load() {
   loading.value = true
   try {
     const result = await api.request(`/v1/playerboard/teams/${requestedTeamId}/trainings`, {}, PlayerboardTrainingSchema.array())
-    if (teamId.value === requestedTeamId) trainings.value = result
+    if (isLatest()) trainings.value = result
   } catch (error) {
-    if (teamId.value === requestedTeamId) errorMessage.value = playerboardErrorMessage(error, 'Die Trainings konnten nicht geladen werden.')
+    if (isLatest()) errorMessage.value = playerboardErrorMessage(error, 'Die Trainings konnten nicht geladen werden.')
   } finally {
-    if (teamId.value === requestedTeamId) loading.value = false
+    if (isLatest()) loading.value = false
   }
-}
-await load()
-watch(teamId, () => { void load() })
+})
+await ready
 
 const dateFormat = new Intl.DateTimeFormat('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' })
 function formatDate(value: string): string {

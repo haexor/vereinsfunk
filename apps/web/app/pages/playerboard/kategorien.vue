@@ -20,11 +20,9 @@ const categories = ref<PlayerboardCategory[]>([])
 const loading = ref(false)
 const errorMessage = ref('')
 const actionError = ref('')
-const loadGeneration = ref(0)
-const mutationGeneration = ref(0)
 
-async function load() {
-  const generation = ++loadGeneration.value
+const levelKey = () => level.value && `${level.value.scope}:${level.value.scopeId}`
+const { ready } = useScopedLoad(levelKey, async (_levelKey, isLatest) => {
   const requested = level.value
   categories.value = []
   errorMessage.value = ''
@@ -32,20 +30,22 @@ async function load() {
     loading.value = false
     return
   }
-  const isCurrent = () => generation === loadGeneration.value
-    && level.value?.scope === requested.scope
-    && level.value?.scopeId === requested.scopeId
   loading.value = true
   try {
     const result = await api.request('/v1/playerboard/categories', { query: { scope: requested.scope, scopeId: requested.scopeId } }, PlayerboardCategorySchema.array())
-    if (isCurrent()) categories.value = result
+    if (isLatest()) categories.value = result
   } catch (error) {
-    if (isCurrent()) errorMessage.value = playerboardErrorMessage(error, 'Die Kategorien konnten nicht geladen werden.')
+    if (isLatest()) errorMessage.value = playerboardErrorMessage(error, 'Die Kategorien konnten nicht geladen werden.')
   } finally {
-    if (isCurrent()) loading.value = false
+    if (isLatest()) loading.value = false
   }
-}
-await load()
+})
+await ready
+
+// Aenderungen schreiben ihr Ergebnis nur zurueck, solange die Ebene noch dieselbe ist, fuer die sie
+// gestartet wurden; jeder Ebenenwechsel beginnt einen neuen Lauf.
+const levelRuns = useLatestRequest()
+let isCurrentLevel = levelRuns.begin()
 
 const inherited = computed(() => categories.value.filter((category) => category.inherited))
 const own = computed(() => categories.value.filter((category) => !category.inherited))
@@ -59,10 +59,7 @@ const creating = ref(false)
 async function create() {
   const requested = level.value
   if (!requested) return
-  const generation = mutationGeneration.value
-  const isCurrent = () => generation === mutationGeneration.value
-    && level.value?.scope === requested.scope
-    && level.value?.scopeId === requested.scopeId
+  const isCurrent = isCurrentLevel
   creating.value = true
   actionError.value = ''
   try {
@@ -97,12 +94,8 @@ function startEdit(category: PlayerboardCategory) {
 }
 
 async function update(category: PlayerboardCategory, body: Record<string, unknown>) {
-  const requested = level.value
-  if (!requested) return false
-  const generation = mutationGeneration.value
-  const isCurrent = () => generation === mutationGeneration.value
-    && level.value?.scope === requested.scope
-    && level.value?.scopeId === requested.scopeId
+  if (!level.value) return false
+  const isCurrent = isCurrentLevel
   busyId.value = category.id
   actionError.value = ''
   try {
@@ -131,12 +124,8 @@ async function saveEdit(category: PlayerboardCategory) {
 
 async function remove(category: PlayerboardCategory) {
   if (!window.confirm(`Kategorie „${category.name}“ löschen?`)) return
-  const requested = level.value
-  if (!requested) return
-  const generation = mutationGeneration.value
-  const isCurrent = () => generation === mutationGeneration.value
-    && level.value?.scope === requested.scope
-    && level.value?.scopeId === requested.scopeId
+  if (!level.value) return
+  const isCurrent = isCurrentLevel
   busyId.value = category.id
   actionError.value = ''
   try {
@@ -149,13 +138,11 @@ async function remove(category: PlayerboardCategory) {
   }
 }
 
-watch(() => level.value && `${level.value.scope}:${level.value.scopeId}`, () => {
-  loadGeneration.value += 1
-  mutationGeneration.value += 1
+watch(levelKey, () => {
+  isCurrentLevel = levelRuns.begin()
   editingId.value = null
   creating.value = false
   busyId.value = null
-  void load()
 })
 
 const inputClass = 'focus-ring h-11 w-full rounded-xl border border-[#dfe0d9] bg-white px-3 text-sm text-ink'

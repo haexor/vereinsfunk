@@ -34,23 +34,20 @@ const saveError = ref('')
 const notice = ref('')
 
 // Spaete Antworten frueherer Laeufe (Vereinswechsel waehrend des Ladens) verfallen.
-let latestLoad = 0
-async function load() {
-  const loadRun = ++latestLoad
+const { reload: load, ready } = useScopedLoad(() => organizationId.value, async (requestedOrganizationId, isLatest) => {
   errorMessage.value = ''
-  if (!organizationId.value) return
+  if (!requestedOrganizationId) return
   loading.value = true
   try {
-    const loaded = await api.request(`/v1/organizations/${organizationId.value}/playerboard/settings`, {}, ScopePlayerboardSettingsSchema.array())
-    if (loadRun === latestLoad) entries.value = loaded
+    const loaded = await api.request(`/v1/organizations/${requestedOrganizationId}/playerboard/settings`, {}, ScopePlayerboardSettingsSchema.array())
+    if (isLatest()) entries.value = loaded
   } catch (error) {
-    if (loadRun === latestLoad) errorMessage.value = playerboardErrorMessage(error, 'Die Einstellungen konnten nicht geladen werden.')
+    if (isLatest()) errorMessage.value = playerboardErrorMessage(error, 'Die Einstellungen konnten nicht geladen werden.')
   } finally {
-    if (loadRun === latestLoad) loading.value = false
+    if (isLatest()) loading.value = false
   }
-}
-await load()
-watch(organizationId, () => { void load() })
+})
+await ready
 
 const entry = computed(() => (level.value ? entries.value.find((item) => item.scope === level.value!.scope && item.scopeId === level.value!.scopeId) ?? null : null))
 const draft = ref<PlayerboardSettingsValues | null>(null)
@@ -138,9 +135,7 @@ async function copyLink() {
 const playersWithoutConsent = ref<PlayerboardPlayer[] | null>(null)
 // Nach einem Mannschaftswechsel darf die spaetere Antwort der vorigen Mannschaft deren Spieler
 // nicht unter der neuen anzeigen.
-let latestConsentLoad = 0
-async function loadConsents() {
-  const loadRun = ++latestConsentLoad
+const { ready: consentsReady } = useScopedLoad(() => level.value && `${level.value.scope}:${level.value.scopeId}`, async (_levelKey, isLatest) => {
   playersWithoutConsent.value = null
   const current = level.value
   if (current?.scope !== 'team' || !useCan('training.manage', current.permissionScope)) return
@@ -149,15 +144,14 @@ async function loadConsents() {
       api.request(`/v1/playerboard/teams/${current.scopeId}/players`, {}, PlayerboardPlayerSchema.array()),
       api.request(`/v1/playerboard/teams/${current.scopeId}/photo-consents`, {}, PlayerboardPhotoConsentSchema.array()),
     ])
-    if (loadRun !== latestConsentLoad) return
+    if (!isLatest()) return
     const missing = new Set(consents.filter((consent) => !consent.consentRecordId).map((consent) => consent.playerId))
     playersWithoutConsent.value = roster.filter((player) => player.active && missing.has(player.id))
   } catch {
-    if (loadRun === latestConsentLoad) playersWithoutConsent.value = null
+    if (isLatest()) playersWithoutConsent.value = null
   }
-}
-await loadConsents()
-watch(() => level.value && `${level.value.scope}:${level.value.scopeId}`, () => { void loadConsents() })
+})
+await consentsReady
 
 const chipClass = 'rounded-full px-2 py-0.5 text-[10px] font-bold'
 const inputClass = 'focus-ring h-11 rounded-xl border border-[#dfe0d9] bg-white px-3 text-sm text-ink disabled:bg-[#f4f4ef] disabled:text-[#9aa096]'

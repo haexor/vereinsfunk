@@ -30,23 +30,20 @@ const periods: { kind: RankingPeriodKind; label: string }[] = [
   { kind: 'custom', label: 'Frei' },
 ]
 
+const seasonRuns = useLatestRequest()
 /** Laedt den Saisonanfang, sobald die Mannschaft feststeht. */
 async function loadSeason(): Promise<boolean> {
+  const isLatest = seasonRuns.begin()
   seasonFrom.value = null
   seasonLoadError.value = ''
   if (!organizationId.value || !teamId.value) return true
-  const requestedOrganizationId = organizationId.value
-  const requestedTeamId = teamId.value
-  const requestedTimezone = organizationTimezone.value
   try {
-    const from = await loadSeasonFrom(requestedOrganizationId, requestedTeamId, requestedTimezone)
-    if (organizationId.value !== requestedOrganizationId || teamId.value !== requestedTeamId)
-      return false
+    const from = await loadSeasonFrom(organizationId.value, teamId.value, organizationTimezone.value)
+    if (!isLatest()) return false
     seasonFrom.value = from
     return true
   } catch (error) {
-    if (organizationId.value !== requestedOrganizationId || teamId.value !== requestedTeamId)
-      return false
+    if (!isLatest()) return false
     seasonLoadError.value = playerboardErrorMessage(error, 'Die Saison konnte nicht geladen werden.')
     errorMessage.value = seasonLoadError.value
     return false
@@ -54,9 +51,9 @@ async function loadSeason(): Promise<boolean> {
 }
 
 /** Laedt die Rangliste fuer Mannschaft und Zeitraum; spaete Antworten frueherer Anfragen verfallen. */
-let latestRequest = 0
+const rankingRuns = useLatestRequest()
 async function load() {
-  const request = ++latestRequest
+  const isLatest = rankingRuns.begin()
   errorMessage.value = ''
   if (!teamId.value) {
     items.value = []
@@ -80,15 +77,15 @@ async function load() {
       customTo: customTo.value,
     })
     const result = await loadRankingItems(requestedTeamId, range)
-    if (request === latestRequest) items.value = result.items
+    if (isLatest()) items.value = result.items
   } catch (error) {
-    if (request === latestRequest)
+    if (isLatest())
       errorMessage.value = playerboardErrorMessage(
         error,
         'Die Rangliste konnte nicht geladen werden.',
       )
   } finally {
-    if (request === latestRequest) loading.value = false
+    if (isLatest()) loading.value = false
   }
 }
 if (await loadSeason()) await load()
