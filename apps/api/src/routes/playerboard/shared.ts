@@ -13,7 +13,7 @@ import type { PermissionScope } from '../../auth.js'
 import { indexByScopeLevel, type ScopeLevelIndex } from '../../moduleStatus.js'
 import { parseSupabaseData } from '../../supabase.js'
 import type { ApiRouteContext } from '../context.js'
-import { resolveMembershipScope } from '../../services/scopeAuthorization.js'
+import { resolveMembershipScope, scopeLevelOf } from '../../services/scopeAuthorization.js'
 
 /**
  * Paket 052: gemeinsame Bausteine der PlayerBoard-Routen.
@@ -173,12 +173,11 @@ export function toSettingsLevel(row: PlayerboardSettingsRow | null | undefined):
  * Fuer eine Mannschaft muss der Scope auch deren Abteilungs-ID enthalten.
  */
 export function resolveSettingsFor(settings: OrganizationPlayerboardSettings, scope: { departmentId?: string | null; teamId?: string | null }) {
-  const target = scope.teamId ? 'team' : scope.departmentId ? 'department' : 'organization'
   return resolvePlayerboardSettings({
     organization: toSettingsLevel(settings.organization),
     department: scope.departmentId ? toSettingsLevel(settings.departmentById.get(scope.departmentId)) : null,
     team: scope.teamId ? toSettingsLevel(settings.teamById.get(scope.teamId)) : null,
-  }, target)
+  }, scopeLevelOf(scope))
 }
 
 /**

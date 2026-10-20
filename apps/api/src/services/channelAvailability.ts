@@ -4,6 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { resolveAvailableChannels, type ChannelCandidate, type ScopeLevelName } from '@vereinsfunk/domain'
 import { z } from 'zod'
 import { parseSupabaseData } from '../supabase.js'
+import { scopeLevelOf } from './scopeAuthorization.js'
 
 // maxCharacters bleibt null, wenn fuer die Plattform keine Vorgabezeile existiert: eine fehlende
 // Zeile darf die Laenge weder heimlich hochsetzen noch heimlich senken, also entscheidet erst der
@@ -60,7 +61,7 @@ export async function resolveAvailableChannelIdsForPostVersion(
   if (policyRow.error) throw policyRow.error
   const snapshot = parseSupabaseData(ChannelSnapshotSchema, target.effectiveConfigSnapshot)
   return resolveAvailableChannels({
-    scope: target.teamId ? 'team' : target.departmentId ? 'department' : 'organization',
+    scope: scopeLevelOf(target),
     ...(target.departmentId ? { departmentId: target.departmentId } : {}),
     ...(target.teamId ? { teamId: target.teamId } : {}),
     channels: toChannelCandidates(connections.data, scopeRows.data),
@@ -92,7 +93,7 @@ export async function resolveTextGenerationPlatformAvailability(
   if (policyRow.error) throw policyRow.error
   if (platformDefaults.error) throw platformDefaults.error
 
-  const targetScope: ScopeLevelName = teamId ? 'team' : departmentId ? 'department' : 'organization'
+  const targetScope = scopeLevelOf({ departmentId, teamId })
   const requireChannelResponsible = policyRow.data?.require_channel_responsible ?? false
   const maxCharactersByPlatform = new Map(platformDefaults.data.map((row) => [row.platform as SocialPlatform, row.max_characters as number]))
   // Plan 039, PR 1 Step 3: je Kanal eine eigene Laengengrenze (social_connections.max_characters).
