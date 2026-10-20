@@ -42,8 +42,14 @@ export class FileSourceTransport implements SourceTransport {
     for (const row of rows) yield row
   }
 
+  // relax_column_count: eine einzelne Zeile mit fehlender oder ueberzaehliger Zelle (in von Hand
+  // gepflegten Exporten ueblich) darf nicht die ganze Datei scheitern lassen -- fehlende Zellen
+  // fehlen im Datensatz, und das Bereichsschema meldet die Zeile gezielt als invalid_record. bom: ein
+  // Excel-Export "CSV UTF-8" beginnt mit einem BOM, der sonst am ersten Spaltennamen haengt.
   private readCsv(): Record<string, string>[] {
-    return parse(this.buffer, { columns: true, skip_empty_lines: true, trim: true }) as Record<string, string>[]
+    return parse(this.buffer, {
+      columns: true, skip_empty_lines: true, trim: true, relax_column_count: true, bom: true, delimiter: detectCsvDelimiter(this.buffer),
+    }) as Record<string, string>[]
   }
 
   private async readXlsx(): Promise<Record<string, string>[]> {
@@ -79,6 +85,24 @@ export class FileSourceTransport implements SourceTransport {
     })
     return rows
   }
+}
+
+// Ein deutsches Excel speichert CSV mit ';', andere Werkzeuge mit ',' oder Tab. Entschieden wird
+// an der Kopfzeile: Spaltennamen enthalten das Trennzeichen praktisch nie, Datenzellen ("Beck,
+// Anna", Dezimalkomma) dagegen schon. Ohne Treffer bleibt es beim Standard ','.
+function detectCsvDelimiter(buffer: Buffer): string {
+  const text = buffer.toString('utf8', 0, Math.min(buffer.length, 64 * 1024))
+  const headerLine = text.split(/\r\n|\n|\r/).find((line) => line.trim().length > 0) ?? ''
+  let best = ','
+  let bestCount = 0
+  for (const candidate of [',', ';', '\t']) {
+    const count = headerLine.split(candidate).length - 1
+    if (count > bestCount) {
+      best = candidate
+      bestCount = count
+    }
+  }
+  return best
 }
 
 function cellToString(value: unknown): string {
