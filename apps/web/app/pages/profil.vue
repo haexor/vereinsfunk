@@ -43,6 +43,10 @@ async function save() {
   } finally {
     saving.value = false
   }
+  // Seitenleiste und Kopfzeile lesen den Namen aus useSession() und zeigten sonst bis zum naechsten
+  // vollen Reload den alten. Ausserhalb des try: scheitert nur das Auffrischen, ist der Name
+  // trotzdem gespeichert, und die Sitzung behaelt ihren bisherigen Stand.
+  if (saveSuccess.value) await refreshSession().catch(() => undefined)
 }
 
 const saveDisabled = computed(() => !displayNameDraft.value.trim())

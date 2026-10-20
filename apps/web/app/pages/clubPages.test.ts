@@ -51,4 +51,11 @@ describe('Vereinsseiten', () => {
     expect(page).toContain(":disabled=\"lockedForActiveLevel.has('displayFontAssetId')\"")
     expect(page).toContain(":disabled=\"lockedForActiveLevel.has('bodyFontAssetId')\"")
   })
+
+  it('frischt nach dem Speichern des Anzeigenamens die Sitzung auf', () => {
+    const save = functionBody(read('profil.vue'), 'save')
+
+    // Seitenleiste und Kopfzeile lesen den Namen aus useSession().
+    expect(save).toContain('if (saveSuccess.value) await refreshSession()')
+  })
 })
