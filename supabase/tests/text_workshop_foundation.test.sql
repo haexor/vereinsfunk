@@ -649,11 +649,12 @@ select is((select count(*)::integer from public.media_assets where id = '3200000
 select set_config('request.jwt.claim.sub', '31000000-0000-4000-8000-000000000001', true);
 select is((select count(*)::integer from public.composition_sessions where input_hash = encode(sha256('org-level-session'::bytea), 'hex')), 0, 'negative: an unrelated tenant A member cannot read tenant B''s organization-level session');
 
--- media_assets_insert org-fallback: post.create via organization role, not department membership.
+-- Seit 2026101912 legt nur noch reserve_storage_upload() (Service Role) media_assets-Zeilen an --
+-- auch eine Vereinsrolle mit post.create schreibt nicht mehr direkt.
 select set_config('request.jwt.claim.sub', '32000000-0000-4000-8000-000000000008', true);
-select lives_ok(
+select throws_ok(
   $$insert into public.media_assets (organization_id, department_id, bucket_id, object_path, mime_type, byte_size, created_by) values ('32000000-2000-4000-8000-000000000002', null, 'raw-media', 'organizations/32000000-2000-4000-8000-000000000002/assets/social-manager/original.jpg', 'image/jpeg', 12, '32000000-0000-4000-8000-000000000008')$$,
-  'a social_manager with post.create at the organization level can insert an organization-level media asset'
+  '42501', null, 'negative: even a social_manager with post.create cannot insert a media asset directly'
 );
 select set_config('request.jwt.claim.sub', '32000000-0000-4000-8000-000000000005', true);
 select throws_ok(
