@@ -12,11 +12,9 @@ import {
   type SubscriptionPlan,
 } from '@vereinsfunk/contracts'
 import { optionalNumber } from '../../../utils/numberInput'
+import { BYTES_PER_MB, MEDIA_ORIGIN_LABELS } from '../../../utils/planLimits'
 
 definePageMeta({ layout: 'admin' })
-
-const MEDIA_ORIGIN_LABELS: Record<MediaOrigin, string> = { own_upload: 'Eigene Beiträge', ai_image: 'KI-Bilder', ai_video: 'KI-Videos' }
-const BYTES_PER_MB = 1024 * 1024
 
 const config = useRuntimeConfig()
 const route = useRoute()

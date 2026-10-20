@@ -11,6 +11,7 @@ import {
   type SubscriptionPlan,
 } from '@vereinsfunk/contracts'
 import { optionalNumber } from '../../utils/numberInput'
+import { BYTES_PER_MB, MEDIA_ORIGIN_LABELS } from '../../utils/planLimits'
 
 // Plan 021: Tarif-Editor -- Tabellen-/Formular-Layout nach dem Vorbild von llm.vue (Liste,
 // Anlegen-Formular, Inline-Aktionen), aber useApiClient() statt useAuthHeader()+$fetch (siehe
@@ -18,8 +19,6 @@ import { optionalNumber } from '../../utils/numberInput'
 definePageMeta({ layout: 'admin' })
 
 const MEDIA_ORIGINS: readonly MediaOrigin[] = MediaOriginSchema.options
-const MEDIA_ORIGIN_LABELS: Record<MediaOrigin, string> = { own_upload: 'Eigene Beiträge', ai_image: 'KI-Bilder', ai_video: 'KI-Videos' }
-const BYTES_PER_MB = 1024 * 1024
 // Paket 051: welche Module ein Tarif enthaelt. Ein Verein, eine Abteilung oder Mannschaft kann
 // daraus nur abwaehlen, nie etwas hinzunehmen.
 const APP_MODULES: readonly AppModule[] = AppModuleSchema.options
