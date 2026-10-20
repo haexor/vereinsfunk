@@ -5,7 +5,7 @@ import { WorkflowNameSchema } from '@vereinsfunk/contracts'
 import { ConcurrencyLimitStrategy } from '@hatchet-dev/typescript-sdk/v1/task.js'
 import type { GenerationRecoveryRepository } from './generationRecovery.js'
 import type { VisionProviderComparisonExecutor } from './visionProviderComparison.js'
-import { concurrency, createGenerationRecoveryScanWorkflow, createHatchetWorker, createVisionProviderComparisonScanWorkflow, createWorkflowDefinitions, WorkflowExecutionError, type ProductWorkflowExecutor, type WorkflowExecutionRepository } from './workflows.js'
+import { concurrency, createGenerationRecoveryScanWorkflow, createHatchetWorker, createVisionProviderComparisonScanWorkflow, createWorkflowDefinitions, keepLeaseAlive, WorkflowExecutionError, type ProductWorkflowExecutor, type WorkflowExecutionRepository } from './workflows.js'
 
 const payload: WorkflowPayload = {
   entityId: '11111111-1111-4111-8111-111111111111', organizationId: '22222222-2222-4222-8222-222222222222',
@@ -17,6 +17,7 @@ const payload: WorkflowPayload = {
 function declarations(begin: WorkflowExecutionRepository['begin'], execute = vi.fn<ProductWorkflowExecutor['execute']>().mockResolvedValue(undefined)) {
   const runs: WorkflowExecutionRepository = {
     begin,
+    renew: vi.fn().mockResolvedValue(true),
     succeed: vi.fn().mockResolvedValue(undefined),
     fail: vi.fn().mockResolvedValue(undefined),
   }
@@ -82,12 +83,64 @@ describe('worker workflow registration', () => {
     expect(execute.mock.calls.map((call) => call[2])).toEqual([{ final: false }, { final: true }])
   })
 
+  // Vorher meldete die zweite Zustellung den noch laufenden Lauf als erledigt; scheiterte der
+  // erste Versuch danach, gab es keinen Retry mehr.
+  it('retries a delivery while another attempt still holds the lease', async () => {
+    const { task, execute } = declarations(async () => ({ state: 'in_progress' }))
+    await expect(task(payload, attemptContext(0))).rejects.toMatchObject({ errorClass: 'run_in_progress', retryable: true })
+    expect(execute).not.toHaveBeenCalled()
+  })
+
+  it('renews the lease while a long attempt runs and stops afterwards', async () => {
+    vi.useFakeTimers()
+    try {
+      let finish = () => {}
+      const execute = vi.fn<ProductWorkflowExecutor['execute']>().mockImplementation(() => new Promise((resolve) => { finish = resolve }))
+      const { task, runs } = declarations(async () => ({ state: 'acquired', leaseToken: '55555555-5555-4555-8555-555555555555' }), execute)
+      const running = task(payload, attemptContext(0))
+      await vi.advanceTimersByTimeAsync(130_000)
+      expect(runs.renew).toHaveBeenCalledTimes(3)
+      expect(runs.renew).toHaveBeenCalledWith('process-submission', payload, '55555555-5555-4555-8555-555555555555')
+      finish()
+      await running
+      await vi.advanceTimersByTimeAsync(120_000)
+      expect(runs.renew).toHaveBeenCalledTimes(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('records and rethrows a retryable executor failure', async () => {
     const execute = vi.fn<ProductWorkflowExecutor['execute']>().mockRejectedValue(new WorkflowExecutionError('provider_unavailable', true))
     const { task, runs } = declarations(async () => ({ state: 'acquired', leaseToken: '55555555-5555-4555-8555-555555555555' }), execute)
     await expect(task(payload, attemptContext(0))).rejects.toMatchObject({ errorClass: 'provider_unavailable', retryable: true })
     expect(runs.fail).toHaveBeenCalledWith('process-submission', payload, '55555555-5555-4555-8555-555555555555', 'provider_unavailable', true)
     expect(runs.succeed).not.toHaveBeenCalled()
+  })
+})
+
+describe('keepLeaseAlive', () => {
+  it('stops once the lease is lost, keeps going after a failed call and gives up after 30 minutes', async () => {
+    vi.useFakeTimers()
+    try {
+      const lost = vi.fn().mockResolvedValueOnce(true).mockResolvedValue(false)
+      keepLeaseAlive(lost)
+      await vi.advanceTimersByTimeAsync(200_000)
+      expect(lost).toHaveBeenCalledTimes(2)
+
+      const flaky = vi.fn().mockRejectedValueOnce(new Error('network')).mockResolvedValue(true)
+      const stopFlaky = keepLeaseAlive(flaky)
+      await vi.advanceTimersByTimeAsync(80_000)
+      expect(flaky).toHaveBeenCalledTimes(2)
+      stopFlaky()
+
+      const hanging = vi.fn().mockResolvedValue(true)
+      keepLeaseAlive(hanging)
+      await vi.advanceTimersByTimeAsync(60 * 60_000)
+      expect(hanging).toHaveBeenCalledTimes(44)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
@@ -121,7 +174,7 @@ describe('worker process integration', () => {
     const hatchet = client()
     const worker = vi.spyOn(hatchet, 'worker').mockResolvedValue({ registerWorkflows: vi.fn() } as never)
     const recovery: GenerationRecoveryRepository = { claimStalledCandidates: vi.fn(), loadSessionForRecovery: vi.fn(), createRecoveryAttempt: vi.fn(), finalizeRecovery: vi.fn() }
-    const runs: WorkflowExecutionRepository = { begin: vi.fn(), succeed: vi.fn(), fail: vi.fn() }
+    const runs: WorkflowExecutionRepository = { begin: vi.fn(), renew: vi.fn(), succeed: vi.fn(), fail: vi.fn() }
     await createHatchetWorker(hatchet, { HATCHET_WORKER_SLOTS: 4 }, runs, { execute: vi.fn() }, recovery, {} as VisionProviderComparisonExecutor, { enqueueScheduled: vi.fn() })
     expect(worker).toHaveBeenCalledWith('vereinsfunk-worker', expect.objectContaining({ handleKill: false }))
   })

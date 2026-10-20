@@ -104,8 +104,13 @@ export function createWorkflowExecutionRepository(config: WorkerEnvironment): Wo
       if (error) throw error
       const result = Array.isArray(data) ? data[0] : data
       if (result?.status === 'acquired' && typeof result.lease_token === 'string') return { state: 'acquired', leaseToken: UuidSchema.parse(result.lease_token) }
-      if (result?.status === 'already_handled' || result?.status === 'not_found') return { state: result.status }
+      if (result?.status === 'already_handled' || result?.status === 'in_progress' || result?.status === 'not_found') return { state: result.status }
       throw new Error('unexpected workflow run acquisition state')
+    },
+    async renew(workflow, payload, leaseToken) {
+      const { data, error } = await client.rpc('renew_workflow_run_lease', { ...rpcInput(workflow, payload), p_lease_token: leaseToken })
+      if (error) throw error
+      return data === true
     },
     async succeed(workflow, payload, leaseToken) {
       const { data, error } = await client.rpc('finish_workflow_run', { ...rpcInput(workflow, payload), p_lease_token: leaseToken, p_status: 'succeeded', p_error_class: null })
