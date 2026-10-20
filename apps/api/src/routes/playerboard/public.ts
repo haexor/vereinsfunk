@@ -5,7 +5,7 @@ import {
   PublicPlayerboardTeamSchema,
   PublicPlayerboardVeoMatchSchema,
 } from '@vereinsfunk/contracts'
-import { currentSeasonStart } from '@vereinsfunk/domain'
+import { currentSeasonStart, localDateKey } from '@vereinsfunk/domain'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import type { ApiRouteContext } from '../context.js'
@@ -66,7 +66,7 @@ export function registerPlayerboardPublicRoutes(app: FastifyInstance, context: A
     const scope = { departmentId: team.department_id, teamId: team.team_id }
     const brand = await loadResolvedBrandColors(service, organizationId, scope.departmentId, scope.teamId)
     const timezone = (organization.data.timezone as string | null) ?? 'Europe/Berlin'
-    const today = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+    const today = localDateKey(new Date(), timezone)
     return { seasonFrom: currentSeasonStart(resolveSettingsFor(settings, scope).seasonStart, today), brand, timezone }
   }
 
