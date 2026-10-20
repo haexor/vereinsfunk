@@ -16,7 +16,7 @@ import { hashLogoBuffer } from '@vereinsfunk/brand-assets'
 import { computeTilePlacements, PHOTO_LAYOUT_CANVAS_SIZE_PX, renderPhotoLayout, transformFaceRegionsForTile, type SourceFaceRegion } from '../photoLayout.js'
 import { isSelectableInScope } from '../services/brandAssetSelection.js'
 import type { ApiRouteContext } from './context.js'
-import { loadResolvedBrandColors } from './imageStyle.js'
+import { loadResolvedBrandColors } from '../services/brandResolution.js'
 import { resolveDirectoryScope, toPermissionScope } from '../services/scopeAuthorization.js'
 
 // Dieselbe Pruefung wie der mediaAssetIds-Loop in POST /v1/text-workshop/sessions
