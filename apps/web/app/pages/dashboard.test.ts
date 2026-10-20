@@ -22,14 +22,14 @@ describe('Dashboard', () => {
 
     // Der FetchError von ofetch enthaelt options.headers.authorization mit dem Bearer-JWT.
     expect(page).not.toContain('console.error(error)')
-    expect(page).toContain("'Anlassvorschlag konnte nicht verworfen werden',\n      (error as { statusCode?: number })?.statusCode,")
+    expect(page).toContain("'Anlassvorschlag konnte nicht verworfen werden',\n      error instanceof ApiRequestError ? error.statusCode : undefined,")
   })
 
   it('prueft die Onboarding-Antwort am Vertrag statt sie nur zu casten', () => {
     const page = readFileSync(join(PAGES_DIR, 'index.vue'), 'utf8')
 
     expect(page).not.toContain('$fetch<{ completedSteps: string[] }>')
-    expect(page).toContain('.then((response) => OnboardingStateSchema.parse(response))')
+    expect(page).toContain(".request('/v1/onboarding', { query: { organizationId } }, OnboardingStateSchema)")
   })
 
   it('zeigt in "Aktuelle Beitraege" die geladenen Beitraege statt eines festen Leertexts', () => {
@@ -48,10 +48,9 @@ describe('Dashboard', () => {
 
     // Ohne NuxtPage-Key bleibt die Seite beim Wechsel in der Sidebar montiert; geladen wurde nur
     // einmal beim Setup, die Kennzahlen gehoerten danach zum vorigen Bereich.
-    expect(page).toContain('[() => scope.value?.organizationId, () => scope.value?.departmentId, socialMediaActive]')
-    expect(page).toContain('const run = ++dashboardLoadRun')
-    expect(page).toContain('const run = ++suggestionsLoadRun')
-    expect(page.match(/if \(run !== dashboardLoadRun\) return/g)).toHaveLength(2)
-    expect(page).toContain('if (run !== suggestionsLoadRun) return')
+    expect(page).toContain('`${activeOrganizationId.value}:${activeDepartmentId.value}:${socialMediaActive.value}`')
+    expect(page).toContain('useScopedLoad(dashboardScopeKey, (_key, isLatest) =>\n  loadDashboard(isLatest),')
+    expect(page).toContain('useScopedLoad(dashboardScopeKey, (_key, isLatest) =>\n  loadSuggestions(isLatest),')
+    expect(page.match(/if \(!isLatest\(\)\) return/g)).toHaveLength(3)
   })
 })

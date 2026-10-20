@@ -18,11 +18,17 @@ import {
   type OnboardingStep,
 } from '@vereinsfunk/contracts'
 import type { PostStatus } from '@vereinsfunk/domain'
+import { ApiRequestError } from '../utils/apiClient'
 import { localDateKey } from '../utils/memberDates'
 
-const config = useRuntimeConfig()
+const api = useApiClient()
 const session = await useSession()
-const scope = await useScope()
+const {
+  organizationId: activeOrganizationId,
+  departmentId: activeDepartmentId,
+  organization: activeOrganization,
+  organizationTimezone: timezone,
+} = await useActiveScope()
 // Paket 051, PR 3: Kennzahlen, Beitragsliste, Redaktionsplan und Anlassvorschlaege gehoeren zum
 // Modul social_media. Eine modulübergreifende Kachel-API gibt es bewusst nicht; PlayerBoard haengt
 // in Paket 052 seine eigene Kachel hier direkt ein.
@@ -48,20 +54,14 @@ const playerboardActive = computed(
   () => isModuleEnabled('playerboard') && playerboardTeams.value.length > 0,
 )
 
-const activeOrganization = computed(
-  () =>
-    session.value?.scopes.find((item) => item.organizationId === scope.value?.organizationId) ??
-    null,
-)
 const department = computed(
   () =>
-    activeOrganization.value?.departments.find((item) => item.id === scope.value?.departmentId)
+    activeOrganization.value?.departments.find((item) => item.id === activeDepartmentId.value)
       ?.name ??
     activeOrganization.value?.organizationName ??
     '',
 )
 const firstName = computed(() => session.value?.displayName.split(/\s+/)[0] ?? '')
-const timezone = computed(() => activeOrganization.value?.organizationTimezone ?? 'Europe/Berlin')
 const todayLabel = computed(() =>
   new Intl.DateTimeFormat('de-DE', {
     weekday: 'long',
@@ -126,28 +126,21 @@ function buildWeek(timeZone: string, posts: readonly DashboardPost[]): WeekDay[]
   return days
 }
 
-// Die Sidebar wechselt Verein/Abteilung ohne Remount dieser Seite. Monoton steigende Ladezaehler
-// wie in kalender.vue: nur der zuletzt gestartete Lauf darf Kennzahlen, Listen und Vorschlaege
-// schreiben, sonst stuenden Daten des vorigen Bereichs unter dem neuen.
-let dashboardLoadRun = 0
-let suggestionsLoadRun = 0
-
-async function loadDashboard() {
+async function loadDashboard(isLatest: () => boolean) {
   if (import.meta.server) return
-  const run = ++dashboardLoadRun
   stats.value = null
   weekDays.value = []
   recentPosts.value = []
   nextSteps.value = []
   dashboardError.value = false
   loadingDashboard.value = true
-  const organizationId = scope.value?.organizationId
+  const organizationId = activeOrganizationId.value
   // Paket 055: Kennzahlen, Beitraege und Einrichtungsschritte gehoeren zu Social Media.
   if (!organizationId || !socialMediaActive.value) {
     loadingDashboard.value = false
     return
   }
-  const departmentId = scope.value?.departmentId
+  const departmentId = activeDepartmentId.value
   const supabase = useSupabaseClient()
 
   let postsQuery = supabase
@@ -170,7 +163,7 @@ async function loadDashboard() {
       .eq('organization_id', organizationId)
       .maybeSingle(),
   ])
-  if (run !== dashboardLoadRun) return
+  if (!isLatest()) return
 
   if (postsResult.error) {
     dashboardError.value = true
@@ -196,13 +189,10 @@ async function loadDashboard() {
   weekDays.value = buildWeek(timezone.value, posts)
   recentPosts.value = posts.slice(0, RECENT_POSTS_LIMIT)
 
-  const onboarding = await $fetch<unknown>(`${config.public.apiBase}/v1/onboarding`, {
-    headers: await useAuthHeader(),
-    query: { organizationId },
-  })
-    .then((response) => OnboardingStateSchema.parse(response))
+  const onboarding = await api
+    .request('/v1/onboarding', { query: { organizationId } }, OnboardingStateSchema)
     .catch(() => ({ completedSteps: [] as OnboardingStep[] }))
-  if (run !== dashboardLoadRun) return
+  if (!isLatest()) return
 
   const steps: { key: string; label: string; href: string }[] = []
   if (!brandResult.data?.logo_asset_id && !onboarding.completedSteps.includes('branding')) {
@@ -248,27 +238,24 @@ async function dismissSuggestion(item: ContentSuggestion) {
           : null
   if (!endpoint) return
   try {
-    await $fetch(`${config.public.apiBase}${endpoint}`, {
-      method: 'POST',
-      headers: await useAuthHeader(),
-    })
+    await api.request(endpoint, { method: 'POST' })
     suggestions.value = suggestions.value.filter((suggestion) => suggestion !== item)
   } catch (error) {
-    // Nur der Statuscode: der FetchError traegt in options.headers das Bearer-Token der Sitzung.
+    // Nur Code und Status: der urspruengliche FetchError traegt in options.headers das
+    // Bearer-Token der Sitzung.
     console.error(
       'Anlassvorschlag konnte nicht verworfen werden',
-      (error as { statusCode?: number })?.statusCode,
+      error instanceof ApiRequestError ? error.statusCode : undefined,
     )
   }
 }
 
-async function loadSuggestions() {
+async function loadSuggestions(isLatest: () => boolean) {
   if (import.meta.server) return
-  const run = ++suggestionsLoadRun
   suggestions.value = []
   suggestionsLoaded.value = false
-  const organizationId = scope.value?.organizationId
-  const departmentId = scope.value?.departmentId
+  const organizationId = activeOrganizationId.value
+  const departmentId = activeDepartmentId.value
   if (
     !organizationId ||
     !departmentId ||
@@ -277,12 +264,13 @@ async function loadSuggestions() {
   )
     return
   try {
-    const response = await $fetch<unknown>(
-      `${config.public.apiBase}/v1/departments/${departmentId}/content-suggestions`,
-      { headers: await useAuthHeader() },
+    const response = await api.request(
+      `/v1/departments/${departmentId}/content-suggestions`,
+      {},
+      ContentSuggestionsResponseSchema,
     )
-    if (run !== suggestionsLoadRun) return
-    suggestions.value = ContentSuggestionsResponseSchema.parse(response).suggestions
+    if (!isLatest()) return
+    suggestions.value = response.suggestions
     suggestionsLoaded.value = true
   } catch {
     // Anlassvorschlaege sind ein Zusatz, kein Kern-Dashboard-Datum -- ein Ausfall bleibt hier
@@ -290,16 +278,19 @@ async function loadSuggestions() {
   }
 }
 
-await Promise.all([loadDashboard(), loadSuggestions()])
-// socialMediaActive gehoert dazu: nach einem Vereinswechsel laedt useScopeModules die Module neu,
-// das Modul wird also womoeglich erst nach dem Bereichswechsel als aktiv erkannt.
-watch(
-  [() => scope.value?.organizationId, () => scope.value?.departmentId, socialMediaActive],
-  () => {
-    void loadDashboard()
-    void loadSuggestions()
-  },
+// Die Sidebar wechselt Verein/Abteilung ohne Remount dieser Seite: nur der zuletzt gestartete Lauf
+// darf Kennzahlen, Listen und Vorschlaege schreiben, sonst stuenden Daten des vorigen Bereichs
+// unter dem neuen. socialMediaActive gehoert zum Schluessel: nach einem Vereinswechsel laedt
+// useScopeModules die Module neu, das Modul wird also womoeglich erst danach als aktiv erkannt.
+const dashboardScopeKey = () =>
+  `${activeOrganizationId.value}:${activeDepartmentId.value}:${socialMediaActive.value}`
+const { ready: dashboardReady } = useScopedLoad(dashboardScopeKey, (_key, isLatest) =>
+  loadDashboard(isLatest),
 )
+const { ready: suggestionsReady } = useScopedLoad(dashboardScopeKey, (_key, isLatest) =>
+  loadSuggestions(isLatest),
+)
+await Promise.all([dashboardReady, suggestionsReady])
 </script>
 
 <template>
