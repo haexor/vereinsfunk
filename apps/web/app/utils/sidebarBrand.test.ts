@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { contrastRatio } from '@vereinsfunk/domain'
-import { deriveSidebarPalette } from './sidebarBrand'
+import { deriveSidebarPalette, sidebarClassesFor } from './sidebarBrand'
 
 describe('deriveSidebarPalette', () => {
   it('uses light text on a dark primary color and dark text on a light accent color', () => {
@@ -25,5 +25,12 @@ describe('deriveSidebarPalette', () => {
 
     expect(palette.actionSurface).toBe('#193c2e')
     expect(palette.onAction).toBe('#ffffff')
+  })
+})
+
+describe('sidebarClassesFor', () => {
+  it('follows the readable foreground of the sidebar surface', () => {
+    expect(sidebarClassesFor(deriveSidebarPalette('#163a2c', '#caff4a')).nav).toBe('text-white hover:bg-white/[.07]')
+    expect(sidebarClassesFor(deriveSidebarPalette('#70ade0', '#80bf06')).nav).toBe('text-ink hover:bg-ink/[.07]')
   })
 })
