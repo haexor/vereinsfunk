@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { DEPARTMENT_ID, ORGANIZATION_ID, USER_ID, chain, denyingRoleProvider, draftCreationServiceClient, grantingRoleProvider, organizationManagerRoleProvider, signAccessToken, startApp } from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
@@ -10,6 +10,25 @@ describe('api', () => {
     const response = await app.inject({ method: 'GET', url: '/health' })
     expect(response.statusCode).toBe(200)
     expect(response.json()).toMatchObject({ status: 'ok', service: 'api' })
+  })
+
+  // Regression: ohne trustProxy war request.ip hinter dem TLS-Proxy immer dessen Adresse -- jedes
+  // IP-Rate-Limit wurde zu einem globalen Zaehler fuer alle Besucher.
+  it('takes the client address from X-Forwarded-For only for the configured proxy hops', async () => {
+    const forwarded = { 'x-forwarded-for': '198.51.100.7, 203.0.113.9' }
+    const untrusted = await startApp()
+    untrusted.get('/__test/ip', async (request) => ({ ip: request.ip }))
+    expect((await untrusted.inject({ method: 'GET', url: '/__test/ip', headers: forwarded, remoteAddress: '10.0.0.2' })).json()).toEqual({ ip: '10.0.0.2' })
+
+    vi.stubEnv('TRUST_PROXY_HOPS', '1')
+    try {
+      const trusted = await startApp()
+      trusted.get('/__test/ip', async (request) => ({ ip: request.ip }))
+      // Nur der eine Hop des eigenen Proxys zaehlt -- ein vom Client vorangestellter Eintrag nicht.
+      expect((await trusted.inject({ method: 'GET', url: '/__test/ip', headers: forwarded, remoteAddress: '10.0.0.2' })).json()).toEqual({ ip: '203.0.113.9' })
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it('allows the configured web origin and no other', async () => {

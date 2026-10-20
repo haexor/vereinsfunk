@@ -152,6 +152,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     // uuid-Spalten (audit_events.correlation_id, workflow_outbox, ...). Mit requestIdHeader haette
     // ein beliebiger Header-String jeden Audit-Insert still scheitern lassen.
     requestIdHeader: false,
+    // 0 laesst X-Forwarded-For unbeachtet (lokal, Tests); Produktion hinter Traefik setzt 1.
+    trustProxy: environment.TRUST_PROXY_HOPS,
     genReqId: (request) => {
       const header = request.headers['x-correlation-id']
       return typeof header === 'string' && UuidSchema.safeParse(header).success ? header : randomUUID()
