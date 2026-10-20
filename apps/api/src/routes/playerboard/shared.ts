@@ -10,6 +10,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import type { PermissionScope } from '../../auth.js'
+import { indexByScopeLevel, type ScopeLevelIndex } from '../../moduleStatus.js'
 import { parseSupabaseData } from '../../supabase.js'
 import type { ApiRouteContext } from '../context.js'
 
@@ -140,11 +141,7 @@ const PlayerboardSettingsRowSchema = z.object({
 })
 export type PlayerboardSettingsRow = z.infer<typeof PlayerboardSettingsRowSchema>
 
-export interface OrganizationPlayerboardSettings {
-  organization: PlayerboardSettingsRow | null
-  departmentById: ReadonlyMap<string, PlayerboardSettingsRow>
-  teamById: ReadonlyMap<string, PlayerboardSettingsRow>
-}
+export type OrganizationPlayerboardSettings = ScopeLevelIndex<PlayerboardSettingsRow>
 
 /**
  * Alle Einstellungszeilen eines Vereins in einer Abfrage, ueber den Service-Client: die Policy
@@ -153,12 +150,7 @@ export interface OrganizationPlayerboardSettings {
 export async function loadOrganizationPlayerboardSettings(service: SupabaseClient, organizationId: string): Promise<OrganizationPlayerboardSettings> {
   const rows = await service.from('playerboard_settings').select(SETTINGS_COLUMNS).eq('organization_id', organizationId)
   if (rows.error) throw rows.error
-  const typed = parseSupabaseData(z.array(PlayerboardSettingsRowSchema), rows.data)
-  return {
-    organization: typed.find((row) => row.scope === 'organization') ?? null,
-    departmentById: new Map(typed.filter((row) => row.scope === 'department').map((row) => [row.department_id!, row])),
-    teamById: new Map(typed.filter((row) => row.scope === 'team').map((row) => [row.team_id!, row])),
-  }
+  return indexByScopeLevel(parseSupabaseData(z.array(PlayerboardSettingsRowSchema), rows.data), (row) => row)
 }
 
 /** Uebertraegt vererbbare Datenbankfelder in eine Domain-Einstellungsebene; fehlende Zeilen ergeben null. */

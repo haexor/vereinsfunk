@@ -291,7 +291,7 @@ describe('PlayerBoard coach flows', () => {
     /** Erste Suche findet keine Zeile, die zweite die inzwischen angelegte; der Insert scheitert mit insertError. */
     function racingClients(insertError: { code: string; message: string }, updates: unknown[]) {
       const lookups: unknown[] = [null, { id: SETTINGS_ID }]
-      const fakes = clients({ serviceTables: { organizations: { name: 'SV Beispiel', slug: 'sv-beispiel' } } })
+      const fakes = clients({ serviceTables: { organizations: { name: 'SV Beispiel', slug: 'sv-beispiel' }, teams: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, name: 'U13' } } })
       const service = fakes.forService() as unknown as { from: (name: string) => unknown; rpc: unknown }
       fakes.forService = () => ({
         rpc: service.rpc,

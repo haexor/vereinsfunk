@@ -7,22 +7,16 @@ import {
 } from '@vereinsfunk/contracts'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { permissionScopeKey } from '../../auth.js'
+import { ownScopeLevelValue } from '../../moduleStatus.js'
 import type { ApiRouteContext } from '../context.js'
-import {
-  createAuditRecorder,
-  isAnyMemberOfOrganization,
-  resolveMembershipScope,
-  resolveRolesForScopes,
-  toPermissionScope,
-} from '../shared.js'
+import { loadOrganizationLevels, loadScopeName } from '../modules.js'
+import { createAuditRecorder, isAnyMemberOfOrganization, resolveMembershipScope } from '../shared.js'
 import {
   loadOrganizationPlayerboardSettings,
   requirePlayerboardModule,
   resolveSettingsFor,
   sendDatabaseError,
   type OrganizationPlayerboardSettings,
-  type PlayerboardSettingsRow,
 } from './shared.js'
 
 /** Validiert eigene, wirksame und gesperrte Einstellungen einer Ebene samt uebergebenem Bearbeitungsrecht. */
@@ -36,10 +30,7 @@ function buildEntry(
   organizationSlug: string,
 ) {
   const teamId = scope === 'team' ? scopeId : null
-  const own: PlayerboardSettingsRow | null =
-    scope === 'organization' ? settings.organization
-      : scope === 'department' ? (settings.departmentById.get(scopeId) ?? null)
-        : (settings.teamById.get(scopeId) ?? null)
+  const own = ownScopeLevelValue(settings, scope, scopeId)
   const resolved = resolveSettingsFor(settings, { departmentId, teamId })
   return ScopePlayerboardSettingsSchema.parse({
     scope, scopeId, name, departmentId,
@@ -93,34 +84,13 @@ export function registerPlayerboardSettingsRoutes(app: FastifyInstance, context:
     // Service-Client fuer Struktur und Einstellungen aus demselben Grund wie in routes/modules.ts:
     // ein reines Mannschaftsmitglied sieht Abteilungen und Mannschaften per RLS nicht.
     const service = supabaseClients.forService()
-    const [organization, departments, teams, settings] = await Promise.all([
-      service.from('organizations').select('name, slug').eq('id', params.id).maybeSingle(),
-      service.from('departments').select('id, name').eq('organization_id', params.id).is('archived_at', null).order('name'),
-      service.from('teams').select('id, name, department_id').eq('organization_id', params.id).is('archived_at', null).order('name'),
+    const [overview, settings] = await Promise.all([
+      loadOrganizationLevels(service, roleProvider, request.auth!, params.id),
       loadOrganizationPlayerboardSettings(service, params.id),
     ])
-    if (organization.error) throw organization.error
-    if (departments.error) throw departments.error
-    if (teams.error) throw teams.error
-    if (!organization.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
-
-    const scopes = [
-      toPermissionScope(params.id),
-      ...departments.data.map((department) => toPermissionScope(params.id, department.id as string)),
-      ...teams.data.map((team) => toPermissionScope(params.id, team.department_id as string, team.id as string)),
-    ]
-    const rolesByScopeKey = await resolveRolesForScopes(roleProvider, request.auth!, scopes)
-    const canEditFor = (departmentId: string | null, teamId: string | null) =>
-      hasPermission(rolesByScopeKey.get(permissionScopeKey(toPermissionScope(params.id, departmentId, teamId))) ?? [], 'playerboard.manage')
-
-    const organizationSlug = organization.data.slug as string
-    return reply.code(200).send([
-      buildEntry(settings, 'organization', params.id, organization.data.name as string, null, canEditFor(null, null), organizationSlug),
-      ...departments.data.map((department) =>
-        buildEntry(settings, 'department', department.id as string, department.name as string, department.id as string, canEditFor(department.id as string, null), organizationSlug)),
-      ...teams.data.map((team) =>
-        buildEntry(settings, 'team', team.id as string, team.name as string, team.department_id as string, canEditFor(team.department_id as string, team.id as string), organizationSlug)),
-    ])
+    if (!overview) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    return reply.code(200).send(overview.levels.map((level) =>
+      buildEntry(settings, level.scope, level.scopeId, level.name, level.departmentId, hasPermission(level.roles, 'playerboard.manage'), overview.organization.slug)))
   })
 
   app.put('/v1/playerboard/settings', async (request, reply) => {
@@ -170,18 +140,12 @@ export function registerPlayerboardSettingsRoutes(app: FastifyInstance, context:
       metadata: { scope: input.scope, scopeId: input.scopeId, patch: input.patch },
     })
 
-    const [organization, nameQuery] = await Promise.all([
-      service.from('organizations').select('name, slug').eq('id', scope.organizationId).single(),
-      input.scope === 'department'
-        ? service.from('departments').select('name').eq('id', scope.departmentId!).single()
-        : input.scope === 'team'
-          ? service.from('teams').select('name').eq('id', scope.teamId!).single()
-          : null,
+    const [organization, name, settings] = await Promise.all([
+      service.from('organizations').select('slug').eq('id', scope.organizationId).single(),
+      loadScopeName(service, input.scope, scope),
+      loadOrganizationPlayerboardSettings(service, scope.organizationId),
     ])
     if (organization.error) throw organization.error
-    if (nameQuery?.error) throw nameQuery.error
-    const name = (nameQuery?.data?.name ?? organization.data.name) as string
-    const settings = await loadOrganizationPlayerboardSettings(service, scope.organizationId)
     return reply.code(200).send(buildEntry(settings, input.scope, input.scopeId, name, scope.departmentId ?? null, true, organization.data.slug as string))
   })
 }

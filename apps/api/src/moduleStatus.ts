@@ -1,4 +1,4 @@
-import { AppModuleSchema, ModuleBlockingPublicationSchema, type ModuleBlockingPublication } from '@vereinsfunk/contracts'
+import { AppModuleSchema, ModuleBlockingPublicationSchema, type ModuleBlockingPublication, type ScopeLevel } from '@vereinsfunk/contracts'
 import { resolveEnabledModules, type AppModule, type ModuleLayers, type ResolvedModules } from '@vereinsfunk/domain'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { z } from 'zod'
@@ -9,11 +9,38 @@ import type { PermissionScope } from './auth.js'
 // die Oberflaeche zusaetzlich erfaehrt, WO ein Modul abgeschaltet wurde. SQL-Gegenstueck fuer RLS
 // und fuer den Claim einer Veroeffentlichung ist authz.module_enabled(); beide folgen derselben
 // Regel (Tarif ∩ Verein ∩ Abteilung ∩ Mannschaft, kein Abo = Tarif schraenkt nichts ein).
-export interface OrganizationModuleSettings {
+export interface OrganizationModuleSettings extends ScopeLevelIndex<readonly AppModule[]> {
   planModules: readonly AppModule[] | null
-  organization: readonly AppModule[] | null
-  departmentById: ReadonlyMap<string, readonly AppModule[]>
-  teamById: ReadonlyMap<string, readonly AppModule[]>
+}
+
+/** Je-Ebene-Zeilen eines Vereins: Vereinszeile sowie Abteilungs- und Mannschaftszeilen nach ID. */
+export interface ScopeLevelIndex<T> {
+  organization: T | null
+  departmentById: ReadonlyMap<string, T>
+  teamById: ReadonlyMap<string, T>
+}
+
+/**
+ * Indiziert Zeilen einer Je-Ebene-Tabelle (scope, department_id, team_id) nach Ebene. Von
+ * Modulauswahl und PlayerBoard-Einstellungen geteilt, die beide alle Ebenen eines Vereins in einer
+ * Abfrage laden.
+ */
+export function indexByScopeLevel<R extends { scope: ScopeLevel; department_id?: string | null; team_id?: string | null }, T>(
+  rows: readonly R[],
+  value: (row: R) => T,
+): ScopeLevelIndex<T> {
+  const organization = rows.find((row) => row.scope === 'organization')
+  return {
+    organization: organization ? value(organization) : null,
+    departmentById: new Map(rows.filter((row) => row.scope === 'department').map((row) => [row.department_id!, value(row)])),
+    teamById: new Map(rows.filter((row) => row.scope === 'team').map((row) => [row.team_id!, value(row)])),
+  }
+}
+
+/** Die eigene Zeile genau einer Ebene, ohne Vererbung; null, wenn die Ebene keine hat. */
+export function ownScopeLevelValue<T>(index: ScopeLevelIndex<T>, scope: ScopeLevel, scopeId: string): T | null {
+  if (scope === 'organization') return index.organization
+  return (scope === 'department' ? index.departmentById.get(scopeId) : index.teamById.get(scopeId)) ?? null
 }
 
 const ModuleListSchema = z.array(AppModuleSchema)
@@ -40,9 +67,7 @@ export async function loadOrganizationModuleSettings(client: SupabaseClient, org
   const moduleRows = z.array(ModuleRowSchema).parse(rows.data)
   return {
     planModules: subscription.data ? SubscriptionRowSchema.parse(subscription.data).subscription_plans.included_modules : null,
-    organization: moduleRows.find((row) => row.scope === 'organization')?.enabled_modules ?? null,
-    departmentById: new Map(moduleRows.filter((row) => row.scope === 'department').map((row) => [row.department_id!, row.enabled_modules])),
-    teamById: new Map(moduleRows.filter((row) => row.scope === 'team').map((row) => [row.team_id!, row.enabled_modules])),
+    ...indexByScopeLevel(moduleRows, (row) => row.enabled_modules),
   }
 }
 
