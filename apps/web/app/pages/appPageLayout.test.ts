@@ -22,10 +22,12 @@ describe('standard app page layout', () => {
 
   it('defers the authenticated app shell until client session data is available', () => {
     const layout = readFileSync(join(appDirectory, 'layouts/default.vue'), 'utf8')
+    const shell = readFileSync(join(appDirectory, 'components/AppShell.vue'), 'utf8')
 
-    expect(layout).toContain('<ClientOnly>')
-    expect(layout).toContain('<template #fallback>')
-    expect(layout).toContain('Anwendung wird geladen …')
+    expect(layout).toContain('<AppShell')
+    expect(shell).toContain('<ClientOnly>')
+    expect(shell).toContain('<template #fallback>')
+    expect(shell).toContain('Anwendung wird geladen …')
   })
 
   it('offers the organization itself as a first-class working context and renders page save actions as a FAB', () => {
