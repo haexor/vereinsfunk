@@ -60,29 +60,17 @@ export async function resolveRolesForScopes(
   return new Map(entries)
 }
 
-// Wie resolveInvitationScope (routes/members.ts): departmentId/teamId serverseitig gegen ihre
-// echte organization_id/department_id verifizieren, BEVOR irgendeine Berechtigung geprueft wird --
-// sonst waeren sie client-seitig frei kombinierbar (z. B. eine fremde departmentId zu dieser
-// Organisation). Von Verzeichnis, Integration und Einwilligung gebraucht, deshalb hier.
+// departmentId/teamId serverseitig gegen ihre echte organization_id/department_id verifizieren,
+// BEVOR irgendeine Berechtigung geprueft wird -- sonst waeren sie client-seitig frei kombinierbar
+// (z. B. eine fremde departmentId zu dieser Organisation). Von Verzeichnis, Integration und
+// Einwilligung gebraucht; dieselbe Pruefung wie resolveInvitationScope, nur ohne den Anzeigenamen.
 export async function resolveDirectoryScope(
   client: SupabaseClient,
   organizationId: string,
   departmentId: string | null,
   teamId: string | null,
 ): Promise<PermissionScope | null> {
-  if (teamId) {
-    const team = await client.from('teams').select('organization_id, department_id').eq('id', teamId).maybeSingle()
-    if (team.error) throw team.error
-    if (!team.data || team.data.organization_id !== organizationId || team.data.department_id !== departmentId) return null
-    return { organizationId, departmentId: team.data.department_id as string, teamId }
-  }
-  if (departmentId) {
-    const department = await client.from('departments').select('organization_id').eq('id', departmentId).maybeSingle()
-    if (department.error) throw department.error
-    if (!department.data || department.data.organization_id !== organizationId) return null
-    return { organizationId, departmentId }
-  }
-  return { organizationId }
+  return (await resolveInvitationScope(client, { organizationId, departmentId, teamId }))?.scope ?? null
 }
 
 // Deckt dieselbe Mitgliedschaft ab wie authz.is_any_member_of_organization (RLS-Grundlage von
@@ -494,8 +482,8 @@ export function membershipCapabilities(actorRoles: readonly Role[], targetRole: 
   }
 }
 
-// POST /v1/invitations nimmt organizationId/departmentId/teamId direkt vom Client entgegen.
-// Ungeprueft wuerde requirePermission auf einer Scope-Kette pruefen, die client-seitig frei
+// POST /v1/invitations nimmt organizationId/departmentId/teamId direkt vom Client entgegen. Zugleich
+// der Kern von resolveDirectoryScope (oben). Ungeprueft wuerde requirePermission auf einer Scope-Kette pruefen, die client-seitig frei
 // kombinierbar ist (z. B. eine fremde organizationId zusammen mit der eigenen departmentId) --
 // beim Mandantentrennung-Review gefunden, dort nur zufaellig durch den FK-Constraint auf
 // invitations abgefangen.
