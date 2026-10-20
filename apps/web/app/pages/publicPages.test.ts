@@ -12,7 +12,7 @@ describe('oeffentliche Seiten', () => {
     // Vorher nur per Typ-Cast uebernommen und direkt in <a :href> gebunden.
     expect(page).not.toContain('$fetch<{ status: string; revocationUrl?: string }>')
     expect(page).toContain("revocationUrl: z.url({ protocol: /^https?$/ }).optional().catch(undefined)")
-    expect(page).toContain('const response = RespondResponseSchema.parse(await $fetch<unknown>(')
+    expect(page).toContain('      RespondResponseSchema,\n    )')
   })
 
   it('setzt nur eine UUID als Verein in den serverseitigen Impressums-Abruf ein', () => {

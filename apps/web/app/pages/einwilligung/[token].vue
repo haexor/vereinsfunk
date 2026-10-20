@@ -2,6 +2,7 @@
 import { AlertTriangle, CheckCircle2, LoaderCircle, XCircle } from '@lucide/vue'
 import { PublicConsentRequestViewSchema } from '@vereinsfunk/contracts'
 import { z } from 'zod'
+import { ApiRequestError } from '../../utils/apiClient'
 
 definePageMeta({ layout: 'auth' })
 
@@ -10,7 +11,7 @@ definePageMeta({ layout: 'auth' })
 useHead({ meta: [{ name: 'robots', content: 'noindex, nofollow' }] })
 
 const route = useRoute()
-const config = useRuntimeConfig()
+const api = useApiClient()
 const token = typeof route.params.token === 'string' ? route.params.token : ''
 const encodedToken = encodeURIComponent(token)
 
@@ -34,13 +35,12 @@ const scopeDescription = computed(() => {
 async function load() {
   if (!token) { status.value = 'not-found'; return }
   try {
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/consent-requests/by-token/${encodedToken}`)
-    view.value = PublicConsentRequestViewSchema.parse(response)
+    view.value = await api.request(`/v1/consent-requests/by-token/${encodedToken}`, { authenticate: false }, PublicConsentRequestViewSchema)
     status.value = 'ready'
   } catch (error) {
     // Nur ein 404 bedeutet "Token unbekannt/abgelaufen/bereits verwendet". Ein Transportfehler
     // oder ein 429 darf einen gueltigen Link nicht als ungueltig darstellen (gefunden im Code-Review).
-    status.value = (error as { statusCode?: number })?.statusCode === 404 ? 'not-found' : 'error'
+    status.value = error instanceof ApiRequestError && error.statusCode === 404 ? 'not-found' : 'error'
   }
 }
 
@@ -56,10 +56,11 @@ const RespondResponseSchema = z.discriminatedUnion('status', [
 async function respond(decision: 'granted' | 'declined') {
   status.value = 'submitting'
   try {
-    const response = RespondResponseSchema.parse(await $fetch<unknown>(
-      `${config.public.apiBase}/v1/consent-requests/by-token/${encodedToken}/respond`,
-      { method: 'POST', body: { decision } },
-    ))
+    const response = await api.request(
+      `/v1/consent-requests/by-token/${encodedToken}/respond`,
+      { method: 'POST', body: { decision }, authenticate: false },
+      RespondResponseSchema,
+    )
     if (response.status === 'granted') {
       revocationUrl.value = response.revocationUrl ?? ''
       status.value = 'granted'

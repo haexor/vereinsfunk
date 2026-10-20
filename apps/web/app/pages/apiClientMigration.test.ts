@@ -5,7 +5,10 @@ import { describe, expect, it } from 'vitest'
 const PAGES_DIR = join(import.meta.dirname, '.')
 
 describe('API-client migration', () => {
-  for (const page of ['marke.vue', 'mitglieder.vue', 'integrationen.vue']) {
+  for (const page of [
+    'marke.vue', 'mitglieder.vue', 'integrationen.vue',
+    'einladung.vue', 'einwilligung/[token].vue', 'einwilligung/widerruf/[token].vue', 'impressum/[organizationId].vue',
+  ]) {
     it(`${page} delegates browser requests to useApiClient`, () => {
       const source = readFileSync(join(PAGES_DIR, page), 'utf8')
 
@@ -13,6 +16,15 @@ describe('API-client migration', () => {
       expect(source).not.toContain('useAuthHeader()')
       expect(source).not.toContain('config.public.apiBase')
       expect(source).not.toContain('$fetch')
+    })
+  }
+
+  for (const page of ['einladung.vue']) {
+    it(`${page} reads API error codes from ApiRequestError`, () => {
+      const source = readFileSync(join(PAGES_DIR, page), 'utf8')
+
+      expect(source).toContain('instanceof ApiRequestError')
+      expect(source).not.toContain('data?.error')
     })
   }
 })

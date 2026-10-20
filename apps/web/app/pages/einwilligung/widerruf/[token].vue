@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { AlertTriangle, CheckCircle2, LoaderCircle } from '@lucide/vue'
 import { PublicConsentRevocationViewSchema } from '@vereinsfunk/contracts'
+import { ApiRequestError } from '../../../utils/apiClient'
 
 definePageMeta({ layout: 'auth' })
 
@@ -9,7 +10,7 @@ definePageMeta({ layout: 'auth' })
 useHead({ meta: [{ name: 'robots', content: 'noindex, nofollow' }] })
 
 const route = useRoute()
-const config = useRuntimeConfig()
+const api = useApiClient()
 const token = typeof route.params.token === 'string' ? route.params.token : ''
 const encodedToken = encodeURIComponent(token)
 
@@ -19,21 +20,20 @@ const view = ref<ReturnType<typeof PublicConsentRevocationViewSchema.parse> | nu
 async function load() {
   if (!token) { status.value = 'not-found'; return }
   try {
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/consents/by-revocation-token/${encodedToken}`)
-    view.value = PublicConsentRevocationViewSchema.parse(response)
+    view.value = await api.request(`/v1/consents/by-revocation-token/${encodedToken}`, { authenticate: false }, PublicConsentRevocationViewSchema)
     status.value = view.value.status === 'already_revoked' ? 'already-revoked' : 'ready'
   } catch (error) {
     // Nur ein 404 bedeutet "Token unbekannt/abgelaufen/bereits verwendet". Ein Transportfehler
     // oder ein 429 darf einen gueltigen Widerrufslink nicht als ungueltig darstellen (gefunden im
     // Code-Review).
-    status.value = (error as { statusCode?: number })?.statusCode === 404 ? 'not-found' : 'error'
+    status.value = error instanceof ApiRequestError && error.statusCode === 404 ? 'not-found' : 'error'
   }
 }
 
 async function confirmRevoke() {
   status.value = 'confirming'
   try {
-    await $fetch(`${config.public.apiBase}/v1/consents/by-revocation-token/${encodedToken}`, { method: 'POST' })
+    await api.request(`/v1/consents/by-revocation-token/${encodedToken}`, { method: 'POST', authenticate: false })
     status.value = 'revoked'
   } catch {
     status.value = 'error'

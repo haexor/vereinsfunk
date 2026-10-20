@@ -9,7 +9,7 @@ import { PublicOrganizationImprintSchema, UuidSchema, type PublicOrganizationImp
 definePageMeta({ layout: 'auth' })
 
 const route = useRoute()
-const config = useRuntimeConfig()
+const api = useApiClient()
 // Der Parameter wird serverseitig in den API-Pfad eingesetzt. Ungeprueft liesse ein Wert wie
 // "..%2F..%2F...%3F" die Anfrage auf einen beliebigen anderen, anmeldungsfreien API-Pfad zeigen --
 // alles ausser einer UUID ist schlicht ein unbekannter Verein.
@@ -51,7 +51,7 @@ function safeHttpUrl(value: string | null): string | null {
 // Seiten nicht betroffen.
 const { data: imprint, error, pending } = await useAsyncData<PublicOrganizationImprint>(
   `public-imprint-${organizationId}`,
-  () => $fetch(`${config.public.apiBase}/v1/organizations/${organizationId}/imprint`).then((response) => PublicOrganizationImprintSchema.parse(response)),
+  () => api.request(`/v1/organizations/${organizationId}/imprint`, { authenticate: false }, PublicOrganizationImprintSchema),
   { immediate: Boolean(organizationId) },
 )
 
@@ -61,7 +61,8 @@ const status = computed<'loading' | 'ready' | 'not-found' | 'error'>(() => {
   // Nur ein 404 heisst "Verein unbekannt". Ein Transportfehler oder 429 soll nicht als
   // "Verein existiert nicht" dargestellt werden (gleiches Muster wie bei den
   // Einwilligungs-Token-Seiten).
-  if (error.value) return (error.value as { statusCode?: number })?.statusCode === 404 ? 'not-found' : 'error'
+  // useAsyncData uebernimmt den Status der ApiRequestError in den NuxtError.
+  if (error.value) return error.value.statusCode === 404 ? 'not-found' : 'error'
   return imprint.value ? 'ready' : 'error'
 })
 useHead({ title: computed(() => (imprint.value ? `Impressum — ${imprint.value.organizationName}` : 'Impressum')) })
