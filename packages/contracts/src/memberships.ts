@@ -99,3 +99,18 @@ export type Invitation = z.infer<typeof InvitationSchema>
 export type CreateInvitationRequest = z.infer<typeof CreateInvitationRequestSchema>
 export type AcceptInvitationRequest = z.infer<typeof AcceptInvitationRequestSchema>
 export type AcceptInvitationResponse = z.infer<typeof AcceptInvitationResponseSchema>
+
+// Mitgliedschafts-Scopes einer Person (authz.membership_scopes()), Grundlage von useSession().
+const RoleNameSchema = z.string().min(1)
+export const MembershipTeamScopeSchema = z.object({
+  id: UuidSchema, name: z.string().min(1), roles: z.array(RoleNameSchema),
+})
+export const MembershipDepartmentScopeSchema = z.object({
+  id: UuidSchema, name: z.string().min(1), roles: z.array(RoleNameSchema), teams: z.array(MembershipTeamScopeSchema),
+})
+export const MembershipScopeSchema = z.object({
+  organizationId: UuidSchema, organizationName: z.string().min(1), organizationTimezone: z.string().min(1),
+  organizationRoles: z.array(RoleNameSchema), departments: z.array(MembershipDepartmentScopeSchema),
+})
+export const MembershipScopesSchema = z.array(MembershipScopeSchema)
+export type MembershipScope = z.infer<typeof MembershipScopeSchema>

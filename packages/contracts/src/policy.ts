@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import { ContentPresetSlugSchema, MediaGateBlockerSchema, OutputFormatSchema } from './content.js'
+import { ContentPresetSlugSchema, OutputFormatSchema } from './content.js'
+import { MediaGateBlockerSchema } from './media.js'
 import { hasExclusivePlatformConflict, OAuthPlatformSchema, SocialPlatformSchema, UuidSchema } from './primitives.js'
 import { AssignableRoleSchema, ScopeLevelSchema } from './structure.js'
 

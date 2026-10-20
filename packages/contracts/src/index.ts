@@ -2,6 +2,9 @@
 // Neue Vertraege gehoeren in das fachlich passende Modul, nicht hierher (plans/029).
 export { UuidSchema } from './primitives.js'
 export * from './content.js'
+export * from './styleProfiles.js'
+export * from './textGeneration.js'
+export * from './media.js'
 export * from './consent.js'
 export * from './compliance.js'
 export * from './workflow.js'
