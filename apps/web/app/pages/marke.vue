@@ -42,7 +42,7 @@ const loading = ref(true)
 const loadError = ref(false)
 const saving = ref(false)
 const errorMessage = ref('')
-let latestLoadRun = 0
+const loadRuns = useLatestRequest()
 
 // Die Analyse darf erst nach dem Speichern starten. Diese Momentaufnahme trennt eine gerade
 // bearbeitete Eingabe klar von der URL, die die API tatsächlich aus dem Markenprofil liest.
@@ -128,7 +128,7 @@ const contrastChecks = computed(() => [
 ])
 
 async function loadAll() {
-  const loadRun = ++latestLoadRun
+  const isLatest = loadRuns.begin()
   if (!organizationId.value) {
     loading.value = false
     return
@@ -191,11 +191,11 @@ async function loadAll() {
       teamProfilesResult.error ||
       assetsResult.error
     ) {
-      if (loadRun !== latestLoadRun) return
+      if (!isLatest()) return
       loadError.value = true
       return
     }
-    if (loadRun !== latestLoadRun) return
+    if (!isLatest()) return
     const rows = BrandPageRowsSchema.safeParse({
       brand: brandResult.data,
       departments: departmentsResult.data,
@@ -274,7 +274,7 @@ async function loadAll() {
     if (activeLevel.value === 'department' && activeDepartmentId.value)
       overrideFor(activeDepartmentId.value)
   } finally {
-    if (loadRun === latestLoadRun) loading.value = false
+    if (isLatest()) loading.value = false
   }
 }
 const {

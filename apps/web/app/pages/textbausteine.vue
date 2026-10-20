@@ -4,14 +4,11 @@ import { z } from 'zod'
 import { emptyContentSignatureBlockDraft, type ContentSignatureBlockDraft } from '../utils/contentSignatureBlockDraft'
 
 const api = useApiClient()
-const session = await useSession()
-const { organizationId, departmentId: activeDepartmentId } = await useActiveScope()
-const activeOrganization = computed(() => session.value?.scopes.find((item) => item.organizationId === organizationId.value) ?? null)
+const { organizationId, departmentId: activeDepartmentId, organization: activeOrganization } = await useActiveScope()
 
 const loading = ref(true)
 const loadError = ref(false)
 const saving = ref(false)
-let latestLoadRun = 0
 
 const blocks = ref<ContentSignatureBlock[]>([])
 
@@ -31,24 +28,21 @@ function scopeLabel(block: ContentSignatureBlock): string {
   return activeOrganization.value?.departments.find((item) => item.id === block.departmentId)?.name ?? 'Abteilung'
 }
 
-async function loadAll() {
-  const loadRun = ++latestLoadRun
-  if (!organizationId.value) { loading.value = false; return }
+const { reload: loadAll, ready } = useScopedLoad(() => organizationId.value, async (requestedOrganizationId, isLatest) => {
+  if (!requestedOrganizationId) { loading.value = false; return }
   loading.value = true
   loadError.value = false
   try {
-    const [blocksResponse] = await Promise.all([
-      api.request('/v1/content-signature-blocks', { query: { organizationId: organizationId.value } }, z.object({ blocks: z.array(ContentSignatureBlockSchema) })),
-    ])
-    if (loadRun !== latestLoadRun) return
-    blocks.value = blocksResponse.blocks
+    const response = await api.request('/v1/content-signature-blocks', { query: { organizationId: requestedOrganizationId } }, z.object({ blocks: z.array(ContentSignatureBlockSchema) }))
+    if (!isLatest()) return
+    blocks.value = response.blocks
   } catch {
-    if (loadRun === latestLoadRun) loadError.value = true
+    if (isLatest()) loadError.value = true
   } finally {
-    if (loadRun === latestLoadRun) loading.value = false
+    if (isLatest()) loading.value = false
   }
-}
-await loadAll()
+})
+await ready
 
 // --- Anlage ------------------------------------------------------------------------------
 
@@ -89,7 +83,6 @@ watch(organizationId, () => {
   createError.value = ''
   deleteError.value = ''
   editError.value = ''
-  void loadAll()
 })
 watch(activeDepartmentId, () => {
   editingId.value = null
