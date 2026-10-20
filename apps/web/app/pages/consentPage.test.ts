@@ -23,4 +23,12 @@ describe('Einwilligungen', () => {
     expect(page).toContain("if (run === loadAllRun) errorMessage.value = 'Die Einwilligungen konnten nicht geladen werden.'")
     expect(page).toContain('if (run === loadAllRun) loading.value = false')
   })
+
+  it('setzt das Eingangsdatum einer Betroffenenanfrage auf den heutigen Tag in der Vereinszeitzone', () => {
+    const page = readFileSync(join(PAGES_DIR, 'datenschutz/anfragen.vue'), 'utf8')
+
+    // toISOString() ist UTC: zwischen 0 und 2 Uhr deutscher Zeit stand dort der Vortag.
+    expect(page).not.toContain('new Date().toISOString().slice(0, 10)')
+    expect(page).toContain('receivedAt: localDateKey(new Date(), timezone.value),')
+  })
 })
