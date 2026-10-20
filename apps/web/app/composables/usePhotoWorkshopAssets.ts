@@ -1,3 +1,4 @@
+import { computed, toValue, type MaybeRefOrGetter } from 'vue'
 import {
   fetchBrandAssets,
   type BrandLevelOverride,
@@ -13,10 +14,10 @@ export type BrandAssetCard = { id: string; name: string; signedUrl: string }
  * Arbeitsbereich waehlbaren Marken-Assets selbst ueber useBrandAssets (mandantensicher signiert).
  */
 export function usePhotoWorkshopAssets(props: {
-  organizationId: string
-  departmentId: string | null
-  frameAssets?: BrandAssetCard[]
-  logoAssets?: BrandAssetCard[]
+  organizationId: MaybeRefOrGetter<string | null | undefined>
+  departmentId: MaybeRefOrGetter<string | null | undefined>
+  frameAssets?: MaybeRefOrGetter<BrandAssetCard[] | undefined>
+  logoAssets?: MaybeRefOrGetter<BrandAssetCard[] | undefined>
 }) {
   const supabase = useSupabaseClient()
   const api = useApiClient()
@@ -25,14 +26,14 @@ export function usePhotoWorkshopAssets(props: {
   const selectedFrameId = ref<string | null>(null)
   const selectedLogoId = ref<string | null>(null)
   let latestAssetLoadRun = 0
-  const organizationId = computed(() => props.organizationId || null)
+  const organizationId = computed(() => toValue(props.organizationId) || null)
   const hasProvidedAssetLibrary = computed(
-    () => props.frameAssets !== undefined || props.logoAssets !== undefined,
+    () => toValue(props.frameAssets) !== undefined || toValue(props.logoAssets) !== undefined,
   )
   const activeLevel = computed<BrandScopeLevel>(() =>
-    props.departmentId ? 'department' : 'organization',
+    toValue(props.departmentId) ? 'department' : 'organization',
   )
-  const activeDepartmentId = computed(() => props.departmentId)
+  const activeDepartmentId = computed(() => toValue(props.departmentId) ?? null)
   const activeTeamId = computed(() => null)
   const noBrandOverride = computed<BrandLevelOverride | null>(() => null)
   const workshopBrand = reactive<BrandOrganizationState>({
@@ -106,8 +107,8 @@ export function usePhotoWorkshopAssets(props: {
   // direkt weiterzugeben vermeidet einen zweiten asynchronen Abruf, durch den die Rahmenkacheln
   // beim Oeffnen der Werkstatt bislang leer bleiben konnten. Beim Foto-Anhang ohne diese Props
   // bleibt der mandantensichere Fallback ueber useBrandAssets bestehen.
-  const frames = computed(() => props.frameAssets ?? selectableAssetsToCards(selectableFrameAssets.value))
-  const logos = computed(() => props.logoAssets ?? selectableAssetsToCards(selectableLogoAssets.value))
+  const frames = computed(() => toValue(props.frameAssets) ?? selectableAssetsToCards(selectableFrameAssets.value))
+  const logos = computed(() => toValue(props.logoAssets) ?? selectableAssetsToCards(selectableLogoAssets.value))
   const selectedFrame = computed(
     () => frames.value.find((frame) => frame.id === selectedFrameId.value) ?? null,
   )

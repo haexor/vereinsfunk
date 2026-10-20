@@ -1,12 +1,17 @@
 <script setup lang="ts">
 import { Upload } from '@lucide/vue'
 import { uploadMediaAsset } from '~/utils/mediaUpload'
+import { usePhotoWorkshopAssets } from '../composables/usePhotoWorkshopAssets'
 
 const {
   organizationId,
   departmentId: activeDepartmentId,
 } = await useActiveScope()
 const api = useApiClient()
+const {
+  frames: workshopFrameAssets,
+  logos: workshopLogoAssets,
+} = usePhotoWorkshopAssets({ organizationId, departmentId: activeDepartmentId })
 
 const workshopFile = ref<File | null>(null)
 const workshopResultFile = ref<File | null>(null)
@@ -82,6 +87,8 @@ onBeforeUnmount(() => {
       :file="workshopFile"
       :organization-id="organizationId ?? ''"
       :department-id="activeDepartmentId ?? null"
+      :frame-assets="workshopFrameAssets"
+      :logo-assets="workshopLogoAssets"
       @save="acceptWorkshopFile"
       @cancel="closePhotoWorkshop"
     />
