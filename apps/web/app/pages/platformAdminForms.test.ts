@@ -22,4 +22,16 @@ describe('Betreiberformulare', () => {
     expect(page).toContain('v-model="baseUrlModel"')
     expect(page).toContain('baseUrlModel.value = preset?.baseUrl ?? \'\'')
   })
+
+  it('zeigt die Fehlermeldung eines Einstellungs-Speicherns erst nach dem Neuladen an', () => {
+    const page = readFileSync(join(PAGES_DIR, 'plattform-admin/einstellungen.vue'), 'utf8')
+
+    // load() leert errorMessage -- vorher gesetzt, war die 409-Erklaerung nie zu sehen.
+    for (const name of ['savePublishingEnabled', 'saveAgentLlmProvider']) {
+      const body = functionBody(page, name)
+      const catchBlock = body.slice(body.indexOf('} catch'))
+      expect(catchBlock.indexOf('await load()')).toBeGreaterThan(-1)
+      expect(catchBlock.indexOf('await load()')).toBeLessThan(catchBlock.indexOf('errorMessage.value ='))
+    }
+  })
 })
