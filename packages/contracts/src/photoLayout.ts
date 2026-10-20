@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { UuidSchema } from './primitives.js'
+import { requireDepartmentForTeam, UuidSchema } from './primitives.js'
 
 // Plan 047, PR 1: "Bildkomposition" -- mehrere Fotos zu einem Layout zusammensetzen. Interne
 // Bezeichner heissen bewusst "photoLayout", nicht "composition"/"collage": beide Woerter sind im
@@ -53,11 +53,7 @@ export const CreatePhotoLayoutPresetRequestSchema = PhotoLayoutPresetFieldsSchem
   organizationId: UuidSchema,
   departmentId: UuidSchema.optional(),
   teamId: UuidSchema.optional(),
-}).superRefine((preset, context) => {
-  if (preset.teamId !== undefined && preset.departmentId === undefined) {
-    context.addIssue({ code: 'custom', path: ['teamId'], message: 'teamId requires departmentId' })
-  }
-})
+}).superRefine(requireDepartmentForTeam)
 
 // Scope ist unveraendlich, wie bei UpdateImageStylePresetRequestSchema -- PATCH leitet ihn aus der
 // bestehenden Zeile her.

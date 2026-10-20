@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { UuidSchema } from './primitives.js'
+import { requireDepartmentForTeam, UuidSchema } from './primitives.js'
 
 // Integrationsrahmen und Mitgliederverzeichnis (Paket 014). HTTP- und Webhook-Transport sind nur
 // als Werte vorgesehen -- kein Adapter in diesem Paket, siehe plans/014.
@@ -146,9 +146,7 @@ const DirectoryPersonFieldsSchema = z.object({
 export const CreateDirectoryPersonRequestSchema = DirectoryPersonFieldsSchema.extend({
   firstName: z.string().trim().min(1).max(80),
   lastName: z.string().trim().min(1).max(80),
-}).refine((value) => value.teamId === undefined || value.teamId === null || (value.departmentId !== undefined && value.departmentId !== null), {
-  message: 'teamId requires departmentId',
-})
+}).superRefine(requireDepartmentForTeam)
 export const UpdateDirectoryPersonRequestSchema = DirectoryPersonFieldsSchema.extend({
   firstName: z.string().trim().min(1).max(80).optional(),
   lastName: z.string().trim().min(1).max(80).optional(),

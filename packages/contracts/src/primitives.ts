@@ -6,6 +6,14 @@ import { z } from 'zod'
 export const UuidSchema = z.uuid()
 export const CountryCodeSchema = z.string().regex(/^[A-Z]{2}$/)
 
+// Ein Team liegt immer in einer Abteilung: die Tabellen tragen check (team_id is null or
+// department_id is not null). Ohne diese Vorpruefung schlaegt die Kombination erst beim Schreiben
+// als 23514 auf, statt als benannter 400er zurueckzukommen.
+const TEAM_REQUIRES_DEPARTMENT_MESSAGE = 'teamId requires departmentId'
+export function requireDepartmentForTeam(scope: { departmentId?: string | null | undefined; teamId?: string | null | undefined }, context: z.RefinementCtx): void {
+  if (scope.teamId && !scope.departmentId) context.addIssue({ code: 'custom', path: ['teamId'], message: TEAM_REQUIRES_DEPARTMENT_MESSAGE })
+}
+
 // Eine einzige Quelle fuer die Social-Media-Plattformen. Liegt hier und nicht in channels.ts, weil
 // auch die Textwerkstatt sie braucht (Ziel-Plattformen eines Beitrags) und channels.ts von dort
 // MaxCharactersSchema importiert -- ein Import in die andere Richtung waere ein Zyklus.
