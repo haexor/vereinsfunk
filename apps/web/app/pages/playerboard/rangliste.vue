@@ -20,7 +20,8 @@ const seasonFrom = ref<string | null>(null)
 const items = ref<RankingListItem[]>([])
 const loading = ref(false)
 const errorMessage = ref('')
-const seasonLoadError = ref(false)
+// Meldung eines gescheiterten Saisonabrufs; leer, solange der Saisonanfang bekannt ist.
+const seasonLoadError = ref('')
 
 const periods: { kind: RankingPeriodKind; label: string }[] = [
   { kind: 'season', label: 'Saison' },
@@ -32,7 +33,7 @@ const periods: { kind: RankingPeriodKind; label: string }[] = [
 /** Laedt den Saisonanfang, sobald die Mannschaft feststeht. */
 async function loadSeason(): Promise<boolean> {
   seasonFrom.value = null
-  seasonLoadError.value = false
+  seasonLoadError.value = ''
   if (!organizationId.value || !teamId.value) return true
   const requestedOrganizationId = organizationId.value
   const requestedTeamId = teamId.value
@@ -46,8 +47,8 @@ async function loadSeason(): Promise<boolean> {
   } catch (error) {
     if (organizationId.value !== requestedOrganizationId || teamId.value !== requestedTeamId)
       return false
-    seasonLoadError.value = true
-    errorMessage.value = playerboardErrorMessage(error, 'Die Saison konnte nicht geladen werden.')
+    seasonLoadError.value = playerboardErrorMessage(error, 'Die Saison konnte nicht geladen werden.')
+    errorMessage.value = seasonLoadError.value
     return false
   }
 }
@@ -61,7 +62,13 @@ async function load() {
     items.value = []
     return
   }
-  if (period.value === 'season' && seasonLoadError.value) return
+  // Ohne Saisonanfang gibt es keinen Saison-Zeitraum: die Meldung bleibt stehen und die zuletzt
+  // geladene Rangliste (etwa die des Monats) verschwindet, statt unter "Saison" weiterzulaufen.
+  if (period.value === 'season' && seasonLoadError.value) {
+    items.value = []
+    errorMessage.value = seasonLoadError.value
+    return
+  }
   const requestedTeamId = teamId.value
   const requestedSeasonFrom = seasonFrom.value
   loading.value = true

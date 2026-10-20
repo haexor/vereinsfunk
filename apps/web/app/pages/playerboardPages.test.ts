@@ -35,6 +35,14 @@ describe('PlayerBoard-Seiten', () => {
     expect(consents.indexOf('if (loadRun !== latestConsentLoad) return')).toBeLessThan(consents.indexOf('playersWithoutConsent.value = roster'))
   })
 
+  it('zeigt unter "Saison" ohne Saisonanfang die Meldung statt der zuletzt geladenen Rangliste', () => {
+    const page = read('playerboard/rangliste.vue')
+
+    expect(page.replace(/\s+/g, ' ')).toContain(
+      "if (period.value === 'season' && seasonLoadError.value) { items.value = [] errorMessage.value = seasonLoadError.value return }",
+    )
+  })
+
   it('uebernimmt den Saisonanfang der Spiele erst nach der Pruefung auf eine neuere Anfrage', () => {
     const load = functionBody(read('playerboard/spiele.vue'), 'load')
 
