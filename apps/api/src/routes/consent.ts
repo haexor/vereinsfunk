@@ -162,7 +162,13 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
       })
       .select(CONSENT_RECORD_SELECT)
       .single()
-    if (insert.error) throw insert.error
+    if (insert.error) {
+      // Ohne Zeile verweist nichts mehr auf die Nachweisdatei -- keine Aufbewahrungsregel faende sie
+      // je, eine private Unterschrift bliebe dauerhaft im Bucket liegen.
+      const removed = await service.storage.from('raw-media').remove([objectPath])
+      if (removed.error) request.log.error({ err: removed.error, correlationId: request.id }, 'consent evidence cleanup failed')
+      throw insert.error
+    }
 
     await recordAuditEvent(request, { organizationId: fields.organizationId, action: 'consent.registered', entityType: 'consent_records', entityId: consentId })
     return reply.code(201).send(mapConsentRecordRow(insert.data as ConsentRecordRow, new Date()))

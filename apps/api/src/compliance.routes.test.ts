@@ -537,6 +537,42 @@ describe('Paket 020: Rechtliche Pflichten und Datenschutzbetrieb', () => {
       expect(response.json()).toMatchObject({ processorName: 'Supabase', hasDocument: false })
     })
 
+    it('removes an uploaded agreement document when the database insert fails', async () => {
+      const removedPaths: string[][] = []
+      let uploadedPath: string | undefined
+      const clients: SupabaseClientFactory = {
+        forUser: () => ({}) as unknown as SupabaseClient,
+        forService: () =>
+          ({
+            storage: {
+              from: () => ({
+                upload: async (path: string) => { uploadedPath = path; return { error: null } },
+                remove: async (paths: string[]) => { removedPaths.push(paths); return { data: [], error: null } },
+              }),
+            },
+            from: (table: string) => {
+              if (table === 'processor_agreements') return { insert: () => ({ select: () => ({ single: async () => ({ data: null, error: { code: '23514', message: 'check violation' } }) }) }) }
+              throw new Error(`unexpected table: ${table}`)
+            },
+          }) as unknown as SupabaseClient,
+      }
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      const boundary = '----vereinsfunkAgreementBoundary'
+      const body = Buffer.concat([
+        Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="vertrag.pdf"\r\nContent-Type: application/pdf\r\n\r\n%PDF-1.4 fake\r\n`),
+        Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="processorName"\r\n\r\nSupabase\r\n`),
+        Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="purpose"\r\n\r\nHosting\r\n--${boundary}--\r\n`),
+      ])
+      const response = await app.inject({
+        method: 'POST', url: `/v1/organizations/${ORGANIZATION_ID}/processor-agreements`,
+        headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` }, payload: body,
+      })
+      expect(response.statusCode).toBe(400)
+      expect(uploadedPath).toBeDefined()
+      expect(removedPaths).toEqual([[uploadedPath]])
+    })
+
     // Regression: validUntil vor signedAt schlug bislang am CHECK-Constraint der Datenbank fehl
     // (500) statt an der Zod-Validierung (400).
     it('rejects a processor agreement whose validUntil is before signedAt', async () => {

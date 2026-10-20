@@ -288,6 +288,45 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
     expect(response.json()).toMatchObject({ status: 'expired' })
   })
 
+  it('removes the uploaded evidence file when the consent record insert fails', async () => {
+    const removedPaths: string[][] = []
+    let uploadedPath: string | undefined
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'directory_people') return chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, is_minor: false }, error: null })
+            if (table === 'policy_settings') return chain({ data: [], error: null })
+            throw new Error(`unexpected table: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          storage: {
+            from: () => ({
+              upload: async (path: string) => { uploadedPath = path; return { error: null } },
+              remove: async (paths: string[]) => { removedPaths.push(paths); return { data: [], error: null } },
+            }),
+          },
+          from: (table: string) => {
+            if (table === 'consent_records') return { insert: () => chain({ data: null, error: { code: '23503', message: 'foreign key violation' } }) }
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const { boundary, body } = consentUploadBody(consentScopeAndFields())
+    const response = await app.inject({
+      method: 'POST', url: '/v1/consents',
+      headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` },
+      payload: body,
+    })
+    expect(response.statusCode).toBe(500)
+    expect(uploadedPath).toBeDefined()
+    expect(removedPaths).toEqual([[uploadedPath]])
+  })
+
   it('applies the consent validity policy to a superseding version', async () => {
     let insertedRow: Record<string, unknown> | undefined
     const clients: SupabaseClientFactory = {
