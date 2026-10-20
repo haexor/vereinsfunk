@@ -48,6 +48,7 @@ import { registerChannelRoutes } from './routes/channels.js'
 import { registerClubScheduleRoutes } from './routes/clubSchedule.js'
 import { registerComplianceRoutes } from './routes/compliance.js'
 import { registerConsentRoutes } from './routes/consent.js'
+import { registerConsentRequestRoutes } from './routes/consentRequests.js'
 import { registerConsentPublicRoutes } from './routes/consentPublic.js'
 import { registerContentRoutes } from './routes/content.js'
 import { registerContentStyleProfileRoutes } from './routes/contentStyleProfiles.js'
@@ -450,6 +451,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   registerDirectoryRoutes(app, context)
 
   registerConsentRoutes(app, context)
+  registerConsentRequestRoutes(app, context)
   registerConsentPublicRoutes(app, context)
 
   registerRetentionRoutes(app, context)
