@@ -2,7 +2,12 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-const component = readFileSync(join(import.meta.dirname, 'PhotoImageWorkshop.vue'), 'utf8')
+const source = (path: string) => readFileSync(join(import.meta.dirname, path), 'utf8')
+const component = source('PhotoImageWorkshop.vue')
+const filterPanel = source('PhotoWorkshopFilterPanel.vue')
+const filterPreviews = source('../composables/useGmicFilterPreviews.ts')
+const history = source('../composables/usePhotoWorkshopHistory.ts')
+const assets = source('../composables/usePhotoWorkshopAssets.ts')
 
 describe('PhotoImageWorkshop layout', () => {
   it('is embedded in its host instead of rendering as a modal', () => {
@@ -47,51 +52,52 @@ describe('PhotoImageWorkshop layout', () => {
     expect(component).toContain('function updateCroppedPreview')
     expect(component).toContain('function defaultCropSize')
     expect(component).toContain(':default-size="defaultCropSize"')
-    expect(component).toContain('function renderGmicFilter')
-    expect(component).toContain("/v1/image-style-workshop/filter")
-    expect(component).toContain('let filterPreviewRenderRun = 0')
-    expect(component).toContain('const filter = selectedFilter.value')
-    expect(component).toContain('renderRun !== filterPreviewRenderRun || selectedFilter.value !== filter')
-    expect(component).toContain('renderGmicFilter(canvas, 1200, filter)')
+    expect(filterPreviews).toContain('function renderGmicFilter')
+    expect(filterPreviews).toContain("/v1/image-style-workshop/filter")
+    expect(filterPreviews).toContain('let filterPreviewRenderRun = 0')
+    expect(filterPreviews).toContain('const filter = selectedFilter.value')
+    expect(filterPreviews).toContain('renderRun !== filterPreviewRenderRun || selectedFilter.value !== filter')
+    expect(filterPreviews).toContain('renderGmicFilter(canvas, 1200, filter)')
     expect(component).toContain('v-if="applyingFilter"')
     expect(component).toContain('<LoaderCircle class="animate-spin"')
     expect(component).toContain('Filter wird angewendet …')
-    expect(component).toContain('const undoHistory = ref<EditorState[]>')
-    expect(component).toContain('const redoHistory = ref<EditorState[]>')
-    expect(component).toContain('async function undo()')
-    expect(component).toContain('async function redo()')
+    expect(history).toContain('const undoHistory = ref<EditorState[]>')
+    expect(history).toContain('const redoHistory = ref<EditorState[]>')
+    expect(history).toContain('async function undo()')
+    expect(history).toContain('async function redo()')
     expect(component).toContain('Schritt zurück')
     expect(component).toContain('Schritt vor')
   })
 
   it('keeps filter previews compact instead of stretching them across the panel', () => {
-    expect(component).toContain('<div class="flex flex-wrap gap-2"><button v-for="filter')
-    expect(component).toContain('focus-ring w-28 shrink-0 overflow-hidden')
-    expect(component).toContain('function scheduleFilterThumbnails')
-    expect(component).toContain('function refreshFilterThumbnails')
-    expect(component).toContain('/v1/image-style-workshop/filter-previews')
-    expect(component).toContain('ImageStyleFilterPreviewsResponseSchema')
-    expect(component).not.toContain('await Promise.all([renderNext(), renderNext()])')
-    expect(component).toContain('filterThumbnailUrls[filter.value]')
-    expect(component).toContain('filterThumbnailStatuses.value = Object.fromEntries')
-    expect(component).toContain("filters.map((filter) => [filter.value, 'unavailable'])")
-    expect(component).toContain(
+    expect(filterPanel).toContain('<div class="flex flex-wrap gap-2"><button v-for="filter')
+    expect(filterPanel).toContain('focus-ring w-28 shrink-0 overflow-hidden')
+    expect(filterPreviews).toContain('function scheduleFilterThumbnails')
+    expect(filterPreviews).toContain('function refreshFilterThumbnails')
+    expect(filterPreviews).toContain('/v1/image-style-workshop/filter-previews')
+    expect(filterPreviews).toContain('ImageStyleFilterPreviewsResponseSchema')
+    expect(filterPreviews).not.toContain('await Promise.all([renderNext(), renderNext()])')
+    expect(filterPanel).toContain('filterThumbnailUrls[filter.value]')
+    expect(filterPreviews).toContain('filterThumbnailStatuses.value = Object.fromEntries')
+    expect(filterPreviews).toContain("filters.map((filter) => [filter.value, 'unavailable'])")
+    expect(filterPreviews).toContain(
       'filters.every((filter) => result.unavailableFilters.includes(filter.value))',
     )
-    expect(component).toContain('const resumeThumbnails = filterThumbnailController !== undefined')
-    expect(component).toContain('{ method: \'POST\', body, signal }')
-    expect(component).toContain('previewRun !== filterPreviewRenderRun')
-    expect(component).not.toContain(
+    expect(filterPreviews).toContain('const resumeThumbnails = filterThumbnailController !== undefined')
+    expect(filterPreviews).toContain('{ method: \'POST\', body, signal }')
+    expect(filterPreviews).toContain('previewRun !== filterPreviewRenderRun')
+    expect(filterPreviews).not.toContain(
       "result.unavailableFilters.some((filter) => filter.startsWith('gmic_'))",
     )
     expect(component).not.toContain(':disabled="applyingFilter"')
-    expect(component).not.toContain(':src="croppedPreviewUrl || sourceUrl" alt="" aria-hidden="true" class="aspect-[4/3] w-full rounded object-cover" /><span class="mt-1 block truncate text-center text-[10px] font-semibold">{{ filter.label }}</span>')
+    expect(filterPanel).not.toContain(':disabled="applyingFilter"')
+    expect(filterPanel).not.toContain(':src="originalPreviewUrl" alt="" aria-hidden="true" class="aspect-[4/3] w-full rounded object-cover" /><span class="mt-1 block truncate text-center text-[10px] font-semibold">{{ filter.label }}</span>')
   })
 
   it('loads selectable frame assets from the shared brand asset library', () => {
-    expect(component).toContain('selectableFrameAssets')
-    expect(component).toContain('props.frameAssets ?? selectableAssetsToCards')
-    expect(component).toContain('const frames = computed')
+    expect(assets).toContain('selectableFrameAssets')
+    expect(assets).toContain('props.frameAssets ?? selectableAssetsToCards')
+    expect(assets).toContain('const frames = computed')
   })
 })
 
@@ -102,23 +108,24 @@ describe('PhotoImageWorkshop history and output size', () => {
   })
 
   it('does not render the filter preview from the canvas before an edit is applied', () => {
-    const recordEdit = component.match(/function recordEdit\(\) {[\s\S]*?\n}/)?.[0]
-    const finishHistoryGroup = component.match(/function finishHistoryGroup\(\) {[\s\S]*?\n}/)?.[0]
+    const recordEdit = history.match(/function recordEdit\(\) {[\s\S]*?\n {2}}/)?.[0]
+    const finishHistoryGroup = history.match(/function finishHistoryGroup\(\) {[\s\S]*?\n {2}}/)?.[0]
+    expect(recordEdit).toBeDefined()
+    expect(finishHistoryGroup).toBeDefined()
     expect(recordEdit).not.toContain('finishHistoryGroup')
     expect(finishHistoryGroup).not.toContain('refreshFilterPreview')
     expect(component.match(/function onCropChange\([\s\S]*?\n}\) {[\s\S]*?\n}/)?.[0]).toContain('refreshChangedFilterPreview()')
   })
 
   it('restores rotation, flip and crop without transitions after the reset has finished', () => {
-    expect(component).toContain('await controller.reset()')
-    expect(component).toContain('controller.rotate(state.crop.rotate, { transitions: false })')
-    expect(component).toContain('controller.flip(state.crop.flipHorizontal, state.crop.flipVertical, { transitions: false })')
-    expect(component).toContain('controller.setCoordinates(state.crop.coordinates, { transitions: false })')
+    expect(history).toContain('await controller.reset()')
+    expect(history).toContain('controller.rotate(state.crop.rotate, { transitions: false })')
+    expect(history).toContain('controller.flip(state.crop.flipHorizontal, state.crop.flipVertical, { transitions: false })')
+    expect(history).toContain('controller.setCoordinates(state.crop.coordinates, { transitions: false })')
   })
 
-  it('keeps a locked output size proportional to later crop changes', () => {
+  it('lets a locked output size follow later crop changes', () => {
     const onCropChange = component.match(/function onCropChange\([\s\S]*?\n}\) {[\s\S]*?\n}/)?.[0]
-    expect(onCropChange).toContain('const exactHeight = (outputWidth.value * croppedHeight.value) / croppedWidth.value')
-    expect(onCropChange).toContain('outputHeight.value = height')
+    expect(onCropChange).toContain('followCrop(croppedWidth.value, croppedHeight.value)')
   })
 })
