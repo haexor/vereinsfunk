@@ -94,3 +94,31 @@ describe('PhotoImageWorkshop layout', () => {
     expect(component).toContain('const frames = computed')
   })
 })
+
+describe('PhotoImageWorkshop history and output size', () => {
+  it('only records history from pointer gestures while the crop tool is active', () => {
+    expect(component).toContain(`@pointerdown.capture="activeTool === 'crop' && startHistoryGroup()"`)
+    expect(component).toContain(`@pointerup.capture="activeTool === 'crop' && finishHistoryGroup()"`)
+  })
+
+  it('does not render the filter preview from the canvas before an edit is applied', () => {
+    const recordEdit = component.match(/function recordEdit\(\) {[\s\S]*?\n}/)?.[0]
+    const finishHistoryGroup = component.match(/function finishHistoryGroup\(\) {[\s\S]*?\n}/)?.[0]
+    expect(recordEdit).not.toContain('finishHistoryGroup')
+    expect(finishHistoryGroup).not.toContain('refreshFilterPreview')
+    expect(component.match(/function onCropChange\([\s\S]*?\n}\) {[\s\S]*?\n}/)?.[0]).toContain('refreshChangedFilterPreview()')
+  })
+
+  it('restores rotation, flip and crop without transitions after the reset has finished', () => {
+    expect(component).toContain('await controller.reset()')
+    expect(component).toContain('controller.rotate(state.crop.rotate, { transitions: false })')
+    expect(component).toContain('controller.flip(state.crop.flipHorizontal, state.crop.flipVertical, { transitions: false })')
+    expect(component).toContain('controller.setCoordinates(state.crop.coordinates, { transitions: false })')
+  })
+
+  it('keeps a locked output size proportional to later crop changes', () => {
+    const onCropChange = component.match(/function onCropChange\([\s\S]*?\n}\) {[\s\S]*?\n}/)?.[0]
+    expect(onCropChange).toContain('const exactHeight = (outputWidth.value * croppedHeight.value) / croppedWidth.value')
+    expect(onCropChange).toContain('outputHeight.value = height')
+  })
+})

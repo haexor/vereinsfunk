@@ -52,10 +52,12 @@ type CropperController = {
     coordinates: { width: number; height: number; left: number; top: number }
     image: { transforms: { rotate: number; flip: { horizontal: boolean; vertical: boolean } } }
   }
-  setCoordinates: (coordinates: { width: number; height: number; left: number; top: number }) => void
-  rotate: (angle: number) => void
-  flip: (horizontal: boolean, vertical: boolean) => void
-  reset: () => void
+  // options.transitions fehlt in den mitgelieferten Typen, die Methoden werten es aber aus; reset()
+  // liefert dort ebenfalls ungetypt das Promise von resetVisibleArea().
+  setCoordinates: (coordinates: { width: number; height: number; left: number; top: number }, options?: { transitions?: boolean }) => void
+  rotate: (angle: number, options?: { transitions?: boolean }) => void
+  flip: (horizontal: boolean, vertical: boolean, options?: { transitions?: boolean }) => void
+  reset: () => Promise<void> | void
   refresh: () => void
 }
 type BrandAsset = { id: string; name: string; signedUrl: string }
@@ -476,10 +478,24 @@ async function refreshFilterThumbnails() {
     if (filterThumbnailController === controller) filterThumbnailController = undefined
   }
 }
+// Ausschnitt (Koordinaten und Transformationen), aus dem die gefilterte Vorschau zuletzt gerendert
+// wurde. Geometrie aendert sich nur im Zuschnitt-Werkzeug, dessen Vorschau ungefiltert ist: neu
+// gerendert wird erst, wenn die gefilterte Vorschau wieder sichtbar ist und sich der Ausschnitt seit
+// dem letzten Render geaendert hat -- nicht je Zwischenschritt und nicht doppelt nach einem Undo.
+let filterPreviewSource = ''
+function cropSourceKey() {
+  const result = cropper.value?.getResult()
+  return result ? JSON.stringify([result.coordinates, result.image.transforms]) : ''
+}
+function refreshChangedFilterPreview() {
+  if (activeTool.value === 'crop' || restoringHistory.value || selectedFilter.value === 'original') return
+  if (cropSourceKey() !== filterPreviewSource) void refreshFilterPreview()
+}
 async function refreshFilterPreview() {
   const canvas = cropper.value?.getResult().canvas
   const filter = selectedFilter.value
   if (!canvas || filter === 'original') return
+  filterPreviewSource = cropSourceKey()
   const resumeThumbnails = filterThumbnailController !== undefined
   cancelFilterThumbnailRequest()
   const renderRun = ++filterPreviewRenderRun
@@ -496,6 +512,7 @@ async function refreshFilterPreview() {
     if (previousUrl) URL.revokeObjectURL(previousUrl)
   } catch (error) {
     if (renderRun !== filterPreviewRenderRun || selectedFilter.value !== filter) return
+    filterPreviewSource = ''
     filterError.value = error instanceof Error && error.message === 'gmic_not_enabled'
       ? 'G’MIC ist auf dem Server nicht verfügbar.'
       : 'Der G’MIC-Filter konnte nicht gerendert werden.'
@@ -516,9 +533,25 @@ function onCropChange(result: {
   if (!coordinates?.width || !coordinates.height) return
   croppedWidth.value = Math.round(coordinates.width)
   croppedHeight.value = Math.round(coordinates.height)
+  // Die Ausgabegroesse entsteht beim Oeffnen von "Bildgroesse" aus dem damaligen Ausschnitt. Mit
+  // festem Verhaeltnis folgt die Hoehe jedem spaeteren Zuschnitt, Drehen oder Seitenverhaeltnis --
+  // sonst wuerde der neue Ausschnitt beim Speichern verzerrt. Passt sie nicht mehr in die Grenzen,
+  // gilt wieder die Groesse des Ausschnitts. Abweichungen unter einem Pixel sind Rundung einer
+  // eingetippten Hoehe und bleiben stehen.
+  const exactHeight = (outputWidth.value * croppedHeight.value) / croppedWidth.value
+  if (keepAspectRatio.value && outputWidth.value && outputHeight.value && Math.abs(exactHeight - outputHeight.value) >= 1) {
+    const height = Math.max(1, Math.round(exactHeight))
+    if (outputSizeError({ width: outputWidth.value, height })) {
+      outputWidth.value = 0
+      outputHeight.value = 0
+    } else {
+      outputHeight.value = height
+    }
+  }
   updateCroppedPreview(result.canvas)
   markFilterThumbnailsDirty()
   scheduleFilterThumbnails()
+  refreshChangedFilterPreview()
 }
 
 function onCropperReady() {
@@ -575,12 +608,13 @@ function startHistoryGroup() {
 }
 function finishHistoryGroup() {
   historyGroupOpen.value = false
-  if (selectedFilter.value !== 'original') void refreshFilterPreview()
   scheduleFilterThumbnails()
 }
+// Nur Verlauf: recordEdit() laeuft vor der Aenderung. Die Filtervorschau von hier aus zu rendern,
+// nahm den Ausschnitt von vor der Aenderung -- sie folgt deshalb dem (entprellten) Crop-Change.
 function recordEdit() {
   startHistoryGroup()
-  finishHistoryGroup()
+  historyGroupOpen.value = false
 }
 async function restoreEditorState(state: EditorState) {
   restoringHistory.value = true
@@ -599,11 +633,14 @@ async function restoreEditorState(state: EditorState) {
     await nextTick()
     const controller = cropper.value
     if (!controller || !state.crop) return
-    controller.reset()
-    if (state.crop.rotate) controller.rotate(state.crop.rotate)
+    // reset() setzt Ausschnitt und Transformationen asynchron zurueck, und rotate() schaltet fuer
+    // ~350 ms Transitionen ein, waehrend derer der Cropper flip() und setCoordinates() verwirft.
+    // Ohne await und ohne transitions: false verlor ein Undo Spiegelung und Ausschnitt.
+    await controller.reset()
+    if (state.crop.rotate) controller.rotate(state.crop.rotate, { transitions: false })
     if (state.crop.flipHorizontal || state.crop.flipVertical)
-      controller.flip(state.crop.flipHorizontal, state.crop.flipVertical)
-    controller.setCoordinates(state.crop.coordinates)
+      controller.flip(state.crop.flipHorizontal, state.crop.flipVertical, { transitions: false })
+    controller.setCoordinates(state.crop.coordinates, { transitions: false })
     await nextTick()
     controller.refresh()
     updateCroppedPreview(controller.getResult().canvas)
@@ -696,6 +733,7 @@ function toggleAspectRatioLock() {
 }
 function selectTool(tool: EditorTool) {
   activeTool.value = tool
+  refreshChangedFilterPreview()
   if (tool === 'resize' && (!outputWidth.value || !outputHeight.value))
     setOutputDimensions(cropDimensions())
   if (tool === 'filters') scheduleFilterThumbnails(0)
@@ -840,7 +878,7 @@ onBeforeUnmount(() => {
                 <LoaderCircle class="animate-spin" :size="28" aria-hidden="true" />
                 <span class="rounded-full bg-white/90 px-3 py-1.5 text-xs font-semibold shadow-sm">Filter wird angewendet …</span>
               </div>
-              <div class="absolute inset-3 min-h-0 min-w-0 sm:inset-5" @pointerdown.capture="startHistoryGroup" @pointerup.capture="finishHistoryGroup" @pointercancel.capture="finishHistoryGroup">
+              <div class="absolute inset-3 min-h-0 min-w-0 sm:inset-5" @pointerdown.capture="activeTool === 'crop' && startHistoryGroup()" @pointerup.capture="activeTool === 'crop' && finishHistoryGroup()" @pointercancel.capture="activeTool === 'crop' && finishHistoryGroup()">
                 <Cropper :key="cropperKey" ref="cropper" class="photo-workshop-cropper h-full w-full" :class="{ 'photo-workshop-cropper--inactive': activeTool !== 'crop' }" :src="sourceUrl" :stencil-props="cropperStencilProps" :default-size="defaultCropSize" :canvas="true" :check-orientation="!skipOrientationCheck" :debounce="100" default-boundaries="fit" image-restriction="fit-area" @ready="onCropperReady" @error="onCropperError" @change="onCropChange" />
               </div>
               <img v-if="selectedFrame" class="pointer-events-none absolute inset-3 h-[calc(100%-1.5rem)] w-[calc(100%-1.5rem)] object-fill sm:inset-5 sm:h-[calc(100%-2.5rem)] sm:w-[calc(100%-2.5rem)]" :src="selectedFrame.signedUrl" alt="" aria-hidden="true" />
