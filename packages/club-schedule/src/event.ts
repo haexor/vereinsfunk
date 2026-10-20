@@ -59,7 +59,13 @@ function normalize(raw: Readonly<Record<string, unknown>>, mapping: FieldMapping
     if (result.description === undefined && typeof description === 'string' && description.length > 0) result.description = description
 
     const uid = raw['uid']
-    if (result.externalId === undefined && typeof uid === 'string' && uid.length > 0) result.externalId = uid
+    if (result.externalId === undefined && typeof uid === 'string' && uid.length > 0) {
+      result.externalId = uid
+      // Die UID ist seriengleich (RFC 5545); erst RECURRENCE-ID benennt eine verschobene Instanz.
+      // Ohne sie kollidierte die Instanz mit dem Serientermin als duplicate_external_id.
+      const recurrenceId = raw['recurrence-id']
+      if (result.recurrenceKey === undefined && typeof recurrenceId === 'string' && recurrenceId.length > 0) result.recurrenceKey = recurrenceId
+    }
   }
 
   if (result.startsAt === undefined) {

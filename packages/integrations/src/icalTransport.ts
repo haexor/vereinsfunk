@@ -31,18 +31,30 @@ function parseVEvents(text: string): Record<string, unknown>[] {
   const lines = unfoldLines(text)
   const events: Record<string, unknown>[] = []
   let current: Record<string, string> | null = null
+  // Verschachtelte Komponenten in einem VEVENT (VALARM, ...) tragen eigene SUMMARY/DESCRIPTION/
+  // UID. Ohne Tiefenzaehler ueberschrieben sie die Werte des Termins ("Alarm notification" als
+  // Titel), und ihr END:VALARM liesse sich nicht von END:VEVENT unterscheiden.
+  let nestedDepth = 0
   for (const line of lines) {
-    const trimmed = line.trim()
-    if (trimmed === 'BEGIN:VEVENT') {
-      current = {}
+    const trimmed = line.trim().toUpperCase()
+    if (!current) {
+      if (trimmed === 'BEGIN:VEVENT') current = {}
       continue
     }
-    if (trimmed === 'END:VEVENT') {
-      if (current) events.push(current)
-      current = null
+    if (trimmed.startsWith('BEGIN:')) {
+      nestedDepth += 1
       continue
     }
-    if (!current) continue
+    if (trimmed.startsWith('END:')) {
+      if (nestedDepth > 0) {
+        nestedDepth -= 1
+      } else if (trimmed === 'END:VEVENT') {
+        events.push(current)
+        current = null
+      }
+      continue
+    }
+    if (nestedDepth > 0) continue
     const separatorIndex = line.indexOf(':')
     if (separatorIndex === -1) continue
     const rawKey = line.slice(0, separatorIndex)

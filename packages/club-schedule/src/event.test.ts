@@ -36,6 +36,12 @@ describe('clubEventDomainAdapter.normalize', () => {
     })
   })
 
+  it('keeps the RECURRENCE-ID of a moved series instance as recurrenceKey next to the shared UID', () => {
+    const raw = { summary: 'Training', dtstart: '20260828T160000Z', uid: 'series-1', 'recurrence-id': '20260827T160000Z' }
+    const normalized = clubEventDomainAdapter.normalize(raw, {}) as Record<string, unknown>
+    expect(normalized).toMatchObject({ externalId: 'series-1', recurrenceKey: '20260827T160000Z' })
+  })
+
   it('returns undefined when the summary looks like a match -- that belongs to the fixtures domain', () => {
     const raw = { summary: 'SV Nordstadt – TSV Süd', dtstart: '2026-08-15T15:00:00Z' }
     expect(clubEventDomainAdapter.normalize(raw, {})).toBeUndefined()

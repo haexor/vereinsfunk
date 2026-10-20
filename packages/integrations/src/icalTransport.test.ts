@@ -37,6 +37,25 @@ describe('IcalSourceTransport', () => {
     ])
   })
 
+  it('ignores properties of a nested VALARM instead of letting them overwrite the event', async () => {
+    const text = [
+      'BEGIN:VCALENDAR',
+      'BEGIN:VEVENT',
+      'UID:event-1@example.org',
+      'SUMMARY:Sommerfest',
+      'BEGIN:VALARM',
+      'ACTION:DISPLAY',
+      'DESCRIPTION:Alarm notification',
+      'SUMMARY:Alarm notification',
+      'END:VALARM',
+      'DTSTART:20260815T140000Z',
+      'END:VEVENT',
+      'END:VCALENDAR',
+    ].join('\r\n')
+    const rows = await collect(new IcalSourceTransport({ key: 'club.ics', text }))
+    expect(rows).toEqual([{ uid: 'event-1@example.org', summary: 'Sommerfest', dtstart: '20260815T140000Z' }])
+  })
+
   it('reads two VEVENTs from the same feed', async () => {
     const text = [
       'BEGIN:VCALENDAR',
