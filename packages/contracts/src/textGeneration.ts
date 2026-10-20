@@ -26,7 +26,7 @@ export const MaxCharactersSchema = z.int().min(100).max(MAX_CHARACTERS_CEILING)
 export const TEXT_GENERATION_DEFAULT_MAX_CHARACTERS = 2200
 // Reines Modell-Budget, absichtlich nicht pro Plattform: es verhindert einen davonlaufenden
 // Aufruf, waehrend die Plattform-Grenze ueber max_characters wirkt. Bleibt die feste Vorgabe fuer
-// den Preview-Pfad (previewStyleProfile, routes/shared.ts), der keinen Sitzungs-max_characters
+// den Preview-Pfad (previewStyleProfile, services/styleProfilePreview.ts), der keinen Sitzungs-max_characters
 // kennt -- fuer eine echte Sitzung liefert deriveTextGenerationMaxOutputTokens unten den Wert.
 export const TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS = 1200
 
@@ -127,7 +127,7 @@ export const CreateCompositionSessionSchema = z.object({
   // Paket 042: Mehrfachauswahl, weil ein Verein denselben Beitrag ueblicherweise auf mehreren
   // Plattformen veroeffentlicht. Aus der Auswahl leitet die Route die verbindliche Zeichengrenze ab
   // (Sitzungs-Override > kleinste Vorgabe der gewaehlten Plattformen > Fallback, siehe
-  // routes/content.ts). Welche Plattformen ein Mitglied ueberhaupt anhaken darf, ergibt sich aus den
+  // routes/textWorkshop.ts). Welche Plattformen ein Mitglied ueberhaupt anhaken darf, ergibt sich aus den
   // eingerichteten Kanaelen seines Scopes; die Route prueft das seit Plan 042, PR 3 selbst und
   // antwortet mit 422 platform_not_available.
   //

@@ -81,7 +81,7 @@ export function styleProfileDraftFrom(profile: {
 
 const PreviewErrorPayloadSchema = z.object({ data: z.object({ error: z.string() }) })
 
-// Maps request-layer error codes (routes/shared.ts, previewStyleProfile) to an honest,
+// Maps request-layer error codes (services/styleProfilePreview.ts, previewStyleProfile) to an honest,
 // non-technical message -- "kein lokaler Provider" must read differently from a transient
 // provider failure, per the Plan 040 smoke test.
 export function previewErrorMessage(error: unknown): string {

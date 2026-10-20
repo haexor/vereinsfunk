@@ -21,7 +21,7 @@ const CONTENT_TEXT_MAX_LENGTH = TextWorkshopDraftPayloadSchema.shape.observation
 const CandidateSchema = z.object({ id: z.string(), status: z.string(), generated_content: z.object({ headline: z.string(), caption: z.string(), hashtags: z.array(z.string()), verifiedFacts: z.array(z.string()), missingFacts: z.array(z.string()) }).nullable(), failure_code: z.string().nullable(), triggered_by: z.enum(['member', 'automatic_recovery']) })
 // Fuer den Wiedereinstieg per postId (GET /v1/text-workshop/sessions?postId=): style_profile_snapshot
 // traegt bei Personas/Systemprofilen zusaetzlich zu StyleProfileSnapshotSchema ein "slug"-Feld
-// (routes/content.ts), das der exportierte Vertrag nicht kennt -- deshalb hier lose statt importiert.
+// (services/textGenerationSessions.ts), das der exportierte Vertrag nicht kennt -- deshalb hier lose statt importiert.
 const CompositionSessionDraftSchema = z.object({
   id: z.string(), communication_goal: z.string(), source_material: SourceMaterialSchema,
   style_profile_id: z.string().nullable(), style_profile_snapshot: z.object({ slug: z.string().optional() }).passthrough(),
@@ -275,7 +275,7 @@ async function loadDraftFromPost(postId: string) {
     // Filter wie in restoreDraft(), ein Kanal kann seither entfernt worden sein.
     selectedPlatforms.value = resolveExclusivePlatforms(draftSession.target_platforms.filter((platform) => platforms.value.some((entry) => entry.platform === platform && entry.available)))
     // max_characters bewusst NICHT vorbefuellt: die Spalte traegt den nach Minimumbildung mit den
-    // gewaehlten Plattformen aufgeloesten Wert (routes/content.ts), nicht zwingend eine eigene
+    // gewaehlten Plattformen aufgeloesten Wert (routes/textWorkshop.ts), nicht zwingend eine eigene
     // Obergrenze, die die Person tatsaechlich eingetragen hatte -- eine Vorbefuellung wuerde hier
     // faelschlich eine eigene Grenze vortaeuschen, die nie gesetzt wurde.
     sessionId.value = draftSession.id
@@ -317,7 +317,7 @@ async function createCandidate() {
         mediaAssetIds: [...mediaAssetIds.value, ...additionalMediaAssetIds.value],
         ...profileChoice, sourceMaterial: sourceMaterial(), targetPlatforms: selectedPlatforms.value,
         // Ein weiterer Kandidat der serverseitigen Minimumbildung, keine Ueberschreibung -- die
-        // gewaehlten Plattformen bleiben die verbindliche Obergrenze (routes/content.ts).
+        // gewaehlten Plattformen bleiben die verbindliche Obergrenze (routes/textWorkshop.ts).
         ...(maxCharacters !== undefined ? { maxCharacters } : {}),
       },
     }, z.object({ sessionId: UuidSchema, candidateIds: z.array(UuidSchema).min(1) }))

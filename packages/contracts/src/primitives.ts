@@ -39,7 +39,7 @@ export type SocialPlatform = z.infer<typeof SocialPlatformSchema>
 
 // Eine Quelle fuer 'plaintext ist exklusiv', geteilt von jeder Stelle, die eine Plattformliste
 // entgegennimmt (createTextGenerationSession, policy.ts defaultTargetPlatforms, der
-// save_content_brief-Bestaetigungspfad in apps/api/src/routes/agent.ts) -- vorher an mehreren
+// save_content_brief-Bestaetigungspfad in apps/api/src/services/agentProposalExecutors.ts) -- vorher an mehreren
 // Stellen unabhaengig nachgebaut, teils gar nicht (Review PR #181).
 export function hasExclusivePlatformConflict(platforms: readonly SocialPlatform[]): boolean {
   return platforms.includes('plaintext') && platforms.length > 1
