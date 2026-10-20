@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AlertTriangle, TrendingDown, TrendingUp } from '@lucide/vue'
+import { AlertTriangle } from '@lucide/vue'
 import {
   AnalyticsBreakdownResponseSchema,
   AnalyticsFunnelResponseSchema,
@@ -156,11 +156,6 @@ watch(breakdownDimension, async () => {
   }
 })
 
-function formatTrend(value: number | null): string | null {
-  if (value === null) return null
-  const percent = Math.round(value * 100)
-  return `${percent > 0 ? '+' : ''}${percent} %`
-}
 function formatPercent(value: number | null): string {
   return value === null ? '—' : `${Math.round(value * 100)} %`
 }
@@ -255,51 +250,11 @@ const maxFunnelCount = computed(() => Math.max(1, ...funnelStages.value.map((sta
 
     <template v-else-if="summary">
       <section class="mb-7 grid grid-cols-2 gap-3 lg:grid-cols-5" aria-label="Kennzahlen">
-        <article class="card p-4">
-          <div class="font-display text-2xl font-extrabold tracking-[-.04em]">{{ summary.postsCreated }}</div>
-          <div class="mt-1 flex items-center gap-1 text-[11px] text-[#7a817d]">
-            <span class="font-semibold text-ink">Beiträge erstellt</span>
-            <span v-if="formatTrend(summary.postsCreatedTrend)" class="flex items-center gap-0.5" :class="(summary.postsCreatedTrend ?? 0) >= 0 ? 'text-emerald-700' : 'text-red-700'">
-              <component :is="(summary.postsCreatedTrend ?? 0) >= 0 ? TrendingUp : TrendingDown" :size="11" />{{ formatTrend(summary.postsCreatedTrend) }}
-            </span>
-          </div>
-        </article>
-        <article class="card p-4">
-          <div class="font-display text-2xl font-extrabold tracking-[-.04em]">{{ summary.postsPublished }}</div>
-          <div class="mt-1 flex items-center gap-1 text-[11px] text-[#7a817d]">
-            <span class="font-semibold text-ink">Veröffentlicht</span>
-            <span v-if="formatTrend(summary.postsPublishedTrend)" class="flex items-center gap-0.5" :class="(summary.postsPublishedTrend ?? 0) >= 0 ? 'text-emerald-700' : 'text-red-700'">
-              <component :is="(summary.postsPublishedTrend ?? 0) >= 0 ? TrendingUp : TrendingDown" :size="11" />{{ formatTrend(summary.postsPublishedTrend) }}
-            </span>
-          </div>
-        </article>
-        <article class="card p-4">
-          <div class="font-display text-2xl font-extrabold tracking-[-.04em]">{{ summary.publicationsPublished }}</div>
-          <div class="mt-1 flex items-center gap-1 text-[11px] text-[#7a817d]">
-            <span class="font-semibold text-ink">Publikationen</span>
-            <span v-if="formatTrend(summary.publicationsPublishedTrend)" class="flex items-center gap-0.5" :class="(summary.publicationsPublishedTrend ?? 0) >= 0 ? 'text-emerald-700' : 'text-red-700'">
-              <component :is="(summary.publicationsPublishedTrend ?? 0) >= 0 ? TrendingUp : TrendingDown" :size="11" />{{ formatTrend(summary.publicationsPublishedTrend) }}
-            </span>
-          </div>
-        </article>
-        <article class="card p-4">
-          <div class="font-display text-2xl font-extrabold tracking-[-.04em]">{{ formatPercent(summary.approvalRate) }}</div>
-          <div class="mt-1 flex items-center gap-1 text-[11px] text-[#7a817d]">
-            <span class="font-semibold text-ink">Freigabequote</span>
-            <span v-if="formatTrend(summary.approvalRateTrend)" class="flex items-center gap-0.5" :class="(summary.approvalRateTrend ?? 0) >= 0 ? 'text-emerald-700' : 'text-red-700'">
-              <component :is="(summary.approvalRateTrend ?? 0) >= 0 ? TrendingUp : TrendingDown" :size="11" />{{ formatTrend(summary.approvalRateTrend) }}
-            </span>
-          </div>
-        </article>
-        <article class="card p-4">
-          <div class="font-display text-2xl font-extrabold tracking-[-.04em]">{{ formatSeconds(summary.leadTimeSecondsMedian) }}</div>
-          <div class="mt-1 flex items-center gap-1 text-[11px] text-[#7a817d]">
-            <span class="font-semibold text-ink">Durchlaufzeit-Median</span>
-            <span v-if="formatTrend(summary.leadTimeSecondsMedianTrend)" class="flex items-center gap-0.5" :class="(summary.leadTimeSecondsMedianTrend ?? 0) <= 0 ? 'text-emerald-700' : 'text-red-700'">
-              <component :is="(summary.leadTimeSecondsMedianTrend ?? 0) <= 0 ? TrendingDown : TrendingUp" :size="11" />{{ formatTrend(summary.leadTimeSecondsMedianTrend) }}
-            </span>
-          </div>
-        </article>
+        <KpiCard :value="summary.postsCreated" label="Beiträge erstellt" :trend="summary.postsCreatedTrend" />
+        <KpiCard :value="summary.postsPublished" label="Veröffentlicht" :trend="summary.postsPublishedTrend" />
+        <KpiCard :value="summary.publicationsPublished" label="Publikationen" :trend="summary.publicationsPublishedTrend" />
+        <KpiCard :value="formatPercent(summary.approvalRate)" label="Freigabequote" :trend="summary.approvalRateTrend" />
+        <KpiCard :value="formatSeconds(summary.leadTimeSecondsMedian)" label="Durchlaufzeit-Median" :trend="summary.leadTimeSecondsMedianTrend" lower-is-better />
       </section>
 
       <section class="card mb-7 p-5 sm:p-6">

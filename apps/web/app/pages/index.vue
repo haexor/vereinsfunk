@@ -327,45 +327,24 @@ await Promise.all([dashboardReady, suggestionsReady])
       class="mb-7 grid grid-cols-1 gap-3 sm:grid-cols-3"
       aria-label="Kennzahlen"
     >
-      <article class="card p-4 sm:p-5">
-        <div class="mb-5 flex items-start justify-between">
-          <span class="grid h-9 w-9 place-items-center rounded-xl bg-emerald-100 text-emerald-700"
-            ><CheckCircle2 :size="17"
-          /></span>
-        </div>
-        <div class="font-display text-2xl font-extrabold tracking-[-.04em] sm:text-[29px]">
-          {{ stats.published }}
-        </div>
-        <div class="mt-1 text-[11px] text-[#7a817d]">
-          <span class="font-semibold text-ink">Veröffentlicht</span>
-        </div>
-      </article>
-      <article class="card p-4 sm:p-5">
-        <div class="mb-5 flex items-start justify-between">
-          <span class="grid h-9 w-9 place-items-center rounded-xl bg-amber-100 text-amber-700"
-            ><Clock3 :size="17"
-          /></span>
-        </div>
-        <div class="font-display text-2xl font-extrabold tracking-[-.04em] sm:text-[29px]">
-          {{ stats.openApprovals }}
-        </div>
-        <div class="mt-1 text-[11px] text-[#7a817d]">
-          <span class="font-semibold text-ink">Offene Freigaben</span>
-        </div>
-      </article>
-      <article class="card p-4 sm:p-5">
-        <div class="mb-5 flex items-start justify-between">
-          <span class="grid h-9 w-9 place-items-center rounded-xl bg-sky-100 text-sky-700"
-            ><FileText :size="17"
-          /></span>
-        </div>
-        <div class="font-display text-2xl font-extrabold tracking-[-.04em] sm:text-[29px]">
-          {{ stats.scheduledNext7Days }}
-        </div>
-        <div class="mt-1 text-[11px] text-[#7a817d]">
-          <span class="font-semibold text-ink">Geplant, nächste 7 Tage</span>
-        </div>
-      </article>
+      <KpiCard
+        :value="stats.published"
+        label="Veröffentlicht"
+        :icon="CheckCircle2"
+        icon-class="bg-emerald-100 text-emerald-700"
+      />
+      <KpiCard
+        :value="stats.openApprovals"
+        label="Offene Freigaben"
+        :icon="Clock3"
+        icon-class="bg-amber-100 text-amber-700"
+      />
+      <KpiCard
+        :value="stats.scheduledNext7Days"
+        label="Geplant, nächste 7 Tage"
+        :icon="FileText"
+        icon-class="bg-sky-100 text-sky-700"
+      />
     </section>
 
     <section
