@@ -67,6 +67,9 @@ import { registerMemberRoutes } from './routes/members.js'
 import { registerPhotoLayoutRoutes } from './routes/photoLayout.js'
 import { registerOrganizationRoutes } from './routes/organization.js'
 import { registerPlatformAdminRoutes } from './routes/platformAdmin.js'
+import { registerPlatformSettingsRoutes } from './routes/platformSettings.js'
+import { registerPlatformOrganizationRoutes } from './routes/platformOrganizations.js'
+import { registerPlatformSubscriptionRoutes } from './routes/platformSubscriptions.js'
 import { registerPlatformPersonaRoutes } from './routes/platformPersonas.routes.js'
 import { registerPolicyRoutes } from './routes/policies.js'
 import { registerModuleRoutes } from './routes/modules.js'
@@ -425,6 +428,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   registerSubscriptionRoutes(app, context)
 
   registerPlatformAdminRoutes(app, context)
+  registerPlatformSettingsRoutes(app, context)
+  registerPlatformOrganizationRoutes(app, context)
+  registerPlatformSubscriptionRoutes(app, context)
 
   registerLlmProviderRoutes(app, context)
   registerVisionProviderComparisonRoutes(app, context)
