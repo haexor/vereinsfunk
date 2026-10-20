@@ -96,7 +96,7 @@ describe('PhotoImageWorkshop layout', () => {
 
   it('loads selectable frame assets from the shared brand asset library', () => {
     expect(assets).toContain('selectableFrameAssets')
-    expect(assets).toContain('props.frameAssets ?? selectableAssetsToCards')
+    expect(assets).toContain('toValue(props.frameAssets) ?? selectableAssetsToCards')
     expect(assets).toContain('const frames = computed')
   })
 })
