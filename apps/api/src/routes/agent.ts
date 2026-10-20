@@ -32,7 +32,8 @@ import {
   type AgentScope,
   type AgentWorkspace,
 } from '@vereinsfunk/contracts'
-import { canAssignRole, hasPermission, permissionModule, type Permission, type PermissionModule } from '@vereinsfunk/authorization'
+import { canAssignRole, hasPermission, type Permission, type PermissionModule } from '@vereinsfunk/authorization'
+import { findDisabledModule } from '../auth.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { createHash, randomUUID } from 'node:crypto'
@@ -647,10 +648,8 @@ export function registerAgentRoutes(
     const roles = await roleProvider.rolesForScope(request.auth!, permissionScope)
     if (!hasPermission(roles, permission)) return { ok: false, reason: 'forbidden' }
     // Dieselbe Modulregel wie requirePermission (auth.ts), erst nach der Rollenpruefung.
-    const module = permissionModule[permission]
-    if (module !== 'core' && !(await moduleStatusProvider.modulesForScope(permissionScope)).enabled.includes(module)) {
-      return { ok: false, reason: 'module_disabled', module }
-    }
+    const module = await findDisabledModule(moduleStatusProvider, [permission], permissionScope)
+    if (module) return { ok: false, reason: 'module_disabled', module }
     let invitationInput: CreateInvitationRequest | null = null
     if (proposal.toolName === 'create_invitation') {
       // Das Tool-Schema bietet dem Modell jede Rolle an; welche im Scope vergeben werden darf, prueft

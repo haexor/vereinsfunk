@@ -1,4 +1,4 @@
-import { hasPermission, permissionModule, type Permission, type Role } from '@vereinsfunk/authorization'
+import { hasPermission, permissionModule, type Permission, type PermissionModule, type Role } from '@vereinsfunk/authorization'
 import type { ApiEnvironment } from '@vereinsfunk/config'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyReply, FastifyRequest } from 'fastify'
@@ -25,7 +25,7 @@ export interface RoleProvider {
   // ueber alle Abteilungen/Teams) kann damit die drei Mitgliedschaftstabellen gebuendelt statt
   // einmal je Scope aufloesen.
   // Optional, damit bestehende RoleProvider-Testdoubles, die nur rolesForScope implementieren, gueltig
-  // bleiben -- siehe resolveRolesForScopes (routes/shared.ts) fuer den Fallback ohne diese Methode.
+  // bleiben -- siehe resolveRolesForScopes (services/scopeAuthorization.ts) fuer den Fallback ohne diese Methode.
   rolesForScopes?(
     auth: { userId: string; accessToken: string },
     scopes: readonly PermissionScope[],
@@ -185,6 +185,26 @@ export class SupabasePlatformAdminProvider implements PlatformAdminProvider {
   }
 }
 
+/**
+ * Prueft fuer bereits per Rolle gewaehrte Permissions die Module im Scope
+ * (Tarif ∩ Verein ∩ Abteilung ∩ Mannschaft). Erst nach der Rollenpruefung aufrufen,
+ * damit Unberechtigte nichts ueber die Modulauswahl erfahren.
+ * Eine Rahmen-Permission erlaubt den Aufruf ohne Abfrage; sonst muss mindestens ein Modul
+ * aktiv sein. Liefert das blockierende Modul oder null. Ohne Antwort, damit auch Aufrufer
+ * ausserhalb einer Route (Agenten-Vorschlaege) dieselbe Regel nutzen.
+ */
+export async function findDisabledModule(
+  moduleStatusProvider: ModuleStatusProvider,
+  grantedPermissions: readonly Permission[],
+  scope: PermissionScope,
+): Promise<Exclude<PermissionModule, 'core'> | null> {
+  const modules = grantedPermissions.map((permission) => permissionModule[permission])
+  if (modules.includes('core')) return null
+  const { enabled } = await moduleStatusProvider.modulesForScope(scope)
+  if (modules.some((module) => (enabled as readonly string[]).includes(module))) return null
+  return modules.find((module): module is Exclude<PermissionModule, 'core'> => module !== 'core') ?? null
+}
+
 /** Erstellt Authentifizierungs-, Rollen- und Modulpruefungen mit gemeinsamem JWKS-Cache. */
 export function createAuthGuards(
   environment: ApiEnvironment,
@@ -241,24 +261,16 @@ export function createAuthGuards(
     return requireModulesOf(request, reply, [permission], scope)
   }
 
-  /**
-   * Prueft fuer bereits per Rolle gewaehrte Permissions die Module im Scope
-   * (Tarif ∩ Verein ∩ Abteilung ∩ Mannschaft). Erst nach der Rollenpruefung aufrufen,
-   * damit Unberechtigte nichts ueber die Modulauswahl erfahren.
-   * Eine Rahmen-Permission erlaubt den Aufruf ohne Abfrage; sonst muss mindestens ein Modul
-   * aktiv sein. Bei Ablehnung wird 403 module_disabled gesendet und false geliefert.
-   */
+  /** Sendet bei einem abgeschalteten Modul (findDisabledModule) 403 module_disabled und liefert false. */
   const requireModulesOf = async (
     request: FastifyRequest,
     reply: FastifyReply,
     grantedPermissions: readonly Permission[],
     scope: PermissionScope,
   ): Promise<boolean> => {
-    const modules = grantedPermissions.map((permission) => permissionModule[permission])
-    if (modules.includes('core')) return true
-    const { enabled } = await moduleStatusProvider.modulesForScope(scope)
-    if (modules.some((module) => (enabled as readonly string[]).includes(module))) return true
-    reply.code(403).send({ error: 'module_disabled', module: modules[0], correlationId: request.id })
+    const disabledModule = await findDisabledModule(moduleStatusProvider, grantedPermissions, scope)
+    if (!disabledModule) return true
+    reply.code(403).send({ error: 'module_disabled', module: disabledModule, correlationId: request.id })
     return false
   }
 
