@@ -5,15 +5,12 @@ import { emptyPhotoLayoutPresetDraft, type PhotoLayoutPresetDraft } from '../uti
 import { selectableAtLevel } from '../utils/scopeSelection'
 
 const api = useApiClient()
-const session = await useSession()
-const { organizationId, departmentId: activeDepartmentId, teamId: activeTeamId, level: activeLevel } = await useActiveScope()
+const { organizationId, departmentId: activeDepartmentId, teamId: activeTeamId, level: activeLevel, organization: activeOrganization } = await useActiveScope()
 const supabase = useSupabaseClient()
-const activeOrganization = computed(() => session.value?.scopes.find((item) => item.organizationId === organizationId.value) ?? null)
 
 const loading = ref(true)
 const loadError = ref(false)
 const saving = ref(false)
-let latestLoadRun = 0
 
 const presets = ref<PhotoLayoutPreset[]>([])
 const DEFAULT_ORG_COLORS = { primaryColor: '#163a2c', accentColor: '#caff4a' }
@@ -44,17 +41,16 @@ function scopeLabel(preset: PhotoLayoutPreset): string {
   return 'Verein'
 }
 
-async function loadAll() {
-  const loadRun = ++latestLoadRun
-  if (!organizationId.value) { loading.value = false; return }
+const { reload: loadAll, ready } = useScopedLoad(() => organizationId.value, async (currentOrganizationId, isLatest) => {
+  if (!currentOrganizationId) { loading.value = false; return }
   loading.value = true
   loadError.value = false
   try {
     const [orgBrandResult, presetsResponse] = await Promise.all([
-      supabase.from('organization_brand_profiles').select('primary_color, accent_color').eq('organization_id', organizationId.value).maybeSingle(),
-      api.request('/v1/photo-layout-presets', { query: { organizationId: organizationId.value } }, z.object({ presets: z.array(PhotoLayoutPresetSchema) })),
+      supabase.from('organization_brand_profiles').select('primary_color, accent_color').eq('organization_id', currentOrganizationId).maybeSingle(),
+      api.request('/v1/photo-layout-presets', { query: { organizationId: currentOrganizationId } }, z.object({ presets: z.array(PhotoLayoutPresetSchema) })),
     ])
-    if (loadRun !== latestLoadRun) return
+    if (!isLatest()) return
     if (orgBrandResult.error) { loadError.value = true; return }
     // Ohne eigene Markenzeile gelten wieder die Vorgaben -- sonst zeigten die Vorschauen nach einem
     // Vereinswechsel die Farben des vorigen Vereins.
@@ -62,13 +58,12 @@ async function loadAll() {
     orgColors.accentColor = orgBrandResult.data?.accent_color ?? DEFAULT_ORG_COLORS.accentColor
     presets.value = presetsResponse.presets
   } catch {
-    if (loadRun === latestLoadRun) loadError.value = true
+    if (isLatest()) loadError.value = true
   } finally {
-    if (loadRun === latestLoadRun) loading.value = false
+    if (isLatest()) loading.value = false
   }
-}
-await loadAll()
-watch(organizationId, () => { void loadAll() })
+})
+await ready
 watch([activeLevel, activeDepartmentId], () => {
   createError.value = ''
   deleteError.value = ''
