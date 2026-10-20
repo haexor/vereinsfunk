@@ -26,14 +26,23 @@ export class WorkflowOutboxDispatcher {
   constructor(private readonly outbox: WorkflowOutboxRepository, private readonly orchestrator: Orchestrator) {}
   async dispatchPending(limit = 20) {
     const claimed = await this.outbox.claimPending(limit)
+    let releaseFailure: unknown
     for (const entry of claimed) {
       try {
         const { runId } = await this.orchestrator.trigger(entry.workflow, entry.payload, { priority: entry.priority })
         await this.outbox.markDispatched(entry.id, entry.claimToken, runId)
       } catch (error) {
-        await this.outbox.markRetryableFailure(entry.id, entry.claimToken, error instanceof Error ? error.name : 'unknown')
+        // Eine gescheiterte Freigabe darf den Rest des Stapels nicht liegen lassen: die Zeile bleibt
+        // 'dispatching' und wird nach Ablauf der Claim-Sperre erneut geclaimt. Gemeldet wird der
+        // Fehler erst nach dem Stapel.
+        try {
+          await this.outbox.markRetryableFailure(entry.id, entry.claimToken, error instanceof Error ? error.name : 'unknown')
+        } catch (failure) {
+          releaseFailure ??= failure
+        }
       }
     }
+    if (releaseFailure !== undefined) throw releaseFailure
     return claimed.length
   }
 }

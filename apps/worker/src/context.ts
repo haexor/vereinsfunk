@@ -4,7 +4,7 @@ import type { WorkerEnvironment } from '@vereinsfunk/config'
 import { hashLogoBuffer } from '@vereinsfunk/brand-assets'
 import { byteaToBuffer, EmbeddedProviderSecretSchema, unwrapEmbeddedSecret } from '@vereinsfunk/secrets'
 import { CommunicationGoalSchema, MaxCharactersSchema, SocialPlatformSchema, TextGenerationTemperatureSchema, UuidSchema, WorkflowNameSchema, WorkflowPayloadSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
-import type { WorkflowOutboxRepository } from '@vereinsfunk/orchestration'
+import type { ClaimedOutboxEntry, WorkflowOutboxRepository } from '@vereinsfunk/orchestration'
 import type { BrandAnalysisJobRow, BrandWebsiteAnalysisRepository, VisionProviderRow } from './brandWebsiteAnalysis.js'
 import { WorkflowExecutionError, type WorkflowExecutionRepository, type WorkflowRunAcquireResult } from './workflows.js'
 import type { CandidateRow, ProviderRow, SessionRow, TextGenerationRepository } from './textGeneration.js'
@@ -61,14 +61,30 @@ const RECOVERABLE_SESSION_ROW_COLUMNS = Object.keys(RecoverableSessionRowSchema.
 /** Creates the worker-only service-role repository from validated configuration. */
 export function createWorkflowOutboxRepository(config: WorkerEnvironment): WorkflowOutboxRepository {
   const client = createClient(config.SUPABASE_URL, config.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  const release = async (id: string, claimToken: string, errorClass: string) => { const { data, error } = await client.rpc('release_workflow_outbox', { p_outbox_id: id, p_claim_token: claimToken, p_error_class: errorClass }); if (error || !data) throw error ?? new Error('outbox release lost') }
   return {
     async claimPending(limit) {
       const { data, error } = await client.rpc('claim_workflow_outbox', { p_limit: limit })
       if (error) throw error
-      return (data ?? []).map((row: { id: string; claim_token: string; workflow_name: unknown; payload: unknown; priority: 1 | 2 | 3 }) => ({ id: row.id, claimToken: row.claim_token, workflow: WorkflowNameSchema.parse(row.workflow_name), payload: WorkflowPayloadSchema.parse(row.payload), priority: row.priority }))
+      const claimed: ClaimedOutboxEntry[] = []
+      for (const row of (data ?? []) as { id: string; claim_token: string; workflow_name: unknown; payload: unknown; priority: 1 | 2 | 3 }[]) {
+        const workflow = WorkflowNameSchema.safeParse(row.workflow_name)
+        const payload = WorkflowPayloadSchema.safeParse(row.payload)
+        if (workflow.success && payload.success) {
+          claimed.push({ id: row.id, claimToken: row.claim_token, workflow: workflow.data, payload: payload.data, priority: row.priority })
+          continue
+        }
+        // Je Zeile statt fuer den ganzen Stapel: eine einzige ungueltige Zeile liess sonst alle
+        // geclaimten Zeilen in 'dispatching' haengen, und der naechste Claim nach fuenf Minuten traf
+        // sie in derselben Reihenfolge wieder -- der Versand stand fuer alle Vereine. Die Freigabe
+        // schiebt die Zeile per available_at ans Ende der Warteschlange; scheitert auch sie, holt
+        // der Claim sie nach Ablauf der Sperre zurueck.
+        await release(row.id, row.claim_token, 'invalid_outbox_row').catch(() => {})
+      }
+      return claimed
     },
     async markDispatched(id, claimToken, runId) { const { data, error } = await client.rpc('acknowledge_workflow_outbox', { p_outbox_id: id, p_claim_token: claimToken, p_hatchet_run_id: runId }); if (error || !data) throw error ?? new Error('outbox acknowledgement lost') },
-    async markRetryableFailure(id, claimToken, errorClass) { const { data, error } = await client.rpc('release_workflow_outbox', { p_outbox_id: id, p_claim_token: claimToken, p_error_class: errorClass }); if (error || !data) throw error ?? new Error('outbox release lost') },
+    markRetryableFailure: release,
   }
 }
 
