@@ -36,7 +36,13 @@ async function sendProviderModelListing(
     // vorgezogene Pruefung hier waere doppelte Arbeit fuer dasselbe Ergebnis.
     payload = JSON.parse(await fetchPublicUrl(joinUrlPath(provider.baseUrl, 'models'), { headers, maxBytes: 1_000_000 }))
   } catch (error) {
-    request.log.warn({ err: error, correlationId: request.id }, logMessage)
+    // Nie den Fehler selbst loggen: seine Meldung traegt die volle URL, und eine Basis-URL kann den
+    // Schluessel als Query-Parameter enthalten (?key=...). Grund und Host reichen zur Diagnose.
+    request.log.warn({
+      reason: error instanceof OutboundFetchError ? error.reason : error instanceof SyntaxError ? 'invalid_json' : 'unknown',
+      host: new URL(provider.baseUrl).host,
+      correlationId: request.id,
+    }, logMessage)
     if (error instanceof OutboundFetchError && error.reason === 'blocked_url') {
       return reply.code(400).send({ error: 'base_url_not_allowed', correlationId: request.id })
     }

@@ -904,6 +904,32 @@ describe('platform administration', () => {
     expect(response.json()).toMatchObject({ error: 'base_url_not_allowed' })
   })
 
+  // Eine Basis-URL darf den Schluessel als Query-Parameter tragen; die Fehlermeldung von
+  // fetchPublicUrl enthaelt die volle URL und darf deshalb nie ins Log.
+  it('logs only the failure reason and host when the model listing fails', async () => {
+    const app = await startApp({ platformAdminProvider: adminProvider })
+    const warnings: unknown[] = []
+    app.addHook('preHandler', async (request) => {
+      request.log.warn = ((...args: unknown[]) => { warnings.push(args) }) as typeof request.log.warn
+    })
+    const token = await signAccessToken(USER_ID)
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('connect ECONNREFUSED https://8.8.8.8/v1/models?key=leaked-query-key') }))
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/llm-providers/models',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { protocol: 'openai', baseUrl: 'https://8.8.8.8/v1?key=leaked-query-key', apiKey: 'super-secret-bearer-token' },
+      })
+      expect(response.statusCode).toBe(502)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+    expect(warnings).toHaveLength(1)
+    expect(JSON.stringify(warnings)).not.toContain('leaked-query-key')
+    expect(warnings[0]).toEqual([expect.objectContaining({ reason: 'request_failed', host: '8.8.8.8' }), 'llm provider model listing failed'])
+  })
+
   it('refuses to list models without platform administration', async () => {
     const app = await startApp({
       platformAdminProvider: { async statusFor() { return { isPlatformAdmin: false, isDefaultAdmin: false } } },
