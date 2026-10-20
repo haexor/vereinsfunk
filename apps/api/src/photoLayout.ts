@@ -1,6 +1,6 @@
 import { PHOTO_LAYOUT_PHOTO_COUNTS, type PhotoLayoutKind, type PhotoLayoutPreset } from '@vereinsfunk/contracts'
 import sharp from 'sharp'
-import { hexToRgb } from './imageStyle.js'
+import { hexToRgb } from './color.js'
 
 export interface PhotoLayoutBrandColors {
   primaryColor: string
