@@ -1,10 +1,6 @@
 import type { ApiEnvironment } from '@vereinsfunk/config'
 import { createChainSigner, createSecretBox, parseSecretBoxKeys, type ChainSigner, type SecretBox } from '@vereinsfunk/secrets'
 
-// bytea- und Embed-Helfer liegen in packages/secrets, weil der Worker sie ebenso braucht. Hier
-// weiter exportiert, damit die bestehenden Importe aus ./secretBox.js unveraendert bleiben.
-export { byteaToBuffer, ciphertextToBytea, EmbeddedProviderSecretSchema, unwrapEmbeddedSecret } from '@vereinsfunk/secrets'
-
 // Gemeinsam fuer LLM-Provider-Schluessel (Paket 011) und Social-Connection-Tokens (Paket 012) --
 // beide Verwendungen teilen denselben Schluesselsatz, statt einen zweiten mit eigenen Env-Variablen
 // einzufuehren (Plan 012 sah urspruenglich SOCIAL_TOKEN_KEYS vor; SECRET_BOX_KEYS existierte zu dem

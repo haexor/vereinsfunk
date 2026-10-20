@@ -21,7 +21,8 @@ import Fastify, { LogController, type FastifyInstance, type FastifyServerOptions
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { z } from 'zod'
-import { byteaToBuffer, createSecretBoxFromEnvironment, EmbeddedProviderSecretSchema, unwrapEmbeddedSecret } from './secretBox.js'
+import { byteaToBuffer, EmbeddedProviderSecretSchema, unwrapEmbeddedSecret } from '@vereinsfunk/secrets'
+import { createSecretBoxFromEnvironment } from './secretBox.js'
 import { LocalAgentResponder, OpenAiResponsesAgentResponder, type AgentResponder } from './agent.js'
 import {
   createAuthGuards,

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createSecretBox } from '@vereinsfunk/secrets'
 import { INVITATION_ID, ORGANIZATION_ID, USER_ID, adminProvider, chain, defaultAdminProvider, nonAdminProvider, signAccessToken, startApp } from './testSupport.js'
-import { ciphertextToBytea } from './secretBox.js'
+import { ciphertextToBytea } from '@vereinsfunk/secrets'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
 

@@ -4,7 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { MetaPublishError } from '@vereinsfunk/publishing'
 import type { PublicationInput, SocialPublisher } from '@vereinsfunk/publishing'
 import type { SupabaseClientFactory } from './app.js'
-import { ciphertextToBytea } from './secretBox.js'
+import { ciphertextToBytea } from '@vereinsfunk/secrets'
 import { createSecretBox } from '@vereinsfunk/secrets'
 
 describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffentlichung)', () => {

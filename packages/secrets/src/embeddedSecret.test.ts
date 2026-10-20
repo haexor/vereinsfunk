@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { EmbeddedProviderSecretSchema, unwrapEmbeddedSecret } from './secretBox.js'
+import { EmbeddedProviderSecretSchema, unwrapEmbeddedSecret } from './index.js'
 
 describe('EmbeddedProviderSecretSchema', () => {
   const secret = { api_key_ciphertext: '\\x00', key_version: 'v1' }

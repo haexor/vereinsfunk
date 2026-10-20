@@ -1,7 +1,7 @@
 import { ContentGenerationError } from '@vereinsfunk/content-engine'
 import { createSecretBox } from '@vereinsfunk/secrets'
 import { describe, expect, it } from 'vitest'
-import { ciphertextToBytea } from './secretBox.js'
+import { ciphertextToBytea } from '@vereinsfunk/secrets'
 import { adminProvider, nonAdminProvider, signAccessToken, startApp, USER_ID } from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'

@@ -4,7 +4,7 @@ import { FakeLinkedInOAuthClient, FakeTwitterOAuthClient } from '@vereinsfunk/pu
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
 import type { RoleProvider } from './auth.js'
-import { ciphertextToBytea } from './secretBox.js'
+import { ciphertextToBytea } from '@vereinsfunk/secrets'
 import { createSecretBox } from '@vereinsfunk/secrets'
 
 const META_ENVIRONMENT_KEYS = ['PUBLISHING_PROVIDER', 'META_APP_ID', 'META_APP_SECRET', 'META_OAUTH_REDIRECT_URL', 'API_PUBLIC_BASE_URL'] as const

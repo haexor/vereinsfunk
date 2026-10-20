@@ -35,7 +35,8 @@ import { mapPlatformAdminInvitationRow } from '../apiMappers.js'
 import { generateInvitationToken, invitationCallbackUrls, sendInvitationThroughSupabaseAuth } from '../invitations.js'
 import type { ApiRouteContext } from './context.js'
 import { createAuditRecorder, fetchAllRows, notExpiredFilter } from './shared.js'
-import { ciphertextToBytea, createSecretBoxFromEnvironment } from '../secretBox.js'
+import { ciphertextToBytea } from '@vereinsfunk/secrets'
+import { createSecretBoxFromEnvironment } from '../secretBox.js'
 import { parseBlockingPublications } from '../moduleStatus.js'
 
 /** Erstellt den Auth-Callback zur Plattform-Admin-Einladung mit dem URL-kodierten Einladungstoken. */

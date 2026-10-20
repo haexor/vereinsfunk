@@ -15,7 +15,8 @@ import { fetchPublicUrl, OutboundFetchError } from '@vereinsfunk/outbound-fetch'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { IMPLEMENTED_LLM_PROTOCOLS, IMPLEMENTED_LLM_TASK_KINDS, joinUrlPath, mapLlmProviderConfigurationRow, parseModelListingIds } from '../llmProviders.js'
-import { byteaToBuffer, ciphertextToBytea, createSecretBoxFromEnvironment, EmbeddedProviderSecretSchema, unwrapEmbeddedSecret } from '../secretBox.js'
+import { byteaToBuffer, ciphertextToBytea, EmbeddedProviderSecretSchema, unwrapEmbeddedSecret } from '@vereinsfunk/secrets'
+import { createSecretBoxFromEnvironment } from '../secretBox.js'
 import type { ApiRouteContext } from './context.js'
 
 // Gemeinsam fuer die Modellabfrage mit dem Formularschluessel und mit dem gespeicherten Geheimnis.
