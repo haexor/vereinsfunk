@@ -57,12 +57,22 @@ if (collisions.length > 0) {
 // Fallback wie "gar nicht gesetzt" nehmen.
 const baseRef = process.env.MIGRATION_CHECK_BASE_REF || 'origin/main'
 
+// Laedt nur einen entfernten Branch (origin/<name>) nach; ein lokaler Branch oder eine Commit-ID
+// (images.yml) muss ohnehin schon vorhanden sein. --depth nur in einem bereits flachen Klon: in
+// einem vollstaendigen machte "git fetch --depth=1" den lokalen Klon des Entwicklers flach.
+function fetchBaseRef(ref) {
+  const branch = /^origin\/(.+)$/.exec(ref)?.[1]
+  if (!branch) return
+  const shallow = execFileSync('git', ['rev-parse', '--is-shallow-repository'], { cwd: repoRoot, encoding: 'utf8' }).trim() === 'true'
+  execFileSync('git', ['fetch', '--quiet', ...(shallow ? ['--depth=1'] : []), 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`], {
+    cwd: repoRoot,
+    stdio: 'ignore',
+  })
+}
+
 function migrationsAtRef(ref) {
   try {
-    execFileSync('git', ['fetch', '--quiet', '--depth=1', 'origin', '+refs/heads/main:refs/remotes/origin/main'], {
-      cwd: repoRoot,
-      stdio: 'ignore',
-    })
+    fetchBaseRef(ref)
     const output = execFileSync('git', ['ls-tree', '-r', '--name-only', ref, '--', 'supabase/migrations'], {
       cwd: repoRoot,
       encoding: 'utf8',
