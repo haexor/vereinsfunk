@@ -1,5 +1,5 @@
-import { createGuardedFetch, OutboundFetchError } from '@vereinsfunk/outbound-fetch'
-import { classifyProviderStatus } from './providerStatus.js'
+import { createGuardedFetch } from '@vereinsfunk/outbound-fetch'
+import { ANTHROPIC_OUTPUT_TOOL_NAME, joinUrlPath, postProviderJson, type FetchLike } from './providerRequest.js'
 
 /**
  * Paket 048: Vision-Analyse eines Website-Screenshots fuer die KI-Markenerkennung. Bewusst ein
@@ -75,24 +75,10 @@ function buildPrompt(input: VisionAnalysisInput) {
   }
 }
 
-type FetchLike = (input: string, init: RequestInit) => Promise<Response>
-
-function joinUrlPath(baseUrl: string, path: string): string {
-  const url = new URL(baseUrl)
-  url.pathname = `${url.pathname.replace(/\/$/, '')}/${path}`
-  return url.toString()
-}
-
 function parsePairingKey(value: unknown, options: readonly FontPairingOption[]): string | null {
   if (value === NO_FONT_PAIRING_MATCH) return null
   return options.some((option) => option.key === value) ? (value as string) : null
 }
-
-// Muss 'final_result' heissen, wie in index.ts: haex-claude-proxy verdrahtet im Abo-Modus nur dieses
-// Werkzeug als strukturierte Ausgabe. Ein anderer Name liefert eine reine Textantwort ohne
-// tool_use-Block, die hier als provider_schema scheitert. Bewusst nicht aus index.ts importiert --
-// index.ts re-exportiert dieses Modul.
-const ANTHROPIC_OUTPUT_TOOL_NAME = 'final_result'
 
 function jsonSchemaFor(input: VisionAnalysisInput) {
   const fontPairingEnum = [...input.fontPairingOptions.map((option) => option.key), NO_FONT_PAIRING_MATCH]
@@ -113,34 +99,19 @@ export class AnthropicVisionAnalysisGenerator implements VisionAnalysisGenerator
 
   async analyzeBrand(input: VisionAnalysisInput): Promise<VisionAnalysisResult> {
     const prompt = buildPrompt(input)
-    let response: Response
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), input.requestTimeoutMs ?? 60_000)
+    const body = await postProviderJson(this.fetcher, joinUrlPath(input.baseUrl, 'messages'), {
+      headers: { 'x-api-key': input.apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: input.model, max_tokens: 1024, system: prompt.system,
+        messages: [{ role: 'user', content: [
+          { type: 'image', source: { type: 'base64', media_type: input.imageMediaType, data: input.imageBase64 } },
+          { type: 'text', text: 'Analysiere diesen Screenshot.' },
+        ] }],
+        tools: [{ name: ANTHROPIC_OUTPUT_TOOL_NAME, description: 'Gibt die vorgeschlagenen Markenfarben und Font-Wahl zurueck.', input_schema: jsonSchemaFor(input) }],
+        tool_choice: { type: 'tool', name: ANTHROPIC_OUTPUT_TOOL_NAME },
+      }),
+    }, input.requestTimeoutMs ?? 60_000, (errorClass, retryable) => new VisionAnalysisError(errorClass, retryable)) as { stop_reason?: unknown; content?: Array<{ type?: unknown; name?: unknown; input?: unknown }> }
     try {
-      response = await this.fetcher(joinUrlPath(input.baseUrl, 'messages'), {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { 'x-api-key': input.apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({
-          model: input.model, max_tokens: 1024, system: prompt.system,
-          messages: [{ role: 'user', content: [
-            { type: 'image', source: { type: 'base64', media_type: input.imageMediaType, data: input.imageBase64 } },
-            { type: 'text', text: 'Analysiere diesen Screenshot.' },
-          ] }],
-          tools: [{ name: ANTHROPIC_OUTPUT_TOOL_NAME, description: 'Gibt die vorgeschlagenen Markenfarben und Font-Wahl zurueck.', input_schema: jsonSchemaFor(input) }],
-          tool_choice: { type: 'tool', name: ANTHROPIC_OUTPUT_TOOL_NAME },
-        }),
-      })
-    } catch (error) {
-      if (error instanceof OutboundFetchError) throw new VisionAnalysisError('provider_configuration', false)
-      throw new VisionAnalysisError('provider_network', true)
-    } finally { clearTimeout(timeout) }
-    if (!response.ok) {
-      const { errorClass, retryable } = classifyProviderStatus(response.status)
-      throw new VisionAnalysisError(errorClass, retryable)
-    }
-    try {
-      const body = await response.json() as { stop_reason?: unknown; content?: Array<{ type?: unknown; name?: unknown; input?: unknown }> }
       if (body.stop_reason === 'refusal') throw new VisionAnalysisError('provider_schema', false)
       const block = body.content?.find((entry) => entry.type === 'tool_use' && entry.name === ANTHROPIC_OUTPUT_TOOL_NAME)
       return parseResult(block?.input, input.fontPairingOptions)
@@ -157,36 +128,21 @@ export class OpenAiCompatibleVisionAnalysisGenerator implements VisionAnalysisGe
 
   async analyzeBrand(input: VisionAnalysisInput): Promise<VisionAnalysisResult> {
     const prompt = buildPrompt(input)
-    let response: Response
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), input.requestTimeoutMs ?? 60_000)
+    const body = await postProviderJson(this.fetcher, joinUrlPath(input.baseUrl, 'chat/completions'), {
+      headers: { authorization: `Bearer ${input.apiKey}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: input.model, max_tokens: 1024,
+        response_format: { type: 'json_schema', json_schema: { name: 'brand_color_analysis', strict: true, schema: jsonSchemaFor(input) } },
+        messages: [
+          { role: 'system', content: prompt.system },
+          { role: 'user', content: [
+            { type: 'image_url', image_url: { url: `data:${input.imageMediaType};base64,${input.imageBase64}` } },
+            { type: 'text', text: 'Analysiere diesen Screenshot.' },
+          ] },
+        ],
+      }),
+    }, input.requestTimeoutMs ?? 60_000, (errorClass, retryable) => new VisionAnalysisError(errorClass, retryable)) as { choices?: Array<{ message?: { content?: unknown } }> }
     try {
-      response = await this.fetcher(joinUrlPath(input.baseUrl, 'chat/completions'), {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { authorization: `Bearer ${input.apiKey}`, 'content-type': 'application/json' },
-        body: JSON.stringify({
-          model: input.model, max_tokens: 1024,
-          response_format: { type: 'json_schema', json_schema: { name: 'brand_color_analysis', strict: true, schema: jsonSchemaFor(input) } },
-          messages: [
-            { role: 'system', content: prompt.system },
-            { role: 'user', content: [
-              { type: 'image_url', image_url: { url: `data:${input.imageMediaType};base64,${input.imageBase64}` } },
-              { type: 'text', text: 'Analysiere diesen Screenshot.' },
-            ] },
-          ],
-        }),
-      })
-    } catch (error) {
-      if (error instanceof OutboundFetchError) throw new VisionAnalysisError('provider_configuration', false)
-      throw new VisionAnalysisError('provider_network', true)
-    } finally { clearTimeout(timeout) }
-    if (!response.ok) {
-      const { errorClass, retryable } = classifyProviderStatus(response.status)
-      throw new VisionAnalysisError(errorClass, retryable)
-    }
-    try {
-      const body = await response.json() as { choices?: Array<{ message?: { content?: unknown } }> }
       const raw = body.choices?.[0]?.message?.content
       const content = typeof raw === 'string' ? JSON.parse(raw) : raw
       return parseResult(content, input.fontPairingOptions)

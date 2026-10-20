@@ -1,7 +1,7 @@
 import { GeneratedPostSchema, PlatformVariantSchema, SafetyFlagSchema, type CreateSubmission, type GeneratedPost, type PlatformVariant, type StyleProfileSnapshot } from '@vereinsfunk/contracts'
-import { createGuardedFetch, OutboundFetchError } from '@vereinsfunk/outbound-fetch'
+import { createGuardedFetch } from '@vereinsfunk/outbound-fetch'
 import { getPreset, validateSourceMaterial } from './presets.js'
-import { classifyProviderStatus } from './providerStatus.js'
+import { ANTHROPIC_OUTPUT_TOOL_NAME, joinUrlPath, postProviderJson, type FetchLike } from './providerRequest.js'
 
 export { factsFromFixture, factsFromClubEvent } from './schedule.js'
 export type { FactsFromScheduleResult } from './schedule.js'
@@ -162,53 +162,22 @@ export function buildStructuredTextPrompt(input: Pick<StructuredTextGeneratorInp
   }
 }
 
-type FetchLike = (input: string, init: RequestInit) => Promise<Response>
-
-/**
- * Haengt `path` ueber `URL.pathname` an, nicht per String-Konkatenation: eine Basis-URL mit
- * Query-String wuerde sonst den Schlussteil des Pfads verschlucken, weil ein angehaengter "/"
- * hinter dem "?" landet statt davor.
- */
-function joinUrlPath(baseUrl: string, path: string): string {
-  const url = new URL(baseUrl)
-  url.pathname = `${url.pathname.replace(/\/$/, '')}/${path}`
-  return url.toString()
-}
-
 /** OpenAI-compatible, JSON-schema constrained adapter. It is deliberately worker injectable. */
 export class OpenAiCompatibleStructuredContentGenerator implements StructuredContentGenerator {
   constructor(private readonly fetcher: FetchLike = createGuardedFetch()) {}
 
   async generateText(input: StructuredTextGeneratorInput): Promise<GeneratedPost> {
     const prompt = buildStructuredTextPrompt(input)
-    let response: Response
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), input.requestTimeoutMs ?? 60_000)
+    const body = await postProviderJson(this.fetcher, joinUrlPath(input.baseUrl, 'chat/completions'), {
+      headers: { authorization: `Bearer ${input.apiKey}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ model: input.model, temperature: input.temperature, max_tokens: input.maxOutputTokens,
+        response_format: { type: 'json_schema', json_schema: { name: 'generated_post', strict: true, schema: generatedPostJsonSchema } },
+        messages: [{ role: 'system', content: prompt.system }, { role: 'user', content: prompt.user }],
+      }),
+    }, input.requestTimeoutMs ?? 60_000, (errorClass, retryable) => new ContentGenerationError(errorClass, retryable)) as { choices?: Array<{ message?: { content?: unknown } }> }
     try {
-      response = await this.fetcher(joinUrlPath(input.baseUrl, 'chat/completions'), {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { authorization: `Bearer ${input.apiKey}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ model: input.model, temperature: input.temperature, max_tokens: input.maxOutputTokens,
-          response_format: { type: 'json_schema', json_schema: { name: 'generated_post', strict: true, schema: generatedPostJsonSchema } },
-          messages: [{ role: 'system', content: prompt.system }, { role: 'user', content: prompt.user }],
-        }),
-      })
-    } catch (error) {
-      // Eine blockierte oder umgeleitete Zieladresse ist eine dauerhafte Fehlkonfiguration, kein
-      // transienter Netzwerkfehler -- drei automatische Hatchet-Wiederholungen waeren verschwendet.
-      if (error instanceof OutboundFetchError) throw new ContentGenerationError('provider_configuration', false)
-      throw new ContentGenerationError('provider_network', true)
-    } finally { clearTimeout(timeout) }
-    if (!response.ok) {
-      const { errorClass, retryable } = classifyProviderStatus(response.status)
-      throw new ContentGenerationError(errorClass, retryable)
-    }
-    let content: unknown
-    try {
-      const body = await response.json() as { choices?: Array<{ message?: { content?: unknown } }> }
       const raw = body.choices?.[0]?.message?.content
-      content = typeof raw === 'string' ? JSON.parse(raw) : raw
+      const content: unknown = typeof raw === 'string' ? JSON.parse(raw) : raw
       const post = GeneratedPostSchema.parse(content)
       assertGroundedPost(post, input.brief)
       assertCaptionLength(post, input.maxCharacters)
@@ -219,16 +188,6 @@ export class OpenAiCompatibleStructuredContentGenerator implements StructuredCon
     }
   }
 }
-
-/**
- * Name des Werkzeugs, das die schemakonforme Antwort erzwingt. Der Wert ist nicht frei waehlbar:
- * haex-claude-proxy erkennt genau diesen Namen und uebergibt dessen `input_schema` als
- * `--json-schema` an die Claude-CLI (src/cli-format.js, OUTPUT_TOOL_NAME) -- ein anderer Name
- * landet dort im Ausgabe-Werkzeug-Filter und die Antwort kaeme als Prosa zurueck. Fuer
- * api.anthropic.com ist es ein gewoehnlicher Werkzeugname ohne Sonderbedeutung, derselbe Aufruf
- * funktioniert also gegen beide Gegenstellen.
- */
-const ANTHROPIC_OUTPUT_TOOL_NAME = 'final_result'
 
 /**
  * Anthropic-Messages-Adapter. Strukturierte Ausgabe laeuft ueber erzwungenen Werkzeugaufruf statt
@@ -244,35 +203,18 @@ export class AnthropicStructuredContentGenerator implements StructuredContentGen
 
   async generateText(input: StructuredTextGeneratorInput): Promise<GeneratedPost> {
     const prompt = buildStructuredTextPrompt(input)
-    let response: Response
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), input.requestTimeoutMs ?? 60_000)
+    const body = await postProviderJson(this.fetcher, joinUrlPath(input.baseUrl, 'messages'), {
+      // x-api-key statt Bearer: die echte Anthropic-API verlangt es so, und die Resolver des
+      // Proxys lesen denselben Kopf. Beide Koepfe gleichzeitig lehnt api.anthropic.com ab.
+      headers: { 'x-api-key': input.apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: input.model, max_tokens: input.maxOutputTokens,
+        system: prompt.system,
+        messages: [{ role: 'user', content: prompt.user }],
+        tools: [{ name: ANTHROPIC_OUTPUT_TOOL_NAME, description: 'Gibt den fertigen Vereinsbeitrag zurueck.', input_schema: generatedPostJsonSchema }],
+        tool_choice: { type: 'tool', name: ANTHROPIC_OUTPUT_TOOL_NAME },
+      }),
+    }, input.requestTimeoutMs ?? 60_000, (errorClass, retryable) => new ContentGenerationError(errorClass, retryable)) as { stop_reason?: unknown; content?: Array<{ type?: unknown; name?: unknown; input?: unknown }> }
     try {
-      response = await this.fetcher(joinUrlPath(input.baseUrl, 'messages'), {
-        method: 'POST',
-        signal: controller.signal,
-        // x-api-key statt Bearer: die echte Anthropic-API verlangt es so, und die Resolver des
-        // Proxys lesen denselben Kopf. Beide Koepfe gleichzeitig lehnt api.anthropic.com ab.
-        headers: { 'x-api-key': input.apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: input.model, max_tokens: input.maxOutputTokens,
-          system: prompt.system,
-          messages: [{ role: 'user', content: prompt.user }],
-          tools: [{ name: ANTHROPIC_OUTPUT_TOOL_NAME, description: 'Gibt den fertigen Vereinsbeitrag zurueck.', input_schema: generatedPostJsonSchema }],
-          tool_choice: { type: 'tool', name: ANTHROPIC_OUTPUT_TOOL_NAME },
-        }),
-      })
-    } catch (error) {
-      // Eine blockierte oder umgeleitete Zieladresse ist eine dauerhafte Fehlkonfiguration, kein
-      // transienter Netzwerkfehler -- drei automatische Hatchet-Wiederholungen waeren verschwendet.
-      if (error instanceof OutboundFetchError) throw new ContentGenerationError('provider_configuration', false)
-      throw new ContentGenerationError('provider_network', true)
-    } finally { clearTimeout(timeout) }
-    if (!response.ok) {
-      const { errorClass, retryable } = classifyProviderStatus(response.status)
-      throw new ContentGenerationError(errorClass, retryable)
-    }
-    try {
-      const body = await response.json() as { stop_reason?: unknown; content?: Array<{ type?: unknown; name?: unknown; input?: unknown }> }
       // Eine Ablehnung durch die Sicherheitsklassifikatoren kommt als HTTP 200 ohne Werkzeugaufruf
       // zurueck; ein erneuter Versuch mit derselben Eingabe wuerde genauso enden.
       if (body.stop_reason === 'refusal') throw new ContentGenerationError('provider_schema', false)

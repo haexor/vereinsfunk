@@ -129,6 +129,21 @@ describe('structured content generator', () => {
     await expect(generator.generateText({ ...input, requestTimeoutMs: 1 })).rejects.toMatchObject({ errorClass: 'provider_network', retryable: true } satisfies Partial<ContentGenerationError>)
   })
 
+  // Die Zeitgrenze muss auch das Lesen des Bodys abdecken: ein Provider, der Header schickt und
+  // dann haengt, hielte den Worker-Slot sonst unbegrenzt fest.
+  it('aborts a provider that stalls after the headers and classifies it as retryable network failure', async () => {
+    const generator = new AnthropicStructuredContentGenerator(async (_url, init) => new Response(new ReadableStream({
+      start(controller) { init.signal?.addEventListener('abort', () => controller.error(new DOMException('aborted', 'AbortError'))) },
+    }), { status: 200 }))
+    await expect(generator.generateText({ ...input, requestTimeoutMs: 5 })).rejects.toMatchObject({ errorClass: 'provider_network', retryable: true } satisfies Partial<ContentGenerationError>)
+  })
+  it('classifies a socket error while reading the body as retryable network failure, not as a bad answer', async () => {
+    const generator = new OpenAiCompatibleStructuredContentGenerator(async () => new Response(new ReadableStream({
+      start(controller) { controller.error(new TypeError('terminated')) },
+    }), { status: 200 }))
+    await expect(generator.generateText(input)).rejects.toMatchObject({ errorClass: 'provider_network', retryable: true } satisfies Partial<ContentGenerationError>)
+  })
+
   // Der Anthropic-Weg erzwingt das Schema ueber einen Werkzeugaufruf statt ueber response_format.
   // Der Werkzeugname ist Teil des Vertrags mit haex-claude-proxy und darf nicht driften.
   it('forces the anthropic schema through the final_result tool and reads the tool_use answer', async () => {
