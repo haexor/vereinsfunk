@@ -303,9 +303,15 @@ export function registerChannelOAuthRoutes(app: FastifyInstance, context: ApiRou
       token_ciphertext: ciphertextToBytea(sealed.ciphertext),
       token_key_version: sealed.keyVersion,
     })
+    // Ohne Rollback bliebe eine halbe Verbindung zurueck, und der Unique-Index auf dem externen
+    // Konto liesse jede Wiederholung derselben Auswahl dauerhaft mit 409 scheitern. Das Loeschen
+    // der Kanalzeile nimmt das Geheimnis per on delete cascade mit.
+    const rollbackConnection = async (): Promise<void> => {
+      const rollback = await service.from('social_connections').delete().eq('id', insert.data.id)
+      if (rollback.error) request.log.error({ err: rollback.error, correlationId: request.id }, 'oauth channel rollback failed')
+    }
     if (secretInsert.error) {
-      // Ohne Rollback bliebe eine Kanalzeile ohne Geheimnis zurueck.
-      await service.from('social_connections').delete().eq('id', insert.data.id)
+      await rollbackConnection()
       throw secretInsert.error
     }
 
@@ -320,7 +326,12 @@ export function registerChannelOAuthRoutes(app: FastifyInstance, context: ApiRou
       can_schedule: true,
       created_by: request.auth!.userId,
     })
-    if (defaultScope.error) throw defaultScope.error
+    // Ohne Freigabezeile sieht resolveAvailableChannels die Verbindung nie -- derselbe Rueckbau wie
+    // bei POST /v1/channels (channels.ts).
+    if (defaultScope.error) {
+      await rollbackConnection()
+      throw defaultScope.error
+    }
 
     await recordAuditEvent(request, {
       organizationId,

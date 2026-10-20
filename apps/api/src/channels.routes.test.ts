@@ -4,6 +4,8 @@ import { FakeLinkedInOAuthClient, FakeTwitterOAuthClient } from '@vereinsfunk/pu
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
 import type { RoleProvider } from './auth.js'
+import { ciphertextToBytea } from './secretBox.js'
+import { createSecretBox } from '@vereinsfunk/secrets'
 
 const META_ENVIRONMENT_KEYS = ['PUBLISHING_PROVIDER', 'META_APP_ID', 'META_APP_SECRET', 'META_OAUTH_REDIRECT_URL', 'API_PUBLIC_BASE_URL'] as const
 
@@ -390,6 +392,44 @@ describe('Paket 012: Kanaele und Social-Accounts', () => {
         restoreEnvironment()
       }
     })
+  })
+
+  // Regression: scheiterte die Freigabezeile der eigenen Ebene, blieben Kanal und Geheimnis stehen
+  // -- unbenutzbar, und jede Wiederholung derselben Auswahl lief dauerhaft in 409.
+  it('rolls the OAuth connection back when its default channel scope cannot be created', async () => {
+    const PENDING_ID = '10000000-7000-4000-8000-000000000001'
+    const sealed = createSecretBox({ v1: Buffer.alloc(32, 7).toString('base64') }, 'v1').seal('page-token', `${PENDING_ID}:page-1`)
+    const pendingRow = {
+      id: PENDING_ID, organization_id: ORGANIZATION_ID, platform: 'facebook', owner_scope: 'organization', owner_department_id: null,
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+      available_accounts: [{ externalAccountId: 'page-1', displayName: 'SV Seite', pageAccessTokenCiphertext: ciphertextToBytea(sealed.ciphertext).slice(2), pageAccessTokenKeyVersion: sealed.keyVersion }],
+    }
+    const deletedConnectionIds: unknown[] = []
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'oauth_pending_connections') return chain({ data: pendingRow, error: null })
+            if (table === 'social_connections') {
+              return {
+                insert: () => ({ select: () => ({ single: async () => ({ data: { id: CONNECTION_ID }, error: null }) }) }),
+                delete: () => ({ eq: async (_column: string, value: unknown) => { deletedConnectionIds.push(value); return { error: null } } }),
+              }
+            }
+            if (table === 'social_connection_secrets') return { insert: async () => ({ error: null }) }
+            if (table === 'channel_scopes') return { insert: async () => ({ error: { message: 'scope insert failed' } }) }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST', url: `/v1/oauth-pending/${PENDING_ID}/select`, headers: { authorization: `Bearer ${token}` }, payload: { externalAccountId: 'page-1' },
+    })
+    expect(response.statusCode).toBe(500)
+    expect(deletedConnectionIds).toEqual([CONNECTION_ID])
   })
 
   // Plan 039: die einzige Kanal-Anlage ohne OAuth.
