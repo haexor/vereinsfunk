@@ -29,3 +29,42 @@ export function deriveSidebarPalette(primaryColor: string, accentColor: string):
     onAction: readableForeground(accent),
   }
 }
+
+export interface SidebarClasses {
+  text: string
+  muted: string
+  quiet: string
+  panel: string
+  divider: string
+  select: string
+  nav: string
+  activeNav: string
+  footer: string
+}
+
+// Die Klassen stehen vollstaendig ausgeschrieben, damit Tailwind sie beim Scannen findet.
+export function sidebarClassesFor(palette: SidebarPalette): SidebarClasses {
+  return palette.onSurface === WHITE
+    ? {
+        text: 'text-white',
+        muted: 'text-white',
+        quiet: 'text-white',
+        panel: 'border-white/30 bg-white/[.06]',
+        divider: 'bg-white/30',
+        select: 'text-white [&_svg]:text-white',
+        nav: 'text-white hover:bg-white/[.07]',
+        activeNav: '!bg-white/[.11] !text-white',
+        footer: 'border-white/30',
+      }
+    : {
+        text: 'text-ink',
+        muted: 'text-ink',
+        quiet: 'text-ink',
+        panel: 'border-ink/30 bg-ink/[.05]',
+        divider: 'bg-ink/30',
+        select: 'text-ink [&_svg]:text-ink',
+        nav: 'text-ink hover:bg-ink/[.07]',
+        activeNav: '!bg-ink/[.11] !text-ink',
+        footer: 'border-ink/30',
+      }
+}

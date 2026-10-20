@@ -30,9 +30,10 @@ describe('standard app page layout', () => {
 
   it('offers the organization itself as a first-class working context and renders page save actions as a FAB', () => {
     const layout = readFileSync(join(appDirectory, 'layouts/default.vue'), 'utf8')
+    const scopeSwitcher = readFileSync(join(appDirectory, 'components/SidebarScopeSwitcher.vue'), 'utf8')
 
-    expect(layout).toContain('SelectItem')
-    expect(layout).toContain('value="organization"')
+    expect(scopeSwitcher).toContain('SelectItem')
+    expect(scopeSwitcher).toContain('value="organization"')
     expect(layout).toContain('<PageSaveFab />')
   })
 
@@ -44,7 +45,8 @@ describe('standard app page layout', () => {
     expect(layout).toContain('deriveSidebarPalette')
     expect(scopeBrand).toContain('resolveSidebarLogoAsset')
     expect(scopeBrand).toContain('revision.value')
-    expect(layout).toContain('@error="scopeLogoUrl = \'\'"')
+    expect(layout).toContain('v-model:logo-url="scopeLogoUrl"')
+    expect(readFileSync(join(appDirectory, 'components/SidebarScopeSwitcher.vue'), 'utf8')).toContain('@error="logoUrl = \'\'"')
     expect(brandPageData).toContain('refreshBrandRevision()')
   })
 })

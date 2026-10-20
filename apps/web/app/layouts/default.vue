@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { LogOut, Menu, Plus, UserRound, X } from '@lucide/vue'
-import { initialsOf } from '../utils/initials'
-import { deriveSidebarPalette } from '../utils/sidebarBrand'
+import { Menu, Plus, X } from '@lucide/vue'
+import { deriveSidebarPalette, sidebarClassesFor } from '../utils/sidebarBrand'
 
 const mobileOpen = ref(false)
 const route = useRoute()
@@ -17,16 +16,6 @@ watch(
   },
 )
 
-const activeDepartment = computed(
-  () =>
-    activeOrganization.value?.departments.find((item) => item.id === scope.value?.departmentId) ??
-    null,
-)
-const activeScopeName = computed(
-  () => activeDepartment.value?.name ?? activeOrganization.value?.organizationName ?? '',
-)
-const activeScopeKind = computed(() => (activeDepartment.value ? 'Abteilung' : 'Verein'))
-const scopeInitials = computed(() => initialsOf(activeScopeName.value))
 const { brand: scopeBrand, logoUrl: scopeLogoUrl } = useScopeBrand(scope)
 const activeDepartmentRoles = computed(
   () =>
@@ -36,24 +25,6 @@ const activeDepartmentRoles = computed(
 const topRoleLabel = computed(() => {
   const role = activeOrganization.value?.organizationRoles[0] ?? activeDepartmentRoles.value[0]
   return role ? (roleLabels[role] ?? role) : ''
-})
-const userInitials = computed(() => initialsOf(session.value?.displayName ?? ''))
-
-function selectOrganization(organizationId: string) {
-  const organization = session.value?.scopes.find((item) => item.organizationId === organizationId)
-  if (organization) scope.value = { organizationId, departmentId: null }
-}
-
-const scopeSelection = computed({
-  get: () =>
-    scope.value?.departmentId ? `department:${scope.value.departmentId}` : 'organization',
-  set: (value: string) => {
-    if (!scope.value) return
-    scope.value = {
-      ...scope.value,
-      departmentId: value === 'organization' ? null : value.replace(/^department:/, ''),
-    }
-  },
 })
 
 const sidebarPalette = computed(() =>
@@ -67,31 +38,7 @@ const accentStyle = computed(() => ({
   backgroundColor: sidebarPalette.value.actionSurface,
   color: sidebarPalette.value.onAction,
 }))
-const sidebarClasses = computed(() =>
-  sidebarPalette.value.onSurface === '#ffffff'
-    ? {
-        text: 'text-white',
-        muted: 'text-white',
-        quiet: 'text-white',
-        panel: 'border-white/30 bg-white/[.06]',
-        divider: 'bg-white/30',
-        select: 'text-white [&_svg]:text-white',
-        nav: 'text-white hover:bg-white/[.07]',
-        activeNav: '!bg-white/[.11] !text-white',
-        footer: 'border-white/30',
-      }
-    : {
-        text: 'text-ink',
-        muted: 'text-ink',
-        quiet: 'text-ink',
-        panel: 'border-ink/30 bg-ink/[.05]',
-        divider: 'bg-ink/30',
-        select: 'text-ink [&_svg]:text-ink',
-        nav: 'text-ink hover:bg-ink/[.07]',
-        activeNav: '!bg-ink/[.11] !text-ink',
-        footer: 'border-ink/30',
-      },
-)
+const sidebarClasses = computed(() => sidebarClassesFor(sidebarPalette.value))
 
 const { navigation, moduleGroups, organizationNavigation, moduleManagementGroups } = useShellNavigation(scope, scopeModules)
 </script>
@@ -132,89 +79,15 @@ const { navigation, moduleGroups, organizationNavigation, moduleManagementGroups
       >
         <div class="hidden px-2 pb-7 lg:block"><AppLogo :text-class="sidebarClasses.text" /></div>
 
-        <div
+        <SidebarScopeSwitcher
           v-if="activeOrganization"
-          class="mb-5 rounded-2xl border p-2"
-          :class="sidebarClasses.panel"
-        >
-          <div class="flex w-full items-center gap-3 p-2 text-left">
-            <img
-              v-if="scopeLogoUrl"
-              :src="scopeLogoUrl"
-              :alt="`${activeScopeName} Logo`"
-              class="h-10 w-10 shrink-0 rounded-xl border border-black/5 bg-white p-1.5 shadow-sm"
-              @error="scopeLogoUrl = ''"
-            />
-            <span
-              v-else
-              class="grid h-9 w-9 shrink-0 place-items-center rounded-xl font-display text-sm font-extrabold"
-              :style="accentStyle"
-              >{{ scopeInitials }}</span
-            >
-            <span v-if="(session?.scopes.length ?? 0) <= 1" class="min-w-0 flex-1">
-              <span class="block truncate text-sm font-semibold">{{ activeScopeName }}</span>
-              <span class="block text-[11px]" :class="sidebarClasses.muted">{{
-                activeScopeKind
-              }}</span>
-            </span>
-            <div v-else class="relative block min-w-0 flex-1">
-              <Select
-                :model-value="scope?.organizationId ?? ''"
-                @update:model-value="(value: unknown) => selectOrganization(value as string)"
-              >
-                <SelectTrigger
-                  aria-label="Verein auswählen"
-                  class="border-0 py-1 pr-6 pl-0 text-sm font-semibold"
-                  :class="sidebarClasses.select"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem
-                    v-for="item in session?.scopes"
-                    :key="item.organizationId"
-                    :value="item.organizationId"
-                    >{{ item.organizationName }}</SelectItem
-                  >
-                </SelectContent>
-              </Select>
-              <span class="block text-[11px]" :class="sidebarClasses.muted">{{
-                activeScopeKind
-              }}</span>
-            </div>
-          </div>
-          <template v-if="activeOrganization.departments.length">
-            <div class="mx-2 my-1 h-px" :class="sidebarClasses.divider" />
-            <div class="relative block">
-              <p
-                class="px-2 pt-2 text-[10px] font-bold uppercase tracking-[.12em]"
-                :class="sidebarClasses.quiet"
-              >
-                Arbeitsbereich
-              </p>
-              <Select v-model="scopeSelection">
-                <SelectTrigger
-                  aria-label="Verein oder Abteilung auswählen"
-                  class="border-0 py-2 pr-8 pl-2 text-xs font-medium"
-                  :class="sidebarClasses.select"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="organization"
-                    >{{ activeOrganization.organizationName }} · Verein</SelectItem
-                  >
-                  <SelectItem
-                    v-for="item in activeOrganization.departments"
-                    :key="item.id"
-                    :value="`department:${item.id}`"
-                    >{{ item.name }} · Abteilung</SelectItem
-                  >
-                </SelectContent>
-              </Select>
-            </div>
-          </template>
-        </div>
+          v-model:scope="scope"
+          v-model:logo-url="scopeLogoUrl"
+          :organizations="session?.scopes ?? []"
+          :organization="activeOrganization"
+          :classes="sidebarClasses"
+          :accent-style="accentStyle"
+        />
 
         <NuxtLink
           v-if="isModuleEnabled('social_media') && canUseAtActiveScope('post.create')"
@@ -225,119 +98,37 @@ const { navigation, moduleGroups, organizationNavigation, moduleManagementGroups
           <Plus :size="17" stroke-width="2.5" /> Beitrag erstellen
         </NuxtLink>
 
-        <nav class="space-y-1" aria-label="Hauptnavigation">
-          <NuxtLink
-            v-for="item in navigation"
-            :key="item.to"
-            :to="item.to"
-            class="focus-ring group flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition"
-            :class="sidebarClasses.nav"
-            :active-class="sidebarClasses.activeNav"
-          >
-            <component :is="item.icon" :size="17" />
-            <span class="flex-1">{{ item.label }}</span>
-            <span
-              v-if="item.badge"
-              class="grid h-5 min-w-5 place-items-center rounded-full bg-coral px-1 text-[10px] font-bold text-ink"
-              >{{ item.badge }}</span
-            >
-          </NuxtLink>
-        </nav>
+        <SidebarNavSection :items="navigation" label="Hauptnavigation" :classes="sidebarClasses" />
+        <SidebarNavSection
+          v-for="group in moduleGroups"
+          :key="group.key"
+          :heading="group.label"
+          :label="group.label"
+          :items="group.navigation"
+          :classes="sidebarClasses"
+        />
+        <SidebarNavSection
+          v-if="organizationNavigation.length > 0"
+          heading="Verein verwalten"
+          label="Vereinsverwaltung"
+          :items="organizationNavigation"
+          :classes="sidebarClasses"
+        />
+        <SidebarNavSection
+          v-for="group in moduleManagementGroups"
+          :key="`manage-${group.key}`"
+          :heading="`${group.label} verwalten`"
+          :label="`${group.label} verwalten`"
+          :items="group.managementNavigation"
+          :classes="sidebarClasses"
+        />
 
-        <template v-for="group in moduleGroups" :key="group.key">
-          <div
-            class="mb-2 mt-7 px-3 text-[10px] font-bold uppercase tracking-[.14em]"
-            :class="sidebarClasses.quiet"
-          >
-            {{ group.label }}
-          </div>
-          <nav class="space-y-1" :aria-label="group.label">
-            <NuxtLink
-              v-for="item in group.navigation"
-              :key="item.to"
-              :to="item.to"
-              class="focus-ring group flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition"
-              :class="sidebarClasses.nav"
-              :active-class="sidebarClasses.activeNav"
-            >
-              <component :is="item.icon" :size="17" />
-              <span class="flex-1">{{ item.label }}</span>
-            </NuxtLink>
-          </nav>
-        </template>
-
-        <template v-if="organizationNavigation.length > 0">
-        <div
-          class="mb-2 mt-7 px-3 text-[10px] font-bold uppercase tracking-[.14em]"
-          :class="sidebarClasses.quiet"
-        >
-          Verein verwalten
-        </div>
-        <nav class="space-y-1" aria-label="Vereinsverwaltung">
-          <NuxtLink
-            v-for="item in organizationNavigation"
-            :key="item.to"
-            :to="item.to"
-            class="focus-ring flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition"
-            :class="sidebarClasses.nav"
-            :active-class="sidebarClasses.activeNav"
-          >
-            <component :is="item.icon" :size="17" />{{ item.label }}
-          </NuxtLink>
-        </nav>
-        </template>
-
-        <template v-for="group in moduleManagementGroups" :key="`manage-${group.key}`">
-          <div
-            class="mb-2 mt-7 px-3 text-[10px] font-bold uppercase tracking-[.14em]"
-            :class="sidebarClasses.quiet"
-          >
-            {{ group.label }} verwalten
-          </div>
-          <nav class="space-y-1" :aria-label="`${group.label} verwalten`">
-            <NuxtLink
-              v-for="item in group.managementNavigation"
-              :key="item.to"
-              :to="item.to"
-              class="focus-ring flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition"
-              :class="sidebarClasses.nav"
-              :active-class="sidebarClasses.activeNav"
-            >
-              <component :is="item.icon" :size="17" />{{ item.label }}
-            </NuxtLink>
-          </nav>
-        </template>
-
-        <div
-          class="mt-auto flex items-center gap-3 border-t px-2 pt-4"
-          :class="sidebarClasses.footer"
-        >
-          <span
-            class="grid h-9 w-9 place-items-center rounded-full bg-[#d2c7ff] text-xs font-bold text-[#3c3260]"
-            >{{ userInitials }}</span
-          >
-          <span class="min-w-0 flex-1"
-            ><span class="block truncate text-xs font-semibold">{{ session?.displayName }}</span
-            ><span class="block text-[10px]" :class="sidebarClasses.quiet">{{
-              topRoleLabel
-            }}</span></span
-          >
-          <NuxtLink
-            to="/profil"
-            class="focus-ring rounded-lg p-1.5"
-            :class="sidebarClasses.muted"
-            aria-label="Profil"
-            ><UserRound :size="15"
-          /></NuxtLink>
-          <button
-            class="focus-ring rounded-lg p-1.5"
-            :class="sidebarClasses.muted"
-            aria-label="Abmelden"
-            @click="signOut()"
-          >
-            <LogOut :size="15" />
-          </button>
-        </div>
+        <SidebarUserFooter
+          :display-name="session?.displayName ?? ''"
+          :role-label="topRoleLabel"
+          :classes="sidebarClasses"
+          show-profile-link
+        />
       </aside>
 
       <!-- relative: absolut positionierte Inhalte (sr-only, versteckte Datei-Inputs) muessen in
