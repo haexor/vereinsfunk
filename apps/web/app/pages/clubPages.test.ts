@@ -54,10 +54,12 @@ describe('Vereinsseiten', () => {
 
   it('sperrt auf /marke die Schriftwahl wie Logo und Farben', () => {
     const page = read('marke.vue')
+    const fontSection = readFileSync(join(PAGES_DIR, '../components/BrandFontSection.vue'), 'utf8')
 
     // saveDepartment() laesst gesperrte Felder aus -- die Auswahl war nach dem Speichern still weg.
-    expect(page).toContain(":disabled=\"lockedForActiveLevel.has('displayFontAssetId')\"")
-    expect(page).toContain(":disabled=\"lockedForActiveLevel.has('bodyFontAssetId')\"")
+    expect(page).toContain(':locked="lockedForActiveLevel"')
+    expect(fontSection).toContain(":disabled=\"locked.has('displayFontAssetId')\"")
+    expect(fontSection).toContain(":disabled=\"locked.has('bodyFontAssetId')\"")
   })
 
   it('fuehrt auf /marke keine Mannschaftsebene, solange useActiveScope() sie nicht liefert', () => {
@@ -67,7 +69,7 @@ describe('Vereinsseiten', () => {
     expect(activeScope).toContain("departmentId.value ? 'department' : 'organization'")
     expect(page).not.toContain("activeLevel.value === 'team'")
     expect(page).not.toContain("activeLevel === 'team'")
-    expect(page).not.toContain('async function saveTeam')
+    expect(readFileSync(join(PAGES_DIR, '../composables/useBrandPageData.ts'), 'utf8')).not.toContain('async function saveTeam')
   })
 
   it('frischt nach dem Speichern des Anzeigenamens die Sitzung auf', () => {
