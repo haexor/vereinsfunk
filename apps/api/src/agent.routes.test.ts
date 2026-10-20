@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { CreateAgentActionProposalSchema, type CreateAgentActionProposal } from '@vereinsfunk/contracts'
+import { hashAgentProposalInput } from '@vereinsfunk/domain'
 import type { AgentResponder } from './agent.js'
 import type { SupabaseClientFactory } from './app.js'
 import { DEPARTMENT_ID, MEMBERSHIP_ID, ORGANIZATION_ID, USER_ID, chain, grantingRoleProvider, membershipRowsStub, moduleStatusProviderWith, organizationManagerRoleProvider, signAccessToken, startApp } from './testSupport.js'
@@ -322,5 +323,128 @@ describe('agent routes', () => {
     expect(response.statusCode).toBe(201)
     expect(response.json().messages.at(-1)).toMatchObject({ role: 'assistant', content: PERMISSION_FALLBACK_ANSWER })
     expect(captured.proposals).toEqual([])
+  })
+})
+
+describe('POST /v1/agent/action-proposals/:id/confirm', () => {
+  const PROPOSAL_ID = '10000000-a000-4000-8000-000000000001'
+  const POST_ID = '10000000-a100-4000-8000-000000000001'
+  const VERSION_ID = '10000000-a200-4000-8000-000000000001'
+  const CONNECTION_ID = '10000000-a300-4000-8000-000000000001'
+  const INVITATION_ROW_ID = '10000000-a400-4000-8000-000000000001'
+
+  async function proposalRow(toolName: string, input: Record<string, unknown>, departmentId: string | null, status = 'pending', targetRefs: unknown[] = []) {
+    return {
+      id: PROPOSAL_ID, organization_id: ORGANIZATION_ID, conversation_id: CONVERSATION_ID, created_by: USER_ID, tool_name: toolName,
+      scope_snapshot: { organizationId: ORGANIZATION_ID, departmentId, teamId: null }, input_snapshot: input, input_hash: await hashAgentProposalInput(input),
+      target_refs: targetRefs, status, expires_at: '2099-01-01T00:00:00+00:00', confirmed_at: status === 'confirmed' ? '2026-08-24T10:01:00+00:00' : null,
+      created_at: '2026-08-24T10:00:00+00:00', updated_at: '2026-08-24T10:00:00+00:00',
+    }
+  }
+
+  // Claim, Tool-Lauf, Abschluss und Audit; die fachliche Aktion selbst laeuft ueber die Route.
+  function confirmServiceClient(claimed: unknown, completed: unknown, audits: Record<string, unknown>[]): SupabaseClient {
+    return {
+      auth: { admin: { inviteUserByEmail: async () => ({ data: { user: {} }, error: null }) } },
+      rpc: async (name: string) => {
+        if (name === 'claim_agent_action_proposal') return { data: claimed, error: null }
+        throw new Error(`unexpected rpc in agent confirm test: ${name}`)
+      },
+      from: (table: string) => {
+        if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { audits.push(row); return { error: null } } }
+        if (table === 'agent_tool_runs') return { insert: () => chain({ data: { id: '10000000-a500-4000-8000-000000000001' }, error: null }), update: () => chain({ data: null, error: null }) }
+        if (table === 'agent_action_proposals') return { update: () => chain({ data: completed, error: null }) }
+        throw new Error(`unexpected table in agent confirm service fake: ${table}`)
+      },
+    } as unknown as SupabaseClient
+  }
+
+  async function confirm(options: Parameters<typeof startApp>[0]) {
+    const app = await startApp(options)
+    return app.inject({
+      method: 'POST',
+      url: `/v1/agent/action-proposals/${PROPOSAL_ID}/confirm`,
+      headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` },
+    })
+  }
+
+  const invitationInput = { email: 'neu@example.org', role: 'organization_viewer' }
+
+  function invitationClients(alreadyMember: boolean, pending: unknown, claimed: unknown, completed: unknown, audits: Record<string, unknown>[]): SupabaseClientFactory {
+    const invitationRow = {
+      id: INVITATION_ROW_ID, organization_id: ORGANIZATION_ID, department_id: null, team_id: null, email: invitationInput.email, role: invitationInput.role,
+      invited_by: USER_ID, expires_at: '2026-09-24T10:00:00+00:00', accepted_at: null, revoked_at: null, last_sent_at: '2026-08-24T10:00:00+00:00', send_count: 1, created_at: '2026-08-24T10:00:00+00:00',
+    }
+    return {
+      forUser: () => ({
+        rpc: async (name: string) => (name === 'email_has_membership' ? { data: alreadyMember, error: null } : { data: invitationRow, error: null }),
+        from: (table: string) => {
+          if (table === 'agent_action_proposals') return chain({ data: pending, error: null })
+          throw new Error(`unexpected table in agent confirm test: ${table}`)
+        },
+      }) as unknown as SupabaseClient,
+      forService: () => confirmServiceClient(claimed, completed, audits),
+    }
+  }
+
+  it('maps an invitation rejection like the invitation route instead of a 500', async () => {
+    // Frueher rief der Agent createInvitation selbst auf; InvitationCreationError trug keinen
+    // Statuscode und wurde zu einem 500.
+    const audits: Record<string, unknown>[] = []
+    const response = await confirm({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: invitationClients(true, await proposalRow('create_invitation', invitationInput, null), await proposalRow('create_invitation', invitationInput, null, 'executing'), null, audits),
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'already_a_member' })
+  })
+
+  it('records invitation.created under the same correlation id as the confirmation', async () => {
+    const audits: Record<string, unknown>[] = []
+    const response = await confirm({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: invitationClients(
+        false,
+        await proposalRow('create_invitation', invitationInput, null),
+        await proposalRow('create_invitation', invitationInput, null, 'executing'),
+        await proposalRow('create_invitation', invitationInput, null, 'confirmed', [{ entityType: 'invitations', id: INVITATION_ROW_ID }]),
+        audits,
+      ),
+    })
+    expect(response.statusCode).toBe(200)
+    const created = audits.find((row) => row.action === 'invitation.created')
+    const confirmed = audits.find((row) => row.action === 'agent.action_proposal_confirmed')
+    expect(created).toMatchObject({ entity_id: INVITATION_ROW_ID })
+    expect(confirmed).toMatchObject({ metadata: expect.objectContaining({ resultId: INVITATION_ROW_ID, emailDelivered: true }) })
+    expect(created?.correlation_id).toBe(confirmed?.correlation_id)
+  })
+
+  it('honours the publishing kill switch when confirming a scheduled publication', async () => {
+    // Die eigene Kopie der Planung im Agenten kannte publishingIsAvailable() nicht.
+    const scheduleInput = { postVersionId: VERSION_ID, platform: 'instagram', scheduledFor: null }
+    const pending = await proposalRow('schedule_publication', scheduleInput, DEPARTMENT_ID)
+    const claimed = await proposalRow('schedule_publication', scheduleInput, DEPARTMENT_ID, 'executing')
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({
+        from: (table: string) => {
+          if (table === 'agent_action_proposals') return chain({ data: pending, error: null })
+          if (table === 'post_versions') return chain({ data: { id: VERSION_ID, post_id: POST_ID, effective_config_snapshot: null }, error: null })
+          if (table === 'posts') return chain({ data: { id: POST_ID, organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: null, status: 'approved', current_version_id: VERSION_ID }, error: null })
+          if (table === 'social_connections') return chain({ data: [{ id: CONNECTION_ID, platform: 'instagram', status: 'active', archived_at: null, responsible_profile_id: null }], error: null })
+          if (table === 'channel_scopes') return chain({ data: [{ social_connection_id: CONNECTION_ID, scope: 'organization', department_id: null, team_id: null, can_schedule: true }], error: null })
+          if (table === 'policy_settings') return chain({ data: null, error: null })
+          throw new Error(`unexpected table in agent confirm test: ${table}`)
+        },
+      }) as unknown as SupabaseClient,
+      forService: () => confirmServiceClient(claimed, null, []),
+    }
+    vi.stubEnv('PUBLISHING_MODE', 'disabled')
+    try {
+      const response = await confirm({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+      expect(response.statusCode).toBe(503)
+      expect(response.json()).toMatchObject({ error: 'publishing_disabled' })
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 })

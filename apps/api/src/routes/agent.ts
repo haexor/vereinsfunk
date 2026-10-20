@@ -10,6 +10,7 @@ import {
   CreateInvitationRequestSchema,
   AgentMessageSchema,
   OAuthPlatformSchema,
+  RequestApprovalResponseSchema,
   AgentScopeSchema,
   AgentWorkspaceSchema,
   CreateAgentConversationSchema,
@@ -40,7 +41,6 @@ import { z } from 'zod'
 import { hashAgentProposalInput } from '@vereinsfunk/domain'
 import type { AgentResponder } from '../agent.js'
 import { createClubEvent } from '../services/clubEvents.js'
-import { createInvitation } from '../services/invitations.js'
 import { saveTextWorkshopDraft } from '../services/textWorkshopDrafts.js'
 import { createTextGenerationSession } from '../services/textGenerationSessions.js'
 import type { ApiRouteContext } from './context.js'
@@ -123,8 +123,13 @@ const ScopedPublicationRowSchema = z.object({
   post_versions: z.object({ id: UuidSchema, title: z.string(), posts: EmbeddedPostScopeSchema }),
 })
 
+type AgentProposalExecutionStatus = 400 | 403 | 404 | 409 | 422 | 429 | 502 | 503
+// Fachliche Ablehnungen der ausfuehrenden Route werden unveraendert weitergereicht; alles andere
+// (auch eine abgelaufene Anmeldung mitten im Aufruf) ist aus Sicht des Agenten ein 502.
+const FORWARDED_EXECUTION_STATUSES: readonly number[] = [400, 403, 404, 409, 422, 429, 503]
+
 class AgentProposalExecutionError extends Error {
-  constructor(readonly statusCode: 404 | 409 | 422 | 502 | 503, readonly errorCode: string) {
+  constructor(readonly statusCode: AgentProposalExecutionStatus, readonly errorCode: string) {
     super(errorCode)
   }
 }
@@ -546,7 +551,7 @@ async function loadPublicationTarget(client: SupabaseClient, publicationId: stri
 }
 
 type AgentProposalAuthorization =
-  | { ok: true; approvalTarget: ApprovalTarget | null; textCandidateTarget: TextCandidateTarget | null; scheduleTarget: ScheduleTarget | null; invitationInput: CreateInvitationRequest | null }
+  | { ok: true; textCandidateTarget: TextCandidateTarget | null; scheduleTarget: ScheduleTarget | null; invitationInput: CreateInvitationRequest | null }
   | { ok: false; reason: 'requires_department' }
   | { ok: false; reason: 'invalid_input' }
   | { ok: false; reason: 'forbidden' }
@@ -624,7 +629,7 @@ export function registerAgentRoutes(
   context: ApiRouteContext,
   responder: AgentResponder,
 ): void {
-  const { requireAuth, supabaseClients, roleProvider, moduleStatusProvider, environment } = context
+  const { requireAuth, supabaseClients, roleProvider, moduleStatusProvider } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
 
   // Die eine Pruefung "Tool-Eingabe -> Ziel -> Scope -> Berechtigung samt Modul -> Rollenvergabe"
@@ -667,7 +672,26 @@ export function registerAgentRoutes(
       if (!canAssignRole(roles, parsed.data.role)) return { ok: false, reason: 'forbidden' }
       invitationInput = parsed.data
     }
-    return { ok: true, approvalTarget, textCandidateTarget, scheduleTarget, invitationInput }
+    return { ok: true, textCandidateTarget, scheduleTarget, invitationInput }
+  }
+
+  // Bestaetigte Vorschlaege, fuer die es eine fachliche Route gibt, laufen ueber genau diese Route.
+  // Deren Pruefungen, Publishing-Not-Aus, Fehlerabbildung und Audit bleiben so der einzige Pfad;
+  // eigene Kopien im Agenten waren davon abgedriftet (kein approval.requested-/invitation.created-
+  // Audit, kein publishing_disabled, 500 statt 409). Dieselbe Correlation-ID verbindet beide Audits.
+  async function executeThroughRoute(request: FastifyRequest, url: string, payload?: Record<string, unknown>): Promise<unknown> {
+    const response = await app.inject({
+      method: 'POST',
+      url,
+      headers: { authorization: request.headers.authorization ?? '', 'x-correlation-id': request.id },
+      ...(payload ? { payload } : {}),
+    })
+    let body: unknown = null
+    try { body = response.json() } catch { body = null }
+    if (response.statusCode >= 200 && response.statusCode < 300) return body
+    const rejection = z.object({ error: z.string() }).safeParse(body)
+    const statusCode = FORWARDED_EXECUTION_STATUSES.includes(response.statusCode) ? response.statusCode as AgentProposalExecutionStatus : 502
+    throw new AgentProposalExecutionError(statusCode, rejection.success ? rejection.data.error : 'proposal_execution_unavailable')
   }
 
   // Gemeinsame HTTP-Antwort auf eine Ablehnung, die nicht vom Ziel des Vorschlags abhaengt.
@@ -844,7 +868,7 @@ export function registerAgentRoutes(
       return sendAuthorizationRejection(request, reply, authorization)
     }
     if (proposal.inputHash !== (await hashAgentProposalInput(proposal.input))) return reply.code(409).send({ error: 'proposal_input_changed', correlationId: request.id })
-    const { approvalTarget, textCandidateTarget, scheduleTarget, invitationInput } = authorization
+    const { textCandidateTarget, scheduleTarget, invitationInput } = authorization
     // mapProposal hat die Eingabe bereits je Tool validiert.
     const eventInput = proposal.toolName === 'create_event' ? proposal.input : null
     const approvalInput = proposal.toolName === 'request_approval' ? proposal.input : null
@@ -879,26 +903,17 @@ export function registerAgentRoutes(
     try {
       let resultId: string
       let emailDelivered: boolean | undefined
-      let emailError: unknown
       if (eventInput) {
         const event = await createClubEvent(service, request.auth!.userId, scope, eventInput)
         resultId = event.id
       } else if (invitationInput) {
-        const invitation = await createInvitation(client, service, invitationInput!, environment.WEB_BASE_URL ?? 'http://localhost:4200')
-        resultId = invitation.invitation.id
+        const invitation = z.object({ id: UuidSchema, emailDelivered: z.boolean() }).parse(await executeThroughRoute(request, '/v1/invitations', invitationInput))
+        resultId = invitation.id
         emailDelivered = invitation.emailDelivered
-        emailError = invitation.emailError
       } else {
         if (approvalInput) {
-          const approval = await client.rpc('request_approval', { target_post_version_id: approvalInput.postVersionId })
-          if (approval.error) {
-            if (approval.error.message.includes('invalid_status')) throw new AgentProposalExecutionError(409, 'invalid_status')
-            if (approval.error.message.includes('review_required') || approval.error.message.includes('minor_stage_required') || approval.error.message.includes('invalid_reviewer_snapshot') || approval.error.message.includes('empty_reviewer_snapshot')) {
-              throw new AgentProposalExecutionError(422, 'approval_route_unavailable')
-            }
-            throw approval.error
-          }
-          resultId = z.object({ approvalRequestId: UuidSchema.nullable().optional(), postId: UuidSchema }).parse(approval.data).approvalRequestId ?? approvalTarget!.postId
+          const approval = RequestApprovalResponseSchema.parse(await executeThroughRoute(request, `/v1/post-versions/${approvalInput.postVersionId}/request-approval`))
+          resultId = approval.approvalRequestId ?? approval.postId
         } else if (contentBriefInput) {
           // Derselbe Ausschluss wie createTextGenerationSession (textGenerationSessions.ts) --
           // ohne ihn wuerde ein vom Agenten vorgeschlagener Entwurf mit z. B. ['plaintext',
@@ -918,25 +933,14 @@ export function registerAgentRoutes(
           if (!generated.ok) throw new AgentProposalExecutionError(generated.statusCode, generated.error)
           resultId = generated.sessionId
         } else if (scheduleInput) {
-          const scheduled = await client.rpc('schedule_publication', { target_post_version_id: scheduleInput.postVersionId, target_social_connection_id: scheduleTarget!.socialConnectionId, target_scheduled_for: scheduleInput.scheduledFor })
-          if (scheduled.error) throw new AgentProposalExecutionError(422, 'publication_schedule_unavailable')
-          resultId = z.object({ id: UuidSchema }).parse(scheduled.data).id
-        } else if (publicationExecutionInput) {
-          // Der Agent ruft bewusst den bestehenden Ausführungsendpunkt auf. Damit bleiben dessen
-          // erneute Berechtigungsprüfung, Consent-/Medien-Gate, Compare-and-Set und Provider-Audit
-          // der einzige fachliche Veröffentlichungspfad.
-          const executed = await app.inject({
-            method: 'POST',
-            url: `/v1/publications/${publicationExecutionInput.publicationId}/execute`,
-            headers: { authorization: request.headers.authorization ?? '' },
+          const scheduled = await executeThroughRoute(request, `/v1/post-versions/${scheduleInput.postVersionId}/schedule`, {
+            socialConnectionId: scheduleTarget!.socialConnectionId, scheduledFor: scheduleInput.scheduledFor,
           })
-          if (executed.statusCode !== 200) {
-            const executionError = z.object({ error: z.string() }).safeParse(executed.json())
-            const statusCode = executed.statusCode === 404 || executed.statusCode === 409 || executed.statusCode === 422 || executed.statusCode === 502 || executed.statusCode === 503
-              ? executed.statusCode
-              : 502
-            throw new AgentProposalExecutionError(statusCode, executionError.success ? executionError.data.error : 'publication_execution_unavailable')
-          }
+          resultId = z.object({ id: UuidSchema }).parse(scheduled).id
+        } else if (publicationExecutionInput) {
+          // Consent-/Medien-Gate, Compare-and-Set und Provider-Audit bleiben so der einzige
+          // fachliche Veroeffentlichungspfad.
+          await executeThroughRoute(request, `/v1/publications/${publicationExecutionInput.publicationId}/execute`)
           resultId = publicationExecutionInput.publicationId
         } else {
           const attachments = await service.from('composition_session_post_media').select('media_asset_id').eq('organization_id', textCandidateTarget!.organizationId).eq('composition_session_id', textCandidateTarget!.sessionId).limit(1)
@@ -1016,7 +1020,6 @@ export function registerAgentRoutes(
           metadata: { source: 'agent_tool' },
         })
       }
-      if (emailDelivered === false) request.log.error({ err: emailError, correlationId: request.id }, 'Supabase invitation email delivery failed')
       return reply.code(200).send(mapProposal(completed.data))
     } catch (error) {
       if (toolRun.data) {

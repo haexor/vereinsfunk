@@ -22,7 +22,7 @@ function mapCreateInvitationError(error: { code?: string | null; message?: strin
 }
 
 /**
- * Gemeinsamer Write-Use-Case für die Einladungsroute und bestätigte Agent-Proposals. Die
+ * Write-Use-Case der Einladungsroute (bestätigte Agent-Proposals laufen über dieselbe Route). Die
  * aufrufende Route bindet den Scope vorher serverseitig und prüft die Rolle des Akteurs.
  */
 export async function createInvitation(
