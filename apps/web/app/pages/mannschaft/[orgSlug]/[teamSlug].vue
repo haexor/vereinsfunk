@@ -120,13 +120,29 @@ const photosError = ref(false)
 // Vollbild mit Wischen durch alle freigegebenen Fotos.
 const photoGallery = ref<HTMLElement | null>(null)
 usePhotoSwipe(photoGallery)
+let photosLoadedAt = 0
 /** Laedt die freigegebenen Fotos mit frischen, kurzlebigen Links. */
 async function loadPhotos() {
   photosError.value = false
   try {
     photos.value = PublicPlayerboardPhotoSchema.array().parse(await $fetch(`${basePath}/photos`))
+    photosLoadedAt = Date.now()
   } catch {
     photosError.value = true
+  }
+}
+// Mit loading="lazy" laedt ein Bild erst, wenn es ins Bild scrollt -- nach fuenf Minuten ist sein
+// Link abgelaufen. Dann einmal frische Links holen; mehrere gleichzeitig scheiternde Bilder loesen
+// nur ein Neuladen aus, und ein Bild, das auch mit frischem Link scheitert, keine Schleife.
+const PHOTO_RELOAD_MIN_AGE_MS = 60_000
+let photosReloading = false
+async function reloadExpiredPhotos() {
+  if (photosReloading || Date.now() - photosLoadedAt < PHOTO_RELOAD_MIN_AGE_MS) return
+  photosReloading = true
+  try {
+    await loadPhotos()
+  } finally {
+    photosReloading = false
   }
 }
 watch(
@@ -304,6 +320,7 @@ useHead({
                 :alt="`Trainingsfoto vom ${formatDate(photo.trainingDate)}`"
                 class="aspect-square w-full object-cover"
                 loading="lazy"
+                @error="reloadExpiredPhotos"
               />
             </a>
             <p class="px-2 py-1 text-[10px] text-[#6c756f]">{{ formatDate(photo.trainingDate) }}</p>

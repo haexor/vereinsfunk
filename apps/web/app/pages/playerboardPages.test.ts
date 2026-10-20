@@ -49,4 +49,12 @@ describe('PlayerBoard-Seiten', () => {
     expect(load).not.toContain('seasonFrom.value = await')
     expect(load.indexOf('if (request !== latestRequest) return')).toBeLessThan(load.indexOf('seasonFrom.value = loadedSeasonFrom'))
   })
+
+  it('holt auf der oeffentlichen Seite frische Fotolinks, wenn ein Bild nicht mehr laedt', () => {
+    const page = read('mannschaft/[orgSlug]/[teamSlug].vue')
+
+    // Die signierten Links leben fuenf Minuten; ein spaet ins Bild gescrolltes Foto blieb kaputt.
+    expect(page).toContain('@error="reloadExpiredPhotos"')
+    expect(functionBody(page, 'reloadExpiredPhotos')).toContain('if (photosReloading || Date.now() - photosLoadedAt < PHOTO_RELOAD_MIN_AGE_MS) return')
+  })
 })
