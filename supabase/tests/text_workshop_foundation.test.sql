@@ -639,10 +639,11 @@ select set_config('request.jwt.claim.sub', '32000000-0000-4000-8000-000000000002
 select is((select count(*)::integer from public.composition_sessions where input_hash = encode(sha256('org-level-session'::bytea), 'hex')), 0, 'negative: a department B editor with only organization_viewer at the org level cannot read the organization-level session (their department role does not apply to a null department_id)');
 
 -- style-e: department B viewer only, no organization_memberships row at all -- insufficient for
--- post.edit at any level, but is_any_member_of_organization still covers them for media_assets.
+-- post.edit at any level, and since 2026101911 also outside the organization-level raw media,
+-- which needs an organization role just like the department branch needs the department.
 select set_config('request.jwt.claim.sub', '32000000-0000-4000-8000-000000000005', true);
 select is((select count(*)::integer from public.composition_sessions where input_hash = encode(sha256('org-level-session'::bytea), 'hex')), 0, 'negative: a department-only viewer with no organization role cannot read the organization-level session');
-select is((select count(*)::integer from public.media_assets where id = '32000000-3130-4000-8000-000000000002'), 1, 'the same department-only viewer reads the organization-level media asset via is_any_member_of_organization');
+select is((select count(*)::integer from public.media_assets where id = '32000000-3130-4000-8000-000000000002'), 0, 'negative: the same department-only viewer cannot read the organization-level raw media asset');
 
 -- style-a: an unrelated tenant A member, the pre-existing cross-tenant negative pattern.
 select set_config('request.jwt.claim.sub', '31000000-0000-4000-8000-000000000001', true);
