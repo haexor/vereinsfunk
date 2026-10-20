@@ -19,7 +19,7 @@ import {
 } from '@vereinsfunk/contracts'
 import type { PostStatus } from '@vereinsfunk/domain'
 import { ApiRequestError } from '../utils/apiClient'
-import { localDateKey } from '../utils/memberDates'
+import { buildDashboardWeek, type DashboardWeekDay } from '../utils/dashboardWeek'
 
 const api = useApiClient()
 const session = await useSession()
@@ -71,13 +71,6 @@ const todayLabel = computed(() =>
   }).format(new Date()),
 )
 
-interface WeekDay {
-  key: string
-  label: string
-  dayNumber: number
-  isToday: boolean
-  posts: { id: string }[]
-}
 interface DashboardPost {
   id: string
   status: PostStatus
@@ -93,38 +86,11 @@ const dashboardError = ref(false)
 const stats = ref<{ published: number; openApprovals: number; scheduledNext7Days: number } | null>(
   null,
 )
-const weekDays = ref<WeekDay[]>([])
+const weekDays = ref<DashboardWeekDay[]>([])
 const recentPosts = ref<DashboardPost[]>([])
 const nextSteps = ref<{ key: string; label: string; href: string }[]>([])
 const suggestions = ref<ContentSuggestion[]>([])
 const suggestionsLoaded = ref(false)
-
-function buildWeek(timeZone: string, posts: readonly DashboardPost[]): WeekDay[] {
-  const todayKey = localDateKey(new Date(), timeZone)
-  const monday = new Date(`${todayKey}T00:00:00Z`)
-  const weekday = monday.getUTCDay()
-  monday.setUTCDate(monday.getUTCDate() + (weekday === 0 ? -6 : 1 - weekday))
-
-  const labels = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So']
-  const days: WeekDay[] = Array.from({ length: 7 }, (_, index) => {
-    const day = new Date(monday)
-    day.setUTCDate(day.getUTCDate() + index)
-    const key = localDateKey(day, 'UTC')
-    return {
-      key,
-      label: labels[index] ?? '',
-      dayNumber: day.getUTCDate(),
-      isToday: key === todayKey,
-      posts: [],
-    }
-  })
-  for (const post of posts) {
-    if (!post.scheduled_for) continue
-    const key = localDateKey(new Date(post.scheduled_for), timeZone)
-    days.find((day) => day.key === key)?.posts.push({ id: post.id })
-  }
-  return days
-}
 
 async function loadDashboard(isLatest: () => boolean) {
   if (import.meta.server) return
@@ -186,7 +152,7 @@ async function loadDashboard(isLatest: () => boolean) {
       return time >= now && time <= in7Days
     }).length,
   }
-  weekDays.value = buildWeek(timezone.value, posts)
+  weekDays.value = buildDashboardWeek(timezone.value, posts)
   recentPosts.value = posts.slice(0, RECENT_POSTS_LIMIT)
 
   const onboarding = await api
@@ -408,50 +374,7 @@ await Promise.all([dashboardReady, suggestionsReady])
           </div>
         </article>
 
-        <article class="card overflow-hidden">
-          <div
-            class="flex flex-col items-start gap-3 border-b border-[#e7e7df] px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6"
-          >
-            <div class="min-w-0">
-              <h2 class="font-display text-base font-bold tracking-[-.02em]">Redaktionsplan</h2>
-              <p class="mt-0.5 text-[11px] text-[#7a817d]">Diese Woche, {{ timezone }}</p>
-            </div>
-            <NuxtLink
-              to="/kalender"
-              class="focus-ring inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-forest hover:bg-stone-100"
-              >Zum Kalender <CalendarDays :size="13"
-            /></NuxtLink>
-          </div>
-          <div v-if="dashboardError" class="p-8 text-center text-xs font-semibold text-red-700">
-            Der Redaktionsplan konnte nicht geladen werden.
-          </div>
-          <div v-else class="overflow-x-auto">
-            <div class="grid min-w-0 grid-cols-7 divide-x divide-[#ecece5] md:min-w-[620px]">
-              <div
-                v-for="day in weekDays"
-                :key="day.key"
-                class="min-h-28 min-w-0 p-2 sm:min-h-32 sm:p-3"
-              >
-                <div class="mb-3 flex items-center justify-between">
-                  <span class="text-[10px] font-bold uppercase text-[#929792]">{{ day.label }}</span
-                  ><span
-                    class="grid h-6 w-6 place-items-center rounded-full text-xs font-semibold"
-                    :class="day.isToday ? 'bg-forest text-white' : 'text-ink'"
-                    >{{ day.dayNumber }}</span
-                  >
-                </div>
-                <div v-if="day.posts.length === 0" class="text-[10px] text-[#c4c8c1]">—</div>
-                <div
-                  v-for="post in day.posts"
-                  :key="post.id"
-                  class="truncate rounded-lg bg-[#eef1e9] p-1 text-[10px] font-semibold leading-tight text-forest sm:p-2"
-                >
-                  Beitrag geplant
-                </div>
-              </div>
-            </div>
-          </div>
-        </article>
+        <DashboardWeekPlan :days="weekDays" :timezone="timezone" :error="dashboardError" />
       </div>
 
       <aside class="space-y-7">
