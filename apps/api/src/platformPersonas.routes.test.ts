@@ -187,7 +187,7 @@ describe('platform style personas', () => {
 
     // Ein Client-Retry (Timeout, Doppelklick) mit demselben Idempotency-Key darf den Provider
     // nicht ein zweites Mal kostenpflichtig aufrufen -- previewStyleProfile teilt sich den
-    // laufenden Aufruf (shared.ts).
+    // laufenden Aufruf (services/styleProfilePreview.ts).
     it('shares one provider call between concurrent retries with the same Idempotency-Key', async () => {
       let calls = 0
       const clients: SupabaseClientFactory = {

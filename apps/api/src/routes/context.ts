@@ -84,6 +84,6 @@ export interface ApiRouteContext extends ApiRouteGuards {
   // wie TextGenerationExecutor.generator im Worker (apps/worker/src/textGeneration.ts) -- ein Test
   // kann so eine echte Provider-Zeile faken (fuer model/baseUrl/apiKey), ohne einen echten
   // ausgehenden Fetch ueber createGuardedFetch() ausloesen zu muessen. Ausserhalb von Tests immer
-  // undefined; previewStyleProfile (routes/shared.ts) waehlt dann anhand des Provider-Protokolls.
+  // undefined; previewStyleProfile (services/styleProfilePreview.ts) waehlt dann anhand des Provider-Protokolls.
   textGenerator?: StructuredContentGenerator
 }

@@ -79,7 +79,7 @@ export function registerImageStyleRenderRoutes(app: FastifyInstance, context: Ap
     // legt dafuer nur department_memberships/team_memberships an). Genau die Redakteure, fuer die
     // diese Route da ist, saehen ihre eigene Beitragsfoto-Zeile also nicht und bekaemen 404, bevor
     // die Berechtigungspruefung ueberhaupt laeuft. Dieselbe Umgehung, mit derselben Begruendung,
-    // wie beim Anhaengen eines Fotos in routes/content.ts. Die Sichtbarkeit haengt stattdessen am
+    // wie beim Anhaengen eines Fotos in routes/textWorkshop.ts. Die Sichtbarkeit haengt stattdessen am
     // Beitrag selbst -- posts_select ueber den Nutzer-Client unten -- und am 'post.edit'-Gate.
     const media = await service
       .from('post_media')

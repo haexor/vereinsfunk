@@ -62,7 +62,7 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
     const client = supabaseClients.forUser(request.auth!.accessToken)
     // departmentId/teamId gegen ihre echte organization_id verifizieren, BEVOR die Berechtigung
     // geprueft wird -- sonst waeren sie client-seitig frei kombinierbar (dieselbe Reihenfolge wie
-    // /v1/text-generation-platforms, routes/content.ts).
+    // /v1/text-generation-platforms, routes/textWorkshop.ts).
     const resolvedScope = await resolveDirectoryScope(
       client,
       input.organizationId,
@@ -141,7 +141,7 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
       return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
 
     // Kein Idempotency-Key/In-Flight-Dedupe wie bei den LLM-Vorschauen (previewStyleProfile,
-    // routes/shared.ts): dort schuetzt es vor einem zweiten BEZAHLTEN Provider-Aufruf bei einem
+    // services/styleProfilePreview.ts): dort schuetzt es vor einem zweiten BEZAHLTEN Provider-Aufruf bei einem
     // Client-Retry. Hier gibt es keinen externen Aufruf, ofetch wiederholt POSTs nicht, und der
     // Client entprellt bereits samt Race-Guard (useImageStylePreviewRequest.ts) -- ein Cache haette
     // ohne mitgeschickten Header nur zufaellige Schluessel und damit garantiert keinen Treffer,

@@ -113,7 +113,7 @@ export function registerContentStyleProfileRoutes(app: FastifyInstance, context:
     }
     const input = PreviewCustomStyleProfileRequestSchema.parse(request.body)
     // departmentId/teamId gegen ihre echte organization_id verifizieren, BEVOR die Berechtigung
-    // geprueft wird (resolveDirectoryScope, shared.ts): rolesForScope vereinigt Organisations-,
+    // geprueft wird (resolveDirectoryScope, services/scopeAuthorization.ts): rolesForScope vereinigt Organisations-,
     // Abteilungs- und Teamrollen, eine frei kombinierte fremde departmentId kann die Rollenmenge
     // also nur vergroessern. Bei POST oben faengt der zusammengesetzte Fremdschluessel der Tabelle
     // die Kombination ab -- diese Route schreibt nichts und hat diesen Rueckhalt nicht.
@@ -122,7 +122,7 @@ export function registerContentStyleProfileRoutes(app: FastifyInstance, context:
     if (scope === null) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     if (!(await requirePermission(request, reply, 'post.create', scope))) return
     // A retried request (client-side timeout, double-click) must not bill the provider twice --
-    // resolvePreviewIdempotencyKey/previewStyleProfile share one in-flight call per key (shared.ts).
+    // resolvePreviewIdempotencyKey/previewStyleProfile share one in-flight call per key (services/styleProfilePreview.ts).
     const idempotencyKey = resolvePreviewIdempotencyKey(request)
     if (idempotencyKey === null) return reply.code(400).send({ error: 'invalid_idempotency_key', correlationId: request.id })
     const result = await previewStyleProfile(supabaseClients, environment, input, idempotencyKey, textGenerator)
