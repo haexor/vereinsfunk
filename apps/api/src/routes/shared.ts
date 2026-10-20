@@ -2,7 +2,7 @@ import type { ConsentScope, GeneratedPost, OAuthPlatform, OutputFormat, ScopeLev
 import { canRemoveRole, hasPermission, type Permission, type Role } from '@vereinsfunk/authorization'
 import type { ApiEnvironment } from '@vereinsfunk/config'
 import { AnthropicStructuredContentGenerator, buildStructuredTextPrompt, ContentGenerationError, OpenAiCompatibleStructuredContentGenerator, type StructuredContentGenerator, type TextGroundedContentBrief } from '@vereinsfunk/content-engine'
-import { SocialConnectionSchema, SocialPlatformSchema, TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS, TEXT_GENERATION_DEFAULT_TEMPERATURE, UuidSchema, type SocialConnection } from '@vereinsfunk/contracts'
+import { SocialConnectionSchema, SocialPlatformSchema, SyncIdempotencyKeySchema, TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS, TEXT_GENERATION_DEFAULT_TEMPERATURE, UuidSchema, type SocialConnection } from '@vereinsfunk/contracts'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { mergeEffectiveConfig, resolveAvailableChannels, resolveEffectiveConfig, type ChannelCandidate, type ConfigOverride, type ScopeLevelName, type TrustRecord } from '@vereinsfunk/domain'
 import type { FastifyRequest } from 'fastify'
@@ -574,10 +574,15 @@ export type StyleProfilePreviewResult =
   | { ok: true; post: GeneratedPost }
   | { ok: false; status: number; error: string }
 
-// Same shape as packages/contracts/src/integrations.ts's SyncIdempotencyKeySchema, duplicated
-// rather than imported: that one is named for the sync domain, and this header is generic HTTP
-// convention, not a sync concept.
-const PreviewIdempotencyKeySchema = z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/)
+// Liest den optionalen Idempotency-Key-Header (Sync-Routen, Veo-Abgleich, Vorschau). Ohne Header
+// ein zufaelliger Schluessel, also keine Deduplizierung; null bei mehrfachem oder ungueltigem Wert
+// -- der Aufrufer antwortet dann mit 400 invalid_idempotency_key.
+export function readIdempotencyKeyHeader(request: FastifyRequest): string | null {
+  const header = request.headers['idempotency-key']
+  if (Array.isArray(header)) return null
+  const parsed = SyncIdempotencyKeySchema.safeParse(header ?? randomUUID())
+  return parsed.success ? parsed.data : null
+}
 
 // A client-side timeout/retry on either preview route must not trigger a second billed provider
 // call for the same logical attempt (gefunden im Code-Review dieses Pakets). The integrations
@@ -597,11 +602,9 @@ const PreviewIdempotencyKeySchema = z.string().trim().min(1).max(128).regex(/^[A
 // Fensters das Ergebnis des ersten Aufrufs zurueck -- ueber Vereinsgrenzen hinweg. Ein Retry
 // desselben Nutzers dedupliziert weiterhin, genau darum geht es hier.
 export function resolvePreviewIdempotencyKey(request: FastifyRequest): string | null {
-  const header = request.headers['idempotency-key']
-  if (Array.isArray(header)) return null
-  const parsed = PreviewIdempotencyKeySchema.safeParse(header ?? randomUUID())
-  if (!parsed.success || !request.auth) return null
-  return `${request.auth.userId}:${parsed.data}`
+  const key = readIdempotencyKeyHeader(request)
+  if (!key || !request.auth) return null
+  return `${request.auth.userId}:${key}`
 }
 
 const previewByIdempotencyKey = new Map<string, { promise: Promise<StyleProfilePreviewResult>; expiresAt: number }>()

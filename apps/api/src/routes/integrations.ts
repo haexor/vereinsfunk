@@ -3,7 +3,6 @@ import {
   FieldMappingSchema,
   IntegrationDomainSchema,
   ResolveSyncConflictRequestSchema,
-  SyncIdempotencyKeySchema,
   SyncModeSchema,
   UpdateIntegrationSourceRequestSchema,
   UuidSchema,
@@ -30,7 +29,7 @@ import { handleFixturesSync } from '../services/sync/fixtures.js'
 import { handlePeopleSync } from '../services/sync/people.js'
 import { handleTeamsSync } from '../services/sync/teams.js'
 import type { ApiRouteContext } from './context.js'
-import { createAuditRecorder, resolveDirectoryScope, toPermissionScope } from './shared.js'
+import { createAuditRecorder, readIdempotencyKeyHeader, resolveDirectoryScope, toPermissionScope } from './shared.js'
 import { parseSupabaseData } from '../supabase.js'
 
 export function registerIntegrationRoutes(app: FastifyInstance, context: ApiRouteContext): void {
@@ -292,15 +291,8 @@ export function registerIntegrationRoutes(app: FastifyInstance, context: ApiRout
     const service = supabaseClients.forService()
     const correlationId = randomUUID()
 
-    const headerIdempotencyKey = request.headers['idempotency-key']
-    if (Array.isArray(headerIdempotencyKey)) {
-      return reply.code(400).send({ error: 'invalid_idempotency_key', correlationId: request.id })
-    }
-    const parsedIdempotencyKey = SyncIdempotencyKeySchema.safeParse(
-      typeof headerIdempotencyKey === 'string' ? headerIdempotencyKey : randomUUID(),
-    )
-    if (!parsedIdempotencyKey.success) return reply.code(400).send({ error: 'invalid_idempotency_key', correlationId: request.id })
-    const idempotencyKey = parsedIdempotencyKey.data
+    const idempotencyKey = readIdempotencyKeyHeader(request)
+    if (!idempotencyKey) return reply.code(400).send({ error: 'invalid_idempotency_key', correlationId: request.id })
 
     // Der fachliche Bereich braucht dieselbe explizite Berechtigung wie der spätere Schreibpfad.
     // Diese Prüfung liegt vor dem atomaren Guard, damit ein abgewiesener Request keinen Lauf belegt.
