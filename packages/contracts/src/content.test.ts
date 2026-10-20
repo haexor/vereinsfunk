@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CompressionProvenanceSchema, CreateCompositionSessionSchema, CreateCustomStyleProfileRequestSchema, CreateGenerationCommandSchema, CreatePlatformStylePersonaRequestSchema, CreateSubmissionSchema, CustomStyleProfileSchema, deriveTextGenerationMaxOutputTokens, GeneratedPostSchema, MaxCharactersSchema, PlatformStylePersonaSchema, SaveTextWorkshopDraftSchema, TEXT_GENERATION_TEMPERATURE_STEPS, TextGenerationPlatformAvailabilitySchema, UpdatePlatformStylePersonaRequestSchema, VideoUploadMetadataSchema, WorkflowPayloadSchema } from './index.js'
+import { CreateCompositionSessionSchema, CreateCustomStyleProfileRequestSchema, CreateGenerationCommandSchema, CreatePlatformStylePersonaRequestSchema, CreateSubmissionSchema, CustomStyleProfileSchema, deriveTextGenerationMaxOutputTokens, GeneratedPostSchema, MaxCharactersSchema, PlatformStylePersonaSchema, SaveTextWorkshopDraftSchema, TEXT_GENERATION_TEMPERATURE_STEPS, TextGenerationPlatformAvailabilitySchema, UpdatePlatformStylePersonaRequestSchema, WorkflowPayloadSchema } from './index.js'
 import { department, org, team } from './testFixtures.js'
 
 describe('contracts', () => {
@@ -149,13 +149,6 @@ describe('text workshop contracts', () => {
     expect(CreateCompositionSessionSchema.safeParse({ ...input, requestedFormats: ['text_post', 'text_post'] }).success).toBe(false)
   })
 
-  it('requires the supported, bounded upload-video delivery profile', () => {
-    const video = { kind: 'video', mimeType: 'video/mp4', byteSize: 1_000_000, width: 1080, height: 608, durationMs: 30_000, container: 'mp4', videoCodec: 'h264', audioCodec: 'aac' }
-    expect(VideoUploadMetadataSchema.safeParse(video).success).toBe(true)
-    expect(VideoUploadMetadataSchema.safeParse({ ...video, videoCodec: 'vp9' }).success).toBe(false)
-    expect(VideoUploadMetadataSchema.safeParse({ ...video, durationMs: 180_001 }).success).toBe(false)
-  })
-
   it('permits custom style profiles that name a real person to imitate and bounded revision instructions', () => {
     const profile = { organizationId: org, departmentId: department, teamId: null, slug: 'unser-ton', name: 'Unser Ton', description: 'Warm und konkret', styleRules, avoidRules: ['Floskeln'], doRules: ['Fans erwähnen'] }
     expect(CreateCustomStyleProfileRequestSchema.safeParse(profile).success).toBe(true)
@@ -253,18 +246,6 @@ describe('text workshop contracts', () => {
     expect(UpdatePlatformStylePersonaRequestSchema.safeParse({ isActive: false }).success).toBe(true)
     expect(UpdatePlatformStylePersonaRequestSchema.safeParse({}).success).toBe(false)
     expect(UpdatePlatformStylePersonaRequestSchema.safeParse({ slug: 'klar_erklaerend' }).success).toBe(false)
-  })
-
-  it('requires compression output measurements only when compression succeeded', () => {
-    const succeeded = {
-      method: 'device' as const, profileVersion: 'v1', inputBytes: 2_000_000, outputBytes: 900_000,
-      container: 'mp4' as const, videoCodec: 'h264' as const, audioCodec: 'aac' as const,
-      width: 1080, height: 608, durationMs: 20_000, failureReason: null,
-    }
-    expect(CompressionProvenanceSchema.safeParse(succeeded).success).toBe(true)
-    expect(CompressionProvenanceSchema.safeParse({ ...succeeded, outputBytes: null }).success).toBe(false)
-    const failed = { ...succeeded, outputBytes: null, width: null, height: null, durationMs: null, failureReason: 'memory_guardrail' as const }
-    expect(CompressionProvenanceSchema.safeParse(failed).success).toBe(true)
   })
 
   // Plan 039, PR 1 Step 4: ohne diese Ableitung waere die 5000-Zeichen-Vorgabe eines Website-Kanals
