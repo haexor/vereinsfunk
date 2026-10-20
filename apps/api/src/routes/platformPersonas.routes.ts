@@ -99,18 +99,18 @@ export function registerPlatformPersonaRoutes(app: FastifyInstance, context: Api
   })
 
   // "Persona testen": calls the active text provider directly and synchronously, no
-  // session/candidate row (see previewStyleProfile, routes/shared.ts).
+  // session/candidate row (see previewStyleProfile, services/styleProfilePreview.ts).
   app.post('/v1/platform-style-personas/preview', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     if (!(await requirePlatformAdmin(request, reply))) return
-    // Dasselbe Kostenlimit wie auf der Vereinsseite (routes/content.ts): auch ein Plattform-Admin
+    // Dasselbe Kostenlimit wie auf der Vereinsseite (routes/contentStyleProfiles.ts): auch ein Plattform-Admin
     // soll den Provider nicht in einer Schleife abrufen koennen, absichtlich oder versehentlich.
     if (!checkRateLimit(`style-preview:${request.auth!.userId}`, 10, 60_000)) {
       return reply.code(429).send({ error: 'rate_limited', correlationId: request.id })
     }
     const input = PreviewPlatformStylePersonaRequestSchema.parse(request.body)
     // A retried request (client-side timeout, double-click) must not bill the provider twice --
-    // resolvePreviewIdempotencyKey/previewStyleProfile share one in-flight call per key (shared.ts).
+    // resolvePreviewIdempotencyKey/previewStyleProfile share one in-flight call per key (services/styleProfilePreview.ts).
     const idempotencyKey = resolvePreviewIdempotencyKey(request)
     if (idempotencyKey === null) return reply.code(400).send({ error: 'invalid_idempotency_key', correlationId: request.id })
     const result = await previewStyleProfile(supabaseClients, environment, input, idempotencyKey, textGenerator)
@@ -119,7 +119,7 @@ export function registerPlatformPersonaRoutes(app: FastifyInstance, context: Api
   })
 
   // "System-Prompt anzeigen": no provider call, no DB read, no cost -- see
-  // buildStyleProfilePromptPreview (routes/shared.ts). Same request shape and permission gate as
+  // buildStyleProfilePromptPreview (services/styleProfilePreview.ts). Same request shape and permission gate as
   // /preview above since it needs the identical draft state, but no rate limit/idempotency key
   // needed since nothing billable happens.
   app.post('/v1/platform-style-personas/prompt-preview', async (request, reply) => {

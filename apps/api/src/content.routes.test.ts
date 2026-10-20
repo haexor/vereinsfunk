@@ -846,7 +846,7 @@ describe('GET /v1/text-generation-platforms', () => {
   })
 
   // Org-level posting: departmentId omitted resolves to an organization-level scope.
-  // resolveDirectoryScope (routes/shared.ts) returns { organizationId } directly without querying
+  // resolveDirectoryScope (services/scopeAuthorization.ts) returns { organizationId } directly without querying
   // the departments table when neither departmentId nor teamId is given -- unlike the
   // department-scoped tests in this block, this fake therefore has no 'departments' branch.
   it('resolves organization-level scope when departmentId is omitted', async () => {
@@ -1250,7 +1250,7 @@ describe('POST /v1/content-style-profiles/preview', () => {
 
   // Ein Client-Retry (Timeout, Doppelklick) mit demselben Idempotency-Key darf den Provider nicht
   // ein zweites Mal kostenpflichtig aufrufen -- previewStyleProfile teilt sich den laufenden Aufruf
-  // (shared.ts).
+  // (services/styleProfilePreview.ts).
   it('shares one provider call between concurrent retries with the same Idempotency-Key', async () => {
     let calls = 0
     const clients: SupabaseClientFactory = {

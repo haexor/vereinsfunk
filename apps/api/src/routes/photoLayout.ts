@@ -20,7 +20,7 @@ import { loadResolvedBrandColors } from '../services/brandResolution.js'
 import { resolveDirectoryScope, toPermissionScope } from '../services/scopeAuthorization.js'
 
 // Dieselbe Pruefung wie der mediaAssetIds-Loop in POST /v1/text-workshop/sessions
-// (routes/content.ts) -- absichtlich wortgleiche Fehlercodes, weil erstellen.vue deren
+// (routes/textWorkshop.ts) -- absichtlich wortgleiche Fehlercodes, weil erstellen.vue deren
 // Fehlerbehandlung (media_asset_not_reviewed/not_ready/not_found) fuer diese Route mitbenutzt.
 const RenderMediaAssetRowSchema = z.object({
   organization_id: UuidSchema, department_id: UuidSchema, upload_status: z.string(), people_reviewed_at: z.string().nullable(),

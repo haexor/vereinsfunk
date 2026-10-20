@@ -28,8 +28,7 @@ export async function isDepartmentOwnedChannelAllowed(client: SupabaseClient, or
 // 015, Abschnitt 3) und brauchen ein Rate-Limit pro IP und pro Token. Fuer einen einzelnen
 // API-Prozess ausreichend; ein mehrknotiges Produktions-Deployment braucht einen gemeinsamen
 // Speicher (Redis) statt dieser lokalen Map -- dokumentierte Grenze, kein stiller Kompromiss.
-// Modul-Singleton: von app.ts (Datenschutz-Routen) und routes/policies.ts (Media-Grants) geteilt,
-// damit beide weiterhin denselben Zaehler pro Praefix-Key benutzen.
+// Modul-Singleton: alle Route-Module teilen sich darueber denselben Zaehler pro Praefix-Key.
 const rateLimitBuckets = new Map<string, { count: number; resetAt: number }>()
 let nextRateLimitSweepAt = 0
 export function checkRateLimit(key: string, limit: number, windowMs: number): boolean {
@@ -86,9 +85,9 @@ export function createExternalActionAuditRecorder(supabaseClients: SupabaseClien
   }
 }
 
-// Gemeinsame Zeilenform fuer consent_records (Paket 015) -- gebraucht sowohl von den noch nicht
-// extrahierten Datenschutz-Routen als auch von computeMediaGateBlockersForPostVersion in
-// routes/policies.ts (Freigabe-Medien-Gate liest bestehende Einwilligungen).
+// Gemeinsame Zeilenform fuer consent_records (Paket 015) -- gebraucht sowohl von den
+// Datenschutz-Routen als auch von computeMediaGateBlockersForPostVersion in services/mediaGate.ts
+// (Freigabe-Medien-Gate liest bestehende Einwilligungen).
 export const CONSENT_RECORD_SELECT =
   'id, organization_id, directory_person_id, pseudonymous_subject_ref, scope, scope_structured, origin, source_id, signed_at, signer_name, signer_role, guardian_confirmed, valid_from, valid_until, revoked_at, revoked_by, revocation_reason, superseded_by, created_at'
 

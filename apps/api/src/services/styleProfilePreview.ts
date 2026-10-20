@@ -15,7 +15,7 @@ import { readIdempotencyKeyHeader } from '../routes/shared.js'
 // den Contracts statt eines Lookups. Dort stehen sie neben dem Regler und der Token-Spanne, damit
 // Preview und echte Sitzung nicht auf zwei getrennt gepflegten Zahlen laufen.
 
-// Plan 040: "Persona/Stilprofil testen" (routes/content.ts, routes/platformPersonas.routes.ts)
+// Plan 040: "Persona/Stilprofil testen" (routes/contentStyleProfiles.ts, routes/platformPersonas.routes.ts)
 // calls the active text provider directly and synchronously, unlike POST
 // /v1/text-workshop/sessions which only ever writes an ID-only Hatchet delivery for the worker to
 // pick up. The provider row shape and its decryption mirror apps/worker/src/context.ts's

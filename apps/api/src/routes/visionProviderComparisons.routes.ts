@@ -7,7 +7,7 @@ import type { ApiRouteContext } from './context.js'
 
 const RUN_COLUMNS = 'id, website_url, status, detected_font_family, logo_object_path, logo_mime_type, results, error_reason, created_at'
 
-// Analog mapBrandWebsiteAnalysisRow (routes/brand.ts): eine Signed URL bei jedem Abruf frisch
+// Analog mapBrandWebsiteAnalysisRow (routes/brandWebsiteAnalysis.ts): eine Signed URL bei jedem Abruf frisch
 // erzeugt statt gespeichert, weil sie waehrend eines langen Polls verfallen kann. Anders als dort
 // stehen die Ergebnis-Farbfelder schon in der camelCase-Form, in der der Worker sie geschrieben hat
 // (VisionComparisonResultEntry) -- keine Transformation je Zeile noetig.
@@ -32,7 +32,7 @@ async function mapVisionProviderComparisonRunRow(service: SupabaseClient, row: R
 
 /**
  * Plattform-Admin-Werkzeug (Paket 050): mehrere aktive Vision-Provider gegen dieselbe Test-URL
- * vergleichen, um zu entscheiden, welche Modelle fuer die echte Markenerkennung (routes/brand.ts)
+ * vergleichen, um zu entscheiden, welche Modelle fuer die echte Markenerkennung (routes/brandWebsiteAnalysis.ts)
  * aktiv bleiben sollen. Das Anlegen schreibt nur eine 'pending'-Zeile -- die eigentliche Analyse
  * laeuft ausserhalb von workflow_outbox in einem eigenen Cron-Poll im Worker (siehe
  * createVisionProviderComparisonScanWorkflow, apps/worker/src/workflows.ts), weil dafuer keine
@@ -45,7 +45,7 @@ export function registerVisionProviderComparisonRoutes(app: FastifyInstance, con
     if (!(await requireAuth(request, reply))) return
     if (!(await requirePlatformAdmin(request, reply))) return
     const input = CreateVisionProviderComparisonRunRequestSchema.parse(request.body)
-    // Dieselbe Vorabpruefung wie beim echten Marken-Crawl (routes/brand.ts): der Worker rendert
+    // Dieselbe Vorabpruefung wie beim echten Marken-Crawl (routes/brandWebsiteAnalysis.ts): der Worker rendert
     // genau diese URL mit einem echten Browser, eine vom CHECK abgelehnte Adresse waere sonst eine
     // 500 statt einer verstaendlichen 400.
     if (!isAllowedOutboundUrl(input.websiteUrl)) {

@@ -262,7 +262,7 @@ describe('POST /v1/image-style-presets/preview', () => {
   }
 
   // organization_brand_profiles ist die einzige Service-Tabelle, die loadResolvedBrandColors ohne
-  // department-/teamId abfragt (siehe routes/imageStyle.ts) -- null faellt auf die Default-Marke
+  // department-/teamId abfragt (siehe services/brandResolution.ts) -- null faellt auf die Default-Marke
   // zurueck, genau wie bei einem Verein ohne eigenes Markenprofil.
   function noAssetClients(): SupabaseClientFactory {
     return {

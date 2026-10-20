@@ -43,7 +43,7 @@ const ChannelSnapshotSchema = z.object({ config: z.object({ allowedChannelIds: z
 // schedule_publication (2026082504), die die verbindliche Pruefung in SQL traegt. Der Scope folgt
 // dem Beitrag: Team, Abteilung oder (department_id null) der Verein. Website-Kanaele sind
 // ausgenommen, sie sind noch kein Veroeffentlichungsziel (Plan 039, publications_platform_check).
-// platform engt auf eine Plattform ein (Agenten-Vorschlag, routes/agent.ts).
+// platform engt auf eine Plattform ein (Agenten-Vorschlag, services/agentProposalAuthorization.ts).
 export async function resolveAvailableChannelIdsForPostVersion(
   client: SupabaseClient,
   target: { organizationId: string; departmentId: string | null; teamId: string | null; effectiveConfigSnapshot: unknown },
