@@ -255,6 +255,51 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
     expect(response.json()).toMatchObject({ error: 'invalid_logo' })
   })
 
+  // Das Rastern scheiterte frueher erst nach dem Upload des Originals, das dann verwaist im
+  // Bucket lag.
+  it('rejects an SVG logo that cannot be rasterized before uploading anything', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          storage: {
+            from: () => {
+              throw new Error('nothing may be uploaded for a rejected SVG')
+            },
+          },
+          from: (table: string) => {
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const boundary = '----vereinsfunkHugeSvgBoundary'
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/brand/assets',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': `multipart/form-data; boundary=${boundary}`,
+      },
+      payload: Buffer.concat([
+        Buffer.from(
+          `--${boundary}\r\nContent-Disposition: form-data; name="organizationId"\r\n\r\n${ORGANIZATION_ID}\r\n`,
+        ),
+        Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="kind"\r\n\r\nlogo_primary\r\n`),
+        Buffer.from(
+          `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="logo.svg"\r\nContent-Type: image/svg+xml\r\n\r\n`,
+        ),
+        Buffer.from(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="10000" height="10000"><rect width="10" height="10"/></svg>',
+        ),
+        Buffer.from(`\r\n--${boundary}--\r\n`),
+      ]),
+    })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ error: 'invalid_logo' })
+  })
+
   it('rejects a font upload that is not a recognizable font container', async () => {
     const app = await startApp({ roleProvider: organizationManagerRoleProvider })
     const token = await signAccessToken(USER_ID)

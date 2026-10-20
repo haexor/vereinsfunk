@@ -554,17 +554,10 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
     } else if (processedImage) {
       const hash = hashLogoBuffer(processedImage.buffer)
       const objectPath = `organizations/${fields.organizationId}/brand/${scopeSegment}/${fields.kind}-${hash}.${processedImage.extension}`
-      const upload = await service.storage
-        .from('brand-assets')
-        .upload(objectPath, processedImage.buffer, {
-          contentType: processedImage.contentType,
-          upsert: true,
-        })
-      if (upload.error) throw upload.error
-
-      let rasterDerivativePaths: Record<string, string> = {}
+      // Rastern vor jedem Upload: ein erst danach abgelehntes SVG liess sein Original verwaist im
+      // Bucket zurueck.
+      let derivatives: Record<string, Buffer> | undefined
       if (processedImage.extension === 'svg') {
-        let derivatives
         try {
           derivatives = await generateSvgRasterDerivatives(processedImage.buffer)
         } catch (error) {
@@ -575,6 +568,17 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
           }
           throw error
         }
+      }
+      const upload = await service.storage
+        .from('brand-assets')
+        .upload(objectPath, processedImage.buffer, {
+          contentType: processedImage.contentType,
+          upsert: true,
+        })
+      if (upload.error) throw upload.error
+
+      let rasterDerivativePaths: Record<string, string> = {}
+      if (derivatives) {
         const derivativeUploads = await Promise.all(
           (Object.entries(derivatives) as [string, Buffer][]).map(async ([size, png]) => {
             const path = `organizations/${fields.organizationId}/brand/${scopeSegment}/${fields.kind}-${hash}-${size}.png`
