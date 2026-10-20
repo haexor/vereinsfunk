@@ -174,9 +174,14 @@ function actorMaxRank(actorRoles: readonly Role[]): number {
 // organization_owner ist nie ueber diesen Weg vergebbar, nur uebertragbar (ausserhalb dieses
 // Pakets). actorRoles muss bereits auf den Zielscope beschraenkt sein (siehe rolesForScope in
 // apps/api/src/auth.ts), sonst kaskadieren Rollen aus falschen Scopes in den Rang ein.
+// Der Rang allein reicht nicht, weil die Permission-Mengen nicht geschachtelt sind: ein
+// organization_admin (Rang 90) hat kein billing.manage, koennte ueber den Rang aber billing_admin
+// (Rang 30) vergeben und sich so die Abrechnung verschaffen. Vergebbar ist deshalb nur eine Rolle,
+// deren Permissions die eigenen Rollen zusammen schon abdecken. Gespiegelt in authz.can_assign_role.
 export function canAssignRole(actorRoles: readonly Role[], role: Role): boolean {
   if (role === 'organization_owner') return false
-  return roleRank[role] <= actorMaxRank(actorRoles)
+  if (roleRank[role] > actorMaxRank(actorRoles)) return false
+  return [...rolePermissions[role]].every((permission) => hasPermission(actorRoles, permission))
 }
 
 // Eskalationsschutz gilt auch beim Entfernen/Herabstufen, nicht nur beim Vergeben: sonst
