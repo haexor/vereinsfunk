@@ -2,7 +2,7 @@
 import { AlertTriangle, Check, ImagePlus, LoaderCircle, Trash2, X } from '@lucide/vue'
 import { MediaAssetSummarySchema } from '@vereinsfunk/contracts'
 import { z } from 'zod'
-import { sha256Hex } from '~/utils/sha256'
+import { uploadMediaAsset } from '~/utils/mediaUpload'
 
 // Foto-Anhang-Steuerung für die Textwerkstatt. Der lokale Editor läuft bewusst VOR dem Upload und
 // vor der Personenprüfung: Gesichtsfelder und Einwilligungen beziehen sich dadurch auf den
@@ -147,26 +147,17 @@ async function uploadEditedFile(file: File) {
   phase.value = 'uploading'
   errorMessage.value = ''
   try {
-    const initiated = await api.request('/v1/media/uploads', {
-      method: 'POST',
-      body: { organizationId: props.organizationId, departmentId: props.departmentId, filename: file.name, mimeType: file.type, byteSize: file.size },
-    }, z.object({ assetId: z.string(), uploadUrl: z.string() }))
-    const upload = await fetch(initiated.uploadUrl, { method: 'PUT', body: file, headers: { 'content-type': file.type } })
-    if (!upload.ok) throw new Error('upload_failed')
-    phase.value = 'processing'
-    const sha256 = await sha256Hex(file)
-    await api.request(`/v1/media/${initiated.assetId}/complete`, { method: 'POST', body: { sha256 } }, z.object({ accepted: z.boolean() }))
-    // complete() ist synchron (kein Worker in Plan 045 PR 0) -- ein einzelnes Nachlesen genuegt,
-    // kein Polling noetig.
-    const asset = await supabase.from('media_assets').select('upload_status').eq('id', initiated.assetId).single()
-    if (asset.error) throw asset.error
-    if (asset.data.upload_status !== 'ready') throw new Error('image_processing_failed')
+    const completed = await uploadMediaAsset(api, {
+      organizationId: props.organizationId, departmentId: props.departmentId, file,
+      onUploaded: () => { phase.value = 'processing' },
+    })
+    if (completed.uploadStatus !== 'ready') throw new Error('image_processing_failed')
     // Erst hier wird die bisherige Vorschau (und damit eine eventuell bestehende Object-URL)
     // verworfen. Das neue Asset muss anschließend wie jedes neue Foto erneut geprüft werden.
     reset(false)
     previewUrl.value = URL.createObjectURL(file)
     boxes.value = []
-    currentAssetId.value = initiated.assetId
+    currentAssetId.value = completed.assetId
     editableLocalFile.value = file
     phase.value = 'marking'
     await loadConsents()

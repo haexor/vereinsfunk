@@ -2,6 +2,7 @@
 import { Check, Images, LoaderCircle, Paperclip, Trash2 } from '@lucide/vue'
 import { MediaAssetSummarySchema, type MediaAssetSummary } from '@vereinsfunk/contracts'
 import { z } from 'zod'
+import { uploadMediaAsset } from '../utils/mediaUpload'
 
 const props = withDefaults(defineProps<{
   organizationId: string
@@ -33,11 +34,6 @@ const mode = ref<'upload' | 'existing'>('upload')
 const existingAssets = ref<MediaAssetSummary[]>([])
 const loadingExisting = ref(false)
 const loadExistingError = ref('')
-const UploadCompletionSchema = z.object({
-  accepted: z.literal(true),
-  uploadStatus: z.enum(['initiated', 'uploaded', 'normalizing', 'ready', 'quarantined', 'failed', 'deleted']),
-  mimeType: z.string().nullable(),
-})
 const PeopleReviewInputSchema = z.object({ target_asset_id: z.string().uuid(), faces_present: z.boolean() })
 const ReviewedMediaAssetSchema = z.object({
   id: z.string().uuid(),
@@ -54,10 +50,6 @@ function mimeTypeOf(attachment: PendingAttachment) {
 function nameOf(attachment: PendingAttachment) {
   return attachment.file?.name ?? attachment.existingLabel ?? 'Datei'
 }
-async function sha256Hex(file: File) {
-  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
-}
 function syncModel() {
   mediaAssetIds.value = attachments.value
     .filter((attachment) => attachment.state === 'ready' && attachment.assetId !== null)
@@ -65,20 +57,8 @@ function syncModel() {
 }
 async function upload(attachment: PendingAttachment & { file: File }) {
   try {
-    const initiated = await api.request('/v1/media/uploads', {
-      method: 'POST',
-      body: {
-        organizationId: props.organizationId,
-        departmentId: props.departmentId,
-        filename: attachment.file.name,
-        mimeType: attachment.file.type,
-        byteSize: attachment.file.size,
-      },
-    }, z.object({ assetId: z.string(), uploadUrl: z.string() }))
-    const sent = await fetch(initiated.uploadUrl, { method: 'PUT', body: attachment.file, headers: { 'content-type': attachment.file.type } })
-    if (!sent.ok) throw new Error('upload_failed')
-    const completed = await api.request(`/v1/media/${initiated.assetId}/complete`, { method: 'POST', body: { sha256: await sha256Hex(attachment.file) } }, UploadCompletionSchema)
-    attachment.assetId = initiated.assetId
+    const completed = await uploadMediaAsset(api, { organizationId: props.organizationId, departmentId: props.departmentId, file: attachment.file })
+    attachment.assetId = completed.assetId
     if (completed.uploadStatus !== 'ready') {
       attachment.state = 'failed'
       attachment.error = 'Der Upload konnte nicht geprüft werden. Bitte versuche es erneut.'
