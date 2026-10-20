@@ -362,7 +362,11 @@ select is((select count(*)::integer from public.member_review_trust where organi
 -- sucht die Folgestufe ueber position + 1: mit den Positionen 1 und 3 wuerde Stufe 3 nie oeffnen und
 -- der Beitrag nach Stufe 1 sofort auf 'approved' gehen -- so liesse sich jede aeussere Stufe
 -- ueberspringen, auch die unbefreibare Minderjaehrigenstufe.
+-- Aufgerufen wird der Helfer sonst nur aus request_approval/reresolve_approval_route, also immer im
+-- Namen eines Vereinsmitglieds -- seit 2026101916 beantwortet is_user_member_of_organization die
+-- Pruefer-Mitgliedschaft fuer ein vereinsfremdes Konto (hier noch ...098 von oben) nicht mehr.
 set local role postgres;
+select set_config('request.jwt.claim.sub', '64000000-0000-4000-8000-000000000001', true);
 select throws_ok(
   $$select authz.assert_valid_stage_list(
     '64000000-1000-4000-8000-000000000001'::uuid, '64000000-0000-4000-8000-000000000001'::uuid,
