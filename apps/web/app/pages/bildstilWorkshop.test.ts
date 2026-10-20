@@ -8,6 +8,8 @@ describe('Bildstil photo workshop', () => {
 
     expect(page).toContain('<PhotoImageWorkshop')
     expect(page).toContain('@save="acceptWorkshopFile"')
+    expect(page).toContain(':frame-assets="workshopFrameAssets"')
+    expect(page).toContain(':logo-assets="workshopLogoAssets"')
     expect(page).not.toContain('<ImageStyleCanvasEditor')
     expect(page).not.toContain('<ImageStylePresetForm')
     expect(page).not.toContain('Bausteine für diese Ebene')
