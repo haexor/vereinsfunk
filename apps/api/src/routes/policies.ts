@@ -15,11 +15,12 @@ import {
   type ScopeLevel,
   type SocialPlatform,
 } from '@vereinsfunk/contracts'
-import { hasPermission, type Role } from '@vereinsfunk/authorization'
+import { hasPermission } from '@vereinsfunk/authorization'
 import type { resolveEffectiveConfig } from '@vereinsfunk/domain'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
+import type { PermissionScope } from '../auth.js'
 import type { ApiRouteContext } from './context.js'
 import {
   computeRuleEntry,
@@ -28,9 +29,20 @@ import {
   isAnyMemberOfOrganization,
   POLICY_MANAGE_PERMISSION,
   resolveMembershipScope,
+  resolveRolesForScopes,
   toPermissionScope,
   type PolicyRuleRow,
 } from './shared.js'
+
+// Verein, jede Abteilung und jedes Team -- die Ebenen, deren Bearbeitbarkeit beide
+// Richtlinien-Uebersichten anzeigen; der Schluessel ist permissionScopeKey wie im canEditFor-Lookup.
+function policyScopes(organizationId: string, departments: readonly Record<string, unknown>[], teams: readonly Record<string, unknown>[]): PermissionScope[] {
+  return [
+    toPermissionScope(organizationId),
+    ...departments.map((department) => toPermissionScope(organizationId, department.id as string)),
+    ...teams.map((team) => toPermissionScope(organizationId, team.department_id as string, team.id as string)),
+  ]
+}
 
 function resolvePolicyFlagState(ancestorEffective: boolean, ownValue: boolean | null, canEdit: boolean): PolicyFlagState {
   return {
@@ -170,22 +182,10 @@ export function registerPolicyRoutes(app: FastifyInstance, context: ApiRouteCont
     const orgInviteAllowed = orgRow?.invite_allowed ?? true
     const orgPostsVisible = orgRow?.posts_visible_org_wide ?? true
 
-    // Eine Ebene wird fuer die Rollenermittlung nur einmal nachgeschlagen, nach demselben Muster
-    // wie rolesByScopeKey in GET /v1/organizations/:id/members -- sonst loest buildPolicySetting
-    // pro Eintrag einen eigenen rolesForScope-Aufruf aus (51 Aufrufe bei 10 Abteilungen/40 Teams).
-    const rolesByScopeKey = new Map<string, readonly Role[]>()
-    rolesByScopeKey.set('organization', await roleProvider.rolesForScope(request.auth!, { organizationId: params.id }))
-    await Promise.all([
-      ...departments.data.map(async (department) => {
-        rolesByScopeKey.set(`department:${department.id}`, await roleProvider.rolesForScope(request.auth!, { organizationId: params.id, departmentId: department.id as string }))
-      }),
-      ...teams.data.map(async (team) => {
-        rolesByScopeKey.set(
-          `team:${team.id}`,
-          await roleProvider.rolesForScope(request.auth!, { organizationId: params.id, departmentId: team.department_id as string, teamId: team.id as string }),
-        )
-      }),
-    ])
+    // Alle Ebenen in einem Rutsch, nach demselben Muster wie rolesByScopeKey in
+    // GET /v1/organizations/:id/members -- sonst loest buildPolicySetting pro Eintrag einen eigenen
+    // rolesForScope-Aufruf aus (51 Aufrufe bei 10 Abteilungen/40 Teams).
+    const rolesByScopeKey = await resolveRolesForScopes(roleProvider, request.auth!, policyScopes(params.id, departments.data, teams.data))
     const canEditFor = (scope: ScopeLevel, scopeId: string) => {
       const roles = rolesByScopeKey.get(scope === 'organization' ? 'organization' : `${scope}:${scopeId}`) ?? []
       return hasPermission(roles, POLICY_MANAGE_PERMISSION[scope])
@@ -306,16 +306,7 @@ export function registerPolicyRoutes(app: FastifyInstance, context: ApiRouteCont
       }
     }
 
-    const rolesByScopeKey = new Map<string, readonly Role[]>()
-    rolesByScopeKey.set('organization', await roleProvider.rolesForScope(request.auth!, { organizationId: params.id }))
-    await Promise.all([
-      ...departments.data.map(async (department) => {
-        rolesByScopeKey.set(`department:${department.id}`, await roleProvider.rolesForScope(request.auth!, { organizationId: params.id, departmentId: department.id as string }))
-      }),
-      ...teams.data.map(async (team) => {
-        rolesByScopeKey.set(`team:${team.id}`, await roleProvider.rolesForScope(request.auth!, { organizationId: params.id, departmentId: team.department_id as string, teamId: team.id as string }))
-      }),
-    ])
+    const rolesByScopeKey = await resolveRolesForScopes(roleProvider, request.auth!, policyScopes(params.id, departments.data, teams.data))
     const canEditFor = (scope: ScopeLevel, scopeId: string) => hasPermission(rolesByScopeKey.get(scope === 'organization' ? 'organization' : `${scope}:${scopeId}`) ?? [], POLICY_MANAGE_PERMISSION[scope])
 
     function buildEntry(scope: ScopeLevel, scopeId: string, name: string, departmentIdForTeam: string | null) {
