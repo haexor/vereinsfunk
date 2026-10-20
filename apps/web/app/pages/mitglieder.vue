@@ -16,6 +16,7 @@ import {
   type ReviewRequirement,
   type ScopeLevel,
 } from '@vereinsfunk/contracts'
+import { ApiRequestError } from '../utils/apiClient'
 import { endOfDayIso, localDateKey } from '../utils/memberDates'
 
 const api = useApiClient()
@@ -214,7 +215,7 @@ async function sendInvitation() {
     inviteRole.value = ''
     await load()
   } catch (error) {
-    const code = (error as { data?: { error?: string } })?.data?.error
+    const code = error instanceof ApiRequestError ? error.code : undefined
     inviteError.value =
       code === 'already_a_member'
         ? 'Diese Person ist in diesem Bereich bereits Mitglied.'

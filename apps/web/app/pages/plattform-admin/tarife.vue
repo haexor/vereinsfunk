@@ -14,8 +14,7 @@ import { optionalNumber } from '../../utils/numberInput'
 import { BYTES_PER_MB, MEDIA_ORIGIN_LABELS } from '../../utils/planLimits'
 
 // Plan 021: Tarif-Editor -- Tabellen-/Formular-Layout nach dem Vorbild von llm.vue (Liste,
-// Anlegen-Formular, Inline-Aktionen), aber useApiClient() statt useAuthHeader()+$fetch (siehe
-// Recherche-Fakten: llm.vue ist das veraltete Muster, neue Seiten migrieren).
+// Anlegen-Formular, Inline-Aktionen).
 definePageMeta({ layout: 'admin' })
 
 const MEDIA_ORIGINS: readonly MediaOrigin[] = MediaOriginSchema.options
