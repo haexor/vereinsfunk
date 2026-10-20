@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { CommunicationGoalSchema, CompositionFormatSchema, ContentPresetSlugSchema, OutputFormatSchema, SourceMaterialSchema } from './content.js'
-import { SocialPlatformSchema, UuidSchema } from './primitives.js'
+import { requireDepartmentForTeam, SocialPlatformSchema, UuidSchema } from './primitives.js'
 import { SystemStyleProfileSlugSchema } from './styleProfiles.js'
 
 export const GenerationIntentSchema = z.enum(['initial', 'revise'])
@@ -103,11 +103,6 @@ export const TextGenerationPlatformAvailabilitySchema = z.object({
 // wuerde ein Umbau der Stufen einen Default hinterlassen, den das eigene Schema ablehnt.
 export const TEXT_GENERATION_DEFAULT_TEMPERATURE = TEXT_GENERATION_TEMPERATURE_STEPS[1].value
 
-// Ein Team liegt immer in einer Abteilung: composition_sessions und text_workshop_drafts tragen
-// beide check (team_id is null or department_id is not null). Ohne diese Vorpruefung schlaegt die
-// Kombination erst beim Schreiben als 23514 auf, statt als benannter 400er zurueckzukommen.
-const TEAM_REQUIRES_DEPARTMENT_MESSAGE = 'teamId requires departmentId'
-
 export const CreateCompositionSessionSchema = z.object({
   organizationId: UuidSchema,
   // null = organization-level (no specific department). CreateSubmissionSchema (content.ts) stays
@@ -152,7 +147,7 @@ export const CreateCompositionSessionSchema = z.object({
 }).superRefine((value, context) => {
   const chosen = [value.styleProfileId, value.systemStyleProfileSlug, value.personaSlug].filter((field) => field !== undefined && field !== null)
   if (chosen.length > 1) context.addIssue({ code: 'custom', message: 'Choose at most one of styleProfileId, systemStyleProfileSlug, or personaSlug' })
-  if (value.departmentId === null && (value.teamId ?? null) !== null) context.addIssue({ code: 'custom', path: ['teamId'], message: TEAM_REQUIRES_DEPARTMENT_MESSAGE })
+  requireDepartmentForTeam(value, context)
 })
 
 // Ein Werkstatt-Entwurf ist bewusst noch keine composition_session: Er darf unvollständig sein
@@ -174,9 +169,7 @@ export const SaveTextWorkshopDraftSchema = z.object({
   departmentId: UuidSchema.nullable(),
   teamId: UuidSchema.nullable().optional(),
   payload: TextWorkshopDraftPayloadSchema,
-}).superRefine((value, context) => {
-  if (value.departmentId === null && (value.teamId ?? null) !== null) context.addIssue({ code: 'custom', path: ['teamId'], message: TEAM_REQUIRES_DEPARTMENT_MESSAGE })
-})
+}).superRefine(requireDepartmentForTeam)
 export const TextWorkshopDraftRowSchema = z.object({
   id: UuidSchema, organization_id: UuidSchema, department_id: UuidSchema.nullable(), team_id: UuidSchema.nullable(),
   post_id: UuidSchema.nullable(), payload: TextWorkshopDraftPayloadSchema, created_at: z.iso.datetime({ offset: true }), updated_at: z.iso.datetime({ offset: true }),

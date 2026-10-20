@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { ContentPresetSlugSchema } from './content.js'
-import { UuidSchema } from './primitives.js'
+import { requireDepartmentForTeam, UuidSchema } from './primitives.js'
 
 // Product decision (Plan 032, "Kuratierte und selbst angelegte Persona"): style profiles may
 // name and imitate a real person (curated persona shipped by the platform, or custom persona an
@@ -56,9 +56,7 @@ export const StyleProfileScopeSchema = z.object({
   organizationId: UuidSchema,
   departmentId: UuidSchema.nullable(),
   teamId: UuidSchema.nullable(),
-}).superRefine((scope, context) => {
-  if (scope.teamId && !scope.departmentId) context.addIssue({ code: 'custom', message: 'teamId requires departmentId' })
-})
+}).superRefine(requireDepartmentForTeam)
 export const CustomStyleProfileSchema = StyleProfileScopeSchema.extend({
   id: UuidSchema,
   slug: ContentPresetSlugSchema,
@@ -84,7 +82,7 @@ export const CreateCustomStyleProfileRequestSchema = z.object({
   avoidRules: StyleProfileRuleListSchema,
   doRules: StyleProfileRuleListSchema,
 }).superRefine((profile, context) => {
-  if (profile.teamId && !profile.departmentId) context.addIssue({ code: 'custom', message: 'teamId requires departmentId' })
+  requireDepartmentForTeam(profile, context)
   rejectReservedSlug(profile.slug, context)
 })
 // Plan 037: a platform-admin-curated, global persona catalogue -- no organization_id, no
@@ -147,9 +145,7 @@ export const PreviewCustomStyleProfileRequestSchema = StyleProfilePreviewCoreSch
   organizationId: UuidSchema,
   departmentId: UuidSchema.nullable().optional(),
   teamId: UuidSchema.nullable().optional(),
-}).superRefine((profile, context) => {
-  if (profile.teamId && !profile.departmentId) context.addIssue({ code: 'custom', message: 'teamId requires departmentId' })
-})
+}).superRefine(requireDepartmentForTeam)
 // "System-Prompt anzeigen": same request shape as the preview above (it needs the exact same
 // draft state to build the prompt), but the response is the assembled prompt text instead of a
 // generated post -- no provider call, no cost, so this is a pure, side-effect-free readback.

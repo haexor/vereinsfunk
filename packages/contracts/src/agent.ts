@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { CommunicationGoalSchema, SourceMaterialSchema } from './content.js'
 import { ClubEventCategorySchema } from './clubSchedule.js'
-import { OAuthPlatformSchema, SocialPlatformSchema, UuidSchema } from './primitives.js'
+import { OAuthPlatformSchema, requireDepartmentForTeam, SocialPlatformSchema, UuidSchema } from './primitives.js'
 import { AssignableRoleSchema } from './structure.js'
 import { SystemStyleProfileSlugSchema } from './styleProfiles.js'
 
@@ -11,11 +11,7 @@ export const AgentScopeSchema = z.object({
   organizationId: UuidSchema,
   departmentId: UuidSchema.nullable().optional(),
   teamId: UuidSchema.nullable().optional(),
-}).superRefine((scope, context) => {
-  if (scope.teamId && !scope.departmentId) {
-    context.addIssue({ code: 'custom', message: 'teamId requires departmentId' })
-  }
-})
+}).superRefine(requireDepartmentForTeam)
 
 export const CreateAgentConversationSchema = AgentScopeSchema
 

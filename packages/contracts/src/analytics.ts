@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { UuidSchema } from './primitives.js'
+import { requireDepartmentForTeam, UuidSchema } from './primitives.js'
 import { ChannelQuotaSchema } from './policy.js'
 
 // Paket 016: Auswertung: interne Kennzahlen -------------------------------------------------------
@@ -9,11 +9,9 @@ import { ChannelQuotaSchema } from './policy.js'
 const ANALYTICS_MAX_RANGE_DAYS = 366 * 2 // 24 Monate, wie vom Plan unter "Endpunkte" verlangt.
 function checkAnalyticsScopeQuery(
   value: { departmentId?: string | undefined; teamId?: string | undefined; from: string; to: string },
-  context: { addIssue: (issue: { code: 'custom'; message: string; path?: (string | number)[] }) => void },
+  context: z.RefinementCtx,
 ): void {
-  if (value.teamId && !value.departmentId) {
-    context.addIssue({ code: 'custom', message: 'teamId requires departmentId', path: ['teamId'] })
-  }
+  requireDepartmentForTeam(value, context)
   if (value.from > value.to) {
     context.addIssue({ code: 'custom', message: 'from must not be after to', path: ['from'] })
   }

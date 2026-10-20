@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { CountryCodeSchema, UuidSchema } from './primitives.js'
+import { CountryCodeSchema, requireDepartmentForTeam, UuidSchema } from './primitives.js'
 
 const HexColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/)
 // Die Marken-Website wird fuer die automatische Analyse von unserem Server abgerufen. Deshalb
@@ -214,9 +214,7 @@ export const CreateBrandAssetRequestSchema = z
     teamId: UuidSchema.optional(),
     kind: BrandAssetUploadKindSchema,
   })
-  .refine((value) => value.teamId === undefined || value.departmentId !== undefined, {
-    message: 'teamId requires departmentId',
-  })
+  .superRefine(requireDepartmentForTeam)
 
 export const ConfirmBrandAssetLicenseRequestSchema = z.object({
   licenseHolder: z.string().trim().min(1).max(200),

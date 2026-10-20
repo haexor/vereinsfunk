@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { UuidSchema } from './primitives.js'
+import { requireDepartmentForTeam, UuidSchema } from './primitives.js'
 
 // Plan 045, PR 1: Bildstil-Presets (Rahmen, Logo-Wasserzeichen, Filter) fuer Beitragsfotos --
 // mehrschichtig wie Marke (Verein/Abteilung/Mannschaft), aber ein eigener Datensatz je Preset
@@ -161,9 +161,7 @@ export const CreateImageStylePresetRequestSchema = ImageStylePresetFieldsSchema.
   teamId: UuidSchema.optional(),
 }).superRefine((preset, context) => {
   checkImageStylePresetFields(preset, context)
-  if (preset.teamId !== undefined && preset.departmentId === undefined) {
-    context.addIssue({ code: 'custom', path: ['teamId'], message: 'teamId requires departmentId' })
-  }
+  requireDepartmentForTeam(preset, context)
 })
 
 // Scope (organizationId/departmentId/teamId) ist unveraendlich -- PATCH /v1/image-style-presets/:id
@@ -183,9 +181,7 @@ export const PreviewImageStylePresetRequestSchema = ImageStylePresetFieldsSchema
   teamId: UuidSchema.optional(),
 }).superRefine((preset, context) => {
   checkImageStylePresetFields({ ...preset, name: preset.name ?? '' }, context)
-  if (preset.teamId !== undefined && preset.departmentId === undefined) {
-    context.addIssue({ code: 'custom', path: ['teamId'], message: 'teamId requires departmentId' })
-  }
+  requireDepartmentForTeam(preset, context)
 })
 
 // Immer WebP, anders als ApplyImageStyleRenderResponse: die Vorschau geht nicht in den
@@ -209,15 +205,7 @@ export const ImageStyleFilterPreviewsRequestSchema = z
     departmentId: UuidSchema.optional(),
     teamId: UuidSchema.optional(),
   })
-  .superRefine((input, context) => {
-    if (input.teamId !== undefined && input.departmentId === undefined) {
-      context.addIssue({
-        code: 'custom',
-        path: ['teamId'],
-        message: 'teamId requires departmentId',
-      })
-    }
-  })
+  .superRefine(requireDepartmentForTeam)
 
 export const ImageStyleFilterPreviewSchema = z.object({
   filter: ImageStyleFilterSchema,
