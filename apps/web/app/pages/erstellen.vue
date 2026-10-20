@@ -2,6 +2,7 @@
 import { Check, LoaderCircle, RefreshCw, Save, Sparkles } from '@lucide/vue'
 import { MaxCharactersSchema, RequestApprovalResponseSchema, SocialPlatformSchema, SourceMaterialSchema, TEXT_GENERATION_DEFAULT_TEMPERATURE, TextGenerationPlatformAvailabilitySchema, TextWorkshopDraftPayloadSchema, TextWorkshopDraftRowSchema, UuidSchema, type SocialPlatform, type TextGenerationPlatformAvailability } from '@vereinsfunk/contracts'
 import { z } from 'zod'
+import { ApiRequestError } from '../utils/apiClient'
 import { optionalNumber } from '../utils/numberInput'
 
 type Profile = { id: string | null; slug: string; kind: 'system' | 'persona' | 'custom'; name: string; description: string }
@@ -319,7 +320,7 @@ async function createCandidate() {
     sessionId.value = created.sessionId; sessionProfile.value = selectedProfile.value; candidate.value = { id: created.candidateIds[0]!, status: 'pending', generated_content: null, failure_code: null, triggered_by: 'member' }
     await refreshSession()
   } catch (error) {
-    const code = (error as { data?: { error?: string } })?.data?.error
+    const code = error instanceof ApiRequestError ? error.code : ''
     if (code === 'platform_not_available') {
       await loadPlatformAvailability()
       notice.value = 'Eine gewählte Plattform ist nicht mehr verfügbar. Bitte Auswahl aktualisieren.'
@@ -362,8 +363,8 @@ async function acceptCandidate() {
       serverDraftId.value = null
       await navigateTo('/beitraege')
     } catch (error) {
-      const code = (error as { data?: { error?: string } })?.data?.error
-      notice.value = REQUEST_APPROVAL_ERROR_MESSAGES[code ?? ''] ?? 'Der Entwurf wurde gespeichert, konnte aber nicht zur Freigabe eingereicht werden.'
+      const code = error instanceof ApiRequestError ? error.code : ''
+      notice.value = REQUEST_APPROVAL_ERROR_MESSAGES[code] ?? 'Der Entwurf wurde gespeichert, konnte aber nicht zur Freigabe eingereicht werden.'
     }
   } catch { notice.value = 'Der Kandidat konnte nicht übernommen werden.' } finally { submitting.value = false }
 }
