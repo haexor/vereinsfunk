@@ -11,50 +11,6 @@ export const OutputFormatSchema = z.enum(['feed_image', 'carousel', 'story', 're
 // New text-workshop commands deliberately use this separate schema so a user-uploaded
 // video is never misrepresented as an AI-generated Reel.
 export const CompositionFormatSchema = z.enum(['text_post', 'photo_post', 'video_post'])
-export const MediaAssetKindSchema = z.enum(['image', 'video'])
-export const CompressionMethodSchema = z.enum(['device', 'server'])
-export const CompressionFailureReasonSchema = z.enum([
-  'unsupported_codec', 'unsupported_device', 'memory_guardrail', 'battery_guardrail',
-  'network_guardrail', 'transcode_failed', 'cancelled',
-])
-export const CompressionProvenanceSchema = z.object({
-  method: CompressionMethodSchema,
-  profileVersion: z.string().trim().min(1).max(80),
-  inputBytes: z.int().nonnegative(),
-  outputBytes: z.int().positive().nullable(),
-  container: z.literal('mp4'),
-  videoCodec: z.literal('h264'),
-  audioCodec: z.literal('aac').nullable(),
-  width: z.int().positive().max(1080).nullable(),
-  height: z.int().positive().max(1080).nullable(),
-  durationMs: z.int().positive().max(180_000).nullable(),
-  failureReason: CompressionFailureReasonSchema.nullable().default(null),
-}).superRefine((provenance, context) => {
-  // A failed/cancelled compression never produced real output bytes, dimensions or duration --
-  // only a successful run must report them.
-  if (provenance.failureReason === null && (provenance.outputBytes === null || provenance.width === null || provenance.height === null || provenance.durationMs === null)) {
-    context.addIssue({ code: 'custom', message: 'outputBytes, width, height and durationMs are required when compression succeeded' })
-  }
-})
-export const ImageUploadMetadataSchema = z.object({
-  kind: z.literal('image'),
-  mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp', 'image/heic']),
-  byteSize: z.int().positive().max(20 * 1024 * 1024),
-  width: z.int().positive().max(12_000),
-  height: z.int().positive().max(12_000),
-})
-export const VideoUploadMetadataSchema = z.object({
-  kind: z.literal('video'),
-  mimeType: z.literal('video/mp4'),
-  byteSize: z.int().positive().max(250 * 1024 * 1024),
-  width: z.int().positive().max(1080),
-  height: z.int().positive().max(1080),
-  durationMs: z.int().positive().max(180_000),
-  container: z.literal('mp4'),
-  videoCodec: z.literal('h264'),
-  audioCodec: z.literal('aac').nullable(),
-})
-export const AttachmentUploadMetadataSchema = z.discriminatedUnion('kind', [ImageUploadMetadataSchema, VideoUploadMetadataSchema])
 
 // Product decision (Plan 032, "Kuratierte und selbst angelegte Persona"): style profiles may
 // name and imitate a real person (curated persona shipped by the platform, or custom persona an
@@ -99,7 +55,6 @@ export const StyleProfileSnapshotSchema = z.object({
 export const SystemStyleProfileSlugSchema = z.enum([
   'klar_erklaerend', 'warm_gemeinschaftlich', 'lebendig_sportlich', 'leicht_humorvoll', 'feierlich_wertschaetzend',
 ])
-export const StyleProfileKindSchema = z.enum(['system', 'custom'])
 export const StyleProfileScopeSchema = z.object({
   organizationId: UuidSchema,
   departmentId: UuidSchema.nullable(),
@@ -541,8 +496,6 @@ export type MediaAssetSummary = z.infer<typeof MediaAssetSummarySchema>
 export type MembershipScope = z.infer<typeof MembershipScopeSchema>
 export type MediaGateBlocker = z.infer<typeof MediaGateBlockerSchema>
 export type CompositionFormat = z.infer<typeof CompositionFormatSchema>
-export type AttachmentUploadMetadata = z.infer<typeof AttachmentUploadMetadataSchema>
-export type CompressionProvenance = z.infer<typeof CompressionProvenanceSchema>
 export type StyleProfileExample = z.infer<typeof StyleProfileExampleSchema>
 export type StyleProfileRules = z.infer<typeof StyleProfileRulesSchema>
 export type StyleProfilePromptPreview = z.infer<typeof StyleProfilePromptPreviewSchema>
