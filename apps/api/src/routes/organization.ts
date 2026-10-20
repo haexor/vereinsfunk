@@ -10,7 +10,10 @@ import {
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { mapProfileRow, toProfileUpdatePayload } from '../apiMappers.js'
+import { parseSupabaseData } from '../supabase.js'
 import type { ApiRouteContext } from './context.js'
+
+const OnboardingRowsSchema = z.array(z.object({ completed_steps: z.array(z.string()), dismissed_at: z.string().nullable() }))
 
 export function registerOrganizationRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients } = context
@@ -100,23 +103,13 @@ app.post('/v1/onboarding/steps/:step/complete', async (request, reply) => {
   const body = z.object({ organizationId: UuidSchema }).parse(request.body)
   if (!(await requirePermission(request, reply, 'organization.manage', { organizationId: body.organizationId }))) return
   const client = supabaseClients.forUser(request.auth!.accessToken)
-  const current = await client
-    .from('organization_onboarding')
-    .select('completed_steps')
-    .eq('organization_id', body.organizationId)
-    .single()
-  if (current.error) throw current.error
-  const completedSteps = Array.from(new Set([...(current.data.completed_steps as string[]), params.step]))
-  const update = await client
-    .from('organization_onboarding')
-    .update({ completed_steps: completedSteps })
-    .eq('organization_id', body.organizationId)
-    .select('completed_steps, dismissed_at')
-    .single()
-  if (update.error) throw update.error
-  return reply.code(200).send(
-    OnboardingStateSchema.parse({ completedSteps: update.data.completed_steps, dismissedAt: update.data.dismissed_at }),
-  )
+  // Lesen und Zurueckschreiben des ganzen Arrays verlor einen gleichzeitig abgeschlossenen
+  // Schritt; complete_onboarding_step haengt in einer einzigen UPDATE-Anweisung an.
+  const rpc = await client.rpc('complete_onboarding_step', { target_organization_id: body.organizationId, target_step: params.step })
+  if (rpc.error) throw rpc.error
+  const [row] = parseSupabaseData(OnboardingRowsSchema, rpc.data)
+  if (!row) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+  return reply.code(200).send(OnboardingStateSchema.parse({ completedSteps: row.completed_steps, dismissedAt: row.dismissed_at }))
 })
 
 }

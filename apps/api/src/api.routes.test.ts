@@ -233,6 +233,34 @@ describe('api', () => {
 })
 
 describe('onboarding', () => {
+  // Regression: der Schritt wurde gelesen, in der API ergaenzt und als ganzes Array zurueck-
+  // geschrieben -- ein gleichzeitig abgeschlossener Schritt ging verloren. Die Route schreibt
+  // deshalb nichts mehr selbst, sondern haengt per RPC an.
+  it('appends a completed step through complete_onboarding_step', async () => {
+    const calls: { name: string; args: unknown }[] = []
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({
+        rpc: async (name: string, args: unknown) => {
+          calls.push({ name, args })
+          return { data: [{ completed_steps: ['responsible_person', 'branding'], dismissed_at: null }], error: null }
+        },
+        from: (table: string) => { throw new Error(`unexpected table in test fake: ${table}`) },
+      }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/onboarding/steps/branding/complete',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { organizationId: ORGANIZATION_ID },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ completedSteps: ['responsible_person', 'branding'], dismissedAt: null })
+    expect(calls).toEqual([{ name: 'complete_onboarding_step', args: { target_organization_id: ORGANIZATION_ID, target_step: 'branding' } }])
+  })
+
   it('rejects a profile update without organization.manage', async () => {
     const app = await startApp({ roleProvider: denyingRoleProvider })
     const token = await signAccessToken(USER_ID)
