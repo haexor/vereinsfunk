@@ -183,7 +183,8 @@ describe('app shell wiring', () => {
 
   it('builds the sidebar from the registry and hides post creation without social media', () => {
     const layout = readFileSync(join(appDirectory, 'layouts/default.vue'), 'utf8')
-    expect(layout).toContain('appModuleRegistry[module].navigation')
+    const shellNavigation = readFileSync(join(appDirectory, 'composables/useShellNavigation.ts'), 'utf8')
+    expect(shellNavigation).toContain('appModuleRegistry[module].navigation')
     expect(layout).toContain(
       `v-if="isModuleEnabled('social_media') && canUseAtActiveScope('post.create')"`,
     )
