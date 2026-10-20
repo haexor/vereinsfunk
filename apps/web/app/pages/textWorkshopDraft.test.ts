@@ -38,4 +38,12 @@ describe('Textwerkstatt-Entwurf', () => {
     expect(page).toContain('/v1/text-workshop/sessions/${requestedSessionId}')
     expect(page).toContain('if (sessionId.value !== requestedSessionId) return\n  sessionProfile.value =')
   })
+
+  it('erklaert, warum eine ueberholte Fassung nicht zur Freigabe eingereicht werden kann', () => {
+    const page = readFileSync(join(PAGES_DIR, 'erstellen.vue'), 'utf8')
+
+    // request-approval lehnt eine nicht mehr aktuelle Fassung mit 409 version_not_current ab.
+    expect(page).toContain("version_not_current: 'Inzwischen gibt es eine neuere Fassung dieses Beitrags.")
+    expect(page).toContain('notice.value = REQUEST_APPROVAL_ERROR_MESSAGES[code] ??')
+  })
 })
