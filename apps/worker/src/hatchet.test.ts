@@ -8,7 +8,6 @@ function client() {
   return {
     runNoWait: vi.fn().mockResolvedValue({ runId: 'run-1' }),
     scheduled: { create: vi.fn().mockResolvedValue({ metadata: { id: 'scheduled-1' } }) },
-    runs: { cancel: vi.fn() },
   }
 }
 

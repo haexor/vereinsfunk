@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  denseRanks,
   currentSeasonStart,
   isPlayerboardCategoryEffective,
   resolvePlayerboardSettings,
@@ -89,14 +88,6 @@ describe('isPlayerboardCategoryEffective', () => {
     const own = { scope: 'team' as const, departmentId: 'dept-a', teamId: 'team-a1', active: true }
     expect(isPlayerboardCategoryEffective(own, team, true)).toBe(true)
     expect(isPlayerboardCategoryEffective(own, team, false)).toBe(false)
-  })
-})
-
-describe('denseRanks', () => {
-  it('shares places without a gap after a tie', () => {
-    expect(denseRanks([10, 8, 8, 3])).toEqual([1, 2, 2, 3])
-    expect(denseRanks([7, 7, 5, 5, 5, 5, 3, 3, 3, 1])).toEqual([1, 1, 2, 2, 2, 2, 3, 3, 3, 4])
-    expect(denseRanks([])).toEqual([])
   })
 })
 

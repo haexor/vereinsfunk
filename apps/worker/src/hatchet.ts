@@ -6,7 +6,6 @@ import { assertWorkflowPayload, priorityToHatchet, type HatchetPriority, type Or
 type HatchetDispatchClient = {
   runNoWait: (workflow: WorkflowName, payload: WorkflowPayload, options: { priority: Priority }) => Promise<{ runId: string | Promise<string> }>
   scheduled: { create: (workflow: WorkflowName, input: { triggerAt: Date; input: WorkflowPayload; priority: Priority }) => Promise<{ metadata: { id: string } }> }
-  runs: { cancel: (input: { ids: string[] }) => Promise<unknown> }
 }
 
 /** Creates the worker-local Hatchet SDK client from already validated configuration. */
@@ -38,6 +37,4 @@ export class HatchetOrchestrator implements Orchestrator {
       throw error
     }
   }
-
-  async cancel(runId: string): Promise<void> { await this.client.runs.cancel({ ids: [runId] }) }
 }

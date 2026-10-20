@@ -95,7 +95,7 @@ function applyOverride(
 
 // SaaS-Standard, falls ein Verein sein Markenprofil noch nicht vollstaendig ausgefuellt hat --
 // identische Werte zu organization_brand_profiles' eigenen Spaltendefaults.
-export const DEFAULT_RESOLVED_BRAND: ResolvedBrand = {
+const DEFAULT_RESOLVED_BRAND: ResolvedBrand = {
   primaryColor: '#163a2c',
   accentColor: '#caff4a',
   backgroundColor: '#f6f4ec',
