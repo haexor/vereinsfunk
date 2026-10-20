@@ -9,12 +9,12 @@ import {
   type SubscriptionPlan,
   type SubscriptionSummary,
 } from '@vereinsfunk/contracts'
+import { MEDIA_ORIGIN_LABELS } from '../../utils/planLimits'
 
 // Plan 021: Tarif, Speicher- und Beitragskontingente des eigenen Vereins -- Balken mit
 // absoluten Zahlen daneben, keine Instagram-Fachbegriffe, keine Kosten-/Tokenzahl (siehe
 // plans/021, "Fachliches Modell"). ai_image/ai_video sind spezifiziert, aber noch wirkungslos
 // (keine Erzeugung existiert) -- als "bald verfügbar" markiert, nicht verschwiegen.
-const MEDIA_ORIGIN_LABELS: Record<MediaOrigin, string> = { own_upload: 'Eigene Beiträge', ai_image: 'KI-Bilder', ai_video: 'KI-Videos' }
 const MEDIA_ORIGIN_AVAILABLE: Record<MediaOrigin, boolean> = { own_upload: true, ai_image: false, ai_video: false }
 
 const api = useApiClient()
