@@ -104,8 +104,6 @@ function mappingTargetsFor(): typeof FIELD_MAPPING_BASE_TARGETS {
   return FIELD_MAPPING_BASE_TARGETS
 }
 
-function addMappingRow() { mappingRows.value.push({ column: '', field: '' }) }
-function removeMappingRow(index: number) { mappingRows.value.splice(index, 1) }
 
 function buildFieldMapping(rows: { column: string; field: string }[]): Record<string, string> {
   return Object.fromEntries(rows.filter((row) => row.column.trim() && row.field).map((row) => [row.column.trim(), row.field]))
@@ -388,7 +386,7 @@ async function resolveConflict(conflict: IntegrationSyncConflict, resolution: 'k
       <IntegrationSourceCreateForm
         v-model:form="createForm" v-model:mapping-rows="mappingRows" :departments="departmentOptionsForCreate"
         :can-manage-org-wide="canManageOrgWide" :submitting="createSubmitting" :error="createError"
-        :mapping-targets-for="mappingTargetsFor" @submit="createSource" @add-row="addMappingRow" @remove-row="removeMappingRow"
+        :mapping-targets-for="mappingTargetsFor" @submit="createSource"
       />
 
       <section v-for="source in sources" :key="source.id" class="card mb-4 p-6" :class="{ 'opacity-60': !source.enabled }">
@@ -412,7 +410,7 @@ async function resolveConflict(conflict: IntegrationSyncConflict, resolution: 'k
         <IntegrationSourceEditForm
           v-if="editingSourceId === source.id" :source="source" v-model:form="editForm" v-model:mapping-rows="editMappingRows"
           :submitting="editSubmitting" :error="editError" :mapping-targets-for="mappingTargetsFor"
-          @save="saveEdit(source)" @cancel="editingSourceId = null" @add-row="editMappingRows.push({ column: '', field: '' })" @remove-row="editMappingRows.splice($event, 1)"
+          @save="saveEdit(source)" @cancel="editingSourceId = null"
         />
 
         <div v-if="syncingSourceId === source.id" class="mt-4 rounded-xl border border-[#e8e9e2] bg-[#f7f8f4] p-4">
