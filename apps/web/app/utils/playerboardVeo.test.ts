@@ -1,5 +1,6 @@
+import type { PlayerboardVeoMatch } from '@vereinsfunk/contracts'
 import { describe, expect, it } from 'vitest'
-import { formatStatValue, matchOutcome, ownTeamTotals, playerSeasonRows, scoreLabel, seasonRecord, statLabel, teamStatsByCategory } from './playerboardVeo'
+import { formatStatValue, matchOutcome, ownTeamTotals, personIdLookup, playerSeasonRows, scoreLabel, seasonRecord, statLabel, teamStatsByCategory, veoSeasonMatches } from './playerboardVeo'
 
 const stat = (teamAssociation: 'own' | 'opponent', statType: string, value: number, category = 'attacking') => ({ teamAssociation, statType, category, value })
 
@@ -57,5 +58,24 @@ describe('playerboardVeo', () => {
     const rows = playerSeasonRows([{ players: [row('p1', 'person-1'), row('p2')] }, { players: [row('p1', 'person-1')] }])
     expect(rows.find((entry) => entry.key === 'p1')?.personId).toBe('person-1')
     expect(rows.find((entry) => entry.key === 'p2')).not.toHaveProperty('personId')
+  })
+
+  it('keeps only assigned jersey numbers for the season and links them to the person when the squad is known', () => {
+    const playerId = '53000000-1000-4000-8000-000000000001'
+    const personId = '58000000-1000-4000-8000-000000000001'
+    const stats = [{ statType: 'sprints_total', category: 'physical', value: 4 }]
+    const match: PlayerboardVeoMatch = {
+      fixtureId: '57000000-1000-4000-8000-000000000001', kickoffAt: '2026-09-01T10:00:00Z', opponentName: 'TSV', isHome: true,
+      ownScore: 2, opponentScore: 1, teamStats: [],
+      players: [
+        { jerseyNumber: 7, playerId, name: 'Mia K.', matchedManually: false, stats },
+        { jerseyNumber: 12, playerId: null, name: null, matchedManually: false, stats },
+      ],
+    }
+
+    expect(veoSeasonMatches([match], [{ id: playerId, directoryPersonId: personId }])[0]!.players)
+      .toEqual([{ key: playerId, label: 'Mia K.', jerseyNumber: 7, personId, stats }])
+    expect(veoSeasonMatches([match], [])[0]!.players).toEqual([{ key: playerId, label: 'Mia K.', jerseyNumber: 7, stats }])
+    expect(personIdLookup([{ id: playerId, directoryPersonId: personId }])(null)).toEqual({})
   })
 })

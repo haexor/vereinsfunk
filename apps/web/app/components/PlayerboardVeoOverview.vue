@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ArrowRight } from '@lucide/vue'
 import { PlayerboardPlayerSchema, type PlayerboardPlayer, type PlayerboardVeoMatch } from '@vereinsfunk/contracts'
-import type { VeoSeasonMatch } from './PlayerboardVeoSeason.vue'
+import { veoSeasonMatches } from '../utils/playerboardVeo'
 
 // Paket 053, PR 3: Veo-Saison je Spieler auf /playerboard. Ohne Veo-Spiele in der Saison
 // erscheint nichts; Fehler beim Laden verstecken nur diesen Abschnitt, nicht die Rangliste.
@@ -35,22 +35,7 @@ const { ready } = useScopedLoad(() => teamId.value, async (requestedTeamId, isLa
 })
 await ready
 
-const personByPlayer = computed(() => new Map(roster.value.map((player) => [player.id, player.directoryPersonId])))
-
-/** Person-Id einer zugeordneten Veo-Zeile fuer den Profil-Link; ohne Kader leer. */
-function personIdOf(playerId: string): { personId?: string } {
-  const personId = personByPlayer.value.get(playerId)
-  return personId ? { personId } : {}
-}
-
-const seasonMatches = computed<VeoSeasonMatch[]>(() => matches.value.map((match) => ({
-  ownScore: match.ownScore,
-  opponentScore: match.opponentScore,
-  teamStats: match.teamStats,
-  players: match.players.flatMap((player) => player.playerId && player.name
-    ? [{ key: player.playerId, label: player.name, jerseyNumber: player.jerseyNumber, ...personIdOf(player.playerId), stats: player.stats }]
-    : []),
-})))
+const seasonMatches = computed(() => veoSeasonMatches(matches.value, roster.value))
 </script>
 
 <template>

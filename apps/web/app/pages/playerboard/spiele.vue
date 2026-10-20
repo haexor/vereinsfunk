@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { PlayerboardPlayerSchema, type PlayerboardPlayer, type PlayerboardVeoMatch } from '@vereinsfunk/contracts'
 import { playerboardErrorMessage } from '../../utils/playerboardErrors'
-import { scoreLabel } from '../../utils/playerboardVeo'
+import { personIdLookup, scoreLabel, veoSeasonMatches } from '../../utils/playerboardVeo'
 import type { VeoCardMatch } from '../../components/PlayerboardVeoMatchCard.vue'
-import type { VeoSeasonMatch } from '../../components/PlayerboardVeoSeason.vue'
 
 // Paket 053, PR 3: Spiele mit Veo-Werten fuer alle, die die Kennzahlen der Mannschaft sehen
 // (training.view oder stats_visibility). Trainer ordnen hier Rueckennummern dem Kader zu.
@@ -61,23 +60,8 @@ async function load(keepSelection = false) {
 await load()
 watch([teamId, period], () => { void load() })
 
-const personByPlayer = computed(() => new Map((roster.value ?? []).map((player) => [player.id, player.directoryPersonId])))
-
-/** Person-Id einer zugeordneten Veo-Zeile fuer den Profil-Link; ohne Kader oder Zuordnung leer. */
-function personIdOf(playerId: string | null): { personId?: string } {
-  const personId = playerId ? personByPlayer.value.get(playerId) : undefined
-  return personId ? { personId } : {}
-}
-
-// Saison: nur zugeordnete Nummern, damit jeder Spieler eine Zeile ueber alle Spiele hat.
-const seasonMatches = computed<VeoSeasonMatch[]>(() => matches.value.map((match) => ({
-  ownScore: match.ownScore,
-  opponentScore: match.opponentScore,
-  teamStats: match.teamStats,
-  players: match.players.flatMap((player) => player.playerId && player.name
-    ? [{ key: player.playerId, label: player.name, jerseyNumber: player.jerseyNumber, ...personIdOf(player.playerId), stats: player.stats }]
-    : []),
-})))
+const personIdOf = computed(() => personIdLookup(roster.value ?? []))
+const seasonMatches = computed(() => veoSeasonMatches(matches.value, roster.value ?? []))
 const selectedMatch = computed<VeoCardMatch | null>(() => {
   const match = matches.value.find((entry) => entry.fixtureId === selectedFixtureId.value)
   if (!match) return null
@@ -87,7 +71,7 @@ const selectedMatch = computed<VeoCardMatch | null>(() => {
       jerseyNumber: player.jerseyNumber,
       playerId: player.playerId,
       label: `#${player.jerseyNumber} ${player.name ?? '· nicht zugeordnet'}`,
-      ...personIdOf(player.playerId),
+      ...personIdOf.value(player.playerId),
       stats: player.stats,
     })),
   }

@@ -1,4 +1,4 @@
-import type { PlayerboardVeoStat, PlayerboardVeoTeamStat } from '@vereinsfunk/contracts'
+import type { PlayerboardPlayer, PlayerboardVeoMatch, PlayerboardVeoStat, PlayerboardVeoTeamStat } from '@vereinsfunk/contracts'
 
 // Paket 053, PR 3: Darstellung der Veo-Werte (aus playerboard utils/veoStatLabels.ts und
 // useVeoAnalytics.ts). Intern und auf der oeffentlichen Seite gleich gerechnet.
@@ -201,4 +201,32 @@ export function scoreLabel(match: { ownScore: number | null; opponentScore: numb
 export function matchOutcome(match: { ownScore: number | null; opponentScore: number | null }): 'win' | 'draw' | 'loss' | null {
   if (match.ownScore === null || match.opponentScore === null) return null
   return match.ownScore > match.opponentScore ? 'win' : match.ownScore < match.opponentScore ? 'loss' : 'draw'
+}
+
+/** Person-Id einer zugeordneten Veo-Zeile fuer den Profil-Link; ohne Kader oder Zuordnung leer. */
+export function personIdLookup(roster: readonly Pick<PlayerboardPlayer, 'id' | 'directoryPersonId'>[]): (playerId: string | null) => { personId?: string } {
+  const personByPlayer = new Map(roster.map((player) => [player.id, player.directoryPersonId]))
+  return (playerId) => {
+    const personId = playerId ? personByPlayer.get(playerId) : undefined
+    return personId ? { personId } : {}
+  }
+}
+
+/**
+ * Spiele fuer die Saisonansicht: nur zugeordnete Nummern, damit jeder Spieler eine Zeile ueber alle
+ * Spiele hat. Mit Kader verweist jede Zeile auf das Profil der Person, ohne bleibt der Name Text.
+ */
+export function veoSeasonMatches(
+  matches: readonly PlayerboardVeoMatch[],
+  roster: readonly Pick<PlayerboardPlayer, 'id' | 'directoryPersonId'>[],
+): (VeoMatchLike & { players: PlayerStatRowInput[] })[] {
+  const personIdOf = personIdLookup(roster)
+  return matches.map((match) => ({
+    ownScore: match.ownScore,
+    opponentScore: match.opponentScore,
+    teamStats: match.teamStats,
+    players: match.players.flatMap((player) => player.playerId && player.name
+      ? [{ key: player.playerId, label: player.name, jerseyNumber: player.jerseyNumber, ...personIdOf(player.playerId), stats: player.stats }]
+      : []),
+  }))
 }
