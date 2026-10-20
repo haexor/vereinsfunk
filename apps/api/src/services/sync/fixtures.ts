@@ -2,7 +2,7 @@ import { createFixtureMatchStrategy, ExternalFixtureSchema, fixtureDomainAdapter
 import { planSync } from '@vereinsfunk/integrations'
 import type { FastifyReply } from 'fastify'
 import { buildPendingConflicts, finishSyncRun, handleAbortedSync, loadIgnoredFingerprints, normalizeStructureName, parseIncomingRows, resolveScheduleDateTime, type SyncDomainContext } from '../integrationSync.js'
-import { fetchAllRows } from '../../routes/shared.js'
+import { fetchAllRows } from '../../supabase.js'
 
 export async function handleFixturesSync(ctx: SyncDomainContext): Promise<FastifyReply> {
   const { request, reply, service, organizationId, sourceDepartmentId, sourceId, sourceFieldMapping, sourceLossThresholdPercent, mode, domain, runId, idempotencyKey, rawRows, organizationTimezone } = ctx

@@ -30,13 +30,12 @@ import type { ApiRouteContext } from './context.js'
 import {
   CONSENT_RECORD_SELECT,
   createAuditRecorder,
-  fetchAllRows,
-  fetchAllRowsForIds,
   isAnyMemberOfOrganization,
   resolveDirectoryScope,
   toPermissionScope,
   type ConsentRecordRow,
 } from './shared.js'
+import { fetchAllRows, fetchAllRowsForIds } from '../supabase.js'
 
 export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, requirePermissionAnyOf, supabaseClients, emailSender, environment } = context

@@ -16,7 +16,8 @@ import { z } from 'zod'
 import { buildStageDefinitions, filterAdultUserIds, isAuthorMinor, membersWithApprovePermission } from '../services/approvalRouting.js'
 import { computeMediaGateBlockersForPostVersion } from '../services/mediaGate.js'
 import type { ApiRouteContext } from './context.js'
-import { computeRuleEntry, computeScopedEffectiveConfig, createAuditRecorder, fetchAllRows, fetchAllRowsForIds, fetchMemberTrust, fetchPolicyRuleRows } from './shared.js'
+import { computeRuleEntry, computeScopedEffectiveConfig, createAuditRecorder, fetchMemberTrust, fetchPolicyRuleRows } from './shared.js'
+import { fetchAllRows, fetchAllRowsForIds } from '../supabase.js'
 
 export function registerApprovalRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients } = context

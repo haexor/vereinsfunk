@@ -2,7 +2,7 @@ import { clubEventDomainAdapter, createClubEventMatchStrategy, ExternalClubEvent
 import { planSync } from '@vereinsfunk/integrations'
 import type { FastifyReply } from 'fastify'
 import { addUniquePendingConflict, buildPendingConflicts, conflictFingerprint, finishSyncRun, handleAbortedSync, loadIgnoredFingerprints, parseIncomingRows, resolveScheduleDateTime, type SyncDomainContext } from '../integrationSync.js'
-import { fetchAllRows } from '../../routes/shared.js'
+import { fetchAllRows } from '../../supabase.js'
 
 export async function handleEventsSync(ctx: SyncDomainContext): Promise<FastifyReply> {
   const { request, reply, service, organizationId, sourceDepartmentId, sourceId, sourceFieldMapping, sourceLossThresholdPercent, mode, domain, runId, idempotencyKey, rawRows, organizationTimezone } = ctx

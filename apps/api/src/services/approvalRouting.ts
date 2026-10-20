@@ -2,7 +2,8 @@ import { hasPermission } from '@vereinsfunk/authorization'
 import { resolveReviewers, type MembershipRecord, type ReviewerRef as DomainReviewerRef, type StageDefinition } from '@vereinsfunk/domain'
 import type { ScopeLevel } from '@vereinsfunk/contracts'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { fetchAllRows, notExpiredFilter, ownPolicyRuleRow, type PolicyRuleRows } from '../routes/shared.js'
+import { ownPolicyRuleRow, type PolicyRuleRows } from '../routes/shared.js'
+import { fetchAllRows, notExpiredFilter } from '../supabase.js'
 
 // Wer darf eine Freigabestufe entscheiden -- die Aufloesung von Rollen und benannten Prueferinnen
 // zu konkreten userIds. Ohne Fastify-Bezug, damit routes/policies.ts und routes/approvals.ts
