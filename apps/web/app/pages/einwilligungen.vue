@@ -108,8 +108,10 @@ async function revoke(consent: ConsentRecord) {
   try {
     const updated = await api.request(`/v1/consents/${consent.id}/revoke`, { method: 'POST', body: { revokedBy: 'organization', reason: reason || undefined } }, ConsentRecordSchema)
     consents.value = consents.value.map((item) => (item.id === updated.id ? updated : item))
-  } catch {
-    revokeError.value = 'Der Widerruf konnte nicht gespeichert werden.'
+  } catch (error) {
+    revokeError.value = errorCodeOf(error) === 'already_revoked'
+      ? 'Diese Einwilligung wurde bereits widerrufen.'
+      : 'Der Widerruf konnte nicht gespeichert werden.'
   } finally {
     revokingId.value = null
   }
@@ -212,8 +214,10 @@ async function resendRequest(request: ConsentRequest) {
   try {
     const updated = await api.request(`/v1/consent-requests/${request.id}/resend`, { method: 'POST' }, ConsentRequestSchema)
     requests.value = requests.value.map((item) => (item.id === updated.id ? updated : item))
-  } catch {
-    requestError.value = 'Die Anfrage konnte nicht erneut gesendet werden.'
+  } catch (error) {
+    requestError.value = errorCodeOf(error) === 'request_not_open'
+      ? 'Diese Anfrage ist nicht mehr offen und kann nicht erneut gesendet werden.'
+      : 'Die Anfrage konnte nicht erneut gesendet werden.'
   }
 }
 </script>

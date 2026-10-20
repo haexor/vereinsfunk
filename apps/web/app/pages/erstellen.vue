@@ -34,6 +34,9 @@ const REQUEST_APPROVAL_ERROR_MESSAGES: Record<string, string> = {
   review_required: 'Laut Richtlinie ist für diesen Beitrag eine Prüfung nötig, es ist aber niemand zum Prüfen hinterlegt. Bitte an eine Vereinsverwaltung wenden.',
   unfulfillable_stage: 'Für diesen Beitrag lässt sich aktuell keine gültige Freigaberoute bilden. Bitte an eine Vereinsverwaltung wenden.',
   only_author_as_reviewer: 'Du bist die einzige mögliche Prüfperson für diesen Beitrag. Bitte an eine Vereinsverwaltung wenden.',
+  // Freigaben gelten nur fuer die aktuelle Fassung: wurde inzwischen (etwa in einem anderen Tab)
+  // eine neuere uebernommen, lehnt die API die alte ab.
+  version_not_current: 'Inzwischen gibt es eine neuere Fassung dieses Beitrags. Bitte reiche die aktuelle Fassung zur Freigabe ein.',
 }
 type PlatformUnavailableReason = 'no_channel' | 'restricted_by_policy'
 const PLATFORM_UNAVAILABLE_REASONS: Record<PlatformUnavailableReason, string> = {

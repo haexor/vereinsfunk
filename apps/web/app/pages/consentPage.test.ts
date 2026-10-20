@@ -24,6 +24,14 @@ describe('Einwilligungen', () => {
     expect(page).toContain('if (isLatest()) loading.value = false')
   })
 
+  it('erklaert einen bereits erfolgten Widerruf und eine nicht mehr offene Anfrage', () => {
+    const page = readFileSync(join(PAGES_DIR, 'einwilligungen.vue'), 'utf8')
+
+    // Beide Faelle meldete die Seite vorher nur als allgemeinen Speicherfehler.
+    expect(page).toContain("revokeError.value = errorCodeOf(error) === 'already_revoked'")
+    expect(page).toContain("requestError.value = errorCodeOf(error) === 'request_not_open'")
+  })
+
   it('setzt das Eingangsdatum einer Betroffenenanfrage auf den heutigen Tag in der Vereinszeitzone', () => {
     const page = readFileSync(join(PAGES_DIR, 'datenschutz/anfragen.vue'), 'utf8')
 
