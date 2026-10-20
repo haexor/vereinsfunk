@@ -26,6 +26,14 @@ describe('Vereinsseiten', () => {
     expect(before(load, 'if (loadRun !== latestPeopleLoad) return', 'people.value = DirectoryPersonSchema.array().parse(response)')).toBe(true)
   })
 
+  it('leert beim Abteilungswechsel im Bearbeiten-Formular das Team', () => {
+    const page = read('verzeichnis.vue')
+    const setter = page.match(/const editFormDepartmentIdModel = computed\(\{[\s\S]*?\n\}\)/)?.[0] ?? ''
+
+    // Das alte Team passt nicht zur neuen Abteilung; der Fremdschluessel lehnte das Speichern ab.
+    expect(setter).toContain("if (departmentId !== editForm.departmentId) editForm.teamId = ''")
+  })
+
   it('verwirft nach einem Vereinswechsel spaete Antworten auf /mitglieder und /struktur', () => {
     const members = functionBody(read('mitglieder.vue'), 'load')
     expect(before(members, 'if (loadRun !== latestLoadRun) return', 'members.value = membersResponse')).toBe(true)
