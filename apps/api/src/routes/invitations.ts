@@ -1,6 +1,7 @@
 import { AcceptInvitationRequestSchema, AcceptInvitationResponseSchema, CreateInvitationRequestSchema, InvitationSchema, UuidSchema } from '@vereinsfunk/contracts'
 import { canAssignRole } from '@vereinsfunk/authorization'
-import type { FastifyInstance } from 'fastify'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { mapInvitationRow } from '../apiMappers.js'
 import { generateInvitationToken, invitationCallbackUrls, sendInvitationThroughSupabaseAuth } from '../invitations.js'
@@ -16,6 +17,34 @@ function invitationUrls(webBaseUrl: string, rawToken: string): { accept: string 
 export function registerInvitationRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients, roleProvider, environment } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
+
+  /**
+   * Laedt eine offene Einladung und prueft member.invite in ihrem Scope. Sendet 404 bzw. die
+   * Ablehnung von requirePermission und liefert dann null.
+   */
+  async function loadOpenInvitation(request: FastifyRequest, reply: FastifyReply, client: SupabaseClient, invitationId: string) {
+    const existing = await client
+      .from('invitations')
+      .select('organization_id, department_id, team_id, email, send_count, accepted_at, revoked_at')
+      .eq('id', invitationId)
+      .maybeSingle()
+    if (existing.error) throw existing.error
+    // Nur eine offene Einladung ist erneut versendbar oder widerrufbar. Ein Widerruf auf einer
+    // bereits angenommenen Zeile aenderte nichts an der entstandenen Mitgliedschaft, setzte aber
+    // revoked_at und schrieb einen irrefuehrenden Audit-Eintrag; ein zweiter Widerruf erzeugte nur
+    // Rauschen (im Nachfolge-Review dieses PRs gefunden).
+    if (!existing.data || existing.data.accepted_at || existing.data.revoked_at) {
+      reply.code(404).send({ error: 'not_found', correlationId: request.id })
+      return null
+    }
+    const scope = toPermissionScope(
+      existing.data.organization_id as string,
+      existing.data.department_id as string | null,
+      existing.data.team_id as string | null,
+    )
+    if (!(await requirePermission(request, reply, 'member.invite', scope))) return null
+    return { scope, email: existing.data.email as string, sendCount: existing.data.send_count as number }
+  }
 
   app.get('/v1/organizations/:id/invitations', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
@@ -87,20 +116,10 @@ export function registerInvitationRoutes(app: FastifyInstance, context: ApiRoute
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
     const client = supabaseClients.forUser(request.auth!.accessToken)
-    const existing = await client
-      .from('invitations')
-      .select('organization_id, department_id, team_id, email, send_count, accepted_at, revoked_at')
-      .eq('id', params.id)
-      .maybeSingle()
-    if (existing.error) throw existing.error
-    if (!existing.data || existing.data.accepted_at || existing.data.revoked_at) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
-    const scope = toPermissionScope(
-      existing.data.organization_id as string,
-      existing.data.department_id as string | null,
-      existing.data.team_id as string | null,
-    )
-    if (!(await requirePermission(request, reply, 'member.invite', scope))) return
-    if ((existing.data.send_count as number) >= 10) return reply.code(429).send({ error: 'resend_limit_reached', correlationId: request.id })
+    const invitation = await loadOpenInvitation(request, reply, client, params.id)
+    if (!invitation) return
+    const { scope } = invitation
+    if (invitation.sendCount >= 10) return reply.code(429).send({ error: 'resend_limit_reached', correlationId: request.id })
     const { rawToken, tokenHash } = generateInvitationToken()
     // resend_invitation() ist eine security-definer-RPC: sie prueft und erhoeht dasselbe
     // adressbezogene Rate-Limit wie create_invitation() atomar mit dem Update selbst (siehe dort).
@@ -115,7 +134,7 @@ export function registerInvitationRoutes(app: FastifyInstance, context: ApiRoute
     const urls = invitationUrls(environment.WEB_BASE_URL ?? 'http://localhost:4200', rawToken)
     let emailDelivered = true
     try {
-      await sendInvitationThroughSupabaseAuth(supabaseClients.forService(), existing.data.email as string, urls)
+      await sendInvitationThroughSupabaseAuth(supabaseClients.forService(), invitation.email, urls)
     } catch (error) {
       emailDelivered = false
       request.log.error({ err: error, correlationId: request.id }, 'Supabase invitation email delivery failed')
@@ -125,7 +144,7 @@ export function registerInvitationRoutes(app: FastifyInstance, context: ApiRoute
       action: 'invitation.resent',
       entityType: 'invitations',
       entityId: params.id,
-      metadata: { email: existing.data.email, emailDelivered },
+      metadata: { email: invitation.email, emailDelivered },
     })
     return reply.code(200).send({ ...InvitationSchema.parse(mapInvitationRow(updateData)), emailDelivered })
   })
@@ -134,25 +153,9 @@ export function registerInvitationRoutes(app: FastifyInstance, context: ApiRoute
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
     const client = supabaseClients.forUser(request.auth!.accessToken)
-    const existing = await client
-      .from('invitations')
-      .select('organization_id, department_id, team_id, email, accepted_at, revoked_at')
-      .eq('id', params.id)
-      .maybeSingle()
-    if (existing.error) throw existing.error
-    // Dieselbe Bedingung wie /resend: nur eine offene Einladung ist widerrufbar. Ein Widerruf auf
-    // einer bereits angenommenen Zeile aendert nichts an der entstandenen Mitgliedschaft, setzte
-    // aber revoked_at und schrieb einen irrefuehrenden Audit-Eintrag; ein zweiter Widerruf
-    // erzeugte nur Rauschen (im Nachfolge-Review dieses PRs gefunden).
-    if (!existing.data || existing.data.accepted_at || existing.data.revoked_at) {
-      return reply.code(404).send({ error: 'not_found', correlationId: request.id })
-    }
-    const scope = toPermissionScope(
-      existing.data.organization_id as string,
-      existing.data.department_id as string | null,
-      existing.data.team_id as string | null,
-    )
-    if (!(await requirePermission(request, reply, 'member.invite', scope))) return
+    const invitation = await loadOpenInvitation(request, reply, client, params.id)
+    if (!invitation) return
+    const { scope } = invitation
     const update = await client
       .from('invitations')
       .update({ revoked_at: new Date().toISOString() })
@@ -165,7 +168,7 @@ export function registerInvitationRoutes(app: FastifyInstance, context: ApiRoute
       action: 'invitation.revoked',
       entityType: 'invitations',
       entityId: params.id,
-      metadata: { email: existing.data.email },
+      metadata: { email: invitation.email },
     })
     return reply.code(200).send(InvitationSchema.parse(mapInvitationRow(update.data)))
   })
