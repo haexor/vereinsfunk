@@ -15,6 +15,7 @@ import type { FetchLike, LoginBrowser } from '@vereinsfunk/veo-client'
 import type { EmailSender } from '../email.js'
 import type { PermissionScope, PlatformAdminProvider, RoleProvider } from '../auth.js'
 import type { ModuleStatusProvider } from '../moduleStatus.js'
+import type { RateLimiter } from './shared.js'
 
 // All privileged dependencies are created exactly once by buildApp and supplied to route
 // modules explicitly. Keeping this type close to the route boundary makes accidental module
@@ -61,6 +62,8 @@ export interface ApiRouteContext extends ApiRouteGuards {
   platformAdminProvider: PlatformAdminProvider
   moduleStatusProvider: ModuleStatusProvider
   emailSender: EmailSender
+  // Ein Zaehler pro App-Instanz (createRateLimiter in routes/shared.ts), geteilt von allen Route-Modulen.
+  checkRateLimit: RateLimiter
   // Paket 053: Browser fuer die Veo-Anmeldung und fetch fuer Veos Web-API; Tests setzen Fakes ein.
   veo: VeoAccess
   imageEffects?: ImageEffectProvider

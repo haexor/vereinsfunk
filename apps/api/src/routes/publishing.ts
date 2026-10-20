@@ -8,7 +8,7 @@ import { byteaToBuffer } from '@vereinsfunk/secrets'
 import { createSecretBoxFromEnvironment } from '../secretBox.js'
 import { computeMediaGateBlockersForPostVersion, HARD_PUBLISH_BLOCKERS } from '../services/mediaGate.js'
 import type { ApiRouteContext } from './context.js'
-import { checkRateLimit, createAuditRecorder } from './shared.js'
+import { createAuditRecorder } from './shared.js'
 import { resolveScopedEffectiveConfig } from '../services/policyRules.js'
 
 /**
@@ -16,7 +16,7 @@ import { resolveScopedEffectiveConfig } from '../services/policyRules.js'
  * Die Ausfuehrung beansprucht die Veroeffentlichung atomar per RPC und lehnt deaktivierte Module ab.
  */
 export function registerPublishingRoutes(app: FastifyInstance, context: ApiRouteContext): void {
-  const { requireAuth, requirePermission, supabaseClients, environment, createPublisherForConnection } = context
+  const { requireAuth, requirePermission, supabaseClients, environment, createPublisherForConnection, checkRateLimit } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
 
   // Zwei bewusst getrennte Sperren: der Deployment-Modus stellt sicher, dass dieser Container

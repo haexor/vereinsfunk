@@ -79,6 +79,7 @@ import { registerModuleRoutes } from './routes/modules.js'
 import { registerPlayerboardRoutes } from './routes/playerboard/index.js'
 import { registerPublishingRoutes } from './routes/publishing.js'
 import { registerRetentionRoutes } from './routes/retention.js'
+import { createRateLimiter } from './routes/shared.js'
 import { registerStructureRoutes } from './routes/structure.js'
 import { registerSubscriptionRoutes } from './routes/subscriptions.js'
 import type {
@@ -355,6 +356,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     platformAdminProvider,
     moduleStatusProvider,
     emailSender,
+    checkRateLimit: createRateLimiter(),
     veo: {
       launchBrowser: options.veo?.launchBrowser ?? launchVeoLoginBrowser,
       fetch: options.veo?.fetch ?? ((input, init) => fetch(input, init)),

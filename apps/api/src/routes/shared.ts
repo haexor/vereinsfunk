@@ -28,30 +28,37 @@ export async function isDepartmentOwnedChannelAllowed(client: SupabaseClient, or
 // 015, Abschnitt 3) und brauchen ein Rate-Limit pro IP und pro Token. Fuer einen einzelnen
 // API-Prozess ausreichend; ein mehrknotiges Produktions-Deployment braucht einen gemeinsamen
 // Speicher (Redis) statt dieser lokalen Map -- dokumentierte Grenze, kein stiller Kompromiss.
-// Modul-Singleton: alle Route-Module teilen sich darueber denselben Zaehler pro Praefix-Key.
-const rateLimitBuckets = new Map<string, { count: number; resetAt: number }>()
-let nextRateLimitSweepAt = 0
-export function checkRateLimit(key: string, limit: number, windowMs: number): boolean {
-  const now = Date.now()
-  // Diese Routen sind oeffentlich erreichbar; ohne Aufraeumen wuerde jede neue Quell-IP dauerhaft
-  // einen Eintrag belegen (gefunden im Code-Review). Nur bei Bedarf durchsuchen, statt bei jedem
-  // Aufruf ueber die ganze Map zu iterieren -- und selbst dann hoechstens einmal pro Minute, sonst
-  // wuerde ein Schwarm neuer IPs bei gleichzeitig >10.000 aktiven Eintraegen (resetAt >= now, der
-  // Durchlauf loescht dann nichts) jeden weiteren Aufruf erneut die ganze Map durchsuchen lassen.
-  if (rateLimitBuckets.size > 10_000 && now >= nextRateLimitSweepAt) {
-    nextRateLimitSweepAt = now + 60_000
-    for (const [bucketKey, entry] of rateLimitBuckets) {
-      if (entry.resetAt < now) rateLimitBuckets.delete(bucketKey)
+// buildApp erzeugt genau einen Zaehler pro App-Instanz und reicht ihn ueber ApiRouteContext an
+// alle Route-Module weiter; die teilen sich darueber denselben Zaehler pro Praefix-Key. Frueher
+// ein Modul-Singleton: dann setzte jede weitere App-Instanz im selben Prozess (jeder Test) den
+// Zaehlerstand der vorherigen fort.
+export type RateLimiter = (key: string, limit: number, windowMs: number) => boolean
+
+export function createRateLimiter(): RateLimiter {
+  const buckets = new Map<string, { count: number; resetAt: number }>()
+  let nextSweepAt = 0
+  return (key, limit, windowMs) => {
+    const now = Date.now()
+    // Diese Routen sind oeffentlich erreichbar; ohne Aufraeumen wuerde jede neue Quell-IP dauerhaft
+    // einen Eintrag belegen (gefunden im Code-Review). Nur bei Bedarf durchsuchen, statt bei jedem
+    // Aufruf ueber die ganze Map zu iterieren -- und selbst dann hoechstens einmal pro Minute, sonst
+    // wuerde ein Schwarm neuer IPs bei gleichzeitig >10.000 aktiven Eintraegen (resetAt >= now, der
+    // Durchlauf loescht dann nichts) jeden weiteren Aufruf erneut die ganze Map durchsuchen lassen.
+    if (buckets.size > 10_000 && now >= nextSweepAt) {
+      nextSweepAt = now + 60_000
+      for (const [bucketKey, entry] of buckets) {
+        if (entry.resetAt < now) buckets.delete(bucketKey)
+      }
     }
-  }
-  const bucket = rateLimitBuckets.get(key)
-  if (!bucket || bucket.resetAt < now) {
-    rateLimitBuckets.set(key, { count: 1, resetAt: now + windowMs })
+    const bucket = buckets.get(key)
+    if (!bucket || bucket.resetAt < now) {
+      buckets.set(key, { count: 1, resetAt: now + windowMs })
+      return true
+    }
+    if (bucket.count >= limit) return false
+    bucket.count += 1
     return true
   }
-  if (bucket.count >= limit) return false
-  bucket.count += 1
-  return true
 }
 
 type AuditEvent = { organizationId: string; action: string; entityType: string; entityId: string | null; metadata?: Record<string, unknown> }

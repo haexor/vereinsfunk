@@ -10,7 +10,6 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import type { ApiRouteContext } from '../context.js'
 import { loadResolvedBrandColors } from '../../services/brandResolution.js'
-import { checkRateLimit } from '../shared.js'
 import { signPhotoUrls } from './photos.js'
 import { loadOrganizationPlayerboardSettings, resolveSettingsFor } from './shared.js'
 
@@ -26,7 +25,7 @@ const PUBLIC_PHOTO_URL_SECONDS = 300
  * Schalter, public_sharing_allowed und Modul selbst und geben Spieler nur als "#7 M. K." aus.
  */
 export function registerPlayerboardPublicRoutes(app: FastifyInstance, context: ApiRouteContext): void {
-  const { supabaseClients } = context
+  const { supabaseClients, checkRateLimit } = context
 
   /**
    * Prueft IP-Rate-Limit und Slugs und laedt die oeffentlich freigegebene Mannschaft per RPC.

@@ -43,7 +43,7 @@ export type StyleProfilePreviewResult =
 // call for the same logical attempt (gefunden im Code-Review dieses Pakets). The integrations
 // sync route (routes/integrations.ts) guards the same problem with an atomic RPC backed by the
 // idempotency_keys table, but that table requires a non-null organization_id -- platform-style-
-// personas/preview has none (Plan 037, platform personas are global). Mirrors checkRateLimit's
+// personas/preview has none (Plan 037, platform personas are global). Mirrors createRateLimiter's
 // in-memory approach (routes/shared.ts) instead: same one-process-only caveat, same low-stakes tradeoff for a
 // preview button.
 //
