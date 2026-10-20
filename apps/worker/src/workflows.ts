@@ -29,8 +29,13 @@ export interface WorkflowExecutionRepository {
   succeed(workflow: WorkflowName, payload: WorkflowPayload, leaseToken: string): Promise<void>
   fail(workflow: WorkflowName, payload: WorkflowPayload, leaseToken: string, errorClass: string, retryable: boolean): Promise<void>
 }
+// Hatchet wiederholt einen Task nach dem ersten Versuch hoechstens so oft; retryCount() zaehlt die
+// bereits erfolgten Wiederholungen, der Versuch mit retryCount() === WORKFLOW_RETRIES ist der letzte.
+const WORKFLOW_RETRIES = 3
+/** Was ein Executor ueber den laufenden Hatchet-Versuch wissen muss. */
+export type WorkflowAttempt = { final: boolean }
 export interface ProductWorkflowExecutor {
-  execute(workflow: WorkflowName, payload: WorkflowPayload): Promise<void>
+  execute(workflow: WorkflowName, payload: WorkflowPayload, attempt: WorkflowAttempt): Promise<void>
 }
 
 export class WorkflowExecutionError extends Error {
@@ -73,12 +78,12 @@ export function createWorkflowDefinitions(
   return WorkflowNameSchema.options.map((workflow) => client.task<WorkflowPayload, void>({
     name: workflow,
     inputValidator: WorkflowPayloadSchema,
-    retries: 3,
+    retries: WORKFLOW_RETRIES,
     backoff: { factor: 2, maxSeconds: 60 },
     executionTimeout: '10m',
     concurrency: concurrencyFor(workflow),
     idempotency: { strategy: 'status', expression: 'input.idempotencyKey', fallbackTtlMs: 86_400_000 },
-    fn: async (raw) => {
+    fn: async (raw, ctx) => {
       const payload = WorkflowPayloadSchema.parse(raw)
       const acquired = await runs.begin(workflow, payload)
       if (acquired.state !== 'acquired') {
@@ -89,7 +94,7 @@ export function createWorkflowDefinitions(
       }
       const leaseToken = acquired.leaseToken
       try {
-        await executor.execute(workflow, payload)
+        await executor.execute(workflow, payload, { final: ctx.retryCount() >= WORKFLOW_RETRIES })
         await runs.succeed(workflow, payload, leaseToken)
       } catch (error) {
         const classified = classifyWorkflowError(error)

@@ -26,6 +26,11 @@ function declarations(begin: WorkflowExecutionRepository['begin'], execute = vi.
   return { definitions, task, runs, execute }
 }
 
+/** Der Ausschnitt des Hatchet-Kontexts, den die Task-Funktion liest. */
+function attemptContext(retryCount: number) {
+  return { retryCount: () => retryCount } as never
+}
+
 describe('worker workflow registration', () => {
   it('registers every allow-listed workflow with ID-only validation and fairness limits', async () => {
     const { definitions, task } = declarations(async () => ({ state: 'already_handled' }))
@@ -62,15 +67,23 @@ describe('worker workflow registration', () => {
   it('records a non-retryable failure and does not mark the run as succeeded', async () => {
     const execute = vi.fn<ProductWorkflowExecutor['execute']>().mockRejectedValue(new WorkflowExecutionError('authorization', false))
     const { task, runs } = declarations(async () => ({ state: 'acquired', leaseToken: '55555555-5555-4555-8555-555555555555' }), execute)
-    await expect(task(payload, {} as never)).rejects.toMatchObject({ name: 'NonRetryableError' })
+    await expect(task(payload, attemptContext(0))).rejects.toMatchObject({ name: 'NonRetryableError' })
     expect(runs.fail).toHaveBeenCalledWith('process-submission', payload, '55555555-5555-4555-8555-555555555555', 'authorization', false)
     expect(runs.succeed).not.toHaveBeenCalled()
+  })
+
+  it('tells the executor whether this is the last Hatchet attempt', async () => {
+    const execute = vi.fn<ProductWorkflowExecutor['execute']>().mockResolvedValue(undefined)
+    const { task } = declarations(async () => ({ state: 'acquired', leaseToken: '55555555-5555-4555-8555-555555555555' }), execute)
+    await task(payload, attemptContext(2))
+    await task(payload, attemptContext(3))
+    expect(execute.mock.calls.map((call) => call[2])).toEqual([{ final: false }, { final: true }])
   })
 
   it('records and rethrows a retryable executor failure', async () => {
     const execute = vi.fn<ProductWorkflowExecutor['execute']>().mockRejectedValue(new WorkflowExecutionError('provider_unavailable', true))
     const { task, runs } = declarations(async () => ({ state: 'acquired', leaseToken: '55555555-5555-4555-8555-555555555555' }), execute)
-    await expect(task(payload, {} as never)).rejects.toMatchObject({ errorClass: 'provider_unavailable', retryable: true })
+    await expect(task(payload, attemptContext(0))).rejects.toMatchObject({ errorClass: 'provider_unavailable', retryable: true })
     expect(runs.fail).toHaveBeenCalledWith('process-submission', payload, '55555555-5555-4555-8555-555555555555', 'provider_unavailable', true)
     expect(runs.succeed).not.toHaveBeenCalled()
   })

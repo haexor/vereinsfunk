@@ -218,8 +218,8 @@ export class BrandWebsiteAnalysisExecutor {
             : error instanceof OutboundFetchError
               ? new WorkflowExecutionError('blocked_url', false)
               : new WorkflowExecutionError('website_analysis_failed', true)
-      // Anders als bei der Textwerkstatt-Ensemble-Kandidatenzeile (releaseCandidate faellt auf
-      // 'pending' zurueck, eine eigene Recovery-Scan-Cron greift bei Erschoepfung) gibt es hier
+      // Anders als bei der Textwerkstatt-Ensemble-Kandidatenzeile (releaseCandidate faellt bis zum
+      // letzten Hatchet-Versuch auf 'pending' zurueck, erst dieser markiert sie 'failed') gibt es hier
       // genau eine Job-Zeile pro Verein ohne Fan-out: jeder Fehler -- auch ein retryable-Fehler --
       // setzt sie auf 'failed'. Greift Hatchets eigener automatischer Retry danach doch noch
       // erfolgreich, ueberschreibt markSucceeded diesen Zwischenstand einfach wieder; erschoepfen

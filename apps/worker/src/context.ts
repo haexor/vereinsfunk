@@ -153,7 +153,7 @@ export function createTextGenerationRepository(config: WorkerEnvironment): TextG
         .select('id, protocol, base_url, model, structured_output_required, llm_provider_secrets!inner(api_key_ciphertext, key_version)')
         .eq('id', providerConfigurationId).limit(1)
       if (error) throw error
-      if (data.length === 0) throw new Error('assigned text provider is missing')
+      if (data.length === 0) throw new WorkflowExecutionError('unsupported_provider_configuration', false) // zugewiesener Provider geloescht
       const row = z.object({
         id: UuidSchema, protocol: z.string(), base_url: z.url(), model: z.string().trim().min(1),
         structured_output_required: z.boolean(), llm_provider_secrets: EmbeddedProviderSecretSchema,

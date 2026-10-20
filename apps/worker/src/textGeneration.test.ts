@@ -66,6 +66,23 @@ describe('TextGenerationExecutor', () => {
     expect(repo.markFailed).not.toHaveBeenCalled()
     expect(repo.releaseCandidate).toHaveBeenCalledWith(payload.candidateId, payload.entityId, '10000000-1300-4000-8000-000000000099')
   })
+  // Nach dem letzten Hatchet-Versuch holt niemand einen 'pending'-Kandidaten mehr ab -- er muss
+  // ehrlich scheitern statt in der Runde haengen zu bleiben.
+  it('marks a retryable failure on the final Hatchet attempt as failed instead of releasing it', async () => {
+    const repo = repository()
+    const generator = { generateText: vi.fn().mockRejectedValue(new ContentGenerationError('provider_rate_limit', true)) }
+    await expect(new TextGenerationExecutor(config, repo, generator).execute(payload, { final: true })).rejects.toMatchObject({ errorClass: 'provider_rate_limit' })
+    expect(repo.releaseCandidate).not.toHaveBeenCalled()
+    expect(repo.markFailed).toHaveBeenCalledWith(payload.candidateId, payload.entityId, '10000000-1300-4000-8000-000000000099', 'provider_rate_limit')
+  })
+  it('retries an unknown infrastructure error after the provider call instead of failing the candidate for good', async () => {
+    const repo = repository()
+    repo.markReady = vi.fn().mockRejectedValue(new Error('fetch failed'))
+    const generator = { generateText: vi.fn().mockResolvedValue(post) }
+    await expect(new TextGenerationExecutor(config, repo, generator).execute(payload)).rejects.toMatchObject({ errorClass: 'transient', retryable: true })
+    expect(repo.releaseCandidate).toHaveBeenCalled()
+    expect(repo.markFailed).not.toHaveBeenCalled()
+  })
   it('accepts a candidate-qualified purpose and rejects a mismatched candidate ID', async () => {
     const repo = repository()
     const generator = { generateText: vi.fn().mockResolvedValue(post) }

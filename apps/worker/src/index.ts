@@ -83,8 +83,8 @@ async function main(): Promise<void> {
     log: (fields, message) => logger.warn(fields, message),
   })
   const executor: ProductWorkflowExecutor = {
-    async execute(workflow, payload) {
-      if (workflow === 'generate-text-post') return textGeneration.execute(payload)
+    async execute(workflow, payload, attempt) {
+      if (workflow === 'generate-text-post') return textGeneration.execute(payload, attempt)
       if (workflow === 'analyze-website-branding') return brandWebsiteAnalysis.execute(payload)
       if (workflow === 'sync-integration-source') return veoSync.execute(payload)
       throw new WorkflowExecutionError('product_executor_unavailable', false, `no product executor is configured for ${workflow}`)
