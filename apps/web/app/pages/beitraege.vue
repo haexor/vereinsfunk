@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { MediaAssetSummarySchema, TextWorkshopDraftRowSchema, type MediaAssetSummary } from '@vereinsfunk/contracts'
 import { z } from 'zod'
-const scope = await useScope()
 const api = useApiClient()
+const { organizationId: activeOrganizationId, departmentId: activeDepartmentId } = await useActiveScope()
 const posts = ref<{ id: string; status: string; created_at: string; current_version_id: string | null }[]>([])
 const workshopDrafts = ref<z.infer<typeof TextWorkshopDraftRowSchema>[]>([])
 const postsLoading = ref(true)
@@ -14,24 +14,23 @@ const mediaLoading = ref(false)
 const mediaError = ref<string | null>(null)
 const onlyMyMedia = ref(false)
 // Die Sidebar wechselt Verein/Abteilung ohne Remount dieser Seite. Nur der zuletzt gestartete Lauf
-// darf schreiben -- sonst standen Beitraege des vorigen Bereichs neben Medien des neuen (dasselbe
-// Zaehlermuster wie kalender.vue).
-let loadRun = 0
-let mediaLoadRun = 0
+// darf schreiben -- sonst standen Beitraege des vorigen Bereichs neben Medien des neuen.
+const mediaRuns = useLatestRequest()
 async function loadMedia() {
-  if (!scope.value?.organizationId) return
-  const run = ++mediaLoadRun
+  const organizationId = activeOrganizationId.value
+  if (!organizationId) return
+  const isLatest = mediaRuns.begin()
   mediaLoading.value = true
   mediaError.value = null
   try {
     const assets = await api.request('/v1/media-assets', {
-      query: { organizationId: scope.value.organizationId, departmentId: scope.value.departmentId ?? undefined, createdBy: onlyMyMedia.value ? 'me' : undefined },
+      query: { organizationId, departmentId: activeDepartmentId.value ?? undefined, createdBy: onlyMyMedia.value ? 'me' : undefined },
     }, z.array(MediaAssetSummarySchema))
-    if (run === mediaLoadRun) mediaAssets.value = assets
+    if (isLatest()) mediaAssets.value = assets
   } catch {
-    if (run === mediaLoadRun) mediaError.value = 'Medien konnten nicht geladen werden. Bitte versuche es erneut.'
+    if (isLatest()) mediaError.value = 'Medien konnten nicht geladen werden. Bitte versuche es erneut.'
   } finally {
-    if (run === mediaLoadRun) mediaLoading.value = false
+    if (isLatest()) mediaLoading.value = false
   }
 }
 watch(onlyMyMedia, () => void loadMedia())
@@ -51,12 +50,11 @@ function draftLabel(draft: z.infer<typeof TextWorkshopDraftRowSchema>) {
   const firstFact = draft.payload.factsText.split('\n').find((line) => line.trim())
   return firstFact?.split(':').slice(1).join(':').trim() || draft.payload.observation.trim() || 'Textwerkstatt-Entwurf'
 }
-async function load() {
-  const run = ++loadRun
-  const organizationId = scope.value?.organizationId
-  const departmentId = scope.value?.departmentId ?? null
+const { ready } = useScopedLoad(() => `${activeOrganizationId.value}:${activeDepartmentId.value}`, async (_key, isLatest) => {
+  const organizationId = activeOrganizationId.value
+  const departmentId = activeDepartmentId.value
   // Auch laufende Medien-Anfragen des vorigen Bereichs verwerfen, bevor loadMedia() unten startet.
-  ++mediaLoadRun
+  mediaRuns.begin()
   posts.value = []; workshopDrafts.value = []; mediaAssets.value = []
   postsError.value = null; workshopDraftsError.value = null; mediaError.value = null
   workshopDraftsLoading.value = false; mediaLoading.value = false
@@ -65,22 +63,21 @@ async function load() {
   const query = useSupabaseClient().from('posts').select('id, status, created_at, current_version_id').eq('organization_id', organizationId).order('created_at', { ascending: false })
   if (departmentId) query.eq('department_id', departmentId)
   const result = await query
-  if (run !== loadRun) return
+  if (!isLatest()) return
   if (result.error) postsError.value = 'Beiträge konnten nicht geladen werden. Bitte versuche es erneut.'
   else posts.value = result.data
   postsLoading.value = false
   workshopDraftsLoading.value = true
   try {
     const result = await api.request('/v1/text-workshop/drafts', { query: { organizationId, departmentId: departmentId ?? undefined } }, z.object({ drafts: z.array(TextWorkshopDraftRowSchema) }))
-    if (run !== loadRun) return
+    if (!isLatest()) return
     workshopDrafts.value = result.drafts
-  } catch { if (run === loadRun) workshopDraftsError.value = 'Entwürfe konnten nicht geladen werden. Bitte versuche es erneut.' }
-  finally { if (run === loadRun) workshopDraftsLoading.value = false }
-  if (run !== loadRun) return
+  } catch { if (isLatest()) workshopDraftsError.value = 'Entwürfe konnten nicht geladen werden. Bitte versuche es erneut.' }
+  finally { if (isLatest()) workshopDraftsLoading.value = false }
+  if (!isLatest()) return
   await loadMedia()
-}
-await load()
-watch([() => scope.value?.organizationId, () => scope.value?.departmentId], () => void load())
+})
+await ready
 
 const deletingId = ref<string | null>(null)
 const deleteError = ref('')

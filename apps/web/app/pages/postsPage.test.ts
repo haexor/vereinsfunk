@@ -13,11 +13,10 @@ describe('Beitraege', () => {
     // Vorher nur einmal beim Setup geladen; "Nur meine" lud danach Medien des neuen Bereichs
     // neben Beitraegen des alten.
     expect(page).not.toContain('if (scope.value?.organizationId) {\n  const query')
-    expect(page).toContain('await load()\nwatch([() => scope.value?.organizationId, () => scope.value?.departmentId], () => void load())')
-    expect(page).toContain('const run = ++loadRun')
-    expect(page).toContain('if (run !== loadRun) return\n  await loadMedia()')
+    expect(page).toContain('useScopedLoad(() => `${activeOrganizationId.value}:${activeDepartmentId.value}`')
+    expect(page).toContain('if (!isLatest()) return\n  await loadMedia()')
     // Eine noch laufende Medien-Anfrage des vorigen Bereichs darf nicht mehr schreiben.
-    expect(page).toContain('++mediaLoadRun\n  posts.value = []')
-    expect(page).toContain('if (run === mediaLoadRun) mediaAssets.value = assets')
+    expect(page).toContain('mediaRuns.begin()\n  posts.value = []')
+    expect(page).toContain('if (isLatest()) mediaAssets.value = assets')
   })
 })
