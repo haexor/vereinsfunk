@@ -6,6 +6,7 @@ import {
   UpdatePlatformStylePersonaRequestSchema,
   type PlatformStylePersona,
 } from '@vereinsfunk/contracts'
+import { ApiRequestError } from '../../utils/apiClient'
 import { avoidRulesFromDraft, doRulesFromDraft, emptyStyleProfileDraft, styleProfileDraftFrom, styleRulesFromDraft } from '../../utils/styleProfileDraft'
 
 definePageMeta({ layout: 'admin' })
@@ -70,8 +71,10 @@ async function savePersona() {
     }
     resetForm()
     await load()
-  } catch {
-    formError.value = isEditing.value ? 'Persona konnte nicht gespeichert werden.' : 'Persona konnte nicht angelegt werden.'
+  } catch (error) {
+    formError.value = error instanceof ApiRequestError && error.code === 'slug_taken'
+      ? 'Dieser Slug ist bereits vergeben. Bitte einen anderen wählen.'
+      : isEditing.value ? 'Persona konnte nicht gespeichert werden.' : 'Persona konnte nicht angelegt werden.'
   } finally {
     saving.value = false
   }

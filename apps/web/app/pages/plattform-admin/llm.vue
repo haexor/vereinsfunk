@@ -311,8 +311,11 @@ async function removeProvider(id: string) {
     const providerId = UuidSchema.parse(id)
     await api.request(`/v1/llm-providers/${providerId}`, { method: 'DELETE' })
     await load()
-  } catch {
-    errorMessage.value = 'Provider konnte nicht entfernt werden.'
+  } catch (error) {
+    // Bereits erzeugte Texte verweisen auf den Provider (on delete restrict); abschalten geht immer.
+    errorMessage.value = error instanceof ApiRequestError && error.code === 'llm_provider_in_use'
+      ? 'Dieser Provider wurde schon für Texte verwendet und kann deshalb nicht gelöscht werden. Deaktiviere ihn stattdessen.'
+      : 'Provider konnte nicht entfernt werden.'
   } finally {
     saving.value = false
   }
