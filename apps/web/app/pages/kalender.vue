@@ -2,21 +2,13 @@
 import { CalendarDays, ChevronLeft, ChevronRight } from '@lucide/vue'
 import { localDateKey } from '../utils/memberDates'
 
-const session = await useSession()
-const scope = await useScope()
+const { organizationId: activeOrganizationId, departmentId: activeDepartmentId, organizationTimezone: timezone } = await useActiveScope()
 // Paket 051, PR 3: der Kalender gehoert zum Rahmen (Spiele, Veranstaltungen). Geplante Beitraege
 // und der Sprung zur Beitragserstellung gehoeren zu social_media und erscheinen nur, wenn es wirkt.
 const { isEnabled: isModuleEnabled, canUseAtActiveScope } = await useScopeModules()
 const socialMediaActive = computed(() => isModuleEnabled('social_media'))
 // Paket 055: Erstell-Links nur mit dem Recht, Beitraege anzulegen.
 const canCreatePost = computed(() => socialMediaActive.value && canUseAtActiveScope('post.create'))
-const activeOrganization = computed(
-  () =>
-    session.value?.scopes.find((item) => item.organizationId === scope.value?.organizationId) ??
-    null,
-)
-const timezone = computed(() => activeOrganization.value?.organizationTimezone ?? 'Europe/Berlin')
-
 const monthOffset = ref(0)
 
 const viewedMonth = computed(() => {
@@ -82,23 +74,20 @@ function fixtureTitle(fixture: CalendarFixtureDay) {
   return parts.join(' · ') || undefined
 }
 
-// Monoton steigender Ladezaehler: klickt die Nutzerin schnell mehrfach auf einen Monatswechsel,
-// koennen die Antworten in anderer Reihenfolge eintreffen -- nur der jeweils zuletzt gestartete
-// Lauf darf noch in postsByDay/fixturesByDay/eventsByDay oder loadError schreiben.
-let loadToken = 0
-
-async function loadMonth() {
+// Klickt die Nutzerin schnell mehrfach auf einen Monatswechsel, koennen die Antworten in anderer
+// Reihenfolge eintreffen -- nur der jeweils zuletzt gestartete Lauf (isLatest) darf noch in
+// postsByDay/fixturesByDay/eventsByDay oder loadError schreiben.
+async function loadMonth(isLatest: () => boolean) {
   if (import.meta.server) return
-  const token = ++loadToken
   loading.value = true
   loadError.value = false
-  const organizationId = scope.value?.organizationId
+  const organizationId = activeOrganizationId.value
   if (!organizationId) {
     resetCalendar()
     loading.value = false
     return
   }
-  const departmentId = scope.value?.departmentId
+  const departmentId = activeDepartmentId.value
   const supabase = useSupabaseClient()
   const { year, month } = viewedMonth.value
   const rangeStart = new Date(Date.UTC(year, month, 1) - 3 * 24 * 60 * 60 * 1000).toISOString()
@@ -138,7 +127,7 @@ async function loadMonth() {
     fixturesQuery,
     eventsQuery,
   ])
-  if (token !== loadToken) return
+  if (!isLatest()) return
   if (postsResult.error || fixturesResult.error || eventsResult.error) {
     resetCalendar()
     loadError.value = true
@@ -158,7 +147,7 @@ async function loadMonth() {
         'fixture_id',
         fixtures.map((fixture) => fixture.id),
       )
-    if (token !== loadToken) return
+    if (!isLatest()) return
     if (submissionsResult.error) {
       resetCalendar()
       loadError.value = true
@@ -223,8 +212,11 @@ async function loadMonth() {
   loading.value = false
 }
 
-watch([monthOffset, () => scope.value?.organizationId, () => scope.value?.departmentId], loadMonth)
-await loadMonth()
+const { ready } = useScopedLoad(
+  () => `${activeOrganizationId.value}:${activeDepartmentId.value}:${monthOffset.value}`,
+  (_key, isLatest) => loadMonth(isLatest),
+)
+await ready
 
 const hasAnyItem = computed(
   () =>
