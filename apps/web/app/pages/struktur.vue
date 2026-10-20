@@ -33,7 +33,11 @@ const teamsByDepartment = computed(() => {
 
 const renameDraft = reactive<Record<string, string>>({})
 
+// Nach einem Vereinswechsel darf eine spaeter eintreffende Antwort des alten Vereins dessen
+// Abteilungen nicht ueber die des neuen legen.
+let latestLoadRun = 0
 async function load() {
+  const loadRun = ++latestLoadRun
   if (!organizationId.value) { loading.value = false; return }
   loading.value = true
   errorMessage.value = ''
@@ -52,10 +56,12 @@ async function load() {
       useAuthHeader().then((headers) => $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/policy-settings`, { headers })),
     ])
   } catch {
+    if (loadRun !== latestLoadRun) return
     errorMessage.value = 'Die Vereinsstruktur konnte nicht geladen werden.'
     loading.value = false
     return
   }
+  if (loadRun !== latestLoadRun) return
   if (departmentsResult.error || teamsResult.error) {
     errorMessage.value = 'Die Vereinsstruktur konnte nicht geladen werden.'
     loading.value = false

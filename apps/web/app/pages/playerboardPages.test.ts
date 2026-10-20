@@ -25,4 +25,20 @@ describe('PlayerBoard-Seiten', () => {
     expect(page.replace(/\s+/g, ' ')).toContain('await load() watchRun()')
     expect(page.replace(/\s+/g, ' ')).toContain('watch(teamId, async () => { resetLogin() await load() watchRun() })')
   })
+
+  it('verwirft spaete Antworten frueherer Vereine bzw. Mannschaften in den Einstellungen', () => {
+    const page = read('playerboard/einstellungen.vue')
+
+    expect(functionBody(page, 'load')).toContain('if (loadRun === latestLoad) entries.value = loaded')
+    const consents = functionBody(page, 'loadConsents')
+    expect(consents.indexOf('if (loadRun !== latestConsentLoad) return')).toBeGreaterThan(-1)
+    expect(consents.indexOf('if (loadRun !== latestConsentLoad) return')).toBeLessThan(consents.indexOf('playersWithoutConsent.value = roster'))
+  })
+
+  it('uebernimmt den Saisonanfang der Spiele erst nach der Pruefung auf eine neuere Anfrage', () => {
+    const load = functionBody(read('playerboard/spiele.vue'), 'load')
+
+    expect(load).not.toContain('seasonFrom.value = await')
+    expect(load.indexOf('if (request !== latestRequest) return')).toBeLessThan(load.indexOf('seasonFrom.value = loadedSeasonFrom'))
+  })
 })

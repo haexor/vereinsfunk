@@ -137,15 +137,21 @@ const availableRolesForInvite = computed(() => {
   return candidates.filter((role) => canAssignRole(actorRoles, role))
 })
 
+// Ein Vereinswechsel waehrend eines Ladevorgangs (oder ein Neuladen nach einer Aktion) darf die
+// Liste nicht mit der Antwort des vorherigen Laufs ueberschreiben.
+let latestLoadRun = 0
 async function load() {
-  if (!organizationId.value) { loading.value = false; return }
+  const loadRun = ++latestLoadRun
+  const requestedOrganizationId = organizationId.value
+  if (!requestedOrganizationId) { loading.value = false; return }
   loading.value = true
   errorMessage.value = ''
   try {
     const [membersResponse, invitationsResponse] = await Promise.all([
-      api.request(`/v1/organizations/${organizationId.value}/members`, {}, MemberSchema.array()),
-      api.request(`/v1/organizations/${organizationId.value}/invitations`, {}, InvitationSchema.array()),
+      api.request(`/v1/organizations/${requestedOrganizationId}/members`, {}, MemberSchema.array()),
+      api.request(`/v1/organizations/${requestedOrganizationId}/invitations`, {}, InvitationSchema.array()),
     ])
+    if (loadRun !== latestLoadRun) return
     members.value = membersResponse
     // Der Invitations-Endpunkt filtert nur accepted_at/revoked_at -- eine abgelaufene, aber noch
     // offene Einladung wuerde sonst weiter unter "Offene Einladungen" erscheinen, obwohl
@@ -153,22 +159,19 @@ async function load() {
     invitations.value = invitationsResponse.filter((invitation) => new Date(invitation.expiresAt) > new Date())
     // Die Richtlinien sind sekundaer: ohne sie bleibt die Mitgliederliste bedienbar, und
     // inviteAllowedFor() faellt auf "erlaubt" zurueck. Die API entscheidet ohnehin endgueltig.
-    try {
-      policySettings.value = await api.request(`/v1/organizations/${organizationId.value}/policy-settings`, {}, PolicySettingSchema.array())
-    } catch {
-      policySettings.value = []
-    }
-    // Vertrauen ist ebenfalls sekundaer -- ohne sichtbare Eintraege gilt fuer jede Person "geerbt"
-    // (Paket 011).
-    try {
-      memberReviewTrust.value = await api.request(`/v1/organizations/${organizationId.value}/member-review-trust`, {}, MemberReviewTrustSchema.array())
-    } catch {
-      memberReviewTrust.value = []
-    }
+    const [loadedPolicySettings, loadedTrust] = await Promise.all([
+      api.request(`/v1/organizations/${requestedOrganizationId}/policy-settings`, {}, PolicySettingSchema.array()).catch(() => []),
+      // Vertrauen ist ebenfalls sekundaer -- ohne sichtbare Eintraege gilt fuer jede Person
+      // "geerbt" (Paket 011).
+      api.request(`/v1/organizations/${requestedOrganizationId}/member-review-trust`, {}, MemberReviewTrustSchema.array()).catch(() => []),
+    ])
+    if (loadRun !== latestLoadRun) return
+    policySettings.value = loadedPolicySettings
+    memberReviewTrust.value = loadedTrust
   } catch {
-    errorMessage.value = 'Mitglieder und Einladungen konnten nicht geladen werden.'
+    if (loadRun === latestLoadRun) errorMessage.value = 'Mitglieder und Einladungen konnten nicht geladen werden.'
   } finally {
-    loading.value = false
+    if (loadRun === latestLoadRun) loading.value = false
   }
 }
 await load()

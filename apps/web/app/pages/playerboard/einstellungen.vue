@@ -33,16 +33,20 @@ const errorMessage = ref('')
 const saveError = ref('')
 const notice = ref('')
 
+// Spaete Antworten frueherer Laeufe (Vereinswechsel waehrend des Ladens) verfallen.
+let latestLoad = 0
 async function load() {
+  const loadRun = ++latestLoad
   errorMessage.value = ''
   if (!organizationId.value) return
   loading.value = true
   try {
-    entries.value = await api.request(`/v1/organizations/${organizationId.value}/playerboard/settings`, {}, ScopePlayerboardSettingsSchema.array())
+    const loaded = await api.request(`/v1/organizations/${organizationId.value}/playerboard/settings`, {}, ScopePlayerboardSettingsSchema.array())
+    if (loadRun === latestLoad) entries.value = loaded
   } catch (error) {
-    errorMessage.value = playerboardErrorMessage(error, 'Die Einstellungen konnten nicht geladen werden.')
+    if (loadRun === latestLoad) errorMessage.value = playerboardErrorMessage(error, 'Die Einstellungen konnten nicht geladen werden.')
   } finally {
-    loading.value = false
+    if (loadRun === latestLoad) loading.value = false
   }
 }
 await load()
@@ -132,7 +136,11 @@ async function copyLink() {
 
 // Spieler ohne gueltige Einwilligung fuer oeffentliche Fotos (nur Mannschaftsebene, nur Trainer).
 const playersWithoutConsent = ref<PlayerboardPlayer[] | null>(null)
+// Nach einem Mannschaftswechsel darf die spaetere Antwort der vorigen Mannschaft deren Spieler
+// nicht unter der neuen anzeigen.
+let latestConsentLoad = 0
 async function loadConsents() {
+  const loadRun = ++latestConsentLoad
   playersWithoutConsent.value = null
   const current = level.value
   if (current?.scope !== 'team' || !useCan('training.manage', current.permissionScope)) return
@@ -141,10 +149,11 @@ async function loadConsents() {
       api.request(`/v1/playerboard/teams/${current.scopeId}/players`, {}, PlayerboardPlayerSchema.array()),
       api.request(`/v1/playerboard/teams/${current.scopeId}/photo-consents`, {}, PlayerboardPhotoConsentSchema.array()),
     ])
+    if (loadRun !== latestConsentLoad) return
     const missing = new Set(consents.filter((consent) => !consent.consentRecordId).map((consent) => consent.playerId))
     playersWithoutConsent.value = roster.filter((player) => player.active && missing.has(player.id))
   } catch {
-    playersWithoutConsent.value = null
+    if (loadRun === latestConsentLoad) playersWithoutConsent.value = null
   }
 }
 await loadConsents()

@@ -33,8 +33,10 @@ async function load(keepSelection = false) {
   const requestedTeamId = teamId.value
   loading.value = true
   try {
-    seasonFrom.value = await loadSeasonFrom(organizationId.value, requestedTeamId, organizationTimezone.value)
-    const range = period.value === 'season' && seasonFrom.value ? { from: seasonFrom.value } : {}
+    // Erst nach der Pruefung unten zuweisen: sonst stuende nach einem schnellen Mannschaftswechsel
+    // der Saisonbeginn der vorigen Mannschaft ueber den Spielen der neuen.
+    const loadedSeasonFrom = await loadSeasonFrom(organizationId.value, requestedTeamId, organizationTimezone.value)
+    const range = period.value === 'season' && loadedSeasonFrom ? { from: loadedSeasonFrom } : {}
     const [loaded, players] = await Promise.all([
       loadMatches(requestedTeamId, range),
       // Den Kader brauchen alle fuer die Profil-Links; nur Trainer ordnen damit Rueckennummern zu. Faellt er fuer
@@ -45,6 +47,7 @@ async function load(keepSelection = false) {
       }),
     ])
     if (request !== latestRequest) return
+    seasonFrom.value = loadedSeasonFrom
     matches.value = loaded
     roster.value = players
     if (!keepSelection || !loaded.some((match) => match.fixtureId === selectedFixtureId.value)) selectedFixtureId.value = loaded[0]?.fixtureId ?? null
