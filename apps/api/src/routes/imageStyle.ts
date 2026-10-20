@@ -42,12 +42,12 @@ import {
   type ImageStyleRenderResult,
 } from '../imageStyle.js'
 import type { ApiRouteContext } from './context.js'
-import { isSelectableInScope, LOGO_ASSET_KINDS, scopeLevelOf, validateBrandAssetReferences } from './brand.js'
+import { isSelectableInScope, LOGO_ASSET_KINDS, validateBrandAssetReferences } from '../services/brandAssetSelection.js'
 import {
   checkRateLimit,
   createAuditRecorder,
 } from './shared.js'
-import { resolveDirectoryScope, toPermissionScope } from '../services/scopeAuthorization.js'
+import { resolveDirectoryScope, scopeLevelOf, toPermissionScope } from '../services/scopeAuthorization.js'
 
 // Zod an der DB-Grenze statt roher `as string`-Zusicherungen: media_assets.sha256 ist nullable und
 // post_media.media_derivative_id koennte theoretisch fehlen -- durchgereicht landen beide als

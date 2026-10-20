@@ -3,6 +3,7 @@ import { canRemoveRole, hasPermission, type Permission, type Role } from '@verei
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { permissionScopeKey, type PermissionScope, type RoleProvider } from '../auth.js'
 import { notExpiredFilter } from '../supabase.js'
+import type { ScopeLevelName } from '@vereinsfunk/domain'
 
 // Scope-Aufloesung und Berechtigungshilfen: fast jedes Route-Modul (Richtlinien/Freigaben, Kanaele,
 // Mitglieder/Einladungen, Verzeichnis) loest scope+scopeId oder ein Membership-Tripel auf --
@@ -124,4 +125,12 @@ export async function resolveInvitationScope(
     return { scope: { organizationId: department.data.organization_id as string, departmentId: input.departmentId }, scopeName: department.data.name as string }
   }
   return { scope: { organizationId: input.organizationId }, scopeName: '' }
+}
+
+export type ScopeIds = { departmentId?: string | null | undefined; teamId?: string | null | undefined }
+
+// Ebene aus den Scope-Spalten einer Zeile oder eines Ziels -- eine team_id setzt immer eine
+// department_id voraus (CHECK in jeder Scope-Tabelle), deshalb entscheidet sie zuerst.
+export function scopeLevelOf(scope: ScopeIds): ScopeLevelName {
+  return scope.teamId ? 'team' : scope.departmentId ? 'department' : 'organization'
 }
