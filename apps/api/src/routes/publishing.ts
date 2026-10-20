@@ -252,8 +252,13 @@ export function registerPublishingRoutes(app: FastifyInstance, context: ApiRoute
 
     try {
       const result = await publisher.publish(publicationInput)
-      const markPublished = await service.from('publications').update({ status: result.status, provider_publication_id: result.externalId }).eq('id', params.id)
-      if (markPublished.error) request.log.error({ err: markPublished.error, correlationId: request.id }, 'publications status update failed')
+      // Die externe Aktion ist bereits geschehen: bleibt dieses Update aus, haengt die Zeile dauerhaft
+      // in 'uploading' (der Claim-CAS laesst sie nie wieder zu). Ein sofortiger zweiter Versuch
+      // faengt kurze Aussetzer ab; scheitert auch er, nennt das Log die externalId zum Nachtragen.
+      const markPublished = () => service.from('publications').update({ status: result.status, provider_publication_id: result.externalId }).eq('id', params.id)
+      let published = await markPublished()
+      if (published.error) published = await markPublished()
+      if (published.error) request.log.error({ err: published.error, correlationId: request.id, publicationId: params.id, externalId: result.externalId }, 'publications status update failed after publish')
       // Auch ein geglueckter Mehrfoto-Ablauf hat mehr erzeugt als die eine externalId: die
       // Facebook-Fotos bleiben eigene, adressierbare Objekte auf der Seite, und die
       // Instagram-Container sind der einzige Beleg, wie der Beitrag zusammengesetzt wurde. Ohne sie

@@ -318,6 +318,46 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
       expect(auditCaptured).toMatchObject([{ action: 'post.published', entity_id: PUBLICATION_ID }])
     })
 
+    it('retries the status update once when it fails after a successful publish', async () => {
+      // Die Veroeffentlichung ist extern bereits geschehen -- ohne zweiten Versuch blieb die Zeile
+      // nach einem kurzen Datenbankaussetzer dauerhaft auf 'uploading'.
+      const publicationUpdates: Record<string, unknown>[] = []
+      const clients: SupabaseClientFactory = {
+        ...readOnlyClients(),
+        forService: () =>
+          ({
+            rpc: async () => ({ data: 'claimed', error: null }),
+            from: (table: string) => {
+              const gate = mediaGateTables(table)
+              if (gate) return gate
+              if (table === 'publications') {
+                return {
+                  update: (payload: Record<string, unknown>) => {
+                    publicationUpdates.push(payload)
+                    return chain({ data: null, error: publicationUpdates.length === 1 ? { message: 'temporary outage' } : null })
+                  },
+                }
+              }
+              if (table === 'social_connections') return chain({ data: { external_account_id: 'page-123' }, error: null })
+              if (table === 'social_connection_secrets') {
+                const sealed = createSecretBox({ v1: Buffer.alloc(32, 7).toString('base64') }, 'v1').seal('fake-access-token', PUB_SOCIAL_CONNECTION_ID)
+                return chain({ data: { token_ciphertext: ciphertextToBytea(sealed.ciphertext), token_key_version: 'v1' }, error: null })
+              }
+              if (table === 'publication_attempts') return { ...chain({ data: null, error: null }), insert: async () => ({ error: null }) }
+              if (table === 'publication_media_grants') return { update: () => ({ eq: () => ({ is: async () => ({ error: null }) }) }) }
+              if (table === 'audit_events') return { insert: async () => ({ error: null }) }
+              throw new Error(`unexpected table in service fake: ${table}`)
+            },
+          }) as unknown as SupabaseClient,
+      }
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
+      expect(response.statusCode).toBe(200)
+      expect(publicationUpdates).toHaveLength(2)
+      expect(publicationUpdates[1]).toMatchObject({ status: 'published' })
+    })
+
     it('publishes successfully once an approved media derivative exists, records the attempt and audits it', async () => {
       process.env.API_PUBLIC_BASE_URL = 'https://api.example.test'
       try {
