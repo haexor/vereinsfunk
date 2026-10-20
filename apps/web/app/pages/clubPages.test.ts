@@ -59,6 +59,16 @@ describe('Vereinsseiten', () => {
     expect(page).toContain(":disabled=\"lockedForActiveLevel.has('bodyFontAssetId')\"")
   })
 
+  it('fuehrt auf /marke keine Mannschaftsebene, solange useActiveScope() sie nicht liefert', () => {
+    const page = read('marke.vue')
+    const activeScope = readFileSync(join(PAGES_DIR, '../composables/useActiveScope.ts'), 'utf8')
+
+    expect(activeScope).toContain("departmentId.value ? 'department' : 'organization'")
+    expect(page).not.toContain("activeLevel.value === 'team'")
+    expect(page).not.toContain("activeLevel === 'team'")
+    expect(page).not.toContain('async function saveTeam')
+  })
+
   it('frischt nach dem Speichern des Anzeigenamens die Sitzung auf', () => {
     const save = functionBody(read('profil.vue'), 'save')
 

@@ -69,7 +69,6 @@ const {
   readOverride,
   readTeamOverride,
   overrideFor,
-  teamOverrideFor,
 } = useBrandOverrides()
 
 const activeDepartmentOverride = computed(() =>
@@ -87,21 +86,17 @@ const activeBrandWebsiteKey = computed(() => {
       : null
 })
 
-// Sperren wirken nur nach unten: eine Vereinssperre gilt auch fuer die Mannschaft, selbst wenn
-// die Abteilung sie nicht wiederholt (siehe packages/domain/src/brand.ts, resolveBrand).
+// Sperren wirken nur nach unten (siehe packages/domain/src/brand.ts, resolveBrand): fuer die
+// Abteilung gelten die Sperren des Vereins.
 const lockedForActiveLevel = computed<Set<string>>(() => {
   const locked = new Set<string>()
   if (activeLevel.value === 'organization') return locked
   for (const field of org.lockedFields) locked.add(field)
-  if (activeLevel.value === 'team' && activeDepartmentId.value) {
-    for (const field of readOverride(activeDepartmentId.value).lockedFields ?? []) locked.add(field)
-  }
   return locked
 })
 
 const resolved = computed(() => {
   const departmentLevel = activeDepartmentId.value ? readOverride(activeDepartmentId.value) : null
-  const teamLevel = activeLevel.value === 'team' ? activeTeamOverride.value : null
   return resolveBrand(
     { ...org },
     activeLevel.value === 'organization'
@@ -113,7 +108,7 @@ const resolved = computed(() => {
             lockedFields: departmentLevel.lockedFields ?? [],
           }
         : null,
-    teamLevel,
+    null,
   )
 })
 
@@ -278,7 +273,6 @@ async function loadAll() {
     // mehr nachtraeglich anlegen.
     if (activeLevel.value === 'department' && activeDepartmentId.value)
       overrideFor(activeDepartmentId.value)
-    if (activeLevel.value === 'team' && activeTeamId.value) teamOverrideFor(activeTeamId.value)
   } finally {
     if (loadRun === latestLoadRun) loading.value = false
   }
@@ -581,20 +575,6 @@ async function saveDepartment(departmentId: string) {
   })
 }
 
-async function saveTeam(teamId: string) {
-  const value = teamOverrideFor(teamId)
-  await api.request(`/v1/teams/${teamId}/brand`, {
-    method: 'PUT',
-    body: {
-      primaryColor: value.primaryColor,
-      accentColor: value.accentColor,
-      logoAssetId: value.logoAssetId,
-      displayFontAssetId: value.displayFontAssetId,
-      bodyFontAssetId: value.bodyFontAssetId,
-    },
-  })
-}
-
 async function save() {
   if (!organizationId.value) return
   saving.value = true
@@ -603,7 +583,7 @@ async function save() {
     if (activeLevel.value === 'organization') await saveOrganization()
     else if (activeLevel.value === 'department' && activeDepartmentId.value)
       await saveDepartment(activeDepartmentId.value)
-    else if (activeLevel.value === 'team' && activeTeamId.value) await saveTeam(activeTeamId.value)
+    // Mannschaftsebene (PUT /v1/teams/:id/brand) folgt, sobald useActiveScope() 'team' liefert.
     await loadAll()
     refreshBrandRevision()
   } catch (error) {
@@ -806,7 +786,7 @@ usePageSaveFab({ label: 'Änderungen speichern', save, saving })
           </p>
           <div v-if="activeLevel !== 'organization' && selectableLogoAssets.length" class="mt-4">
             <p class="text-[11px] font-semibold text-[#7b827d]">
-              Wählbar (vom Verein{{ activeLevel === 'team' ? ' oder der Abteilung' : '' }}) — erneut
+              Wählbar (vom Verein) — erneut
               klicken entfernt die Auswahl
             </p>
             <div class="mt-2 flex flex-wrap gap-2">
@@ -943,53 +923,6 @@ usePageSaveFab({ label: 'Änderungen speichern', save, saving })
               />
               Mannschaften dürfen eigenes Branding führen
             </label>
-          </template>
-          <template v-else-if="activeTeamOverride && activeLevel === 'team'">
-            <p class="mt-2 text-xs text-[#7a817c]">
-              Leer lassen, um die Abteilungsfarbe zu übernehmen.
-            </p>
-            <div class="mt-4 grid grid-cols-2 gap-4">
-              <label
-                v-for="field in [
-                  ['primaryColor', 'Primärfarbe', resolved.primaryColor],
-                  ['accentColor', 'Akzentfarbe', resolved.accentColor],
-                ] as const"
-                :key="field[0]"
-              >
-                <span class="mb-2 flex items-center gap-1 text-xs font-semibold">
-                  {{ field[1] }}
-                  <span
-                    v-if="lockedForActiveLevel.has(field[0])"
-                    class="rounded-full bg-[#eef1ea] px-1.5 py-0.5 text-[9px] text-[#9aa096]"
-                    >gesperrt</span
-                  >
-                </span>
-                <div
-                  class="flex items-center gap-2 rounded-xl border border-[#dfe0d9] bg-white p-2"
-                  :class="lockedForActiveLevel.has(field[0]) && 'opacity-50'"
-                >
-                  <input
-                    :value="activeTeamOverride[field[0]] ?? field[2]"
-                    type="color"
-                    class="h-8 w-8 border-0 bg-transparent"
-                    :disabled="lockedForActiveLevel.has(field[0])"
-                    @input="
-                      activeTeamOverride[field[0]] = ($event.target as HTMLInputElement).value
-                    "
-                  />
-                  <span class="text-xs">{{
-                    activeTeamOverride[field[0]] ?? `geerbt: ${field[2]}`
-                  }}</span>
-                  <button
-                    v-if="activeTeamOverride[field[0]]"
-                    class="focus-ring ml-auto text-[10px] underline"
-                    @click="activeTeamOverride[field[0]] = null"
-                  >
-                    erben
-                  </button>
-                </div>
-              </label>
-            </div>
           </template>
           <div class="mt-5 space-y-1.5 border-t border-[#eceee7] pt-4">
             <p class="mb-1 text-[11px] font-semibold text-[#7b827d]">
