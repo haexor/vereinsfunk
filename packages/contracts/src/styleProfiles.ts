@@ -45,6 +45,13 @@ export const StyleProfileSnapshotSchema = z.object({
 export const SystemStyleProfileSlugSchema = z.enum([
   'klar_erklaerend', 'warm_gemeinschaftlich', 'lebendig_sportlich', 'leicht_humorvoll', 'feierlich_wertschaetzend',
 ])
+// Die fuenf Systemmodi werden per Slug referenziert; ein eigenes Profil oder eine Persona mit
+// gleichem Slug waere bei der Auswahl nicht mehr unterscheidbar.
+function rejectReservedSlug(slug: string | undefined, context: z.RefinementCtx): void {
+  if (slug !== undefined && (SystemStyleProfileSlugSchema.options as readonly string[]).includes(slug)) {
+    context.addIssue({ code: 'custom', path: ['slug'], message: 'System style profile slugs are reserved' })
+  }
+}
 export const StyleProfileScopeSchema = z.object({
   organizationId: UuidSchema,
   departmentId: UuidSchema.nullable(),
@@ -78,9 +85,7 @@ export const CreateCustomStyleProfileRequestSchema = z.object({
   doRules: StyleProfileRuleListSchema,
 }).superRefine((profile, context) => {
   if (profile.teamId && !profile.departmentId) context.addIssue({ code: 'custom', message: 'teamId requires departmentId' })
-  if ((SystemStyleProfileSlugSchema.options as readonly string[]).includes(profile.slug)) {
-    context.addIssue({ code: 'custom', message: 'System style profile slugs are reserved' })
-  }
+  rejectReservedSlug(profile.slug, context)
 })
 // Plan 037: a platform-admin-curated, global persona catalogue -- no organization_id, no
 // composite foreign key (see platform_style_personas migration). Referenced by slug only, frozen
@@ -105,30 +110,11 @@ export const CreatePlatformStylePersonaRequestSchema = z.object({
   styleRules: StyleProfileRulesSchema,
   avoidRules: StyleProfileRuleListSchema,
   doRules: StyleProfileRuleListSchema,
-}).superRefine((persona, context) => {
-  if ((SystemStyleProfileSlugSchema.options as readonly string[]).includes(persona.slug)) {
-    context.addIssue({ code: 'custom', message: 'System style profile slugs are reserved' })
-  }
-})
-export const UpdatePlatformStylePersonaRequestSchema = z.object({
-  slug: ContentPresetSlugSchema.optional(),
-  name: z.string().trim().min(1).max(80).optional(),
-  description: z.string().trim().min(1).max(500).optional(),
-  styleRules: StyleProfileRulesSchema.optional(),
-  avoidRules: StyleProfileRuleListSchema.optional(),
-  doRules: StyleProfileRuleListSchema.optional(),
-  isActive: z.boolean().optional(),
-}).superRefine((persona, context) => {
-  if (persona.slug !== undefined && (SystemStyleProfileSlugSchema.options as readonly string[]).includes(persona.slug)) {
-    context.addIssue({ code: 'custom', path: ['slug'], message: 'System style profile slugs are reserved' })
-  }
-  if (Object.values(persona).every((value) => value === undefined)) {
-    context.addIssue({ code: 'custom', message: 'At least one field must be provided' })
-  }
-})
-// Scope (organizationId/departmentId/teamId) is not part of this shape -- a profile's scope is
-// immutable, PATCH /v1/content-style-profiles/:id derives it from the existing row instead.
-export const UpdateCustomStyleProfileRequestSchema = z.object({
+}).superRefine((persona, context) => rejectReservedSlug(persona.slug, context))
+// Persona und Stilprofil aendern dieselben Felder. Der Scope (organizationId/departmentId/teamId)
+// gehoert bewusst nicht dazu -- er ist unveraenderlich, PATCH /v1/content-style-profiles/:id leitet
+// ihn aus der bestehenden Zeile her.
+const UpdateStyleProfileRequestSchema = z.object({
   slug: ContentPresetSlugSchema.optional(),
   name: z.string().trim().min(1).max(80).optional(),
   description: z.string().trim().min(1).max(500).optional(),
@@ -137,13 +123,13 @@ export const UpdateCustomStyleProfileRequestSchema = z.object({
   doRules: StyleProfileRuleListSchema.optional(),
   isActive: z.boolean().optional(),
 }).superRefine((profile, context) => {
-  if (profile.slug !== undefined && (SystemStyleProfileSlugSchema.options as readonly string[]).includes(profile.slug)) {
-    context.addIssue({ code: 'custom', path: ['slug'], message: 'System style profile slugs are reserved' })
-  }
+  rejectReservedSlug(profile.slug, context)
   if (Object.values(profile).every((value) => value === undefined)) {
     context.addIssue({ code: 'custom', message: 'At least one field must be provided' })
   }
 })
+export const UpdatePlatformStylePersonaRequestSchema = UpdateStyleProfileRequestSchema
+export const UpdateCustomStyleProfileRequestSchema = UpdateStyleProfileRequestSchema
 // Plan 040: "Persona/Stilprofil testen" calls the active text provider directly and
 // synchronously -- no session/candidate row, no preset. sampleInput plays the role a preset's
 // sourceMaterial normally plays (a single allowedClaim); there is no communicationGoal/preset
