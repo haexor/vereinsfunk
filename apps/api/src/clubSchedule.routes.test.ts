@@ -340,6 +340,29 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
       expect(capturedInsertRows[0]).toMatchObject({ team_id: TEAM_ID, is_home: true, opponent_name: 'SV Gegner', department_id: DEPARTMENT_ID })
     })
 
+    it('stores a floating kickoff (no Z, no TZID) in the club time zone and unconfirmed, not as confirmed UTC', async () => {
+      const csv = 'Mannschaft,Gegner,Anstoss\r\nErste Mannschaft,SV Gegner,20261115T150000\r\n'
+      const fieldMapping = { Mannschaft: 'teamReference', Gegner: 'opponentName', Anstoss: 'kickoffAt' }
+      let capturedInsertRows: Record<string, unknown>[] = []
+      const clients: SupabaseClientFactory = {
+        forUser: () => sourceOnlyUserClient(integrationSource({ department_id: DEPARTMENT_ID, enabled_domains: ['fixtures'], field_mapping: fieldMapping })),
+        forService: () =>
+          syncServiceClient({
+            fixtures: { ...chain({ data: [], error: null }), insert: (rows: Record<string, unknown>[]) => { capturedInsertRows = rows; return chain({ data: null, error: null }) } },
+            teams: chain({ data: [{ id: TEAM_ID, name: 'Erste Mannschaft' }], error: null }),
+          }),
+      }
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      const { boundary, body } = syncMultipartBody('apply', 'fixtures', csv)
+      const response = await app.inject({
+        method: 'POST', url: `/v1/integration-sources/${SOURCE_ID}/sync`,
+        headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` }, payload: body,
+      })
+      expect(response.statusCode).toBe(200)
+      expect(capturedInsertRows[0]).toMatchObject({ kickoff_at: '2026-11-15T14:00:00.000Z', kickoff_time_confirmed: false })
+    })
+
     it('treats a teamReference resolving to no known team as an unknown_structure conflict', async () => {
       const csv = 'Mannschaft,Gegner\r\nZweite Mannschaft,SV Gegner\r\n'
       const fieldMapping = { Mannschaft: 'teamReference', Gegner: 'opponentName' }

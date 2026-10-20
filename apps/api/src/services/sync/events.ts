@@ -35,7 +35,9 @@ export async function handleEventsSync(ctx: SyncDomainContext): Promise<FastifyR
     labelOf: (normalized, rowIndex) => (typeof normalized.title === 'string' ? normalized.title : `Zeile ${rowIndex}`),
   })
 
-  const match = createClubEventMatchStrategy()
+  const match = createClubEventMatchStrategy({
+    resolveDateTime: (rawValue, tzid) => resolveScheduleDateTime(rawValue, tzid, organizationTimezone),
+  })
   const plan = planSync({ existing: existingLocals, incoming, match, policy: { lossThresholdPercent: sourceLossThresholdPercent } })
   if (plan.aborted) {
     return reply.code(200).send(await handleAbortedSync({ service, request, runId, sourceId, idempotencyKey }))

@@ -1,13 +1,24 @@
-import { planSync } from '@vereinsfunk/integrations'
+import { planSync, resolveIcalDateTime } from '@vereinsfunk/integrations'
 import { describe, expect, it } from 'vitest'
 import { ExternalFixtureSchema } from './fixture.js'
 import { createFixtureMatchStrategy, type FixtureLocal } from './fixtureMatch.js'
+import type { ScheduleMatchContext } from './scheduleTime.js'
 
 const TEAM_HOME = '11111111-1111-4111-8111-111111111111'
 const TEAM_AWAY_KNOWN = '22222222-2222-4222-8222-222222222222'
 
 function resolver(knownNames: Record<string, string>) {
   return { resolveTeamId: (name: string) => knownNames[name] }
+}
+
+// Ersatz fuer resolveScheduleDateTime der API: iCal-Kompaktform in Europe/Berlin, eine ISO-Spalte
+// nur mit Offset -- genug, um zu zeigen, dass der Abgleich Instanzen statt Schreibweisen vergleicht.
+const schedule: ScheduleMatchContext = {
+  resolveDateTime: (rawValue, tzid) => {
+    const ical = resolveIcalDateTime(rawValue, tzid, 'Europe/Berlin')
+    if (ical) return ical
+    return /(?:Z|[+-]\d{2}:\d{2})$/.test(rawValue) ? { iso: new Date(rawValue).toISOString(), confirmed: true } : undefined
+  },
 }
 
 function localFixture(overrides: Partial<FixtureLocal> = {}): FixtureLocal {
@@ -36,41 +47,41 @@ function localFixture(overrides: Partial<FixtureLocal> = {}): FixtureLocal {
 
 describe('createFixtureMatchStrategy team resolution', () => {
   it('resolves teamId directly from an explicit teamReference (file-style row)', () => {
-    const strategy = createFixtureMatchStrategy(resolver({ '2. Herren': TEAM_HOME }))
+    const strategy = createFixtureMatchStrategy(resolver({ '2. Herren': TEAM_HOME }), schedule)
     const external = ExternalFixtureSchema.parse({ teamReference: '2. Herren', opponentName: 'TSV Süd', isHome: true })
     expect(strategy.fieldsOf(external)).toEqual({
-      teamId: TEAM_HOME, opponentName: 'TSV Süd', isHome: true, competition: null, kickoffAt: null,
+      teamId: TEAM_HOME, opponentName: 'TSV Süd', isHome: true, competition: null,
     })
     expect(strategy.unknownStructureRefs?.(external)).toEqual([])
   })
 
   it('assigns isHome=true when the home-side iCal title name resolves to a known team', () => {
-    const strategy = createFixtureMatchStrategy(resolver({ 'SV Nordstadt': TEAM_HOME }))
+    const strategy = createFixtureMatchStrategy(resolver({ 'SV Nordstadt': TEAM_HOME }), schedule)
     const external = ExternalFixtureSchema.parse({ homeNameRaw: 'SV Nordstadt', awayNameRaw: 'TSV Süd' })
     expect(strategy.fieldsOf(external)).toEqual({
-      teamId: TEAM_HOME, opponentName: 'TSV Süd', isHome: true, competition: null, kickoffAt: null,
+      teamId: TEAM_HOME, opponentName: 'TSV Süd', isHome: true, competition: null,
     })
   })
 
   it('assigns isHome=false when the away-side iCal title name resolves to a known team', () => {
-    const strategy = createFixtureMatchStrategy(resolver({ 'TSV Süd': TEAM_AWAY_KNOWN }))
+    const strategy = createFixtureMatchStrategy(resolver({ 'TSV Süd': TEAM_AWAY_KNOWN }), schedule)
     const external = ExternalFixtureSchema.parse({ homeNameRaw: 'SV Nordstadt', awayNameRaw: 'TSV Süd' })
     expect(strategy.fieldsOf(external)).toEqual({
-      teamId: TEAM_AWAY_KNOWN, opponentName: 'SV Nordstadt', isHome: false, competition: null, kickoffAt: null,
+      teamId: TEAM_AWAY_KNOWN, opponentName: 'SV Nordstadt', isHome: false, competition: null,
     })
   })
 
   it('resolves neither side to an unknown-structure signal -- kein Raten', () => {
-    const strategy = createFixtureMatchStrategy(resolver({}))
+    const strategy = createFixtureMatchStrategy(resolver({}), schedule)
     const external = ExternalFixtureSchema.parse({ homeNameRaw: 'SV Nordstadt', awayNameRaw: 'TSV Süd' })
     expect(strategy.unknownStructureRefs?.(external)).toEqual(['SV Nordstadt', 'TSV Süd'])
     expect(strategy.fieldsOf(external)).toEqual({
-      teamId: null, opponentName: null, isHome: null, competition: null, kickoffAt: null,
+      teamId: null, opponentName: null, isHome: null, competition: null,
     })
   })
 
   it('turns an unresolved iCal fixture into an unknown_structure conflict via planSync, never a guess', () => {
-    const strategy = createFixtureMatchStrategy(resolver({}))
+    const strategy = createFixtureMatchStrategy(resolver({}), schedule)
     const external = ExternalFixtureSchema.parse({ homeNameRaw: 'SV Nordstadt', awayNameRaw: 'TSV Süd' })
     const plan = planSync({ existing: [], incoming: [external], match: strategy, policy: { lossThresholdPercent: 30 } })
     expect(plan.aborted).toBe(false)
@@ -81,7 +92,7 @@ describe('createFixtureMatchStrategy team resolution', () => {
   })
 
   it('detects a changed opponent between a resolved local fixture and an updated external row', () => {
-    const strategy = createFixtureMatchStrategy(resolver({ '2. Herren': TEAM_HOME }))
+    const strategy = createFixtureMatchStrategy(resolver({ '2. Herren': TEAM_HOME }), schedule)
     const external = ExternalFixtureSchema.parse({
       externalId: 'ext-1', teamReference: '2. Herren', opponentName: 'TSV Nord', isHome: true,
       competition: 'Kreisliga A', kickoffAt: '20260815T150000Z', sourceUpdatedAt: '2026-08-05T00:00:00Z',
@@ -104,11 +115,34 @@ describe('createFixtureMatchStrategy team resolution', () => {
 describe('createFixtureMatchStrategy.identityOf', () => {
   it('prefers the external id when present', () => {
     const entity = ExternalFixtureSchema.parse({ externalId: 'ext-1', opponentName: 'TSV Süd' })
-    expect(createFixtureMatchStrategy(resolver({})).identityOf(entity)).toEqual({ externalId: 'ext-1' })
+    expect(createFixtureMatchStrategy(resolver({}), schedule).identityOf(entity)).toEqual({ externalId: 'ext-1' })
   })
 
   it('falls back to a fuzzy key of opponent and kickoff time', () => {
     const entity = ExternalFixtureSchema.parse({ opponentName: 'TSV Süd', kickoffAt: '2026-08-15T15:00:00Z' })
-    expect(createFixtureMatchStrategy(resolver({})).identityOf(entity)).toEqual({ fuzzy: ['tsv süd', '2026-08-15T15:00:00Z'] })
+    expect(createFixtureMatchStrategy(resolver({}), schedule).identityOf(entity)).toEqual({ fuzzy: ['tsv süd', String(Date.parse('2026-08-15T15:00:00Z'))] })
+  })
+})
+
+describe('createFixtureMatchStrategy kickoff comparison', () => {
+  it('finds the fuzzy candidate for a re-imported kickoff written with an offset instead of planning create plus retire', () => {
+    const external = ExternalFixtureSchema.parse({ teamReference: '2. Herren', opponentName: 'TSV Süd', kickoffAt: '2026-08-15T17:00:00+02:00' })
+    const plan = planSync({
+      existing: [localFixture()],
+      incoming: [external],
+      match: createFixtureMatchStrategy(resolver({ '2. Herren': TEAM_HOME }), schedule),
+      policy: { lossThresholdPercent: 30 },
+    })
+    expect(plan.aborted).toBe(false)
+    if (plan.aborted) return
+    expect(plan.created).toHaveLength(0)
+    expect(plan.retired).toHaveLength(0)
+    expect(plan.conflicts[0]?.kind).toBe('ambiguous_match')
+  })
+
+  it('reads a floating iCal kickoff in the club time zone, not as UTC', () => {
+    const external = ExternalFixtureSchema.parse({ externalId: 'ext-1', teamReference: '2. Herren', opponentName: 'TSV Süd', kickoffAt: '20260815T170000' })
+    const fields = createFixtureMatchStrategy(resolver({ '2. Herren': TEAM_HOME }), schedule).fieldsOf(external)
+    expect(fields.kickoffAt).toBe(Date.parse('2026-08-15T15:00:00Z'))
   })
 })

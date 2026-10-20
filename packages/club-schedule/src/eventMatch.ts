@@ -1,5 +1,6 @@
 import type { MatchStrategy } from '@vereinsfunk/integrations'
 import type { ExternalClubEvent } from './event.js'
+import { comparableInstant, type ScheduleMatchContext } from './scheduleTime.js'
 
 /**
  * Minimaler lokaler Veranstaltungs-Datensatz, den der Abgleich braucht -- keine
@@ -36,9 +37,10 @@ function isLocal(entity: ClubEventLocal | ExternalClubEvent): entity is ClubEven
  * Mannschaften/Spielen braucht es hier keinen Resolver: eine Veranstaltung referenziert im Rahmen
  * dieses Packages keine Abteilung/Mannschaft ueber einen Namen. Eine synchronisierte Zeile behaelt
  * die department_id der eigenen integration_sources-Quelle -- das passiert im Schreibpfad der API,
- * nicht hier (genau wie bei directory_people).
+ * nicht hier (genau wie bei directory_people). Beginn/Ende vergleicht sie als Instanz
+ * (comparableInstant), aufgeloest mit schedule.resolveDateTime.
  */
-export function createClubEventMatchStrategy(): MatchStrategy<ClubEventLocal, ExternalClubEvent> {
+export function createClubEventMatchStrategy(schedule: ScheduleMatchContext): MatchStrategy<ClubEventLocal, ExternalClubEvent> {
   // externalId allein identifiziert bei einer Serie nur die Serie (RFC 5545: UID ist seriengleich,
   // RECURRENCE-ID/recurrenceKey erst die Instanz) -- ohne recurrenceKey in der Identitaet wuerden
   // zwei verschiedene Termine derselben Serie faelschlich als derselbe Datensatz abgeglichen,
@@ -50,13 +52,13 @@ export function createClubEventMatchStrategy(): MatchStrategy<ClubEventLocal, Ex
   return {
     identityOf(entity) {
       if (entity.externalId) return { externalId: compositeExternalId(entity.externalId, entity.recurrenceKey) }
-      return { fuzzy: [entity.title.trim().toLowerCase(), entity.startsAt] }
+      return { fuzzy: [entity.title.trim().toLowerCase(), String(comparableInstant(schedule, entity.startsAt, entity.startsAtTzid))] }
     },
     externalIdOf(local) {
       return local.externalId ? compositeExternalId(local.externalId, local.recurrenceKey) : undefined
     },
     fuzzyKeyOf(local) {
-      return [local.title.trim().toLowerCase(), local.startsAt.toISOString()]
+      return [local.title.trim().toLowerCase(), String(local.startsAt.getTime())]
     },
     fieldsOf(entity) {
       if (isLocal(entity)) {
@@ -64,8 +66,8 @@ export function createClubEventMatchStrategy(): MatchStrategy<ClubEventLocal, Ex
           title: entity.title,
           description: entity.description,
           category: entity.category,
-          startsAt: entity.startsAt.toISOString(),
-          endsAt: entity.endsAt ? entity.endsAt.toISOString() : null,
+          startsAt: entity.startsAt.getTime(),
+          endsAt: entity.endsAt ? entity.endsAt.getTime() : null,
           allDay: entity.allDay,
           locationName: entity.locationName,
           status: entity.status,
@@ -79,8 +81,8 @@ export function createClubEventMatchStrategy(): MatchStrategy<ClubEventLocal, Ex
         title: entity.title,
         description: entity.description,
         category: entity.category,
-        startsAt: entity.startsAt,
-        endsAt: entity.endsAt,
+        startsAt: comparableInstant(schedule, entity.startsAt, entity.startsAtTzid),
+        endsAt: entity.endsAt === undefined ? undefined : comparableInstant(schedule, entity.endsAt, entity.endsAtTzid),
         allDay: entity.allDay,
         locationName: entity.locationName,
         status: entity.status,

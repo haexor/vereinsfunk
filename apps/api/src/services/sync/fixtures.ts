@@ -50,7 +50,9 @@ export async function handleFixturesSync(ctx: SyncDomainContext): Promise<Fastif
       typeof normalized.opponentName === 'string' ? normalized.opponentName : typeof normalized.awayNameRaw === 'string' ? normalized.awayNameRaw : `Zeile ${rowIndex}`,
   })
 
-  const match = createFixtureMatchStrategy(resolver)
+  const match = createFixtureMatchStrategy(resolver, {
+    resolveDateTime: (rawValue, tzid) => resolveScheduleDateTime(rawValue, tzid, organizationTimezone),
+  })
   const plan = planSync({ existing: existingLocals, incoming, match, policy: { lossThresholdPercent: sourceLossThresholdPercent } })
   if (plan.aborted) {
     return reply.code(200).send(await handleAbortedSync({ service, request, runId, sourceId, idempotencyKey }))
@@ -63,8 +65,9 @@ export async function handleFixturesSync(ctx: SyncDomainContext): Promise<Fastif
   if (mode === 'apply') {
     if (plan.created.length > 0) {
       const insertRows = plan.created.map((entity) => {
-        const resolved = match.fieldsOf(entity) as { teamId: string | null; opponentName: string | null; isHome: boolean | null; competition: string | null; kickoffAt: string | null }
-        const kickoff = resolved.kickoffAt ? resolveScheduleDateTime(resolved.kickoffAt, entity.kickoffAtTzid, organizationTimezone) : undefined
+        const resolved = match.fieldsOf(entity) as { teamId: string | null; opponentName: string | null; isHome: boolean | null; competition: string | null }
+        // Aus dem Rohwert, nicht aus fieldsOf: dessen kickoffAt ist nur ein Vergleichswert.
+        const kickoff = entity.kickoffAt ? resolveScheduleDateTime(entity.kickoffAt, entity.kickoffAtTzid, organizationTimezone) : undefined
         const ownTeamLabel = resolved.isHome === true ? entity.homeNameRaw ?? null : resolved.isHome === false ? entity.awayNameRaw ?? null : null
         return {
           organization_id: organizationId, department_id: sourceDepartmentId, team_id: resolved.teamId,
@@ -79,7 +82,7 @@ export async function handleFixturesSync(ctx: SyncDomainContext): Promise<Fastif
       if (insert.error) throw insert.error
     }
     for (const update of plan.updated) {
-      const resolved = match.fieldsOf(update.external) as { teamId: string | null; opponentName: string | null; isHome: boolean | null; competition: string | null; kickoffAt: string | null }
+      const resolved = match.fieldsOf(update.external) as { teamId: string | null; opponentName: string | null; isHome: boolean | null; competition: string | null }
       const patch: Record<string, unknown> = {
         team_id: resolved.teamId ?? update.local.teamId, opponent_name: resolved.opponentName ?? update.local.opponentName,
         is_home: resolved.isHome ?? update.local.isHome, competition: resolved.competition ?? update.local.competition,
