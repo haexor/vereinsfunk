@@ -3,7 +3,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createHash, randomBytes } from 'node:crypto'
 import type { EmailMessage } from '../email.js'
 import type { PermissionScope } from '../auth.js'
-import { CONSENT_RECORD_SELECT, toPermissionScope, type ConsentRecordRow } from '../routes/shared.js'
+import { CONSENT_RECORD_SELECT, type ConsentRecordRow } from '../routes/shared.js'
+import { toPermissionScope } from './scopeAuthorization.js'
 
 // Alles, was die Einwilligungsverwaltung an reiner Logik und an Ladefunktionen braucht -- geteilt
 // von routes/consent.ts (angemeldete Verwaltung) und routes/consentPublic.ts (die oeffentlichen

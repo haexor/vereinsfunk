@@ -8,7 +8,8 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { mapContentSignatureBlockRow } from '../apiMappers.js'
 import type { ApiRouteContext } from './context.js'
-import { createAuditRecorder, resolveDirectoryScope, toPermissionScope } from './shared.js'
+import { createAuditRecorder } from './shared.js'
+import { resolveDirectoryScope, toPermissionScope } from '../services/scopeAuthorization.js'
 
 // Paket B, PR 0: CRUD fuer frei anlegbare Textbausteine (CTA/Footer/Signatur), analog
 // apps/api/src/routes/imageStyle.ts -- GET ohne eigenes Berechtigungsgate (RLS entscheidet die

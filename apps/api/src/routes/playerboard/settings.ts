@@ -10,7 +10,8 @@ import { z } from 'zod'
 import { ownScopeLevelValue } from '../../moduleStatus.js'
 import type { ApiRouteContext } from '../context.js'
 import { loadOrganizationLevels, loadScopeName } from '../modules.js'
-import { createAuditRecorder, isAnyMemberOfOrganization, resolveMembershipScope } from '../shared.js'
+import { createAuditRecorder } from '../shared.js'
+import { isAnyMemberOfOrganization, resolveMembershipScope } from '../../services/scopeAuthorization.js'
 import {
   loadOrganizationPlayerboardSettings,
   requirePlayerboardModule,

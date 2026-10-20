@@ -8,7 +8,8 @@ import {
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ApiRouteContext } from './context.js'
-import { buildStyleProfilePromptPreview, checkRateLimit, previewStyleProfile, resolvePreviewIdempotencyKey } from './shared.js'
+import { checkRateLimit } from './shared.js'
+import { buildStyleProfilePromptPreview, previewStyleProfile, resolvePreviewIdempotencyKey } from '../services/styleProfilePreview.js'
 
 const PERSONA_COLUMNS = 'id, slug, name, description, style_rules, avoid_rules, do_rules, is_active, created_by, created_at, updated_at'
 

@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { permissionScopeKey } from '../../auth.js'
 import type { ApiRouteContext } from '../context.js'
-import { resolveRolesForScopes } from '../shared.js'
+import { resolveRolesForScopes } from '../../services/scopeAuthorization.js'
 import { loadTeamScope } from './shared.js'
 
 // Rueckgabe von public.person_profile (2026101701_person_profile.sql). An dieser Grenze validiert,

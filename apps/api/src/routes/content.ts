@@ -36,9 +36,13 @@ import { parseSupabaseData } from '../supabase.js'
 import { CLUB_EVENT_COLUMNS, FIXTURE_COLUMNS, MEDIA_ASSET_SUMMARY_COLUMNS, mapClubEventRow, mapFixtureRow, mapMediaAssetSummaryRow, mapTeamRow } from '../apiMappers.js'
 import { ensurePassThroughDerivative } from '../passThroughDerivative.js'
 import { saveTextWorkshopDraft } from '../services/textWorkshopDrafts.js'
-import { createTextGenerationSession, isStyleProfileUsableInScope, SYSTEM_STYLE_PROFILES } from '../services/textGenerationSessions.js'
+import { createTextGenerationSession, isStyleProfileUsableInScope, resolveTextGenerationProviderConfigurationIds, SYSTEM_STYLE_PROFILES } from '../services/textGenerationSessions.js'
 import type { ApiRouteContext } from './context.js'
-import { buildStyleProfilePromptPreview, checkRateLimit, createAuditRecorder, fetchMemberTrust, isAnyMemberOfOrganization, previewStyleProfile, resolveDirectoryScope, resolvePreviewIdempotencyKey, resolveScopedEffectiveConfig, resolveTextGenerationPlatformAvailability, resolveTextGenerationProviderConfigurationIds, toPermissionScope } from './shared.js'
+import { checkRateLimit, createAuditRecorder } from './shared.js'
+import { buildStyleProfilePromptPreview, previewStyleProfile, resolvePreviewIdempotencyKey } from '../services/styleProfilePreview.js'
+import { resolveTextGenerationPlatformAvailability } from '../services/channelAvailability.js'
+import { fetchMemberTrust, resolveScopedEffectiveConfig } from '../services/policyRules.js'
+import { isAnyMemberOfOrganization, resolveDirectoryScope, toPermissionScope } from '../services/scopeAuthorization.js'
 
 // Plan 033 text-only workshop. Diese Routen rufen kein LLM auf: sie schreiben Sitzung und einen
 // reinen ID-Umschlag ueber eine service-only RPC, die der Worker spaeter ausfuehrt.

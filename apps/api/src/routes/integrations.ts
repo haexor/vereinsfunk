@@ -29,7 +29,8 @@ import { handleFixturesSync } from '../services/sync/fixtures.js'
 import { handlePeopleSync } from '../services/sync/people.js'
 import { handleTeamsSync } from '../services/sync/teams.js'
 import type { ApiRouteContext } from './context.js'
-import { createAuditRecorder, readIdempotencyKeyHeader, resolveDirectoryScope, toPermissionScope } from './shared.js'
+import { createAuditRecorder, readIdempotencyKeyHeader } from './shared.js'
+import { resolveDirectoryScope, toPermissionScope } from '../services/scopeAuthorization.js'
 import { parseSupabaseData } from '../supabase.js'
 
 export function registerIntegrationRoutes(app: FastifyInstance, context: ApiRouteContext): void {

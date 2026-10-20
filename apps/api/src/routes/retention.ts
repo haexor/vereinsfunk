@@ -10,7 +10,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ApiRouteContext } from './context.js'
-import { createAuditRecorder, toPermissionScope } from './shared.js'
+import { createAuditRecorder } from './shared.js'
+import { toPermissionScope } from '../services/scopeAuthorization.js'
 import { fetchAllRows } from '../supabase.js'
 
 export function registerRetentionRoutes(app: FastifyInstance, context: ApiRouteContext): void {

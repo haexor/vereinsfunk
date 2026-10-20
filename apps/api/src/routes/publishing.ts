@@ -8,7 +8,8 @@ import { byteaToBuffer } from '@vereinsfunk/secrets'
 import { createSecretBoxFromEnvironment } from '../secretBox.js'
 import { computeMediaGateBlockersForPostVersion, HARD_PUBLISH_BLOCKERS } from '../services/mediaGate.js'
 import type { ApiRouteContext } from './context.js'
-import { checkRateLimit, createAuditRecorder, resolveScopedEffectiveConfig } from './shared.js'
+import { checkRateLimit, createAuditRecorder } from './shared.js'
+import { resolveScopedEffectiveConfig } from '../services/policyRules.js'
 
 /**
  * Registriert Planung und Ausfuehrung von Veroeffentlichungen mit Berechtigungs- und Medienpruefung.

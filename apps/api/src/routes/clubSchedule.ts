@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { CLUB_EVENT_COLUMNS, FIXTURE_COLUMNS, mapClubEventRow, mapFixtureRow } from '../apiMappers.js'
 import type { ApiRouteContext } from './context.js'
-import { toPermissionScope } from './shared.js'
+import { toPermissionScope } from '../services/scopeAuthorization.js'
 import { fetchAllRows } from '../supabase.js'
 
 export function registerClubScheduleRoutes(app: FastifyInstance, context: ApiRouteContext): void {

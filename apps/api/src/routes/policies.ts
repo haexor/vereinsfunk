@@ -22,17 +22,9 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { PermissionScope } from '../auth.js'
 import type { ApiRouteContext } from './context.js'
-import {
-  computeRuleEntry,
-  createAuditRecorder,
-  fetchPolicyRuleRows,
-  isAnyMemberOfOrganization,
-  POLICY_MANAGE_PERMISSION,
-  resolveMembershipScope,
-  resolveRolesForScopes,
-  toPermissionScope,
-  type PolicyRuleRow,
-} from './shared.js'
+import { createAuditRecorder } from './shared.js'
+import { computeRuleEntry, fetchPolicyRuleRows, type PolicyRuleRow } from '../services/policyRules.js'
+import { isAnyMemberOfOrganization, POLICY_MANAGE_PERMISSION, resolveMembershipScope, resolveRolesForScopes, toPermissionScope } from '../services/scopeAuthorization.js'
 
 // Verein, jede Abteilung und jedes Team -- die Ebenen, deren Bearbeitbarkeit beide
 // Richtlinien-Uebersichten anzeigen; der Schluessel ist permissionScopeKey wie im canEditFor-Lookup.

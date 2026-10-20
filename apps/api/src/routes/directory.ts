@@ -11,7 +11,8 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { DIRECTORY_PERSON_COLUMNS, mapDirectoryPersonRow } from '../apiMappers.js'
 import type { ApiRouteContext } from './context.js'
-import { createAuditRecorder, isAnyMemberOfOrganization, resolveDirectoryScope, toPermissionScope } from './shared.js'
+import { createAuditRecorder } from './shared.js'
+import { isAnyMemberOfOrganization, resolveDirectoryScope, toPermissionScope } from '../services/scopeAuthorization.js'
 import { fetchAllRows } from '../supabase.js'
 
 /**

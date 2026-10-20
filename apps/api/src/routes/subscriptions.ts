@@ -15,7 +15,8 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { parseBlockingPublications } from '../moduleStatus.js'
 import type { ApiRouteContext } from './context.js'
-import { createAuditRecorder, isAnyMemberOfOrganization, POLICY_MANAGE_PERMISSION, resolveMembershipScope } from './shared.js'
+import { createAuditRecorder } from './shared.js'
+import { isAnyMemberOfOrganization, POLICY_MANAGE_PERMISSION, resolveMembershipScope } from '../services/scopeAuthorization.js'
 
 async function loadEffectiveLimits(service: SupabaseClient, organizationId: string) {
   const result = await service.rpc('effective_limits', { target: organizationId })

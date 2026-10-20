@@ -46,9 +46,8 @@ import { isSelectableInScope, LOGO_ASSET_KINDS, scopeLevelOf, validateBrandAsset
 import {
   checkRateLimit,
   createAuditRecorder,
-  resolveDirectoryScope,
-  toPermissionScope,
 } from './shared.js'
+import { resolveDirectoryScope, toPermissionScope } from '../services/scopeAuthorization.js'
 
 // Zod an der DB-Grenze statt roher `as string`-Zusicherungen: media_assets.sha256 ist nullable und
 // post_media.media_derivative_id koennte theoretisch fehlen -- durchgereicht landen beide als

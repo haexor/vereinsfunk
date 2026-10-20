@@ -14,14 +14,8 @@ import { permissionScopeKey, type PermissionScope, type RoleProvider } from '../
 import { loadOrganizationModuleSettings, moduleLayersFor, ownScopeLevelValue, parseBlockingPublications, type OrganizationModuleSettings } from '../moduleStatus.js'
 import { parseSupabaseData } from '../supabase.js'
 import type { ApiRouteContext } from './context.js'
-import {
-  createAuditRecorder,
-  isAnyMemberOfOrganization,
-  POLICY_MANAGE_PERMISSION,
-  resolveMembershipScope,
-  resolveRolesForScopes,
-  toPermissionScope,
-} from './shared.js'
+import { createAuditRecorder } from './shared.js'
+import { isAnyMemberOfOrganization, POLICY_MANAGE_PERMISSION, resolveMembershipScope, resolveRolesForScopes, toPermissionScope } from '../services/scopeAuthorization.js'
 
 /** Baut und validiert die Scope-Antwort mit eigener Auswahl, wirksamen Modulen und Schreibrecht. */
 function buildScopeModules(

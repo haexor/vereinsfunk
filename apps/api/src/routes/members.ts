@@ -18,7 +18,8 @@ import { membershipTableFor } from '../apiMappers.js'
 import type { PermissionScope } from '../auth.js'
 import { fetchAllRows, fetchAllRowsForIds, parseSupabaseData } from '../supabase.js'
 import type { ApiRouteContext } from './context.js'
-import { createAuditRecorder, membershipCapabilities, resolveMembershipScope, resolveRolesForScopes, toPermissionScope } from './shared.js'
+import { createAuditRecorder } from './shared.js'
+import { membershipCapabilities, resolveMembershipScope, resolveRolesForScopes, toPermissionScope } from '../services/scopeAuthorization.js'
 
 // Jede Mitgliedschaftstabelle traegt nur die Scope-Spalten ihrer Ebene: organization_memberships
 // hat weder department_id noch team_id, department_memberships kein team_id. Eine gemeinsame
