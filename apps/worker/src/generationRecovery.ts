@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { ZodError } from 'zod'
 import type { SocialPlatform } from '@vereinsfunk/contracts'
 import { createLogger } from '@vereinsfunk/observability'
 
@@ -56,6 +57,13 @@ export async function scanAndRecoverStaleCandidates(repository: GenerationRecove
         await repository.finalizeRecovery(candidate, 'stalled_after_crash')
       } catch (error) {
         logger.error({ err: error, candidateId: candidate.id }, 'automatic recovery attempt failed')
+        // Eine Sitzungszeile, die nicht ins Schema passt, scheitert bei jedem Scan gleich -- ohne
+        // Abschluss wuerde der Kandidat alle 15 Minuten fuer immer erneut geclaimt.
+        if (error instanceof ZodError) {
+          await repository.finalizeRecovery(candidate, 'stalled_after_crash').catch((finalizeError: unknown) => {
+            logger.error({ err: finalizeError, candidateId: candidate.id }, 'stalled candidate recovery: finalize failed')
+          })
+        }
       }
     }
   }
