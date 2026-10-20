@@ -48,10 +48,27 @@ function resolveSupabaseCliEntry(): string {
   return path.join(path.dirname(packageJsonPath), relativeBin)
 }
 
+// Plan 036, Step 2: deutlich ueber der beobachteten Laufzeit von `db push`, aber klein genug, dass ein
+// haengender Push (Lock, totes Netz) den Container nicht unbegrenzt blockiert statt neu zu starten.
+const MIGRATION_TIMEOUT_MS = 120_000
+
+/**
+ * Startet die CLI mit hartem Timeout: nach Ablauf wird der Kindprozess per SIGKILL beendet und eine
+ * eindeutige MigrationError geworfen. Exportiert, damit der Test es mit einem Fake-Kindprozess prueft.
+ */
+export async function execMigrationCli(file: string, args: readonly string[], timeoutMs = MIGRATION_TIMEOUT_MS): Promise<void> {
+  try {
+    await execFileAsync(file, args, { timeout: timeoutMs, killSignal: 'SIGKILL' })
+  } catch (error) {
+    if (error && typeof error === 'object' && 'killed' in error && error.killed) throw new MigrationError(`supabase db push timed out after ${timeoutMs} ms`)
+    throw error
+  }
+}
+
 const defaultCliRunner: MigrationCliRunner = async (databaseUrl) => {
   const cliEntry = resolveSupabaseCliEntry()
   const workdir = resolveMigrationsWorkdir()
-  await execFileAsync(process.execPath, [cliEntry, 'db', 'push', '--yes', '--workdir', workdir, '--db-url', databaseUrl])
+  await execMigrationCli(process.execPath, [cliEntry, 'db', 'push', '--yes', '--workdir', workdir, '--db-url', databaseUrl])
 }
 
 export interface RunPendingMigrationsOptions {
@@ -79,6 +96,7 @@ export async function runPendingMigrations(databaseUrl: string, options: RunPend
   try {
     await runner(databaseUrl)
   } catch (error) {
+    if (error instanceof MigrationError) throw new MigrationError(redact(error.message, databaseUrl))
     const stderr = error && typeof error === 'object' && 'stderr' in error ? String((error as { stderr?: unknown }).stderr) : ''
     const message = error instanceof Error ? error.message : String(error)
     throw new MigrationError(redact(`supabase db push failed: ${message}${stderr ? ` -- ${stderr}` : ''}`, databaseUrl))
