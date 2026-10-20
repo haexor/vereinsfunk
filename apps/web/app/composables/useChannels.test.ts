@@ -1,4 +1,4 @@
-import { computed, nextTick, reactive, ref, watch } from 'vue'
+import { computed, effectScope, nextTick, reactive, ref, watch } from 'vue'
 import type { ZodType } from 'zod'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useScopedLoad } from './useLatestRequest'
@@ -7,7 +7,8 @@ import { useChannels } from './useChannels'
 const PENDING_ID = '10000000-1000-4000-8000-000000000001'
 
 describe('useChannels', () => {
-  const scope = ref({ organizationId: 'A', departmentId: null as string | null })
+  // Je Test ein eigener Ref: Watcher frueherer Tests duerfen auf Wechsel hier nicht reagieren.
+  let scope = ref({ organizationId: 'A', departmentId: null as string | null })
   const route = { query: {} as Record<string, string> }
   let gateB: Promise<void> = Promise.resolve()
   let openB = () => {}
@@ -22,7 +23,7 @@ describe('useChannels', () => {
   })
 
   beforeEach(() => {
-    scope.value = { organizationId: 'A', departmentId: null }
+    scope = ref({ organizationId: 'A', departmentId: null })
     route.query = {}
     authorizationUrl = 'https://www.facebook.com/dialog/oauth'
     gateB = new Promise<void>((resolve) => { openB = resolve })
@@ -58,6 +59,18 @@ describe('useChannels', () => {
 
     expect(channels.channels.value.map((channel) => channel.id)).toEqual(['C-channel'])
     expect(channels.loading.value).toBe(false)
+  })
+
+  it('stops reloading after the owning page is gone', async () => {
+    const page = effectScope()
+    await page.run(() => useChannels())
+    request.mockClear()
+    page.stop()
+
+    scope.value = { organizationId: 'C', departmentId: null }
+    await nextTick()
+
+    expect(request).not.toHaveBeenCalled()
   })
 
   it('ignores a pending connection id that is not a UUID instead of putting it into the API path', async () => {

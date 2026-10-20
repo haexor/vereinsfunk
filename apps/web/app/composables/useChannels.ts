@@ -1,6 +1,8 @@
+import { effectScope, type Ref } from 'vue'
 import { z } from 'zod'
 import { ApiRequestError } from '../utils/apiClient'
 import { optionalNumber } from '../utils/numberInput'
+import type { ActiveScope } from './useScope'
 import {
   ChannelPolicySchema,
   MemberSchema,
@@ -20,7 +22,23 @@ const AuthorizationUrlSchema = z.object({ authorizationUrl: z.url({ protocol: /^
 export async function useChannels() {
   const api = useApiClient()
   const route = useRoute()
+  // Watcher und der Latest-wins-Schutz muessen mit der Seite enden. Der Effekt-Scope der Komponente
+  // ist aber nur bis zum ersten await aktiv -- danach angelegte Watcher hingen an keinem Scope und
+  // luden nach dem Verlassen der Seite bei jedem Vereinswechsel weiter. Der Kind-Scope entsteht
+  // deshalb synchron und nimmt den gesamten Zustand auf.
+  const lifetime = effectScope()
   const scope = await useScope()
+  // Endete die Seite schon waehrend des await, ist auch der Kind-Scope gestoppt; der Zustand
+  // entsteht dann in einem sofort beendeten Scope, damit kein Watcher weiterlaeuft.
+  const owner = lifetime.active ? lifetime : effectScope(true)
+  const { ready, loadPending, ...channelsState } = owner.run(() => createChannelsState(api, route, scope))!
+  if (owner !== lifetime) owner.stop()
+  await ready
+  await loadPending()
+  return channelsState
+}
+
+function createChannelsState(api: ReturnType<typeof useApiClient>, route: ReturnType<typeof useRoute>, scope: Ref<ActiveScope | null>) {
   const organizationId = computed(() => scope.value?.organizationId ?? null)
 
   const loading = ref(true)
@@ -77,7 +95,6 @@ export async function useChannels() {
       if (isLatest()) loading.value = false
     }
   })
-  await ready
 
   watch(organizationId, () => { actionError.value = '' })
 
@@ -169,7 +186,6 @@ export async function useChannels() {
       pendingLoading.value = false
     }
   }
-  await loadPending()
 
   async function selectPendingAccount(externalAccountId: string) {
     if (!pendingId.value) return
@@ -354,5 +370,6 @@ export async function useChannels() {
     purposeDraft, saveEditorialFields, saveMaxCharacters, savePurpose, scopeAssignment, scopeBusyKey, selectPendingAccount,
     toggleDepartmentScope, toggleOrganizationScope, updateChannelPolicy, verifyChannel, disconnectChannel,
     organizationScopeAssignment, websiteForm,
+    loadPending, ready,
   }
 }
