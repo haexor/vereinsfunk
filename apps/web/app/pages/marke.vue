@@ -1119,20 +1119,24 @@ usePageSaveFab({ label: 'Änderungen speichern', save, saving })
               >
                 <span>{{ asset.fontFamily }} — {{ assetOrigin(asset) }}</span>
                 <span class="flex items-center gap-2">
+                  <!-- Gesperrt wie Logo und Farben: saveDepartment() laesst gesperrte Felder aus,
+                       eine Auswahl hier waere nach dem Speichern still wieder weg. -->
                   <button
                     type="button"
-                    class="focus-ring underline"
+                    class="focus-ring underline disabled:opacity-50"
                     :aria-pressed="activeFontAssetId('display') === asset.id"
                     :class="activeFontAssetId('display') === asset.id && 'font-bold'"
+                    :disabled="lockedForActiveLevel.has('displayFontAssetId')"
                     @click="toggleFontAsset('display', asset.id)"
                   >
                     als Überschriften-Schrift
                   </button>
                   <button
                     type="button"
-                    class="focus-ring underline"
+                    class="focus-ring underline disabled:opacity-50"
                     :aria-pressed="activeFontAssetId('body') === asset.id"
                     :class="activeFontAssetId('body') === asset.id && 'font-bold'"
+                    :disabled="lockedForActiveLevel.has('bodyFontAssetId')"
                     @click="toggleFontAsset('body', asset.id)"
                   >
                     als Fließtext-Schrift

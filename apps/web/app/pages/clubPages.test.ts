@@ -43,4 +43,12 @@ describe('Vereinsseiten', () => {
     const structure = functionBody(read('struktur.vue'), 'load')
     expect(before(structure, 'if (loadRun !== latestLoadRun) return', 'departments.value = parsedDepartments.data')).toBe(true)
   })
+
+  it('sperrt auf /marke die Schriftwahl wie Logo und Farben', () => {
+    const page = read('marke.vue')
+
+    // saveDepartment() laesst gesperrte Felder aus -- die Auswahl war nach dem Speichern still weg.
+    expect(page).toContain(":disabled=\"lockedForActiveLevel.has('displayFontAssetId')\"")
+    expect(page).toContain(":disabled=\"lockedForActiveLevel.has('bodyFontAssetId')\"")
+  })
 })
