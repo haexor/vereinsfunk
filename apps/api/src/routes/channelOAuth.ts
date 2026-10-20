@@ -7,7 +7,8 @@ import { oauthRedirectUri } from '../apiMappers.js'
 import { ciphertextToBytea } from '@vereinsfunk/secrets'
 import { createSecretBoxFromEnvironment } from '../secretBox.js'
 import type { ApiRouteContext } from './context.js'
-import { channelOwnerScope, createAuditRecorder, createExternalActionAuditRecorder, isDepartmentOwnedChannelAllowed, loadSocialConnectionResponse, SOCIAL_CONNECTION_COLUMNS, toPermissionScope } from './shared.js'
+import { channelOwnerScope, createAuditRecorder, createExternalActionAuditRecorder, isDepartmentOwnedChannelAllowed, loadSocialConnectionResponse, SOCIAL_CONNECTION_COLUMNS } from './shared.js'
+import { toPermissionScope } from '../services/scopeAuthorization.js'
 
 // Paket 045: welcher OAuth-Adapter eine Plattform bedient. Instagram/Facebook teilen sich weiterhin
 // den Meta-Graph-API-Adapter (Paket 012); Twitter/LinkedIn haben je einen eigenen, strukturell

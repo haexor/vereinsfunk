@@ -13,7 +13,7 @@ import type { PermissionScope } from '../../auth.js'
 import { indexByScopeLevel, type ScopeLevelIndex } from '../../moduleStatus.js'
 import { parseSupabaseData } from '../../supabase.js'
 import type { ApiRouteContext } from '../context.js'
-import { resolveMembershipScope } from '../shared.js'
+import { resolveMembershipScope } from '../../services/scopeAuthorization.js'
 
 /**
  * Paket 052: gemeinsame Bausteine der PlayerBoard-Routen.

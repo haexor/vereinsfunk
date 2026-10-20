@@ -46,7 +46,8 @@ import {
 import { readMultipartUpload } from '../multipartUpload.js'
 import { parseSupabaseData } from '../supabase.js'
 import type { ApiRouteContext } from './context.js'
-import { createAuditRecorder, toPermissionScope } from './shared.js'
+import { createAuditRecorder } from './shared.js'
+import { toPermissionScope } from '../services/scopeAuthorization.js'
 
 type ScopeIds = { departmentId?: string | null | undefined; teamId?: string | null | undefined }
 

@@ -12,7 +12,7 @@ import {
   type RoleProvider,
 } from './auth.js'
 import type { ModuleStatusProvider } from './moduleStatus.js'
-import { resolveRolesForScopes } from './routes/shared.js'
+import { resolveRolesForScopes } from './services/scopeAuthorization.js'
 import { fetchAllRowsForIds } from './supabase.js'
 
 const roleProvider: RoleProvider = { async rolesForScope() { return [] } }

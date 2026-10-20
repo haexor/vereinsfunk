@@ -11,7 +11,8 @@ import type { FastifyInstance } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { ApiRouteContext } from './context.js'
-import { createAuditRecorder, toPermissionScope } from './shared.js'
+import { createAuditRecorder } from './shared.js'
+import { toPermissionScope } from '../services/scopeAuthorization.js'
 
 export function registerDataSubjectRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients } = context

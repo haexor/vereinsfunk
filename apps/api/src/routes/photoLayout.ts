@@ -17,7 +17,7 @@ import { computeTilePlacements, PHOTO_LAYOUT_CANVAS_SIZE_PX, renderPhotoLayout, 
 import { isSelectableInScope } from './brand.js'
 import type { ApiRouteContext } from './context.js'
 import { loadResolvedBrandColors } from './imageStyle.js'
-import { resolveDirectoryScope, toPermissionScope } from './shared.js'
+import { resolveDirectoryScope, toPermissionScope } from '../services/scopeAuthorization.js'
 
 // Dieselbe Pruefung wie der mediaAssetIds-Loop in POST /v1/text-workshop/sessions
 // (routes/content.ts) -- absichtlich wortgleiche Fehlercodes, weil erstellen.vue deren

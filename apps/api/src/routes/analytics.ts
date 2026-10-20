@@ -26,7 +26,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { ApiRouteContext } from './context.js'
 import type { PermissionScope } from '../auth.js'
-import { resolveDirectoryScope } from './shared.js'
+import { resolveDirectoryScope } from '../services/scopeAuthorization.js'
 import { fetchAllRows, fetchAllRowsForIds } from '../supabase.js'
 
 export function registerAnalyticsRoutes(app: FastifyInstance, context: ApiRouteContext): void {

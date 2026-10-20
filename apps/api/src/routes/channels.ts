@@ -15,7 +15,9 @@ import { mapChannelScopeRow, mapSocialConnectionRow } from '../apiMappers.js'
 import { byteaToBuffer } from '@vereinsfunk/secrets'
 import { createSecretBoxFromEnvironment } from '../secretBox.js'
 import type { ApiRouteContext } from './context.js'
-import { channelOwnerScope, createAuditRecorder, isAnyMemberOfOrganization, isDepartmentOwnedChannelAllowed, loadSocialConnectionResponse, resolveAvailableChannelIdsForPostVersion, resolveMembershipScope, SOCIAL_CONNECTION_COLUMNS, toPermissionScope } from './shared.js'
+import { channelOwnerScope, createAuditRecorder, isDepartmentOwnedChannelAllowed, loadSocialConnectionResponse, SOCIAL_CONNECTION_COLUMNS } from './shared.js'
+import { resolveAvailableChannelIdsForPostVersion } from '../services/channelAvailability.js'
+import { isAnyMemberOfOrganization, resolveMembershipScope, toPermissionScope } from '../services/scopeAuthorization.js'
 
 // Kanonisiert die Adresse vor dem Schreiben: new URL(...).toString() normalisiert Schema und Host
 // bereits auf Kleinschreibung und serialisiert einen leeren Pfad immer als "/" -- https://Example.org

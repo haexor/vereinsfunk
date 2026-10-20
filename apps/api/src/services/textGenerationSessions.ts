@@ -10,7 +10,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import { parseSupabaseData } from '../supabase.js'
-import { resolveScopedEffectiveConfig, resolveTextGenerationPlatformAvailability, resolveTextGenerationProviderConfigurationIds } from '../routes/shared.js'
+import { resolveTextGenerationPlatformAvailability } from './channelAvailability.js'
+import { resolveScopedEffectiveConfig } from './policyRules.js'
 
 export const SYSTEM_STYLE_PROFILES: Record<string, { name: string; description: string; styleRules: StyleProfileRules; avoidRules: string[]; doRules: string[] }> = {
   klar_erklaerend: { name: 'Klar erklärend', description: 'Sachlich, verständlich und direkt.', styleRules: { toneTags: ['klar', 'sachlich'], catchphrases: [], examples: [{ input: '3:1 Sieg im Lokalderby, Tore: Müller, Meier, 500 Zuschauer', output: '3:1 gegen den Lokalrivalen. Müller und Meier trafen vor 500 Zuschauern – ein klarer Auftritt unserer Mannschaft.' }], additionalInstructions: '' }, avoidRules: ['Superlative ohne Beleg'], doRules: [] },
@@ -120,4 +121,17 @@ export async function createTextGenerationSession(
     if (attach.error) throw attach.error
   }
   return { ok: true, ...created }
+}
+
+// Paket 046/050: welche LLM-Provider gleichzeitig einen Textvorschlag liefern. Seit Paket 050 gibt
+// es keine gesonderte Ensemble-Groesse mehr -- es zaehlen schlicht alle gerade aktiven
+// text_generation-Provider (Auswahl in plattform-admin/llm.vue, "Aufgaben-Zuordnung"). Vormals
+// apps/worker/src/context.ts loadActiveTextProvider, jetzt hier, weil create_text_generation_session
+// die Zuweisung braucht, bevor irgendein Worker die Sitzung ueberhaupt sieht -- siehe Migration
+// 2026081912. Liefert nur IDs: Modellname/Anbieter bleiben Mitgliedern verborgen (siehe
+// post_generation_provenance, "enthaelt nie Rohprompt/Providerdaten").
+export async function resolveTextGenerationProviderConfigurationIds(service: SupabaseClient): Promise<string[]> {
+  const providers = await service.from('llm_provider_configurations').select('id').eq('task_kind', 'text_generation').eq('is_active', true).order('created_at')
+  if (providers.error) throw providers.error
+  return z.array(z.object({ id: UuidSchema })).parse(providers.data).map((row) => row.id)
 }

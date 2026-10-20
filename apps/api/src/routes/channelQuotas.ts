@@ -2,7 +2,7 @@ import { ChannelQuotaSchema, CreateChannelQuotaRequestSchema, UpdateChannelQuota
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ApiRouteContext } from './context.js'
-import { isAnyMemberOfOrganization, POLICY_MANAGE_PERMISSION, resolveMembershipScope, toPermissionScope } from './shared.js'
+import { isAnyMemberOfOrganization, POLICY_MANAGE_PERMISSION, resolveMembershipScope, toPermissionScope } from '../services/scopeAuthorization.js'
 
 export function registerChannelQuotaRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients } = context

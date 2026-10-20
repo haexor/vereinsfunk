@@ -43,7 +43,9 @@ import { createClubEvent } from '../services/clubEvents.js'
 import { saveTextWorkshopDraft } from '../services/textWorkshopDrafts.js'
 import { createTextGenerationSession } from '../services/textGenerationSessions.js'
 import type { ApiRouteContext } from './context.js'
-import { createAuditRecorder, isAnyMemberOfOrganization, resolveAvailableChannelIdsForPostVersion, resolveDirectoryScope, toPermissionScope } from './shared.js'
+import { createAuditRecorder } from './shared.js'
+import { resolveAvailableChannelIdsForPostVersion } from '../services/channelAvailability.js'
+import { isAnyMemberOfOrganization, resolveDirectoryScope, toPermissionScope } from '../services/scopeAuthorization.js'
 
 const ConversationRowSchema = z.object({
   id: UuidSchema,

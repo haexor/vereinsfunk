@@ -7,7 +7,8 @@ import { mapInvitationRow } from '../apiMappers.js'
 import { generateInvitationToken, invitationCallbackUrls, sendInvitationThroughSupabaseAuth } from '../invitations.js'
 import { createInvitation, InvitationCreationError } from '../services/invitations.js'
 import type { ApiRouteContext } from './context.js'
-import { createAuditRecorder, resolveInvitationScope, toPermissionScope } from './shared.js'
+import { createAuditRecorder } from './shared.js'
+import { resolveInvitationScope, toPermissionScope } from '../services/scopeAuthorization.js'
 
 /** Erstellt den Auth-Callback zur Vereinseinladung mit dem URL-kodierten Einladungstoken. */
 function invitationUrls(webBaseUrl: string, rawToken: string): { accept: string } {
