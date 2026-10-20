@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addDays, approvalDurationSecondsSamples, computeCountMetrics, computeCountMetricsSeries, computeFunnel, computeTrend, dayWindow, isInWindow, leadTimeSecondsSamples, median, rangeWindow } from './index.js'
+import { addDays, approvalDurationSecondsSamples, computeCountMetrics, computeCountMetricsSeries, computeFunnel, computeTrend, dayWindow, isInWindow, localDateKey, leadTimeSecondsSamples, median, rangeWindow } from './index.js'
 
 describe('metrics (Paket 016)', () => {
   describe('dayWindow', () => {
@@ -14,6 +14,31 @@ describe('metrics (Paket 016)', () => {
       expect(window).toEqual({ startUtc: '2026-03-28T23:00:00.000Z', endUtc: '2026-03-29T22:00:00.000Z' })
       const hours = (new Date(window.endUtc).getTime() - new Date(window.startUtc).getTime()) / 3_600_000
       expect(hours).toBe(23)
+    })
+
+    // Faellt die Zeitumstellung genau auf Mitternacht, landete der Tagesbeginn vorher eine Stunde
+    // am Vortag -- je nach Richtung des Offsets einmal in Santiago, einmal in Beirut.
+    it('starts the day at 01:00 when the clocks jump over midnight', () => {
+      // Santiago stellt am 08.09.2024 von 00:00 (UTC-4) auf 01:00 (UTC-3) vor.
+      expect(dayWindow('2024-09-08', 'America/Santiago').startUtc).toBe('2024-09-08T04:00:00.000Z')
+      expect(dayWindow('2024-09-07', 'America/Santiago').endUtc).toBe('2024-09-08T04:00:00.000Z')
+    })
+
+    it('starts the day at the second midnight when the clocks fall back over it', () => {
+      // Beirut stellt am 27.10.2024 um 00:00 (UTC+3) auf 23:00 des Vortags (UTC+2) zurueck.
+      expect(dayWindow('2024-10-27', 'Asia/Beirut').startUtc).toBe('2024-10-26T22:00:00.000Z')
+      expect(dayWindow('2024-10-26', 'Asia/Beirut').endUtc).toBe('2024-10-26T22:00:00.000Z')
+    })
+
+    it('normalizes an overflowing day for the window end', () => {
+      expect(dayWindow('2026-01-31', 'Europe/Berlin').endUtc).toBe('2026-01-31T23:00:00.000Z')
+    })
+  })
+
+  describe('localDateKey', () => {
+    it('returns the calendar day in the club timezone', () => {
+      expect(localDateKey(new Date('2026-08-09T22:30:00Z'), 'Europe/Berlin')).toBe('2026-08-10')
+      expect(localDateKey(new Date('2026-08-09T21:30:00Z'), 'Europe/Berlin')).toBe('2026-08-09')
     })
   })
 

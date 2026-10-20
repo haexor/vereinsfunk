@@ -52,6 +52,7 @@ export {
 export {
   dayWindow,
   rangeWindow,
+  localDateKey,
   addDays,
   daysBetween,
   isInWindow,
