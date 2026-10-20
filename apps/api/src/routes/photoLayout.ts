@@ -7,7 +7,6 @@ import {
   UpdatePhotoLayoutPresetRequestSchema,
   UuidSchema,
 } from '@vereinsfunk/contracts'
-import { isBrandAssetSelectable } from '@vereinsfunk/domain'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
@@ -15,6 +14,7 @@ import { parseSupabaseData } from '../supabase.js'
 import { mapPhotoLayoutPresetRow } from '../apiMappers.js'
 import { hashLogoBuffer } from '@vereinsfunk/brand-assets'
 import { computeTilePlacements, PHOTO_LAYOUT_CANVAS_SIZE_PX, renderPhotoLayout, transformFaceRegionsForTile, type SourceFaceRegion } from '../photoLayout.js'
+import { isSelectableInScope } from './brand.js'
 import type { ApiRouteContext } from './context.js'
 import { loadResolvedBrandColors } from './imageStyle.js'
 import { resolveDirectoryScope, toPermissionScope } from './shared.js'
@@ -158,16 +158,8 @@ export function registerPhotoLayoutRoutes(app: FastifyInstance, context: ApiRout
     // Die Render-Route kennt nur den Abteilungs-Scope (die Foto-Anhang-UI kennt keine
     // Mannschaftsebene) -- ein mannschaftsgebundenes Preset ist von hier aus deshalb nie
     // waehlbar, auch nicht innerhalb der eigenen Abteilung (dieselbe Richtung wie
-    // isBrandAssetSelectable es fuer jede andere Ebene durchsetzt).
-    const presetSelectable = isBrandAssetSelectable(
-      {
-        scope: preset.teamId ? 'team' : preset.departmentId ? 'department' : 'organization',
-        ...(preset.departmentId ? { departmentId: preset.departmentId } : {}),
-        ...(preset.teamId ? { teamId: preset.teamId } : {}),
-      },
-      'department', input.departmentId,
-    )
-    if (!presetSelectable) return reply.code(400).send({ error: 'photo_layout_preset_not_selectable', correlationId: request.id })
+    // isSelectableInScope es fuer jede andere Ebene durchsetzt).
+    if (!isSelectableInScope(preset, { departmentId: input.departmentId })) return reply.code(400).send({ error: 'photo_layout_preset_not_selectable', correlationId: request.id })
 
     const photoCountRange = PHOTO_LAYOUT_PHOTO_COUNTS[preset.kind]
     if (input.mediaAssetIds.length < photoCountRange.min || input.mediaAssetIds.length > photoCountRange.max) {

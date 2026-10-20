@@ -13,7 +13,6 @@ import {
   type PreviewImageStylePresetRequest,
 } from '@vereinsfunk/contracts'
 import {
-  isBrandAssetSelectable,
   isPostEditable,
   postStatuses,
   resolveBrand,
@@ -43,7 +42,7 @@ import {
   type ImageStyleRenderResult,
 } from '../imageStyle.js'
 import type { ApiRouteContext } from './context.js'
-import { loadSelectableBrandAsset, LOGO_ASSET_KINDS } from './brand.js'
+import { isSelectableInScope, LOGO_ASSET_KINDS, scopeLevelOf, validateBrandAssetReferences } from './brand.js'
 import {
   checkRateLimit,
   createAuditRecorder,
@@ -97,6 +96,20 @@ const WorkshopFilterPreviewsMultipartSchema = WorkshopFilterPreviewsFieldsSchema
 // (app.ts) und werden zu 500 internal_error -- der Aufrufer koennte einen erwarteten
 // Nebenlaeufigkeitskonflikt, den er an anderer Stelle schon als 409 behandelt, nicht von einem
 // echten Serverfehler unterscheiden.
+const FRAME_ASSET_KINDS = new Set(['frame'])
+
+// logoBrandAssetId ist nicht mehr auf kind='watermark' gepinnt (2026082002) -- jede Logovariante
+// aus LOGO_ASSET_KINDS ist zulaessig, u.a. das ueber die Marke-Seite hochgeladene Hauptlogo.
+function presetAssetReferences(input: {
+  frameBrandAssetId?: string | null | undefined
+  logoBrandAssetId?: string | null | undefined
+}) {
+  return [
+    [input.frameBrandAssetId, FRAME_ASSET_KINDS],
+    [input.logoBrandAssetId, LOGO_ASSET_KINDS],
+  ] as const
+}
+
 const RPC_ERROR_STATUS: Record<string, number> = {
   post_media_not_found: 404,
   post_version_not_found: 404,
@@ -516,29 +529,8 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
       return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     if (!(await requirePermission(request, reply, 'brand.manage', resolvedScope))) return
 
-    // logoBrandAssetId ist nicht mehr auf kind='watermark' gepinnt (2026082002) -- jede Logovariante
-    // aus LOGO_ASSET_KINDS ist zulaessig, u.a. das ueber die Marke-Seite hochgeladene Hauptlogo.
-    for (const [assetId, isExpectedKind] of [
-      [input.frameBrandAssetId, (kind: string) => kind === 'frame'],
-      [input.logoBrandAssetId, (kind: string) => LOGO_ASSET_KINDS.has(kind)],
-    ] as const) {
-      if (!assetId) continue
-      const targetScope = resolvedScope.teamId
-        ? 'team'
-        : resolvedScope.departmentId
-          ? 'department'
-          : 'organization'
-      const asset = await loadSelectableBrandAsset(
-        client,
-        input.organizationId,
-        assetId,
-        targetScope,
-        resolvedScope.departmentId,
-        resolvedScope.teamId,
-      )
-      if (!asset || !isExpectedKind(asset.kind))
-        return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
-    }
+    if (!(await validateBrandAssetReferences(client, input.organizationId, resolvedScope, presetAssetReferences(input))))
+      return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
 
     const insert = await client
       .from('image_style_presets')
@@ -570,7 +562,7 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
       entityType: 'image_style_preset',
       entityId: insert.data.id as string,
       metadata: {
-        scope: input.teamId ? 'team' : input.departmentId ? 'department' : 'organization',
+        scope: scopeLevelOf(input),
       },
     })
     return reply.code(201).send(ImageStylePresetSchema.parse(mapImageStylePresetRow(insert.data)))
@@ -601,27 +593,8 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
       return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     if (!(await requirePermission(request, reply, 'brand.manage', resolvedScope))) return
 
-    for (const [assetId, isExpectedKind] of [
-      [input.frameBrandAssetId, (kind: string) => kind === 'frame'],
-      [input.logoBrandAssetId, (kind: string) => LOGO_ASSET_KINDS.has(kind)],
-    ] as const) {
-      if (!assetId) continue
-      const targetScope = resolvedScope.teamId
-        ? 'team'
-        : resolvedScope.departmentId
-          ? 'department'
-          : 'organization'
-      const asset = await loadSelectableBrandAsset(
-        client,
-        input.organizationId,
-        assetId,
-        targetScope,
-        resolvedScope.departmentId,
-        resolvedScope.teamId,
-      )
-      if (!asset || !isExpectedKind(asset.kind))
-        return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
-    }
+    if (!(await validateBrandAssetReferences(client, input.organizationId, resolvedScope, presetAssetReferences(input))))
+      return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
 
     // Kein Idempotency-Key/In-Flight-Dedupe wie bei den LLM-Vorschauen (previewStyleProfile,
     // routes/shared.ts): dort schuetzt es vor einem zweiten BEZAHLTEN Provider-Aufruf bei einem
@@ -692,23 +665,8 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
     if (!(await requirePermission(request, reply, 'brand.manage', scope))) return
     const input = UpdateImageStylePresetRequestSchema.parse(request.body)
 
-    for (const [assetId, isExpectedKind] of [
-      [input.frameBrandAssetId, (kind: string) => kind === 'frame'],
-      [input.logoBrandAssetId, (kind: string) => LOGO_ASSET_KINDS.has(kind)],
-    ] as const) {
-      if (!assetId) continue
-      const targetScope = scope.teamId ? 'team' : scope.departmentId ? 'department' : 'organization'
-      const asset = await loadSelectableBrandAsset(
-        client,
-        scope.organizationId,
-        assetId,
-        targetScope,
-        scope.departmentId,
-        scope.teamId,
-      )
-      if (!asset || !isExpectedKind(asset.kind))
-        return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
-    }
+    if (!(await validateBrandAssetReferences(client, scope.organizationId, scope, presetAssetReferences(input))))
+      return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
 
     const payload: Record<string, unknown> = {
       name: input.name,
@@ -868,18 +826,7 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
       return reply
         .code(400)
         .send({ error: 'image_style_preset_not_active', correlationId: request.id })
-    const targetScope = scope.teamId ? 'team' : scope.departmentId ? 'department' : 'organization'
-    const presetSelectable = isBrandAssetSelectable(
-      {
-        scope: preset.teamId ? 'team' : preset.departmentId ? 'department' : 'organization',
-        ...(preset.departmentId ? { departmentId: preset.departmentId } : {}),
-        ...(preset.teamId ? { teamId: preset.teamId } : {}),
-      },
-      targetScope,
-      scope.departmentId,
-      scope.teamId,
-    )
-    if (!presetSelectable)
+    if (!isSelectableInScope(preset, scope))
       return reply
         .code(400)
         .send({ error: 'image_style_preset_not_selectable', correlationId: request.id })

@@ -47,6 +47,30 @@ import { readMultipartUpload } from '../multipartUpload.js'
 import type { ApiRouteContext } from './context.js'
 import { createAuditRecorder, toPermissionScope } from './shared.js'
 
+type ScopeIds = { departmentId?: string | null | undefined; teamId?: string | null | undefined }
+
+// Ebene aus den Scope-Spalten einer Zeile oder eines Ziels -- eine team_id setzt immer eine
+// department_id voraus (CHECK in jeder Scope-Tabelle), deshalb entscheidet sie zuerst.
+export function scopeLevelOf(scope: ScopeIds): ScopeLevelName {
+  return scope.teamId ? 'team' : scope.departmentId ? 'department' : 'organization'
+}
+
+// Ob eine Zeile mit eigener Besitzebene (Brand-Asset, Bildstil- oder Layout-Preset) im Ziel-Scope
+// waehlbar ist: auf derselben oder einer uebergeordneten Ebene (siehe isBrandAssetSelectable).
+export function isSelectableInScope(owner: ScopeIds, target: ScopeIds): boolean {
+  const asset: BrandAssetRef = {
+    scope: scopeLevelOf(owner),
+    ...(owner.departmentId ? { departmentId: owner.departmentId } : {}),
+    ...(owner.teamId ? { teamId: owner.teamId } : {}),
+  }
+  return isBrandAssetSelectable(
+    asset,
+    scopeLevelOf(target),
+    target.departmentId ?? undefined,
+    target.teamId ?? undefined,
+  )
+}
+
 // Exportiert, weil apps/api/src/routes/imageStyle.ts (Plan 045, PR 1) dieselbe Waehlbarkeits-
 // Vorabpruefung fuer frame_brand_asset_id/logo_brand_asset_id braucht -- die DB-CHECK
 // (authz.brand_asset_is_selectable in der RLS-Policy) bleibt die eigentliche Sicherheitsgrenze,
@@ -56,9 +80,7 @@ export async function loadSelectableBrandAsset(
   client: SupabaseClient,
   organizationId: string,
   assetId: string,
-  targetScope: ScopeLevelName,
-  targetDepartmentId: string | undefined,
-  targetTeamId: string | undefined,
+  target: ScopeIds,
 ): Promise<{ id: string; kind: string } | null> {
   const result = await client
     .from('brand_assets')
@@ -68,24 +90,46 @@ export async function loadSelectableBrandAsset(
     .maybeSingle()
   if (result.error) throw result.error
   if (!result.data || result.data.status !== 'ready') return null
-  const asset: BrandAssetRef = {
-    scope:
-      result.data.department_id === null
-        ? 'organization'
-        : result.data.team_id === null
-          ? 'department'
-          : 'team',
-    departmentId: result.data.department_id ?? undefined,
-    teamId: result.data.team_id ?? undefined,
-  }
-  if (!isBrandAssetSelectable(asset, targetScope, targetDepartmentId, targetTeamId)) return null
+  const owner = { departmentId: result.data.department_id as string | null, teamId: result.data.team_id as string | null }
+  if (!isSelectableInScope(owner, target)) return null
   return { id: result.data.id as string, kind: result.data.kind as string }
+}
+
+// Prueft jede gesetzte Asset-Referenz eines Markenprofils oder Presets: 'ready', im Ziel-Scope
+// waehlbar und von einer der erwarteten Arten. Nicht gesetzte Referenzen (null/undefined) zaehlen
+// als gueltig.
+export async function validateBrandAssetReferences(
+  client: SupabaseClient,
+  organizationId: string,
+  target: ScopeIds,
+  references: readonly (readonly [assetId: string | null | undefined, expectedKinds: ReadonlySet<string>])[],
+): Promise<boolean> {
+  for (const [assetId, expectedKinds] of references) {
+    if (!assetId) continue
+    const asset = await loadSelectableBrandAsset(client, organizationId, assetId, target)
+    if (!asset || !expectedKinds.has(asset.kind)) return false
+  }
+  return true
 }
 
 // Exportiert, weil apps/api/src/routes/imageStyle.ts (Bildstil-Nachbesserung) dieselbe Menge
 // braucht: logo_brand_asset_id ist seit der Lockerung des Fremdschluessels (2026082002) nicht mehr
 // auf kind='watermark' gepinnt, sondern akzeptiert jede hier gelistete Logovariante.
 export const LOGO_ASSET_KINDS = new Set<string>(BrandLogoAssetKindSchema.options)
+const FONT_ASSET_KINDS = new Set(['font'])
+
+// Die drei Asset-Referenzen eines Markenprofils auf jeder Ebene.
+function brandProfileAssetReferences(input: {
+  logoAssetId?: string | null | undefined
+  displayFontAssetId?: string | null | undefined
+  bodyFontAssetId?: string | null | undefined
+}) {
+  return [
+    [input.logoAssetId, LOGO_ASSET_KINDS],
+    [input.displayFontAssetId, FONT_ASSET_KINDS],
+    [input.bodyFontAssetId, FONT_ASSET_KINDS],
+  ] as const
+}
 
 // brand_website_analysis_jobs.result ist jsonb und damit auch bei einem durch den Worker
 // geschriebenen Wert eine Systemgrenze. Nur diese drei Formate kann processBrandLogoUpload in
@@ -120,24 +164,8 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
     if (!(await requirePermission(request, reply, 'brand.manage', { organizationId: params.id })))
       return
     const client = supabaseClients.forUser(request.auth!.accessToken)
-    for (const [assetId, expectedKinds] of [
-      [input.logoAssetId, LOGO_ASSET_KINDS],
-      [input.displayFontAssetId, new Set(['font'])],
-      [input.bodyFontAssetId, new Set(['font'])],
-    ] as const) {
-      if (!assetId) continue
-      const asset = await loadSelectableBrandAsset(
-        client,
-        params.id,
-        assetId,
-        'organization',
-        undefined,
-        undefined,
-      )
-      if (!asset || !expectedKinds.has(asset.kind)) {
-        return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
-      }
-    }
+    if (!(await validateBrandAssetReferences(client, params.id, {}, brandProfileAssetReferences(input))))
+      return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
     const payload: Record<string, unknown> = {
       primary_color: input.primaryColor,
       accent_color: input.accentColor,
@@ -762,24 +790,8 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
         .code(400)
         .send({ error: 'field_locked', field: blockedField, correlationId: request.id })
 
-    for (const [assetId, expectedKinds] of [
-      [input.logoAssetId, LOGO_ASSET_KINDS],
-      [input.displayFontAssetId, new Set(['font'])],
-      [input.bodyFontAssetId, new Set(['font'])],
-    ] as const) {
-      if (!assetId) continue
-      const asset = await loadSelectableBrandAsset(
-        client,
-        organizationId,
-        assetId,
-        'department',
-        params.id,
-        undefined,
-      )
-      if (!asset || !expectedKinds.has(asset.kind)) {
-        return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
-      }
-    }
+    if (!(await validateBrandAssetReferences(client, organizationId, { departmentId: params.id }, brandProfileAssetReferences(input))))
+      return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
 
     const payload: Record<string, unknown> = {
       organization_id: organizationId,
@@ -865,24 +877,8 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
         .code(400)
         .send({ error: 'field_locked', field: blockedField, correlationId: request.id })
 
-    for (const [assetId, expectedKinds] of [
-      [input.logoAssetId, LOGO_ASSET_KINDS],
-      [input.displayFontAssetId, new Set(['font'])],
-      [input.bodyFontAssetId, new Set(['font'])],
-    ] as const) {
-      if (!assetId) continue
-      const asset = await loadSelectableBrandAsset(
-        client,
-        organizationId,
-        assetId,
-        'team',
-        departmentId,
-        params.id,
-      )
-      if (!asset || !expectedKinds.has(asset.kind)) {
-        return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
-      }
-    }
+    if (!(await validateBrandAssetReferences(client, organizationId, { departmentId, teamId: params.id }, brandProfileAssetReferences(input))))
+      return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
 
     const payload: Record<string, unknown> = {
       organization_id: organizationId,
