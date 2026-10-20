@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { AlertTriangle, Check, MessageSquareText, RefreshCw, ShieldCheck, X } from '@lucide/vue'
 import { ApprovalStageSchema, StalledApprovalRequestSchema, type ApprovalStage, type MediaGateBlocker, type StalledApprovalRequest } from '@vereinsfunk/contracts'
+import { ApiRequestError } from '../utils/apiClient'
 
 // Paket 015: Medien-Gate-Blocker (evaluateMediaGate) je Stufe -- eine fehlende oder nicht
 // passende Einwilligung ist jetzt sichtbar, statt nur beim Freigeben selbst zu scheitern.
@@ -52,8 +53,15 @@ async function decide(stage: ApprovalStage, decision: 'approved' | 'changes_requ
       method: 'POST', body: { decision, reason: reasonDraft[stage.id]?.trim() || null },
     })
     await load()
-  } catch {
-    actionError.value = 'Die Entscheidung konnte nicht gespeichert werden.'
+  } catch (error) {
+    // Der Antrag wurde seit dem Laden invalidiert (Medium, Spielplan oder Einwilligung geaendert):
+    // die Stufe ist nicht mehr entscheidbar, die Liste muss neu geladen werden.
+    if (error instanceof ApiRequestError && error.code === 'approval_invalidated') {
+      actionError.value = 'Der Beitrag wurde inzwischen geändert und muss neu zur Freigabe eingereicht werden.'
+      await load()
+    } else {
+      actionError.value = 'Die Entscheidung konnte nicht gespeichert werden.'
+    }
   } finally {
     decidingStageId.value = null
   }
