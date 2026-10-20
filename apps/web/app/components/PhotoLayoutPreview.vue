@@ -11,9 +11,8 @@ const props = withDefaults(defineProps<{
 })
 
 // Rein kosmetische CSS-Naeherung mit Platzhalterfarben statt echter Fotos -- das eigentliche
-// Kompositionsergebnis entsteht serverseitig per Sharp (apps/api/src/photoLayout.ts). Dieselbe
-// Rolle wie ImageStyleFramePreview.vue fuer Rahmenstile: Galerie-Kachel UND grosse Live-Vorschau
-// nutzen dieselbe Komponente.
+// Kompositionsergebnis entsteht serverseitig per Sharp (apps/api/src/photoLayout.ts). Galerie-Kachel
+// UND grosse Live-Vorschau nutzen dieselbe Komponente.
 const TILE_COLORS = ['#8fae86', '#4f6e56', '#c7d6bf', '#a9c29c']
 const gapStyle = computed(() => ({ gap: `${props.dividerWidthPx}px`, backgroundColor: props.dividerColorHex }))
 </script>

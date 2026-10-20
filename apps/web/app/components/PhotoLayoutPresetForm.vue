@@ -25,8 +25,8 @@ const KIND_OPTIONS: { value: PhotoLayoutKind; label: string; hint: string }[] = 
   { value: 'mixed_grid', label: 'Gemischtes Raster', hint: '1 großes + kleine Fotos' },
 ]
 // Feste, kleine Breite fuer die Galerie-Kacheln statt der tatsaechlich eingestellten
-// dividerWidthPx (die bis zu 100px reichen kann) -- dieselbe Ueberlegung wie
-// GALLERY_PREVIEW_WIDTH_PX in ImageStylePresetForm.vue.
+// dividerWidthPx (die bis zu 100px reichen kann): in der kleinen Kachel waere ein breiter Steg
+// nur noch Flaeche.
 const GALLERY_PREVIEW_WIDTH_PX = 4
 
 type DividerColorMode = 'primary' | 'accent' | 'custom'
@@ -47,7 +47,7 @@ function nullableNumberFromInput(event: Event): number | null {
 // Spiegelt PhotoLayoutPresetFieldsSchema (packages/contracts/src/photoLayout.ts) 1:1 -- der
 // Speichern-Knopf bleibt deaktiviert, statt eine Anfrage zu schicken, die die API ohnehin
 // ablehnen wuerde. Number.isInteger liefert bei einem leeren Zahlenfeld (v-model.number laesst
-// dann den rohen leeren String stehen, siehe ImageStylePresetForm.vue) korrekt false.
+// dann den rohen leeren String stehen) korrekt false.
 const isValid = computed(() => {
   const value = draft.value
   if (!value.name.trim()) return false
