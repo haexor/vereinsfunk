@@ -2,8 +2,10 @@ import { HatchetClient } from '@hatchet-dev/typescript-sdk/v1/index.js'
 import { describe, expect, it, vi } from 'vitest'
 import type { WorkflowPayload } from '@vereinsfunk/contracts'
 import { WorkflowNameSchema } from '@vereinsfunk/contracts'
+import { ConcurrencyLimitStrategy } from '@hatchet-dev/typescript-sdk/v1/task.js'
 import type { GenerationRecoveryRepository } from './generationRecovery.js'
-import { concurrency, createGenerationRecoveryScanWorkflow, createWorkflowDefinitions, WorkflowExecutionError, type ProductWorkflowExecutor, type WorkflowExecutionRepository } from './workflows.js'
+import type { VisionProviderComparisonExecutor } from './visionProviderComparison.js'
+import { concurrency, createGenerationRecoveryScanWorkflow, createHatchetWorker, createVisionProviderComparisonScanWorkflow, createWorkflowDefinitions, WorkflowExecutionError, type ProductWorkflowExecutor, type WorkflowExecutionRepository } from './workflows.js'
 
 const payload: WorkflowPayload = {
   entityId: '11111111-1111-4111-8111-111111111111', organizationId: '22222222-2222-4222-8222-222222222222',
@@ -107,5 +109,25 @@ describe('generation-recovery-scan registration', () => {
     if (!task) throw new Error('generation-recovery-scan handler was not registered')
     await task({}, {} as never)
     expect(claimStalledCandidates).toHaveBeenCalled()
+  })
+})
+
+describe('worker process integration', () => {
+  const client = () => HatchetClient.init<WorkflowPayload>({ token: 'x.eyJzdWIiOiJ0ZXN0LXRlbmFudCJ9.x', api_url: 'http://localhost:8080', host_port: 'localhost:7077', tls_config: { tls_strategy: 'none' } })
+
+  // Mit dem SDK-Default beendet dessen eigener SIGTERM-Handler den Prozess per process.exit(0),
+  // bevor index.ts' shutdown() den Outbox-Versand abgeschlossen hat.
+  it('leaves signal handling to the worker process instead of the SDK', async () => {
+    const hatchet = client()
+    const worker = vi.spyOn(hatchet, 'worker').mockResolvedValue({ registerWorkflows: vi.fn() } as never)
+    const recovery: GenerationRecoveryRepository = { claimStalledCandidates: vi.fn(), loadSessionForRecovery: vi.fn(), createRecoveryAttempt: vi.fn(), finalizeRecovery: vi.fn() }
+    const runs: WorkflowExecutionRepository = { begin: vi.fn(), succeed: vi.fn(), fail: vi.fn() }
+    await createHatchetWorker(hatchet, { HATCHET_WORKER_SLOTS: 4 }, runs, { execute: vi.fn() }, recovery, {} as VisionProviderComparisonExecutor, { enqueueScheduled: vi.fn() })
+    expect(worker).toHaveBeenCalledWith('vereinsfunk-worker', expect.objectContaining({ handleKill: false }))
+  })
+
+  it('never runs two vision-comparison ticks (two Chromium instances) at once', () => {
+    const declaration = createVisionProviderComparisonScanWorkflow(client(), {} as VisionProviderComparisonExecutor)
+    expect(declaration.definition._tasks[0]?.concurrency).toEqual({ expression: "'global'", maxRuns: 1, limitStrategy: ConcurrencyLimitStrategy.CANCEL_NEWEST })
   })
 })

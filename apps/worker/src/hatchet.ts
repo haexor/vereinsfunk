@@ -8,8 +8,8 @@ type HatchetDispatchClient = {
   scheduled: { create: (workflow: WorkflowName, input: { triggerAt: Date; input: WorkflowPayload; priority: Priority }) => Promise<{ metadata: { id: string } }> }
 }
 
-/** Creates the worker-local Hatchet SDK client from already validated configuration. */
-export function createHatchetClient(config: WorkerEnvironment): HatchetDispatchClient {
+/** Creates the one worker-local Hatchet SDK client (worker registration and outbox dispatch share it). */
+export function createHatchetClient(config: WorkerEnvironment): HatchetClient<WorkflowPayload> {
   return HatchetClient.init<WorkflowPayload>({
     token: config.HATCHET_CLIENT_TOKEN,
     api_url: config.HATCHET_CLIENT_API_URL,

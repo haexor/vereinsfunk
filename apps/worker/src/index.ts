@@ -90,7 +90,8 @@ async function main(): Promise<void> {
       throw new WorkflowExecutionError('product_executor_unavailable', false, `no product executor is configured for ${workflow}`)
     },
   }
-  const createdWorker = await createHatchetWorker(config, runs, executor, createGenerationRecoveryRepository(config), visionProviderComparison, veoSyncRepository)
+  const hatchet = createHatchetClient(config)
+  const createdWorker = await createHatchetWorker(hatchet, config, runs, executor, createGenerationRecoveryRepository(config), visionProviderComparison, veoSyncRepository)
   worker = createdWorker
   if (stopping) return stopWorker()
 
@@ -104,7 +105,7 @@ async function main(): Promise<void> {
   await worker.waitUntilReady(WORKER_READY_TIMEOUT_MS)
   if (stopping) return stopWorker()
 
-  const dispatcher = new WorkflowOutboxDispatcher(createWorkflowOutboxRepository(config), new HatchetOrchestrator(createHatchetClient(config)))
+  const dispatcher = new WorkflowOutboxDispatcher(createWorkflowOutboxRepository(config), new HatchetOrchestrator(hatchet))
   await dispatchOnce(dispatcher)
   if (stopping) return stopWorker()
 

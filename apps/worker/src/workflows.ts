@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { HatchetClient, type Worker } from '@hatchet-dev/typescript-sdk/v1/index.js'
+import type { HatchetClient, Worker } from '@hatchet-dev/typescript-sdk/v1/index.js'
 import { type TaskWorkflowDeclaration } from '@hatchet-dev/typescript-sdk/v1/declaration.js'
 import { ConcurrencyLimitStrategy, NonRetryableError } from '@hatchet-dev/typescript-sdk/v1/task.js'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
@@ -138,6 +138,10 @@ export function createVisionProviderComparisonScanWorkflow(client: HatchetClient
     onCrons: ['*/1 * * * *'],
     inputValidator: z.object({}),
     executionTimeout: '10m',
+    // Jeder Lauf startet Chromium; ein Tick, der laenger als eine Minute braucht, darf keinen
+    // zweiten Browser neben sich bekommen. CANCEL_NEWEST verwirft den ueberlappenden Tick -- der
+    // naechste nach dem Ende holt den Rest ab, der Claim selbst bleibt skip-locked.
+    concurrency: { expression: "'global'", maxRuns: 1, limitStrategy: ConcurrencyLimitStrategy.CANCEL_NEWEST },
     fn: async () => { await drainPendingVisionProviderComparisons(comparisons) },
   })
 }
@@ -159,20 +163,18 @@ export function createVeoSyncScheduleWorkflow(client: HatchetClient<WorkflowPayl
 
 /** Creates a real SDK worker and registers all bounded technical workflow envelopes. */
 export async function createHatchetWorker(
-  config: WorkerEnvironment,
+  client: HatchetClient<WorkflowPayload>,
+  config: Pick<WorkerEnvironment, 'HATCHET_WORKER_SLOTS'>,
   runs: WorkflowExecutionRepository,
   executor: ProductWorkflowExecutor,
   recovery: GenerationRecoveryRepository,
   visionComparisons: VisionProviderComparisonExecutor,
   veoSchedule: { enqueueScheduled(): Promise<number> },
 ): Promise<Worker> {
-  const client = HatchetClient.init<WorkflowPayload>({
-    token: config.HATCHET_CLIENT_TOKEN,
-    api_url: config.HATCHET_CLIENT_API_URL,
-    host_port: config.HATCHET_CLIENT_HOST_PORT,
-    tls_config: { tls_strategy: config.HATCHET_TLS ? 'tls' : 'none' },
-  })
-  const worker = await client.worker('vereinsfunk-worker', { slots: config.HATCHET_WORKER_SLOTS })
+  // handleKill: false -- sonst registriert das SDK eigene SIGTERM/SIGINT-Handler, die nach seinem
+  // Stopp process.exit(0) aufrufen und damit index.ts' shutdown() (laufender Outbox-Versand,
+  // Exit-Code) mitten im Ablauf abschneiden.
+  const worker = await client.worker('vereinsfunk-worker', { slots: config.HATCHET_WORKER_SLOTS, handleKill: false })
   await worker.registerWorkflows([
     ...createWorkflowDefinitions(client, runs, executor),
     createGenerationRecoveryScanWorkflow(client, recovery),
