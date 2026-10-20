@@ -98,6 +98,13 @@ const StoredBrandWebsiteAnalysisLogoCandidateSchema = z
   .strict()
 const MAX_STORED_LOGO_CANDIDATES = 8
 
+// confirm_brand_font_license prueft Status und Art selbst noch einmal unter Zeilensperre.
+const CONFIRM_LICENSE_ERROR_STATUS: Record<string, number> = {
+  brand_asset_not_found: 404,
+  not_a_font_asset: 400,
+  brand_asset_not_pending_license: 409,
+}
+
 export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
@@ -503,6 +510,22 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
       const hash = hashLogoBuffer(processedFont.woff2Buffer)
       const rawObjectPath = `organizations/${fields.organizationId}/brand/${scopeSegment}/font-${hash}-original.${processedFont.originalExtension}`
       const woff2ObjectPath = `organizations/${fields.organizationId}/brand/${scopeSegment}/font-${hash}.woff2`
+      // Dieselbe Schriftdatei erneut hochgeladen: das upsert unten setzte eine bereits lizenzierte,
+      // womoeglich von Markenprofilen ausgewaehlte Schrift zurueck auf 'processing' -- die Profile
+      // zeigten danach auf ein nicht waehlbares Asset. Die vorhandene Zeile bleibt unveraendert.
+      const readyFont = await service
+        .from('brand_assets')
+        .select()
+        .eq('organization_id', fields.organizationId)
+        .eq('object_path', woff2ObjectPath)
+        .eq('status', 'ready')
+        .maybeSingle()
+      if (readyFont.error) throw readyFont.error
+      if (readyFont.data) {
+        return reply
+          .code(200)
+          .send(CreateBrandAssetResponseSchema.parse({ ...mapBrandAssetRow(readyFont.data), sanitized: false }))
+      }
       const rawUpload = await service.storage
         .from('raw-media')
         .upload(rawObjectPath, processedFont.originalBuffer, {
@@ -691,46 +714,27 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
     )
     if (!(await requirePermission(request, reply, 'brand.manage', scope))) return
 
-    const service = supabaseClients.forService()
     // Abgeloest wird nur DIESELBE Schrift (Familie, Schnitt, Lage) -- anders als ein Logo ist eine
     // Schrift kein Platz, den es je Ebene nur einmal gibt: das Markenprofil kennt eine Ueberschriften-
     // und eine Fliesstextschrift, und der Plan sieht mehrere eigene Schriftdateien je Verein vor.
-    // Ein Supersede ueber kind = 'font' allein haette beim Bestaetigen der zweiten Schrift die
-    // erste entwertet und damit unreferenzierbar gemacht.
-    const supersede = await service
-      .from('brand_assets')
-      .update({ status: 'replaced' })
-      .eq('organization_id', existing.data.organization_id)
-      .eq('kind', 'font')
-      .eq('status', 'ready')
-      .eq('font_family', existing.data.font_family)
-      .eq('font_weight', existing.data.font_weight)
-      .eq('font_style', existing.data.font_style)
-      .filter(
-        'department_id',
-        existing.data.department_id ? 'eq' : 'is',
-        existing.data.department_id ?? null,
-      )
-      .filter('team_id', existing.data.team_id ? 'eq' : 'is', existing.data.team_id ?? null)
-    if (supersede.error) throw supersede.error
-
-    const update = await service
-      .from('brand_assets')
-      .update({
-        license_holder: input.licenseHolder,
-        license_note: input.licenseNote ?? null,
-        license_confirmed_at: new Date().toISOString(),
-        license_confirmed_by: request.auth!.userId,
-        status: 'ready',
-      })
-      .eq('id', params.id)
-      .select()
-      .single()
-    if (update.error) throw update.error
+    // Statusvorbedingung ('processing'), Abloesung nur nicht mehr ausgewaehlter Schriften und die
+    // Freigabe laufen atomar in confirm_brand_font_license() (Migration 2026101941).
+    const confirmed = await supabaseClients.forService().rpc('confirm_brand_font_license', {
+      p_organization_id: existing.data.organization_id,
+      p_asset_id: params.id,
+      p_license_holder: input.licenseHolder,
+      p_license_note: input.licenseNote ?? null,
+      p_actor_user_id: request.auth!.userId,
+    })
+    if (confirmed.error) {
+      const status = CONFIRM_LICENSE_ERROR_STATUS[confirmed.error.message]
+      if (status === undefined) throw confirmed.error
+      return reply.code(status).send({ error: confirmed.error.message, correlationId: request.id })
+    }
 
     await recordAuditEvent(request, { organizationId: existing.data.organization_id, action: 'brand_asset.license_confirmed', entityType: 'brand_assets', entityId: params.id, metadata: { licenseHolder: input.licenseHolder } })
 
-    return reply.code(200).send(BrandAssetSchema.parse(mapBrandAssetRow(update.data)))
+    return reply.code(200).send(BrandAssetSchema.parse(mapBrandAssetRow(confirmed.data)))
   })
 
   app.put('/v1/departments/:id/brand', async (request, reply) => {
