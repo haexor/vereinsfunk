@@ -777,6 +777,51 @@ describe('GET /v1/consents -- post.edit access (Plan 045)', () => {
     expect(response.statusCode).toBe(200)
   })
 
+  it('reads a large department in id batches and still returns the newest consent first', async () => {
+    const personIds = Array.from({ length: 150 }, (_, index) => `15000000-3000-4000-8000-${String(index).padStart(12, '0')}`)
+    const batches: string[][] = []
+    function consentRecordsTable() {
+      let batch: string[] = []
+      const query: Record<string, unknown> = {
+        select: () => query, eq: () => query, order: () => query, range: () => query,
+        in: (_column: string, ids: string[]) => { batch = ids; batches.push(ids); return query },
+        then: (resolve: (value: unknown) => unknown) => {
+          // Jeder Block liefert die Einwilligung seiner ersten Person; der zweite Block die neuere.
+          const first = batch[0] as string
+          const createdAt = first === personIds[0] ? '2026-08-01T00:00:00Z' : '2026-09-01T00:00:00Z'
+          return resolve({
+            data: [{
+              id: `15000000-4000-4000-8000-${first.slice(-12)}`, organization_id: ORGANIZATION_ID, directory_person_id: first, pseudonymous_subject_ref: first,
+              scope: 'Fotos', origin: 'paper', source_id: null, signed_at: '2026-08-01', signer_name: 'Erika Musterfrau', signer_role: 'guardian', guardian_confirmed: true,
+              valid_from: '2026-08-01T00:00:00Z', valid_until: null, revoked_at: null, revoked_by: null, revocation_reason: null, superseded_by: null, created_at: createdAt,
+              scope_structured: { purposes: ['social_media'], platforms: null, mediaKinds: ['photo'], contexts: null, namingAllowed: false, departmentIds: null },
+            }],
+            error: null,
+          })
+        },
+      }
+      return query
+    }
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'directory_people') return chain({ data: personIds.map((id) => ({ id })), error: null })
+            if (table === 'consent_records') return consentRecordsTable()
+            throw new Error(`unexpected table: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: `/v1/consents?organizationId=${ORGANIZATION_ID}&departmentId=${DEPARTMENT_ID}`, headers: { authorization: `Bearer ${token}` } })
+    expect(response.statusCode).toBe(200)
+    expect(batches.map((ids) => ids.length)).toEqual([100, 50])
+    const body = response.json() as { directoryPersonId: string }[]
+    expect(body.map((consent) => consent.directoryPersonId)).toEqual([personIds[100], personIds[0]])
+  })
+
   it('rejects a post.edit caller scoped to another department before reading that person\'s consents', async () => {
     const otherDepartmentId = '15000000-1100-4000-8000-000000000099'
     const clients: SupabaseClientFactory = {

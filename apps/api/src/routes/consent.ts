@@ -31,6 +31,7 @@ import {
   CONSENT_RECORD_SELECT,
   createAuditRecorder,
   fetchAllRows,
+  fetchAllRowsForIds,
   isAnyMemberOfOrganization,
   resolveDirectoryScope,
   toPermissionScope,
@@ -200,12 +201,19 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
       directoryPersonIds = people.map((person) => person.id)
       if (directoryPersonIds.length === 0) return reply.code(200).send([])
     }
-    let select = service.from('consent_records').select(CONSENT_RECORD_SELECT).eq('organization_id', query.organizationId)
-    if (directoryPersonIds) select = select.in('directory_person_id', directoryPersonIds)
-    const rows = await select.order('created_at', { ascending: false })
-    if (rows.error) throw rows.error
+    // Seitenweise und in Id-Bloecken: max_rows schnitte die Liste sonst bei 1000 Zeilen still ab,
+    // und eine ganze Abteilung als eine .in()-Liste sprengt die Laenge der Request-URL.
+    const rows = directoryPersonIds
+      ? await fetchAllRowsForIds<ConsentRecordRow>(directoryPersonIds, (batch, from, to) =>
+          service.from('consent_records').select(CONSENT_RECORD_SELECT).eq('organization_id', query.organizationId).in('directory_person_id', batch).order('id', { ascending: true }).range(from, to),
+        )
+      : await fetchAllRows<ConsentRecordRow>((from, to) =>
+          service.from('consent_records').select(CONSENT_RECORD_SELECT).eq('organization_id', query.organizationId).order('id', { ascending: true }).range(from, to),
+        )
+    // Stabile Seitengrenzen brauchen die eindeutige id als Ordnung; die Antwort bleibt neueste zuerst.
+    rows.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
     const now = new Date()
-    return reply.code(200).send((rows.data as ConsentRecordRow[]).map((row) => mapConsentRecordRow(row, now)))
+    return reply.code(200).send(rows.map((row) => mapConsentRecordRow(row, now)))
   })
 
   app.get('/v1/consents/:id', async (request, reply) => {
