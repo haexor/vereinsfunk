@@ -309,6 +309,23 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
     expect(response.statusCode).toBe(403)
   })
 
+  it('maps approval_invalidated from decide_approval_stage to 409', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ rpc: async () => ({ data: null, error: { message: 'approval_invalidated' } }) }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used') } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/approval-stages/${STAGE_ID}/decide`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { decision: 'approved' },
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'approval_invalidated' })
+  })
+
   it('opens the next stage when decide_approval_stage reports the current one satisfied', async () => {
     const clients: SupabaseClientFactory = {
       forUser: () =>

@@ -127,6 +127,9 @@ export function registerApprovalRoutes(app: FastifyInstance, context: ApiRouteCo
     if (rpc.error) {
       if (rpc.error.message.includes('insufficient_permission')) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
       if (rpc.error.message.includes('invalid_decision')) return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+      // Der Antrag wurde inzwischen invalidiert (Medium, Spielplan, Einwilligung geaendert) -- ein
+      // Zustandskonflikt, kein Serverfehler.
+      if (rpc.error.message.includes('approval_invalidated')) return reply.code(409).send({ error: 'approval_invalidated', correlationId: request.id })
       throw rpc.error
     }
     return reply.code(200).send(
