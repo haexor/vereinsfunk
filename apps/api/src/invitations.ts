@@ -1,6 +1,5 @@
 import { randomBytes, createHash } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { EmailMessage } from './email.js'
 
 export function generateInvitationToken(): { rawToken: string; tokenHash: string } {
   const rawToken = randomBytes(32).toString('hex')
@@ -75,17 +74,4 @@ export async function sendInvitationThroughSupabaseAuth(
     'signInWithOtp',
   )
   if (magicLink.error) throw magicLink.error
-}
-
-export function buildInvitationEmail(options: {
-  to: string
-  organizationName: string
-  scopeName: string
-  acceptUrl: string
-}): EmailMessage {
-  return {
-    to: options.to,
-    subject: `Einladung zu ${options.organizationName}`,
-    text: `Ihr wurdet zu ${options.scopeName} bei ${options.organizationName} eingeladen.\n\nEinladung annehmen: ${options.acceptUrl}\n\nDer Link ist 14 Tage gueltig.`,
-  }
 }
