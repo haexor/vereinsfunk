@@ -116,7 +116,7 @@ export async function handlePeopleSync(ctx: PeopleSyncContext): Promise<FastifyR
           department_id: resolved.departmentId ?? sourceDepartmentId,
           team_id: resolved.teamId ?? null,
           first_name: entity.firstName, last_name: entity.lastName, birth_year: entity.birthYear ?? null,
-          is_minor: isMinor, status: entity.status ?? 'active', joined_at: entity.joinedAt ?? null,
+          is_minor: isMinor, status: entity.status ?? 'active', joined_at: entity.joinedAt ?? null, left_at: entity.leftAt ?? null,
           email: entity.email ?? null,
           source_id: sourceId, external_id: entity.externalId ?? null, source_updated_at: entity.sourceUpdatedAt ?? null,
         }
@@ -139,6 +139,9 @@ export async function handlePeopleSync(ctx: PeopleSyncContext): Promise<FastifyR
         source_updated_at: update.external.sourceUpdatedAt ?? update.local.sourceUpdatedAt?.toISOString() ?? null,
       }
       if (update.external.birthYear !== undefined) patch.is_minor = deriveIsMinor(update.external.birthYear, referenceYear)
+      // Das Austrittsdatum war gemappt und geprueft, aber nie geschrieben; left_at entscheidet u. a.
+      // ueber die Gueltigkeit von Foto-Einwilligungen (authz.playerboard_photo_consent_valid).
+      if (update.external.leftAt !== undefined) patch.left_at = update.external.leftAt
       const result = await service.from('directory_people').update(patch).eq('id', update.local.id)
       if (result.error) throw result.error
     }

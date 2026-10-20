@@ -32,7 +32,9 @@ export const ExternalFixtureSchema = z.object({
   homeScore: z.coerce.number().int().min(0).max(999).optional(),
   awayScore: z.coerce.number().int().min(0).max(999).optional(),
   note: z.string().trim().max(2000).optional(),
-  sourceUpdatedAt: z.string().trim().min(1).optional(),
+  // Mit Offset wie bei ExternalTeamSchema -- ein freier String waere als Invalid Date durch den
+  // local_newer-Vergleich gelaufen und in source_updated_at (timestamptz) gescheitert.
+  sourceUpdatedAt: z.iso.datetime({ offset: true }).optional(),
 })
 export type ExternalFixture = z.infer<typeof ExternalFixtureSchema>
 

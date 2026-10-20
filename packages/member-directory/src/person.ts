@@ -9,6 +9,11 @@ import { z } from 'zod'
 // existiert hier nicht: das Schema selbst ist die Datenminimierung. applyFieldMapping kopiert nur
 // gemappte Felder, und parse() wirft unbekannte Schluessel ohnehin weg -- eine falsch benannte
 // Zuordnung (z. B. auf 'iban') landet nie in einem PersonExternal.
+// directory_people.joined_at/left_at sind date-Spalten. Nur 'YYYY-MM-DD' -- "15.03.2019" liesse
+// Postgres mitten im Schreiben abbrechen, "03.04.2019" laese es still als MDY. Eine XLSX-Datumszelle
+// kommt aus fileTransport als UTC-Mitternachts-Zeitstempel und wird auf ihr Datum gekuerzt.
+const DirectoryDateSchema = z.string().trim().pipe(z.union([z.iso.date(), z.iso.datetime().transform((value) => value.slice(0, 10))]))
+
 export const PersonExternalSchema = z.object({
   externalId: z.string().trim().min(1).optional(),
   firstName: z.string().trim().min(1).max(80),
@@ -17,10 +22,12 @@ export const PersonExternalSchema = z.object({
   departmentName: z.string().trim().min(1).max(120).optional(),
   teamName: z.string().trim().min(1).max(120).optional(),
   status: z.enum(['active', 'inactive', 'left']).optional(),
-  joinedAt: z.string().trim().min(1).optional(),
-  leftAt: z.string().trim().min(1).optional(),
+  joinedAt: DirectoryDateSchema.optional(),
+  leftAt: DirectoryDateSchema.optional(),
   email: z.string().trim().toLowerCase().pipe(z.email()).optional(),
-  sourceUpdatedAt: z.string().trim().min(1).optional(),
+  // Mit Offset wie bei ExternalTeamSchema: ein ungueltiger Wert waere als Invalid Date durch
+  // sourceUpdatedAtOf gelaufen und haette den local_newer-Schutz in planSync abgeschaltet.
+  sourceUpdatedAt: z.iso.datetime({ offset: true }).optional(),
 })
 export type PersonExternal = z.infer<typeof PersonExternalSchema>
 

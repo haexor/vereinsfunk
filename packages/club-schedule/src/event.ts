@@ -24,7 +24,8 @@ export const ExternalClubEventSchema = z.object({
   registrationUrl: z.url().optional(),
   status: z.enum(['scheduled', 'postponed', 'cancelled']).optional(),
   recurrenceKey: z.string().trim().min(1).max(200).optional(),
-  sourceUpdatedAt: z.string().trim().min(1).optional(),
+  // Mit Offset -- siehe ExternalFixtureSchema.sourceUpdatedAt.
+  sourceUpdatedAt: z.iso.datetime({ offset: true }).optional(),
 })
 export type ExternalClubEvent = z.infer<typeof ExternalClubEventSchema>
 

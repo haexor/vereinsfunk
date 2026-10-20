@@ -34,3 +34,20 @@ describe('peopleDomainAdapter.normalize', () => {
     expect('iban' in parsed).toBe(false)
   })
 })
+
+describe('PersonExternalSchema dates', () => {
+  it('accepts an ISO date and cuts an XLSX date cell timestamp down to its date', () => {
+    const parsed = PersonExternalSchema.parse({ firstName: 'Anna', lastName: 'Beck', joinedAt: '2019-03-15', leftAt: '2026-06-30T00:00:00.000Z' })
+    expect(parsed).toMatchObject({ joinedAt: '2019-03-15', leftAt: '2026-06-30' })
+  })
+
+  it('rejects German and ambiguous dates instead of handing them to a date column', () => {
+    expect(PersonExternalSchema.safeParse({ firstName: 'Anna', lastName: 'Beck', joinedAt: '15.03.2019' }).success).toBe(false)
+    expect(PersonExternalSchema.safeParse({ firstName: 'Anna', lastName: 'Beck', leftAt: '03.04.2019' }).success).toBe(false)
+  })
+
+  it('rejects a sourceUpdatedAt that would be an Invalid Date', () => {
+    expect(PersonExternalSchema.safeParse({ firstName: 'Anna', lastName: 'Beck', sourceUpdatedAt: 'gestern' }).success).toBe(false)
+    expect(PersonExternalSchema.safeParse({ firstName: 'Anna', lastName: 'Beck', sourceUpdatedAt: '2026-08-01T10:00:00+02:00' }).success).toBe(true)
+  })
+})

@@ -295,6 +295,34 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
     })
   })
 
+  describe('people sync', () => {
+    it('writes a mapped leave date and turns a German date into an invalid_record conflict', async () => {
+      const csv = 'Vorname,Nachname,Status,Austritt\r\nAnna,Beck,left,2026-06-30\r\nTom,Meyer,active,15.03.2019\r\n'
+      const fieldMapping = { Vorname: 'firstName', Nachname: 'lastName', Status: 'status', Austritt: 'leftAt' }
+      let capturedInsertRows: Record<string, unknown>[] = []
+      const clients: SupabaseClientFactory = {
+        forUser: () => sourceOnlyUserClient(integrationSource({ department_id: null, enabled_domains: ['people'], field_mapping: fieldMapping })),
+        forService: () =>
+          syncServiceClient({
+            directory_people: { ...chain({ data: [], error: null }), insert: (rows: Record<string, unknown>[]) => { capturedInsertRows = rows; return chain({ data: null, error: null }) } },
+            departments: chain({ data: [], error: null }),
+            teams: chain({ data: [], error: null }),
+          }),
+      }
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      const { boundary, body } = syncMultipartBody('apply', 'people', csv)
+      const response = await app.inject({
+        method: 'POST', url: `/v1/integration-sources/${SOURCE_ID}/sync`,
+        headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` }, payload: body,
+      })
+      expect(response.statusCode).toBe(200)
+      expect(capturedInsertRows).toHaveLength(1)
+      expect(capturedInsertRows[0]).toMatchObject({ first_name: 'Anna', status: 'left', left_at: '2026-06-30' })
+      expect(response.json().conflicts).toEqual([expect.objectContaining({ kind: 'invalid_record', label: 'Tom Meyer' })])
+    })
+  })
+
   describe('fixtures sync', () => {
     it('rejects a fixtures sync on a source without a department, before reading any fixtures/teams rows', async () => {
       const clients: SupabaseClientFactory = {
