@@ -19,17 +19,6 @@ export const IMPLEMENTED_LLM_PROTOCOLS = new Set(['openai', 'anthropic'])
 export const IMPLEMENTED_LLM_TASK_KINDS = new Set(['text_generation', 'vision_analysis'])
 
 /**
- * Haengt `path` ueber `URL.pathname` an, nicht per String-Konkatenation: eine Basis-URL mit
- * Query-String (z.B. "…/v1?key=abc") wuerde sonst den Schlussteil des Pfads verschlucken, weil ein
- * angehaengter "/" hinter dem "?" landet statt davor.
- */
-export function joinUrlPath(baseUrl: string, path: string): string {
-  const url = new URL(baseUrl)
-  url.pathname = `${url.pathname.replace(/\/$/, '')}/${path}`
-  return url.toString()
-}
-
-/**
  * Antwort eines `GET /models`: `{ data: [{ id }] }` -- die Huelle ist bei OpenAI-kompatiblen
  * Endpunkten und bei Anthropic dieselbe, nur die Authentifizierung unterscheidet sich. Alles
  * andere wird verworfen statt den Aufruf scheitern zu lassen: die Liste fuellt ein Auswahlfeld,

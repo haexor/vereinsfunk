@@ -4,6 +4,7 @@ import { getPreset, validateSourceMaterial } from './presets.js'
 import { ANTHROPIC_OUTPUT_TOOL_NAME, joinUrlPath, postProviderJson, type FetchLike } from './providerRequest.js'
 
 export { factsFromFixture, factsFromClubEvent } from './schedule.js'
+export { joinUrlPath } from './providerRequest.js'
 export type { FactsFromScheduleResult } from './schedule.js'
 export { AnthropicVisionAnalysisGenerator, OpenAiCompatibleVisionAnalysisGenerator, VisionAnalysisError } from './visionAnalysis.js'
 export type { FontPairingOption, VisionAnalysisGenerator, VisionAnalysisInput, VisionAnalysisResult } from './visionAnalysis.js'
