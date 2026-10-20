@@ -16,9 +16,9 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { membershipTableFor } from '../apiMappers.js'
 import type { PermissionScope } from '../auth.js'
-import { parseSupabaseData } from '../supabase.js'
+import { fetchAllRows, fetchAllRowsForIds, parseSupabaseData } from '../supabase.js'
 import type { ApiRouteContext } from './context.js'
-import { createAuditRecorder, fetchAllRows, fetchAllRowsForIds, membershipCapabilities, resolveMembershipScope, resolveRolesForScopes, toPermissionScope } from './shared.js'
+import { createAuditRecorder, membershipCapabilities, resolveMembershipScope, resolveRolesForScopes, toPermissionScope } from './shared.js'
 
 // Jede Mitgliedschaftstabelle traegt nur die Scope-Spalten ihrer Ebene: organization_memberships
 // hat weder department_id noch team_id, department_memberships kein team_id. Eine gemeinsame

@@ -3,7 +3,7 @@ import { planSync } from '@vereinsfunk/integrations'
 import type { FastifyReply } from 'fastify'
 import { buildPendingConflicts, finishSyncRun, handleAbortedSync, loadIgnoredFingerprints, normalizeStructureName, parseIncomingRows, type SyncDomainContext } from '../integrationSync.js'
 import { resolvePersonScope } from '../integrationSync.js'
-import { fetchAllRows } from '../../routes/shared.js'
+import { fetchAllRows } from '../../supabase.js'
 
 // Personen (Paket 014) -- dieselbe Form wie die drei Domaenen oben. Bis zur Zerlegung stand dieser
 // Ablauf direkt im Routen-Handler und trug eine eigene, wortgleiche Kopie von

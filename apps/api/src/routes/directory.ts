@@ -11,7 +11,8 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { DIRECTORY_PERSON_COLUMNS, mapDirectoryPersonRow } from '../apiMappers.js'
 import type { ApiRouteContext } from './context.js'
-import { createAuditRecorder, fetchAllRows, isAnyMemberOfOrganization, resolveDirectoryScope, toPermissionScope } from './shared.js'
+import { createAuditRecorder, isAnyMemberOfOrganization, resolveDirectoryScope, toPermissionScope } from './shared.js'
+import { fetchAllRows } from '../supabase.js'
 
 /**
  * `isMinor` aus der Anfrage darf den Schutz nur anheben, nie senken. Ohne diese Klammer koennte

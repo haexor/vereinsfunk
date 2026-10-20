@@ -13,7 +13,6 @@ import { permissionScopeKey, type PermissionScope, type RoleProvider } from '../
 import { byteaToBuffer, EmbeddedProviderSecretSchema, unwrapEmbeddedSecret } from '@vereinsfunk/secrets'
 import { createSecretBoxFromEnvironment } from '../secretBox.js'
 import { notExpiredFilter, parseSupabaseData } from '../supabase.js'
-export { fetchAllRows, fetchAllRowsForIds, notExpiredFilter } from '../supabase.js'
 import type { SupabaseClientFactory } from './context.js'
 
 // Von mehreren Route-Modulen und dem verbleibenden app.ts benoetigt (Richtlinien/Freigaben,
