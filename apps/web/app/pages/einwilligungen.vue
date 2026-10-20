@@ -60,7 +60,11 @@ async function loadPeople(currentOrganizationId: string, currentDepartmentId: st
   people.value = DirectoryPersonSchema.array().parse(response)
 }
 
+// Nur der zuletzt gestartete Lauf darf schreiben -- auch im Fehlerfall: eine aeltere, scheiternde
+// Anfrage setzte sonst eine Fehlermeldung ueber die bereits geladenen aktuellen Daten.
+let loadAllRun = 0
 async function loadAll() {
+  const run = ++loadAllRun
   if (!organizationId.value) { loading.value = false; return }
   const currentOrganizationId = organizationId.value
   const currentDepartmentId = filterDepartmentId.value
@@ -78,13 +82,13 @@ async function loadAll() {
     // Ein frueher gestarteter Durchlauf kann nach einem spaeter gestarteten zurueckkehren, wenn
     // sich Verein/Abteilung zwischendurch aendern -- er wuerde sonst deren Ergebnisse mit denen der
     // vorigen Auswahl ueberschreiben (gefunden im Code-Review, gleiches Muster wie layouts/default.vue).
-    if (organizationId.value !== currentOrganizationId || filterDepartmentId.value !== currentDepartmentId) return
+    if (run !== loadAllRun) return
     consents.value = ConsentRecordSchema.array().parse(consentsResponse)
     requests.value = ConsentRequestSchema.array().parse(requestsResponse)
   } catch {
-    errorMessage.value = 'Die Einwilligungen konnten nicht geladen werden.'
+    if (run === loadAllRun) errorMessage.value = 'Die Einwilligungen konnten nicht geladen werden.'
   } finally {
-    loading.value = false
+    if (run === loadAllRun) loading.value = false
   }
 }
 await loadAll()

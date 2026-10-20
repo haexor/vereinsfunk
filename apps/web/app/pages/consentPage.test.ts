@@ -13,4 +13,14 @@ describe('Einwilligungen', () => {
     expect(page).toContain('registerForm.file = null; registerFileInputKey.value += 1')
     expect(page).toContain('<input :key="registerFileInputKey" type="file" required')
   })
+
+  it('laesst eine veraltete Ladung auch im Fehlerfall nichts mehr schreiben', () => {
+    const page = readFileSync(join(PAGES_DIR, 'einwilligungen.vue'), 'utf8')
+
+    // Vorher war nur der Erfolgsweg geschuetzt; eine aeltere, scheiternde Anfrage setzte die
+    // Fehlermeldung ueber frische Daten.
+    expect(page).toContain('const run = ++loadAllRun')
+    expect(page).toContain("if (run === loadAllRun) errorMessage.value = 'Die Einwilligungen konnten nicht geladen werden.'")
+    expect(page).toContain('if (run === loadAllRun) loading.value = false')
+  })
 })
