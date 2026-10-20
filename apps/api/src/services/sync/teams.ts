@@ -21,7 +21,7 @@ export async function handleTeamsSync(ctx: SyncDomainContext): Promise<FastifyRe
   const existingRows = await fetchAllRows<Record<string, unknown>>((from, to) => {
     let query = service
       .from('teams')
-      .select('id, name, department_id, age_group, competition, source_id, external_id, source_updated_at, updated_at')
+      .select('id, name, department_id, age_group, competition, archived_at, source_id, external_id, source_updated_at, updated_at')
       .eq('organization_id', organizationId)
       .or(`source_id.is.null,source_id.eq.${sourceId}`)
     if (sourceDepartmentId) query = query.eq('department_id', sourceDepartmentId)
@@ -30,7 +30,7 @@ export async function handleTeamsSync(ctx: SyncDomainContext): Promise<FastifyRe
   const existingLocals: TeamLocal[] = existingRows.map((row) => ({
     id: row.id as string, externalId: row.external_id as string | null, sourceId: row.source_id as string | null,
     name: row.name as string, departmentId: row.department_id as string, ageGroup: row.age_group as string | null,
-    competition: row.competition as string | null,
+    competition: row.competition as string | null, archivedAt: row.archived_at ? new Date(row.archived_at as string) : null,
     sourceUpdatedAt: row.source_updated_at ? new Date(row.source_updated_at as string) : null,
     updatedAt: new Date(row.updated_at as string),
   }))

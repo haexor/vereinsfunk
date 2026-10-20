@@ -108,9 +108,11 @@ export function createPeopleMatchStrategy(resolver: DepartmentResolver): MatchSt
     // Nur Personen mit echter Quellenbindung koennen "aus der Quelle verschwunden" sein. Eine von
     // Hand angelegte Person (sourceId null) taucht in existing ausschliesslich fuer den unscharfen
     // Abgleich auf -- ohne diese Einschraenkung wuerde ein voellig unabhaengiger Import sie als
-    // "left" markieren, nur weil sie in dieser einen Datei nicht vorkommt.
+    // "left" markieren, nur weil sie in dieser einen Datei nicht vorkommt. Eine bereits
+    // ausgetretene Person ist schon stillgelegt (MatchStrategy.isRetirable). Sie wird beim
+    // Wiederauftauchen bewusst nicht reaktiviert (ADR-009, "Bekannte Grenzen").
     isRetirable(local) {
-      return local.sourceId !== null
+      return local.sourceId !== null && local.status !== 'left'
     },
   }
 }

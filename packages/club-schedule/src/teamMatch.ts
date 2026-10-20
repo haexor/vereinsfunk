@@ -14,6 +14,7 @@ export interface TeamLocal {
   readonly departmentId: string
   readonly ageGroup: string | null
   readonly competition: string | null
+  readonly archivedAt: Date | null
   readonly sourceUpdatedAt: Date | null
   readonly updatedAt: Date
 }
@@ -80,8 +81,9 @@ export function createTeamMatchStrategy(resolver: TeamDepartmentResolver): Match
     },
     // Nur Mannschaften mit echter Quellenbindung koennen "aus der Quelle verschwunden" sein --
     // dieselbe Begruendung wie bei DirectoryPersonLocal (packages/member-directory/src/match.ts).
+    // Eine archivierte Mannschaft ist bereits stillgelegt (MatchStrategy.isRetirable).
     isRetirable(local) {
-      return local.sourceId !== null
+      return local.sourceId !== null && local.archivedAt === null
     },
   }
 }

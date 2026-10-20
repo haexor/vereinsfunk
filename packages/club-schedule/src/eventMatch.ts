@@ -99,8 +99,10 @@ export function createClubEventMatchStrategy(schedule: ScheduleMatchContext): Ma
     },
     // Nur Veranstaltungen mit echter Quellenbindung koennen "aus der Quelle verschwunden" sein --
     // dieselbe Begruendung wie bei DirectoryPersonLocal (packages/member-directory/src/match.ts).
+    // Eine abgesagte oder bereits begonnene Veranstaltung steht nicht mehr zur Absage
+    // (siehe fixtureMatch.ts und ScheduleMatchContext.now).
     isRetirable(local) {
-      return local.sourceId !== null
+      return local.sourceId !== null && local.status !== 'cancelled' && local.startsAt.getTime() >= schedule.now.getTime()
     },
   }
 }

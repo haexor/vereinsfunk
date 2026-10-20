@@ -19,6 +19,7 @@ const schedule: ScheduleMatchContext = {
     if (ical) return ical
     return /(?:Z|[+-]\d{2}:\d{2})$/.test(rawValue) ? { iso: new Date(rawValue).toISOString(), confirmed: true } : undefined
   },
+  now: new Date('2026-08-10T00:00:00Z'),
 }
 
 function localFixture(overrides: Partial<FixtureLocal> = {}): FixtureLocal {
@@ -144,5 +145,36 @@ describe('createFixtureMatchStrategy kickoff comparison', () => {
     const external = ExternalFixtureSchema.parse({ externalId: 'ext-1', teamReference: '2. Herren', opponentName: 'TSV Süd', kickoffAt: '20260815T170000' })
     const fields = createFixtureMatchStrategy(resolver({ '2. Herren': TEAM_HOME }), schedule).fieldsOf(external)
     expect(fields.kickoffAt).toBe(Date.parse('2026-08-15T15:00:00Z'))
+  })
+})
+
+describe('createFixtureMatchStrategy retirement', () => {
+  it('leaves cancelled, played and past fixtures out of retirement and the loss threshold -- a feed rolling to a new season is no mass cancellation', () => {
+    const plan = planSync({
+      existing: [
+        localFixture({ id: 'future', externalId: 'ext-future', kickoffAt: new Date('2026-08-15T15:00:00Z') }),
+        localFixture({ id: 'cancelled', externalId: 'ext-cancelled', status: 'cancelled' }),
+        localFixture({ id: 'played', externalId: 'ext-played', status: 'played', homeScore: 2, awayScore: 1 }),
+        localFixture({ id: 'past', externalId: 'ext-past', kickoffAt: new Date('2026-05-01T15:00:00Z') }),
+      ],
+      incoming: [ExternalFixtureSchema.parse({ externalId: 'ext-future', teamReference: '2. Herren', opponentName: 'TSV Süd' })],
+      match: createFixtureMatchStrategy(resolver({ '2. Herren': TEAM_HOME }), schedule),
+      policy: { lossThresholdPercent: 30 },
+    })
+    expect(plan.aborted).toBe(false)
+    if (plan.aborted) return
+    expect(plan.retired).toHaveLength(0)
+  })
+
+  it('still retires an upcoming fixture that vanished from the source', () => {
+    const plan = planSync({
+      existing: [localFixture({ kickoffAt: new Date('2026-08-15T15:00:00Z') })],
+      incoming: [],
+      match: createFixtureMatchStrategy(resolver({}), schedule),
+      policy: { lossThresholdPercent: 100 },
+    })
+    expect(plan.aborted).toBe(false)
+    if (plan.aborted) return
+    expect(plan.retired.map((local) => local.id)).toEqual(['local-1'])
   })
 })

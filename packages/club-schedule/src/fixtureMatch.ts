@@ -132,8 +132,12 @@ export function createFixtureMatchStrategy(resolver: TeamNameResolver, schedule:
     },
     // Nur Spiele mit echter Quellenbindung koennen "aus der Quelle verschwunden" sein --
     // dieselbe Begruendung wie bei DirectoryPersonLocal (packages/member-directory/src/match.ts).
+    // Abgesagt oder gespielt ist ein Spiel bereits endgueltig, ein vergangener Anstoss kann nicht
+    // mehr abgesagt werden (ScheduleMatchContext.now) -- sonst blockierte jeder Saisonwechsel im
+    // Feed den Lauf an der Verlustschwelle.
     isRetirable(local) {
-      return local.sourceId !== null
+      if (local.sourceId === null || local.status === 'cancelled' || local.status === 'played') return false
+      return local.kickoffAt === null || local.kickoffAt.getTime() >= schedule.now.getTime()
     },
   }
 }

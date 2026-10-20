@@ -11,6 +11,7 @@ const schedule: ScheduleMatchContext = {
     if (ical) return ical
     return /(?:Z|[+-]\d{2}:\d{2})$/.test(rawValue) ? { iso: new Date(rawValue).toISOString(), confirmed: true } : undefined
   },
+  now: new Date('2026-08-10T00:00:00Z'),
 }
 
 function localEvent(overrides: Partial<ClubEventLocal> = {}): ClubEventLocal {
@@ -54,5 +55,23 @@ describe('createClubEventMatchStrategy time comparison', () => {
     if (plan.aborted) return
     expect(plan.updated).toHaveLength(0)
     expect(plan.skipped[0]?.reason).toBe('unchanged')
+  })
+})
+
+describe('createClubEventMatchStrategy retirement', () => {
+  it('leaves cancelled and past events out of retirement and the loss threshold', () => {
+    const plan = planSync({
+      existing: [
+        localEvent(),
+        localEvent({ id: 'cancelled', externalId: 'uid-cancelled', status: 'cancelled' }),
+        localEvent({ id: 'past', externalId: 'uid-past', startsAt: new Date('2026-05-01T14:00:00Z'), endsAt: null }),
+      ],
+      incoming: [ExternalClubEventSchema.parse({ externalId: 'uid-1', title: 'Sommerfest', startsAt: '20260820T140000Z' })],
+      match: createClubEventMatchStrategy(schedule),
+      policy: { lossThresholdPercent: 30 },
+    })
+    expect(plan.aborted).toBe(false)
+    if (plan.aborted) return
+    expect(plan.retired).toHaveLength(0)
   })
 })

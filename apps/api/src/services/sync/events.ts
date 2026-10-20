@@ -37,6 +37,7 @@ export async function handleEventsSync(ctx: SyncDomainContext): Promise<FastifyR
 
   const match = createClubEventMatchStrategy({
     resolveDateTime: (rawValue, tzid) => resolveScheduleDateTime(rawValue, tzid, organizationTimezone),
+    now: new Date(),
   })
   const plan = planSync({ existing: existingLocals, incoming, match, policy: { lossThresholdPercent: sourceLossThresholdPercent } })
   if (plan.aborted) {

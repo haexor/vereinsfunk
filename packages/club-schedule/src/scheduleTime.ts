@@ -10,6 +10,12 @@ export type ScheduleDateTimeResolver = (rawValue: string, tzid: string | undefin
 
 export interface ScheduleMatchContext {
   readonly resolveDateTime: ScheduleDateTimeResolver
+  /**
+   * Bezugszeitpunkt des Laufs. Ein bereits vergangenes Spiel/eine vergangene Veranstaltung, die
+   * aus der Quelle verschwindet, wurde nicht abgesagt -- Feeds lassen Vergangenes regelmaessig
+   * fallen, spaetestens beim Saisonwechsel. Von aussen, damit der Abgleich ohne Uhr testbar bleibt.
+   */
+  readonly now: Date
 }
 
 // Vergleichswert eines rohen Zeitpunkts in Epoch-Millisekunden: "2026-08-12T19:30:00+02:00",

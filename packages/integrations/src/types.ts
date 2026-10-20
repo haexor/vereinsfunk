@@ -74,8 +74,11 @@ export interface MatchStrategy<TLocal, TExternal> {
    * für den unscharfen Abgleich (Duplikatvermeidung gegen von Hand gepflegte Einträge), nie zur
    * Disposition eines Sync-Laufs, der sie nie "besessen" hat. Ohne diese Unterscheidung würde ein
    * völlig unabhängiger Import eine von Hand angelegte Person als "left" markieren, nur weil sie in
-   * dieser einen Datei nicht vorkommt. Fehlt der Hook, bleibt das alte Verhalten (alles retirable)
-   * bestehen.
+   * dieser einen Datei nicht vorkommt. Ebenso nie retirable: ein bereits stillgelegter Datensatz
+   * ('left', archiviert, abgesagt) -- er bleibt in existing, damit er wiedererkannt statt neu
+   * angelegt wird, darf aber weder erneut stillgelegt noch in der Verlustschwelle mitgezaehlt
+   * werden, sonst bricht jeder Lauf ab, sobald genug Altbestand zusammenkommt. Fehlt der Hook,
+   * bleibt das alte Verhalten (alles retirable) bestehen.
    */
   isRetirable?(local: TLocal): boolean
 }

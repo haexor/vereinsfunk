@@ -189,3 +189,18 @@ describe('createPeopleMatchStrategy.identityOf', () => {
     expect(createPeopleMatchStrategy(resolver()).identityOf(entity)).toEqual({ fuzzy: ['anna', 'beck', '2010'] })
   })
 })
+
+describe('createPeopleMatchStrategy retirement', () => {
+  it('does not count an already left person as lost again, so the loss threshold only sees active members', () => {
+    const present = PersonExternalSchema.parse({ externalId: 'ext-1', firstName: 'Anna', lastName: 'Beck', birthYear: 2010 })
+    const plan = planSync({
+      existing: [localPerson(), localPerson({ id: 'local-2', externalId: 'ext-2', firstName: 'Ben', status: 'left' })],
+      incoming: [present],
+      match: createPeopleMatchStrategy(resolver()),
+      policy: { lossThresholdPercent: 30 },
+    })
+    expect(plan.aborted).toBe(false)
+    if (plan.aborted) return
+    expect(plan.retired).toHaveLength(0)
+  })
+})

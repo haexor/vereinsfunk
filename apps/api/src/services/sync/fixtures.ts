@@ -52,6 +52,7 @@ export async function handleFixturesSync(ctx: SyncDomainContext): Promise<Fastif
 
   const match = createFixtureMatchStrategy(resolver, {
     resolveDateTime: (rawValue, tzid) => resolveScheduleDateTime(rawValue, tzid, organizationTimezone),
+    now: new Date(),
   })
   const plan = planSync({ existing: existingLocals, incoming, match, policy: { lossThresholdPercent: sourceLossThresholdPercent } })
   if (plan.aborted) {
