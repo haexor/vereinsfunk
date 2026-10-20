@@ -388,15 +388,11 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
       expect(json.conflicts[0]).toMatchObject({ kind: 'unknown_structure' })
     })
 
-    it('applies a played-match update (status + scores) once a tracked field also changed', async () => {
-      // planSync vergleicht nur die in fixtureMatch.ts.fieldsOf() genannten Felder (teamId/
-      // opponentName/isHome/competition/kickoffAt) -- status/homeScore/awayScore gehoeren nicht
-      // dazu. Ohne eine Aenderung an einem dieser Felder gaelte die Zeile als "unchanged" und
-      // wuerde uebersprungen, das Ergebnis daher nie geschrieben. competition aendert sich hier
-      // zusaetzlich (wie es ein echter Export nach Spielende oft ohnehin tut) und loest die
-      // Uebernahme aus; status/homeScore/awayScore werden dann im selben Patch mitgeschrieben.
-      const csv = 'ExterneId,Gegner,Liga,Status,Heimtore,Auswaertstore\r\next-1,SV Gegner,Kreisliga A,played,2,1\r\n'
-      const fieldMapping = { ExterneId: 'externalId', Gegner: 'opponentName', Liga: 'competition', Status: 'status', Heimtore: 'homeScore', Auswaertstore: 'awayScore' }
+    it('applies a played-match update (status + scores) even when no other field changed', async () => {
+      // status/homeScore/awayScore gehoeren zu fixtureMatch.ts.fieldsOf(): ein nachgetragenes
+      // Ergebnis allein ist eine Aenderung und wird geschrieben, nicht als "unchanged" uebersprungen.
+      const csv = 'ExterneId,Gegner,Status,Heimtore,Auswaertstore\r\next-1,SV Gegner,played,2,1\r\n'
+      const fieldMapping = { ExterneId: 'externalId', Gegner: 'opponentName', Status: 'status', Heimtore: 'homeScore', Auswaertstore: 'awayScore' }
       const existingFixtureRow = {
         id: FIXTURE_ID, external_id: 'ext-1', source_id: SOURCE_ID, team_id: null, is_home: null, own_team_label: null,
         opponent_name: 'SV Gegner', competition: null, kickoff_at: '2026-08-01T18:00:00Z', kickoff_time_confirmed: true,
@@ -421,7 +417,7 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
       })
       expect(response.statusCode).toBe(200)
       expect(response.json().run).toMatchObject({ updatedCount: 1 })
-      expect(capturedUpdate).toMatchObject({ competition: 'Kreisliga A', status: 'played', home_score: 2, away_score: 1 })
+      expect(capturedUpdate).toMatchObject({ status: 'played', home_score: 2, away_score: 1 })
     })
 
     it('absorbs a CHECK-constraint rejection (played without both scores) as a graceful no-op, not a crash', async () => {

@@ -106,6 +106,12 @@ export function createFixtureMatchStrategy(resolver: TeamNameResolver, schedule:
           isHome: entity.isHome,
           competition: entity.competition,
           kickoffAt: entity.kickoffAt ? entity.kickoffAt.getTime() : null,
+          status: entity.status,
+          homeScore: entity.homeScore,
+          awayScore: entity.awayScore,
+          venueName: entity.venueName,
+          venueAddress: entity.venueAddress,
+          note: entity.note,
         }
       }
       const resolved = resolveOwnSide(entity, resolver)
@@ -116,6 +122,15 @@ export function createFixtureMatchStrategy(resolver: TeamNameResolver, schedule:
         competition: entity.competition ?? null,
         // undefined statt null ohne Anstoss-Spalte: die Quelle sagt dazu nichts (MatchStrategy.fieldsOf).
         kickoffAt: entity.kickoffAt === undefined ? undefined : comparableInstant(schedule, entity.kickoffAt, entity.kickoffAtTzid),
+        // Ergebnis, Status und Ort gehoeren zum Abgleich: ohne sie galt ein nachgetragenes Ergebnis
+        // als "unchanged", wurde nie geschrieben, und ein spaeter verschwundenes Spiel landete
+        // trotz Ergebnis als 'cancelled'. undefined (Spalte fehlt) zaehlt nie als Unterschied.
+        status: entity.status,
+        homeScore: entity.homeScore,
+        awayScore: entity.awayScore,
+        venueName: entity.venueName,
+        venueAddress: entity.venueAddress,
+        note: entity.note,
       }
     },
     labelOf(entity) {
