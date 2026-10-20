@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { assertNavigableUrl, guardOutboundRequests } from './browserGuard.js'
+import { assertNavigableUrl, guardOutboundRequests, newGuardedContext } from './browserGuard.js'
 
 const publicLookup = async (hostname: string) => (hostname === 'verein.example.org' ? ['203.0.113.10'] : ['203.0.113.11'])
 const privateLookup = async () => ['169.254.169.254']
@@ -103,5 +103,21 @@ describe('guardOutboundRequests', () => {
     release()
     await guarding
     expect(guardReady).toBe(true)
+  })
+})
+
+describe('newGuardedContext', () => {
+  // context.route() sieht weder Service-Worker-Anfragen noch WebSocket-Handshakes.
+  it('blocks service workers and closes every WebSocket without contacting the server', async () => {
+    let wsHandler: ((ws: { close: () => Promise<void>; connectToServer: () => unknown }) => unknown) | undefined
+    const context = { route: vi.fn(async () => {}), routeWebSocket: vi.fn(async (_pattern: RegExp, fn: typeof wsHandler) => { wsHandler = fn }) }
+    const browser = { newContext: vi.fn(async () => context) }
+    await expect(newGuardedContext(browser as never, { viewport: { width: 1, height: 1 } }, publicLookup)).resolves.toBe(context)
+    expect(browser.newContext).toHaveBeenCalledWith({ viewport: { width: 1, height: 1 }, serviceWorkers: 'block' })
+    expect(context.route).toHaveBeenCalled()
+    const ws = { close: vi.fn(async () => {}), connectToServer: vi.fn() }
+    await wsHandler!(ws)
+    expect(ws.close).toHaveBeenCalled()
+    expect(ws.connectToServer).not.toHaveBeenCalled()
   })
 })

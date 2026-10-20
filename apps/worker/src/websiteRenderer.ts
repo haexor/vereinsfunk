@@ -1,7 +1,7 @@
 import { OutboundFetchError } from '@vereinsfunk/outbound-fetch'
 import { chromium } from 'playwright'
 import { z } from 'zod'
-import { assertNavigableUrl, guardOutboundRequests } from './browserGuard.js'
+import { assertNavigableUrl, newGuardedContext } from './browserGuard.js'
 import { captureScreenshot } from './screenshotCapture.js'
 import { WorkflowExecutionError } from './workflows.js'
 
@@ -266,8 +266,7 @@ export class PlaywrightWebsiteRenderer implements WebsiteRenderer {
     try {
       // Eigener Context statt browser.newPage(), damit der Guard fuer jede Seite darin gilt --
       // auch fuer ein per window.open() geoeffnetes Fenster (siehe guardOutboundRequests).
-      const context = await browser.newContext({ viewport: VIEWPORT })
-      await guardOutboundRequests(context)
+      const context = await newGuardedContext(browser, { viewport: VIEWPORT })
       const page = await context.newPage()
       try {
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT_MS })

@@ -1,5 +1,5 @@
 import { assertResolvesPublicly, isAllowedOutboundUrl, OutboundFetchError, systemLookup, type AddressLookup } from '@vereinsfunk/outbound-fetch'
-import type { BrowserContext } from 'playwright'
+import type { Browser, BrowserContext, BrowserContextOptions } from 'playwright'
 
 /**
  * Paket 048: eine von einem Verein hinterlegte Homepage-URL wird per echtem Chromium-Browser
@@ -64,4 +64,18 @@ export async function guardOutboundRequests(target: RequestRouter, lookupImpl: A
       // nichts mehr zu tun: die Anfrage geht mit der geschlossenen Seite ohnehin nicht hinaus
     }
   })
+}
+
+/**
+ * Oeffnet den BrowserContext fuer eine fremde Seite mit allen Wegen nach draussen unter Kontrolle.
+ * context.route() sieht weder Anfragen eines Service Workers (Playwright reicht sie an der Route
+ * vorbei) noch WebSocket-Handshakes -- beides waere sonst ein ungeprueftes Ziel ins interne Netz.
+ * Service Worker werden deshalb gar nicht erst registriert, und jeder WebSocket wird geschlossen,
+ * ohne den Server je zu kontaktieren: eine Marken-Analyse braucht keine Live-Verbindung.
+ */
+export async function newGuardedContext(browser: Pick<Browser, 'newContext'>, options: BrowserContextOptions, lookupImpl: AddressLookup = systemLookup): Promise<BrowserContext> {
+  const context = await browser.newContext({ ...options, serviceWorkers: 'block' })
+  await guardOutboundRequests(context, lookupImpl)
+  await context.routeWebSocket(/.*/, (ws) => ws.close())
+  return context
 }
