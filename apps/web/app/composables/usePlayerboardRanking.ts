@@ -7,7 +7,7 @@ import {
 } from '@vereinsfunk/contracts'
 import { currentSeasonStart } from '@vereinsfunk/domain'
 import { localDateKey } from '../utils/memberDates'
-import type { RankingListItem, RankingRange } from '../utils/playerboardRanking'
+import { playerLabel, type RankingListItem, type RankingRange } from '../utils/playerboardRanking'
 
 // Paket 052, PR 4: gemeinsame Ladelogik fuer Rangliste, PlayerBoard-Uebersicht und die Kachel auf
 // der Startseite. Lesen duerfen alle, die die Werte der Mannschaft sehen (stats_visibility).
@@ -36,7 +36,7 @@ export function usePlayerboardRanking() {
     const items = ranking.map((entry) => ({
       key: entry.playerId,
       rank: entry.rank,
-      label: `${entry.jerseyNumber !== null ? `#${entry.jerseyNumber} ` : ''}${entry.firstName} ${entry.lastName}`,
+      label: playerLabel(entry),
       ...(personByPlayer.has(entry.playerId) ? { personId: personByPlayer.get(entry.playerId)! } : {}),
       total: entry.total,
       highlight: entry.playerId === selfId,

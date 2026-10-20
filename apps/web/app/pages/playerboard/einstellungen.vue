@@ -329,7 +329,7 @@ const inputClass = 'focus-ring h-11 rounded-xl border border-[#dfe0d9] bg-white 
             <p class="mt-1 text-xs text-[#6c756f]">Fotos, auf denen sie erkennbar sind, bleiben intern. Einwilligungen holst du unter <NuxtLink to="/einwilligungen" class="font-semibold text-forest underline">Einwilligungen</NuxtLink> ein.</p>
             <ul class="mt-2 flex flex-wrap gap-2">
               <li v-for="player in playersWithoutConsent" :key="player.id" class="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-900">
-                {{ player.jerseyNumber !== null ? `#${player.jerseyNumber} ` : '' }}<PersonLink :person-id="player.directoryPersonId">{{ player.firstName }} {{ player.lastName }}</PersonLink>
+                <PersonLink :person-id="player.directoryPersonId">{{ playerLabel(player) }}</PersonLink>
               </li>
             </ul>
           </template>

@@ -2,7 +2,7 @@
 import { ArrowRight, ClipboardList, Plus, Trophy } from '@lucide/vue'
 import { PlayerboardTrainingSchema, type PlayerboardTraining } from '@vereinsfunk/contracts'
 import { playerboardErrorMessage } from '../utils/playerboardErrors'
-import { placementBadgeClass, placementRowClass, type RankingListItem } from '../utils/playerboardRanking'
+import { placementBadgeClass, type RankingListItem } from '../utils/playerboardRanking'
 
 // Paket 052, PR 4: Saison der gewaehlten Mannschaft auf einen Blick -- eigener Platz (fuer
 // Spieler mit verknuepftem Kader-Eintrag), die ganze Rangliste und die letzten Trainings. Ausfuehrlich
@@ -123,25 +123,8 @@ const seasonLabel = computed(() =>
 
       <div>
         <h3 class="mb-2 text-[11px] font-bold uppercase tracking-[.12em] text-[#7b827d]">Rangliste</h3>
-        <p v-if="items.length === 0" class="text-sm text-[#6c756f]">
-          Noch keine Punkte aus abgeschlossenen Trainings.
-        </p>
         <!-- Betreiberentscheidung 2026-10-08: immer alle Spieler, die Plaetze 1 bis 3 in Medaillenfarben. -->
-        <ol v-else class="-mx-2 space-y-0.5">
-          <li v-for="item in items" :key="item.key" class="flex items-center gap-2 rounded-lg px-2 py-1" :class="placementRowClass(item.rank)">
-            <span
-              class="grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-extrabold"
-              :class="placementBadgeClass(item.rank)"
-              >{{ item.rank }}</span
-            >
-            <span
-              class="min-w-0 flex-1 truncate text-sm"
-              :class="item.highlight ? 'font-bold text-forest' : 'text-ink'"
-              ><PersonLink :person-id="item.personId">{{ item.label }}</PersonLink></span
-            >
-            <span class="text-sm font-bold tabular-nums text-ink">{{ item.total }}</span>
-          </li>
-        </ol>
+        <PlayerboardRankingList :items="items" empty-text="Noch keine Punkte aus abgeschlossenen Trainings." compact />
         <NuxtLink
           to="/playerboard/rangliste"
           class="focus-ring mt-2 inline-flex min-h-11 items-center gap-1 rounded-lg text-xs font-semibold text-forest"

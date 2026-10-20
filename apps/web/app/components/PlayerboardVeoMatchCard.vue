@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { PlayerboardPlayer, PlayerboardVeoTeamStat } from '@vereinsfunk/contracts'
 import { playerboardErrorMessage } from '../utils/playerboardErrors'
+import { playerLabel } from '../utils/playerboardRanking'
 import { categoryLabel, formatStatValue, matchOutcome, scoreLabel, statLabel, statValues, teamStatsByCategory } from '../utils/playerboardVeo'
 import type { VeoPlayerTableRow } from './PlayerboardVeoPlayerTable.vue'
 
@@ -51,7 +52,7 @@ const assignedPlayer = computed(() => new Map(props.match.players.map((player) =
 const canAssign = computed(() => Boolean(props.roster && props.match.fixtureId))
 const rosterOptions = computed(() => (props.roster ?? [])
   .filter((player) => player.active)
-  .map((player) => ({ id: player.id, label: `${player.jerseyNumber !== null ? `#${player.jerseyNumber} ` : ''}${player.firstName} ${player.lastName}` })))
+  .map((player) => ({ id: player.id, label: playerLabel(player) })))
 
 /** Speichert die Wahl fuer eine Rueckennummer und meldet, wie viele Spiele sich geaendert haben. */
 async function choose(jerseyNumber: number, select: HTMLSelectElement) {

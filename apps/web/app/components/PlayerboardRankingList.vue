@@ -4,9 +4,10 @@ import { placementBadgeClass, placementRowClass, type RankingListItem } from '..
 
 // Paket 052, PR 4: Rangliste als Liste, die auf 360 px ohne seitliches Scrollen auskommt. Intern
 // mit Namen, oeffentlich nur mit "#7 M. K." -- die Seiten bilden ihre Eintraege auf diese Form ab.
-// Die Punkte je Kategorie klappen pro Zeile auf, statt Spalten zu brauchen.
+// Die Punkte je Kategorie klappen pro Zeile auf, statt Spalten zu brauchen. compact ist die schmale
+// Fassung fuer die Saison-Kachel (PlayerboardSeasonSummary.vue): ohne Karte und ohne Aufklappen.
 
-defineProps<{ items: readonly RankingListItem[]; emptyText: string }>()
+defineProps<{ items: readonly RankingListItem[]; emptyText: string; compact?: boolean }>()
 const expanded = ref<string | null>(null)
 
 /** Klappt die Kategorien einer Zeile auf oder zu. */
@@ -16,7 +17,14 @@ function toggle(key: string) {
 </script>
 
 <template>
-  <p v-if="items.length === 0" class="card p-6 text-center text-sm text-[#6c756f]">{{ emptyText }}</p>
+  <p v-if="items.length === 0" :class="compact ? 'text-sm text-[#6c756f]' : 'card p-6 text-center text-sm text-[#6c756f]'">{{ emptyText }}</p>
+  <ol v-else-if="compact" class="-mx-2 space-y-0.5">
+    <li v-for="item in items" :key="item.key" class="flex items-center gap-2 rounded-lg px-2 py-1" :class="placementRowClass(item.rank)">
+      <span class="grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-extrabold" :class="placementBadgeClass(item.rank)">{{ item.rank }}</span>
+      <span class="min-w-0 flex-1 truncate text-sm" :class="item.highlight ? 'font-bold text-forest' : 'text-ink'"><PersonLink :person-id="item.personId">{{ item.label }}</PersonLink></span>
+      <span class="text-sm font-bold tabular-nums text-ink">{{ item.total }}</span>
+    </li>
+  </ol>
   <ol v-else class="card divide-y divide-[#ecece5]" data-testid="ranking-list">
     <!-- Plaetze 1 bis 3 in ihrer Medaillenfarbe; die eigene Zeile zusaetzlich mit Balken links, damit
          sich beide Hervorhebungen nicht ueberdecken. -->
