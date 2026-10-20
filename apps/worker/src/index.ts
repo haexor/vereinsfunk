@@ -54,7 +54,11 @@ const shutdown = async (signal: string): Promise<void> => {
   await stopWorker()
   await workerRun?.catch(() => {})
   logger.info({ signal }, 'worker stopped gracefully')
-  process.exitCode = 0
+  // Ein vorher gesetzter Fehler-Exit-Code (Startfehler, abgebrochener Worker-Lauf) bleibt stehen,
+  // sonst startete die Restart-Policy einen gescheiterten Worker nie neu. process.exit, weil das SDK
+  // seit handleKill: false nicht mehr selbst beendet und offene Client-Verbindungen ihn halten koennen.
+  process.exitCode ??= 0
+  process.exit()
 }
 
 process.once('SIGINT', () => { void shutdown('SIGINT') })
@@ -118,4 +122,7 @@ const startup = main()
 startup.catch((error: unknown) => {
   logger.fatal({ err: error }, 'Hatchet worker failed to start')
   process.exitCode = 1
+  // Ein bereits gestarteter Worker (etwa wenn waitUntilReady scheitert) hielte den Prozess sonst
+  // ohne Outbox-Versand am Leben -- haengend statt neu gestartet.
+  void shutdown('startup_failed')
 })
