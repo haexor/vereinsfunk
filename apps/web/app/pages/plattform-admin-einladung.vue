@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { AlertTriangle, CheckCircle2, LoaderCircle } from '@lucide/vue'
 import { PlatformAdminStatusSchema } from '@vereinsfunk/contracts'
+import { ApiRequestError } from '../utils/apiClient'
 
 definePageMeta({ layout: 'auth' })
 
 const route = useRoute()
-const config = useRuntimeConfig()
+const api = useApiClient()
 const session = await useSession()
 
 const token = typeof route.query.token === 'string' ? route.query.token : ''
@@ -16,18 +17,12 @@ const errorMessage = ref('')
 async function acceptInvitation() {
   status.value = 'accepting'
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/platform-admin-invitations/accept`, {
-      method: 'POST',
-      headers,
-      body: { token },
-    })
-    PlatformAdminStatusSchema.parse(response)
+    await api.request('/v1/platform-admin-invitations/accept', { method: 'POST', body: { token } }, PlatformAdminStatusSchema)
     await refreshSession()
     status.value = 'accepted'
   } catch (error) {
     status.value = 'error'
-    const code = (error as { data?: { error?: string } })?.data?.error
+    const code = error instanceof ApiRequestError ? error.code : undefined
     const messages: Record<string, string> = {
       invitation_email_mismatch: 'Diese Einladung wurde an eine andere E-Mail-Adresse geschickt als die, mit der du angemeldet bist.',
       member_cannot_become_platform_admin: 'Dieses Konto ist Mitglied in einem Verein. Betreiber- und Vereinskonten sind getrennt.',

@@ -5,7 +5,7 @@ import {
   type DirectoryPersonStatus,
 } from '@vereinsfunk/contracts'
 
-const config = useRuntimeConfig()
+const api = useApiClient()
 const session = await useSession()
 const scope = await useScope()
 
@@ -86,13 +86,12 @@ async function loadPeople() {
   loading.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
     const query: Record<string, string> = {}
     if (filterDepartmentId.value) query.departmentId = filterDepartmentId.value
     if (filterTeamId.value) query.teamId = filterTeamId.value
     if (filterMinor.value) query.isMinor = 'true'
     if (filterLeft.value) query.status = 'left'
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/directory-people`, { headers, query })
+    const response = await api.request(`/v1/organizations/${organizationId.value}/directory-people`, { query })
     if (loadRun !== latestPeopleLoad) return
     people.value = DirectoryPersonSchema.array().parse(response)
   } catch {
@@ -141,7 +140,6 @@ async function createPerson() {
   createSubmitting.value = true
   createError.value = ''
   try {
-    const headers = await useAuthHeader()
     const body: Record<string, unknown> = {
       firstName: createForm.firstName.trim(),
       lastName: createForm.lastName.trim(),
@@ -152,8 +150,8 @@ async function createPerson() {
     if (createForm.birthYear) body.birthYear = Number(createForm.birthYear)
     if (createForm.joinedAt) body.joinedAt = createForm.joinedAt
     if (createForm.email.trim()) body.email = createForm.email.trim()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/directory-people`, { method: 'POST', headers, body })
-    people.value = [...people.value, DirectoryPersonSchema.parse(response)]
+    const created = await api.request(`/v1/organizations/${organizationId.value}/directory-people`, { method: 'POST', body }, DirectoryPersonSchema)
+    people.value = [...people.value, created]
     createForm.firstName = ''; createForm.lastName = ''; createForm.birthYear = ''; createForm.joinedAt = ''; createForm.email = ''
     createForm.status = 'active'
   } catch {
@@ -211,7 +209,6 @@ async function saveEdit(person: DirectoryPerson) {
   editSubmitting.value = true
   editError.value = ''
   try {
-    const headers = await useAuthHeader()
     const body: Record<string, unknown> = {
       firstName: editForm.firstName.trim(),
       lastName: editForm.lastName.trim(),
@@ -223,8 +220,7 @@ async function saveEdit(person: DirectoryPerson) {
       leftAt: editForm.leftAt || null,
       email: editForm.email.trim() || null,
     }
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/directory-people/${person.id}`, { method: 'PATCH', headers, body })
-    const updated = DirectoryPersonSchema.parse(response)
+    const updated = await api.request(`/v1/directory-people/${person.id}`, { method: 'PATCH', body }, DirectoryPersonSchema)
     people.value = people.value.map((item) => (item.id === updated.id ? updated : item))
     editingPersonId.value = null
   } catch {

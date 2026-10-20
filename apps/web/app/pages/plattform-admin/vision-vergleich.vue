@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { CreateVisionProviderComparisonRunRequestSchema, VisionProviderComparisonRunSchema, type VisionProviderComparisonRun } from '@vereinsfunk/contracts'
+import { ApiRequestError } from '../../utils/apiClient'
 
 definePageMeta({ layout: 'admin' })
 
-const config = useRuntimeConfig()
+const api = useApiClient()
 const runs = ref<VisionProviderComparisonRun[]>([])
 const loading = ref(true)
 const errorMessage = ref('')
@@ -22,9 +23,7 @@ function hasUnfinishedRun(): boolean {
 const { refresh: loadRuns } = usePolling(async () => {
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch(`${config.public.apiBase}/v1/vision-provider-comparisons`, { headers })
-    runs.value = VisionProviderComparisonRunSchema.array().parse(response)
+    runs.value = await api.request('/v1/vision-provider-comparisons', {}, VisionProviderComparisonRunSchema.array())
   } catch {
     errorMessage.value = 'Vergleichsläufe konnten nicht geladen werden.'
   } finally {
@@ -38,13 +37,12 @@ async function submitRun() {
   submitting.value = true
   submitError.value = ''
   try {
-    const headers = await useAuthHeader()
     const body = CreateVisionProviderComparisonRunRequestSchema.parse({ websiteUrl: websiteUrl.value.trim() })
-    await $fetch(`${config.public.apiBase}/v1/vision-provider-comparisons`, { method: 'POST', headers, body })
+    await api.request('/v1/vision-provider-comparisons', { method: 'POST', body })
     websiteUrl.value = ''
     await loadRuns()
   } catch (error) {
-    const code = (error as { data?: { error?: string } })?.data?.error
+    const code = error instanceof ApiRequestError ? error.code : undefined
     submitError.value = code === 'website_url_not_allowed'
       ? 'Diese Adresse darf nicht abgerufen werden.'
       : 'Vergleichslauf konnte nicht gestartet werden.'

@@ -15,6 +15,7 @@ import {
   type SocialPlatform,
   type TextGenerationPlatformDefault,
 } from '@vereinsfunk/contracts'
+import { ApiRequestError } from '../../utils/apiClient'
 
 definePageMeta({ layout: 'admin' })
 
@@ -48,7 +49,7 @@ const TASK_KIND_OPTIONS = [
   { value: 'image_generation', label: 'Bildgenerierung', available: false },
   { value: 'video_generation', label: 'Videogenerierung', available: false },
 ] as const
-const config = useRuntimeConfig()
+const api = useApiClient()
 const loading = ref(true)
 const saving = ref(false)
 const errorMessage = ref('')
@@ -171,9 +172,7 @@ async function load() {
   loading.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch(`${config.public.apiBase}/v1/llm-providers`, { headers })
-    providers.value = LlmProviderConfigurationSchema.array().parse(response)
+    providers.value = await api.request('/v1/llm-providers', {}, LlmProviderConfigurationSchema.array())
   } catch {
     errorMessage.value = 'LLM-Provider konnten nicht geladen werden.'
   } finally {
@@ -197,10 +196,8 @@ async function toggleProviderActive(provider: LlmProviderConfigurationDto) {
   taskAssignmentSaving[provider.id] = true
   taskAssignmentError.value = ''
   try {
-    const headers = await useAuthHeader()
     const body = UpdateLlmProviderConfigurationRequestSchema.parse({ isActive: !provider.isActive })
-    const response = await $fetch(`${config.public.apiBase}/v1/llm-providers/${provider.id}`, { method: 'PATCH', headers, body })
-    const updated = LlmProviderConfigurationSchema.parse(response)
+    const updated = await api.request(`/v1/llm-providers/${provider.id}`, { method: 'PATCH', body }, LlmProviderConfigurationSchema)
     const index = providers.value.findIndex((entry) => entry.id === provider.id)
     if (index >= 0) providers.value[index] = updated
   } catch {
@@ -218,9 +215,7 @@ function platformDefaultUpdatedAt(platform: SocialPlatform): string {
 async function loadPlatformDefaults() {
   platformDefaultsLoading.value = true
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch(`${config.public.apiBase}/v1/text-generation-platform-defaults`, { headers })
-    platformDefaults.value = TextGenerationPlatformDefaultSchema.array().parse(response)
+    platformDefaults.value = await api.request('/v1/text-generation-platform-defaults', {}, TextGenerationPlatformDefaultSchema.array())
     for (const row of platformDefaults.value) platformDefaultDrafts[row.platform] = row.maxCharacters
   } catch {
     errorMessage.value = 'Zeichengrenzen konnten nicht geladen werden.'
@@ -239,16 +234,14 @@ async function savePlatformDefault(platform: SocialPlatform) {
   platformDefaultSaving[platform] = true
   platformDefaultErrors[platform] = ''
   try {
-    const headers = await useAuthHeader()
     const body = UpdateTextGenerationPlatformDefaultRequestSchema.parse({ maxCharacters: draft })
-    const response = await $fetch(`${config.public.apiBase}/v1/text-generation-platform-defaults/${platform}`, { method: 'PUT', headers, body })
-    const updated = TextGenerationPlatformDefaultSchema.parse(response)
+    const updated = await api.request(`/v1/text-generation-platform-defaults/${platform}`, { method: 'PUT', body }, TextGenerationPlatformDefaultSchema)
     const index = platformDefaults.value.findIndex((row) => row.platform === platform)
     if (index >= 0) platformDefaults.value[index] = updated
     else platformDefaults.value.push(updated)
     platformDefaultDrafts[platform] = updated.maxCharacters
   } catch (error) {
-    const code = (error as { data?: { error?: string } })?.data?.error
+    const code = error instanceof ApiRequestError ? error.code : undefined
     platformDefaultErrors[platform] = code === 'text_generation_platform_default_not_found'
       ? 'Für diese Plattform ist keine Vorgabe angelegt.'
       : 'Zeichengrenze konnte nicht gespeichert werden.'
@@ -262,15 +255,13 @@ async function loadModels() {
   modelsLoading.value = true
   modelsMessage.value = ''
   try {
-    const headers = await useAuthHeader()
     const response = editingProviderId.value && !newProvider.apiKey.trim()
-      ? await $fetch(`${config.public.apiBase}/v1/llm-providers/${editingProviderId.value}/models`, { method: 'POST', headers })
-      : await $fetch(`${config.public.apiBase}/v1/llm-providers/models`, {
+      ? await api.request(`/v1/llm-providers/${editingProviderId.value}/models`, { method: 'POST' }, ListLlmProviderModelsResponseSchema)
+      : await api.request('/v1/llm-providers/models', {
         method: 'POST',
-        headers,
         body: ListLlmProviderModelsRequestSchema.parse({ protocol: newProvider.protocol, baseUrl: newProvider.baseUrl, apiKey: newProvider.apiKey }),
-      })
-    availableModels.value = ListLlmProviderModelsResponseSchema.parse(response).models
+      }, ListLlmProviderModelsResponseSchema)
+    availableModels.value = response.models
     useCustomModel.value = false
     if (!availableModels.value.includes(newProvider.model)) newProvider.model = availableModels.value[0] ?? ''
   } catch {
@@ -289,7 +280,6 @@ async function saveProvider() {
   saving.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
     const values = {
       label: newProvider.label,
       protocol: newProvider.protocol,
@@ -300,10 +290,10 @@ async function saveProvider() {
     }
     if (editingProviderId.value) {
       const body = UpdateLlmProviderConfigurationRequestSchema.parse({ ...values, apiKey: newProvider.apiKey.trim() || undefined })
-      await $fetch(`${config.public.apiBase}/v1/llm-providers/${editingProviderId.value}`, { method: 'PATCH', headers, body })
+      await api.request(`/v1/llm-providers/${editingProviderId.value}`, { method: 'PATCH', body })
     } else {
       const body = CreateLlmProviderConfigurationRequestSchema.parse({ ...values, apiKey: newProvider.apiKey })
-      await $fetch(`${config.public.apiBase}/v1/llm-providers`, { method: 'POST', headers, body })
+      await api.request('/v1/llm-providers', { method: 'POST', body })
     }
     resetProviderForm()
     await load()
@@ -318,9 +308,8 @@ async function removeProvider(id: string) {
   saving.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
     const providerId = UuidSchema.parse(id)
-    await $fetch(`${config.public.apiBase}/v1/llm-providers/${providerId}`, { method: 'DELETE', headers })
+    await api.request(`/v1/llm-providers/${providerId}`, { method: 'DELETE' })
     await load()
   } catch {
     errorMessage.value = 'Provider konnte nicht entfernt werden.'

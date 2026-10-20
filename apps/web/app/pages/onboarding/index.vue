@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { AlertTriangle, ArrowRight, Check, ShieldCheck, Sparkles, Upload } from '@lucide/vue'
-import { CreateBrandAssetResponseSchema } from '@vereinsfunk/contracts'
+import { CreateBrandAssetResponseSchema, CreateOrganizationResponseSchema } from '@vereinsfunk/contracts'
+import { ApiRequestError } from '../../utils/apiClient'
 import { optionalNumber } from '../../utils/numberInput'
 
 definePageMeta({ layout: false })
 
-const config = useRuntimeConfig()
+const api = useApiClient()
 const step = useState('onboarding-step', () => 1)
 const organizationId = useState<string | null>('onboarding-organization-id', () => null)
 const createdSlug = useState<string | null>('onboarding-slug', () => null)
@@ -73,13 +74,11 @@ async function submitOrganization() {
   submitting.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
     if (!organizationId.value) {
-      const created = await $fetch<{ organizationId: string; slug: string }>(`${config.public.apiBase}/v1/organizations`, {
+      const created = await api.request('/v1/organizations', {
         method: 'POST',
-        headers,
         body: { name: org.value.name.trim(), firstDepartmentName: departmentName.value.trim(), timezone: org.value.timezone },
-      })
+      }, CreateOrganizationResponseSchema)
       organizationId.value = created.organizationId
       createdSlug.value = created.slug
     }
@@ -95,18 +94,14 @@ async function submitOrganization() {
     const foundedYear = optionalNumber(org.value.foundedYear)
     if (foundedYear !== null) profilePatch.foundedYear = foundedYear
     if (Object.keys(profilePatch).length > 0) {
-      await $fetch(`${config.public.apiBase}/v1/organizations/${organizationId.value}/profile`, {
-        method: 'PATCH',
-        headers,
-        body: profilePatch,
-      })
+      await api.request(`/v1/organizations/${organizationId.value}/profile`, { method: 'PATCH', body: profilePatch })
     }
 
     await refreshSession()
     step.value = 3
   } catch (error) {
     errorMessage.value =
-      (error as { response?: { status?: number } })?.response?.status === 429
+      error instanceof ApiRequestError && error.statusCode === 429
         ? 'Ihr habt bereits die maximale Anzahl an Vereinen für dieses Konto erreicht. Bitte meldet euch bei uns.'
         : 'Der Verein konnte nicht angelegt werden. Bitte Angaben prüfen und erneut versuchen.'
   } finally {
@@ -126,7 +121,6 @@ async function saveBranding() {
   submitting.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
     let logoAssetId: string | undefined
     if (logoFile.value) {
       const formData = new FormData()
@@ -136,15 +130,12 @@ async function saveBranding() {
       // logoPreviewUrl bleibt die lokale URL.createObjectURL()-Vorschau aus onLogoSelected --
       // die generische Route liefert einen Objekt-Pfad, keine Signed URL, ein zweiter
       // Sign-Aufruf nur fuer die Vorschau lohnt hier nicht.
-      const uploaded = CreateBrandAssetResponseSchema.parse(
-        await $fetch(`${config.public.apiBase}/v1/brand/assets`, { method: 'POST', headers, body: formData }),
-      )
+      const uploaded = await api.request('/v1/brand/assets', { method: 'POST', body: formData }, CreateBrandAssetResponseSchema)
       logoAssetId = uploaded.id
       logoSanitizedNotice.value = uploaded.sanitized
     }
-    await $fetch(`${config.public.apiBase}/v1/organizations/${organizationId.value}/brand`, {
+    await api.request(`/v1/organizations/${organizationId.value}/brand`, {
       method: 'PUT',
-      headers,
       body: {
         primaryColor: brand.value.primaryColor,
         accentColor: brand.value.accentColor,
@@ -159,7 +150,7 @@ async function saveBranding() {
         ...(logoAssetId ? { logoAssetId } : {}),
       },
     })
-    await $fetch(`${config.public.apiBase}/v1/onboarding/steps/branding/complete`, { method: 'POST', headers, body: { organizationId: organizationId.value } })
+    await api.request('/v1/onboarding/steps/branding/complete', { method: 'POST', body: { organizationId: organizationId.value } })
     step.value = 4
   } catch {
     errorMessage.value = 'Das Erscheinungsbild konnte nicht gespeichert werden.'
@@ -180,14 +171,11 @@ async function confirmResponsiblePerson() {
   submitting.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
-    const session = await useSession()
-    await $fetch(`${config.public.apiBase}/v1/organizations/${organizationId.value}/profile`, {
+    await api.request(`/v1/organizations/${organizationId.value}/profile`, {
       method: 'PATCH',
-      headers,
       body: { responsiblePersonProfileId: session.value?.userId },
     })
-    await $fetch(`${config.public.apiBase}/v1/onboarding/steps/responsible_person/complete`, { method: 'POST', headers, body: { organizationId: organizationId.value } })
+    await api.request('/v1/onboarding/steps/responsible_person/complete', { method: 'POST', body: { organizationId: organizationId.value } })
     await finishOnboarding()
   } catch {
     errorMessage.value = 'Konnte nicht gespeichert werden. Bitte erneut versuchen.'

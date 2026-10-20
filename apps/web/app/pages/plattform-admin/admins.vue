@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { AddPlatformAdminRequestSchema, PlatformAdminInvitationSchema, PlatformAdminSchema, type PlatformAdmin, type PlatformAdminInvitation } from '@vereinsfunk/contracts'
+import { ApiRequestError } from '../../utils/apiClient'
 
 definePageMeta({ layout: 'admin' })
 
-const config = useRuntimeConfig()
+const api = useApiClient()
 const session = await useSession()
 const loading = ref(true)
 const saving = ref(false)
@@ -28,13 +29,12 @@ async function load() {
   loading.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
-    const [adminsResponse, invitationsResponse] = await Promise.all([
-      $fetch(`${config.public.apiBase}/v1/platform-admins`, { headers }),
-      $fetch(`${config.public.apiBase}/v1/platform-admin-invitations`, { headers }),
+    const [adminList, invitationList] = await Promise.all([
+      api.request('/v1/platform-admins', {}, PlatformAdminSchema.array()),
+      api.request('/v1/platform-admin-invitations', {}, PlatformAdminInvitationSchema.array()),
     ])
-    admins.value = PlatformAdminSchema.array().parse(adminsResponse)
-    invitations.value = PlatformAdminInvitationSchema.array().parse(invitationsResponse)
+    admins.value = adminList
+    invitations.value = invitationList
   } catch {
     errorMessage.value = 'Admins konnten nicht geladen werden.'
   } finally {
@@ -48,13 +48,12 @@ async function addAdmin() {
   saving.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
     const body = AddPlatformAdminRequestSchema.parse({ email: newEmail.value })
-    await $fetch(`${config.public.apiBase}/v1/platform-admin-invitations`, { method: 'POST', headers, body })
+    await api.request('/v1/platform-admin-invitations', { method: 'POST', body })
     newEmail.value = ''
     await load()
   } catch (error) {
-    const code = (error as { data?: { error?: string } })?.data?.error
+    const code = error instanceof ApiRequestError ? error.code : undefined
     errorMessage.value = INVITE_ERROR_MESSAGES[code ?? ''] ?? 'Einladung konnte nicht versendet werden.'
   } finally {
     saving.value = false
@@ -65,11 +64,10 @@ async function resendInvitation(id: string) {
   saving.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/platform-admin-invitations/${id}/resend`, { method: 'POST', headers })
+    await api.request(`/v1/platform-admin-invitations/${id}/resend`, { method: 'POST' })
     await load()
   } catch (error) {
-    const code = (error as { data?: { error?: string } })?.data?.error
+    const code = error instanceof ApiRequestError ? error.code : undefined
     errorMessage.value = RESEND_ERROR_MESSAGES[code ?? ''] ?? 'Einladung konnte nicht erneut versendet werden.'
   } finally {
     saving.value = false
@@ -80,8 +78,7 @@ async function revokeInvitation(id: string) {
   saving.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/platform-admin-invitations/${id}/revoke`, { method: 'POST', headers })
+    await api.request(`/v1/platform-admin-invitations/${id}/revoke`, { method: 'POST' })
     await load()
   } catch {
     errorMessage.value = 'Einladung konnte nicht widerrufen werden.'
@@ -94,8 +91,7 @@ async function removeAdmin(userId: string) {
   saving.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/platform-admins/${userId}`, { method: 'DELETE', headers })
+    await api.request(`/v1/platform-admins/${userId}`, { method: 'DELETE' })
     await load()
   } catch {
     errorMessage.value = 'Admin konnte nicht entfernt werden.'

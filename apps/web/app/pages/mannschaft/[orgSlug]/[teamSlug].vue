@@ -23,7 +23,7 @@ import { deriveSidebarPalette } from '../../../utils/sidebarBrand'
 definePageMeta({ layout: 'auth' })
 
 const route = useRoute()
-const config = useRuntimeConfig()
+const api = useApiClient()
 const routeParams = PublicTeamRouteParamsSchema.safeParse({
   orgSlug: route.params.orgSlug,
   teamSlug: route.params.teamSlug,
@@ -31,7 +31,7 @@ const routeParams = PublicTeamRouteParamsSchema.safeParse({
 const orgSlug = routeParams.success ? routeParams.data.orgSlug : ''
 const teamSlug = routeParams.success ? routeParams.data.teamSlug : ''
 const basePath = routeParams.success
-  ? `${config.public.apiBase}/v1/public/playerboard/${orgSlug}/${teamSlug}`
+  ? `/v1/public/playerboard/${orgSlug}/${teamSlug}`
   : ''
 
 const {
@@ -40,8 +40,7 @@ const {
   pending,
 } = await useAsyncData<PublicPlayerboardTeam>(`public-team-${orgSlug}-${teamSlug}`, async () => {
   if (!routeParams.success) throw createError({ statusCode: 404, statusMessage: 'Not found' })
-  const response = await $fetch(basePath)
-  return PublicPlayerboardTeamSchema.parse(response)
+  return api.request(basePath, { authenticate: false }, PublicPlayerboardTeamSchema)
 })
 
 type PublicTab = 'ranking' | 'veo' | 'photos'
@@ -70,21 +69,20 @@ const {
   `public-team-ranking-${orgSlug}-${teamSlug}`,
   async () => {
     if (!team.value?.tabs.points) return []
-    const response = await $fetch(`${basePath}/ranking`, {
+    const entries = await api.request(`${basePath}/ranking`, {
+      authenticate: false,
       query: team.value.seasonFrom ? { from: team.value.seasonFrom } : {},
-    })
-    return PublicPlayerboardRankingEntrySchema.array()
-      .parse(response)
-      .map((entry, index) => ({
-        key: `${index}`,
-        rank: entry.rank,
-        label: entry.label,
-        total: entry.total,
-        categories: entry.categories.map((category) => ({
-          name: category.category,
-          points: category.points,
-        })),
-      }))
+    }, PublicPlayerboardRankingEntrySchema.array())
+    return entries.map((entry, index) => ({
+      key: `${index}`,
+      rank: entry.rank,
+      label: entry.label,
+      total: entry.total,
+      categories: entry.categories.map((category) => ({
+        name: category.category,
+        points: category.points,
+      })),
+    }))
   },
   { watch: [team] },
 )
@@ -98,9 +96,10 @@ async function loadVeo() {
   if (veoMatches.value) return
   veoError.value = false
   try {
-    veoMatches.value = PublicPlayerboardVeoMatchSchema.array().parse(await $fetch(`${basePath}/veo`, {
+    veoMatches.value = await api.request(`${basePath}/veo`, {
+      authenticate: false,
       query: team.value?.seasonFrom ? { from: team.value.seasonFrom } : {},
-    }))
+    }, PublicPlayerboardVeoMatchSchema.array())
   } catch {
     veoError.value = true
   }
@@ -125,7 +124,7 @@ let photosLoadedAt = 0
 async function loadPhotos() {
   photosError.value = false
   try {
-    photos.value = PublicPlayerboardPhotoSchema.array().parse(await $fetch(`${basePath}/photos`))
+    photos.value = await api.request(`${basePath}/photos`, { authenticate: false }, PublicPlayerboardPhotoSchema.array())
     photosLoadedAt = Date.now()
   } catch {
     photosError.value = true

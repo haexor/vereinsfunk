@@ -11,12 +11,13 @@ import {
   type PlatformAdminOrganizationSubscription,
   type SubscriptionPlan,
 } from '@vereinsfunk/contracts'
+import { ApiRequestError } from '../../../utils/apiClient'
 import { optionalNumber } from '../../../utils/numberInput'
 import { BYTES_PER_MB, MEDIA_ORIGIN_LABELS } from '../../../utils/planLimits'
 
 definePageMeta({ layout: 'admin' })
 
-const config = useRuntimeConfig()
+const api = useApiClient()
 const route = useRoute()
 const loading = ref(true)
 const errorMessage = ref('')
@@ -37,14 +38,13 @@ const contentOverride = reactive<Record<MediaOrigin, { maxPerMonth: string; maxD
 
 async function loadSubscription() {
   try {
-    const headers = await useAuthHeader()
-    const [subscriptionResponse, plansResponse] = await Promise.all([
-      $fetch(`${config.public.apiBase}/v1/platform-admin/organizations/${route.params.id}/subscription`, { headers }),
-      $fetch(`${config.public.apiBase}/v1/platform-admin/subscription-plans`, { headers }),
+    const [currentSubscription, planList] = await Promise.all([
+      api.request(`/v1/platform-admin/organizations/${route.params.id}/subscription`, {}, PlatformAdminOrganizationSubscriptionSchema),
+      api.request('/v1/platform-admin/subscription-plans', {}, SubscriptionPlanSchema.array()),
     ])
-    subscription.value = PlatformAdminOrganizationSubscriptionSchema.parse(subscriptionResponse)
-    plans.value = SubscriptionPlanSchema.array().parse(plansResponse)
-    selectedPlanKey.value = subscription.value.planKey
+    subscription.value = currentSubscription
+    plans.value = planList
+    selectedPlanKey.value = currentSubscription.planKey
   } catch {
     // Kein eigener Fehlerzustand fuer diesen Unterabschnitt -- die restliche Seite (Kontakt,
     // Ressourcenverbrauch) bleibt nutzbar, auch wenn der Tarifabschnitt einmal nicht laedt.
@@ -57,9 +57,8 @@ async function changePlan() {
   savingSubscription.value = true
   subscriptionError.value = ''
   try {
-    const headers = await useAuthHeader()
     const body = SetOrganizationSubscriptionRequestSchema.parse({ planKey: selectedPlanKey.value })
-    await $fetch(`${config.public.apiBase}/v1/platform-admin/organizations/${route.params.id}/subscription`, { method: 'PUT', headers, body })
+    await api.request(`/v1/platform-admin/organizations/${route.params.id}/subscription`, { method: 'PUT', body })
     await loadSubscription()
   } catch {
     subscriptionError.value = 'Tarifwechsel fehlgeschlagen.'
@@ -73,7 +72,6 @@ async function saveStructureOverride() {
   savingSubscription.value = true
   subscriptionError.value = ''
   try {
-    const headers = await useAuthHeader()
     const storageMegabytes = optionalNumber(structureOverride.storageMegabytes)
     const body = SetOrganizationSubscriptionRequestSchema.parse({
       planKey: selectedPlanKey.value,
@@ -82,7 +80,7 @@ async function saveStructureOverride() {
       storageBytesOverride: storageMegabytes === null ? null : storageMegabytes * BYTES_PER_MB,
       overrideReason: structureOverride.reason,
     })
-    await $fetch(`${config.public.apiBase}/v1/platform-admin/organizations/${route.params.id}/subscription`, { method: 'PUT', headers, body })
+    await api.request(`/v1/platform-admin/organizations/${route.params.id}/subscription`, { method: 'PUT', body })
     structureOverride.maxTeams = ''; structureOverride.maxDepartments = ''; structureOverride.storageMegabytes = ''; structureOverride.reason = ''
     await loadSubscription()
   } catch {
@@ -98,14 +96,13 @@ async function saveContentOverride(mediaOrigin: MediaOrigin) {
   savingSubscription.value = true
   subscriptionError.value = ''
   try {
-    const headers = await useAuthHeader()
     const body = SetContentLimitOverrideRequestSchema.parse({
       mediaOrigin,
       maxPerMonth: optionalNumber(form.maxPerMonth),
       maxDurationSeconds: optionalNumber(form.maxDurationSeconds),
       overrideReason: form.reason,
     })
-    await $fetch(`${config.public.apiBase}/v1/platform-admin/organizations/${route.params.id}/content-limit-overrides`, { method: 'PUT', headers, body })
+    await api.request(`/v1/platform-admin/organizations/${route.params.id}/content-limit-overrides`, { method: 'PUT', body })
     form.maxPerMonth = ''; form.maxDurationSeconds = ''; form.reason = ''
     await loadSubscription()
   } catch {
@@ -137,11 +134,9 @@ async function load() {
   loading.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch(`${config.public.apiBase}/v1/platform-admin/organizations/${route.params.id}`, { headers })
-    organization.value = PlatformAdminOrganizationDetailSchema.parse(response)
+    organization.value = await api.request(`/v1/platform-admin/organizations/${route.params.id}`, {}, PlatformAdminOrganizationDetailSchema)
   } catch (error) {
-    const status = (error as { statusCode?: number })?.statusCode
+    const status = error instanceof ApiRequestError ? error.statusCode : undefined
     errorMessage.value = status === 404 ? 'Dieser Verein wurde nicht gefunden.' : 'Die Vereinsdetails konnten nicht geladen werden.'
   } finally {
     loading.value = false
