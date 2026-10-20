@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { isBrandAssetSelectable } from '@vereinsfunk/domain'
 import {
   CreateCustomStyleProfileRequestSchema,
   CustomStyleProfileSchema,
@@ -7,6 +6,7 @@ import {
   UpdateCustomStyleProfileRequestSchema,
   type CustomStyleProfile,
 } from '@vereinsfunk/contracts'
+import { selectableAtLevel } from '../utils/scopeSelection'
 import { avoidRulesFromDraft, doRulesFromDraft, emptyStyleProfileDraft, styleProfileDraftFrom, styleRulesFromDraft } from '../utils/styleProfileDraft'
 
 const api = useApiClient()
@@ -51,14 +51,7 @@ const profiles = ref<CustomStyleProfile[]>([])
 // Mannschaftsprofil nur dort. Bisher zeigte diese Seite ausschliesslich die eigene Ebene -- in einer
 // Abteilung war jedes vereinsweite Stilprofil unsichtbar, obwohl /erstellen es anbietet.
 const visibleProfiles = computed(() =>
-  profiles.value.filter((profile) =>
-    isBrandAssetSelectable(
-      { scope: profile.teamId ? 'team' : profile.departmentId ? 'department' : 'organization', departmentId: profile.departmentId ?? undefined, teamId: profile.teamId ?? undefined },
-      activeLevel.value,
-      activeDepartmentId.value ?? undefined,
-      activeTeamId.value ?? undefined,
-    ),
-  ),
+  selectableAtLevel(profiles.value, activeLevel.value, activeDepartmentId.value ?? undefined, activeTeamId.value ?? undefined),
 )
 const ownProfiles = computed(() =>
   visibleProfiles.value.filter(
