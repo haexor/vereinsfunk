@@ -16,7 +16,7 @@ import { z } from 'zod'
 import { buildStageDefinitions, filterAdultUserIds, isAuthorMinor, membersWithApprovePermission } from '../services/approvalRouting.js'
 import { computeMediaGateBlockersForPostVersion } from '../services/mediaGate.js'
 import type { ApiRouteContext } from './context.js'
-import { computeRuleEntry, createAuditRecorder, fetchAllRows, fetchAllRowsForIds, fetchMemberTrust, fetchPolicyRuleRows } from './shared.js'
+import { computeRuleEntry, computeScopedEffectiveConfig, createAuditRecorder, fetchAllRows, fetchAllRowsForIds, fetchMemberTrust, fetchPolicyRuleRows } from './shared.js'
 
 export function registerApprovalRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients } = context
@@ -325,10 +325,10 @@ export function registerApprovalRoutes(app: FastifyInstance, context: ApiRouteCo
     )
     const postVersionByRequestId = new Map(approvalRequestRows.map((row) => [row.id, row.post_version_id]))
     const postIds = Array.from(new Set(approvalRequestRows.map((row) => row.post_id)))
-    const postRows = await fetchAllRowsForIds<{ id: string; department_id: string }>(postIds, (batch, from, to) =>
-      client.from('posts').select('id, department_id').in('id', batch).order('id', { ascending: true }).range(from, to),
+    const postRows = await fetchAllRowsForIds<{ id: string; department_id: string | null; team_id: string | null }>(postIds, (batch, from, to) =>
+      client.from('posts').select('id, department_id, team_id').in('id', batch).order('id', { ascending: true }).range(from, to),
     )
-    const departmentByPostId = new Map(postRows.map((row) => [row.id, row.department_id]))
+    const postById = new Map(postRows.map((row) => [row.id, row]))
     const postIdByRequestId = new Map(approvalRequestRows.map((row) => [row.id, row.post_id]))
 
     // Kein unnoetiger Roundtrip auf policy_settings, wenn es (noch) keine einzige aufloesbare
@@ -336,12 +336,15 @@ export function registerApprovalRoutes(app: FastifyInstance, context: ApiRouteCo
     // plans/README.md), in dem approval_stages zwar existieren koennen, aber approval_request_id
     // ins Leere zeigt, solange kein echter Beitrag dahinter steht.
     const policyRows = postIds.length > 0 ? await fetchPolicyRuleRows(client, query.organizationId) : null
-    const effectiveConfigByDepartmentId = new Map<string, ReturnType<typeof resolveEffectiveConfig>>()
-    function effectivePolicyForDepartment(departmentId: string): { consentExpiresOnLeave: boolean } {
-      let config = effectiveConfigByDepartmentId.get(departmentId)
+    // Je Beitragsscope (Verein, Abteilung oder Team) einmal: consentExpiresOnLeave kann jede dieser
+    // Ebenen verschaerfen, eine reine Abteilungsaufloesung uebersah die Team-Ebene.
+    const effectiveConfigByScope = new Map<string, ReturnType<typeof resolveEffectiveConfig>>()
+    function effectivePolicyForPost(post: { department_id: string | null; team_id: string | null }): { consentExpiresOnLeave: boolean } {
+      const key = `${post.department_id ?? ''}:${post.team_id ?? ''}`
+      let config = effectiveConfigByScope.get(key)
       if (!config) {
-        config = computeRuleEntry(policyRows!, 'department', departmentId, null).config
-        effectiveConfigByDepartmentId.set(departmentId, config)
+        config = computeScopedEffectiveConfig(policyRows!, query.organizationId, post.department_id, post.team_id)
+        effectiveConfigByScope.set(key, config)
       }
       return { consentExpiresOnLeave: config.policies.consentExpiresOnLeave }
     }
@@ -366,11 +369,14 @@ export function registerApprovalRoutes(app: FastifyInstance, context: ApiRouteCo
       mine.map(async (row) => {
         const postVersionId = postVersionByRequestId.get(row.approval_request_id as string)
         const postId = postIdByRequestId.get(row.approval_request_id as string)
-        const departmentId = postId ? departmentByPostId.get(postId) : undefined
-        if (!postVersionId || !departmentId) return []
+        // Auf den Treffer pruefen, nicht auf department_id: null ist die Vereinsebene (Migration
+        // 2026082504, siehe /v1/approval-requests/stalled oben). Ein Vereinsbeitrag zeigte sonst
+        // "keine Einwaende", obwohl seine Medien blockieren.
+        const post = postId ? postById.get(postId) : undefined
+        if (!postVersionId || !post) return []
         let pending = blockersByPostVersionId.get(postVersionId)
         if (!pending) {
-          pending = computeMediaGateBlockersForPostVersion(gateClient, postVersionId, departmentId, effectivePolicyForDepartment(departmentId))
+          pending = computeMediaGateBlockersForPostVersion(gateClient, postVersionId, post.department_id, effectivePolicyForPost(post))
           blockersByPostVersionId.set(postVersionId, pending)
         }
         return pending

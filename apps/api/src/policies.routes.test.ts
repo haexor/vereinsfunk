@@ -907,6 +907,51 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
     expect(response.json()).toMatchObject([{ id: STAGE_ID, mediaGateBlockers: ['scan_pending'] }])
   })
 
+  it('reports the media gate blockers of an organization-level post without a department', async () => {
+    // Regression: posts.department_id ist seit Migration 2026082504 nullable (null = Vereinsebene).
+    // Die Blocker-Berechnung brach bei fehlender Abteilung mit einer leeren Liste ab -- ein
+    // Vereinsbeitrag zeigte dem Freigebenden "keine Einwaende", obwohl sein Medium blockiert.
+    const STAGE_POST_ID = '11000000-2000-4000-8000-000000000002'
+    const STAGE_POST_VERSION_ID = '11000000-3000-4000-8000-000000000002'
+    const APPROVAL_REQUEST_ROW_ID = '11000000-4000-4000-8000-000000000002'
+    const stageRow = {
+      id: STAGE_ID, position: 1, scope: 'organization', label: 'Verein', mode: 'named', minimum_approvals: 1, is_minor_stage: false,
+      status: 'open', reviewer_snapshot: [{ userId: USER_ID }], deadline_at: null, approval_request_id: APPROVAL_REQUEST_ROW_ID,
+    }
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'approval_stages') return chain({ data: [stageRow], error: null })
+            if (table === 'approval_requests') return chain({ data: [{ id: APPROVAL_REQUEST_ROW_ID, post_id: STAGE_POST_ID, post_version_id: STAGE_POST_VERSION_ID }], error: null })
+            if (table === 'posts') return chain({ data: [{ id: STAGE_POST_ID, department_id: null, team_id: null }], error: null })
+            if (table === 'policy_settings') return chain({ data: [], error: null })
+            throw new Error(`the media gate must not read ${table} through the user client`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'post_versions') return chain({ data: { title: '', caption: 'Hallo Welt' }, error: null })
+            if (table === 'post_media') return chain({ data: [{ media_derivative_id: '11000000-6000-4000-8000-000000000002' }], error: null })
+            if (table === 'media_derivatives') return chain({ data: [{ id: '11000000-6000-4000-8000-000000000002', media_asset_id: '11000000-6100-4000-8000-000000000002', status: 'ready' }], error: null })
+            if (table === 'media_assets') return chain({ data: [{ id: '11000000-6100-4000-8000-000000000002', mime_type: 'image/png', scan_status: 'pending', people_reviewed_at: '2026-08-01T00:00:00+00:00' }], error: null })
+            if (table === 'face_regions') return chain({ data: [], error: null })
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/approval-stages/mine?organizationId=${ORGANIZATION_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject([{ id: STAGE_ID, mediaGateBlockers: ['scan_pending'] }])
+  })
+
   it('requires an organizationId when listing the stages waiting for the caller', async () => {
     // Ohne Organisationsbezug saehe eine Person mit Pruefrollen in mehreren Vereinen die Freigaben
     // aller ihrer Vereine in der Liste eines einzelnen.

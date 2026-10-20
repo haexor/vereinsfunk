@@ -315,10 +315,17 @@ export function computeRuleEntry(
   return { ownRow, config }
 }
 
-export async function resolveScopedEffectiveConfig(client: SupabaseClient, organizationId: string, departmentId: string | null, teamId: string | null) {
-  const rows = await fetchPolicyRuleRows(client, organizationId)
+// Effektive Konfiguration genau des Scopes, in dem ein Beitrag liegt. posts.department_id ist seit
+// Migration 2026082504 nullable (null = Vereinsebene), und Verschaerfungen wie
+// consentExpiresOnLeave greifen auf jeder Ebene (mergeEffectiveConfig) -- eine feste
+// 'department'-Aufloesung uebersah Vereinsbeitraege ebenso wie eine Vorgabe der Team-Ebene.
+export function computeScopedEffectiveConfig(rows: PolicyRuleRows, organizationId: string, departmentId: string | null, teamId: string | null) {
   const scope = teamId ? 'team' : departmentId ? 'department' : 'organization'
   return computeRuleEntry(rows, scope, teamId ?? departmentId ?? organizationId, departmentId).config
+}
+
+export async function resolveScopedEffectiveConfig(client: SupabaseClient, organizationId: string, departmentId: string | null, teamId: string | null) {
+  return computeScopedEffectiveConfig(await fetchPolicyRuleRows(client, organizationId), organizationId, departmentId, teamId)
 }
 
 // maxCharacters bleibt null, wenn fuer die Plattform keine Vorgabezeile existiert: eine fehlende

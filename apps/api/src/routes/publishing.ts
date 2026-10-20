@@ -7,7 +7,7 @@ import { z } from 'zod'
 import { byteaToBuffer, createSecretBoxFromEnvironment } from '../secretBox.js'
 import { computeMediaGateBlockersForPostVersion, HARD_PUBLISH_BLOCKERS } from '../services/mediaGate.js'
 import type { ApiRouteContext } from './context.js'
-import { checkRateLimit, computeRuleEntry, createAuditRecorder, fetchPolicyRuleRows } from './shared.js'
+import { checkRateLimit, createAuditRecorder, resolveScopedEffectiveConfig } from './shared.js'
 
 /**
  * Registriert Planung und Ausfuehrung von Veroeffentlichungen mit Berechtigungs- und Medienpruefung.
@@ -97,7 +97,7 @@ export function registerPublishingRoutes(app: FastifyInstance, context: ApiRoute
     const version = await client.from('post_versions').select('id, post_id, caption').eq('id', publication.data.post_version_id as string).maybeSingle()
     if (version.error) throw version.error
     if (!version.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
-    const post = await client.from('posts').select('id, department_id').eq('id', version.data.post_id as string).maybeSingle()
+    const post = await client.from('posts').select('id, department_id, team_id').eq('id', version.data.post_id as string).maybeSingle()
     if (post.error) throw post.error
     if (!post.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     if (!(await requirePermission(request, reply, 'post.publish', { organizationId: publication.data.organization_id as string, departmentId: post.data.department_id as string }))) return
@@ -122,9 +122,9 @@ export function registerPublishingRoutes(app: FastifyInstance, context: ApiRoute
     // aussen geht nur die Liste der Blocker-Namen, keine Verzeichnisdaten -- dasselbe Muster wie das
     // Lesen von social_connection_secrets ueber den Service-Client.
     const service = supabaseClients.forService()
-    const policyRows = await fetchPolicyRuleRows(service, publication.data.organization_id as string)
-    const policy = { consentExpiresOnLeave: computeRuleEntry(policyRows, 'department', post.data.department_id as string, null).config.policies.consentExpiresOnLeave }
-    const gateBlockers = await computeMediaGateBlockersForPostVersion(service, version.data.id as string, post.data.department_id as string, policy)
+    const departmentId = post.data.department_id as string | null
+    const config = await resolveScopedEffectiveConfig(service, publication.data.organization_id as string, departmentId, post.data.team_id as string | null)
+    const gateBlockers = await computeMediaGateBlockersForPostVersion(service, version.data.id as string, departmentId, { consentExpiresOnLeave: config.policies.consentExpiresOnLeave })
     const hardBlockers = gateBlockers.filter((blocker) => HARD_PUBLISH_BLOCKERS.includes(blocker))
     if (hardBlockers.length > 0) {
       return reply.code(409).send({ error: 'media_gate_blocked', blockers: hardBlockers, correlationId: request.id })

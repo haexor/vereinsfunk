@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { DEPARTMENT_ID, ORGANIZATION_ID, USER_ID, chain, denyingRoleProvider, moduleStatusProviderWith, organizationManagerRoleProvider, signAccessToken, startApp } from './testSupport.js'
+import { DEPARTMENT_ID, ORGANIZATION_ID, TEAM_ID, USER_ID, chain, denyingRoleProvider, emptyPolicyRuleColumns, moduleStatusProviderWith, organizationManagerRoleProvider, signAccessToken, startApp } from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { MetaPublishError } from '@vereinsfunk/publishing'
 import type { PublicationInput, SocialPublisher } from '@vereinsfunk/publishing'
@@ -164,6 +164,48 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
           people: [{ id: '25000000-5000-4000-8000-000000000014', first_name: 'Mia', last_name: 'Minderjaehrig', status: 'active', is_minor: true }],
         }),
       })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
+      expect(response.statusCode).toBe(409)
+      expect(response.json()).toMatchObject({ error: 'media_gate_blocked', blockers: ['consent_invalid'] })
+    })
+
+    it('blocks the photo of a person who left when only the post’s team sets consent_expires_on_leave', async () => {
+      // Regression: die Richtlinie wurde fest auf Abteilungsebene aufgeloest und posts.team_id nie
+      // gelesen. consentExpiresOnLeave verschaerft sich aber je Ebene -- eine Team-Vorgabe blieb
+      // unbeachtet, und das Foto einer ausgetretenen Person ging trotzdem hinaus.
+      const mediaOverrides = {
+        postMedia: [{ media_derivative_id: '25000000-5000-4000-8000-000000000021' }],
+        derivatives: [{ id: '25000000-5000-4000-8000-000000000021', media_asset_id: '25000000-5000-4000-8000-000000000022', status: 'ready' }],
+        assets: [{ id: '25000000-5000-4000-8000-000000000022', mime_type: 'image/png', scan_status: 'clean', people_reviewed_at: '2026-08-01T00:00:00+00:00' }],
+        faces: [{ media_asset_id: '25000000-5000-4000-8000-000000000022', subject_kind: 'adult', decision: 'consented', consent_record_id: '25000000-5000-4000-8000-000000000023' }],
+        consents: [{
+          id: '25000000-5000-4000-8000-000000000023', guardian_confirmed: false, signer_role: 'self', superseded_by: null,
+          revoked_at: null, valid_from: null, valid_until: null, directory_person_id: '25000000-5000-4000-8000-000000000024',
+          scope_structured: { purposes: ['social_media'], platforms: null, mediaKinds: ['photo'], contexts: null, namingAllowed: true, departmentIds: null },
+        }],
+        people: [{ id: '25000000-5000-4000-8000-000000000024', first_name: 'Max', last_name: 'Ausgetreten', status: 'left', is_minor: false }],
+      }
+      const readOnly = readOnlyClients({}, mediaOverrides)
+      const clients: SupabaseClientFactory = {
+        forUser: () =>
+          ({
+            from: (table: string) => {
+              if (table === 'posts') return chain({ data: { id: PUB_POST_ID, department_id: DEPARTMENT_ID, team_id: TEAM_ID }, error: null })
+              return readOnly.forUser('token').from(table)
+            },
+          }) as unknown as SupabaseClient,
+        forService: () =>
+          ({
+            from: (table: string) => {
+              if (table === 'policy_settings') {
+                return chain({ data: [{ id: 'p-team', scope: 'team', department_id: DEPARTMENT_ID, team_id: TEAM_ID, ...emptyPolicyRuleColumns(), consent_expires_on_leave: true }], error: null })
+              }
+              return readOnly.forService().from(table)
+            },
+          }) as unknown as SupabaseClient,
+      }
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
       const token = await signAccessToken(USER_ID)
       const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
       expect(response.statusCode).toBe(409)
