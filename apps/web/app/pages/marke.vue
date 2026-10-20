@@ -1,75 +1,38 @@
 <script setup lang="ts">
-import { AlertTriangle, Check, LoaderCircle, Sparkles, Upload } from '@lucide/vue'
-import {
-  BRAND_LOCKABLE_FIELDS,
-  curatedFontPairings,
-  meetsMinimumContrast,
-  MINIMUM_AA_CONTRAST,
-  resolveBrand,
-} from '@vereinsfunk/domain'
+import { curatedFontPairings, resolveBrand, type CuratedFontPairing } from '@vereinsfunk/domain'
 import { BrandAssetSchema, type BrandWebsiteAnalysisResult } from '@vereinsfunk/contracts'
-import {
-  type BrandOrganizationState,
-  useBrandAssets,
-} from '../composables/useBrandAssets'
+import type { DepartmentColorPatch, OrganizationColorPatch } from '../components/BrandColorRoles.vue'
+import { useBrandAssets } from '../composables/useBrandAssets'
 import { useBrandOverrides } from '../composables/useBrandOverrides'
+import { useBrandPageData } from '../composables/useBrandPageData'
 import { useBrandWebsiteAnalysis } from '../composables/useBrandWebsiteAnalysis'
-import { ApiRequestError } from '../utils/apiClient'
 import { brandAnalysisFailureMessage } from '../utils/brandAnalysisFailure'
-import { BrandPageRowsSchema } from '../utils/brandPageRows'
-
-// Genau BRAND_LOCKABLE_FIELDS aus packages/domain, nur mit deutschem Etikett: eine Sperre wirkt
-// ausschliesslich auf Felder, die eine Abteilung/Mannschaft ueberhaupt selbst fuehren kann.
-const LOCKABLE_FIELD_LABELS: Readonly<Record<string, string>> = {
-  primaryColor: 'Primärfarbe',
-  accentColor: 'Akzentfarbe',
-  logoAssetId: 'Logo',
-  websiteUrl: 'Website-Adresse',
-  displayFontAssetId: 'Eigene Überschriften-Schrift',
-  bodyFontAssetId: 'Eigene Fließtext-Schrift',
-}
-const LOCKABLE_FIELDS = BRAND_LOCKABLE_FIELDS.map((key) => ({
-  key,
-  label: LOCKABLE_FIELD_LABELS[key]!,
-}))
 
 const api = useApiClient()
 const { organizationId, departmentId: activeDepartmentId, teamId: activeTeamId, level: activeLevel } = await useActiveScope()
-const { refreshBrandRevision } = useBrandRevision()
 const supabase = useSupabaseClient()
 
-const loading = ref(true)
-const loadError = ref(false)
-const saving = ref(false)
-const errorMessage = ref('')
-const loadRuns = useLatestRequest()
-
-// Die Analyse darf erst nach dem Speichern starten. Diese Momentaufnahme trennt eine gerade
-// bearbeitete Eingabe klar von der URL, die die API tatsächlich aus dem Markenprofil liest.
-const savedBrandWebsiteUrls = ref<Record<string, string | null>>({})
-
-const org = reactive<BrandOrganizationState>({
-  primaryColor: '#163a2c',
-  accentColor: '#caff4a',
-  backgroundColor: '#f6f4ec',
-  textColor: '#122820',
-  onPrimaryColor: '#ffffff',
-  displayFontKey: 'manrope',
-  bodyFontKey: 'dm_sans',
-  displayFontAssetId: null as string | null,
-  bodyFontAssetId: null as string | null,
-  logoAssetId: null as string | null,
-  websiteUrl: null as string | null,
-  allowDepartmentOverrides: true,
-  lockedFields: [] as string[],
-})
+const overrides = useBrandOverrides()
+const { readOverride, readTeamOverride, overrideFor } = overrides
 const {
-  departmentOverrides,
-  teamOverrides,
-  readOverride,
-  readTeamOverride,
-  overrideFor,
-} = useBrandOverrides()
+  org,
+  loading,
+  loadError,
+  saving,
+  errorMessage,
+  savedBrandWebsiteUrls,
+  lockedForActiveLevel,
+  loadAll,
+  save,
+} = useBrandPageData({
+  api,
+  supabase,
+  organizationId,
+  activeLevel,
+  activeDepartmentId,
+  overrides,
+  onAssetsLoaded: (loaded) => { assets.value = loaded },
+})
 
 const activeDepartmentOverride = computed(() =>
   activeDepartmentId.value ? readOverride(activeDepartmentId.value) : null,
@@ -84,15 +47,6 @@ const activeBrandWebsiteKey = computed(() => {
     : activeLevel.value === 'organization'
       ? `organization:${organizationId.value}`
       : null
-})
-
-// Sperren wirken nur nach unten (siehe packages/domain/src/brand.ts, resolveBrand): fuer die
-// Abteilung gelten die Sperren des Vereins.
-const lockedForActiveLevel = computed<Set<string>>(() => {
-  const locked = new Set<string>()
-  if (activeLevel.value === 'organization') return locked
-  for (const field of org.lockedFields) locked.add(field)
-  return locked
 })
 
 const resolved = computed(() => {
@@ -112,171 +66,6 @@ const resolved = computed(() => {
   )
 })
 
-const contrastChecks = computed(() => [
-  {
-    label: 'Text auf Hintergrund',
-    ...meetsMinimumContrast(resolved.value.textColor, resolved.value.backgroundColor),
-  },
-  {
-    label: 'Auf-Primär-Text auf Primärfarbe',
-    ...meetsMinimumContrast(resolved.value.onPrimaryColor, resolved.value.primaryColor),
-  },
-  {
-    label: 'Text auf Akzentfarbe',
-    ...meetsMinimumContrast(resolved.value.textColor, resolved.value.accentColor),
-  },
-])
-
-async function loadAll() {
-  const isLatest = loadRuns.begin()
-  if (!organizationId.value) {
-    loading.value = false
-    return
-  }
-  loading.value = true
-  loadError.value = false
-  try {
-    const [
-      brandResult,
-      departmentsResult,
-      teamsResult,
-      departmentProfilesResult,
-      teamProfilesResult,
-      assetsResult,
-    ] = await Promise.all([
-      supabase
-        .from('organization_brand_profiles')
-        .select(
-          'primary_color, accent_color, background_color, text_color, on_primary_color, display_font_key, body_font_key, display_font_asset_id, body_font_asset_id, logo_asset_id, website_url, allow_department_overrides, locked_fields',
-        )
-        .eq('organization_id', organizationId.value)
-        .maybeSingle(),
-      supabase
-        .from('departments')
-        .select('id, name')
-        .eq('organization_id', organizationId.value)
-        .is('archived_at', null)
-        .order('name'),
-      supabase
-        .from('teams')
-        .select('id, name, department_id')
-        .eq('organization_id', organizationId.value)
-        .is('archived_at', null)
-        .order('name'),
-      supabase
-        .from('department_brand_profiles')
-        .select(
-          'department_id, primary_color, accent_color, logo_asset_id, website_url, display_font_asset_id, body_font_asset_id, allow_team_overrides, locked_fields',
-        )
-        .eq('organization_id', organizationId.value),
-      supabase
-        .from('team_brand_profiles')
-        .select(
-          'team_id, primary_color, accent_color, logo_asset_id, display_font_asset_id, body_font_asset_id',
-        )
-        .eq('organization_id', organizationId.value),
-      supabase
-        .from('brand_assets')
-        .select(
-          'id, department_id, team_id, kind, object_path, status, font_family, font_weight, font_style, license_holder, created_at',
-        )
-        .eq('organization_id', organizationId.value)
-        .order('created_at', { ascending: false }),
-    ])
-    if (
-      brandResult.error ||
-      departmentsResult.error ||
-      teamsResult.error ||
-      departmentProfilesResult.error ||
-      teamProfilesResult.error ||
-      assetsResult.error
-    ) {
-      if (!isLatest()) return
-      loadError.value = true
-      return
-    }
-    if (!isLatest()) return
-    const rows = BrandPageRowsSchema.safeParse({
-      brand: brandResult.data,
-      departments: departmentsResult.data,
-      teams: teamsResult.data,
-      departmentProfiles: departmentProfilesResult.data,
-      teamProfiles: teamProfilesResult.data,
-      assets: assetsResult.data,
-    })
-    if (!rows.success) {
-      loadError.value = true
-      return
-    }
-    if (rows.data.brand) {
-      org.primaryColor = rows.data.brand.primary_color
-      org.accentColor = rows.data.brand.accent_color
-      org.backgroundColor = rows.data.brand.background_color
-      org.textColor = rows.data.brand.text_color
-      org.onPrimaryColor = rows.data.brand.on_primary_color
-      org.displayFontKey = rows.data.brand.display_font_key
-      org.bodyFontKey = rows.data.brand.body_font_key
-      org.displayFontAssetId = rows.data.brand.display_font_asset_id
-      org.bodyFontAssetId = rows.data.brand.body_font_asset_id
-      org.logoAssetId = rows.data.brand.logo_asset_id
-      org.websiteUrl = rows.data.brand.website_url
-      org.allowDepartmentOverrides = rows.data.brand.allow_department_overrides
-      org.lockedFields = rows.data.brand.locked_fields
-    }
-    const savedUrls: Record<string, string | null> = {
-      [`organization:${organizationId.value}`]: rows.data.brand?.website_url ?? null,
-    }
-    departmentOverrides.value = {}
-    for (const row of rows.data.departmentProfiles) {
-      savedUrls[`department:${row.department_id}`] = row.website_url
-      departmentOverrides.value[row.department_id] = {
-        primaryColor: row.primary_color,
-        accentColor: row.accent_color,
-        logoAssetId: row.logo_asset_id,
-        websiteUrl: row.website_url,
-        displayFontAssetId: row.display_font_asset_id,
-        bodyFontAssetId: row.body_font_asset_id,
-        displayFontKey: null,
-        bodyFontKey: null,
-        allowTeamOverrides: row.allow_team_overrides,
-        lockedFields: row.locked_fields,
-      }
-    }
-    savedBrandWebsiteUrls.value = savedUrls
-    teamOverrides.value = {}
-    for (const row of rows.data.teamProfiles) {
-      teamOverrides.value[row.team_id] = {
-        primaryColor: row.primary_color,
-        accentColor: row.accent_color,
-        logoAssetId: row.logo_asset_id,
-        displayFontAssetId: row.display_font_asset_id,
-        bodyFontAssetId: row.body_font_asset_id,
-        displayFontKey: null,
-        bodyFontKey: null,
-      }
-    }
-    assets.value = rows.data.assets.map((row) => ({
-      id: row.id,
-      departmentId: row.department_id,
-      teamId: row.team_id,
-      kind: row.kind,
-      objectPath: row.object_path,
-      status: row.status,
-      fontFamily: row.font_family,
-      fontWeight: row.font_weight,
-      fontStyle: row.font_style,
-      licenseHolder: row.license_holder,
-      createdAt: row.created_at,
-    }))
-    // Hat die aktive Ebene serverseitig noch kein Profil, muss der leere Eintrag hier neu
-    // entstehen -- die Formularfelder schreiben direkt hinein, und ein computed darf ihn nicht
-    // mehr nachtraeglich anlegen.
-    if (activeLevel.value === 'department' && activeDepartmentId.value)
-      overrideFor(activeDepartmentId.value)
-  } finally {
-    if (isLatest()) loading.value = false
-  }
-}
 const {
   assets,
   assetSignedUrls,
@@ -316,10 +105,16 @@ async function removeLogo(assetId: string) {
   await deleteAsset(assetId)
 }
 
-// Alte Asset-Arten werden beim Anzeigen bewusst nicht mehr unterschieden. Die Datenmigration
-// vereinheitlicht sie auf logo_primary; diese Zuordnung hält auch wiederhergestellte Altbestände
-// verständlich.
-const LOGO_ASSET_LABEL = 'Logo'
+function updateOrganization(patch: OrganizationColorPatch) {
+  Object.assign(org, patch)
+}
+function updateDepartment(patch: DepartmentColorPatch) {
+  if (activeDepartmentId.value) Object.assign(overrideFor(activeDepartmentId.value), patch)
+}
+function selectFontPairing(pairing: CuratedFontPairing) {
+  org.displayFontKey = pairing.displayFontKey
+  org.bodyFontKey = pairing.bodyFontKey
+}
 
 // Die Homepage ist eine eigene, dauerhafte Markeneinstellung. Die Analyse erhält keine URL aus
 // dem Browser, sondern startet danach ausschliesslich mit der serverseitig gespeicherten Adresse.
@@ -538,66 +333,7 @@ watch(activeDepartmentId, (departmentId) => {
   errorMessage.value = ''
 }, { immediate: true })
 
-async function saveOrganization() {
-  await api.request(`/v1/organizations/${organizationId.value}/brand`, {
-    method: 'PUT',
-    body: {
-      primaryColor: org.primaryColor,
-      accentColor: org.accentColor,
-      displayFontKey: org.displayFontKey,
-      bodyFontKey: org.bodyFontKey,
-      displayFontAssetId: org.displayFontAssetId,
-      bodyFontAssetId: org.bodyFontAssetId,
-      logoAssetId: org.logoAssetId,
-      websiteUrl: org.websiteUrl,
-      allowDepartmentOverrides: org.allowDepartmentOverrides,
-      lockedFields: org.lockedFields,
-    },
-  })
-}
-
-async function saveDepartment(departmentId: string) {
-  const value = overrideFor(departmentId)
-  const locked = lockedForActiveLevel.value
-  const body: Record<string, unknown> = {
-    allowTeamOverrides: value.allowTeamOverrides,
-    lockedFields: value.lockedFields,
-  }
-  if (!locked.has('primaryColor')) body.primaryColor = value.primaryColor
-  if (!locked.has('accentColor')) body.accentColor = value.accentColor
-  if (!locked.has('logoAssetId')) body.logoAssetId = value.logoAssetId
-  if (!locked.has('websiteUrl')) body.websiteUrl = value.websiteUrl
-  if (!locked.has('displayFontAssetId')) body.displayFontAssetId = value.displayFontAssetId
-  if (!locked.has('bodyFontAssetId')) body.bodyFontAssetId = value.bodyFontAssetId
-  await api.request(`/v1/departments/${departmentId}/brand`, {
-    method: 'PUT',
-    body,
-  })
-}
-
-async function save() {
-  if (!organizationId.value) return
-  saving.value = true
-  errorMessage.value = ''
-  try {
-    if (activeLevel.value === 'organization') await saveOrganization()
-    else if (activeLevel.value === 'department' && activeDepartmentId.value)
-      await saveDepartment(activeDepartmentId.value)
-    // Mannschaftsebene (PUT /v1/teams/:id/brand) folgt, sobald useActiveScope() 'team' liefert.
-    await loadAll()
-    refreshBrandRevision()
-  } catch (error) {
-    errorMessage.value =
-      error instanceof ApiRequestError && error.code === 'invalid_logo' && error.data.message
-        ? `Logo konnte nicht gespeichert werden: ${error.data.message}`
-        : 'Die Marke konnte nicht gespeichert werden. Bitte erneut versuchen.'
-  } finally {
-    saving.value = false
-  }
-}
-
 usePageSaveFab({ label: 'Änderungen speichern', save, saving })
-
 </script>
 
 <template>
@@ -640,445 +376,72 @@ usePageSaveFab({ label: 'Änderungen speichern', save, saving })
                speichern (PUT .../brand lehnt mit 400 overrides_not_allowed ab) -- die Karte bliebe
                sonst sichtbar und würde einen echten, kostenpflichtigen Analyse-Lauf anstoßen, dessen
                Ergebnis garantiert nicht gespeichert werden kann. -->
-        <section
-          v-if="
-            activeLevel === 'organization' ||
-            (activeLevel === 'department' && org.allowDepartmentOverrides)
+        <BrandWebsiteAnalysisCard
+          v-if="activeLevel === 'organization' || (activeLevel === 'department' && org.allowDepartmentOverrides)"
+          :is-department="activeLevel === 'department'"
+          :running="websiteAnalysisRunning"
+          :starting="websiteAnalysisStarting"
+          :start-disabled="
+            websiteAnalysisRunning ||
+            websiteAnalysisStarting ||
+            !brandWebsiteUrl.trim() ||
+            brandWebsiteUrlNeedsSaving ||
+            (activeLevel === 'department' && lockedForActiveLevel.has('websiteUrl'))
           "
-          class="card p-6"
-        >
-          <h2 class="font-display flex items-center gap-2 text-base font-bold">
-            <Sparkles :size="16" /> Automatisch aus der Homepage übernehmen
-          </h2>
-          <p class="mt-2 text-xs text-[#7a817c]">
-            {{
-              activeLevel === 'department'
-                ? 'Primärfarbe und Akzentfarbe aus der Homepage dieser Abteilung vorschlagen lassen.'
-                : 'Primärfarbe, Akzentfarbe und eine Schriftempfehlung aus eurer Vereins-Homepage vorschlagen lassen.'
-            }}
-            Gefundene Logos erscheinen unten als eigene Vorschläge zum Übernehmen. Farben und Schrift
-            werden erst mit „Änderungen speichern“ unten dauerhaft übernommen.
-          </p>
-          <div class="mt-4 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              class="focus-ring flex items-center gap-1.5 rounded-lg bg-forest px-3 py-2 text-xs font-bold text-white disabled:opacity-60"
-              :disabled="
-                websiteAnalysisRunning ||
-                websiteAnalysisStarting ||
-                !brandWebsiteUrl.trim() ||
-                brandWebsiteUrlNeedsSaving ||
-                (activeLevel === 'department' && lockedForActiveLevel.has('websiteUrl'))
-              "
-              @click="startWebsiteAnalysis"
-            >
-              <LoaderCircle
-                v-if="websiteAnalysisRunning || websiteAnalysisStarting"
-                :size="14"
-                class="animate-spin"
-              /><Sparkles v-else :size="14" />
-              {{ websiteAnalysisRunning ? 'Analyse läuft …' : 'Analyse starten' }}
-            </button>
-          </div>
-          <p v-if="brandWebsiteUrlNeedsSaving" class="mt-2 text-[11px] text-[#7a817c]">
-            Bitte die Homepage-Adresse zuerst mit „Änderungen speichern“ sichern.
-          </p>
-          <p v-if="websiteAnalysisStartError" class="mt-2 text-[11px] text-amber-800">
-            {{ websiteAnalysisStartError }}
-          </p>
-          <p v-else-if="websiteAnalysisFailureMessage" class="mt-2 text-[11px] text-amber-800">
-            {{ websiteAnalysisFailureMessage }}
-          </p>
-          <p
-            v-if="websiteAnalysisApplied"
-            class="mt-2 flex items-center gap-1.5 text-[11px] text-emerald-700"
-          >
-            <Check :size="12" /> Farb-/Schriftvorschlag übernommen — bitte prüfen und unten
-            speichern.
-          </p>
-          <p v-if="detectedFontNotice" class="mt-2 text-[11px] text-[#7a817c]">
-            {{ detectedFontNotice }}
-          </p>
-          <div v-if="websiteAnalysisResult?.logoCandidates.length" class="mt-4">
-            <p class="text-[11px] font-semibold text-[#7b827d]">
-              Gefundene Logos — einzeln prüfen und übernehmen
-            </p>
-            <div class="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <div
-                v-for="(candidate, index) in websiteAnalysisResult.logoCandidates"
-                :key="candidate.signedUrl"
-                class="rounded-xl border border-[#e1e2db] p-2 text-center"
-              >
-                <img :src="candidate.signedUrl" alt="" class="mx-auto h-12 w-12 object-contain" />
-                <button
-                  type="button"
-                  class="focus-ring mt-1.5 block w-full rounded-lg bg-forest px-2 py-1 text-[10px] font-bold text-white disabled:opacity-50"
-                  :disabled="logoSuggestionApplied[index]"
-                  @click="applyLogoSuggestion(index)"
-                >
-                  {{ logoSuggestionApplied[index] ? 'Übernommen' : 'Übernehmen' }}
-                </button>
-              </div>
-            </div>
-          </div>
-        </section>
+          :needs-saving="brandWebsiteUrlNeedsSaving"
+          :start-error="websiteAnalysisStartError"
+          :failure-message="websiteAnalysisFailureMessage"
+          :applied="websiteAnalysisApplied"
+          :detected-font-notice="detectedFontNotice"
+          :logo-candidates="websiteAnalysisResult?.logoCandidates ?? []"
+          :logo-applied="logoSuggestionApplied"
+          @start="startWebsiteAnalysis"
+          @apply-logo="applyLogoSuggestion"
+        />
 
-        <!-- Logo -->
-        <section class="card p-6">
-          <h2 class="font-display text-base font-bold">Logo</h2>
-          <p class="mt-2 text-xs text-[#7a817c]">
-            Hinterlegt die Logo-Dateien, die ihr in euren Beiträgen verwenden möchtet. „Als Logo“
-            legt die aktuell verwendete Datei dieser Ebene fest.
-          </p>
-          <div class="mt-4 flex flex-wrap gap-2">
-            <label
-              class="focus-ring relative flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-[11px] font-semibold"
-            >
-              <input
-                type="file"
-                accept="image/png,image/jpeg,image/svg+xml"
-                class="sr-only"
-                :disabled="uploadingAsset"
-                @change="uploadAsset($event, 'logo_primary')"
-              />
-              <Upload :size="12" /> Logo hochladen
-            </label>
-          </div>
-          <div v-if="ownLogoAssets.length" class="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-4">
-            <div
-              v-for="asset in ownLogoAssets"
-              :key="asset.id"
-              class="rounded-xl border p-2 text-center"
-              :class="
-                activeLogoAssetId() === asset.id ? 'border-forest bg-[#f2f6e9]' : 'border-[#e1e2db]'
-              "
-            >
-              <img
-                v-if="assetSignedUrls[asset.id]"
-                :src="assetSignedUrls[asset.id]"
-                :alt="LOGO_ASSET_LABEL"
-                class="mx-auto h-12 w-12 object-contain"
-              />
-              <p class="mt-1 text-[9px] text-[#9aa096]">{{ LOGO_ASSET_LABEL }}</p>
-              <button
-                type="button"
-                class="focus-ring text-[9px] underline disabled:opacity-50"
-                :aria-pressed="activeLogoAssetId() === asset.id"
-                :disabled="
-                  activeLevel !== 'organization' && lockedForActiveLevel.has('logoAssetId')
-                "
-                @click="toggleLogoAsset(asset.id)"
-              >
-                {{ activeLogoAssetId() === asset.id ? 'Logo entfernen' : 'als Logo' }}
-              </button>
-              <button
-                type="button"
-                class="focus-ring mt-1 block w-full text-[9px] text-amber-800 underline disabled:opacity-50"
-                :disabled="deletingAsset === asset.id"
-                @click="removeLogo(asset.id)"
-              >
-                {{ deletingAsset === asset.id ? 'Wird entfernt …' : 'löschen' }}
-              </button>
-            </div>
-          </div>
-          <p v-if="deleteAssetError" class="mt-2 text-[11px] text-amber-800">
-            {{ deleteAssetError }}
-          </p>
-          <div v-if="activeLevel !== 'organization' && selectableLogoAssets.length" class="mt-4">
-            <p class="text-[11px] font-semibold text-[#7b827d]">
-              Wählbar (vom Verein) — erneut
-              klicken entfernt die Auswahl
-            </p>
-            <div class="mt-2 flex flex-wrap gap-2">
-              <button
-                v-for="asset in selectableLogoAssets"
-                :key="asset.id"
-                type="button"
-                class="focus-ring rounded-lg px-2 py-1 text-[10px] disabled:opacity-50"
-                :class="activeLogoAssetId() === asset.id ? 'bg-forest text-white' : 'bg-[#f4f6f1]'"
-                :aria-pressed="activeLogoAssetId() === asset.id"
-                :disabled="lockedForActiveLevel.has('logoAssetId')"
-                @click="toggleLogoAsset(asset.id)"
-              >
-                {{ LOGO_ASSET_LABEL }} — {{ assetOrigin(asset) }}
-              </button>
-            </div>
-          </div>
-        </section>
+        <BrandLogoSection
+          :level="activeLevel"
+          :own-logo-assets="ownLogoAssets"
+          :selectable-logo-assets="selectableLogoAssets"
+          :asset-signed-urls="assetSignedUrls"
+          :active-logo-asset-id="activeLogoAssetId()"
+          :logo-locked="lockedForActiveLevel.has('logoAssetId')"
+          :uploading="uploadingAsset"
+          :deleting-asset-id="deletingAsset"
+          :delete-error="deleteAssetError"
+          :asset-origin="assetOrigin"
+          @upload="uploadAsset($event, 'logo_primary')"
+          @toggle="toggleLogoAsset"
+          @remove="removeLogo"
+        />
 
-        <!-- Farbrollen -->
-        <section class="card p-6">
-          <h2 class="font-display text-base font-bold">Farbrollen</h2>
-          <template v-if="activeLevel === 'organization'">
-            <div class="mt-5 grid grid-cols-2 gap-4">
-              <label
-                v-for="field in [
-                  ['primaryColor', 'Primärfarbe'],
-                  ['accentColor', 'Akzentfarbe'],
-                ] as const"
-                :key="field[0]"
-              >
-                <span class="mb-2 flex items-center gap-1 text-xs font-semibold">
-                  {{ field[1] }}
-                  <span
-                    v-if="org.lockedFields.includes(field[0])"
-                    class="rounded-full bg-[#eef1ea] px-1.5 py-0.5 text-[9px] text-[#9aa096]"
-                    >gesperrt für Abteilungen</span
-                  >
-                </span>
-                <div
-                  class="flex items-center gap-2 rounded-xl border border-[#dfe0d9] bg-white p-2"
-                >
-                  <input
-                    v-model="org[field[0]]"
-                    type="color"
-                    class="h-8 w-8 border-0 bg-transparent"
-                  />
-                  <span class="text-xs">{{ org[field[0]] }}</span>
-                </div>
-              </label>
-            </div>
-            <label class="mt-4 flex items-center gap-2 text-xs">
-              <input
-                v-model="org.allowDepartmentOverrides"
-                type="checkbox"
-                class="h-4 w-4 accent-[#163a2c]"
-              />
-              Abteilungen dürfen eigenes Branding führen
-            </label>
-            <div v-if="org.allowDepartmentOverrides" class="mt-3">
-              <p class="mb-2 text-[11px] font-semibold text-[#7b827d]">
-                Felder für Abteilungen sperren:
-              </p>
-              <label
-                v-for="field in LOCKABLE_FIELDS"
-                :key="field.key"
-                class="mr-3 inline-flex items-center gap-1.5 text-[11px]"
-              >
-                <input
-                  type="checkbox"
-                  class="h-4 w-4 accent-[#163a2c]"
-                  :checked="org.lockedFields.includes(field.key)"
-                  @change="
-                    ($event.target as HTMLInputElement).checked
-                      ? org.lockedFields.push(field.key)
-                      : (org.lockedFields = org.lockedFields.filter((f) => f !== field.key))
-                  "
-                />
-                {{ field.label }}
-              </label>
-            </div>
-          </template>
-          <template v-else-if="activeDepartmentOverride && activeLevel === 'department'">
-            <p class="mt-2 text-xs text-[#7a817c]">
-              Leer lassen, um die Vereinsfarbe zu übernehmen.
-            </p>
-            <div class="mt-4 grid grid-cols-2 gap-4">
-              <label
-                v-for="field in [
-                  ['primaryColor', 'Primärfarbe', resolved.primaryColor],
-                  ['accentColor', 'Akzentfarbe', resolved.accentColor],
-                ] as const"
-                :key="field[0]"
-              >
-                <span class="mb-2 flex items-center gap-1 text-xs font-semibold">
-                  {{ field[1] }}
-                  <span
-                    v-if="lockedForActiveLevel.has(field[0])"
-                    class="rounded-full bg-[#eef1ea] px-1.5 py-0.5 text-[9px] text-[#9aa096]"
-                    >vom Verein gesperrt</span
-                  >
-                </span>
-                <div
-                  class="flex items-center gap-2 rounded-xl border border-[#dfe0d9] bg-white p-2"
-                  :class="lockedForActiveLevel.has(field[0]) && 'opacity-50'"
-                >
-                  <input
-                    :value="activeDepartmentOverride[field[0]] ?? field[2]"
-                    type="color"
-                    class="h-8 w-8 border-0 bg-transparent"
-                    :disabled="lockedForActiveLevel.has(field[0])"
-                    @input="
-                      activeDepartmentOverride[field[0]] = ($event.target as HTMLInputElement).value
-                    "
-                  />
-                  <span class="text-xs">{{
-                    activeDepartmentOverride[field[0]] ?? `geerbt: ${field[2]}`
-                  }}</span>
-                  <button
-                    v-if="activeDepartmentOverride[field[0]]"
-                    class="focus-ring ml-auto text-[10px] underline"
-                    @click="activeDepartmentOverride[field[0]] = null"
-                  >
-                    erben
-                  </button>
-                </div>
-              </label>
-            </div>
-            <label class="mt-4 flex items-center gap-2 text-xs">
-              <input
-                v-model="activeDepartmentOverride.allowTeamOverrides"
-                type="checkbox"
-                class="h-4 w-4 accent-[#163a2c]"
-              />
-              Mannschaften dürfen eigenes Branding führen
-            </label>
-          </template>
-          <div class="mt-5 space-y-1.5 border-t border-[#eceee7] pt-4">
-            <p class="mb-1 text-[11px] font-semibold text-[#7b827d]">
-              Lesbarkeit (WCAG-AA-Kontrast, mind. {{ MINIMUM_AA_CONTRAST }}:1)
-            </p>
-            <div
-              v-for="check in contrastChecks"
-              :key="check.label"
-              class="flex items-center justify-between text-[11px]"
-              :title="`Kontrastverhältnis ${check.ratio}:1 — WCAG AA verlangt mindestens ${MINIMUM_AA_CONTRAST}:1`"
-            >
-              <span class="text-[#7b827d]">{{ check.label }}</span>
-              <span
-                class="flex items-center gap-1 font-semibold"
-                :class="check.meetsAA ? 'text-emerald-700' : 'text-amber-800'"
-              >
-                <AlertTriangle v-if="!check.meetsAA" :size="12" /> {{ check.ratio }}:1 ·
-                {{ check.meetsAA ? 'gut lesbar' : 'schwer lesbar' }}
-              </span>
-            </div>
-          </div>
-        </section>
+        <BrandColorRoles
+          :level="activeLevel"
+          :organization="org"
+          :department-override="activeDepartmentOverride"
+          :locked="lockedForActiveLevel"
+          :resolved="resolved"
+          @update-organization="updateOrganization"
+          @update-department="updateDepartment"
+        />
 
-        <!-- Schriften -->
-        <section class="card p-6">
-          <h2 class="font-display text-base font-bold">Schriften</h2>
-          <template v-if="activeLevel === 'organization'">
-            <p class="mt-2 text-xs text-[#7a817c]">
-              Kuratiertes Paar wählen oder eine eigene Schrift hochladen.
-            </p>
-            <div class="mt-4 grid gap-2 sm:grid-cols-2">
-              <label
-                v-for="pairing in curatedFontPairings"
-                :key="pairing.key"
-                class="focus-ring relative cursor-pointer rounded-xl border p-3"
-                :class="
-                  org.displayFontKey === pairing.displayFontKey
-                    ? 'border-forest bg-[#f2f6e9]'
-                    : 'border-[#e1e2db]'
-                "
-              >
-                <input
-                  v-model="org.displayFontKey"
-                  type="radio"
-                  :value="pairing.displayFontKey"
-                  class="sr-only"
-                  @change="org.bodyFontKey = pairing.bodyFontKey"
-                />
-                <strong class="block text-xs">{{ pairing.label }}</strong>
-              </label>
-            </div>
-          </template>
-          <!-- Abteilungen/Mannschaften waehlen kein eigenes kuratiertes Paar (dafuer fehlt die
-                 Spalte bewusst, siehe Migration) -- nur eine eigene Schriftdatei oder Erben. -->
-          <p v-else class="mt-2 text-xs text-[#7a817c]">
-            Erbt das kuratierte Paar des Vereins, sofern hier keine eigene Schrift ausgewählt ist.
-          </p>
-
-          <div class="mt-6 border-t border-[#eceee7] pt-4">
-            <p class="text-xs font-semibold">Eigene Schrift</p>
-            <label
-              class="focus-ring relative mt-2 flex w-fit cursor-pointer items-center gap-2 rounded-xl border border-[#dfe0d9] px-4 py-2.5 text-xs font-semibold"
-            >
-              <input
-                type="file"
-                accept=".ttf,.otf,.woff2,font/ttf,font/otf,font/woff2"
-                class="sr-only"
-                :disabled="uploadingAsset"
-                @change="uploadAsset($event, 'font')"
-              />
-              <LoaderCircle v-if="uploadingAsset" :size="14" class="animate-spin" /><Upload
-                v-else
-                :size="14"
-              />
-              Schriftdatei hochladen
-            </label>
-            <p v-if="uploadError" class="mt-2 text-[11px] text-amber-800">{{ uploadError }}</p>
-
-            <div
-              v-for="asset in pendingLicenseAssets"
-              :key="asset.id"
-              class="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3"
-            >
-              <p class="text-xs font-semibold">
-                {{ asset.fontFamily }} ({{ asset.fontWeight }}, {{ asset.fontStyle }}) — Lizenz noch
-                zu bestätigen
-              </p>
-              <input
-                v-model="licenseDraftFor(asset.id).licenseHolder"
-                type="text"
-                placeholder="Rechteinhaber"
-                class="mt-2 w-full rounded-lg border border-[#dfe0d9] px-2 py-1.5 text-xs"
-              />
-              <input
-                v-model="licenseDraftFor(asset.id).licenseNote"
-                type="text"
-                placeholder="Notiz (optional)"
-                class="mt-2 w-full rounded-lg border border-[#dfe0d9] px-2 py-1.5 text-xs"
-              />
-              <label class="mt-2 flex items-center gap-1.5 text-[11px]">
-                <input
-                  v-model="licenseDraftFor(asset.id).confirmed"
-                  type="checkbox"
-                  class="h-4 w-4 accent-[#163a2c]"
-                />
-                Wir besitzen eine Lizenz, die die Nutzung in unseren Social-Media-Beiträgen erlaubt.
-              </label>
-              <button
-                class="focus-ring mt-2 rounded-lg bg-forest px-3 py-1.5 text-[11px] font-bold text-white disabled:opacity-50"
-                :disabled="
-                  !licenseDraftFor(asset.id).confirmed ||
-                  !licenseDraftFor(asset.id).licenseHolder.trim() ||
-                  confirmingLicense === asset.id
-                "
-                @click="confirmLicense(asset.id)"
-              >
-                Lizenz bestätigen
-              </button>
-            </div>
-
-            <div v-if="selectableFontAssets.length" class="mt-4 space-y-1.5">
-              <p class="text-[11px] font-semibold text-[#7b827d]">Verfügbare eigene Schriften</p>
-              <div
-                v-for="asset in selectableFontAssets"
-                :key="asset.id"
-                class="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[#f4f6f1] px-3 py-1.5 text-[11px]"
-              >
-                <span>{{ asset.fontFamily }} — {{ assetOrigin(asset) }}</span>
-                <span class="flex items-center gap-2">
-                  <!-- Gesperrt wie Logo und Farben: saveDepartment() laesst gesperrte Felder aus,
-                       eine Auswahl hier waere nach dem Speichern still wieder weg. -->
-                  <button
-                    type="button"
-                    class="focus-ring underline disabled:opacity-50"
-                    :aria-pressed="activeFontAssetId('display') === asset.id"
-                    :class="activeFontAssetId('display') === asset.id && 'font-bold'"
-                    :disabled="lockedForActiveLevel.has('displayFontAssetId')"
-                    @click="toggleFontAsset('display', asset.id)"
-                  >
-                    als Überschriften-Schrift
-                  </button>
-                  <button
-                    type="button"
-                    class="focus-ring underline disabled:opacity-50"
-                    :aria-pressed="activeFontAssetId('body') === asset.id"
-                    :class="activeFontAssetId('body') === asset.id && 'font-bold'"
-                    :disabled="lockedForActiveLevel.has('bodyFontAssetId')"
-                    @click="toggleFontAsset('body', asset.id)"
-                  >
-                    als Fließtext-Schrift
-                  </button>
-                </span>
-              </div>
-            </div>
-          </div>
-        </section>
+        <BrandFontSection
+          :level="activeLevel"
+          :display-font-key="org.displayFontKey"
+          :uploading="uploadingAsset"
+          :upload-error="uploadError"
+          :pending-license-assets="pendingLicenseAssets"
+          :license-draft-for="licenseDraftFor"
+          :confirming-license-asset-id="confirmingLicense"
+          :selectable-font-assets="selectableFontAssets"
+          :active-font-asset-ids="{ display: activeFontAssetId('display'), body: activeFontAssetId('body') }"
+          :locked="lockedForActiveLevel"
+          :asset-origin="assetOrigin"
+          @select-pairing="selectFontPairing"
+          @upload="uploadAsset($event, 'font')"
+          @confirm-license="confirmLicense"
+          @toggle-font="toggleFontAsset"
+        />
       </div>
 
       <p v-if="errorMessage" class="mt-4 text-sm text-amber-800">{{ errorMessage }}</p>

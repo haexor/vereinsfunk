@@ -38,12 +38,12 @@ describe('standard app page layout', () => {
 
   it('derives independent sidebar text colors and reloads the active club branding after a save', () => {
     const layout = readFileSync(join(appDirectory, 'layouts/default.vue'), 'utf8')
-    const brandPage = readFileSync(join(appDirectory, 'pages/marke.vue'), 'utf8')
+    const brandPageData = readFileSync(join(appDirectory, 'composables/useBrandPageData.ts'), 'utf8')
 
     expect(layout).toContain('deriveSidebarPalette')
     expect(layout).toContain('resolveSidebarLogoAsset')
     expect(layout).toContain('brandRevision.value')
     expect(layout).toContain('@error="scopeLogoUrl = \'\'"')
-    expect(brandPage).toContain('refreshBrandRevision()')
+    expect(brandPageData).toContain('refreshBrandRevision()')
   })
 })
