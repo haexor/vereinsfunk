@@ -1,7 +1,5 @@
 <script setup lang="ts">
-import { CalendarDays, LayoutDashboard, LogOut, Menu, Plus, UserRound, X } from '@lucide/vue'
-import { frameworkNavigation, visibleFrameworkNavigation } from '../modules/frameworkNavigation'
-import { appModuleOrder, appModuleRegistry, moduleForPath, type ModuleNavItem } from '../modules/registry'
+import { LogOut, Menu, Plus, UserRound, X } from '@lucide/vue'
 import { initialsOf } from '../utils/initials'
 import { deriveSidebarPalette } from '../utils/sidebarBrand'
 
@@ -9,13 +7,8 @@ const mobileOpen = ref(false)
 const route = useRoute()
 const session = await useSession()
 const { scope, organization: activeOrganization } = await useActiveScope()
-const {
-  enabled: enabledModules,
-  isEnabled: isModuleEnabled,
-  canUse,
-  canUseAtActiveScope,
-  ensureLoaded: ensureScopeModulesLoaded,
-} = await useScopeModules()
+const scopeModules = await useScopeModules()
+const { isEnabled: isModuleEnabled, canUseAtActiveScope } = scopeModules
 
 watch(
   () => route.path,
@@ -100,72 +93,7 @@ const sidebarClasses = computed(() =>
       },
 )
 
-// Paket 051, PR 3: die Shell besteht aus Rahmen-Eintraegen (immer sichtbar) und den Eintraegen der
-// im Arbeitsbereich wirksamen Module, gruppiert nach Modul (modules/registry.ts). Solange die
-// Modulauswahl unbekannt ist (enabled = null: laedt noch oder Ladefehler), zeigt sie alle Module --
-// die API setzt die Auswahl ohnehin selbst durch.
-const navigation: { label: string; to: string; icon: typeof LayoutDashboard; badge?: number }[] = [
-  { label: 'Übersicht', to: '/', icon: LayoutDashboard },
-  { label: 'Kalender', to: '/kalender', icon: CalendarDays },
-]
-// Paket 055: Eintraege mit permissions nur mit einem dieser Rechte; Gruppen ohne sichtbaren Eintrag
-// entfallen ganz.
-const navItemVisible = (item: ModuleNavItem) =>
-  !item.permissions || item.permissions.some((permission) => canUse(permission))
-const moduleGroups = computed(() =>
-  appModuleOrder
-    .filter((module) => isModuleEnabled(module))
-    .map((module) => ({
-      ...appModuleRegistry[module],
-      navigation: appModuleRegistry[module].navigation.filter(navItemVisible),
-    }))
-    .filter((group) => group.navigation.length > 0),
-)
-// Paket 056: "Verein verwalten" nur mit den Rechten, die die jeweilige Seite braucht
-// (modules/frameworkNavigation.ts); ohne einen Eintrag entfaellt die Ueberschrift.
-const visibleOrganizationNav = computed(() => visibleFrameworkNavigation(frameworkNavigation, {
-  inDepartment: Boolean(scope.value?.departmentId),
-  canUse,
-  isModuleVisible: isModuleEnabled,
-}))
-const moduleManagementNav = computed(() =>
-  appModuleOrder
-    .filter((module) => isModuleEnabled(module))
-    .map((module) => ({
-      ...appModuleRegistry[module],
-      managementNavigation: appModuleRegistry[module].managementNavigation.filter(navItemVisible),
-    }))
-    .filter((group) => group.managementNavigation.length > 0),
-)
-const organizationOnlyRoutes = new Set(frameworkNavigation.filter((item) => item.organizationOnly).map((item) => item.to))
-
-// Wechsel des Vereins laedt dessen Modulauswahl neu. Wird ein Bereich gewaehlt, in dem das Modul
-// der offenen Seite aus ist, fuehrt das auf die Erklaerseite -- wie ein Direktaufruf
-// (middleware/module.global.ts); umgekehrt fuehrt die Erklaerseite selbst zurueck, sobald es wirkt.
-watch(
-  () => scope.value?.organizationId,
-  (organizationId, previous) => {
-    if (organizationId && previous && organizationId !== previous) void ensureScopeModulesLoaded()
-  },
-)
-watch(
-  () => [enabledModules.value, route.path] as const,
-  ([, path]) => {
-    const module = moduleForPath(path)
-    if (module && !isModuleEnabled(module))
-      void navigateTo({ path: '/modul-inaktiv', query: { modul: module, von: route.fullPath } })
-  },
-)
-
-// Vereinsweite Vertrags- und Datenschutzthemen dürfen nicht im Arbeitsbereich einer
-// Abteilung offen bleiben, auch nicht über einen alten Tab oder einen Direktlink.
-watch(
-  () => [scope.value?.departmentId, route.path] as const,
-  ([departmentId, path]) => {
-    if (departmentId && organizationOnlyRoutes.has(path)) void navigateTo('/')
-  },
-  { immediate: true },
-)
+const { navigation, moduleGroups, organizationNavigation, moduleManagementGroups } = useShellNavigation(scope, scopeModules)
 </script>
 
 <template>
@@ -338,7 +266,7 @@ watch(
           </nav>
         </template>
 
-        <template v-if="visibleOrganizationNav.length > 0">
+        <template v-if="organizationNavigation.length > 0">
         <div
           class="mb-2 mt-7 px-3 text-[10px] font-bold uppercase tracking-[.14em]"
           :class="sidebarClasses.quiet"
@@ -347,7 +275,7 @@ watch(
         </div>
         <nav class="space-y-1" aria-label="Vereinsverwaltung">
           <NuxtLink
-            v-for="item in visibleOrganizationNav"
+            v-for="item in organizationNavigation"
             :key="item.to"
             :to="item.to"
             class="focus-ring flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition"
@@ -359,7 +287,7 @@ watch(
         </nav>
         </template>
 
-        <template v-for="group in moduleManagementNav" :key="`manage-${group.key}`">
+        <template v-for="group in moduleManagementGroups" :key="`manage-${group.key}`">
           <div
             class="mb-2 mt-7 px-3 text-[10px] font-bold uppercase tracking-[.14em]"
             :class="sidebarClasses.quiet"
