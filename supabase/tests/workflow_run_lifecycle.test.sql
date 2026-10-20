@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(23);
+select plan(27);
 set local role postgres;
 
 insert into public.workflow_outbox (
@@ -37,7 +37,19 @@ select is((select status from public.begin_workflow_run(
 select is((select status from public.begin_workflow_run(
   '11111111-1111-4111-8111-111111111111', 'process-submission',
   '62000000-0000-4000-8000-000000000002', 1, 'lifecycle-test', 'lifecycle:1'
-)), 'already_handled', 'second delivery cannot acquire the active lease');
+)), 'in_progress', 'second delivery cannot acquire the active lease and is told to retry');
+select is(public.renew_workflow_run_lease(
+  '11111111-1111-4111-8111-111111111111', 'process-submission',
+  '62000000-0000-4000-8000-000000000002', 1, 'lifecycle-test',
+  '55555555-5555-4555-8555-555555555555'
+), false, 'a stale worker cannot renew a lease it no longer owns');
+update public.workflow_runs set worker_lease_until = now() + interval '5 seconds' where hatchet_run_id = 'hatchet-run-lifecycle-1';
+select ok(public.renew_workflow_run_lease(
+  '11111111-1111-4111-8111-111111111111', 'process-submission',
+  '62000000-0000-4000-8000-000000000002', 1, 'lifecycle-test',
+  (select worker_lease_token from public.workflow_runs where hatchet_run_id = 'hatchet-run-lifecycle-1')
+), 'the lease owner renews its lease');
+select ok((select worker_lease_until > now() + interval '100 seconds' from public.workflow_runs where hatchet_run_id = 'hatchet-run-lifecycle-1'), 'renewal extends the lease');
 select is(public.finish_workflow_run(
   '11111111-1111-4111-8111-111111111111', 'process-submission',
   '62000000-0000-4000-8000-000000000002', 1, 'lifecycle-test',
@@ -62,6 +74,10 @@ select throws_ok(
 select throws_ok(
   $$select public.finish_workflow_run('11111111-1111-4111-8111-111111111111', 'process-submission', '62000000-0000-4000-8000-000000000002', 1, 'lifecycle-test', '55555555-5555-4555-8555-555555555555', 'cancelled')$$,
   '42501', null, 'members cannot cancel technical workflow runs'
+);
+select throws_ok(
+  $$select public.renew_workflow_run_lease('11111111-1111-4111-8111-111111111111', 'process-submission', '62000000-0000-4000-8000-000000000002', 1, 'lifecycle-test', '55555555-5555-4555-8555-555555555555')$$,
+  '42501', null, 'members cannot renew technical workflow leases'
 );
 set local role postgres;
 select throws_ok(

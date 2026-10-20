@@ -23,9 +23,11 @@ export const concurrency = {
 
 export type WorkflowRunAcquireResult =
   | { state: 'acquired'; leaseToken: string }
-  | { state: 'already_handled' | 'not_found' }
+  | { state: 'already_handled' | 'in_progress' | 'not_found' }
 export interface WorkflowExecutionRepository {
   begin(workflow: WorkflowName, payload: WorkflowPayload): Promise<WorkflowRunAcquireResult>
+  /** false, sobald der Lease nicht mehr diesem Versuch gehoert. */
+  renew(workflow: WorkflowName, payload: WorkflowPayload, leaseToken: string): Promise<boolean>
   succeed(workflow: WorkflowName, payload: WorkflowPayload, leaseToken: string): Promise<void>
   fail(workflow: WorkflowName, payload: WorkflowPayload, leaseToken: string, errorClass: string, retryable: boolean): Promise<void>
 }
@@ -36,6 +38,32 @@ const WORKFLOW_RETRIES = 3
 export type WorkflowAttempt = { final: boolean }
 export interface ProductWorkflowExecutor {
   execute(workflow: WorkflowName, payload: WorkflowPayload, attempt: WorkflowAttempt): Promise<void>
+}
+
+// begin_workflow_run und renew_workflow_run_lease vergeben 120 s; nach einem Drittel davon
+// verlaengern, damit ein einzelner verlorener Aufruf den Lease noch nicht kostet.
+const LEASE_RENEWAL_INTERVAL_MS = 40_000
+// Haengt ein Executor ohne eigenes Timeout, haelt der Heartbeat den Lauf nicht unbegrenzt fest:
+// danach laeuft der Lease ab und eine erneute Zustellung darf den Lauf uebernehmen.
+const MAX_LEASE_RENEWAL_MS = 30 * 60_000
+
+/**
+ * Haelt den Lease eines laufenden Versuchs am Leben, solange der Executor im Prozess arbeitet --
+ * auch ueber Hatchets executionTimeout hinaus, denn der Executor laeuft dann weiter. Ein
+ * fehlgeschlagener Aufruf wird beim naechsten Takt wiederholt; ist der Lease verloren, endet der
+ * Heartbeat. Gibt die Stopp-Funktion zurueck.
+ */
+export function keepLeaseAlive(renew: () => Promise<boolean>, now: () => number = Date.now): () => void {
+  const startedAt = now()
+  const timer = setInterval(() => {
+    if (now() - startedAt >= MAX_LEASE_RENEWAL_MS) {
+      clearInterval(timer)
+      return
+    }
+    renew().then((owned) => { if (!owned) clearInterval(timer) }, () => {})
+  }, LEASE_RENEWAL_INTERVAL_MS)
+  timer.unref()
+  return () => clearInterval(timer)
 }
 
 export class WorkflowExecutionError extends Error {
@@ -88,11 +116,15 @@ export function createWorkflowDefinitions(
       const acquired = await runs.begin(workflow, payload)
       if (acquired.state !== 'acquired') {
         if (acquired.state === 'already_handled') return
+        // Ein anderer Versuch arbeitet noch mit gueltigem Lease; spaeter erneut zustellen, statt den
+        // Lauf als erledigt zu melden, obwohl er noch scheitern kann.
+        if (acquired.state === 'in_progress') throw new WorkflowExecutionError('run_in_progress', true)
         // Hatchet is allowed to schedule a run before the outbox dispatcher obtains its durable
         // acknowledgement. Retrying is the only safe response: performing an untracked action is not.
         throw new WorkflowExecutionError('run_mapping_pending', true)
       }
       const leaseToken = acquired.leaseToken
+      const stopLeaseRenewal = keepLeaseAlive(() => runs.renew(workflow, payload, leaseToken))
       try {
         await executor.execute(workflow, payload, { final: ctx.retryCount() >= WORKFLOW_RETRIES })
         await runs.succeed(workflow, payload, leaseToken)
@@ -101,6 +133,8 @@ export function createWorkflowDefinitions(
         await runs.fail(workflow, payload, leaseToken, classified.errorClass, classified.retryable)
         if (!classified.retryable) throw new NonRetryableError(classified.errorClass)
         throw classified
+      } finally {
+        stopLeaseRenewal()
       }
     },
   }))
