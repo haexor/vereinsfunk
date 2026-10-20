@@ -2,6 +2,7 @@ import type { OutputFormat, ScopeLevel, SocialPlatform } from '@vereinsfunk/cont
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { mergeEffectiveConfig, resolveEffectiveConfig, type ConfigOverride, type TrustRecord } from '@vereinsfunk/domain'
 import { notExpiredFilter } from '../supabase.js'
+import { scopeLevelOf } from './scopeAuthorization.js'
 
 // Regelaufloesung je Ebene (Paket 011/023) -- gebraucht von routes/policies.ts (Richtlinien-
 // Oberflaeche, Freigaberouten) UND vom in app.ts verbleibenden POST /v1/submissions
@@ -115,8 +116,7 @@ export function computeRuleEntry(
 // consentExpiresOnLeave greifen auf jeder Ebene (mergeEffectiveConfig) -- eine feste
 // 'department'-Aufloesung uebersah Vereinsbeitraege ebenso wie eine Vorgabe der Team-Ebene.
 export function computeScopedEffectiveConfig(rows: PolicyRuleRows, organizationId: string, departmentId: string | null, teamId: string | null) {
-  const scope = teamId ? 'team' : departmentId ? 'department' : 'organization'
-  return computeRuleEntry(rows, scope, teamId ?? departmentId ?? organizationId, departmentId).config
+  return computeRuleEntry(rows, scopeLevelOf({ departmentId, teamId }), teamId ?? departmentId ?? organizationId, departmentId).config
 }
 
 export async function resolveScopedEffectiveConfig(client: SupabaseClient, organizationId: string, departmentId: string | null, teamId: string | null) {

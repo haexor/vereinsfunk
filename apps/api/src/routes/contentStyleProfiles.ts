@@ -5,7 +5,7 @@ import { isStyleProfileUsableInScope, SYSTEM_STYLE_PROFILES } from '../services/
 import type { ApiRouteContext } from './context.js'
 import { checkRateLimit, createAuditRecorder } from './shared.js'
 import { buildStyleProfilePromptPreview, previewStyleProfile, resolvePreviewIdempotencyKey } from '../services/styleProfilePreview.js'
-import { resolveDirectoryScope, toPermissionScope } from '../services/scopeAuthorization.js'
+import { resolveDirectoryScope, scopeLevelOf, toPermissionScope } from '../services/scopeAuthorization.js'
 import { TextWorkshopScopeSchema } from './textWorkshop.js'
 
 const CUSTOM_STYLE_PROFILE_COLUMNS = 'id, organization_id, department_id, team_id, slug, name, description, style_rules, avoid_rules, do_rules, is_active, created_by, created_at, updated_at'
@@ -54,7 +54,7 @@ export function registerContentStyleProfileRoutes(app: FastifyInstance, context:
     const service = supabaseClients.forService()
     const inserted = await service.from('content_style_profiles').insert({ organization_id: input.organizationId, department_id: input.departmentId ?? null, team_id: input.teamId ?? null, slug: input.slug, name: input.name, kind: 'custom', description: input.description, style_rules: input.styleRules, avoid_rules: input.avoidRules, do_rules: input.doRules, created_by: request.auth!.userId }).select('id').single()
     if (inserted.error) throw inserted.error
-    await recordAuditEvent(request, { organizationId: input.organizationId, action: 'content_style_profile.created', entityType: 'content_style_profile', entityId: inserted.data.id as string, metadata: { scope: input.teamId ? 'team' : input.departmentId ? 'department' : 'organization' } })
+    await recordAuditEvent(request, { organizationId: input.organizationId, action: 'content_style_profile.created', entityType: 'content_style_profile', entityId: inserted.data.id as string, metadata: { scope: scopeLevelOf(input) } })
     return reply.code(201).send({ id: inserted.data.id })
   })
 
@@ -95,7 +95,7 @@ export function registerContentStyleProfileRoutes(app: FastifyInstance, context:
     if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(existing.data.organization_id, existing.data.department_id, existing.data.team_id)))) return
     const del = await service.from('content_style_profiles').delete().eq('id', params.id)
     if (del.error) throw del.error
-    await recordAuditEvent(request, { organizationId: existing.data.organization_id, action: 'content_style_profile.deleted', entityType: 'content_style_profile', entityId: params.id, metadata: { scope: existing.data.team_id ? 'team' : existing.data.department_id ? 'department' : 'organization' } })
+    await recordAuditEvent(request, { organizationId: existing.data.organization_id, action: 'content_style_profile.deleted', entityType: 'content_style_profile', entityId: params.id, metadata: { scope: scopeLevelOf({ departmentId: existing.data.department_id, teamId: existing.data.team_id }) } })
     return reply.code(204).send()
   })
 

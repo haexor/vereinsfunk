@@ -17,7 +17,7 @@ import { buildStageDefinitions, filterAdultUserIds, isAuthorMinor, membersWithAp
 import { computeMediaGateBlockersForPostVersion } from '../services/mediaGate.js'
 import type { ApiRouteContext } from './context.js'
 import { createAuditRecorder } from './shared.js'
-import { computeRuleEntry, computeScopedEffectiveConfig, fetchMemberTrust, fetchPolicyRuleRows } from '../services/policyRules.js'
+import { computeScopedEffectiveConfig, fetchMemberTrust, fetchPolicyRuleRows } from '../services/policyRules.js'
 import { fetchAllRows, fetchAllRowsForIds } from '../supabase.js'
 
 export function registerApprovalRoutes(app: FastifyInstance, context: ApiRouteContext): void {
@@ -42,7 +42,7 @@ export function registerApprovalRoutes(app: FastifyInstance, context: ApiRouteCo
     // effektive Konfiguration lesen dieselben Zeilen.
     const ruleRows = await fetchPolicyRuleRows(client, post.data.organization_id)
     const orgRow = ruleRows.orgRow
-    const config = computeRuleEntry(ruleRows, teamId ? 'team' : 'department', teamId ?? departmentId, departmentId).config
+    const config = computeScopedEffectiveConfig(ruleRows, post.data.organization_id, departmentId, teamId)
     // Service-role-Client fuer alles, was den Pruefkreis oder die Verfasserin betrifft:
     // organization/department/team_memberships_select zeigen einer einreichenden Person ohne
     // *.manage per RLS nur ihre eigenen Mitgliedschaftszeilen. Mit dem Aufrufer-Client waere der
