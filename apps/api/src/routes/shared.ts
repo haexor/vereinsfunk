@@ -1,4 +1,4 @@
-import type { ConsentScope, GeneratedPost, OutputFormat, ScopeLevel, SocialPlatform, StyleProfilePromptPreview, StyleProfileRules } from '@vereinsfunk/contracts'
+import type { ConsentScope, GeneratedPost, OAuthPlatform, OutputFormat, ScopeLevel, SocialPlatform, StyleProfilePromptPreview, StyleProfileRules } from '@vereinsfunk/contracts'
 import { canRemoveRole, hasPermission, type Permission, type Role } from '@vereinsfunk/authorization'
 import type { ApiEnvironment } from '@vereinsfunk/config'
 import { AnthropicStructuredContentGenerator, buildStructuredTextPrompt, ContentGenerationError, OpenAiCompatibleStructuredContentGenerator, type StructuredContentGenerator, type TextGroundedContentBrief } from '@vereinsfunk/content-engine'
@@ -11,7 +11,7 @@ import { z } from 'zod'
 import { mapChannelScopeRow, mapSocialConnectionRow } from '../apiMappers.js'
 import { permissionScopeKey, type PermissionScope, type RoleProvider } from '../auth.js'
 import { byteaToBuffer, createSecretBoxFromEnvironment, EmbeddedProviderSecretSchema, unwrapEmbeddedSecret } from '../secretBox.js'
-import { notExpiredFilter } from '../supabase.js'
+import { notExpiredFilter, parseSupabaseData } from '../supabase.js'
 export { fetchAllRows, fetchAllRowsForIds, notExpiredFilter } from '../supabase.js'
 import type { SupabaseClientFactory } from './context.js'
 
@@ -343,6 +343,41 @@ export function toChannelCandidates(connections: readonly ChannelConnectionRow[]
         canSchedule: row.can_schedule as boolean,
       })),
   }))
+}
+
+// effective_config_snapshot ist jsonb ohne Formgarantie. Eine stille Fehlinterpretation von
+// allowedChannelIds als "nicht gesetzt" hiesse "keine Einschraenkung" -- also lieber ein 500.
+const ChannelSnapshotSchema = z.object({ config: z.object({ allowedChannelIds: z.array(z.string()).nullable().optional() }).optional() })
+
+// "Auf welche Kanaele darf diese Beitragsfassung eingeplant werden" -- die Anzeige zu
+// schedule_publication (2026082504), die die verbindliche Pruefung in SQL traegt. Der Scope folgt
+// dem Beitrag: Team, Abteilung oder (department_id null) der Verein. Website-Kanaele sind
+// ausgenommen, sie sind noch kein Veroeffentlichungsziel (Plan 039, publications_platform_check).
+// platform engt auf eine Plattform ein (Agenten-Vorschlag, routes/agent.ts).
+export async function resolveAvailableChannelIdsForPostVersion(
+  client: SupabaseClient,
+  target: { organizationId: string; departmentId: string | null; teamId: string | null; effectiveConfigSnapshot: unknown },
+  platform?: OAuthPlatform,
+): Promise<string[]> {
+  let connectionQuery = client.from('social_connections').select('id, status, archived_at, responsible_profile_id').eq('organization_id', target.organizationId).neq('platform', 'website')
+  if (platform) connectionQuery = connectionQuery.eq('platform', platform)
+  const [connections, scopeRows, policyRow] = await Promise.all([
+    connectionQuery,
+    client.from('channel_scopes').select('social_connection_id, scope, department_id, team_id, can_schedule').eq('organization_id', target.organizationId),
+    client.from('policy_settings').select('require_channel_responsible').eq('organization_id', target.organizationId).eq('scope', 'organization').maybeSingle(),
+  ])
+  if (connections.error) throw connections.error
+  if (scopeRows.error) throw scopeRows.error
+  if (policyRow.error) throw policyRow.error
+  const snapshot = parseSupabaseData(ChannelSnapshotSchema, target.effectiveConfigSnapshot)
+  return resolveAvailableChannels({
+    scope: target.teamId ? 'team' : target.departmentId ? 'department' : 'organization',
+    ...(target.departmentId ? { departmentId: target.departmentId } : {}),
+    ...(target.teamId ? { teamId: target.teamId } : {}),
+    channels: toChannelCandidates(connections.data, scopeRows.data),
+    allowedChannelIds: snapshot.config?.allowedChannelIds ?? null,
+    requireChannelResponsible: policyRow.data?.require_channel_responsible ?? false,
+  })
 }
 
 // Plan 042, PR 3 Step 3: "auf welchen Plattformen darf dieser Scope ueberhaupt veroeffentlichen"

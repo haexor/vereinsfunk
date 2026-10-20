@@ -432,6 +432,57 @@ describe('Paket 012: Kanaele und Social-Accounts', () => {
     expect(deletedConnectionIds).toEqual([CONNECTION_ID])
   })
 
+  describe('GET /v1/post-versions/:id/available-channels', () => {
+    const POST_VERSION_ID = '10000000-5000-4000-8000-000000000001'
+    const OTHER_CONNECTION_ID = '10000000-8000-4000-8000-000000000098'
+    function clientsWithSnapshot(effectiveConfigSnapshot: unknown): SupabaseClientFactory {
+      return {
+        forUser: () =>
+          ({
+            from: (table: string) => {
+              if (table === 'post_versions') return chain({ data: { id: POST_VERSION_ID, post_id: 'post-1', effective_config_snapshot: effectiveConfigSnapshot }, error: null })
+              // Vereinsbeitrag: department_id null -- nur die vereinsweite Freigabe deckt ihn.
+              if (table === 'posts') return chain({ data: { id: 'post-1', organization_id: ORGANIZATION_ID, department_id: null, team_id: null }, error: null })
+              if (table === 'social_connections') {
+                return chain({
+                  data: [CONNECTION_ID, OTHER_CONNECTION_ID].map((id) => ({ id, status: 'active', archived_at: null, responsible_profile_id: null })),
+                  error: null,
+                })
+              }
+              if (table === 'channel_scopes') {
+                return chain({
+                  data: [
+                    { social_connection_id: CONNECTION_ID, scope: 'organization', department_id: null, team_id: null, can_schedule: true },
+                    { social_connection_id: OTHER_CONNECTION_ID, scope: 'organization', department_id: null, team_id: null, can_schedule: true },
+                  ],
+                  error: null,
+                })
+              }
+              if (table === 'policy_settings') return chain({ data: null, error: null })
+              throw new Error(`unexpected table in test fake: ${table}`)
+            },
+          }) as unknown as SupabaseClient,
+        forService: () => ({}) as unknown as SupabaseClient,
+      }
+    }
+
+    it('limits an organization-level post to the channels its snapshot allows', async () => {
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clientsWithSnapshot({ config: { allowedChannelIds: [CONNECTION_ID] } }) })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'GET', url: `/v1/post-versions/${POST_VERSION_ID}/available-channels`, headers: { authorization: `Bearer ${token}` } })
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toEqual({ socialConnectionIds: [CONNECTION_ID] })
+    })
+
+    // Ein unlesbares allowedChannelIds hiess frueher still "keine Einschraenkung".
+    it('fails closed on a malformed allowedChannelIds snapshot', async () => {
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clientsWithSnapshot({ config: { allowedChannelIds: CONNECTION_ID } }) })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'GET', url: `/v1/post-versions/${POST_VERSION_ID}/available-channels`, headers: { authorization: `Bearer ${token}` } })
+      expect(response.statusCode).toBe(500)
+    })
+  })
+
   // Plan 039: die einzige Kanal-Anlage ohne OAuth.
   describe('POST /v1/channels (website channels)', () => {
     const socialManagerRoleProvider: RoleProvider = { async rolesForScope() { return ['social_manager'] } }
