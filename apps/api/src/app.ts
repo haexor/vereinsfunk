@@ -54,6 +54,8 @@ import { registerContentSignatureBlockRoutes } from './routes/contentSignatureBl
 import { registerDataSubjectRoutes } from './routes/dataSubjects.js'
 import { registerDirectoryRoutes } from './routes/directory.js'
 import { registerImageStyleRoutes } from './routes/imageStyle.js'
+import { registerImageStyleWorkshopRoutes } from './routes/imageStyleWorkshop.js'
+import { registerImageStyleRenderRoutes } from './routes/imageStyleRender.js'
 import { registerIntegrationRoutes } from './routes/integrations.js'
 import { registerLlmProviderRoutes } from './routes/llmProviders.routes.js'
 import { registerVisionProviderComparisonRoutes } from './routes/visionProviderComparisons.routes.js'
@@ -398,6 +400,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   registerBrandWebsiteAnalysisRoutes(app, context)
   registerBrandAssetRoutes(app, context)
   registerImageStyleRoutes(app, context)
+  registerImageStyleWorkshopRoutes(app, context)
+  registerImageStyleRenderRoutes(app, context)
   registerPhotoLayoutRoutes(app, context)
   registerContentSignatureBlockRoutes(app, context)
 
