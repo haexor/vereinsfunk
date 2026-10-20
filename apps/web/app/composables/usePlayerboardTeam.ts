@@ -17,8 +17,8 @@ export async function usePlayerboardTeam() {
   const selected = useState<string | null>('vf-playerboard-team', () => null)
   const remembered = useCookie<string | null>('vf-playerboard-team', { default: () => null, sameSite: 'lax' })
   const sessionPromise = useSession()
-  const scopePromise = useScope()
-  const [session, scope] = await Promise.all([sessionPromise, scopePromise])
+  const activeScopePromise = useActiveScope()
+  const [session, { scope, organizationId, organization, organizationTimezone }] = await Promise.all([sessionPromise, activeScopePromise])
 
   const rememberedTeamId = computed(() => {
     const parsed = UuidSchema.safeParse(remembered.value)
@@ -34,9 +34,6 @@ export async function usePlayerboardTeam() {
     },
   })
   const team = computed(() => teams.value.find((item) => item.id === teamId.value) ?? null)
-  const organizationId = computed(() => scope.value?.organizationId ?? null)
-  const organizationTimezone = computed(() =>
-    session.value?.scopes.find((item) => item.organizationId === organizationId.value)?.organizationTimezone ?? 'Europe/Berlin')
   // Rechte auf der gewaehlten Mannschaft -- Komfort, durchgesetzt wird in API und RLS.
   const permissionScope = computed(() =>
     team.value && organizationId.value ? { organizationId: organizationId.value, departmentId: team.value.departmentId, teamId: team.value.id } : null)
@@ -45,24 +42,24 @@ export async function usePlayerboardTeam() {
   // Ebenen fuer Kategorien und Einstellungen: Verein, Abteilung (aktive oder die der Mannschaft),
   // gewaehlte Mannschaft.
   const levels = computed<PlayerboardLevel[]>(() => {
-    const organization = session.value?.scopes.find((item) => item.organizationId === organizationId.value)
-    if (!organization) return []
+    const membership = organization.value
+    if (!membership) return []
     const result: PlayerboardLevel[] = [{
-      scope: 'organization', scopeId: organization.organizationId, label: 'Verein', name: organization.organizationName,
-      permissionScope: { organizationId: organization.organizationId },
+      scope: 'organization', scopeId: membership.organizationId, label: 'Verein', name: membership.organizationName,
+      permissionScope: { organizationId: membership.organizationId },
     }]
     const departmentId = scope.value?.departmentId ?? team.value?.departmentId ?? null
-    const department = organization.departments.find((item) => item.id === departmentId)
+    const department = membership.departments.find((item) => item.id === departmentId)
     if (department) {
       result.push({
         scope: 'department', scopeId: department.id, label: 'Abteilung', name: department.name,
-        permissionScope: { organizationId: organization.organizationId, departmentId: department.id },
+        permissionScope: { organizationId: membership.organizationId, departmentId: department.id },
       })
     }
     if (team.value) {
       result.push({
         scope: 'team', scopeId: team.value.id, label: 'Mannschaft', name: team.value.name,
-        permissionScope: { organizationId: organization.organizationId, departmentId: team.value.departmentId, teamId: team.value.id },
+        permissionScope: { organizationId: membership.organizationId, departmentId: team.value.departmentId, teamId: team.value.id },
       })
     }
     return result

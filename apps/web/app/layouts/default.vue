@@ -9,7 +9,7 @@ import { resolveSidebarLogoAsset, type SidebarLogoAsset } from '../utils/sidebar
 const mobileOpen = ref(false)
 const route = useRoute()
 const session = await useSession()
-const scope = await useScope()
+const { scope, organization: activeOrganization } = await useActiveScope()
 const {
   enabled: enabledModules,
   isEnabled: isModuleEnabled,
@@ -25,11 +25,6 @@ watch(
   },
 )
 
-const activeOrganization = computed(
-  () =>
-    session.value?.scopes.find((item) => item.organizationId === scope.value?.organizationId) ??
-    null,
-)
 const activeDepartment = computed(
   () =>
     activeOrganization.value?.departments.find((item) => item.id === scope.value?.departmentId) ??
