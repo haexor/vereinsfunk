@@ -10,7 +10,6 @@ import {
   UuidSchema,
   type MediaOrigin,
 } from '@vereinsfunk/contracts'
-import { hasPermission } from '@vereinsfunk/authorization'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
@@ -56,18 +55,14 @@ async function loadContentQuotaUsage(service: SupabaseClient, organizationId: st
 
 /** Registriert berechtigungsgepruefte Routen fuer Tarife, Kontingente sowie Speicher- und Veroeffentlichungsnutzung. */
 export function registerSubscriptionRoutes(app: FastifyInstance, context: ApiRouteContext): void {
-  const { requireAuth, requirePermission, roleProvider, supabaseClients } = context
+  const { requireAuth, requirePermission, requirePermissionAnyOf, supabaseClients } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
 
   app.get('/v1/subscription', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const query = z.object({ organizationId: UuidSchema }).parse(request.query)
-    // organization.manage ODER billing.manage duerfen den eigenen Tarif einsehen --
-    // requirePermission kennt nur eine einzelne Berechtigung, deshalb hier von Hand.
-    const roles = await roleProvider.rolesForScope(request.auth!, { organizationId: query.organizationId })
-    if (!hasPermission(roles, 'organization.manage') && !hasPermission(roles, 'billing.manage')) {
-      return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
-    }
+    // organization.manage ODER billing.manage duerfen den eigenen Tarif einsehen.
+    if (!(await requirePermissionAnyOf(request, reply, ['organization.manage', 'billing.manage'], { organizationId: query.organizationId }))) return
     const service = supabaseClients.forService()
     const subscription = await service
       .from('organization_subscriptions')

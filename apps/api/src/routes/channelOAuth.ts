@@ -262,8 +262,7 @@ export function registerChannelOAuthRoutes(app: FastifyInstance, context: ApiRou
     const ownerScope = pending.data.owner_scope
     const ownerDepartmentId = pending.data.owner_department_id
     const platform = pending.data.platform
-    const scope = toPermissionScope(organizationId, ownerScope === 'department' ? (ownerDepartmentId as string) : null)
-    if (!(await requirePermission(request, reply, 'social_account.manage', scope))) return
+    if (!(await requirePermission(request, reply, 'social_account.manage', channelOwnerScope(pending.data)))) return
     const accounts = pending.data.available_accounts as {
       externalAccountId: string
       displayName: string
