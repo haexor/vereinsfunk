@@ -101,7 +101,9 @@ async function composeLayout(preset: PhotoLayoutPreset) {
         </span>
       </button>
     </div>
-    <p v-if="error" class="mt-2 text-[11px] text-amber-800">{{ error }}</p>
   </div>
   <p v-else-if="!loading && loadError" class="mt-3 text-[11px] text-amber-800">Die Layouts konnten nicht geladen werden.</p>
+  <!-- Ausserhalb des Blocks oben: eine veraltete Personen-Pruefung leert mediaAssetIds, womit der
+       Block samt Fehlermeldung verschwaende, die genau das erklaert. -->
+  <p v-if="error" class="mt-2 text-[11px] text-amber-800">{{ error }}</p>
 </template>
