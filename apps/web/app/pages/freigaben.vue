@@ -18,9 +18,8 @@ const BLOCKER_LABELS: Record<MediaGateBlocker, string> = {
 // anfragende Person warten (GET /v1/approval-stages/mine). Ohne Paket 005/006 (Inhalts-Pipeline)
 // entstehen noch keine echten Beiträge -- die Liste bleibt deshalb ehrlich leer, bis dort ein
 // Beitrag den Status "awaiting_approval" erreicht.
-const config = useRuntimeConfig()
-const scope = await useScope()
-const organizationId = computed(() => scope.value?.organizationId ?? null)
+const api = useApiClient()
+const { organizationId } = await useActiveScope()
 
 const loading = ref(true)
 const errorMessage = ref('')
@@ -29,34 +28,28 @@ const stages = ref<ApprovalStage[]>([])
 const reasonDraft = reactive<Record<string, string>>({})
 const decidingStageId = ref<string | null>(null)
 
-async function load() {
-  if (!organizationId.value) { stages.value = []; loading.value = false; return }
+const { reload: load, ready } = useScopedLoad(() => organizationId.value, async (currentOrganizationId, isLatest) => {
+  if (!currentOrganizationId) { stages.value = []; loading.value = false; return }
   loading.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
     // Auf den aktiven Verein begrenzt: wer in mehreren Vereinen prüft, soll hier nur die Freigaben
     // des gerade gewählten sehen.
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/approval-stages/mine`, {
-      headers, query: { organizationId: organizationId.value },
-    })
-    stages.value = ApprovalStageSchema.array().parse(response)
+    const loaded = await api.request('/v1/approval-stages/mine', { query: { organizationId: currentOrganizationId } }, ApprovalStageSchema.array())
+    if (isLatest()) stages.value = loaded
   } catch {
-    errorMessage.value = 'Die offenen Freigaben konnten nicht geladen werden.'
+    if (isLatest()) errorMessage.value = 'Die offenen Freigaben konnten nicht geladen werden.'
   } finally {
-    loading.value = false
+    if (isLatest()) loading.value = false
   }
-}
-await load()
-watch(organizationId, () => void load())
+})
 
 async function decide(stage: ApprovalStage, decision: 'approved' | 'changes_requested' | 'rejected') {
   decidingStageId.value = stage.id
   actionError.value = ''
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/approval-stages/${stage.id}/decide`, {
-      method: 'POST', headers, body: { decision, reason: reasonDraft[stage.id]?.trim() || null },
+    await api.request(`/v1/approval-stages/${stage.id}/decide`, {
+      method: 'POST', body: { decision, reason: reasonDraft[stage.id]?.trim() || null },
     })
     await load()
   } catch {
@@ -77,22 +70,19 @@ const reresolvingId = ref<string | null>(null)
 const reresolveError = ref('')
 const stalledError = ref('')
 
-async function loadStalled() {
-  if (!organizationId.value) { stalledRequests.value = []; return }
+const { reload: loadStalled, ready: stalledReady } = useScopedLoad(() => organizationId.value, async (currentOrganizationId, isLatest) => {
+  if (!currentOrganizationId) { stalledRequests.value = []; return }
   stalledError.value = ''
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/approval-requests/stalled`, {
-      headers, query: { organizationId: organizationId.value },
-    })
-    stalledRequests.value = StalledApprovalRequestSchema.array().parse(response)
+    const loaded = await api.request('/v1/approval-requests/stalled', { query: { organizationId: currentOrganizationId } }, StalledApprovalRequestSchema.array())
+    if (isLatest()) stalledRequests.value = loaded
   } catch {
+    if (!isLatest()) return
     stalledRequests.value = []
     stalledError.value = 'Die festhängenden Freigaben konnten nicht geladen werden.'
   }
-}
-await loadStalled()
-watch(organizationId, () => void loadStalled())
+})
+await Promise.all([ready, stalledReady])
 
 async function reresolve(item: StalledApprovalRequest) {
   const reason = reresolveReasonDraft[item.approvalRequestId]?.trim() ?? ''
@@ -100,9 +90,8 @@ async function reresolve(item: StalledApprovalRequest) {
   reresolvingId.value = item.approvalRequestId
   reresolveError.value = ''
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/approval-requests/${item.approvalRequestId}/reresolve`, {
-      method: 'POST', headers, body: { reason },
+    await api.request(`/v1/approval-requests/${item.approvalRequestId}/reresolve`, {
+      method: 'POST', body: { reason },
     })
     reresolveOpenId.value = null
     delete reresolveReasonDraft[item.approvalRequestId]
