@@ -16,10 +16,8 @@ import { localDateKey } from '../../utils/memberDates'
 
 // Paket 020: Betroffenenanfragen (Auskunft, Löschung, Berichtigung, Widerspruch,
 // Datenübertragbarkeit) -- Frist wird serverseitig aus receivedAt berechnet, hier nur angezeigt.
-const config = useRuntimeConfig()
-const session = await useSession()
-const { organizationId, level: activeScopeLevel } = await useActiveScope()
-const timezone = computed(() => session.value?.scopes.find((item) => item.organizationId === organizationId.value)?.organizationTimezone ?? 'Europe/Berlin')
+const api = useApiClient()
+const { organizationId, level: activeScopeLevel, organizationTimezone } = await useActiveScope()
 const isOrganizationScope = computed(() => activeScopeLevel.value === 'organization')
 const canManage = computed(() => isOrganizationScope.value && useCan('organization.manage', { organizationId: organizationId.value ?? '' }))
 
@@ -28,26 +26,27 @@ const errorMessage = ref('')
 const requests = ref<DataSubjectRequest[]>([])
 const people = ref<DirectoryPerson[]>([])
 
-async function load() {
-  if (!organizationId.value || !canManage.value) { loading.value = false; return }
+// Ohne Verwaltungsrecht (oder auf Abteilungsebene) ist der Schluessel null: dann wird nichts
+// geladen, und ein Wechsel zurueck laedt fuer den aktuellen Verein neu.
+const { ready } = useScopedLoad(() => (canManage.value ? organizationId.value : null), async (currentOrganizationId, isLatest) => {
+  if (!currentOrganizationId) { loading.value = false; return }
   loading.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
-    const [requestsResponse, peopleResponse] = await Promise.all([
-      $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/data-subject-requests`, { headers }),
-      $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/directory-people`, { headers }),
+    const [loadedRequests, loadedPeople] = await Promise.all([
+      api.request(`/v1/organizations/${currentOrganizationId}/data-subject-requests`, {}, DataSubjectRequestSchema.array()),
+      api.request(`/v1/organizations/${currentOrganizationId}/directory-people`, {}, DirectoryPersonSchema.array()),
     ])
-    requests.value = DataSubjectRequestSchema.array().parse(requestsResponse)
-    people.value = DirectoryPersonSchema.array().parse(peopleResponse)
+    if (!isLatest()) return
+    requests.value = loadedRequests
+    people.value = loadedPeople
   } catch {
-    errorMessage.value = 'Die Betroffenenanfragen konnten nicht geladen werden.'
+    if (isLatest()) errorMessage.value = 'Die Betroffenenanfragen konnten nicht geladen werden.'
   } finally {
-    loading.value = false
+    if (isLatest()) loading.value = false
   }
-}
-await load()
-watch([organizationId, isOrganizationScope], () => { void load() })
+})
+await ready
 
 function personLabel(personId: string | null): string {
   if (!personId) return ''
@@ -89,7 +88,7 @@ const createForm = reactive({
   subjectLabel: '',
   // Kalendertag in der Zeitzone des Vereins: toISOString() lieferte zwischen 0 und 2 Uhr deutscher
   // Zeit noch den Vortag, und die daraus berechnete Frist endete einen Tag zu frueh.
-  receivedAt: localDateKey(new Date(), timezone.value),
+  receivedAt: localDateKey(new Date(), organizationTimezone.value),
 })
 watch(() => createForm.directoryPersonId, (id) => {
   if (createForm.subjectKind !== 'directory_person' || createForm.subjectLabel) return
@@ -108,10 +107,8 @@ async function createRequest() {
   creating.value = true
   createError.value = ''
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/data-subject-requests`, {
+    const created = await api.request(`/v1/organizations/${organizationId.value}/data-subject-requests`, {
       method: 'POST',
-      headers,
       body: {
         kind: createForm.kind,
         subjectKind: createForm.subjectKind,
@@ -119,8 +116,8 @@ async function createRequest() {
         subjectLabel: createForm.subjectLabel,
         receivedAt: createForm.receivedAt,
       },
-    })
-    requests.value = [DataSubjectRequestSchema.parse(response), ...requests.value]
+    }, DataSubjectRequestSchema)
+    requests.value = [created, ...requests.value]
     createForm.directoryPersonId = ''
     createForm.subjectLabel = ''
   } catch {
@@ -139,9 +136,7 @@ async function updateStatus(request: DataSubjectRequest, status: DataSubjectRequ
   statusUpdatingId.value = request.id
   actionError.value = ''
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/data-subject-requests/${request.id}`, { method: 'PATCH', headers, body: { status } })
-    const updated = DataSubjectRequestSchema.parse(response)
+    const updated = await api.request(`/v1/data-subject-requests/${request.id}`, { method: 'PATCH', body: { status } }, DataSubjectRequestSchema)
     requests.value = requests.value.map((item) => (item.id === updated.id ? updated : item))
   } catch {
     actionError.value = 'Der Status konnte nicht geändert werden.'
@@ -162,13 +157,10 @@ async function saveExtend(request: DataSubjectRequest) {
   extending.value = true
   actionError.value = ''
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/data-subject-requests/${request.id}`, {
+    const updated = await api.request(`/v1/data-subject-requests/${request.id}`, {
       method: 'PATCH',
-      headers,
       body: { extendedUntil: extendForm.extendedUntil || null, extensionReason: extendForm.extensionReason.trim() || null },
-    })
-    const updated = DataSubjectRequestSchema.parse(response)
+    }, DataSubjectRequestSchema)
     requests.value = requests.value.map((item) => (item.id === updated.id ? updated : item))
     extendingId.value = null
   } catch {
@@ -187,9 +179,7 @@ async function saveResolutionNote(request: DataSubjectRequest) {
   if (value === (request.resolutionNote ?? '')) return
   actionError.value = ''
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/data-subject-requests/${request.id}`, { method: 'PATCH', headers, body: { resolutionNote: value || null } })
-    const updated = DataSubjectRequestSchema.parse(response)
+    const updated = await api.request(`/v1/data-subject-requests/${request.id}`, { method: 'PATCH', body: { resolutionNote: value || null } }, DataSubjectRequestSchema)
     requests.value = requests.value.map((item) => (item.id === updated.id ? updated : item))
   } catch {
     actionError.value = 'Die Abschlussnotiz konnte nicht gespeichert werden.'
@@ -206,9 +196,7 @@ async function exportPerson(request: DataSubjectRequest) {
   exportingId.value = request.id
   exportError.value = ''
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/data-subjects/${request.directoryPersonId}/export`, { headers })
-    const parsed = DataSubjectExportResponseSchema.parse(response)
+    const parsed = await api.request(`/v1/data-subjects/${request.directoryPersonId}/export`, {}, DataSubjectExportResponseSchema)
     exportResults[request.id] = parsed
     window.open(parsed.signedUrl, '_blank')
   } catch {
@@ -227,9 +215,7 @@ async function erasePerson(request: DataSubjectRequest) {
   erasingId.value = request.id
   eraseError.value = ''
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/data-subjects/${request.directoryPersonId}/erase`, { method: 'POST', headers })
-    eraseResults[request.id] = DataSubjectEraseResponseSchema.parse(response)
+    eraseResults[request.id] = await api.request(`/v1/data-subjects/${request.directoryPersonId}/erase`, { method: 'POST' }, DataSubjectEraseResponseSchema)
   } catch {
     eraseError.value = 'Die Löschung konnte nicht ausgeführt werden.'
   } finally {
