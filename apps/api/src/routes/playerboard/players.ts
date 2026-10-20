@@ -11,6 +11,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { createInvitation, InvitationCreationError } from '../../services/invitations.js'
+import { parseSupabaseData } from '../../supabase.js'
 import type { ApiRouteContext } from '../context.js'
 import { createAuditRecorder } from '../shared.js'
 import { loadTeamScope, requireStatsAccess, sendDatabaseError } from './shared.js'
@@ -183,19 +184,21 @@ export function registerPlayerboardPlayerRoutes(app: FastifyInstance, context: A
   })
 
   // Entfernen nur ohne Punkte: Kader-Eintraege mit Punkten nehmen ueber "on delete cascade" ihre
-  // Punkte mit -- dafuer gibt es "inaktiv".
+  // Punkte mit -- dafuer gibt es "inaktiv". Pruefen und Loeschen laufen in
+  // playerboard_delete_player unter einer Sperre des Eintrags; getrennt gingen dazwischen
+  // gespeicherte Punkte still verloren.
   app.delete('/v1/playerboard/players/:id', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
     const player = await loadPlayer(request, reply, params.id)
     if (!player) return
     if (!(await requirePermission(request, reply, 'training.manage', player.scope))) return
-    const points = await supabaseClients.forService().from('playerboard_point_entries').select('id', { count: 'exact', head: true }).eq('player_id', params.id)
-    if (points.error) throw points.error
-    if ((points.count ?? 0) > 0) return reply.code(409).send({ error: 'player_has_points', correlationId: request.id })
-    const result = await supabaseClients.forUser(request.auth!.accessToken).from('playerboard_players').delete().eq('id', params.id).select('id')
+    const result = await supabaseClients.forUser(request.auth!.accessToken).rpc('playerboard_delete_player', { target_player_id: params.id })
     if (result.error) throw result.error
-    if (result.data.length === 0) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+    const outcome = parseSupabaseData(z.enum(['deleted', 'player_has_points', 'not_found']), result.data)
+    if (outcome === 'player_has_points') return reply.code(409).send({ error: 'player_has_points', correlationId: request.id })
+    // Per Service-Client gefunden, fuer den Nutzer aber nicht sperr- oder loeschbar: RLS.
+    if (outcome === 'not_found') return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
     await recordAuditEvent(request, {
       organizationId: player.scope.organizationId, action: 'playerboard_player.removed', entityType: 'playerboard_players', entityId: params.id,
     })

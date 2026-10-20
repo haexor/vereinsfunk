@@ -47,10 +47,7 @@ function clients(options: FakeOptions = {}): SupabaseClientFactory {
   const table = (tables: Record<string, unknown>, label: string) => (name: string) => {
     if (name === 'audit_events') return { insert: async (row: Record<string, unknown>) => { options.audit?.push(row); return { error: null } } }
     if (!(name in tables)) throw new Error(`unexpected ${label} table in test fake: ${name}`)
-    const value = tables[name]
-    // { __count: n } bedient head-Abfragen mit count: 'exact'.
-    if (value && typeof value === 'object' && '__count' in value) return chain({ data: null, error: null, count: (value as { __count: number }).__count })
-    return chain({ data: value, error: null })
+    return chain({ data: tables[name], error: null })
   }
   const rpc = (calls: Record<string, { data: unknown; error: unknown }>, label: string) => async (name: string) => {
     if (!(name in calls)) throw new Error(`unexpected ${label} rpc in test fake: ${name}`)
@@ -264,13 +261,27 @@ describe('PlayerBoard coach flows', () => {
     expect(response.json()).toMatchObject({ error: 'player_has_account' })
   })
 
+  // Pruefen und Loeschen laufen atomar in playerboard_delete_player (pgTAP:
+  // playerboard_delete_player.test.sql); vorher zaehlte die Route und loeschte getrennt.
   it('refuses to delete a player who already has points', async () => {
     const app = await startApp({
       roleProvider: rolesProvider(['team_manager']),
-      supabaseClients: clients({ serviceTables: { playerboard_point_entries: { __count: 3 } } }),
+      supabaseClients: clients({ userRpc: { playerboard_delete_player: { data: 'player_has_points', error: null } } }),
     })
     const response = await call(app, 'DELETE', `/v1/playerboard/players/${PLAYER_ID}`)
     expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'player_has_points' })
+  })
+
+  it('deletes a player without points through playerboard_delete_player', async () => {
+    const audit: Record<string, unknown>[] = []
+    const app = await startApp({
+      roleProvider: rolesProvider(['team_manager']),
+      supabaseClients: clients({ audit, userRpc: { playerboard_delete_player: { data: 'deleted', error: null } } }),
+    })
+    const response = await call(app, 'DELETE', `/v1/playerboard/players/${PLAYER_ID}`)
+    expect(response.statusCode).toBe(204)
+    expect(audit).toEqual([expect.objectContaining({ action: 'playerboard_player.removed' })])
   })
 
   it('rejects public team page settings outside a team', async () => {
