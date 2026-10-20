@@ -13,6 +13,7 @@ import type { PermissionScope } from '../../auth.js'
 import { indexByScopeLevel, type ScopeLevelIndex } from '../../moduleStatus.js'
 import { parseSupabaseData } from '../../supabase.js'
 import type { ApiRouteContext } from '../context.js'
+import { resolveMembershipScope } from '../shared.js'
 
 /**
  * Paket 052: gemeinsame Bausteine der PlayerBoard-Routen.
@@ -23,10 +24,19 @@ import type { ApiRouteContext } from '../context.js'
  * Scope-Pfad; Berechtigung pruefen requirePermission bzw. requireStatsAccess danach.
  */
 export async function loadTeamScope(service: SupabaseClient, teamId: string): Promise<Required<PermissionScope> | null> {
-  const team = await service.from('teams').select('organization_id, department_id').eq('id', teamId).maybeSingle()
-  if (team.error) throw team.error
-  if (!team.data) return null
-  return { organizationId: team.data.organization_id as string, departmentId: team.data.department_id as string, teamId }
+  const scope = await resolveMembershipScope(service, 'team', teamId)
+  return scope?.departmentId ? { organizationId: scope.organizationId, departmentId: scope.departmentId, teamId } : null
+}
+
+/** Laedt den Mannschaftsscope eines Trainings vor der Rechtepruefung; sendet bei Fehlen 404 und liefert null. */
+export async function loadTrainingScope(
+  service: SupabaseClient, request: FastifyRequest, reply: FastifyReply, trainingId: string,
+): Promise<Required<PermissionScope> | null> {
+  const training = await service.from('playerboard_trainings').select('team_id').eq('id', trainingId).maybeSingle()
+  if (training.error) throw training.error
+  const scope = training.data ? await loadTeamScope(service, training.data.team_id as string) : null
+  if (!scope) reply.code(404).send({ error: 'not_found', correlationId: request.id })
+  return scope
 }
 
 /**
@@ -41,11 +51,7 @@ export async function requireStatsAccess(
   reply: FastifyReply,
   scope: Required<PermissionScope>,
 ): Promise<boolean> {
-  const { enabled } = await context.moduleStatusProvider.modulesForScope(scope)
-  if (!enabled.includes('playerboard')) {
-    reply.code(403).send({ error: 'module_disabled', module: 'playerboard', correlationId: request.id })
-    return false
-  }
+  if (!(await requirePlayerboardModule(context, request, reply, scope))) return false
   const client = context.supabaseClients.forUser(request.auth!.accessToken)
   const allowed = await client.rpc('playerboard_can_view_stats', { target_team_id: scope.teamId })
   if (allowed.error) throw allowed.error

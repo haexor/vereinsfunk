@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { ApiRouteContext } from '../context.js'
 import { createAuditRecorder } from '../shared.js'
-import { loadTeamScope, requirePlayerboardModule, sendDatabaseError } from './shared.js'
+import { loadTeamScope, loadTrainingScope, requirePlayerboardModule, sendDatabaseError } from './shared.js'
 
 export const PLAYERBOARD_PHOTO_BUCKET = 'playerboard-training-photos'
 const SIGNED_URL_SECONDS = 600
@@ -26,19 +26,24 @@ type PhotoRow = {
 
 const PeopleDetailSchema = z.array(z.object({ directoryPersonId: z.string(), consentRecordId: z.string() }))
 
+/** Signiert Pfade im privaten Fotobucket; Pfade ohne signierte URL fehlen in der Map. */
+export async function signPhotoUrls(service: SupabaseClient, paths: string[], expiresInSeconds: number): Promise<ReadonlyMap<string, string>> {
+  const signed = await service.storage.from(PLAYERBOARD_PHOTO_BUCKET).createSignedUrls(paths, expiresInSeconds)
+  if (signed.error) throw signed.error
+  return new Map(signed.data.flatMap((entry) => (entry.path && entry.signedUrl ? [[entry.path, entry.signedUrl] as const] : [])))
+}
+
 /**
  * Ergaenzt Fotozeilen um sichtbare Personen und fuer zehn Minuten signierte URLs.
  * Validiert die Antworten und laesst Fotos ohne signierte URL aus.
  */
 async function mapPhotos(client: SupabaseClient, service: SupabaseClient, rows: readonly PhotoRow[]) {
   if (rows.length === 0) return []
-  const [people, signed] = await Promise.all([
+  const [people, urlByPath] = await Promise.all([
     client.from('playerboard_training_photo_people').select('photo_id, directory_person_id, consent_record_id').in('photo_id', rows.map((row) => row.id)),
-    service.storage.from(PLAYERBOARD_PHOTO_BUCKET).createSignedUrls(rows.map((row) => row.storage_path), SIGNED_URL_SECONDS),
+    signPhotoUrls(service, rows.map((row) => row.storage_path), SIGNED_URL_SECONDS),
   ])
   if (people.error) throw people.error
-  if (signed.error) throw signed.error
-  const urlByPath = new Map(signed.data.map((entry) => [entry.path, entry.signedUrl]))
   return rows.flatMap((row) => {
     const url = urlByPath.get(row.storage_path)
     if (!url) return []
@@ -61,15 +66,6 @@ export function registerPlayerboardPhotoRoutes(app: FastifyInstance, context: Ap
   const { requireAuth, requirePermission, requirePermissionAnyOf, supabaseClients } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
 
-  /** Laedt den Mannschaftsscope eines Trainings vor der Rechtepruefung; sendet bei Fehlen 404 und liefert null. */
-  async function trainingScope(request: FastifyRequest, reply: FastifyReply, trainingId: string) {
-    const training = await supabaseClients.forService().from('playerboard_trainings').select('team_id').eq('id', trainingId).maybeSingle()
-    if (training.error) throw training.error
-    const scope = training.data ? await loadTeamScope(supabaseClients.forService(), training.data.team_id as string) : null
-    if (!scope) reply.code(404).send({ error: 'not_found', correlationId: request.id })
-    return scope
-  }
-
   /** Laedt Foto und Trainingsscope per Service-Client vor der Rechtepruefung; sendet bei Fehlen 404 und liefert null. */
   async function loadPhoto(request: FastifyRequest, reply: FastifyReply, photoId: string) {
     const photo = await supabaseClients.forService().from('playerboard_training_photos').select(PHOTO_COLUMNS).eq('id', photoId).maybeSingle()
@@ -79,7 +75,7 @@ export function registerPlayerboardPhotoRoutes(app: FastifyInstance, context: Ap
       return null
     }
     const row = photo.data as unknown as PhotoRow
-    const scope = await trainingScope(request, reply, row.training_id)
+    const scope = await loadTrainingScope(supabaseClients.forService(), request, reply, row.training_id)
     return scope ? { row, scope } : null
   }
 
@@ -98,7 +94,7 @@ export function registerPlayerboardPhotoRoutes(app: FastifyInstance, context: Ap
   app.get('/v1/playerboard/trainings/:id/photos', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
-    const scope = await trainingScope(request, reply, params.id)
+    const scope = await loadTrainingScope(supabaseClients.forService(), request, reply, params.id)
     if (!scope) return
     // Fotos bleiben mannschaftsintern: training.view, nicht stats_visibility.
     if (!(await requirePermission(request, reply, 'training.view', scope))) return
@@ -113,7 +109,7 @@ export function registerPlayerboardPhotoRoutes(app: FastifyInstance, context: Ap
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
     const input = CreatePlayerboardPhotoUploadRequestSchema.parse(request.body)
-    const scope = await trainingScope(request, reply, params.id)
+    const scope = await loadTrainingScope(supabaseClients.forService(), request, reply, params.id)
     if (!scope) return
     if (!(await requirePermission(request, reply, 'training.manage', scope))) return
     const service = supabaseClients.forService()

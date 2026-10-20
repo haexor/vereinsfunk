@@ -9,13 +9,12 @@ import {
   UuidSchema,
 } from '@vereinsfunk/contracts'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
+import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ApiRouteContext } from '../context.js'
 import { createAuditRecorder, fetchAllRowsForIds } from '../shared.js'
-import { loadTeamScope, mapTrainingRow, requireStatsAccess, sendDatabaseError, TRAINING_COLUMNS } from './shared.js'
-
-const PHOTO_BUCKET = 'playerboard-training-photos'
+import { PLAYERBOARD_PHOTO_BUCKET } from './photos.js'
+import { loadTeamScope, loadTrainingScope, mapTrainingRow, requireStatsAccess, sendDatabaseError, TRAINING_COLUMNS } from './shared.js'
 
 type EntryRow = { player_id: string; category_id: string; value: number }
 
@@ -40,18 +39,6 @@ async function loadNotes(client: SupabaseClient, trainingIds: readonly string[])
 export function registerPlayerboardTrainingRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
-
-  /** Laedt den Mannschaftsscope eines Trainings vor der Rechtepruefung; sendet bei Fehlen 404 und liefert null. */
-  async function loadTraining(request: FastifyRequest, reply: FastifyReply, trainingId: string) {
-    const training = await supabaseClients.forService().from('playerboard_trainings').select('id, team_id').eq('id', trainingId).maybeSingle()
-    if (training.error) throw training.error
-    const scope = training.data ? await loadTeamScope(supabaseClients.forService(), training.data.team_id as string) : null
-    if (!scope) {
-      reply.code(404).send({ error: 'not_found', correlationId: request.id })
-      return null
-    }
-    return scope
-  }
 
   /**
    * Laedt Training, Punkte und sichtbare Notiz mit dem uebergebenen Nutzer-Client und validiert die Antwort.
@@ -121,7 +108,7 @@ export function registerPlayerboardTrainingRoutes(app: FastifyInstance, context:
   app.get('/v1/playerboard/trainings/:id', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
-    const scope = await loadTraining(request, reply, params.id)
+    const scope = await loadTrainingScope(supabaseClients.forService(), request, reply, params.id)
     if (!scope) return
     if (!(await requireStatsAccess(context, request, reply, scope))) return
     // Ein Entwurf ist fuer Mitlesende per RLS unsichtbar -- dann wie nicht vorhanden.
@@ -134,7 +121,7 @@ export function registerPlayerboardTrainingRoutes(app: FastifyInstance, context:
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
     const input = UpdatePlayerboardTrainingRequestSchema.parse(request.body)
-    const scope = await loadTraining(request, reply, params.id)
+    const scope = await loadTrainingScope(supabaseClients.forService(), request, reply, params.id)
     if (!scope) return
     if (!(await requirePermission(request, reply, 'training.manage', scope))) return
     const client = supabaseClients.forUser(request.auth!.accessToken)
@@ -168,7 +155,7 @@ export function registerPlayerboardTrainingRoutes(app: FastifyInstance, context:
   app.delete('/v1/playerboard/trainings/:id', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
-    const scope = await loadTraining(request, reply, params.id)
+    const scope = await loadTrainingScope(supabaseClients.forService(), request, reply, params.id)
     if (!scope) return
     if (!(await requirePermission(request, reply, 'training.manage', scope))) return
     const service = supabaseClients.forService()
@@ -180,7 +167,7 @@ export function registerPlayerboardTrainingRoutes(app: FastifyInstance, context:
     if (result.error) throw result.error
     if (result.data.length === 0) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
     if (photos.data.length > 0) {
-      const removed = await service.storage.from(PHOTO_BUCKET).remove(photos.data.map((row) => row.storage_path as string))
+      const removed = await service.storage.from(PLAYERBOARD_PHOTO_BUCKET).remove(photos.data.map((row) => row.storage_path as string))
       if (removed.error) request.log.error({ err: removed.error, correlationId: request.id }, 'playerboard photo cleanup failed')
     }
     await recordAuditEvent(request, {
@@ -196,7 +183,7 @@ export function registerPlayerboardTrainingRoutes(app: FastifyInstance, context:
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
     const input = SetPlayerboardTrainingPointsRequestSchema.parse(request.body)
-    const scope = await loadTraining(request, reply, params.id)
+    const scope = await loadTrainingScope(supabaseClients.forService(), request, reply, params.id)
     if (!scope) return
     if (!(await requirePermission(request, reply, 'training.manage', scope))) return
     const result = await supabaseClients.forUser(request.auth!.accessToken).rpc('playerboard_set_training_points', {

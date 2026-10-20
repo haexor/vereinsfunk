@@ -11,7 +11,7 @@ import { isPlayerboardCategoryEffective } from '@vereinsfunk/domain'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ApiRouteContext } from '../context.js'
-import { createAuditRecorder, isAnyMemberOfOrganization, resolveMembershipScope } from '../shared.js'
+import { createAuditRecorder, isAnyMemberOfOrganization, resolveMembershipScope, toPermissionScope } from '../shared.js'
 import { loadOrganizationPlayerboardSettings, requirePlayerboardModule, resolveSettingsFor, sendDatabaseError } from './shared.js'
 
 const CATEGORY_COLUMNS = 'id, organization_id, scope, department_id, team_id, name, active, sort_order, value_min, value_max'
@@ -112,7 +112,7 @@ export function registerPlayerboardCategoryRoutes(app: FastifyInstance, context:
     const category = row.data as unknown as CategoryRow
     return {
       category,
-      scope: { organizationId: category.organization_id, ...(category.department_id ? { departmentId: category.department_id } : {}), ...(category.team_id ? { teamId: category.team_id } : {}) },
+      scope: toPermissionScope(category.organization_id, category.department_id, category.team_id),
     }
   }
 
