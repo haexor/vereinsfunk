@@ -217,6 +217,11 @@ const syncSubmitting = ref(false)
 const syncError = ref('')
 // HTTP-Quellen (Veo, Paket 053) laufen im Worker: die Antwort bestaetigt nur das Einreihen.
 const syncNotice = ref('')
+// Ein haengender Worker-Lauf meldet sich nie zurueck: ohne Frist und Abbruch beim Verlassen der
+// Seite lief die Warteschleife unten unbegrenzt weiter.
+const HTTP_SYNC_WAIT_MS = 2 * 60 * 1000
+let unmounted = false
+onUnmounted(() => { unmounted = true })
 const syncResults = reactive<Record<string, { run: IntegrationSyncRun; conflicts: IntegrationSyncConflict[] }>>({})
 
 function openSync(source: IntegrationSource) {
@@ -244,7 +249,8 @@ async function runSync(source: IntegrationSource) {
       const queued = PlayerboardVeoSyncAcceptedSchema.parse(await api.request(`/v1/integration-sources/${source.id}/sync`, { method: 'POST', body: {} }))
       syncNotice.value = 'Abgleich gestartet. Das Ergebnis erscheint gleich im Verlauf.'
       if (historySourceId.value === source.id) {
-        while (historySourceId.value === source.id) {
+        const deadline = Date.now() + HTTP_SYNC_WAIT_MS
+        while (!unmounted && historySourceId.value === source.id && Date.now() < deadline) {
           const loaded = await loadHistory(source.id)
           if (!loaded) break
           const run = historyRuns.value.find((item) => item.id === queued.runId)
@@ -252,6 +258,7 @@ async function runSync(source: IntegrationSource) {
           await new Promise((resolve) => setTimeout(resolve, 1000))
         }
       }
+      if (unmounted) return
       await load()
       return
     }
@@ -282,17 +289,24 @@ async function runSync(source: IntegrationSource) {
 const historySourceId = ref<string | null>(null)
 const historyRuns = ref<IntegrationSyncRun[]>([])
 const historyLoading = ref(false)
+// Wechselt die Person schnell von Quelle A zu B, darf die spaeter eintreffende Antwort fuer A nicht
+// unter B erscheinen -- nur der zuletzt gestartete Abruf schreibt (Zaehlermuster wie kalender.vue).
+let historyLoadRun = 0
 
 async function loadHistory(sourceId: string): Promise<boolean> {
+  const run = ++historyLoadRun
   historyLoading.value = true
   try {
-    historyRuns.value = await api.request(`/v1/integration-sources/${sourceId}/sync-runs`, {}, IntegrationSyncRunSchema.array())
+    const runs = await api.request(`/v1/integration-sources/${sourceId}/sync-runs`, {}, IntegrationSyncRunSchema.array())
+    // Ein ueberholter Abruf meldet false, damit die Warteschleife in runSync() nicht auf fremde Laeufe wartet.
+    if (run !== historyLoadRun) return false
+    historyRuns.value = runs
     return true
   } catch {
-    historyRuns.value = []
+    if (run === historyLoadRun) historyRuns.value = []
     return false
   } finally {
-    historyLoading.value = false
+    if (run === historyLoadRun) historyLoading.value = false
   }
 }
 async function toggleHistory(source: IntegrationSource) {
@@ -309,17 +323,21 @@ const conflictsLoading = ref(false)
 const showResolvedConflicts = ref(false)
 const conflictActionError = ref('')
 const conflictBusyId = ref<string | null>(null)
+// Wie beim Verlauf: nur der zuletzt gestartete Abruf schreibt die Konfliktliste.
+let conflictsLoadRun = 0
 
 async function loadConflicts(sourceId: string) {
+  const run = ++conflictsLoadRun
   conflictsLoading.value = true
   try {
-    conflictItems.value = await api.request(`/v1/integration-sources/${sourceId}/conflicts`, {
+    const conflicts = await api.request(`/v1/integration-sources/${sourceId}/conflicts`, {
       query: showResolvedConflicts.value ? {} : { resolution: 'pending' },
     }, IntegrationSyncConflictSchema.array())
+    if (run === conflictsLoadRun) conflictItems.value = conflicts
   } catch {
-    conflictItems.value = []
+    if (run === conflictsLoadRun) conflictItems.value = []
   } finally {
-    conflictsLoading.value = false
+    if (run === conflictsLoadRun) conflictsLoading.value = false
   }
 }
 async function toggleConflicts(source: IntegrationSource) {
