@@ -139,6 +139,10 @@ const registerForm = reactive({
 })
 const registerSubmitting = ref(false)
 const registerError = ref('')
+// Das Datei-Feld laesst sich nicht per v-model leeren: ohne neuen key zeigte es nach dem Hinterlegen
+// weiter die alte Datei und erfuellte "required", waehrend registerForm.file schon null war -- der
+// naechste Versuch brach dann wortlos ab (gleiches Muster wie syncFileInputKey in integrationen.vue).
+const registerFileInputKey = ref(0)
 
 const GUARDIAN_REQUIRED_MESSAGE = 'Diese Person ist minderjährig. Eine Einwilligung muss von einer erziehungsberechtigten Person erteilt werden.'
 function errorCodeOf(error: unknown): string | undefined {
@@ -175,7 +179,7 @@ async function registerConsent() {
     const response = await $fetch<unknown>(`${config.public.apiBase}/v1/consents`, { method: 'POST', headers, body })
     consents.value = [ConsentRecordSchema.parse(response), ...consents.value]
     registerForm.directoryPersonId = ''; registerForm.scope = ''; registerForm.signedAt = ''; registerForm.signerName = ''
-    registerForm.guardianConfirmed = false; registerForm.file = null
+    registerForm.guardianConfirmed = false; registerForm.file = null; registerFileInputKey.value += 1
   } catch (error) {
     registerError.value = errorCodeOf(error) === 'guardian_required_for_minor' ? GUARDIAN_REQUIRED_MESSAGE : 'Die Erklärung konnte nicht hinterlegt werden.'
   } finally {
@@ -347,7 +351,7 @@ async function resendRequest(request: ConsentRequest) {
               <input v-model="registerForm.guardianConfirmed" type="checkbox" required /> Erziehungsberechtigung bestätigt
             </label>
             <label><span class="mb-1 block text-xs font-semibold">Nachweis (PDF, JPEG, PNG, WEBP)</span>
-              <input type="file" required accept=".pdf,.jpg,.jpeg,.png,.webp" class="focus-ring w-full text-xs" @change="registerForm.file = ($event.target as HTMLInputElement).files?.[0] ?? null" />
+              <input :key="registerFileInputKey" type="file" required accept=".pdf,.jpg,.jpeg,.png,.webp" class="focus-ring w-full text-xs" @change="registerForm.file = ($event.target as HTMLInputElement).files?.[0] ?? null" />
             </label>
             <p v-if="registerError" class="text-xs text-amber-800">{{ registerError }}</p>
             <button type="submit" :disabled="registerSubmitting" class="focus-ring rounded-xl bg-forest px-4 py-2.5 text-xs font-bold text-white disabled:opacity-60">
