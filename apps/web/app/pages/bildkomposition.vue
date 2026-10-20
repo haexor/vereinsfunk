@@ -43,11 +43,6 @@ function scopeLabel(preset: PhotoLayoutPreset): string {
   if (preset.departmentId) return organization.departments.find((item) => item.id === preset.departmentId)?.name ?? 'Abteilung'
   return 'Verein'
 }
-function resolveDividerColor(dividerColor: string): string {
-  if (dividerColor === 'primary') return orgColors.primaryColor
-  if (dividerColor === 'accent') return orgColors.accentColor
-  return dividerColor
-}
 
 async function loadAll() {
   const loadRun = ++latestLoadRun
@@ -229,7 +224,7 @@ async function deletePreset(preset: PhotoLayoutPreset) {
         </div>
 
         <div class="lg:sticky lg:top-6 lg:self-start">
-          <PhotoLayoutPreview :kind="(editingId ? editDraft : draft).kind" :divider-color-hex="resolveDividerColor((editingId ? editDraft : draft).dividerColor)" :divider-width-px="(editingId ? editDraft : draft).dividerWidthPx" />
+          <PhotoLayoutPreview :kind="(editingId ? editDraft : draft).kind" :divider-color-hex="resolveDividerColor((editingId ? editDraft : draft).dividerColor, orgColors)" :divider-width-px="(editingId ? editDraft : draft).dividerWidthPx" />
         </div>
       </div>
     </template>

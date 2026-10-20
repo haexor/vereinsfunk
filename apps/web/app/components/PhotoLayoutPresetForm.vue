@@ -2,6 +2,7 @@
 import { LoaderCircle } from '@lucide/vue'
 import type { PhotoLayoutKind } from '@vereinsfunk/contracts'
 import type { PhotoLayoutPresetDraft } from '../utils/photoLayoutPresetDraft'
+import { resolveDividerColor } from '../utils/photoLayoutPresets'
 
 const props = withDefaults(defineProps<{
   saving: boolean
@@ -34,11 +35,7 @@ const dividerColorMode = computed<DividerColorMode>(() => (draft.value.dividerCo
 function setDividerColorMode(mode: DividerColorMode) {
   draft.value.dividerColor = mode === 'custom' ? (draft.value.dividerColor.startsWith('#') ? draft.value.dividerColor : '#163a2c') : mode
 }
-const resolvedDividerColorHex = computed(() => {
-  if (draft.value.dividerColor === 'primary') return props.primaryColor
-  if (draft.value.dividerColor === 'accent') return props.accentColor
-  return draft.value.dividerColor
-})
+const resolvedDividerColorHex = computed(() => resolveDividerColor(draft.value.dividerColor, props))
 function nullableNumberFromInput(event: Event): number | null {
   const value = (event.target as HTMLInputElement).value
   return value ? Number(value) : null
