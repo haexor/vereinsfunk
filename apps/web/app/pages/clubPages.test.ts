@@ -44,6 +44,13 @@ describe('Vereinsseiten', () => {
     expect(before(structure, 'if (loadRun !== latestLoadRun) return', 'departments.value = parsedDepartments.data')).toBe(true)
   })
 
+  it('prueft die Antwort einer Einladung mit dem Vertragsschema', () => {
+    const page = read('mitglieder.vue')
+
+    expect(page).not.toContain('api.request<{ emailDelivered')
+    expect(page.match(/PlayerboardInviteResponseSchema\)/g)).toHaveLength(2)
+  })
+
   it('sperrt auf /marke die Schriftwahl wie Logo und Farben', () => {
     const page = read('marke.vue')
 

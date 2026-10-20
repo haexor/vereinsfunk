@@ -4,6 +4,7 @@ import {
   InvitationSchema,
   MemberReviewTrustSchema,
   MemberSchema,
+  PlayerboardInviteResponseSchema,
   PolicySettingSchema,
   rolesForScopeLevel,
   type AssignableRole,
@@ -202,7 +203,9 @@ async function sendInvitation() {
     // Eine Team-Einladung muss die ELTERN-Abteilung mitschicken: CreateInvitationRequestSchema
     // verlangt departmentId zusammen mit teamId, und resolveInvitationScope() in apps/api prueft
     // beide gegeneinander. Ohne die Abteilung schlug jede Team-Einladung mit 400 fehl.
-    const response = await api.request<{ emailDelivered?: boolean }>('/v1/invitations', {
+    // Dieselbe Antwort wie bei der Kader-Einladung (beide ueber createInvitation in apps/api):
+    // Einladung plus emailDelivered.
+    const response = await api.request('/v1/invitations', {
       method: 'POST',
       body: {
         organizationId: organizationId.value,
@@ -211,11 +214,11 @@ async function sendInvitation() {
         email: inviteEmail.value,
         role: inviteRole.value,
       },
-    })
+    }, PlayerboardInviteResponseSchema)
     // Die Einladung existiert auch dann, wenn der SMTP-Versand fehlschlug (die API antwortet
     // dafuer mit 201 und emailDelivered: false) -- ein pauschales "Einladung versendet" waere
     // dort schlicht falsch.
-    inviteEmailDelivered.value = response?.emailDelivered !== false
+    inviteEmailDelivered.value = response.emailDelivered
     inviteSuccess.value = true
     inviteEmail.value = ''
     inviteRole.value = ''
@@ -362,10 +365,10 @@ async function saveTrust(entry: MemberRoleEntry, userId: string) {
 async function resendInvitation(id: string) {
   actionError.value = ''
   try {
-    const response = await api.request<{ emailDelivered?: boolean }>(`/v1/invitations/${id}/resend`, { method: 'POST' })
+    const response = await api.request(`/v1/invitations/${id}/resend`, { method: 'POST' }, PlayerboardInviteResponseSchema)
     // Siehe sendInvitation(): ein fehlgeschlagener SMTP-Versand ist kein Fehlerstatus, muss aber
     // sichtbar sein -- sonst wartet die eingeladene Person auf eine Mail, die nie ankam.
-    if (response?.emailDelivered === false) {
+    if (!response.emailDelivered) {
       actionError.value = 'Die Einladung wurde erneuert, aber die E-Mail konnte nicht versendet werden.'
     }
     await load()
