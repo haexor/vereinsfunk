@@ -1,4 +1,8 @@
 <script setup lang="ts">
+// Bewusst noch eine Datei (knapp ueber 500 Zeilen): Entwurfsspeicherung, Sitzungs-Polling und
+// Einreichen teilen sich denselben Zustand (Sitzung, Kandidat, Entwurfs-ID) und den Bereichswechsel.
+// Spaeterer Schnitt: die Entwurfsspeicherung (lokal und serverseitig, persistDraft bis
+// restoreDraft) in ein Composable useTextWorkshopDraft, die Kandidatenansicht in eine Komponente.
 import { Check, LoaderCircle, RefreshCw, Save, Sparkles } from '@lucide/vue'
 import { MaxCharactersSchema, RequestApprovalResponseSchema, SocialPlatformSchema, SourceMaterialSchema, TEXT_GENERATION_DEFAULT_TEMPERATURE, TextGenerationPlatformAvailabilitySchema, TextWorkshopDraftPayloadSchema, TextWorkshopDraftRowSchema, UuidSchema, type SocialPlatform, type TextGenerationPlatformAvailability } from '@vereinsfunk/contracts'
 import { z } from 'zod'
