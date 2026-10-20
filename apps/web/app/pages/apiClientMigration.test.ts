@@ -9,7 +9,7 @@ describe('API-client migration', () => {
     'marke.vue', 'mitglieder.vue', 'integrationen.vue',
     'einladung.vue', 'einwilligung/[token].vue', 'einwilligung/widerruf/[token].vue', 'impressum/[organizationId].vue',
     'datenschutz/anfragen.vue', 'einwilligungen.vue', 'einstellungen/index.vue',
-    'freigaben.vue',
+    'freigaben.vue', 'index.vue', 'auswertung.vue',
   ]) {
     it(`${page} delegates browser requests to useApiClient`, () => {
       const source = readFileSync(join(PAGES_DIR, page), 'utf8')

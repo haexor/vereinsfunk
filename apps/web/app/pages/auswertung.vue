@@ -21,13 +21,10 @@ import { localDateKey } from '../utils/memberDates'
 // -- kein Cache, keine Vorberechnung. Kein eigener Scope-Waehler auf dieser Seite: die aktive
 // Verein-/Abteilungsauswahl kommt wie auf jeder anderen Seite aus der Sidebar (layouts/default.vue),
 // nicht aus einem zweiten, redundanten Auswahlfeld.
-const config = useRuntimeConfig()
-const session = await useSession()
-const scope = await useScope()
+const api = useApiClient()
+const { organizationId: activeOrganizationId, departmentId: activeDepartmentId, organization: activeOrganization, organizationTimezone: timezone } = await useActiveScope()
 
-const activeOrganization = computed(() => session.value?.scopes.find((item) => item.organizationId === scope.value?.organizationId) ?? null)
-const timezone = computed(() => activeOrganization.value?.organizationTimezone ?? 'Europe/Berlin')
-const departmentName = computed(() => activeOrganization.value?.departments.find((item) => item.id === scope.value?.departmentId)?.name ?? null)
+const departmentName = computed(() => activeOrganization.value?.departments.find((item) => item.id === activeDepartmentId.value)?.name ?? null)
 
 const rangePreset = ref<AnalyticsRangePreset>('30d')
 const customFrom = ref('')
@@ -76,92 +73,86 @@ const breakdownError = ref(false)
 const funnelStages = ref<AnalyticsFunnelEntry[]>([])
 
 function buildScopeQuery(): Record<string, string> {
-  const organizationId = scope.value?.organizationId
+  const organizationId = activeOrganizationId.value
   if (!organizationId) return {}
   const query: Record<string, string> = { organizationId, from: range.value.from, to: range.value.to }
-  if (scope.value?.departmentId) query.departmentId = scope.value.departmentId
+  if (activeDepartmentId.value) query.departmentId = activeDepartmentId.value
   return query
 }
 
-// Anfragezaehler wie bei Metrik und Aufschluesselung unten: wechselt der Zeitraum von 7 auf 90 Tage,
-// waehrend der 7-Tage-Lauf noch laeuft, darf dessen spaete Antwort nicht unter der 90-Tage-
-// Ueberschrift landen. load() zieht auch die beiden anderen Zaehler hoch, damit eine noch laufende
-// Metrik-/Dimensionsanfrage fuer den alten Bereich oder Zeitraum verworfen wird -- und schreibt
-// Zeitreihe bzw. Aufschluesselung nur, solange kein neuerer Metrik-/Dimensionswechsel dazwischenkam.
-let loadRequestId = 0
-async function load() {
-  const requestId = ++loadRequestId
-  const timeseriesRequest = ++timeseriesRequestId
-  const breakdownRequest = ++breakdownRequestId
-  const organizationId = scope.value?.organizationId
-  if (!organizationId) { loading.value = false; return }
-  if (customRangeError.value) { errorMessage.value = customRangeError.value; loading.value = false; return }
-  loading.value = true
-  errorMessage.value = ''
-  try {
-    const headers = await useAuthHeader()
-    const base = `${config.public.apiBase}/v1/analytics`
-    const baseQuery = buildScopeQuery()
-    const [summaryResponse, timeseriesResponse, breakdownResponse, funnelResponse] = await Promise.all([
-      $fetch<unknown>(`${base}/summary`, { headers, query: baseQuery }),
-      $fetch<unknown>(`${base}/timeseries`, { headers, query: { ...baseQuery, metric: timeseriesMetric.value, granularity: timeseriesGranularity.value } }),
-      $fetch<unknown>(`${base}/breakdown`, { headers, query: { ...baseQuery, dimension: breakdownDimension.value } }),
-      $fetch<unknown>(`${base}/funnel`, { headers, query: baseQuery }),
-    ])
-    if (requestId !== loadRequestId) return
-    summary.value = AnalyticsSummarySchema.parse(summaryResponse)
-    if (timeseriesRequest === timeseriesRequestId) {
-      timeseriesPoints.value = AnalyticsTimeseriesResponseSchema.parse(timeseriesResponse).points
-      timeseriesError.value = false
-    }
-    if (breakdownRequest === breakdownRequestId) {
-      breakdownEntries.value = AnalyticsBreakdownResponseSchema.parse(breakdownResponse).entries
-      breakdownError.value = false
-    }
-    funnelStages.value = AnalyticsFunnelResponseSchema.parse(funnelResponse).stages
-  } catch {
-    if (requestId === loadRequestId) errorMessage.value = 'Die Kennzahlen konnten nicht geladen werden.'
-  } finally {
-    if (requestId === loadRequestId) loading.value = false
-  }
-}
-
-// Anfragezaehler statt eines leeren catch: ein Nutzer, der die Metrik/Granularitaet zweimal schnell
-// wechselt, darf nicht die zuerst gestartete (spaeter eintreffende) Antwort ueber die neuere
+// Latest-wins statt eines leeren catch: wer die Metrik/Granularitaet oder die Dimension zweimal
+// schnell wechselt, darf nicht die zuerst gestartete (spaeter eintreffende) Antwort ueber die neuere
 // geschrieben bekommen -- eine veraltete Antwort wird verworfen, ein aktueller Fehler wird sichtbar
 // statt verschluckt (CodeRabbit-Fund zu PR #28).
-let timeseriesRequestId = 0
-let breakdownRequestId = 0
-await load()
-watch([() => scope.value?.organizationId, () => scope.value?.departmentId, range], () => { void load() })
+const timeseriesRuns = useLatestRequest()
+const breakdownRuns = useLatestRequest()
+
+// Wechselt der Zeitraum von 7 auf 90 Tage, waehrend der 7-Tage-Lauf noch laeuft, darf dessen spaete
+// Antwort nicht unter der 90-Tage-Ueberschrift landen. Die Gesamtladung beginnt auch einen neuen
+// Metrik-/Dimensionslauf, damit eine noch laufende Anfrage fuer den alten Bereich oder Zeitraum
+// verworfen wird -- und schreibt Zeitreihe bzw. Aufschluesselung nur, solange kein neuerer
+// Metrik-/Dimensionswechsel dazwischenkam.
+const { ready } = useScopedLoad(
+  () => `${activeOrganizationId.value}:${activeDepartmentId.value}:${range.value.from}:${range.value.to}`,
+  async (_key, isLatest) => {
+    const isLatestTimeseries = timeseriesRuns.begin()
+    const isLatestBreakdown = breakdownRuns.begin()
+    if (!activeOrganizationId.value) { loading.value = false; return }
+    if (customRangeError.value) { errorMessage.value = customRangeError.value; loading.value = false; return }
+    loading.value = true
+    errorMessage.value = ''
+    try {
+      const baseQuery = buildScopeQuery()
+      const [summaryResponse, timeseriesResponse, breakdownResponse, funnelResponse] = await Promise.all([
+        api.request('/v1/analytics/summary', { query: baseQuery }, AnalyticsSummarySchema),
+        api.request('/v1/analytics/timeseries', { query: { ...baseQuery, metric: timeseriesMetric.value, granularity: timeseriesGranularity.value } }, AnalyticsTimeseriesResponseSchema),
+        api.request('/v1/analytics/breakdown', { query: { ...baseQuery, dimension: breakdownDimension.value } }, AnalyticsBreakdownResponseSchema),
+        api.request('/v1/analytics/funnel', { query: baseQuery }, AnalyticsFunnelResponseSchema),
+      ])
+      if (!isLatest()) return
+      summary.value = summaryResponse
+      if (isLatestTimeseries()) {
+        timeseriesPoints.value = timeseriesResponse.points
+        timeseriesError.value = false
+      }
+      if (isLatestBreakdown()) {
+        breakdownEntries.value = breakdownResponse.entries
+        breakdownError.value = false
+      }
+      funnelStages.value = funnelResponse.stages
+    } catch {
+      if (isLatest()) errorMessage.value = 'Die Kennzahlen konnten nicht geladen werden.'
+    } finally {
+      if (isLatest()) loading.value = false
+    }
+  },
+)
+await ready
+
 watch([timeseriesMetric, timeseriesGranularity], async () => {
-  const requestId = ++timeseriesRequestId
+  const isLatest = timeseriesRuns.begin()
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/analytics/timeseries`, {
-      headers, query: { ...buildScopeQuery(), metric: timeseriesMetric.value, granularity: timeseriesGranularity.value },
-    })
-    if (requestId !== timeseriesRequestId) return
-    timeseriesPoints.value = AnalyticsTimeseriesResponseSchema.parse(response).points
+    const response = await api.request('/v1/analytics/timeseries', {
+      query: { ...buildScopeQuery(), metric: timeseriesMetric.value, granularity: timeseriesGranularity.value },
+    }, AnalyticsTimeseriesResponseSchema)
+    if (!isLatest()) return
+    timeseriesPoints.value = response.points
     timeseriesError.value = false
   } catch {
-    if (requestId !== timeseriesRequestId) return
-    timeseriesError.value = true
+    if (isLatest()) timeseriesError.value = true
   }
 })
 watch(breakdownDimension, async () => {
-  const requestId = ++breakdownRequestId
+  const isLatest = breakdownRuns.begin()
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/analytics/breakdown`, {
-      headers, query: { ...buildScopeQuery(), dimension: breakdownDimension.value },
-    })
-    if (requestId !== breakdownRequestId) return
-    breakdownEntries.value = AnalyticsBreakdownResponseSchema.parse(response).entries
+    const response = await api.request('/v1/analytics/breakdown', {
+      query: { ...buildScopeQuery(), dimension: breakdownDimension.value },
+    }, AnalyticsBreakdownResponseSchema)
+    if (!isLatest()) return
+    breakdownEntries.value = response.entries
     breakdownError.value = false
   } catch {
-    if (requestId !== breakdownRequestId) return
-    breakdownError.value = true
+    if (isLatest()) breakdownError.value = true
   }
 })
 
