@@ -21,7 +21,7 @@ import {
 } from '@vereinsfunk/domain'
 import { isAllowedOutboundUrl } from '@vereinsfunk/outbound-fetch'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import {
   firstBlockedBrandField,
@@ -44,6 +44,7 @@ import {
   UnsupportedLogoFormatError,
 } from '@vereinsfunk/brand-assets'
 import { readMultipartUpload } from '../multipartUpload.js'
+import { parseSupabaseData } from '../supabase.js'
 import type { ApiRouteContext } from './context.js'
 import { createAuditRecorder, toPermissionScope } from './shared.js'
 
@@ -142,6 +143,20 @@ const StoredBrandWebsiteAnalysisLogoCandidateSchema = z
   })
   .strict()
 const MAX_STORED_LOGO_CANDIDATES = 8
+
+// start_brand_website_analysis liefert jsonb; ohne Pruefung ginge ein unerwartetes Format als
+// jobId: undefined an den Client.
+const StartBrandWebsiteAnalysisResultSchema = z.object({ jobId: UuidSchema })
+const DepartmentOrganizationRowSchema = z.object({ organization_id: UuidSchema })
+
+// Fehler, die start_brand_website_analysis selbst meldet. department_not_in_organization ist in
+// der Praxis unerreichbar (organizationId stammt aus der Abteilung selbst), die RPC prueft es aber
+// als eigene Schutzschicht -- dieselbe Abbildung wie organization_has_no_department statt 500.
+const START_WEBSITE_ANALYSIS_ERROR_STATUS: Record<string, number> = {
+  analysis_in_progress: 409,
+  organization_has_no_department: 422,
+  department_not_in_organization: 422,
+}
 
 // confirm_brand_font_license prueft Status und Art selbst noch einmal unter Zeilensperre.
 const CONFIRM_LICENSE_ERROR_STATUS: Record<string, number> = {
@@ -248,106 +263,52 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
     })
   }
 
-  // Die Homepage wird als Markenwert gepflegt. Der Analyse-Request übergibt bewusst keine URL,
-  // damit der Worker immer genau die gespeicherte Adresse abruft.
-  app.post('/v1/organizations/:id/brand/website-analysis', async (request, reply) => {
-    if (!(await requireAuth(request, reply))) return
-    const params = z.object({ id: UuidSchema }).parse(request.params)
-    if (!(await requirePermission(request, reply, 'brand.manage', { organizationId: params.id })))
-      return
-    StartBrandWebsiteAnalysisRequestSchema.parse(request.body ?? {})
-    const service = supabaseClients.forService()
-    const profile = await service
-      .from('organization_brand_profiles')
-      .select('website_url')
-      .eq('organization_id', params.id)
-      .maybeSingle()
-    if (profile.error) throw profile.error
-    const websiteUrl = profile.data?.website_url
-    if (!websiteUrl)
-      return reply.code(422).send({ error: 'website_url_missing', correlationId: request.id })
-    if (!isAllowedOutboundUrl(websiteUrl)) {
-      return reply.code(400).send({ error: 'website_url_not_allowed', correlationId: request.id })
-    }
-    const result = await service.rpc('start_brand_website_analysis', {
-      p_organization_id: params.id,
-      p_website_url: websiteUrl,
-      p_requested_by: request.auth!.userId,
-    })
-    if (result.error) {
-      if (result.error.message === 'analysis_in_progress')
-        return reply.code(409).send({ error: 'analysis_in_progress', correlationId: request.id })
-      if (result.error.message === 'organization_has_no_department')
-        return reply
-          .code(422)
-          .send({ error: 'organization_has_no_department', correlationId: request.id })
-      throw result.error
-    }
-    return reply.code(202).send({ jobId: (result.data as { jobId: string }).jobId })
-  })
-
-  app.get('/v1/organizations/:id/brand/website-analysis', async (request, reply) => {
-    if (!(await requireAuth(request, reply))) return
-    const params = z.object({ id: UuidSchema }).parse(request.params)
-    if (!(await requirePermission(request, reply, 'brand.manage', { organizationId: params.id })))
-      return
-    const service = supabaseClients.forService()
-    // is('department_id', null) ist seit Paket 049 notwendig: derselbe organization_id-Wert steht
-    // jetzt auch auf jeder Abteilungs-Job-Zeile, maybeSingle() wuerde sonst bei mehr als einer
-    // Zeile fuer den Verein einen Fehler werfen.
-    const row = await service
-      .from('brand_website_analysis_jobs')
-      .select('status, result, error_reason')
-      .eq('organization_id', params.id)
-      .is('department_id', null)
-      .maybeSingle()
-    if (row.error) throw row.error
-    if (!row.data)
-      return reply.code(404).send({ error: 'no_analysis_yet', correlationId: request.id })
-    return reply.code(200).send(await mapBrandWebsiteAnalysisRow(service, row.data, params.id))
-  })
-
-  app.post('/v1/departments/:id/brand/website-analysis', async (request, reply) => {
-    if (!(await requireAuth(request, reply))) return
-    const params = z.object({ id: UuidSchema }).parse(request.params)
+  // Laedt die Abteilung ueber den Nutzer-Client (RLS: eine fremde Abteilung ist "nicht gefunden")
+  // und prueft brand.manage in ihrem Scope. Liefert die organization_id oder null, wenn die
+  // Antwort bereits gesendet ist.
+  async function authorizeDepartmentBrand(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    departmentId: string,
+  ): Promise<string | null> {
     const department = await supabaseClients
       .forUser(request.auth!.accessToken)
       .from('departments')
       .select('organization_id')
-      .eq('id', params.id)
+      .eq('id', departmentId)
       .maybeSingle()
     if (department.error) throw department.error
-    if (!department.data)
-      return reply.code(404).send({ error: 'not_found', correlationId: request.id })
-    const organizationId = department.data.organization_id as string
-    if (
-      !(await requirePermission(
-        request,
-        reply,
-        'brand.manage',
-        toPermissionScope(organizationId, params.id),
-      ))
-    )
-      return
-    StartBrandWebsiteAnalysisRequestSchema.parse(request.body ?? {})
-    const service = supabaseClients.forService()
-    // Ein bereits vorhandenes Abteilungsprofil bleibt beim spaeteren Deaktivieren der
-    // Überschreibungen bestehen. Der Start eines kostenpflichtigen Analyse-Jobs muss dieselbe
-    // Grenze daher serverseitig durchsetzen wie das Speichern eines Abteilungs-Overrides.
-    const organizationBrand = await service
-      .from('organization_brand_profiles')
-      .select('allow_department_overrides')
-      .eq('organization_id', organizationId)
-      .maybeSingle()
-    if (organizationBrand.error) throw organizationBrand.error
-    if (organizationBrand.data && !organizationBrand.data.allow_department_overrides) {
-      return reply.code(400).send({ error: 'overrides_not_allowed', correlationId: request.id })
+    if (!department.data) {
+      reply.code(404).send({ error: 'not_found', correlationId: request.id })
+      return null
     }
-    const profile = await service
-      .from('department_brand_profiles')
-      .select('website_url')
-      .eq('department_id', params.id)
-      .maybeSingle()
+    const organizationId = parseSupabaseData(DepartmentOrganizationRowSchema, department.data).organization_id
+    if (!(await requirePermission(request, reply, 'brand.manage', toPermissionScope(organizationId, departmentId))))
+      return null
+    return organizationId
+  }
+
+  // Die Homepage wird als Markenwert gepflegt. Der Analyse-Request übergibt bewusst keine URL,
+  // damit der Worker immer genau die gespeicherte Adresse der jeweiligen Ebene abruft.
+  async function startBrandWebsiteAnalysis(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    organizationId: string,
+    departmentId?: string,
+  ) {
+    const service = supabaseClients.forService()
+    const profile = departmentId
+      ? await service
+          .from('department_brand_profiles')
+          .select('website_url')
+          .eq('organization_id', organizationId)
+          .eq('department_id', departmentId)
+          .maybeSingle()
+      : await service
+          .from('organization_brand_profiles')
+          .select('website_url')
+          .eq('organization_id', organizationId)
+          .maybeSingle()
     if (profile.error) throw profile.error
     const websiteUrl = profile.data?.website_url
     if (!websiteUrl)
@@ -359,62 +320,87 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
       p_organization_id: organizationId,
       p_website_url: websiteUrl,
       p_requested_by: request.auth!.userId,
-      p_department_id: params.id,
+      ...(departmentId ? { p_department_id: departmentId } : {}),
     })
     if (result.error) {
-      if (result.error.message === 'analysis_in_progress')
-        return reply.code(409).send({ error: 'analysis_in_progress', correlationId: request.id })
-      // In der Praxis unerreichbar (organizationId stammt oben aus der Abteilung selbst), aber die
-      // RPC prueft es trotzdem als eigene Schutzschicht (siehe Migration) -- dieselbe Abbildung wie
-      // 'organization_has_no_department' bei der Vereinsroute statt eines unspezifischen 500.
-      if (result.error.message === 'department_not_in_organization')
-        return reply
-          .code(422)
-          .send({ error: 'department_not_in_organization', correlationId: request.id })
-      throw result.error
+      const status = START_WEBSITE_ANALYSIS_ERROR_STATUS[result.error.message]
+      if (status === undefined) throw result.error
+      return reply.code(status).send({ error: result.error.message, correlationId: request.id })
     }
-    return reply.code(202).send({ jobId: (result.data as { jobId: string }).jobId })
+    return reply
+      .code(202)
+      .send({ jobId: parseSupabaseData(StartBrandWebsiteAnalysisResultSchema, result.data).jobId })
+  }
+
+  async function sendBrandWebsiteAnalysisStatus(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    organizationId: string,
+    departmentId?: string,
+  ) {
+    const service = supabaseClients.forService()
+    // is('department_id', null) ist seit Paket 049 notwendig: derselbe organization_id-Wert steht
+    // jetzt auch auf jeder Abteilungs-Job-Zeile, maybeSingle() wuerde sonst bei mehr als einer
+    // Zeile fuer den Verein einen Fehler werfen.
+    const query = service
+      .from('brand_website_analysis_jobs')
+      .select('status, result, error_reason')
+      .eq('organization_id', organizationId)
+    const row = await (departmentId
+      ? query.eq('department_id', departmentId)
+      : query.is('department_id', null)
+    ).maybeSingle()
+    if (row.error) throw row.error
+    if (!row.data)
+      return reply.code(404).send({ error: 'no_analysis_yet', correlationId: request.id })
+    return reply.code(200).send(await mapBrandWebsiteAnalysisRow(service, row.data, organizationId))
+  }
+
+  app.post('/v1/organizations/:id/brand/website-analysis', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    if (!(await requirePermission(request, reply, 'brand.manage', { organizationId: params.id })))
+      return
+    StartBrandWebsiteAnalysisRequestSchema.parse(request.body ?? {})
+    return startBrandWebsiteAnalysis(request, reply, params.id)
+  })
+
+  app.get('/v1/organizations/:id/brand/website-analysis', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    if (!(await requirePermission(request, reply, 'brand.manage', { organizationId: params.id })))
+      return
+    return sendBrandWebsiteAnalysisStatus(request, reply, params.id)
+  })
+
+  app.post('/v1/departments/:id/brand/website-analysis', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const organizationId = await authorizeDepartmentBrand(request, reply, params.id)
+    if (organizationId === null) return
+    StartBrandWebsiteAnalysisRequestSchema.parse(request.body ?? {})
+    // Ein bereits vorhandenes Abteilungsprofil bleibt beim spaeteren Deaktivieren der
+    // Überschreibungen bestehen. Der Start eines kostenpflichtigen Analyse-Jobs muss dieselbe
+    // Grenze daher serverseitig durchsetzen wie das Speichern eines Abteilungs-Overrides.
+    const organizationBrand = await supabaseClients
+      .forService()
+      .from('organization_brand_profiles')
+      .select('allow_department_overrides')
+      .eq('organization_id', organizationId)
+      .maybeSingle()
+    if (organizationBrand.error) throw organizationBrand.error
+    if (organizationBrand.data && !organizationBrand.data.allow_department_overrides) {
+      return reply.code(400).send({ error: 'overrides_not_allowed', correlationId: request.id })
+    }
+    return startBrandWebsiteAnalysis(request, reply, organizationId, params.id)
   })
 
   app.get('/v1/departments/:id/brand/website-analysis', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
-    const department = await supabaseClients
-      .forUser(request.auth!.accessToken)
-      .from('departments')
-      .select('organization_id')
-      .eq('id', params.id)
-      .maybeSingle()
-    if (department.error) throw department.error
-    if (!department.data)
-      return reply.code(404).send({ error: 'not_found', correlationId: request.id })
-    if (
-      !(await requirePermission(
-        request,
-        reply,
-        'brand.manage',
-        toPermissionScope(department.data.organization_id as string, params.id),
-      ))
-    )
-      return
-    const service = supabaseClients.forService()
-    const row = await service
-      .from('brand_website_analysis_jobs')
-      .select('status, result, error_reason')
-      .eq('department_id', params.id)
-      .maybeSingle()
-    if (row.error) throw row.error
-    if (!row.data)
-      return reply.code(404).send({ error: 'no_analysis_yet', correlationId: request.id })
-    return reply
-      .code(200)
-      .send(
-        await mapBrandWebsiteAnalysisRow(
-          service,
-          row.data,
-          department.data.organization_id as string,
-        ),
-      )
+    const organizationId = await authorizeDepartmentBrand(request, reply, params.id)
+    if (organizationId === null) return
+    return sendBrandWebsiteAnalysisStatus(request, reply, organizationId, params.id)
   })
 
   app.post('/v1/brand/assets', async (request, reply) => {
@@ -746,22 +732,8 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
     const params = z.object({ id: UuidSchema }).parse(request.params)
     const input = UpdateDepartmentBrandRequestSchema.parse(request.body)
     const client = supabaseClients.forUser(request.auth!.accessToken)
-    const department = await client
-      .from('departments')
-      .select('organization_id')
-      .eq('id', params.id)
-      .maybeSingle()
-    if (department.error) throw department.error
-    if (!department.data)
-      return reply.code(404).send({ error: 'not_found', correlationId: request.id })
-    const organizationId = department.data.organization_id as string
-    if (
-      !(await requirePermission(request, reply, 'brand.manage', {
-        organizationId,
-        departmentId: params.id,
-      }))
-    )
-      return
+    const organizationId = await authorizeDepartmentBrand(request, reply, params.id)
+    if (organizationId === null) return
 
     // Ueber die Service Role, nicht ueber den Nutzer-Client: ob die Sperre greift, darf nicht davon
     // abhaengen, ob die Aufruferin das Vereinsprofil selbst lesen darf -- sonst liefe die Pruefung
