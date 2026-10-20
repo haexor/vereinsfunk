@@ -49,7 +49,7 @@ describe('POST /v1/post-versions/:id/request-approval -- version check', () => {
       forService: () =>
         ({
           from: (table: string) => {
-            if (table === 'directory_people') return chain({ data: [], error: null })
+            if (table === 'directory_people' || table === 'organization_memberships' || table === 'department_memberships' || table === 'team_memberships') return chain({ data: [], error: null })
             throw new Error(`unexpected table in service fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
