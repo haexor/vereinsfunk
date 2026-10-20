@@ -72,6 +72,8 @@ import { registerPlatformOrganizationRoutes } from './routes/platformOrganizatio
 import { registerPlatformSubscriptionRoutes } from './routes/platformSubscriptions.js'
 import { registerPlatformPersonaRoutes } from './routes/platformPersonas.routes.js'
 import { registerPolicyRoutes } from './routes/policies.js'
+import { registerPolicyRuleRoutes } from './routes/policyRules.routes.js'
+import { registerMemberReviewTrustRoutes } from './routes/memberReviewTrust.js'
 import { registerModuleRoutes } from './routes/modules.js'
 import { registerPlayerboardRoutes } from './routes/playerboard/index.js'
 import { registerPublishingRoutes } from './routes/publishing.js'
@@ -420,6 +422,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   registerMemberRoutes(app, context)
   registerInvitationRoutes(app, context)
   registerPolicyRoutes(app, context)
+  registerPolicyRuleRoutes(app, context)
+  registerMemberReviewTrustRoutes(app, context)
   registerModuleRoutes(app, context)
   registerPlayerboardRoutes(app, context)
   registerApprovalRoutes(app, context)
