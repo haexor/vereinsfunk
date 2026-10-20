@@ -41,6 +41,8 @@ import { registerAgentRoutes } from './routes/agent.js'
 import { registerApprovalRoutes } from './routes/approvals.js'
 import { registerChannelQuotaRoutes } from './routes/channelQuotas.js'
 import { registerBrandRoutes } from './routes/brand.js'
+import { registerBrandWebsiteAnalysisRoutes } from './routes/brandWebsiteAnalysis.js'
+import { registerBrandAssetRoutes } from './routes/brandAssets.js'
 import { registerChannelOAuthRoutes } from './routes/channelOAuth.js'
 import { registerChannelRoutes } from './routes/channels.js'
 import { registerClubScheduleRoutes } from './routes/clubSchedule.js'
@@ -393,6 +395,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   registerOrganizationRoutes(app, context)
   registerBrandRoutes(app, context)
+  registerBrandWebsiteAnalysisRoutes(app, context)
+  registerBrandAssetRoutes(app, context)
   registerImageStyleRoutes(app, context)
   registerPhotoLayoutRoutes(app, context)
   registerContentSignatureBlockRoutes(app, context)
