@@ -8,12 +8,16 @@ const PAGES_DIR = join(import.meta.dirname, '.')
 // Seiten: Header, Basis-URL, Fehlercodes und Antwortpruefung laufen nur noch ueber useApiClient().
 const PAGES = [
   'mannschaft/[orgSlug]/[teamSlug].vue',
+  'marke.vue',
+  'mitglieder.vue',
   'onboarding/index.vue',
   'plattform-admin-einladung.vue',
   'plattform-admin/admins.vue',
   'plattform-admin/einstellungen.vue',
   'plattform-admin/index.vue',
   'plattform-admin/llm.vue',
+  'plattform-admin/personas.vue',
+  'plattform-admin/tarife.vue',
   'plattform-admin/vereine/[id].vue',
   'plattform-admin/vision-vergleich.vue',
   'profil.vue',
