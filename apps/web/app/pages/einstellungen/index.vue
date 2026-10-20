@@ -100,7 +100,10 @@ function loadDraftFrom(entry: PolicyRuleSetting) {
   requiredHashtagsText.value = entry.own.requiredHashtags.join(', ')
   allowedPresetsText.value = entry.own.allowedPresets?.join(', ') ?? ''
 }
-watch(selectedEntry, (entry) => { if (entry) loadDraftFrom(entry) }, { immediate: true })
+// Nur bei einer anderen Ebene neu befuellen: load() ersetzt die Eintraege auch nach dem Anlegen oder
+// Entfernen einer Pruefperson, und ein Watcher auf das Objekt selbst verwarf dabei ungespeicherte
+// Aenderungen an der Richtlinie. Nach dem Speichern uebernimmt save() den Serverstand ausdruecklich.
+watch(() => (selectedEntry.value ? entryKey(selectedEntry.value) : null), () => { if (selectedEntry.value) loadDraftFrom(selectedEntry.value) }, { immediate: true })
 
 function splitList(text: string): string[] {
   return text.split(',').map((item) => item.trim()).filter(Boolean)
@@ -139,7 +142,10 @@ async function save() {
         },
       },
     })
+    const entriesBeforeReload = entries.value
     await load()
+    // Nur einen tatsaechlich neu geladenen Stand uebernehmen; scheitert load(), bleibt der Entwurf.
+    if (entries.value !== entriesBeforeReload && selectedEntry.value) loadDraftFrom(selectedEntry.value)
   } catch {
     saveError.value = 'Die Richtlinie konnte nicht gespeichert werden.'
   } finally {
