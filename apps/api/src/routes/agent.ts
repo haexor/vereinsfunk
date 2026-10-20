@@ -110,7 +110,7 @@ export function registerAgentRoutes(
     // Abteilungs-Unterhaltungen in den Verlauf, obwohl der Kommentar oben "desselben Scopes" verspricht.
     // .eq(col, null) waere hier falsch: PostgREST versucht dann, den literalen String "null" in den
     // uuid-Spaltentyp zu casten, statt IS NULL zu pruefen -- derselbe Fallstrick, den .is() bereits
-    // an anderer Stelle vermeidet (siehe text-workshop/drafts weiter unten in content.ts).
+    // an anderer Stelle vermeidet (siehe text-workshop/drafts in routes/textWorkshop.ts).
     let rows = client
       .from('agent_conversations')
       .select(AGENT_CONVERSATION_COLUMNS)

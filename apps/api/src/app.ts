@@ -50,6 +50,9 @@ import { registerComplianceRoutes } from './routes/compliance.js'
 import { registerConsentRoutes } from './routes/consent.js'
 import { registerConsentPublicRoutes } from './routes/consentPublic.js'
 import { registerContentRoutes } from './routes/content.js'
+import { registerContentStyleProfileRoutes } from './routes/contentStyleProfiles.js'
+import { registerTextWorkshopRoutes } from './routes/textWorkshop.js'
+import { registerMediaRoutes } from './routes/media.js'
 import { registerContentSignatureBlockRoutes } from './routes/contentSignatureBlocks.js'
 import { registerDataSubjectRoutes } from './routes/dataSubjects.js'
 import { registerDirectoryRoutes } from './routes/directory.js'
@@ -393,6 +396,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   )
 
   registerContentRoutes(app, context)
+  registerContentStyleProfileRoutes(app, context)
+  registerTextWorkshopRoutes(app, context)
+  registerMediaRoutes(app, context)
   registerAgentRoutes(app, context, agentResponder)
 
   registerOrganizationRoutes(app, context)
