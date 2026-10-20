@@ -50,6 +50,14 @@ describe('PlayerBoard-Seiten', () => {
     expect(load.indexOf('if (request !== latestRequest) return')).toBeLessThan(load.indexOf('seasonFrom.value = loadedSeasonFrom'))
   })
 
+  it('teilt sich die Zeitraumwahl zwischen Rangliste und Spielen', () => {
+    for (const page of ['playerboard/rangliste.vue', 'playerboard/spiele.vue']) {
+      const source = read(page)
+      expect(source).toContain('<PlayerboardPeriodPicker v-model="period" :periods="periods" :season-from="seasonFrom"')
+      expect(source).not.toContain('role="radiogroup"')
+    }
+  })
+
   it('holt auf der oeffentlichen Seite frische Fotolinks, wenn ein Bild nicht mehr laedt', () => {
     const page = read('mannschaft/[orgSlug]/[teamSlug].vue')
 

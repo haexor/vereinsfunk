@@ -99,19 +99,6 @@ watch([period, month, customFrom, customTo], () => {
   void load()
 })
 
-const seasonFormat = new Intl.DateTimeFormat('de-DE', {
-  day: 'numeric',
-  month: 'long',
-  year: 'numeric',
-  timeZone: 'UTC',
-})
-const periodHint = computed(() => {
-  if (period.value === 'season')
-    return seasonFrom.value
-      ? `Seit ${seasonFormat.format(new Date(`${seasonFrom.value}T00:00:00Z`))}`
-      : 'Kein Saisonbeginn festgelegt – es zählt die gesamte Zeit.'
-  return ''
-})
 const inputClass =
   'focus-ring h-11 rounded-xl border border-[#dfe0d9] bg-white px-3 text-sm text-ink'
 </script>
@@ -128,26 +115,7 @@ const inputClass =
 
     <PlayerboardTeamEmpty v-if="!team" />
     <template v-else>
-      <div class="mb-3 flex flex-wrap gap-2" role="radiogroup" aria-label="Zeitraum">
-        <button
-          v-for="item in periods"
-          :key="item.kind"
-          type="button"
-          role="radio"
-          :aria-checked="period === item.kind"
-          class="focus-ring min-h-11 rounded-xl border px-4 text-xs font-semibold"
-          :class="
-            period === item.kind
-              ? 'border-forest bg-[#e4f1e7] text-forest'
-              : 'border-[#dfe0d9] bg-white text-ink'
-          "
-          @click="period = item.kind"
-        >
-          {{ item.label }}
-        </button>
-      </div>
-      <div class="mb-5 flex min-h-11 flex-wrap items-center gap-3 text-xs text-[#6c756f]">
-        <span v-if="periodHint">{{ periodHint }}</span>
+      <PlayerboardPeriodPicker v-model="period" :periods="periods" :season-from="seasonFrom">
         <input
           v-if="period === 'month'"
           v-model="month"
@@ -163,7 +131,7 @@ const inputClass =
             >bis <input v-model="customTo" type="date" :class="inputClass"
           /></label>
         </template>
-      </div>
+      </PlayerboardPeriodPicker>
 
       <p v-if="errorMessage" class="text-sm text-amber-800">{{ errorMessage }}</p>
       <div v-else :aria-busy="loading" :class="loading ? 'opacity-60' : ''">
