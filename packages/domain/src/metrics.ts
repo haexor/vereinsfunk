@@ -9,12 +9,8 @@ export interface MetricsWindow {
   endUtc: string // exklusiv, ISO 8601
 }
 
-// Zwei Durchlaeufe gegeneinander verrechnet, identisches Verfahren wie
-// packages/integrations/src/icalTransport.ts (zonedWallTimeToUtcMs) -- hier lokal dupliziert statt
-// importiert, weil packages/domain keine Abhaengigkeit zu packages/integrations hat und ein
-// einzelner kleiner Zeitzonen-Helfer keine neue Paketabhaengigkeit rechtfertigt.
-function offsetAtInstant(instantMs: number, timeZone: string): number {
-  const formatter = new Intl.DateTimeFormat('en-US', {
+function wallTimeAt(instantMs: number, timeZone: string) {
+  const parts = new Intl.DateTimeFormat('en-US', {
     timeZone,
     hourCycle: 'h23',
     year: 'numeric',
@@ -23,17 +19,43 @@ function offsetAtInstant(instantMs: number, timeZone: string): number {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-  })
-  const parts = formatter.formatToParts(new Date(instantMs))
+  }).formatToParts(new Date(instantMs))
   const get = (type: string) => Number(parts.find((part) => part.type === type)?.value)
-  const asIfUtcMs = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'), get('second'))
-  return asIfUtcMs - instantMs
+  return { year: get('year'), month: get('month'), day: get('day'), hour: get('hour'), minute: get('minute'), second: get('second') }
 }
 
-function zonedWallTimeToUtcMs(year: number, month: number, day: number, timeZone: string): number {
-  const utcGuessMs = Date.UTC(year, month - 1, day, 0, 0, 0)
-  const firstPassMs = utcGuessMs - offsetAtInstant(utcGuessMs, timeZone)
-  return utcGuessMs - offsetAtInstant(firstPassMs, timeZone)
+function offsetAtInstant(instantMs: number, timeZone: string): number {
+  const wall = wallTimeAt(instantMs, timeZone)
+  return Date.UTC(wall.year, wall.month - 1, wall.day, wall.hour, wall.minute, wall.second) - instantMs
+}
+
+const HOUR_MS = 3_600_000
+
+// Erster Zeitpunkt des Kalendertags in der Zeitzone. Kandidaten sind lokale Mitternacht mit dem
+// Offset vor und mit dem Offset nach dem Tageswechsel (UTC-Offsets liegen zwischen -12 und +14
+// Stunden); gueltig ist ein Kandidat nur, wenn er tatsaechlich auf diesen Tag faellt, und der
+// frueheste gewinnt. Das zweistufige Verfahren vorher landete eine Stunde am Vortag, wenn die
+// Zeitumstellung genau um Mitternacht liegt -- in Santiago, Havanna und Asuncion beginnt der Tag
+// dann erst um 01:00, in Beirut, Teheran und Kairo gibt es 23:00 des Vortags zweimal. Gegen eine
+// viertelstuendliche Suche ueber 17 Zeitzonen und die Jahre 2010-2030 geprueft. Den Kalendertag
+// zuerst normalisieren: dayWindow uebergibt fuer das Fensterende bewusst date+1.
+function zonedDayStartUtcMs(year: number, month: number, day: number, timeZone: string): number {
+  const midnightAsUtcMs = Date.UTC(year, month - 1, day)
+  const normalized = new Date(midnightAsUtcMs)
+  const isSameDay = (instantMs: number) => {
+    const wall = wallTimeAt(instantMs, timeZone)
+    return wall.year === normalized.getUTCFullYear() && wall.month === normalized.getUTCMonth() + 1 && wall.day === normalized.getUTCDate()
+  }
+  const candidates = [midnightAsUtcMs - offsetAtInstant(midnightAsUtcMs - 15 * HOUR_MS, timeZone), midnightAsUtcMs - offsetAtInstant(midnightAsUtcMs + 13 * HOUR_MS, timeZone)]
+  const onThisDay = candidates.filter(isSameDay)
+  // Nur ein ausgelassener Kalendertag (Pacific/Apia, 30.12.2011) hat keinen Kandidaten; sein
+  // Fenster wird dann leer, weil es am Beginn des Folgetags anfaengt.
+  return onThisDay.length > 0 ? Math.min(...onThisDay) : Math.max(...candidates)
+}
+
+// Kalendertag (YYYY-MM-DD) eines Zeitpunkts in der Vereinszeitzone.
+export function localDateKey(instant: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(instant)
 }
 
 // .slice() statt .split('-').map(Number): Destrukturieren aus einem Array-Rueckgabewert waere unter
@@ -50,8 +72,8 @@ function parseDayParts(day: string): { year: number; month: number; date: number
 export function dayWindow(day: string, timezone: string): MetricsWindow {
   const { year, month, date } = parseDayParts(day)
   return {
-    startUtc: new Date(zonedWallTimeToUtcMs(year, month, date, timezone)).toISOString(),
-    endUtc: new Date(zonedWallTimeToUtcMs(year, month, date + 1, timezone)).toISOString(),
+    startUtc: new Date(zonedDayStartUtcMs(year, month, date, timezone)).toISOString(),
+    endUtc: new Date(zonedDayStartUtcMs(year, month, date + 1, timezone)).toISOString(),
   }
 }
 
@@ -59,8 +81,8 @@ export function rangeWindow(fromDay: string, toDayExclusive: string, timezone: s
   const from = parseDayParts(fromDay)
   const to = parseDayParts(toDayExclusive)
   return {
-    startUtc: new Date(zonedWallTimeToUtcMs(from.year, from.month, from.date, timezone)).toISOString(),
-    endUtc: new Date(zonedWallTimeToUtcMs(to.year, to.month, to.date, timezone)).toISOString(),
+    startUtc: new Date(zonedDayStartUtcMs(from.year, from.month, from.date, timezone)).toISOString(),
+    endUtc: new Date(zonedDayStartUtcMs(to.year, to.month, to.date, timezone)).toISOString(),
   }
 }
 
