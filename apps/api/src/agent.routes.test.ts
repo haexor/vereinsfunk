@@ -428,7 +428,7 @@ describe('POST /v1/agent/action-proposals/:id/confirm', () => {
       forUser: () => ({
         from: (table: string) => {
           if (table === 'agent_action_proposals') return chain({ data: pending, error: null })
-          if (table === 'post_versions') return chain({ data: { id: VERSION_ID, post_id: POST_ID, effective_config_snapshot: null }, error: null })
+          if (table === 'post_versions') return chain({ data: { id: VERSION_ID, post_id: POST_ID, effective_config_snapshot: {} }, error: null })
           if (table === 'posts') return chain({ data: { id: POST_ID, organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: null, status: 'approved', current_version_id: VERSION_ID }, error: null })
           if (table === 'social_connections') return chain({ data: [{ id: CONNECTION_ID, platform: 'instagram', status: 'active', archived_at: null, responsible_profile_id: null }], error: null })
           if (table === 'channel_scopes') return chain({ data: [{ social_connection_id: CONNECTION_ID, scope: 'organization', department_id: null, team_id: null, can_schedule: true }], error: null })

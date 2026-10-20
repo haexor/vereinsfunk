@@ -33,7 +33,6 @@ import {
   type AgentWorkspace,
 } from '@vereinsfunk/contracts'
 import { canAssignRole, hasPermission, permissionModule, type Permission, type PermissionModule } from '@vereinsfunk/authorization'
-import { resolveAvailableChannels } from '@vereinsfunk/domain'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { createHash, randomUUID } from 'node:crypto'
@@ -44,7 +43,7 @@ import { createClubEvent } from '../services/clubEvents.js'
 import { saveTextWorkshopDraft } from '../services/textWorkshopDrafts.js'
 import { createTextGenerationSession } from '../services/textGenerationSessions.js'
 import type { ApiRouteContext } from './context.js'
-import { createAuditRecorder, isAnyMemberOfOrganization, resolveDirectoryScope, toChannelCandidates, toPermissionScope } from './shared.js'
+import { createAuditRecorder, isAnyMemberOfOrganization, resolveAvailableChannelIdsForPostVersion, resolveDirectoryScope, toPermissionScope } from './shared.js'
 
 const ConversationRowSchema = z.object({
   id: UuidSchema,
@@ -516,23 +515,10 @@ async function loadScheduleTarget(client: SupabaseClient, input: AgentSchedulePu
   const post = await client.from('posts').select('id, organization_id, department_id, team_id, status, current_version_id').eq('id', version.data.post_id as string).maybeSingle()
   if (post.error) throw post.error
   if (!post.data || post.data.status !== 'approved' || post.data.current_version_id !== version.data.id) return null
-  const [connections, scopeRows, policy] = await Promise.all([
-    client.from('social_connections').select('id, platform, status, archived_at, responsible_profile_id').eq('organization_id', post.data.organization_id).eq('platform', input.platform),
-    client.from('channel_scopes').select('social_connection_id, scope, department_id, team_id, can_schedule').eq('organization_id', post.data.organization_id),
-    client.from('policy_settings').select('require_channel_responsible').eq('organization_id', post.data.organization_id).eq('scope', 'organization').maybeSingle(),
-  ])
-  if (connections.error) throw connections.error
-  if (scopeRows.error) throw scopeRows.error
-  if (policy.error) throw policy.error
-  const snapshot = version.data.effective_config_snapshot as { config?: { allowedChannelIds?: unknown } } | null
-  const allowedChannelIds = Array.isArray(snapshot?.config?.allowedChannelIds) ? snapshot!.config!.allowedChannelIds as string[] : null
-  const channelIds = resolveAvailableChannels({
-    scope: post.data.team_id ? 'team' : 'department', departmentId: post.data.department_id as string,
-    ...(post.data.team_id ? { teamId: post.data.team_id as string } : {}), channels: toChannelCandidates(connections.data, scopeRows.data), allowedChannelIds,
-    requireChannelResponsible: policy.data?.require_channel_responsible ?? false,
-  })
+  const target = { organizationId: post.data.organization_id as string, departmentId: post.data.department_id as string | null, teamId: post.data.team_id as string | null }
+  const channelIds = await resolveAvailableChannelIdsForPostVersion(client, { ...target, effectiveConfigSnapshot: version.data.effective_config_snapshot }, input.platform)
   if (channelIds.length !== 1) return null
-  return { organizationId: post.data.organization_id as string, departmentId: post.data.department_id as string, teamId: post.data.team_id as string | null, postId: post.data.id as string, socialConnectionId: channelIds[0]! }
+  return { ...target, postId: post.data.id as string, socialConnectionId: channelIds[0]! }
 }
 
 async function loadPublicationTarget(client: SupabaseClient, publicationId: string): Promise<PublicationTarget | null> {
