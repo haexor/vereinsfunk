@@ -32,7 +32,7 @@ export const StyleProfileRulesSchema = z.object({
 // 2026081003_text_workshop_foundation.sql and 2026081304_style_profile_character_model.sql).
 const StyleProfileRuleListSchema = z.array(z.string().trim().min(1).max(160)).max(30)
 // The shape composition_sessions.style_profile_snapshot/post_generation_provenance.
-// style_profile_snapshot are frozen into (apps/api/src/routes/content.ts) and read back out of
+// style_profile_snapshot are frozen into (apps/api/src/services/textGenerationSessions.ts) and read back out of
 // (apps/worker/src/context.ts, apps/worker/src/textGeneration.ts) -- one shared schema instead of
 // two independently maintained copies of the same shape.
 export const StyleProfileSnapshotSchema = z.object({
@@ -131,7 +131,7 @@ export const UpdateCustomStyleProfileRequestSchema = UpdateStyleProfileRequestSc
 // Plan 040: "Persona/Stilprofil testen" calls the active text provider directly and
 // synchronously -- no session/candidate row, no preset. sampleInput plays the role a preset's
 // sourceMaterial normally plays (a single allowedClaim); there is no communicationGoal/preset
-// here, so previewStyleProfile (apps/api/src/routes/shared.ts) fills those in with fixed values.
+// here, so previewStyleProfile (apps/api/src/services/styleProfilePreview.ts) fills those in with fixed values.
 const StyleProfilePreviewCoreSchema = z.object({
   name: z.string().trim().min(1).max(80),
   description: z.string().trim().min(1).max(500),

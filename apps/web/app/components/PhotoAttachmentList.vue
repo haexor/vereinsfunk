@@ -3,7 +3,7 @@
 // auf der UI-Ebene auf, ohne PhotoAttachment.vue selbst anzufassen -- Upload/Personen-Pruefung
 // bleiben pro Foto exakt dieselbe, bereits funktionierende Einheit, hier nur mehrfach
 // nebeneinander gestellt. Die Reihenfolge der Slots wird zur Reihenfolge in mediaAssetIds und
-// spaeter zur position der post_media-Zeilen (routes/content.ts).
+// spaeter zur position der post_media-Zeilen (routes/textWorkshop.ts).
 const props = withDefaults(defineProps<{ organizationId: string; departmentId: string | null; max?: number; initialMediaAssetIds?: string[] }>(), { max: 10 })
 const mediaAssetIds = defineModel<string[]>('mediaAssetIds', { required: true })
 

@@ -165,7 +165,7 @@ export const CreateImageStylePresetRequestSchema = ImageStylePresetFieldsSchema.
 })
 
 // Scope (organizationId/departmentId/teamId) ist unveraendlich -- PATCH /v1/image-style-presets/:id
-// leitet ihn aus der bestehenden Zeile her, wie PATCH /v1/content-style-profiles/:id (routes/content.ts).
+// leitet ihn aus der bestehenden Zeile her, wie PATCH /v1/content-style-profiles/:id (routes/contentStyleProfiles.ts).
 export const UpdateImageStylePresetRequestSchema = ImageStylePresetFieldsSchema.extend({
   isActive: z.boolean().optional(),
 }).superRefine(checkImageStylePresetFields)
@@ -187,7 +187,7 @@ export const PreviewImageStylePresetRequestSchema = ImageStylePresetFieldsSchema
 // Immer WebP, anders als ApplyImageStyleRenderResponse: die Vorschau geht nicht in den
 // 'rendered-media'-Bucket (der nur image/jpeg und image/png zulaesst), sondern als data:-URL in ein
 // Canvas -- WebP behaelt den Alphakanal bei einem Bruchteil der Base64-Groesse (siehe encodePreview
-// in apps/api/src/routes/imageStyle.ts).
+// in apps/api/src/services/imageStyleRendering.ts).
 export const PreviewImageStylePresetResponseSchema = z.object({
   imageBase64: z.string().min(1),
   contentType: z.literal('image/webp'),
