@@ -1,5 +1,6 @@
 import type { ComputedRef, Ref } from 'vue'
 import { z } from 'zod'
+import { ApiRequestError } from '../utils/apiClient'
 import { BrandAssetRowSchema } from '../utils/brandPageRows'
 import { selectableAtLevel } from '../utils/scopeSelection'
 
@@ -328,8 +329,14 @@ export function useBrandAssets({
         },
       })
       await reload()
-    } catch {
-      uploadError.value = 'Die Lizenz konnte nicht bestätigt werden.'
+    } catch (error) {
+      if (error instanceof ApiRequestError && error.code === 'brand_asset_not_pending_license') {
+        // Schon bestaetigt oder entfernt (etwa in einem anderen Tab): die Karte ist veraltet.
+        uploadError.value = 'Diese Schrift wartet nicht mehr auf eine Lizenzbestätigung. Die Liste wurde aktualisiert.'
+        await reload()
+      } else {
+        uploadError.value = 'Die Lizenz konnte nicht bestätigt werden.'
+      }
     } finally {
       confirmingLicense.value = null
     }
