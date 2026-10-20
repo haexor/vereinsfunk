@@ -9,7 +9,7 @@ import { z } from 'zod'
 // Supabase liefert an dieser Grenze untypisierte Daten. Die Row-Schemas validieren die
 // snake_case-Form bereits vor jeder Zustandsübernahme; die einzelnen Feldschemas stammen aus den
 // öffentlichen Contracts, damit API- und Browsergrenze dieselben Werte akzeptieren.
-const OrganizationBrandRowSchema = z.object({
+export const OrganizationBrandRowSchema = z.object({
   primary_color: OrganizationBrandSchema.shape.primaryColor,
   accent_color: OrganizationBrandSchema.shape.accentColor,
   background_color: OrganizationBrandSchema.shape.backgroundColor,
@@ -33,7 +33,7 @@ const TeamRowSchema = z.object({
   name: z.string(),
   department_id: DepartmentBrandSchema.shape.departmentId,
 })
-const DepartmentBrandRowSchema = z.object({
+export const DepartmentBrandRowSchema = z.object({
   department_id: DepartmentBrandSchema.shape.departmentId,
   primary_color: DepartmentBrandSchema.shape.primaryColor.nonoptional(),
   accent_color: DepartmentBrandSchema.shape.accentColor.nonoptional(),

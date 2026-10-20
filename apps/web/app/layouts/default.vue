@@ -4,7 +4,6 @@ import { frameworkNavigation, visibleFrameworkNavigation } from '../modules/fram
 import { appModuleOrder, appModuleRegistry, moduleForPath, type ModuleNavItem } from '../modules/registry'
 import { initialsOf } from '../utils/initials'
 import { deriveSidebarPalette } from '../utils/sidebarBrand'
-import { resolveSidebarLogoAsset, type SidebarLogoAsset } from '../utils/sidebarLogo'
 
 const mobileOpen = ref(false)
 const route = useRoute()
@@ -35,92 +34,7 @@ const activeScopeName = computed(
 )
 const activeScopeKind = computed(() => (activeDepartment.value ? 'Abteilung' : 'Verein'))
 const scopeInitials = computed(() => initialsOf(activeScopeName.value))
-const { revision: brandRevision } = useBrandRevision()
-
-// Paket 013, Rueckbau: das Vereinslogo ersetzt die Initialen dort, wo der Verein tatsaechlich
-// als Marke auftritt -- diese kleine Kachel im Umschalter, nicht die geteilte AppLogo-Komponente.
-// AppLogo bleibt bewusst unveraendert: sie steht auch in layouts/admin.vue und layouts/auth.vue,
-// wo es keinen (oder noch keinen einzelnen) aktiven Verein gibt -- dort waere ein Vereinslogo
-// fachlich falsch, es ist die Produktmarke "vereinsfunk", nicht die des Vereins.
-const scopeLogoUrl = ref('')
-const scopeBrand = ref({ primaryColor: '#163a2c', accentColor: '#caff4a' })
-// Lauf-Pruefung statt reiner organizationId-Pruefung: bei A -> B -> A stimmt organizationId beim
-// dritten Lauf wieder mit dem ersten ueberein, ein spaet zurueckkehrender erster Lauf wuerde die
-// Pruefung also bestehen und das (moeglicherweise veraltete) Ergebnis des dritten Laufs
-// ueberschreiben. Jeder Watcher-Aufruf beginnt einen eigenen Lauf, unabhaengig vom Zielverein.
-const scopeBrandRuns = useLatestRequest()
-watch(
-  () => [scope.value?.organizationId, scope.value?.departmentId, brandRevision.value] as const,
-  async ([organizationId, departmentId]) => {
-    const isLatest = scopeBrandRuns.begin()
-    scopeLogoUrl.value = ''
-    scopeBrand.value = { primaryColor: '#163a2c', accentColor: '#caff4a' }
-    if (!organizationId) return
-    const supabase = useSupabaseClient()
-    const organizationBrand = await supabase
-      .from('organization_brand_profiles')
-      .select('primary_color, accent_color, logo_asset_id')
-      .eq('organization_id', organizationId)
-      .maybeSingle()
-    if (!isLatest() || !organizationBrand.data) return
-    let brand = {
-      primaryColor: organizationBrand.data.primary_color as string,
-      accentColor: organizationBrand.data.accent_color as string,
-      logoAssetId: organizationBrand.data.logo_asset_id as string | null,
-    }
-    if (departmentId) {
-      const departmentBrand = await supabase
-        .from('department_brand_profiles')
-        .select('primary_color, accent_color, logo_asset_id')
-        .eq('department_id', departmentId)
-        .maybeSingle()
-      if (!isLatest()) return
-      if (departmentBrand.data) {
-        brand = {
-          ...brand,
-          primaryColor: (departmentBrand.data.primary_color as string | null) ?? brand.primaryColor,
-          accentColor: (departmentBrand.data.accent_color as string | null) ?? brand.accentColor,
-          logoAssetId: (departmentBrand.data.logo_asset_id as string | null) ?? brand.logoAssetId,
-        }
-      }
-    }
-    scopeBrand.value = brand
-    // Das aktiv verknuepfte Logo bleibt die erste Wahl. Wurde eine passende Logo-Datei bereits
-    // hochgeladen, aber auf /marke noch nicht als Render-Logo gespeichert, zeigt die Shell sie
-    // trotzdem als Identitaet des aktuellen Bereichs. So bleibt der Kontext eindeutig, ohne die
-    // fachliche, explizite Verknuepfung fuer Beitraege zu veraendern.
-    const logoAssets = await supabase
-      .from('brand_assets')
-      .select('id, department_id, team_id, kind, object_path, status')
-      .eq('organization_id', organizationId)
-      .eq('status', 'ready')
-      .in('kind', ['logo_primary', 'logo_light', 'logo_dark', 'logo_mark'])
-      .order('created_at', { ascending: false })
-    if (!isLatest() || logoAssets.error || !logoAssets.data) return
-    const asset = resolveSidebarLogoAsset(
-      logoAssets.data.map(
-        (item) =>
-          ({
-            id: item.id as string,
-            departmentId: item.department_id as string | null,
-            teamId: item.team_id as string | null,
-            kind: item.kind as string,
-            objectPath: item.object_path as string,
-            status: item.status as string,
-          }) satisfies SidebarLogoAsset,
-      ),
-      departmentId ?? null,
-      brand.logoAssetId,
-    )
-    if (!asset) return
-    const signed = await supabase.storage
-      .from('brand-assets')
-      .createSignedUrl(asset.objectPath, 600)
-    if (!isLatest()) return
-    scopeLogoUrl.value = signed.data?.signedUrl ?? ''
-  },
-  { immediate: true },
-)
+const { brand: scopeBrand, logoUrl: scopeLogoUrl } = useScopeBrand(scope)
 const activeDepartmentRoles = computed(
   () =>
     activeOrganization.value?.departments.find((item) => item.id === scope.value?.departmentId)
