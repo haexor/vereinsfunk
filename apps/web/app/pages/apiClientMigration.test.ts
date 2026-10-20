@@ -21,7 +21,7 @@ describe('API-client migration', () => {
     })
   }
 
-  for (const page of ['einladung.vue', 'einwilligungen.vue', 'einstellungen/recht.vue']) {
+  for (const page of ['einladung.vue', 'einwilligungen.vue', 'einstellungen/recht.vue', 'integrationen.vue']) {
     it(`${page} reads API error codes from ApiRequestError`, () => {
       const source = readFileSync(join(PAGES_DIR, page), 'utf8')
 
