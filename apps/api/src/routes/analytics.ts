@@ -25,7 +25,8 @@ import {
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { ApiRouteContext } from './context.js'
-import { fetchAllRows, fetchAllRowsForIds, toPermissionScope } from './shared.js'
+import type { PermissionScope } from '../auth.js'
+import { fetchAllRows, fetchAllRowsForIds, resolveDirectoryScope } from './shared.js'
 
 export function registerAnalyticsRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients } = context
@@ -35,64 +36,55 @@ export function registerAnalyticsRoutes(app: FastifyInstance, context: ApiRouteC
   // Rohtabellen (post_status_events, approval_decisions, publications, workflow_runs,
   // post_versions, posts, submissions). Siehe plans/016-auswertung-interne-kennzahlen.md,
   // "Abweichungen vom Plan" Punkt 4, fuer die Begruendung.
-  interface AnalyticsScope {
-    organizationId: string
-    departmentId?: string
-    teamId?: string
-  }
-  function toAnalyticsScope(query: { organizationId: string; departmentId?: string | undefined; teamId?: string | undefined }): AnalyticsScope {
-    return { organizationId: query.organizationId, ...(query.departmentId ? { departmentId: query.departmentId } : {}), ...(query.teamId ? { teamId: query.teamId } : {}) }
-  }
+  type AnalyticsScope = PermissionScope
 
   // KRITISCHER FUND (adversariale Pruefung): auth.ts' rolesForScope prueft organization_memberships,
   // department_memberships und team_memberships voellig unabhaengig voneinander -- nirgends wird
   // geprueft, dass die drei IDs ueberhaupt zusammengehoeren. Ein Aufrufer mit einer echten
   // Abteilungsrolle (analytics.view) in Verein A koennte sonst organizationId=<fremder Verein B> mit
   // seiner eigenen, echten departmentId aus A kombinieren: requirePermission wuerde ueber die reale
-  // Abteilungsrolle in A durchgehen, obwohl die Anfrage inhaltlich Verein B gilt. Die meisten Loader
-  // unten filtern zusammengesetzt nach organization_id UND department_id und liefern bei einem
-  // solchen inkonsistenten Paar zufaellig leer -- die Kontingentauslastung in GET .../summary filtert
-  // channel_quotas dagegen ausschliesslich nach organizationId und haette echte Konfigurations- und
-  // Nutzungsdaten eines fremden Vereins zurueckgegeben. Statt den gemeinsam genutzten RoleProvider
-  // projektweit zu aendern (groesserer, eigenstaendiger Eingriff), wird hier vor jeder Rechtepruefung
-  // separat sichergestellt, dass departmentId tatsaechlich zu organizationId gehoert und teamId zu
-  // departmentId -- dasselbe Muster wie resolveMembershipScope() oben, nur in die andere Richtung
-  // (IDs vom Aufrufer, nicht aus scope+scopeId aufgeloest).
+  // Abteilungsrolle in A durchgehen, obwohl die Anfrage inhaltlich Verein B gilt. Die Kontingent-
+  // auslastung in GET .../summary filtert channel_quotas ausschliesslich nach organizationId und
+  // haette echte Daten eines fremden Vereins zurueckgegeben. resolveDirectoryScope stellt deshalb
+  // vor jeder Rechtepruefung sicher, dass departmentId zu organizationId gehoert und teamId zu
+  // departmentId. Ohne departmentId (teamId verlangt eins, Schema) gibt es nichts zu pruefen.
   //
   // Ueber den Nutzer-Client (RLS), nicht die Service Role: departments_select_member/
-  // teams_select_member lassen jedes Mitglied die eigene Abteilung/das eigene Team sehen (mit
-  // Fallback auf eine Vereinsrolle) -- fuer eine echte Kombination liefert das dieselbe Zeile wie
-  // die Service Role, fuer eine vorgetaeuschte liefert RLS entweder eine ANDERE organization_id
-  // (Mismatch erkannt) oder gar keine Zeile (ebenfalls erkannt). So bleibt der etablierte Aufbau
-  // dieser Datei erhalten: kein Supabase-Zugriff, bevor requirePermission entschieden hat -- nur
-  // aufgerufen, wenn tatsaechlich eine departmentId angegeben ist.
-  async function verifyDepartmentAndTeamBelongToOrganization(
-    client: SupabaseClient,
-    query: { organizationId: string; departmentId: string; teamId?: string | undefined },
-  ): Promise<boolean> {
-    const department = await client.from('departments').select('organization_id').eq('id', query.departmentId).maybeSingle()
-    if (department.error) throw department.error
-    if (!department.data || department.data.organization_id !== query.organizationId) return false
-    if (query.teamId) {
-      const team = await client.from('teams').select('organization_id, department_id').eq('id', query.teamId).maybeSingle()
-      if (team.error) throw team.error
-      if (!team.data || team.data.organization_id !== query.organizationId || team.data.department_id !== query.departmentId) return false
-    }
-    return true
-  }
-  async function assertAnalyticsScopeConsistency(
+  // teams_select_member lassen jedes Mitglied die eigene Abteilung/das eigene Team sehen -- fuer eine
+  // vorgetaeuschte Kombination liefert RLS eine ANDERE organization_id oder gar keine Zeile, beides
+  // wird erkannt. Kein Service-Role-Zugriff, bevor requirePermission entschieden hat.
+  //
+  // Gemeinsamer Vorspann aller Kennzahl-Routen; null heisst: die Antwort ist bereits gesendet.
+  async function openAnalyticsScope(
     request: FastifyRequest,
     reply: FastifyReply,
     query: { organizationId: string; departmentId?: string | undefined; teamId?: string | undefined },
-  ): Promise<boolean> {
-    if (!query.departmentId) return true
-    const client = supabaseClients.forUser(request.auth!.accessToken)
-    const consistent = await verifyDepartmentAndTeamBelongToOrganization(client, { organizationId: query.organizationId, departmentId: query.departmentId, teamId: query.teamId })
-    if (!consistent) {
+  ): Promise<{ service: SupabaseClient; scope: AnalyticsScope; timezone: string; measurementStartsAt: string | null } | null> {
+    const scope = query.departmentId
+      ? await resolveDirectoryScope(supabaseClients.forUser(request.auth!.accessToken), query.organizationId, query.departmentId, query.teamId ?? null)
+      : { organizationId: query.organizationId }
+    if (!scope) {
       reply.code(404).send({ error: 'not_found', correlationId: request.id })
-      return false
+      return null
     }
-    return true
+    if (!(await requirePermission(request, reply, 'analytics.view', scope))) return null
+    const service = supabaseClients.forService()
+    const timezone = await loadOrganizationTimezone(service, query.organizationId)
+    if (timezone === null) {
+      reply.code(404).send({ error: 'not_found', correlationId: request.id })
+      return null
+    }
+    return { service, scope, timezone, measurementStartsAt: await loadMeasurementStart(service, scope) }
+  }
+
+  // Team vor Abteilung: eine team-gescopte Anfrage traegt immer auch ihre departmentId. Ohne
+  // Constraint auf Query, weil der Strukturvergleich mit PostgrestFilterBuilder tsc mit TS2589
+  // ("excessively deep") abbricht; eq() gibt den Builder selbst zurueck.
+  function filterToScope<Query>(query: Query, scope: AnalyticsScope): Query {
+    const filterable = query as unknown as { eq(column: string, value: string): Query }
+    if (scope.teamId) return filterable.eq('team_id', scope.teamId)
+    if (scope.departmentId) return filterable.eq('department_id', scope.departmentId)
+    return query
   }
 
   // null statt Wurf, wenn die Organisation nicht (mehr) existiert -- ein geworfener Error waere ueber
@@ -111,21 +103,15 @@ export function registerAnalyticsRoutes(app: FastifyInstance, context: ApiRouteC
   // Abschnitt "Endpunkte", "coverage"). null, solange kein einziger Beitrag eingereicht wurde. Auch
   // die Grundlage dafuer, ob eine Vorperiode fuer einen Trend ueberhaupt vollstaendig ist.
   async function loadMeasurementStart(service: SupabaseClient, scope: AnalyticsScope): Promise<string | null> {
-    let query = service.from('submissions').select('created_at').eq('organization_id', scope.organizationId)
-    if (scope.teamId) query = query.eq('team_id', scope.teamId)
-    else if (scope.departmentId) query = query.eq('department_id', scope.departmentId)
-    const result = await query.order('created_at', { ascending: true }).limit(1).maybeSingle()
+    const result = await filterToScope(service.from('submissions').select('created_at').eq('organization_id', scope.organizationId).order('created_at', { ascending: true }).limit(1), scope).maybeSingle()
     if (result.error) throw result.error
     return result.data ? (result.data.created_at as string).slice(0, 10) : null
   }
 
   async function loadPostsInScope(service: SupabaseClient, scope: AnalyticsScope): Promise<{ id: string; createdAt: string; departmentId: string }[]> {
-    const rows = await fetchAllRows<{ id: string; created_at: string; department_id: string }>((from, to) => {
-      let query = service.from('posts').select('id, created_at, department_id').eq('organization_id', scope.organizationId)
-      if (scope.teamId) query = query.eq('team_id', scope.teamId)
-      else if (scope.departmentId) query = query.eq('department_id', scope.departmentId)
-      return query.range(from, to)
-    })
+    const rows = await fetchAllRows<{ id: string; created_at: string; department_id: string }>((from, to) =>
+      filterToScope(service.from('posts').select('id, created_at, department_id').eq('organization_id', scope.organizationId), scope).range(from, to),
+    )
     return rows.map((row) => ({ id: row.id, createdAt: row.created_at, departmentId: row.department_id }))
   }
 
@@ -134,16 +120,12 @@ export function registerAnalyticsRoutes(app: FastifyInstance, context: ApiRouteC
   // uebertragener Uebergang (z. B. draft_ready -> render_queued) kostet ohne Nutzen.
   const RELEVANT_TRANSITION_STATUSES = ['awaiting_approval', 'approved', 'changes_requested', 'scheduled', 'published']
   async function loadStatusTransitionsInScope(service: SupabaseClient, scope: AnalyticsScope): Promise<{ postId: string; toStatus: string; occurredAt: string }[]> {
-    const rows = await fetchAllRows<{ post_id: string; to_status: string; occurred_at: string }>((from, to) => {
-      let query = service
-        .from('post_status_events')
-        .select('post_id, to_status, occurred_at')
-        .eq('organization_id', scope.organizationId)
-        .in('to_status', RELEVANT_TRANSITION_STATUSES)
-      if (scope.teamId) query = query.eq('team_id', scope.teamId)
-      else if (scope.departmentId) query = query.eq('department_id', scope.departmentId)
-      return query.range(from, to)
-    })
+    const rows = await fetchAllRows<{ post_id: string; to_status: string; occurred_at: string }>((from, to) =>
+      filterToScope(
+        service.from('post_status_events').select('post_id, to_status, occurred_at').eq('organization_id', scope.organizationId).in('to_status', RELEVANT_TRANSITION_STATUSES),
+        scope,
+      ).range(from, to),
+    )
     return rows.map((row) => ({ postId: row.post_id, toStatus: row.to_status, occurredAt: row.occurred_at }))
   }
 
@@ -215,14 +197,9 @@ export function registerAnalyticsRoutes(app: FastifyInstance, context: ApiRouteC
   app.get('/v1/analytics/summary', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const query = AnalyticsScopeQuerySchema.parse(request.query)
-    if (!(await assertAnalyticsScopeConsistency(request, reply, query))) return
-    if (!(await requirePermission(request, reply, 'analytics.view', toPermissionScope(query.organizationId, query.departmentId, query.teamId)))) return
-
-    const service = supabaseClients.forService()
-    const scope = toAnalyticsScope(query)
-    const timezone = await loadOrganizationTimezone(service, query.organizationId)
-    if (timezone === null) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
-    const measurementStartsAt = await loadMeasurementStart(service, scope)
+    const opened = await openAnalyticsScope(request, reply, query)
+    if (!opened) return
+    const { service, scope, timezone, measurementStartsAt } = opened
     const window = rangeWindow(query.from, addDays(query.to, 1), timezone)
     // Vorab berechnet, weil publications/workflow_runs weiter unten schon ab der unteren Grenze der
     // Vorperiode geladen werden -- der Trend-Block weiter unten braucht dieselbe previousWindow.
@@ -292,12 +269,9 @@ export function registerAnalyticsRoutes(app: FastifyInstance, context: ApiRouteC
     // zeitraum (Plan, Abschnitt "Oberflaeche", eigener Punkt neben der Kennzahlenzeile).
     const quotaRows = await fetchAllRows<{
       id: string; scope: string; department_id: string | null; team_id: string | null; social_connection_id: string | null; period: 'day' | 'week' | 'month'; max_publications: number
-    }>((from, to) => {
-      let quotaQuery = service.from('channel_quotas').select('id, scope, department_id, team_id, social_connection_id, period, max_publications').eq('organization_id', query.organizationId)
-      if (scope.teamId) quotaQuery = quotaQuery.eq('team_id', scope.teamId)
-      else if (scope.departmentId) quotaQuery = quotaQuery.eq('department_id', scope.departmentId)
-      return quotaQuery.range(from, to)
-    })
+    }>((from, to) =>
+      filterToScope(service.from('channel_quotas').select('id, scope, department_id, team_id, social_connection_id, period, max_publications').eq('organization_id', query.organizationId), scope).range(from, to),
+    )
     const nowIso = new Date().toISOString()
     // Ein Aufruf fuer alle Kontingente statt einer je Zeile: count_publications_for_quotas
     // (Migration 2026081207) ruft dieselbe Zaehlfunktion vereinsintern pro Zeile auf. Ueber
@@ -332,14 +306,9 @@ export function registerAnalyticsRoutes(app: FastifyInstance, context: ApiRouteC
   app.get('/v1/analytics/timeseries', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const query = AnalyticsTimeseriesQuerySchema.parse(request.query)
-    if (!(await assertAnalyticsScopeConsistency(request, reply, query))) return
-    if (!(await requirePermission(request, reply, 'analytics.view', toPermissionScope(query.organizationId, query.departmentId, query.teamId)))) return
-
-    const service = supabaseClients.forService()
-    const scope = toAnalyticsScope(query)
-    const timezone = await loadOrganizationTimezone(service, query.organizationId)
-    if (timezone === null) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
-    const measurementStartsAt = await loadMeasurementStart(service, scope)
+    const opened = await openAnalyticsScope(request, reply, query)
+    if (!opened) return
+    const { service, scope, timezone, measurementStartsAt } = opened
     const requestWindowStart = rangeWindow(query.from, addDays(query.to, 1), timezone).startUtc
 
     const posts = await loadPostsInScope(service, scope)
@@ -394,14 +363,9 @@ export function registerAnalyticsRoutes(app: FastifyInstance, context: ApiRouteC
   app.get('/v1/analytics/breakdown', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const query = AnalyticsBreakdownQuerySchema.parse(request.query)
-    if (!(await assertAnalyticsScopeConsistency(request, reply, query))) return
-    if (!(await requirePermission(request, reply, 'analytics.view', toPermissionScope(query.organizationId, query.departmentId, query.teamId)))) return
-
-    const service = supabaseClients.forService()
-    const scope = toAnalyticsScope(query)
-    const timezone = await loadOrganizationTimezone(service, query.organizationId)
-    if (timezone === null) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
-    const measurementStartsAt = await loadMeasurementStart(service, scope)
+    const opened = await openAnalyticsScope(request, reply, query)
+    if (!opened) return
+    const { service, scope, timezone, measurementStartsAt } = opened
     const window = rangeWindow(query.from, addDays(query.to, 1), timezone)
 
     let entries: { key: string; label: string; count: number }[]
@@ -424,12 +388,9 @@ export function registerAnalyticsRoutes(app: FastifyInstance, context: ApiRouteC
       // das, was am Ende als vollstaendiger Post entstand.
       const submissions = await fetchAllRows<{
         id: string; department_id: string; team_id: string | null; preset_slug: string; communication_goal: string; requested_formats: string[]; created_at: string
-      }>((from, to) => {
-        let submissionQuery = service.from('submissions').select('id, department_id, team_id, preset_slug, communication_goal, requested_formats, created_at').eq('organization_id', query.organizationId)
-        if (scope.teamId) submissionQuery = submissionQuery.eq('team_id', scope.teamId)
-        else if (scope.departmentId) submissionQuery = submissionQuery.eq('department_id', scope.departmentId)
-        return submissionQuery.range(from, to)
-      })
+      }>((from, to) =>
+        filterToScope(service.from('submissions').select('id, department_id, team_id, preset_slug, communication_goal, requested_formats, created_at').eq('organization_id', query.organizationId), scope).range(from, to),
+      )
       const inWindow = submissions.filter((submission) => isInWindow(submission.created_at, window))
       const counts = new Map<string, number>()
       if (query.dimension === 'preset') for (const submission of inWindow) counts.set(submission.preset_slug, (counts.get(submission.preset_slug) ?? 0) + 1)
@@ -466,14 +427,9 @@ export function registerAnalyticsRoutes(app: FastifyInstance, context: ApiRouteC
   app.get('/v1/analytics/funnel', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const query = AnalyticsFunnelQuerySchema.parse(request.query)
-    if (!(await assertAnalyticsScopeConsistency(request, reply, query))) return
-    if (!(await requirePermission(request, reply, 'analytics.view', toPermissionScope(query.organizationId, query.departmentId, query.teamId)))) return
-
-    const service = supabaseClients.forService()
-    const scope = toAnalyticsScope(query)
-    const timezone = await loadOrganizationTimezone(service, query.organizationId)
-    if (timezone === null) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
-    const measurementStartsAt = await loadMeasurementStart(service, scope)
+    const opened = await openAnalyticsScope(request, reply, query)
+    if (!opened) return
+    const { service, scope, timezone, measurementStartsAt } = opened
     const window = rangeWindow(query.from, addDays(query.to, 1), timezone)
 
     const posts = await loadPostsInScope(service, scope)
