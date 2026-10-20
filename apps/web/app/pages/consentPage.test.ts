@@ -19,9 +19,9 @@ describe('Einwilligungen', () => {
 
     // Vorher war nur der Erfolgsweg geschuetzt; eine aeltere, scheiternde Anfrage setzte die
     // Fehlermeldung ueber frische Daten.
-    expect(page).toContain('const run = ++loadAllRun')
-    expect(page).toContain("if (run === loadAllRun) errorMessage.value = 'Die Einwilligungen konnten nicht geladen werden.'")
-    expect(page).toContain('if (run === loadAllRun) loading.value = false')
+    expect(page).toContain('useScopedLoad(')
+    expect(page).toContain("if (isLatest()) errorMessage.value = 'Die Einwilligungen konnten nicht geladen werden.'")
+    expect(page).toContain('if (isLatest()) loading.value = false')
   })
 
   it('setzt das Eingangsdatum einer Betroffenenanfrage auf den heutigen Tag in der Vereinszeitzone', () => {
@@ -29,6 +29,6 @@ describe('Einwilligungen', () => {
 
     // toISOString() ist UTC: zwischen 0 und 2 Uhr deutscher Zeit stand dort der Vortag.
     expect(page).not.toContain('new Date().toISOString().slice(0, 10)')
-    expect(page).toContain('receivedAt: localDateKey(new Date(), timezone.value),')
+    expect(page).toContain('receivedAt: localDateKey(new Date(), organizationTimezone.value),')
   })
 })

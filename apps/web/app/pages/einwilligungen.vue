@@ -8,13 +8,10 @@ import {
   type ConsentStatus,
   type DirectoryPerson,
 } from '@vereinsfunk/contracts'
+import { ApiRequestError } from '../utils/apiClient'
 
-const config = useRuntimeConfig()
-const session = await useSession()
-const scope = await useScope()
-
-const organizationId = computed(() => scope.value?.organizationId ?? null)
-const organization = computed(() => session.value?.scopes.find((item) => item.organizationId === organizationId.value) ?? null)
+const api = useApiClient()
+const { organizationId, organization } = await useActiveScope()
 
 const canManageOrgWide = computed(() => useCan('consent.manage', { organizationId: organizationId.value ?? '' }))
 function canManageDepartment(departmentId: string): boolean {
@@ -49,50 +46,36 @@ function personLabel(personId: string | null): string {
   return person ? `${person.firstName} ${person.lastName}` : 'Unbekannte Person'
 }
 
-async function loadPeople(currentOrganizationId: string, currentDepartmentId: string) {
-  const headers = await useAuthHeader()
-  const query: Record<string, string> = {}
-  if (currentDepartmentId) query.departmentId = currentDepartmentId
-  const response = await $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${currentOrganizationId}/directory-people`, { headers, query })
-  // Verein/Abteilung koennte sich waehrend des Requests geaendert haben -- ein frueher gestarteter
-  // Durchlauf darf eine spaeter gewaehlte Auswahl nicht ueberschreiben (siehe loadAll).
-  if (organizationId.value !== currentOrganizationId || filterDepartmentId.value !== currentDepartmentId) return
-  people.value = DirectoryPersonSchema.array().parse(response)
-}
-
-// Nur der zuletzt gestartete Lauf darf schreiben -- auch im Fehlerfall: eine aeltere, scheiternde
-// Anfrage setzte sonst eine Fehlermeldung ueber die bereits geladenen aktuellen Daten.
-let loadAllRun = 0
-async function loadAll() {
-  const run = ++loadAllRun
-  if (!organizationId.value) { loading.value = false; return }
-  const currentOrganizationId = organizationId.value
-  const currentDepartmentId = filterDepartmentId.value
-  loading.value = true
-  errorMessage.value = ''
-  try {
-    const headers = await useAuthHeader()
-    const query: Record<string, string> = {}
-    if (currentDepartmentId) query.departmentId = currentDepartmentId
-    const [consentsResponse, requestsResponse] = await Promise.all([
-      $fetch<unknown>(`${config.public.apiBase}/v1/consents`, { headers, query: { organizationId: currentOrganizationId, ...query } }),
-      $fetch<unknown>(`${config.public.apiBase}/v1/consent-requests`, { headers, query: { organizationId: currentOrganizationId, ...query } }),
-      loadPeople(currentOrganizationId, currentDepartmentId),
-    ])
-    // Ein frueher gestarteter Durchlauf kann nach einem spaeter gestarteten zurueckkehren, wenn
-    // sich Verein/Abteilung zwischendurch aendern -- er wuerde sonst deren Ergebnisse mit denen der
-    // vorigen Auswahl ueberschreiben (gefunden im Code-Review, gleiches Muster wie layouts/default.vue).
-    if (run !== loadAllRun) return
-    consents.value = ConsentRecordSchema.array().parse(consentsResponse)
-    requests.value = ConsentRequestSchema.array().parse(requestsResponse)
-  } catch {
-    if (run === loadAllRun) errorMessage.value = 'Die Einwilligungen konnten nicht geladen werden.'
-  } finally {
-    if (run === loadAllRun) loading.value = false
-  }
-}
-await loadAll()
-watch([organizationId, filterDepartmentId], () => { void loadAll() })
+// Nur der zuletzt gestartete Lauf darf schreiben -- auch im Fehlerfall: ein frueher gestarteter
+// Lauf fuer eine vorige Verein-/Abteilungsauswahl ueberschriebe sonst deren Ergebnisse oder setzte
+// eine Fehlermeldung ueber die bereits geladenen aktuellen Daten.
+const { ready } = useScopedLoad(
+  () => (organizationId.value ? `${organizationId.value}:${filterDepartmentId.value}` : null),
+  async (_key, isLatest) => {
+    const currentOrganizationId = organizationId.value
+    if (!currentOrganizationId) { loading.value = false; return }
+    // undefined faellt aus der Query heraus: ohne Abteilung gilt der ganze Verein.
+    const departmentId = filterDepartmentId.value || undefined
+    loading.value = true
+    errorMessage.value = ''
+    try {
+      const [loadedConsents, loadedRequests, loadedPeople] = await Promise.all([
+        api.request('/v1/consents', { query: { organizationId: currentOrganizationId, departmentId } }, ConsentRecordSchema.array()),
+        api.request('/v1/consent-requests', { query: { organizationId: currentOrganizationId, departmentId } }, ConsentRequestSchema.array()),
+        api.request(`/v1/organizations/${currentOrganizationId}/directory-people`, { query: { departmentId } }, DirectoryPersonSchema.array()),
+      ])
+      if (!isLatest()) return
+      consents.value = loadedConsents
+      requests.value = loadedRequests
+      people.value = loadedPeople
+    } catch {
+      if (isLatest()) errorMessage.value = 'Die Einwilligungen konnten nicht geladen werden.'
+    } finally {
+      if (isLatest()) loading.value = false
+    }
+  },
+)
+await ready
 
 const showMinorsWithoutConsent = ref(true)
 const minorsWithoutValidConsent = computed(() => {
@@ -123,9 +106,7 @@ async function revoke(consent: ConsentRecord) {
   revokingId.value = consent.id
   revokeError.value = ''
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/consents/${consent.id}/revoke`, { method: 'POST', headers, body: { revokedBy: 'organization', reason: reason || undefined } })
-    const updated = ConsentRecordSchema.parse(response)
+    const updated = await api.request(`/v1/consents/${consent.id}/revoke`, { method: 'POST', body: { revokedBy: 'organization', reason: reason || undefined } }, ConsentRecordSchema)
     consents.value = consents.value.map((item) => (item.id === updated.id ? updated : item))
   } catch {
     revokeError.value = 'Der Widerruf konnte nicht gespeichert werden.'
@@ -150,7 +131,7 @@ const registerFileInputKey = ref(0)
 
 const GUARDIAN_REQUIRED_MESSAGE = 'Diese Person ist minderjährig. Eine Einwilligung muss von einer erziehungsberechtigten Person erteilt werden.'
 function errorCodeOf(error: unknown): string | undefined {
-  return (error as { data?: { error?: string } })?.data?.error
+  return error instanceof ApiRequestError ? error.code : undefined
 }
 
 async function registerConsent() {
@@ -162,7 +143,6 @@ async function registerConsent() {
   registerSubmitting.value = true
   registerError.value = ''
   try {
-    const headers = await useAuthHeader()
     const scopeStructured = {
       purposes: registerForm.purposes, platforms: registerForm.allPlatforms ? null : registerForm.platforms,
       mediaKinds: registerForm.mediaKinds, contexts: null, namingAllowed: registerForm.namingAllowed, departmentIds: null,
@@ -180,8 +160,8 @@ async function registerConsent() {
     // Code-Review), weil das Feld dann ausgeblendet wird, aber registerForm.guardianConfirmed nicht.
     body.set('guardianConfirmed', String(registerForm.signerRole === 'guardian' && registerForm.guardianConfirmed))
     body.set('file', registerForm.file)
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/consents`, { method: 'POST', headers, body })
-    consents.value = [ConsentRecordSchema.parse(response), ...consents.value]
+    const created = await api.request('/v1/consents', { method: 'POST', body }, ConsentRecordSchema)
+    consents.value = [created, ...consents.value]
     registerForm.directoryPersonId = ''; registerForm.scope = ''; registerForm.signedAt = ''; registerForm.signerName = ''
     registerForm.guardianConfirmed = false; registerForm.file = null; registerFileInputKey.value += 1
   } catch (error) {
@@ -206,16 +186,15 @@ async function sendConsentRequest() {
   requestSubmitting.value = true
   requestError.value = ''
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/consent-requests`, {
-      method: 'POST', headers,
+    const created = await api.request('/v1/consent-requests', {
+      method: 'POST',
       body: {
         organizationId: organizationId.value, directoryPersonId: requestForm.directoryPersonId,
         recipientEmail: requestForm.recipientEmail, recipientRole: requestForm.recipientRole,
         requestedScope: { purposes: requestForm.purposes, platforms: null, mediaKinds: requestForm.mediaKinds, contexts: null, namingAllowed: requestForm.namingAllowed, departmentIds: null },
       },
-    })
-    requests.value = [ConsentRequestSchema.parse(response), ...requests.value]
+    }, ConsentRequestSchema)
+    requests.value = [created, ...requests.value]
     requestForm.directoryPersonId = ''; requestForm.recipientEmail = ''
   } catch (error) {
     const code = errorCodeOf(error)
@@ -231,9 +210,7 @@ async function sendConsentRequest() {
 
 async function resendRequest(request: ConsentRequest) {
   try {
-    const headers = await useAuthHeader()
-    const response = await $fetch<unknown>(`${config.public.apiBase}/v1/consent-requests/${request.id}/resend`, { method: 'POST', headers })
-    const updated = ConsentRequestSchema.parse(response)
+    const updated = await api.request(`/v1/consent-requests/${request.id}/resend`, { method: 'POST' }, ConsentRequestSchema)
     requests.value = requests.value.map((item) => (item.id === updated.id ? updated : item))
   } catch {
     requestError.value = 'Die Anfrage konnte nicht erneut gesendet werden.'
