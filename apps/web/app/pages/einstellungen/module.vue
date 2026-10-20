@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { Blocks } from '@lucide/vue'
-import { ScopeModulesSchema, UpdateScopeModulesRequestSchema, type AppModule, type ScopeModules } from '@vereinsfunk/contracts'
+import { ModuleBlockingPublicationSchema, ScopeModulesSchema, UpdateScopeModulesRequestSchema, type AppModule, type ScopeModules } from '@vereinsfunk/contracts'
 import { appModuleOrder, appModuleRegistry, blockedByLabel, moduleToggleState, nextModuleSelection, type ModuleToggleState } from '../../modules/registry'
+import { z } from 'zod'
 import { ApiRequestError } from '../../utils/apiClient'
 
 // Paket 051, PR 3: welche Module auf welcher Ebene wirken. Eine Ebene kann nur abwaehlen, was oben
 // aktiv ist; die drei Zustaende folgen PolicyFlagToggles.vue (geerbt / abgewaehlt / gesperrt).
 // Jedes Mitglied sieht die Auswahl, aendern kann nur, wer die Ebene verwalten darf (canEdit).
+const BlockingPublicationsErrorSchema = z.object({ publications: ModuleBlockingPublicationSchema.array() })
+
 const api = useApiClient()
 const { entries, refresh } = await useScopeModules()
 
@@ -50,8 +53,8 @@ async function save(entry: ScopeModules, enabledModules: AppModule[] | null) {
   } catch (error) {
     const code = error instanceof ApiRequestError ? error.code : ''
     if (code === 'module_has_active_publications') {
-      const publications = (error as ApiRequestError).data as { publications?: unknown[] }
-      blockingPublicationCount.value = publications.publications?.length ?? 0
+      const details = BlockingPublicationsErrorSchema.safeParse((error as ApiRequestError).data)
+      blockingPublicationCount.value = details.data?.publications.length ?? 0
       errorMessage.value = 'Social Media kann hier nicht abgeschaltet werden, solange Veröffentlichungen eingeplant sind oder laufen. Brich sie zuerst ab oder warte, bis sie erschienen sind.'
     } else if (code === 'module_not_available') {
       errorMessage.value = 'Dieses Modul ist auf einer höheren Ebene oder im Tarif nicht aktiv und kann hier nicht eingeschaltet werden.'

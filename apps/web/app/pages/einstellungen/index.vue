@@ -15,11 +15,8 @@ import { roleLabels } from '~/composables/roleLabels'
 
 // Paket 011: einstellungen.vue wird zur scopeabhaengigen Richtlinienseite (Plan 011, "4.
 // Oberflaeche") -- ersetzt die fuenf hartkodierten Zeilen aus Paket 008/010.
-const config = useRuntimeConfig()
-const session = await useSession()
-const scope = await useScope()
-const organizationId = computed(() => scope.value?.organizationId ?? null)
-const organization = computed(() => session.value?.scopes.find((item) => item.organizationId === organizationId.value) ?? null)
+const api = useApiClient()
+const { organizationId, departmentId: activeDepartmentId, organization } = await useActiveScope()
 
 const loading = ref(true)
 const errorMessage = ref('')
@@ -36,7 +33,6 @@ function entryKey(entry: { scope: ScopeLevel; scopeId: string }) {
 // Wer in einer Abteilung arbeitet, kann deren Richtlinien und die ihrer Teams verwalten, aber
 // nicht versehentlich die vereinsweite Regelung auswaehlen. Vereinsrichtlinien werden nur im
 // Vereinsbereich bearbeitet.
-const activeDepartmentId = computed(() => scope.value?.departmentId ?? null)
 const availableEntries = computed(() => {
   const departmentId = activeDepartmentId.value
   if (!departmentId) return entries.value
@@ -55,28 +51,29 @@ function selectFirstAvailableEntry() {
   }
 }
 
-async function load() {
-  if (!organizationId.value) { loading.value = false; return }
+// Ein anderer Verein hat andere Ebenen: die Auswahl beginnt dort neu.
+watch(organizationId, () => { selectedKey.value = '' })
+const { reload: load, ready } = useScopedLoad(() => organizationId.value, async (currentOrganizationId, isLatest) => {
+  if (!currentOrganizationId) { loading.value = false; return }
   loading.value = true
   errorMessage.value = ''
   try {
-    const headers = await useAuthHeader()
-    const [rulesResponse, membersResponse] = await Promise.all([
-      $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/policy-rules`, { headers }),
-      $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/members`, { headers }),
+    const [loadedEntries, loadedMembers] = await Promise.all([
+      api.request(`/v1/organizations/${currentOrganizationId}/policy-rules`, {}, PolicyRuleSettingSchema.array()),
+      api.request(`/v1/organizations/${currentOrganizationId}/members`, {}, MemberSchema.array()),
     ])
-    entries.value = PolicyRuleSettingSchema.array().parse(rulesResponse)
-    members.value = MemberSchema.array().parse(membersResponse)
+    if (!isLatest()) return
+    entries.value = loadedEntries
+    members.value = loadedMembers
     selectFirstAvailableEntry()
   } catch {
-    errorMessage.value = 'Die Richtlinien konnten nicht geladen werden.'
+    if (isLatest()) errorMessage.value = 'Die Richtlinien konnten nicht geladen werden.'
   } finally {
-    loading.value = false
+    if (isLatest()) loading.value = false
   }
-}
-await load()
+})
+await ready
 
-watch(organizationId, () => { selectedKey.value = ''; void load() })
 watch(activeDepartmentId, () => selectFirstAvailableEntry())
 
 const selectedEntry = computed(() => availableEntries.value.find((entry) => entryKey(entry) === selectedKey.value) ?? null)
@@ -123,10 +120,8 @@ async function save() {
   saving.value = true
   saveError.value = ''
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/policy-rules`, {
+    await api.request('/v1/policy-rules', {
       method: 'PUT',
-      headers,
       body: {
         scope: selectedEntry.value.scope,
         scopeId: selectedEntry.value.scopeId,
@@ -226,7 +221,6 @@ async function addReviewer() {
   reviewerAdding.value = true
   reviewerError.value = ''
   try {
-    const headers = await useAuthHeader()
     let reviewerRef: ReviewerRef
     if (reviewerKind.value === 'user') {
       if (!reviewerUserId.value) { reviewerError.value = 'Bitte eine Person wählen.'; return }
@@ -246,8 +240,8 @@ async function addReviewer() {
       }
       reviewerRef = { kind: 'team_role', departmentId: selectedDepartmentId.value, teamId: selectedEntry.value.scopeId, role: reviewerRole.value as never }
     }
-    await $fetch(`${config.public.apiBase}/v1/policy-reviewers`, {
-      method: 'POST', headers, body: { scope: selectedEntry.value.scope, scopeId: selectedEntry.value.scopeId, ref: reviewerRef },
+    await api.request('/v1/policy-reviewers', {
+      method: 'POST', body: { scope: selectedEntry.value.scope, scopeId: selectedEntry.value.scopeId, ref: reviewerRef },
     })
     reviewerUserId.value = ''
     reviewerRole.value = ''
@@ -262,8 +256,7 @@ async function addReviewer() {
 async function removeReviewer(id: string) {
   actionError.value = ''
   try {
-    const headers = await useAuthHeader()
-    await $fetch(`${config.public.apiBase}/v1/policy-reviewers/${id}`, { method: 'DELETE', headers })
+    await api.request(`/v1/policy-reviewers/${id}`, { method: 'DELETE' })
     await load()
   } catch {
     actionError.value = 'Die Prüferzuweisung konnte nicht entfernt werden.'

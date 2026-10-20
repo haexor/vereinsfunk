@@ -39,28 +39,28 @@ function formatQuota(value: number): string {
   return new Intl.NumberFormat('de-DE').format(value)
 }
 
-async function load() {
-  if (!organizationId.value || !canView.value) { loading.value = false; return }
+const { reload, ready } = useScopedLoad(() => (canView.value ? organizationId.value : null), async (currentOrganizationId, isLatest) => {
+  if (!currentOrganizationId) { loading.value = false; return }
   loading.value = true
   errorMessage.value = ''
   try {
     const [summaryResponse, plansResponse, storageResponse] = await Promise.all([
-      api.request('/v1/subscription', { query: { organizationId: organizationId.value } }, SubscriptionSummarySchema),
+      api.request('/v1/subscription', { query: { organizationId: currentOrganizationId } }, SubscriptionSummarySchema),
       api.request('/v1/subscription/plans', {}, SubscriptionPlanSchema.array()),
-      api.request('/v1/storage/usage', { query: { organizationId: organizationId.value } }, StorageUsageResponseSchema),
+      api.request('/v1/storage/usage', { query: { organizationId: currentOrganizationId } }, StorageUsageResponseSchema),
     ])
+    if (!isLatest()) return
     summary.value = summaryResponse
     plans.value = plansResponse
     storageBreakdown.value = storageResponse
     selectedPlanKey.value = summaryResponse.plan.key
   } catch {
-    errorMessage.value = 'Der Tarif konnte nicht geladen werden.'
+    if (isLatest()) errorMessage.value = 'Der Tarif konnte nicht geladen werden.'
   } finally {
-    loading.value = false
+    if (isLatest()) loading.value = false
   }
-}
-await load()
-watch(organizationId, () => { void load() })
+})
+await ready
 
 async function changePlan() {
   if (!canChangePlan.value || !organizationId.value || !summary.value || selectedPlanKey.value === summary.value.plan.key) return
@@ -69,7 +69,7 @@ async function changePlan() {
   try {
     const body = ChangeSubscriptionPlanRequestSchema.parse({ planKey: selectedPlanKey.value })
     await api.request('/v1/subscription/plan', { method: 'POST', body: { organizationId: organizationId.value, ...body } })
-    await load()
+    await reload()
   } catch {
     actionError.value = 'Tarifwechsel fehlgeschlagen.'
   } finally {

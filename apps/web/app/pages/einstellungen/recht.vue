@@ -13,6 +13,7 @@ import {
   type RetentionSettings,
   type RunRetentionResponse,
 } from '@vereinsfunk/contracts'
+import { ApiRequestError } from '../../utils/apiClient'
 import { optionalNumber } from '../../utils/numberInput'
 
 // Paket 020: Rechtliche Pflichten und Datenschutzbetrieb -- Aufbewahrung, Betroffenenanfragen-
@@ -33,37 +34,39 @@ const processingRecords = ref<ProcessingRecord[]>([])
 const organizationProfile = ref<OrganizationProfile | null>(null)
 const members = ref<Member[]>([])
 
-async function load() {
-  if (!organizationId.value || !canManage.value) { loading.value = false; return }
+// Ohne Verwaltungsrecht (oder auf Abteilungsebene) ist der Schluessel null: dann wird nichts
+// geladen, und ein Wechsel zurueck laedt fuer den aktuellen Verein neu.
+const { ready } = useScopedLoad(() => (canManage.value ? organizationId.value : null), async (currentOrganizationId, isLatest) => {
+  if (!currentOrganizationId) { loading.value = false; return }
   loading.value = true
   errorMessage.value = ''
   try {
     const [settingsResponse, deletionsResponse, recordsResponse, profileResponse, membersResponse] = await Promise.all([
-      api.request(`/v1/organizations/${organizationId.value}/retention-settings`, {}, RetentionSettingsSchema),
-      api.request(`/v1/organizations/${organizationId.value}/retention-deletions`, {}, RetentionDeletionSchema.array()),
-      api.request(`/v1/organizations/${organizationId.value}/processing-records`, {}, ProcessingRecordSchema.array()),
-      api.request(`/v1/organizations/${organizationId.value}/profile`, {}, OrganizationProfileSchema),
-      api.request(`/v1/organizations/${organizationId.value}/members`, {}, MemberSchema.array()),
+      api.request(`/v1/organizations/${currentOrganizationId}/retention-settings`, {}, RetentionSettingsSchema),
+      api.request(`/v1/organizations/${currentOrganizationId}/retention-deletions`, {}, RetentionDeletionSchema.array()),
+      api.request(`/v1/organizations/${currentOrganizationId}/processing-records`, {}, ProcessingRecordSchema.array()),
+      api.request(`/v1/organizations/${currentOrganizationId}/profile`, {}, OrganizationProfileSchema),
+      api.request(`/v1/organizations/${currentOrganizationId}/members`, {}, MemberSchema.array()),
     ])
+    if (!isLatest()) return
     retentionSettings.value = settingsResponse
     deletions.value = deletionsResponse
     processingRecords.value = recordsResponse
     organizationProfile.value = profileResponse
     members.value = membersResponse
   } catch {
-    errorMessage.value = 'Die rechtlichen Einstellungen konnten nicht geladen werden.'
+    if (isLatest()) errorMessage.value = 'Die rechtlichen Einstellungen konnten nicht geladen werden.'
   } finally {
-    loading.value = false
+    if (isLatest()) loading.value = false
   }
-}
-await load()
-watch([organizationId, isOrganizationScope], () => { void load() })
+})
+await ready
 
 function formatDate(value: string | null): string {
   return value ? new Date(value).toLocaleDateString('de-DE') : 'nicht angegeben'
 }
 function errorCodeOf(error: unknown): string | undefined {
-  return (error as { data?: { error?: string } })?.data?.error
+  return error instanceof ApiRequestError ? error.code : undefined
 }
 function blankToNull(value: string): string | null {
   const trimmed = value.trim()
