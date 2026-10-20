@@ -10,9 +10,9 @@ import {
   type AgentWorkspace,
   type CreateAgentActionProposal,
 } from '@vereinsfunk/contracts'
+import { joinUrlPath } from '@vereinsfunk/content-engine'
 import { createGuardedFetch } from '@vereinsfunk/outbound-fetch'
 import { z } from 'zod'
-import { joinUrlPath } from './llmProviders.js'
 
 export interface AgentResponse {
   content: string
