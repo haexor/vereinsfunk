@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addDays, approvalDurationSecondsSamples, computeCountMetrics, computeCountMetricsSeries, computeFunnel, computeTrend, dayWindow, leadTimeSecondsSamples, median, rangeWindow } from './index.js'
+import { addDays, approvalDurationSecondsSamples, computeCountMetrics, computeCountMetricsSeries, computeFunnel, computeTrend, dayWindow, isInWindow, leadTimeSecondsSamples, median, rangeWindow } from './index.js'
 
 describe('metrics (Paket 016)', () => {
   describe('dayWindow', () => {
@@ -14,6 +14,25 @@ describe('metrics (Paket 016)', () => {
       expect(window).toEqual({ startUtc: '2026-03-28T23:00:00.000Z', endUtc: '2026-03-29T22:00:00.000Z' })
       const hours = (new Date(window.endUtc).getTime() - new Date(window.startUtc).getTime()) / 3_600_000
       expect(hours).toBe(23)
+    })
+  })
+
+  // PostgREST liefert "+00:00" statt "Z" und oft Mikrosekunden -- als Text verglichen sortiert ein
+  // Zeitpunkt genau auf der Fenstergrenze ("+" < ".") vor den Fensterbeginn.
+  describe('isInWindow and series with PostgREST timestamps', () => {
+    const window = dayWindow('2026-08-10', 'Europe/Berlin')
+    it('counts an event exactly on the start boundary into the window', () => {
+      expect(isInWindow('2026-08-09T22:00:00+00:00', window)).toBe(true)
+      expect(isInWindow('2026-08-10T22:00:00+00:00', window)).toBe(false)
+      expect(isInWindow('2026-08-09T21:59:59.999999+00:00', window)).toBe(false)
+    })
+    it('puts a boundary event into the later bucket of a series', () => {
+      const next = dayWindow('2026-08-11', 'Europe/Berlin')
+      const counts = computeCountMetricsSeries([window, next], {
+        postsCreated: [{ id: 'p1', createdAt: '2026-08-10T22:00:00+00:00' }],
+        publishedTransitions: [], approvalDecisions: [], publications: [], workflowRuns: [], postVersions: [],
+      })
+      expect(counts.map((bucket) => bucket.postsCreated)).toEqual([0, 1])
     })
   })
 

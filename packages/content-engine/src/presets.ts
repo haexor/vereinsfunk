@@ -1,7 +1,7 @@
 import type { ContentPresetSlug, SourceMaterial } from '@vereinsfunk/contracts'
 
 export interface ContentPreset { slug: ContentPresetSlug; label: string; helpText: string; requiredFacts: readonly string[]; requiresObservation?: boolean }
-export const contentPresets: readonly ContentPreset[] = [
+const contentPresets: readonly ContentPreset[] = [
   ['training_insight', 'Trainingseinblick', 'Was wurde konkret geübt?', [], true], ['club_life', 'Vereinsleben', 'Ein echter Moment aus dem Verein.', [], true],
   ['children_program', 'Ballschule & Kinderangebote', 'Beschreibe Angebot und Lernmoment.', ['audience'], true], ['people_spotlight', 'Menschen im Verein', 'Nur freigegebene Zitate verwenden.', ['personName'], true],
   ['volunteering', 'Ehrenamt', 'Wofür soll gedankt werden?', [], true], ['behind_the_scenes', 'Hinter den Kulissen', 'Zeige einen konkreten Einblick.', [], true],

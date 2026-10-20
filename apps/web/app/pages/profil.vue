@@ -43,12 +43,16 @@ async function save() {
   } finally {
     saving.value = false
   }
+  // Seitenleiste und Kopfzeile lesen den Namen aus useSession() und zeigten sonst bis zum naechsten
+  // vollen Reload den alten. Ausserhalb des try: scheitert nur das Auffrischen, ist der Name
+  // trotzdem gespeichert, und die Sitzung behaelt ihren bisherigen Stand.
+  if (saveSuccess.value) await refreshSession().catch(() => undefined)
 }
 
 const saveDisabled = computed(() => !displayNameDraft.value.trim())
 usePageSaveFab({ label: 'Speichern', save, saving, disabled: saveDisabled })
 
-const initials = computed(() => (profile.value?.displayName ?? '').split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join('').toUpperCase())
+const initials = computed(() => initialsOf(profile.value?.displayName ?? ''))
 
 // Flache Liste aus Vereins-/Abteilungs-/Team-Rollen je Verein, damit das Template kein
 // verschachteltes v-for braucht (siehe scopeName()-Muster in mitglieder.vue).

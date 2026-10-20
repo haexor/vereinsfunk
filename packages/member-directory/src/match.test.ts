@@ -177,3 +177,30 @@ describe('createPeopleMatchStrategy with planSync', () => {
     expect(plan.skipped[0]?.reason).toBe('local_newer')
   })
 })
+
+describe('createPeopleMatchStrategy.identityOf', () => {
+  it('prefers the external id when present', () => {
+    const entity = PersonExternalSchema.parse({ externalId: 'ext-1', firstName: 'Anna', lastName: 'Beck' })
+    expect(createPeopleMatchStrategy(resolver()).identityOf(entity)).toEqual({ externalId: 'ext-1' })
+  })
+
+  it('falls back to a fuzzy key of name and birth year when there is no external id', () => {
+    const entity = PersonExternalSchema.parse({ firstName: 'Anna', lastName: 'Beck', birthYear: 2010 })
+    expect(createPeopleMatchStrategy(resolver()).identityOf(entity)).toEqual({ fuzzy: ['anna', 'beck', '2010'] })
+  })
+})
+
+describe('createPeopleMatchStrategy retirement', () => {
+  it('does not count an already left person as lost again, so the loss threshold only sees active members', () => {
+    const present = PersonExternalSchema.parse({ externalId: 'ext-1', firstName: 'Anna', lastName: 'Beck', birthYear: 2010 })
+    const plan = planSync({
+      existing: [localPerson(), localPerson({ id: 'local-2', externalId: 'ext-2', firstName: 'Ben', status: 'left' })],
+      incoming: [present],
+      match: createPeopleMatchStrategy(resolver()),
+      policy: { lossThresholdPercent: 30 },
+    })
+    expect(plan.aborted).toBe(false)
+    if (plan.aborted) return
+    expect(plan.retired).toHaveLength(0)
+  })
+})

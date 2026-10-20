@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { Upload } from '@lucide/vue'
-import { z } from 'zod'
-import { sha256Hex } from '~/utils/sha256'
+import { uploadMediaAsset } from '~/utils/mediaUpload'
 
 const {
   organizationId,
@@ -49,29 +48,13 @@ async function saveWorkshopResult() {
   savingWorkshopResult.value = true
   saveWorkshopError.value = ''
   try {
-    const file = workshopResultFile.value
-    const initiated = await api.request('/v1/media/uploads', {
-      method: 'POST',
-      body: {
-        organizationId: organizationId.value,
-        departmentId: activeDepartmentId.value ?? null,
-        filename: file.name,
-        mimeType: file.type,
-        byteSize: file.size,
-      },
-    }, z.object({ assetId: z.uuid(), uploadUrl: z.url() }))
-    const uploaded = await fetch(initiated.uploadUrl, {
-      method: 'PUT', body: file, headers: { 'content-type': file.type },
+    const completed = await uploadMediaAsset(api, {
+      organizationId: organizationId.value,
+      departmentId: activeDepartmentId.value ?? null,
+      file: workshopResultFile.value,
     })
-    if (!uploaded.ok) throw new Error('upload_failed')
-    const completed = await api.request(`/v1/media/${initiated.assetId}/complete`, {
-      method: 'POST', body: { sha256: await sha256Hex(file) },
-    }, z.object({
-      accepted: z.literal(true),
-      uploadStatus: z.enum(['initiated', 'uploaded', 'normalizing', 'ready', 'quarantined', 'failed', 'deleted']),
-    }))
     if (completed.uploadStatus !== 'ready') throw new Error('image_processing_failed')
-    savedWorkshopAssetId.value = initiated.assetId
+    savedWorkshopAssetId.value = completed.assetId
   } catch {
     saveWorkshopError.value = 'Das bearbeitete Bild konnte nicht gespeichert werden.'
   } finally {

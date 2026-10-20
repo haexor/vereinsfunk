@@ -649,6 +649,25 @@ describe('renderImageStyle: Ausgabeformat', () => {
     expect(result.buffer.length).toBeLessThan(source.length * 3)
   })
 
+  // composite() legt fuer die Eckmarken einen Alphakanal an, der ueberall deckend bleibt -- das
+  // darf nicht als Transparenz zaehlen.
+  it('gibt ein JPEG-Foto mit aufgelegten Eckmarken als JPEG aus, obwohl composite einen Alphakanal anlegt', async () => {
+    const source = await photoJpeg(600, 400)
+    const result = await renderImageStyle({
+      sourceBuffer: source,
+      preset: {
+        ...NO_STYLE_PRESET,
+        frameType: 'parametric',
+        frameStyle: 'corner_marks',
+        frameColor: '#ff0000',
+        frameWidthPx: 10,
+      },
+      brandColors: BRAND_COLORS,
+    })
+    expect(result.contentType).toBe('image/jpeg')
+    expect((await sharp(result.buffer).metadata()).format).toBe('jpeg')
+  })
+
   it('behaelt PNG, sobald das Ergebnis Transparenz traegt', async () => {
     const source = await photoJpeg(200, 200)
     const result = await renderImageStyle({

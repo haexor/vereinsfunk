@@ -4,6 +4,8 @@ import { FakeLinkedInOAuthClient, FakeTwitterOAuthClient } from '@vereinsfunk/pu
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
 import type { RoleProvider } from './auth.js'
+import { ciphertextToBytea } from '@vereinsfunk/secrets'
+import { createSecretBox } from '@vereinsfunk/secrets'
 
 const META_ENVIRONMENT_KEYS = ['PUBLISHING_PROVIDER', 'META_APP_ID', 'META_APP_SECRET', 'META_OAUTH_REDIRECT_URL', 'API_PUBLIC_BASE_URL'] as const
 
@@ -389,6 +391,95 @@ describe('Paket 012: Kanaele und Social-Accounts', () => {
       } finally {
         restoreEnvironment()
       }
+    })
+  })
+
+  // Regression: scheiterte die Freigabezeile der eigenen Ebene, blieben Kanal und Geheimnis stehen
+  // -- unbenutzbar, und jede Wiederholung derselben Auswahl lief dauerhaft in 409.
+  it('rolls the OAuth connection back when its default channel scope cannot be created', async () => {
+    const PENDING_ID = '10000000-7000-4000-8000-000000000001'
+    const sealed = createSecretBox({ v1: Buffer.alloc(32, 7).toString('base64') }, 'v1').seal('page-token', `${PENDING_ID}:page-1`)
+    const pendingRow = {
+      id: PENDING_ID, organization_id: ORGANIZATION_ID, platform: 'facebook', owner_scope: 'organization', owner_department_id: null,
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+      available_accounts: [{ externalAccountId: 'page-1', displayName: 'SV Seite', pageAccessTokenCiphertext: ciphertextToBytea(sealed.ciphertext).slice(2), pageAccessTokenKeyVersion: sealed.keyVersion }],
+    }
+    const deletedConnectionIds: unknown[] = []
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'oauth_pending_connections') return chain({ data: pendingRow, error: null })
+            if (table === 'social_connections') {
+              return {
+                insert: () => ({ select: () => ({ single: async () => ({ data: { id: CONNECTION_ID }, error: null }) }) }),
+                delete: () => ({ eq: async (_column: string, value: unknown) => { deletedConnectionIds.push(value); return { error: null } } }),
+              }
+            }
+            if (table === 'social_connection_secrets') return { insert: async () => ({ error: null }) }
+            if (table === 'channel_scopes') return { insert: async () => ({ error: { message: 'scope insert failed' } }) }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST', url: `/v1/oauth-pending/${PENDING_ID}/select`, headers: { authorization: `Bearer ${token}` }, payload: { externalAccountId: 'page-1' },
+    })
+    expect(response.statusCode).toBe(500)
+    expect(deletedConnectionIds).toEqual([CONNECTION_ID])
+  })
+
+  describe('GET /v1/post-versions/:id/available-channels', () => {
+    const POST_VERSION_ID = '10000000-5000-4000-8000-000000000001'
+    const OTHER_CONNECTION_ID = '10000000-8000-4000-8000-000000000098'
+    function clientsWithSnapshot(effectiveConfigSnapshot: unknown): SupabaseClientFactory {
+      return {
+        forUser: () =>
+          ({
+            from: (table: string) => {
+              if (table === 'post_versions') return chain({ data: { id: POST_VERSION_ID, post_id: 'post-1', effective_config_snapshot: effectiveConfigSnapshot }, error: null })
+              // Vereinsbeitrag: department_id null -- nur die vereinsweite Freigabe deckt ihn.
+              if (table === 'posts') return chain({ data: { id: 'post-1', organization_id: ORGANIZATION_ID, department_id: null, team_id: null }, error: null })
+              if (table === 'social_connections') {
+                return chain({
+                  data: [CONNECTION_ID, OTHER_CONNECTION_ID].map((id) => ({ id, status: 'active', archived_at: null, responsible_profile_id: null })),
+                  error: null,
+                })
+              }
+              if (table === 'channel_scopes') {
+                return chain({
+                  data: [
+                    { social_connection_id: CONNECTION_ID, scope: 'organization', department_id: null, team_id: null, can_schedule: true },
+                    { social_connection_id: OTHER_CONNECTION_ID, scope: 'organization', department_id: null, team_id: null, can_schedule: true },
+                  ],
+                  error: null,
+                })
+              }
+              if (table === 'policy_settings') return chain({ data: null, error: null })
+              throw new Error(`unexpected table in test fake: ${table}`)
+            },
+          }) as unknown as SupabaseClient,
+        forService: () => ({}) as unknown as SupabaseClient,
+      }
+    }
+
+    it('limits an organization-level post to the channels its snapshot allows', async () => {
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clientsWithSnapshot({ config: { allowedChannelIds: [CONNECTION_ID] } }) })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'GET', url: `/v1/post-versions/${POST_VERSION_ID}/available-channels`, headers: { authorization: `Bearer ${token}` } })
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toEqual({ socialConnectionIds: [CONNECTION_ID] })
+    })
+
+    // Ein unlesbares allowedChannelIds hiess frueher still "keine Einschraenkung".
+    it('fails closed on a malformed allowedChannelIds snapshot', async () => {
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clientsWithSnapshot({ config: { allowedChannelIds: CONNECTION_ID } }) })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'GET', url: `/v1/post-versions/${POST_VERSION_ID}/available-channels`, headers: { authorization: `Bearer ${token}` } })
+      expect(response.statusCode).toBe(500)
     })
   })
 

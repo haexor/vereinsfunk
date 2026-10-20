@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 import { scanAndRecoverStaleCandidates, type GenerationRecoveryRepository, type RecoverableSessionRow, type StalledCandidateRow } from './generationRecovery.js'
 
 const stale: StalledCandidateRow = { id: '10000000-3010-4000-8000-000000000001', composition_session_id: '10000000-3000-4000-8000-000000000001', organization_id: '10000000-1000-4000-8000-000000000001', generation_intent: 'revise', revision_instruction: 'kuerzer bitte', generation_lease_token: '10000000-9010-4000-8000-000000000001', round_input_hash: 'a'.repeat(64) }
@@ -51,6 +52,13 @@ describe('scanAndRecoverStaleCandidates', () => {
     expect(repo.createRecoveryAttempt).toHaveBeenCalledTimes(1)
     expect(repo.finalizeRecovery).toHaveBeenCalledTimes(1)
     expect(repo.finalizeRecovery).toHaveBeenCalledWith(second, 'stalled_after_crash')
+  })
+  it('finalizes a candidate whose session row fails schema validation instead of reclaiming it forever', async () => {
+    const schemaError = z.object({ id: z.string() }).safeParse({}).error!
+    const repo = repository({ loadSessionForRecovery: vi.fn().mockRejectedValue(schemaError) })
+    await expect(scanAndRecoverStaleCandidates(repo)).resolves.toBeUndefined()
+    expect(repo.createRecoveryAttempt).not.toHaveBeenCalled()
+    expect(repo.finalizeRecovery).toHaveBeenCalledWith(stale, 'stalled_after_crash')
   })
   it('does not finalize when finalizeRecovery itself throws, so the row stays reclaimable', async () => {
     const repo = repository({ finalizeRecovery: vi.fn().mockRejectedValue(new Error('lease superseded')) })

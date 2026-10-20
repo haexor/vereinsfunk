@@ -183,6 +183,23 @@ describe('POST /v1/playerboard/veo/link', () => {
     expect(box.open(ciphertext, 'v1', `integration-source:${SOURCE_ID}`)).toBe(COOKIE)
     expect(calls.find((entry) => entry.name === 'enqueue_integration_sync')!.args).toMatchObject({ target_source_id: SOURCE_ID, target_triggered_by: USER_ID })
   })
+
+  // Regression: das Einreihen lief ohne Fehlerbehandlung nach Speichern und Audit -- eine
+  // erfolgreiche Verbindung antwortete dann mit 500.
+  it('answers 201 for a stored link even when the first sync cannot be queued', async () => {
+    const app = await startApp({
+      roleProvider: rolesProvider(['team_manager']),
+      supabaseClients: clients({
+        rpc: {
+          playerboard_veo_link_team: { data: SOURCE_ID, error: null },
+          enqueue_integration_sync: { data: null, error: { message: 'source_disabled' } },
+        },
+      }),
+    })
+    const response = await call(app, 'POST', '/v1/playerboard/veo/link', { teamId: TEAM_ID, linkToken: validLinkToken(), veoClubSlug: 'tsv', veoTeamSlug: 'u13' })
+    expect(response.statusCode).toBe(201)
+    expect(response.json()).toMatchObject({ teamId: TEAM_ID })
+  })
 })
 
 describe('POST /v1/playerboard/veo/sync', () => {

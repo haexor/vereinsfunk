@@ -21,7 +21,8 @@ import Fastify, { LogController, type FastifyInstance, type FastifyServerOptions
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { z } from 'zod'
-import { byteaToBuffer, createSecretBoxFromEnvironment, EmbeddedProviderSecretSchema, unwrapEmbeddedSecret } from './secretBox.js'
+import { byteaToBuffer, EmbeddedProviderSecretSchema, unwrapEmbeddedSecret } from '@vereinsfunk/secrets'
+import { createSecretBoxFromEnvironment } from './secretBox.js'
 import { LocalAgentResponder, OpenAiResponsesAgentResponder, type AgentResponder } from './agent.js'
 import {
   createAuthGuards,
@@ -148,8 +149,16 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const environment = parseApiEnvironment()
   const fastifyOptions: FastifyServerOptions = {
     logController: new LogController({ disableRequestLogging: environment.NODE_ENV === 'test' }),
-    requestIdHeader: 'x-correlation-id',
-    genReqId: () => randomUUID(),
+    // Den x-correlation-id-Header nur uebernehmen, wenn er eine UUID ist: request.id landet in
+    // uuid-Spalten (audit_events.correlation_id, workflow_outbox, ...). Mit requestIdHeader haette
+    // ein beliebiger Header-String jeden Audit-Insert still scheitern lassen.
+    requestIdHeader: false,
+    // 0 laesst X-Forwarded-For unbeachtet (lokal, Tests); Produktion hinter Traefik setzt 1.
+    trustProxy: environment.TRUST_PROXY_HOPS,
+    genReqId: (request) => {
+      const header = request.headers['x-correlation-id']
+      return typeof header === 'string' && UuidSchema.safeParse(header).success ? header : randomUUID()
+    },
     logger:
       options.logger === false
         ? false
@@ -172,7 +181,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     forUser: (accessToken) => createUserClient(environment, accessToken),
     forService: () => createServiceClient(environment),
   }
-  const uploads = options.uploads ?? new SupabaseUploadService(() => supabaseClients.forService())
+  const uploads = options.uploads ?? new SupabaseUploadService(() => supabaseClients.forService(), app.log)
   const imageEffects =
     options.imageEffects ??
     (environment.IMAGE_EFFECTS_PROVIDER === 'gmic'

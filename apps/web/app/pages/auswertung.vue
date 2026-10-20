@@ -14,6 +14,7 @@ import {
   type AnalyticsTimeseriesPoint,
 } from '@vereinsfunk/contracts'
 import { resolveAnalyticsRange, type AnalyticsRangePreset } from '../utils/analyticsRange'
+import { localDateKey } from '../utils/memberDates'
 
 // Paket 016: Auswertung: interne Kennzahlen. Alle vier Endpunkte berechnen live aus den
 // Rohtabellen (siehe plans/016-auswertung-interne-kennzahlen.md, "Abweichungen vom Plan" Punkt 4)
@@ -28,9 +29,6 @@ const activeOrganization = computed(() => session.value?.scopes.find((item) => i
 const timezone = computed(() => activeOrganization.value?.organizationTimezone ?? 'Europe/Berlin')
 const departmentName = computed(() => activeOrganization.value?.departments.find((item) => item.id === scope.value?.departmentId)?.name ?? null)
 
-function localDateKey(date: Date, timeZone: string): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date)
-}
 const rangePreset = ref<AnalyticsRangePreset>('30d')
 const customFrom = ref('')
 const customTo = ref('')
@@ -85,7 +83,16 @@ function buildScopeQuery(): Record<string, string> {
   return query
 }
 
+// Anfragezaehler wie bei Metrik und Aufschluesselung unten: wechselt der Zeitraum von 7 auf 90 Tage,
+// waehrend der 7-Tage-Lauf noch laeuft, darf dessen spaete Antwort nicht unter der 90-Tage-
+// Ueberschrift landen. load() zieht auch die beiden anderen Zaehler hoch, damit eine noch laufende
+// Metrik-/Dimensionsanfrage fuer den alten Bereich oder Zeitraum verworfen wird -- und schreibt
+// Zeitreihe bzw. Aufschluesselung nur, solange kein neuerer Metrik-/Dimensionswechsel dazwischenkam.
+let loadRequestId = 0
 async function load() {
+  const requestId = ++loadRequestId
+  const timeseriesRequest = ++timeseriesRequestId
+  const breakdownRequest = ++breakdownRequestId
   const organizationId = scope.value?.organizationId
   if (!organizationId) { loading.value = false; return }
   if (customRangeError.value) { errorMessage.value = customRangeError.value; loading.value = false; return }
@@ -101,26 +108,32 @@ async function load() {
       $fetch<unknown>(`${base}/breakdown`, { headers, query: { ...baseQuery, dimension: breakdownDimension.value } }),
       $fetch<unknown>(`${base}/funnel`, { headers, query: baseQuery }),
     ])
+    if (requestId !== loadRequestId) return
     summary.value = AnalyticsSummarySchema.parse(summaryResponse)
-    timeseriesPoints.value = AnalyticsTimeseriesResponseSchema.parse(timeseriesResponse).points
-    timeseriesError.value = false
-    breakdownEntries.value = AnalyticsBreakdownResponseSchema.parse(breakdownResponse).entries
-    breakdownError.value = false
+    if (timeseriesRequest === timeseriesRequestId) {
+      timeseriesPoints.value = AnalyticsTimeseriesResponseSchema.parse(timeseriesResponse).points
+      timeseriesError.value = false
+    }
+    if (breakdownRequest === breakdownRequestId) {
+      breakdownEntries.value = AnalyticsBreakdownResponseSchema.parse(breakdownResponse).entries
+      breakdownError.value = false
+    }
     funnelStages.value = AnalyticsFunnelResponseSchema.parse(funnelResponse).stages
   } catch {
-    errorMessage.value = 'Die Kennzahlen konnten nicht geladen werden.'
+    if (requestId === loadRequestId) errorMessage.value = 'Die Kennzahlen konnten nicht geladen werden.'
   } finally {
-    loading.value = false
+    if (requestId === loadRequestId) loading.value = false
   }
 }
-await load()
-watch([() => scope.value?.organizationId, () => scope.value?.departmentId, range], () => { void load() })
 
 // Anfragezaehler statt eines leeren catch: ein Nutzer, der die Metrik/Granularitaet zweimal schnell
 // wechselt, darf nicht die zuerst gestartete (spaeter eintreffende) Antwort ueber die neuere
 // geschrieben bekommen -- eine veraltete Antwort wird verworfen, ein aktueller Fehler wird sichtbar
 // statt verschluckt (CodeRabbit-Fund zu PR #28).
 let timeseriesRequestId = 0
+let breakdownRequestId = 0
+await load()
+watch([() => scope.value?.organizationId, () => scope.value?.departmentId, range], () => { void load() })
 watch([timeseriesMetric, timeseriesGranularity], async () => {
   const requestId = ++timeseriesRequestId
   try {
@@ -136,7 +149,6 @@ watch([timeseriesMetric, timeseriesGranularity], async () => {
     timeseriesError.value = true
   }
 })
-let breakdownRequestId = 0
 watch(breakdownDimension, async () => {
   const requestId = ++breakdownRequestId
   try {

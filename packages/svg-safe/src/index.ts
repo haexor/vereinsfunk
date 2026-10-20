@@ -112,6 +112,13 @@ function sanitizeElementTree(element: Element): boolean {
     const name = attribute.name.toLowerCase()
     const value = attribute.value
 
+    // Ein CSS-Escape (`\75 rl(` statt `url(`) macht jede Textpruefung unten wertlos, und kein
+    // statisches Logo braucht einen Backslash in einem Attributwert.
+    if (value.includes('\\')) {
+      element.removeAttribute(attribute.name)
+      modified = true
+      continue
+    }
     if (name === 'href' || name === 'xlink:href') {
       if (!isSafeFragmentHref(value)) {
         element.removeAttribute(attribute.name)

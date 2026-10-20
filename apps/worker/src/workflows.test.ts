@@ -2,8 +2,10 @@ import { HatchetClient } from '@hatchet-dev/typescript-sdk/v1/index.js'
 import { describe, expect, it, vi } from 'vitest'
 import type { WorkflowPayload } from '@vereinsfunk/contracts'
 import { WorkflowNameSchema } from '@vereinsfunk/contracts'
+import { ConcurrencyLimitStrategy } from '@hatchet-dev/typescript-sdk/v1/task.js'
 import type { GenerationRecoveryRepository } from './generationRecovery.js'
-import { concurrency, createGenerationRecoveryScanWorkflow, createWorkflowDefinitions, WorkflowExecutionError, type ProductWorkflowExecutor, type WorkflowExecutionRepository } from './workflows.js'
+import type { VisionProviderComparisonExecutor } from './visionProviderComparison.js'
+import { concurrency, createGenerationRecoveryScanWorkflow, createHatchetWorker, createVisionProviderComparisonScanWorkflow, createWorkflowDefinitions, WorkflowExecutionError, type ProductWorkflowExecutor, type WorkflowExecutionRepository } from './workflows.js'
 
 const payload: WorkflowPayload = {
   entityId: '11111111-1111-4111-8111-111111111111', organizationId: '22222222-2222-4222-8222-222222222222',
@@ -24,6 +26,11 @@ function declarations(begin: WorkflowExecutionRepository['begin'], execute = vi.
   if (!options?.fn) throw new Error('process-submission handler was not registered')
   const task = options.fn
   return { definitions, task, runs, execute }
+}
+
+/** Der Ausschnitt des Hatchet-Kontexts, den die Task-Funktion liest. */
+function attemptContext(retryCount: number) {
+  return { retryCount: () => retryCount } as never
 }
 
 describe('worker workflow registration', () => {
@@ -62,15 +69,23 @@ describe('worker workflow registration', () => {
   it('records a non-retryable failure and does not mark the run as succeeded', async () => {
     const execute = vi.fn<ProductWorkflowExecutor['execute']>().mockRejectedValue(new WorkflowExecutionError('authorization', false))
     const { task, runs } = declarations(async () => ({ state: 'acquired', leaseToken: '55555555-5555-4555-8555-555555555555' }), execute)
-    await expect(task(payload, {} as never)).rejects.toMatchObject({ name: 'NonRetryableError' })
+    await expect(task(payload, attemptContext(0))).rejects.toMatchObject({ name: 'NonRetryableError' })
     expect(runs.fail).toHaveBeenCalledWith('process-submission', payload, '55555555-5555-4555-8555-555555555555', 'authorization', false)
     expect(runs.succeed).not.toHaveBeenCalled()
+  })
+
+  it('tells the executor whether this is the last Hatchet attempt', async () => {
+    const execute = vi.fn<ProductWorkflowExecutor['execute']>().mockResolvedValue(undefined)
+    const { task } = declarations(async () => ({ state: 'acquired', leaseToken: '55555555-5555-4555-8555-555555555555' }), execute)
+    await task(payload, attemptContext(2))
+    await task(payload, attemptContext(3))
+    expect(execute.mock.calls.map((call) => call[2])).toEqual([{ final: false }, { final: true }])
   })
 
   it('records and rethrows a retryable executor failure', async () => {
     const execute = vi.fn<ProductWorkflowExecutor['execute']>().mockRejectedValue(new WorkflowExecutionError('provider_unavailable', true))
     const { task, runs } = declarations(async () => ({ state: 'acquired', leaseToken: '55555555-5555-4555-8555-555555555555' }), execute)
-    await expect(task(payload, {} as never)).rejects.toMatchObject({ errorClass: 'provider_unavailable', retryable: true })
+    await expect(task(payload, attemptContext(0))).rejects.toMatchObject({ errorClass: 'provider_unavailable', retryable: true })
     expect(runs.fail).toHaveBeenCalledWith('process-submission', payload, '55555555-5555-4555-8555-555555555555', 'provider_unavailable', true)
     expect(runs.succeed).not.toHaveBeenCalled()
   })
@@ -94,5 +109,25 @@ describe('generation-recovery-scan registration', () => {
     if (!task) throw new Error('generation-recovery-scan handler was not registered')
     await task({}, {} as never)
     expect(claimStalledCandidates).toHaveBeenCalled()
+  })
+})
+
+describe('worker process integration', () => {
+  const client = () => HatchetClient.init<WorkflowPayload>({ token: 'x.eyJzdWIiOiJ0ZXN0LXRlbmFudCJ9.x', api_url: 'http://localhost:8080', host_port: 'localhost:7077', tls_config: { tls_strategy: 'none' } })
+
+  // Mit dem SDK-Default beendet dessen eigener SIGTERM-Handler den Prozess per process.exit(0),
+  // bevor index.ts' shutdown() den Outbox-Versand abgeschlossen hat.
+  it('leaves signal handling to the worker process instead of the SDK', async () => {
+    const hatchet = client()
+    const worker = vi.spyOn(hatchet, 'worker').mockResolvedValue({ registerWorkflows: vi.fn() } as never)
+    const recovery: GenerationRecoveryRepository = { claimStalledCandidates: vi.fn(), loadSessionForRecovery: vi.fn(), createRecoveryAttempt: vi.fn(), finalizeRecovery: vi.fn() }
+    const runs: WorkflowExecutionRepository = { begin: vi.fn(), succeed: vi.fn(), fail: vi.fn() }
+    await createHatchetWorker(hatchet, { HATCHET_WORKER_SLOTS: 4 }, runs, { execute: vi.fn() }, recovery, {} as VisionProviderComparisonExecutor, { enqueueScheduled: vi.fn() })
+    expect(worker).toHaveBeenCalledWith('vereinsfunk-worker', expect.objectContaining({ handleKill: false }))
+  })
+
+  it('never runs two vision-comparison ticks (two Chromium instances) at once', () => {
+    const declaration = createVisionProviderComparisonScanWorkflow(client(), {} as VisionProviderComparisonExecutor)
+    expect(declaration.definition._tasks[0]?.concurrency).toEqual({ expression: "'global'", maxRuns: 1, limitStrategy: ConcurrencyLimitStrategy.CANCEL_NEWEST })
   })
 })

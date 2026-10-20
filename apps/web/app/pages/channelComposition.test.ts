@@ -13,7 +13,7 @@ describe('channel page composition', () => {
     expect(page).toContain('<ChannelCard')
     expect(page).not.toContain('useApiClient()')
     expect(page).not.toContain('$fetch')
-    expect(composable).toContain('async function load()')
+    expect(composable).toContain('useScopedLoad(() => organizationId.value')
     expect(composable).toContain("method: 'PATCH'")
     expect(composable).toContain("method: 'POST'")
   })

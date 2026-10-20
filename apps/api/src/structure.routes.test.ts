@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEPARTMENT_ID, INVITATION_ID, MEMBERSHIP_ID, ORGANIZATION_ID, TEAM_ID, USER_ID, denyingRoleProvider, organizationManagerRoleProvider, serviceClientCapturingAudit, signAccessToken, startApp } from './testSupport.js'
+import { DEPARTMENT_ID, INVITATION_ID, MEMBERSHIP_ID, ORGANIZATION_ID, TEAM_ID, USER_ID, chain, denyingRoleProvider, organizationManagerRoleProvider, serviceClientCapturingAudit, signAccessToken, startApp } from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
 import type { RoleProvider } from './auth.js'
@@ -34,6 +34,38 @@ describe('structure, memberships and invitations', () => {
     })
     expect(response.statusCode).toBe(403)
     expect(response.json()).toMatchObject({ error: 'forbidden' })
+  })
+
+  // Regression: PATCH/DELETE /v1/departments/:id pruefte department.manage nur mit organizationId.
+  // Der RoleProvider liest Abteilungsrollen aber nur mit departmentId -- ein department_admin bekam
+  // fuer seine eigene Abteilung 403, obwohl departments_update/_delete es ihm erlauben.
+  it('lets a department_admin rename their own department', async () => {
+    const ownDepartmentAdmin: RoleProvider = {
+      async rolesForScope(_auth, scope) {
+        return scope.departmentId === DEPARTMENT_ID ? ['department_admin'] : []
+      },
+    }
+    const departmentRow = { id: DEPARTMENT_ID, organization_id: ORGANIZATION_ID, name: 'Handball', slug: 'handball', archived_at: null, created_at: '2026-08-06T10:00:00+00:00' }
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table !== 'departments') throw new Error(`unexpected table in test fake: ${table}`)
+            return { select: () => chain({ data: { organization_id: ORGANIZATION_ID }, error: null }), update: () => chain({ data: departmentRow, error: null }) }
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => serviceClientCapturingAudit([]),
+    }
+    const app = await startApp({ roleProvider: ownDepartmentAdmin, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PATCH',
+      url: `/v1/departments/${DEPARTMENT_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'Handball' },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ id: DEPARTMENT_ID, name: 'Handball' })
   })
 
   it('creates a department via the create_department RPC', async () => {
@@ -692,9 +724,10 @@ describe('structure, memberships and invitations', () => {
             if (table === 'profiles') {
               return {
                 select: () => ({
-                  in: async (_column: string, values: string[]) => {
+                  in: (_column: string, values: string[]) => {
                     requestedChunkSizes.push(values.length)
-                    return { data: values.map((id) => ({ id, display_name: `Person ${id.slice(-4)}` })), error: null }
+                    const rows = values.map((id) => ({ id, display_name: `Person ${id.slice(-4)}` }))
+                    return { order: () => ({ range: async (from: number) => ({ data: from === 0 ? rows : [], error: null }) }) }
                   },
                 }),
               }
@@ -727,7 +760,7 @@ describe('structure, memberships and invitations', () => {
         ({
           from: (table: string) => {
             if (table === 'profiles') {
-              return { select: () => ({ in: async (_c: string, ids: string[]) => ({ data: ids.map((id) => ({ id, display_name: 'Person' })), error: null }) }) }
+              return { select: () => ({ in: (_c: string, ids: string[]) => ({ order: () => ({ range: async () => ({ data: ids.map((id) => ({ id, display_name: 'Person' })), error: null }) }) }) }) }
             }
             if (table === 'organization_memberships') {
               return { select: () => ({ eq: () => ({ order: () => ({ range: async (from: number) => ({ data: from === 0 ? [{ id: '10000000-3000-4000-8000-000000000101', user_id: ownerUserId, role: 'organization_owner', expires_at: null }] : [], error: null }) }) }) }) }
@@ -821,5 +854,54 @@ describe('structure, memberships and invitations', () => {
     })
     expect(response.statusCode).toBe(200)
     expect(response.json()).toMatchObject({ expiresAt: '2026-09-01T00:00:00+00:00' })
+  })
+
+  // Regression: PATCH/DELETE /v1/memberships lasen auf jeder Ebene organization_id, department_id
+  // und team_id. organization_memberships hat die beiden letzten nicht, department_memberships kein
+  // team_id -- PostgREST antwortet darauf mit 42703, die Routen mit 500. Der Fake lehnt deshalb
+  // jede Spalte ab, die die jeweilige Tabelle nicht hat.
+  const membershipTableColumns: Record<string, string[]> = {
+    organization_memberships: ['id', 'organization_id', 'user_id', 'role', 'expires_at'],
+    department_memberships: ['id', 'organization_id', 'department_id', 'user_id', 'role', 'expires_at'],
+    team_memberships: ['id', 'organization_id', 'department_id', 'team_id', 'user_id', 'role', 'expires_at'],
+  }
+  const membershipLevels = [
+    { scope: 'organization', table: 'organization_memberships', scopeId: ORGANIZATION_ID, row: { organization_id: ORGANIZATION_ID, role: 'organization_viewer' } },
+    { scope: 'department', table: 'department_memberships', scopeId: DEPARTMENT_ID, row: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, role: 'viewer' } },
+    { scope: 'team', table: 'team_memberships', scopeId: TEAM_ID, row: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: TEAM_ID, role: 'player' } },
+  ] as const
+
+  it.each(membershipLevels)('reads only the columns of $table when setting a membership expiry', async ({ scope, table, scopeId, row }) => {
+    const stored: Record<string, unknown> = { id: MEMBERSHIP_ID, user_id: '10000000-0000-4000-8000-000000000099', expires_at: null, ...row }
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (name: string) => {
+            if (name !== table) throw new Error(`unexpected table in test fake: ${name}`)
+            return {
+              select: (columns: string) => {
+                const requested = columns.split(',').map((column) => column.trim())
+                const unknown = requested.find((column) => !membershipTableColumns[name]!.includes(column))
+                const result = unknown
+                  ? { data: null, error: { code: '42703', message: `column ${name}.${unknown} does not exist` } }
+                  : { data: Object.fromEntries(requested.map((column) => [column, stored[column]])), error: null }
+                return { eq: () => ({ maybeSingle: async () => result }) }
+              },
+            }
+          },
+          rpc: async () => ({ data: { membershipId: MEMBERSHIP_ID, expiresAt: '2026-09-01T00:00:00+00:00' }, error: null }),
+        }) as unknown as SupabaseClient,
+      forService: () => serviceClientCapturingAudit([]),
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PATCH',
+      url: `/v1/memberships/${MEMBERSHIP_ID}/expiry?scope=${scope}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { expiresAt: '2026-09-01T00:00:00+00:00' },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ scope, scopeId, role: row.role })
   })
 })

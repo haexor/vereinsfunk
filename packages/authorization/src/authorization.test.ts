@@ -67,6 +67,21 @@ describe('canAssignRole', () => {
   it('returns false for no roles at all', () => {
     expect(canAssignRole([], 'viewer')).toBe(false)
   })
+
+  it('blocks organization_admin from assigning billing_admin, whose billing.manage it lacks despite the lower rank', () => {
+    expect(canAssignRole(['organization_admin'], 'billing_admin')).toBe(false)
+    expect(canAssignRole(['organization_owner'], 'billing_admin')).toBe(true)
+  })
+
+  it('keeps the usual assignments of owners, admins and team managers', () => {
+    expect(canAssignRole(['organization_owner'], 'organization_admin')).toBe(true)
+    expect(canAssignRole(['organization_admin'], 'social_manager')).toBe(true)
+    expect(canAssignRole(['organization_admin'], 'editor')).toBe(true)
+    expect(canAssignRole(['department_admin'], 'team_manager')).toBe(true)
+    expect(canAssignRole(['department_admin'], 'approver')).toBe(true)
+    expect(canAssignRole(['team_manager'], 'player')).toBe(true)
+    expect(canAssignRole(['team_manager'], 'viewer')).toBe(true)
+  })
 })
 
 describe('canRemoveRole', () => {

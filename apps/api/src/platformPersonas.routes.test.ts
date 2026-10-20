@@ -1,7 +1,7 @@
 import { ContentGenerationError } from '@vereinsfunk/content-engine'
 import { createSecretBox } from '@vereinsfunk/secrets'
 import { describe, expect, it } from 'vitest'
-import { ciphertextToBytea } from './secretBox.js'
+import { ciphertextToBytea } from '@vereinsfunk/secrets'
 import { adminProvider, nonAdminProvider, signAccessToken, startApp, USER_ID } from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
@@ -103,6 +103,33 @@ describe('platform style personas', () => {
       payload: { slug: 'klar_erklaerend', name: 'Duplikat', description: 'Must fail', styleRules: STYLE_RULES, avoidRules: [], doRules: [] },
     })
     expect(response.statusCode).toBe(400)
+  })
+
+  it('maps a slug that is already taken to 409 on create and patch', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: () => ({
+            insert: () => ({ select: () => ({ single: async () => ({ data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint "platform_style_personas_slug_key"' } }) }) }),
+            update: () => ({ eq: () => ({ select: () => ({ maybeSingle: async () => ({ data: null, error: { code: 'P0001', message: 'slug kapitaen-klar is already used by a club style profile' } }) }) }) }),
+          }),
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const created = await app.inject({
+      method: 'POST', url: '/v1/platform-style-personas', headers: { authorization: `Bearer ${token}` },
+      payload: { slug: 'kapitaen-klar', name: 'Kapitän Klar', description: 'Direkt.', styleRules: STYLE_RULES, avoidRules: [], doRules: [] },
+    })
+    expect(created.statusCode).toBe(409)
+    expect(created.json()).toMatchObject({ error: 'slug_taken' })
+    const patched = await app.inject({
+      method: 'PATCH', url: `/v1/platform-style-personas/${PERSONA_ID}`, headers: { authorization: `Bearer ${token}` },
+      payload: { slug: 'kapitaen-klar' },
+    })
+    expect(patched.statusCode).toBe(409)
+    expect(patched.json()).toMatchObject({ error: 'slug_taken' })
   })
 
   it('returns 404 when patching an unknown persona', async () => {

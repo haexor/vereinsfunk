@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   DEPARTMENT_ID,
@@ -252,6 +255,51 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
     expect(response.json()).toMatchObject({ error: 'invalid_logo' })
   })
 
+  // Das Rastern scheiterte frueher erst nach dem Upload des Originals, das dann verwaist im
+  // Bucket lag.
+  it('rejects an SVG logo that cannot be rasterized before uploading anything', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          storage: {
+            from: () => {
+              throw new Error('nothing may be uploaded for a rejected SVG')
+            },
+          },
+          from: (table: string) => {
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const boundary = '----vereinsfunkHugeSvgBoundary'
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/brand/assets',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': `multipart/form-data; boundary=${boundary}`,
+      },
+      payload: Buffer.concat([
+        Buffer.from(
+          `--${boundary}\r\nContent-Disposition: form-data; name="organizationId"\r\n\r\n${ORGANIZATION_ID}\r\n`,
+        ),
+        Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="kind"\r\n\r\nlogo_primary\r\n`),
+        Buffer.from(
+          `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="logo.svg"\r\nContent-Type: image/svg+xml\r\n\r\n`,
+        ),
+        Buffer.from(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="10000" height="10000"><rect width="10" height="10"/></svg>',
+        ),
+        Buffer.from(`\r\n--${boundary}--\r\n`),
+      ]),
+    })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ error: 'invalid_logo' })
+  })
+
   it('rejects a font upload that is not a recognizable font container', async () => {
     const app = await startApp({ roleProvider: organizationManagerRoleProvider })
     const token = await signAccessToken(USER_ID)
@@ -385,61 +433,49 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
     expect(response.json()).toMatchObject({ error: 'not_a_font_asset' })
   })
 
-  it('confirms a font license and moves the asset to ready', async () => {
-    const captured: Record<string, unknown>[] = []
-    const clients: SupabaseClientFactory = {
+  const FONT_ASSET_ROW = {
+    id: '10000000-9000-4000-8000-000000000001',
+    organization_id: ORGANIZATION_ID,
+    department_id: null,
+    team_id: null,
+    kind: 'font',
+    object_path: 'organizations/x/brand/organization/font-abc.woff2',
+    mime_type: 'font/woff2',
+    byte_size: 1234,
+    width: null,
+    height: null,
+    font_family: 'Custom Sans',
+    font_weight: 400,
+    font_style: 'normal',
+    license_holder: 'Verein',
+    license_note: null,
+    license_confirmed_at: '2026-08-07T00:00:00.000+00:00',
+    status: 'ready',
+    rejection_reason: null,
+    created_at: '2026-08-07T00:00:00.000+00:00',
+  }
+
+  function confirmLicenseClients(
+    rpcResult: { data: unknown; error: unknown },
+    captured: Record<string, unknown>[] = [],
+  ): SupabaseClientFactory {
+    return {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'brand_assets') {
-              return chain({
-                data: {
-                  id: '10000000-9000-4000-8000-000000000001',
-                  organization_id: ORGANIZATION_ID,
-                  department_id: null,
-                  team_id: null,
-                  kind: 'font',
-                },
-                error: null,
-              })
-            }
+            if (table === 'brand_assets')
+              return chain({ data: { ...FONT_ASSET_ROW, status: 'processing' }, error: null })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
       forService: () =>
         ({
+          rpc: async (name: string, args: Record<string, unknown>) => {
+            if (name !== 'confirm_brand_font_license') throw new Error(`unexpected rpc: ${name}`)
+            captured.push(args)
+            return rpcResult
+          },
           from: (table: string) => {
-            if (table === 'brand_assets') {
-              return {
-                update: (values: Record<string, unknown>) => {
-                  captured.push(values)
-                  return chain({
-                    data: {
-                      id: '10000000-9000-4000-8000-000000000001',
-                      organization_id: ORGANIZATION_ID,
-                      department_id: null,
-                      team_id: null,
-                      kind: 'font',
-                      object_path: 'organizations/x/brand/organization/font-abc.woff2',
-                      mime_type: 'font/woff2',
-                      byte_size: 1234,
-                      width: null,
-                      height: null,
-                      font_family: 'Custom Sans',
-                      font_weight: 400,
-                      font_style: 'normal',
-                      license_holder: 'Verein',
-                      license_note: null,
-                      license_confirmed_at: '2026-08-07T00:00:00.000+00:00',
-                      status: 'ready',
-                      rejection_reason: null,
-                      created_at: '2026-08-07T00:00:00.000+00:00',
-                    },
-                    error: null,
-                  })
-                },
-              }
-            }
             if (table === 'audit_events')
               return {
                 insert: async (row: Record<string, unknown>) => {
@@ -451,16 +487,99 @@ describe('Paket 013: Marke, Branding-Assets und Schriften', () => {
           },
         }) as unknown as SupabaseClient,
     }
+  }
+
+  async function confirmLicense(clients: SupabaseClientFactory) {
     const app = await startApp({
       roleProvider: organizationManagerRoleProvider,
       supabaseClients: clients,
     })
     const token = await signAccessToken(USER_ID)
-    const response = await app.inject({
+    return app.inject({
       method: 'POST',
       url: '/v1/brand/assets/10000000-9000-4000-8000-000000000001/confirm-license',
       headers: { authorization: `Bearer ${token}` },
       payload: { licenseHolder: 'Verein', confirmed: true },
+    })
+  }
+
+  it('confirms a font license and moves the asset to ready', async () => {
+    const captured: Record<string, unknown>[] = []
+    const response = await confirmLicense(
+      confirmLicenseClients({ data: FONT_ASSET_ROW, error: null }, captured),
+    )
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ status: 'ready', licenseHolder: 'Verein' })
+    expect(captured[0]).toMatchObject({
+      p_organization_id: ORGANIZATION_ID,
+      p_asset_id: '10000000-9000-4000-8000-000000000001',
+      p_license_holder: 'Verein',
+      p_actor_user_id: USER_ID,
+    })
+  })
+
+  // Eine geloeschte, abgeloeste oder bereits freigegebene Schrift darf nicht ueber die
+  // Lizenzbestaetigung (zurueck) auf 'ready' kommen.
+  it('answers 409 when the font is no longer waiting for its license confirmation', async () => {
+    const response = await confirmLicense(
+      confirmLicenseClients({
+        data: null,
+        error: { message: 'brand_asset_not_pending_license', code: 'P0001' },
+      }),
+    )
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'brand_asset_not_pending_license' })
+  })
+
+  // Dieselben Schriftbytes ergeben denselben object_path; das upsert setzte eine lizenzierte,
+  // womoeglich ausgewaehlte Schrift sonst zurueck auf 'processing'.
+  it('keeps an already licensed font unchanged when the same file is uploaded again', async () => {
+    const font = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '__fixtures__', 'karla-bold.ttf'))
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'brand_assets')
+              return {
+                select: () => chain({ data: FONT_ASSET_ROW, error: null }),
+                upsert: () => {
+                  throw new Error('a ready font must not be upserted again')
+                },
+              }
+            throw new Error(`unexpected table in test fake: ${table}`)
+          },
+          storage: {
+            from: () => {
+              throw new Error('an already stored font must not be uploaded again')
+            },
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: clients,
+    })
+    const token = await signAccessToken(USER_ID)
+    const boundary = '----vereinsfunkReadyFontBoundary'
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/brand/assets',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': `multipart/form-data; boundary=${boundary}`,
+      },
+      payload: Buffer.concat([
+        Buffer.from(
+          `--${boundary}\r\nContent-Disposition: form-data; name="organizationId"\r\n\r\n${ORGANIZATION_ID}\r\n`,
+        ),
+        Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="kind"\r\n\r\nfont\r\n`),
+        Buffer.from(
+          `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="karla.ttf"\r\nContent-Type: font/ttf\r\n\r\n`,
+        ),
+        font,
+        Buffer.from(`\r\n--${boundary}--\r\n`),
+      ]),
     })
     expect(response.statusCode).toBe(200)
     expect(response.json()).toMatchObject({ status: 'ready', licenseHolder: 'Verein' })

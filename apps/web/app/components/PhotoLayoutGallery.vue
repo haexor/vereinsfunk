@@ -2,7 +2,7 @@
 import { LoaderCircle } from '@lucide/vue'
 import { PHOTO_LAYOUT_MIN_PHOTOS, PHOTO_LAYOUT_PHOTO_COUNTS, PhotoLayoutPresetSchema, RenderPhotoLayoutResponseSchema, type PhotoLayoutPreset } from '@vereinsfunk/contracts'
 import { z } from 'zod'
-import { selectablePhotoLayoutPresets } from '../utils/photoLayoutPresets'
+import { selectableAtLevel } from '../utils/scopeSelection'
 
 // Plan 047, PR 1: "Diese Fotos zu einem Bild zusammenfügen" -- eingebettet direkt nach
 // PhotoAttachmentList.vue in erstellen.vue. mediaAssetIds wird nach erfolgreicher Komposition auf
@@ -23,32 +23,28 @@ const composingId = ref<string | null>(null)
 const error = ref('')
 const loadError = ref(false)
 
-// Sichert die Antworten gegen Ueberholen ab -- wenn organizationId schnell wechselt (Watch unten),
-// soll nicht eine aeltere Antwort eine bereits neuere ueberschreiben.
-let loadToken = 0
-
-async function loadPresets() {
-  const token = ++loadToken
+// Sichert die Antworten gegen Ueberholen ab -- wenn organizationId schnell wechselt, soll nicht
+// eine aeltere Antwort eine bereits neuere ueberschreiben.
+const { ready } = useScopedLoad(() => props.organizationId, async (organizationId, isLatest) => {
   loading.value = true
   loadError.value = false
   try {
-    const response = await api.request('/v1/photo-layout-presets', { query: { organizationId: props.organizationId } }, z.object({ presets: z.array(PhotoLayoutPresetSchema) }))
-    if (token !== loadToken) return
+    const response = await api.request('/v1/photo-layout-presets', { query: { organizationId } }, z.object({ presets: z.array(PhotoLayoutPresetSchema) }))
+    if (!isLatest()) return
     presets.value = response.presets.filter((preset) => preset.isActive)
   } catch {
-    if (token !== loadToken) return
+    if (!isLatest()) return
     presets.value = []
     loadError.value = true
   } finally {
-    if (token === loadToken) loading.value = false
+    if (isLatest()) loading.value = false
   }
-}
-await loadPresets()
-watch(() => props.organizationId, loadPresets)
+})
+await ready
 
 // Nur die department-eigenen und vererbten Presets -- die Foto-Anhang-UI kennt keine
 // Mannschaftsebene, dieselbe Grenze wie die Render-Route selbst durchsetzt.
-const selectablePresets = computed(() => selectablePhotoLayoutPresets(presets.value, 'department', props.departmentId))
+const selectablePresets = computed(() => selectableAtLevel(presets.value, 'department', props.departmentId))
 
 function photoCountLabel(preset: PhotoLayoutPreset): string {
   const range = PHOTO_LAYOUT_PHOTO_COUNTS[preset.kind]
@@ -105,7 +101,9 @@ async function composeLayout(preset: PhotoLayoutPreset) {
         </span>
       </button>
     </div>
-    <p v-if="error" class="mt-2 text-[11px] text-amber-800">{{ error }}</p>
   </div>
   <p v-else-if="!loading && loadError" class="mt-3 text-[11px] text-amber-800">Die Layouts konnten nicht geladen werden.</p>
+  <!-- Ausserhalb des Blocks oben: eine veraltete Personen-Pruefung leert mediaAssetIds, womit der
+       Block samt Fehlermeldung verschwaende, die genau das erklaert. -->
+  <p v-if="error" class="mt-2 text-[11px] text-amber-800">{{ error }}</p>
 </template>

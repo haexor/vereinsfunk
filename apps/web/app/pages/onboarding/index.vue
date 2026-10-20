@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { AlertTriangle, ArrowRight, Check, ShieldCheck, Sparkles, Upload } from '@lucide/vue'
 import { CreateBrandAssetResponseSchema } from '@vereinsfunk/contracts'
+import { optionalNumber } from '../../utils/numberInput'
 
 definePageMeta({ layout: false })
 
@@ -91,7 +92,8 @@ async function submitOrganization() {
     if (org.value.city.trim()) profilePatch.city = org.value.city.trim()
     if (org.value.contactEmail.trim()) profilePatch.contactEmail = org.value.contactEmail.trim()
     if (org.value.websiteUrl.trim()) profilePatch.websiteUrl = org.value.websiteUrl.trim()
-    if (org.value.foundedYear.trim()) profilePatch.foundedYear = Number(org.value.foundedYear)
+    const foundedYear = optionalNumber(org.value.foundedYear)
+    if (foundedYear !== null) profilePatch.foundedYear = foundedYear
     if (Object.keys(profilePatch).length > 0) {
       await $fetch(`${config.public.apiBase}/v1/organizations/${organizationId.value}/profile`, {
         method: 'PATCH',

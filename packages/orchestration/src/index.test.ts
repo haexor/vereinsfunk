@@ -15,4 +15,19 @@ describe('workflow outbox dispatcher', () => {
     expect(count).toBe(1)
     expect(dispatched).toEqual(['fake-run-1'])
   })
+
+  it('keeps dispatching the rest of the batch when releasing one entry fails, then reports it', async () => {
+    const dispatched: string[] = []
+    const failing = { trigger: async (workflow: 'render-content', raw: typeof payload) => { if (raw.idempotencyKey === 'render:x:1') throw new Error('hatchet down'); return new FakeOrchestrator().trigger(workflow, raw) } }
+    const outbox: WorkflowOutboxRepository = {
+      claimPending: async () => [
+        { id: 'outbox-1', claimToken: 'claim-1', workflow: 'render-content', payload, priority: 2 },
+        { id: 'outbox-2', claimToken: 'claim-2', workflow: 'render-content', payload: { ...payload, idempotencyKey: 'render:x:2' }, priority: 2 },
+      ],
+      markDispatched: async (id) => { dispatched.push(id) },
+      markRetryableFailure: async () => { throw new Error('outbox release lost') },
+    }
+    await expect(new WorkflowOutboxDispatcher(outbox, failing as never).dispatchPending()).rejects.toThrow('outbox release lost')
+    expect(dispatched).toEqual(['outbox-2'])
+  })
 })

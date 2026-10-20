@@ -47,10 +47,7 @@ function clients(options: FakeOptions = {}): SupabaseClientFactory {
   const table = (tables: Record<string, unknown>, label: string) => (name: string) => {
     if (name === 'audit_events') return { insert: async (row: Record<string, unknown>) => { options.audit?.push(row); return { error: null } } }
     if (!(name in tables)) throw new Error(`unexpected ${label} table in test fake: ${name}`)
-    const value = tables[name]
-    // { __count: n } bedient head-Abfragen mit count: 'exact'.
-    if (value && typeof value === 'object' && '__count' in value) return chain({ data: null, error: null, count: (value as { __count: number }).__count })
-    return chain({ data: value, error: null })
+    return chain({ data: tables[name], error: null })
   }
   const rpc = (calls: Record<string, { data: unknown; error: unknown }>, label: string) => async (name: string) => {
     if (!(name in calls)) throw new Error(`unexpected ${label} rpc in test fake: ${name}`)
@@ -174,6 +171,34 @@ describe('PlayerBoard read routes', () => {
     expect(response.json()[0]).toMatchObject({ isSelf: true })
     expect(response.json()[0]).not.toHaveProperty('email')
   })
+
+  // Regression: die Notizen aller Trainings einer Mannschaft gingen in EIN .in() -- nach einigen
+  // hundert Trainings riss die URL die Gateway-Grenze, die Liste antwortete mit 500.
+  it('loads the notes of a long training list in batches', async () => {
+    const trainings = Array.from({ length: 250 }, (_, index) => ({
+      id: `52000000-5000-4000-8000-${String(index).padStart(12, '0')}`, organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: TEAM_ID,
+      training_date: '2026-10-01', title: null, status: 'saved', created_at: '2026-10-01T10:00:00Z',
+    }))
+    const noteBatches: number[] = []
+    const fakes = clients({ userRpc: { playerboard_can_view_stats: { data: true, error: null } }, userTables: { playerboard_trainings: trainings } })
+    const user = fakes.forUser('token') as unknown as { from: (name: string) => unknown; rpc: unknown }
+    fakes.forUser = () => ({
+      rpc: user.rpc,
+      from: (name: string) => name === 'playerboard_training_notes'
+        ? { select: () => ({ in: (_column: string, ids: string[]) => {
+            noteBatches.push(ids.length)
+            return chain({ data: ids.map((id) => ({ training_id: id, note: `Notiz ${id.slice(-3)}` })), error: null })
+          } }) }
+        : user.from(name),
+    }) as unknown as SupabaseClient
+    const app = await startApp({ roleProvider: rolesProvider(['team_manager']), supabaseClients: fakes })
+    const response = await call(app, 'GET', `/v1/playerboard/teams/${TEAM_ID}/trainings`)
+    expect(response.statusCode).toBe(200)
+    expect(noteBatches).toEqual([100, 100, 50])
+    const body = response.json() as { id: string; note: string | null }[]
+    expect(body).toHaveLength(250)
+    expect(body.at(-1)).toMatchObject({ note: 'Notiz 249' })
+  })
 })
 
 describe('PlayerBoard coach flows', () => {
@@ -236,19 +261,88 @@ describe('PlayerBoard coach flows', () => {
     expect(response.json()).toMatchObject({ error: 'player_has_account' })
   })
 
+  // Pruefen und Loeschen laufen atomar in playerboard_delete_player (pgTAP:
+  // playerboard_delete_player.test.sql); vorher zaehlte die Route und loeschte getrennt.
   it('refuses to delete a player who already has points', async () => {
     const app = await startApp({
       roleProvider: rolesProvider(['team_manager']),
-      supabaseClients: clients({ serviceTables: { playerboard_point_entries: { __count: 3 } } }),
+      supabaseClients: clients({ userRpc: { playerboard_delete_player: { data: 'player_has_points', error: null } } }),
     })
     const response = await call(app, 'DELETE', `/v1/playerboard/players/${PLAYER_ID}`)
     expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'player_has_points' })
+  })
+
+  it('deletes a player without points through playerboard_delete_player', async () => {
+    const audit: Record<string, unknown>[] = []
+    const app = await startApp({
+      roleProvider: rolesProvider(['team_manager']),
+      supabaseClients: clients({ audit, userRpc: { playerboard_delete_player: { data: 'deleted', error: null } } }),
+    })
+    const response = await call(app, 'DELETE', `/v1/playerboard/players/${PLAYER_ID}`)
+    expect(response.statusCode).toBe(204)
+    expect(audit).toEqual([expect.objectContaining({ action: 'playerboard_player.removed' })])
   })
 
   it('rejects public team page settings outside a team', async () => {
     const app = await startApp({ roleProvider: rolesProvider(['organization_admin']), supabaseClients: clients() })
     const response = await call(app, 'PUT', '/v1/playerboard/settings', { scope: 'organization', scopeId: ORGANIZATION_ID, patch: { publicSlug: 'u13' } })
     expect(response.statusCode).toBe(400)
+  })
+
+  // Regression: jede 23505 beim ersten Speichern einer Ebene galt als "Slug vergeben". Zwei
+  // gleichzeitige erste Speicherungen derselben Mannschaft scheitern aber am Unique-Index der Ebene.
+  describe('saving team settings concurrently', () => {
+    const SETTINGS_ID = '52000000-8000-4000-8000-000000000001'
+    const teamSettings = {
+      scope: 'team', department_id: DEPARTMENT_ID, team_id: TEAM_ID, season_start: null, stats_visibility: null, overridable_fields: [],
+      team_categories_allowed: null, public_sharing_allowed: null, public_points_enabled: null, public_veo_stats_enabled: null, public_photos_enabled: null, public_slug: 'u13',
+    }
+
+    /** Erste Suche findet keine Zeile, die zweite die inzwischen angelegte; der Insert scheitert mit insertError. */
+    function racingClients(insertError: { code: string; message: string }, updates: unknown[]) {
+      const lookups: unknown[] = [null, { id: SETTINGS_ID }]
+      const fakes = clients({ serviceTables: { organizations: { name: 'SV Beispiel', slug: 'sv-beispiel' }, teams: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, name: 'U13' } } })
+      const service = fakes.forService() as unknown as { from: (name: string) => unknown; rpc: unknown }
+      fakes.forService = () => ({
+        rpc: service.rpc,
+        from: (name: string) => {
+          if (name !== 'playerboard_settings') return service.from(name)
+          const builder = chain({ data: [teamSettings], error: null })
+          builder.maybeSingle = async () => ({ data: lookups.shift() ?? null, error: null })
+          return builder
+        },
+      }) as unknown as SupabaseClient
+      fakes.forUser = () => ({
+        from: (name: string) => {
+          if (name !== 'playerboard_settings') throw new Error(`unexpected user table in test fake: ${name}`)
+          return {
+            insert: () => chain({ data: null, error: insertError }),
+            update: (values: unknown) => { updates.push(values); return chain({ data: [{ id: SETTINGS_ID }], error: null }) },
+          }
+        },
+      }) as unknown as SupabaseClient
+      return fakes
+    }
+
+    it('writes into the row a concurrent first save just created', async () => {
+      const updates: unknown[] = []
+      const fakes = racingClients({ code: '23505', message: 'duplicate key value violates unique constraint "playerboard_settings_team_unique"' }, updates)
+      const app = await startApp({ roleProvider: rolesProvider(['team_manager']), supabaseClients: fakes })
+      const response = await call(app, 'PUT', '/v1/playerboard/settings', { scope: 'team', scopeId: TEAM_ID, patch: { publicSlug: 'u13' } })
+      expect(response.statusCode).toBe(200)
+      expect(updates).toEqual([expect.objectContaining({ public_slug: 'u13' })])
+    })
+
+    it('still reports a slug used by another team', async () => {
+      const updates: unknown[] = []
+      const fakes = racingClients({ code: '23505', message: 'duplicate key value violates unique constraint "playerboard_settings_organization_id_public_slug_key"' }, updates)
+      const app = await startApp({ roleProvider: rolesProvider(['team_manager']), supabaseClients: fakes })
+      const response = await call(app, 'PUT', '/v1/playerboard/settings', { scope: 'team', scopeId: TEAM_ID, patch: { publicSlug: 'u13' } })
+      expect(response.statusCode).toBe(409)
+      expect(response.json()).toMatchObject({ error: 'public_slug_taken' })
+      expect(updates).toEqual([])
+    })
   })
 
   it('reports invalid photo consents with the affected people', async () => {

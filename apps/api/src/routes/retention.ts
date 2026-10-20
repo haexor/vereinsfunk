@@ -8,7 +8,6 @@ import {
 } from '@vereinsfunk/contracts'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyInstance } from 'fastify'
-import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { ApiRouteContext } from './context.js'
 import { createAuditRecorder, fetchAllRows, toPermissionScope } from './shared.js'
@@ -128,12 +127,9 @@ export function registerRetentionRoutes(app: FastifyInstance, context: ApiRouteC
     const settingsRow = await loadOrCreateRetentionSettings(service, params.id, request.auth!.userId)
     const settings = settingsRow as { raw_media_days: number; derivative_days: number | null; audit_event_days: number; consent_evidence_years: number; status_event_days: number }
     const now = Date.now()
-    // Eigene, lokal erzeugte correlationId statt request.id: Fastify ist mit requestIdHeader
-    // konfiguriert, ein Aufrufer kann request.id also per x-correlation-id-Header auf einen
-    // beliebigen String setzen (vorbestehende, projektweite Konfiguration) -- correlation_id ist
-    // hier eine uuid-Spalte, ein nicht-UUID-Header haette den Datenbank-Insert erst NACH den
-    // bereits ausgefuehrten Loeschungen scheitern lassen (adversariale Pruefung).
-    const correlationId = randomUUID()
+    // request.id ist immer eine UUID (genReqId in app.ts) -- correlation_id ist eine uuid-Spalte,
+    // deren Insert sonst erst NACH den bereits ausgefuehrten Loeschungen scheitern wuerde.
+    const correlationId = request.id
     const results: { ruleKey: string; entityType: string; entityCount: number; cutoffDate: string }[] = []
 
     const CHUNK_SIZE = 100

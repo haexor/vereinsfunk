@@ -14,6 +14,7 @@ const { loadMatches } = usePlayerboardVeo()
 const canManagePlayerboard = computed(() => (permissionScope.value ? useCan('playerboard.manage', permissionScope.value) : false))
 
 const period = ref<'season' | 'all'>('season')
+const periods = [{ kind: 'season', label: 'Saison' }, { kind: 'all', label: 'Gesamt' }] as const
 const seasonFrom = ref<string | null>(null)
 const matches = ref<PlayerboardVeoMatch[]>([])
 const roster = ref<PlayerboardPlayer[] | undefined>(undefined)
@@ -33,8 +34,10 @@ async function load(keepSelection = false) {
   const requestedTeamId = teamId.value
   loading.value = true
   try {
-    seasonFrom.value = await loadSeasonFrom(organizationId.value, requestedTeamId, organizationTimezone.value)
-    const range = period.value === 'season' && seasonFrom.value ? { from: seasonFrom.value } : {}
+    // Erst nach der Pruefung unten zuweisen: sonst stuende nach einem schnellen Mannschaftswechsel
+    // der Saisonbeginn der vorigen Mannschaft ueber den Spielen der neuen.
+    const loadedSeasonFrom = await loadSeasonFrom(organizationId.value, requestedTeamId, organizationTimezone.value)
+    const range = period.value === 'season' && loadedSeasonFrom ? { from: loadedSeasonFrom } : {}
     const [loaded, players] = await Promise.all([
       loadMatches(requestedTeamId, range),
       // Den Kader brauchen alle fuer die Profil-Links; nur Trainer ordnen damit Rueckennummern zu. Faellt er fuer
@@ -45,6 +48,7 @@ async function load(keepSelection = false) {
       }),
     ])
     if (request !== latestRequest) return
+    seasonFrom.value = loadedSeasonFrom
     matches.value = loaded
     roster.value = players
     if (!keepSelection || !loaded.some((match) => match.fixtureId === selectedFixtureId.value)) selectedFixtureId.value = loaded[0]?.fixtureId ?? null
@@ -96,7 +100,6 @@ const optionDate = computed(() => new Intl.DateTimeFormat('de-DE', { day: '2-dig
 function optionLabel(match: PlayerboardVeoMatch): string {
   return `${optionDate.value.format(new Date(match.kickoffAt))} · ${match.opponentName ?? 'unbekannt'} · ${scoreLabel(match)}`
 }
-const seasonFormat = new Intl.DateTimeFormat('de-DE', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })
 const inputClass = 'focus-ring h-11 rounded-xl border border-[#dfe0d9] bg-white px-3 text-sm text-ink'
 </script>
 
@@ -112,23 +115,7 @@ const inputClass = 'focus-ring h-11 rounded-xl border border-[#dfe0d9] bg-white 
 
     <PlayerboardTeamEmpty v-if="!team" />
     <template v-else>
-      <div class="mb-5 flex flex-wrap items-center gap-2" role="radiogroup" aria-label="Zeitraum">
-        <button
-          v-for="item in [{ kind: 'season', label: 'Saison' }, { kind: 'all', label: 'Gesamt' }] as const"
-          :key="item.kind"
-          type="button"
-          role="radio"
-          :aria-checked="period === item.kind"
-          class="focus-ring min-h-11 rounded-xl border px-4 text-xs font-semibold"
-          :class="period === item.kind ? 'border-forest bg-[#e4f1e7] text-forest' : 'border-[#dfe0d9] bg-white text-ink'"
-          @click="period = item.kind"
-        >
-          {{ item.label }}
-        </button>
-        <span v-if="period === 'season'" class="text-xs text-[#6c756f]">
-          {{ seasonFrom ? `Seit ${seasonFormat.format(new Date(`${seasonFrom}T00:00:00Z`))}` : 'Kein Saisonbeginn festgelegt – es zählt die gesamte Zeit.' }}
-        </span>
-      </div>
+      <PlayerboardPeriodPicker v-model="period" :periods="periods" :season-from="seasonFrom" />
 
       <p v-if="errorMessage" class="text-sm text-amber-800">{{ errorMessage }}</p>
       <div v-else-if="!loading && matches.length === 0" class="card p-6 text-sm text-[#6c756f]">

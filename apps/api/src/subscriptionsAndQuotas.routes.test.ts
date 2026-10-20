@@ -144,13 +144,11 @@ describe('POST /v1/media/uploads -- storage_limit_reached', () => {
 
   // Org-level posting: ohne Abteilung entfaellt das departments/<id>-Segment im Objektpfad, und
   // reserve_storage_upload bekommt target_department null (kein Abteilungs-Speicherkontingent).
-  // Der Pfad wird an zwei Stellen gebaut -- hier fuer die Reservierung, in SupabaseUploadService
-  // .create() fuer die signierte URL. Laufen sie auseinander, liegt die Reservierung auf einem
-  // anderen Objekt als die Bytes und /complete laedt ins Leere, deshalb pruefen beide Zusicherungen
-  // denselben String.
+  // Reservierung und signierte URL muessen denselben Pfad tragen, sonst liegt die Reservierung auf
+  // einem anderen Objekt als die Bytes und /complete laedt ins Leere.
   it('reserves an organization-level upload without a department segment in the object path', async () => {
     let capturedParams: Record<string, unknown> | undefined
-    let capturedCreate: { departmentId: string | null; assetId: string } | undefined
+    let capturedCreate: { objectPath: string } | undefined
     const clients: SupabaseClientFactory = {
       forUser: () => ({}) as unknown as SupabaseClient,
       forService: () =>
@@ -176,8 +174,9 @@ describe('POST /v1/media/uploads -- storage_limit_reached', () => {
     })
     expect(response.statusCode).toBe(201)
     expect(capturedParams).toMatchObject({ target_organization: ORGANIZATION_ID, target_department: null })
-    expect(capturedParams?.target_object_path).toBe(`organizations/${ORGANIZATION_ID}/assets/${capturedCreate?.assetId}/foto.jpg`)
-    expect(capturedCreate?.departmentId).toBeNull()
+    expect(capturedParams?.target_object_path).toBe(`organizations/${ORGANIZATION_ID}/assets/${capturedParams?.target_asset_id as string}/foto.jpg`)
+    // Signiert wird derselbe Pfad, den die Reservierung festhaelt -- /complete laedt ihn wieder herunter.
+    expect(capturedCreate?.objectPath).toBe(capturedParams?.target_object_path)
   })
 
   it('accepts an upload under the limit and issues the upload URL after the RPC reservation succeeds', async () => {

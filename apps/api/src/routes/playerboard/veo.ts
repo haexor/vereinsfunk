@@ -12,17 +12,17 @@ import {
   PlayerboardVeoSyncAcceptedSchema,
   PlayerboardVeoSyncRequestSchema,
   ResolvePlayerboardVeoConflictRequestSchema,
-  SyncIdempotencyKeySchema,
   UuidSchema,
 } from '@vereinsfunk/contracts'
 import { captureSessionViaLogin, exchangeSessionCookieForToken, listClubTeams, listOwnClubs, VeoError } from '@vereinsfunk/veo-client'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
-import { ciphertextToBytea, createSecretBoxFromEnvironment } from '../../secretBox.js'
+import { ciphertextToBytea } from '@vereinsfunk/secrets'
+import { createSecretBoxFromEnvironment } from '../../secretBox.js'
 import { enqueueIntegrationSync, isSourceDisabledError } from '../../services/integrationQueue.js'
 import type { ApiRouteContext } from '../context.js'
-import { createAuditRecorder } from '../shared.js'
+import { createAuditRecorder, readIdempotencyKeyHeader } from '../shared.js'
 import { loadTeamScope, requireStatsAccess, sendDatabaseError } from './shared.js'
 import { openVeoLinkToken, sealVeoLinkToken, type VeoTeamChoice } from './veoLinkToken.js'
 
@@ -105,14 +105,6 @@ async function loadStatus(service: SupabaseClient, teamId: string) {
       conflictCount: run.conflict_count, errorClass: run.error_class,
     })),
   })
-}
-
-/** Liest den optionalen Idempotency-Key-Header; undefined bei ungueltigem Wert. */
-function readIdempotencyKey(request: FastifyRequest): string | undefined {
-  const header = request.headers['idempotency-key']
-  if (Array.isArray(header)) return undefined
-  const parsed = SyncIdempotencyKeySchema.safeParse(typeof header === 'string' ? header : randomUUID())
-  return parsed.success ? parsed.data : undefined
 }
 
 type ConflictRow = { id: string; source_id: string; label: string; current_value: string | null; incoming_value: string | null }
@@ -230,9 +222,15 @@ export function registerPlayerboardVeoRoutes(app: FastifyInstance, context: ApiR
       entityType: 'integration_source', entityId: sourceId,
       metadata: { teamId: input.teamId, veoClubSlug: choice.clubSlug, veoTeamSlug: choice.teamSlug },
     })
-    await enqueueIntegrationSync(service, {
-      organizationId: scope.organizationId, sourceId, idempotencyKey: `link:${randomUUID()}`, triggeredBy: request.auth!.userId,
-    })
+    // Die Verbindung ist bereits gespeichert und auditiert. Scheitert nur das Einreihen des ersten
+    // Abgleichs, bleibt es bei 201; der Abgleich laesst sich manuell nachholen.
+    try {
+      await enqueueIntegrationSync(service, {
+        organizationId: scope.organizationId, sourceId, idempotencyKey: `link:${randomUUID()}`, triggeredBy: request.auth!.userId,
+      })
+    } catch (error) {
+      request.log.error({ err: error, correlationId: request.id }, 'playerboard veo first sync could not be queued')
+    }
     return reply.code(201).send(await loadStatus(service, input.teamId))
   })
 
@@ -340,7 +338,7 @@ export function registerPlayerboardVeoRoutes(app: FastifyInstance, context: ApiR
   app.post('/v1/playerboard/veo/sync', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const input = PlayerboardVeoSyncRequestSchema.parse(request.body)
-    const idempotencyKey = readIdempotencyKey(request)
+    const idempotencyKey = readIdempotencyKeyHeader(request)
     if (!idempotencyKey) return reply.code(400).send({ error: 'invalid_idempotency_key', correlationId: request.id })
     const service = supabaseClients.forService()
     const scope = await loadTeamScope(service, input.teamId)

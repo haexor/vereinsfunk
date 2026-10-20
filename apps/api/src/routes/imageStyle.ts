@@ -13,7 +13,6 @@ import {
   type PreviewImageStylePresetRequest,
 } from '@vereinsfunk/contracts'
 import {
-  isBrandAssetSelectable,
   isPostEditable,
   postStatuses,
   resolveBrand,
@@ -22,9 +21,11 @@ import {
   type OrganizationBrandLevel,
 } from '@vereinsfunk/domain'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { FastifyInstance, FastifyRequest } from 'fastify'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import sharp from 'sharp'
 import { z } from 'zod'
+import { readMultipartUpload, type MultipartUploadResult } from '../multipartUpload.js'
+import { parseSupabaseData } from '../supabase.js'
 import {
   mapBrandRow,
   mapDepartmentBrandRow,
@@ -33,9 +34,15 @@ import {
 } from '../apiMappers.js'
 import { hashLogoBuffer } from '@vereinsfunk/brand-assets'
 import { GmicImageEffectError } from '@vereinsfunk/media-processing'
-import { GmicNotEnabledError, MAX_IMAGE_STYLE_INPUT_PIXELS, renderImageStyle } from '../imageStyle.js'
+import {
+  assertImageStyleInputSize,
+  GmicNotEnabledError,
+  ImageTooLargeError,
+  renderImageStyle,
+  type ImageStyleRenderResult,
+} from '../imageStyle.js'
 import type { ApiRouteContext } from './context.js'
-import { loadSelectableBrandAsset, LOGO_ASSET_KINDS } from './brand.js'
+import { isSelectableInScope, LOGO_ASSET_KINDS, scopeLevelOf, validateBrandAssetReferences } from './brand.js'
 import {
   checkRateLimit,
   createAuditRecorder,
@@ -89,20 +96,43 @@ const WorkshopFilterPreviewsMultipartSchema = WorkshopFilterPreviewsFieldsSchema
 // (app.ts) und werden zu 500 internal_error -- der Aufrufer koennte einen erwarteten
 // Nebenlaeufigkeitskonflikt, den er an anderer Stelle schon als 409 behandelt, nicht von einem
 // echten Serverfehler unterscheiden.
+const FRAME_ASSET_KINDS = new Set(['frame'])
+
+// logoBrandAssetId ist nicht mehr auf kind='watermark' gepinnt (2026082002) -- jede Logovariante
+// aus LOGO_ASSET_KINDS ist zulaessig, u.a. das ueber die Marke-Seite hochgeladene Hauptlogo.
+function presetAssetReferences(input: {
+  frameBrandAssetId?: string | null | undefined
+  logoBrandAssetId?: string | null | undefined
+}) {
+  return [
+    [input.frameBrandAssetId, FRAME_ASSET_KINDS],
+    [input.logoBrandAssetId, LOGO_ASSET_KINDS],
+  ] as const
+}
+
 const RPC_ERROR_STATUS: Record<string, number> = {
   post_media_not_found: 404,
   post_version_not_found: 404,
   post_not_found: 404,
   post_not_editable: 409,
   post_media_changed: 409,
+  post_version_not_current: 409,
 }
 
-function parseSupabaseData<T>(schema: z.ZodType<T>, data: unknown): T {
-  const parsed = schema.safeParse(data)
-  if (parsed.success) return parsed.data
-  const error = new Error('Unexpected Supabase response')
-  error.name = 'SupabaseResponseError'
-  throw error
+class BrandAssetNotReadyError extends Error {
+  constructor() {
+    super('brand_asset_not_ready')
+  }
+}
+
+// Vorschau und style-render teilen dieselben erwartbaren Ablehnungen: G'MIC fehlt, die
+// referenzierte Rahmen-/Logografik ist zwischen Pruefung und Download nicht mehr 'ready', oder das
+// Foto ist zu gross. Ohne diese Zuordnung landeten sie im generischen Fehlerhandler als 500.
+function renderRejection(error: unknown): { status: number; error: string } | null {
+  if (error instanceof GmicNotEnabledError) return { status: 422, error: 'gmic_not_enabled' }
+  if (error instanceof BrandAssetNotReadyError) return { status: 422, error: 'brand_asset_not_ready' }
+  if (error instanceof ImageTooLargeError) return { status: 413, error: 'image_too_large' }
+  return null
 }
 
 async function downloadBrandAssetBuffer(
@@ -118,7 +148,7 @@ async function downloadBrandAssetBuffer(
     .eq('status', 'ready')
     .maybeSingle()
   if (asset.error) throw asset.error
-  if (!asset.data) throw new Error('brand_asset_not_ready')
+  if (!asset.data) throw new BrandAssetNotReadyError()
   const download = await service.storage
     .from('brand-assets')
     .download(parseSupabaseData(BrandAssetPathRowSchema, asset.data).object_path)
@@ -195,8 +225,8 @@ interface ImageStylePreviewResult {
 }
 
 // Die Vorschau wird angeschaut, nicht veroeffentlicht -- deshalb NICHT das Format aus encodeResult
-// (imageStyle.ts) uebernehmen: das waehlt fuer jedes Ergebnis mit Alpha (abgerundete Ecken,
-// 'double'/'festlich'-Rahmen, durchscheinende Rahmengrafik) verlustfreies PNG und liefert damit
+// (imageStyle.ts) uebernehmen: das waehlt fuer jedes Ergebnis mit echter Transparenz (abgerundete
+// Ecken, 'double'-Rahmen) und fuer jede PNG-Quelle verlustfreies PNG und liefert damit
 // gemessene 4,3 MB -- als Base64 im JSON-Body 5,7 MB, und das bei bis zu 30 Anfragen/Minute je
 // Nutzer. WebP q80 auf 1200 px Breite behaelt den Alphakanal, ist auf derselben Messung 0,26 MB
 // Base64 und immer noch doppelt so breit wie die Editorspalte je darstellt (~600 CSS-px).
@@ -335,25 +365,45 @@ async function previewWorkshopImageStyleFilters(
   return renderImageStyleFilterPreviews(context, sourceBuffer, brandColors, signal)
 }
 
-function createRequestAbortController(request: FastifyRequest): {
+// Am Response-Stream statt am Request lauschen: der Multipart-Body ist hier bereits vollstaendig
+// gelesen, und danach feuert Node auf request.raw weder 'aborted' noch 'close' -- ein getrennter
+// Client liess die komplette G'MIC-Galerie trotzdem weiterrechnen. Ein 'close' der Antwort vor
+// ihrem Ende bedeutet dagegen immer, dass die Verbindung weg ist.
+function createRequestAbortController(reply: FastifyReply): {
   signal: AbortSignal
   dispose: () => void
 } {
   const controller = new AbortController()
-  if (request.raw.aborted || (request.raw.destroyed && !request.raw.complete)) controller.abort()
-  const abortOnDisconnect = () => controller.abort()
-  const abortOnClose = () => {
-    if (request.raw.aborted || !request.raw.complete) abortOnDisconnect()
+  const abortOnDisconnect = () => {
+    if (!reply.raw.writableEnded) controller.abort()
   }
-  request.raw.once('aborted', abortOnDisconnect)
-  request.raw.once('close', abortOnClose)
+  if (reply.raw.destroyed) abortOnDisconnect()
+  reply.raw.once('close', abortOnDisconnect)
   return {
     signal: controller.signal,
-    dispose: () => {
-      request.raw.off('aborted', abortOnDisconnect)
-      request.raw.off('close', abortOnClose)
-    },
+    dispose: () => reply.raw.off('close', abortOnDisconnect),
   }
+}
+
+// Beide Werkstatt-Routen nehmen dasselbe lokal zugeschnittene Foto entgegen. Eine Datei, die sharp
+// nicht lesen kann, ist 422 invalid_image; die Pixelgrenze gilt schon vor dem Berechtigungscheck,
+// damit kein Rendering an einem zu grossen Foto startet.
+async function readWorkshopUpload<Schema extends z.ZodType>(
+  request: FastifyRequest,
+  schema: Schema,
+): Promise<MultipartUploadResult<z.output<Schema>>> {
+  const upload = await readMultipartUpload(request, schema, {
+    fileSize: 100 * 1024 * 1024,
+    unsupportedMimetypeError: 'unsupported_image_type',
+  })
+  if (!upload.ok) return upload
+  try {
+    await assertImageStyleInputSize(upload.buffer)
+  } catch (error) {
+    if (error instanceof ImageTooLargeError) return { ok: false, status: 413, error: 'image_too_large' }
+    return { ok: false, status: 422, error: 'invalid_image' }
+  }
+  return upload
 }
 
 // Plan 045, PR 1: CRUD fuer Bildstil-Presets. Eigenes Modul statt in brand.ts (Modulgrenze wie
@@ -370,41 +420,9 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
     if (!checkRateLimit(`image-style-workshop-filter:${request.auth!.userId}`, 30, 60_000)) {
       return reply.code(429).send({ error: 'rate_limited', correlationId: request.id })
     }
-    const filePart = await request.file({ limits: { fileSize: 100 * 1024 * 1024 } })
-    if (!filePart)
-      return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
-
-    let input: z.infer<typeof WorkshopFilterFieldsSchema>
-    let sourceBuffer: Buffer
-    try {
-      sourceBuffer = await filePart.toBuffer()
-      const parsed = WorkshopFilterMultipartSchema.safeParse(
-        Object.fromEntries(
-          [...Object.entries(filePart.fields), ['mimetype', filePart.mimetype]].map(
-            ([key, field]) => [
-              key,
-              field && typeof field === 'object' && 'value' in field ? field.value : field,
-            ],
-          ),
-        ),
-      )
-      if (
-        !parsed.success &&
-        parsed.error.issues.some((issue) => issue.path[0] === 'mimetype')
-      )
-        return reply.code(400).send({ error: 'unsupported_image_type', correlationId: request.id })
-      if (!parsed.success) throw parsed.error
-      input = parsed.data
-      const metadata = await sharp(sourceBuffer, { limitInputPixels: MAX_IMAGE_STYLE_INPUT_PIXELS }).metadata()
-      if (!metadata.width || !metadata.height || metadata.width * metadata.height > MAX_IMAGE_STYLE_INPUT_PIXELS)
-        return reply.code(413).send({ error: 'image_too_large', correlationId: request.id })
-    } catch (error) {
-      if (error instanceof Error && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE')
-        return reply.code(413).send({ error: 'file_too_large', correlationId: request.id })
-      if (error instanceof z.ZodError)
-        return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
-      return reply.code(422).send({ error: 'invalid_image', correlationId: request.id })
-    }
+    const upload = await readWorkshopUpload(request, WorkshopFilterMultipartSchema)
+    if (!upload.ok) return reply.code(upload.status).send({ error: upload.error, correlationId: request.id })
+    const { buffer: sourceBuffer, fields: input } = upload
 
     const client = supabaseClients.forUser(request.auth!.accessToken)
     const resolvedScope = await resolveDirectoryScope(client, input.organizationId, input.departmentId ?? null, null)
@@ -445,41 +463,9 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
     if (!checkRateLimit(`image-style-workshop-filter-previews:${request.auth!.userId}`, 6, 60_000)) {
       return reply.code(429).send({ error: 'rate_limited', correlationId: request.id })
     }
-    const filePart = await request.file({ limits: { fileSize: 100 * 1024 * 1024 } })
-    if (!filePart)
-      return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
-
-    let input: z.infer<typeof WorkshopFilterPreviewsFieldsSchema>
-    let sourceBuffer: Buffer
-    try {
-      sourceBuffer = await filePart.toBuffer()
-      const parsed = WorkshopFilterPreviewsMultipartSchema.safeParse(
-        Object.fromEntries(
-          [...Object.entries(filePart.fields), ['mimetype', filePart.mimetype]].map(
-            ([key, field]) => [
-              key,
-              field && typeof field === 'object' && 'value' in field ? field.value : field,
-            ],
-          ),
-        ),
-      )
-      if (
-        !parsed.success &&
-        parsed.error.issues.some((issue) => issue.path[0] === 'mimetype')
-      )
-        return reply.code(400).send({ error: 'unsupported_image_type', correlationId: request.id })
-      if (!parsed.success) throw parsed.error
-      input = parsed.data
-      const metadata = await sharp(sourceBuffer, { limitInputPixels: MAX_IMAGE_STYLE_INPUT_PIXELS }).metadata()
-      if (!metadata.width || !metadata.height || metadata.width * metadata.height > MAX_IMAGE_STYLE_INPUT_PIXELS)
-        return reply.code(413).send({ error: 'image_too_large', correlationId: request.id })
-    } catch (error) {
-      if (error instanceof Error && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE')
-        return reply.code(413).send({ error: 'file_too_large', correlationId: request.id })
-      if (error instanceof z.ZodError)
-        return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
-      return reply.code(422).send({ error: 'invalid_image', correlationId: request.id })
-    }
+    const upload = await readWorkshopUpload(request, WorkshopFilterPreviewsMultipartSchema)
+    if (!upload.ok) return reply.code(upload.status).send({ error: upload.error, correlationId: request.id })
+    const { buffer: sourceBuffer, fields: input } = upload
 
     const client = supabaseClients.forUser(request.auth!.accessToken)
     const resolvedScope = await resolveDirectoryScope(client, input.organizationId, input.departmentId ?? null, null)
@@ -487,7 +473,7 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
       return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     if (!(await requirePermission(request, reply, 'post.create', resolvedScope))) return
 
-    const requestAbort = createRequestAbortController(request)
+    const requestAbort = createRequestAbortController(reply)
     try {
       const result = await previewWorkshopImageStyleFilters(
         supabaseClients.forService(),
@@ -543,29 +529,8 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
       return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     if (!(await requirePermission(request, reply, 'brand.manage', resolvedScope))) return
 
-    // logoBrandAssetId ist nicht mehr auf kind='watermark' gepinnt (2026082002) -- jede Logovariante
-    // aus LOGO_ASSET_KINDS ist zulaessig, u.a. das ueber die Marke-Seite hochgeladene Hauptlogo.
-    for (const [assetId, isExpectedKind] of [
-      [input.frameBrandAssetId, (kind: string) => kind === 'frame'],
-      [input.logoBrandAssetId, (kind: string) => LOGO_ASSET_KINDS.has(kind)],
-    ] as const) {
-      if (!assetId) continue
-      const targetScope = resolvedScope.teamId
-        ? 'team'
-        : resolvedScope.departmentId
-          ? 'department'
-          : 'organization'
-      const asset = await loadSelectableBrandAsset(
-        client,
-        input.organizationId,
-        assetId,
-        targetScope,
-        resolvedScope.departmentId,
-        resolvedScope.teamId,
-      )
-      if (!asset || !isExpectedKind(asset.kind))
-        return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
-    }
+    if (!(await validateBrandAssetReferences(client, input.organizationId, resolvedScope, presetAssetReferences(input))))
+      return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
 
     const insert = await client
       .from('image_style_presets')
@@ -597,7 +562,7 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
       entityType: 'image_style_preset',
       entityId: insert.data.id as string,
       metadata: {
-        scope: input.teamId ? 'team' : input.departmentId ? 'department' : 'organization',
+        scope: scopeLevelOf(input),
       },
     })
     return reply.code(201).send(ImageStylePresetSchema.parse(mapImageStylePresetRow(insert.data)))
@@ -628,27 +593,8 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
       return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     if (!(await requirePermission(request, reply, 'brand.manage', resolvedScope))) return
 
-    for (const [assetId, isExpectedKind] of [
-      [input.frameBrandAssetId, (kind: string) => kind === 'frame'],
-      [input.logoBrandAssetId, (kind: string) => LOGO_ASSET_KINDS.has(kind)],
-    ] as const) {
-      if (!assetId) continue
-      const targetScope = resolvedScope.teamId
-        ? 'team'
-        : resolvedScope.departmentId
-          ? 'department'
-          : 'organization'
-      const asset = await loadSelectableBrandAsset(
-        client,
-        input.organizationId,
-        assetId,
-        targetScope,
-        resolvedScope.departmentId,
-        resolvedScope.teamId,
-      )
-      if (!asset || !isExpectedKind(asset.kind))
-        return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
-    }
+    if (!(await validateBrandAssetReferences(client, input.organizationId, resolvedScope, presetAssetReferences(input))))
+      return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
 
     // Kein Idempotency-Key/In-Flight-Dedupe wie bei den LLM-Vorschauen (previewStyleProfile,
     // routes/shared.ts): dort schuetzt es vor einem zweiten BEZAHLTEN Provider-Aufruf bei einem
@@ -660,11 +606,9 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
       const result = await previewImageStyle(supabaseClients.forService(), context, input, resolvedScope)
       return reply.code(200).send(PreviewImageStylePresetResponseSchema.parse(result))
     } catch (error) {
-      if (error instanceof GmicNotEnabledError)
-        return reply.code(422).send({ error: 'gmic_not_enabled', correlationId: request.id })
-      if (error instanceof Error && error.message === 'brand_asset_not_ready')
-        return reply.code(422).send({ error: 'brand_asset_not_ready', correlationId: request.id })
-      throw error
+      const rejection = renderRejection(error)
+      if (!rejection) throw error
+      return reply.code(rejection.status).send({ error: rejection.error, correlationId: request.id })
     }
   })
 
@@ -721,23 +665,8 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
     if (!(await requirePermission(request, reply, 'brand.manage', scope))) return
     const input = UpdateImageStylePresetRequestSchema.parse(request.body)
 
-    for (const [assetId, isExpectedKind] of [
-      [input.frameBrandAssetId, (kind: string) => kind === 'frame'],
-      [input.logoBrandAssetId, (kind: string) => LOGO_ASSET_KINDS.has(kind)],
-    ] as const) {
-      if (!assetId) continue
-      const targetScope = scope.teamId ? 'team' : scope.departmentId ? 'department' : 'organization'
-      const asset = await loadSelectableBrandAsset(
-        client,
-        scope.organizationId,
-        assetId,
-        targetScope,
-        scope.departmentId,
-        scope.teamId,
-      )
-      if (!asset || !isExpectedKind(asset.kind))
-        return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
-    }
+    if (!(await validateBrandAssetReferences(client, scope.organizationId, scope, presetAssetReferences(input))))
+      return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
 
     const payload: Record<string, unknown> = {
       name: input.name,
@@ -875,6 +804,8 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
     // Veroeffentlichung. Ohne diese Pruefung koennte die postMediaId einer archivierten,
     // freigegebenen Fassung uebergeben werden und wuerde deren Bildstand nachtraeglich
     // umschreiben, obwohl publications und approval_media_snapshots weiter darauf zeigen.
+    // Vorabpruefung fuer eine fruehe Antwort; verbindlich prueft apply_image_style_render
+    // (2026101940) erneut, denn waehrend des Renderings kann eine neue Fassung entstehen.
     if (postRow.current_version_id !== mediaRow.post_version_id) {
       return reply.code(409).send({ error: 'post_version_not_current', correlationId: request.id })
     }
@@ -895,18 +826,7 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
       return reply
         .code(400)
         .send({ error: 'image_style_preset_not_active', correlationId: request.id })
-    const targetScope = scope.teamId ? 'team' : scope.departmentId ? 'department' : 'organization'
-    const presetSelectable = isBrandAssetSelectable(
-      {
-        scope: preset.teamId ? 'team' : preset.departmentId ? 'department' : 'organization',
-        ...(preset.departmentId ? { departmentId: preset.departmentId } : {}),
-        ...(preset.teamId ? { teamId: preset.teamId } : {}),
-      },
-      targetScope,
-      scope.departmentId,
-      scope.teamId,
-    )
-    if (!presetSelectable)
+    if (!isSelectableInScope(preset, scope))
       return reply
         .code(400)
         .send({ error: 'image_style_preset_not_selectable', correlationId: request.id })
@@ -954,29 +874,35 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
     if (download.error) throw download.error
     const sourceBuffer = Buffer.from(await download.data.arrayBuffer())
 
-    const [frameAssetBuffer, logoAssetBuffer, brandColors] = await Promise.all([
-      preset.frameType === 'custom' && preset.frameBrandAssetId
-        ? downloadBrandAssetBuffer(service, organizationId, preset.frameBrandAssetId)
-        : Promise.resolve(undefined),
-      preset.logoEnabled && preset.logoBrandAssetId
-        ? downloadBrandAssetBuffer(service, organizationId, preset.logoBrandAssetId)
-        : Promise.resolve(undefined),
-      loadResolvedBrandColors(
-        service,
-        organizationId,
-        scope.departmentId ?? null,
-        scope.teamId ?? null,
-      ),
-    ])
-
-    const rendered = await renderImageStyle({
-      sourceBuffer,
-      preset,
-      brandColors,
-      ...(context.imageEffects ? { imageEffects: context.imageEffects } : {}),
-      ...(frameAssetBuffer ? { frameAssetBuffer } : {}),
-      ...(logoAssetBuffer ? { logoAssetBuffer } : {}),
-    })
+    let rendered: ImageStyleRenderResult
+    try {
+      const [frameAssetBuffer, logoAssetBuffer, brandColors] = await Promise.all([
+        preset.frameType === 'custom' && preset.frameBrandAssetId
+          ? downloadBrandAssetBuffer(service, organizationId, preset.frameBrandAssetId)
+          : Promise.resolve(undefined),
+        preset.logoEnabled && preset.logoBrandAssetId
+          ? downloadBrandAssetBuffer(service, organizationId, preset.logoBrandAssetId)
+          : Promise.resolve(undefined),
+        loadResolvedBrandColors(
+          service,
+          organizationId,
+          scope.departmentId ?? null,
+          scope.teamId ?? null,
+        ),
+      ])
+      rendered = await renderImageStyle({
+        sourceBuffer,
+        preset,
+        brandColors,
+        ...(context.imageEffects ? { imageEffects: context.imageEffects } : {}),
+        ...(frameAssetBuffer ? { frameAssetBuffer } : {}),
+        ...(logoAssetBuffer ? { logoAssetBuffer } : {}),
+      })
+    } catch (error) {
+      const rejection = renderRejection(error)
+      if (!rejection) throw error
+      return reply.code(rejection.status).send({ error: rejection.error, correlationId: request.id })
+    }
     const outputSha256 = hashLogoBuffer(rendered.buffer)
     // renderImageStyle liefert nur noch image/jpeg oder image/png -- genau die beiden Typen, die
     // der 'rendered-media'-Bucket zulaesst (202608020002_private_storage.sql).

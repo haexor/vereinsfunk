@@ -9,6 +9,7 @@ import {
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
+import { parseSupabaseData } from '../supabase.js'
 import { resolveScopedEffectiveConfig, resolveTextGenerationPlatformAvailability, resolveTextGenerationProviderConfigurationIds } from '../routes/shared.js'
 
 export const SYSTEM_STYLE_PROFILES: Record<string, { name: string; description: string; styleRules: StyleProfileRules; avoidRules: string[]; doRules: string[] }> = {
@@ -46,14 +47,6 @@ export function isStyleProfileUsableInScope(
 ): boolean {
   return (profile.department_id === null || profile.department_id === departmentId)
     && (profile.team_id === null || profile.team_id === teamId)
-}
-
-function parseSupabaseData<T>(schema: z.ZodType<T>, data: unknown): T {
-  const parsed = schema.safeParse(data)
-  if (parsed.success) return parsed.data
-  const error = new Error('Unexpected Supabase response')
-  error.name = 'SupabaseResponseError'
-  throw error
 }
 
 export async function createTextGenerationSession(

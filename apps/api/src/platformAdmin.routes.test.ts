@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createSecretBox } from '@vereinsfunk/secrets'
 import { INVITATION_ID, ORGANIZATION_ID, USER_ID, adminProvider, chain, defaultAdminProvider, nonAdminProvider, signAccessToken, startApp } from './testSupport.js'
-import { ciphertextToBytea } from './secretBox.js'
+import { ciphertextToBytea } from '@vereinsfunk/secrets'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
 
@@ -831,6 +831,64 @@ describe('platform administration', () => {
     expect(response.json()).toMatchObject({ protocol: 'anthropic', hasSecret: true })
   })
 
+  it('rotates only the API key without an empty row update', async () => {
+    const configRow = {
+      id: 'a0000000-0000-4000-8000-000000000001', label: 'OpenAI', protocol: 'openai', base_url: 'https://api.openai.com/v1',
+      model: 'gpt-5-mini', purpose: 'default', task_kind: 'text_generation', structured_output_required: true, is_active: true,
+    }
+    let secretUpserted = false
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({
+        from: (table: string) => {
+          if (table === 'llm_provider_configurations') {
+            return {
+              select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: configRow, error: null }) }) }),
+              update: () => { throw new Error('a key-only patch must not update the configuration row') },
+            }
+          }
+          if (table === 'llm_provider_secrets') {
+            return {
+              upsert: async () => { secretUpserted = true; return { error: null } },
+              select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { llm_provider_configuration_id: configRow.id }, error: null }) }) }),
+            }
+          }
+          throw new Error(`unexpected table in test fake: ${table}`)
+        },
+      }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'PATCH', url: `/v1/llm-providers/${configRow.id}`,
+      headers: { authorization: `Bearer ${token}` }, payload: { apiKey: 'rotated-secret' },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ id: configRow.id, label: 'OpenAI', hasSecret: true })
+    expect(secretUpserted).toBe(true)
+  })
+
+  // generation_candidates und der Herkunftsnachweis halten die Konfiguration per on delete restrict.
+  it('maps deleting a provider that generated content to 409 instead of 500', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({
+        from: (table: string) => {
+          if (table !== 'llm_provider_configurations') throw new Error(`unexpected table in test fake: ${table}`)
+          return { delete: () => ({ eq: async () => ({ error: { code: '23503', message: 'update or delete on table "llm_provider_configurations" violates foreign key constraint' } }) }) }
+        },
+      }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ platformAdminProvider: adminProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'DELETE', url: '/v1/llm-providers/a0000000-0000-4000-8000-000000000001',
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'llm_provider_in_use' })
+  })
+
   it('refuses to list models behind a base url that points into the internal network', async () => {
     // Die Adresse kommt aus dem Formular: ohne diese Pruefung waere die Modell-Abfrage ein
     // Server-zu-Server-Proxy ins eigene Netz, auch fuer eine Plattform-Administration.
@@ -844,6 +902,32 @@ describe('platform administration', () => {
     })
     expect(response.statusCode).toBe(400)
     expect(response.json()).toMatchObject({ error: 'base_url_not_allowed' })
+  })
+
+  // Eine Basis-URL darf den Schluessel als Query-Parameter tragen; die Fehlermeldung von
+  // fetchPublicUrl enthaelt die volle URL und darf deshalb nie ins Log.
+  it('logs only the failure reason and host when the model listing fails', async () => {
+    const app = await startApp({ platformAdminProvider: adminProvider })
+    const warnings: unknown[] = []
+    app.addHook('preHandler', async (request) => {
+      request.log.warn = ((...args: unknown[]) => { warnings.push(args) }) as typeof request.log.warn
+    })
+    const token = await signAccessToken(USER_ID)
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('connect ECONNREFUSED https://8.8.8.8/v1/models?key=leaked-query-key') }))
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/llm-providers/models',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { protocol: 'openai', baseUrl: 'https://8.8.8.8/v1?key=leaked-query-key', apiKey: 'super-secret-bearer-token' },
+      })
+      expect(response.statusCode).toBe(502)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+    expect(warnings).toHaveLength(1)
+    expect(JSON.stringify(warnings)).not.toContain('leaked-query-key')
+    expect(warnings[0]).toEqual([expect.objectContaining({ reason: 'request_failed', host: '8.8.8.8' }), 'llm provider model listing failed'])
   })
 
   it('refuses to list models without platform administration', async () => {

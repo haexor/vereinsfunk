@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { monthRange, placementBadgeClass, placementRowClass, rankingRange } from './playerboardRanking'
+import { monthRange, placementBadgeClass, placementRowClass, playerLabel, rankingRange } from './playerboardRanking'
 
 const base = { seasonFrom: '2026-08-01', month: '2026-02', customFrom: '', customTo: '' }
 
@@ -39,5 +39,12 @@ describe('placement colours', () => {
     expect(placementBadgeClass(7)).toBe(placementBadgeClass(4))
     expect(new Set([1, 2, 3].map(placementRowClass)).size).toBe(3)
     expect(placementRowClass(4)).toBe('')
+  })
+})
+
+describe('playerLabel', () => {
+  it('prefixes the jersey number and leaves it out when there is none', () => {
+    expect(playerLabel({ jerseyNumber: 7, firstName: 'Max', lastName: 'Muster' })).toBe('#7 Max Muster')
+    expect(playerLabel({ jerseyNumber: null, firstName: 'Max', lastName: 'Muster' })).toBe('Max Muster')
   })
 })

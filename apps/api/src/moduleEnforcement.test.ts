@@ -139,7 +139,7 @@ describe('module selection routes', () => {
     }
     /** Ordnet Tabellen ihren Testdaten zu und erfasst Audit-Inserts, sofern angefordert. */
     const tables = (table: string) => {
-      if (table === 'organizations') return chain({ data: { name: 'SV Test' }, error: null })
+      if (table === 'organizations') return chain({ data: { name: 'SV Test', slug: 'sv-test' }, error: null })
       if (table === 'departments') return rows([{ id: DEPARTMENT_ID, name: 'Fussball', organization_id: ORGANIZATION_ID }])
       if (table === 'teams') return rows([{ id: TEAM_ID, name: 'U13', organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID }])
       if (table === 'policy_settings') return chain({ data: options.policyRows ?? [], error: null })

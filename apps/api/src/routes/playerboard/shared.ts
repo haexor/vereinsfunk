@@ -1,14 +1,19 @@
-import { PlayerboardTrainingSchema } from '@vereinsfunk/contracts'
 import {
-  resolvePlayerboardSettings,
-  type PlayerboardReplaceableField,
-  type PlayerboardSettingsLevel,
-  type PlayerboardStatsVisibility,
-} from '@vereinsfunk/domain'
+  PlayerboardOverridableFieldSchema,
+  PlayerboardStatsVisibilitySchema,
+  PlayerboardTrainingSchema,
+  ScopeLevelSchema,
+  UuidSchema,
+} from '@vereinsfunk/contracts'
+import { resolvePlayerboardSettings, type PlayerboardSettingsLevel } from '@vereinsfunk/domain'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyReply, FastifyRequest } from 'fastify'
+import { z } from 'zod'
 import type { PermissionScope } from '../../auth.js'
+import { indexByScopeLevel, type ScopeLevelIndex } from '../../moduleStatus.js'
+import { parseSupabaseData } from '../../supabase.js'
 import type { ApiRouteContext } from '../context.js'
+import { resolveMembershipScope } from '../shared.js'
 
 /**
  * Paket 052: gemeinsame Bausteine der PlayerBoard-Routen.
@@ -19,10 +24,19 @@ import type { ApiRouteContext } from '../context.js'
  * Scope-Pfad; Berechtigung pruefen requirePermission bzw. requireStatsAccess danach.
  */
 export async function loadTeamScope(service: SupabaseClient, teamId: string): Promise<Required<PermissionScope> | null> {
-  const team = await service.from('teams').select('organization_id, department_id').eq('id', teamId).maybeSingle()
-  if (team.error) throw team.error
-  if (!team.data) return null
-  return { organizationId: team.data.organization_id as string, departmentId: team.data.department_id as string, teamId }
+  const scope = await resolveMembershipScope(service, 'team', teamId)
+  return scope?.departmentId ? { organizationId: scope.organizationId, departmentId: scope.departmentId, teamId } : null
+}
+
+/** Laedt den Mannschaftsscope eines Trainings vor der Rechtepruefung; sendet bei Fehlen 404 und liefert null. */
+export async function loadTrainingScope(
+  service: SupabaseClient, request: FastifyRequest, reply: FastifyReply, trainingId: string,
+): Promise<Required<PermissionScope> | null> {
+  const training = await service.from('playerboard_trainings').select('team_id').eq('id', trainingId).maybeSingle()
+  if (training.error) throw training.error
+  const scope = training.data ? await loadTeamScope(service, training.data.team_id as string) : null
+  if (!scope) reply.code(404).send({ error: 'not_found', correlationId: request.id })
+  return scope
 }
 
 /**
@@ -37,11 +51,7 @@ export async function requireStatsAccess(
   reply: FastifyReply,
   scope: Required<PermissionScope>,
 ): Promise<boolean> {
-  const { enabled } = await context.moduleStatusProvider.modulesForScope(scope)
-  if (!enabled.includes('playerboard')) {
-    reply.code(403).send({ error: 'module_disabled', module: 'playerboard', correlationId: request.id })
-    return false
-  }
+  if (!(await requirePlayerboardModule(context, request, reply, scope))) return false
   const client = context.supabaseClients.forUser(request.auth!.accessToken)
   const allowed = await client.rpc('playerboard_can_view_stats', { target_team_id: scope.teamId })
   if (allowed.error) throw allowed.error
@@ -121,26 +131,23 @@ export function sendDatabaseError(
 
 export const SETTINGS_COLUMNS = 'scope, department_id, team_id, season_start, stats_visibility, overridable_fields, team_categories_allowed, public_sharing_allowed, public_points_enabled, public_veo_stats_enabled, public_photos_enabled, public_slug'
 
-export interface PlayerboardSettingsRow {
-  scope: 'organization' | 'department' | 'team'
-  department_id: string | null
-  team_id: string | null
-  season_start: string | null
-  stats_visibility: PlayerboardStatsVisibility | null
-  overridable_fields: PlayerboardReplaceableField[]
-  team_categories_allowed: boolean | null
-  public_sharing_allowed: boolean | null
-  public_points_enabled: boolean | null
-  public_veo_stats_enabled: boolean | null
-  public_photos_enabled: boolean | null
-  public_slug: string | null
-}
+const PlayerboardSettingsRowSchema = z.object({
+  scope: ScopeLevelSchema,
+  department_id: UuidSchema.nullable(),
+  team_id: UuidSchema.nullable(),
+  season_start: z.iso.date().nullable(),
+  stats_visibility: PlayerboardStatsVisibilitySchema.nullable(),
+  overridable_fields: z.array(PlayerboardOverridableFieldSchema),
+  team_categories_allowed: z.boolean().nullable(),
+  public_sharing_allowed: z.boolean().nullable(),
+  public_points_enabled: z.boolean().nullable(),
+  public_veo_stats_enabled: z.boolean().nullable(),
+  public_photos_enabled: z.boolean().nullable(),
+  public_slug: z.string().nullable(),
+})
+export type PlayerboardSettingsRow = z.infer<typeof PlayerboardSettingsRowSchema>
 
-export interface OrganizationPlayerboardSettings {
-  organization: PlayerboardSettingsRow | null
-  departmentById: ReadonlyMap<string, PlayerboardSettingsRow>
-  teamById: ReadonlyMap<string, PlayerboardSettingsRow>
-}
+export type OrganizationPlayerboardSettings = ScopeLevelIndex<PlayerboardSettingsRow>
 
 /**
  * Alle Einstellungszeilen eines Vereins in einer Abfrage, ueber den Service-Client: die Policy
@@ -149,19 +156,14 @@ export interface OrganizationPlayerboardSettings {
 export async function loadOrganizationPlayerboardSettings(service: SupabaseClient, organizationId: string): Promise<OrganizationPlayerboardSettings> {
   const rows = await service.from('playerboard_settings').select(SETTINGS_COLUMNS).eq('organization_id', organizationId)
   if (rows.error) throw rows.error
-  const typed = rows.data as unknown as PlayerboardSettingsRow[]
-  return {
-    organization: typed.find((row) => row.scope === 'organization') ?? null,
-    departmentById: new Map(typed.filter((row) => row.scope === 'department').map((row) => [row.department_id!, row])),
-    teamById: new Map(typed.filter((row) => row.scope === 'team').map((row) => [row.team_id!, row])),
-  }
+  return indexByScopeLevel(parseSupabaseData(z.array(PlayerboardSettingsRowSchema), rows.data), (row) => row)
 }
 
 /** Uebertraegt vererbbare Datenbankfelder in eine Domain-Einstellungsebene; fehlende Zeilen ergeben null. */
 export function toSettingsLevel(row: PlayerboardSettingsRow | null | undefined): PlayerboardSettingsLevel | null {
   if (!row) return null
   return {
-    seasonStart: row.season_start, statsVisibility: row.stats_visibility, overridableFields: row.overridable_fields ?? [],
+    seasonStart: row.season_start, statsVisibility: row.stats_visibility, overridableFields: row.overridable_fields,
     teamCategoriesAllowed: row.team_categories_allowed, publicSharingAllowed: row.public_sharing_allowed,
   }
 }

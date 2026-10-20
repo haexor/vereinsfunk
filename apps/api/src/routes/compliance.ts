@@ -183,6 +183,11 @@ export function registerComplianceRoutes(app: FastifyInstance, context: ApiRoute
       .select(PROCESSOR_AGREEMENT_COLUMNS)
       .single()
     if (insert.error) {
+      // Ohne Zeile verweist nichts mehr auf das Vertragsdokument -- keine Aufbewahrungsregel faende es.
+      if (documentPath) {
+        const removed = await service.storage.from('raw-media').remove([documentPath])
+        if (removed.error) request.log.error({ err: removed.error, correlationId: request.id }, 'processor agreement document cleanup failed')
+      }
       if (insert.error.code === '23514') return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
       throw insert.error
     }

@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto'
+import { ZodError } from 'zod'
 import { AnthropicStructuredContentGenerator, ContentGenerationError, OpenAiCompatibleStructuredContentGenerator, TEXT_PROMPT_TEMPLATE_VERSION, createTextGroundedContentBrief, type StructuredContentGenerator } from '@vereinsfunk/content-engine'
 import { deriveTextGenerationMaxOutputTokens, providerSendsTemperature, StoredSourceMaterialSchema, StyleProfileSnapshotSchema, UuidSchema, type GeneratedPost, type WorkflowPayload } from '@vereinsfunk/contracts'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
 import { createLogger } from '@vereinsfunk/observability'
 import { openProviderSecret } from './providerSecrets.js'
-import { WorkflowExecutionError } from './workflows.js'
+import { classifyWorkflowError, WorkflowExecutionError, type WorkflowAttempt } from './workflows.js'
 
 const logger = createLogger({ name: 'worker' })
 
@@ -63,7 +64,7 @@ export class TextGenerationExecutor {
   /** `generator` ueberschreibt die Protokollauswahl vollstaendig und ist die Testklammer. */
   constructor(private readonly config: WorkerEnvironment, private readonly repository: TextGenerationRepository, private readonly generator?: StructuredContentGenerator) {}
 
-  async execute(payload: WorkflowPayload) {
+  async execute(payload: WorkflowPayload, attempt: WorkflowAttempt = { final: false }) {
     if (!payload.candidateId) throw new WorkflowExecutionError('generation_candidate_not_found', false)
     if (!hasGenerationPurpose(payload)) throw new WorkflowExecutionError('invalid_generation_purpose', false)
     const session = await this.repository.loadSession(payload.entityId, payload.organizationId)
@@ -109,12 +110,20 @@ export class TextGenerationExecutor {
       }
       await this.repository.markReady(candidate.id, session.id, candidate.lease_token, post, { providerConfigurationId: provider.id, providerModelId: provider.model, providerParameterHash: parameterHash(provider, session, maxOutputTokens), promptTemplateVersion: TEXT_PROMPT_TEMPLATE_VERSION })
     } catch (error) {
-      const classified = error instanceof ContentGenerationError ? error : error instanceof WorkflowExecutionError ? error : new WorkflowExecutionError('generation_validation', false)
+      // Nur ein Schema-Fehler am gespeicherten Material ist hier deterministisch; alles Unbekannte
+      // (etwa ein PostgREST-503 beim Speichern nach einem bereits bezahlten Provider-Aufruf) wird
+      // wie in classifyWorkflowError wiederholt, statt den Kandidaten endgueltig scheitern zu lassen.
+      const classified = error instanceof ContentGenerationError || error instanceof WorkflowExecutionError ? error
+        : error instanceof ZodError ? new WorkflowExecutionError('generation_validation', false)
+          : classifyWorkflowError(error)
       // Nur die Fehlerklasse ueberlebt in Supabase/Hatchet (kein Prompt/keine Providerdaten im
       // Envelope, siehe Klassenkommentar oben) -- ohne diesen Log-Eintrag ist die eigentliche
       // Ursache nirgends mehr nachvollziehbar, sobald der Worker-Container neu startet.
       logger.error({ err: error, candidateId: candidate.id, sessionId: session.id, errorClass: classified.errorClass }, 'text generation failed')
-      if (classified.retryable) await this.repository.releaseCandidate(candidate.id, session.id, candidate.lease_token)
+      // Freigeben nur, solange Hatchet noch einen Versuch hat: ein 'pending'-Kandidat nach dem
+      // letzten Versuch holt niemand mehr ab (die Recovery reklamiert nur 'generating', und
+      // create_text_generation_session gibt die haengende Runde als lebendig zurueck).
+      if (classified.retryable && !attempt.final) await this.repository.releaseCandidate(candidate.id, session.id, candidate.lease_token)
       else await this.repository.markFailed(candidate.id, session.id, candidate.lease_token, classified.errorClass)
       throw new WorkflowExecutionError(classified.errorClass, classified.retryable)
     }

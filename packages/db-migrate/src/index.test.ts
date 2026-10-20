@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { MigrationError, runPendingMigrations } from './index.js'
+import { execMigrationCli, MigrationError, runPendingMigrations } from './index.js'
 
 describe('runPendingMigrations', () => {
   it('resolves without throwing when the runner succeeds', async () => {
@@ -46,5 +46,14 @@ describe('runPendingMigrations', () => {
     await runPendingMigrations('postgresql://example', { runner: async () => {}, log })
     expect(log).toHaveBeenCalledWith('applying pending database migrations')
     expect(log).toHaveBeenCalledWith('database migrations applied')
+  })
+
+  // Plan 036, Step 2: ein haengender Push darf den Start nicht unbegrenzt blockieren.
+  it('kills a hanging CLI after the timeout and throws a timeout MigrationError', async () => {
+    const started = Date.now()
+    const rejection = await execMigrationCli(process.execPath, ['-e', 'setTimeout(() => {}, 60_000)'], 200).catch((error: unknown) => error)
+    expect(rejection).toBeInstanceOf(MigrationError)
+    expect((rejection as Error).message).toMatch(/timed out/)
+    expect(Date.now() - started).toBeLessThan(10_000)
   })
 })

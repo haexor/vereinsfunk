@@ -154,6 +154,18 @@ describe('MetaPublisher', () => {
     expect((error as MetaPublishError).message).toMatch(/carousel container creation failed \(500\)/)
   })
 
+  it('carries the created container ID when a single-photo Instagram media_publish fails', async () => {
+    let calls = 0
+    const fetchImpl = vi.fn(async () => {
+      calls += 1
+      return calls === 1 ? Response.json({ id: 'container-1' }) : new Response('', { status: 500 })
+    }) as unknown as typeof fetch
+    const error = await publisher(fetchImpl).publish(publicationInput()).catch((err: unknown) => err)
+    expect(error).toBeInstanceOf(MetaPublishError)
+    expect((error as MetaPublishError).completedSteps).toEqual([{ label: 'publish request', externalId: 'container-1' }])
+    expect((error as MetaPublishError).message).toMatch(/media_publish failed \(500\)/)
+  })
+
   it('carries the already uploaded Facebook photo IDs when the feed post fails', async () => {
     let calls = 0
     const fetchImpl = vi.fn(async () => {

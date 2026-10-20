@@ -125,9 +125,11 @@ export const AgentActionProposalSchema = z.discriminatedUnion('toolName', [
   AgentActionProposalBaseSchema.extend({ toolName: z.literal('execute_publication'), input: AgentPublicationExecutionProposalInputSchema }),
 ])
 
+// departmentId null = Beitrag auf Vereinsebene (seit Migration 2026082504 zulaessig). Ein einziger
+// solcher Datensatz darf die Uebersicht nicht ungueltig machen.
 export const AgentPostSummarySchema = z.object({
   id: UuidSchema,
-  departmentId: UuidSchema,
+  departmentId: UuidSchema.nullable(),
   title: z.string().trim().max(200),
   status: z.string().trim().min(1).max(80),
   scheduledFor: z.iso.datetime({ offset: true }).nullable(),
@@ -147,7 +149,7 @@ export const AgentApprovalSummarySchema = z.object({
   stageId: UuidSchema,
   postId: UuidSchema,
   postVersionId: UuidSchema,
-  departmentId: UuidSchema,
+  departmentId: UuidSchema.nullable(),
   title: z.string().trim().max(200),
   label: z.string().trim().min(1).max(200),
   deadlineAt: z.iso.datetime({ offset: true }).nullable(),
@@ -156,14 +158,14 @@ export const AgentApprovalSummarySchema = z.object({
 export const AgentTextCandidateSummarySchema = z.object({
   id: UuidSchema,
   sessionId: UuidSchema,
-  departmentId: UuidSchema,
+  departmentId: UuidSchema.nullable(),
   teamId: UuidSchema.nullable(),
   headline: z.string().trim().max(200),
 })
 export const AgentDuePublicationSummarySchema = z.object({
   id: UuidSchema,
   postVersionId: UuidSchema,
-  departmentId: UuidSchema,
+  departmentId: UuidSchema.nullable(),
   teamId: UuidSchema.nullable(),
   title: z.string().trim().max(200),
   platform: OAuthPlatformSchema,
@@ -171,7 +173,7 @@ export const AgentDuePublicationSummarySchema = z.object({
 })
 export const AgentPublicationActivitySummarySchema = z.object({
   id: UuidSchema,
-  departmentId: UuidSchema,
+  departmentId: UuidSchema.nullable(),
   teamId: UuidSchema.nullable(),
   title: z.string().trim().max(200),
   platform: OAuthPlatformSchema,
@@ -188,9 +190,13 @@ export const AgentWorkspaceSchema = AgentScopeSchema.extend({
   publicationActivities: z.array(AgentPublicationActivitySummarySchema).max(20),
 })
 
+// Ein Verlauf wird immer als Fenster der juengsten Nachrichten geliefert. Laden und Antwort der API
+// nutzen dieselbe Grenze, sonst wuerde eine laengere Unterhaltung an diesem Schema scheitern.
+export const AGENT_CONVERSATION_MESSAGE_WINDOW = 100
+
 export const AgentConversationDetailSchema = z.object({
   conversation: AgentConversationSchema,
-  messages: z.array(AgentMessageSchema).max(100),
+  messages: z.array(AgentMessageSchema).max(AGENT_CONVERSATION_MESSAGE_WINDOW),
 })
 
 export type AgentScope = z.infer<typeof AgentScopeSchema>
@@ -198,6 +204,7 @@ export type AgentConversation = z.infer<typeof AgentConversationSchema>
 export type AgentMessage = z.infer<typeof AgentMessageSchema>
 export type AgentMessageRole = z.infer<typeof AgentMessageRoleSchema>
 export type AgentProposalStatus = z.infer<typeof AgentProposalStatusSchema>
+export type AgentProposalToolName = z.infer<typeof AgentProposalToolNameSchema>
 export type AgentEventProposalInput = z.infer<typeof AgentEventProposalInputSchema>
 export type AgentInvitationProposalInput = z.infer<typeof AgentInvitationProposalInputSchema>
 export type AgentApprovalProposalInput = z.infer<typeof AgentApprovalProposalInputSchema>

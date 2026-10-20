@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { AlertTriangle, LoaderCircle } from '@lucide/vue'
-import { PublicOrganizationImprintSchema, type PublicOrganizationImprint } from '@vereinsfunk/contracts'
+import { PublicOrganizationImprintSchema, UuidSchema, type PublicOrganizationImprint } from '@vereinsfunk/contracts'
 
 // Oeffentliches Impressum EINES Vereins (Plan 020, Abschnitt "3."): verlinkbar aus dessen
 // Instagram-/Facebook-Bio, ohne Anmeldung erreichbar -- kein noindex, im Gegensatz zu den
@@ -10,7 +10,11 @@ definePageMeta({ layout: 'auth' })
 
 const route = useRoute()
 const config = useRuntimeConfig()
-const organizationId = typeof route.params.organizationId === 'string' ? route.params.organizationId : ''
+// Der Parameter wird serverseitig in den API-Pfad eingesetzt. Ungeprueft liesse ein Wert wie
+// "..%2F..%2F...%3F" die Anfrage auf einen beliebigen anderen, anmeldungsfreien API-Pfad zeigen --
+// alles ausser einer UUID ist schlicht ein unbekannter Verein.
+const parsedOrganizationId = UuidSchema.safeParse(route.params.organizationId)
+const organizationId = parsedOrganizationId.success ? parsedOrganizationId.data : ''
 
 const LEGAL_FORM_LABELS: Record<NonNullable<PublicOrganizationImprint['legalForm']>, string> = {
   e_v: 'eingetragener Verein (e. V.)',

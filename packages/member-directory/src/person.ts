@@ -1,4 +1,4 @@
-import type { DomainAdapter, FieldMapping } from '@vereinsfunk/integrations'
+import { applyFieldMapping, type DomainAdapter } from '@vereinsfunk/integrations'
 import { z } from 'zod'
 
 // Erlaubte Felder, vollstaendig (plans/014, "Mitgliederverzeichnis"): Vorname, Nachname,
@@ -6,9 +6,14 @@ import { z } from 'zod'
 // dieses Package kennt keine Datenbank), Status/Austrittsdatum, eigene E-Mail (Paket 054; einen
 // Elternkontakt gibt es seitdem nicht mehr). Alles andere --
 // Adresse, IBAN, Geschlecht, Nationalitaet, Gesundheitsdaten, volles Geburtsdatum, Freitext --
-// existiert hier nicht: das Schema selbst ist die Datenminimierung. normalize() unten kopiert nur
+// existiert hier nicht: das Schema selbst ist die Datenminimierung. applyFieldMapping kopiert nur
 // gemappte Felder, und parse() wirft unbekannte Schluessel ohnehin weg -- eine falsch benannte
 // Zuordnung (z. B. auf 'iban') landet nie in einem PersonExternal.
+// directory_people.joined_at/left_at sind date-Spalten. Nur 'YYYY-MM-DD' -- "15.03.2019" liesse
+// Postgres mitten im Schreiben abbrechen, "03.04.2019" laese es still als MDY. Eine XLSX-Datumszelle
+// kommt aus fileTransport als UTC-Mitternachts-Zeitstempel und wird auf ihr Datum gekuerzt.
+const DirectoryDateSchema = z.string().trim().pipe(z.union([z.iso.date(), z.iso.datetime().transform((value) => value.slice(0, 10))]))
+
 export const PersonExternalSchema = z.object({
   externalId: z.string().trim().min(1).optional(),
   firstName: z.string().trim().min(1).max(80),
@@ -17,38 +22,21 @@ export const PersonExternalSchema = z.object({
   departmentName: z.string().trim().min(1).max(120).optional(),
   teamName: z.string().trim().min(1).max(120).optional(),
   status: z.enum(['active', 'inactive', 'left']).optional(),
-  joinedAt: z.string().trim().min(1).optional(),
-  leftAt: z.string().trim().min(1).optional(),
+  joinedAt: DirectoryDateSchema.optional(),
+  leftAt: DirectoryDateSchema.optional(),
   email: z.string().trim().toLowerCase().pipe(z.email()).optional(),
-  sourceUpdatedAt: z.string().trim().min(1).optional(),
+  // Mit Offset wie bei ExternalTeamSchema: ein ungueltiger Wert waere als Invalid Date durch
+  // sourceUpdatedAtOf gelaufen und haette den local_newer-Schutz in planSync abgeschaltet.
+  sourceUpdatedAt: z.iso.datetime({ offset: true }).optional(),
 })
 export type PersonExternal = z.infer<typeof PersonExternalSchema>
 
-/**
- * Wendet das FieldMapping (externe Spalte -> interner Feldname) auf eine rohe Zeile an. Das
- * Ergebnis ist bewusst ungeprueft -- der Aufrufer validiert es mit PersonExternalSchema.parse().
- * Werte, die keinem gemappten Feld zugeordnet sind, verschwinden einfach: dieses Package kopiert
- * nie das gesamte raw-Objekt durch.
- */
-function normalize(raw: Readonly<Record<string, unknown>>, mapping: FieldMapping): Record<string, unknown> {
-  const result: Record<string, unknown> = {}
-  for (const [externalColumn, internalField] of Object.entries(mapping)) {
-    const value = raw[externalColumn]
-    if (value !== undefined && value !== null && value !== '') result[internalField] = value
-  }
-  return result
-}
-
+// Die Identitaet (externe ID bzw. unscharfer Schluessel) steht nur in createPeopleMatchStrategy
+// (match.ts) -- eine zweite Kopie hier liefe beim naechsten Aendern auseinander.
 export const peopleDomainAdapter: DomainAdapter<PersonExternal> = {
   domain: 'people',
   schema: PersonExternalSchema,
-  normalize,
-  identityOf(entity) {
-    if (entity.externalId) return { externalId: entity.externalId }
-    // Unscharfer Schluessel: Name (kleingeschrieben) plus Geburtsjahr, falls vorhanden -- zwei
-    // gleichnamige Personen unterschiedlichen Jahrgangs sind keine Kandidaten fuereinander.
-    return { fuzzy: [entity.firstName.trim().toLowerCase(), entity.lastName.trim().toLowerCase(), String(entity.birthYear ?? '')] }
-  },
+  normalize: applyFieldMapping,
 }
 
 /**

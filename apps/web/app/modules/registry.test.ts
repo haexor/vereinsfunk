@@ -8,7 +8,6 @@ import {
   appModuleRegistry,
   canUsePermission,
   canUsePermissionAtScope,
-  enabledModulesOf,
   moduleAvailability,
   moduleForPath,
   moduleToggleState,
@@ -99,18 +98,12 @@ describe('active scope lookup', () => {
   ]
 
   it('picks the department entry in a department and the organization entry otherwise', () => {
-    expect(
-      enabledModulesOf(scopeModulesFor(entries, { organizationId: ORG, departmentId: DEPT })),
-    ).toEqual(['playerboard'])
-    expect(
-      enabledModulesOf(scopeModulesFor(entries, { organizationId: ORG, departmentId: null })),
-    ).toEqual(['social_media', 'playerboard'])
+    expect(scopeModulesFor(entries, { organizationId: ORG, departmentId: DEPT })?.scope).toBe('department')
+    expect(scopeModulesFor(entries, { organizationId: ORG, departmentId: null })?.scope).toBe('organization')
   })
 
   it('treats a missing entry as no module', () => {
-    expect(
-      enabledModulesOf(scopeModulesFor(entries, { organizationId: ORG, departmentId: 'unknown' })),
-    ).toEqual([])
+    expect(scopeModulesFor(entries, { organizationId: ORG, departmentId: 'unknown' })).toBeNull()
   })
 })
 

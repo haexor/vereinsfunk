@@ -78,6 +78,16 @@ describe('sanitizeSvg: known XSS/SSRF payload corpus', () => {
     expect(result.modified).toBe(true)
   })
 
+  // `\75 ` ist das CSS-Escape fuer "u": der Browser liest url(...), die Textpruefung sah nur "\75 rl(".
+  it.each([
+    ['style', '<rect style="fill: \\75 rl(https://evil.example/paint)" width="1" height="1"/>'],
+    ['fill', '<rect fill="\\75 rl(https://evil.example/paint)" width="1" height="1"/>'],
+  ])('drops a %s value that hides url() behind a CSS escape', (_name, element) => {
+    const result = sanitizeSvg(`<svg xmlns="http://www.w3.org/2000/svg">${element}</svg>`)
+    expect(result.sanitized).not.toContain('evil.example')
+    expect(result.modified).toBe(true)
+  })
+
   it('drops a style declaration containing @import', () => {
     const result = sanitizeSvg('<svg xmlns="http://www.w3.org/2000/svg"><rect style="@import url(evil.css);fill:#fff" width="1" height="1"/></svg>')
     assertHarmless(result.sanitized)

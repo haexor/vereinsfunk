@@ -81,6 +81,29 @@ const newProvider = reactive({
 })
 
 const usesPreset = computed(() => newProvider.presetLabel !== '')
+// Protokoll, Anbieter und Basis-URL setzen ihre Folgefelder nur zurueck, wenn die Person sie
+// aendert (Setter statt Watcher): editProvider() fuellt alle Felder auf einmal, ein Watcher liefe
+// danach trotzdem los, leerte das gespeicherte Modell und ersetzte eine eigene Proxy-URL durch das
+// erste Preset des Protokolls.
+const protocolModel = computed({
+  get: () => newProvider.protocol,
+  set: (value: LlmProviderProtocol) => {
+    newProvider.protocol = value
+    // Das bisherige Preset gehoert zum alten Protokoll und passt jetzt nicht mehr.
+    newProvider.presetLabel = visiblePresets.value[0]?.label ?? ''
+    applyPreset()
+  },
+})
+const baseUrlModel = computed({
+  get: () => newProvider.baseUrl,
+  set: (value: string) => {
+    if (value === newProvider.baseUrl) return
+    newProvider.baseUrl = value
+    // Eine geladene Modell-Liste gehoert zu genau einer Basis-URL -- nach einem Wechsel waere sie
+    // stillschweigend falsch.
+    resetModelChoice()
+  },
+})
 const presetLabelModel = computed({
   get: () => newProvider.presetLabel || '__none__',
   set: (value: string) => {
@@ -139,20 +162,10 @@ function editProvider(provider: LlmProviderConfigurationDto) {
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
-// Eine geladene Modell-Liste gehoert zu genau einer Basis-URL -- nach einem Wechsel waere sie
-// stillschweigend falsch.
-watch(() => newProvider.baseUrl, resetModelChoice)
-
 function applyPreset() {
   const preset = visiblePresets.value.find((entry) => entry.label === newProvider.presetLabel)
-  newProvider.baseUrl = preset?.baseUrl ?? ''
+  baseUrlModel.value = preset?.baseUrl ?? ''
 }
-
-// Protokollwechsel: das bisherige Preset gehoert zum alten Protokoll und passt jetzt nicht mehr.
-watch(() => newProvider.protocol, () => {
-  newProvider.presetLabel = visiblePresets.value[0]?.label ?? ''
-  applyPreset()
-})
 
 async function load() {
   loading.value = true
@@ -344,7 +357,7 @@ async function removeProvider(id: string) {
           />
 
           <label class="text-xs font-semibold text-[#5c655f]">Protokoll
-            <Select v-model="newProvider.protocol">
+            <Select v-model="protocolModel">
               <SelectTrigger class="mt-1 px-4 py-2.5 text-sm font-normal"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem v-for="option in PROTOCOL_OPTIONS" :key="option.value" :value="option.value" :disabled="!option.available">
@@ -375,7 +388,7 @@ async function removeProvider(id: string) {
           </label>
           <label class="text-xs font-semibold text-[#5c655f] sm:col-span-2">Basis-URL
             <input
-              v-model="newProvider.baseUrl"
+              v-model="baseUrlModel"
               type="url"
               required
               :disabled="usesPreset"

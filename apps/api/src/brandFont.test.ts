@@ -36,6 +36,17 @@ describe('processBrandFontUpload', () => {
     expect(reprocessed.woff2Buffer.equals(converted.woff2Buffer)).toBe(true)
   })
 
+  // usWeightClass ist ein uint16; brand_assets.font_weight erlaubt nur 100..900.
+  it('rejects a font whose OS/2 weight class lies outside 100..900', async () => {
+    const patched = Buffer.from(karlaBoldTtf)
+    const tableCount = patched.readUInt16BE(4)
+    for (let index = 0; index < tableCount; index++) {
+      const entry = 12 + index * 16
+      if (patched.toString('latin1', entry, entry + 4) === 'OS/2') patched.writeUInt16BE(1000, patched.readUInt32BE(entry + 8) + 4)
+    }
+    await expect(processBrandFontUpload(patched)).rejects.toThrow(/outside the supported range/)
+  })
+
   it('rejects a file that is not a recognizable font container', async () => {
     await expect(processBrandFontUpload(Buffer.from('not a font'))).rejects.toBeInstanceOf(UnsupportedFontFormatError)
   })

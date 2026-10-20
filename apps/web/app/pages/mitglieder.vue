@@ -4,6 +4,7 @@ import {
   InvitationSchema,
   MemberReviewTrustSchema,
   MemberSchema,
+  PlayerboardInviteResponseSchema,
   PolicySettingSchema,
   rolesForScopeLevel,
   type AssignableRole,
@@ -137,15 +138,21 @@ const availableRolesForInvite = computed(() => {
   return candidates.filter((role) => canAssignRole(actorRoles, role))
 })
 
+// Ein Vereinswechsel waehrend eines Ladevorgangs (oder ein Neuladen nach einer Aktion) darf die
+// Liste nicht mit der Antwort des vorherigen Laufs ueberschreiben.
+let latestLoadRun = 0
 async function load() {
-  if (!organizationId.value) { loading.value = false; return }
+  const loadRun = ++latestLoadRun
+  const requestedOrganizationId = organizationId.value
+  if (!requestedOrganizationId) { loading.value = false; return }
   loading.value = true
   errorMessage.value = ''
   try {
     const [membersResponse, invitationsResponse] = await Promise.all([
-      api.request(`/v1/organizations/${organizationId.value}/members`, {}, MemberSchema.array()),
-      api.request(`/v1/organizations/${organizationId.value}/invitations`, {}, InvitationSchema.array()),
+      api.request(`/v1/organizations/${requestedOrganizationId}/members`, {}, MemberSchema.array()),
+      api.request(`/v1/organizations/${requestedOrganizationId}/invitations`, {}, InvitationSchema.array()),
     ])
+    if (loadRun !== latestLoadRun) return
     members.value = membersResponse
     // Der Invitations-Endpunkt filtert nur accepted_at/revoked_at -- eine abgelaufene, aber noch
     // offene Einladung wuerde sonst weiter unter "Offene Einladungen" erscheinen, obwohl
@@ -153,22 +160,19 @@ async function load() {
     invitations.value = invitationsResponse.filter((invitation) => new Date(invitation.expiresAt) > new Date())
     // Die Richtlinien sind sekundaer: ohne sie bleibt die Mitgliederliste bedienbar, und
     // inviteAllowedFor() faellt auf "erlaubt" zurueck. Die API entscheidet ohnehin endgueltig.
-    try {
-      policySettings.value = await api.request(`/v1/organizations/${organizationId.value}/policy-settings`, {}, PolicySettingSchema.array())
-    } catch {
-      policySettings.value = []
-    }
-    // Vertrauen ist ebenfalls sekundaer -- ohne sichtbare Eintraege gilt fuer jede Person "geerbt"
-    // (Paket 011).
-    try {
-      memberReviewTrust.value = await api.request(`/v1/organizations/${organizationId.value}/member-review-trust`, {}, MemberReviewTrustSchema.array())
-    } catch {
-      memberReviewTrust.value = []
-    }
+    const [loadedPolicySettings, loadedTrust] = await Promise.all([
+      api.request(`/v1/organizations/${requestedOrganizationId}/policy-settings`, {}, PolicySettingSchema.array()).catch(() => []),
+      // Vertrauen ist ebenfalls sekundaer -- ohne sichtbare Eintraege gilt fuer jede Person
+      // "geerbt" (Paket 011).
+      api.request(`/v1/organizations/${requestedOrganizationId}/member-review-trust`, {}, MemberReviewTrustSchema.array()).catch(() => []),
+    ])
+    if (loadRun !== latestLoadRun) return
+    policySettings.value = loadedPolicySettings
+    memberReviewTrust.value = loadedTrust
   } catch {
-    errorMessage.value = 'Mitglieder und Einladungen konnten nicht geladen werden.'
+    if (loadRun === latestLoadRun) errorMessage.value = 'Mitglieder und Einladungen konnten nicht geladen werden.'
   } finally {
-    loading.value = false
+    if (loadRun === latestLoadRun) loading.value = false
   }
 }
 await load()
@@ -199,7 +203,9 @@ async function sendInvitation() {
     // Eine Team-Einladung muss die ELTERN-Abteilung mitschicken: CreateInvitationRequestSchema
     // verlangt departmentId zusammen mit teamId, und resolveInvitationScope() in apps/api prueft
     // beide gegeneinander. Ohne die Abteilung schlug jede Team-Einladung mit 400 fehl.
-    const response = await api.request<{ emailDelivered?: boolean }>('/v1/invitations', {
+    // Dieselbe Antwort wie bei der Kader-Einladung (beide ueber createInvitation in apps/api):
+    // Einladung plus emailDelivered.
+    const response = await api.request('/v1/invitations', {
       method: 'POST',
       body: {
         organizationId: organizationId.value,
@@ -208,11 +214,11 @@ async function sendInvitation() {
         email: inviteEmail.value,
         role: inviteRole.value,
       },
-    })
+    }, PlayerboardInviteResponseSchema)
     // Die Einladung existiert auch dann, wenn der SMTP-Versand fehlschlug (die API antwortet
     // dafuer mit 201 und emailDelivered: false) -- ein pauschales "Einladung versendet" waere
     // dort schlicht falsch.
-    inviteEmailDelivered.value = response?.emailDelivered !== false
+    inviteEmailDelivered.value = response.emailDelivered
     inviteSuccess.value = true
     inviteEmail.value = ''
     inviteRole.value = ''
@@ -359,10 +365,10 @@ async function saveTrust(entry: MemberRoleEntry, userId: string) {
 async function resendInvitation(id: string) {
   actionError.value = ''
   try {
-    const response = await api.request<{ emailDelivered?: boolean }>(`/v1/invitations/${id}/resend`, { method: 'POST' })
+    const response = await api.request(`/v1/invitations/${id}/resend`, { method: 'POST' }, PlayerboardInviteResponseSchema)
     // Siehe sendInvitation(): ein fehlgeschlagener SMTP-Versand ist kein Fehlerstatus, muss aber
     // sichtbar sein -- sonst wartet die eingeladene Person auf eine Mail, die nie ankam.
-    if (response?.emailDelivered === false) {
+    if (!response.emailDelivered) {
       actionError.value = 'Die Einladung wurde erneuert, aber die E-Mail konnte nicht versendet werden.'
     }
     await load()

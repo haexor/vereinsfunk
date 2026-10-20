@@ -11,7 +11,7 @@ import { z } from 'zod'
 import type { ApiRouteContext } from '../context.js'
 import { loadResolvedBrandColors } from '../imageStyle.js'
 import { checkRateLimit } from '../shared.js'
-import { PLAYERBOARD_PHOTO_BUCKET } from './photos.js'
+import { signPhotoUrls } from './photos.js'
 import { loadOrganizationPlayerboardSettings, resolveSettingsFor } from './shared.js'
 
 const SlugSchema = z.string().max(80).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
@@ -123,9 +123,7 @@ export function registerPlayerboardPublicRoutes(app: FastifyInstance, context: A
     if (photos.error) throw photos.error
     const rows = (photos.data ?? []) as { storage_path: string; training_date: string }[]
     if (rows.length === 0) return reply.code(200).send([])
-    const signed = await service.storage.from(PLAYERBOARD_PHOTO_BUCKET).createSignedUrls(rows.map((row) => row.storage_path), PUBLIC_PHOTO_URL_SECONDS)
-    if (signed.error) throw signed.error
-    const urlByPath = new Map(signed.data.map((entry) => [entry.path, entry.signedUrl]))
+    const urlByPath = await signPhotoUrls(service, rows.map((row) => row.storage_path), PUBLIC_PHOTO_URL_SECONDS)
     return reply.code(200).send(rows.flatMap((row) => {
       const url = urlByPath.get(row.storage_path)
       return url ? [PublicPlayerboardPhotoSchema.parse({ url, trainingDate: row.training_date })] : []

@@ -1,7 +1,7 @@
 import type { PhotoLayoutKind } from '@vereinsfunk/contracts'
 
 // Eigene Datei statt in PhotoLayoutPresetForm.vue: Vue raet von benannten Exporten aus
-// <script setup> ab (imageStylePresetDraft.ts folgt demselben Muster).
+// <script setup> ab (styleProfileDraft.ts folgt demselben Muster).
 export interface PhotoLayoutPresetDraft {
   name: string
   kind: PhotoLayoutKind

@@ -76,7 +76,12 @@ const filterTeamIdModel = computed({
   set: (value: string) => { filterTeamId.value = value === '__none__' ? '' : value },
 })
 
+// Jeder Filterwechsel laedt neu (ein Abteilungswechsel sogar zweimal, weil er den Team-Filter
+// leert) -- ohne Laufnummer koennte eine langsamere, aeltere Antwort die Liste zum sichtbaren
+// Filter ueberschreiben.
+let latestPeopleLoad = 0
 async function loadPeople() {
+  const loadRun = ++latestPeopleLoad
   if (!organizationId.value) { loading.value = false; return }
   loading.value = true
   errorMessage.value = ''
@@ -88,11 +93,12 @@ async function loadPeople() {
     if (filterMinor.value) query.isMinor = 'true'
     if (filterLeft.value) query.status = 'left'
     const response = await $fetch<unknown>(`${config.public.apiBase}/v1/organizations/${organizationId.value}/directory-people`, { headers, query })
+    if (loadRun !== latestPeopleLoad) return
     people.value = DirectoryPersonSchema.array().parse(response)
   } catch {
-    errorMessage.value = 'Das Verzeichnis konnte nicht geladen werden.'
+    if (loadRun === latestPeopleLoad) errorMessage.value = 'Das Verzeichnis konnte nicht geladen werden.'
   } finally {
-    loading.value = false
+    if (loadRun === latestPeopleLoad) loading.value = false
   }
 }
 await loadPeople()
@@ -185,9 +191,16 @@ const teamOptionsForEdit = computed(() => {
   return canReadDepartment(department.id) ? department.teams : department.teams.filter((team) => canReadTeam(department.id, team.id))
 })
 
+// Ein Team gehoert zu genau einer Abteilung; behielte ein Abteilungswechsel das alte Team, lehnte
+// der zusammengesetzte Fremdschluessel das Speichern ab. Im Setter statt per Watcher, weil
+// startEdit() beide Felder gleichzeitig befuellt.
 const editFormDepartmentIdModel = computed({
   get: () => editForm.departmentId || '__none__',
-  set: (value: string) => { editForm.departmentId = value === '__none__' ? '' : value },
+  set: (value: string) => {
+    const departmentId = value === '__none__' ? '' : value
+    if (departmentId !== editForm.departmentId) editForm.teamId = ''
+    editForm.departmentId = departmentId
+  },
 })
 const editFormTeamIdModel = computed({
   get: () => editForm.teamId || '__none__',

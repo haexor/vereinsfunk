@@ -3,9 +3,25 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { mapInvitationRow } from '../apiMappers.js'
 import { generateInvitationToken, invitationCallbackUrls, sendInvitationThroughSupabaseAuth } from '../invitations.js'
 
+type InvitationCreationErrorCode = 'already_a_member' | 'invitation_already_open' | 'resend_limit_reached' | 'resend_rate_limited' | 'invite_not_allowed' | 'invalid_request'
+
+// HTTP-Status je Fehlercode an einer Stelle, damit jede Route, die createInvitation aufruft
+// (Einladungen, PlayerBoard-Kader, Agent-Vorschlaege), dieselbe Antwort gibt.
+const INVITATION_CREATION_ERROR_STATUS: Readonly<Record<InvitationCreationErrorCode, number>> = {
+  already_a_member: 409,
+  invitation_already_open: 409,
+  resend_limit_reached: 429,
+  resend_rate_limited: 429,
+  invite_not_allowed: 403,
+  invalid_request: 400,
+}
+
 export class InvitationCreationError extends Error {
-  constructor(readonly code: 'already_a_member' | 'invitation_already_open' | 'resend_limit_reached' | 'resend_rate_limited' | 'invite_not_allowed' | 'invalid_request') {
+  readonly status: number
+
+  constructor(readonly code: InvitationCreationErrorCode) {
     super(code)
+    this.status = INVITATION_CREATION_ERROR_STATUS[code]
   }
 }
 
@@ -22,7 +38,7 @@ function mapCreateInvitationError(error: { code?: string | null; message?: strin
 }
 
 /**
- * Gemeinsamer Write-Use-Case für die Einladungsroute und bestätigte Agent-Proposals. Die
+ * Write-Use-Case der Einladungsroute (bestätigte Agent-Proposals laufen über dieselbe Route). Die
  * aufrufende Route bindet den Scope vorher serverseitig und prüft die Rolle des Akteurs.
  */
 export async function createInvitation(

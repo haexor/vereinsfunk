@@ -12,16 +12,17 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import {
   ALLOWED_EVIDENCE_MIME,
-  addMonthsToIsoDate,
   buildConsentRequestEmail,
+  computeConsentValidity,
+  consentRequestExpiresAt,
   currentOrganizationConsentText,
   CONSENT_REQUEST_SELECT,
+  DEFAULT_CONSENT_TEXT_VERSION,
   departmentOfDirectoryPerson,
   generatePublicToken,
   loadConsentRecordForScope,
   mapConsentRecordRow,
   mapConsentRequestRow,
-  resolveConsentValidityMonths,
   shortPersonLabel,
   type ConsentRequestRow,
 } from '../services/consent.js'
@@ -30,6 +31,7 @@ import {
   CONSENT_RECORD_SELECT,
   createAuditRecorder,
   fetchAllRows,
+  fetchAllRowsForIds,
   isAnyMemberOfOrganization,
   resolveDirectoryScope,
   toPermissionScope,
@@ -50,7 +52,7 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
     const text = await currentOrganizationConsentText(client, params.id)
     return reply.code(200).send(
       OrganizationConsentTextSchema.parse({
-        id: text.id ?? 'default-template', organizationId: params.id, body: text.body,
+        id: text.id ?? DEFAULT_CONSENT_TEXT_VERSION, organizationId: params.id, body: text.body,
         createdAt: text.createdAt, isDefaultTemplate: text.id === null,
       }),
     )
@@ -127,8 +129,7 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
     const scope = toPermissionScope(fields.organizationId, departmentId)
     if (!(await requirePermission(request, reply, 'consent.manage', scope))) return
 
-    const validityMonths = await resolveConsentValidityMonths(client, fields.organizationId, departmentId)
-    const validUntil = validityMonths === null ? null : addMonthsToIsoDate(fields.signedAt, validityMonths)
+    const validity = await computeConsentValidity(client, fields.organizationId, departmentId, fields.signedAt)
 
     const service = supabaseClients.forService()
     const consentId = randomUUID()
@@ -155,12 +156,19 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
         signer_name: fields.signerName,
         signer_role: fields.signerRole,
         guardian_confirmed: fields.guardianConfirmed,
-        valid_until: validUntil,
+        valid_from: validity.validFrom,
+        valid_until: validity.validUntil,
         created_by: request.auth!.userId,
       })
       .select(CONSENT_RECORD_SELECT)
       .single()
-    if (insert.error) throw insert.error
+    if (insert.error) {
+      // Ohne Zeile verweist nichts mehr auf die Nachweisdatei -- keine Aufbewahrungsregel faende sie
+      // je, eine private Unterschrift bliebe dauerhaft im Bucket liegen.
+      const removed = await service.storage.from('raw-media').remove([objectPath])
+      if (removed.error) request.log.error({ err: removed.error, correlationId: request.id }, 'consent evidence cleanup failed')
+      throw insert.error
+    }
 
     await recordAuditEvent(request, { organizationId: fields.organizationId, action: 'consent.registered', entityType: 'consent_records', entityId: consentId })
     return reply.code(201).send(mapConsentRecordRow(insert.data as ConsentRecordRow, new Date()))
@@ -199,12 +207,19 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
       directoryPersonIds = people.map((person) => person.id)
       if (directoryPersonIds.length === 0) return reply.code(200).send([])
     }
-    let select = service.from('consent_records').select(CONSENT_RECORD_SELECT).eq('organization_id', query.organizationId)
-    if (directoryPersonIds) select = select.in('directory_person_id', directoryPersonIds)
-    const rows = await select.order('created_at', { ascending: false })
-    if (rows.error) throw rows.error
+    // Seitenweise und in Id-Bloecken: max_rows schnitte die Liste sonst bei 1000 Zeilen still ab,
+    // und eine ganze Abteilung als eine .in()-Liste sprengt die Laenge der Request-URL.
+    const rows = directoryPersonIds
+      ? await fetchAllRowsForIds<ConsentRecordRow>(directoryPersonIds, (batch, from, to) =>
+          service.from('consent_records').select(CONSENT_RECORD_SELECT).eq('organization_id', query.organizationId).in('directory_person_id', batch).order('id', { ascending: true }).range(from, to),
+        )
+      : await fetchAllRows<ConsentRecordRow>((from, to) =>
+          service.from('consent_records').select(CONSENT_RECORD_SELECT).eq('organization_id', query.organizationId).order('id', { ascending: true }).range(from, to),
+        )
+    // Stabile Seitengrenzen brauchen die eindeutige id als Ordnung; die Antwort bleibt neueste zuerst.
+    rows.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
     const now = new Date()
-    return reply.code(200).send((rows.data as ConsentRecordRow[]).map((row) => mapConsentRecordRow(row, now)))
+    return reply.code(200).send(rows.map((row) => mapConsentRecordRow(row, now)))
   })
 
   app.get('/v1/consents/:id', async (request, reply) => {
@@ -278,6 +293,9 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (loaded === 'not_found') return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     if (!(await requirePermission(request, reply, 'consent.manage', loaded.scope))) return
     if (loaded.row.superseded_by !== null) return reply.code(409).send({ error: 'already_superseded', correlationId: request.id })
+    // Eine widerrufene Einwilligung bleibt widerrufen: die Nachfolgerin truege keinen revoked_at
+    // und machte den Widerruf stillschweigend rueckgaengig ("Widerruf gewinnt immer", Plan 015).
+    if (loaded.row.revoked_at !== null) return reply.code(409).send({ error: 'already_revoked', correlationId: request.id })
 
     // Derselbe Fund/derselbe Guard wie bei POST /v1/consents und POST /v1/consent-requests: die
     // Abloesung darf eine minderjaehrige Person nicht nachtraeglich auf signerRole='self' setzen.
@@ -289,6 +307,7 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
       }
     }
 
+    const validity = await computeConsentValidity(client, loaded.row.organization_id, loaded.scope.departmentId ?? null, input.signedAt)
     const service = supabaseClients.forService()
     const evidenceOfOriginal = await service.from('consent_records').select('evidence_bucket, evidence_path').eq('id', params.id).single()
     if (evidenceOfOriginal.error) throw evidenceOfOriginal.error
@@ -313,6 +332,8 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
         signer_name: input.signerName,
         signer_role: input.signerRole,
         guardian_confirmed: input.guardianConfirmed,
+        valid_from: validity.validFrom,
+        valid_until: validity.validUntil,
         created_by: request.auth!.userId,
       })
       .select(CONSENT_RECORD_SELECT)
@@ -320,9 +341,18 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (insert.error) throw insert.error
 
     // Wie bei POST /v1/consents/:id/revoke: .is('superseded_by', null) macht die Verkettung atomar.
-    // Trifft sie keine Zeile, hat eine parallele Anfrage bereits abgeloest -- die eben angelegte
-    // Zeile wird dann verworfen, statt zwei Nachfolgerinnen fuer dieselbe Einwilligung zu erzeugen.
-    const linkBack = await service.from('consent_records').update({ superseded_by: newId }).eq('id', params.id).is('superseded_by', null).select('id').maybeSingle()
+    // Trifft sie keine Zeile, hat eine parallele Anfrage bereits abgeloest oder widerrufen -- die
+    // eben angelegte Zeile wird dann verworfen, statt zwei Nachfolgerinnen fuer dieselbe
+    // Einwilligung zu erzeugen oder einen gleichzeitigen Widerruf zu ueberholen.
+    const linkBack = await service
+      .from('consent_records')
+      .update({ superseded_by: newId })
+      .eq('organization_id', loaded.row.organization_id)
+      .eq('id', params.id)
+      .is('superseded_by', null)
+      .is('revoked_at', null)
+      .select('id')
+      .maybeSingle()
     if (linkBack.error) throw linkBack.error
     if (!linkBack.data) {
       await service.from('consent_records').delete().eq('id', newId)
@@ -355,6 +385,18 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
     }
 
     const service = supabaseClients.forService()
+    // consent_requests_open_unique gilt fuer status='sent'. Ohne Ablaufjob bliebe eine abgelaufene
+    // Anfrage dort fuer immer "offen", und jede neue Anfrage an dieselbe Adresse scheiterte an 409.
+    const now = new Date()
+    const expired = await service
+      .from('consent_requests')
+      .update({ status: 'expired' })
+      .eq('organization_id', input.organizationId)
+      .eq('directory_person_id', input.directoryPersonId)
+      .eq('recipient_email', input.recipientEmail)
+      .eq('status', 'sent')
+      .lt('expires_at', now.toISOString())
+    if (expired.error) throw expired.error
     const text = await currentOrganizationConsentText(service, input.organizationId)
     const { rawToken, tokenHash } = generatePublicToken()
     const insert = await service
@@ -366,9 +408,9 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
         recipient_email: input.recipientEmail,
         recipient_role: input.recipientRole,
         requested_scope: input.requestedScope,
-        text_version: text.id ?? 'default-template',
+        text_version: text.id ?? DEFAULT_CONSENT_TEXT_VERSION,
         token_hash: tokenHash,
-        expires_at: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+        expires_at: consentRequestExpiresAt(now),
         created_by: request.auth!.userId,
         correlation_id: request.id,
       })
@@ -430,16 +472,25 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
 
     const service = supabaseClients.forService()
     const { rawToken, tokenHash } = generatePublicToken()
+    const now = new Date()
+    // Compare-and-Set auf status und send_count: eine inzwischen beantwortete Anfrage bekommt
+    // keinen neuen Token, und zwei gleichzeitige Versendungen koennen nicht beide denselben
+    // gelesenen Zaehler hochsetzen und so am Limit (CHECK send_count <= 5) vorbeisenden. Der
+    // neue Link bekommt die volle Frist, die die E-Mail verspricht.
     const update = await service
       .from('consent_requests')
-      .update({ token_hash: tokenHash, send_count: row.send_count + 1, last_sent_at: new Date().toISOString() })
+      .update({ token_hash: tokenHash, send_count: row.send_count + 1, last_sent_at: now.toISOString(), expires_at: consentRequestExpiresAt(now) })
+      .eq('organization_id', row.organization_id)
       .eq('id', params.id)
+      .eq('status', 'sent')
+      .eq('send_count', row.send_count)
       .select(CONSENT_REQUEST_SELECT)
-      .single()
+      .maybeSingle()
     if (update.error) {
       if (update.error.code === '23514') return reply.code(409).send({ error: 'resend_limit_reached', correlationId: request.id })
       throw update.error
     }
+    if (!update.data) return reply.code(409).send({ error: 'request_not_open', correlationId: request.id })
     const [person, organizationName] = await Promise.all([
       service.from('directory_people').select('first_name, last_name').eq('id', row.directory_person_id).single(),
       service.from('organizations').select('name').eq('id', row.organization_id).single(),

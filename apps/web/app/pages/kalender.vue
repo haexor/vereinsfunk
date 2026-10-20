@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { CalendarDays, ChevronLeft, ChevronRight } from '@lucide/vue'
+import { localDateKey } from '../utils/memberDates'
 
 const session = await useSession()
 const scope = await useScope()
@@ -15,15 +16,6 @@ const activeOrganization = computed(
     null,
 )
 const timezone = computed(() => activeOrganization.value?.organizationTimezone ?? 'Europe/Berlin')
-
-function localDateKey(date: Date, timeZone: string) {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(date)
-}
 
 const monthOffset = ref(0)
 

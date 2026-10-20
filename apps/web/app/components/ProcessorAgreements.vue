@@ -16,27 +16,37 @@ const agreementForm = reactive({ processorName: '', purpose: '', signedAt: '', v
 const creatingAgreement = ref(false)
 const changingAgreementId = ref<string | null>(null)
 const viewingAgreementId = ref<string | null>(null)
+// file=null leert nur den Zustand; ohne Zuruecksetzen des Elements zeigte das Feld weiter den
+// Namen der bereits hochgeladenen Datei.
+const fileInput = useTemplateRef<HTMLInputElement>('fileInput')
 
 function formatDate(value: string | null): string {
   return value ? new Date(value).toLocaleDateString('de-DE') : 'nicht angegeben'
 }
 function resetForm() {
   Object.assign(agreementForm, { processorName: '', purpose: '', signedAt: '', validUntil: '', status: 'pending', file: null })
+  if (fileInput.value) fileInput.value.value = ''
 }
-async function load() {
-  if (!props.organizationId) { agreements.value = []; return }
-  loading.value = true
+// Bei einem Vereinswechsel weder die Liste noch ein halb ausgefuelltes Formular des vorherigen
+// Vereins stehen lassen; eine spaete Antwort fuer ihn verfaellt.
+useScopedLoad(() => props.organizationId, async (organizationId, isLatest) => {
+  agreements.value = []
   actionError.value = ''
+  resetForm()
+  if (!organizationId) { loading.value = false; return }
+  loading.value = true
   try {
-    agreements.value = await api.request(`/v1/organizations/${props.organizationId}/processor-agreements`, {}, ProcessorAgreementSchema.array())
+    const loaded = await api.request(`/v1/organizations/${organizationId}/processor-agreements`, {}, ProcessorAgreementSchema.array())
+    if (isLatest()) agreements.value = loaded
   } catch {
-    actionError.value = 'Die Auftragsverarbeiter konnten nicht geladen werden.'
+    if (isLatest()) actionError.value = 'Die Auftragsverarbeiter konnten nicht geladen werden.'
   } finally {
-    loading.value = false
+    if (isLatest()) loading.value = false
   }
-}
+})
 async function createAgreement() {
-  if (!props.organizationId) return
+  const organizationId = props.organizationId
+  if (!organizationId) return
   creatingAgreement.value = true
   actionError.value = ''
   try {
@@ -58,7 +68,8 @@ async function createAgreement() {
         status: agreementForm.status,
       }
     }
-    const agreement = await api.request(`/v1/organizations/${props.organizationId}/processor-agreements`, { method: 'POST', body }, ProcessorAgreementSchema)
+    const agreement = await api.request(`/v1/organizations/${organizationId}/processor-agreements`, { method: 'POST', body }, ProcessorAgreementSchema)
+    if (props.organizationId !== organizationId) return
     agreements.value = [...agreements.value, agreement]
     resetForm()
   } catch {
@@ -92,7 +103,6 @@ async function viewAgreementDocument(agreement: ProcessorAgreement) {
     viewingAgreementId.value = null
   }
 }
-watch(() => props.organizationId, () => { void load() }, { immediate: true })
 </script>
 
 <template>
@@ -117,7 +127,7 @@ watch(() => props.organizationId, () => { void load() }, { immediate: true })
       <label><span class="mb-1 block text-xs font-semibold">Unterzeichnet am</span><input v-model="agreementForm.signedAt" type="date" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-sm" /></label>
       <label><span class="mb-1 block text-xs font-semibold">Gültig bis</span><input v-model="agreementForm.validUntil" type="date" class="focus-ring w-full rounded-lg border border-[#dfe0d9] p-2 text-sm" /></label>
       <label><span class="mb-1 block text-xs font-semibold">Status</span><Select v-model="agreementForm.status"><SelectTrigger class="text-sm"><SelectValue /></SelectTrigger><SelectContent><SelectItem v-for="option in AGREEMENT_STATUS_OPTIONS" :key="option" :value="option">{{ AGREEMENT_STATUS_LABELS[option] }}</SelectItem></SelectContent></Select></label>
-      <label><span class="mb-1 block text-xs font-semibold">Vertragsdokument (PDF oder DOCX, optional)</span><input type="file" accept=".pdf,.docx" class="focus-ring w-full text-xs" @change="agreementForm.file = ($event.target as HTMLInputElement).files?.[0] ?? null" /></label>
+      <label><span class="mb-1 block text-xs font-semibold">Vertragsdokument (PDF oder DOCX, optional)</span><input ref="fileInput" type="file" accept=".pdf,.docx" class="focus-ring w-full text-xs" @change="agreementForm.file = ($event.target as HTMLInputElement).files?.[0] ?? null" /></label>
       <div class="sm:col-span-2"><button type="submit" :disabled="creatingAgreement" class="focus-ring rounded-xl bg-forest px-4 py-2.5 text-xs font-bold text-white disabled:opacity-60">{{ creatingAgreement ? 'Wird angelegt …' : 'Anlegen' }}</button></div>
     </form>
   </section>

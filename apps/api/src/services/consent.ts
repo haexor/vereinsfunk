@@ -147,11 +147,18 @@ export function describeConsentScope(scope: ConsentScope): string[] {
   return lines
 }
 
+// Die E-Mail nennt diese Frist -- Anlage UND erneuter Versand setzen expires_at daraus, sonst
+// verspraeche ein erneut gesendeter Link 14 Tage und waere schon abgelaufen.
+const CONSENT_REQUEST_VALID_DAYS = 14
+export function consentRequestExpiresAt(now: Date): string {
+  return new Date(now.getTime() + CONSENT_REQUEST_VALID_DAYS * 24 * 60 * 60 * 1000).toISOString()
+}
+
 export function buildConsentRequestEmail(options: { to: string; organizationName: string; personLabel: string; respondUrl: string }): EmailMessage {
   return {
     to: options.to,
     subject: `Einwilligung zur Veröffentlichung von Fotos/Videos – ${options.organizationName}`,
-    text: `${options.organizationName} bittet um Ihre Einwilligung zur Veröffentlichung von Fotos/Videos von ${options.personLabel} in sozialen Medien.\n\nZur Anfrage: ${options.respondUrl}\n\nDer Link ist 14 Tage gültig. Eine Einwilligung ist freiwillig und jederzeit für die Zukunft widerrufbar.`,
+    text: `${options.organizationName} bittet um Ihre Einwilligung zur Veröffentlichung von Fotos/Videos von ${options.personLabel} in sozialen Medien.\n\nZur Anfrage: ${options.respondUrl}\n\nDer Link ist ${CONSENT_REQUEST_VALID_DAYS} Tage gültig. Eine Einwilligung ist freiwillig und jederzeit für die Zukunft widerrufbar.`,
   }
 }
 
@@ -160,6 +167,19 @@ export function buildConsentRequestEmail(options: { to: string; organizationName
 // minderjaehrigen) Person. Dieselbe Kurzform in E-Mail und oeffentlicher Ansicht.
 export function shortPersonLabel(firstName: string, lastName: string): string {
   return `${firstName} ${lastName.charAt(0)}.`
+}
+
+// text_version einer Anfrage, solange der Verein keinen eigenen Text hinterlegt hat.
+export const DEFAULT_CONSENT_TEXT_VERSION = 'default-template'
+
+// Der Nachweis einer digitalen Einwilligung ist, WELCHEN Text jemand bestaetigt hat (Plan 015) --
+// die oeffentliche Seite zeigt deshalb die bei Anlage der Anfrage festgehaltene Fassung, nicht
+// die inzwischen vielleicht ersetzte aktuelle. Fassungen sind append-only und damit stabil.
+export async function consentTextForVersion(client: SupabaseClient, organizationId: string, textVersion: string): Promise<string> {
+  if (textVersion === DEFAULT_CONSENT_TEXT_VERSION) return DEFAULT_CONSENT_TEXT_TEMPLATE
+  const text = await client.from('organization_consent_texts').select('body').eq('organization_id', organizationId).eq('id', textVersion).single()
+  if (text.error) throw text.error
+  return text.data.body as string
 }
 
 export async function currentOrganizationConsentText(
@@ -192,7 +212,7 @@ export async function departmentOfDirectoryPerson(
 // "Aufbewahrungsfrist"-artiger Vorbelegungswert, anders als reviewMinimumApprovals, das
 // bewusst knotenlokal bleibt) -- nur fuer die Vorbelegung neuer Einwilligungen gebraucht, nicht
 // Teil der generischen Policy-Anzeige.
-export async function resolveConsentValidityMonths(
+async function resolveConsentValidityMonths(
   client: SupabaseClient, organizationId: string, departmentId: string | null,
 ): Promise<number | null> {
   const rows = await client.from('policy_settings').select('scope, department_id, consent_validity_months').eq('organization_id', organizationId)
@@ -201,6 +221,19 @@ export async function resolveConsentValidityMonths(
   const orgValue = data.find((row) => row.scope === 'organization')?.consent_validity_months ?? null
   const deptValue = departmentId ? data.find((row) => row.scope === 'department' && row.department_id === departmentId)?.consent_validity_months ?? null : null
   return deptValue ?? orgValue
+}
+
+// Eine Einwilligung gilt ab ihrer Unterschrift (signed_at), nicht ab ihrer Erfassung: valid_until
+// rechnet die Richtliniendauer ab signed_at, also braucht valid_from denselben Anker -- mit dem
+// Default now() verletzte eine nachgetragene alte Papiererklaerung den CHECK
+// valid_until > valid_from und endete als 500; jetzt ist sie ehrlich 'expired'. Dieselbe Rechnung
+// fuer Registratur, Abloesung und digitale Zustimmung, sonst blieben die beiden letzten trotz
+// Richtlinie unbefristet gueltig.
+export async function computeConsentValidity(
+  client: SupabaseClient, organizationId: string, departmentId: string | null, signedAt: string,
+): Promise<{ validFrom: string; validUntil: string | null }> {
+  const validityMonths = await resolveConsentValidityMonths(client, organizationId, departmentId)
+  return { validFrom: `${signedAt}T00:00:00.000Z`, validUntil: validityMonths === null ? null : addMonthsToIsoDate(signedAt, validityMonths) }
 }
 
 export async function loadConsentRecordForScope(
@@ -217,6 +250,29 @@ export async function loadConsentRecordForScope(
     departmentId = (person.data?.department_id as string | null) ?? null
   }
   return { row, scope: toPermissionScope(row.organization_id, departmentId) }
+}
+
+// Der Widerrufslink haengt an der Zeile, fuer die er ausgestellt wurde (revocation_token_hash ist
+// unique). Eine Abloesung legt eine neue Zeile ohne eigenen Token an -- massgeblich fuer Anzeige
+// und Widerruf ist deshalb das Ende der superseded_by-Kette, sonst widerriefe der Link die ohnehin
+// unwirksame alte Fassung, waehrend die gueltige Nachfolgerin bestehen bliebe.
+export async function findConsentRecordByRevocationToken(
+  service: SupabaseClient, rawToken: string,
+): Promise<{ tokenRow: ConsentRecordRow; head: ConsentRecordRow } | null> {
+  const found = await service.from('consent_records').select(CONSENT_RECORD_SELECT).eq('revocation_token_hash', hashPublicToken(rawToken)).maybeSingle()
+  if (found.error) throw found.error
+  if (!found.data) return null
+  const tokenRow = found.data as ConsentRecordRow
+  let head = tokenRow
+  // consent_records_superseded_unique und _not_self_superseded schliessen Verzweigungen und
+  // Selbstbezug aus; die Obergrenze bricht trotzdem jeden denkbaren Zyklus ab.
+  for (let hops = 0; head.superseded_by !== null; hops += 1) {
+    if (hops >= 100) throw new Error('consent supersede chain too long')
+    const next = await service.from('consent_records').select(CONSENT_RECORD_SELECT).eq('organization_id', head.organization_id).eq('id', head.superseded_by).single()
+    if (next.error) throw next.error
+    head = next.data as ConsentRecordRow
+  }
+  return { tokenRow, head }
 }
 
 export async function findOpenConsentRequestByToken(service: SupabaseClient, rawToken: string): Promise<ConsentRequestRow | null> {

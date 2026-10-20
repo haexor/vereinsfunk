@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { PlayerboardPlayer, PlayerboardVeoTeamStat } from '@vereinsfunk/contracts'
 import { playerboardErrorMessage } from '../utils/playerboardErrors'
+import { playerLabel } from '../utils/playerboardRanking'
 import { categoryLabel, formatStatValue, matchOutcome, scoreLabel, statLabel, statValues, teamStatsByCategory } from '../utils/playerboardVeo'
 import type { VeoPlayerTableRow } from './PlayerboardVeoPlayerTable.vue'
 
@@ -51,11 +52,12 @@ const assignedPlayer = computed(() => new Map(props.match.players.map((player) =
 const canAssign = computed(() => Boolean(props.roster && props.match.fixtureId))
 const rosterOptions = computed(() => (props.roster ?? [])
   .filter((player) => player.active)
-  .map((player) => ({ id: player.id, label: `${player.jerseyNumber !== null ? `#${player.jerseyNumber} ` : ''}${player.firstName} ${player.lastName}` })))
+  .map((player) => ({ id: player.id, label: playerLabel(player) })))
 
 /** Speichert die Wahl fuer eine Rueckennummer und meldet, wie viele Spiele sich geaendert haben. */
-async function choose(jerseyNumber: number, value: string) {
+async function choose(jerseyNumber: number, select: HTMLSelectElement) {
   if (!props.match.fixtureId) return
+  const value = select.value
   savingJersey.value = jerseyNumber
   message.value = ''
   errorMessage.value = ''
@@ -65,6 +67,9 @@ async function choose(jerseyNumber: number, value: string) {
     message.value = result.changed > 1 ? `Gespeichert, in ${result.changed} Spielen übernommen.` : 'Gespeichert.'
     emit('assigned')
   } catch (error) {
+    // Ohne Zuruecksetzen zeigte die Auswahl weiter die nicht gespeicherte Wahl -- die Zuordnung
+    // selbst hat sich nicht geaendert, also patcht Vue das Element nicht.
+    select.value = assignedPlayer.value.get(`${jerseyNumber}`) ?? ''
     errorMessage.value = playerboardErrorMessage(error, 'Die Zuordnung konnte nicht gespeichert werden.')
   } finally {
     savingJersey.value = null
@@ -120,7 +125,7 @@ async function choose(jerseyNumber: number, value: string) {
               class="focus-ring h-9 max-w-48 rounded-lg border border-[#dfe0d9] bg-white px-2 text-xs font-normal text-ink"
               :value="assignedPlayer.get(row.key) ?? ''"
               :disabled="savingJersey !== null"
-              @change="choose(Number(row.key), ($event.target as HTMLSelectElement).value)"
+              @change="choose(Number(row.key), $event.target as HTMLSelectElement)"
             >
               <option value="">Nicht zugeordnet</option>
               <option v-for="option in rosterOptions" :key="option.id" :value="option.id">{{ option.label }}</option>

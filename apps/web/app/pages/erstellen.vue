@@ -1,11 +1,16 @@
 <script setup lang="ts">
 import { Check, LoaderCircle, RefreshCw, Save, Sparkles } from '@lucide/vue'
-import { MaxCharactersSchema, RequestApprovalResponseSchema, SocialPlatformSchema, SourceMaterialSchema, TEXT_GENERATION_DEFAULT_TEMPERATURE, TextGenerationPlatformAvailabilitySchema, TextWorkshopDraftRowSchema, UuidSchema, type SocialPlatform, type TextGenerationPlatformAvailability } from '@vereinsfunk/contracts'
+import { MaxCharactersSchema, RequestApprovalResponseSchema, SocialPlatformSchema, SourceMaterialSchema, TEXT_GENERATION_DEFAULT_TEMPERATURE, TextGenerationPlatformAvailabilitySchema, TextWorkshopDraftPayloadSchema, TextWorkshopDraftRowSchema, UuidSchema, type SocialPlatform, type TextGenerationPlatformAvailability } from '@vereinsfunk/contracts'
 import { z } from 'zod'
+import { optionalNumber } from '../utils/numberInput'
 
 type Profile = { id: string | null; slug: string; kind: 'system' | 'persona' | 'custom'; name: string; description: string }
 type Candidate = { id: string; status: string; generated_content: { headline: string; caption: string; hashtags: string[]; verifiedFacts: string[]; missingFacts: string[] } | null; failure_code: string | null; triggered_by: 'member' | 'automatic_recovery' }
 const DEFAULT_TEXT_WORKSHOP_PROFILE = 'lebendig_sportlich'
+// Der Rohtext landet unveraendert in payload.observation des Werkstatt-Entwurfs. Jede Generierung
+// setzt einen gespeicherten Entwurf voraus -- ein laengeres Feld liess die Speicherung am Vertrag
+// scheitern und blockierte damit still die Generierung.
+const CONTENT_TEXT_MAX_LENGTH = TextWorkshopDraftPayloadSchema.shape.observation.maxLength ?? 5_000
 // Geteilt von refreshSession() und loadDraftFromPost() (Wiedereinstieg aus der Beitraege-Liste) --
 // dieselbe Kandidaten-Antwortform, einmal benannt statt zweimal inline dupliziert.
 const CandidateSchema = z.object({ id: z.string(), status: z.string(), generated_content: z.object({ headline: z.string(), caption: z.string(), hashtags: z.array(z.string()), verifiedFacts: z.array(z.string()), missingFacts: z.array(z.string()) }).nullable(), failure_code: z.string().nullable(), triggered_by: z.enum(['member', 'automatic_recovery']) })
@@ -54,7 +59,8 @@ const profiles = ref<Profile[]>([])
 const selectedProfile = ref<string>(DEFAULT_TEXT_WORKSHOP_PROFILE)
 const platforms = ref<TextGenerationPlatformAvailability[]>([])
 const selectedPlatforms = ref<SocialPlatform[]>([])
-const maxCharactersOverride = ref('')
+// v-model auf type="number" schreibt eine Zahl hinein, ein geleertes Feld ''.
+const maxCharactersOverride = ref<string | number>('')
 // Plan 047, PR 0: mehrere Fotos moeglich (frueher hoechstens eines, Plan 045 PR 0 Schritt 3) --
 // nur reihum von PhotoAttachmentList befuellte Eintraege, die ihre Personen-Pruefung abgeschlossen haben.
 const mediaAssetIds = ref<string[]>([])
@@ -94,6 +100,10 @@ let restoringDraft = false
 let draftSaveTimer: ReturnType<typeof setTimeout> | undefined
 let serverDraftSaveChain: Promise<void> = Promise.resolve()
 let latestServerDraftSave = 0
+// Nach dem Einreichen gehoert der Formularinhalt zum Beitrag. Die Speicherung beim Verlassen der
+// Seite legte ihn sonst unter einer neuen ID erneut als Entwurf an -- jeder eingereichte Beitrag
+// hinterliess einen verwaisten Entwurf in /beitraege.
+let submittedForApproval = false
 
 function sourceMaterial() {
   const text = contentText.value.trim()
@@ -112,13 +122,13 @@ function sourceMaterial() {
 }
 function persistDraft() {
   if (restoringDraft || !import.meta.client || !draftKey.value) return
-  localStorage.setItem(draftKey.value, JSON.stringify({ communicationGoal: communicationGoal.value, contentText: contentText.value, selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }))
+  localStorage.setItem(draftKey.value, JSON.stringify({ communicationGoal: communicationGoal.value, contentText: contentText.value, selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: String(maxCharactersOverride.value) }))
 }
 function clearDraft() { if (import.meta.client && draftKey.value) localStorage.removeItem(draftKey.value) }
 function draftPayload() {
   // Die persistierte Vertragsform bleibt vorerst kompatibel zu bestehenden Entwürfen. Das UI
   // schreibt nur noch den Rohtext in observation; die früheren Spezialfelder bleiben leer.
-  return { communicationGoal: communicationGoal.value, factsText: '', observation: contentText.value, selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: maxCharactersOverride.value }
+  return { communicationGoal: communicationGoal.value, factsText: '', observation: contentText.value, selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: String(maxCharactersOverride.value) }
 }
 function hasDraftContent() {
   const payload = draftPayload()
@@ -126,7 +136,7 @@ function hasDraftContent() {
 }
 async function saveServerDraft({ explicit = false, required = false }: { explicit?: boolean; required?: boolean } = {}): Promise<boolean> {
   if (draftSaveTimer) { clearTimeout(draftSaveTimer); draftSaveTimer = undefined }
-  if (restoringDraft || !scope.value?.organizationId || (!explicit && !hasDraftContent())) return false
+  if (submittedForApproval || restoringDraft || !scope.value?.organizationId || (!explicit && !hasDraftContent())) return false
   if (!hasDraftContent()) { notice.value = 'Gib zuerst etwas für den Entwurf ein.'; return false }
   if (!serverDraftId.value) serverDraftId.value = crypto.randomUUID()
   const draftId = serverDraftId.value
@@ -159,7 +169,7 @@ async function saveServerDraft({ explicit = false, required = false }: { explici
   return queuedSave
 }
 function queueServerDraftSave() {
-  if (restoringDraft || !hasDraftContent()) return
+  if (submittedForApproval || restoringDraft || !hasDraftContent()) return
   if (draftSaveTimer) clearTimeout(draftSaveTimer)
   draftSaveTimer = setTimeout(() => { void saveServerDraft() }, 900)
 }
@@ -175,7 +185,7 @@ function restoreDraft() {
   } catch { clearDraft() }
 }
 watch([communicationGoal, contentText, selectedProfile, selectedPlatforms, maxCharactersOverride], () => { persistDraft(); queueServerDraftSave() }, { flush: 'sync', deep: true })
-watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; sessionId.value = null; sessionProfile.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; communicationGoal.value = 'inform'; selectedProfile.value = DEFAULT_TEXT_WORKSHOP_PROFILE; contentText.value = ''; additionalMediaAssetIds.value = []; revisionInstruction.value = ''; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; mediaAssetIds.value = []; composedPhotoPreview.value = null; photoMode.value = 'carousel'; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
+watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; submittedForApproval = false; sessionId.value = null; sessionProfile.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; communicationGoal.value = 'inform'; selectedProfile.value = DEFAULT_TEXT_WORKSHOP_PROFILE; contentText.value = ''; additionalMediaAssetIds.value = []; revisionInstruction.value = ''; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; mediaAssetIds.value = []; composedPhotoPreview.value = null; photoMode.value = 'carousel'; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
 
 async function loadProfiles() {
   if (!scope.value?.organizationId) return
@@ -206,8 +216,13 @@ function hasUnfinishedCandidate(): boolean {
 // Generierung im Hintergrund, diese Seite hat sonst keinen Weg, von "pending"/"generating" zu
 // erfahren, ohne dass die Person selbst auf "Aktualisieren" klickt.
 const { refresh: refreshSession, ensurePolling } = usePolling(async () => {
-  if (!sessionId.value) return
-  const response = await api.request(`/v1/text-workshop/sessions/${sessionId.value}`, {}, z.object({ session: CompositionSessionDraftSchema, candidates: z.array(CandidateSchema) }))
+  const requestedSessionId = sessionId.value
+  if (!requestedSessionId) return
+  const response = await api.request(`/v1/text-workshop/sessions/${requestedSessionId}`, {}, z.object({ session: CompositionSessionDraftSchema, candidates: z.array(CandidateSchema) }))
+  // Ein Bereichswechsel oder eine neue Generierung ersetzt die Sitzung, waehrend diese Anfrage noch
+  // laeuft. Ihre Antwort schriebe sonst den alten Kandidaten zurueck -- bei ausgeblendeter
+  // Kandidatenansicht, ohne Erzeugen-Aktion und mit weiterlaufendem Poll.
+  if (sessionId.value !== requestedSessionId) return
   sessionProfile.value = response.session.style_profile_id ?? response.session.style_profile_snapshot.slug ?? DEFAULT_TEXT_WORKSHOP_PROFILE
   candidate.value = response.candidates[0] ?? null
 }, hasUnfinishedCandidate)
@@ -263,14 +278,16 @@ async function loadDraftFromPost(postId: string) {
   }
 }
 function parsedMaxCharactersOverride(): number | undefined | 'invalid' {
-  const trimmed = maxCharactersOverride.value.trim()
-  if (!trimmed) return undefined
-  const parsed = MaxCharactersSchema.safeParse(Number(trimmed))
+  const value = optionalNumber(maxCharactersOverride.value)
+  if (value === null) return undefined
+  const parsed = MaxCharactersSchema.safeParse(value)
   return parsed.success ? parsed.data : 'invalid'
 }
 async function createCandidate() {
   if (!scope.value?.organizationId) { notice.value = 'Bitte wähle einen Verein.'; return }
   if (!contentText.value.trim()) { notice.value = 'Schreibe kurz, worum es in deinem Beitrag geht.'; return }
+  // maxlength begrenzt nur das Tippen -- ein wiederaufgenommener Beitrag kann laenger sein.
+  if (contentText.value.length > CONTENT_TEXT_MAX_LENGTH) { notice.value = `Der Text darf höchstens ${CONTENT_TEXT_MAX_LENGTH.toLocaleString('de-DE')} Zeichen lang sein. Bitte kürze ihn.`; return }
   if (!selectedPlatforms.value.length) { notice.value = 'Bitte wähle mindestens eine Zielplattform.'; return }
   const maxCharacters = parsedMaxCharactersOverride()
   if (maxCharacters === 'invalid') { notice.value = 'Die maximale Länge muss zwischen 100 und 10.000 Zeichen liegen.'; return }
@@ -340,6 +357,7 @@ async function acceptCandidate() {
     // ueber alreadyAccepted denselben postVersionId zurueck).
     try {
       await api.request(`/v1/post-versions/${accepted.postVersionId}/request-approval`, { method: 'POST' }, RequestApprovalResponseSchema)
+      submittedForApproval = true
       clearDraft()
       serverDraftId.value = null
       await navigateTo('/beitraege')
@@ -412,7 +430,8 @@ onBeforeUnmount(() => { if (hasDraftContent()) void saveServerDraft() })
     <section class="card grid gap-5 p-5 sm:p-7">
       <label>
         <span class="mb-2 block text-sm font-bold">Was möchtest du erzählen?</span>
-        <textarea v-model="contentText" rows="7" maxlength="10000" class="w-full resize-y rounded-2xl border border-[#dfe2da] bg-white p-4 text-sm leading-6 shadow-sm outline-none placeholder:text-[#929991] focus:border-forest focus:ring-2 focus:ring-forest/15" placeholder="Zum Beispiel: Heute hat unsere U12 im Training Passen geübt. Besonders schön war, wie sich alle gegenseitig unterstützt haben." />
+        <textarea v-model="contentText" rows="7" :maxlength="CONTENT_TEXT_MAX_LENGTH" class="w-full resize-y rounded-2xl border border-[#dfe2da] bg-white p-4 text-sm leading-6 shadow-sm outline-none placeholder:text-[#929991] focus:border-forest focus:ring-2 focus:ring-forest/15" placeholder="Zum Beispiel: Heute hat unsere U12 im Training Passen geübt. Besonders schön war, wie sich alle gegenseitig unterstützt haben." />
+        <p class="mt-1 text-[11px] text-[#9aa096]">{{ contentText.length }}/{{ CONTENT_TEXT_MAX_LENGTH }} Zeichen</p>
       </label>
       <fieldset>
         <legend class="mb-2 text-xs font-semibold">Anhänge</legend>

@@ -1,6 +1,6 @@
-import { resolveIcalDateTime } from '@vereinsfunk/integrations'
 import type { MatchStrategy } from '@vereinsfunk/integrations'
 import type { ExternalFixture } from './fixture.js'
+import { comparableInstant, type ScheduleMatchContext } from './scheduleTime.js'
 
 export type FixtureStatus = 'scheduled' | 'postponed' | 'cancelled' | 'played' | 'unknown'
 
@@ -45,16 +45,6 @@ function isLocal(entity: FixtureLocal | ExternalFixture): entity is FixtureLocal
   return 'id' in entity
 }
 
-// Eine externe kickoffAt-Zeile kann die iCal-Kompaktform sein ("20260815T150000Z", noch nicht
-// aufgeloest) oder bereits eine vollstaendige ISO-Zeichenkette (Datei-Spalte). Ohne Normalisierung
-// vergleichen identityOf/fuzzyKeyOf/fieldsOf die Kompaktform textuell gegen local.kickoffAt.
-// toISOString() und halten jeden iCal-synchronisierten Termin faelschlich fuer geaendert.
-// resolveIcalDateTime erkennt nur die Kompaktform; fuer eine bereits vollstaendige ISO-
-// Zeichenkette liefert es undefined, der Rohwert bleibt dann unveraendert.
-function comparableKickoffAt(rawValue: string, tzid: string | undefined): string {
-  return resolveIcalDateTime(rawValue, tzid, 'UTC')?.iso ?? rawValue
-}
-
 /**
  * Loest auf, welche Seite eines Spiels die eigene Mannschaft ist. Kein Raten (plans/019,
  * "Mannschaftszuordnung"): wenn weder teamReference noch einer der beiden iCal-Rohnamen einer
@@ -91,19 +81,22 @@ function resolveOwnSide(entity: ExternalFixture, resolver: TeamNameResolver): Re
 
 /**
  * Baut eine MatchStrategy fuer planSync im Bereich "Spiele". Die Mannschaftszuordnung wird hier
- * aufgeloest, nicht in ExternalFixtureSchema selbst -- das Schema kennt keine Datenbank.
+ * aufgeloest, nicht in ExternalFixtureSchema selbst -- das Schema kennt keine Datenbank. Anstoss-
+ * zeiten vergleicht sie als Instanz (comparableInstant), aufgeloest mit schedule.resolveDateTime.
  */
-export function createFixtureMatchStrategy(resolver: TeamNameResolver): MatchStrategy<FixtureLocal, ExternalFixture> {
+export function createFixtureMatchStrategy(resolver: TeamNameResolver, schedule: ScheduleMatchContext): MatchStrategy<FixtureLocal, ExternalFixture> {
   return {
     identityOf(entity) {
       if (entity.externalId) return { externalId: entity.externalId }
-      return { fuzzy: [(entity.opponentName ?? entity.awayNameRaw ?? '').trim().toLowerCase(), entity.kickoffAt ? comparableKickoffAt(entity.kickoffAt, entity.kickoffAtTzid) : ''] }
+      // Unscharfer Schluessel: Gegner (aufgeloest oder roh) plus Anstoßzeit -- zwei Spiele gegen
+      // denselben Gegner zu unterschiedlichen Zeiten sind keine Kandidaten fuereinander.
+      return { fuzzy: [(entity.opponentName ?? entity.awayNameRaw ?? '').trim().toLowerCase(), entity.kickoffAt ? String(comparableInstant(schedule, entity.kickoffAt, entity.kickoffAtTzid)) : ''] }
     },
     externalIdOf(local) {
       return local.externalId ?? undefined
     },
     fuzzyKeyOf(local) {
-      return [(local.opponentName ?? '').trim().toLowerCase(), local.kickoffAt ? local.kickoffAt.toISOString() : '']
+      return [(local.opponentName ?? '').trim().toLowerCase(), local.kickoffAt ? String(local.kickoffAt.getTime()) : '']
     },
     fieldsOf(entity) {
       if (isLocal(entity)) {
@@ -112,7 +105,13 @@ export function createFixtureMatchStrategy(resolver: TeamNameResolver): MatchStr
           opponentName: entity.opponentName,
           isHome: entity.isHome,
           competition: entity.competition,
-          kickoffAt: entity.kickoffAt ? entity.kickoffAt.toISOString() : null,
+          kickoffAt: entity.kickoffAt ? entity.kickoffAt.getTime() : null,
+          status: entity.status,
+          homeScore: entity.homeScore,
+          awayScore: entity.awayScore,
+          venueName: entity.venueName,
+          venueAddress: entity.venueAddress,
+          note: entity.note,
         }
       }
       const resolved = resolveOwnSide(entity, resolver)
@@ -121,11 +120,26 @@ export function createFixtureMatchStrategy(resolver: TeamNameResolver): MatchStr
         opponentName: resolved.opponentName,
         isHome: resolved.isHome,
         competition: entity.competition ?? null,
-        kickoffAt: entity.kickoffAt ? comparableKickoffAt(entity.kickoffAt, entity.kickoffAtTzid) : null,
+        // undefined statt null ohne Anstoss-Spalte: die Quelle sagt dazu nichts (MatchStrategy.fieldsOf).
+        kickoffAt: entity.kickoffAt === undefined ? undefined : comparableInstant(schedule, entity.kickoffAt, entity.kickoffAtTzid),
+        // Ergebnis, Status und Ort gehoeren zum Abgleich: ohne sie galt ein nachgetragenes Ergebnis
+        // als "unchanged", wurde nie geschrieben, und ein spaeter verschwundenes Spiel landete
+        // trotz Ergebnis als 'cancelled'. undefined (Spalte fehlt) zaehlt nie als Unterschied.
+        status: entity.status,
+        homeScore: entity.homeScore,
+        awayScore: entity.awayScore,
+        venueName: entity.venueName,
+        venueAddress: entity.venueAddress,
+        note: entity.note,
       }
     },
     labelOf(entity) {
-      return entity.opponentName ?? 'Spiel ohne Gegner'
+      if (entity.opponentName) return entity.opponentName
+      // Ein iCal-Spiel traegt nur die rohen Titelnamen. Ohne sie hiesse jede iCal-Konfliktzeile
+      // "Spiel ohne Gegner" -- und ohne UID teilten alle denselben Fingerabdruck, ein einziges
+      // ignore_permanently haette sie zusammen unterdrueckt.
+      if (!isLocal(entity) && (entity.homeNameRaw || entity.awayNameRaw)) return [entity.homeNameRaw, entity.awayNameRaw].filter(Boolean).join(' – ')
+      return 'Spiel ohne Gegner'
     },
     sourceUpdatedAtOf(entity) {
       return entity.sourceUpdatedAt ? new Date(entity.sourceUpdatedAt) : undefined
@@ -138,8 +152,12 @@ export function createFixtureMatchStrategy(resolver: TeamNameResolver): MatchStr
     },
     // Nur Spiele mit echter Quellenbindung koennen "aus der Quelle verschwunden" sein --
     // dieselbe Begruendung wie bei DirectoryPersonLocal (packages/member-directory/src/match.ts).
+    // Abgesagt oder gespielt ist ein Spiel bereits endgueltig, ein vergangener Anstoss kann nicht
+    // mehr abgesagt werden (ScheduleMatchContext.now) -- sonst blockierte jeder Saisonwechsel im
+    // Feed den Lauf an der Verlustschwelle.
     isRetirable(local) {
-      return local.sourceId !== null
+      if (local.sourceId === null || local.status === 'cancelled' || local.status === 'played') return false
+      return local.kickoffAt === null || local.kickoffAt.getTime() >= schedule.now.getTime()
     },
   }
 }

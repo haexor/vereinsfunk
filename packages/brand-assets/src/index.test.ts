@@ -9,6 +9,18 @@ describe('processBrandLogoUpload', () => {
     expect(result).toMatchObject({ extension: 'svg', contentType: 'image/svg+xml' })
   })
 
+  it('recognizes an Illustrator export with a generator comment and a DOCTYPE before <svg>', async () => {
+    const svg = Buffer.from(
+      '<?xml version="1.0" encoding="utf-8"?>\n' +
+        `<!-- Generator: Adobe Illustrator 28.0.0, SVG Export Plug-In . SVG Version: 6.00 Build 0)  ${'-'.repeat(400)} -->\n` +
+        '<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n' +
+        '<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#163a2c"/></svg>',
+    )
+    const result = await processBrandLogoUpload(svg)
+    expect(result).toMatchObject({ extension: 'svg', contentType: 'image/svg+xml' })
+    expect(result.buffer.toString('utf8')).toContain('<rect')
+  })
+
   it('rejects an SVG with a <script> element instead of silently stripping it into something unexpected', async () => {
     const malicious = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>')
     const result = await processBrandLogoUpload(malicious)

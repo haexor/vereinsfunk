@@ -152,10 +152,6 @@ export function scopeModulesFor(
   )
 }
 
-export function enabledModulesOf(entry: ScopeModules | null): AppModule[] {
-  return entry ? entry.modules.filter((state) => state.enabled).map((state) => state.module) : []
-}
-
 // --- Paket 055: Sichtbarkeit je Person ----------------------------------------------------------
 
 // Was die Auswertung aus der Sitzung braucht (SessionScope aus useSession()).

@@ -16,7 +16,7 @@ import { z } from 'zod'
 import { buildStageDefinitions, filterAdultUserIds, isAuthorMinor, membersWithApprovePermission } from '../services/approvalRouting.js'
 import { computeMediaGateBlockersForPostVersion } from '../services/mediaGate.js'
 import type { ApiRouteContext } from './context.js'
-import { computeRuleEntry, createAuditRecorder, fetchAllRows, fetchAllRowsForIds, fetchMemberTrust, fetchPolicyRuleRows } from './shared.js'
+import { computeRuleEntry, computeScopedEffectiveConfig, createAuditRecorder, fetchAllRows, fetchAllRowsForIds, fetchMemberTrust, fetchPolicyRuleRows } from './shared.js'
 
 export function registerApprovalRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients } = context
@@ -41,21 +41,21 @@ export function registerApprovalRoutes(app: FastifyInstance, context: ApiRouteCo
     const ruleRows = await fetchPolicyRuleRows(client, post.data.organization_id)
     const orgRow = ruleRows.orgRow
     const config = computeRuleEntry(ruleRows, teamId ? 'team' : 'department', teamId ?? departmentId, departmentId).config
-    const stages = await buildStageDefinitions(client, ruleRows, post.data.organization_id, departmentId, teamId)
+    // Service-role-Client fuer alles, was den Pruefkreis oder die Verfasserin betrifft:
+    // organization/department/team_memberships_select zeigen einer einreichenden Person ohne
+    // *.manage per RLS nur ihre eigenen Mitgliedschaftszeilen. Mit dem Aufrufer-Client waere der
+    // Pruefkreis jeder Stufe fuer die meisten Einreichenden leer, und die Vorschau antwortete mit
+    // 422 empty_reviewer_pool, obwohl request_approval die Route erfolgreich angelegt haette.
+    // directory_people verlangt zusaetzlich directory.read (siehe Kommentar bei isAuthorMinor).
+    const service = supabaseClients.forService()
+    const stages = await buildStageDefinitions(service, ruleRows, post.data.organization_id, departmentId, teamId)
     const authorId = version.data.created_by_user_id as string
     const trust = await fetchMemberTrust(client, authorId, post.data.organization_id, departmentId, teamId)
     const containsMinors = ((version.data.safety_flags as string[]) ?? []).includes('minor')
-    // Service-role-Client: directory_people verlangt directory.read, das eine einreichende Person
-    // mit blosser post.submit-Rolle i.d.R. nicht haelt (siehe Kommentar bei isAuthorMinor).
-    const service = supabaseClients.forService()
     const authorIsMinor = await isAuthorMinor(service, post.data.organization_id, authorId)
-    // Ueber den Service-Client: organization_memberships_select zeigt einer einreichenden Person
-    // ohne organization.manage per RLS nur die eigene Mitgliedschaftszeile, nicht die anderer
-    // Genehmigender -- mit dem Aufrufer-Client waere der Pruefkreis dieser beiden unbefreibaren
-    // Vereinsstufen fuer die meisten Einreichenden faelschlich leer (422 trotz vorhandener
-    // erwachsener Genehmigender). Einmal geladen, fuer beide Minderjaehrigenstufen wiederverwendet
-    // -- beide fragen denselben vereinsweiten Genehmigungskreis ab, ein zweiter identischer Aufruf
-    // waere nur verschwendet.
+    // Einmal geladen, fuer beide unbefreibaren Minderjaehrigenstufen wiederverwendet -- beide fragen
+    // denselben vereinsweiten Genehmigungskreis ab, ein zweiter identischer Aufruf waere nur
+    // verschwendet.
     const orgApproverUserIds = containsMinors || authorIsMinor
       ? await membersWithApprovePermission(service, post.data.organization_id, 'organization', null, null)
       : []
@@ -85,6 +85,8 @@ export function registerApprovalRoutes(app: FastifyInstance, context: ApiRouteCo
     if (rpc.error) {
       if (rpc.error.message.includes('insufficient_permission')) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
       if (rpc.error.message.includes('invalid_status')) return reply.code(409).send({ error: 'invalid_status', correlationId: request.id })
+      // 2026101910: eine alte Version darf keine Freigabe fuer den Post anstossen.
+      if (rpc.error.message.includes('version_not_current')) return reply.code(409).send({ error: 'version_not_current', correlationId: request.id })
       if (rpc.error.message.includes('minor_stage_required')) return reply.code(422).send({ error: 'minor_stage_required', correlationId: request.id })
       if (rpc.error.message.includes('review_required')) return reply.code(422).send({ error: 'review_required', correlationId: request.id })
       if (rpc.error.message.includes('invalid_reviewer_snapshot')) return reply.code(422).send({ error: 'invalid_reviewer_snapshot', correlationId: request.id })
@@ -125,6 +127,9 @@ export function registerApprovalRoutes(app: FastifyInstance, context: ApiRouteCo
     if (rpc.error) {
       if (rpc.error.message.includes('insufficient_permission')) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
       if (rpc.error.message.includes('invalid_decision')) return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
+      // Der Antrag wurde inzwischen invalidiert (Medium, Spielplan, Einwilligung geaendert) -- ein
+      // Zustandskonflikt, kein Serverfehler.
+      if (rpc.error.message.includes('approval_invalidated')) return reply.code(409).send({ error: 'approval_invalidated', correlationId: request.id })
       throw rpc.error
     }
     return reply.code(200).send(
@@ -325,10 +330,10 @@ export function registerApprovalRoutes(app: FastifyInstance, context: ApiRouteCo
     )
     const postVersionByRequestId = new Map(approvalRequestRows.map((row) => [row.id, row.post_version_id]))
     const postIds = Array.from(new Set(approvalRequestRows.map((row) => row.post_id)))
-    const postRows = await fetchAllRowsForIds<{ id: string; department_id: string }>(postIds, (batch, from, to) =>
-      client.from('posts').select('id, department_id').in('id', batch).order('id', { ascending: true }).range(from, to),
+    const postRows = await fetchAllRowsForIds<{ id: string; department_id: string | null; team_id: string | null }>(postIds, (batch, from, to) =>
+      client.from('posts').select('id, department_id, team_id').in('id', batch).order('id', { ascending: true }).range(from, to),
     )
-    const departmentByPostId = new Map(postRows.map((row) => [row.id, row.department_id]))
+    const postById = new Map(postRows.map((row) => [row.id, row]))
     const postIdByRequestId = new Map(approvalRequestRows.map((row) => [row.id, row.post_id]))
 
     // Kein unnoetiger Roundtrip auf policy_settings, wenn es (noch) keine einzige aufloesbare
@@ -336,12 +341,15 @@ export function registerApprovalRoutes(app: FastifyInstance, context: ApiRouteCo
     // plans/README.md), in dem approval_stages zwar existieren koennen, aber approval_request_id
     // ins Leere zeigt, solange kein echter Beitrag dahinter steht.
     const policyRows = postIds.length > 0 ? await fetchPolicyRuleRows(client, query.organizationId) : null
-    const effectiveConfigByDepartmentId = new Map<string, ReturnType<typeof resolveEffectiveConfig>>()
-    function effectivePolicyForDepartment(departmentId: string): { consentExpiresOnLeave: boolean } {
-      let config = effectiveConfigByDepartmentId.get(departmentId)
+    // Je Beitragsscope (Verein, Abteilung oder Team) einmal: consentExpiresOnLeave kann jede dieser
+    // Ebenen verschaerfen, eine reine Abteilungsaufloesung uebersah die Team-Ebene.
+    const effectiveConfigByScope = new Map<string, ReturnType<typeof resolveEffectiveConfig>>()
+    function effectivePolicyForPost(post: { department_id: string | null; team_id: string | null }): { consentExpiresOnLeave: boolean } {
+      const key = `${post.department_id ?? ''}:${post.team_id ?? ''}`
+      let config = effectiveConfigByScope.get(key)
       if (!config) {
-        config = computeRuleEntry(policyRows!, 'department', departmentId, null).config
-        effectiveConfigByDepartmentId.set(departmentId, config)
+        config = computeScopedEffectiveConfig(policyRows!, query.organizationId, post.department_id, post.team_id)
+        effectiveConfigByScope.set(key, config)
       }
       return { consentExpiresOnLeave: config.policies.consentExpiresOnLeave }
     }
@@ -366,11 +374,14 @@ export function registerApprovalRoutes(app: FastifyInstance, context: ApiRouteCo
       mine.map(async (row) => {
         const postVersionId = postVersionByRequestId.get(row.approval_request_id as string)
         const postId = postIdByRequestId.get(row.approval_request_id as string)
-        const departmentId = postId ? departmentByPostId.get(postId) : undefined
-        if (!postVersionId || !departmentId) return []
+        // Auf den Treffer pruefen, nicht auf department_id: null ist die Vereinsebene (Migration
+        // 2026082504, siehe /v1/approval-requests/stalled oben). Ein Vereinsbeitrag zeigte sonst
+        // "keine Einwaende", obwohl seine Medien blockieren.
+        const post = postId ? postById.get(postId) : undefined
+        if (!postVersionId || !post) return []
         let pending = blockersByPostVersionId.get(postVersionId)
         if (!pending) {
-          pending = computeMediaGateBlockersForPostVersion(gateClient, postVersionId, departmentId, effectivePolicyForDepartment(departmentId))
+          pending = computeMediaGateBlockersForPostVersion(gateClient, postVersionId, post.department_id, effectivePolicyForPost(post))
           blockersByPostVersionId.set(postVersionId, pending)
         }
         return pending

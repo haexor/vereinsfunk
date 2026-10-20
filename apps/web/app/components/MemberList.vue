@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { AssignableRole, Member, MemberRoleEntry, ReviewRequirement, ScopeLevel } from '@vereinsfunk/contracts'
 import { roleLabels } from '../composables/roleLabels'
+import { initialsOf } from '../utils/initials'
 
 defineProps<{
   members: Member[]
@@ -32,7 +33,7 @@ const trustExpiryDraft = defineModel<string>('trustExpiryDraft', { required: tru
   <section class="card mb-6 divide-y divide-[#e8e9e2]">
     <div v-for="member in members" :key="member.userId" class="flex items-start gap-4 p-4 sm:px-6">
       <span class="mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#dce6d8] text-xs font-bold">
-        {{ member.displayName.split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join('').toUpperCase() }}
+        {{ initialsOf(member.displayName) }}
       </span>
       <div class="flex-1">
         <div class="text-sm font-semibold">{{ member.displayName }}</div>

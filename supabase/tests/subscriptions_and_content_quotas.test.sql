@@ -212,8 +212,10 @@ select throws_ok(
 -- ai_video maximal 5/Monat mit 10 Sekunden Hoechstlaenge. Ein einziger Beitrag (mehrere Versionen),
 -- weil schedule_publication ihn nach Erfolg auf 'scheduled' setzt -- zwischen den Aufrufen wird der
 -- Status gezielt zurueck auf 'approved' gesetzt, um jeweils nur die Kontingentpruefung zu isolieren.
-insert into public.posts (id, organization_id, department_id, status, created_by) values
-  ('41000000-2000-4000-8000-000000000001', '41000000-1000-4000-8000-000000000001', '41000000-1100-4000-8000-000000000001', 'approved', '41000000-0000-4000-8000-000000000001');
+-- Einplanbar ist nur die aktuelle Version (2026101910) -- current_version_id wandert deshalb mit,
+-- wie es eine neu angenommene Version im echten Ablauf ebenfalls tut.
+insert into public.posts (id, organization_id, department_id, status, created_by, current_version_id) values
+  ('41000000-2000-4000-8000-000000000001', '41000000-1000-4000-8000-000000000001', '41000000-1100-4000-8000-000000000001', 'approved', '41000000-0000-4000-8000-000000000001', '41000000-3000-4000-8000-000000000001');
 insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type, created_by_user_id) values
   ('41000000-3000-4000-8000-000000000001', '41000000-1000-4000-8000-000000000001', '41000000-2000-4000-8000-000000000001', 1, '{}', '{}', 'user', '41000000-0000-4000-8000-000000000001'),
   ('41000000-3000-4000-8000-000000000002', '41000000-1000-4000-8000-000000000001', '41000000-2000-4000-8000-000000000001', 2, '{}', '{}', 'user', '41000000-0000-4000-8000-000000000001'),
@@ -240,7 +242,7 @@ select ok(
   'scheduling the first own_upload post_version succeeds and consumes the monthly content quota'
 );
 set local role postgres;
-update public.posts set status = 'approved' where id = '41000000-2000-4000-8000-000000000001';
+update public.posts set status = 'approved', current_version_id = '41000000-3000-4000-8000-000000000002' where id = '41000000-2000-4000-8000-000000000001';
 set local role authenticated;
 select throws_ok(
   $$select public.schedule_publication('41000000-3000-4000-8000-000000000002', '41000000-8000-4000-8000-000000000001', now() + interval '1 hour')$$,
@@ -248,12 +250,15 @@ select throws_ok(
 );
 
 -- Eine ANDERE Herkunftsart (hier: ai_image) bleibt vom ausgeschoepften own_upload-Kontingent unberuehrt.
+set local role postgres;
+update public.posts set current_version_id = '41000000-3000-4000-8000-000000000003' where id = '41000000-2000-4000-8000-000000000001';
+set local role authenticated;
 select ok(
   (select status from public.schedule_publication('41000000-3000-4000-8000-000000000003', '41000000-8000-4000-8000-000000000001', now() + interval '1 hour')) = 'queued',
   'scheduling a different media_origin (ai_image) is unaffected by the exhausted own_upload quota'
 );
 set local role postgres;
-update public.posts set status = 'approved' where id = '41000000-2000-4000-8000-000000000001';
+update public.posts set status = 'approved', current_version_id = '41000000-3000-4000-8000-000000000004' where id = '41000000-2000-4000-8000-000000000001';
 set local role authenticated;
 
 -- Ein KI-Video ueber der Hoechstlaenge wird abgelehnt, auch wenn das Monatskontingent (5) noch
@@ -268,6 +273,7 @@ select throws_ok(
 set local role postgres;
 update public.publications set status = 'failed'
   where post_version_id = '41000000-3000-4000-8000-000000000001' and social_connection_id = '41000000-8000-4000-8000-000000000001';
+update public.posts set current_version_id = '41000000-3000-4000-8000-000000000005' where id = '41000000-2000-4000-8000-000000000001';
 set local role authenticated;
 select ok(
   (select status from public.schedule_publication('41000000-3000-4000-8000-000000000005', '41000000-8000-4000-8000-000000000001', now() + interval '1 hour')) = 'queued',
@@ -282,7 +288,7 @@ set local role postgres;
 update public.organization_subscriptions set plan_key = 'pgtap_incomplete_plan' where organization_id = '41000000-1000-4000-8000-000000000001';
 insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type, created_by_user_id, media_origin) values
   ('41000000-3000-4000-8000-000000000006', '41000000-1000-4000-8000-000000000001', '41000000-2000-4000-8000-000000000001', 6, '{}', '{}', 'user', '41000000-0000-4000-8000-000000000001', 'ai_image');
-update public.posts set status = 'approved' where id = '41000000-2000-4000-8000-000000000001';
+update public.posts set status = 'approved', current_version_id = '41000000-3000-4000-8000-000000000006' where id = '41000000-2000-4000-8000-000000000001';
 set local role authenticated;
 select throws_ok(
   $$select public.schedule_publication('41000000-3000-4000-8000-000000000006', '41000000-8000-4000-8000-000000000001', now() + interval '1 hour')$$,

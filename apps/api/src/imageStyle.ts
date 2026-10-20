@@ -5,7 +5,7 @@ import type {
   ImageStylePreset,
 } from '@vereinsfunk/contracts'
 import type { ImageEffectProvider } from '@vereinsfunk/media-processing'
-import sharp from 'sharp'
+import sharp, { type Metadata } from 'sharp'
 
 export const MAX_IMAGE_STYLE_INPUT_PIXELS = 40_000_000
 
@@ -26,6 +26,24 @@ export class GmicNotEnabledError extends Error {
   constructor() {
     super("G'MIC image effects are not enabled")
   }
+}
+
+// Aus demselben Grund ein eigener Typ: ein Foto ueber MAX_IMAGE_STYLE_INPUT_PIXELS ist eine
+// erwartbare Ablehnung (413), kein Serverfehler.
+export class ImageTooLargeError extends Error {
+  constructor() {
+    super('image_too_large')
+  }
+}
+
+// Liest nur die Kopfdaten und deshalb bewusst ohne limitInputPixels: sharp setzt die Grenze sonst
+// schon hier mit einem eigenen, generischen Fehler durch, und ein zu grosses Foto waere nicht mehr
+// von einer unlesbaren Datei zu unterscheiden. Ein unbekanntes Format wirft weiterhin sharps Fehler.
+export async function assertImageStyleInputSize(buffer: Buffer): Promise<Metadata> {
+  const metadata = await sharp(buffer, { limitInputPixels: false }).metadata()
+  if (!metadata.width || !metadata.height || metadata.width * metadata.height > MAX_IMAGE_STYLE_INPUT_PIXELS)
+    throw new ImageTooLargeError()
+  return metadata
 }
 
 export interface ImageStyleRenderInput {
@@ -546,9 +564,13 @@ async function applyLogoWatermark(
 // rund zwoelfmal so gross zurueck (gemessen), und die Veroeffentlichungsziele deckeln Bilder bei
 // wenigen MB -- ausgerechnet die gestylten Fotos wuerden dort scheitern. Deshalb am Ende einmal
 // bewusst kodieren:
-//   - Alpha im Ergebnis (abgerundete Ecken, durchscheinende Rahmengrafik) -> PNG, alternativlos.
+//   - echte Transparenz im Ergebnis (abgerundete Ecken, Luecke im 'double'-Rahmen) -> PNG,
+//     alternativlos.
 //   - PNG-Quelle -> PNG, damit ein grafiknahes Original nicht in JPEG-Artefakte laeuft.
 //   - sonst JPEG.
+// Massgeblich ist, ob ein Pixel tatsaechlich durchscheint (stats().isOpaque), nicht hasAlpha:
+// jedes composite() (Logo, Rahmengrafik, Eckmarken, Konfetti) legt einen Alphakanal an, auch wenn
+// er ueberall deckend ist -- ein gerahmtes JPEG-Foto kam so als rund fuenfmal groesseres PNG zurueck.
 // Das macht das Ergebnis zugleich immer bucket-tauglich: 'rendered-media' laesst nur image/jpeg
 // und image/png zu, eine WebP-Quelle haette bis hierher ein image/webp-Upload und damit einen
 // Storage-Fehler ergeben. Liegt das Ergebnis schon im Zielformat vor, bleibt der Puffer wie er
@@ -558,7 +580,8 @@ async function encodeResult(
   sourceFormat: string | undefined,
 ): Promise<ImageStyleRenderResult> {
   const metadata = await limitedSharp(buffer).metadata()
-  const lossless = metadata.hasAlpha === true || sourceFormat === 'png'
+  const transparent = metadata.hasAlpha === true && !(await limitedSharp(buffer).stats()).isOpaque
+  const lossless = transparent || sourceFormat === 'png'
   const targetFormat = lossless ? 'png' : 'jpeg'
   const encoded =
     metadata.format === targetFormat
@@ -577,10 +600,7 @@ export async function renderImageStyle(
   input: ImageStyleRenderInput,
 ): Promise<ImageStyleRenderResult> {
   const { preset } = input
-  const sourceMetadata = await limitedSharp(input.sourceBuffer).metadata()
-  if (!sourceMetadata.width || !sourceMetadata.height || sourceMetadata.width * sourceMetadata.height > MAX_IMAGE_STYLE_INPUT_PIXELS)
-    throw new Error('image_too_large')
-  const sourceFormat = sourceMetadata.format
+  const sourceFormat = (await assertImageStyleInputSize(input.sourceBuffer)).format
   const filtered = await applyFilter(
     input.sourceBuffer,
     preset.filter,

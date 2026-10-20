@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import { DEPARTMENT_ID, ORGANIZATION_ID, USER_ID, chain, denyingRoleProvider, moduleStatusProviderWith, organizationManagerRoleProvider, signAccessToken, startApp } from './testSupport.js'
+import { DEPARTMENT_ID, ORGANIZATION_ID, TEAM_ID, USER_ID, chain, denyingRoleProvider, emptyPolicyRuleColumns, moduleStatusProviderWith, organizationManagerRoleProvider, signAccessToken, startApp } from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { MetaPublishError } from '@vereinsfunk/publishing'
 import type { PublicationInput, SocialPublisher } from '@vereinsfunk/publishing'
 import type { SupabaseClientFactory } from './app.js'
-import { ciphertextToBytea } from './secretBox.js'
+import { ciphertextToBytea } from '@vereinsfunk/secrets'
 import { createSecretBox } from '@vereinsfunk/secrets'
 
 describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffentlichung)', () => {
@@ -170,6 +170,48 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
       expect(response.json()).toMatchObject({ error: 'media_gate_blocked', blockers: ['consent_invalid'] })
     })
 
+    it('blocks the photo of a person who left when only the post’s team sets consent_expires_on_leave', async () => {
+      // Regression: die Richtlinie wurde fest auf Abteilungsebene aufgeloest und posts.team_id nie
+      // gelesen. consentExpiresOnLeave verschaerft sich aber je Ebene -- eine Team-Vorgabe blieb
+      // unbeachtet, und das Foto einer ausgetretenen Person ging trotzdem hinaus.
+      const mediaOverrides = {
+        postMedia: [{ media_derivative_id: '25000000-5000-4000-8000-000000000021' }],
+        derivatives: [{ id: '25000000-5000-4000-8000-000000000021', media_asset_id: '25000000-5000-4000-8000-000000000022', status: 'ready' }],
+        assets: [{ id: '25000000-5000-4000-8000-000000000022', mime_type: 'image/png', scan_status: 'clean', people_reviewed_at: '2026-08-01T00:00:00+00:00' }],
+        faces: [{ media_asset_id: '25000000-5000-4000-8000-000000000022', subject_kind: 'adult', decision: 'consented', consent_record_id: '25000000-5000-4000-8000-000000000023' }],
+        consents: [{
+          id: '25000000-5000-4000-8000-000000000023', guardian_confirmed: false, signer_role: 'self', superseded_by: null,
+          revoked_at: null, valid_from: null, valid_until: null, directory_person_id: '25000000-5000-4000-8000-000000000024',
+          scope_structured: { purposes: ['social_media'], platforms: null, mediaKinds: ['photo'], contexts: null, namingAllowed: true, departmentIds: null },
+        }],
+        people: [{ id: '25000000-5000-4000-8000-000000000024', first_name: 'Max', last_name: 'Ausgetreten', status: 'left', is_minor: false }],
+      }
+      const readOnly = readOnlyClients({}, mediaOverrides)
+      const clients: SupabaseClientFactory = {
+        forUser: () =>
+          ({
+            from: (table: string) => {
+              if (table === 'posts') return chain({ data: { id: PUB_POST_ID, department_id: DEPARTMENT_ID, team_id: TEAM_ID }, error: null })
+              return readOnly.forUser('token').from(table)
+            },
+          }) as unknown as SupabaseClient,
+        forService: () =>
+          ({
+            from: (table: string) => {
+              if (table === 'policy_settings') {
+                return chain({ data: [{ id: 'p-team', scope: 'team', department_id: DEPARTMENT_ID, team_id: TEAM_ID, ...emptyPolicyRuleColumns(), consent_expires_on_leave: true }], error: null })
+              }
+              return readOnly.forService().from(table)
+            },
+          }) as unknown as SupabaseClient,
+      }
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
+      expect(response.statusCode).toBe(409)
+      expect(response.json()).toMatchObject({ error: 'media_gate_blocked', blockers: ['consent_invalid'] })
+    })
+
     it('rejects with 409 invalid_status when the compare-and-set loses the race', async () => {
       // status ist bereits nicht mehr 'queued' (paralleler Aufruf/frueherer Versuch) -- der Claim
       // (claim_publication_for_execution, Paket 051) meldet dann invalid_status.
@@ -274,6 +316,46 @@ describe('Paket 025: Inhalts-Pipeline schliessen (Entwurfserzeugung und Veroeffe
       expect(response.statusCode).toBe(200)
       expect(response.json()).toMatchObject({ id: PUBLICATION_ID, status: 'published' })
       expect(auditCaptured).toMatchObject([{ action: 'post.published', entity_id: PUBLICATION_ID }])
+    })
+
+    it('retries the status update once when it fails after a successful publish', async () => {
+      // Die Veroeffentlichung ist extern bereits geschehen -- ohne zweiten Versuch blieb die Zeile
+      // nach einem kurzen Datenbankaussetzer dauerhaft auf 'uploading'.
+      const publicationUpdates: Record<string, unknown>[] = []
+      const clients: SupabaseClientFactory = {
+        ...readOnlyClients(),
+        forService: () =>
+          ({
+            rpc: async () => ({ data: 'claimed', error: null }),
+            from: (table: string) => {
+              const gate = mediaGateTables(table)
+              if (gate) return gate
+              if (table === 'publications') {
+                return {
+                  update: (payload: Record<string, unknown>) => {
+                    publicationUpdates.push(payload)
+                    return chain({ data: null, error: publicationUpdates.length === 1 ? { message: 'temporary outage' } : null })
+                  },
+                }
+              }
+              if (table === 'social_connections') return chain({ data: { external_account_id: 'page-123' }, error: null })
+              if (table === 'social_connection_secrets') {
+                const sealed = createSecretBox({ v1: Buffer.alloc(32, 7).toString('base64') }, 'v1').seal('fake-access-token', PUB_SOCIAL_CONNECTION_ID)
+                return chain({ data: { token_ciphertext: ciphertextToBytea(sealed.ciphertext), token_key_version: 'v1' }, error: null })
+              }
+              if (table === 'publication_attempts') return { ...chain({ data: null, error: null }), insert: async () => ({ error: null }) }
+              if (table === 'publication_media_grants') return { update: () => ({ eq: () => ({ is: async () => ({ error: null }) }) }) }
+              if (table === 'audit_events') return { insert: async () => ({ error: null }) }
+              throw new Error(`unexpected table in service fake: ${table}`)
+            },
+          }) as unknown as SupabaseClient,
+      }
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'POST', url: `/v1/publications/${PUBLICATION_ID}/execute`, headers: { authorization: `Bearer ${token}` } })
+      expect(response.statusCode).toBe(200)
+      expect(publicationUpdates).toHaveLength(2)
+      expect(publicationUpdates[1]).toMatchObject({ status: 'published' })
     })
 
     it('publishes successfully once an approved media derivative exists, records the attempt and audits it', async () => {

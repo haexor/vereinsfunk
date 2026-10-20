@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { z } from 'zod'
+import { parseSupabaseData } from './supabase.js'
 
 const EXTENSION_BY_MIME_TYPE: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'video/mp4': 'mp4' }
 const ExistingDerivativeSchema = z.object({ id: z.string().uuid(), recipe: z.unknown().nullable(), status: z.string().min(1) })
@@ -9,14 +10,6 @@ const MediaAssetSchema = z.object({
 })
 const DownloadDataSchema = z.instanceof(Blob)
 const DerivativeInsertSchema = z.object({ id: z.string().uuid() })
-
-function parseSupabaseData<T>(schema: z.ZodType<T>, data: unknown): T {
-  const parsed = schema.safeParse(data)
-  if (parsed.success) return parsed.data
-  const error = new Error('Unexpected Supabase response')
-  error.name = 'SupabaseResponseError'
-  throw error
-}
 
 /**
  * Plan 045, PR 0 Step 4: a photo attached to a composition session (composition_session_post_media)

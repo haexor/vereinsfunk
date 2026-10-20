@@ -1,12 +1,13 @@
-import { ChannelConnectStartRequestSchema, ChannelOwnerScopeSchema, OAuthPlatformSchema, OAuthPendingConnectionSchema, SelectOAuthAccountRequestSchema, SocialConnectionSchema, UuidSchema, type OAuthPlatform } from '@vereinsfunk/contracts'
+import { ChannelConnectStartRequestSchema, ChannelOwnerScopeSchema, OAuthPlatformSchema, OAuthPendingConnectionSchema, SelectOAuthAccountRequestSchema, UuidSchema, type OAuthPlatform } from '@vereinsfunk/contracts'
 import type { MetaPlatform } from '@vereinsfunk/publishing'
 import type { FastifyInstance } from 'fastify'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import { mapChannelScopeRow, mapSocialConnectionRow, oauthRedirectUri } from '../apiMappers.js'
-import { ciphertextToBytea, createSecretBoxFromEnvironment } from '../secretBox.js'
+import { oauthRedirectUri } from '../apiMappers.js'
+import { ciphertextToBytea } from '@vereinsfunk/secrets'
+import { createSecretBoxFromEnvironment } from '../secretBox.js'
 import type { ApiRouteContext } from './context.js'
-import { channelOwnerScope, createAuditRecorder, createExternalActionAuditRecorder, isDepartmentOwnedChannelAllowed, SOCIAL_CONNECTION_COLUMNS, toPermissionScope } from './shared.js'
+import { channelOwnerScope, createAuditRecorder, createExternalActionAuditRecorder, isDepartmentOwnedChannelAllowed, loadSocialConnectionResponse, SOCIAL_CONNECTION_COLUMNS, toPermissionScope } from './shared.js'
 
 // Paket 045: welcher OAuth-Adapter eine Plattform bedient. Instagram/Facebook teilen sich weiterhin
 // den Meta-Graph-API-Adapter (Paket 012); Twitter/LinkedIn haben je einen eigenen, strukturell
@@ -262,8 +263,7 @@ export function registerChannelOAuthRoutes(app: FastifyInstance, context: ApiRou
     const ownerScope = pending.data.owner_scope
     const ownerDepartmentId = pending.data.owner_department_id
     const platform = pending.data.platform
-    const scope = toPermissionScope(organizationId, ownerScope === 'department' ? (ownerDepartmentId as string) : null)
-    if (!(await requirePermission(request, reply, 'social_account.manage', scope))) return
+    if (!(await requirePermission(request, reply, 'social_account.manage', channelOwnerScope(pending.data)))) return
     const accounts = pending.data.available_accounts as {
       externalAccountId: string
       displayName: string
@@ -303,9 +303,15 @@ export function registerChannelOAuthRoutes(app: FastifyInstance, context: ApiRou
       token_ciphertext: ciphertextToBytea(sealed.ciphertext),
       token_key_version: sealed.keyVersion,
     })
+    // Ohne Rollback bliebe eine halbe Verbindung zurueck, und der Unique-Index auf dem externen
+    // Konto liesse jede Wiederholung derselben Auswahl dauerhaft mit 409 scheitern. Das Loeschen
+    // der Kanalzeile nimmt das Geheimnis per on delete cascade mit.
+    const rollbackConnection = async (): Promise<void> => {
+      const rollback = await service.from('social_connections').delete().eq('id', insert.data.id)
+      if (rollback.error) request.log.error({ err: rollback.error, correlationId: request.id }, 'oauth channel rollback failed')
+    }
     if (secretInsert.error) {
-      // Ohne Rollback bliebe eine Kanalzeile ohne Geheimnis zurueck.
-      await service.from('social_connections').delete().eq('id', insert.data.id)
+      await rollbackConnection()
       throw secretInsert.error
     }
 
@@ -320,7 +326,12 @@ export function registerChannelOAuthRoutes(app: FastifyInstance, context: ApiRou
       can_schedule: true,
       created_by: request.auth!.userId,
     })
-    if (defaultScope.error) throw defaultScope.error
+    // Ohne Freigabezeile sieht resolveAvailableChannels die Verbindung nie -- derselbe Rueckbau wie
+    // bei POST /v1/channels (channels.ts).
+    if (defaultScope.error) {
+      await rollbackConnection()
+      throw defaultScope.error
+    }
 
     await recordAuditEvent(request, {
       organizationId,
@@ -336,13 +347,6 @@ export function registerChannelOAuthRoutes(app: FastifyInstance, context: ApiRou
     const pendingDelete = await service.from('oauth_pending_connections').delete().eq('id', params.id)
     if (pendingDelete.error) request.log.error({ err: pendingDelete.error, correlationId: request.id }, 'oauth_pending_connections delete failed')
 
-    const scopesResult = await service.from('channel_scopes').select('id, scope, department_id, team_id, can_schedule').eq('social_connection_id', insert.data.id)
-    if (scopesResult.error) throw scopesResult.error
-    return reply.code(201).send(
-      SocialConnectionSchema.parse({
-        ...mapSocialConnectionRow(insert.data),
-        scopes: scopesResult.data.map((scopeRow) => mapChannelScopeRow(scopeRow, organizationId)),
-      }),
-    )
+    return reply.code(201).send(await loadSocialConnectionResponse(service, insert.data, organizationId))
   })
 }

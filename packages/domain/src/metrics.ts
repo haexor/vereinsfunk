@@ -64,8 +64,17 @@ export function rangeWindow(fromDay: string, toDayExclusive: string, timezone: s
   }
 }
 
+// Zeitpunkte als Millisekunden vergleichen, nie als Text: PostgREST liefert timestamptz als
+// "2026-10-01T22:00:00+00:00" (mit Mikrosekunden, wenn vorhanden), die Fenstergrenzen stammen aus
+// toISOString() ("...T22:00:00.000Z"). Lexikografisch sortiert "+" vor ".", ein Ereignis genau auf
+// der Grenze landete so im falschen Fenster.
+function instantMs(iso: string): number {
+  return Date.parse(iso)
+}
+
 export function isInWindow(occurredAtIso: string, window: MetricsWindow): boolean {
-  return occurredAtIso >= window.startUtc && occurredAtIso < window.endUtc
+  const at = instantMs(occurredAtIso)
+  return at >= instantMs(window.startUtc) && at < instantMs(window.endUtc)
 }
 
 // Kalenderarithmetik auf den Tages-Labels, keine Instanz-Arithmetik -- "ein Tag mehr" ist
@@ -159,7 +168,7 @@ function firstOccurrenceByPost(events: readonly PublishedTransitionInput[]): Map
   const first = new Map<string, string>()
   for (const event of events) {
     const existing = first.get(event.postId)
-    if (existing === undefined || event.occurredAt < existing) first.set(event.postId, event.occurredAt)
+    if (existing === undefined || instantMs(event.occurredAt) < instantMs(existing)) first.set(event.postId, event.occurredAt)
   }
   return first
 }
@@ -236,15 +245,16 @@ export function computeCountMetricsSeries(windows: readonly MetricsWindow[], inp
       throw new Error('computeCountMetricsSeries: windows must be ascending and contiguous')
     }
   }
-  const firstWindowStart = (windows[0] as MetricsWindow).startUtc
+  const firstWindowStart = instantMs((windows[0] as MetricsWindow).startUtc)
+  const windowEnds = windows.map((window) => instantMs(window.endUtc))
 
   function bucketCounts<T>(items: readonly T[], timestampOf: (item: T) => string, matches: (item: T) => boolean): number[] {
-    const timestamps = items.filter(matches).map(timestampOf).sort()
+    const timestamps = items.filter(matches).map((item) => instantMs(timestampOf(item))).sort((a, b) => a - b)
     let idx = 0
-    while (idx < timestamps.length && (timestamps[idx] as string) < firstWindowStart) idx++
-    return windows.map((window) => {
+    while (idx < timestamps.length && (timestamps[idx] as number) < firstWindowStart) idx++
+    return windowEnds.map((windowEnd) => {
       let count = 0
-      while (idx < timestamps.length && (timestamps[idx] as string) < window.endUtc) {
+      while (idx < timestamps.length && (timestamps[idx] as number) < windowEnd) {
         count++
         idx++
       }
@@ -271,18 +281,18 @@ export function computeCountMetricsSeries(windows: readonly MetricsWindow[], inp
     const current = maxVersionByPost.get(version.postId) ?? 0
     if (version.versionNumber > current) maxVersionByPost.set(version.postId, version.versionNumber)
   }
-  const publishedEntries = [...firstPublishedAt.entries()].sort(([, a], [, b]) => (a < b ? -1 : a > b ? 1 : 0))
+  const publishedEntries = [...firstPublishedAt.entries()].map(([postId, occurredAt]) => [postId, instantMs(occurredAt)] as const).sort(([, a], [, b]) => a - b)
   let publishedIdx = 0
-  while (publishedIdx < publishedEntries.length && (publishedEntries[publishedIdx] as [string, string])[1] < firstWindowStart) publishedIdx++
+  while (publishedIdx < publishedEntries.length && (publishedEntries[publishedIdx] as readonly [string, number])[1] < firstWindowStart) publishedIdx++
   const postsPublishedCounts: number[] = []
   const revisionsSumCounts: number[] = []
   const revisionsCountCounts: number[] = []
-  for (const window of windows) {
+  for (const windowEnd of windowEnds) {
     let published = 0
     let revisionsSum = 0
     let revisionsCount = 0
-    while (publishedIdx < publishedEntries.length && (publishedEntries[publishedIdx] as [string, string])[1] < window.endUtc) {
-      const [postId] = publishedEntries[publishedIdx] as [string, string]
+    while (publishedIdx < publishedEntries.length && (publishedEntries[publishedIdx] as readonly [string, number])[1] < windowEnd) {
+      const [postId] = publishedEntries[publishedIdx] as readonly [string, number]
       published++
       const maxVersion = maxVersionByPost.get(postId)
       if (maxVersion !== undefined) {
@@ -358,7 +368,7 @@ export function approvalDurationSecondsSamples(window: MetricsWindow, transition
 
   const samples: number[] = []
   for (const list of byPost.values()) {
-    const sorted = [...list].sort((a, b) => (a.occurredAt < b.occurredAt ? -1 : a.occurredAt > b.occurredAt ? 1 : 0))
+    const sorted = [...list].sort((a, b) => instantMs(a.occurredAt) - instantMs(b.occurredAt))
     let openedAt: string | null = null
     for (const transition of sorted) {
       if (transition.toStatus === 'awaiting_approval') {
@@ -405,7 +415,7 @@ export function computeFunnel(window: MetricsWindow, posts: readonly PostCreated
     for (const transition of transitions) {
       if (transition.toStatus !== status) continue
       const existing = first.get(transition.postId)
-      if (existing === undefined || transition.occurredAt < existing) first.set(transition.postId, transition.occurredAt)
+      if (existing === undefined || instantMs(transition.occurredAt) < instantMs(existing)) first.set(transition.postId, transition.occurredAt)
     }
     return [...first.values()].filter((occurredAt) => isInWindow(occurredAt, window)).length
   }

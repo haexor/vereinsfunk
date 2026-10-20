@@ -2,7 +2,7 @@
 import { CreatePhotoLayoutPresetRequestSchema, PhotoLayoutPresetSchema, UpdatePhotoLayoutPresetRequestSchema, type PhotoLayoutPreset } from '@vereinsfunk/contracts'
 import { z } from 'zod'
 import { emptyPhotoLayoutPresetDraft, type PhotoLayoutPresetDraft } from '../utils/photoLayoutPresetDraft'
-import { selectablePhotoLayoutPresets } from '../utils/photoLayoutPresets'
+import { selectableAtLevel } from '../utils/scopeSelection'
 
 const api = useApiClient()
 const session = await useSession()
@@ -16,7 +16,8 @@ const saving = ref(false)
 let latestLoadRun = 0
 
 const presets = ref<PhotoLayoutPreset[]>([])
-const orgColors = reactive({ primaryColor: '#163a2c', accentColor: '#caff4a' })
+const DEFAULT_ORG_COLORS = { primaryColor: '#163a2c', accentColor: '#caff4a' }
+const orgColors = reactive({ ...DEFAULT_ORG_COLORS })
 
 const canManageActiveLevel = computed(() => {
   if (!organizationId.value) return false
@@ -25,7 +26,7 @@ const canManageActiveLevel = computed(() => {
 
 // "Erben, bis die Ebene ein eigenes Preset anlegt" -- alle Presets, die von hier aus waehlbar
 // waeren, eigene UND vererbte von oben, dieselbe Richtung wie Bildstil-Presets.
-const visiblePresets = computed(() => selectablePhotoLayoutPresets(presets.value, activeLevel.value, activeDepartmentId.value ?? undefined, activeTeamId.value ?? undefined))
+const visiblePresets = computed(() => selectableAtLevel(presets.value, activeLevel.value, activeDepartmentId.value ?? undefined, activeTeamId.value ?? undefined))
 const ownPresets = computed(() => visiblePresets.value.filter((preset) => preset.departmentId === activeDepartmentId.value && preset.teamId === activeTeamId.value))
 const inheritedPresets = computed(() => visiblePresets.value.filter((preset) => !ownPresets.value.includes(preset)))
 
@@ -42,11 +43,6 @@ function scopeLabel(preset: PhotoLayoutPreset): string {
   if (preset.departmentId) return organization.departments.find((item) => item.id === preset.departmentId)?.name ?? 'Abteilung'
   return 'Verein'
 }
-function resolveDividerColor(dividerColor: string): string {
-  if (dividerColor === 'primary') return orgColors.primaryColor
-  if (dividerColor === 'accent') return orgColors.accentColor
-  return dividerColor
-}
 
 async function loadAll() {
   const loadRun = ++latestLoadRun
@@ -60,10 +56,10 @@ async function loadAll() {
     ])
     if (loadRun !== latestLoadRun) return
     if (orgBrandResult.error) { loadError.value = true; return }
-    if (orgBrandResult.data) {
-      orgColors.primaryColor = orgBrandResult.data.primary_color
-      orgColors.accentColor = orgBrandResult.data.accent_color
-    }
+    // Ohne eigene Markenzeile gelten wieder die Vorgaben -- sonst zeigten die Vorschauen nach einem
+    // Vereinswechsel die Farben des vorigen Vereins.
+    orgColors.primaryColor = orgBrandResult.data?.primary_color ?? DEFAULT_ORG_COLORS.primaryColor
+    orgColors.accentColor = orgBrandResult.data?.accent_color ?? DEFAULT_ORG_COLORS.accentColor
     presets.value = presetsResponse.presets
   } catch {
     if (loadRun === latestLoadRun) loadError.value = true
@@ -228,7 +224,7 @@ async function deletePreset(preset: PhotoLayoutPreset) {
         </div>
 
         <div class="lg:sticky lg:top-6 lg:self-start">
-          <PhotoLayoutPreview :kind="(editingId ? editDraft : draft).kind" :divider-color-hex="resolveDividerColor((editingId ? editDraft : draft).dividerColor)" :divider-width-px="(editingId ? editDraft : draft).dividerWidthPx" />
+          <PhotoLayoutPreview :kind="(editingId ? editDraft : draft).kind" :divider-color-hex="resolveDividerColor((editingId ? editDraft : draft).dividerColor, orgColors)" :divider-width-px="(editingId ? editDraft : draft).dividerWidthPx" />
         </div>
       </div>
     </template>

@@ -14,6 +14,13 @@ const sent = ref(false)
 const errorMessage = ref('')
 const LoginInputSchema = z.object({ email: z.string().trim().pipe(z.email()) })
 
+// Die serverseitige Middleware kennt nur den Cookie-Hinweis (plugins/supabase.client.ts) -- fehlt
+// er, landet auch eine noch gueltige Sitzung hier. Dann direkt zum Ziel statt zu einem neuen Link.
+onMounted(async () => {
+  const { data } = await useSupabaseClient().auth.getSession()
+  if (data.session) await navigateTo(resolveSafeRedirect(route.query.redirect), { replace: true })
+})
+
 /** Schickt einen Anmeldelink; der Link fuehrt ueber /auth/callback zum urspruenglichen Ziel. */
 async function submit() {
   errorMessage.value = ''

@@ -20,7 +20,8 @@ const seasonFrom = ref<string | null>(null)
 const items = ref<RankingListItem[]>([])
 const loading = ref(false)
 const errorMessage = ref('')
-const seasonLoadError = ref(false)
+// Meldung eines gescheiterten Saisonabrufs; leer, solange der Saisonanfang bekannt ist.
+const seasonLoadError = ref('')
 
 const periods: { kind: RankingPeriodKind; label: string }[] = [
   { kind: 'season', label: 'Saison' },
@@ -32,7 +33,7 @@ const periods: { kind: RankingPeriodKind; label: string }[] = [
 /** Laedt den Saisonanfang, sobald die Mannschaft feststeht. */
 async function loadSeason(): Promise<boolean> {
   seasonFrom.value = null
-  seasonLoadError.value = false
+  seasonLoadError.value = ''
   if (!organizationId.value || !teamId.value) return true
   const requestedOrganizationId = organizationId.value
   const requestedTeamId = teamId.value
@@ -46,8 +47,8 @@ async function loadSeason(): Promise<boolean> {
   } catch (error) {
     if (organizationId.value !== requestedOrganizationId || teamId.value !== requestedTeamId)
       return false
-    seasonLoadError.value = true
-    errorMessage.value = playerboardErrorMessage(error, 'Die Saison konnte nicht geladen werden.')
+    seasonLoadError.value = playerboardErrorMessage(error, 'Die Saison konnte nicht geladen werden.')
+    errorMessage.value = seasonLoadError.value
     return false
   }
 }
@@ -61,7 +62,13 @@ async function load() {
     items.value = []
     return
   }
-  if (period.value === 'season' && seasonLoadError.value) return
+  // Ohne Saisonanfang gibt es keinen Saison-Zeitraum: die Meldung bleibt stehen und die zuletzt
+  // geladene Rangliste (etwa die des Monats) verschwindet, statt unter "Saison" weiterzulaufen.
+  if (period.value === 'season' && seasonLoadError.value) {
+    items.value = []
+    errorMessage.value = seasonLoadError.value
+    return
+  }
   const requestedTeamId = teamId.value
   const requestedSeasonFrom = seasonFrom.value
   loading.value = true
@@ -92,19 +99,6 @@ watch([period, month, customFrom, customTo], () => {
   void load()
 })
 
-const seasonFormat = new Intl.DateTimeFormat('de-DE', {
-  day: 'numeric',
-  month: 'long',
-  year: 'numeric',
-  timeZone: 'UTC',
-})
-const periodHint = computed(() => {
-  if (period.value === 'season')
-    return seasonFrom.value
-      ? `Seit ${seasonFormat.format(new Date(`${seasonFrom.value}T00:00:00Z`))}`
-      : 'Kein Saisonbeginn festgelegt – es zählt die gesamte Zeit.'
-  return ''
-})
 const inputClass =
   'focus-ring h-11 rounded-xl border border-[#dfe0d9] bg-white px-3 text-sm text-ink'
 </script>
@@ -121,26 +115,7 @@ const inputClass =
 
     <PlayerboardTeamEmpty v-if="!team" />
     <template v-else>
-      <div class="mb-3 flex flex-wrap gap-2" role="radiogroup" aria-label="Zeitraum">
-        <button
-          v-for="item in periods"
-          :key="item.kind"
-          type="button"
-          role="radio"
-          :aria-checked="period === item.kind"
-          class="focus-ring min-h-11 rounded-xl border px-4 text-xs font-semibold"
-          :class="
-            period === item.kind
-              ? 'border-forest bg-[#e4f1e7] text-forest'
-              : 'border-[#dfe0d9] bg-white text-ink'
-          "
-          @click="period = item.kind"
-        >
-          {{ item.label }}
-        </button>
-      </div>
-      <div class="mb-5 flex min-h-11 flex-wrap items-center gap-3 text-xs text-[#6c756f]">
-        <span v-if="periodHint">{{ periodHint }}</span>
+      <PlayerboardPeriodPicker v-model="period" :periods="periods" :season-from="seasonFrom">
         <input
           v-if="period === 'month'"
           v-model="month"
@@ -156,7 +131,7 @@ const inputClass =
             >bis <input v-model="customTo" type="date" :class="inputClass"
           /></label>
         </template>
-      </div>
+      </PlayerboardPeriodPicker>
 
       <p v-if="errorMessage" class="text-sm text-amber-800">{{ errorMessage }}</p>
       <div v-else :aria-busy="loading" :class="loading ? 'opacity-60' : ''">

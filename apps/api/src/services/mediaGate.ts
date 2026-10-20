@@ -26,7 +26,7 @@ import { CONSENT_RECORD_SELECT, type ConsentRecordRow } from '../routes/shared.j
 // personLeft false abgeleitet werden. Das Ergebnis ist dann eine leere Blockerliste, die aussieht
 // wie "nichts zu beanstanden" (gefunden im Code-Review zu Paket 002).
 export async function computeMediaGateBlockersForPostVersion(
-  client: SupabaseClient, postVersionId: string, departmentId: string, policy: { consentExpiresOnLeave: boolean },
+  client: SupabaseClient, postVersionId: string, departmentId: string | null, policy: { consentExpiresOnLeave: boolean },
 ): Promise<MediaGateBlocker[]> {
   const postVersion = await client.from('post_versions').select('title, caption').eq('id', postVersionId).maybeSingle()
   if (postVersion.error) throw postVersion.error

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Mail, Pencil, Trash2, UserPlus } from '@lucide/vue'
 import { DirectoryPersonSchema, PlayerboardInviteResponseSchema, PlayerboardPlayerSchema, type DirectoryPerson, type PlayerboardPlayer } from '@vereinsfunk/contracts'
+import { optionalNumber } from '../../utils/numberInput'
 import { playerboardErrorMessage } from '../../utils/playerboardErrors'
 
 // Paket 052, PR 3: Kader der gewaehlten Mannschaft. Trainer legen Spieler selbst an (die
@@ -53,11 +54,6 @@ function replacePlayer(player: PlayerboardPlayer) {
   players.value = players.value.some((item) => item.id === player.id)
     ? players.value.map((item) => (item.id === player.id ? player : item))
     : [...players.value, player]
-}
-
-// v-model auf type="number" liefert eine Zahl, ein geleertes Feld aber ''.
-function optionalNumber(value: string | number): number | null {
-  return typeof value === 'number' ? value : value.trim() === '' ? null : Number(value)
 }
 
 // --- Anlegen -----------------------------------------------------------------------------------

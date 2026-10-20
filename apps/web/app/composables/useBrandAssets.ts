@@ -1,7 +1,7 @@
-import { BrandAssetSchema } from '@vereinsfunk/contracts'
-import { isBrandAssetSelectable } from '@vereinsfunk/domain'
 import type { ComputedRef, Ref } from 'vue'
 import { z } from 'zod'
+import { BrandAssetRowSchema } from '../utils/brandPageRows'
+import { selectableAtLevel } from '../utils/scopeSelection'
 
 export type BrandScopeLevel = 'organization' | 'department' | 'team'
 
@@ -18,22 +18,6 @@ export interface BrandAssetRow {
   licenseHolder: string | null
   createdAt: string
 }
-
-// Supabase-Selects sind zur Laufzeit untypisiert. Dieses schmale Schema entspricht exakt den
-// Spalten aus fetchBrandAssets und verhindert, dass unvollständige Storage-Pfade in die UI gelangen.
-export const BrandAssetRowSchema = z.object({
-  id: BrandAssetSchema.shape.id,
-  department_id: BrandAssetSchema.shape.departmentId,
-  team_id: BrandAssetSchema.shape.teamId,
-  kind: BrandAssetSchema.shape.kind,
-  object_path: BrandAssetSchema.shape.objectPath,
-  status: BrandAssetSchema.shape.status,
-  font_family: BrandAssetSchema.shape.fontFamily,
-  font_weight: BrandAssetSchema.shape.fontWeight,
-  font_style: BrandAssetSchema.shape.fontStyle,
-  license_holder: BrandAssetSchema.shape.licenseHolder,
-  created_at: BrandAssetSchema.shape.createdAt,
-})
 
 export const SignedBrandAssetUrlSchema = z.object({ signedUrl: z.url() })
 
@@ -133,55 +117,27 @@ export function useBrandAssets({
   }
 
   const selectableLogoAssets = computed(() =>
-    assets.value.filter(
-      (asset) =>
-        asset.status === 'ready' &&
-        asset.kind !== 'font' &&
-        asset.kind !== 'frame' &&
-        isBrandAssetSelectable(
-          {
-            scope: asset.teamId ? 'team' : asset.departmentId ? 'department' : 'organization',
-            departmentId: asset.departmentId ?? undefined,
-            teamId: asset.teamId ?? undefined,
-          },
-          activeLevel.value,
-          activeDepartmentId.value ?? undefined,
-          activeTeamId.value ?? undefined,
-        ),
+    selectableAtLevel(
+      assets.value.filter((asset) => asset.status === 'ready' && asset.kind !== 'font' && asset.kind !== 'frame'),
+      activeLevel.value,
+      activeDepartmentId.value ?? undefined,
+      activeTeamId.value ?? undefined,
     ),
   )
   const selectableFrameAssets = computed(() =>
-    assets.value.filter(
-      (asset) =>
-        asset.status === 'ready' &&
-        asset.kind === 'frame' &&
-        isBrandAssetSelectable(
-          {
-            scope: asset.teamId ? 'team' : asset.departmentId ? 'department' : 'organization',
-            departmentId: asset.departmentId ?? undefined,
-            teamId: asset.teamId ?? undefined,
-          },
-          activeLevel.value,
-          activeDepartmentId.value ?? undefined,
-          activeTeamId.value ?? undefined,
-        ),
+    selectableAtLevel(
+      assets.value.filter((asset) => asset.status === 'ready' && asset.kind === 'frame'),
+      activeLevel.value,
+      activeDepartmentId.value ?? undefined,
+      activeTeamId.value ?? undefined,
     ),
   )
   const selectableFontAssets = computed(() =>
-    assets.value.filter(
-      (asset) =>
-        asset.status === 'ready' &&
-        asset.kind === 'font' &&
-        isBrandAssetSelectable(
-          {
-            scope: asset.teamId ? 'team' : asset.departmentId ? 'department' : 'organization',
-            departmentId: asset.departmentId ?? undefined,
-            teamId: asset.teamId ?? undefined,
-          },
-          activeLevel.value,
-          activeDepartmentId.value ?? undefined,
-          activeTeamId.value ?? undefined,
-        ),
+    selectableAtLevel(
+      assets.value.filter((asset) => asset.status === 'ready' && asset.kind === 'font'),
+      activeLevel.value,
+      activeDepartmentId.value ?? undefined,
+      activeTeamId.value ?? undefined,
     ),
   )
   const ownFontAssets = computed(() =>

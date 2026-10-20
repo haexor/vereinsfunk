@@ -169,6 +169,13 @@ describe('ApiEnvironmentSchema', () => {
     expect(ApiEnvironmentSchema.safeParse({ NODE_ENV: 'development', PUBLISHING_MODE: 'fake' }).success).toBe(true)
   })
 
+  it('trusts no proxy hop by default and parses an explicit hop count', () => {
+    expect(ApiEnvironmentSchema.parse({ NODE_ENV: 'development' }).TRUST_PROXY_HOPS).toBe(0)
+    expect(ApiEnvironmentSchema.parse({ NODE_ENV: 'development', TRUST_PROXY_HOPS: '' }).TRUST_PROXY_HOPS).toBe(0)
+    expect(ApiEnvironmentSchema.parse({ NODE_ENV: 'development', TRUST_PROXY_HOPS: '1' }).TRUST_PROXY_HOPS).toBe(1)
+    expect(ApiEnvironmentSchema.safeParse({ NODE_ENV: 'development', TRUST_PROXY_HOPS: 'true' }).success).toBe(false)
+  })
+
   it('uses an explicit fake mode with all supported providers when unset', () => {
     const parsed = ApiEnvironmentSchema.parse({ NODE_ENV: 'development' })
     expect(parsed.PUBLISHING_MODE).toBe('fake')

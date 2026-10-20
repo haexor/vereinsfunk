@@ -7,15 +7,32 @@ export function usePolling(load: () => Promise<void>, hasUnfinishedWork: () => b
   let timer: ReturnType<typeof setTimeout> | undefined
   let cancelled = false
   let inFlight: Promise<void> | undefined
+  let rerun = false
 
   async function refresh() {
     // Ohne diese Deduplizierung koennte ein direkter Aufruf (z. B. der manuelle
     // "Aktualisieren"-Button) waehrend eines laufenden Poll-Requests einen zweiten parallelen
     // Request ausloesen -- eine langsamere, aeltere Antwort ueberschriebe dann neueren Zustand.
-    if (inFlight) return inFlight
+    // Den laufenden Request einfach zurueckzugeben reicht aber nicht: er kann vor einer Mutation
+    // des Aufrufers gestartet sein (erstellen.vue legt per POST einen neuen Kandidaten an) und
+    // liefert dann den alten Zustand, womoeglich einen Endzustand, der das Polling beendet.
+    // Deshalb laedt er danach genau einmal neu; alle Aufrufer bis dahin teilen sich diesen Lauf.
+    if (inFlight) {
+      rerun = true
+      return inFlight
+    }
     inFlight = (async () => {
       try {
-        await load()
+        // Zaehlt nur das Ergebnis des letzten Laufs -- ein Fehler eines ueberholten Laufs nicht.
+        for (;;) {
+          rerun = false
+          try {
+            await load()
+            if (!rerun) return
+          } catch (error) {
+            if (!rerun) throw error
+          }
+        }
       } finally {
         inFlight = undefined
         // Auch nach einem fehlgeschlagenen Refresh weiterpollen, solange der zuletzt bekannte

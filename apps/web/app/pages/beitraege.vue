@@ -13,18 +13,25 @@ const mediaAssets = ref<MediaAssetSummary[]>([])
 const mediaLoading = ref(false)
 const mediaError = ref<string | null>(null)
 const onlyMyMedia = ref(false)
+// Die Sidebar wechselt Verein/Abteilung ohne Remount dieser Seite. Nur der zuletzt gestartete Lauf
+// darf schreiben -- sonst standen Beitraege des vorigen Bereichs neben Medien des neuen (dasselbe
+// Zaehlermuster wie kalender.vue).
+let loadRun = 0
+let mediaLoadRun = 0
 async function loadMedia() {
   if (!scope.value?.organizationId) return
+  const run = ++mediaLoadRun
   mediaLoading.value = true
   mediaError.value = null
   try {
-    mediaAssets.value = await api.request('/v1/media-assets', {
+    const assets = await api.request('/v1/media-assets', {
       query: { organizationId: scope.value.organizationId, departmentId: scope.value.departmentId ?? undefined, createdBy: onlyMyMedia.value ? 'me' : undefined },
     }, z.array(MediaAssetSummarySchema))
+    if (run === mediaLoadRun) mediaAssets.value = assets
   } catch {
-    mediaError.value = 'Medien konnten nicht geladen werden. Bitte versuche es erneut.'
+    if (run === mediaLoadRun) mediaError.value = 'Medien konnten nicht geladen werden. Bitte versuche es erneut.'
   } finally {
-    mediaLoading.value = false
+    if (run === mediaLoadRun) mediaLoading.value = false
   }
 }
 watch(onlyMyMedia, () => void loadMedia())
@@ -44,21 +51,36 @@ function draftLabel(draft: z.infer<typeof TextWorkshopDraftRowSchema>) {
   const firstFact = draft.payload.factsText.split('\n').find((line) => line.trim())
   return firstFact?.split(':').slice(1).join(':').trim() || draft.payload.observation.trim() || 'Textwerkstatt-Entwurf'
 }
-if (scope.value?.organizationId) {
-  const query = useSupabaseClient().from('posts').select('id, status, created_at, current_version_id').eq('organization_id', scope.value.organizationId).order('created_at', { ascending: false })
-  if (scope.value.departmentId) query.eq('department_id', scope.value.departmentId)
+async function load() {
+  const run = ++loadRun
+  const organizationId = scope.value?.organizationId
+  const departmentId = scope.value?.departmentId ?? null
+  // Auch laufende Medien-Anfragen des vorigen Bereichs verwerfen, bevor loadMedia() unten startet.
+  ++mediaLoadRun
+  posts.value = []; workshopDrafts.value = []; mediaAssets.value = []
+  postsError.value = null; workshopDraftsError.value = null; mediaError.value = null
+  workshopDraftsLoading.value = false; mediaLoading.value = false
+  if (!organizationId) { postsLoading.value = false; return }
+  postsLoading.value = true
+  const query = useSupabaseClient().from('posts').select('id, status, created_at, current_version_id').eq('organization_id', organizationId).order('created_at', { ascending: false })
+  if (departmentId) query.eq('department_id', departmentId)
   const result = await query
+  if (run !== loadRun) return
   if (result.error) postsError.value = 'Beiträge konnten nicht geladen werden. Bitte versuche es erneut.'
-  else { posts.value = result.data; postsError.value = null }
+  else posts.value = result.data
   postsLoading.value = false
   workshopDraftsLoading.value = true
   try {
-    const result = await api.request('/v1/text-workshop/drafts', { query: { organizationId: scope.value.organizationId, departmentId: scope.value.departmentId ?? undefined } }, z.object({ drafts: z.array(TextWorkshopDraftRowSchema) }))
+    const result = await api.request('/v1/text-workshop/drafts', { query: { organizationId, departmentId: departmentId ?? undefined } }, z.object({ drafts: z.array(TextWorkshopDraftRowSchema) }))
+    if (run !== loadRun) return
     workshopDrafts.value = result.drafts
-  } catch { workshopDraftsError.value = 'Entwürfe konnten nicht geladen werden. Bitte versuche es erneut.' }
-  finally { workshopDraftsLoading.value = false }
+  } catch { if (run === loadRun) workshopDraftsError.value = 'Entwürfe konnten nicht geladen werden. Bitte versuche es erneut.' }
+  finally { if (run === loadRun) workshopDraftsLoading.value = false }
+  if (run !== loadRun) return
   await loadMedia()
-} else postsLoading.value = false
+}
+await load()
+watch([() => scope.value?.organizationId, () => scope.value?.departmentId], () => void load())
 
 const deletingId = ref<string | null>(null)
 const deleteError = ref('')

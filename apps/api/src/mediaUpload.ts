@@ -1,7 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { FastifyBaseLogger } from 'fastify'
 import { createHash } from 'node:crypto'
 import sharp from 'sharp'
 import { z } from 'zod'
+import { parseSupabaseData } from './supabase.js'
 import type { MediaUploadService } from './routes/context.js'
 
 type MediaMimeType = 'image/jpeg' | 'image/png' | 'image/webp' | 'video/mp4' | 'audio/mpeg' | 'audio/mp4'
@@ -12,17 +14,10 @@ const MediaAssetDataSchema = z.object({
   object_path: z.string().min(1),
   upload_status: z.string().min(1),
   mime_type: z.string().nullable(),
+  byte_size: z.number().int().positive(),
 })
 const UploadStatusRowSchema = z.object({ upload_status: z.string().min(1) })
 const DownloadDataSchema = z.instanceof(Blob)
-
-function parseSupabaseData<T>(schema: z.ZodType<T>, data: unknown): T {
-  const parsed = schema.safeParse(data)
-  if (parsed.success) return parsed.data
-  const error = new Error('Unexpected Supabase response')
-  error.name = 'SupabaseResponseError'
-  throw error
-}
 
 /**
  * Byte-sniff, never trust the client-declared Content-Type -- same reasoning as
@@ -49,19 +44,19 @@ function detectMediaMimeType(buffer: Buffer): MediaMimeType | null {
  * upload as clean.
  */
 export class SupabaseUploadService implements MediaUploadService {
-  constructor(private readonly getServiceClient: () => SupabaseClient) {}
+  constructor(
+    private readonly getServiceClient: () => SupabaseClient,
+    private readonly log?: Pick<FastifyBaseLogger, 'error'>,
+  ) {}
 
-  async create(input: { organizationId: string; departmentId: string | null; assetId: string; filename: string; mimeType: string; byteSize: number }) {
-    const objectPath = input.departmentId
-      ? `organizations/${input.organizationId}/departments/${input.departmentId}/assets/${input.assetId}/${input.filename}`
-      : `organizations/${input.organizationId}/assets/${input.assetId}/${input.filename}`
+  async create(input: { objectPath: string }) {
     const service = this.getServiceClient()
-    const signed = await service.storage.from('raw-media').createSignedUploadUrl(objectPath)
+    const signed = await service.storage.from('raw-media').createSignedUploadUrl(input.objectPath)
     if (signed.error) throw signed.error
     const signedData = parseSupabaseData(SignedUploadDataSchema, signed.data)
     return {
       uploadUrl: signedData.signedUrl,
-      objectPath,
+      objectPath: input.objectPath,
       // Supabase's signed upload token has a fixed, non-configurable 2h server-side lifetime --
       // this is descriptive of that fact, not a value this code controls.
       expiresAt: new Date(Date.now() + 2 * 60 * 60_000).toISOString(),
@@ -70,7 +65,7 @@ export class SupabaseUploadService implements MediaUploadService {
 
   async complete(input: { assetId: string; sha256: string }): Promise<{ accepted: true; uploadStatus: string; mimeType: string | null }> {
     const service = this.getServiceClient()
-    const existing = await service.from('media_assets').select('bucket_id, object_path, upload_status, mime_type').eq('id', input.assetId).single()
+    const existing = await service.from('media_assets').select('bucket_id, object_path, upload_status, mime_type, byte_size').eq('id', input.assetId).single()
     if (existing.error) throw existing.error
     const existingData = parseSupabaseData(MediaAssetDataSchema, existing.data)
     // Idempotent: a second /complete call for an asset that already left 'initiated' (ready,
@@ -84,22 +79,37 @@ export class SupabaseUploadService implements MediaUploadService {
     // reaches this update last would silently overwrite the other's terminal state (e.g. a stale
     // retry marking an already-'ready' asset 'failed'). When no row matches, someone else already
     // resolved this asset -- report that persisted state instead of pretending this call won.
+    const persistedResult = async () => {
+      const current = await service.from('media_assets').select('upload_status').eq('id', input.assetId).single()
+      if (current.error) throw current.error
+      return { accepted: true as const, uploadStatus: parseSupabaseData(UploadStatusRowSchema, current.data).upload_status, mimeType: null }
+    }
     const applyTerminalUpdate = async (payload: Record<string, unknown>, uploadStatus: string, mimeType: string | null) => {
       const update = await service.from('media_assets').update(payload).eq('id', input.assetId).eq('upload_status', 'initiated').select('upload_status')
       if (update.error) throw update.error
-      if (update.data.length === 0) {
-        const current = await service.from('media_assets').select('upload_status').eq('id', input.assetId).single()
-        if (current.error) throw current.error
-        return { accepted: true as const, uploadStatus: parseSupabaseData(UploadStatusRowSchema, current.data).upload_status, mimeType: null }
-      }
+      if (update.data.length === 0) return persistedResult()
+      // Das Rohoriginal traegt noch EXIF/GPS und liegt nach dem Normalisieren nicht mehr unter
+      // object_path -- Aufbewahrung und Loeschung erreichen es dann nie. Erst nach dem gewonnenen
+      // Statuswechsel entfernen: bis dahin muss ein Retry die Originalbytes erneut pruefen koennen.
+      // Geloggt statt geworfen, der Endzustand ist bereits gespeichert.
+      const removal = await service.storage.from(existingData.bucket_id).remove([existingData.object_path])
+      if (removal.error) this.log?.error({ err: removal.error, assetId: input.assetId }, 'raw media original removal failed')
       return { accepted: true as const, uploadStatus, mimeType }
     }
 
     const markFailed = () => applyTerminalUpdate({ structural_validation_status: 'failed', scan_status: 'failed', upload_status: 'failed' }, 'failed', null)
 
     const download = await service.storage.from(existingData.bucket_id).download(existingData.object_path)
-    if (download.error) throw download.error
+    if (download.error) {
+      // Ein paralleler Aufruf, der den Statuswechsel gewonnen hat, hat das Original bereits entfernt.
+      const persisted = await persistedResult()
+      if (persisted.uploadStatus !== 'initiated') return persisted
+      throw download.error
+    }
     const downloadData = parseSupabaseData(DownloadDataSchema, download.data)
+    // reserve_storage_upload hat nur die angekuendigte Groesse gegen das Speicherkontingent
+    // geprueft. Ohne diesen Abgleich reservierte ein Upload 1 Byte und legte bis zur Bucket-Grenze ab.
+    if (downloadData.size > existingData.byte_size) return markFailed()
     const buffer = Buffer.from(await downloadData.arrayBuffer())
 
     if (createHash('sha256').update(buffer).digest('hex') !== input.sha256) return markFailed()

@@ -21,7 +21,7 @@ import {
 } from '@vereinsfunk/domain'
 import { isAllowedOutboundUrl } from '@vereinsfunk/outbound-fetch'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import {
   firstBlockedBrandField,
@@ -43,8 +43,34 @@ import {
   processBrandLogoUpload,
   UnsupportedLogoFormatError,
 } from '@vereinsfunk/brand-assets'
+import { readMultipartUpload } from '../multipartUpload.js'
+import { parseSupabaseData } from '../supabase.js'
 import type { ApiRouteContext } from './context.js'
-import { toPermissionScope } from './shared.js'
+import { createAuditRecorder, toPermissionScope } from './shared.js'
+
+type ScopeIds = { departmentId?: string | null | undefined; teamId?: string | null | undefined }
+
+// Ebene aus den Scope-Spalten einer Zeile oder eines Ziels -- eine team_id setzt immer eine
+// department_id voraus (CHECK in jeder Scope-Tabelle), deshalb entscheidet sie zuerst.
+export function scopeLevelOf(scope: ScopeIds): ScopeLevelName {
+  return scope.teamId ? 'team' : scope.departmentId ? 'department' : 'organization'
+}
+
+// Ob eine Zeile mit eigener Besitzebene (Brand-Asset, Bildstil- oder Layout-Preset) im Ziel-Scope
+// waehlbar ist: auf derselben oder einer uebergeordneten Ebene (siehe isBrandAssetSelectable).
+export function isSelectableInScope(owner: ScopeIds, target: ScopeIds): boolean {
+  const asset: BrandAssetRef = {
+    scope: scopeLevelOf(owner),
+    ...(owner.departmentId ? { departmentId: owner.departmentId } : {}),
+    ...(owner.teamId ? { teamId: owner.teamId } : {}),
+  }
+  return isBrandAssetSelectable(
+    asset,
+    scopeLevelOf(target),
+    target.departmentId ?? undefined,
+    target.teamId ?? undefined,
+  )
+}
 
 // Exportiert, weil apps/api/src/routes/imageStyle.ts (Plan 045, PR 1) dieselbe Waehlbarkeits-
 // Vorabpruefung fuer frame_brand_asset_id/logo_brand_asset_id braucht -- die DB-CHECK
@@ -55,9 +81,7 @@ export async function loadSelectableBrandAsset(
   client: SupabaseClient,
   organizationId: string,
   assetId: string,
-  targetScope: ScopeLevelName,
-  targetDepartmentId: string | undefined,
-  targetTeamId: string | undefined,
+  target: ScopeIds,
 ): Promise<{ id: string; kind: string } | null> {
   const result = await client
     .from('brand_assets')
@@ -67,24 +91,46 @@ export async function loadSelectableBrandAsset(
     .maybeSingle()
   if (result.error) throw result.error
   if (!result.data || result.data.status !== 'ready') return null
-  const asset: BrandAssetRef = {
-    scope:
-      result.data.department_id === null
-        ? 'organization'
-        : result.data.team_id === null
-          ? 'department'
-          : 'team',
-    departmentId: result.data.department_id ?? undefined,
-    teamId: result.data.team_id ?? undefined,
-  }
-  if (!isBrandAssetSelectable(asset, targetScope, targetDepartmentId, targetTeamId)) return null
+  const owner = { departmentId: result.data.department_id as string | null, teamId: result.data.team_id as string | null }
+  if (!isSelectableInScope(owner, target)) return null
   return { id: result.data.id as string, kind: result.data.kind as string }
+}
+
+// Prueft jede gesetzte Asset-Referenz eines Markenprofils oder Presets: 'ready', im Ziel-Scope
+// waehlbar und von einer der erwarteten Arten. Nicht gesetzte Referenzen (null/undefined) zaehlen
+// als gueltig.
+export async function validateBrandAssetReferences(
+  client: SupabaseClient,
+  organizationId: string,
+  target: ScopeIds,
+  references: readonly (readonly [assetId: string | null | undefined, expectedKinds: ReadonlySet<string>])[],
+): Promise<boolean> {
+  for (const [assetId, expectedKinds] of references) {
+    if (!assetId) continue
+    const asset = await loadSelectableBrandAsset(client, organizationId, assetId, target)
+    if (!asset || !expectedKinds.has(asset.kind)) return false
+  }
+  return true
 }
 
 // Exportiert, weil apps/api/src/routes/imageStyle.ts (Bildstil-Nachbesserung) dieselbe Menge
 // braucht: logo_brand_asset_id ist seit der Lockerung des Fremdschluessels (2026082002) nicht mehr
 // auf kind='watermark' gepinnt, sondern akzeptiert jede hier gelistete Logovariante.
 export const LOGO_ASSET_KINDS = new Set<string>(BrandLogoAssetKindSchema.options)
+const FONT_ASSET_KINDS = new Set(['font'])
+
+// Die drei Asset-Referenzen eines Markenprofils auf jeder Ebene.
+function brandProfileAssetReferences(input: {
+  logoAssetId?: string | null | undefined
+  displayFontAssetId?: string | null | undefined
+  bodyFontAssetId?: string | null | undefined
+}) {
+  return [
+    [input.logoAssetId, LOGO_ASSET_KINDS],
+    [input.displayFontAssetId, FONT_ASSET_KINDS],
+    [input.bodyFontAssetId, FONT_ASSET_KINDS],
+  ] as const
+}
 
 // brand_website_analysis_jobs.result ist jsonb und damit auch bei einem durch den Worker
 // geschriebenen Wert eine Systemgrenze. Nur diese drei Formate kann processBrandLogoUpload in
@@ -98,8 +144,30 @@ const StoredBrandWebsiteAnalysisLogoCandidateSchema = z
   .strict()
 const MAX_STORED_LOGO_CANDIDATES = 8
 
+// start_brand_website_analysis liefert jsonb; ohne Pruefung ginge ein unerwartetes Format als
+// jobId: undefined an den Client.
+const StartBrandWebsiteAnalysisResultSchema = z.object({ jobId: UuidSchema })
+const DepartmentOrganizationRowSchema = z.object({ organization_id: UuidSchema })
+
+// Fehler, die start_brand_website_analysis selbst meldet. department_not_in_organization ist in
+// der Praxis unerreichbar (organizationId stammt aus der Abteilung selbst), die RPC prueft es aber
+// als eigene Schutzschicht -- dieselbe Abbildung wie organization_has_no_department statt 500.
+const START_WEBSITE_ANALYSIS_ERROR_STATUS: Record<string, number> = {
+  analysis_in_progress: 409,
+  organization_has_no_department: 422,
+  department_not_in_organization: 422,
+}
+
+// confirm_brand_font_license prueft Status und Art selbst noch einmal unter Zeilensperre.
+const CONFIRM_LICENSE_ERROR_STATUS: Record<string, number> = {
+  brand_asset_not_found: 404,
+  not_a_font_asset: 400,
+  brand_asset_not_pending_license: 409,
+}
+
 export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients } = context
+  const recordAuditEvent = createAuditRecorder(supabaseClients)
 
   app.put('/v1/organizations/:id/brand', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
@@ -111,24 +179,8 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
     if (!(await requirePermission(request, reply, 'brand.manage', { organizationId: params.id })))
       return
     const client = supabaseClients.forUser(request.auth!.accessToken)
-    for (const [assetId, expectedKinds] of [
-      [input.logoAssetId, LOGO_ASSET_KINDS],
-      [input.displayFontAssetId, new Set(['font'])],
-      [input.bodyFontAssetId, new Set(['font'])],
-    ] as const) {
-      if (!assetId) continue
-      const asset = await loadSelectableBrandAsset(
-        client,
-        params.id,
-        assetId,
-        'organization',
-        undefined,
-        undefined,
-      )
-      if (!asset || !expectedKinds.has(asset.kind)) {
-        return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
-      }
-    }
+    if (!(await validateBrandAssetReferences(client, params.id, {}, brandProfileAssetReferences(input))))
+      return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
     const payload: Record<string, unknown> = {
       primary_color: input.primaryColor,
       accent_color: input.accentColor,
@@ -211,106 +263,52 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
     })
   }
 
-  // Die Homepage wird als Markenwert gepflegt. Der Analyse-Request übergibt bewusst keine URL,
-  // damit der Worker immer genau die gespeicherte Adresse abruft.
-  app.post('/v1/organizations/:id/brand/website-analysis', async (request, reply) => {
-    if (!(await requireAuth(request, reply))) return
-    const params = z.object({ id: UuidSchema }).parse(request.params)
-    if (!(await requirePermission(request, reply, 'brand.manage', { organizationId: params.id })))
-      return
-    StartBrandWebsiteAnalysisRequestSchema.parse(request.body ?? {})
-    const service = supabaseClients.forService()
-    const profile = await service
-      .from('organization_brand_profiles')
-      .select('website_url')
-      .eq('organization_id', params.id)
-      .maybeSingle()
-    if (profile.error) throw profile.error
-    const websiteUrl = profile.data?.website_url
-    if (!websiteUrl)
-      return reply.code(422).send({ error: 'website_url_missing', correlationId: request.id })
-    if (!isAllowedOutboundUrl(websiteUrl)) {
-      return reply.code(400).send({ error: 'website_url_not_allowed', correlationId: request.id })
-    }
-    const result = await service.rpc('start_brand_website_analysis', {
-      p_organization_id: params.id,
-      p_website_url: websiteUrl,
-      p_requested_by: request.auth!.userId,
-    })
-    if (result.error) {
-      if (result.error.message === 'analysis_in_progress')
-        return reply.code(409).send({ error: 'analysis_in_progress', correlationId: request.id })
-      if (result.error.message === 'organization_has_no_department')
-        return reply
-          .code(422)
-          .send({ error: 'organization_has_no_department', correlationId: request.id })
-      throw result.error
-    }
-    return reply.code(202).send({ jobId: (result.data as { jobId: string }).jobId })
-  })
-
-  app.get('/v1/organizations/:id/brand/website-analysis', async (request, reply) => {
-    if (!(await requireAuth(request, reply))) return
-    const params = z.object({ id: UuidSchema }).parse(request.params)
-    if (!(await requirePermission(request, reply, 'brand.manage', { organizationId: params.id })))
-      return
-    const service = supabaseClients.forService()
-    // is('department_id', null) ist seit Paket 049 notwendig: derselbe organization_id-Wert steht
-    // jetzt auch auf jeder Abteilungs-Job-Zeile, maybeSingle() wuerde sonst bei mehr als einer
-    // Zeile fuer den Verein einen Fehler werfen.
-    const row = await service
-      .from('brand_website_analysis_jobs')
-      .select('status, result, error_reason')
-      .eq('organization_id', params.id)
-      .is('department_id', null)
-      .maybeSingle()
-    if (row.error) throw row.error
-    if (!row.data)
-      return reply.code(404).send({ error: 'no_analysis_yet', correlationId: request.id })
-    return reply.code(200).send(await mapBrandWebsiteAnalysisRow(service, row.data, params.id))
-  })
-
-  app.post('/v1/departments/:id/brand/website-analysis', async (request, reply) => {
-    if (!(await requireAuth(request, reply))) return
-    const params = z.object({ id: UuidSchema }).parse(request.params)
+  // Laedt die Abteilung ueber den Nutzer-Client (RLS: eine fremde Abteilung ist "nicht gefunden")
+  // und prueft brand.manage in ihrem Scope. Liefert die organization_id oder null, wenn die
+  // Antwort bereits gesendet ist.
+  async function authorizeDepartmentBrand(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    departmentId: string,
+  ): Promise<string | null> {
     const department = await supabaseClients
       .forUser(request.auth!.accessToken)
       .from('departments')
       .select('organization_id')
-      .eq('id', params.id)
+      .eq('id', departmentId)
       .maybeSingle()
     if (department.error) throw department.error
-    if (!department.data)
-      return reply.code(404).send({ error: 'not_found', correlationId: request.id })
-    const organizationId = department.data.organization_id as string
-    if (
-      !(await requirePermission(
-        request,
-        reply,
-        'brand.manage',
-        toPermissionScope(organizationId, params.id),
-      ))
-    )
-      return
-    StartBrandWebsiteAnalysisRequestSchema.parse(request.body ?? {})
-    const service = supabaseClients.forService()
-    // Ein bereits vorhandenes Abteilungsprofil bleibt beim spaeteren Deaktivieren der
-    // Überschreibungen bestehen. Der Start eines kostenpflichtigen Analyse-Jobs muss dieselbe
-    // Grenze daher serverseitig durchsetzen wie das Speichern eines Abteilungs-Overrides.
-    const organizationBrand = await service
-      .from('organization_brand_profiles')
-      .select('allow_department_overrides')
-      .eq('organization_id', organizationId)
-      .maybeSingle()
-    if (organizationBrand.error) throw organizationBrand.error
-    if (organizationBrand.data && !organizationBrand.data.allow_department_overrides) {
-      return reply.code(400).send({ error: 'overrides_not_allowed', correlationId: request.id })
+    if (!department.data) {
+      reply.code(404).send({ error: 'not_found', correlationId: request.id })
+      return null
     }
-    const profile = await service
-      .from('department_brand_profiles')
-      .select('website_url')
-      .eq('department_id', params.id)
-      .maybeSingle()
+    const organizationId = parseSupabaseData(DepartmentOrganizationRowSchema, department.data).organization_id
+    if (!(await requirePermission(request, reply, 'brand.manage', toPermissionScope(organizationId, departmentId))))
+      return null
+    return organizationId
+  }
+
+  // Die Homepage wird als Markenwert gepflegt. Der Analyse-Request übergibt bewusst keine URL,
+  // damit der Worker immer genau die gespeicherte Adresse der jeweiligen Ebene abruft.
+  async function startBrandWebsiteAnalysis(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    organizationId: string,
+    departmentId?: string,
+  ) {
+    const service = supabaseClients.forService()
+    const profile = departmentId
+      ? await service
+          .from('department_brand_profiles')
+          .select('website_url')
+          .eq('organization_id', organizationId)
+          .eq('department_id', departmentId)
+          .maybeSingle()
+      : await service
+          .from('organization_brand_profiles')
+          .select('website_url')
+          .eq('organization_id', organizationId)
+          .maybeSingle()
     if (profile.error) throw profile.error
     const websiteUrl = profile.data?.website_url
     if (!websiteUrl)
@@ -322,93 +320,95 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
       p_organization_id: organizationId,
       p_website_url: websiteUrl,
       p_requested_by: request.auth!.userId,
-      p_department_id: params.id,
+      ...(departmentId ? { p_department_id: departmentId } : {}),
     })
     if (result.error) {
-      if (result.error.message === 'analysis_in_progress')
-        return reply.code(409).send({ error: 'analysis_in_progress', correlationId: request.id })
-      // In der Praxis unerreichbar (organizationId stammt oben aus der Abteilung selbst), aber die
-      // RPC prueft es trotzdem als eigene Schutzschicht (siehe Migration) -- dieselbe Abbildung wie
-      // 'organization_has_no_department' bei der Vereinsroute statt eines unspezifischen 500.
-      if (result.error.message === 'department_not_in_organization')
-        return reply
-          .code(422)
-          .send({ error: 'department_not_in_organization', correlationId: request.id })
-      throw result.error
+      const status = START_WEBSITE_ANALYSIS_ERROR_STATUS[result.error.message]
+      if (status === undefined) throw result.error
+      return reply.code(status).send({ error: result.error.message, correlationId: request.id })
     }
-    return reply.code(202).send({ jobId: (result.data as { jobId: string }).jobId })
+    return reply
+      .code(202)
+      .send({ jobId: parseSupabaseData(StartBrandWebsiteAnalysisResultSchema, result.data).jobId })
+  }
+
+  async function sendBrandWebsiteAnalysisStatus(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    organizationId: string,
+    departmentId?: string,
+  ) {
+    const service = supabaseClients.forService()
+    // is('department_id', null) ist seit Paket 049 notwendig: derselbe organization_id-Wert steht
+    // jetzt auch auf jeder Abteilungs-Job-Zeile, maybeSingle() wuerde sonst bei mehr als einer
+    // Zeile fuer den Verein einen Fehler werfen.
+    const query = service
+      .from('brand_website_analysis_jobs')
+      .select('status, result, error_reason')
+      .eq('organization_id', organizationId)
+    const row = await (departmentId
+      ? query.eq('department_id', departmentId)
+      : query.is('department_id', null)
+    ).maybeSingle()
+    if (row.error) throw row.error
+    if (!row.data)
+      return reply.code(404).send({ error: 'no_analysis_yet', correlationId: request.id })
+    return reply.code(200).send(await mapBrandWebsiteAnalysisRow(service, row.data, organizationId))
+  }
+
+  app.post('/v1/organizations/:id/brand/website-analysis', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    if (!(await requirePermission(request, reply, 'brand.manage', { organizationId: params.id })))
+      return
+    StartBrandWebsiteAnalysisRequestSchema.parse(request.body ?? {})
+    return startBrandWebsiteAnalysis(request, reply, params.id)
+  })
+
+  app.get('/v1/organizations/:id/brand/website-analysis', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    if (!(await requirePermission(request, reply, 'brand.manage', { organizationId: params.id })))
+      return
+    return sendBrandWebsiteAnalysisStatus(request, reply, params.id)
+  })
+
+  app.post('/v1/departments/:id/brand/website-analysis', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = z.object({ id: UuidSchema }).parse(request.params)
+    const organizationId = await authorizeDepartmentBrand(request, reply, params.id)
+    if (organizationId === null) return
+    StartBrandWebsiteAnalysisRequestSchema.parse(request.body ?? {})
+    // Ein bereits vorhandenes Abteilungsprofil bleibt beim spaeteren Deaktivieren der
+    // Überschreibungen bestehen. Der Start eines kostenpflichtigen Analyse-Jobs muss dieselbe
+    // Grenze daher serverseitig durchsetzen wie das Speichern eines Abteilungs-Overrides.
+    const organizationBrand = await supabaseClients
+      .forService()
+      .from('organization_brand_profiles')
+      .select('allow_department_overrides')
+      .eq('organization_id', organizationId)
+      .maybeSingle()
+    if (organizationBrand.error) throw organizationBrand.error
+    if (organizationBrand.data && !organizationBrand.data.allow_department_overrides) {
+      return reply.code(400).send({ error: 'overrides_not_allowed', correlationId: request.id })
+    }
+    return startBrandWebsiteAnalysis(request, reply, organizationId, params.id)
   })
 
   app.get('/v1/departments/:id/brand/website-analysis', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
-    const department = await supabaseClients
-      .forUser(request.auth!.accessToken)
-      .from('departments')
-      .select('organization_id')
-      .eq('id', params.id)
-      .maybeSingle()
-    if (department.error) throw department.error
-    if (!department.data)
-      return reply.code(404).send({ error: 'not_found', correlationId: request.id })
-    if (
-      !(await requirePermission(
-        request,
-        reply,
-        'brand.manage',
-        toPermissionScope(department.data.organization_id as string, params.id),
-      ))
-    )
-      return
-    const service = supabaseClients.forService()
-    const row = await service
-      .from('brand_website_analysis_jobs')
-      .select('status, result, error_reason')
-      .eq('department_id', params.id)
-      .maybeSingle()
-    if (row.error) throw row.error
-    if (!row.data)
-      return reply.code(404).send({ error: 'no_analysis_yet', correlationId: request.id })
-    return reply
-      .code(200)
-      .send(
-        await mapBrandWebsiteAnalysisRow(
-          service,
-          row.data,
-          department.data.organization_id as string,
-        ),
-      )
+    const organizationId = await authorizeDepartmentBrand(request, reply, params.id)
+    if (organizationId === null) return
+    return sendBrandWebsiteAnalysisStatus(request, reply, organizationId, params.id)
   })
 
   app.post('/v1/brand/assets', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
 
-    const filePart = await request.file()
-    if (!filePart)
-      return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
-
-    let fields: z.infer<typeof CreateBrandAssetRequestSchema>
-    let buffer: Buffer
-    try {
-      // Wie beim Logo-Upload: die Datei zuerst vollstaendig lesen, danach die begleitenden
-      // multipart-Felder auswerten -- busboy fuellt filePart.fields erst, sobald der
-      // Datei-Stream durchgelaufen ist.
-      buffer = await filePart.toBuffer()
-      const rawFields = Object.fromEntries(
-        Object.entries(filePart.fields).map(([key, field]) => [
-          key,
-          field && 'value' in field ? field.value : undefined,
-        ]),
-      )
-      fields = CreateBrandAssetRequestSchema.parse(rawFields)
-    } catch (error) {
-      if (error instanceof Error && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE') {
-        return reply.code(413).send({ error: 'file_too_large', correlationId: request.id })
-      }
-      if (error instanceof z.ZodError)
-        return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
-      throw error
-    }
+    const upload = await readMultipartUpload(request, CreateBrandAssetRequestSchema)
+    if (!upload.ok) return reply.code(upload.status).send({ error: upload.error, correlationId: request.id })
+    const { buffer, fields } = upload
 
     const scope = toPermissionScope(fields.organizationId, fields.departmentId, fields.teamId)
     if (!(await requirePermission(request, reply, 'brand.manage', scope))) return
@@ -462,9 +462,6 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
               correlationId: request.id,
             })
         }
-        if (error instanceof Error && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE') {
-          return reply.code(413).send({ error: 'file_too_large', correlationId: request.id })
-        }
         throw error
       }
     } else {
@@ -475,9 +472,6 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
           return reply
             .code(400)
             .send({ error: 'invalid_logo', message: error.message, correlationId: request.id })
-        }
-        if (error instanceof Error && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE') {
-          return reply.code(413).send({ error: 'file_too_large', correlationId: request.id })
         }
         throw error
       }
@@ -502,6 +496,22 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
       const hash = hashLogoBuffer(processedFont.woff2Buffer)
       const rawObjectPath = `organizations/${fields.organizationId}/brand/${scopeSegment}/font-${hash}-original.${processedFont.originalExtension}`
       const woff2ObjectPath = `organizations/${fields.organizationId}/brand/${scopeSegment}/font-${hash}.woff2`
+      // Dieselbe Schriftdatei erneut hochgeladen: das upsert unten setzte eine bereits lizenzierte,
+      // womoeglich von Markenprofilen ausgewaehlte Schrift zurueck auf 'processing' -- die Profile
+      // zeigten danach auf ein nicht waehlbares Asset. Die vorhandene Zeile bleibt unveraendert.
+      const readyFont = await service
+        .from('brand_assets')
+        .select()
+        .eq('organization_id', fields.organizationId)
+        .eq('object_path', woff2ObjectPath)
+        .eq('status', 'ready')
+        .maybeSingle()
+      if (readyFont.error) throw readyFont.error
+      if (readyFont.data) {
+        return reply
+          .code(200)
+          .send(CreateBrandAssetResponseSchema.parse({ ...mapBrandAssetRow(readyFont.data), sanitized: false }))
+      }
       const rawUpload = await service.storage
         .from('raw-media')
         .upload(rawObjectPath, processedFont.originalBuffer, {
@@ -530,17 +540,10 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
     } else if (processedImage) {
       const hash = hashLogoBuffer(processedImage.buffer)
       const objectPath = `organizations/${fields.organizationId}/brand/${scopeSegment}/${fields.kind}-${hash}.${processedImage.extension}`
-      const upload = await service.storage
-        .from('brand-assets')
-        .upload(objectPath, processedImage.buffer, {
-          contentType: processedImage.contentType,
-          upsert: true,
-        })
-      if (upload.error) throw upload.error
-
-      let rasterDerivativePaths: Record<string, string> = {}
+      // Rastern vor jedem Upload: ein erst danach abgelehntes SVG liess sein Original verwaist im
+      // Bucket zurueck.
+      let derivatives: Record<string, Buffer> | undefined
       if (processedImage.extension === 'svg') {
-        let derivatives
         try {
           derivatives = await generateSvgRasterDerivatives(processedImage.buffer)
         } catch (error) {
@@ -551,6 +554,17 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
           }
           throw error
         }
+      }
+      const upload = await service.storage
+        .from('brand-assets')
+        .upload(objectPath, processedImage.buffer, {
+          contentType: processedImage.contentType,
+          upsert: true,
+        })
+      if (upload.error) throw upload.error
+
+      let rasterDerivativePaths: Record<string, string> = {}
+      if (derivatives) {
         const derivativeUploads = await Promise.all(
           (Object.entries(derivatives) as [string, Buffer][]).map(async ([size, png]) => {
             const path = `organizations/${fields.organizationId}/brand/${scopeSegment}/${fields.kind}-${hash}-${size}.png`
@@ -597,24 +611,11 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
       .single()
     if (insert.error) throw insert.error
 
-    const audit = await service.from('audit_events').insert({
-      organization_id: fields.organizationId,
-      actor_user_id: request.auth!.userId,
-      action: 'brand_asset.uploaded',
-      entity_type: 'brand_assets',
-      entity_id: insert.data.id,
-      correlation_id: request.id,
-      metadata: {
+    await recordAuditEvent(request, { organizationId: fields.organizationId, action: 'brand_asset.uploaded', entityType: 'brand_assets', entityId: insert.data.id, metadata: {
         kind: fields.kind,
         departmentId: fields.departmentId ?? null,
         teamId: fields.teamId ?? null,
-      },
-    })
-    if (audit.error)
-      request.log.error(
-        { err: audit.error, correlationId: request.id },
-        'audit_events insert failed',
-      )
+      } })
 
     // sanitized ist bewusst kein Feld von BrandAssetSchema (der persistierten Asset-Zeile), sondern
     // eine einmalige Nebeninformation dieser Antwort -- der Onboarding-Wizard zeigt damit denselben
@@ -674,20 +675,7 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
     if (!deletion.data)
       return reply.code(404).send({ error: 'not_found', correlationId: request.id })
 
-    const audit = await service.from('audit_events').insert({
-      organization_id: existing.data.organization_id,
-      actor_user_id: request.auth!.userId,
-      action: 'brand_asset.deleted',
-      entity_type: 'brand_assets',
-      entity_id: params.id,
-      correlation_id: request.id,
-      metadata: {},
-    })
-    if (audit.error)
-      request.log.error(
-        { err: audit.error, correlationId: request.id },
-        'audit_events insert failed',
-      )
+    await recordAuditEvent(request, { organizationId: existing.data.organization_id, action: 'brand_asset.deleted', entityType: 'brand_assets', entityId: params.id, metadata: {} })
 
     return reply.code(204).send()
   })
@@ -716,59 +704,27 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
     )
     if (!(await requirePermission(request, reply, 'brand.manage', scope))) return
 
-    const service = supabaseClients.forService()
     // Abgeloest wird nur DIESELBE Schrift (Familie, Schnitt, Lage) -- anders als ein Logo ist eine
     // Schrift kein Platz, den es je Ebene nur einmal gibt: das Markenprofil kennt eine Ueberschriften-
     // und eine Fliesstextschrift, und der Plan sieht mehrere eigene Schriftdateien je Verein vor.
-    // Ein Supersede ueber kind = 'font' allein haette beim Bestaetigen der zweiten Schrift die
-    // erste entwertet und damit unreferenzierbar gemacht.
-    const supersede = await service
-      .from('brand_assets')
-      .update({ status: 'replaced' })
-      .eq('organization_id', existing.data.organization_id)
-      .eq('kind', 'font')
-      .eq('status', 'ready')
-      .eq('font_family', existing.data.font_family)
-      .eq('font_weight', existing.data.font_weight)
-      .eq('font_style', existing.data.font_style)
-      .filter(
-        'department_id',
-        existing.data.department_id ? 'eq' : 'is',
-        existing.data.department_id ?? null,
-      )
-      .filter('team_id', existing.data.team_id ? 'eq' : 'is', existing.data.team_id ?? null)
-    if (supersede.error) throw supersede.error
-
-    const update = await service
-      .from('brand_assets')
-      .update({
-        license_holder: input.licenseHolder,
-        license_note: input.licenseNote ?? null,
-        license_confirmed_at: new Date().toISOString(),
-        license_confirmed_by: request.auth!.userId,
-        status: 'ready',
-      })
-      .eq('id', params.id)
-      .select()
-      .single()
-    if (update.error) throw update.error
-
-    const audit = await service.from('audit_events').insert({
-      organization_id: existing.data.organization_id,
-      actor_user_id: request.auth!.userId,
-      action: 'brand_asset.license_confirmed',
-      entity_type: 'brand_assets',
-      entity_id: params.id,
-      correlation_id: request.id,
-      metadata: { licenseHolder: input.licenseHolder },
+    // Statusvorbedingung ('processing'), Abloesung nur nicht mehr ausgewaehlter Schriften und die
+    // Freigabe laufen atomar in confirm_brand_font_license() (Migration 2026101941).
+    const confirmed = await supabaseClients.forService().rpc('confirm_brand_font_license', {
+      p_organization_id: existing.data.organization_id,
+      p_asset_id: params.id,
+      p_license_holder: input.licenseHolder,
+      p_license_note: input.licenseNote ?? null,
+      p_actor_user_id: request.auth!.userId,
     })
-    if (audit.error)
-      request.log.error(
-        { err: audit.error, correlationId: request.id },
-        'audit_events insert failed',
-      )
+    if (confirmed.error) {
+      const status = CONFIRM_LICENSE_ERROR_STATUS[confirmed.error.message]
+      if (status === undefined) throw confirmed.error
+      return reply.code(status).send({ error: confirmed.error.message, correlationId: request.id })
+    }
 
-    return reply.code(200).send(BrandAssetSchema.parse(mapBrandAssetRow(update.data)))
+    await recordAuditEvent(request, { organizationId: existing.data.organization_id, action: 'brand_asset.license_confirmed', entityType: 'brand_assets', entityId: params.id, metadata: { licenseHolder: input.licenseHolder } })
+
+    return reply.code(200).send(BrandAssetSchema.parse(mapBrandAssetRow(confirmed.data)))
   })
 
   app.put('/v1/departments/:id/brand', async (request, reply) => {
@@ -776,22 +732,8 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
     const params = z.object({ id: UuidSchema }).parse(request.params)
     const input = UpdateDepartmentBrandRequestSchema.parse(request.body)
     const client = supabaseClients.forUser(request.auth!.accessToken)
-    const department = await client
-      .from('departments')
-      .select('organization_id')
-      .eq('id', params.id)
-      .maybeSingle()
-    if (department.error) throw department.error
-    if (!department.data)
-      return reply.code(404).send({ error: 'not_found', correlationId: request.id })
-    const organizationId = department.data.organization_id as string
-    if (
-      !(await requirePermission(request, reply, 'brand.manage', {
-        organizationId,
-        departmentId: params.id,
-      }))
-    )
-      return
+    const organizationId = await authorizeDepartmentBrand(request, reply, params.id)
+    if (organizationId === null) return
 
     // Ueber die Service Role, nicht ueber den Nutzer-Client: ob die Sperre greift, darf nicht davon
     // abhaengen, ob die Aufruferin das Vereinsprofil selbst lesen darf -- sonst liefe die Pruefung
@@ -820,24 +762,8 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
         .code(400)
         .send({ error: 'field_locked', field: blockedField, correlationId: request.id })
 
-    for (const [assetId, expectedKinds] of [
-      [input.logoAssetId, LOGO_ASSET_KINDS],
-      [input.displayFontAssetId, new Set(['font'])],
-      [input.bodyFontAssetId, new Set(['font'])],
-    ] as const) {
-      if (!assetId) continue
-      const asset = await loadSelectableBrandAsset(
-        client,
-        organizationId,
-        assetId,
-        'department',
-        params.id,
-        undefined,
-      )
-      if (!asset || !expectedKinds.has(asset.kind)) {
-        return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
-      }
-    }
+    if (!(await validateBrandAssetReferences(client, organizationId, { departmentId: params.id }, brandProfileAssetReferences(input))))
+      return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
 
     const payload: Record<string, unknown> = {
       organization_id: organizationId,
@@ -923,24 +849,8 @@ export function registerBrandRoutes(app: FastifyInstance, context: ApiRouteConte
         .code(400)
         .send({ error: 'field_locked', field: blockedField, correlationId: request.id })
 
-    for (const [assetId, expectedKinds] of [
-      [input.logoAssetId, LOGO_ASSET_KINDS],
-      [input.displayFontAssetId, new Set(['font'])],
-      [input.bodyFontAssetId, new Set(['font'])],
-    ] as const) {
-      if (!assetId) continue
-      const asset = await loadSelectableBrandAsset(
-        client,
-        organizationId,
-        assetId,
-        'team',
-        departmentId,
-        params.id,
-      )
-      if (!asset || !expectedKinds.has(asset.kind)) {
-        return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
-      }
-    }
+    if (!(await validateBrandAssetReferences(client, organizationId, { departmentId, teamId: params.id }, brandProfileAssetReferences(input))))
+      return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
 
     const payload: Record<string, unknown> = {
       organization_id: organizationId,

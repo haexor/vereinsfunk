@@ -2,7 +2,7 @@
 import { ArrowRight, ClipboardList, Plus, Trophy } from '@lucide/vue'
 import { PlayerboardTrainingSchema, type PlayerboardTraining } from '@vereinsfunk/contracts'
 import { playerboardErrorMessage } from '../utils/playerboardErrors'
-import { placementBadgeClass, placementRowClass, type RankingListItem } from '../utils/playerboardRanking'
+import { placementBadgeClass, type RankingListItem } from '../utils/playerboardRanking'
 
 // Paket 052, PR 4: Saison der gewaehlten Mannschaft auf einen Blick -- eigener Platz (fuer
 // Spieler mit verknuepftem Kader-Eintrag), die ganze Rangliste und die letzten Trainings. Ausfuehrlich
@@ -20,21 +20,18 @@ const loading = ref(false)
 const errorMessage = ref('')
 
 /** Laedt Saisonanfang, Rangliste der Saison und die letzten Trainings der gewaehlten Mannschaft. */
-let latestRequest = 0
-async function load() {
-  const request = ++latestRequest
+const { ready } = useScopedLoad(() => teamId.value, async (requestedTeamId, isLatest) => {
   errorMessage.value = ''
   items.value = []
   trainings.value = []
   seasonFrom.value = null
-  if (!organizationId.value || !teamId.value) return
+  if (!organizationId.value || !requestedTeamId) return
   const requestedOrganizationId = organizationId.value
-  const requestedTeamId = teamId.value
   const requestedTimezone = organizationTimezone.value
   loading.value = true
   try {
     const from = await loadSeasonFrom(requestedOrganizationId, requestedTeamId, requestedTimezone)
-    if (request !== latestRequest) return
+    if (!isLatest()) return
     const [ranking, recent] = await Promise.all([
       loadRankingItems(requestedTeamId, from ? { from } : {}),
       api.request(
@@ -43,21 +40,18 @@ async function load() {
         PlayerboardTrainingSchema.array(),
       ),
     ])
-    if (request !== latestRequest) return
+    if (!isLatest()) return
     seasonFrom.value = from
     items.value = ranking.items
     trainings.value = recent.slice(0, props.compact ? 1 : 3)
   } catch (error) {
-    if (request === latestRequest)
+    if (isLatest())
       errorMessage.value = playerboardErrorMessage(error, 'Die Saison konnte nicht geladen werden.')
   } finally {
-    if (request === latestRequest) loading.value = false
+    if (isLatest()) loading.value = false
   }
-}
-await load()
-watch(teamId, () => {
-  void load()
 })
+await ready
 
 const self = computed(() => items.value.find((item) => item.highlight) ?? null)
 const dateFormat = new Intl.DateTimeFormat('de-DE', {
@@ -129,25 +123,8 @@ const seasonLabel = computed(() =>
 
       <div>
         <h3 class="mb-2 text-[11px] font-bold uppercase tracking-[.12em] text-[#7b827d]">Rangliste</h3>
-        <p v-if="items.length === 0" class="text-sm text-[#6c756f]">
-          Noch keine Punkte aus abgeschlossenen Trainings.
-        </p>
         <!-- Betreiberentscheidung 2026-10-08: immer alle Spieler, die Plaetze 1 bis 3 in Medaillenfarben. -->
-        <ol v-else class="-mx-2 space-y-0.5">
-          <li v-for="item in items" :key="item.key" class="flex items-center gap-2 rounded-lg px-2 py-1" :class="placementRowClass(item.rank)">
-            <span
-              class="grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-extrabold"
-              :class="placementBadgeClass(item.rank)"
-              >{{ item.rank }}</span
-            >
-            <span
-              class="min-w-0 flex-1 truncate text-sm"
-              :class="item.highlight ? 'font-bold text-forest' : 'text-ink'"
-              ><PersonLink :person-id="item.personId">{{ item.label }}</PersonLink></span
-            >
-            <span class="text-sm font-bold tabular-nums text-ink">{{ item.total }}</span>
-          </li>
-        </ol>
+        <PlayerboardRankingList :items="items" empty-text="Noch keine Punkte aus abgeschlossenen Trainings." compact />
         <NuxtLink
           to="/playerboard/rangliste"
           class="focus-ring mt-2 inline-flex min-h-11 items-center gap-1 rounded-lg text-xs font-semibold text-forest"

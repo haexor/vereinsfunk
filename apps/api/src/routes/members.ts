@@ -2,6 +2,7 @@ import {
   CreateMembershipRequestSchema,
   MemberRoleEntrySchema,
   MemberSchema,
+  RoleSchema,
   rolesForScopeLevel,
   ScopeLevelSchema,
   UpdateMembershipExpiryRequestSchema,
@@ -10,16 +11,57 @@ import {
   type ScopeLevel,
 } from '@vereinsfunk/contracts'
 import { canAssignRole, canRemoveRole, type Role } from '@vereinsfunk/authorization'
-import type { FastifyInstance } from 'fastify'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { membershipTableFor } from '../apiMappers.js'
 import type { PermissionScope } from '../auth.js'
+import { parseSupabaseData } from '../supabase.js'
 import type { ApiRouteContext } from './context.js'
-import { createAuditRecorder, fetchAllRows, membershipCapabilities, resolveMembershipScope, resolveRolesForScopes, toPermissionScope } from './shared.js'
+import { createAuditRecorder, fetchAllRows, fetchAllRowsForIds, membershipCapabilities, resolveMembershipScope, resolveRolesForScopes, toPermissionScope } from './shared.js'
+
+// Jede Mitgliedschaftstabelle traegt nur die Scope-Spalten ihrer Ebene: organization_memberships
+// hat weder department_id noch team_id, department_memberships kein team_id. Eine gemeinsame
+// Spaltenliste liess PostgREST fuer Vereins- und Abteilungsmitgliedschaften mit 42703 scheitern.
+const MEMBERSHIP_COLUMNS: Readonly<Record<ScopeLevel, string>> = {
+  organization: 'organization_id, user_id, role',
+  department: 'organization_id, department_id, user_id, role',
+  team: 'organization_id, department_id, team_id, user_id, role',
+}
+const MembershipRowSchema = z.object({
+  organization_id: UuidSchema,
+  department_id: UuidSchema.nullish(),
+  team_id: UuidSchema.nullish(),
+  user_id: UuidSchema,
+  role: RoleSchema,
+})
 
 export function registerMemberRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients, roleProvider } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
+
+  /**
+   * Laedt eine Mitgliedschaft der angefragten Ebene, prueft permission in ihrem Scope und liefert
+   * zusaetzlich die Rollen des Anfragenden dort. Sendet 404 bzw. die Ablehnung von
+   * requirePermission und liefert dann null.
+   */
+  async function loadMembership(
+    request: FastifyRequest, reply: FastifyReply, client: SupabaseClient, level: ScopeLevel, membershipId: string,
+    permission: 'member.invite' | 'member.remove',
+  ) {
+    const existing = await client.from(membershipTableFor(level)).select(MEMBERSHIP_COLUMNS[level]).eq('id', membershipId).maybeSingle()
+    if (existing.error) throw existing.error
+    if (!existing.data) {
+      reply.code(404).send({ error: 'not_found', correlationId: request.id })
+      return null
+    }
+    const row = parseSupabaseData(MembershipRowSchema, existing.data)
+    const scope = toPermissionScope(row.organization_id, row.department_id, row.team_id)
+    if (!(await requirePermission(request, reply, permission, scope))) return null
+    const roles = await roleProvider.rolesForScope(request.auth!, scope)
+    const scopeId = level === 'organization' ? row.organization_id : level === 'department' ? row.department_id! : row.team_id!
+    return { scope, scopeId, userId: row.user_id, role: row.role, roles }
+  }
 
   app.get('/v1/organizations/:id/members', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
@@ -43,13 +85,10 @@ export function registerMemberRoutes(app: FastifyInstance, context: ApiRouteCont
     // Antwort (derselbe Grund wie bei fetchAllRows oben), und die IDs stehen als Query-String in
     // der URL, die schon bei einigen hundert UUIDs die Header-Grenze des Gateways reisst. Ohne
     // Bloecke fielen betroffene Mitglieder still auf "Unbekannt" zurueck.
-    const allUserIds = Array.from(userIds)
-    const displayNameById = new Map<string, string>()
-    for (let offset = 0; offset < allUserIds.length; offset += 100) {
-      const profiles = await client.from('profiles').select('id, display_name').in('id', allUserIds.slice(offset, offset + 100))
-      if (profiles.error) throw profiles.error
-      for (const row of profiles.data) displayNameById.set(row.id as string, row.display_name as string)
-    }
+    const profiles = await fetchAllRowsForIds<{ id: string; display_name: string }>(Array.from(userIds), (batch, from, to) =>
+      client.from('profiles').select('id, display_name').in('id', batch).order('id', { ascending: true }).range(from, to),
+    )
+    const displayNameById = new Map(profiles.map((row) => [row.id, row.display_name]))
 
     // Capability-Felder (Paket 023): fuer jede eindeutige Ebene in dieser Antwort einmal die
     // Rollen DES ANFRAGENDEN nachschlagen (nicht die des jeweiligen Mitglieds), dann daraus fuer
@@ -149,22 +188,14 @@ export function registerMemberRoutes(app: FastifyInstance, context: ApiRouteCont
       return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
     }
     const client = supabaseClients.forUser(request.auth!.accessToken)
-    const table = membershipTableFor(query.scope)
-    const existing = await client.from(table).select('organization_id, department_id, team_id, user_id, role').eq('id', params.id).maybeSingle()
-    if (existing.error) throw existing.error
-    if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
-    const scope = toPermissionScope(
-      existing.data.organization_id as string,
-      existing.data.department_id as string | null,
-      existing.data.team_id as string | null,
-    )
-    if (!(await requirePermission(request, reply, 'member.invite', scope))) return
-    const roles = await roleProvider.rolesForScope(request.auth!, scope)
+    const membership = await loadMembership(request, reply, client, query.scope, params.id, 'member.invite')
+    if (!membership) return
+    const { scope, scopeId, roles } = membership
     // Ein Rollenwechsel ist intern Delete+Insert (siehe Plan 010) -- ohne canRemoveRole gegen die
     // AKTUELLE Rolle koennte z. B. ein organization_admin einen organization_owner degradieren,
     // obwohl canAssignRole eine Neuzuweisung von organization_owner korrekt verweigert (beim
     // Rechte-Review dieses Pakets gefunden).
-    if (!canRemoveRole(roles, existing.data.role as Role)) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+    if (!canRemoveRole(roles, membership.role)) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
     if (!canAssignRole(roles, input.role)) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
     // Delete+Insert als zwei getrennte PostgREST-Aufrufe war nicht atomar: ein fehlschlagender
     // Insert liess die bereits geloeschte alte Mitgliedschaft verloren zurueck, ein durch RLS
@@ -182,11 +213,10 @@ export function registerMemberRoutes(app: FastifyInstance, context: ApiRouteCont
       throw rpc.error
     }
     const result = rpc.data as { membershipId: string; userId: string; role: string; expiresAt: string | null; fromRole: string }
-    const scopeId = query.scope === 'organization' ? scope.organizationId : query.scope === 'department' ? scope.departmentId! : (existing.data.team_id as string)
     await recordAuditEvent(request, {
       organizationId: scope.organizationId,
       action: 'membership.role_changed',
-      entityType: table,
+      entityType: membershipTableFor(query.scope),
       entityId: result.membershipId,
       metadata: { userId: result.userId, fromRole: result.fromRole, toRole: result.role, scope: query.scope, scopeId },
     })
@@ -207,20 +237,12 @@ export function registerMemberRoutes(app: FastifyInstance, context: ApiRouteCont
     const query = z.object({ scope: ScopeLevelSchema }).parse(request.query)
     const input = UpdateMembershipExpiryRequestSchema.parse(request.body)
     const client = supabaseClients.forUser(request.auth!.accessToken)
-    const table = membershipTableFor(query.scope)
-    const existing = await client.from(table).select('organization_id, department_id, team_id, user_id, role').eq('id', params.id).maybeSingle()
-    if (existing.error) throw existing.error
-    if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
-    const scope = toPermissionScope(
-      existing.data.organization_id as string,
-      existing.data.department_id as string | null,
-      existing.data.team_id as string | null,
-    )
-    if (!(await requirePermission(request, reply, 'member.invite', scope))) return
-    const roles = await roleProvider.rolesForScope(request.auth!, scope)
+    const membership = await loadMembership(request, reply, client, query.scope, params.id, 'member.invite')
+    if (!membership) return
+    const { scope, scopeId, roles } = membership
     // Rang-Check gegen die AKTUELLE Rolle: wer die Zeile nicht entfernen duerfte, darf sie auch
     // nicht befristen. Dieselben drei Capability-Felder gehen danach in die Antwort.
-    const capabilities = membershipCapabilities(roles, existing.data.role as Role)
+    const capabilities = membershipCapabilities(roles, membership.role)
     if (!capabilities.canSetExpiry) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
     const rpc = await client.rpc('set_membership_expiry', {
       target_scope: query.scope,
@@ -234,17 +256,16 @@ export function registerMemberRoutes(app: FastifyInstance, context: ApiRouteCont
       throw rpc.error
     }
     const result = rpc.data as { membershipId: string; expiresAt: string | null }
-    const scopeId = query.scope === 'organization' ? scope.organizationId : query.scope === 'department' ? scope.departmentId! : (existing.data.team_id as string)
     await recordAuditEvent(request, {
       organizationId: scope.organizationId,
       action: 'membership.expiry_changed',
-      entityType: table,
+      entityType: membershipTableFor(query.scope),
       entityId: result.membershipId,
-      metadata: { userId: existing.data.user_id, expiresAt: result.expiresAt, scope: query.scope, scopeId },
+      metadata: { userId: membership.userId, expiresAt: result.expiresAt, scope: query.scope, scopeId },
     })
     return reply.code(200).send(
       MemberRoleEntrySchema.parse({
-        membershipId: result.membershipId, scope: query.scope, scopeId, role: existing.data.role, expiresAt: result.expiresAt,
+        membershipId: result.membershipId, scope: query.scope, scopeId, role: membership.role, expiresAt: result.expiresAt,
         ...capabilities,
       }),
     )
@@ -256,26 +277,19 @@ export function registerMemberRoutes(app: FastifyInstance, context: ApiRouteCont
     const query = z.object({ scope: ScopeLevelSchema }).parse(request.query)
     const client = supabaseClients.forUser(request.auth!.accessToken)
     const table = membershipTableFor(query.scope)
-    const existing = await client.from(table).select('organization_id, department_id, team_id, user_id, role').eq('id', params.id).maybeSingle()
-    if (existing.error) throw existing.error
-    if (!existing.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
-    const scope = toPermissionScope(
-      existing.data.organization_id as string,
-      existing.data.department_id as string | null,
-      existing.data.team_id as string | null,
-    )
-    if (!(await requirePermission(request, reply, 'member.remove', scope))) return
+    const membership = await loadMembership(request, reply, client, query.scope, params.id, 'member.remove')
+    if (!membership) return
+    const { scope, roles } = membership
     // Siehe PATCH oben: derselbe Rang-gegen-aktuelle-Rolle-Check, sonst kann ein Akteur mit
     // member.remove jemanden entfernen, der maechtiger ist als er selbst.
-    const roles = await roleProvider.rolesForScope(request.auth!, scope)
-    if (!canRemoveRole(roles, existing.data.role as Role)) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+    if (!canRemoveRole(roles, membership.role)) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
     // Die verantwortliche Person muss nur ihre Organisationsmitgliedschaft behalten (Paket 009) --
     // dieser Guard darf ein Verlassen/Entfernen aus einem Team oder einer Abteilung nicht
     // blockieren, nur den Austritt aus dem Verein selbst (beim Vertraege-Review gefunden).
     if (query.scope === 'organization') {
       const profile = await client.from('organization_profiles').select('responsible_person_profile_id').eq('organization_id', scope.organizationId).maybeSingle()
       if (profile.error) throw profile.error
-      if (profile.data?.responsible_person_profile_id === existing.data.user_id) {
+      if (profile.data?.responsible_person_profile_id === membership.userId) {
         return reply.code(409).send({ error: 'responsible_person_cannot_be_removed', correlationId: request.id })
       }
     }
@@ -294,7 +308,7 @@ export function registerMemberRoutes(app: FastifyInstance, context: ApiRouteCont
       .from('social_connections')
       .select('id')
       .eq('organization_id', scope.organizationId)
-      .eq('editorial_responsible_profile_id', existing.data.user_id)
+      .eq('editorial_responsible_profile_id', membership.userId)
       // Ein getrennter/archivierter Kanal veroeffentlicht nichts mehr und traegt keine
       // presserechtliche Verantwortung -- ohne diesen Filter bliebe die benannte Person
       // dauerhaft unentfernbar, weil DELETE /v1/channels/:id die Zeile bewusst stehen laesst.
@@ -315,7 +329,7 @@ export function registerMemberRoutes(app: FastifyInstance, context: ApiRouteCont
       action: 'membership.removed',
       entityType: table,
       entityId: params.id,
-      metadata: { userId: existing.data.user_id, role: existing.data.role, scope: query.scope },
+      metadata: { userId: membership.userId, role: membership.role, scope: query.scope },
     })
     return reply.code(204).send()
   })

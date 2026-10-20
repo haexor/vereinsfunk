@@ -1,16 +1,19 @@
-import type { ConsentScope, GeneratedPost, OutputFormat, ScopeLevel, SocialPlatform, StyleProfilePromptPreview, StyleProfileRules } from '@vereinsfunk/contracts'
+import type { ConsentScope, GeneratedPost, OAuthPlatform, OutputFormat, ScopeLevel, SocialPlatform, StyleProfilePromptPreview, StyleProfileRules } from '@vereinsfunk/contracts'
 import { canRemoveRole, hasPermission, type Permission, type Role } from '@vereinsfunk/authorization'
 import type { ApiEnvironment } from '@vereinsfunk/config'
 import { AnthropicStructuredContentGenerator, buildStructuredTextPrompt, ContentGenerationError, OpenAiCompatibleStructuredContentGenerator, type StructuredContentGenerator, type TextGroundedContentBrief } from '@vereinsfunk/content-engine'
-import { SocialPlatformSchema, TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS, TEXT_GENERATION_DEFAULT_TEMPERATURE, UuidSchema } from '@vereinsfunk/contracts'
+import { SocialConnectionSchema, SocialPlatformSchema, SyncIdempotencyKeySchema, TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS, TEXT_GENERATION_DEFAULT_TEMPERATURE, UuidSchema, type SocialConnection } from '@vereinsfunk/contracts'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { mergeEffectiveConfig, resolveAvailableChannels, resolveEffectiveConfig, type ChannelCandidate, type ConfigOverride, type ScopeLevelName, type TrustRecord } from '@vereinsfunk/domain'
 import type { FastifyRequest } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
+import { mapChannelScopeRow, mapSocialConnectionRow } from '../apiMappers.js'
 import { permissionScopeKey, type PermissionScope, type RoleProvider } from '../auth.js'
-import { byteaToBuffer, createSecretBoxFromEnvironment, EmbeddedProviderSecretSchema, unwrapEmbeddedSecret } from '../secretBox.js'
-export { fetchAllRows, fetchAllRowsForIds } from '../supabase.js'
+import { byteaToBuffer, EmbeddedProviderSecretSchema, unwrapEmbeddedSecret } from '@vereinsfunk/secrets'
+import { createSecretBoxFromEnvironment } from '../secretBox.js'
+import { notExpiredFilter, parseSupabaseData } from '../supabase.js'
+export { fetchAllRows, fetchAllRowsForIds, notExpiredFilter } from '../supabase.js'
 import type { SupabaseClientFactory } from './context.js'
 
 // Von mehreren Route-Modulen und dem verbleibenden app.ts benoetigt (Richtlinien/Freigaben,
@@ -58,38 +61,17 @@ export async function resolveRolesForScopes(
   return new Map(entries)
 }
 
-// Wie resolveInvitationScope (routes/members.ts): departmentId/teamId serverseitig gegen ihre
-// echte organization_id/department_id verifizieren, BEVOR irgendeine Berechtigung geprueft wird --
-// sonst waeren sie client-seitig frei kombinierbar (z. B. eine fremde departmentId zu dieser
-// Organisation). Von Verzeichnis, Integration und Einwilligung gebraucht, deshalb hier.
+// departmentId/teamId serverseitig gegen ihre echte organization_id/department_id verifizieren,
+// BEVOR irgendeine Berechtigung geprueft wird -- sonst waeren sie client-seitig frei kombinierbar
+// (z. B. eine fremde departmentId zu dieser Organisation). Von Verzeichnis, Integration und
+// Einwilligung gebraucht; dieselbe Pruefung wie resolveInvitationScope, nur ohne den Anzeigenamen.
 export async function resolveDirectoryScope(
   client: SupabaseClient,
   organizationId: string,
   departmentId: string | null,
   teamId: string | null,
 ): Promise<PermissionScope | null> {
-  if (teamId) {
-    const team = await client.from('teams').select('organization_id, department_id').eq('id', teamId).maybeSingle()
-    if (team.error) throw team.error
-    if (!team.data || team.data.organization_id !== organizationId || team.data.department_id !== departmentId) return null
-    return { organizationId, departmentId: team.data.department_id as string, teamId }
-  }
-  if (departmentId) {
-    const department = await client.from('departments').select('organization_id').eq('id', departmentId).maybeSingle()
-    if (department.error) throw department.error
-    if (!department.data || department.data.organization_id !== organizationId) return null
-    return { organizationId, departmentId }
-  }
-  return { organizationId }
-}
-
-// Eine befristete Mitgliedschaft oder Befreiung ist nach expires_at wirkungslos. Jede Abfrage auf
-// organization_memberships/department_memberships/team_memberships/member_review_trust, deren
-// Ergebnis eine Berechtigung traegt, filtert damit -- dieselbe Bedingung, die die authz-Funktionen
-// in SQL verwenden ("expires_at is null or expires_at > now()"). Als gemeinsamer Helfer, damit die
-// Stellen nicht auseinanderlaufen (beim Review dieses Pakets gefunden: drei Stellen ohne Filter).
-export function notExpiredFilter(): string {
-  return `expires_at.is.null,expires_at.gt.${new Date().toISOString()}`
+  return (await resolveInvitationScope(client, { organizationId, departmentId, teamId }))?.scope ?? null
 }
 
 // Deckt dieselbe Mitgliedschaft ab wie authz.is_any_member_of_organization (RLS-Grundlage von
@@ -157,39 +139,24 @@ export function checkRateLimit(key: string, limit: number, windowMs: number): bo
   return true
 }
 
-// Dieselbe Form wie die inline geschriebenen audit_events-Inserts (Service-Client, weil
-// audit_events fuer authenticated keine INSERT-Policy hat; Fehler werden geloggt, nicht geworfen --
-// ein fehlgeschlagener Audit-Eintrag darf die bereits durchgefuehrte Aenderung nicht nachtraeglich
-// als Fehler ausgeben). Als Factory statt einer einzelnen Funktion, weil recordAuditEvent
-// supabaseClients aus der Closure von buildApp brauchte -- app.ts und jedes Route-Modul rufen
-// createAuditRecorder(supabaseClients) einmal auf und behalten den vertrauten Zwei-Parameter-Aufruf.
+type AuditEvent = { organizationId: string; action: string; entityType: string; entityId: string | null; metadata?: Record<string, unknown> }
+
+// Service-Client, weil audit_events fuer authenticated keine INSERT-Policy hat. Fehler werden
+// geloggt, nicht geworfen -- ein fehlgeschlagener Audit-Eintrag darf die bereits durchgefuehrte
+// Aenderung nicht nachtraeglich als Fehler ausgeben. Als Factory, weil der Recorder
+// supabaseClients aus der Closure von buildApp braucht; jedes Route-Modul ruft
+// createAuditRecorder(supabaseClients) einmal auf.
 export function createAuditRecorder(supabaseClients: SupabaseClientFactory) {
-  return async function recordAuditEvent(
-    request: FastifyRequest,
-    event: { organizationId: string; action: string; entityType: string; entityId: string | null; metadata?: Record<string, unknown> },
-  ): Promise<void> {
-    const audit = await supabaseClients.forService().from('audit_events').insert({
-      organization_id: event.organizationId,
-      actor_user_id: request.auth!.userId,
-      action: event.action,
-      entity_type: event.entityType,
-      entity_id: event.entityId,
-      correlation_id: request.id,
-      metadata: event.metadata ?? {},
-    })
-    if (audit.error) request.log.error({ err: audit.error, correlationId: request.id }, 'audit_events insert failed')
-  }
+  const recordExternalActionAuditEvent = createExternalActionAuditRecorder(supabaseClients)
+  return (request: FastifyRequest, event: AuditEvent): Promise<void> =>
+    recordExternalActionAuditEvent(request, request.auth!.userId, event)
 }
 
-// OAuth-Callbacks kommen vom Provider und haben daher keinen request.auth-Kontext. Der beim Start
-// gespeicherte Nutzer ist dennoch der fachliche Akteur der externen Aktion; diese getrennte Factory
-// verhindert, dass Callback-Routen einen nicht vorhandenen Authorization-Kontext erzwingen.
+// OAuth-Callbacks und oeffentliche Token-Links (Einwilligung, Widerruf) haben keinen
+// request.auth-Kontext. Der Akteur kommt deshalb explizit: der beim OAuth-Start gespeicherte
+// Nutzer, oder null, wenn die handelnde Person kein Konto hat.
 export function createExternalActionAuditRecorder(supabaseClients: SupabaseClientFactory) {
-  return async function recordExternalActionAuditEvent(
-    request: FastifyRequest,
-    actorUserId: string,
-    event: { organizationId: string; action: string; entityType: string; entityId: string | null; metadata?: Record<string, unknown> },
-  ): Promise<void> {
+  return async function recordExternalActionAuditEvent(request: FastifyRequest, actorUserId: string | null, event: AuditEvent): Promise<void> {
     const audit = await supabaseClients.forService().from('audit_events').insert({
       organization_id: event.organizationId,
       actor_user_id: actorUserId,
@@ -338,10 +305,17 @@ export function computeRuleEntry(
   return { ownRow, config }
 }
 
-export async function resolveScopedEffectiveConfig(client: SupabaseClient, organizationId: string, departmentId: string | null, teamId: string | null) {
-  const rows = await fetchPolicyRuleRows(client, organizationId)
+// Effektive Konfiguration genau des Scopes, in dem ein Beitrag liegt. posts.department_id ist seit
+// Migration 2026082504 nullable (null = Vereinsebene), und Verschaerfungen wie
+// consentExpiresOnLeave greifen auf jeder Ebene (mergeEffectiveConfig) -- eine feste
+// 'department'-Aufloesung uebersah Vereinsbeitraege ebenso wie eine Vorgabe der Team-Ebene.
+export function computeScopedEffectiveConfig(rows: PolicyRuleRows, organizationId: string, departmentId: string | null, teamId: string | null) {
   const scope = teamId ? 'team' : departmentId ? 'department' : 'organization'
   return computeRuleEntry(rows, scope, teamId ?? departmentId ?? organizationId, departmentId).config
+}
+
+export async function resolveScopedEffectiveConfig(client: SupabaseClient, organizationId: string, departmentId: string | null, teamId: string | null) {
+  return computeScopedEffectiveConfig(await fetchPolicyRuleRows(client, organizationId), organizationId, departmentId, teamId)
 }
 
 // maxCharacters bleibt null, wenn fuer die Plattform keine Vorgabezeile existiert: eine fehlende
@@ -370,6 +344,41 @@ export function toChannelCandidates(connections: readonly ChannelConnectionRow[]
         canSchedule: row.can_schedule as boolean,
       })),
   }))
+}
+
+// effective_config_snapshot ist jsonb ohne Formgarantie. Eine stille Fehlinterpretation von
+// allowedChannelIds als "nicht gesetzt" hiesse "keine Einschraenkung" -- also lieber ein 500.
+const ChannelSnapshotSchema = z.object({ config: z.object({ allowedChannelIds: z.array(z.string()).nullable().optional() }).optional() })
+
+// "Auf welche Kanaele darf diese Beitragsfassung eingeplant werden" -- die Anzeige zu
+// schedule_publication (2026082504), die die verbindliche Pruefung in SQL traegt. Der Scope folgt
+// dem Beitrag: Team, Abteilung oder (department_id null) der Verein. Website-Kanaele sind
+// ausgenommen, sie sind noch kein Veroeffentlichungsziel (Plan 039, publications_platform_check).
+// platform engt auf eine Plattform ein (Agenten-Vorschlag, routes/agent.ts).
+export async function resolveAvailableChannelIdsForPostVersion(
+  client: SupabaseClient,
+  target: { organizationId: string; departmentId: string | null; teamId: string | null; effectiveConfigSnapshot: unknown },
+  platform?: OAuthPlatform,
+): Promise<string[]> {
+  let connectionQuery = client.from('social_connections').select('id, status, archived_at, responsible_profile_id').eq('organization_id', target.organizationId).neq('platform', 'website')
+  if (platform) connectionQuery = connectionQuery.eq('platform', platform)
+  const [connections, scopeRows, policyRow] = await Promise.all([
+    connectionQuery,
+    client.from('channel_scopes').select('social_connection_id, scope, department_id, team_id, can_schedule').eq('organization_id', target.organizationId),
+    client.from('policy_settings').select('require_channel_responsible').eq('organization_id', target.organizationId).eq('scope', 'organization').maybeSingle(),
+  ])
+  if (connections.error) throw connections.error
+  if (scopeRows.error) throw scopeRows.error
+  if (policyRow.error) throw policyRow.error
+  const snapshot = parseSupabaseData(ChannelSnapshotSchema, target.effectiveConfigSnapshot)
+  return resolveAvailableChannels({
+    scope: target.teamId ? 'team' : target.departmentId ? 'department' : 'organization',
+    ...(target.departmentId ? { departmentId: target.departmentId } : {}),
+    ...(target.teamId ? { teamId: target.teamId } : {}),
+    channels: toChannelCandidates(connections.data, scopeRows.data),
+    allowedChannelIds: snapshot.config?.allowedChannelIds ?? null,
+    requireChannelResponsible: policyRow.data?.require_channel_responsible ?? false,
+  })
 }
 
 // Plan 042, PR 3 Step 3: "auf welchen Plattformen darf dieser Scope ueberhaupt veroeffentlichen"
@@ -482,6 +491,14 @@ export const POLICY_MANAGE_PERMISSION: Record<ScopeLevel, Permission> = {
 export const SOCIAL_CONNECTION_COLUMNS =
   'id, platform, external_account_id, display_name, status, token_expires_at, last_verified_at, owner_scope, owner_department_id, responsible_profile_id, purpose, confidential, archived_at, created_at, imprint_url, privacy_url, editorial_responsible_profile_id, editorial_responsible_note, website_url, max_characters'
 
+// Antwortform nach jedem Schreibzugriff auf einen Kanal: die frisch gelesene Zeile plus ihre
+// aktuellen Freigaben. Stand viermal wortgleich in channels.ts und channelOAuth.ts.
+export async function loadSocialConnectionResponse(service: SupabaseClient, row: Record<string, unknown>, organizationId: string): Promise<SocialConnection> {
+  const scopes = await service.from('channel_scopes').select('id, scope, department_id, team_id, can_schedule').eq('organization_id', organizationId).eq('social_connection_id', row.id as string)
+  if (scopes.error) throw scopes.error
+  return SocialConnectionSchema.parse({ ...mapSocialConnectionRow(row), scopes: scopes.data.map((scopeRow) => mapChannelScopeRow(scopeRow, organizationId)) })
+}
+
 // Massgeblich fuer jede Kanal-Berechtigung ist der Kanalbesitz: eine Verbindung im Besitz einer
 // Abteilung wird in deren Scope geprueft, eine vereinseigene auf Vereinsebene (Plan 012,
 // "Zuordnung und Verantwortung"). Stand sechsmal wortgleich in routes/channels.ts.
@@ -501,8 +518,8 @@ export function membershipCapabilities(actorRoles: readonly Role[], targetRole: 
   }
 }
 
-// POST /v1/invitations nimmt organizationId/departmentId/teamId direkt vom Client entgegen.
-// Ungeprueft wuerde requirePermission auf einer Scope-Kette pruefen, die client-seitig frei
+// POST /v1/invitations nimmt organizationId/departmentId/teamId direkt vom Client entgegen. Zugleich
+// der Kern von resolveDirectoryScope (oben). Ungeprueft wuerde requirePermission auf einer Scope-Kette pruefen, die client-seitig frei
 // kombinierbar ist (z. B. eine fremde organizationId zusammen mit der eigenen departmentId) --
 // beim Mandantentrennung-Review gefunden, dort nur zufaellig durch den FK-Constraint auf
 // invitations abgefangen.
@@ -558,10 +575,15 @@ export type StyleProfilePreviewResult =
   | { ok: true; post: GeneratedPost }
   | { ok: false; status: number; error: string }
 
-// Same shape as packages/contracts/src/integrations.ts's SyncIdempotencyKeySchema, duplicated
-// rather than imported: that one is named for the sync domain, and this header is generic HTTP
-// convention, not a sync concept.
-const PreviewIdempotencyKeySchema = z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/)
+// Liest den optionalen Idempotency-Key-Header (Sync-Routen, Veo-Abgleich, Vorschau). Ohne Header
+// ein zufaelliger Schluessel, also keine Deduplizierung; null bei mehrfachem oder ungueltigem Wert
+// -- der Aufrufer antwortet dann mit 400 invalid_idempotency_key.
+export function readIdempotencyKeyHeader(request: FastifyRequest): string | null {
+  const header = request.headers['idempotency-key']
+  if (Array.isArray(header)) return null
+  const parsed = SyncIdempotencyKeySchema.safeParse(header ?? randomUUID())
+  return parsed.success ? parsed.data : null
+}
 
 // A client-side timeout/retry on either preview route must not trigger a second billed provider
 // call for the same logical attempt (gefunden im Code-Review dieses Pakets). The integrations
@@ -581,11 +603,9 @@ const PreviewIdempotencyKeySchema = z.string().trim().min(1).max(128).regex(/^[A
 // Fensters das Ergebnis des ersten Aufrufs zurueck -- ueber Vereinsgrenzen hinweg. Ein Retry
 // desselben Nutzers dedupliziert weiterhin, genau darum geht es hier.
 export function resolvePreviewIdempotencyKey(request: FastifyRequest): string | null {
-  const header = request.headers['idempotency-key']
-  if (Array.isArray(header)) return null
-  const parsed = PreviewIdempotencyKeySchema.safeParse(header ?? randomUUID())
-  if (!parsed.success || !request.auth) return null
-  return `${request.auth.userId}:${parsed.data}`
+  const key = readIdempotencyKeyHeader(request)
+  if (!key || !request.auth) return null
+  return `${request.auth.userId}:${key}`
 }
 
 const previewByIdempotencyKey = new Map<string, { promise: Promise<StyleProfilePreviewResult>; expiresAt: number }>()

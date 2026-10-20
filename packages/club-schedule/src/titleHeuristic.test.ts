@@ -55,4 +55,8 @@ describe('detectFixtureTitle', () => {
       awayName: 'TSV Süd',
     })
   })
+
+  it('strips a kickoff time from the title instead of storing it as a 15:0 score', () => {
+    expect(detectFixtureTitle('SV A - SV B 15:00')).toEqual({ homeName: 'SV A', awayName: 'SV B' })
+  })
 })

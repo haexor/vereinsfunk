@@ -2,13 +2,14 @@
 import { CalendarDays, LayoutDashboard, LogOut, Menu, Plus, UserRound, X } from '@lucide/vue'
 import { frameworkNavigation, visibleFrameworkNavigation } from '../modules/frameworkNavigation'
 import { appModuleOrder, appModuleRegistry, moduleForPath, type ModuleNavItem } from '../modules/registry'
+import { initialsOf } from '../utils/initials'
 import { deriveSidebarPalette } from '../utils/sidebarBrand'
 import { resolveSidebarLogoAsset, type SidebarLogoAsset } from '../utils/sidebarLogo'
 
 const mobileOpen = ref(false)
 const route = useRoute()
 const session = await useSession()
-const scope = await useScope()
+const { scope, organization: activeOrganization } = await useActiveScope()
 const {
   enabled: enabledModules,
   isEnabled: isModuleEnabled,
@@ -24,11 +25,6 @@ watch(
   },
 )
 
-const activeOrganization = computed(
-  () =>
-    session.value?.scopes.find((item) => item.organizationId === scope.value?.organizationId) ??
-    null,
-)
 const activeDepartment = computed(
   () =>
     activeOrganization.value?.departments.find((item) => item.id === scope.value?.departmentId) ??
@@ -38,15 +34,7 @@ const activeScopeName = computed(
   () => activeDepartment.value?.name ?? activeOrganization.value?.organizationName ?? '',
 )
 const activeScopeKind = computed(() => (activeDepartment.value ? 'Abteilung' : 'Verein'))
-const scopeInitials = computed(() =>
-  activeScopeName.value
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((word) => word[0])
-    .join('')
-    .toUpperCase(),
-)
+const scopeInitials = computed(() => initialsOf(activeScopeName.value))
 const { revision: brandRevision } = useBrandRevision()
 
 // Paket 013, Rueckbau: das Vereinslogo ersetzt die Initialen dort, wo der Verein tatsaechlich
@@ -56,15 +44,15 @@ const { revision: brandRevision } = useBrandRevision()
 // fachlich falsch, es ist die Produktmarke "vereinsfunk", nicht die des Vereins.
 const scopeLogoUrl = ref('')
 const scopeBrand = ref({ primaryColor: '#163a2c', accentColor: '#caff4a' })
-// Lauf-ID statt reiner organizationId-Pruefung: bei A -> B -> A stimmt organizationId beim
+// Lauf-Pruefung statt reiner organizationId-Pruefung: bei A -> B -> A stimmt organizationId beim
 // dritten Lauf wieder mit dem ersten ueberein, ein spaet zurueckkehrender erster Lauf wuerde die
 // Pruefung also bestehen und das (moeglicherweise veraltete) Ergebnis des dritten Laufs
-// ueberschreiben. Die Lauf-ID ist bei jedem Watcher-Aufruf eindeutig, unabhaengig vom Zielverein.
-let latestScopeBrandRun = 0
+// ueberschreiben. Jeder Watcher-Aufruf beginnt einen eigenen Lauf, unabhaengig vom Zielverein.
+const scopeBrandRuns = useLatestRequest()
 watch(
   () => [scope.value?.organizationId, scope.value?.departmentId, brandRevision.value] as const,
   async ([organizationId, departmentId]) => {
-    const run = ++latestScopeBrandRun
+    const isLatest = scopeBrandRuns.begin()
     scopeLogoUrl.value = ''
     scopeBrand.value = { primaryColor: '#163a2c', accentColor: '#caff4a' }
     if (!organizationId) return
@@ -74,7 +62,7 @@ watch(
       .select('primary_color, accent_color, logo_asset_id')
       .eq('organization_id', organizationId)
       .maybeSingle()
-    if (run !== latestScopeBrandRun || !organizationBrand.data) return
+    if (!isLatest() || !organizationBrand.data) return
     let brand = {
       primaryColor: organizationBrand.data.primary_color as string,
       accentColor: organizationBrand.data.accent_color as string,
@@ -86,7 +74,7 @@ watch(
         .select('primary_color, accent_color, logo_asset_id')
         .eq('department_id', departmentId)
         .maybeSingle()
-      if (run !== latestScopeBrandRun) return
+      if (!isLatest()) return
       if (departmentBrand.data) {
         brand = {
           ...brand,
@@ -108,7 +96,7 @@ watch(
       .eq('status', 'ready')
       .in('kind', ['logo_primary', 'logo_light', 'logo_dark', 'logo_mark'])
       .order('created_at', { ascending: false })
-    if (run !== latestScopeBrandRun || logoAssets.error || !logoAssets.data) return
+    if (!isLatest() || logoAssets.error || !logoAssets.data) return
     const asset = resolveSidebarLogoAsset(
       logoAssets.data.map(
         (item) =>
@@ -128,7 +116,7 @@ watch(
     const signed = await supabase.storage
       .from('brand-assets')
       .createSignedUrl(asset.objectPath, 600)
-    if (run !== latestScopeBrandRun) return
+    if (!isLatest()) return
     scopeLogoUrl.value = signed.data?.signedUrl ?? ''
   },
   { immediate: true },
@@ -142,15 +130,7 @@ const topRoleLabel = computed(() => {
   const role = activeOrganization.value?.organizationRoles[0] ?? activeDepartmentRoles.value[0]
   return role ? (roleLabels[role] ?? role) : ''
 })
-const userInitials = computed(() =>
-  (session.value?.displayName ?? '')
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((word) => word[0])
-    .join('')
-    .toUpperCase(),
-)
+const userInitials = computed(() => initialsOf(session.value?.displayName ?? ''))
 
 function selectOrganization(organizationId: string) {
   const organization = session.value?.scopes.find((item) => item.organizationId === organizationId)
@@ -205,11 +185,6 @@ const sidebarClasses = computed(() =>
         footer: 'border-ink/30',
       },
 )
-
-async function logout() {
-  await signOut()
-  await navigateTo('/anmelden')
-}
 
 // Paket 051, PR 3: die Shell besteht aus Rahmen-Eintraegen (immer sichtbar) und den Eintraegen der
 // im Arbeitsbereich wirksamen Module, gruppiert nach Modul (modules/registry.ts). Solange die
@@ -516,7 +491,7 @@ watch(
             class="focus-ring rounded-lg p-1.5"
             :class="sidebarClasses.muted"
             aria-label="Abmelden"
-            @click="logout"
+            @click="signOut()"
           >
             <LogOut :size="15" />
           </button>

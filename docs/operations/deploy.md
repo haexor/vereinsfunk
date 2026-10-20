@@ -70,6 +70,20 @@ Kompromittierung von `vereinsfunk-api` oder `vereinsfunk-worker`:
    "database migrations applied" bestätigt, dass der Boot-Hook mit dem neuen Credential
    durchläuft.
 
+## Client-IP hinter Traefik: `TRUST_PROXY_HOPS`
+
+`vereinsfunk-api` ist in Produktion nur über Traefik erreichbar (`proxy`-Netzwerk der
+Ansible-Rolle `vereinsfunk`, ein TLS-Hop). Ohne Konfiguration sieht Fastify als `request.ip` die
+Adresse des Traefik-Containers. Dann teilen sich alle Besucher die Rate-Limits der öffentlichen
+Routen (Einwilligungsseiten, Medien-Grants, Impressum, Playerboard), und der Hash einer digitalen
+Einwilligungsantwort enthält die Proxy- statt der Client-IP.
+
+`TRUST_PROXY_HOPS=1` im API-Container setzen (Ansible-Rolle `vereinsfunk`, API-Umgebung). Die API
+übernimmt dann genau den letzten von Traefik angehängten `X-Forwarded-For`-Eintrag; vom Client
+vorangestellte Einträge zählen nicht. Steht ein weiterer Proxy davor (z. B. ein CDN), die Zahl um
+diesen Hop erhöhen. Lokal und in Tests bleibt der Standard `0` (Header wird ignoriert), denn ohne
+vorgeschalteten Proxy könnte sonst jeder Client seine Adresse frei wählen.
+
 ## Meta OAuth aktivieren
 
 Die Verbindung von Instagram-Professional-Konten und Facebook-Seiten wird von der

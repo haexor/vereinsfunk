@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { DEPARTMENT_ID, ORGANIZATION_ID, USER_ID, chain, denyingRoleProvider, grantingRoleProvider, organizationManagerRoleProvider, signAccessToken, startApp } from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
+import { addMonthsToIsoDate, hashPublicToken } from './services/consent.js'
 
 describe('Paket 015: Einwilligungsverwaltung', () => {
   const CONSENT_ID = '15000000-4000-4000-8000-000000000001'
@@ -223,6 +224,240 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
     expect(response.statusCode).toBe(409)
   })
 
+  it('refuses to supersede a revoked consent record instead of silently undoing the revocation', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'consent_records') return chain({ data: consentRecordRow({ revoked_at: '2026-08-01T00:00:00Z', revoked_by: 'guardian' }), error: null })
+            if (table === 'directory_people') return chain({ data: { department_id: DEPARTMENT_ID }, error: null })
+            throw new Error(`unexpected table: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () => { throw new Error('a revoked consent must not get a successor') },
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST', url: `/v1/consents/${CONSENT_ID}/supersede`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        scope: 'Fotos fuer Social Media', scopeStructured: { purposes: ['social_media'], platforms: null, mediaKinds: ['photo'], contexts: null, namingAllowed: false, departmentIds: null },
+        signedAt: '2026-08-01', signerName: 'Erika Musterfrau', signerRole: 'guardian', guardianConfirmed: true,
+      },
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'already_revoked' })
+  })
+
+  const TWELVE_MONTH_POLICY = { data: [{ scope: 'organization', department_id: null, consent_validity_months: 12 }], error: null }
+
+  it('registers an old paper form with its validity window anchored on the signature date', async () => {
+    let insertedRow: Record<string, unknown> | undefined
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'directory_people') return chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, is_minor: false }, error: null })
+            if (table === 'policy_settings') return chain(TWELVE_MONTH_POLICY)
+            throw new Error(`unexpected table: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          storage: { from: () => ({ upload: async () => ({ error: null }) }) },
+          from: (table: string) => {
+            if (table === 'consent_records') return { insert: (row: Record<string, unknown>) => { insertedRow = row; return chain({ data: consentRecordRow({ id: row.id, signed_at: row.signed_at, valid_from: row.valid_from, valid_until: row.valid_until }), error: null }) } }
+            if (table === 'audit_events') return { insert: async () => ({ error: null }) }
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const { boundary, body } = consentUploadBody({ ...consentScopeAndFields(), signedAt: '2020-03-15' })
+    const response = await app.inject({
+      method: 'POST', url: '/v1/consents',
+      headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` },
+      payload: body,
+    })
+    // Mit valid_from = now() verletzte valid_until (Unterschrift + 12 Monate) den CHECK
+    // valid_until > valid_from und endete als 500.
+    expect(response.statusCode).toBe(201)
+    expect(insertedRow).toMatchObject({ valid_from: '2020-03-15T00:00:00.000Z', valid_until: '2021-03-15T00:00:00.000Z' })
+    expect(response.json()).toMatchObject({ status: 'expired' })
+  })
+
+  it('removes the uploaded evidence file when the consent record insert fails', async () => {
+    const removedPaths: string[][] = []
+    let uploadedPath: string | undefined
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'directory_people') return chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, is_minor: false }, error: null })
+            if (table === 'policy_settings') return chain({ data: [], error: null })
+            throw new Error(`unexpected table: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          storage: {
+            from: () => ({
+              upload: async (path: string) => { uploadedPath = path; return { error: null } },
+              remove: async (paths: string[]) => { removedPaths.push(paths); return { data: [], error: null } },
+            }),
+          },
+          from: (table: string) => {
+            if (table === 'consent_records') return { insert: () => chain({ data: null, error: { code: '23503', message: 'foreign key violation' } }) }
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const { boundary, body } = consentUploadBody(consentScopeAndFields())
+    const response = await app.inject({
+      method: 'POST', url: '/v1/consents',
+      headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` },
+      payload: body,
+    })
+    expect(response.statusCode).toBe(500)
+    expect(uploadedPath).toBeDefined()
+    expect(removedPaths).toEqual([[uploadedPath]])
+  })
+
+  it('applies the consent validity policy to a superseding version', async () => {
+    let insertedRow: Record<string, unknown> | undefined
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'consent_records') return chain({ data: consentRecordRow(), error: null })
+            if (table === 'directory_people') return chain({ data: { department_id: DEPARTMENT_ID, is_minor: false }, error: null })
+            if (table === 'policy_settings') return chain(TWELVE_MONTH_POLICY)
+            throw new Error(`unexpected table: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'consent_records') {
+              return {
+                select: () => chain({ data: { evidence_bucket: 'raw-media', evidence_path: `organizations/${ORGANIZATION_ID}/consents/${CONSENT_ID}/nachweis` }, error: null }),
+                insert: (row: Record<string, unknown>) => { insertedRow = row; return chain({ data: consentRecordRow({ id: row.id, valid_from: row.valid_from, valid_until: row.valid_until }), error: null }) },
+                update: () => chain({ data: { id: CONSENT_ID }, error: null }),
+              }
+            }
+            if (table === 'audit_events') return { insert: async () => ({ error: null }) }
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST', url: `/v1/consents/${CONSENT_ID}/supersede`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        scope: 'Fotos fuer Social Media', scopeStructured: { purposes: ['social_media'], platforms: null, mediaKinds: ['photo'], contexts: null, namingAllowed: false, departmentIds: null },
+        signedAt: '2026-08-01', signerName: 'Erika Musterfrau', signerRole: 'guardian', guardianConfirmed: true,
+      },
+    })
+    expect(response.statusCode).toBe(201)
+    expect(insertedRow).toMatchObject({ valid_from: '2026-08-01T00:00:00.000Z', valid_until: '2027-08-01T00:00:00.000Z' })
+  })
+
+  // Wie chain(), protokolliert aber jeden Aufruf samt Argumenten -- fuer Tests, die pruefen, WELCHE
+  // Filter eine Route an ein Update haengt.
+  function recordingChain(result: { data: unknown; error: unknown }, calls: unknown[][]) {
+    const builder: Record<string, unknown> = {}
+    for (const method of ['eq', 'is', 'in', 'lt', 'gte', 'order', 'limit', 'range', 'select']) {
+      builder[method] = (...args: unknown[]) => { calls.push([method, ...args]); return builder }
+    }
+    builder.maybeSingle = async () => result
+    builder.single = async () => result
+    builder.then = (resolve: (value: unknown) => unknown) => resolve(result)
+    return builder
+  }
+  const noopEmailSender = { send: async () => undefined }
+
+  it('retires an expired open request before creating a new one for the same address', async () => {
+    const events: string[] = []
+    const expireCalls: unknown[][] = []
+    let expireValues: Record<string, unknown> | undefined
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'directory_people') return chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, first_name: 'Max', last_name: 'Mustermann', is_minor: false }, error: null })
+            throw new Error(`unexpected table: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'consent_requests') {
+              return {
+                update: (values: Record<string, unknown>) => { events.push('expire'); expireValues = values; return recordingChain({ data: null, error: null }, expireCalls) },
+                insert: () => { events.push('insert'); return chain({ data: openConsentRequestRow(), error: null }) },
+              }
+            }
+            if (table === 'organization_consent_texts') return chain({ data: null, error: null })
+            if (table === 'organizations') return chain({ data: { name: 'TSV Musterstadt' }, error: null })
+            if (table === 'audit_events') return { insert: async () => ({ error: null }) }
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients, emailSender: noopEmailSender })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST', url: '/v1/consent-requests', headers: { authorization: `Bearer ${token}` },
+      payload: {
+        organizationId: ORGANIZATION_ID, directoryPersonId: DIRECTORY_PERSON_ID, recipientEmail: 'x@example.local', recipientRole: 'guardian',
+        requestedScope: { purposes: ['social_media'], platforms: null, mediaKinds: ['photo'], contexts: null, namingAllowed: false, departmentIds: null },
+      },
+    })
+    expect(response.statusCode).toBe(201)
+    expect(events).toEqual(['expire', 'insert'])
+    expect(expireValues).toEqual({ status: 'expired' })
+    expect(expireCalls).toEqual(expect.arrayContaining([
+      ['eq', 'organization_id', ORGANIZATION_ID], ['eq', 'directory_person_id', DIRECTORY_PERSON_ID], ['eq', 'recipient_email', 'x@example.local'], ['eq', 'status', 'sent'],
+    ]))
+    expect(expireCalls.some(([method, column]) => method === 'lt' && column === 'expires_at')).toBe(true)
+  })
+
+  it('gives a resent request a fresh expiry and guards the update against a concurrent answer or resend', async () => {
+    const updateCalls: unknown[][] = []
+    let updateValues: Record<string, unknown> | undefined
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'consent_requests') return chain({ data: openConsentRequestRow({ send_count: 2, expires_at: '2026-01-01T00:00:00Z' }), error: null })
+            throw new Error(`unexpected table: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            // Null getroffene Zeilen: eine gleichzeitige Antwort oder ein zweiter Versand war schneller.
+            if (table === 'consent_requests') return { update: (values: Record<string, unknown>) => { updateValues = values; return recordingChain({ data: null, error: null }, updateCalls) } }
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients, emailSender: noopEmailSender })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'POST', url: `/v1/consent-requests/${CONSENT_REQUEST_ID}/resend`, headers: { authorization: `Bearer ${token}` } })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'request_not_open' })
+    expect(updateValues).toMatchObject({ send_count: 3 })
+    expect(Date.parse(updateValues?.expires_at as string)).toBeGreaterThan(Date.now() + 13 * 24 * 60 * 60 * 1000)
+    expect(updateCalls).toEqual(expect.arrayContaining([['eq', 'status', 'sent'], ['eq', 'send_count', 2]]))
+  })
+
   it('rejects updating the organization consent text without organization.manage', async () => {
     const app = await startApp({ roleProvider: denyingRoleProvider })
     const token = await signAccessToken(USER_ID)
@@ -299,8 +534,9 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
     expect(response.headers['x-robots-tag']).toBe('noindex, nofollow')
   })
 
-  it('records a decline without creating a consent record', async () => {
+  it('records and audits a decline without creating a consent record', async () => {
     let consentRecordsTouched = false
+    const auditRows: Record<string, unknown>[] = []
     const clients: SupabaseClientFactory = {
       forUser: () => ({}) as unknown as SupabaseClient,
       forService: () =>
@@ -319,6 +555,7 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
               }
             }
             if (table === 'consent_records') { consentRecordsTouched = true; throw new Error('must not be touched on decline') }
+            if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { auditRows.push(row); return { error: null } } }
             throw new Error(`unexpected table in service fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
@@ -328,6 +565,7 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
     expect(response.statusCode).toBe(200)
     expect(response.json()).toMatchObject({ status: 'declined' })
     expect(consentRecordsTouched).toBe(false)
+    expect(auditRows).toEqual([expect.objectContaining({ action: 'consent_request.declined_via_public_link', actor_user_id: null, entity_type: 'consent_requests', entity_id: CONSENT_REQUEST_ID })])
   })
 
   // Zwei gleichzeitige Antworten auf dieselbe Einwilligungsanfrage: die Verliererin des
@@ -369,13 +607,14 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
             if (table === 'consent_requests') {
               return {
                 select: () => chain({
-                  data: { id: CONSENT_REQUEST_ID, organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, directory_person_id: DIRECTORY_PERSON_ID, recipient_email: 'x@example.local', recipient_role: 'guardian', requested_scope: { purposes: ['social_media'], platforms: null, mediaKinds: ['photo'], contexts: null, namingAllowed: false }, text_version: 'v1', status: 'sent', expires_at: '2099-01-01T00:00:00Z', responded_at: null, consent_record_id: null, send_count: 1, last_sent_at: '2026-08-01T00:00:00Z', created_at: '2026-08-01T00:00:00Z', created_by: USER_ID },
+                  data: { id: CONSENT_REQUEST_ID, organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, directory_person_id: DIRECTORY_PERSON_ID, recipient_email: 'x@example.local', recipient_role: 'guardian', requested_scope: { purposes: ['social_media'], platforms: null, mediaKinds: ['photo'], contexts: null, namingAllowed: false, departmentIds: null }, text_version: 'v1', status: 'sent', expires_at: '2099-01-01T00:00:00Z', responded_at: null, consent_record_id: null, send_count: 1, last_sent_at: '2026-08-01T00:00:00Z', created_at: '2026-08-01T00:00:00Z', created_by: USER_ID },
                   error: null,
                 }),
                 update: () => chain({ data: null, error: null }),
               }
             }
             if (table === 'directory_people') return { select: () => chain({ data: { is_minor: false }, error: null }) }
+            if (table === 'policy_settings') return chain({ data: [], error: null })
             if (table === 'consent_records') {
               return {
                 insert: () => chain({ data: { id: CONSENT_RECORD_ID, organization_id: ORGANIZATION_ID }, error: null }),
@@ -393,6 +632,96 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
     expect(deletedConsentIds).toHaveLength(1)
   })
 
+  function openConsentRequestRow(overrides: Record<string, unknown> = {}) {
+    return {
+      id: CONSENT_REQUEST_ID, organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, directory_person_id: DIRECTORY_PERSON_ID, recipient_email: 'x@example.local',
+      recipient_role: 'guardian', requested_scope: { purposes: ['social_media'], platforms: null, mediaKinds: ['photo'], contexts: null, namingAllowed: false, departmentIds: null },
+      text_version: 'default-template', status: 'sent', expires_at: '2099-01-01T00:00:00Z', responded_at: null, consent_record_id: null, send_count: 1,
+      last_sent_at: '2026-08-01T00:00:00Z', created_at: '2026-08-01T00:00:00Z', created_by: USER_ID,
+      ...overrides,
+    }
+  }
+
+  function grantingServiceClient(captured: { consentRow?: Record<string, unknown>; auditRows: Record<string, unknown>[] }, options: { isMinor?: boolean; requestRow?: Record<string, unknown> } = {}) {
+    return {
+      from: (table: string) => {
+        if (table === 'consent_requests') return { select: () => chain({ data: options.requestRow ?? openConsentRequestRow(), error: null }), update: () => chain({ data: { id: CONSENT_REQUEST_ID }, error: null }) }
+        if (table === 'directory_people') return { select: () => chain({ data: { is_minor: options.isMinor ?? false }, error: null }) }
+        if (table === 'policy_settings') return chain({ data: [{ scope: 'organization', department_id: null, consent_validity_months: 12 }], error: null })
+        if (table === 'consent_records') {
+          return { insert: (row: Record<string, unknown>) => { captured.consentRow = row; return chain({ data: { id: row.id, organization_id: ORGANIZATION_ID }, error: null }) } }
+        }
+        if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { captured.auditRows.push(row); return { error: null } } }
+        throw new Error(`unexpected table in service fake: ${table}`)
+      },
+    } as unknown as SupabaseClient
+  }
+
+  it('applies the consent validity policy to a digitally granted consent', async () => {
+    const captured: { consentRow?: Record<string, unknown>; auditRows: Record<string, unknown>[] } = { auditRows: [] }
+    const app = await startApp({ supabaseClients: { forUser: () => ({}) as unknown as SupabaseClient, forService: () => grantingServiceClient(captured) } })
+    const response = await app.inject({ method: 'POST', url: '/v1/consent-requests/by-token/grant-token/respond', payload: { decision: 'granted' } })
+    expect(response.statusCode).toBe(200)
+    const today = new Date().toISOString().slice(0, 10)
+    expect(captured.consentRow).toMatchObject({ signed_at: today, valid_until: addMonthsToIsoDate(today, 12) })
+  })
+
+  it('shows the consent text version the request was created with, not the current one', async () => {
+    const REQUESTED_TEXT_ID = '15000000-7000-4000-8000-000000000001'
+    const texts = [
+      { id: REQUESTED_TEXT_ID, body: 'Fassung bei Anlage der Anfrage', created_at: '2026-08-01T00:00:00Z' },
+      { id: '15000000-7000-4000-8000-000000000002', body: 'Spaeter ersetzte Fassung', created_at: '2026-09-01T00:00:00Z' },
+    ]
+    function consentTextsTable() {
+      const filters: Record<string, unknown> = {}
+      // Ohne id-Filter liefert die Abfrage die juengste Fassung, wie order(created_at desc).limit(1).
+      const result = async () => ({ data: (filters.id ? texts.find((text) => text.id === filters.id) : texts[1]) ?? null, error: null })
+      const query: Record<string, unknown> = {
+        select: () => query, order: () => query, limit: () => query,
+        eq: (column: string, value: unknown) => { filters[column] = value; return query },
+        single: result, maybeSingle: result,
+      }
+      return query
+    }
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'consent_requests') return chain({ data: openConsentRequestRow({ text_version: REQUESTED_TEXT_ID }), error: null })
+            if (table === 'directory_people') return chain({ data: { first_name: 'Max', last_name: 'Mustermann' }, error: null })
+            if (table === 'organizations') return chain({ data: { name: 'TSV Musterstadt' }, error: null })
+            if (table === 'organization_consent_texts') return consentTextsTable()
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const response = await app.inject({ method: 'GET', url: '/v1/consent-requests/by-token/view-token' })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ textVersion: REQUESTED_TEXT_ID, consentText: 'Fassung bei Anlage der Anfrage' })
+  })
+
+  it('refuses a self grant once the person is recorded as a minor', async () => {
+    const captured: { consentRow?: Record<string, unknown>; auditRows: Record<string, unknown>[] } = { auditRows: [] }
+    const service = grantingServiceClient(captured, { isMinor: true, requestRow: openConsentRequestRow({ recipient_role: 'self' }) })
+    const app = await startApp({ supabaseClients: { forUser: () => ({}) as unknown as SupabaseClient, forService: () => service } })
+    const response = await app.inject({ method: 'POST', url: '/v1/consent-requests/by-token/self-grant-token/respond', payload: { decision: 'granted' } })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ error: 'guardian_required_for_minor' })
+    expect(captured.consentRow).toBeUndefined()
+  })
+
+  it('audits a public grant as an external action without an account', async () => {
+    const captured: { consentRow?: Record<string, unknown>; auditRows: Record<string, unknown>[] } = { auditRows: [] }
+    const app = await startApp({ supabaseClients: { forUser: () => ({}) as unknown as SupabaseClient, forService: () => grantingServiceClient(captured) } })
+    const response = await app.inject({ method: 'POST', url: '/v1/consent-requests/by-token/grant-token/respond', payload: { decision: 'granted' } })
+    expect(response.statusCode).toBe(200)
+    expect(captured.auditRows).toEqual([
+      expect.objectContaining({ action: 'consent.granted_via_public_link', actor_user_id: null, entity_type: 'consent_records', entity_id: captured.consentRow?.id, metadata: { consentRequestId: CONSENT_REQUEST_ID } }),
+    ])
+  })
+
   it('rate-limits repeated public respond attempts from the same client', async () => {
     const clients: SupabaseClientFactory = {
       forUser: () => ({}) as unknown as SupabaseClient,
@@ -405,6 +734,63 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
       lastStatus = response.statusCode
     }
     expect(lastStatus).toBe(429)
+  })
+
+  // Filtert die Zeilen tatsaechlich nach eq()/is(), damit ein Test sehen kann, WELCHE Zeile eine
+  // Route liest oder aendert -- chain() ignoriert jeden Filter.
+  function filteringConsentRecordsTable(rows: Record<string, unknown>[], updates: { values: Record<string, unknown>; filters: Record<string, unknown> }[]) {
+    function builder(onResult: (filters: Record<string, unknown>) => unknown) {
+      const filters: Record<string, unknown> = {}
+      const query: Record<string, unknown> = {
+        eq: (column: string, value: unknown) => { filters[column] = value; return query },
+        is: (column: string, value: unknown) => { filters[column] = value; return query },
+        select: () => query,
+        maybeSingle: async () => ({ data: onResult(filters) ?? null, error: null }),
+        single: async () => ({ data: onResult(filters) ?? null, error: null }),
+      }
+      return query
+    }
+    const matches = (row: Record<string, unknown>, filters: Record<string, unknown>) => Object.entries(filters).every(([column, value]) => row[column] === value)
+    return {
+      select: () => builder((filters) => rows.find((row) => matches(row, filters))),
+      update: (values: Record<string, unknown>) => builder((filters) => {
+        const row = rows.find((candidate) => matches(candidate, filters))
+        if (!row) return null
+        updates.push({ values, filters })
+        Object.assign(row, values)
+        return { id: row.id }
+      }),
+    }
+  }
+
+  it('revokes the head of the supersede chain, not the superseded row the public link was issued for', async () => {
+    const SUCCESSOR_ID = '15000000-4000-4000-8000-000000000002'
+    const rows = [
+      consentRecordRow({ origin: 'digital', signer_role: 'self', guardian_confirmed: false, superseded_by: SUCCESSOR_ID, revocation_token_hash: hashPublicToken('revocation-token') }),
+      consentRecordRow({ id: SUCCESSOR_ID, origin: 'digital', signer_role: 'self', guardian_confirmed: false }),
+    ]
+    const updates: { values: Record<string, unknown>; filters: Record<string, unknown> }[] = []
+    const auditRows: Record<string, unknown>[] = []
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'consent_records') return filteringConsentRecordsTable(rows, updates)
+            if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { auditRows.push(row); return { error: null } } }
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const response = await app.inject({ method: 'POST', url: '/v1/consents/by-revocation-token/revocation-token' })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ status: 'revoked' })
+    expect(updates).toHaveLength(1)
+    expect(updates[0]?.filters).toMatchObject({ id: SUCCESSOR_ID, revoked_at: null, superseded_by: null })
+    // Die Anfrage ging an die volljaehrige Person selbst -- sie hat widerrufen, kein Elternteil.
+    expect(updates[0]?.values).toMatchObject({ revoked_by: 'self' })
+    expect(auditRows[0]).toMatchObject({ action: 'consent.revoked_via_public_link', actor_user_id: null, entity_id: SUCCESSOR_ID })
   })
 })
 
@@ -428,6 +814,51 @@ describe('GET /v1/consents -- post.edit access (Plan 045)', () => {
     const token = await signAccessToken(USER_ID)
     const response = await app.inject({ method: 'GET', url: `/v1/consents?organizationId=${ORGANIZATION_ID}`, headers: { authorization: `Bearer ${token}` } })
     expect(response.statusCode).toBe(200)
+  })
+
+  it('reads a large department in id batches and still returns the newest consent first', async () => {
+    const personIds = Array.from({ length: 150 }, (_, index) => `15000000-3000-4000-8000-${String(index).padStart(12, '0')}`)
+    const batches: string[][] = []
+    function consentRecordsTable() {
+      let batch: string[] = []
+      const query: Record<string, unknown> = {
+        select: () => query, eq: () => query, order: () => query, range: () => query,
+        in: (_column: string, ids: string[]) => { batch = ids; batches.push(ids); return query },
+        then: (resolve: (value: unknown) => unknown) => {
+          // Jeder Block liefert die Einwilligung seiner ersten Person; der zweite Block die neuere.
+          const first = batch[0] as string
+          const createdAt = first === personIds[0] ? '2026-08-01T00:00:00Z' : '2026-09-01T00:00:00Z'
+          return resolve({
+            data: [{
+              id: `15000000-4000-4000-8000-${first.slice(-12)}`, organization_id: ORGANIZATION_ID, directory_person_id: first, pseudonymous_subject_ref: first,
+              scope: 'Fotos', origin: 'paper', source_id: null, signed_at: '2026-08-01', signer_name: 'Erika Musterfrau', signer_role: 'guardian', guardian_confirmed: true,
+              valid_from: '2026-08-01T00:00:00Z', valid_until: null, revoked_at: null, revoked_by: null, revocation_reason: null, superseded_by: null, created_at: createdAt,
+              scope_structured: { purposes: ['social_media'], platforms: null, mediaKinds: ['photo'], contexts: null, namingAllowed: false, departmentIds: null },
+            }],
+            error: null,
+          })
+        },
+      }
+      return query
+    }
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'directory_people') return chain({ data: personIds.map((id) => ({ id })), error: null })
+            if (table === 'consent_records') return consentRecordsTable()
+            throw new Error(`unexpected table: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: `/v1/consents?organizationId=${ORGANIZATION_ID}&departmentId=${DEPARTMENT_ID}`, headers: { authorization: `Bearer ${token}` } })
+    expect(response.statusCode).toBe(200)
+    expect(batches.map((ids) => ids.length)).toEqual([100, 50])
+    const body = response.json() as { directoryPersonId: string }[]
+    expect(body.map((consent) => consent.directoryPersonId)).toEqual([personIds[100], personIds[0]])
   })
 
   it('rejects a post.edit caller scoped to another department before reading that person\'s consents', async () => {

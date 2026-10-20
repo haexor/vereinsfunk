@@ -37,12 +37,12 @@ export async function membersWithApprovePermission(
       : []),
     ...(scope !== 'organization' && DEPARTMENT_ROLES_WITH_APPROVE.length > 0
       ? [fetchAllRows<{ user_id: string }>((from, to) =>
-          client.from('department_memberships').select('user_id').eq('department_id', departmentId!).in('role', DEPARTMENT_ROLES_WITH_APPROVE).or(notExpired).order('id', { ascending: true }).range(from, to),
+          client.from('department_memberships').select('user_id').eq('organization_id', organizationId).eq('department_id', departmentId!).in('role', DEPARTMENT_ROLES_WITH_APPROVE).or(notExpired).order('id', { ascending: true }).range(from, to),
         )]
       : []),
     ...(scope === 'team' && TEAM_ROLES_WITH_APPROVE.length > 0
       ? [fetchAllRows<{ user_id: string }>((from, to) =>
-          client.from('team_memberships').select('user_id').eq('team_id', teamId!).in('role', TEAM_ROLES_WITH_APPROVE).or(notExpired).order('id', { ascending: true }).range(from, to),
+          client.from('team_memberships').select('user_id').eq('organization_id', organizationId).eq('team_id', teamId!).in('role', TEAM_ROLES_WITH_APPROVE).or(notExpired).order('id', { ascending: true }).range(from, to),
         )]
       : []),
   ]
@@ -114,6 +114,9 @@ export const DEFAULT_STAGE_LABEL: Record<ScopeLevel, string> = { organization: '
 
 // Baut die Stufendefinitionen innen (Team) nach aussen (Verein) -- nur Ebenen, deren EIGENE
 // Zeile review_required = true setzt, tragen eine Stufe bei (Plan 011: additiv, nicht vererbt).
+// client muss der Service-Client sein: die Mitgliedschafts-Policies zeigen einer einreichenden
+// Person nur die eigenen Zeilen, der Pruefkreis waere sonst leer. Jede Abfrage hier bleibt deshalb
+// selbst auf organizationId eingegrenzt.
 export async function buildStageDefinitions(
   client: SupabaseClient, ruleRows: PolicyRuleRows, organizationId: string, departmentId: string, teamId: string | null,
 ): Promise<StageDefinition[]> {
@@ -130,7 +133,7 @@ export async function buildStageDefinitions(
     const mode = row.review_mode ?? 'any_with_permission'
     let reviewerUserIds: string[]
     if (mode === 'named') {
-      const reviewerRows = await client.from('policy_reviewers').select('kind, user_id, role, target_department_id, target_team_id').eq('policy_settings_id', row.id)
+      const reviewerRows = await client.from('policy_reviewers').select('kind, user_id, role, target_department_id, target_team_id').eq('organization_id', organizationId).eq('policy_settings_id', row.id)
       if (reviewerRows.error) throw reviewerRows.error
       reviewerUserIds = resolveReviewers(reviewerRows.data.map(mapReviewerRow), memberships).userIds
     } else {

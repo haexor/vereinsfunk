@@ -33,16 +33,20 @@ const errorMessage = ref('')
 const saveError = ref('')
 const notice = ref('')
 
+// Spaete Antworten frueherer Laeufe (Vereinswechsel waehrend des Ladens) verfallen.
+let latestLoad = 0
 async function load() {
+  const loadRun = ++latestLoad
   errorMessage.value = ''
   if (!organizationId.value) return
   loading.value = true
   try {
-    entries.value = await api.request(`/v1/organizations/${organizationId.value}/playerboard/settings`, {}, ScopePlayerboardSettingsSchema.array())
+    const loaded = await api.request(`/v1/organizations/${organizationId.value}/playerboard/settings`, {}, ScopePlayerboardSettingsSchema.array())
+    if (loadRun === latestLoad) entries.value = loaded
   } catch (error) {
-    errorMessage.value = playerboardErrorMessage(error, 'Die Einstellungen konnten nicht geladen werden.')
+    if (loadRun === latestLoad) errorMessage.value = playerboardErrorMessage(error, 'Die Einstellungen konnten nicht geladen werden.')
   } finally {
-    loading.value = false
+    if (loadRun === latestLoad) loading.value = false
   }
 }
 await load()
@@ -132,7 +136,11 @@ async function copyLink() {
 
 // Spieler ohne gueltige Einwilligung fuer oeffentliche Fotos (nur Mannschaftsebene, nur Trainer).
 const playersWithoutConsent = ref<PlayerboardPlayer[] | null>(null)
+// Nach einem Mannschaftswechsel darf die spaetere Antwort der vorigen Mannschaft deren Spieler
+// nicht unter der neuen anzeigen.
+let latestConsentLoad = 0
 async function loadConsents() {
+  const loadRun = ++latestConsentLoad
   playersWithoutConsent.value = null
   const current = level.value
   if (current?.scope !== 'team' || !useCan('training.manage', current.permissionScope)) return
@@ -141,10 +149,11 @@ async function loadConsents() {
       api.request(`/v1/playerboard/teams/${current.scopeId}/players`, {}, PlayerboardPlayerSchema.array()),
       api.request(`/v1/playerboard/teams/${current.scopeId}/photo-consents`, {}, PlayerboardPhotoConsentSchema.array()),
     ])
+    if (loadRun !== latestConsentLoad) return
     const missing = new Set(consents.filter((consent) => !consent.consentRecordId).map((consent) => consent.playerId))
     playersWithoutConsent.value = roster.filter((player) => player.active && missing.has(player.id))
   } catch {
-    playersWithoutConsent.value = null
+    if (loadRun === latestConsentLoad) playersWithoutConsent.value = null
   }
 }
 await loadConsents()
@@ -320,7 +329,7 @@ const inputClass = 'focus-ring h-11 rounded-xl border border-[#dfe0d9] bg-white 
             <p class="mt-1 text-xs text-[#6c756f]">Fotos, auf denen sie erkennbar sind, bleiben intern. Einwilligungen holst du unter <NuxtLink to="/einwilligungen" class="font-semibold text-forest underline">Einwilligungen</NuxtLink> ein.</p>
             <ul class="mt-2 flex flex-wrap gap-2">
               <li v-for="player in playersWithoutConsent" :key="player.id" class="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-900">
-                {{ player.jerseyNumber !== null ? `#${player.jerseyNumber} ` : '' }}<PersonLink :person-id="player.directoryPersonId">{{ player.firstName }} {{ player.lastName }}</PersonLink>
+                <PersonLink :person-id="player.directoryPersonId">{{ playerLabel(player) }}</PersonLink>
               </li>
             </ul>
           </template>

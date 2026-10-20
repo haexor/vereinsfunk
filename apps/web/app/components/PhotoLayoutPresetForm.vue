@@ -2,6 +2,7 @@
 import { LoaderCircle } from '@lucide/vue'
 import type { PhotoLayoutKind } from '@vereinsfunk/contracts'
 import type { PhotoLayoutPresetDraft } from '../utils/photoLayoutPresetDraft'
+import { resolveDividerColor } from '../utils/photoLayoutPresets'
 
 const props = withDefaults(defineProps<{
   saving: boolean
@@ -25,8 +26,8 @@ const KIND_OPTIONS: { value: PhotoLayoutKind; label: string; hint: string }[] = 
   { value: 'mixed_grid', label: 'Gemischtes Raster', hint: '1 großes + kleine Fotos' },
 ]
 // Feste, kleine Breite fuer die Galerie-Kacheln statt der tatsaechlich eingestellten
-// dividerWidthPx (die bis zu 100px reichen kann) -- dieselbe Ueberlegung wie
-// GALLERY_PREVIEW_WIDTH_PX in ImageStylePresetForm.vue.
+// dividerWidthPx (die bis zu 100px reichen kann): in der kleinen Kachel waere ein breiter Steg
+// nur noch Flaeche.
 const GALLERY_PREVIEW_WIDTH_PX = 4
 
 type DividerColorMode = 'primary' | 'accent' | 'custom'
@@ -34,11 +35,7 @@ const dividerColorMode = computed<DividerColorMode>(() => (draft.value.dividerCo
 function setDividerColorMode(mode: DividerColorMode) {
   draft.value.dividerColor = mode === 'custom' ? (draft.value.dividerColor.startsWith('#') ? draft.value.dividerColor : '#163a2c') : mode
 }
-const resolvedDividerColorHex = computed(() => {
-  if (draft.value.dividerColor === 'primary') return props.primaryColor
-  if (draft.value.dividerColor === 'accent') return props.accentColor
-  return draft.value.dividerColor
-})
+const resolvedDividerColorHex = computed(() => resolveDividerColor(draft.value.dividerColor, props))
 function nullableNumberFromInput(event: Event): number | null {
   const value = (event.target as HTMLInputElement).value
   return value ? Number(value) : null
@@ -47,7 +44,7 @@ function nullableNumberFromInput(event: Event): number | null {
 // Spiegelt PhotoLayoutPresetFieldsSchema (packages/contracts/src/photoLayout.ts) 1:1 -- der
 // Speichern-Knopf bleibt deaktiviert, statt eine Anfrage zu schicken, die die API ohnehin
 // ablehnen wuerde. Number.isInteger liefert bei einem leeren Zahlenfeld (v-model.number laesst
-// dann den rohen leeren String stehen, siehe ImageStylePresetForm.vue) korrekt false.
+// dann den rohen leeren String stehen) korrekt false.
 const isValid = computed(() => {
   const value = draft.value
   if (!value.name.trim()) return false

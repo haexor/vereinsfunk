@@ -136,7 +136,7 @@ export function registerDataSubjectRoutes(app: FastifyInstance, context: ApiRout
 
     const service = supabaseClients.forService()
     const [consents, accessLog] = await Promise.all([
-      service.from('consent_records').select('id, scope, origin, signed_at, valid_until, revoked_at, superseded_by').eq('directory_person_id', params.personId),
+      service.from('consent_records').select('id, scope, origin, signed_at, valid_until, revoked_at, superseded_by').eq('organization_id', organizationId).eq('directory_person_id', params.personId),
       // organization_id-Filter zusaetzlich zu entity_id, obwohl heute jeder Schreiber mit
       // entityType='directory_people' die Organisation bereits korrekt aus der Personenzeile
       // ableitet (adversariale Pruefung: kein aktuell ausnutzbarer Pfad, aber diese Zeile soll ihre
@@ -149,7 +149,7 @@ export function registerDataSubjectRoutes(app: FastifyInstance, context: ApiRout
     const mediaUsages = consentIds.length === 0
       ? []
       : await (async () => {
-          const result = await service.from('face_regions').select('media_asset_id, decision, obscuring_style, created_at').in('consent_record_id', consentIds)
+          const result = await service.from('face_regions').select('media_asset_id, decision, obscuring_style, created_at').eq('organization_id', organizationId).in('consent_record_id', consentIds)
           if (result.error) throw result.error
           return result.data
         })()
@@ -177,7 +177,9 @@ export function registerDataSubjectRoutes(app: FastifyInstance, context: ApiRout
   // Loeschung: entfernt den Verzeichniseintrag samt eigener E-Mail-Adresse. consent_records_person_fk ist seit
   // dieser Migration ON DELETE SET NULL -- der Einwilligungsnachweis bleibt bestehen, nur die
   // identifizierende Verknuepfung verschwindet, was auch die Gesichtszuordnung (face_regions ->
-  // consent_record_id) von der Person entkoppelt, ohne die Mediendatei selbst anzufassen.
+  // consent_record_id) von der Person entkoppelt, ohne die Mediendatei selbst anzufassen. Die
+  // verknuepften Einwilligungen werden dabei widerrufen, damit sie nicht weiter als Grundlage fuer
+  // Veroeffentlichungen gelten.
   app.post('/v1/data-subjects/:personId/erase', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ personId: UuidSchema }).parse(request.params)
@@ -189,7 +191,7 @@ export function registerDataSubjectRoutes(app: FastifyInstance, context: ApiRout
     if (!(await requirePermission(request, reply, 'organization.manage', toPermissionScope(organizationId)))) return
 
     const service = supabaseClients.forService()
-    const consentCount = await service.from('consent_records').select('id', { count: 'exact', head: true }).eq('directory_person_id', params.personId)
+    const consentCount = await service.from('consent_records').select('id', { count: 'exact', head: true }).eq('organization_id', organizationId).eq('directory_person_id', params.personId)
     if (consentCount.error) throw consentCount.error
     // Identitaet ueberlebte bislang in zwei weiteren Spalten derselben Zeile, obwohl die Antwort
     // "Verknuepfung zur Person entfernt" das Gegenteil behauptete (adversariale Pruefung):
@@ -198,11 +200,23 @@ export function registerDataSubjectRoutes(app: FastifyInstance, context: ApiRout
     // der Person, sonst hat die FK bereits directory_person_id genullt und dieser Filter trifft
     // keine Zeile mehr.
     if ((consentCount.count ?? 0) > 0) {
-      const anonymized = await service.from('consent_records').update({ pseudonymous_subject_ref: null, signer_name: null }).eq('directory_person_id', params.personId)
+      // Ohne Widerruf blieben die Gesichtsregionen 'consented' und das Medien-Gate liesse Fotos der
+      // geloeschten Person weiter durch -- directory_person_id faellt nur auf null, die Zeile selbst
+      // bliebe gueltig. Das Update stoesst die bestehende Kaskade an (Trigger
+      // invalidate_approval_after_consent_revocation: offene Freigaben, geplante Publikationen;
+      // consent_records_block_playerboard_photos). Ein frueherer Widerruf bleibt unveraendert.
+      const revoked = await service
+        .from('consent_records')
+        .update({ revoked_at: new Date().toISOString(), revoked_by: 'organization', revocation_reason: 'Löschung der betroffenen Person' })
+        .eq('organization_id', organizationId)
+        .eq('directory_person_id', params.personId)
+        .is('revoked_at', null)
+      if (revoked.error) throw revoked.error
+      const anonymized = await service.from('consent_records').update({ pseudonymous_subject_ref: null, signer_name: null }).eq('organization_id', organizationId).eq('directory_person_id', params.personId)
       if (anonymized.error) throw anonymized.error
     }
 
-    const deleted = await service.from('directory_people').delete().eq('id', params.personId)
+    const deleted = await service.from('directory_people').delete().eq('organization_id', organizationId).eq('id', params.personId)
     if (deleted.error) throw deleted.error
 
     await recordAuditEvent(request, { organizationId, action: 'data_subject.erased', entityType: 'directory_people', entityId: params.personId })
@@ -210,7 +224,7 @@ export function registerDataSubjectRoutes(app: FastifyInstance, context: ApiRout
     if ((consentCount.count ?? 0) > 0) {
       retained.push({
         category: 'Einwilligungsnachweise',
-        reason: 'Nachweispflicht -- Aufbewahrung gemäss retention_settings.consent_evidence_years ab Ende der Gültigkeit; Verknüpfung zur Person, Pseudonym und Name der unterzeichnenden Person wurden entfernt',
+        reason: 'Nachweispflicht -- Aufbewahrung gemäss retention_settings.consent_evidence_years ab Ende der Gültigkeit; Verknüpfung zur Person, Pseudonym und Name der unterzeichnenden Person wurden entfernt, die Einwilligungen widerrufen',
       })
     }
     retained.push({ category: 'Veröffentlichte Beiträge', reason: 'Löschung auf der Plattform ist eine Handlung des Vereins, nicht des Systems' })

@@ -68,6 +68,13 @@ export async function processBrandFontUpload(buffer: Buffer): Promise<ProcessedF
     throw new FontEmbeddingRestrictedError("this font's license forbids embedding it -- use a font licensed for web/app embedding")
   }
 
+  // usWeightClass ist ein uint16, brand_assets.font_weight erlaubt nur 100..900. Ohne diese
+  // Pruefung lief eine solche Datei erst nach beiden Storage-Uploads in den CHECK (500, verwaiste
+  // Objekte) statt vorher in eine 400.
+  if (!Number.isInteger(os2.usWeightClass) || os2.usWeightClass < 100 || os2.usWeightClass > 900) {
+    throw new UnsupportedFontFormatError(`font weight ${os2.usWeightClass} is outside the supported range 100-900`)
+  }
+
   const woff2Buffer = format === 'woff2' ? buffer : Buffer.from(await compressToWoff2(buffer))
 
   return {

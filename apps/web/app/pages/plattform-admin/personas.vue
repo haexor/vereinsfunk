@@ -1,14 +1,12 @@
 <script setup lang="ts">
 import {
   CreatePlatformStylePersonaRequestSchema,
-  GeneratedPostSchema,
   PlatformStylePersonaSchema,
   PreviewPlatformStylePersonaRequestSchema,
   UpdatePlatformStylePersonaRequestSchema,
-  type GeneratedPost,
   type PlatformStylePersona,
 } from '@vereinsfunk/contracts'
-import { avoidRulesFromDraft, doRulesFromDraft, emptyStyleProfileDraft, previewErrorMessage, styleProfileDraftFrom, styleRulesFromDraft } from '../../utils/styleProfileDraft'
+import { avoidRulesFromDraft, doRulesFromDraft, emptyStyleProfileDraft, styleProfileDraftFrom, styleRulesFromDraft } from '../../utils/styleProfileDraft'
 
 definePageMeta({ layout: 'admin' })
 
@@ -79,35 +77,19 @@ async function savePersona() {
   }
 }
 
-function previewRequestBody() {
-  return PreviewPlatformStylePersonaRequestSchema.parse({
+const { previewing, result: previewResult, error: previewError, preview: testPersona } = useStyleProfilePreview({
+  api,
+  path: '/v1/platform-style-personas/preview',
+  draft,
+  requestBody: () => PreviewPlatformStylePersonaRequestSchema.parse({
     name: draft.value.name,
     description: draft.value.description,
     styleRules: styleRulesFromDraft(draft.value),
     avoidRules: avoidRulesFromDraft(draft.value),
     doRules: doRulesFromDraft(draft.value),
     sampleInput: draft.value.sampleInput,
-  })
-}
-
-const previewing = ref(false)
-const previewResult = ref<GeneratedPost | null>(null)
-const previewError = ref('')
-const previewKey = ref(crypto.randomUUID())
-watch(draft, () => { previewKey.value = crypto.randomUUID() }, { deep: true })
-
-async function testPersona() {
-  previewing.value = true
-  previewError.value = ''
-  try {
-    previewResult.value = await api.request('/v1/platform-style-personas/preview', { method: 'POST', body: previewRequestBody(), headers: { 'idempotency-key': previewKey.value } }, GeneratedPostSchema)
-    previewKey.value = crypto.randomUUID()
-  } catch (error) {
-    previewError.value = previewErrorMessage(error)
-  } finally {
-    previewing.value = false
-  }
-}
+  }),
+})
 
 async function removePersona(persona: PlatformStylePersona) {
   if (!confirm(`"${persona.name}" wirklich löschen? Bereits akzeptierte Textkandidaten bleiben davon unberührt.`)) return

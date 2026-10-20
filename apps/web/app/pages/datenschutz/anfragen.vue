@@ -12,11 +12,14 @@ import {
   type DataSubjectRequestSubjectKind,
   type DirectoryPerson,
 } from '@vereinsfunk/contracts'
+import { localDateKey } from '../../utils/memberDates'
 
 // Paket 020: Betroffenenanfragen (Auskunft, Löschung, Berichtigung, Widerspruch,
 // Datenübertragbarkeit) -- Frist wird serverseitig aus receivedAt berechnet, hier nur angezeigt.
 const config = useRuntimeConfig()
+const session = await useSession()
 const { organizationId, level: activeScopeLevel } = await useActiveScope()
+const timezone = computed(() => session.value?.scopes.find((item) => item.organizationId === organizationId.value)?.organizationTimezone ?? 'Europe/Berlin')
 const isOrganizationScope = computed(() => activeScopeLevel.value === 'organization')
 const canManage = computed(() => isOrganizationScope.value && useCan('organization.manage', { organizationId: organizationId.value ?? '' }))
 
@@ -84,7 +87,9 @@ const createForm = reactive({
   subjectKind: 'directory_person' as DataSubjectRequestSubjectKind,
   directoryPersonId: '',
   subjectLabel: '',
-  receivedAt: new Date().toISOString().slice(0, 10),
+  // Kalendertag in der Zeitzone des Vereins: toISOString() lieferte zwischen 0 und 2 Uhr deutscher
+  // Zeit noch den Vortag, und die daraus berechnete Frist endete einen Tag zu frueh.
+  receivedAt: localDateKey(new Date(), timezone.value),
 })
 watch(() => createForm.directoryPersonId, (id) => {
   if (createForm.subjectKind !== 'directory_person' || createForm.subjectLabel) return

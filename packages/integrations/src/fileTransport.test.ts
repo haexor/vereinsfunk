@@ -19,6 +19,16 @@ describe('FileSourceTransport', () => {
     ])
   })
 
+  it('reads a German Excel CSV with semicolons, a BOM and a ragged row instead of failing the whole file', async () => {
+    const csv = '\uFEFFVorname;Nachname;Geburtsjahr\r\nAnna;Beck, geb. Roth;2010\r\nTom;Meyer\r\n'
+    const transport = new FileSourceTransport({ key: 'members.csv', format: 'csv', buffer: Buffer.from(csv, 'utf-8') })
+    const rows = await collect(transport)
+    expect(rows).toEqual([
+      { Vorname: 'Anna', Nachname: 'Beck, geb. Roth', Geburtsjahr: '2010' },
+      { Vorname: 'Tom', Nachname: 'Meyer' },
+    ])
+  })
+
   it('does not interpret column values -- everything stays a raw string', async () => {
     const csv = 'IBAN,Aktiv\nDE00000000000000000000,true\n'
     const transport = new FileSourceTransport({ key: 'members.csv', format: 'csv', buffer: Buffer.from(csv, 'utf-8') })

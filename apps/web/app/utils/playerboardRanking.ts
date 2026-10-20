@@ -12,6 +12,11 @@ export interface RankingListItem {
   categories: readonly { name: string; points: number }[]
 }
 
+/** Interne Anzeige eines Kaderspielers, "#7 Max Mustermann" bzw. ohne Nummer nur der Name. */
+export function playerLabel(player: { jerseyNumber: number | null; firstName: string; lastName: string }): string {
+  return `${player.jerseyNumber !== null ? `#${player.jerseyNumber} ` : ''}${player.firstName} ${player.lastName}`
+}
+
 export type RankingPeriodKind = 'season' | 'month' | 'all' | 'custom'
 
 export interface RankingRange {

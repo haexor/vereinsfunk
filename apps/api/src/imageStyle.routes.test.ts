@@ -1,5 +1,7 @@
+import type { AddressInfo } from 'node:net'
+import { connect } from 'node:net'
 import sharp from 'sharp'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   chain,
   DEPARTMENT_ID,
@@ -453,6 +455,81 @@ describe('POST /v1/image-style-presets/preview', () => {
     expect(response.json().unavailableFilters).toContain('gmic_poster')
     expect(applied).toBe(1)
     expect(renderSignal).toBeInstanceOf(AbortSignal)
+  })
+
+  // Echter Socket statt inject(): erst ein tatsaechlich geschlossener Client zeigt, ob der
+  // Abbruch nach dem vollstaendig gelesenen Multipart-Body noch ankommt.
+  it('aborts the gallery rendering once the client disconnects after the upload', async () => {
+    const boundary = 'workshop-gmic-filter-previews-disconnect'
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="organizationId"\r\n\r\n${ORGANIZATION_ID}\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="crop.png"\r\nContent-Type: image/png\r\n\r\n`),
+      await tinyImage(),
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ])
+    let renderSignal: AbortSignal | undefined
+    let markStarted = () => {}
+    const started = new Promise<void>((resolve) => (markStarted = resolve))
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: noAssetClients(),
+      imageEffects: {
+        id: 'slow-gmic',
+        supports: (effect: string): effect is 'gmic_vintage' => effect === 'gmic_vintage',
+        apply: async (_effect: string, buffer: Buffer, signal?: AbortSignal) => {
+          renderSignal = signal
+          markStarted()
+          await new Promise((resolve) => {
+            signal?.addEventListener('abort', resolve, { once: true })
+            setTimeout(resolve, 2000)
+          })
+          return buffer
+        },
+      },
+    })
+    await app.listen({ port: 0, host: '127.0.0.1' })
+    const { port } = app.server.address() as AddressInfo
+    const token = await signAccessToken(USER_ID)
+    const socket = connect(port, '127.0.0.1')
+    socket.on('error', () => {})
+    socket.write(
+      `POST /v1/image-style-workshop/filter-previews HTTP/1.1\r\nHost: 127.0.0.1\r\n` +
+        `Authorization: Bearer ${token}\r\nContent-Type: multipart/form-data; boundary=${boundary}\r\n` +
+        `Content-Length: ${body.length}\r\n\r\n`,
+    )
+    socket.write(body)
+    await started
+    socket.destroy()
+    await vi.waitFor(() => expect(renderSignal?.aborted).toBe(true), { timeout: 1500 })
+  })
+
+  // sharp setzt limitInputPixels schon beim Lesen der Kopfdaten durch -- frueher wurde daraus der
+  // generische 422 invalid_image statt der vorgesehenen 413.
+  it('rejects a workshop crop above the pixel limit with 413 image_too_large', async () => {
+    const boundary = 'workshop-oversized'
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="organizationId"\r\n\r\n${ORGANIZATION_ID}\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="filter"\r\n\r\noriginal\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="crop.png"\r\nContent-Type: image/png\r\n\r\n`),
+      Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="8000" height="8000"></svg>'),
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ])
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: noAssetClients(),
+    })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/image-style-workshop/filter',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': `multipart/form-data; boundary=${boundary}`,
+      },
+      payload: body,
+    })
+    expect(response.statusCode).toBe(413)
+    expect(response.json()).toMatchObject({ error: 'image_too_large' })
   })
 
   it('rejects unsupported workshop image MIME types through the Zod multipart schema', async () => {
@@ -943,6 +1020,33 @@ describe('POST /v1/post-media/:postMediaId/style-render', () => {
     expect(response.json()).toMatchObject({ error: 'source_media_asset_not_an_image' })
   })
 
+  // Ein SVG mit grossen Abmessungen statt eines echten 64-MP-Fotos: sharp liest die Masse, ohne
+  // zu rastern, und die Pixelgrenze in renderImageStyle greift genauso.
+  it('maps a source photo above the pixel limit to 413 instead of 500', async () => {
+    const response = await styleRender(
+      styleRenderClients({
+        sourcePhoto: Buffer.from(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="8000" height="8000"></svg>',
+        ),
+      }),
+    )
+    expect(response.statusCode).toBe(413)
+    expect(response.json()).toMatchObject({ error: 'image_too_large' })
+  })
+
+  it("maps a G'MIC preset without a configured provider to 422 instead of 500", async () => {
+    const sourcePhoto = await sharp({
+      create: { width: 40, height: 20, channels: 3, background: { r: 10, g: 20, b: 30 } },
+    })
+      .png()
+      .toBuffer()
+    const response = await styleRender(
+      styleRenderClients({ preset: { ...PRESET_ROW, filter: 'gmic_vintage' }, sourcePhoto }),
+    )
+    expect(response.statusCode).toBe(422)
+    expect(response.json()).toMatchObject({ error: 'gmic_not_enabled' })
+  })
+
   it('maps a race lost inside apply_image_style_render to 409 instead of 500', async () => {
     const sourcePhoto = await sharp({
       create: { width: 40, height: 20, channels: 3, background: { r: 10, g: 20, b: 30 } },
@@ -956,6 +1060,21 @@ describe('POST /v1/post-media/:postMediaId/style-render', () => {
     const response = await styleRender(clients)
     expect(response.statusCode).toBe(409)
     expect(response.json()).toMatchObject({ error: 'post_media_changed' })
+  })
+
+  it('maps a post version that stopped being current during rendering to 409 instead of 201', async () => {
+    const sourcePhoto = await sharp({
+      create: { width: 40, height: 20, channels: 3, background: { r: 10, g: 20, b: 30 } },
+    })
+      .png()
+      .toBuffer()
+    const clients = styleRenderClients({
+      sourcePhoto,
+      rpc: { data: null, error: { message: 'post_version_not_current', code: 'P0001' } },
+    })
+    const response = await styleRender(clients)
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'post_version_not_current' })
   })
 
   it('renders the preset onto the source photo and applies the new derivative to post_media', async () => {

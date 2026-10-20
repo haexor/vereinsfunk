@@ -12,6 +12,13 @@ import { buildStyleProfilePromptPreview, checkRateLimit, previewStyleProfile, re
 
 const PERSONA_COLUMNS = 'id, slug, name, description, style_rules, avoid_rules, do_rules, is_active, created_by, created_at, updated_at'
 
+// 23505 ist die Eindeutigkeit innerhalb des Persona-Katalogs, die Trigger-Meldung die Kollision
+// mit dem Slug eines Vereins-Stilprofils (reject_persona_slug_collision, 2026081301) -- beides ist
+// ein vergebener Slug und kein Serverfehler.
+function isSlugTaken(error: { code?: string; message: string }): boolean {
+  return error.code === '23505' || error.message.includes('is already used by a club style profile')
+}
+
 function mapPersonaRow(row: Record<string, unknown>) {
   return {
     id: row.id, slug: row.slug, name: row.name, description: row.description,
@@ -50,7 +57,10 @@ export function registerPlatformPersonaRoutes(app: FastifyInstance, context: Api
       })
       .select(PERSONA_COLUMNS)
       .single()
-    if (insert.error) throw insert.error
+    if (insert.error) {
+      if (isSlugTaken(insert.error)) return reply.code(409).send({ error: 'slug_taken', correlationId: request.id })
+      throw insert.error
+    }
     return reply.code(201).send(PlatformStylePersonaSchema.parse(mapPersonaRow(insert.data)))
   })
 
@@ -69,7 +79,10 @@ export function registerPlatformPersonaRoutes(app: FastifyInstance, context: Api
     if (input.doRules !== undefined) payload.do_rules = input.doRules
     if (input.isActive !== undefined) payload.is_active = input.isActive
     const update = await service.from('platform_style_personas').update(payload).eq('id', params.id).select(PERSONA_COLUMNS).maybeSingle()
-    if (update.error) throw update.error
+    if (update.error) {
+      if (isSlugTaken(update.error)) return reply.code(409).send({ error: 'slug_taken', correlationId: request.id })
+      throw update.error
+    }
     if (!update.data) return reply.code(404).send({ error: 'platform_style_persona_not_found' })
     return reply.code(200).send(PlatformStylePersonaSchema.parse(mapPersonaRow(update.data)))
   })

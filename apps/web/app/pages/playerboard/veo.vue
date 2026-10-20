@@ -14,6 +14,7 @@ const status = ref<PlayerboardVeoStatus | null>(null)
 const conflicts = ref<PlayerboardVeoConflict[]>([])
 const errorMessage = ref('')
 const notice = ref('')
+const running = computed(() => status.value?.runs[0]?.status === 'running')
 
 /** Laedt Status und offene mehrdeutige Spiele der gewaehlten Mannschaft. */
 let latestRequest = 0
@@ -34,10 +35,28 @@ async function load() {
     if (request === latestRequest) errorMessage.value = playerboardErrorMessage(error, 'Der Veo-Status konnte nicht geladen werden.')
   }
 }
+
+// Fragt den Status alle drei Sekunden ab, solange ein Lauf laeuft -- auch einen, der schon beim
+// Oeffnen der Seite lief. Hoechstens drei Minuten ab dem letzten Anstoss: einen haengenden Lauf
+// gibt erst der taegliche Abgleich frei. usePolling haelt nach dem Verlassen der Seite an.
+let pollUntil = 0
+const { ensurePolling } = usePolling(async () => {
+  await load()
+  if (!running.value) notice.value = ''
+}, () => running.value && Date.now() < pollUntil, 3_000)
+function watchRun() {
+  pollUntil = Date.now() + 180_000
+  ensurePolling()
+}
+
 await load()
-watch(teamId, () => {
+watchRun()
+// Direkt load() statt des Poll-Refreshs: der wuerde einen laufenden Poll der alten Mannschaft
+// wiederverwenden, statt die neue zu laden.
+watch(teamId, async () => {
   resetLogin()
-  void load()
+  await load()
+  watchRun()
 })
 
 // --- Verbinden ---------------------------------------------------------------------------------
@@ -96,23 +115,6 @@ async function submitLink() {
 
 // --- Abgleich ----------------------------------------------------------------------------------
 const syncBusy = ref(false)
-const running = computed(() => status.value?.runs[0]?.status === 'running')
-let pollTimer: ReturnType<typeof setTimeout> | undefined
-let pollsLeft = 0
-
-/** Fragt den Status alle drei Sekunden ab, solange ein Lauf laeuft (hoechstens drei Minuten). */
-function watchRun() {
-  pollsLeft = 60
-  if (pollTimer) clearTimeout(pollTimer)
-  const tick = async () => {
-    await load()
-    pollsLeft -= 1
-    if (running.value && pollsLeft > 0) pollTimer = setTimeout(tick, 3_000)
-    else if (!running.value && notice.value) notice.value = ''
-  }
-  pollTimer = setTimeout(tick, 3_000)
-}
-onBeforeUnmount(() => { if (pollTimer) clearTimeout(pollTimer) })
 
 /** Startet einen Abgleich und verfolgt ihn bis zum Ende. */
 async function startSync() {

@@ -1,4 +1,15 @@
-import { CreateAgentActionProposalSchema, type AgentMessage, type AgentWorkspace, type CreateAgentActionProposal } from '@vereinsfunk/contracts'
+import {
+  AssignableRoleSchema,
+  ClubEventCategorySchema,
+  CommunicationGoalSchema,
+  CreateAgentActionProposalSchema,
+  MetaOAuthPlatformSchema,
+  SocialPlatformSchema,
+  SystemStyleProfileSlugSchema,
+  type AgentMessage,
+  type AgentWorkspace,
+  type CreateAgentActionProposal,
+} from '@vereinsfunk/contracts'
 import { createGuardedFetch } from '@vereinsfunk/outbound-fetch'
 import { z } from 'zod'
 import { joinUrlPath } from './llmProviders.js'
@@ -69,6 +80,8 @@ const ResponsesApiResponseSchema = z.object({
   }).passthrough()).default([]),
 }).passthrough()
 
+// Alle Enum-Werte stammen aus den Contracts: das Tool-Schema darf dem Modell nie andere Werte
+// anbieten, als CreateAgentActionProposalSchema beim Zuruecklesen annimmt.
 const RESPONSE_TOOLS = [
   {
     type: 'function',
@@ -79,14 +92,14 @@ const RESPONSE_TOOLS = [
       type: 'object', additionalProperties: false,
       required: ['title', 'startsAt', 'description', 'category', 'endsAt', 'allDay', 'locationName', 'locationAddress', 'registrationUrl'],
       properties: {
-        title: { type: 'string' }, description: { type: ['string', 'null'] }, category: { type: 'string', enum: ['general_meeting', 'festival', 'tournament', 'training_camp', 'course', 'social', 'fundraiser', 'ceremony', 'other'] },
+        title: { type: 'string' }, description: { type: ['string', 'null'] }, category: { type: 'string', enum: ClubEventCategorySchema.options },
         startsAt: { type: 'string' }, endsAt: { type: ['string', 'null'] }, allDay: { type: 'boolean' }, locationName: { type: ['string', 'null'] }, locationAddress: { type: ['string', 'null'] }, registrationUrl: { type: ['string', 'null'] },
       },
     },
   },
   {
     type: 'function', name: 'create_invitation', description: 'Bereitet eine Mitglieder-Einladung vor, die der Nutzer anschließend bestätigen muss.', strict: true,
-    parameters: { type: 'object', additionalProperties: false, required: ['email', 'role'], properties: { email: { type: 'string' }, role: { type: 'string', enum: ['organization_admin', 'social_manager', 'billing_admin', 'organization_viewer', 'department_admin', 'editor', 'approver', 'contributor', 'viewer', 'team_manager', 'player'] } } },
+    parameters: { type: 'object', additionalProperties: false, required: ['email', 'role'], properties: { email: { type: 'string' }, role: { type: 'string', enum: AssignableRoleSchema.options } } },
   },
   {
     type: 'function', name: 'request_approval', description: 'Bereitet die Freigabe einer im Workspace genannten aktuellen Beitragsversion vor. Der Nutzer muss anschließend bestätigen.', strict: true,
@@ -97,9 +110,9 @@ const RESPONSE_TOOLS = [
     parameters: {
       type: 'object', additionalProperties: false, required: ['communicationGoal', 'sourceMaterial', 'systemStyleProfileSlug', 'targetPlatforms'],
       properties: {
-        communicationGoal: { type: 'string', enum: ['inform', 'inspire', 'thank', 'invite', 'recruit', 'educate', 'strengthen_community'] },
-        systemStyleProfileSlug: { type: 'string', enum: ['klar_erklaerend', 'warm_gemeinschaftlich', 'lebendig_sportlich', 'leicht_humorvoll', 'feierlich_wertschaetzend'] },
-        targetPlatforms: { type: 'array', items: { type: 'string', enum: ['instagram', 'facebook', 'twitter', 'linkedin', 'website', 'plaintext'] } },
+        communicationGoal: { type: 'string', enum: CommunicationGoalSchema.options },
+        systemStyleProfileSlug: { type: 'string', enum: SystemStyleProfileSlugSchema.options },
+        targetPlatforms: { type: 'array', items: { type: 'string', enum: SocialPlatformSchema.options } },
         sourceMaterial: {
           type: 'object', additionalProperties: false, required: ['facts', 'observations', 'quotes'],
           properties: {
@@ -116,9 +129,9 @@ const RESPONSE_TOOLS = [
     parameters: {
       type: 'object', additionalProperties: false, required: ['communicationGoal', 'sourceMaterial', 'systemStyleProfileSlug', 'targetPlatforms'],
       properties: {
-        communicationGoal: { type: 'string', enum: ['inform', 'inspire', 'thank', 'invite', 'recruit', 'educate', 'strengthen_community'] },
-        systemStyleProfileSlug: { type: 'string', enum: ['klar_erklaerend', 'warm_gemeinschaftlich', 'lebendig_sportlich', 'leicht_humorvoll', 'feierlich_wertschaetzend'] },
-        targetPlatforms: { type: 'array', items: { type: 'string', enum: ['instagram', 'facebook', 'twitter', 'linkedin', 'website', 'plaintext'] } },
+        communicationGoal: { type: 'string', enum: CommunicationGoalSchema.options },
+        systemStyleProfileSlug: { type: 'string', enum: SystemStyleProfileSlugSchema.options },
+        targetPlatforms: { type: 'array', items: { type: 'string', enum: SocialPlatformSchema.options } },
         sourceMaterial: {
           type: 'object', additionalProperties: false, required: ['facts', 'observations', 'quotes'],
           properties: {
@@ -139,7 +152,7 @@ const RESPONSE_TOOLS = [
   },
   {
     type: 'function', name: 'schedule_publication', description: 'Bereitet das Einplanen einer im Workspace genannten freigegebenen Beitragsversion auf Instagram oder Facebook vor. Nur die dort genannte postVersionId verwenden. scheduledFor null bedeutet sofort fällig, ist aber weiterhin nur eine bestätigungspflichtige Planung, nie eine direkte Veröffentlichung.', strict: true,
-    parameters: { type: 'object', additionalProperties: false, required: ['postVersionId', 'platform', 'scheduledFor'], properties: { postVersionId: { type: 'string' }, platform: { type: 'string', enum: ['instagram', 'facebook'] }, scheduledFor: { type: ['string', 'null'] } } },
+    parameters: { type: 'object', additionalProperties: false, required: ['postVersionId', 'platform', 'scheduledFor'], properties: { postVersionId: { type: 'string' }, platform: { type: 'string', enum: MetaOAuthPlatformSchema.options }, scheduledFor: { type: ['string', 'null'] } } },
   },
   {
     type: 'function', name: 'execute_publication', description: 'Bereitet die direkte externe Veröffentlichung einer im Workspace genannten, fälligen Publication vor. Nur die dort genannte publicationId verwenden. Die Veröffentlichung startet erst nach einer ausdrücklichen Bestätigung.', strict: true,

@@ -2,8 +2,9 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { z } from 'zod'
 import type { WorkerEnvironment } from '@vereinsfunk/config'
 import { hashLogoBuffer } from '@vereinsfunk/brand-assets'
+import { byteaToBuffer, EmbeddedProviderSecretSchema, unwrapEmbeddedSecret } from '@vereinsfunk/secrets'
 import { CommunicationGoalSchema, MaxCharactersSchema, SocialPlatformSchema, TextGenerationTemperatureSchema, UuidSchema, WorkflowNameSchema, WorkflowPayloadSchema, type WorkflowPayload } from '@vereinsfunk/contracts'
-import type { WorkflowOutboxRepository } from '@vereinsfunk/orchestration'
+import type { ClaimedOutboxEntry, WorkflowOutboxRepository } from '@vereinsfunk/orchestration'
 import type { BrandAnalysisJobRow, BrandWebsiteAnalysisRepository, VisionProviderRow } from './brandWebsiteAnalysis.js'
 import { WorkflowExecutionError, type WorkflowExecutionRepository, type WorkflowRunAcquireResult } from './workflows.js'
 import type { CandidateRow, ProviderRow, SessionRow, TextGenerationRepository } from './textGeneration.js'
@@ -60,14 +61,30 @@ const RECOVERABLE_SESSION_ROW_COLUMNS = Object.keys(RecoverableSessionRowSchema.
 /** Creates the worker-only service-role repository from validated configuration. */
 export function createWorkflowOutboxRepository(config: WorkerEnvironment): WorkflowOutboxRepository {
   const client = createClient(config.SUPABASE_URL, config.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  const release = async (id: string, claimToken: string, errorClass: string) => { const { data, error } = await client.rpc('release_workflow_outbox', { p_outbox_id: id, p_claim_token: claimToken, p_error_class: errorClass }); if (error || !data) throw error ?? new Error('outbox release lost') }
   return {
     async claimPending(limit) {
       const { data, error } = await client.rpc('claim_workflow_outbox', { p_limit: limit })
       if (error) throw error
-      return (data ?? []).map((row: { id: string; claim_token: string; workflow_name: unknown; payload: unknown; priority: 1 | 2 | 3 }) => ({ id: row.id, claimToken: row.claim_token, workflow: WorkflowNameSchema.parse(row.workflow_name), payload: WorkflowPayloadSchema.parse(row.payload), priority: row.priority }))
+      const claimed: ClaimedOutboxEntry[] = []
+      for (const row of (data ?? []) as { id: string; claim_token: string; workflow_name: unknown; payload: unknown; priority: 1 | 2 | 3 }[]) {
+        const workflow = WorkflowNameSchema.safeParse(row.workflow_name)
+        const payload = WorkflowPayloadSchema.safeParse(row.payload)
+        if (workflow.success && payload.success) {
+          claimed.push({ id: row.id, claimToken: row.claim_token, workflow: workflow.data, payload: payload.data, priority: row.priority })
+          continue
+        }
+        // Je Zeile statt fuer den ganzen Stapel: eine einzige ungueltige Zeile liess sonst alle
+        // geclaimten Zeilen in 'dispatching' haengen, und der naechste Claim nach fuenf Minuten traf
+        // sie in derselben Reihenfolge wieder -- der Versand stand fuer alle Vereine. Die Freigabe
+        // schiebt die Zeile per available_at ans Ende der Warteschlange; scheitert auch sie, holt
+        // der Claim sie nach Ablauf der Sperre zurueck.
+        await release(row.id, row.claim_token, 'invalid_outbox_row').catch(() => {})
+      }
+      return claimed
     },
     async markDispatched(id, claimToken, runId) { const { data, error } = await client.rpc('acknowledge_workflow_outbox', { p_outbox_id: id, p_claim_token: claimToken, p_hatchet_run_id: runId }); if (error || !data) throw error ?? new Error('outbox acknowledgement lost') },
-    async markRetryableFailure(id, claimToken, errorClass) { const { data, error } = await client.rpc('release_workflow_outbox', { p_outbox_id: id, p_claim_token: claimToken, p_error_class: errorClass }); if (error || !data) throw error ?? new Error('outbox release lost') },
+    markRetryableFailure: release,
   }
 }
 
@@ -136,15 +153,13 @@ export function createTextGenerationRepository(config: WorkerEnvironment): TextG
         .select('id, protocol, base_url, model, structured_output_required, llm_provider_secrets!inner(api_key_ciphertext, key_version)')
         .eq('id', providerConfigurationId).limit(1)
       if (error) throw error
-      if (data.length === 0) throw new Error('assigned text provider is missing')
+      if (data.length === 0) throw new WorkflowExecutionError('unsupported_provider_configuration', false) // zugewiesener Provider geloescht
       const row = z.object({
         id: UuidSchema, protocol: z.string(), base_url: z.url(), model: z.string().trim().min(1),
-        structured_output_required: z.boolean(), llm_provider_secrets: z.union([z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) }), z.array(z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) })).min(1)]),
+        structured_output_required: z.boolean(), llm_provider_secrets: EmbeddedProviderSecretSchema,
       }).parse(data[0])
-      const secret = row.llm_provider_secrets
-      const value = Array.isArray(secret) ? secret[0] : secret
-      if (!value) throw new Error('text provider secret missing')
-      return ProviderRowSchema.parse({ ...row, api_key_ciphertext: value.api_key_ciphertext, key_version: value.key_version })
+      const secret = unwrapEmbeddedSecret(row.llm_provider_secrets)
+      return ProviderRowSchema.parse({ ...row, api_key_ciphertext: secret.api_key_ciphertext, key_version: secret.key_version })
     },
     async markReady(candidateId, sessionId, leaseToken, generatedContent, metadata) {
       const { error } = await client.rpc('mark_generation_candidate_ready', {
@@ -240,12 +255,10 @@ export function createBrandWebsiteAnalysisRepository(config: WorkerEnvironment):
       if (data.length === 0) return null
       const row = z.object({
         id: UuidSchema, protocol: z.string(), base_url: z.url(), model: z.string().trim().min(1),
-        llm_provider_secrets: z.union([z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) }), z.array(z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) })).min(1)]),
+        llm_provider_secrets: EmbeddedProviderSecretSchema,
       }).parse(data[0])
-      const secret = row.llm_provider_secrets
-      const value = Array.isArray(secret) ? secret[0] : secret
-      if (!value) throw new Error('vision provider secret missing')
-      return VisionProviderRowSchema.parse({ ...row, api_key_ciphertext: value.api_key_ciphertext, key_version: value.key_version })
+      const secret = unwrapEmbeddedSecret(row.llm_provider_secrets)
+      return VisionProviderRowSchema.parse({ ...row, api_key_ciphertext: secret.api_key_ciphertext, key_version: secret.key_version })
     },
     // Staging-Pfad, kein brand_assets-Datenbankeintrag: der entsteht erst, wenn der Verein den
     // KI-Vorschlag tatsaechlich uebernimmt und auf marke.vue speichert (siehe Plandokument).
@@ -348,10 +361,8 @@ export function createVisionProviderComparisonRepository(config: WorkerEnvironme
         .eq('task_kind', 'vision_analysis').eq('is_active', true)
       if (error) throw error
       return data.map((row) => {
-        const secret = row.llm_provider_secrets as { api_key_ciphertext: string; key_version: string } | { api_key_ciphertext: string; key_version: string }[]
-        const value = Array.isArray(secret) ? secret[0] : secret
-        if (!value) throw new Error('vision provider secret missing')
-        return VisionComparisonProviderRowSchema.parse({ ...row, api_key_ciphertext: value.api_key_ciphertext, key_version: value.key_version })
+        const secret = unwrapEmbeddedSecret(EmbeddedProviderSecretSchema.parse(row.llm_provider_secrets))
+        return VisionComparisonProviderRowSchema.parse({ ...row, api_key_ciphertext: secret.api_key_ciphertext, key_version: secret.key_version })
       })
     },
     // Kein organizationId als Namensraum: dieses Werkzeug ist rein plattformbezogen, anders als
@@ -410,9 +421,10 @@ export function createVeoSyncRepository(config: WorkerEnvironment): VeoSyncRepos
         teamName: teamRow.name,
         veoClubSlug: linkRow.veo_club_slug,
         veoTeamSlug: linkRow.veo_team_slug,
-        // bytea kommt ueber PostgREST als Hex-Escape (\x...), siehe apps/api/src/secretBox.ts.
+        // bytea kommt ueber PostgREST als Hex-Escape (\x...). Eine andere Form gilt als fehlendes
+        // Geheimnis statt als Fehler, damit der Lauf trotzdem sauber als 'veo_link_missing' endet.
         secret: ciphertext?.startsWith('\\x')
-          ? { ciphertext: Buffer.from(ciphertext.slice(2), 'hex'), keyVersion: secretRow!.key_version }
+          ? { ciphertext: byteaToBuffer(ciphertext), keyVersion: secretRow!.key_version }
           : null,
       }
     },
@@ -435,13 +447,16 @@ export function createVeoSyncRepository(config: WorkerEnvironment): VeoSyncRepos
         .eq('team_id', teamId).eq('role', 'team_manager')
         .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
       if (memberships.error) throw memberships.error
+      // Je Trainer statt fuer alle: ein einzelner fehlschlagender Abruf verhinderte sonst jeden
+      // Hinweis, und ein Retry kommt nicht mehr hierher (failure_notified_at ist schon gesetzt).
       const emails: string[] = []
+      let unresolved = 0
       for (const membership of memberships.data as { user_id: string }[]) {
-        const user = await client.auth.admin.getUserById(membership.user_id)
-        if (user.error) throw user.error
-        if (user.data.user?.email) emails.push(user.data.user.email)
+        const user = await client.auth.admin.getUserById(membership.user_id).catch(() => null)
+        if (!user || user.error) unresolved += 1
+        else if (user.data.user?.email) emails.push(user.data.user.email)
       }
-      return emails
+      return { emails, unresolved }
     },
     async enqueueScheduled() {
       const { data, error } = await client.rpc('playerboard_veo_enqueue_scheduled_syncs')

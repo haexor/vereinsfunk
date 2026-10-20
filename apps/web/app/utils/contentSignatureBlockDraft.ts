@@ -1,5 +1,5 @@
 // Eigene Datei statt in ContentSignatureBlockForm.vue: Vue rät von benannten Exporten aus
-// <script setup> ab (imageStylePresetDraft.ts folgt demselben Muster).
+// <script setup> ab (photoLayoutPresetDraft.ts folgt demselben Muster).
 export interface ContentSignatureBlockDraft {
   name: string
   body: string

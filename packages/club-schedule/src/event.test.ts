@@ -36,6 +36,12 @@ describe('clubEventDomainAdapter.normalize', () => {
     })
   })
 
+  it('keeps the RECURRENCE-ID of a moved series instance as recurrenceKey next to the shared UID', () => {
+    const raw = { summary: 'Training', dtstart: '20260828T160000Z', uid: 'series-1', 'recurrence-id': '20260827T160000Z' }
+    const normalized = clubEventDomainAdapter.normalize(raw, {}) as Record<string, unknown>
+    expect(normalized).toMatchObject({ externalId: 'series-1', recurrenceKey: '20260827T160000Z' })
+  })
+
   it('returns undefined when the summary looks like a match -- that belongs to the fixtures domain', () => {
     const raw = { summary: 'SV Nordstadt – TSV Süd', dtstart: '2026-08-15T15:00:00Z' }
     expect(clubEventDomainAdapter.normalize(raw, {})).toBeUndefined()
@@ -43,17 +49,5 @@ describe('clubEventDomainAdapter.normalize', () => {
 
   it('returns undefined for a row with neither explicit fields nor a usable summary', () => {
     expect(clubEventDomainAdapter.normalize({ Sonstiges: 'x' }, {})).toBeUndefined()
-  })
-})
-
-describe('clubEventDomainAdapter.identityOf', () => {
-  it('prefers the external id when present', () => {
-    const entity = ExternalClubEventSchema.parse({ externalId: 'ext-1', title: 'Sommerfest', startsAt: '2026-08-20T16:00:00Z' })
-    expect(clubEventDomainAdapter.identityOf(entity)).toEqual({ externalId: 'ext-1' })
-  })
-
-  it('falls back to a fuzzy key of title and start time', () => {
-    const entity = ExternalClubEventSchema.parse({ title: 'Sommerfest', startsAt: '2026-08-20T16:00:00Z' })
-    expect(clubEventDomainAdapter.identityOf(entity)).toEqual({ fuzzy: ['sommerfest', '2026-08-20T16:00:00Z'] })
   })
 })

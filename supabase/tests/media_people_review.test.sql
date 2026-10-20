@@ -177,8 +177,8 @@ select throws_ok(
 -- derivative ready, no pending/consented face region) still blocks on people_review_pending alone
 -- until confirmed, then succeeds once confirmed.
 set local role postgres;
-insert into public.posts (id, organization_id, department_id, status, created_by) values
-  ('45000000-4000-4000-8000-000000000001', '45000000-1000-4000-8000-000000000001', '45000000-1100-4000-8000-000000000001', 'approved', '45000000-0000-4000-8000-000000000001');
+insert into public.posts (id, organization_id, department_id, status, created_by, current_version_id) values
+  ('45000000-4000-4000-8000-000000000001', '45000000-1000-4000-8000-000000000001', '45000000-1100-4000-8000-000000000001', 'approved', '45000000-0000-4000-8000-000000000001', '45000000-5000-4000-8000-000000000001');
 insert into public.post_versions (id, organization_id, post_id, version_number, source_facts_snapshot, effective_config_snapshot, created_by_type, created_by_user_id) values
   ('45000000-5000-4000-8000-000000000001', '45000000-1000-4000-8000-000000000001', '45000000-4000-4000-8000-000000000001', 1, '{}', '{}', 'user', '45000000-0000-4000-8000-000000000001');
 insert into public.media_derivatives (id, organization_id, media_asset_id, recipe, recipe_version, object_path, sha256, mime_type, byte_size, status) values

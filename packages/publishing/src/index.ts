@@ -132,10 +132,17 @@ export class MetaPublisher implements SocialPublisher {
       : media
         ? new URLSearchParams({ caption: input.caption, url: media.grantUrl })
         : new URLSearchParams({ message: input.caption })
-    const containerId = await this.post(endpoint, body, headers, 'publish request')
-    if (input.platform === 'facebook') return { externalId: containerId, status: 'published' }
-    const externalId = await this.post(`${base}/${target}/media_publish`, new URLSearchParams({ creation_id: containerId }), headers, 'media_publish')
-    return { externalId, status: 'published' }
+    if (input.platform === 'facebook') return { externalId: await this.post(endpoint, body, headers, 'publish request'), status: 'published' }
+    // Instagram ist auch mit einem Foto zweistufig: scheitert media_publish, existiert der Container
+    // bei Meta bereits -- seine ID muss wie beim Karussell im Fehler nach aussen (MetaPublishError).
+    let containerId: string | undefined
+    try {
+      containerId = await this.post(endpoint, body, headers, 'publish request')
+      const externalId = await this.post(`${base}/${target}/media_publish`, new URLSearchParams({ creation_id: containerId }), headers, 'media_publish')
+      return { externalId, status: 'published' }
+    } catch (err) {
+      throw new MetaPublishError(err instanceof Error ? err.message : 'Meta publish failed', containerId ? [{ label: 'publish request', externalId: containerId }] : [])
+    }
   }
   async reconcile(input: PublicationReference): Promise<PublicationResult> {
     if (!input.externalId) return { externalId: `unknown_${input.publicationId}`, status: 'unknown' }

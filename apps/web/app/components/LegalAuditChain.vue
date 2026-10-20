@@ -19,30 +19,49 @@ function formatDateTime(value: string | null): string {
   return value ? new Date(value).toLocaleString('de-DE') : 'nicht angegeben'
 }
 
+// Pruef- und Signaturergebnisse gehoeren zu dem Verein, fuer den sie angefragt wurden. Ein
+// Vereinswechsel verwirft sie samt laufender Anfragen, statt das Ergebnis von A unter B zu zeigen.
+const organizationRuns = useLatestRequest()
+let isCurrentOrganization = organizationRuns.begin()
+watch(() => props.organizationId, () => {
+  isCurrentOrganization = organizationRuns.begin()
+  auditVerification.value = null
+  auditSignResult.value = null
+  auditVerifying.value = false
+  auditSigning.value = false
+  auditVerifyError.value = ''
+  auditSignError.value = ''
+})
+
 async function verifyAuditChain() {
   if (!props.organizationId) return
+  const isCurrent = isCurrentOrganization
   auditVerifying.value = true
   auditVerifyError.value = ''
   try {
-    auditVerification.value = await api.request(`/v1/organizations/${props.organizationId}/audit-chain/verify`, {}, AuditChainVerificationSchema)
+    const verification = await api.request(`/v1/organizations/${props.organizationId}/audit-chain/verify`, {}, AuditChainVerificationSchema)
+    if (isCurrent()) auditVerification.value = verification
   } catch {
-    auditVerifyError.value = 'Die Kette konnte nicht geprüft werden.'
+    if (isCurrent()) auditVerifyError.value = 'Die Kette konnte nicht geprüft werden.'
   } finally {
-    auditVerifying.value = false
+    if (isCurrent()) auditVerifying.value = false
   }
 }
 
 async function signAuditChain() {
   if (!props.organizationId) return
+  const isCurrent = isCurrentOrganization
   auditSigning.value = true
   auditSignError.value = ''
   try {
-    auditSignResult.value = await api.request(`/v1/organizations/${props.organizationId}/audit-chain/sign`, { method: 'POST' }, SignAuditChainResponseSchema)
+    const signResult = await api.request(`/v1/organizations/${props.organizationId}/audit-chain/sign`, { method: 'POST' }, SignAuditChainResponseSchema)
+    if (!isCurrent()) return
+    auditSignResult.value = signResult
     await verifyAuditChain()
   } catch {
-    auditSignError.value = 'Die Kette konnte nicht signiert werden.'
+    if (isCurrent()) auditSignError.value = 'Die Kette konnte nicht signiert werden.'
   } finally {
-    auditSigning.value = false
+    if (isCurrent()) auditSigning.value = false
   }
 }
 </script>

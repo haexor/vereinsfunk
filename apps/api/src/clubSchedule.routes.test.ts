@@ -88,6 +88,23 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
     } as unknown as SupabaseClient
   }
 
+  // Bildet PostgREST' max_rows=1000 nach: ohne range() liefert eine Abfrage hoechstens 1000 Zeilen,
+  // mit range() genau das angefragte Fenster. chain() ignoriert beides und koennte eine fehlende
+  // Bloetterung deshalb nie zeigen.
+  function maxRowsTable(rows: readonly Record<string, unknown>[]) {
+    let window = { from: 0, to: 999 }
+    const builder: Record<string, unknown> = {
+      select: () => builder, eq: () => builder, is: () => builder, or: () => builder, order: () => builder,
+      range: (from: number, to: number) => { window = { from, to: Math.min(to, from + 999) }; return builder },
+      then: (resolve: (value: { data: unknown; error: unknown }) => unknown) => {
+        const page = rows.slice(window.from, window.to + 1)
+        window = { from: 0, to: 999 }
+        return resolve({ data: page, error: null })
+      },
+    }
+    return builder
+  }
+
   describe('teams sync', () => {
     it('creates a new team via dry-run and apply: name, resolved department, ageGroup/competition pass through', async () => {
       const csv = 'Name,Abteilung,Altersklasse,Liga\r\nErste Mannschaft,Fußball,Herren,Kreisliga A\r\n'
@@ -238,6 +255,72 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
       expect(runUpdates).toHaveLength(1)
       expect(runUpdates[0]).toMatchObject({ status: 'failed' })
     })
+    it('reads every existing team past PostgREST max_rows, so the 1001st is matched instead of re-created', async () => {
+      const existingTeamRows = Array.from({ length: 1001 }, (_, index) => ({
+        id: `19000000-3000-4000-8000-${String(index).padStart(12, '0')}`, name: `Team ${index}`, department_id: DEPARTMENT_ID,
+        age_group: null, competition: null, source_id: SOURCE_ID, external_id: `t-${index}`, source_updated_at: null, updated_at: '2026-08-01T00:00:00Z',
+      }))
+      const csv = 'Name,ExterneId\r\n' + existingTeamRows.map((row) => `${row.name},${row.external_id}`).join('\r\n') + '\r\n'
+      const clients: SupabaseClientFactory = {
+        forUser: () => sourceOnlyUserClient(integrationSource({ department_id: DEPARTMENT_ID, enabled_domains: ['teams'], field_mapping: { Name: 'name', ExterneId: 'externalId' } })),
+        forService: () => syncServiceClient({ teams: maxRowsTable(existingTeamRows), departments: chain({ data: [{ id: DEPARTMENT_ID, name: 'Fußball' }], error: null }) }),
+      }
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      const { boundary, body } = syncMultipartBody('dry_run', 'teams', csv)
+      const response = await app.inject({
+        method: 'POST', url: `/v1/integration-sources/${SOURCE_ID}/sync`,
+        headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` }, payload: body,
+      })
+      expect(response.statusCode).toBe(200)
+      expect(response.json().run).toMatchObject({ createdCount: 0, skippedCount: 1001 })
+    })
+
+    it('rejects a stored field mapping with a non-string target before acquiring a run', async () => {
+      let acquired = false
+      const service = syncServiceClient({})
+      const clients: SupabaseClientFactory = {
+        forUser: () => sourceOnlyUserClient(integrationSource({ department_id: DEPARTMENT_ID, enabled_domains: ['teams'], field_mapping: { Name: 42 } })),
+        forService: () => ({ ...service, rpc: async () => { acquired = true; return { data: [{ result: 'acquired', run_id: RUN_ID }], error: null } } }) as unknown as SupabaseClient,
+      }
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      const { boundary, body } = syncMultipartBody('dry_run', 'teams', 'Name\r\nErste Mannschaft\r\n')
+      const response = await app.inject({
+        method: 'POST', url: `/v1/integration-sources/${SOURCE_ID}/sync`,
+        headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` }, payload: body,
+      })
+      expect(response.statusCode).toBe(500)
+      expect(acquired).toBe(false)
+    })
+  })
+
+  describe('people sync', () => {
+    it('writes a mapped leave date and turns a German date into an invalid_record conflict', async () => {
+      const csv = 'Vorname,Nachname,Status,Austritt\r\nAnna,Beck,left,2026-06-30\r\nTom,Meyer,active,15.03.2019\r\n'
+      const fieldMapping = { Vorname: 'firstName', Nachname: 'lastName', Status: 'status', Austritt: 'leftAt' }
+      let capturedInsertRows: Record<string, unknown>[] = []
+      const clients: SupabaseClientFactory = {
+        forUser: () => sourceOnlyUserClient(integrationSource({ department_id: null, enabled_domains: ['people'], field_mapping: fieldMapping })),
+        forService: () =>
+          syncServiceClient({
+            directory_people: { ...chain({ data: [], error: null }), insert: (rows: Record<string, unknown>[]) => { capturedInsertRows = rows; return chain({ data: null, error: null }) } },
+            departments: chain({ data: [], error: null }),
+            teams: chain({ data: [], error: null }),
+          }),
+      }
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      const { boundary, body } = syncMultipartBody('apply', 'people', csv)
+      const response = await app.inject({
+        method: 'POST', url: `/v1/integration-sources/${SOURCE_ID}/sync`,
+        headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` }, payload: body,
+      })
+      expect(response.statusCode).toBe(200)
+      expect(capturedInsertRows).toHaveLength(1)
+      expect(capturedInsertRows[0]).toMatchObject({ first_name: 'Anna', status: 'left', left_at: '2026-06-30' })
+      expect(response.json().conflicts).toEqual([expect.objectContaining({ kind: 'invalid_record', label: 'Tom Meyer' })])
+    })
   })
 
   describe('fixtures sync', () => {
@@ -285,6 +368,29 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
       expect(capturedInsertRows[0]).toMatchObject({ team_id: TEAM_ID, is_home: true, opponent_name: 'SV Gegner', department_id: DEPARTMENT_ID })
     })
 
+    it('stores a floating kickoff (no Z, no TZID) in the club time zone and unconfirmed, not as confirmed UTC', async () => {
+      const csv = 'Mannschaft,Gegner,Anstoss\r\nErste Mannschaft,SV Gegner,20261115T150000\r\n'
+      const fieldMapping = { Mannschaft: 'teamReference', Gegner: 'opponentName', Anstoss: 'kickoffAt' }
+      let capturedInsertRows: Record<string, unknown>[] = []
+      const clients: SupabaseClientFactory = {
+        forUser: () => sourceOnlyUserClient(integrationSource({ department_id: DEPARTMENT_ID, enabled_domains: ['fixtures'], field_mapping: fieldMapping })),
+        forService: () =>
+          syncServiceClient({
+            fixtures: { ...chain({ data: [], error: null }), insert: (rows: Record<string, unknown>[]) => { capturedInsertRows = rows; return chain({ data: null, error: null }) } },
+            teams: chain({ data: [{ id: TEAM_ID, name: 'Erste Mannschaft' }], error: null }),
+          }),
+      }
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      const { boundary, body } = syncMultipartBody('apply', 'fixtures', csv)
+      const response = await app.inject({
+        method: 'POST', url: `/v1/integration-sources/${SOURCE_ID}/sync`,
+        headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` }, payload: body,
+      })
+      expect(response.statusCode).toBe(200)
+      expect(capturedInsertRows[0]).toMatchObject({ kickoff_at: '2026-11-15T14:00:00.000Z', kickoff_time_confirmed: false })
+    })
+
     it('treats a teamReference resolving to no known team as an unknown_structure conflict', async () => {
       const csv = 'Mannschaft,Gegner\r\nZweite Mannschaft,SV Gegner\r\n'
       const fieldMapping = { Mannschaft: 'teamReference', Gegner: 'opponentName' }
@@ -310,15 +416,11 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
       expect(json.conflicts[0]).toMatchObject({ kind: 'unknown_structure' })
     })
 
-    it('applies a played-match update (status + scores) once a tracked field also changed', async () => {
-      // planSync vergleicht nur die in fixtureMatch.ts.fieldsOf() genannten Felder (teamId/
-      // opponentName/isHome/competition/kickoffAt) -- status/homeScore/awayScore gehoeren nicht
-      // dazu. Ohne eine Aenderung an einem dieser Felder gaelte die Zeile als "unchanged" und
-      // wuerde uebersprungen, das Ergebnis daher nie geschrieben. competition aendert sich hier
-      // zusaetzlich (wie es ein echter Export nach Spielende oft ohnehin tut) und loest die
-      // Uebernahme aus; status/homeScore/awayScore werden dann im selben Patch mitgeschrieben.
-      const csv = 'ExterneId,Gegner,Liga,Status,Heimtore,Auswaertstore\r\next-1,SV Gegner,Kreisliga A,played,2,1\r\n'
-      const fieldMapping = { ExterneId: 'externalId', Gegner: 'opponentName', Liga: 'competition', Status: 'status', Heimtore: 'homeScore', Auswaertstore: 'awayScore' }
+    it('applies a played-match update (status + scores) even when no other field changed', async () => {
+      // status/homeScore/awayScore gehoeren zu fixtureMatch.ts.fieldsOf(): ein nachgetragenes
+      // Ergebnis allein ist eine Aenderung und wird geschrieben, nicht als "unchanged" uebersprungen.
+      const csv = 'ExterneId,Gegner,Status,Heimtore,Auswaertstore\r\next-1,SV Gegner,played,2,1\r\n'
+      const fieldMapping = { ExterneId: 'externalId', Gegner: 'opponentName', Status: 'status', Heimtore: 'homeScore', Auswaertstore: 'awayScore' }
       const existingFixtureRow = {
         id: FIXTURE_ID, external_id: 'ext-1', source_id: SOURCE_ID, team_id: null, is_home: null, own_team_label: null,
         opponent_name: 'SV Gegner', competition: null, kickoff_at: '2026-08-01T18:00:00Z', kickoff_time_confirmed: true,
@@ -343,7 +445,7 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
       })
       expect(response.statusCode).toBe(200)
       expect(response.json().run).toMatchObject({ updatedCount: 1 })
-      expect(capturedUpdate).toMatchObject({ competition: 'Kreisliga A', status: 'played', home_score: 2, away_score: 1 })
+      expect(capturedUpdate).toMatchObject({ status: 'played', home_score: 2, away_score: 1 })
     })
 
     it('absorbs a CHECK-constraint rejection (played without both scores) as a graceful no-op, not a crash', async () => {
@@ -448,6 +550,28 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
       expect(json.run).toMatchObject({ createdCount: 0 })
       expect(json.conflicts).toHaveLength(1)
       expect(json.conflicts[0]).toMatchObject({ kind: 'invalid_record', field: 'startsAt' })
+    })
+
+    it('reads every existing club event past PostgREST max_rows, so the 1001st is matched instead of re-created', async () => {
+      const existingEventRows = Array.from({ length: 1001 }, (_, index) => ({
+        id: `19000000-7100-4000-8000-${String(index).padStart(12, '0')}`, external_id: `e-${index}`, recurrence_key: null, source_id: SOURCE_ID,
+        title: `Termin ${index}`, description: null, category: 'other', starts_at: '2026-09-01T19:00:00Z', ends_at: null, all_day: false,
+        location_name: null, location_address: null, registration_url: null, status: 'scheduled', source_updated_at: null, updated_at: '2026-08-01T00:00:00Z',
+      }))
+      const csv = 'Titel,Beginn,ExterneId\r\n' + existingEventRows.map((row) => `${row.title},${row.starts_at},${row.external_id}`).join('\r\n') + '\r\n'
+      const clients: SupabaseClientFactory = {
+        forUser: () => sourceOnlyUserClient(integrationSource({ department_id: DEPARTMENT_ID, enabled_domains: ['events'], field_mapping: { Titel: 'title', Beginn: 'startsAt', ExterneId: 'externalId' } })),
+        forService: () => syncServiceClient({ club_events: maxRowsTable(existingEventRows) }),
+      }
+      const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+      const token = await signAccessToken(USER_ID)
+      const { boundary, body } = syncMultipartBody('dry_run', 'events', csv)
+      const response = await app.inject({
+        method: 'POST', url: `/v1/integration-sources/${SOURCE_ID}/sync`,
+        headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` }, payload: body,
+      })
+      expect(response.statusCode).toBe(200)
+      expect(response.json().run).toMatchObject({ createdCount: 0, retiredCount: 0 })
     })
   })
 

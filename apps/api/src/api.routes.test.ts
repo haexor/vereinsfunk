@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { DEPARTMENT_ID, ORGANIZATION_ID, USER_ID, chain, denyingRoleProvider, draftCreationServiceClient, grantingRoleProvider, organizationManagerRoleProvider, signAccessToken, startApp } from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
@@ -10,6 +10,25 @@ describe('api', () => {
     const response = await app.inject({ method: 'GET', url: '/health' })
     expect(response.statusCode).toBe(200)
     expect(response.json()).toMatchObject({ status: 'ok', service: 'api' })
+  })
+
+  // Regression: ohne trustProxy war request.ip hinter dem TLS-Proxy immer dessen Adresse -- jedes
+  // IP-Rate-Limit wurde zu einem globalen Zaehler fuer alle Besucher.
+  it('takes the client address from X-Forwarded-For only for the configured proxy hops', async () => {
+    const forwarded = { 'x-forwarded-for': '198.51.100.7, 203.0.113.9' }
+    const untrusted = await startApp()
+    untrusted.get('/__test/ip', async (request) => ({ ip: request.ip }))
+    expect((await untrusted.inject({ method: 'GET', url: '/__test/ip', headers: forwarded, remoteAddress: '10.0.0.2' })).json()).toEqual({ ip: '10.0.0.2' })
+
+    vi.stubEnv('TRUST_PROXY_HOPS', '1')
+    try {
+      const trusted = await startApp()
+      trusted.get('/__test/ip', async (request) => ({ ip: request.ip }))
+      // Nur der eine Hop des eigenen Proxys zaehlt -- ein vom Client vorangestellter Eintrag nicht.
+      expect((await trusted.inject({ method: 'GET', url: '/__test/ip', headers: forwarded, remoteAddress: '10.0.0.2' })).json()).toEqual({ ip: '203.0.113.9' })
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it('allows the configured web origin and no other', async () => {
@@ -65,6 +84,19 @@ describe('api', () => {
     })
     expect(response.statusCode).toBe(400)
     expect(response.json()).toMatchObject({ error: 'invalid_request' })
+  })
+
+  // request.id landet in uuid-Spalten (audit_events.correlation_id u. a.) -- ein beliebiger
+  // Header-String darf nicht zur Korrelations-ID werden, eine gueltige UUID schon.
+  it('adopts only a UUID x-correlation-id header as the request id', async () => {
+    const app = await startApp()
+    const forwarded = '5f0c2d3e-8b1a-4c6d-9e7f-0a1b2c3d4e5f'
+    const kept = await app.inject({ method: 'POST', url: '/v1/submissions', headers: { 'x-correlation-id': forwarded }, payload: {} })
+    expect(kept.json()).toMatchObject({ correlationId: forwarded })
+    const replaced = await app.inject({ method: 'POST', url: '/v1/submissions', headers: { 'x-correlation-id': 'not-a-uuid' }, payload: {} })
+    const replacedId = (replaced.json() as { correlationId: string }).correlationId
+    expect(replacedId).not.toBe('not-a-uuid')
+    expect(replacedId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
   })
 
   it('rejects a request with a forged signature', async () => {
@@ -159,6 +191,8 @@ describe('api', () => {
     const snapshot = captured.versionRow!.effective_config_snapshot as { config: Record<string, unknown> }
     expect(snapshot.config).toHaveProperty('allowedChannelIds')
     expect(snapshot.config).not.toHaveProperty('policies')
+    // Ohne Verfasserin liefen Selbstfreigabe-Sperre und Minderjaehrigenstufe in SQL ins Leere.
+    expect(captured.versionRow).toMatchObject({ created_by_type: 'llm', created_by_user_id: USER_ID })
   })
 
   // Paket 025: nur der vollstaendige Fall (keine missingFacts) legt einen Entwurf an --
@@ -199,6 +233,34 @@ describe('api', () => {
 })
 
 describe('onboarding', () => {
+  // Regression: der Schritt wurde gelesen, in der API ergaenzt und als ganzes Array zurueck-
+  // geschrieben -- ein gleichzeitig abgeschlossener Schritt ging verloren. Die Route schreibt
+  // deshalb nichts mehr selbst, sondern haengt per RPC an.
+  it('appends a completed step through complete_onboarding_step', async () => {
+    const calls: { name: string; args: unknown }[] = []
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({
+        rpc: async (name: string, args: unknown) => {
+          calls.push({ name, args })
+          return { data: [{ completed_steps: ['responsible_person', 'branding'], dismissed_at: null }], error: null }
+        },
+        from: (table: string) => { throw new Error(`unexpected table in test fake: ${table}`) },
+      }) as unknown as SupabaseClient,
+      forService: () => ({}) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/onboarding/steps/branding/complete',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { organizationId: ORGANIZATION_ID },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ completedSteps: ['responsible_person', 'branding'], dismissedAt: null })
+    expect(calls).toEqual([{ name: 'complete_onboarding_step', args: { target_organization_id: ORGANIZATION_ID, target_step: 'branding' } }])
+  })
+
   it('rejects a profile update without organization.manage', async () => {
     const app = await startApp({ roleProvider: denyingRoleProvider })
     const token = await signAccessToken(USER_ID)

@@ -7,7 +7,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createSecretBox } from '@vereinsfunk/secrets'
 import type * as AgentModule from './agent.js'
 import type { SupabaseClientFactory } from './app.js'
-import { ciphertextToBytea } from './secretBox.js'
+import { ciphertextToBytea } from '@vereinsfunk/secrets'
 import { chain, DEPARTMENT_ID, ORGANIZATION_ID, signAccessToken, startApp, USER_ID } from './testSupport.js'
 
 const capturedProviderOptions: { apiKey: string; model: string; baseUrl?: string }[] = []

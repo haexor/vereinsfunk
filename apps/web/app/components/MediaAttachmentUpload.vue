@@ -2,6 +2,7 @@
 import { Check, Images, LoaderCircle, Paperclip, Trash2 } from '@lucide/vue'
 import { MediaAssetSummarySchema, type MediaAssetSummary } from '@vereinsfunk/contracts'
 import { z } from 'zod'
+import { uploadMediaAsset } from '../utils/mediaUpload'
 
 const props = withDefaults(defineProps<{
   organizationId: string
@@ -33,11 +34,6 @@ const mode = ref<'upload' | 'existing'>('upload')
 const existingAssets = ref<MediaAssetSummary[]>([])
 const loadingExisting = ref(false)
 const loadExistingError = ref('')
-const UploadCompletionSchema = z.object({
-  accepted: z.literal(true),
-  uploadStatus: z.enum(['initiated', 'uploaded', 'normalizing', 'ready', 'quarantined', 'failed', 'deleted']),
-  mimeType: z.string().nullable(),
-})
 const PeopleReviewInputSchema = z.object({ target_asset_id: z.string().uuid(), faces_present: z.boolean() })
 const ReviewedMediaAssetSchema = z.object({
   id: z.string().uuid(),
@@ -54,10 +50,6 @@ function mimeTypeOf(attachment: PendingAttachment) {
 function nameOf(attachment: PendingAttachment) {
   return attachment.file?.name ?? attachment.existingLabel ?? 'Datei'
 }
-async function sha256Hex(file: File) {
-  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
-}
 function syncModel() {
   mediaAssetIds.value = attachments.value
     .filter((attachment) => attachment.state === 'ready' && attachment.assetId !== null)
@@ -65,20 +57,8 @@ function syncModel() {
 }
 async function upload(attachment: PendingAttachment & { file: File }) {
   try {
-    const initiated = await api.request('/v1/media/uploads', {
-      method: 'POST',
-      body: {
-        organizationId: props.organizationId,
-        departmentId: props.departmentId,
-        filename: attachment.file.name,
-        mimeType: attachment.file.type,
-        byteSize: attachment.file.size,
-      },
-    }, z.object({ assetId: z.string(), uploadUrl: z.string() }))
-    const sent = await fetch(initiated.uploadUrl, { method: 'PUT', body: attachment.file, headers: { 'content-type': attachment.file.type } })
-    if (!sent.ok) throw new Error('upload_failed')
-    const completed = await api.request(`/v1/media/${initiated.assetId}/complete`, { method: 'POST', body: { sha256: await sha256Hex(attachment.file) } }, UploadCompletionSchema)
-    attachment.assetId = initiated.assetId
+    const completed = await uploadMediaAsset(api, { organizationId: props.organizationId, departmentId: props.departmentId, file: attachment.file })
+    attachment.assetId = completed.assetId
     if (completed.uploadStatus !== 'ready') {
       attachment.state = 'failed'
       attachment.error = 'Der Upload konnte nicht geprüft werden. Bitte versuche es erneut.'
@@ -96,7 +76,10 @@ async function upload(attachment: PendingAttachment & { file: File }) {
 function onFiles(event: Event) {
   const files = Array.from((event.target as HTMLInputElement).files ?? []).slice(0, effectiveMax.value - attachments.value.length)
   for (const file of files) {
-    const attachment = { id: crypto.randomUUID(), file, assetId: null, state: 'uploading' as const }
+    // reactive() statt eines rohen Objekts: upload() aendert state/error erst spaeter, und nur
+    // Aenderungen ueber den Proxy erreichen die Liste -- sonst bliebe ein Video ewig bei
+    // "Laedt hoch" und ein fehlgeschlagener Upload zeigte nie seinen Fehler.
+    const attachment = reactive<PendingAttachment & { file: File }>({ id: crypto.randomUUID(), file, assetId: null, state: 'uploading' })
     attachments.value.push(attachment)
     void upload(attachment)
   }
@@ -131,6 +114,7 @@ function pickExisting(asset: MediaAssetSummary) {
 }
 async function confirmVideoReview(attachment: PendingAttachment) {
   if (!attachment.assetId) return
+  attachment.error = undefined
   try {
     const reviewInput = PeopleReviewInputSchema.parse({ target_asset_id: attachment.assetId, faces_present: false })
     const confirmed = await useSupabaseClient().rpc('confirm_media_people_review', reviewInput)
@@ -147,8 +131,12 @@ function remove(attachment: PendingAttachment) {
   attachments.value = attachments.value.filter((entry) => entry.id !== attachment.id)
   syncModel()
 }
+// Ein von aussen gesetztes leeres Array ist ein externer Reset (wie in PhotoAttachmentList.vue) --
+// aber nur, solange intern noch fertige Anhaenge existieren. Hat syncModel() selbst [] gemeldet
+// (remove() des letzten fertigen Anhangs), wuerde der Reset sonst laufende Uploads verwerfen und
+// deren Assets verwaisen lassen.
 watch(mediaAssetIds, (ids) => {
-  if (ids.length === 0 && attachments.value.length) attachments.value = []
+  if (ids.length === 0 && attachments.value.some((attachment) => attachment.state === 'ready' && attachment.assetId !== null)) attachments.value = []
 })
 </script>
 
@@ -185,7 +173,10 @@ watch(mediaAssetIds, (ids) => {
         <component :is="iconForMimeType(mimeTypeOf(attachment))" :size="16" class="shrink-0 text-forest" />
         <span class="min-w-0 flex-1 truncate font-semibold">{{ nameOf(attachment) }}</span>
         <span v-if="attachment.state === 'uploading'" class="inline-flex items-center gap-1 text-[#727a75]"><LoaderCircle :size="13" class="animate-spin" /> Lädt hoch</span>
-        <button v-else-if="attachment.state === 'review'" type="button" class="rounded-lg bg-forest px-2 py-1 text-[11px] font-semibold text-white" @click="confirmVideoReview(attachment)">Video geprüft: keine Personen</button>
+        <template v-else-if="attachment.state === 'review'">
+          <span v-if="attachment.error" class="text-red-700">{{ attachment.error }}</span>
+          <button type="button" class="rounded-lg bg-forest px-2 py-1 text-[11px] font-semibold text-white" @click="confirmVideoReview(attachment)">Video geprüft: keine Personen</button>
+        </template>
         <span v-else-if="attachment.state === 'ready'" class="inline-flex items-center gap-1 text-emerald-700"><Check :size="13" /> Angeheftet</span>
         <span v-else class="text-red-700">{{ attachment.error }}</span>
         <button type="button" class="shrink-0 text-[#727a75] hover:text-red-700" :aria-label="`${nameOf(attachment)} entfernen`" @click="remove(attachment)"><Trash2 :size="15" /></button>

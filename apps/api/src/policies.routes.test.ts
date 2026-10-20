@@ -309,6 +309,23 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
     expect(response.statusCode).toBe(403)
   })
 
+  it('maps approval_invalidated from decide_approval_stage to 409', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({ rpc: async () => ({ data: null, error: { message: 'approval_invalidated' } }) }) as unknown as SupabaseClient,
+      forService: () => ({ from: () => { throw new Error('forService should not be used') } }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/approval-stages/${STAGE_ID}/decide`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { decision: 'approved' },
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'approval_invalidated' })
+  })
+
   it('opens the next stage when decide_approval_stage reports the current one satisfied', async () => {
     const clients: SupabaseClientFactory = {
       forUser: () =>
@@ -405,18 +422,18 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
             if (table === 'policy_settings') {
               return chain({ data: [{ id: 'p1', scope: 'department', department_id: DEPARTMENT_ID, team_id: null, ...emptyPolicyRuleColumns(), review_required: true }], error: null })
             }
-            if (table === 'organization_memberships' || table === 'department_memberships' || table === 'team_memberships') return chain({ data: [], error: null })
             if (table === 'member_review_trust') return chain({ data: [], error: null })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
           rpc: async () => { throw new Error('request_approval should not be called for an unfulfillable route') },
         }) as unknown as SupabaseClient,
-      // isAuthorMinor liest ueber den Service-Client (siehe Kommentar dort) -- die Autorin ist hier
-      // nicht minderjaehrig, kein directory_people-Treffer.
+      // isAuthorMinor und der Pruefkreis lesen ueber den Service-Client (siehe Kommentar dort) --
+      // die Autorin ist hier nicht minderjaehrig, und niemand haelt post.approve.
       forService: () =>
         ({
           from: (table: string) => {
             if (table === 'directory_people') return chain({ data: [], error: null })
+            if (table === 'organization_memberships' || table === 'department_memberships' || table === 'team_memberships') return chain({ data: [], error: null })
             throw new Error(`unexpected table in service fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
@@ -459,7 +476,7 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
         ({
           from: (table: string) => {
             if (table === 'directory_people') return chain({ data: [{ profile_id: USER_ID }], error: null })
-            if (table === 'organization_memberships') return chain({ data: [], error: null })
+            if (table === 'organization_memberships' || table === 'department_memberships' || table === 'team_memberships') return chain({ data: [], error: null })
             throw new Error(`unexpected table in service fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
@@ -502,6 +519,7 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
           from: (table: string) => {
             if (table === 'directory_people') return chain({ data: [{ profile_id: USER_ID }], error: null })
             if (table === 'organization_memberships') return chain({ data: [{ user_id: OTHER_USER_ID, role: 'organization_admin' }], error: null })
+            if (table === 'department_memberships' || table === 'team_memberships') return chain({ data: [], error: null })
             throw new Error(`unexpected table in service fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
@@ -527,6 +545,11 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
     // Beobachtbar bleibt deshalb nur noch, DASS die Vorschau keinen Blocker meldet -- welche
     // reviewerUserIds sie konkret berechnet, deckt weiterhin resolveReviewRoute()/
     // buildStageDefinitions() in packages/domain bzw. den uebrigen API-Tests dieser Datei ab.
+    //
+    // Regression: der Pruefkreis wurde ueber den Aufrufer-Client geladen. Die Mitgliedschafts-
+    // Policies zeigen einer einreichenden Person ohne *.manage nur ihre eigenen Zeilen -- das
+    // forUser-Fake liefert deshalb wie RLS leere Listen, nur der Service-Client sieht die
+    // Vereinsleitung. Ueber den Aufrufer-Client meldete die Vorschau 422 empty_reviewer_pool.
     const rpcCalls: Record<string, unknown>[] = []
     const clients: SupabaseClientFactory = {
       forUser: () =>
@@ -537,8 +560,7 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
             if (table === 'policy_settings') {
               return chain({ data: [{ id: 'p1', scope: 'department', department_id: DEPARTMENT_ID, team_id: null, ...emptyPolicyRuleColumns(), review_required: true }], error: null })
             }
-            if (table === 'organization_memberships') return chain({ data: [{ user_id: OTHER_USER_ID, role: 'organization_admin' }], error: null })
-            if (table === 'department_memberships' || table === 'team_memberships') return chain({ data: [], error: null })
+            if (table === 'organization_memberships' || table === 'department_memberships' || table === 'team_memberships') return chain({ data: [], error: null })
             if (table === 'member_review_trust') return chain({ data: [], error: null })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
@@ -553,6 +575,8 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
         ({
           from: (table: string) => {
             if (table === 'directory_people') return chain({ data: [], error: null })
+            if (table === 'organization_memberships') return chain({ data: [{ user_id: OTHER_USER_ID, role: 'organization_admin' }], error: null })
+            if (table === 'department_memberships' || table === 'team_memberships') return chain({ data: [], error: null })
             throw new Error(`unexpected table in service fake: ${table}`)
           },
         }) as unknown as SupabaseClient,
@@ -578,8 +602,7 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
             if (table === 'post_versions') return chain({ data: { id: POST_VERSION_ID, post_id: POST_ID, created_by_user_id: USER_ID, safety_flags: [] }, error: null })
             if (table === 'posts') return chain({ data: { id: POST_ID, organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: null, status: 'draft_ready' }, error: null })
             if (table === 'policy_settings') return chain({ data: [{ id: 'p1', scope: 'department', department_id: DEPARTMENT_ID, team_id: null, ...emptyPolicyRuleColumns(), review_required: true }], error: null })
-            if (table === 'organization_memberships') return chain({ data: [{ user_id: OTHER_USER_ID, role: 'organization_admin' }], error: null })
-            if (table === 'department_memberships' || table === 'team_memberships' || table === 'member_review_trust') return chain({ data: [], error: null })
+            if (table === 'member_review_trust') return chain({ data: [], error: null })
             throw new Error(`unexpected table in test fake: ${table}`)
           },
           rpc: async () => {
@@ -594,6 +617,8 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
         ({
           from: (table: string) => {
             if (table === 'directory_people') return chain({ data: [], error: null })
+            if (table === 'organization_memberships') return chain({ data: [{ user_id: OTHER_USER_ID, role: 'organization_admin' }], error: null })
+            if (table === 'department_memberships' || table === 'team_memberships') return chain({ data: [], error: null })
             if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { auditRows.push(row); return { error: null } } }
             throw new Error(`unexpected table in service test fake: ${table}`)
           },
@@ -883,6 +908,51 @@ describe('Paket 011: Freigaberouten, Vertrauen, Kontingente', () => {
             if (table === 'post_media') return chain({ data: [{ media_derivative_id: '11000000-6000-4000-8000-000000000001' }], error: null })
             if (table === 'media_derivatives') return chain({ data: [{ id: '11000000-6000-4000-8000-000000000001', media_asset_id: '11000000-6100-4000-8000-000000000001', status: 'ready' }], error: null })
             if (table === 'media_assets') return chain({ data: [{ id: '11000000-6100-4000-8000-000000000001', mime_type: 'image/png', scan_status: 'pending', people_reviewed_at: '2026-08-01T00:00:00+00:00' }], error: null })
+            if (table === 'face_regions') return chain({ data: [], error: null })
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/approval-stages/mine?organizationId=${ORGANIZATION_ID}`,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject([{ id: STAGE_ID, mediaGateBlockers: ['scan_pending'] }])
+  })
+
+  it('reports the media gate blockers of an organization-level post without a department', async () => {
+    // Regression: posts.department_id ist seit Migration 2026082504 nullable (null = Vereinsebene).
+    // Die Blocker-Berechnung brach bei fehlender Abteilung mit einer leeren Liste ab -- ein
+    // Vereinsbeitrag zeigte dem Freigebenden "keine Einwaende", obwohl sein Medium blockiert.
+    const STAGE_POST_ID = '11000000-2000-4000-8000-000000000002'
+    const STAGE_POST_VERSION_ID = '11000000-3000-4000-8000-000000000002'
+    const APPROVAL_REQUEST_ROW_ID = '11000000-4000-4000-8000-000000000002'
+    const stageRow = {
+      id: STAGE_ID, position: 1, scope: 'organization', label: 'Verein', mode: 'named', minimum_approvals: 1, is_minor_stage: false,
+      status: 'open', reviewer_snapshot: [{ userId: USER_ID }], deadline_at: null, approval_request_id: APPROVAL_REQUEST_ROW_ID,
+    }
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'approval_stages') return chain({ data: [stageRow], error: null })
+            if (table === 'approval_requests') return chain({ data: [{ id: APPROVAL_REQUEST_ROW_ID, post_id: STAGE_POST_ID, post_version_id: STAGE_POST_VERSION_ID }], error: null })
+            if (table === 'posts') return chain({ data: [{ id: STAGE_POST_ID, department_id: null, team_id: null }], error: null })
+            if (table === 'policy_settings') return chain({ data: [], error: null })
+            throw new Error(`the media gate must not read ${table} through the user client`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'post_versions') return chain({ data: { title: '', caption: 'Hallo Welt' }, error: null })
+            if (table === 'post_media') return chain({ data: [{ media_derivative_id: '11000000-6000-4000-8000-000000000002' }], error: null })
+            if (table === 'media_derivatives') return chain({ data: [{ id: '11000000-6000-4000-8000-000000000002', media_asset_id: '11000000-6100-4000-8000-000000000002', status: 'ready' }], error: null })
+            if (table === 'media_assets') return chain({ data: [{ id: '11000000-6100-4000-8000-000000000002', mime_type: 'image/png', scan_status: 'pending', people_reviewed_at: '2026-08-01T00:00:00+00:00' }], error: null })
             if (table === 'face_regions') return chain({ data: [], error: null })
             throw new Error(`unexpected table in service fake: ${table}`)
           },

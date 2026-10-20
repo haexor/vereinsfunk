@@ -11,7 +11,14 @@ import {
   ShieldCheck,
   X,
 } from '@lucide/vue'
-import { ContentSuggestionsResponseSchema, type ContentSuggestion } from '@vereinsfunk/contracts'
+import {
+  ContentSuggestionsResponseSchema,
+  OnboardingStateSchema,
+  type ContentSuggestion,
+  type OnboardingStep,
+} from '@vereinsfunk/contracts'
+import type { PostStatus } from '@vereinsfunk/domain'
+import { localDateKey } from '../utils/memberDates'
 
 const config = useRuntimeConfig()
 const session = await useSession()
@@ -73,9 +80,13 @@ interface WeekDay {
 }
 interface DashboardPost {
   id: string
-  status: string
+  status: PostStatus
   scheduled_for: string | null
+  created_at: string
 }
+// So viele der zuletzt angelegten Beitraege zeigt die Karte "Aktuelle Beitraege"; alle weiteren
+// stehen in /beitraege.
+const RECENT_POSTS_LIMIT = 5
 
 const loadingDashboard = ref(true)
 const dashboardError = ref(false)
@@ -83,18 +94,10 @@ const stats = ref<{ published: number; openApprovals: number; scheduledNext7Days
   null,
 )
 const weekDays = ref<WeekDay[]>([])
+const recentPosts = ref<DashboardPost[]>([])
 const nextSteps = ref<{ key: string; label: string; href: string }[]>([])
 const suggestions = ref<ContentSuggestion[]>([])
 const suggestionsLoaded = ref(false)
-
-function localDateKey(date: Date, timeZone: string) {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(date)
-}
 
 function buildWeek(timeZone: string, posts: readonly DashboardPost[]): WeekDay[] {
   const todayKey = localDateKey(new Date(), timeZone)
@@ -123,8 +126,21 @@ function buildWeek(timeZone: string, posts: readonly DashboardPost[]): WeekDay[]
   return days
 }
 
+// Die Sidebar wechselt Verein/Abteilung ohne Remount dieser Seite. Monoton steigende Ladezaehler
+// wie in kalender.vue: nur der zuletzt gestartete Lauf darf Kennzahlen, Listen und Vorschlaege
+// schreiben, sonst stuenden Daten des vorigen Bereichs unter dem neuen.
+let dashboardLoadRun = 0
+let suggestionsLoadRun = 0
+
 async function loadDashboard() {
   if (import.meta.server) return
+  const run = ++dashboardLoadRun
+  stats.value = null
+  weekDays.value = []
+  recentPosts.value = []
+  nextSteps.value = []
+  dashboardError.value = false
+  loadingDashboard.value = true
   const organizationId = scope.value?.organizationId
   // Paket 055: Kennzahlen, Beitraege und Einrichtungsschritte gehoeren zu Social Media.
   if (!organizationId || !socialMediaActive.value) {
@@ -136,17 +152,13 @@ async function loadDashboard() {
 
   let postsQuery = supabase
     .from('posts')
-    .select('id, status, scheduled_for')
+    .select('id, status, scheduled_for, created_at')
     .eq('organization_id', organizationId)
+    .order('created_at', { ascending: false })
   if (departmentId) postsQuery = postsQuery.eq('department_id', departmentId)
 
-  const [postsResult, approvalsResult, brandResult, profileResult] = await Promise.all([
+  const [postsResult, brandResult, profileResult] = await Promise.all([
     postsQuery,
-    supabase
-      .from('approval_requests')
-      .select('id', { count: 'exact', head: true })
-      .eq('organization_id', organizationId)
-      .is('invalidated_at', null),
     supabase
       .from('organization_brand_profiles')
       .select('logo_asset_id')
@@ -158,8 +170,9 @@ async function loadDashboard() {
       .eq('organization_id', organizationId)
       .maybeSingle(),
   ])
+  if (run !== dashboardLoadRun) return
 
-  if (postsResult.error || approvalsResult.error) {
+  if (postsResult.error) {
     dashboardError.value = true
     loadingDashboard.value = false
     return
@@ -170,7 +183,10 @@ async function loadDashboard() {
   const in7Days = now + 7 * 24 * 60 * 60 * 1000
   stats.value = {
     published: posts.filter((post) => post.status === 'published').length,
-    openApprovals: approvalsResult.count ?? 0,
+    // approval_requests kennt keinen Status und keine Abteilung: gezaehlt wurden dort auch laengst
+    // entschiedene Anfragen des ganzen Vereins. Offen ist, was im gewaehlten Bereich auf eine
+    // Freigabe wartet.
+    openApprovals: posts.filter((post) => post.status === 'awaiting_approval').length,
     scheduledNext7Days: posts.filter((post) => {
       if (!post.scheduled_for) return false
       const time = new Date(post.scheduled_for).getTime()
@@ -178,14 +194,15 @@ async function loadDashboard() {
     }).length,
   }
   weekDays.value = buildWeek(timezone.value, posts)
+  recentPosts.value = posts.slice(0, RECENT_POSTS_LIMIT)
 
-  const onboarding = await $fetch<{ completedSteps: string[] }>(
-    `${config.public.apiBase}/v1/onboarding`,
-    {
-      headers: await useAuthHeader(),
-      query: { organizationId },
-    },
-  ).catch(() => ({ completedSteps: [] as string[] }))
+  const onboarding = await $fetch<unknown>(`${config.public.apiBase}/v1/onboarding`, {
+    headers: await useAuthHeader(),
+    query: { organizationId },
+  })
+    .then((response) => OnboardingStateSchema.parse(response))
+    .catch(() => ({ completedSteps: [] as OnboardingStep[] }))
+  if (run !== dashboardLoadRun) return
 
   const steps: { key: string; label: string; href: string }[] = []
   if (!brandResult.data?.logo_asset_id && !onboarding.completedSteps.includes('branding')) {
@@ -237,12 +254,19 @@ async function dismissSuggestion(item: ContentSuggestion) {
     })
     suggestions.value = suggestions.value.filter((suggestion) => suggestion !== item)
   } catch (error) {
-    console.error(error)
+    // Nur der Statuscode: der FetchError traegt in options.headers das Bearer-Token der Sitzung.
+    console.error(
+      'Anlassvorschlag konnte nicht verworfen werden',
+      (error as { statusCode?: number })?.statusCode,
+    )
   }
 }
 
 async function loadSuggestions() {
   if (import.meta.server) return
+  const run = ++suggestionsLoadRun
+  suggestions.value = []
+  suggestionsLoaded.value = false
   const organizationId = scope.value?.organizationId
   const departmentId = scope.value?.departmentId
   if (
@@ -257,6 +281,7 @@ async function loadSuggestions() {
       `${config.public.apiBase}/v1/departments/${departmentId}/content-suggestions`,
       { headers: await useAuthHeader() },
     )
+    if (run !== suggestionsLoadRun) return
     suggestions.value = ContentSuggestionsResponseSchema.parse(response).suggestions
     suggestionsLoaded.value = true
   } catch {
@@ -266,6 +291,15 @@ async function loadSuggestions() {
 }
 
 await Promise.all([loadDashboard(), loadSuggestions()])
+// socialMediaActive gehoert dazu: nach einem Vereinswechsel laedt useScopeModules die Module neu,
+// das Modul wird also womoeglich erst nach dem Bereichswechsel als aktiv erkannt.
+watch(
+  [() => scope.value?.organizationId, () => scope.value?.departmentId, socialMediaActive],
+  () => {
+    void loadDashboard()
+    void loadSuggestions()
+  },
+)
 </script>
 
 <template>
@@ -371,7 +405,9 @@ await Promise.all([loadDashboard(), loadSuggestions()])
           >
             <div class="min-w-0">
               <h2 class="font-display text-base font-bold tracking-[-.02em]">Aktuelle Beiträge</h2>
-              <p class="mt-0.5 text-[11px] text-[#7a817d]">Eure nächsten Inhalte auf einen Blick</p>
+              <p class="mt-0.5 text-[11px] text-[#7a817d]">
+                Eure zuletzt angelegten Inhalte auf einen Blick
+              </p>
             </div>
             <NuxtLink
               to="/beitraege"
@@ -379,9 +415,26 @@ await Promise.all([loadDashboard(), loadSuggestions()])
               >Alle ansehen <ArrowRight :size="13"
             /></NuxtLink>
           </div>
-          <div class="break-words p-8 text-center text-xs text-[#7b827d]">
-            Es liegen noch keine Beiträge vor. Diese Liste befüllt sich, sobald echte Beiträge
-            erstellt werden.
+          <div v-if="dashboardError" class="p-8 text-center text-xs font-semibold text-red-700">
+            Die Beiträge konnten nicht geladen werden.
+          </div>
+          <ul v-else-if="recentPosts.length > 0" class="divide-y divide-[#ecece5]">
+            <li
+              v-for="post in recentPosts"
+              :key="post.id"
+              class="flex items-center justify-between gap-3 px-5 py-3 text-xs sm:px-6"
+            >
+              <span class="font-semibold capitalize text-ink">{{
+                post.status.replaceAll('_', ' ')
+              }}</span>
+              <span class="shrink-0 text-[#7b827d]">{{ occursLabel(post.created_at) }}</span>
+            </li>
+          </ul>
+          <div
+            v-else-if="!loadingDashboard"
+            class="break-words p-8 text-center text-xs text-[#7b827d]"
+          >
+            Es liegen noch keine Beiträge vor.
           </div>
         </article>
 

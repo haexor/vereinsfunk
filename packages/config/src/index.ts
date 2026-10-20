@@ -20,6 +20,11 @@ const ApiEnvironmentBaseSchema = z.object({
   API_HOST: z.string().default('0.0.0.0'),
   API_PORT: z.coerce.number().int().min(1).max(65_535).default(4201),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
+  // Anzahl vertrauenswuerdiger Reverse-Proxys vor der API (Fastify trustProxy als Hop-Zahl). Ohne
+  // Wert ist request.ip hinter dem TLS-Proxy dessen Adresse: jedes IP-Rate-Limit wird zu einem
+  // einzigen globalen Zaehler, und der Einwilligungs-Hash speichert die Proxy-IP. Eine Hop-Zahl
+  // statt "true", damit ein vom Client mitgeschicktes X-Forwarded-For die Adresse nicht faelscht.
+  TRUST_PROXY_HOPS: z.preprocess(emptyStringToUndefined, z.coerce.number().int().min(0).max(10).default(0)),
   SUPABASE_URL: optionalUrl,
   SUPABASE_ANON_KEY: optionalSecret,
   SUPABASE_SERVICE_ROLE_KEY: optionalSecret,

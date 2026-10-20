@@ -32,6 +32,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
+import { parseSupabaseData } from '../supabase.js'
 import { CLUB_EVENT_COLUMNS, FIXTURE_COLUMNS, MEDIA_ASSET_SUMMARY_COLUMNS, mapClubEventRow, mapFixtureRow, mapMediaAssetSummaryRow, mapTeamRow } from '../apiMappers.js'
 import { ensurePassThroughDerivative } from '../passThroughDerivative.js'
 import { saveTextWorkshopDraft } from '../services/textWorkshopDrafts.js'
@@ -45,14 +46,6 @@ const CUSTOM_STYLE_PROFILE_COLUMNS = 'id, organization_id, department_id, team_i
 const SessionAttachmentSchema = z.object({ media_asset_id: UuidSchema })
 const CompletionAssetScopeSchema = z.object({ organization_id: UuidSchema, department_id: UuidSchema.nullable() })
 const DeletableScopeSchema = z.object({ organization_id: UuidSchema, department_id: UuidSchema.nullable(), team_id: UuidSchema.nullable() })
-
-function parseSupabaseData<T>(schema: z.ZodType<T>, data: unknown): T {
-  const parsed = schema.safeParse(data)
-  if (parsed.success) return parsed.data
-  const error = new Error('Unexpected Supabase response')
-  error.name = 'SupabaseResponseError'
-  throw error
-}
 
 function mapCustomStyleProfileRow(row: Record<string, unknown>) {
   return {
@@ -238,7 +231,10 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
             source_facts_snapshot: input.sourceMaterial, effective_config_snapshot: effectiveConfigSnapshot,
             title: generated.headline, caption: generated.caption, call_to_action: generated.callToAction,
             hashtags: generated.hashtags, alt_text: generated.altText, safety_flags: generated.safetyFlags,
-            created_by_type: 'llm',
+            // Die Verfasserin traegt die Freigabepruefung: can_decide_stage schliesst sie ueber
+            // created_by_user_id von der Selbstfreigabe aus, is_profile_minor erzwingt darueber die
+            // Minderjaehrigenstufe. Ohne den Wert waere sie fuer beide Pruefungen unbekannt.
+            created_by_type: 'llm', created_by_user_id: request.auth!.userId,
           })
           .select('id')
           .single()
@@ -746,8 +742,8 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     // enforce_structure_limit()/schedule_publication(): zwei parallele Uploads knapp unter der
     // Grenze duerfen sie nicht gemeinsam ueberschreiten -- eine getrennte TS-seitige Pruefung vor
     // einem ungesperrten insert liesse genau das zu, gefunden im eigenen Review dieser PR).
-    // object_path folgt demselben Muster wie LocalUploadService.create() unten, weil die echte
-    // Pfadvergabe dort passiert und hier noch nicht bekannt ist.
+    // Der Pfad entsteht nur hier: die Reservierung haelt ihn fest, uploads.create() signiert genau
+    // ihn, und /complete laedt ihn ueber media_assets.object_path wieder herunter.
     const objectPath = input.departmentId
       ? `organizations/${input.organizationId}/departments/${input.departmentId}/assets/${assetId}/${input.filename}`
       : `organizations/${input.organizationId}/assets/${assetId}/${input.filename}`
@@ -761,22 +757,23 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
       if (match) return reply.code(409).send({ error: 'storage_limit_reached', scope: match[1], limitBytes: Number(match[2]), usedBytes: Number(match[3]), correlationId: request.id })
       throw reservation.error
     }
-    const upload = await uploads.create({ ...input, assetId })
+    const upload = await uploads.create({ objectPath })
     return reply.code(201).send({ assetId, ...upload })
   })
   app.post('/v1/media/:assetId/complete', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ assetId: UuidSchema }).parse(request.params); const body = z.object({ sha256: z.string().regex(/^[a-f0-9]{64}$/i) }).parse(request.body)
     // Zugehoerigkeit ausschliesslich per Service Client nachschlagen, nie per Nutzer-Client:
-    // media_assets_select gewaehrt nur is_department_member, waehrend das Abschliessen 'post.edit'
-    // verlangt -- reserve_storage_upload() legt die Zeile synchron an (Paket 021), assetId ist ab
-    // dann immer bekannt.
+    // media_assets_select gewaehrt nur is_department_member -- reserve_storage_upload() legt die
+    // Zeile synchron an (Paket 021), assetId ist ab dann immer bekannt. Dieselbe Berechtigung wie
+    // beim Start: mit 'post.edit' bekam ein contributor die signierte URL, scheiterte nach dem
+    // Hochladen aber mit 403, und das Asset blieb mit reserviertem Kontingent auf 'initiated'.
     const service = supabaseClients.forService()
     const asset = await service.from('media_assets').select('organization_id, department_id').eq('id', params.assetId).maybeSingle()
     if (asset.error) throw asset.error
     if (!asset.data) return reply.code(404).send({ error: 'media_asset_not_found', correlationId: request.id })
     const parsedAsset = parseSupabaseData(CompletionAssetScopeSchema, asset.data)
-    if (!(await requirePermission(request, reply, 'post.edit', toPermissionScope(parsedAsset.organization_id, parsedAsset.department_id)))) return
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(parsedAsset.organization_id, parsedAsset.department_id)))) return
     return reply.code(202).send(await uploads.complete({ ...params, ...body }))
   })
   // Signed URLs koennen nicht ueber den Nutzer-Client erzeugt werden (kein Storage-Grant fuer

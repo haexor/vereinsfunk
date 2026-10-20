@@ -8,14 +8,14 @@ import {
   UpdateSocialConnectionRequestSchema,
   UuidSchema,
 } from '@vereinsfunk/contracts'
-import { resolveAvailableChannels } from '@vereinsfunk/domain'
 import { isAllowedOutboundUrl } from '@vereinsfunk/outbound-fetch'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { mapChannelScopeRow, mapSocialConnectionRow } from '../apiMappers.js'
-import { byteaToBuffer, createSecretBoxFromEnvironment } from '../secretBox.js'
+import { byteaToBuffer } from '@vereinsfunk/secrets'
+import { createSecretBoxFromEnvironment } from '../secretBox.js'
 import type { ApiRouteContext } from './context.js'
-import { channelOwnerScope, createAuditRecorder, isAnyMemberOfOrganization, isDepartmentOwnedChannelAllowed, resolveMembershipScope, SOCIAL_CONNECTION_COLUMNS, toChannelCandidates, toPermissionScope } from './shared.js'
+import { channelOwnerScope, createAuditRecorder, isAnyMemberOfOrganization, isDepartmentOwnedChannelAllowed, loadSocialConnectionResponse, resolveAvailableChannelIdsForPostVersion, resolveMembershipScope, SOCIAL_CONNECTION_COLUMNS, toPermissionScope } from './shared.js'
 
 // Kanonisiert die Adresse vor dem Schreiben: new URL(...).toString() normalisiert Schema und Host
 // bereits auf Kleinschreibung und serialisiert einen leeren Pfad immer als "/" -- https://Example.org
@@ -101,14 +101,7 @@ export function registerChannelRoutes(app: FastifyInstance, context: ApiRouteCon
       organizationId: input.organizationId, action: 'channel.connected', entityType: 'social_connections', entityId: insert.data.id as string,
       metadata: { platform: 'website', ownerScope: input.ownerScope, websiteUrl },
     })
-    const scopesResult = await service.from('channel_scopes').select('id, scope, department_id, team_id, can_schedule').eq('social_connection_id', insert.data.id)
-    if (scopesResult.error) throw scopesResult.error
-    return reply.code(201).send(
-      SocialConnectionSchema.parse({
-        ...mapSocialConnectionRow(insert.data),
-        scopes: scopesResult.data.map((scopeRow) => mapChannelScopeRow(scopeRow, input.organizationId)),
-      }),
-    )
+    return reply.code(201).send(await loadSocialConnectionResponse(service, insert.data, input.organizationId))
   })
 
   app.get('/v1/organizations/:id/channels', async (request, reply) => {
@@ -186,14 +179,7 @@ export function registerChannelRoutes(app: FastifyInstance, context: ApiRouteCon
       // Nur die geaenderten Feldnamen, keine Werte -- purpose und displayName sind Freitext.
       metadata: { fields: Object.keys(input) },
     })
-    const scopesResult = await service.from('channel_scopes').select('id, scope, department_id, team_id, can_schedule').eq('social_connection_id', params.id)
-    if (scopesResult.error) throw scopesResult.error
-    return reply.code(200).send(
-      SocialConnectionSchema.parse({
-        ...mapSocialConnectionRow(update.data),
-        scopes: scopesResult.data.map((scopeRow) => mapChannelScopeRow(scopeRow, organizationId)),
-      }),
-    )
+    return reply.code(200).send(await loadSocialConnectionResponse(service, update.data, organizationId))
   })
 
   app.delete('/v1/channels/:id', async (request, reply) => {
@@ -247,14 +233,7 @@ export function registerChannelRoutes(app: FastifyInstance, context: ApiRouteCon
       entityId: params.id,
       metadata: { valid: verification.valid },
     })
-    const scopesResult = await service.from('channel_scopes').select('id, scope, department_id, team_id, can_schedule').eq('social_connection_id', params.id)
-    if (scopesResult.error) throw scopesResult.error
-    return reply.code(200).send(
-      SocialConnectionSchema.parse({
-        ...mapSocialConnectionRow(update.data),
-        scopes: scopesResult.data.map((scopeRow) => mapChannelScopeRow(scopeRow, organizationId)),
-      }),
-    )
+    return reply.code(200).send(await loadSocialConnectionResponse(service, update.data, organizationId))
   })
 
   app.post('/v1/channels/:id/scopes', async (request, reply) => {
@@ -360,33 +339,9 @@ export function registerChannelRoutes(app: FastifyInstance, context: ApiRouteCon
     if (!post.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     if (!(await requirePermission(request, reply, 'post.publish', { organizationId: post.data.organization_id, departmentId: post.data.department_id }))) return
 
-    const [connections, scopeRows, policyRow] = await Promise.all([
-      // Website-Kanaele sind hier ausgenommen (Plan 039: "Bis zum Folgepaket erzeugt ein Blog-Kanal
-      // keine Veroeffentlichungszeile"). Sie waeren sonst waehlbare Veroeffentlichungsziele, und
-      // schedule_publication() legte eine Zeile an, die niemand ausfuehren kann -- ein Blog-Kanal
-      // hat per Entwurfsentscheidung 2 keinen social_connection_secrets-Eintrag. Die verbindliche
-      // Sperre sitzt im publications_platform_check (die RPC ist direkt aufrufbar); das hier ist
-      // die Anzeige, damit die Oberflaeche gar nicht erst etwas Unmoegliches anbietet.
-      client.from('social_connections').select('id, status, archived_at, responsible_profile_id').eq('organization_id', post.data.organization_id).neq('platform', 'website'),
-      client.from('channel_scopes').select('social_connection_id, scope, department_id, team_id, can_schedule').eq('organization_id', post.data.organization_id),
-      client.from('policy_settings').select('require_channel_responsible').eq('organization_id', post.data.organization_id).eq('scope', 'organization').maybeSingle(),
-    ])
-    if (connections.error) throw connections.error
-    if (scopeRows.error) throw scopeRows.error
-    if (policyRow.error) throw policyRow.error
-
-    const snapshotConfig = (version.data.effective_config_snapshot as { config?: { allowedChannelIds?: unknown } } | null)?.config
-    const allowedChannelIds = Array.isArray(snapshotConfig?.allowedChannelIds) ? (snapshotConfig!.allowedChannelIds as string[]) : null
-
-    const candidates = toChannelCandidates(connections.data, scopeRows.data)
-
-    const available = resolveAvailableChannels({
-      scope: post.data.team_id ? 'team' : 'department',
-      departmentId: post.data.department_id as string,
-      ...(post.data.team_id ? { teamId: post.data.team_id as string } : {}),
-      channels: candidates,
-      allowedChannelIds,
-      requireChannelResponsible: policyRow.data?.require_channel_responsible ?? false,
+    const available = await resolveAvailableChannelIdsForPostVersion(client, {
+      organizationId: post.data.organization_id as string, departmentId: post.data.department_id as string | null,
+      teamId: post.data.team_id as string | null, effectiveConfigSnapshot: version.data.effective_config_snapshot,
     })
     return reply.code(200).send(AvailableChannelsResponseSchema.parse({ socialConnectionIds: available }))
   })

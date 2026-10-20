@@ -3,7 +3,7 @@ import { runPendingMigrations } from '@vereinsfunk/db-migrate'
 import { createLogger } from '@vereinsfunk/observability'
 import { WorkflowOutboxDispatcher } from '@vereinsfunk/orchestration'
 import { createEmailSender } from '@vereinsfunk/mailer'
-import { createSecretBox } from '@vereinsfunk/secrets'
+import { createSecretBox, parseSecretBoxKeys } from '@vereinsfunk/secrets'
 import { createBrandWebsiteAnalysisRepository, createGenerationRecoveryRepository, createTextGenerationRepository, createVeoSyncRepository, createVisionProviderComparisonRepository, createWorkflowExecutionRepository, createWorkflowOutboxRepository } from './context.js'
 import { createHatchetClient, HatchetOrchestrator } from './hatchet.js'
 import { concurrency, createHatchetWorker, WorkflowExecutionError, type ProductWorkflowExecutor } from './workflows.js'
@@ -54,7 +54,11 @@ const shutdown = async (signal: string): Promise<void> => {
   await stopWorker()
   await workerRun?.catch(() => {})
   logger.info({ signal }, 'worker stopped gracefully')
-  process.exitCode = 0
+  // Ein vorher gesetzter Fehler-Exit-Code (Startfehler, abgebrochener Worker-Lauf) bleibt stehen,
+  // sonst startete die Restart-Policy einen gescheiterten Worker nie neu. process.exit, weil das SDK
+  // seit handleKill: false nicht mehr selbst beendet und offene Client-Verbindungen ihn halten koennen.
+  process.exitCode ??= 0
+  process.exit()
 }
 
 process.once('SIGINT', () => { void shutdown('SIGINT') })
@@ -74,7 +78,7 @@ async function main(): Promise<void> {
   const veoSyncRepository = createVeoSyncRepository(config)
   const veoSync = new VeoSyncExecutor({
     repository: veoSyncRepository,
-    secretBox: createSecretBox(JSON.parse(config.SECRET_BOX_KEYS) as Record<string, string>, config.SECRET_BOX_CURRENT_KEY_VERSION),
+    secretBox: createSecretBox(parseSecretBoxKeys(config.SECRET_BOX_KEYS), config.SECRET_BOX_CURRENT_KEY_VERSION),
     // Ohne SMTP landet nur der Betreff im Log -- der Text nennt keine Geheimnisse, aber Adressen
     // gehoeren nicht ins Log.
     emailSender: createEmailSender(config, (message) => logger.info({ subject: message.subject }, 'veo failure notification (fake provider)')),
@@ -83,14 +87,15 @@ async function main(): Promise<void> {
     log: (fields, message) => logger.warn(fields, message),
   })
   const executor: ProductWorkflowExecutor = {
-    async execute(workflow, payload) {
-      if (workflow === 'generate-text-post') return textGeneration.execute(payload)
+    async execute(workflow, payload, attempt) {
+      if (workflow === 'generate-text-post') return textGeneration.execute(payload, attempt)
       if (workflow === 'analyze-website-branding') return brandWebsiteAnalysis.execute(payload)
       if (workflow === 'sync-integration-source') return veoSync.execute(payload)
       throw new WorkflowExecutionError('product_executor_unavailable', false, `no product executor is configured for ${workflow}`)
     },
   }
-  const createdWorker = await createHatchetWorker(config, runs, executor, createGenerationRecoveryRepository(config), visionProviderComparison, veoSyncRepository)
+  const hatchet = createHatchetClient(config)
+  const createdWorker = await createHatchetWorker(hatchet, config, runs, executor, createGenerationRecoveryRepository(config), visionProviderComparison, veoSyncRepository)
   worker = createdWorker
   if (stopping) return stopWorker()
 
@@ -104,7 +109,7 @@ async function main(): Promise<void> {
   await worker.waitUntilReady(WORKER_READY_TIMEOUT_MS)
   if (stopping) return stopWorker()
 
-  const dispatcher = new WorkflowOutboxDispatcher(createWorkflowOutboxRepository(config), new HatchetOrchestrator(createHatchetClient(config)))
+  const dispatcher = new WorkflowOutboxDispatcher(createWorkflowOutboxRepository(config), new HatchetOrchestrator(hatchet))
   await dispatchOnce(dispatcher)
   if (stopping) return stopWorker()
 
@@ -117,4 +122,7 @@ const startup = main()
 startup.catch((error: unknown) => {
   logger.fatal({ err: error }, 'Hatchet worker failed to start')
   process.exitCode = 1
+  // Ein bereits gestarteter Worker (etwa wenn waitUntilReady scheitert) hielte den Prozess sonst
+  // ohne Outbox-Versand am Leben -- haengend statt neu gestartet.
+  void shutdown('startup_failed')
 })

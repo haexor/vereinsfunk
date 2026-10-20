@@ -12,11 +12,47 @@ import {
   UuidSchema,
 } from '@vereinsfunk/contracts'
 import { fetchPublicUrl, OutboundFetchError } from '@vereinsfunk/outbound-fetch'
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { IMPLEMENTED_LLM_PROTOCOLS, IMPLEMENTED_LLM_TASK_KINDS, joinUrlPath, mapLlmProviderConfigurationRow, parseModelListingIds } from '../llmProviders.js'
-import { byteaToBuffer, ciphertextToBytea, createSecretBoxFromEnvironment } from '../secretBox.js'
+import { byteaToBuffer, ciphertextToBytea, EmbeddedProviderSecretSchema, unwrapEmbeddedSecret } from '@vereinsfunk/secrets'
+import { createSecretBoxFromEnvironment } from '../secretBox.js'
 import type { ApiRouteContext } from './context.js'
+
+// Gemeinsam fuer die Modellabfrage mit dem Formularschluessel und mit dem gespeicherten Geheimnis.
+// Dieselbe Authentifizierung wie der jeweilige Adapter im Worker: sonst meldet das Formular
+// "erreichbar", wo die spaetere Generierung an 401 scheitert.
+async function sendProviderModelListing(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  provider: { protocol: string; baseUrl: string; apiKey: string },
+  logMessage: string,
+) {
+  const headers = provider.protocol === 'anthropic'
+    ? { 'x-api-key': provider.apiKey, 'anthropic-version': '2023-06-01' }
+    : { authorization: `Bearer ${provider.apiKey}` }
+  let payload: unknown
+  try {
+    // fetchPublicUrl prueft die Zieladresse bereits selbst (auch je Weiterleitung); eine
+    // vorgezogene Pruefung hier waere doppelte Arbeit fuer dasselbe Ergebnis.
+    payload = JSON.parse(await fetchPublicUrl(joinUrlPath(provider.baseUrl, 'models'), { headers, maxBytes: 1_000_000 }))
+  } catch (error) {
+    // Nie den Fehler selbst loggen: seine Meldung traegt die volle URL, und eine Basis-URL kann den
+    // Schluessel als Query-Parameter enthalten (?key=...). Grund und Host reichen zur Diagnose.
+    request.log.warn({
+      reason: error instanceof OutboundFetchError ? error.reason : error instanceof SyntaxError ? 'invalid_json' : 'unknown',
+      host: new URL(provider.baseUrl).host,
+      correlationId: request.id,
+    }, logMessage)
+    if (error instanceof OutboundFetchError && error.reason === 'blocked_url') {
+      return reply.code(400).send({ error: 'base_url_not_allowed', correlationId: request.id })
+    }
+    return reply.code(502).send({ error: 'provider_unreachable', correlationId: request.id })
+  }
+  const models = parseModelListingIds(payload)
+  if (models.length === 0) return reply.code(502).send({ error: 'provider_returned_no_models', correlationId: request.id })
+  return reply.code(200).send(ListLlmProviderModelsResponseSchema.parse({ models }))
+}
 
 export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePlatformAdmin, supabaseClients, environment } = context
@@ -99,7 +135,7 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
     const input = UpdateLlmProviderConfigurationRequestSchema.parse(request.body)
     if (input.taskKind && !IMPLEMENTED_LLM_TASK_KINDS.has(input.taskKind)) return reply.code(422).send({ error: 'task_kind_not_implemented', taskKind: input.taskKind })
     const service = supabaseClients.forService()
-    const current = await service.from('llm_provider_configurations').select('protocol, task_kind, is_active').eq('id', params.id).maybeSingle()
+    const current = await service.from('llm_provider_configurations').select('id, label, protocol, base_url, model, purpose, task_kind, structured_output_required, is_active').eq('id', params.id).maybeSingle()
     if (current.error) throw current.error
     if (!current.data) return reply.code(404).send({ error: 'llm_provider_not_found' })
     const effectiveProtocol = input.protocol ?? current.data.protocol
@@ -119,13 +155,20 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
     if (input.taskKind !== undefined) payload.task_kind = input.taskKind
     if (input.structuredOutputRequired !== undefined) payload.structured_output_required = input.structuredOutputRequired
     if (input.isActive !== undefined) payload.is_active = input.isActive
-    const update = await service
-      .from('llm_provider_configurations')
-      .update(payload)
-      .eq('id', params.id)
-      .select('id, label, protocol, base_url, model, purpose, task_kind, structured_output_required, is_active')
-      .single()
-    if (update.error) throw update.error
+    // Ein reiner Schluesselwechsel ({ apiKey }) laesst die Zeile unveraendert: update({}) liefert
+    // keine Zeile zurueck, .single() scheiterte daran mit einem 500, bevor der neue Schluessel
+    // ueberhaupt gespeichert war.
+    let row = current.data
+    if (Object.keys(payload).length > 0) {
+      const update = await service
+        .from('llm_provider_configurations')
+        .update(payload)
+        .eq('id', params.id)
+        .select('id, label, protocol, base_url, model, purpose, task_kind, structured_output_required, is_active')
+        .single()
+      if (update.error) throw update.error
+      row = update.data
+    }
     if (input.apiKey !== undefined) {
       const sealed = createSecretBoxFromEnvironment(environment).seal(input.apiKey, params.id)
       const upsert = await service.from('llm_provider_secrets').upsert({
@@ -141,7 +184,7 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
       .eq('llm_provider_configuration_id', params.id)
       .maybeSingle()
     if (hasSecret.error) throw hasSecret.error
-    return reply.code(200).send(LlmProviderConfigurationSchema.parse(mapLlmProviderConfigurationRow(update.data, hasSecret.data !== null)))
+    return reply.code(200).send(LlmProviderConfigurationSchema.parse(mapLlmProviderConfigurationRow(row, hasSecret.data !== null)))
   })
 
   // Modellauswahl im Anlege-Formular. Der Schluessel kommt aus dem Request, weil beim Anlegen noch
@@ -153,26 +196,7 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
     if (!(await requireAuth(request, reply))) return
     if (!(await requirePlatformAdmin(request, reply))) return
     const input = ListLlmProviderModelsRequestSchema.parse(request.body)
-    // Dieselbe Authentifizierung wie der jeweilige Adapter im Worker: sonst meldet das Formular
-    // "erreichbar", wo die spaetere Generierung an 401 scheitert.
-    const headers = input.protocol === 'anthropic'
-      ? { 'x-api-key': input.apiKey, 'anthropic-version': '2023-06-01' }
-      : { authorization: `Bearer ${input.apiKey}` }
-    let payload: unknown
-    try {
-      // fetchPublicUrl prueft die Zieladresse bereits selbst (auch je Weiterleitung); eine
-      // vorgezogene Pruefung hier waere doppelte Arbeit fuer dasselbe Ergebnis.
-      payload = JSON.parse(await fetchPublicUrl(joinUrlPath(input.baseUrl, 'models'), { headers, maxBytes: 1_000_000 }))
-    } catch (error) {
-      request.log.warn({ err: error, correlationId: request.id }, 'llm provider model listing failed')
-      if (error instanceof OutboundFetchError && error.reason === 'blocked_url') {
-        return reply.code(400).send({ error: 'base_url_not_allowed', correlationId: request.id })
-      }
-      return reply.code(502).send({ error: 'provider_unreachable', correlationId: request.id })
-    }
-    const models = parseModelListingIds(payload)
-    if (models.length === 0) return reply.code(502).send({ error: 'provider_returned_no_models', correlationId: request.id })
-    return reply.code(200).send(ListLlmProviderModelsResponseSchema.parse({ models }))
+    return sendProviderModelListing(request, reply, input, 'llm provider model listing failed')
   })
 
   // Beim Bearbeiten bleibt der API-Schluessel bewusst leer im Browser. Die Modellauswahl darf
@@ -198,29 +222,11 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
       id: UuidSchema,
       protocol: z.enum(['anthropic', 'openai']),
       base_url: z.url(),
-      llm_provider_secrets: z.union([
-        z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) }),
-        z.array(z.object({ api_key_ciphertext: z.string().min(1), key_version: z.string().trim().min(1) })).min(1),
-      ]),
+      llm_provider_secrets: EmbeddedProviderSecretSchema,
     }).parse(result.data)
-    const secret = Array.isArray(provider.llm_provider_secrets) ? provider.llm_provider_secrets[0]! : provider.llm_provider_secrets
+    const secret = unwrapEmbeddedSecret(provider.llm_provider_secrets)
     const apiKey = createSecretBoxFromEnvironment(environment).open(byteaToBuffer(secret.api_key_ciphertext), secret.key_version, provider.id)
-    const headers = provider.protocol === 'anthropic'
-      ? { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }
-      : { authorization: `Bearer ${apiKey}` }
-    let payload: unknown
-    try {
-      payload = JSON.parse(await fetchPublicUrl(joinUrlPath(provider.base_url, 'models'), { headers, maxBytes: 1_000_000 }))
-    } catch (error) {
-      request.log.warn({ err: error, correlationId: request.id }, 'stored llm provider model listing failed')
-      if (error instanceof OutboundFetchError && error.reason === 'blocked_url') {
-        return reply.code(400).send({ error: 'base_url_not_allowed', correlationId: request.id })
-      }
-      return reply.code(502).send({ error: 'provider_unreachable', correlationId: request.id })
-    }
-    const models = parseModelListingIds(payload)
-    if (models.length === 0) return reply.code(502).send({ error: 'provider_returned_no_models', correlationId: request.id })
-    return reply.code(200).send(ListLlmProviderModelsResponseSchema.parse({ models }))
+    return sendProviderModelListing(request, reply, { protocol: provider.protocol, baseUrl: provider.base_url, apiKey }, 'stored llm provider model listing failed')
   })
 
   app.delete('/v1/llm-providers/:id', async (request, reply) => {
@@ -229,7 +235,13 @@ export function registerLlmProviderRoutes(app: FastifyInstance, context: ApiRout
     const params = z.object({ id: UuidSchema }).parse(request.params)
     const service = supabaseClients.forService()
     const del = await service.from('llm_provider_configurations').delete().eq('id', params.id)
-    if (del.error) throw del.error
+    if (del.error) {
+      // generation_candidates und der Herkunftsnachweis der Beitragsfassungen verweisen mit on
+      // delete restrict auf die Konfiguration: ein bereits genutzter Provider laesst sich nur
+      // deaktivieren, nicht loeschen.
+      if (del.error.code === '23503') return reply.code(409).send({ error: 'llm_provider_in_use', correlationId: request.id })
+      throw del.error
+    }
     return reply.code(204).send()
   })
 

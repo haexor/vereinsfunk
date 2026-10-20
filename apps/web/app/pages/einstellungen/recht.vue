@@ -13,6 +13,7 @@ import {
   type RetentionSettings,
   type RunRetentionResponse,
 } from '@vereinsfunk/contracts'
+import { optionalNumber } from '../../utils/numberInput'
 
 // Paket 020: Rechtliche Pflichten und Datenschutzbetrieb -- Aufbewahrung, Betroffenenanfragen-
 // Verweis, Verarbeitungsdokumentation, Auftragsverarbeiter und der manipulationssichere
@@ -138,7 +139,7 @@ async function saveProfile() {
         contactEmail: blankToNull(profileDraft.value.contactEmail),
         contactPhone: blankToNull(profileDraft.value.contactPhone),
         websiteUrl: blankToNull(profileDraft.value.websiteUrl),
-        foundedYear: profileDraft.value.foundedYear.trim() ? Number(profileDraft.value.foundedYear) : null,
+        foundedYear: optionalNumber(profileDraft.value.foundedYear),
         responsiblePersonProfileId: profileDraft.value.responsiblePersonProfileId || null,
         imprintPublished: profileDraft.value.imprintPublished,
       },
@@ -212,14 +213,18 @@ async function runRetention(dryRun: boolean) {
   if (dryRun) runningDry.value = true
   else runningReal.value = true
   runError.value = ''
+  // Ein scharfer Lauf hat unwiderruflich geloescht, sobald die erste Anfrage gelingt. Scheitert nur
+  // das Nachladen der Loeschliste, darf er nicht als fehlgeschlagen gemeldet werden.
+  let ran = false
   try {
     runResult.value = await api.request(`/v1/organizations/${organizationId.value}/retention/run`, { method: 'POST', body: { dryRun } }, RunRetentionResponseSchema)
     runWasDry.value = dryRun
+    ran = true
     if (!dryRun) {
       deletions.value = await api.request(`/v1/organizations/${organizationId.value}/retention-deletions`, {}, RetentionDeletionSchema.array())
     }
   } catch {
-    runError.value = 'Der Lauf konnte nicht ausgeführt werden.'
+    runError.value = ran ? 'Der Lauf wurde ausgeführt, die Löschliste konnte aber nicht aktualisiert werden. Bitte lade die Seite neu.' : 'Der Lauf konnte nicht ausgeführt werden.'
   } finally {
     runningDry.value = false
     runningReal.value = false

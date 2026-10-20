@@ -2,20 +2,24 @@ import { clubEventDomainAdapter, createClubEventMatchStrategy, ExternalClubEvent
 import { planSync } from '@vereinsfunk/integrations'
 import type { FastifyReply } from 'fastify'
 import { addUniquePendingConflict, buildPendingConflicts, conflictFingerprint, finishSyncRun, handleAbortedSync, loadIgnoredFingerprints, parseIncomingRows, resolveScheduleDateTime, type SyncDomainContext } from '../integrationSync.js'
+import { fetchAllRows } from '../../routes/shared.js'
 
 export async function handleEventsSync(ctx: SyncDomainContext): Promise<FastifyReply> {
   const { request, reply, service, organizationId, sourceDepartmentId, sourceId, sourceFieldMapping, sourceLossThresholdPercent, mode, domain, runId, idempotencyKey, rawRows, organizationTimezone } = ctx
 
-  let existingQuery = service
-    .from('club_events')
-    .select('id, external_id, recurrence_key, source_id, title, description, category, starts_at, ends_at, all_day, location_name, location_address, registration_url, status, source_updated_at, updated_at')
-    .eq('organization_id', organizationId)
-    .or(`source_id.is.null,source_id.eq.${sourceId}`)
-  if (sourceDepartmentId) existingQuery = existingQuery.eq('department_id', sourceDepartmentId)
-  else existingQuery = existingQuery.is('department_id', null)
-  const existingRows = await existingQuery
-  if (existingRows.error) throw existingRows.error
-  const existingLocals: ClubEventLocal[] = existingRows.data.map((row) => ({
+  // fetchAllRows aus demselben Grund wie in handlePeopleSync: ohne Bloetterung haette PostgREST'
+  // max_rows=1000 den Bestand still gekappt, planSync die fehlenden Termine als neu bewertet und
+  // der Insert waere bei jedem Lauf in club_events_external_unique gelaufen.
+  const existingRows = await fetchAllRows<Record<string, unknown>>((from, to) => {
+    let query = service
+      .from('club_events')
+      .select('id, external_id, recurrence_key, source_id, title, description, category, starts_at, ends_at, all_day, location_name, location_address, registration_url, status, source_updated_at, updated_at')
+      .eq('organization_id', organizationId)
+      .or(`source_id.is.null,source_id.eq.${sourceId}`)
+    query = sourceDepartmentId ? query.eq('department_id', sourceDepartmentId) : query.is('department_id', null)
+    return query.order('id', { ascending: true }).range(from, to)
+  })
+  const existingLocals: ClubEventLocal[] = existingRows.map((row) => ({
     id: row.id as string, externalId: row.external_id as string | null, recurrenceKey: row.recurrence_key as string | null,
     sourceId: row.source_id as string | null,
     title: row.title as string, description: row.description as string | null, category: row.category as string,
@@ -31,13 +35,17 @@ export async function handleEventsSync(ctx: SyncDomainContext): Promise<FastifyR
     labelOf: (normalized, rowIndex) => (typeof normalized.title === 'string' ? normalized.title : `Zeile ${rowIndex}`),
   })
 
-  const plan = planSync({ existing: existingLocals, incoming, match: createClubEventMatchStrategy(), policy: { lossThresholdPercent: sourceLossThresholdPercent } })
+  const match = createClubEventMatchStrategy({
+    resolveDateTime: (rawValue, tzid) => resolveScheduleDateTime(rawValue, tzid, organizationTimezone),
+    now: new Date(),
+  })
+  const plan = planSync({ existing: existingLocals, incoming, match, policy: { lossThresholdPercent: sourceLossThresholdPercent } })
   if (plan.aborted) {
-    return reply.code(200).send(await handleAbortedSync({ service, runId, organizationId, sourceId, domain, mode, idempotencyKey }))
+    return reply.code(200).send(await handleAbortedSync({ service, request, runId, sourceId, idempotencyKey }))
   }
 
   const ignoredFingerprints = await loadIgnoredFingerprints(service, sourceId)
-  const pendingConflicts = buildPendingConflicts({ plan, sourceId, domain, identityOf: clubEventDomainAdapter.identityOf, invalidRecords, ignoredFingerprints })
+  const pendingConflicts = buildPendingConflicts({ plan, sourceId, domain, identityOf: match.identityOf, invalidRecords, ignoredFingerprints })
 
   // Eine Veranstaltung ohne aufloesbaren Start-Zeitpunkt (kaputtes Datumsformat) wuerde an der
   // not-null-Spalte starts_at scheitern -- als Konflikt behandeln statt ungefangen zu werfen.

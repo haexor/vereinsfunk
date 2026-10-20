@@ -83,10 +83,12 @@ async function savePublishingEnabled() {
     })
   } catch (error) {
     const status = (error as { statusCode?: number })?.statusCode
+    // Erst neu laden, dann die Meldung setzen: load() leert errorMessage, die 409-Erklaerung
+    // waere sonst nie zu sehen.
+    await load()
     errorMessage.value = status === 409
       ? 'Aktivieren ist erst möglich, wenn das Deployment im Live-Modus läuft, mindestens ein Provider aktiv ist und dessen Zugangsdaten gespeichert sind.'
       : 'Publishing-Status konnte nicht gespeichert werden.'
-    await load()
   } finally {
     saving.value = false
   }
@@ -115,8 +117,9 @@ async function saveAgentLlmProvider() {
       method: 'PUT', headers, body: { value },
     })
   } catch {
-    errorMessage.value = 'Die Modellkonfiguration konnte nicht gespeichert werden.'
+    // Wie in savePublishingEnabled(): load() leert errorMessage, deshalb danach setzen.
     await load()
+    errorMessage.value = 'Die Modellkonfiguration konnte nicht gespeichert werden.'
   } finally {
     saving.value = false
   }

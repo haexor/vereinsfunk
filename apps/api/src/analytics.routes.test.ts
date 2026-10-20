@@ -43,7 +43,7 @@ describe('Paket 016: Auswertung: interne Kennzahlen', () => {
       },
     } as unknown as SupabaseClient
   }
-  // Fuer assertAnalyticsScopeConsistency: departments_select_member laesst ein Mitglied die eigene
+  // Fuer openAnalyticsScope (resolveDirectoryScope): departments_select_member laesst ein Mitglied die eigene
   // Abteilung sehen (RLS) -- der Fake bildet nur genau das ab, was fuer DEPARTMENT_ID/TEAM_ID in
   // diesen Tests gebraucht wird.
   function membershipClient(): SupabaseClient {
