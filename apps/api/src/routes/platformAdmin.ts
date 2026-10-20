@@ -28,7 +28,8 @@ import {
   UsageMetricsResponseSchema,
   UuidSchema,
 } from '@vereinsfunk/contracts'
-import type { FastifyInstance } from 'fastify'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { mapPlatformAdminInvitationRow } from '../apiMappers.js'
 import { generateInvitationToken, invitationCallbackUrls, sendInvitationThroughSupabaseAuth } from '../invitations.js'
@@ -122,6 +123,24 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
   const { requireAuth, requirePlatformAdmin, supabaseClients, platformAdminProvider, environment } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
 
+  // Anlegen und erneutes Senden verschicken dieselbe Einladung. Ein Zustellfehler bricht die
+  // Anfrage nicht ab -- die Einladung existiert bereits und laesst sich erneut senden.
+  async function deliverPlatformAdminInvitation(
+    request: FastifyRequest,
+    service: SupabaseClient,
+    email: string,
+    rawToken: string,
+  ): Promise<boolean> {
+    const urls = platformAdminInvitationUrls(environment.WEB_BASE_URL ?? 'http://localhost:4200', rawToken)
+    try {
+      await sendInvitationThroughSupabaseAuth(service, email, urls)
+      return true
+    } catch (error) {
+      request.log.error({ err: error, correlationId: request.id }, 'Supabase platform admin invitation email delivery failed')
+      return false
+    }
+  }
+
   // --- Plattform-Administration (Paket 022) -------------------------------------------
   // Alle Routen ab hier sind requirePlatformAdmin-gated und verwenden ausschliesslich den
   // Service-Role-Client: die betroffenen Tabellen haben keinerlei Grant/Policy fuer
@@ -162,14 +181,7 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
     }
     const insertData = rpc.data as Record<string, unknown>
 
-    const urls = platformAdminInvitationUrls(environment.WEB_BASE_URL ?? 'http://localhost:4200', rawToken)
-    let emailDelivered = true
-    try {
-      await sendInvitationThroughSupabaseAuth(service, input.email, urls)
-    } catch (error) {
-      emailDelivered = false
-      request.log.error({ err: error, correlationId: request.id }, 'Supabase platform admin invitation email delivery failed')
-    }
+    const emailDelivered = await deliverPlatformAdminInvitation(request, service, input.email, rawToken)
     return reply.code(201).send({ ...PlatformAdminInvitationSchema.parse(mapPlatformAdminInvitationRow(insertData)), emailDelivered })
   })
 
@@ -204,14 +216,7 @@ export function registerPlatformAdminRoutes(app: FastifyInstance, context: ApiRo
       throw rpc.error
     }
     const updateData = rpc.data as Record<string, unknown>
-    const urls = platformAdminInvitationUrls(environment.WEB_BASE_URL ?? 'http://localhost:4200', rawToken)
-    let emailDelivered = true
-    try {
-      await sendInvitationThroughSupabaseAuth(service, existing.data.email as string, urls)
-    } catch (error) {
-      emailDelivered = false
-      request.log.error({ err: error, correlationId: request.id }, 'Supabase platform admin invitation email delivery failed')
-    }
+    const emailDelivered = await deliverPlatformAdminInvitation(request, service, existing.data.email as string, rawToken)
     return reply.code(200).send({ ...PlatformAdminInvitationSchema.parse(mapPlatformAdminInvitationRow(updateData)), emailDelivered })
   })
 
