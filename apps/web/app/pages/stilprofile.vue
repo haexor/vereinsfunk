@@ -3,13 +3,11 @@ import { isBrandAssetSelectable } from '@vereinsfunk/domain'
 import {
   CreateCustomStyleProfileRequestSchema,
   CustomStyleProfileSchema,
-  GeneratedPostSchema,
   PreviewCustomStyleProfileRequestSchema,
   UpdateCustomStyleProfileRequestSchema,
   type CustomStyleProfile,
-  type GeneratedPost,
 } from '@vereinsfunk/contracts'
-import { avoidRulesFromDraft, doRulesFromDraft, emptyStyleProfileDraft, previewErrorMessage, styleProfileDraftFrom, styleRulesFromDraft } from '../utils/styleProfileDraft'
+import { avoidRulesFromDraft, doRulesFromDraft, emptyStyleProfileDraft, styleProfileDraftFrom, styleRulesFromDraft } from '../utils/styleProfileDraft'
 
 const api = useApiClient()
 const session = await useSession()
@@ -113,11 +111,21 @@ function slugify(value: string): string {
 const draft = ref(emptyStyleProfileDraft())
 const creating = ref(false)
 const createError = ref('')
-const creatingPreviewing = ref(false)
-const creatingPreviewResult = ref<GeneratedPost | null>(null)
-const creatingPreviewError = ref('')
-const creatingPreviewKey = ref(crypto.randomUUID())
-watch(draft, () => { creatingPreviewKey.value = crypto.randomUUID() }, { deep: true })
+const { previewing: creatingPreviewing, result: creatingPreviewResult, error: creatingPreviewError, preview: previewCreate } = useStyleProfilePreview({
+  api,
+  path: '/v1/content-style-profiles/preview',
+  draft,
+  requestBody: () => {
+    if (!organizationId.value || !canManageActiveScope.value) return null
+    return PreviewCustomStyleProfileRequestSchema.parse({
+      organizationId: organizationId.value,
+      departmentId: activeDepartmentId.value ?? undefined, teamId: activeTeamId.value ?? undefined,
+      name: draft.value.name, description: draft.value.description,
+      styleRules: styleRulesFromDraft(draft.value), avoidRules: avoidRulesFromDraft(draft.value), doRules: doRulesFromDraft(draft.value),
+      sampleInput: draft.value.sampleInput,
+    })
+  },
+})
 
 async function createProfile() {
   if (!organizationId.value || !canManageActiveScope.value || !draft.value.name.trim() || !draft.value.description.trim()) return
@@ -141,55 +149,37 @@ async function createProfile() {
   }
 }
 
-function createPreviewRequestBody() {
-  if (!organizationId.value || !canManageActiveScope.value) return null
-  return PreviewCustomStyleProfileRequestSchema.parse({
-    organizationId: organizationId.value,
-    departmentId: activeDepartmentId.value ?? undefined, teamId: activeTeamId.value ?? undefined,
-    name: draft.value.name, description: draft.value.description,
-    styleRules: styleRulesFromDraft(draft.value), avoidRules: avoidRulesFromDraft(draft.value), doRules: doRulesFromDraft(draft.value),
-    sampleInput: draft.value.sampleInput,
-  })
-}
-
-async function previewCreate() {
-  const body = createPreviewRequestBody()
-  if (!body) return
-  creatingPreviewing.value = true
-  creatingPreviewError.value = ''
-  try {
-    creatingPreviewResult.value = await api.request('/v1/content-style-profiles/preview', { method: 'POST', body, headers: { 'idempotency-key': creatingPreviewKey.value } }, GeneratedPostSchema)
-    creatingPreviewKey.value = crypto.randomUUID()
-  } catch (error) {
-    creatingPreviewError.value = previewErrorMessage(error)
-  } finally {
-    creatingPreviewing.value = false
-  }
-}
-
 // --- Bearbeitung ---------------------------------------------------------------------------
 
 const editingId = ref<string | null>(null)
 const editDraft = ref(emptyStyleProfileDraft())
 const editSaving = ref(false)
 const editError = ref('')
-const editPreviewing = ref(false)
-const editPreviewResult = ref<GeneratedPost | null>(null)
-const editPreviewError = ref('')
-const editPreviewKey = ref(crypto.randomUUID())
-watch(editDraft, () => { editPreviewKey.value = crypto.randomUUID() }, { deep: true })
+const { previewing: editPreviewing, result: editPreviewResult, error: editPreviewError, preview: previewEdit, reset: resetEditPreview } = useStyleProfilePreview({
+  api,
+  path: '/v1/content-style-profiles/preview',
+  draft: editDraft,
+  requestBody: () => {
+    const profile = profiles.value.find((item) => item.id === editingId.value)
+    if (!profile || !organizationId.value) return null
+    return PreviewCustomStyleProfileRequestSchema.parse({
+      organizationId: organizationId.value, departmentId: profile.departmentId, teamId: profile.teamId,
+      name: editDraft.value.name, description: editDraft.value.description,
+      styleRules: styleRulesFromDraft(editDraft.value), avoidRules: avoidRulesFromDraft(editDraft.value), doRules: doRulesFromDraft(editDraft.value),
+      sampleInput: editDraft.value.sampleInput,
+    })
+  },
+})
 
 function startEdit(profile: CustomStyleProfile) {
   editingId.value = profile.id
   editDraft.value = styleProfileDraftFrom(profile)
   editError.value = ''
-  editPreviewResult.value = null
-  editPreviewError.value = ''
+  resetEditPreview()
 }
 function cancelEdit() {
   editingId.value = null
-  editPreviewResult.value = null
-  editPreviewError.value = ''
+  resetEditPreview()
 }
 async function saveEdit() {
   if (!editingId.value || !editDraft.value.name.trim() || !editDraft.value.description.trim()) return
@@ -202,38 +192,12 @@ async function saveEdit() {
     })
     await api.request(`/v1/content-style-profiles/${editingId.value}`, { method: 'PATCH', body })
     editingId.value = null
-    editPreviewResult.value = null
-    editPreviewError.value = ''
+    resetEditPreview()
     await load()
   } catch {
     editError.value = 'Die Änderung konnte nicht gespeichert werden.'
   } finally {
     editSaving.value = false
-  }
-}
-function editPreviewRequestBody() {
-  const profile = profiles.value.find((item) => item.id === editingId.value)
-  if (!profile || !organizationId.value) return null
-  return PreviewCustomStyleProfileRequestSchema.parse({
-    organizationId: organizationId.value, departmentId: profile.departmentId, teamId: profile.teamId,
-    name: editDraft.value.name, description: editDraft.value.description,
-    styleRules: styleRulesFromDraft(editDraft.value), avoidRules: avoidRulesFromDraft(editDraft.value), doRules: doRulesFromDraft(editDraft.value),
-    sampleInput: editDraft.value.sampleInput,
-  })
-}
-
-async function previewEdit() {
-  const body = editPreviewRequestBody()
-  if (!body) return
-  editPreviewing.value = true
-  editPreviewError.value = ''
-  try {
-    editPreviewResult.value = await api.request('/v1/content-style-profiles/preview', { method: 'POST', body, headers: { 'idempotency-key': editPreviewKey.value } }, GeneratedPostSchema)
-    editPreviewKey.value = crypto.randomUUID()
-  } catch (error) {
-    editPreviewError.value = previewErrorMessage(error)
-  } finally {
-    editPreviewing.value = false
   }
 }
 // --- Löschen ---------------------------------------------------------------------------
