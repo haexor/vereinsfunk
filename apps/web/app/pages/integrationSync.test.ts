@@ -19,7 +19,7 @@ describe('Integrationen', () => {
   it('zeigt Verlauf und Konflikte nur aus dem zuletzt gestarteten Abruf', () => {
     const page = readFileSync(join(PAGES_DIR, 'integrationen.vue'), 'utf8')
 
-    expect(page).toContain('if (run !== historyLoadRun) return false\n    historyRuns.value = runs')
-    expect(page).toContain('if (run === conflictsLoadRun) conflictItems.value = conflicts')
+    expect(page).toContain('if (!isLatest()) return false\n    historyRuns.value = runs')
+    expect(page).toContain('if (isLatest()) conflictItems.value = conflicts')
   })
 })

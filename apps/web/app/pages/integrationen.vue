@@ -9,13 +9,10 @@ import {
   type IntegrationSyncConflict,
   type IntegrationSyncRun,
 } from '@vereinsfunk/contracts'
+import { ApiRequestError } from '../utils/apiClient'
 
 const api = useApiClient()
-const session = await useSession()
-const scope = await useScope()
-
-const organizationId = computed(() => scope.value?.organizationId ?? null)
-const organization = computed(() => session.value?.scopes.find((item) => item.organizationId === organizationId.value) ?? null)
+const { organizationId, organization } = await useActiveScope()
 
 const loading = ref(true)
 const errorMessage = ref('')
@@ -31,20 +28,20 @@ const manageableDepartments = computed(() =>
 const canManageAnything = computed(() => canManageOrgWide.value || manageableDepartments.value.length > 0)
 const departmentOptionsForCreate = computed(() => (canManageOrgWide.value ? (organization.value?.departments ?? []) : manageableDepartments.value))
 
-async function load() {
-  if (!organizationId.value) { loading.value = false; return }
+const { reload: load, ready } = useScopedLoad(() => organizationId.value, async (currentOrganizationId, isLatest) => {
+  if (!currentOrganizationId) { loading.value = false; return }
   loading.value = true
   errorMessage.value = ''
   try {
-    sources.value = await api.request(`/v1/organizations/${organizationId.value}/integration-sources`, {}, IntegrationSourceSchema.array())
+    const loaded = await api.request(`/v1/organizations/${currentOrganizationId}/integration-sources`, {}, IntegrationSourceSchema.array())
+    if (isLatest()) sources.value = loaded
   } catch {
-    errorMessage.value = 'Die Quellen konnten nicht geladen werden.'
+    if (isLatest()) errorMessage.value = 'Die Quellen konnten nicht geladen werden.'
   } finally {
-    loading.value = false
+    if (isLatest()) loading.value = false
   }
-}
-await load()
-watch(organizationId, () => { void load() })
+})
+await ready
 
 const TRANSPORT_LABELS: Record<string, string> = { file: 'Datei (CSV/XLSX)', http: 'HTTP-API', ical: 'Kalender-Feed (iCal)', webhook: 'Webhook' }
 const DOMAIN_LABELS: Record<string, string> = { people: 'Personen', teams: 'Mannschaften', fixtures: 'Spielpläne', events: 'Veranstaltungen' }
@@ -247,7 +244,7 @@ async function runSync(source: IntegrationSource) {
   syncNotice.value = ''
   try {
     if (source.transport === 'http') {
-      const queued = PlayerboardVeoSyncAcceptedSchema.parse(await api.request(`/v1/integration-sources/${source.id}/sync`, { method: 'POST', body: {} }))
+      const queued = await api.request(`/v1/integration-sources/${source.id}/sync`, { method: 'POST', body: {} }, PlayerboardVeoSyncAcceptedSchema)
       syncNotice.value = 'Abgleich gestartet. Das Ergebnis erscheint gleich im Verlauf.'
       if (historySourceId.value === source.id) {
         const deadline = Date.now() + HTTP_SYNC_WAIT_MS
@@ -263,23 +260,22 @@ async function runSync(source: IntegrationSource) {
       await load()
       return
     }
-    let response: unknown
+    let body: FormData | { mode: string; domain: string }
     if (source.transport === 'file') {
-      const formData = new FormData()
-      formData.append('mode', syncMode.value)
-      formData.append('domain', 'people')
-      formData.append('file', syncFile.value as File)
-      response = await api.request(`/v1/integration-sources/${source.id}/sync`, { method: 'POST', body: formData })
+      body = new FormData()
+      body.append('mode', syncMode.value)
+      body.append('domain', 'people')
+      body.append('file', syncFile.value as File)
     } else {
-      response = await api.request(`/v1/integration-sources/${source.id}/sync`, { method: 'POST', body: { mode: syncMode.value, domain: 'people' } })
+      body = { mode: syncMode.value, domain: 'people' }
     }
-    syncResults[source.id] = SyncSourceResponseSchema.parse(response)
+    syncResults[source.id] = await api.request(`/v1/integration-sources/${source.id}/sync`, { method: 'POST', body }, SyncSourceResponseSchema)
     if (historySourceId.value === source.id) await loadHistory(source.id)
     if (conflictsSourceId.value === source.id) await loadConflicts(source.id)
     await load()
   } catch (error) {
-    const code = (error as { data?: { error?: string } })?.data?.error
-    syncError.value = (code && SYNC_ERROR_MESSAGES[code]) ?? 'Der Sync-Lauf ist fehlgeschlagen.'
+    const code = error instanceof ApiRequestError ? error.code : ''
+    syncError.value = SYNC_ERROR_MESSAGES[code] ?? 'Der Sync-Lauf ist fehlgeschlagen.'
   } finally {
     syncSubmitting.value = false
   }
@@ -291,23 +287,23 @@ const historySourceId = ref<string | null>(null)
 const historyRuns = ref<IntegrationSyncRun[]>([])
 const historyLoading = ref(false)
 // Wechselt die Person schnell von Quelle A zu B, darf die spaeter eintreffende Antwort fuer A nicht
-// unter B erscheinen -- nur der zuletzt gestartete Abruf schreibt (Zaehlermuster wie kalender.vue).
-let historyLoadRun = 0
+// unter B erscheinen -- nur der zuletzt gestartete Abruf schreibt.
+const historyRequests = useLatestRequest()
 
 async function loadHistory(sourceId: string): Promise<boolean> {
-  const run = ++historyLoadRun
+  const isLatest = historyRequests.begin()
   historyLoading.value = true
   try {
     const runs = await api.request(`/v1/integration-sources/${sourceId}/sync-runs`, {}, IntegrationSyncRunSchema.array())
     // Ein ueberholter Abruf meldet false, damit die Warteschleife in runSync() nicht auf fremde Laeufe wartet.
-    if (run !== historyLoadRun) return false
+    if (!isLatest()) return false
     historyRuns.value = runs
     return true
   } catch {
-    if (run === historyLoadRun) historyRuns.value = []
+    if (isLatest()) historyRuns.value = []
     return false
   } finally {
-    if (run === historyLoadRun) historyLoading.value = false
+    if (isLatest()) historyLoading.value = false
   }
 }
 async function toggleHistory(source: IntegrationSource) {
@@ -325,20 +321,20 @@ const showResolvedConflicts = ref(false)
 const conflictActionError = ref('')
 const conflictBusyId = ref<string | null>(null)
 // Wie beim Verlauf: nur der zuletzt gestartete Abruf schreibt die Konfliktliste.
-let conflictsLoadRun = 0
+const conflictRequests = useLatestRequest()
 
 async function loadConflicts(sourceId: string) {
-  const run = ++conflictsLoadRun
+  const isLatest = conflictRequests.begin()
   conflictsLoading.value = true
   try {
     const conflicts = await api.request(`/v1/integration-sources/${sourceId}/conflicts`, {
       query: showResolvedConflicts.value ? {} : { resolution: 'pending' },
     }, IntegrationSyncConflictSchema.array())
-    if (run === conflictsLoadRun) conflictItems.value = conflicts
+    if (isLatest()) conflictItems.value = conflicts
   } catch {
-    if (run === conflictsLoadRun) conflictItems.value = []
+    if (isLatest()) conflictItems.value = []
   } finally {
-    if (run === conflictsLoadRun) conflictsLoading.value = false
+    if (isLatest()) conflictsLoading.value = false
   }
 }
 async function toggleConflicts(source: IntegrationSource) {
