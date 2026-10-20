@@ -19,10 +19,9 @@ const errorMessage = ref('')
 const actionError = ref('')
 const notice = ref('')
 
-async function load() {
+const { ready } = useScopedLoad(() => teamId.value, async (requestedTeamId, isLatest) => {
   players.value = []
   errorMessage.value = ''
-  const requestedTeamId = teamId.value
   if (!requestedTeamId) {
     loading.value = false
     return
@@ -30,20 +29,19 @@ async function load() {
   loading.value = true
   try {
     const result = await api.request(`/v1/playerboard/teams/${requestedTeamId}/players`, {}, PlayerboardPlayerSchema.array())
-    if (teamId.value === requestedTeamId) players.value = result
+    if (isLatest()) players.value = result
   } catch (error) {
-    if (teamId.value === requestedTeamId) errorMessage.value = playerboardErrorMessage(error, 'Der Kader konnte nicht geladen werden.')
+    if (isLatest()) errorMessage.value = playerboardErrorMessage(error, 'Der Kader konnte nicht geladen werden.')
   } finally {
-    if (teamId.value === requestedTeamId) loading.value = false
+    if (isLatest()) loading.value = false
   }
-}
-await load()
+})
+await ready
 watch(teamId, () => {
   createMode.value = 'new'
   directoryPeople.value = null
   editingId.value = null
   invitingId.value = null
-  void load()
 })
 
 const activePlayers = computed(() => players.value.filter((player) => player.active))

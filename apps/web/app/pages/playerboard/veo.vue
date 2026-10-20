@@ -17,9 +17,9 @@ const notice = ref('')
 const running = computed(() => status.value?.runs[0]?.status === 'running')
 
 /** Laedt Status und offene mehrdeutige Spiele der gewaehlten Mannschaft. */
-let latestRequest = 0
+const loadRuns = useLatestRequest()
 async function load() {
-  const request = ++latestRequest
+  const isLatest = loadRuns.begin()
   errorMessage.value = ''
   if (!teamId.value || !canManagePlayerboard.value) {
     status.value = null
@@ -28,11 +28,11 @@ async function load() {
   }
   try {
     const [loadedStatus, loadedConflicts] = await Promise.all([veo.loadStatus(teamId.value), veo.loadConflicts(teamId.value)])
-    if (request !== latestRequest) return
+    if (!isLatest()) return
     status.value = loadedStatus
     conflicts.value = loadedConflicts
   } catch (error) {
-    if (request === latestRequest) errorMessage.value = playerboardErrorMessage(error, 'Der Veo-Status konnte nicht geladen werden.')
+    if (isLatest()) errorMessage.value = playerboardErrorMessage(error, 'Der Veo-Status konnte nicht geladen werden.')
   }
 }
 

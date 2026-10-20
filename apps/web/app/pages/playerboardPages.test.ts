@@ -29,10 +29,11 @@ describe('PlayerBoard-Seiten', () => {
   it('verwirft spaete Antworten frueherer Vereine bzw. Mannschaften in den Einstellungen', () => {
     const page = read('playerboard/einstellungen.vue')
 
-    expect(functionBody(page, 'load')).toContain('if (loadRun === latestLoad) entries.value = loaded')
-    const consents = functionBody(page, 'loadConsents')
-    expect(consents.indexOf('if (loadRun !== latestConsentLoad) return')).toBeGreaterThan(-1)
-    expect(consents.indexOf('if (loadRun !== latestConsentLoad) return')).toBeLessThan(consents.indexOf('playersWithoutConsent.value = roster'))
+    expect(page).toContain('useScopedLoad(() => organizationId.value')
+    expect(page).toContain('if (isLatest()) entries.value = loaded')
+    const consents = page.slice(page.indexOf('useScopedLoad(() => level.value'))
+    expect(consents.indexOf('if (!isLatest()) return')).toBeGreaterThan(-1)
+    expect(consents.indexOf('if (!isLatest()) return')).toBeLessThan(consents.indexOf('playersWithoutConsent.value = roster'))
   })
 
   it('zeigt unter "Saison" ohne Saisonanfang die Meldung statt der zuletzt geladenen Rangliste', () => {
@@ -47,7 +48,8 @@ describe('PlayerBoard-Seiten', () => {
     const load = functionBody(read('playerboard/spiele.vue'), 'load')
 
     expect(load).not.toContain('seasonFrom.value = await')
-    expect(load.indexOf('if (request !== latestRequest) return')).toBeLessThan(load.indexOf('seasonFrom.value = loadedSeasonFrom'))
+    expect(load.indexOf('if (!isLatest()) return')).toBeGreaterThan(-1)
+    expect(load.indexOf('if (!isLatest()) return')).toBeLessThan(load.indexOf('seasonFrom.value = loadedSeasonFrom'))
   })
 
   it('teilt sich die Zeitraumwahl zwischen Rangliste und Spielen', () => {

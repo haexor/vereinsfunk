@@ -40,6 +40,7 @@ describe('PersonLink', () => {
 
 describe('person profile loading', () => {
   it('ignores stale errors after the selected period changes', () => {
-    expect(profilePage).toContain('if (personId.value !== requestedId || period.value !== requestedPeriod) return')
+    expect(profilePage).toContain('useScopedLoad(() => `${personId.value}:${period.value}`')
+    expect(profilePage).toContain('if (!isLatest()) return')
   })
 })

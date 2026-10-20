@@ -23,9 +23,9 @@ const loading = ref(false)
 const errorMessage = ref('')
 
 /** Laedt Saisonanfang, Spiele des Zeitraums und fuer Trainer den Kader; spaete Antworten verfallen. */
-let latestRequest = 0
+const loadRuns = useLatestRequest()
 async function load(keepSelection = false) {
-  const request = ++latestRequest
+  const isLatest = loadRuns.begin()
   errorMessage.value = ''
   if (!teamId.value || !organizationId.value) {
     matches.value = []
@@ -47,15 +47,15 @@ async function load(keepSelection = false) {
         return undefined
       }),
     ])
-    if (request !== latestRequest) return
+    if (!isLatest()) return
     seasonFrom.value = loadedSeasonFrom
     matches.value = loaded
     roster.value = players
     if (!keepSelection || !loaded.some((match) => match.fixtureId === selectedFixtureId.value)) selectedFixtureId.value = loaded[0]?.fixtureId ?? null
   } catch (error) {
-    if (request === latestRequest) errorMessage.value = playerboardErrorMessage(error, 'Die Spiele konnten nicht geladen werden.')
+    if (isLatest()) errorMessage.value = playerboardErrorMessage(error, 'Die Spiele konnten nicht geladen werden.')
   } finally {
-    if (request === latestRequest) loading.value = false
+    if (isLatest()) loading.value = false
   }
 }
 await load()
