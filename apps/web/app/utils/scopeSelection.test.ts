@@ -1,6 +1,6 @@
 import type { ImageStylePreset } from '@vereinsfunk/contracts'
 import { describe, expect, it } from 'vitest'
-import { selectableImageStylePresets } from './imageStylePresets'
+import { selectableAtLevel } from './scopeSelection'
 
 const BASE = {
   id: 'p', organizationId: 'org', isActive: true,
@@ -14,27 +14,27 @@ const fussball: ImageStylePreset = { ...BASE, id: 'fussball', name: 'Fußball', 
 const handball: ImageStylePreset = { ...BASE, id: 'handball', name: 'Handball', departmentId: 'dept-handball', teamId: null }
 const teamA: ImageStylePreset = { ...BASE, id: 'team-a', name: 'Team A', departmentId: 'dept-fussball', teamId: 'team-a' }
 
-describe('selectableImageStylePresets (Plan 045, PR 1)', () => {
+describe('selectableAtLevel (Plan 045, PR 1)', () => {
   const presets = [orgWide, fussball, handball, teamA]
 
   it('a department without its own preset still inherits the organization-wide one', () => {
-    const selectable = selectableImageStylePresets([orgWide], 'department', 'dept-handball')
+    const selectable = selectableAtLevel([orgWide], 'department', 'dept-handball')
     expect(selectable).toEqual([orgWide])
   })
 
   it('a department sees the organization-wide preset and its own, but not a sibling department\'s', () => {
-    const selectable = selectableImageStylePresets(presets, 'department', 'dept-fussball')
+    const selectable = selectableAtLevel(presets, 'department', 'dept-fussball')
     expect(selectable.map((p) => p.id)).toEqual(expect.arrayContaining(['org-wide', 'fussball']))
     expect(selectable.map((p) => p.id)).not.toContain('handball')
   })
 
   it('a team sees the organization-wide, its department\'s, and its own preset', () => {
-    const selectable = selectableImageStylePresets(presets, 'team', 'dept-fussball', 'team-a')
+    const selectable = selectableAtLevel(presets, 'team', 'dept-fussball', 'team-a')
     expect(selectable.map((p) => p.id).sort()).toEqual(['fussball', 'org-wide', 'team-a'])
   })
 
   it('a sibling team cannot select a team-scoped preset that is not its own', () => {
-    const selectable = selectableImageStylePresets(presets, 'team', 'dept-fussball', 'team-b')
+    const selectable = selectableAtLevel(presets, 'team', 'dept-fussball', 'team-b')
     expect(selectable.map((p) => p.id)).not.toContain('team-a')
   })
 })

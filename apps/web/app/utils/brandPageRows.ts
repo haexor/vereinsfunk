@@ -52,7 +52,10 @@ const TeamBrandRowSchema = z.object({
   display_font_asset_id: TeamBrandSchema.shape.displayFontAssetId.nonoptional(),
   body_font_asset_id: TeamBrandSchema.shape.bodyFontAssetId.nonoptional(),
 })
-const BrandAssetRowSchema = z.object({
+// Supabase-Selects sind zur Laufzeit untypisiert. Dieses schmale Schema entspricht exakt den
+// Spalten der brand_assets-Abfragen (auch fetchBrandAssets in useBrandAssets.ts) und verhindert,
+// dass unvollstaendige Storage-Pfade in die UI gelangen.
+export const BrandAssetRowSchema = z.object({
   id: BrandAssetSchema.shape.id,
   department_id: BrandAssetSchema.shape.departmentId,
   team_id: BrandAssetSchema.shape.teamId,

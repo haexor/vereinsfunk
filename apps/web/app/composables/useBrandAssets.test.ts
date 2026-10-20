@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { BrandAssetRowSchema, SignedBrandAssetUrlSchema } from './useBrandAssets'
+import { BrandAssetRowSchema } from '../utils/brandPageRows'
+import { SignedBrandAssetUrlSchema } from './useBrandAssets'
 
 const ASSET_ID = '10000000-0000-4000-8000-000000000001'
 

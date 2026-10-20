@@ -2,7 +2,7 @@
 import { CreatePhotoLayoutPresetRequestSchema, PhotoLayoutPresetSchema, UpdatePhotoLayoutPresetRequestSchema, type PhotoLayoutPreset } from '@vereinsfunk/contracts'
 import { z } from 'zod'
 import { emptyPhotoLayoutPresetDraft, type PhotoLayoutPresetDraft } from '../utils/photoLayoutPresetDraft'
-import { selectablePhotoLayoutPresets } from '../utils/photoLayoutPresets'
+import { selectableAtLevel } from '../utils/scopeSelection'
 
 const api = useApiClient()
 const session = await useSession()
@@ -26,7 +26,7 @@ const canManageActiveLevel = computed(() => {
 
 // "Erben, bis die Ebene ein eigenes Preset anlegt" -- alle Presets, die von hier aus waehlbar
 // waeren, eigene UND vererbte von oben, dieselbe Richtung wie Bildstil-Presets.
-const visiblePresets = computed(() => selectablePhotoLayoutPresets(presets.value, activeLevel.value, activeDepartmentId.value ?? undefined, activeTeamId.value ?? undefined))
+const visiblePresets = computed(() => selectableAtLevel(presets.value, activeLevel.value, activeDepartmentId.value ?? undefined, activeTeamId.value ?? undefined))
 const ownPresets = computed(() => visiblePresets.value.filter((preset) => preset.departmentId === activeDepartmentId.value && preset.teamId === activeTeamId.value))
 const inheritedPresets = computed(() => visiblePresets.value.filter((preset) => !ownPresets.value.includes(preset)))
 

@@ -2,7 +2,7 @@
 import { LoaderCircle } from '@lucide/vue'
 import { PHOTO_LAYOUT_MIN_PHOTOS, PHOTO_LAYOUT_PHOTO_COUNTS, PhotoLayoutPresetSchema, RenderPhotoLayoutResponseSchema, type PhotoLayoutPreset } from '@vereinsfunk/contracts'
 import { z } from 'zod'
-import { selectablePhotoLayoutPresets } from '../utils/photoLayoutPresets'
+import { selectableAtLevel } from '../utils/scopeSelection'
 
 // Plan 047, PR 1: "Diese Fotos zu einem Bild zusammenfügen" -- eingebettet direkt nach
 // PhotoAttachmentList.vue in erstellen.vue. mediaAssetIds wird nach erfolgreicher Komposition auf
@@ -44,7 +44,7 @@ await ready
 
 // Nur die department-eigenen und vererbten Presets -- die Foto-Anhang-UI kennt keine
 // Mannschaftsebene, dieselbe Grenze wie die Render-Route selbst durchsetzt.
-const selectablePresets = computed(() => selectablePhotoLayoutPresets(presets.value, 'department', props.departmentId))
+const selectablePresets = computed(() => selectableAtLevel(presets.value, 'department', props.departmentId))
 
 function photoCountLabel(preset: PhotoLayoutPreset): string {
   const range = PHOTO_LAYOUT_PHOTO_COUNTS[preset.kind]
