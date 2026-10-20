@@ -2,23 +2,15 @@
 import {
   ArrowRight,
   Blocks,
-  CalendarDays,
   CheckCircle2,
   Clock3,
   FileText,
   Palette,
   Plus,
   ShieldCheck,
-  X,
 } from '@lucide/vue'
-import {
-  ContentSuggestionsResponseSchema,
-  OnboardingStateSchema,
-  type ContentSuggestion,
-  type OnboardingStep,
-} from '@vereinsfunk/contracts'
+import { OnboardingStateSchema, type OnboardingStep } from '@vereinsfunk/contracts'
 import type { PostStatus } from '@vereinsfunk/domain'
-import { ApiRequestError } from '../utils/apiClient'
 import { buildDashboardWeek, type DashboardWeekDay } from '../utils/dashboardWeek'
 
 const api = useApiClient()
@@ -89,8 +81,6 @@ const stats = ref<{ published: number; openApprovals: number; scheduledNext7Days
 const weekDays = ref<DashboardWeekDay[]>([])
 const recentPosts = ref<DashboardPost[]>([])
 const nextSteps = ref<{ key: string; label: string; href: string }[]>([])
-const suggestions = ref<ContentSuggestion[]>([])
-const suggestionsLoaded = ref(false)
 
 async function loadDashboard(isLatest: () => boolean) {
   if (import.meta.server) return
@@ -178,14 +168,7 @@ async function loadDashboard(isLatest: () => boolean) {
   loadingDashboard.value = false
 }
 
-function suggestionHref(item: ContentSuggestion) {
-  if (item.fixtureId) return `/erstellen?fixtureId=${item.fixtureId}`
-  if (item.clubEventId) return `/erstellen?clubEventId=${item.clubEventId}`
-  return '/erstellen'
-}
-
-function occursLabel(iso: string | undefined) {
-  if (!iso) return ''
+function shortDateLabel(iso: string) {
   return new Intl.DateTimeFormat('de-DE', {
     day: 'numeric',
     month: 'short',
@@ -193,70 +176,15 @@ function occursLabel(iso: string | undefined) {
   }).format(new Date(iso))
 }
 
-async function dismissSuggestion(item: ContentSuggestion) {
-  const endpoint =
-    item.kind === 'fixture_announcement'
-      ? `/v1/fixtures/${item.fixtureId}/dismiss-announcement`
-      : item.kind === 'fixture_result'
-        ? `/v1/fixtures/${item.fixtureId}/dismiss-result`
-        : item.kind === 'event_invitation'
-          ? `/v1/club-events/${item.clubEventId}/dismiss-invitation`
-          : null
-  if (!endpoint) return
-  try {
-    await api.request(endpoint, { method: 'POST' })
-    suggestions.value = suggestions.value.filter((suggestion) => suggestion !== item)
-  } catch (error) {
-    // Nur Code und Status: der urspruengliche FetchError traegt in options.headers das
-    // Bearer-Token der Sitzung.
-    console.error(
-      'Anlassvorschlag konnte nicht verworfen werden',
-      error instanceof ApiRequestError ? error.statusCode : undefined,
-    )
-  }
-}
-
-async function loadSuggestions(isLatest: () => boolean) {
-  if (import.meta.server) return
-  suggestions.value = []
-  suggestionsLoaded.value = false
-  const organizationId = activeOrganizationId.value
-  const departmentId = activeDepartmentId.value
-  if (
-    !organizationId ||
-    !departmentId ||
-    !socialMediaActive.value ||
-    !useCan('post.create', { organizationId, departmentId })
-  )
-    return
-  try {
-    const response = await api.request(
-      `/v1/departments/${departmentId}/content-suggestions`,
-      {},
-      ContentSuggestionsResponseSchema,
-    )
-    if (!isLatest()) return
-    suggestions.value = response.suggestions
-    suggestionsLoaded.value = true
-  } catch {
-    // Anlassvorschlaege sind ein Zusatz, kein Kern-Dashboard-Datum -- ein Ausfall bleibt hier
-    // unsichtbar statt das Dashboard mit einer Fehlermeldung zu stoeren.
-  }
-}
-
 // Die Sidebar wechselt Verein/Abteilung ohne Remount dieser Seite: nur der zuletzt gestartete Lauf
-// darf Kennzahlen, Listen und Vorschlaege schreiben, sonst stuenden Daten des vorigen Bereichs
-// unter dem neuen. socialMediaActive gehoert zum Schluessel: nach einem Vereinswechsel laedt
-// useScopeModules die Module neu, das Modul wird also womoeglich erst danach als aktiv erkannt.
-const dashboardScopeKey = () =>
-  `${activeOrganizationId.value}:${activeDepartmentId.value}:${socialMediaActive.value}`
-const { ready: dashboardReady } = useScopedLoad(dashboardScopeKey, (_key, isLatest) =>
-  loadDashboard(isLatest),
+// darf Kennzahlen und Listen schreiben, sonst stuenden Daten des vorigen Bereichs unter dem neuen.
+// socialMediaActive gehoert zum Schluessel: nach einem Vereinswechsel laedt useScopeModules die
+// Module neu, das Modul wird also womoeglich erst danach als aktiv erkannt.
+const { ready } = useScopedLoad(
+  () => `${activeOrganizationId.value}:${activeDepartmentId.value}:${socialMediaActive.value}`,
+  (_key, isLatest) => loadDashboard(isLatest),
 )
-const { ready: suggestionsReady } = useScopedLoad(dashboardScopeKey, (_key, isLatest) =>
-  loadSuggestions(isLatest),
-)
-await Promise.all([dashboardReady, suggestionsReady])
+await ready
 </script>
 
 <template>
@@ -363,7 +291,7 @@ await Promise.all([dashboardReady, suggestionsReady])
               <span class="font-semibold capitalize text-ink">{{
                 post.status.replaceAll('_', ' ')
               }}</span>
-              <span class="shrink-0 text-[#7b827d]">{{ occursLabel(post.created_at) }}</span>
+              <span class="shrink-0 text-[#7b827d]">{{ shortDateLabel(post.created_at) }}</span>
             </li>
           </ul>
           <div
@@ -409,39 +337,12 @@ await Promise.all([dashboardReady, suggestionsReady])
           <CheckCircle2 :size="22" class="mx-auto mb-2 text-forest" />
           <p class="text-xs font-semibold">Startklar. Alle Einrichtungsschritte sind erledigt.</p>
         </article>
-        <article v-if="suggestionsLoaded && suggestions.length > 0" class="card p-5">
-          <div class="mb-4 flex items-center justify-between">
-            <h2 class="font-display text-sm font-bold">Anlassvorschläge</h2>
-            <span class="grid h-8 w-8 place-items-center rounded-xl bg-sky-100 text-sky-700"
-              ><CalendarDays :size="15"
-            /></span>
-          </div>
-          <ul class="space-y-2">
-            <li
-              v-for="item in suggestions"
-              :key="`${item.kind}-${item.fixtureId ?? item.clubEventId ?? item.label}`"
-              class="flex items-center gap-2 rounded-xl border border-[#e6e7e0] p-3"
-            >
-              <NuxtLink :to="suggestionHref(item)" class="focus-ring min-w-0 flex-1">
-                <span class="block truncate text-xs font-semibold text-ink">{{ item.label }}</span>
-                <span v-if="item.occursAt" class="block text-[10px] text-[#9aa196]">{{
-                  occursLabel(item.occursAt)
-                }}</span>
-              </NuxtLink>
-              <button
-                v-if="item.fixtureId || item.clubEventId"
-                class="focus-ring rounded-lg p-1.5 text-[#9aa196] hover:text-red-600"
-                aria-label="Vorschlag verwerfen"
-                @click="dismissSuggestion(item)"
-              >
-                <X :size="14" />
-              </button>
-            </li>
-          </ul>
-        </article>
-        <article v-else-if="suggestionsLoaded" class="card p-5 text-center text-xs text-[#7b827d]">
-          Keine offenen Anlässe.
-        </article>
+        <ContentSuggestionList
+          v-if="socialMediaActive"
+          :organization-id="activeOrganizationId"
+          :department-id="activeDepartmentId"
+          :timezone="timezone"
+        />
       </aside>
     </section>
   </div>

@@ -18,11 +18,11 @@ describe('Dashboard', () => {
   })
 
   it('protokolliert beim Verwerfen eines Vorschlags nur den Statuscode, nie den FetchError', () => {
-    const page = readFileSync(join(PAGES_DIR, 'index.vue'), 'utf8')
+    const list = readFileSync(join(PAGES_DIR, '../components/ContentSuggestionList.vue'), 'utf8')
 
     // Der FetchError von ofetch enthaelt options.headers.authorization mit dem Bearer-JWT.
-    expect(page).not.toContain('console.error(error)')
-    expect(page).toContain("'Anlassvorschlag konnte nicht verworfen werden',\n      error instanceof ApiRequestError ? error.statusCode : undefined,")
+    expect(list).not.toContain('console.error(error)')
+    expect(list).toContain("'Anlassvorschlag konnte nicht verworfen werden',\n      error instanceof ApiRequestError ? error.statusCode : undefined,")
   })
 
   it('prueft die Onboarding-Antwort am Vertrag statt sie nur zu casten', () => {
@@ -45,12 +45,15 @@ describe('Dashboard', () => {
 
   it('laedt Kennzahlen und Vorschlaege bei einem Bereichswechsel neu und verwirft veraltete Laeufe', () => {
     const page = readFileSync(join(PAGES_DIR, 'index.vue'), 'utf8')
+    const list = readFileSync(join(PAGES_DIR, '../components/ContentSuggestionList.vue'), 'utf8')
 
     // Ohne NuxtPage-Key bleibt die Seite beim Wechsel in der Sidebar montiert; geladen wurde nur
     // einmal beim Setup, die Kennzahlen gehoerten danach zum vorigen Bereich.
-    expect(page).toContain('`${activeOrganizationId.value}:${activeDepartmentId.value}:${socialMediaActive.value}`')
-    expect(page).toContain('useScopedLoad(dashboardScopeKey, (_key, isLatest) =>\n  loadDashboard(isLatest),')
-    expect(page).toContain('useScopedLoad(dashboardScopeKey, (_key, isLatest) =>\n  loadSuggestions(isLatest),')
-    expect(page.match(/if \(!isLatest\(\)\) return/g)).toHaveLength(3)
+    expect(page).toContain('() => `${activeOrganizationId.value}:${activeDepartmentId.value}:${socialMediaActive.value}`,\n  (_key, isLatest) => loadDashboard(isLatest),')
+    expect(page.match(/if \(!isLatest\(\)\) return/g)).toHaveLength(2)
+    // Die Vorschlaege laden mit Verein und Abteilung neu und haengen am aktiven Modul.
+    expect(page).toContain('<ContentSuggestionList\n          v-if="socialMediaActive"')
+    expect(list).toContain('useScopedLoad(() => `${props.organizationId}:${props.departmentId}`')
+    expect(list).toContain('if (!isLatest()) return\n    suggestions.value = response.suggestions')
   })
 })
