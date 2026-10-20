@@ -15,7 +15,7 @@ import { z } from 'zod'
 import { mapChannelScopeRow, mapSocialConnectionRow } from '../apiMappers.js'
 import { byteaToBuffer, createSecretBoxFromEnvironment } from '../secretBox.js'
 import type { ApiRouteContext } from './context.js'
-import { channelOwnerScope, createAuditRecorder, isAnyMemberOfOrganization, isDepartmentOwnedChannelAllowed, resolveMembershipScope, SOCIAL_CONNECTION_COLUMNS, toChannelCandidates, toPermissionScope } from './shared.js'
+import { channelOwnerScope, createAuditRecorder, isAnyMemberOfOrganization, isDepartmentOwnedChannelAllowed, loadSocialConnectionResponse, resolveMembershipScope, SOCIAL_CONNECTION_COLUMNS, toChannelCandidates, toPermissionScope } from './shared.js'
 
 // Kanonisiert die Adresse vor dem Schreiben: new URL(...).toString() normalisiert Schema und Host
 // bereits auf Kleinschreibung und serialisiert einen leeren Pfad immer als "/" -- https://Example.org
@@ -101,14 +101,7 @@ export function registerChannelRoutes(app: FastifyInstance, context: ApiRouteCon
       organizationId: input.organizationId, action: 'channel.connected', entityType: 'social_connections', entityId: insert.data.id as string,
       metadata: { platform: 'website', ownerScope: input.ownerScope, websiteUrl },
     })
-    const scopesResult = await service.from('channel_scopes').select('id, scope, department_id, team_id, can_schedule').eq('social_connection_id', insert.data.id)
-    if (scopesResult.error) throw scopesResult.error
-    return reply.code(201).send(
-      SocialConnectionSchema.parse({
-        ...mapSocialConnectionRow(insert.data),
-        scopes: scopesResult.data.map((scopeRow) => mapChannelScopeRow(scopeRow, input.organizationId)),
-      }),
-    )
+    return reply.code(201).send(await loadSocialConnectionResponse(service, insert.data, input.organizationId))
   })
 
   app.get('/v1/organizations/:id/channels', async (request, reply) => {
@@ -186,14 +179,7 @@ export function registerChannelRoutes(app: FastifyInstance, context: ApiRouteCon
       // Nur die geaenderten Feldnamen, keine Werte -- purpose und displayName sind Freitext.
       metadata: { fields: Object.keys(input) },
     })
-    const scopesResult = await service.from('channel_scopes').select('id, scope, department_id, team_id, can_schedule').eq('social_connection_id', params.id)
-    if (scopesResult.error) throw scopesResult.error
-    return reply.code(200).send(
-      SocialConnectionSchema.parse({
-        ...mapSocialConnectionRow(update.data),
-        scopes: scopesResult.data.map((scopeRow) => mapChannelScopeRow(scopeRow, organizationId)),
-      }),
-    )
+    return reply.code(200).send(await loadSocialConnectionResponse(service, update.data, organizationId))
   })
 
   app.delete('/v1/channels/:id', async (request, reply) => {
@@ -247,14 +233,7 @@ export function registerChannelRoutes(app: FastifyInstance, context: ApiRouteCon
       entityId: params.id,
       metadata: { valid: verification.valid },
     })
-    const scopesResult = await service.from('channel_scopes').select('id, scope, department_id, team_id, can_schedule').eq('social_connection_id', params.id)
-    if (scopesResult.error) throw scopesResult.error
-    return reply.code(200).send(
-      SocialConnectionSchema.parse({
-        ...mapSocialConnectionRow(update.data),
-        scopes: scopesResult.data.map((scopeRow) => mapChannelScopeRow(scopeRow, organizationId)),
-      }),
-    )
+    return reply.code(200).send(await loadSocialConnectionResponse(service, update.data, organizationId))
   })
 
   app.post('/v1/channels/:id/scopes', async (request, reply) => {

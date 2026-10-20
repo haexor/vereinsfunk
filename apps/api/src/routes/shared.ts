@@ -2,12 +2,13 @@ import type { ConsentScope, GeneratedPost, OutputFormat, ScopeLevel, SocialPlatf
 import { canRemoveRole, hasPermission, type Permission, type Role } from '@vereinsfunk/authorization'
 import type { ApiEnvironment } from '@vereinsfunk/config'
 import { AnthropicStructuredContentGenerator, buildStructuredTextPrompt, ContentGenerationError, OpenAiCompatibleStructuredContentGenerator, type StructuredContentGenerator, type TextGroundedContentBrief } from '@vereinsfunk/content-engine'
-import { SocialPlatformSchema, TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS, TEXT_GENERATION_DEFAULT_TEMPERATURE, UuidSchema } from '@vereinsfunk/contracts'
+import { SocialConnectionSchema, SocialPlatformSchema, TEXT_GENERATION_DEFAULT_MAX_OUTPUT_TOKENS, TEXT_GENERATION_DEFAULT_TEMPERATURE, UuidSchema, type SocialConnection } from '@vereinsfunk/contracts'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { mergeEffectiveConfig, resolveAvailableChannels, resolveEffectiveConfig, type ChannelCandidate, type ConfigOverride, type ScopeLevelName, type TrustRecord } from '@vereinsfunk/domain'
 import type { FastifyRequest } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
+import { mapChannelScopeRow, mapSocialConnectionRow } from '../apiMappers.js'
 import { permissionScopeKey, type PermissionScope, type RoleProvider } from '../auth.js'
 import { byteaToBuffer, createSecretBoxFromEnvironment, EmbeddedProviderSecretSchema, unwrapEmbeddedSecret } from '../secretBox.js'
 import { notExpiredFilter } from '../supabase.js'
@@ -465,6 +466,14 @@ export const POLICY_MANAGE_PERMISSION: Record<ScopeLevel, Permission> = {
 // Spaltenliste einer social_connections-Zeile -- von Kanalverwaltung und OAuth-Auswahl geteilt.
 export const SOCIAL_CONNECTION_COLUMNS =
   'id, platform, external_account_id, display_name, status, token_expires_at, last_verified_at, owner_scope, owner_department_id, responsible_profile_id, purpose, confidential, archived_at, created_at, imprint_url, privacy_url, editorial_responsible_profile_id, editorial_responsible_note, website_url, max_characters'
+
+// Antwortform nach jedem Schreibzugriff auf einen Kanal: die frisch gelesene Zeile plus ihre
+// aktuellen Freigaben. Stand viermal wortgleich in channels.ts und channelOAuth.ts.
+export async function loadSocialConnectionResponse(service: SupabaseClient, row: Record<string, unknown>, organizationId: string): Promise<SocialConnection> {
+  const scopes = await service.from('channel_scopes').select('id, scope, department_id, team_id, can_schedule').eq('organization_id', organizationId).eq('social_connection_id', row.id as string)
+  if (scopes.error) throw scopes.error
+  return SocialConnectionSchema.parse({ ...mapSocialConnectionRow(row), scopes: scopes.data.map((scopeRow) => mapChannelScopeRow(scopeRow, organizationId)) })
+}
 
 // Massgeblich fuer jede Kanal-Berechtigung ist der Kanalbesitz: eine Verbindung im Besitz einer
 // Abteilung wird in deren Scope geprueft, eine vereinseigene auf Vereinsebene (Plan 012,

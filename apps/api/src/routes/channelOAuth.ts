@@ -1,12 +1,12 @@
-import { ChannelConnectStartRequestSchema, ChannelOwnerScopeSchema, OAuthPlatformSchema, OAuthPendingConnectionSchema, SelectOAuthAccountRequestSchema, SocialConnectionSchema, UuidSchema, type OAuthPlatform } from '@vereinsfunk/contracts'
+import { ChannelConnectStartRequestSchema, ChannelOwnerScopeSchema, OAuthPlatformSchema, OAuthPendingConnectionSchema, SelectOAuthAccountRequestSchema, UuidSchema, type OAuthPlatform } from '@vereinsfunk/contracts'
 import type { MetaPlatform } from '@vereinsfunk/publishing'
 import type { FastifyInstance } from 'fastify'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import { mapChannelScopeRow, mapSocialConnectionRow, oauthRedirectUri } from '../apiMappers.js'
+import { oauthRedirectUri } from '../apiMappers.js'
 import { ciphertextToBytea, createSecretBoxFromEnvironment } from '../secretBox.js'
 import type { ApiRouteContext } from './context.js'
-import { channelOwnerScope, createAuditRecorder, createExternalActionAuditRecorder, isDepartmentOwnedChannelAllowed, SOCIAL_CONNECTION_COLUMNS, toPermissionScope } from './shared.js'
+import { channelOwnerScope, createAuditRecorder, createExternalActionAuditRecorder, isDepartmentOwnedChannelAllowed, loadSocialConnectionResponse, SOCIAL_CONNECTION_COLUMNS, toPermissionScope } from './shared.js'
 
 // Paket 045: welcher OAuth-Adapter eine Plattform bedient. Instagram/Facebook teilen sich weiterhin
 // den Meta-Graph-API-Adapter (Paket 012); Twitter/LinkedIn haben je einen eigenen, strukturell
@@ -346,13 +346,6 @@ export function registerChannelOAuthRoutes(app: FastifyInstance, context: ApiRou
     const pendingDelete = await service.from('oauth_pending_connections').delete().eq('id', params.id)
     if (pendingDelete.error) request.log.error({ err: pendingDelete.error, correlationId: request.id }, 'oauth_pending_connections delete failed')
 
-    const scopesResult = await service.from('channel_scopes').select('id, scope, department_id, team_id, can_schedule').eq('social_connection_id', insert.data.id)
-    if (scopesResult.error) throw scopesResult.error
-    return reply.code(201).send(
-      SocialConnectionSchema.parse({
-        ...mapSocialConnectionRow(insert.data),
-        scopes: scopesResult.data.map((scopeRow) => mapChannelScopeRow(scopeRow, organizationId)),
-      }),
-    )
+    return reply.code(201).send(await loadSocialConnectionResponse(service, insert.data, organizationId))
   })
 }
