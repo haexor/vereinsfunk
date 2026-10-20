@@ -1,8 +1,9 @@
 import { z } from 'zod'
-import { CommunicationGoalSchema, SourceMaterialSchema, SystemStyleProfileSlugSchema } from './content.js'
+import { CommunicationGoalSchema, SourceMaterialSchema } from './content.js'
 import { ClubEventCategorySchema } from './clubSchedule.js'
 import { OAuthPlatformSchema, SocialPlatformSchema, UuidSchema } from './primitives.js'
 import { AssignableRoleSchema } from './structure.js'
+import { SystemStyleProfileSlugSchema } from './styleProfiles.js'
 
 // Der Agent kennt immer einen expliziten Verein. Abteilung und Mannschaft schraenken den
 // Arbeitsbereich weiter ein; eine Mannschaft ohne Abteilung waere kein pruefbarer Scope.

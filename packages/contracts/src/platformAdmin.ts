@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import { MaxCharactersSchema } from './content.js'
 import { CountryCodeSchema, SocialPlatformSchema, UuidSchema } from './primitives.js'
+import { MaxCharactersSchema } from './textGeneration.js'
 
 // Plattform-Administration (Paket 022): der SaaS-Betreiber, orthogonal zu allen
 // vereinsbezogenen Rollen oben. Jede Schreiboperation hier ist requirePlatformAdmin-gated.
