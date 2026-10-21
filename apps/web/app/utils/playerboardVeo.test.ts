@@ -1,6 +1,6 @@
 import type { PlayerboardVeoMatch } from '@vereinsfunk/contracts'
 import { describe, expect, it } from 'vitest'
-import { categoryLabel, formatStatValue, matchOutcome, ownTeamTotals, personIdLookup, playerSeasonRows, scoreLabel, seasonRecord, statLabel, teamStatsByCategory, veoSeasonMatches } from './playerboardVeo'
+import { categoryLabel, formatStatValue, matchOutcome, ownTeamTotals, personIdLookup, PLAYER_STAT_ORDER, playerSeasonRows, scoreLabel, seasonRecord, statLabel, teamStatsByCategory, veoSeasonMatches } from './playerboardVeo'
 
 const stat = (teamAssociation: 'own' | 'opponent', statType: string, value: number, category = 'attacking') => ({ teamAssociation, statType, category, value })
 
@@ -21,6 +21,12 @@ describe('playerboardVeo', () => {
     expect(statLabel('football_passes_completed_total')).toBe('Angekommene Pässe')
     expect(categoryLabel('distribution')).toBe('Verteilung')
     expect(categoryLabel('general')).toBe('Allgemein')
+  })
+
+  it('keeps all stored Veo player metrics visible to the table', () => {
+    expect(PLAYER_STAT_ORDER).toEqual(expect.arrayContaining([
+      'matches_total', 'football_assist_total', 'football_passes_completed_total', 'football_save_total',
+    ]))
   })
 
   it('counts wins, draws and losses only for matches with a final score', () => {

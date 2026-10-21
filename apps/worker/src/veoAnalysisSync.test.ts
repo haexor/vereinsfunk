@@ -96,6 +96,22 @@ describe('buildVeoAnalysis', () => {
     expect(analysis.status).toBe('complete')
   })
 
+  it('checks the report endpoint even when the processing flag says it is unavailable', async () => {
+    const { fetch, calls } = veoFetch({
+      'feature-processing-status.json': () => json({ analytics: 'completed', match_report: { available: false } }),
+    })
+    const analysis = await buildVeoAnalysis({ ...request, fetchTracks: false }, deps(fetch))
+    expect(analysis.report).not.toBeNull()
+    expect(calls.some((url) => url.pathname.endsWith('/match-report/'))).toBe(true)
+  })
+
+  it('keeps a shot view available when the match has no shots', async () => {
+    const { fetch } = veoFetch({ 'match-events.json': () => json({ events: [] }) })
+    const analysis = await buildVeoAnalysis({ ...request, fetchTracks: false }, deps(fetch))
+    expect(analysis.events).toEqual([])
+    expect(analysis.availability.shots).toEqual({ status: 'available' })
+  })
+
   it('stays pending without periods and asks for nothing that needs them', async () => {
     const { fetch, calls } = veoFetch({ 'periods.json': () => json(fixture('periods-missing.json')) })
     const analysis = await buildVeoAnalysis(request, deps(fetch))

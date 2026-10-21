@@ -102,7 +102,9 @@ export async function buildVeoAnalysis(request: VeoAnalysisRequest, deps: VeoAna
     }]
   })
   mark('events', rawEvents !== null)
-  mark('shots', events.some((event) => event.eventType === 'FootballShot' || event.eventType === 'FootballGoal'))
+  // Eine leere Schussliste ist bei einem tor- und schusslosen Spiel ein gültiges Ergebnis, keine
+  // fehlende Veo-Ansicht. Die Verfügbarkeit richtet sich deshalb nach dem erfolgreichen Abruf.
+  mark('shots', rawEvents !== null)
 
   const heatmaps = await fetchHeatmaps(request, periods, deps)
   mark('heatmaps', heatmaps.length > 0)
@@ -118,7 +120,10 @@ export async function buildVeoAnalysis(request: VeoAnalysisRequest, deps: VeoAna
   const passingNetwork = await fetchNetworks(accessToken, veoMatchId, periods, deps)
   mark('passingNetwork', passingNetwork.length > 0)
 
-  const report = processing?.matchReportAvailable ? await call(() => fetchMatchReport(accessToken, veoMatchId, deps.http)) : null
+  // Das Flag im Processing-Status ist nur ein UI-Hinweis und kann bei Veo veraltet sein. Der
+  // Report-Endpunkt liefert bei Nichtverfügbarkeit 404; deshalb ist er selbst die maßgebliche
+  // Quelle und wird unabhängig vom Flag abgefragt.
+  const report = await call(() => fetchMatchReport(accessToken, veoMatchId, deps.http))
   mark('report', report !== null)
 
   // tracks = null behaelt die gespeicherten Spuren; sie gelten dann weiter als vorhanden.

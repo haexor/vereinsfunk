@@ -166,6 +166,7 @@ const ERROR_TEXT: Readonly<Record<string, string>> = {
   upstream_error: 'Veo war nicht erreichbar',
   stale_run: 'Abgleich hing und wurde beendet',
   analysis_failed: 'Eine Spielanalyse konnte nicht gelesen werden',
+  analysis_not_written: 'Eine Spielanalyse konnte nicht gespeichert werden',
 }
 /** Kurzbeschreibung eines Laufs fuer den Verlauf. */
 function runSummary(run: PlayerboardVeoStatus['runs'][number]): string {
