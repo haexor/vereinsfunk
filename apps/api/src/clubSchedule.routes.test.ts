@@ -793,16 +793,28 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
 
   describe('GET /v1/departments/:id/content-suggestions', () => {
     // fixtures wird zweimal mit unterschiedlichen Spaltenlisten abgefragt (bevorstehend vs.
-    // gespielt), submissions zweimal mit unterschiedlicher Einzelspalte -- die select()-Feldliste
-    // selbst entscheidet hier, welcher Kandidatensatz zurueckkommt, statt die Aufrufreihenfolge
-    // anzunehmen.
+    // gespielt), submissions und composition_sessions je zweimal mit unterschiedlicher
+    // Bezugsspalte -- die select()-Feldliste selbst entscheidet hier, welcher Kandidatensatz
+    // zurueckkommt, statt die Aufrufreihenfolge anzunehmen.
+    type LinkedPost = { table: 'submissions' | 'composition_sessions'; fixtureId?: string; clubEventId?: string; createdAt?: string }
     function contentSuggestionsUserClient(input: {
       upcomingFixtures?: Record<string, unknown>[]
       playedFixtures?: Record<string, unknown>[]
       upcomingEvents?: Record<string, unknown>[]
       fixtureIdsWithSubmission?: string[]
       eventIdsWithSubmission?: string[]
+      linkedPosts?: LinkedPost[]
     }): SupabaseClient {
+      const linkedPosts: LinkedPost[] = [
+        ...(input.fixtureIdsWithSubmission ?? []).map((fixtureId) => ({ table: 'submissions' as const, fixtureId })),
+        ...(input.eventIdsWithSubmission ?? []).map((clubEventId) => ({ table: 'submissions' as const, clubEventId })),
+        ...(input.linkedPosts ?? []),
+      ]
+      const linkedRows = (table: LinkedPost['table'], fields: string) => linkedPosts
+        .filter((link) => link.table === table && (fields.includes('fixture_id') ? link.fixtureId : link.clubEventId))
+        .map((link) => fields.includes('fixture_id')
+          ? { fixture_id: link.fixtureId, created_at: link.createdAt ?? new Date().toISOString() }
+          : { club_event_id: link.clubEventId, created_at: link.createdAt ?? new Date().toISOString() })
       return {
         from: (table: string) => {
           if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
@@ -810,16 +822,8 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
             return { select: (fields: string) => chain({ data: (fields.includes('announcement_dismissed_at') ? input.upcomingFixtures : input.playedFixtures) ?? [], error: null }) }
           }
           if (table === 'club_events') return { select: () => chain({ data: input.upcomingEvents ?? [], error: null }) }
-          if (table === 'submissions') {
-            return {
-              select: (fields: string) =>
-                chain({
-                  data: fields.includes('fixture_id')
-                    ? (input.fixtureIdsWithSubmission ?? []).map((id) => ({ fixture_id: id }))
-                    : (input.eventIdsWithSubmission ?? []).map((id) => ({ club_event_id: id })),
-                  error: null,
-                }),
-            }
+          if (table === 'submissions' || table === 'composition_sessions') {
+            return { select: (fields: string) => chain({ data: linkedRows(table, fields), error: null }) }
           }
           throw new Error(`unexpected table in test fake: ${table}`)
         },
@@ -888,6 +892,39 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
       expect(response.json().suggestions).toEqual([
         { kind: 'fixture_result', departmentId: DEPARTMENT_ID, fixtureId: FIXTURE_ID, occursAt: past24h, label: 'Ergebnis gegen SV Gegner noch nicht erzählt' },
       ])
+    })
+
+    it('counts a post from the text workshop like a submission', async () => {
+      const in2Days = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString()
+      const in10Days = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString()
+      const client = contentSuggestionsUserClient({
+        upcomingFixtures: [{ id: FIXTURE_ID, opponent_name: 'SV Gegner', kickoff_at: in2Days, source_updated_at: null, announcement_dismissed_at: null }],
+        upcomingEvents: [{ id: CLUB_EVENT_ID, title: 'Sommerfest', starts_at: in10Days, source_updated_at: null, invitation_dismissed_at: null }],
+        linkedPosts: [{ table: 'composition_sessions', fixtureId: FIXTURE_ID }, { table: 'composition_sessions', clubEventId: CLUB_EVENT_ID }],
+      })
+      const app = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: { forUser: () => client, forService: () => noServiceAccess } })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'GET', url: `/v1/departments/${DEPARTMENT_ID}/content-suggestions`, headers: { authorization: `Bearer ${token}` } })
+      expect(response.json().suggestions).toEqual([])
+    })
+
+    // Vorher verdeckte die Ankuendigung eines Spiels auch den Vorschlag, sein Ergebnis zu erzaehlen.
+    it('still suggests the result when only the announcement was posted before kickoff', async () => {
+      const past24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+      const beforeKickoff = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString()
+      const afterKickoff = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+      const played = { id: FIXTURE_ID, opponent_name: 'SV Gegner', kickoff_at: past24h, home_score: 2, away_score: 1, source_updated_at: null, result_dismissed_at: null }
+      const token = await signAccessToken(USER_ID)
+
+      const announced = contentSuggestionsUserClient({ playedFixtures: [played], linkedPosts: [{ table: 'composition_sessions', fixtureId: FIXTURE_ID, createdAt: beforeKickoff }] })
+      const app1 = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: { forUser: () => announced, forService: () => noServiceAccess } })
+      const response1 = await app1.inject({ method: 'GET', url: `/v1/departments/${DEPARTMENT_ID}/content-suggestions`, headers: { authorization: `Bearer ${token}` } })
+      expect(response1.json().suggestions).toMatchObject([{ kind: 'fixture_result', fixtureId: FIXTURE_ID }])
+
+      const told = contentSuggestionsUserClient({ playedFixtures: [played], linkedPosts: [{ table: 'submissions', fixtureId: FIXTURE_ID, createdAt: beforeKickoff }, { table: 'composition_sessions', fixtureId: FIXTURE_ID, createdAt: afterKickoff }] })
+      const app2 = await startApp({ roleProvider: grantingRoleProvider, supabaseClients: { forUser: () => told, forService: () => noServiceAccess } })
+      const response2 = await app2.inject({ method: 'GET', url: `/v1/departments/${DEPARTMENT_ID}/content-suggestions`, headers: { authorization: `Bearer ${token}` } })
+      expect(response2.json().suggestions).toEqual([])
     })
 
     it('produces an event_invitation suggestion for an upcoming club event without a submission', async () => {

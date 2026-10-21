@@ -679,7 +679,7 @@ describe('GET /v1/text-workshop/sessions', () => {
     source_material: { facts: { title: 'Training' }, observations: [], quotes: [] },
     style_profile_id: null,
     style_profile_snapshot: { name: 'Klar erklärend', description: 'Sachlich.', styleRules: STYLE_RULES, avoidRules: [], doRules: [], slug: 'klar_erklaerend' },
-    target_platforms: ['instagram'], max_characters: 2200, temperature: 0.6, created_at: '2026-08-09T10:00:00+00:00',
+    target_platforms: ['instagram'], max_characters: 2200, temperature: 0.6, fixture_id: null, club_event_id: null, created_at: '2026-08-09T10:00:00+00:00',
   }
   const CANDIDATE_ROW = {
     id: '3c000000-0000-4000-8000-000000000002', status: 'accepted', generated_content: FAKE_GENERATED_POST,

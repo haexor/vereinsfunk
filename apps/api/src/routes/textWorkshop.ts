@@ -1,4 +1,4 @@
-import { CommunicationGoalSchema, CompositionSessionStatusSchema, CreateCompositionSessionSchema, CreateGenerationCommandSchema, GeneratedPostSchema, GenerationCandidateStatusSchema, MaxCharactersSchema, SaveTextWorkshopDraftSchema, SocialPlatformSchema, SourceMaterialSchema, StyleProfileSnapshotSchema, TEXT_GENERATION_DEFAULT_MAX_CHARACTERS, TextGenerationPlatformAvailabilitySchema, TextGenerationTemperatureSchema, TextWorkshopDraftRowSchema, UuidSchema } from '@vereinsfunk/contracts'
+import { CommunicationGoalSchema, CompositionSessionStatusSchema, ScheduleOccasionSchema, CreateCompositionSessionSchema, CreateGenerationCommandSchema, GeneratedPostSchema, GenerationCandidateStatusSchema, MaxCharactersSchema, SaveTextWorkshopDraftSchema, SocialPlatformSchema, SourceMaterialSchema, StyleProfileSnapshotSchema, TEXT_GENERATION_DEFAULT_MAX_CHARACTERS, TextGenerationPlatformAvailabilitySchema, TextGenerationTemperatureSchema, TextWorkshopDraftRowSchema, UuidSchema } from '@vereinsfunk/contracts'
 import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { FastifyInstance, FastifyReply } from 'fastify'
@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto'
 import { parseSupabaseData } from '../supabase.js'
 import { ensurePassThroughDerivative } from '../passThroughDerivative.js'
 import { saveTextWorkshopDraft } from '../services/textWorkshopDrafts.js'
+import { loadScheduleOccasion } from '../services/scheduleOccasion.js'
 import { createTextGenerationSession, resolveTextGenerationProviderConfigurationIds } from '../services/textGenerationSessions.js'
 import type { ApiRouteContext } from './context.js'
 import { createAuditRecorder } from './shared.js'
@@ -66,6 +67,19 @@ export function registerTextWorkshopRoutes(app: FastifyInstance, context: ApiRou
     )
     if (!result.ok) return reply.code(result.statusCode).send({ error: result.error, ...(result.platform ? { platform: result.platform } : {}), correlationId: request.id })
     return reply.code(202).send({ sessionId: result.sessionId, candidateIds: result.candidateIds, correlationId: request.id })
+  })
+
+  // Vorschau des Kalender-Anlasses fuer ?fixtureId=/?clubEventId=: dieselben Fakten, die
+  // POST /v1/text-workshop/sessions gleich selbst herleitet.
+  app.get('/v1/text-workshop/occasion', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const query = z.object({ organizationId: UuidSchema, departmentId: UuidSchema.optional(), fixtureId: UuidSchema.optional(), clubEventId: UuidSchema.optional() })
+      .refine((value) => Boolean(value.fixtureId) !== Boolean(value.clubEventId), { message: 'exactly one of fixtureId or clubEventId is required' })
+      .parse(request.query)
+    if (!(await requirePermission(request, reply, 'post.create', toPermissionScope(query.organizationId, query.departmentId ?? null)))) return
+    const occasion = await loadScheduleOccasion(supabaseClients.forUser(request.auth!.accessToken), { organizationId: query.organizationId, departmentId: query.departmentId ?? null }, query)
+    if (!occasion?.ok) return reply.code(404).send({ error: occasion?.error ?? 'not_found', correlationId: request.id })
+    return reply.send(ScheduleOccasionSchema.parse(occasion.occasion.view))
   })
 
   const TEXT_WORKSHOP_DRAFT_COLUMNS = 'id, organization_id, department_id, team_id, post_id, payload, created_at, updated_at'
@@ -175,13 +189,15 @@ export function registerTextWorkshopRoutes(app: FastifyInstance, context: ApiRou
     target_platforms: z.array(SocialPlatformSchema),
     max_characters: MaxCharactersSchema,
     temperature: TextGenerationTemperatureSchema,
+    fixture_id: UuidSchema.nullable(),
+    club_event_id: UuidSchema.nullable(),
     created_at: z.iso.datetime({ offset: true }),
   })
   // source_material/style_profile_id/style_profile_snapshot zusaetzlich zu den bisherigen Spalten:
   // beide Routen unten teilen sich diese Liste, damit erstellen.vue eine bestehende Sitzung
   // vollstaendig als Formular-Vorbefuellung lesen kann (Beitraege-Liste -> Textwerkstatt
   // wiedereroeffnen), nicht nur ihre Regler-Werte.
-  const COMPOSITION_SESSION_COLUMNS = 'id, organization_id, department_id, team_id, status, communication_goal, source_material, style_profile_id, style_profile_snapshot, target_platforms, max_characters, temperature, created_at'
+  const COMPOSITION_SESSION_COLUMNS = 'id, organization_id, department_id, team_id, status, communication_goal, source_material, style_profile_id, style_profile_snapshot, target_platforms, max_characters, temperature, fixture_id, club_event_id, created_at'
   async function respondWithCompositionSession(client: SupabaseClient, reply: FastifyReply, sessionRow: z.infer<typeof CompositionSessionRowSchema>) {
     // Paket 046: ein Klick auf Generieren/Ueberarbeiten kann mehrere Kandidaten gleichzeitig
     // anlegen (eine "Runde", gruppiert ueber round_input_hash). Erst die juengste Runde ermitteln,
