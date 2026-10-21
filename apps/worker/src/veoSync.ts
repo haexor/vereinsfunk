@@ -1,4 +1,4 @@
-import type { WorkflowPayload } from '@vereinsfunk/contracts'
+import type { PlayerboardVeoAnalysisWrite, WorkflowPayload } from '@vereinsfunk/contracts'
 import type { EmailSender } from '@vereinsfunk/mailer'
 import type { SecretBox } from '@vereinsfunk/secrets'
 import {
@@ -12,6 +12,7 @@ import {
   type VeoPlayerStats,
   type VeoTeamStat,
 } from '@vereinsfunk/veo-client'
+import { buildVeoAnalysis } from './veoAnalysisSync.js'
 
 // Paket 053, PR 2: Veo-Abgleich einer Mannschaft im Worker ('sync-integration-source').
 //
@@ -43,6 +44,17 @@ export interface VeoSyncSource {
   veoClubSlug: string
   veoTeamSlug: string
   secret: { ciphertext: Buffer; keyVersion: string } | null
+  // Spec 002: "Analyse neu laden" angefordert (playerboard_veo_links.analysis_refresh_requested_at).
+  analysisRefreshRequestedAt: string | null
+}
+
+// Spec 002: gespeicherter Analysestand eines schon abgeglichenen Veo-Spiels.
+export interface VeoAnalysisCandidate {
+  analysisStatus: 'none' | 'pending' | 'complete' | 'unavailable'
+  kickoffAt: string
+  // Zeitpunkt des letzten geschriebenen Pakets; null, solange keins geschrieben wurde.
+  fetchedAt: string | null
+  hasTracks: boolean
 }
 
 export interface VeoSyncFinish {
@@ -61,6 +73,11 @@ export interface VeoSyncRepository {
   finish(runId: string, outcome: VeoSyncFinish): Promise<{ teamId: string; notify: boolean } | null>
   /** `unresolved` zaehlt Trainer, deren Adresse nicht gelesen werden konnte -- sie fehlen in `emails`. */
   failureRecipients(teamId: string): Promise<{ emails: string[]; unresolved: number }>
+  /** Spec 002: Analysestand je Veo-Spiel-ID der Mannschaft. */
+  analysisCandidates(teamId: string): Promise<Map<string, VeoAnalysisCandidate>>
+  applyAnalysis(runId: string, veoMatchId: string, analysis: PlayerboardVeoAnalysisWrite): Promise<'written' | 'unknown_match'>
+  /** Leert die Anforderung "Analyse neu laden", sofern sie seit `requestedAt` nicht erneut gesetzt wurde. */
+  clearAnalysisRefresh(teamId: string, requestedAt: string): Promise<void>
 }
 
 export interface VeoSyncOptions {
@@ -72,6 +89,35 @@ export interface VeoSyncOptions {
   fetch: FetchLike
   webBaseUrl?: string | undefined
   log: (fields: Record<string, unknown>, message: string) => void
+  // Pause zwischen den Fensterabrufen der Positionsdaten; Tests setzen 0.
+  trackingPauseMs?: number
+  // Zeitbudget je Lauf fuer Analysepakete, siehe ANALYSIS_BUDGET_MS.
+  analysisBudgetMs?: number
+  now?: () => Date
+}
+
+// ponytail: Analysepakete nur, solange der Lauf juenger als dieses Budget ist. Hatchets
+// executionTimeout ist 10 min (workflows.ts), ein Spiel mit Positionsdaten braucht etwa 2-3 min;
+// der Rest folgt im naechsten Lauf, die neuesten Spiele zuerst (listMatches ist nach -created
+// sortiert). Ausbau: ein eigener Workflow je Spiel, wenn Mannschaften mit langer Historie dazukommen.
+const ANALYSIS_BUDGET_MS = 5 * 60_000
+
+// ponytail: Veo hat kein Aenderungsmerkmal (Testabruf 2026-10-21); Korrekturen in Veo kommen nur
+// innerhalb dieses Fensters nach dem Anstoss automatisch an, aeltere ueber "Analyse neu laden".
+// Ausbau: ein Aenderungsmerkmal, sobald Veo eines liefert.
+const ANALYSIS_REFRESH_DAYS = 14
+
+/**
+ * Braucht ein Spiel in diesem Lauf ein Analysepaket? (research.md R-03) Eine Anforderung "Analyse
+ * neu laden" gilt fuer jedes Spiel, dessen Paket aelter ist als die Anforderung -- so setzt ein
+ * Lauf, dem das Zeitbudget ausgeht, beim naechsten Mal fort, statt von vorn zu beginnen.
+ */
+export function needsAnalysis(candidate: VeoAnalysisCandidate | undefined, matchStart: string, now: Date, refreshRequestedAt: string | null): boolean {
+  if (!candidate) return true
+  if (refreshRequestedAt && (candidate.fetchedAt === null || Date.parse(candidate.fetchedAt) < Date.parse(refreshRequestedAt))) return true
+  if (candidate.analysisStatus === 'none' || candidate.analysisStatus === 'pending') return true
+  const kickoff = Date.parse(candidate.kickoffAt || matchStart)
+  return now.getTime() - kickoff <= ANALYSIS_REFRESH_DAYS * 24 * 60 * 60 * 1000
 }
 
 const RUN_ABORTING_CODES = new Set(['auth_expired', 'upstream_changed'])
@@ -137,9 +183,14 @@ export class VeoSyncExecutor {
 
     const outcome: VeoSyncFinish = { status: 'succeeded', errorClass: null, created: 0, updated: 0, skipped: 0, conflicts: 0 }
     const http = { fetch: this.options.fetch }
+    let analysisFailed = false
+    let analysisDeferred = 0
+    const startedAt = (this.options.now ?? (() => new Date()))().getTime()
     try {
       const { accessToken } = await exchangeSessionCookieForToken(cookie, http)
       const matches = await listMatches(accessToken, { veoClubSlug: source.veoClubSlug, veoTeamSlug: source.veoTeamSlug }, http)
+      const candidates = await repository.analysisCandidates(source.teamId)
+      const now = (this.options.now ?? (() => new Date()))()
       for (const match of matches) {
         // Ohne fertige Analyse und Endstand gibt es nichts zu zeigen (playerboard 003 FR-007).
         if (!match.hasAnalytics || !match.score) {
@@ -156,6 +207,12 @@ export class VeoSyncExecutor {
           else if (result === 'updated') outcome.updated += 1
           else if (result === 'conflict') outcome.conflicts += 1
           else outcome.skipped += 1
+          const candidate = candidates.get(match.veoMatchId)
+          if ((result === 'created' || result === 'updated') && needsAnalysis(candidate, match.start, now, source.analysisRefreshRequestedAt)) {
+            const elapsed = (this.options.now ?? (() => new Date()))().getTime() - startedAt
+            if (elapsed >= (this.options.analysisBudgetMs ?? ANALYSIS_BUDGET_MS)) analysisDeferred += 1
+            else if (!(await this.writeAnalysis(runId, accessToken, match, players, candidate, outcome))) analysisFailed = true
+          }
         } catch (error) {
           if (error instanceof VeoError && RUN_ABORTING_CODES.has(error.code)) throw error
           outcome.skipped += 1
@@ -169,7 +226,41 @@ export class VeoSyncExecutor {
       outcome.errorClass = error instanceof VeoError ? error.code : 'internal_error'
       this.options.log({ runId, errorClass: outcome.errorClass, status: errorStatus(error), errorName: error instanceof Error ? error.name : 'unknown' }, 'veo sync failed')
     }
+    if (analysisDeferred > 0) this.options.log({ runId, deferred: analysisDeferred }, 'veo analysis deferred to the next run')
+    // "Analyse neu laden" gilt erst als erledigt, wenn jedes Paket geschrieben und keins verschoben wurde.
+    if (source.analysisRefreshRequestedAt && outcome.status === 'succeeded' && !analysisFailed && analysisDeferred === 0) {
+      await repository.clearAnalysisRefresh(source.teamId, source.analysisRefreshRequestedAt)
+    }
     await this.finish(runId, source, outcome)
+  }
+
+  /**
+   * Spec 002: holt und schreibt das Analysepaket eines Spiels. Ein Fehler laesst nur das Paket weg
+   * (die Summenwerte sind schon geschrieben) und markiert den Lauf als fehlgeschlagen; ein
+   * abgelaufenes Cookie oder eine geaenderte Antwortform beenden den Lauf wie bisher.
+   */
+  private async writeAnalysis(
+    runId: string, accessToken: string, match: VeoMatch, players: VeoPlayerStats[], candidate: VeoAnalysisCandidate | undefined, outcome: VeoSyncFinish,
+  ): Promise<boolean> {
+    try {
+      const analysis = await buildVeoAnalysis(
+        { accessToken, veoMatchId: match.veoMatchId, veoTeamId: match.veoTeamId, fetchTracks: !candidate?.hasTracks, players },
+        {
+          retry: (attempt) => this.withRetry(runId, attempt),
+          pause: () => new Promise((resolve) => setTimeout(resolve, this.options.trackingPauseMs ?? 500)),
+          http: { fetch: this.options.fetch },
+        },
+      )
+      await this.options.repository.applyAnalysis(runId, match.veoMatchId, analysis)
+      this.options.log({ runId, status: analysis.status, events: analysis.events.length, heatmaps: analysis.heatmaps.length, tracks: analysis.tracks?.length ?? null }, 'veo analysis written')
+      return true
+    } catch (error) {
+      if (error instanceof VeoError && RUN_ABORTING_CODES.has(error.code)) throw error
+      outcome.status = 'failed'
+      outcome.errorClass ??= error instanceof VeoError ? error.code : 'analysis_failed'
+      this.options.log({ runId, errorClass: error instanceof VeoError ? error.code : 'analysis_failed', status: errorStatus(error), errorName: error instanceof Error ? error.name : 'unknown' }, 'veo analysis skipped')
+      return false
+    }
   }
 
   /**

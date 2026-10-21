@@ -395,7 +395,15 @@ export function createVisionProviderComparisonRepository(config: WorkerEnvironme
 
 const VeoApplyResultSchema: z.ZodType<VeoApplyResult> = z.enum(['created', 'updated', 'conflict', 'ignored'])
 const VeoRunRowSchema = z.object({ source_id: UuidSchema, status: z.string().min(1) })
-const VeoLinkRowSchema = z.object({ team_id: UuidSchema, veo_club_slug: z.string().min(1), veo_team_slug: z.string().min(1) })
+const VeoLinkRowSchema = z.object({ team_id: UuidSchema, veo_club_slug: z.string().min(1), veo_team_slug: z.string().min(1), analysis_refresh_requested_at: z.string().nullable() })
+// Spec 002: Analysestand je Veo-Spiel; tracking.status 'available' heisst, Positionsdaten liegen schon vor.
+const VeoAnalysisCandidateRowSchema = z.object({
+  veo_match_id: z.string().min(1),
+  analysis_status: z.enum(['none', 'pending', 'complete', 'unavailable']),
+  analysis_fetched_at: z.string().nullable(),
+  fixture: z.object({ kickoff_at: z.string() }),
+  analysis: z.object({ availability: z.record(z.string(), z.object({ status: z.string() }).loose()) }).nullable(),
+})
 const VeoTeamRowSchema = z.object({ name: z.string().min(1) })
 const VeoSecretRowSchema = z.object({ secret_ciphertext: z.string(), key_version: z.string().min(1) })
 
@@ -410,7 +418,7 @@ export function createVeoSyncRepository(config: WorkerEnvironment): VeoSyncRepos
       return row ? { sourceId: row.source_id, status: row.status } : null
     },
     async loadSource(sourceId) {
-      const link = await client.from('playerboard_veo_links').select('team_id, veo_club_slug, veo_team_slug').eq('integration_source_id', sourceId).maybeSingle()
+      const link = await client.from('playerboard_veo_links').select('team_id, veo_club_slug, veo_team_slug, analysis_refresh_requested_at').eq('integration_source_id', sourceId).maybeSingle()
       if (link.error) throw link.error
       if (!link.data) return null
       const linkRow = VeoLinkRowSchema.parse(link.data)
@@ -431,7 +439,35 @@ export function createVeoSyncRepository(config: WorkerEnvironment): VeoSyncRepos
         secret: ciphertext?.startsWith('\\x')
           ? { ciphertext: byteaToBuffer(ciphertext), keyVersion: secretRow!.key_version }
           : null,
+        analysisRefreshRequestedAt: linkRow.analysis_refresh_requested_at,
       }
+    },
+    async analysisCandidates(teamId) {
+      const { data, error } = await client.from('playerboard_veo_matches')
+        .select('veo_match_id, analysis_status, analysis_fetched_at, fixture:fixtures!inner(kickoff_at), analysis:playerboard_veo_match_analysis(availability)')
+        .eq('team_id', teamId)
+      if (error) throw error
+      const candidates = new Map<string, { analysisStatus: 'none' | 'pending' | 'complete' | 'unavailable'; kickoffAt: string; fetchedAt: string | null; hasTracks: boolean }>()
+      for (const row of VeoAnalysisCandidateRowSchema.array().parse(data ?? [])) {
+        candidates.set(row.veo_match_id, {
+          analysisStatus: row.analysis_status,
+          kickoffAt: row.fixture.kickoff_at,
+          fetchedAt: row.analysis_fetched_at,
+          hasTracks: row.analysis?.availability.tracking?.status === 'available',
+        })
+      }
+      return candidates
+    },
+    async applyAnalysis(runId, veoMatchId, analysis) {
+      const { data, error } = await client.rpc('playerboard_veo_apply_analysis', { p_run_id: runId, p_fixture_veo_match_id: veoMatchId, p_analysis: analysis })
+      if (error) throw error
+      return z.enum(['written', 'unknown_match']).parse(data)
+    },
+    async clearAnalysisRefresh(teamId, requestedAt) {
+      // Nur der Stand, den dieser Lauf gesehen hat: ein waehrenddessen neu angeforderter bleibt stehen.
+      const { error } = await client.from('playerboard_veo_links').update({ analysis_refresh_requested_at: null })
+        .eq('team_id', teamId).eq('analysis_refresh_requested_at', requestedAt)
+      if (error) throw error
     },
     async applyMatch(runId, match) {
       const { data, error } = await client.rpc('playerboard_veo_apply_match', { p_run_id: runId, p_match: match })

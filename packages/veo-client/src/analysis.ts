@@ -334,11 +334,14 @@ export async function fetchMomentum(accessToken: string, veoMatchId: string, opt
 }
 
 const PassingNetworkSchema = z.object({
+  directionOfPlay: z.enum(['leftToRight', 'rightToLeft']),
   nodes: z.array(z.object({ jerseyNumber: z.string(), averageTouchLocation: z.object({ x: z.number(), z: z.number() }), passesMade: z.number().int(), passesReceived: z.number().int() })),
   edges: z.array(z.object({ fromJersey: z.string(), toJersey: z.string(), completedPasses: z.number().int().nonnegative() })),
 })
 
 export interface VeoPassingNetwork {
+  // Spielrichtung der Durchschnittspositionen; rightToLeft muss gespiegelt werden.
+  directionOfPlay: 'leftToRight' | 'rightToLeft'
   nodes: { jerseyNumber: number; x: number; z: number; passesMade: number; passesReceived: number }[]
   edges: { fromJersey: number; toJersey: number; completedPasses: number }[]
 }
@@ -365,7 +368,7 @@ export async function fetchPassingNetwork(
     const toJersey = jerseyOf(edge.toJersey)
     return fromJersey === null || toJersey === null ? [] : [{ fromJersey, toJersey, completedPasses: edge.completedPasses }]
   })
-  return { nodes, edges }
+  return { directionOfPlay: network.directionOfPlay, nodes, edges }
 }
 
 // --- Positionsdaten -------------------------------------------------------------------------------
