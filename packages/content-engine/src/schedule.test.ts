@@ -156,6 +156,9 @@ describe('factsFromFixture', () => {
     if (result.ok) throw new Error('expected missing result')
     expect(result.missing).toContain('Gegner')
     expect(result.missing).toContain('Ort')
+    // Die Textwerkstatt belegt trotzdem vor, was die Quelle hergibt.
+    expect(Object.keys(result.facts)).toEqual(['date'])
+    expect(Object.keys(result.provenance)).toEqual(['date'])
   })
 
   it('omits the time of day when kickoffTimeConfirmed is false', () => {

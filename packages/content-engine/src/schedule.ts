@@ -1,13 +1,26 @@
 import type { ClubEvent, ContentPresetSlug, FactProvenance, Fixture, Team } from '@vereinsfunk/contracts'
 
+type ScheduleFacts = Record<string, string | number | boolean>
+
+// Auch ohne vollstaendigen Faktensatz traegt das Ergebnis die bekannten Fakten: die Textwerkstatt
+// belegt damit vor, was die Quelle hergibt, und nennt den Rest als fehlend. Ein Preset gibt es
+// dagegen nur bei vollstaendigen Fakten (POST /v1/submissions nutzt facts nur bei ok).
 export type FactsFromScheduleResult =
-  | { readonly ok: true; readonly presetSlug: ContentPresetSlug; readonly facts: Record<string, string | number | boolean>; readonly provenance: Record<string, FactProvenance> }
-  | { readonly ok: false; readonly missing: readonly string[] }
+  | { readonly ok: true; readonly presetSlug: ContentPresetSlug; readonly facts: ScheduleFacts; readonly provenance: Record<string, FactProvenance> }
+  | { readonly ok: false; readonly missing: readonly string[]; readonly facts: ScheduleFacts; readonly provenance: Record<string, FactProvenance> }
 
 // Ohne Uhrzeit, wenn die Quelle sie nicht bestaetigt hat -- eine praezise wirkende, aber
 // unbestaetigte Uhrzeit waere schlimmer als gar keine (plans/019, Abschnitt 3).
 function formatDate(iso: string, timezone: string, timeConfirmed: boolean): string {
   return new Intl.DateTimeFormat('de-DE', { timeZone: timezone, dateStyle: 'medium', timeStyle: timeConfirmed ? 'short' : undefined }).format(new Date(iso))
+}
+
+function knownFacts(candidates: Record<string, string | number | boolean | null>): ScheduleFacts {
+  return Object.fromEntries(Object.entries(candidates).filter((entry): entry is [string, string | number | boolean] => entry[1] !== null))
+}
+
+function provenanceFor(facts: ScheduleFacts, source: FactProvenance['source'], sourceId: string, capturedAt: string): Record<string, FactProvenance> {
+  return Object.fromEntries(Object.keys(facts).map((key) => [key, { source, sourceId, capturedAt }]))
 }
 
 export function factsFromFixture(fixture: Fixture, team: Team | null, timezone: string): FactsFromScheduleResult {
@@ -20,22 +33,27 @@ export function factsFromFixture(fixture: Fixture, team: Team | null, timezone: 
   if (fixture.opponentName === null) missing.push('Gegner')
   if (fixture.kickoffAt === null) missing.push('Zeit')
   if (fixture.venueName === null) missing.push('Ort')
-  if (target === 'match_result' && (fixture.homeScore === null || fixture.awayScore === null)) missing.push('Ergebnis')
-  if (missing.length > 0) return { ok: false, missing }
 
-  const ownName = fixture.ownTeamLabel ?? team?.name ?? 'Wir'
-  const homeTeamName = fixture.isHome ? ownName : fixture.opponentName!
-  const awayTeamName = fixture.isHome ? fixture.opponentName! : ownName
-  const date = formatDate(fixture.kickoffAt!, timezone, fixture.kickoffTimeConfirmed)
-
-  const facts: Record<string, string | number | boolean> = target === 'match_result'
-    ? { homeTeam: homeTeamName, awayTeam: awayTeamName, homeScore: fixture.homeScore!, awayScore: fixture.awayScore! }
-    : { opponent: fixture.opponentName!, date, location: fixture.venueName! }
-
-  const capturedAt = fixture.sourceUpdatedAt ?? fixture.updatedAt
-  const provenance: Record<string, FactProvenance> = {}
-  for (const key of Object.keys(facts)) provenance[key] = { source: 'fixture', sourceId: fixture.id, capturedAt }
-
+  // Ohne Heimrecht laesst sich ein Ergebnis keiner Seite zuordnen; dann bleiben nur die Fakten der
+  // Ankuendigung.
+  let facts: ScheduleFacts
+  if (target === 'match_result' && fixture.isHome !== null && fixture.opponentName !== null) {
+    const ownName = fixture.ownTeamLabel ?? team?.name ?? 'Wir'
+    facts = {
+      homeTeam: fixture.isHome ? ownName : fixture.opponentName,
+      awayTeam: fixture.isHome ? fixture.opponentName : ownName,
+      homeScore: fixture.homeScore!,
+      awayScore: fixture.awayScore!,
+    }
+  } else {
+    facts = knownFacts({
+      opponent: fixture.opponentName,
+      date: fixture.kickoffAt === null ? null : formatDate(fixture.kickoffAt, timezone, fixture.kickoffTimeConfirmed),
+      location: fixture.venueName,
+    })
+  }
+  const provenance = provenanceFor(facts, 'fixture', fixture.id, fixture.sourceUpdatedAt ?? fixture.updatedAt)
+  if (missing.length > 0) return { ok: false, missing, facts, provenance }
   return { ok: true, presetSlug: target, facts, provenance }
 }
 
@@ -44,14 +62,13 @@ export function factsFromClubEvent(event: ClubEvent, timezone: string): FactsFro
   if (!event.title) missing.push('Titel')
   if (!event.startsAt) missing.push('Datum')
   if (event.locationName === null) missing.push('Ort')
-  if (missing.length > 0) return { ok: false, missing }
 
-  const date = formatDate(event.startsAt, timezone, !event.allDay)
-  const facts: Record<string, string | number | boolean> = { title: event.title, date, location: event.locationName! }
-
-  const capturedAt = event.sourceUpdatedAt ?? event.updatedAt
-  const provenance: Record<string, FactProvenance> = {}
-  for (const key of Object.keys(facts)) provenance[key] = { source: 'club_event', sourceId: event.id, capturedAt }
-
+  const facts = knownFacts({
+    title: event.title || null,
+    date: event.startsAt ? formatDate(event.startsAt, timezone, !event.allDay) : null,
+    location: event.locationName,
+  })
+  const provenance = provenanceFor(facts, 'club_event', event.id, event.sourceUpdatedAt ?? event.updatedAt)
+  if (missing.length > 0) return { ok: false, missing, facts, provenance }
   return { ok: true, presetSlug: 'event', facts, provenance }
 }
