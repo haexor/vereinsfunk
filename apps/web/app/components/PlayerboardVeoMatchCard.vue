@@ -26,7 +26,8 @@ export interface VeoCardMatch {
   players: readonly VeoCardPlayer[]
 }
 
-const props = defineProps<{ match: VeoCardMatch; timezone: string; roster?: PlayerboardPlayer[] }>()
+// analysisLink (Spec 002): Ziel der Spielauswertung mit Schusskarte, Heatmap und Ereignissen.
+const props = defineProps<{ match: VeoCardMatch; timezone: string; roster?: PlayerboardPlayer[]; analysisLink?: string }>()
 const emit = defineEmits<{ assigned: [] }>()
 
 const { assign } = usePlayerboardVeo()
@@ -92,6 +93,11 @@ async function choose(jerseyNumber: number, select: HTMLSelectElement) {
         {{ scoreLabel(match) }}
       </p>
     </header>
+    <NuxtLink
+      v-if="analysisLink"
+      :to="analysisLink"
+      class="focus-ring mt-3 inline-flex min-h-11 items-center rounded-xl bg-forest px-4 text-sm font-semibold text-white"
+    >Spielauswertung öffnen</NuxtLink>
 
     <section v-if="categories.length" class="mt-5" aria-label="Mannschaftswerte">
       <div class="mb-1 grid grid-cols-[1fr_4rem_4rem] gap-2 text-[10px] font-bold uppercase tracking-[.08em] text-[#7b827d]">
