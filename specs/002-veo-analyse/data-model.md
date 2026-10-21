@@ -1,6 +1,6 @@
 # Data Model: Veo-Analyse im PlayerBoard
 
-Migration `supabase/migrations/2026102201_playerboard_veo_analysis.sql`. Nummer und Datum werden beim Anlegen an den dann neuesten Stand angepasst. Alle neuen Tabellen:
+Migration `supabase/migrations/2026102102_playerboard_veo_analysis.sql` (PR 1); die Lesefunktionen folgen mit den Story-PRs in eigenen Migrationen. Alle neuen Tabellen:
 - tragen `organization_id` und `team_id`,
 - hängen mit zusammengesetztem Fremdschlüssel `(organization_id, team_id, fixture_id)` an `playerboard_veo_matches` und werden mit dem Spiel gelöscht (`on delete cascade`),
 - haben `enable` und `force row level security`, sind für `anon` gesperrt und für `authenticated` nur lesbar,
@@ -16,7 +16,6 @@ Migration `supabase/migrations/2026102201_playerboard_veo_analysis.sql`. Nummer 
 | `veo_match_slug` | `text` null | 1–200 Zeichen. Wird für den Link ins Veo-Video gebraucht (R-11) und beim nächsten Analyseabruf gefüllt. |
 | `analysis_status` | `text` not null default `'none'` | Erlaubt sind `none`, `pending`, `complete`, `unavailable`. |
 | `analysis_fetched_at` | `timestamptz` null | Zeitpunkt des letzten erfolgreich geschriebenen Analysepakets. |
-| `analysis_refresh_requested_at` | `timestamptz` null | Wird durch „Analyse neu laden“ gesetzt. Der Abgleich holt dann alle Spiele der Mannschaft neu und leert das Feld (R-03). |
 
 Zustände von `analysis_status`:
 - **`none`**: Es wurde noch kein Analysepaket geholt.
@@ -28,6 +27,12 @@ Zustände von `analysis_status`:
 - `none` geht nach `pending`, `complete` oder `unavailable`.
 - `pending` geht nach `complete` oder `unavailable`.
 - `complete` bleibt `complete`. Ein neuer Abruf innerhalb von 14 Tagen oder auf Anforderung ersetzt den Stand.
+
+### `playerboard_veo_links` (Paket 053)
+
+| Spalte | Typ | Regel |
+|---|---|---|
+| `analysis_refresh_requested_at` | `timestamptz` null | Wird durch „Analyse neu laden“ gesetzt, gilt für die ganze Mannschaft. Der nächste Abgleich holt die Analyse aller Spiele neu und leert das Feld (R-03). |
 
 ### `playerboard_veo_player_stats` (Paket 053)
 
@@ -144,6 +149,7 @@ Filterregeln (FR-030):
 - Prüft, dass der Lauf `running` ist und das Spiel zur Quelle des Laufs gehört.
 - Ersetzt in einer Transaktion die Zeilen des Spiels in `playerboard_veo_match_analysis`, `playerboard_veo_events`, `playerboard_veo_heatmaps` und `playerboard_veo_tracks`.
 - Setzt `analysis_status`, `analysis_fetched_at` und `veo_match_slug`.
-- Rückgabe: `written`, `unchanged` oder `unknown_match`.
+- `tracks = null` lässt gespeicherte Positionsdaten stehen; sie werden einmal je Spiel geholt.
+- Rückgabe: `written` oder `unknown_match`.
 
 Die Eingabe wird vorher im Worker mit Zod geprüft. In SQL werden nur Wertebereiche und Pflichtfelder durch `check`-Constraints erzwungen.
