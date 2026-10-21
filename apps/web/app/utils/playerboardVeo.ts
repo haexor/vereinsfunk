@@ -49,17 +49,40 @@ const CATEGORY_LABELS: Readonly<Record<string, string>> = {
   distribution: 'Verteilung',
 }
 
-// Feste Reihenfolge der neun Spielerwerte (playerboard 004 research.md §3).
+// Feste Reihenfolge der Spielerwerte aus Veos Gruppen (Spec 002, research.md R-07). Die Tabelle
+// scrollt horizontal; kein Wert darf nur deshalb verschwinden, weil er später ergänzt wurde.
 export const PLAYER_STAT_ORDER = [
+  'matches_total',
+  'starts_total',
+  'captaincies_total',
+  'player_of_the_match_total',
+  'seconds_played_total',
   'distance_total_meters',
   'sprints_total',
   'top_speed_kmh',
   'average_speed_kmh',
   'high_intensity_runs_total',
-  'seconds_played_total',
   'football_shots_total',
   'football_goal_total',
+  'football_assist_total',
   'football_goal_involvement_total',
+  'football_attempts_total',
+  'football_dribble_total',
+  'football_passes_total',
+  'football_passes_completed_total',
+  'football_passes_unsuccessful_total',
+  'football_tackle_total',
+  'football_duel_total',
+  'football_interception_total',
+  'football_loose_total',
+  'football_possession_won_total',
+  'football_corner_total',
+  'football_free_kick_total',
+  'football_throw_in_total',
+  'football_foul_total',
+  'football_goal_kick_total',
+  'football_penalty_total',
+  'football_save_total',
 ] as const
 
 const UNIT_SUFFIX: Readonly<Record<string, string>> = {

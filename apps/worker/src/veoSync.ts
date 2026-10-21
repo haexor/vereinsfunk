@@ -251,7 +251,13 @@ export class VeoSyncExecutor {
           http: { fetch: this.options.fetch },
         },
       )
-      await this.options.repository.applyAnalysis(runId, match.veoMatchId, analysis)
+      const result = await this.options.repository.applyAnalysis(runId, match.veoMatchId, analysis)
+      if (result !== 'written') {
+        outcome.status = 'failed'
+        outcome.errorClass ??= 'analysis_not_written'
+        this.options.log({ runId, errorClass: 'analysis_not_written' }, 'veo analysis was not written')
+        return false
+      }
       this.options.log({ runId, status: analysis.status, events: analysis.events.length, heatmaps: analysis.heatmaps.length, tracks: analysis.tracks?.length ?? null }, 'veo analysis written')
       return true
     } catch (error) {

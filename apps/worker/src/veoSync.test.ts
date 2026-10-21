@@ -35,7 +35,7 @@ function match(id: string, overrides: Partial<VeoMatch> = {}): VeoMatch {
 }
 
 /** Datenbank-Fake: ein laufender Lauf, eine Verbindung mit versiegeltem Cookie, Aufzeichnung aller Schreibvorgaenge. */
-function fakeRepository(options: { runStatus?: string; notify?: boolean; refreshRequestedAt?: string; candidates?: Record<string, VeoAnalysisCandidate> } = {}) {
+function fakeRepository(options: { runStatus?: string; notify?: boolean; refreshRequestedAt?: string; candidates?: Record<string, VeoAnalysisCandidate>; analysisResult?: 'written' | 'unknown_match' } = {}) {
   const sealed = box.seal(COOKIE, `integration-source:${SOURCE_ID}`)
   const applied: VeoMatchWrite[] = []
   const finished: VeoSyncFinish[] = []
@@ -51,7 +51,7 @@ function fakeRepository(options: { runStatus?: string; notify?: boolean; refresh
     finish: async (_runId, outcome) => { finished.push(outcome); return { teamId: TEAM_ID, notify: options.notify ?? false } },
     failureRecipients: async () => ({ emails: ['coach@example.local'], unresolved: 0 }),
     analysisCandidates: async () => new Map(Object.entries(options.candidates ?? {})),
-    applyAnalysis: async (_runId, veoMatchId) => { analyses.push(veoMatchId); return 'written' },
+    applyAnalysis: async (_runId, veoMatchId) => { analyses.push(veoMatchId); return options.analysisResult ?? 'written' },
     clearAnalysisRefresh: async (_teamId, requestedAt) => { cleared.push(requestedAt) },
   }
   return { repository, applied, finished, analyses, cleared }
@@ -158,6 +158,16 @@ describe('VeoSyncExecutor', () => {
     expect(finished[0]).toMatchObject({ status: 'failed', errorClass: 'upstream_error', updated: 1 })
     expect(cleared).toEqual([])
     expect(logs).toContainEqual({ fields: { runId: RUN_ID, errorClass: 'upstream_error', status: 502, errorName: 'VeoError' }, message: 'veo analysis skipped' })
+  })
+
+  it('does not clear a refresh when the database did not write the analysis', async () => {
+    veo.listMatches.mockResolvedValue([match('a')])
+    const { repository, finished, cleared } = fakeRepository({ refreshRequestedAt: '2026-10-21T08:00:00.000Z', analysisResult: 'unknown_match' })
+    const { instance, logs } = executor(repository)
+    await instance.execute(payload)
+    expect(finished[0]).toMatchObject({ status: 'failed', errorClass: 'analysis_not_written' })
+    expect(cleared).toEqual([])
+    expect(logs).toContainEqual({ fields: { runId: RUN_ID, errorClass: 'analysis_not_written' }, message: 'veo analysis was not written' })
   })
 
   it('ends the run when the analysis meets a changed Veo response', async () => {
