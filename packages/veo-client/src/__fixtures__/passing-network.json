@@ -1,0 +1,522 @@
+{
+ "directionOfPlay": "leftToRight",
+ "nodes": [
+  {
+   "jerseyNumber": "1",
+   "averageTouchLocation": {
+    "x": 0.14821232181997862,
+    "z": 0.5292771534057521
+   },
+   "passesMade": 13,
+   "passesReceived": 4
+  },
+  {
+   "jerseyNumber": "2",
+   "averageTouchLocation": {
+    "x": 0.4840983501670162,
+    "z": 0.7817419054606682
+   },
+   "passesMade": 27,
+   "passesReceived": 13
+  },
+  {
+   "jerseyNumber": "3",
+   "averageTouchLocation": {
+    "x": 0.7159378198678277,
+    "z": 0.36377712060792805
+   },
+   "passesMade": 12,
+   "passesReceived": 23
+  },
+  {
+   "jerseyNumber": "5",
+   "averageTouchLocation": {
+    "x": 0.43514000908210165,
+    "z": 0.561550549255847
+   },
+   "passesMade": 19,
+   "passesReceived": 14
+  },
+  {
+   "jerseyNumber": "6",
+   "averageTouchLocation": {
+    "x": 0.6169268879951798,
+    "z": 0.6776582959419652
+   },
+   "passesMade": 7,
+   "passesReceived": 10
+  },
+  {
+   "jerseyNumber": "7",
+   "averageTouchLocation": {
+    "x": 0.727376576414863,
+    "z": 0.22884637488779971
+   },
+   "passesMade": 6,
+   "passesReceived": 12
+  },
+  {
+   "jerseyNumber": "8",
+   "averageTouchLocation": {
+    "x": 0.5151068091825994,
+    "z": 0.23188516236988624
+   },
+   "passesMade": 31,
+   "passesReceived": 20
+  },
+  {
+   "jerseyNumber": "9",
+   "averageTouchLocation": {
+    "x": 0.7691258262595897,
+    "z": 0.460134197606166
+   },
+   "passesMade": 19,
+   "passesReceived": 13
+  },
+  {
+   "jerseyNumber": "10",
+   "averageTouchLocation": {
+    "x": 0.5868930567856544,
+    "z": 0.2739158871431509
+   },
+   "passesMade": 11,
+   "passesReceived": 15
+  },
+  {
+   "jerseyNumber": "11",
+   "averageTouchLocation": {
+    "x": 0.5921231963923165,
+    "z": 0.17366035066608776
+   },
+   "passesMade": 4,
+   "passesReceived": 9
+  },
+  {
+   "jerseyNumber": "12",
+   "averageTouchLocation": {
+    "x": 0.9580500000000001,
+    "z": 0.51265
+   },
+   "passesMade": 0,
+   "passesReceived": 0
+  },
+  {
+   "jerseyNumber": "13",
+   "averageTouchLocation": {
+    "x": 0.6608116387706955,
+    "z": 0.5211917865354381
+   },
+   "passesMade": 7,
+   "passesReceived": 9
+  },
+  {
+   "jerseyNumber": "16",
+   "averageTouchLocation": {
+    "x": 0.7714029598056102,
+    "z": 0.538721850909622
+   },
+   "passesMade": 6,
+   "passesReceived": 13
+  },
+  {
+   "jerseyNumber": "17",
+   "averageTouchLocation": {
+    "x": 0.6675830199951552,
+    "z": 0.8067191013500612
+   },
+   "passesMade": 8,
+   "passesReceived": 9
+  },
+  {
+   "jerseyNumber": "18",
+   "averageTouchLocation": {
+    "x": 0.851703588289043,
+    "z": 0.6971822874126178
+   },
+   "passesMade": 3,
+   "passesReceived": 9
+  }
+ ],
+ "edges": [
+  {
+   "fromJersey": "1",
+   "toJersey": "2",
+   "completedPasses": 3
+  },
+  {
+   "fromJersey": "1",
+   "toJersey": "5",
+   "completedPasses": 2
+  },
+  {
+   "fromJersey": "1",
+   "toJersey": "8",
+   "completedPasses": 6
+  },
+  {
+   "fromJersey": "1",
+   "toJersey": "10",
+   "completedPasses": 1
+  },
+  {
+   "fromJersey": "1",
+   "toJersey": "11",
+   "completedPasses": 1
+  },
+  {
+   "fromJersey": "2",
+   "toJersey": "1",
+   "completedPasses": 2
+  },
+  {
+   "fromJersey": "2",
+   "toJersey": "5",
+   "completedPasses": 5
+  },
+  {
+   "fromJersey": "2",
+   "toJersey": "6",
+   "completedPasses": 3
+  },
+  {
+   "fromJersey": "2",
+   "toJersey": "9",
+   "completedPasses": 2
+  },
+  {
+   "fromJersey": "2",
+   "toJersey": "10",
+   "completedPasses": 3
+  },
+  {
+   "fromJersey": "2",
+   "toJersey": "13",
+   "completedPasses": 3
+  },
+  {
+   "fromJersey": "2",
+   "toJersey": "16",
+   "completedPasses": 3
+  },
+  {
+   "fromJersey": "2",
+   "toJersey": "17",
+   "completedPasses": 4
+  },
+  {
+   "fromJersey": "2",
+   "toJersey": "18",
+   "completedPasses": 2
+  },
+  {
+   "fromJersey": "3",
+   "toJersey": "1",
+   "completedPasses": 1
+  },
+  {
+   "fromJersey": "3",
+   "toJersey": "7",
+   "completedPasses": 1
+  },
+  {
+   "fromJersey": "3",
+   "toJersey": "9",
+   "completedPasses": 5
+  },
+  {
+   "fromJersey": "3",
+   "toJersey": "16",
+   "completedPasses": 3
+  },
+  {
+   "fromJersey": "3",
+   "toJersey": "18",
+   "completedPasses": 2
+  },
+  {
+   "fromJersey": "5",
+   "toJersey": "2",
+   "completedPasses": 2
+  },
+  {
+   "fromJersey": "5",
+   "toJersey": "3",
+   "completedPasses": 4
+  },
+  {
+   "fromJersey": "5",
+   "toJersey": "6",
+   "completedPasses": 2
+  },
+  {
+   "fromJersey": "5",
+   "toJersey": "7",
+   "completedPasses": 1
+  },
+  {
+   "fromJersey": "5",
+   "toJersey": "8",
+   "completedPasses": 3
+  },
+  {
+   "fromJersey": "5",
+   "toJersey": "9",
+   "completedPasses": 2
+  },
+  {
+   "fromJersey": "5",
+   "toJersey": "10",
+   "completedPasses": 2
+  },
+  {
+   "fromJersey": "5",
+   "toJersey": "11",
+   "completedPasses": 2
+  },
+  {
+   "fromJersey": "5",
+   "toJersey": "18",
+   "completedPasses": 1
+  },
+  {
+   "fromJersey": "6",
+   "toJersey": "2",
+   "completedPasses": 1
+  },
+  {
+   "fromJersey": "6",
+   "toJersey": "10",
+   "completedPasses": 2
+  },
+  {
+   "fromJersey": "6",
+   "toJersey": "11",
+   "completedPasses": 1
+  },
+  {
+   "fromJersey": "6",
+   "toJersey": "17",
+   "completedPasses": 3
+  },
+  {
+   "fromJersey": "7",
+   "toJersey": "3",
+   "completedPasses": 4
+  },
+  {
+   "fromJersey": "7",
+   "toJersey": "8",
+   "completedPasses": 2
+  },
+  {
+   "fromJersey": "8",
+   "toJersey": "1",
+   "completedPasses": 1
+  },
+  {
+   "fromJersey": "8",
+   "toJersey": "2",
+   "completedPasses": 2
+  },
+  {
+   "fromJersey": "8",
+   "toJersey": "3",
+   "completedPasses": 6
+  },
+  {
+   "fromJersey": "8",
+   "toJersey": "5",
+   "completedPasses": 4
+  },
+  {
+   "fromJersey": "8",
+   "toJersey": "6",
+   "completedPasses": 1
+  },
+  {
+   "fromJersey": "8",
+   "toJersey": "7",
+   "completedPasses": 7
+  },
+  {
+   "fromJersey": "8",
+   "toJersey": "9",
+   "completedPasses": 2
+  },
+  {
+   "fromJersey": "8",
+   "toJersey": "10",
+   "completedPasses": 3
+  },
+  {
+   "fromJersey": "8",
+   "toJersey": "11",
+   "completedPasses": 2
+  },
+  {
+   "fromJersey": "8",
+   "toJersey": "13",
+   "completedPasses": 1
+  },
+  {
+   "fromJersey": "8",
+   "toJersey": "16",
+   "completedPasses": 2
+  },
+  {
+   "fromJersey": "9",
+   "toJersey": "2",
+   "completedPasses": 1
+  },
+  {
+   "fromJersey": "9",
+   "toJersey": "3",
+   "completedPasses": 5
+  },
+  {
+   "fromJersey": "9",
+   "toJersey": "7",
+   "completedPasses": 2
+  },
+  {
+   "fromJersey": "9",
+   "toJersey": "8",
+   "completedPasses": 3
+  },
+  {
+   "fromJersey": "9",
+   "toJersey": "16",
+   "completedPasses": 5
+  },
+  {
+   "fromJersey": "9",
+   "toJersey": "18",
+   "completedPasses": 3
+  },
+  {
+   "fromJersey": "10",
+   "toJersey": "2",
+   "completedPasses": 1
+  },
+  {
+   "fromJersey": "10",
+   "toJersey": "5",
+   "completedPasses": 2
+  },
+  {
+   "fromJersey": "10",
+   "toJersey": "6",
+   "completedPasses": 1
+  },
+  {
+   "fromJersey": "10",
+   "toJersey": "8",
+   "completedPasses": 2
+  },
+  {
+   "fromJersey": "10",
+   "toJersey": "11",
+   "completedPasses": 1
+  },
+  {
+   "fromJersey": "10",
+   "toJersey": "13",
+   "completedPasses": 3
+  },
+  {
+   "fromJersey": "10",
+   "toJersey": "17",
+   "completedPasses": 1
+  },
+  {
+   "fromJersey": "11",
+   "toJersey": "8",
+   "completedPasses": 3
+  },
+  {
+   "fromJersey": "11",
+   "toJersey": "10",
+   "completedPasses": 1
+  },
+  {
+   "fromJersey": "13",
+   "toJersey": "2",
+   "completedPasses": 1
+  },
+  {
+   "fromJersey": "13",
+   "toJersey": "8",
+   "completedPasses": 1
+  },
+  {
+   "fromJersey": "13",
+   "toJersey": "10",
+   "completedPasses": 3
+  },
+  {
+   "fromJersey": "13",
+   "toJersey": "11",
+   "completedPasses": 1
+  },
+  {
+   "fromJersey": "13",
+   "toJersey": "17",
+   "completedPasses": 1
+  },
+  {
+   "fromJersey": "16",
+   "toJersey": "3",
+   "completedPasses": 2
+  },
+  {
+   "fromJersey": "16",
+   "toJersey": "7",
+   "completedPasses": 1
+  },
+  {
+   "fromJersey": "16",
+   "toJersey": "9",
+   "completedPasses": 2
+  },
+  {
+   "fromJersey": "16",
+   "toJersey": "18",
+   "completedPasses": 1
+  },
+  {
+   "fromJersey": "17",
+   "toJersey": "2",
+   "completedPasses": 1
+  },
+  {
+   "fromJersey": "17",
+   "toJersey": "5",
+   "completedPasses": 1
+  },
+  {
+   "fromJersey": "17",
+   "toJersey": "6",
+   "completedPasses": 3
+  },
+  {
+   "fromJersey": "17",
+   "toJersey": "11",
+   "completedPasses": 1
+  },
+  {
+   "fromJersey": "17",
+   "toJersey": "13",
+   "completedPasses": 2
+  },
+  {
+   "fromJersey": "18",
+   "toJersey": "2",
+   "completedPasses": 1
+  },
+  {
+   "fromJersey": "18",
+   "toJersey": "3",
+   "completedPasses": 2
+  }
+ ]
+}

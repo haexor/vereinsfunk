@@ -2,7 +2,11 @@ import { VeoError } from './errors.js'
 
 // Paket 053, PR 1: alle ausgehenden Aufrufe gehen nur an Veos eigene Hosts. Die URLs setzt nie ein
 // Nutzer, deshalb genuegt eine feste Allowlist statt packages/outbound-fetch.
-export const VEO_HOSTS: ReadonlySet<string> = new Set(['auth.veo.co', 'app.veo.co'])
+// Spec 002 (research.md R-12): RAS, Veos Dienst fuer Paesse, Ballbesitz und Schuesse, liegt auf
+// CloudFront. ponytail: fester Host aus window.VEO_SERVICE_URLS.RAS_URL der Veo-Seite; zieht Veo um,
+// endet der Abruf mit upstream_error -- Ausbau: RAS_URL beim Abgleich aus app.veo.co lesen.
+export const VEO_RAS_HOST = 'dt3kfuz4eo879.cloudfront.net'
+export const VEO_HOSTS: ReadonlySet<string> = new Set(['auth.veo.co', 'app.veo.co', VEO_RAS_HOST])
 
 export type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>
 

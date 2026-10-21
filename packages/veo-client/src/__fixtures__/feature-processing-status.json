@@ -1,0 +1,12 @@
+{
+ "followcam": "completed",
+ "interactive": "completed",
+ "ai_detection": "completed",
+ "analytics": "completed",
+ "player_spotlight": "completed",
+ "match_report": {
+  "available": true,
+  "team_assigned": true,
+  "sides_confirmed": false
+ }
+}
