@@ -796,6 +796,7 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
     // gespielt), submissions und composition_sessions je zweimal mit unterschiedlicher
     // Bezugsspalte -- die select()-Feldliste selbst entscheidet hier, welcher Kandidatensatz
     // zurueckkommt, statt die Aufrufreihenfolge anzunehmen.
+    // createdAt: bei submissions die Einreichung, bei composition_sessions der uebernommene Beitrag.
     type LinkedPost = { table: 'submissions' | 'composition_sessions'; fixtureId?: string; clubEventId?: string; createdAt?: string }
     function contentSuggestionsUserClient(input: {
       upcomingFixtures?: Record<string, unknown>[]
@@ -810,11 +811,14 @@ describe('Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen',
         ...(input.eventIdsWithSubmission ?? []).map((clubEventId) => ({ table: 'submissions' as const, clubEventId })),
         ...(input.linkedPosts ?? []),
       ]
+      // Sitzungen liefern den Zeitpunkt ihres Beitrags eingebettet (posts!inner(created_at)).
       const linkedRows = (table: LinkedPost['table'], fields: string) => linkedPosts
         .filter((link) => link.table === table && (fields.includes('fixture_id') ? link.fixtureId : link.clubEventId))
-        .map((link) => fields.includes('fixture_id')
-          ? { fixture_id: link.fixtureId, created_at: link.createdAt ?? new Date().toISOString() }
-          : { club_event_id: link.clubEventId, created_at: link.createdAt ?? new Date().toISOString() })
+        .map((link) => {
+          const createdAt = link.createdAt ?? new Date().toISOString()
+          const reference = fields.includes('fixture_id') ? { fixture_id: link.fixtureId } : { club_event_id: link.clubEventId }
+          return table === 'composition_sessions' ? { ...reference, posts: { created_at: createdAt } } : { ...reference, created_at: createdAt }
+        })
       return {
         from: (table: string) => {
           if (table === 'departments') return chain({ data: { organization_id: ORGANIZATION_ID }, error: null })
