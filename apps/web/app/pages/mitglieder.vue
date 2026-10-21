@@ -245,8 +245,13 @@ async function removeMembership(membershipId: string, scopeLevel: ScopeLevel) {
 // Aufklappbare Detailebene je Mitgliedschaft (Plan 023, "Umsetzung 2."): Rolle, Befristung und
 // Einladungsrecht statt eines separaten Rollen-Editors. canChangeRole/canRemove/canSetExpiry
 // kommen fertig aus der API -- die Oberflaeche leitet die Berechtigung nicht selbst her.
+// Bei einer Teammitgliedschaft darf ein Vereinsadmin aus demselben Editor auch eine zusaetzliche
+// Abteilungsrolle waehlen. Das ist kein Rollenwechsel der Teammitgliedschaft: die Abteilungsrolle
+// wird als eigene department_membership angelegt bzw. dort aktualisiert.
 const expandedMembershipId = ref<string | null>(null)
-const roleDraft = ref<AssignableRole | ''>('')
+type MembershipRoleOption = { value: string; role: AssignableRole; scope: ScopeLevel; label: string }
+
+const roleDraft = ref('')
 const expiryDraft = ref('')
 const roleChangeError = ref('')
 const roleChangeSubmitting = ref<string | null>(null)
@@ -258,26 +263,60 @@ function toggleExpanded(entry: MemberRoleEntry, userId: string) {
     return
   }
   expandedMembershipId.value = entry.membershipId
-  roleDraft.value = entry.role as AssignableRole
+  roleDraft.value = `${entry.scope}:${entry.role}`
   expiryDraft.value = entry.expiresAt ? localDateKey(new Date(entry.expiresAt), timezone.value) : ''
   roleChangeError.value = ''
   initTrustDraft(entry, userId)
 }
 
-function availableRolesFor(entry: MemberRoleEntry): AssignableRole[] {
-  const actorRoles = actorRolesFor(entry.scope, entry.scopeId)
-  return rolesForScopeLevel(entry.scope).filter((role) => canAssignRole(actorRoles, role))
+function roleOptionsFor(scope: ScopeLevel, scopeId: string): MembershipRoleOption[] {
+  const actorRoles = actorRolesFor(scope, scopeId)
+  return rolesForScopeLevel(scope)
+    .filter((role) => canAssignRole(actorRoles, role))
+    .map((role) => ({
+      value: `${scope}:${role}`,
+      role,
+      scope,
+      label: `${roleLabels[role] ?? role} · ${scopeName(scope, scopeId)}`,
+    }))
 }
 
-async function changeRole(entry: MemberRoleEntry) {
-  const nextRole = roleDraft.value
-  if (!nextRole || nextRole === entry.role) return
+function availableRolesFor(entry: MemberRoleEntry): MembershipRoleOption[] {
+  const options = roleOptionsFor(entry.scope, entry.scopeId)
+  if (entry.scope !== 'team') return options
+
+  const departmentId = departmentIdFor('team', entry.scopeId)
+  if (!departmentId) return options
+  return [...options, ...roleOptionsFor('department', departmentId)]
+}
+
+async function changeRole(entry: MemberRoleEntry, userId: string) {
+  const option = availableRolesFor(entry).find((candidate) => candidate.value === roleDraft.value)
+  if (!option || option.value === `${entry.scope}:${entry.role}`) return
   roleChangeSubmitting.value = entry.membershipId
   roleChangeError.value = ''
   try {
-    await api.request(`/v1/memberships/${entry.membershipId}`, {
-      method: 'PATCH', query: { scope: entry.scope }, body: { role: nextRole },
-    })
+    if (option.scope === entry.scope) {
+      await api.request(`/v1/memberships/${entry.membershipId}`, {
+        method: 'PATCH', query: { scope: entry.scope }, body: { role: option.role },
+      })
+    } else {
+      const departmentMembership = members.value
+        .find((member) => member.userId === userId)
+        ?.roles.find((membership) => membership.scope === option.scope && membership.scopeId === departmentIdFor('team', entry.scopeId))
+      if (departmentMembership) {
+        await api.request(`/v1/memberships/${departmentMembership.membershipId}`, {
+          method: 'PATCH', query: { scope: option.scope }, body: { role: option.role },
+        })
+      } else {
+        const departmentId = departmentIdFor('team', entry.scopeId)
+        if (!departmentId) return
+        await api.request('/v1/memberships', {
+          method: 'POST',
+          body: { scope: 'department', scopeId: departmentId, userId, role: option.role },
+        })
+      }
+    }
     expandedMembershipId.value = null
     await load()
   } catch {
