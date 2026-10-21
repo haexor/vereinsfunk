@@ -14,22 +14,23 @@ Grundlage für Story 1, 2 und 5. Response `PlayerboardVeoMatchAnalysisSchema`:
 
 ```ts
 {
-  fixtureId: uuid, kickoffAt: iso, opponentName: string | null, isHome: boolean,
+  fixtureId: uuid, kickoffAt: iso, opponentName: string | null, isHome: boolean | null,
   ownScore: int | null, opponentScore: int | null,
   veoUrl: url | null,                       // https://app.veo.co/matches/{slug}/
-  analyticsVersion: '1' | '1.1' | '2',
+  analyticsVersion: '1' | '1.1' | '2' | null,   // null, solange kein Analysepaket geholt wurde
   analysisStatus: 'none' | 'pending' | 'complete' | 'unavailable',
   periods: { number: int, startS: int, endS: int, ownSide: 'left' | 'right', confirmed: boolean }[],
   availability: Record<AnalysisPart, { status: 'available' | 'unavailable' | 'pending', reason?: AvailabilityReason }>,
   teamStats: { teamAssociation: 'own' | 'opponent', statType: string, category: string, value: number,
                periodValues: { period: int, value: number }[] }[],
   players: { jerseyNumber: int, playerId: uuid | null, personId: uuid | null, name: string | null,
-             position: string | null, matchedManually: boolean,
+             matchedManually: boolean,
              stats: { statType: string, category: string, value: number, periodValues: {...}[] }[] }[],
   events: { id: string, teamAssociation: 'own' | 'opponent', eventType: string, jerseyNumber: int | null,
             playerId: uuid | null,              // nur own
             periodNumber: int, periodTimeMs: int, videoTimeMs: int,
-            x: number | null, y: number | null, outcome: int | null, assistJerseyNumber: int | null }[],
+            x: number | null, y: number | null, endX: number | null, endY: number | null, // end* nur bei Pässen
+            outcome: int | null, receiverJerseyNumber: int | null, assistJerseyNumber: int | null }[],
   heatmaps: { jerseyNumber: int, periodNumber: int /* 0 = ganzes Spiel */, width: int, height: int,
               cells: base64, averageX: number | null, averageY: number | null }[],
   passPossession: PassPossession | null,
@@ -40,6 +41,8 @@ Grundlage für Story 1, 2 und 5. Response `PlayerboardVeoMatchAnalysisSchema`:
   hasTracking: boolean,
 }
 ```
+
+`players` hat zunächst keine Position: Veo liefert sie für dieses Konto nicht (`lineup/players/` antwortet mit `403`, research.md). Matrizen (`cells`) und Positionsdaten (`samples`) kommen als base64 in einer Zeile.
 
 `AvailabilityReason` hat die Werte `veo_processing`, `periods_missing`, `older_analytics_version`, `not_provided` und `no_jersey`. Daraus entstehen die Hinweistexte nach FR-066. Gegnerspieler erscheinen nur als `jerseyNumber` in `events`; `players` enthält nur die eigene Mannschaft (FR-064).
 
