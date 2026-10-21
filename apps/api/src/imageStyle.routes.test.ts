@@ -15,7 +15,6 @@ import {
 } from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
-import { ImageStyleFilterSchema } from '@vereinsfunk/contracts'
 
 const PRESET_ID = '47000000-0000-4000-8000-000000000001'
 const FRAME_ASSET_ID = '47000000-0000-4000-8000-000000000002'
@@ -250,8 +249,7 @@ describe('POST /v1/image-style-presets', () => {
   })
 })
 
-describe('POST /v1/image-style-presets/preview', () => {
-  const PREVIEW_URL = '/v1/image-style-presets/preview'
+describe('POST /v1/image-style-workshop/*', () => {
 
   async function tinyImage(): Promise<Buffer> {
     return sharp({
@@ -276,104 +274,6 @@ describe('POST /v1/image-style-presets/preview', () => {
         }) as unknown as SupabaseClient,
     }
   }
-
-  async function preview(
-    body: Record<string, unknown>,
-    options: { clients?: SupabaseClientFactory; imageEffects?: unknown; samplePhoto?: Buffer } = {},
-  ) {
-    const image = options.samplePhoto ?? (await tinyImage())
-    const app = await startApp({
-      roleProvider: organizationManagerRoleProvider,
-      supabaseClients: options.clients ?? noAssetClients(),
-      samplePhotoLoader: async () => image,
-      ...(options.imageEffects ? { imageEffects: options.imageEffects as never } : {}),
-    })
-    const token = await signAccessToken(USER_ID)
-    return app.inject({
-      method: 'POST',
-      url: PREVIEW_URL,
-      headers: { authorization: `Bearer ${token}` },
-      payload: { ...BASE_FIELDS, organizationId: ORGANIZATION_ID, ...body },
-    })
-  }
-
-  // Jeder andere Test hier injiziert samplePhotoLoader -- der Standardpfad aus buildApp wird also
-  // sonst nie ausgefuehrt, und eine umbenannte oder verschobene Datei fiele erst in Produktion als
-  // 500 auf. Diese Datei wurde im Review schon einmal umbenannt, das ist keine hypothetische Sorge.
-  // Deshalb hier bewusst OHNE Override: es laeuft der Loader, den buildApp selbst verdrahtet.
-  it('renders a preview through the default sample photo loader from buildApp', async () => {
-    const app = await startApp({
-      roleProvider: organizationManagerRoleProvider,
-      supabaseClients: noAssetClients(),
-    })
-    const token = await signAccessToken(USER_ID)
-    const response = await app.inject({
-      method: 'POST',
-      url: PREVIEW_URL,
-      headers: { authorization: `Bearer ${token}` },
-      payload: { ...BASE_FIELDS, organizationId: ORGANIZATION_ID },
-    })
-    expect(response.statusCode).toBe(200)
-    const decoded = await sharp(Buffer.from(response.json().imageBase64, 'base64')).metadata()
-    expect(decoded.format).toBe('webp')
-    // encodePreview verkleinert auf 1200 px, vergroessert aber nie (withoutEnlargement) -- die
-    // volle Breite belegt, dass wirklich das 1600 px breite Beispielfoto gelesen wurde.
-    expect(decoded.width).toBe(1200)
-  })
-
-  it('renders a preview for a plain, unstyled preset', async () => {
-    const response = await preview({})
-    expect(response.statusCode).toBe(200)
-    const json = response.json()
-    expect(json.filterProvider).toBe('sharp')
-    // Immer WebP, unabhaengig vom Quellformat: die Vorschau geht in ein Canvas, nicht in den
-    // 'rendered-media'-Bucket -- und ein volles PNG waere hier mehrere MB Base64 (encodePreview).
-    expect(json.contentType).toBe('image/webp')
-    const decoded = await sharp(Buffer.from(json.imageBase64, 'base64')).metadata()
-    expect(decoded.format).toBe('webp')
-  })
-
-  // encodePreview deckelt die Breite: das echte Beispielfoto ist 1600 px breit und kaeme mit Alpha
-  // (abgerundete Ecken, 'double'-Rahmen) als PNG mit mehreren MB Base64 zurueck -- je entprellter
-  // Aenderung, bei bis zu 30 Anfragen/Minute.
-  it('caps the preview width instead of returning the full-size render', async () => {
-    const wide = await sharp({
-      create: { width: 2000, height: 1000, channels: 3, background: { r: 10, g: 20, b: 30 } },
-    })
-      .png()
-      .toBuffer()
-    const response = await preview({}, { samplePhoto: wide })
-    expect(response.statusCode).toBe(200)
-    expect(response.json()).toMatchObject({ width: 1200, height: 600 })
-  })
-
-  it('renders a preview for a draft that has no name yet', async () => {
-    const withoutName: Record<string, unknown> = { ...BASE_FIELDS }
-    delete withoutName.name
-    const response = await preview(withoutName)
-    expect(response.statusCode).toBe(200)
-  })
-
-  it("rejects a G'MIC filter when no provider is configured", async () => {
-    const response = await preview({ filter: 'gmic_vintage' })
-    expect(response.statusCode).toBe(422)
-    expect(response.json()).toMatchObject({ error: 'gmic_not_enabled' })
-  })
-
-  it("renders a G'MIC filter through an injected provider", async () => {
-    const response = await preview(
-      { filter: 'gmic_vintage' },
-      {
-        imageEffects: {
-          id: 'fake-gmic',
-          supports: (effect: string): effect is 'gmic_vintage' => effect === 'gmic_vintage',
-          apply: async (_effect: string, buffer: Buffer) => buffer,
-        },
-      },
-    )
-    expect(response.statusCode).toBe(200)
-    expect(response.json().filterProvider).toBe('fake-gmic')
-  })
 
   it('renders an uploaded workshop crop through the injected G’MIC provider', async () => {
     const boundary = 'workshop-gmic-filter'
@@ -455,6 +355,39 @@ describe('POST /v1/image-style-presets/preview', () => {
     expect(response.json().unavailableFilters).toContain('gmic_poster')
     expect(applied).toBe(1)
     expect(renderSignal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('keeps healthy gallery previews when an individual G’MIC effect fails', async () => {
+    const boundary = 'workshop-gmic-filter-previews-failing'
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="organizationId"\r\n\r\n${ORGANIZATION_ID}\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="crop.png"\r\nContent-Type: image/png\r\n\r\n`),
+      await tinyImage(),
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ])
+    const app = await startApp({
+      roleProvider: organizationManagerRoleProvider,
+      supabaseClients: noAssetClients(),
+      imageEffects: {
+        id: 'failing-gmic',
+        supports: (effect: string): effect is 'gmic_vintage' => effect === 'gmic_vintage',
+        apply: async () => {
+          const { GmicImageEffectError } = await import('@vereinsfunk/media-processing')
+          throw new GmicImageEffectError('gmic_vintage', new Error('CLI failure'))
+        },
+      },
+    })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/image-style-workshop/filter-previews',
+      headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` },
+      payload: body,
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json().unavailableFilters).toContain('gmic_vintage')
+    expect(response.json().previews).toEqual(expect.arrayContaining([expect.objectContaining({ filter: 'original' })]))
   })
 
   // Echter Socket statt inject(): erst ein tatsaechlich geschlossener Client zeigt, ob der
@@ -569,159 +502,6 @@ describe('POST /v1/image-style-presets/preview', () => {
       expect(response.statusCode).toBe(400)
       expect(response.json()).toMatchObject({ error: 'unsupported_image_type' })
     }
-  })
-
-  it('renders the filter gallery on the server and explicitly marks unavailable G’MIC effects', async () => {
-    const app = await startApp({
-      roleProvider: organizationManagerRoleProvider,
-      supabaseClients: noAssetClients(),
-      samplePhotoLoader: tinyImage,
-    })
-    const token = await signAccessToken(USER_ID)
-    const response = await app.inject({
-      method: 'POST',
-      url: '/v1/image-style-presets/filter-previews',
-      headers: { authorization: `Bearer ${token}` },
-      payload: { organizationId: ORGANIZATION_ID },
-    })
-    expect(response.statusCode).toBe(200)
-    const unavailableFilters = ImageStyleFilterSchema.options.filter((filter) =>
-      filter.startsWith('gmic_'),
-    )
-    expect(response.json()).toMatchObject({ unavailableFilters })
-    expect(response.json().previews).toHaveLength(
-      ImageStyleFilterSchema.options.length - unavailableFilters.length,
-    )
-    expect(response.json().previews[0]).toMatchObject({
-      filter: 'original',
-      contentType: 'image/webp',
-      filterProvider: 'sharp',
-    })
-  })
-
-  it('keeps healthy gallery previews when an individual G’MIC effect fails', async () => {
-    const app = await startApp({
-      roleProvider: organizationManagerRoleProvider,
-      supabaseClients: noAssetClients(),
-      samplePhotoLoader: tinyImage,
-      imageEffects: {
-        id: 'failing-gmic',
-        supports: (effect: string): effect is 'gmic_vintage' => effect === 'gmic_vintage',
-        apply: async () => {
-          const { GmicImageEffectError } = await import('@vereinsfunk/media-processing')
-          throw new GmicImageEffectError('gmic_vintage', new Error('CLI failure'))
-        },
-      },
-    })
-    const token = await signAccessToken(USER_ID)
-    const response = await app.inject({
-      method: 'POST',
-      url: '/v1/image-style-presets/filter-previews',
-      headers: { authorization: `Bearer ${token}` },
-      payload: { organizationId: ORGANIZATION_ID },
-    })
-
-    expect(response.statusCode).toBe(200)
-    expect(response.json().unavailableFilters).toContain('gmic_vintage')
-    expect(response.json().previews).toEqual(
-      expect.arrayContaining([expect.objectContaining({ filter: 'original' })]),
-    )
-  })
-
-  it('rejects a frameBrandAssetId that is not a selectable, ready frame asset', async () => {
-    const response = await preview(
-      { frameType: 'custom', frameBrandAssetId: FRAME_ASSET_ID },
-      {
-        clients: {
-          forUser: () => userClient({ brand_assets: chain({ data: null, error: null }) }),
-          forService: () => ({}) as unknown as SupabaseClient,
-        },
-      },
-    )
-    expect(response.statusCode).toBe(400)
-    expect(response.json()).toMatchObject({ error: 'invalid_asset_reference' })
-  })
-
-  // loadSelectableBrandAsset (Nutzer-Client, oben) sieht die Zeile als bereit; downloadBrandAssetBuffer
-  // (Service-Client, unten) trifft sie kurz danach als nicht mehr bereit an -- ein echter, wenn auch
-  // seltener Race-Fall zwischen den beiden Abfragen, den beide Funktionen unveraendert schon abdecken.
-  it('maps a brand asset that stops being ready between both checks to 422', async () => {
-    const response = await preview(
-      { frameType: 'custom', frameBrandAssetId: FRAME_ASSET_ID },
-      {
-        clients: {
-          forUser: () =>
-            userClient({
-              brand_assets: chain({
-                data: {
-                  id: FRAME_ASSET_ID,
-                  kind: 'frame',
-                  department_id: null,
-                  team_id: null,
-                  status: 'ready',
-                },
-                error: null,
-              }),
-            }),
-          forService: () =>
-            ({
-              from: (table: string) => {
-                if (table === 'brand_assets') return chain({ data: null, error: null })
-                if (table === 'organization_brand_profiles')
-                  return chain({ data: null, error: null })
-                throw new Error(`unexpected table in service test fake: ${table}`)
-              },
-            }) as unknown as SupabaseClient,
-        },
-      },
-    )
-    expect(response.statusCode).toBe(422)
-    expect(response.json()).toMatchObject({ error: 'brand_asset_not_ready' })
-  })
-
-  it('rejects without brand.manage', async () => {
-    const image = await tinyImage()
-    const app = await startApp({
-      roleProvider: denyingRoleProvider,
-      supabaseClients: noAssetClients(),
-      samplePhotoLoader: async () => image,
-    })
-    const token = await signAccessToken(USER_ID)
-    const response = await app.inject({
-      method: 'POST',
-      url: PREVIEW_URL,
-      headers: { authorization: `Bearer ${token}` },
-      payload: { ...BASE_FIELDS, organizationId: ORGANIZATION_ID },
-    })
-    expect(response.statusCode).toBe(403)
-  })
-
-  it('rate-limits after too many preview requests from the same user', async () => {
-    const rateLimitedUserId = '47000000-2000-4000-8000-000000000099'
-    const app = await startApp({
-      roleProvider: organizationManagerRoleProvider,
-      supabaseClients: {
-        forUser: () => {
-          throw new Error('forUser should not be called once rate-limited')
-        },
-        forService: () => {
-          throw new Error('forService should not be called once rate-limited')
-        },
-      },
-      samplePhotoLoader: async () => Buffer.alloc(0),
-    })
-    const token = await signAccessToken(rateLimitedUserId)
-    let last: Awaited<ReturnType<typeof app.inject>> | undefined
-    for (let attempt = 0; attempt < 31; attempt++) {
-      last = await app.inject({
-        method: 'POST',
-        url: PREVIEW_URL,
-        headers: { authorization: `Bearer ${token}` },
-        payload: {},
-      })
-    }
-    expect(last?.statusCode).toBe(429)
-    expect(last?.json()).toMatchObject({ error: 'rate_limited' })
   })
 })
 

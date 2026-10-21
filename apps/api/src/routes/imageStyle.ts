@@ -1,10 +1,6 @@
 import {
   CreateImageStylePresetRequestSchema,
-  ImageStyleFilterPreviewsRequestSchema,
-  ImageStyleFilterPreviewsResponseSchema,
   ImageStylePresetSchema,
-  PreviewImageStylePresetRequestSchema,
-  PreviewImageStylePresetResponseSchema,
   UpdateImageStylePresetRequestSchema,
   UuidSchema,
 } from '@vereinsfunk/contracts'
@@ -15,7 +11,6 @@ import type { ApiRouteContext } from './context.js'
 import { LOGO_ASSET_KINDS, validateBrandAssetReferences } from '../services/brandAssetSelection.js'
 import { createAuditRecorder } from './shared.js'
 import { resolveDirectoryScope, scopeLevelOf, toPermissionScope } from '../services/scopeAuthorization.js'
-import { previewImageStyle, previewImageStyleFilters, renderRejection } from '../services/imageStyleRendering.js'
 
 const FRAME_ASSET_KINDS = new Set(['frame'])
 
@@ -34,7 +29,7 @@ function presetAssetReferences(input: {
 // Plan 045, PR 1: CRUD fuer Bildstil-Presets. Eigenes Modul statt in brand.ts (Modulgrenze wie
 // Plan 027) -- ein Preset ist kein brand_asset, sondern referenziert bis zu zwei davon.
 export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRouteContext): void {
-  const { requireAuth, requirePermission, supabaseClients, checkRateLimit } = context
+  const { requireAuth, requirePermission, supabaseClients } = context
   const recordAuditEvent = createAuditRecorder(supabaseClients)
 
   // Sichtbarkeit ist allein RLS' Sache (image_style_presets_select, dieselbe Abschottung wie
@@ -110,77 +105,6 @@ export function registerImageStyleRoutes(app: FastifyInstance, context: ApiRoute
       },
     })
     return reply.code(201).send(ImageStylePresetSchema.parse(mapImageStylePresetRow(insert.data)))
-  })
-
-  // Zustandslose WYSIWYG-Vorschau eines noch nicht gespeicherten Entwurfs (fabric.js-Editor auf
-  // /bildstil). Rendert gegen das feste Beispielfoto statt gegen ein echtes Beitragsfoto -- anders
-  // als style-render (routes/imageStyleRender.ts) gibt es hier keinen post_media-Kontext, und ein
-  // Aufruf pro debounced Aenderung darf keinen echten Beitrag mutieren. brand.manage statt post.edit: das
-  // Konfigurieren eines Presets ist eine Marken-, keine Beitragsaktion.
-  app.post('/v1/image-style-presets/preview', async (request, reply) => {
-    if (!(await requireAuth(request, reply))) return
-    // Hoeher als das 10/60s-Muster der LLM-gestuetzten Vorschauen (style-preview): interaktives
-    // Ziehen am Logo-Griff feuert debounced oefter als ein "Testen"-Button, und G'MIC deckelt seine
-    // eigenen Worst-Case-Kosten bereits ueber den 30s-execFile-Timeout (gmic.ts).
-    if (!checkRateLimit(`image-style-preview:${request.auth!.userId}`, 30, 60_000)) {
-      return reply.code(429).send({ error: 'rate_limited', correlationId: request.id })
-    }
-    const input = PreviewImageStylePresetRequestSchema.parse(request.body)
-    const client = supabaseClients.forUser(request.auth!.accessToken)
-    const resolvedScope = await resolveDirectoryScope(
-      client,
-      input.organizationId,
-      input.departmentId ?? null,
-      input.teamId ?? null,
-    )
-    if (resolvedScope === null)
-      return reply.code(404).send({ error: 'not_found', correlationId: request.id })
-    if (!(await requirePermission(request, reply, 'brand.manage', resolvedScope))) return
-
-    if (!(await validateBrandAssetReferences(client, input.organizationId, resolvedScope, presetAssetReferences(input))))
-      return reply.code(400).send({ error: 'invalid_asset_reference', correlationId: request.id })
-
-    // Kein Idempotency-Key/In-Flight-Dedupe wie bei den LLM-Vorschauen (previewStyleProfile,
-    // services/styleProfilePreview.ts): dort schuetzt es vor einem zweiten BEZAHLTEN Provider-Aufruf bei einem
-    // Client-Retry. Hier gibt es keinen externen Aufruf, ofetch wiederholt POSTs nicht, und der
-    // Client entprellt bereits samt Race-Guard (useImageStylePreviewRequest.ts) -- ein Cache haette
-    // ohne mitgeschickten Header nur zufaellige Schluessel und damit garantiert keinen Treffer,
-    // wuerde aber jedes gerenderte Bild 60 s im Speicher halten.
-    try {
-      const result = await previewImageStyle(supabaseClients.forService(), context, input, resolvedScope)
-      return reply.code(200).send(PreviewImageStylePresetResponseSchema.parse(result))
-    } catch (error) {
-      const rejection = renderRejection(error)
-      if (!rejection) throw error
-      return reply.code(rejection.status).send({ error: rejection.error, correlationId: request.id })
-    }
-  })
-
-  // Eine Galerieanfrage statt neun Browser-Requests: die API darf die kuratierten Effekte
-  // kontrolliert ausführen, der Browser erhält ausschließlich kleine, fertige Vorschauen.
-  app.post('/v1/image-style-presets/filter-previews', async (request, reply) => {
-    if (!(await requireAuth(request, reply))) return
-    if (!checkRateLimit(`image-style-filter-previews:${request.auth!.userId}`, 6, 60_000)) {
-      return reply.code(429).send({ error: 'rate_limited', correlationId: request.id })
-    }
-    const input = ImageStyleFilterPreviewsRequestSchema.parse(request.body)
-    const client = supabaseClients.forUser(request.auth!.accessToken)
-    const resolvedScope = await resolveDirectoryScope(
-      client,
-      input.organizationId,
-      input.departmentId ?? null,
-      input.teamId ?? null,
-    )
-    if (resolvedScope === null)
-      return reply.code(404).send({ error: 'not_found', correlationId: request.id })
-    if (!(await requirePermission(request, reply, 'brand.manage', resolvedScope))) return
-    const result = await previewImageStyleFilters(
-      supabaseClients.forService(),
-      context,
-      input,
-      resolvedScope,
-    )
-    return reply.code(200).send(ImageStyleFilterPreviewsResponseSchema.parse(result))
   })
 
   // Scope ist unveraendlich und wird aus der bestehenden Zeile hergeleitet, nicht aus dem Body

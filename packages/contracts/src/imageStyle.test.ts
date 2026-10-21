@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   CreateImageStylePresetRequestSchema,
-  PreviewImageStylePresetRequestSchema,
   UpdateImageStylePresetRequestSchema,
 } from './imageStyle.js'
 import { department, org, team } from './testFixtures.js'
@@ -232,31 +231,5 @@ describe('image style preset contracts (Plan 045, PR 1)', () => {
     expect(
       UpdateImageStylePresetRequestSchema.safeParse({ ...baseFields, isActive: false }).success,
     ).toBe(true)
-  })
-
-  it('preview accepts a draft without a name', () => {
-    const withoutName: Record<string, unknown> = { ...baseFields }
-    delete withoutName.name
-    expect(
-      PreviewImageStylePresetRequestSchema.safeParse({ ...withoutName, organizationId: org })
-        .success,
-    ).toBe(true)
-  })
-
-  it('preview still applies the same cross-field rules', () => {
-    expect(
-      PreviewImageStylePresetRequestSchema.safeParse({
-        ...baseFields,
-        organizationId: org,
-        frameType: 'parametric',
-      }).success,
-    ).toBe(false)
-    expect(
-      PreviewImageStylePresetRequestSchema.safeParse({
-        ...baseFields,
-        organizationId: org,
-        teamId: team,
-      }).success,
-    ).toBe(false)
   })
 })
