@@ -346,6 +346,11 @@ export function registerPlayerboardVeoRoutes(app: FastifyInstance, context: ApiR
     if (!(await requirePermission(request, reply, 'playerboard.manage', scope))) return
     const link = await loadLink(service, input.teamId)
     if (!link) return reply.code(404).send({ error: 'veo_not_linked', correlationId: request.id })
+    // Spec 002 "Analyse neu laden": vor dem Einreihen, damit der Lauf die Anforderung schon sieht.
+    if (input.refreshAnalysis) {
+      const refresh = await service.from('playerboard_veo_links').update({ analysis_refresh_requested_at: new Date().toISOString() }).eq('team_id', input.teamId)
+      if (refresh.error) throw refresh.error
+    }
 
     let queued: Awaited<ReturnType<typeof enqueueIntegrationSync>>
     try {

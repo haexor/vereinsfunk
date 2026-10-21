@@ -35,9 +35,13 @@ export function usePlayerboardVeo() {
     return api.request('/v1/playerboard/veo/link', { method: 'POST', body: { teamId, linkToken, veoClubSlug, veoTeamSlug } }, PlayerboardVeoStatusSchema)
   }
 
-  /** Startet einen Abgleich; ein neuer Schluessel je Klick, damit ein Doppelklick nur einen Lauf ergibt. */
-  function sync(teamId: string, idempotencyKey: string) {
-    return api.request('/v1/playerboard/veo/sync', { method: 'POST', body: { teamId }, headers: { 'idempotency-key': idempotencyKey } }, PlayerboardVeoSyncAcceptedSchema)
+  /**
+   * Startet einen Abgleich; ein neuer Schluessel je Klick, damit ein Doppelklick nur einen Lauf ergibt.
+   * refreshAnalysis (Spec 002) holt dabei die Spielanalyse aller Spiele neu.
+   */
+  function sync(teamId: string, idempotencyKey: string, refreshAnalysis = false) {
+    const body = refreshAnalysis ? { teamId, refreshAnalysis } : { teamId }
+    return api.request('/v1/playerboard/veo/sync', { method: 'POST', body, headers: { 'idempotency-key': idempotencyKey } }, PlayerboardVeoSyncAcceptedSchema)
   }
 
   /** Ordnet eine Rueckennummer eines Spiels einem Kader-Eintrag zu (null = offen lassen). */

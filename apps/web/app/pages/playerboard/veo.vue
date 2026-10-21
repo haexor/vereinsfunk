@@ -116,14 +116,14 @@ async function submitLink() {
 // --- Abgleich ----------------------------------------------------------------------------------
 const syncBusy = ref(false)
 
-/** Startet einen Abgleich und verfolgt ihn bis zum Ende. */
-async function startSync() {
+/** Startet einen Abgleich und verfolgt ihn bis zum Ende; refreshAnalysis holt die Spielanalysen aller Spiele neu. */
+async function startSync(refreshAnalysis = false) {
   if (!teamId.value) return
   syncBusy.value = true
   errorMessage.value = ''
   try {
-    await veo.sync(teamId.value, crypto.randomUUID())
-    notice.value = 'Abgleich gestartet.'
+    await veo.sync(teamId.value, crypto.randomUUID(), refreshAnalysis)
+    notice.value = refreshAnalysis ? 'Abgleich gestartet. Die Spielanalysen werden neu geladen.' : 'Abgleich gestartet.'
     await load()
     watchRun()
   } catch (error) {
@@ -165,6 +165,7 @@ const ERROR_TEXT: Readonly<Record<string, string>> = {
   upstream_changed: 'Veo hat seine Schnittstelle geändert',
   upstream_error: 'Veo war nicht erreichbar',
   stale_run: 'Abgleich hing und wurde beendet',
+  analysis_failed: 'Eine Spielanalyse konnte nicht gelesen werden',
 }
 /** Kurzbeschreibung eines Laufs fuer den Verlauf. */
 function runSummary(run: PlayerboardVeoStatus['runs'][number]): string {
@@ -201,11 +202,16 @@ const secondaryButtonClass = 'focus-ring inline-flex min-h-11 items-center gap-2
             <h2 id="veo-link-heading" class="flex items-center gap-2 font-display text-base font-bold text-ink"><Video :size="18" /> Verbunden</h2>
             <p class="mt-1 text-sm text-[#5b625d]">{{ status.veoTeamName }} <span class="text-[#7b827d]">· {{ status.veoClubName }}</span></p>
             <p class="mt-1 text-xs text-[#7b827d]">Neue Spiele kommen jeden Morgen automatisch.</p>
+            <p id="veo-refresh-analysis-hint" class="mt-1 text-xs text-[#7b827d]">„Analyse neu laden“ holt die Spielanalysen aller Spiele erneut von Veo, z. B. nach Korrekturen in Veo.</p>
           </div>
           <div class="flex flex-wrap gap-2">
-            <button type="button" :class="buttonClass" :disabled="syncBusy || running || status.needsReconnect" @click="startSync">
+            <button type="button" :class="buttonClass" :disabled="syncBusy || running || status.needsReconnect" @click="startSync()">
               <RefreshCw :size="14" :class="running ? 'animate-spin' : ''" /> {{ running ? 'Abgleich läuft …' : 'Jetzt abgleichen' }}
             </button>
+            <button
+              type="button" :class="secondaryButtonClass" :disabled="syncBusy || running || status.needsReconnect"
+              aria-describedby="veo-refresh-analysis-hint" @click="startSync(true)"
+            >Analyse neu laden</button>
             <button v-if="!reconnecting" type="button" :class="secondaryButtonClass" @click="reconnecting = true">Neu verbinden</button>
           </div>
         </div>

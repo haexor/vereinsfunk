@@ -147,14 +147,14 @@ Monorepo, das Arbeitsverzeichnis ist ein Worktree unter `.worktrees/`. Pfade sin
 ### „Analyse neu laden“
 
 - [X] T019 [P] `packages/contracts/src/playerboard.ts`: `PlayerboardVeoSyncRequestSchema` bekommt `refreshAnalysis: z.boolean().optional()` (bleibt `strict`).
-- [ ] T020 Test in `apps/api/src/playerboardVeo.routes.test.ts`, vor T021: `POST /v1/playerboard/veo/sync` mit `refreshAnalysis: true` setzt `analysis_refresh_requested_at`. Ohne das Recht für „Jetzt abgleichen“ gibt es `403`.
-- [ ] T021 `apps/api/src/routes/playerboard/veo.ts`: `refreshAnalysis` auswerten und `playerboard_veo_links.analysis_refresh_requested_at` setzen. Die Route prüft `playerboard.manage` schon selbst und arbeitet wie der übrige Sync mit dem Service-Client, eine eigene RPC ist deshalb nicht nötig.
-- [ ] T022 `apps/web/app/pages/playerboard/veo.vue` und `apps/web/app/composables/usePlayerboardVeo.ts`: Knopf „Analyse neu laden“ neben „Jetzt abgleichen“, mit Erklärung: „Holt die Spielanalysen aller Spiele erneut von Veo, z. B. nach Korrekturen in Veo.“
+- [X] T020 Test in `apps/api/src/playerboardVeo.routes.test.ts`, vor T021: `POST /v1/playerboard/veo/sync` mit `refreshAnalysis: true` setzt `analysis_refresh_requested_at`. Ohne das Recht für „Jetzt abgleichen“ gibt es `403`.
+- [X] T021 `apps/api/src/routes/playerboard/veo.ts`: `refreshAnalysis` auswerten und `playerboard_veo_links.analysis_refresh_requested_at` setzen. Die Route prüft `playerboard.manage` schon selbst und arbeitet wie der übrige Sync mit dem Service-Client, eine eigene RPC ist deshalb nicht nötig.
+- [X] T022 `apps/web/app/pages/playerboard/veo.vue` und `apps/web/app/composables/usePlayerboardVeo.ts`: Knopf „Analyse neu laden“ neben „Jetzt abgleichen“, mit Erklärung: „Holt die Spielanalysen aller Spiele erneut von Veo, z. B. nach Korrekturen in Veo.“
 
 ### Abschluss PR 1
 
-- [ ] T023 [P] `apps/web/app/utils/playerboardVeo.ts`: Bezeichnungen korrigieren. `football_loose_total` wird „Ballgewinne (loser Ball)“, `football_interception_total` wird „Abfangen“, `football_duel_total` wird „Zweikämpfe“. Die neuen Typen aus T008 bekommen deutsche Bezeichnungen. Tests in `apps/web/app/utils/playerboardVeo.test.ts` anpassen.
-- [ ] T024 Gesamtlauf: `pnpm lint`, `typecheck`, `test`, `build`, `db:test`. Danach lokal mit der C1 abgleichen und prüfen, dass für die Referenzspiele Analysezeilen existieren und `analysis_status = 'complete'` ist (per SQL-Zählung, ohne Inhalte auszugeben).
+- [X] T023 [P] `apps/web/app/utils/playerboardVeo.ts`: Bezeichnungen korrigieren. `football_loose_total` wird „Ballgewinne (loser Ball)“, `football_interception_total` wird „Abfangen“, `football_duel_total` wird „Zweikämpfe“. Die neuen Typen aus T008 bekommen deutsche Bezeichnungen. Tests in `apps/web/app/utils/playerboardVeo.test.ts` anpassen.
+- [X] T024 Gesamtlauf: `pnpm lint`, `typecheck`, `test`, `build`, `db:test`. Danach lokal mit der C1 abgleichen und prüfen, dass für die Referenzspiele Analysezeilen existieren und `analysis_status = 'complete'` ist (per SQL-Zählung, ohne Inhalte auszugeben).
 - [ ] T025 PR 1 öffnen: Conventional Commits, Rebase-Merge, Beschreibung mit Testabruf-Befund und Größe der Analysedaten je Spiel.
 
 **Checkpoint**: Der Abgleich speichert Analysepakete, ohne Ansichten. Story-Phasen können beginnen.
