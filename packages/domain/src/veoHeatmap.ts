@@ -89,7 +89,7 @@ export function blurGrid(grid: Float32Array, width: number, height: number, sigm
  * Werte unter 5 % des Hoechstwerts transparent mit 4 % Uebergang, auf die sichtbaren Werte normieren,
  * Gamma 0,8, bilinear abtasten, Farbe aus dem Verlauf, Deckkraft fade * g^0,1.
  */
-export function renderHeatmap(grid: Float32Array, width: number, height: number, outWidth: number, outHeight: number): Uint8ClampedArray {
+export function renderHeatmap(grid: Float32Array, width: number, height: number, outWidth: number, outHeight: number): Uint8ClampedArray<ArrayBuffer> {
   const pixels = new Uint8ClampedArray(outWidth * outHeight * 4)
   const blurred = blurGrid(grid, width, height)
   const max = blurred.reduce((top, value) => Math.max(top, value), 0)
