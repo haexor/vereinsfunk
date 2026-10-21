@@ -71,7 +71,7 @@ Geprüft gegen `.spaex/constitution.md` und `AGENTS.md`. `.specify/memory/consti
 | graphify vor neuen benannten Artefakten | ✅ Abfragen „chart component svg bar comparison“, „pitch football field svg heatmap“ und „season aggregation player stats sum average“ (Budget 800). Ergebnisse siehe unten. |
 | Tests getrennt vom Produktionscode | ✅ `*.test.ts`, `*.routes.test.ts`, pgTAP unter `supabase/tests`, Testdaten unter `__fixtures__` |
 | Dateien nicht deutlich über 500 Zeilen | ✅ `veo-client` bekommt `analysis.ts` statt `client.ts` zu vergrößern. Die Analyse-Routen bekommen `routes/playerboard/veoAnalysis.ts`, weil `veo.ts` schon 367 Zeilen hat. Die Domain-Logik wird in `veoPitch.ts` und `veoMetrics.ts` geteilt. |
-| Keine Spekulation, keine neue Abhängigkeit | ✅ Siehe Complexity Tracking. `playerboard_veo_tracks` wird nur angelegt, wenn der Testabruf Tracking belegt (R-05). |
+| Keine Spekulation, keine neue Abhängigkeit | ✅ Siehe Complexity Tracking. Positionsdaten sind für die C1 im Testabruf belegt (R-05). |
 | Wiederverwenden vor Neubauen (graphify-first) | ✅ Erweitert statt neu: `playerboard_veo_team_matches` mit Endpunkt, `PlayerboardVeoPlayerTable.vue`, `fetchPlayerStats`, `VeoSyncExecutor`, `POST /veo/sync`, Personenprofil. Bestehende Ableitungen aus `apps/web/app/utils/playerboardVeo.ts` ziehen nach `packages/domain` um. |
 | Keine Agent-Verweise in Artefakten und Commits (MUST NOT) | ✅ Commits ohne zusätzliche Trailer. Das Inventar ist neutral formuliert, lokale Pfade sind entfernt. |
 | Keine lokalen absoluten Pfade, keine Secrets im Repo | ✅ Testdaten werden anonymisiert: Namen, Avatare, Video-URLs und IDs werden ersetzt. Das Veo-Cookie bleibt in `integration_source_secrets`. |
@@ -199,6 +199,6 @@ Die PRs folgen der Constitution: Warnschwelle etwa 100 Zeilen, ab etwa 1000 Zeil
 | Abweichung | Warum nötig | Einfachere Alternative abgelehnt, weil |
 |---|---|---|
 | Fünf neue Tabellen statt einer JSON-Spalte | Ereignisse und Heatmaps müssen über die Rückennummer-Zuordnung je Spieler lesbar sein, auch über Spiele hinweg (FR-023, FR-042). Kleine, nur je Spiel gelesene Strukturen liegen gebündelt als JSON in `playerboard_veo_match_analysis`. | Ein JSON je Spiel würde Saisonabfragen über alle Ereignisse in den Browser oder in JSON-Pfade in SQL verlagern |
-| Positionsdaten speichern (`playerboard_veo_tracks`) | Heatmaps für frei wählbare Minutenabschnitte und die Mannschafts-Heatmap ohne Veos Bild (FR-012, FR-022, R-05) | Je Abschnitt bei Veo nachfragen braucht Live-Zugriff (FR-060). Wird nur gebaut, wenn der Testabruf Tracking belegt; sonst gilt der Fallback |
+| Positionsdaten speichern (`playerboard_veo_tracks`) | Heatmaps für frei wählbare Minutenabschnitte und die Mannschafts-Heatmap ohne Veos Bild (FR-012, FR-022, R-05) | Je Abschnitt bei Veo nachfragen braucht Live-Zugriff (FR-060). Positionsdaten werden einmal je Spiel geholt (etwa 138 Abrufe) und roh je Seite gespeichert |
 | Eigene Spielfeld- und Heatmap-Komponenten | Etwa 12 Grafiken teilen Spielfeld, Zonen und Koordinaten | Je Grafik ein eigenes Spielfeld würde Maße, Zonen und Spiegelung zwölfmal pflegen |
 | 14-Tage-Regel im Abgleich | Begrenzt die Last auf die inoffizielle API (R-03) | Jedes Mal alles holen wären über 500 Abrufe täglich; ein Änderungsmerkmal von Veo ist unbelegt |

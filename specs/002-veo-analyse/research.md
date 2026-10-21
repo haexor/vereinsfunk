@@ -2,7 +2,15 @@
 
 Stand 2026-10-21, gegen `main` `cc7b95c`. Grundlage ist das Inventar der Veo-Web-App in [veo-ui-inventory.md](veo-ui-inventory.md). Es wurde aus den öffentlich ausgelieferten Programmdateien von `app.veo.co` abgeleitet (498 Chunks, Sentry-Release `24036065…`). Die Dateien wurden nur gelesen, nie ausgeführt.
 
-Punkte mit **[Testabruf]** stützen sich bisher nur auf den Code der Veo-App. Sie werden mit dem lesenden Testabruf gegen das Veo-Konto der C1 belegt (Aufgabe 1 in `tasks.md`). Weicht das Ergebnis ab, wird dieser Abschnitt angepasst, bevor PR 1 gemergt wird.
+Punkte mit **[Testabruf]** stützten sich zuerst nur auf den Code der Veo-App. Am 2026-10-21 wurden sie mit einem lesenden Testabruf belegt (T002): drei Spiele der C-Junioren, dazu zwei Spiele der 1. Männer als Gegenprobe, alle mit Analyseversion 2. Die Befunde stehen jeweils unter **Belegt**.
+
+## Befund Testabruf (2026-10-21), Überblick
+
+- Alle Endpunkte aus R-01 antworten, sobald die Bodies stimmen.
+- **Freischaltfelder sind unzuverlässig.** `has_tracking_data` ist `false`, obwohl Positionsdaten kommen. `type` ist leer. `is_confirmed` der Halbzeiten ist `false`, obwohl Veo Analyse und Spielbericht liefert. Der Abgleich richtet sich deshalb nur nach den tatsächlichen Antworten und nach vorhandenen Halbzeiten, nicht nach diesen Feldern.
+- **Trainingsaufnahmen** erscheinen in der Spieleliste mit Analyse, aber ohne Halbzeiten. Daraus entsteht `pending` mit `periods_missing` (Grenzfall aus der Spec).
+- `lineup/players/` und `members/` antworten für dieses Konto mit `403`. Spieleridentität gibt es nur als `jersey_only`, die Zuordnung über Rückennummern bleibt wie in Paket 053.
+- `key-metrics/` antwortet für die C1 mit `204`. Es gelten also Veos Standardkennzahlen.
 
 ## R-01 Welche Veo-Endpunkte
 
@@ -27,7 +35,14 @@ Punkte mit **[Testabruf]** stützen sich bisher nur auf den Code der Veo-App. Si
 
 **Alternatives considered**: `player-event-maps` je `map_kind` liefert nur die eigene Mannschaft und braucht sieben Aufrufe je Spiel. Er dient im Testabruf als Gegenprobe für die Koordinaten. Die ungenutzten MES-Methoden wurden verworfen (siehe oben).
 
-**[Testabruf]**: ob `match-events` Pässe enthält (Schalter `player-passes-events-panel`); Wertebereich und Ursprung von `x`/`z`; Schlüssel von `byPeriod`.
+**Belegt**:
+- **`match-events`** liefert etwa 1.140 Ereignisse je Spiel, rund 1 MB.
+  - Typen: `pass`, `possession`, `FootballOutOfPlay`, `tackle`, `tackle_target`, `FootballShot`, `FootballKickOff`, `interception`, `FootballGoal`, `FootballGoalKick`, `FootballThrowIn`, `duel`, `FootballCornerKick`, `FootballFoul`, `dribble`, `FootballFreeKick`, `dribble_target`, `loose`, `foul_target`, `save`, `FootballPenaltyKick`.
+  - Felder: `id`, `eventType`, `team` (`Own`/`Opponent`), `playerJersey`, `periodId` (1, 2), `periodTimeMs`, `videoTimeMs`, `x`, `z`, `outcome` (1/0/`null`), `attributes`.
+  - Pässe tragen als Attribute `receiver_x`, `receiver_z`, `receiver_jersey`, `distance` und `degree`. Daraus lassen sich Passrichtung und Passkarte ohne Spielbericht ableiten.
+  - Gespeichert werden alle Typen außer `possession` und `*_target`. Die beiden sind Gegenstücke ohne eigene Anzeige in Veo.
+- **Passnetz** verlangt `periods: [{ periodId: <Nummer>, ownSide }]` mit der Halbzeitnummer, nicht der ID. Ohne Halbzeiten kommt `400 periods must not be empty`.
+- **`v2GenerateMatchPlayerHeatmap(s)` und `speed-zone-distribution`** liefern mit Veos eigener Body-Form `422`. Das bestätigt, dass sie nicht genutzt werden.
 
 ## R-02 Spiegeln statt live abfragen
 
@@ -50,7 +65,7 @@ Die heutigen Summenwerte bleiben bei jedem Lauf für alle Spiele, wie in Paket 0
 **Rationale**: Je Spiel kommen etwa 12 bis 14 Abrufe dazu, Tracking nicht mitgezählt. Bei 40 Spielen und täglichem Lauf wären das sonst über 500 Abrufe täglich gegen eine inoffizielle API. Korrekturen in Veo passieren erfahrungsgemäß in den Tagen nach dem Spiel.
 
 **Alternatives considered**:
-- Ein Änderungsmerkmal aus Veo auswerten: Unbelegt, ob Veo Halbzeit- oder Ereignisänderungen in einem Zeitstempel ausweist **[Testabruf]**. Gibt es einen, ersetzt er die 14-Tage-Regel.
+- Ein Änderungsmerkmal aus Veo auswerten. **Belegt**: Veo hat keins. `modifiedAt` war bei allen 1.140 Ereignissen `null`, `user_modified` der Halbzeiten ebenfalls. Die 14-Tage-Regel bleibt.
 - Immer alles holen: abgelehnt, siehe oben.
 
 Im Code bekommt das einen `ponytail:`-Kommentar: Obergrenze sind 14 Tage, der Weg zur Verbesserung ist ein Änderungsmerkmal.
@@ -82,12 +97,25 @@ Für Einzelabrufe gilt dieselbe Wiederholungsregel wie bisher (ein zweiter Versu
 - Je Minute eine Veo-Matrix holen und addieren: 90 Abrufe je Spieler und Spiel. Außerdem sind die Matrizen je Abruf normiert und deshalb nicht summierbar.
 - Das Mannschaftsbild je Halbzeit speichern: privates Medium ohne Zeitabschnitt, deckt FR-012 nicht.
 
-**[Testabruf]**:
-- Ist `player-tracking` mit dem Abo der C1 verfügbar, und mit welcher Abtastrate?
-- Zeilenrichtung der Matrix, und gilt `direction_of_play` je Abruf?
-- Sind Matrixwerte je Spieler normiert?
+**Belegt**:
+- **`player-tracking` ist für die C1 verfügbar.**
+  - Ein Abruf liefert ein 30-s-Fenster mit 75 Bildern (alle 0,4 s, 2,5 Hz).
+  - Je Bild gibt es 20–26 Objekte als `[spurId, kategorie, x, y, rückennummer, distanz, tempo, zone]`. Die Kategorien sind 0 Torwart links, 1 Feldspieler links, 2 Torwart rechts, 3 Feldspieler rechts, 4 Schiedsrichter, 6 Ball.
+  - Fehlende Werte sind `-1`. `x` und `y` liegen in 0–1.
+  - Ein Spiel mit rund 69 Minuten Spielzeit braucht etwa 138 Abrufe und rund 7 MB.
+- **Folge für den Abgleich:**
+  - Positionsdaten werden **einmal je Spiel** geholt, nicht im 14-Tage-Fenster wiederholt.
+  - Sie werden **roh je Spielfeldseite** gespeichert (Kategorie links/rechts), verdichtet auf 1 Hz.
+  - Die Zuordnung zu eigener Mannschaft und Gegner geschieht erst beim Lesen, mit den aktuellen Halbzeiten. So bleibt eine spätere Seitenkorrektur in Veo ohne Neuladen richtig.
+  - Zwischen den Fensterabrufen liegt eine kurze Pause, damit Veo nicht belastet wird.
+- **Spieler-Matrizen:**
+  - 60 × 30 Zellen, Felder `direction_of_play` (beobachtet `leftToRight`), `peak_value`, `smoothing` 1,5.
+  - Je Spieler normiert: Der Höchstwert ist immer 255.
+  - `average_position` hat `x`/`z` in 0–1.
+  - Für den Zeitausschnitt einer Halbzeit sind `start_time`/`end_time` Pflicht. Für das ganze Spiel gilt das Fenster vom ersten Halbzeitbeginn bis zum letzten Halbzeitende.
+  - Weil je Spieler normiert wird, ist die gewichtete Saisonsumme nur eine Näherung (siehe `scope.md`, ⚠️).
 
-**Fallback**, falls Tracking nicht verfügbar ist: Der Schieber für den Zeitabschnitt entfällt. Wählbar sind dann nur ganze Halbzeiten, aus Veo-Matrizen. Die Mannschafts-Heatmap wird als Summe der Spieler-Matrizen der Halbzeit gezeigt. Die Abweichung wird im Umfangsverzeichnis vermerkt.
+**Fallback**, falls ein Spiel ohne Positionsdaten kommt: Der Schieber für den Zeitabschnitt entfällt für dieses Spiel. Wählbar sind dann nur ganze Halbzeiten, aus Veo-Matrizen. Die Mannschafts-Heatmap wird als Summe der Spieler-Matrizen der Halbzeit gezeigt.
 
 ## R-06 Koordinaten
 
@@ -101,7 +129,10 @@ Für Einzelabrufe gilt dieselbe Wiederholungsregel wie bisher (ein zweiter Versu
 
 **Alternatives considered**: Rohwerte speichern und beim Lesen spiegeln. Abgelehnt, weil jede Lesestelle die Halbzeitlogik wiederholen müsste.
 
-**[Testabruf]**: Ursprung und Achsen von MES `x`/`z`. Gegenprobe mit `player-event-maps` (`direction_of_play`) und RAS `shot-details` am selben Spiel.
+**Belegt**:
+- MES-`x` lag zwischen 0,11 und 0,99, `z` zwischen −0,0016 und 1,04. Veo liefert also Werte knapp außerhalb von 0–1. Der Worker begrenzt beim Normieren auf [0, 1], wie Veo beim Zeichnen (`clamp`). Die Check-Constraints bleiben streng.
+- RAS `shot-details` liefert `location: [x, y]` in 0–1 je Kamera-Seite (`side`), die Namen sind `kick_shot_goal` und `kick_shot_no_goal`. Gebraucht wird es nur als Gegenprobe, weil `match-events` dieselben Schüsse mit Spieler liefert.
+- `player-event-maps` liefert `direction_of_play` und `x`/`z` je Ereignis. Der Abgleich der Spiegelung gegen diese Quelle wird in `veoPitch.test.ts` mit den Testdaten festgehalten (T009).
 
 ## R-07 Spielerwerte vollständig und je Halbzeit
 
@@ -113,7 +144,11 @@ Für Einzelabrufe gilt dieselbe Wiederholungsregel wie bisher (ein zweiter Versu
 
 **Rationale**: FR-020, Werte je Halbzeit im Spielbericht. `cross_match` mit einem Spiel liefert keine Halbzeiten.
 
-**[Testabruf]**: Form von `periods[].period` (Nummer oder ID).
+**Belegt**:
+- `periods: [{ period: 1, value }, { period: 2, value }]` mit Halbzeitnummer. Werte, die je Spiel gelten (`matches_total`, `starts_total`), haben `periods: []`.
+- Spielerwerte: 28 Typen, darunter `football_assist_total`, `football_passes_total`, `football_passes_completed_total`, `football_passes_unsuccessful_total`, `player_of_the_match_total` und `captaincies_total`.
+- Mannschaftswerte: 15 Typen.
+- Quoten (`football_conversion_rate`, `football_passes_success_rate`) kommen nur in den Ranglisten und werden sonst nach R-08 abgeleitet.
 
 ## R-08 Kennzahlen und Ableitungen als Domain-Logik
 
@@ -148,7 +183,12 @@ Die Regeln folgen Inventar §1a.2–3, §1b.3, §2.3 und §4.2.1, mit denselben 
 
 **Rationale**: FR-050–056. Der Bericht ist Veos eigene Zusammenstellung; ihn nachzurechnen wäre fehleranfällig.
 
-**[Testabruf]**: Liefert Veo den Bericht für die C1 (Abo, Stichtag 2026-08-04), und in welcher `view` (Basis oder erweitert)?
+**Belegt**:
+- Der Bericht kommt für alle drei C1-Spiele, mit `view: advanced`, rund 72 KB.
+- Schlüssel: `match`, `club`, `teams`, `lineup`, `score`, `events`, `players`, `scorers`, `periods`, `view`, `overview`, `attacking`, `defensive`, `physical`, `passing`.
+- `passing` enthält zusätzlich zum Inventar `forward_accuracy`, `sideways_accuracy`, `backward_accuracy`, `final_third_passes`, `successful_final_third_passes`, `final_third_accuracy` und `pass_string_average_length`.
+- `physical.speed_zones.status` ist `available`.
+- StatValue hat die Form `{ full_time: { own, opponent }, periods: [{ period_number, own, opponent }], comparison: { full_time: { difference, match_count } } }`.
 
 ## R-11 Links ins Veo-Video
 
@@ -160,7 +200,7 @@ Die Regeln folgen Inventar §1a.2–3, §1b.3, §2.3 und §4.2.1, mit denselben 
 
 **Decision**: `VEO_HOSTS` wird um den RAS-Host `dt3kfuz4eo879.cloudfront.net` erweitert. Den Host liefert die Veo-Seite in `window.VEO_SERVICE_URLS.RAS_URL`. Als Konstante bekommt er einen `ponytail:`-Kommentar: Ändert Veo den Host, endet der Abruf mit `upstream_changed`; der Weg zur Verbesserung ist, `RAS_URL` aus `app.veo.co` zu lesen.
 
-**[Testabruf]**: Braucht RAS das Bearer-Token? Veo ruft es mit `credentials: "omit"` auf.
+**Belegt**: RAS wird **ohne** `Authorization`-Header aufgerufen. Mit Bearer-Token antwortet `…/analytics` mit `403` (CloudFront deutet den Header als eigene Signatur). Ohne Header antworten `analytics`, `shot-details` und `match-details` mit `200`. Der RAS-Status meldet die Schlüssel `ball-tracking`, `player-tracking`, `event-detection`, `match-details`, `shot-details` und `match-report`, jeweils `completed`. Daraus ergibt sich die Analyseversion `2`.
 
 ## R-13 Sichtbarkeit und Isolation
 
@@ -182,16 +222,16 @@ Die Regeln folgen Inventar §1a.2–3, §1b.3, §2.3 und §4.2.1, mit denselben 
 
 ## R-15 Speicherbedarf
 
-Für eine Saison mit 40 Spielen und 25 Spielern (Schätzung, Tracking **[Testabruf]**):
+Für eine Saison mit 40 Spielen und 25 Spielern, Größen je Spiel aus dem Testabruf:
 
 | Daten | je Spiel | Saison |
 |---|---|---|
-| Ereignisse (inkl. Pässe, falls geliefert) | ~1.500 Zeilen | ~60.000 Zeilen |
+| Ereignisse ohne `possession`/`*_target` | ~800 Zeilen | ~32.000 Zeilen |
 | Spieler-Matrizen (60 × 30 uint8, 3 Ausschnitte) | ~45 × 1,8 KB ≈ 80 KB | ~3 MB |
-| Positionsdaten (1 Hz, ~25 Spuren, 2 × uint16) | ~0,5 MB | ~20 MB |
-| übrige Analyse (JSON) | ~30 KB | ~1,2 MB |
+| Positionsdaten (1 Hz, ~22 Spuren à ~4.100 s, 2 × uint16) | ~0,4 MB | ~16 MB |
+| übrige Analyse inkl. Bericht (JSON) | ~100 KB | ~4 MB |
 
-Das ist unkritisch für die selbst gehostete Supabase. Bei den Positionsdaten wird die Rate im Testabruf festgelegt.
+Das ist unkritisch für die selbst gehostete Supabase. Der erste Abgleich der C1 mit 8 Spielen braucht wegen der Positionsdaten etwa 1.100 Abrufe bei Veo, danach je neuem Spiel etwa 150.
 
 ## R-16 Datenschutz
 
@@ -199,7 +239,7 @@ Heatmaps und Positionsdaten sind Bewegungsprofile, auch von Minderjährigen. Die
 
 ## Testabruf: Prüfliste
 
-Wird mit dem Testskript aus der Recherche ausgeführt. Rohantworten bleiben lokal; anonymisierte Ausschnitte werden Testdaten unter `packages/veo-client/src/__fixtures__/`:
+Ausgeführt am 2026-10-21. Alle Punkte sind oben unter **Belegt** beantwortet. Die Rohantworten bleiben lokal. Anonymisierte Ausschnitte werden Testdaten unter `packages/veo-client/src/__fixtures__/` (T004):
 
 1. Spiel, Slug, `recordings[0].identifier`, Analysestand, Analyseversion
 2. Halbzeiten: Schlüssel, `own_side`, Zeitbasis
