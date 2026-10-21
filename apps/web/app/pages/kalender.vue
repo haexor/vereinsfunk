@@ -55,9 +55,14 @@ interface CalendarFixtureDay {
   kickoffTimeConfirmed: boolean
   hasSubmission: boolean
 }
+interface CalendarEventDay {
+  id: string
+  title: string
+  hasSubmission: boolean
+}
 const postsByDay = ref<Record<number, { id: string }[]>>({})
 const fixturesByDay = ref<Record<number, CalendarFixtureDay[]>>({})
-const eventsByDay = ref<Record<number, { id: string; title: string }[]>>({})
+const eventsByDay = ref<Record<number, CalendarEventDay[]>>({})
 const loading = ref(true)
 const loadError = ref(false)
 
@@ -136,27 +141,28 @@ async function loadMonth(isLatest: () => boolean) {
   }
 
   const fixtures = (fixturesResult.data ?? []) as CalendarFixture[]
-  let fixtureIdsWithSubmission = new Set<string>()
-  if (fixtures.length) {
-    const submissionsResult = await supabase
-      .from('submissions')
-      .select('fixture_id')
-      .eq('organization_id', organizationId)
-      .not('fixture_id', 'is', null)
-      .in(
-        'fixture_id',
-        fixtures.map((fixture) => fixture.id),
-      )
-    if (!isLatest()) return
-    if (submissionsResult.error) {
-      resetCalendar()
-      loadError.value = true
-      loading.value = false
-      return
-    }
-    fixtureIdsWithSubmission = new Set(
-      (submissionsResult.data ?? []).map((row: { fixture_id: string }) => row.fixture_id),
-    )
+  const events = (eventsResult.data ?? []) as CalendarClubEvent[]
+  // Ein Termin hat einen Beitrag, sobald einer daran haengt: aus /v1/submissions oder aus der
+  // Textwerkstatt (eine Sitzung mit uebernommenem Kandidaten, also mit post_id).
+  async function idsWithSubmission(column: 'fixture_id' | 'club_event_id', ids: string[]): Promise<Set<string> | null> {
+    if (!ids.length) return new Set()
+    const [submissions, sessions] = await Promise.all([
+      supabase.from('submissions').select(column).eq('organization_id', organizationId).in(column, ids),
+      supabase.from('composition_sessions').select(column).eq('organization_id', organizationId).not('post_id', 'is', null).in(column, ids),
+    ])
+    if (submissions.error || sessions.error) return null
+    return new Set([...(submissions.data ?? []), ...(sessions.data ?? [])].map((row) => (row as Record<string, string>)[column]!))
+  }
+  const [fixtureIdsWithSubmission, eventIdsWithSubmission] = await Promise.all([
+    idsWithSubmission('fixture_id', fixtures.map((fixture) => fixture.id)),
+    idsWithSubmission('club_event_id', events.map((event) => event.id)),
+  ])
+  if (!isLatest()) return
+  if (!fixtureIdsWithSubmission || !eventIdsWithSubmission) {
+    resetCalendar()
+    loadError.value = true
+    loading.value = false
+    return
   }
 
   const posts: Record<number, { id: string }[]> = {}
@@ -195,8 +201,8 @@ async function loadMonth(isLatest: () => boolean) {
   }
   fixturesByDay.value = fixtureDays
 
-  const eventDays: Record<number, { id: string; title: string }[]> = {}
-  for (const event of (eventsResult.data ?? []) as CalendarClubEvent[]) {
+  const eventDays: Record<number, CalendarEventDay[]> = {}
+  for (const event of events) {
     const [eventYear, eventMonth, eventDay] = localDateKey(
       new Date(event.starts_at),
       timezone.value,
@@ -204,7 +210,7 @@ async function loadMonth(isLatest: () => boolean) {
       .split('-')
       .map(Number)
     if (eventYear === year && eventMonth === month + 1 && eventDay) {
-      eventDays[eventDay] = [...(eventDays[eventDay] ?? []), { id: event.id, title: event.title }]
+      eventDays[eventDay] = [...(eventDays[eventDay] ?? []), { id: event.id, title: event.title, hasSubmission: eventIdsWithSubmission.has(event.id) }]
     }
   }
   eventsByDay.value = eventDays
@@ -308,12 +314,20 @@ const hasAnyItem = computed(
               {{ fixture.kickoffTimeConfirmed ? '' : '~' }}{{ fixture.opponentName ?? 'Spiel' }}
             </div>
           </div>
-          <div
-            v-for="event in eventsByDay[day] || []"
-            :key="event.id"
-            class="mt-2 truncate rounded-lg bg-amber-100 p-2 text-[9px] font-semibold text-amber-700"
-          >
-            {{ event.title }}
+          <div v-for="event in eventsByDay[day] || []" :key="event.id">
+            <NuxtLink
+              v-if="canCreatePost && !event.hasSubmission"
+              :to="`/erstellen?clubEventId=${event.id}`"
+              title="Kein Beitrag – zur Erstellung"
+              class="focus-ring mt-2 block truncate rounded-lg border border-dashed border-amber-400 bg-amber-50 p-2 text-[9px] font-semibold text-amber-700"
+              >{{ event.title }}</NuxtLink
+            >
+            <div
+              v-else
+              class="mt-2 truncate rounded-lg bg-amber-100 p-2 text-[9px] font-semibold text-amber-700"
+            >
+              {{ event.title }}
+            </div>
           </div>
         </div>
       </div>

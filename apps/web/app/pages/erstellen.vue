@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Bewusst noch eine Datei (knapp ueber 500 Zeilen): Entwurfsspeicherung, Sitzungs-Polling und
+// Bewusst noch eine Datei (gut 500 Zeilen; der Kalender-Anlass liegt schon in useScheduleOccasion): Entwurfsspeicherung, Sitzungs-Polling und
 // Einreichen teilen sich denselben Zustand (Sitzung, Kandidat, Entwurfs-ID) und den Bereichswechsel.
 // Spaeterer Schnitt: die Entwurfsspeicherung (lokal und serverseitig, persistDraft bis
 // restoreDraft) in ein Composable useTextWorkshopDraft, die Kandidatenansicht in eine Komponente.
@@ -8,6 +8,7 @@ import { MaxCharactersSchema, RequestApprovalResponseSchema, SocialPlatformSchem
 import { z } from 'zod'
 import { ApiRequestError } from '../utils/apiClient'
 import { optionalNumber } from '../utils/numberInput'
+import { occasionReference, occasionReferenceFromQuery, type ScheduleOccasionReference } from '../utils/scheduleOccasion'
 
 type Profile = { id: string | null; slug: string; kind: 'system' | 'persona' | 'custom'; name: string; description: string }
 type Candidate = { id: string; status: string; generated_content: { headline: string; caption: string; hashtags: string[]; verifiedFacts: string[]; missingFacts: string[] } | null; failure_code: string | null; triggered_by: 'member' | 'automatic_recovery' }
@@ -26,6 +27,7 @@ const CompositionSessionDraftSchema = z.object({
   id: z.string(), communication_goal: z.string(), source_material: SourceMaterialSchema,
   style_profile_id: z.string().nullable(), style_profile_snapshot: z.object({ slug: z.string().optional() }).passthrough(),
   target_platforms: z.array(SocialPlatformSchema),
+  fixture_id: UuidSchema.nullable().optional(), club_event_id: UuidSchema.nullable().optional(),
 })
 // Nur die drei Faelle, die auf diesem Weg realistisch auftreten (routes/approvals.ts,
 // request_approval-RPC-Fehlermeldungen); die uebrigen (invalid_reviewer_snapshot,
@@ -58,7 +60,16 @@ const api = useApiClient()
 const route = useRoute()
 const session = await useSession()
 const scope = await useScope()
+const { organizationTimezone } = await useActiveScope()
 const notice = ref('')
+const { occasion, loadOccasion, clearOccasion } = useScheduleOccasion(api)
+// Fakten des Kalender-Anlasses gehen strukturiert an die API, die sie selbst nachprueft.
+const occasionFacts = computed(() => occasion.value?.facts ?? {})
+async function applyOccasion(reference: ScheduleOccasionReference) {
+  if (!scope.value?.organizationId || (!reference.fixtureId && !reference.clubEventId)) return
+  const message = await loadOccasion({ organizationId: scope.value.organizationId, departmentId: scope.value.departmentId }, reference)
+  if (message) notice.value = message
+}
 const submitting = ref(false)
 const sessionId = ref<string | null>(null)
 const sessionProfile = ref<string | null>(null)
@@ -126,17 +137,17 @@ function sourceMaterial() {
     rest = rest.slice(boundary).trim()
   }
   if (rest) observations.push(rest.slice(0, 500))
-  return { facts: {}, observations, quotes: [] }
+  return { facts: { ...occasionFacts.value }, observations, quotes: [] }
 }
 function persistDraft() {
   if (restoringDraft || !import.meta.client || !draftKey.value) return
-  localStorage.setItem(draftKey.value, JSON.stringify({ communicationGoal: communicationGoal.value, contentText: contentText.value, selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: String(maxCharactersOverride.value) }))
+  localStorage.setItem(draftKey.value, JSON.stringify({ communicationGoal: communicationGoal.value, contentText: contentText.value, selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: String(maxCharactersOverride.value), ...occasionReference(occasion.value) }))
 }
 function clearDraft() { if (import.meta.client && draftKey.value) localStorage.removeItem(draftKey.value) }
 function draftPayload() {
   // Die persistierte Vertragsform bleibt vorerst kompatibel zu bestehenden Entwürfen. Das UI
   // schreibt nur noch den Rohtext in observation; die früheren Spezialfelder bleiben leer.
-  return { communicationGoal: communicationGoal.value, factsText: '', observation: contentText.value, selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: String(maxCharactersOverride.value) }
+  return { communicationGoal: communicationGoal.value, factsText: '', observation: contentText.value, selectedProfile: selectedProfile.value, temperature: TEXT_GENERATION_DEFAULT_TEMPERATURE, selectedPlatforms: selectedPlatforms.value, maxCharactersOverride: String(maxCharactersOverride.value), ...occasionReference(occasion.value) }
 }
 function hasDraftContent() {
   const payload = draftPayload()
@@ -144,8 +155,11 @@ function hasDraftContent() {
 }
 async function saveServerDraft({ explicit = false, required = false }: { explicit?: boolean; required?: boolean } = {}): Promise<boolean> {
   if (draftSaveTimer) { clearTimeout(draftSaveTimer); draftSaveTimer = undefined }
-  if (submittedForApproval || restoringDraft || !scope.value?.organizationId || (!explicit && !hasDraftContent())) return false
-  if (!hasDraftContent()) { notice.value = 'Gib zuerst etwas für den Entwurf ein.'; return false }
+  // Ein bloss geoeffneter Termin-Link legt beim Verlassen keinen Entwurf an; ausdruecklich
+  // gespeichert oder zum Erzeugen reicht er als Inhalt.
+  const hasContent = hasDraftContent() || ((explicit || required) && occasion.value !== null)
+  if (submittedForApproval || restoringDraft || !scope.value?.organizationId || (!explicit && !hasContent)) return false
+  if (!hasContent) { notice.value = 'Gib zuerst etwas für den Entwurf ein.'; return false }
   if (!serverDraftId.value) serverDraftId.value = crypto.randomUUID()
   const draftId = serverDraftId.value
   const organizationId = scope.value.organizationId
@@ -185,15 +199,16 @@ function restoreDraft() {
   if (!import.meta.client || !draftKey.value) return
   try {
     const raw = localStorage.getItem(draftKey.value); if (!raw) return
-    const draft = z.object({ communicationGoal: z.string(), contentText: z.string().optional(), factsText: z.string().optional(), observation: z.string().optional(), selectedProfile: z.string(), selectedPlatforms: z.array(SocialPlatformSchema).default([]), maxCharactersOverride: z.string().default('') }).parse(JSON.parse(raw))
+    const draft = z.object({ communicationGoal: z.string(), contentText: z.string().optional(), factsText: z.string().optional(), observation: z.string().optional(), selectedProfile: z.string(), selectedPlatforms: z.array(SocialPlatformSchema).default([]), maxCharactersOverride: z.string().default(''), fixtureId: UuidSchema.optional(), clubEventId: UuidSchema.optional() }).parse(JSON.parse(raw))
+    void applyOccasion(draft)
     communicationGoal.value = draft.communicationGoal; contentText.value = draft.contentText ?? [draft.factsText, draft.observation].filter(Boolean).join('\n'); selectedProfile.value = draft.selectedProfile; maxCharactersOverride.value = draft.maxCharactersOverride
     // Nur uebernehmen, was laut der zuletzt geladenen Verfuegbarkeit noch anhakbar ist -- ein Kanal
     // kann seit dem letzten Entwurf entfernt worden sein.
     if (draft.selectedPlatforms.length) selectedPlatforms.value = resolveExclusivePlatforms(draft.selectedPlatforms.filter((platform) => platforms.value.some((entry) => entry.platform === platform && entry.available)))
   } catch { clearDraft() }
 }
-watch([communicationGoal, contentText, selectedProfile, selectedPlatforms, maxCharactersOverride], () => { persistDraft(); queueServerDraftSave() }, { flush: 'sync', deep: true })
-watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; submittedForApproval = false; sessionId.value = null; sessionProfile.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; communicationGoal.value = 'inform'; selectedProfile.value = DEFAULT_TEXT_WORKSHOP_PROFILE; contentText.value = ''; additionalMediaAssetIds.value = []; revisionInstruction.value = ''; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; mediaAssetIds.value = []; composedPhotoPreview.value = null; photoMode.value = 'carousel'; await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
+watch([communicationGoal, contentText, selectedProfile, selectedPlatforms, maxCharactersOverride, occasion], () => { persistDraft(); queueServerDraftSave() }, { flush: 'sync', deep: true })
+watch(() => `${session.value?.userId ?? ''}:${scope.value?.organizationId ?? ''}:${scope.value?.departmentId ?? ''}`, async () => { restoringDraft = true; submittedForApproval = false; sessionId.value = null; sessionProfile.value = null; candidate.value = null; serverDraftId.value = null; profiles.value = []; communicationGoal.value = 'inform'; selectedProfile.value = DEFAULT_TEXT_WORKSHOP_PROFILE; contentText.value = ''; additionalMediaAssetIds.value = []; revisionInstruction.value = ''; platforms.value = []; selectedPlatforms.value = []; maxCharactersOverride.value = ''; mediaAssetIds.value = []; composedPhotoPreview.value = null; photoMode.value = 'carousel'; clearOccasion(); await Promise.all([loadProfiles(), loadPlatformAvailability()]); restoreDraft(); restoringDraft = false })
 
 async function loadProfiles() {
   if (!scope.value?.organizationId) return
@@ -251,6 +266,7 @@ async function loadServerDraft(draftId: string) {
     serverDraftId.value = draft.id
     communicationGoal.value = draft.payload.communicationGoal; contentText.value = [draft.payload.factsText, draft.payload.observation].filter(Boolean).join('\n'); selectedProfile.value = draft.payload.selectedProfile; maxCharactersOverride.value = draft.payload.maxCharactersOverride
     selectedPlatforms.value = resolveExclusivePlatforms(draft.payload.selectedPlatforms.filter((platform) => platforms.value.some((entry) => entry.platform === platform && entry.available)))
+    await applyOccasion(draft.payload)
     persistDraft()
   } catch { notice.value = 'Der Entwurf konnte nicht geladen werden.' }
 }
@@ -264,8 +280,11 @@ async function loadDraftFromPost(postId: string) {
     const response = await api.request('/v1/text-workshop/sessions', { query: { postId } }, z.object({ session: CompositionSessionDraftSchema, candidates: z.array(CandidateSchema) }))
     const { session: draftSession, candidates } = response
     communicationGoal.value = draftSession.communication_goal
+    // Mit Anlass stammen die Fakten aus der Quelle und erscheinen wieder in dessen Karte, nicht im Text.
+    const linked = { fixtureId: draftSession.fixture_id ?? undefined, clubEventId: draftSession.club_event_id ?? undefined }
+    await applyOccasion(linked)
     contentText.value = [
-      ...Object.entries(draftSession.source_material.facts).map(([key, value]) => `${key}: ${value}`),
+      ...(linked.fixtureId || linked.clubEventId ? [] : Object.entries(draftSession.source_material.facts).map(([key, value]) => `${key}: ${value}`)),
       ...draftSession.source_material.observations,
       ...draftSession.source_material.quotes.map((quote) => quote.text),
     ].join('\n')
@@ -293,7 +312,7 @@ function parsedMaxCharactersOverride(): number | undefined | 'invalid' {
 }
 async function createCandidate() {
   if (!scope.value?.organizationId) { notice.value = 'Bitte wähle einen Verein.'; return }
-  if (!contentText.value.trim()) { notice.value = 'Schreibe kurz, worum es in deinem Beitrag geht.'; return }
+  if (!contentText.value.trim() && !Object.keys(occasionFacts.value).length) { notice.value = 'Schreibe kurz, worum es in deinem Beitrag geht.'; return }
   // maxlength begrenzt nur das Tippen -- ein wiederaufgenommener Beitrag kann laenger sein.
   if (contentText.value.length > CONTENT_TEXT_MAX_LENGTH) { notice.value = `Der Text darf höchstens ${CONTENT_TEXT_MAX_LENGTH.toLocaleString('de-DE')} Zeichen lang sein. Bitte kürze ihn.`; return }
   if (!selectedPlatforms.value.length) { notice.value = 'Bitte wähle mindestens eine Zielplattform.'; return }
@@ -315,7 +334,7 @@ async function createCandidate() {
       body: {
         organizationId: scope.value.organizationId, departmentId: scope.value.departmentId, communicationGoal: communicationGoal.value, requestedFormats: ['text_post'],
         mediaAssetIds: [...mediaAssetIds.value, ...additionalMediaAssetIds.value],
-        ...profileChoice, sourceMaterial: sourceMaterial(), targetPlatforms: selectedPlatforms.value,
+        ...profileChoice, sourceMaterial: sourceMaterial(), targetPlatforms: selectedPlatforms.value, ...occasionReference(occasion.value),
         // Ein weiterer Kandidat der serverseitigen Minimumbildung, keine Ueberschreibung -- die
         // gewaehlten Plattformen bleiben die verbindliche Obergrenze (routes/textWorkshop.ts).
         ...(maxCharacters !== undefined ? { maxCharacters } : {}),
@@ -342,6 +361,9 @@ async function createCandidate() {
       composedPhotoPreview.value = null
       photoMode.value = 'carousel'
       notice.value = 'Die Personen-Prüfung eines angehängten Fotos ist nicht mehr aktuell. Bitte die Fotos erneut prüfen.'
+    } else if (code === 'fixture_not_found_in_department' || code === 'event_not_found_in_department') {
+      clearOccasion()
+      notice.value = 'Der Termin gehört nicht mehr zu diesem Bereich und wurde entfernt. Bitte erneut erzeugen.'
     } else if (code === 'no_active_text_provider') {
       notice.value = 'Aktuell ist kein Sprachmodell für die Textgenerierung hinterlegt. Bitte an eine Vereinsverwaltung wenden.'
     } else {
@@ -419,12 +441,17 @@ const resumePostId = UuidSchema.safeParse(route.query.postId)
 const resumeDraftId = UuidSchema.safeParse(route.query.draftId)
 const resumeSessionId = UuidSchema.safeParse(route.query.sessionId)
 const resumeMediaAssetId = UuidSchema.safeParse(route.query.mediaAssetId)
+const linkedOccasion = occasionReferenceFromQuery(route.query)
 if (resumeDraftId.success) await loadServerDraft(resumeDraftId.data)
 else if (resumePostId.success) await loadDraftFromPost(resumePostId.data)
 else if (resumeSessionId.success) await loadExistingSession(resumeSessionId.data)
 else if (resumeMediaAssetId.success) { /* PhotoAttachmentList fuellt sich selbst ueber initial-media-asset-ids */ }
-else {
-  if (route.query.postId !== undefined || route.query.draftId !== undefined || route.query.sessionId !== undefined || route.query.mediaAssetId !== undefined) notice.value = 'Der Link zum Entwurf ist ungültig.'
+else if (linkedOccasion && linkedOccasion !== 'invalid') {
+  // Ein neuer Beitrag zum Termin aus Kalender oder Anlassvorschlag, kein Wiederaufnehmen des letzten Entwurfs.
+  await applyOccasion(linkedOccasion)
+  if (occasion.value) communicationGoal.value = occasion.value.suggestedGoal
+} else {
+  if (linkedOccasion === 'invalid' || route.query.postId !== undefined || route.query.draftId !== undefined || route.query.sessionId !== undefined || route.query.mediaAssetId !== undefined) notice.value = 'Der Link zum Entwurf ist ungültig.'
   restoreDraft()
 }
 restoringDraft = false
@@ -436,8 +463,9 @@ onBeforeUnmount(() => { if (hasDraftContent()) void saveServerDraft() })
   <div>
     <header class="mb-7"><div class="eyebrow mb-2">Textwerkstatt</div><h1 class="font-display text-3xl font-extrabold">Beitrag erstellen</h1><p class="mt-2 text-sm text-[#727a75]">Schreibe einfach auf, was passiert ist. Bilder, Videos und Musik bleiben private Anhänge und werden nicht an das Sprachmodell gesendet.</p></header>
     <section class="card grid gap-5 p-5 sm:p-7">
+      <TextWorkshopOccasion v-if="occasion" :occasion="occasion" :timezone="organizationTimezone" @remove="clearOccasion" />
       <label>
-        <span class="mb-2 block text-sm font-bold">Was möchtest du erzählen?</span>
+        <span class="mb-2 block text-sm font-bold">{{ occasion ? 'Was möchtest du dazu erzählen? (optional)' : 'Was möchtest du erzählen?' }}</span>
         <textarea v-model="contentText" rows="7" :maxlength="CONTENT_TEXT_MAX_LENGTH" class="w-full resize-y rounded-2xl border border-[#dfe2da] bg-white p-4 text-sm leading-6 shadow-sm outline-none placeholder:text-[#929991] focus:border-forest focus:ring-2 focus:ring-forest/15" placeholder="Zum Beispiel: Heute hat unsere U12 im Training Passen geübt. Besonders schön war, wie sich alle gegenseitig unterstützt haben." />
         <p class="mt-1 text-[11px] text-[#9aa096]">{{ contentText.length }}/{{ CONTENT_TEXT_MAX_LENGTH }} Zeichen</p>
       </label>
