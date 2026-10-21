@@ -41,10 +41,10 @@ Monorepo, das Arbeitsverzeichnis ist ein Worktree unter `.worktrees/`. Pfade sin
 
 ## Phase 1: Setup (PR 1)
 
-- [ ] T001 Ausgangslage sichern: `pnpm install`, `pnpm db:reset`, dann `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm db:test`. Notieren, was schon vor der Änderung rot ist. Keine Dateiänderung.
+- [X] T001 Ausgangslage sichern: `pnpm install`, `pnpm db:reset`, dann `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm db:test`. Notieren, was schon vor der Änderung rot ist. Keine Dateiänderung.
 - [X] T002 Lesender Testabruf gegen das Veo-Konto der C1 nach der Prüfliste in [research.md](research.md) („Testabruf: Prüfliste“, Punkte 1–10). Die Rohantworten bleiben außerhalb des Repos. Zugang wie vom Betreiber freigegeben. Hilfsdateien mit Zugangsdaten oder Cookie danach löschen. Ins Log nur die Form der Antworten, keine Werte.
 - [X] T003 `specs/002-veo-analyse/research.md` an den Befund anpassen: jede Markierung **[Testabruf]** durch das belegte Ergebnis ersetzen. Bei Abweichung die betroffene Entscheidung (R-01, R-03, R-05, R-06, R-07, R-10, R-12) samt `data-model.md` und `contracts/veo-analysis.md` nachziehen. Ist kein Tracking verfügbar: `playerboard_veo_tracks`, `GET …/tracks` und T029/T038 streichen und in `scope.md` „Heat map (Mannschaft)“ auf den Fallback aus R-05 setzen.
-- [ ] T004 Anonymisierte Testdaten in `packages/veo-client/src/__fixtures__/` ablegen, eine JSON-Datei je Endpunkt aus R-01 (Name = Endpunkt, z. B. `match-events.json`, `player-heatmaps.json`). Dabei ersetzen:
+- [X] T004 Anonymisierte Testdaten in `packages/veo-client/src/__fixtures__/` ablegen, eine JSON-Datei je Endpunkt aus R-01 (Name = Endpunkt, z. B. `match-events.json`, `player-heatmaps.json`). Dabei ersetzen:
   - Namen, `known_name`, Avatare und Video-URLs durch Platzhalter
   - Veo-IDs durch feste Dummy-IDs
   - Werte, Orte und Rückennummern bleiben erhalten
@@ -59,21 +59,21 @@ Monorepo, das Arbeitsverzeichnis ist ein Worktree unter `.worktrees/`. Pfade sin
 
 ### Veo-Client
 
-- [ ] T005 [P] `packages/veo-client/src/http.ts`: `VEO_HOSTS` um `dt3kfuz4eo879.cloudfront.net` erweitern, mit einem `ponytail:`-Kommentar nach R-12. Test in `packages/veo-client/src/client.test.ts`: Der Host ist erlaubt, ein fremder CloudFront-Host wird abgelehnt.
-- [ ] T006 [P] Test `packages/veo-client/src/analysis.test.ts`, vor T007. Je Testdatei aus T004 wird geparst und die Felder nach [contracts/veo-analysis.md](contracts/veo-analysis.md) „Veo-Client“ geprüft. Fehlt ein Pflichtfeld oder hat ein Feld einen falschen Typ, kommt `VeoError('upstream_changed')`. 404 ergibt `null`. 401 oder 403 ergibt `auth_expired`.
-- [ ] T007 `packages/veo-client/src/analysis.ts` anlegen und in `packages/veo-client/src/index.ts` exportieren:
+- [X] T005 [P] `packages/veo-client/src/http.ts`: `VEO_HOSTS` um `dt3kfuz4eo879.cloudfront.net` erweitern, mit einem `ponytail:`-Kommentar nach R-12. Test in `packages/veo-client/src/client.test.ts`: Der Host ist erlaubt, ein fremder CloudFront-Host wird abgelehnt.
+- [X] T006 [P] Test `packages/veo-client/src/analysis.test.ts`, vor T007. Je Testdatei aus T004 wird geparst und die Felder nach [contracts/veo-analysis.md](contracts/veo-analysis.md) „Veo-Client“ geprüft. Fehlt ein Pflichtfeld oder hat ein Feld einen falschen Typ, kommt `VeoError('upstream_changed')`. 404 ergibt `null`. 401 oder 403 ergibt `auth_expired`.
+- [X] T007 `packages/veo-client/src/analysis.ts` anlegen und in `packages/veo-client/src/index.ts` exportieren:
   - Funktionen: `fetchMatchDetail` (Slug, `recordings[0].identifier`, `has_*`-Felder), `fetchProcessingStatus`, `fetchRasStatus` (daraus `analyticsVersion` `'1'|'1.1'|'2'` nach Inv. §1a.0.3), `fetchPeriods`, `fetchMatchEvents` (`aggregatedDuels=true`), `fetchPlayerHeatmaps(start, end)`, `fetchMatchDetails` (RAS, ein `filters=` je Halbzeit), `fetchMomentum`, `fetchPassingNetwork(periods)`, `fetchMatchReport`, `fetchTrackingWindow(start)`
   - Jede Antwort läuft durch ein Zod-Schema. Muster ist `parseOrChanged` in `client.ts`, gemeinsame Helfer werden dorthin exportiert statt kopiert.
   - Header wie die Veo-App: `Veo-App-Id: hazard`, `veo-agent: veo:svc:web-app`
   - Die Datei bleibt unter 500 Zeilen, sonst nach Endpunktgruppen teilen.
-- [ ] T008 `packages/veo-client/src/client.ts`: `fetchPlayerStats` auf `{ type: 'match_all_players', match_id, team_id }` umstellen (R-07):
+- [X] T008 `packages/veo-client/src/client.ts`: `fetchPlayerStats` auf `{ type: 'match_all_players', match_id, team_id }` umstellen (R-07):
   - Ergebnis je Rückennummer `stats: { statType, category, value, periodValues }[]`
   - `CURATED_PLAYER_STATS` auf alle Typen aus Inv. §4.2.1 erweitern, mit den Kategorien `general`, `physical`, `attacking`, `distribution`, `defending`, `set_pieces`, `goalkeeping`
   - `parsePlayerStats` und die Tests in `client.test.ts` an die neue Form anpassen, inklusive `player.type: 'jersey_only'`
 
 ### Domain
 
-- [ ] T009 [P] Test `packages/domain/src/veoPitch.test.ts`, vor T010:
+- [X] T009 [P] Test `packages/domain/src/veoPitch.test.ts`, vor T010:
   - Spiegelung je Halbzeit nach `own_side` für eigene und gegnerische Ereignisse (Regel aus Inv. §1a.7 `wt`, Ergebnis nach R-06 in [0,1])
   - Ereignis ohne Ort bleibt ohne Ort
   - Strafraumtest nach den Maßen aus Inv. §1a.7
@@ -82,7 +82,7 @@ Monorepo, das Arbeitsverzeichnis ist ein Worktree unter `.worktrees/`. Pfade sin
   - Heatmap-Raster 60 × 30 aus Positionsproben für einen Zeitabschnitt
   - Gewichtete Summe mehrerer Matrizen nach Spielsekunden, neu normiert (R-05)
   - Testdaten aus T004 benutzen, wo vorhanden
-- [ ] T010 `packages/domain/src/veoPitch.ts` und Export in `packages/domain/src/index.ts`. Keine Framework-Abhängigkeit.
+- [X] T010 `packages/domain/src/veoPitch.ts` und Export in `packages/domain/src/index.ts`. Keine Framework-Abhängigkeit.
 
 ### Datenbank
 
