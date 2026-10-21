@@ -1,6 +1,6 @@
 import type { PlayerboardVeoMatch } from '@vereinsfunk/contracts'
 import { describe, expect, it } from 'vitest'
-import { formatStatValue, matchOutcome, ownTeamTotals, personIdLookup, playerSeasonRows, scoreLabel, seasonRecord, statLabel, teamStatsByCategory, veoSeasonMatches } from './playerboardVeo'
+import { categoryLabel, formatStatValue, matchOutcome, ownTeamTotals, personIdLookup, playerSeasonRows, scoreLabel, seasonRecord, statLabel, teamStatsByCategory, veoSeasonMatches } from './playerboardVeo'
 
 const stat = (teamAssociation: 'own' | 'opponent', statType: string, value: number, category = 'attacking') => ({ teamAssociation, statType, category, value })
 
@@ -12,6 +12,15 @@ describe('playerboardVeo', () => {
     expect(formatStatValue('distance_total_meters', 2382)).toBe('2.382 m')
     expect(formatStatValue('top_speed_kmh', 27.84)).toBe('27,8 km/h')
     expect(formatStatValue('sprints_total', 4)).toBe('4')
+  })
+
+  it('names duels, interceptions and loose ball recoveries like Veo and knows the new player groups', () => {
+    expect(statLabel('football_duel_total')).toBe('Zweikämpfe')
+    expect(statLabel('football_interception_total')).toBe('Abfangen')
+    expect(statLabel('football_loose_total')).toBe('Ballgewinne (loser Ball)')
+    expect(statLabel('football_passes_completed_total')).toBe('Angekommene Pässe')
+    expect(categoryLabel('distribution')).toBe('Verteilung')
+    expect(categoryLabel('general')).toBe('Allgemein')
   })
 
   it('counts wins, draws and losses only for matches with a final score', () => {

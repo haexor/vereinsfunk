@@ -31,6 +31,7 @@ function clients(options: {
   userRpc?: Record<string, { data: unknown; error: unknown }>
   tables?: Record<string, unknown>
   calls?: RpcCall[]
+  updates?: { table: string; values: Record<string, unknown> }[]
 } = {}): SupabaseClientFactory {
   const tables: Record<string, unknown> = {
     teams: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID },
@@ -42,7 +43,9 @@ function clients(options: {
     from: (name: string) => {
       if (name === 'audit_events') return { insert: async () => ({ error: null }) }
       if (!(name in tables)) throw new Error(`unexpected service table in test fake: ${name}`)
-      return chain({ data: tables[name], error: null })
+      return Object.assign(chain({ data: tables[name], error: null }), {
+        update: (values: Record<string, unknown>) => { options.updates?.push({ table: name, values }); return chain({ data: null, error: null }) },
+      })
     },
     rpc: async (name: string, args: Record<string, unknown>) => {
       options.calls?.push({ name, args })
@@ -242,6 +245,24 @@ describe('POST /v1/playerboard/veo/sync', () => {
     const app = await startApp({ roleProvider: rolesProvider(['player']), supabaseClients: clients({ link }) })
     const response = await call(app, 'POST', '/v1/playerboard/veo/sync', { teamId: TEAM_ID })
     expect(response.statusCode).toBe(403)
+  })
+
+  it('requests a full analysis refresh before queueing the run', async () => {
+    const calls: RpcCall[] = []
+    const updates: { table: string; values: Record<string, unknown> }[] = []
+    const app = await startApp({ roleProvider: rolesProvider(['team_manager']), supabaseClients: clients({ calls, updates, link, rpc: { enqueue_integration_sync: { data: [{ result: 'acquired', run_id: RUN_ID }], error: null } } }) })
+    const response = await call(app, 'POST', '/v1/playerboard/veo/sync', { teamId: TEAM_ID, refreshAnalysis: true }, { 'idempotency-key': 'sync-2' })
+    expect(response.statusCode).toBe(202)
+    expect(updates).toEqual([{ table: 'playerboard_veo_links', values: { analysis_refresh_requested_at: expect.any(String) } }])
+    expect(calls.map((entry) => entry.name)).toEqual(['enqueue_integration_sync'])
+  })
+
+  it('does not request a refresh for a player', async () => {
+    const updates: { table: string; values: Record<string, unknown> }[] = []
+    const app = await startApp({ roleProvider: rolesProvider(['player']), supabaseClients: clients({ link, updates }) })
+    const response = await call(app, 'POST', '/v1/playerboard/veo/sync', { teamId: TEAM_ID, refreshAnalysis: true })
+    expect(response.statusCode).toBe(403)
+    expect(updates).toEqual([])
   })
 })
 

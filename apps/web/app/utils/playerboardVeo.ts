@@ -15,10 +15,20 @@ const STAT_LABELS: Readonly<Record<string, string>> = {
   football_penalty_total: 'Elfmeter',
   football_tackle_total: 'Tacklings',
   football_dribble_total: 'Dribblings',
-  football_interception_total: 'Balleroberungen',
-  football_loose_total: 'Zweikämpfe',
-  football_duel_total: 'Duelle',
+  // Spec 002 (research.md R-08): Veo "interception", "loose ball recovery" und "duel".
+  football_interception_total: 'Abfangen',
+  football_loose_total: 'Ballgewinne (loser Ball)',
+  football_duel_total: 'Zweikämpfe',
+  football_possession_won_total: 'Ballgewinne',
   football_save_total: 'Paraden',
+  football_assist_total: 'Vorlagen',
+  football_passes_total: 'Pässe',
+  football_passes_completed_total: 'Angekommene Pässe',
+  football_passes_unsuccessful_total: 'Fehlpässe',
+  matches_total: 'Spiele',
+  starts_total: 'Startelf',
+  captaincies_total: 'Kapitän',
+  player_of_the_match_total: 'Spieler des Spiels',
   distance_total_meters: 'Distanz',
   sprints_total: 'Sprints',
   top_speed_kmh: 'Höchstgeschw.',
@@ -35,6 +45,8 @@ const CATEGORY_LABELS: Readonly<Record<string, string>> = {
   defending: 'Verteidigung',
   goalkeeping: 'Torwartspiel',
   physical: 'Athletik',
+  general: 'Allgemein',
+  distribution: 'Verteilung',
 }
 
 // Feste Reihenfolge der neun Spielerwerte (playerboard 004 research.md §3).
