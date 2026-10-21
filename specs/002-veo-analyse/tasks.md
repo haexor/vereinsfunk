@@ -86,7 +86,7 @@ Monorepo, das Arbeitsverzeichnis ist ein Worktree unter `.worktrees/`. Pfade sin
 
 ### Datenbank
 
-- [ ] T011 [P] pgTAP `supabase/tests/playerboard_veo_analysis.test.sql`, vor T012. Erste Anweisung `begin;`, letzte `rollback;`, Muster `supabase/tests/playerboard_veo_views.test.sql`. Fälle:
+- [X] T011 [P] pgTAP `supabase/tests/playerboard_veo_analysis.test.sql`, vor T012. Erste Anweisung `begin;`, letzte `rollback;`, Muster `supabase/tests/playerboard_veo_views.test.sql`. Fälle:
   - Mitspieler liest `playerboard_veo_match_analysis`, `playerboard_veo_events`, `playerboard_veo_heatmaps` und `playerboard_veo_tracks` bei `stats_visibility = team`.
   - Nachbarmannschaft ohne Sicht und fremder Verein lesen 0 Zeilen.
   - Nachbarmannschaft bei `department` liest.
@@ -100,7 +100,7 @@ Monorepo, das Arbeitsverzeichnis ist ein Worktree unter `.worktrees/`. Pfade sin
   - Check-Constraints: `x`/`y` außerhalb 0–1 wird abgelehnt; nur eins von beiden gesetzt wird abgelehnt; `period_number` 0 bei Ereignissen wird abgelehnt; `cells`-Länge ≠ `width × height` wird abgelehnt.
   - Löschen des Spiels kaskadiert.
   - `playerboard_public_veo_stats` liefert nach dem Schreiben einer Analyse dieselbe Ausgabe wie vorher.
-- [ ] T012 Migration `supabase/migrations/2026102201_playerboard_veo_analysis.sql`. Der Zeitstempel muss `pnpm db:test:timestamps` bestehen und größer als der neueste auf `main` sein. Inhalt nach [data-model.md](data-model.md):
+- [X] T012 Migration `supabase/migrations/2026102102_playerboard_veo_analysis.sql` (umbenannt, weil `main` inzwischen `2026102101` belegt). Der Zeitstempel muss `pnpm db:test:timestamps` bestehen und größer als der neueste auf `main` sein. Inhalt nach [data-model.md](data-model.md):
   - `playerboard_veo_matches`:
     - `veo_match_slug` text null, 1–200 Zeichen
     - `analysis_status` text not null default `'none'` check in (`none`, `pending`, `complete`, `unavailable`)
@@ -142,13 +142,13 @@ Monorepo, das Arbeitsverzeichnis ist ein Worktree unter `.worktrees/`. Pfade sin
   - Ein Fehler im Analysepaket lässt `apply_match` desselben Spiels bestehen, und der Lauf endet mit der Fehlerklasse.
   - Nach einem Lauf mit Neuladen ist `analysis_refresh_requested_at` geleert.
 - [ ] T017 `apps/worker/src/veoSync.ts`: Nach `applyMatch` wird für passende Spiele `VeoAnalysisSync` aufgerufen und `repository.applyAnalysis` geschrieben. Die Regel bekommt einen `ponytail:`-Kommentar nach R-03. Im Repository `apps/worker/src/context.ts` kommen `analysisCandidates(teamId)`, `applyAnalysis(runId, veoMatchId, analysis)` (RPC aus T012) und `clearAnalysisRefresh(teamId)` dazu. `toMatchWrite` übernimmt die `periodValues` der Spieler aus T008.
-- [ ] T018 Migration aus T012 ergänzen: `playerboard_veo_apply_match` schreibt `period_values` aus `players[].stats[].periodValues`. Den Test in `supabase/tests/playerboard_veo.test.sql` um diesen Fall ergänzen.
+- [X] T018 Migration aus T012 ergänzen: `playerboard_veo_apply_match` schreibt `period_values` aus `players[].stats[].periodValues`. Den Fall prüft `supabase/tests/playerboard_veo_analysis.test.sql` (Fall 3) statt `playerboard_veo.test.sql`, weil dort schon ein Lauf mit Spielerwerten aufgebaut ist.
 
 ### „Analyse neu laden“
 
 - [ ] T019 [P] `packages/contracts/src/playerboard.ts`: `PlayerboardVeoSyncRequestSchema` bekommt `refreshAnalysis: z.boolean().optional()` (bleibt `strict`).
 - [ ] T020 Test in `apps/api/src/playerboardVeo.routes.test.ts`, vor T021: `POST /v1/playerboard/veo/sync` mit `refreshAnalysis: true` setzt `analysis_refresh_requested_at`. Ohne das Recht für „Jetzt abgleichen“ gibt es `403`.
-- [ ] T021 `apps/api/src/routes/playerboard/veo.ts`: `refreshAnalysis` auswerten. Dafür eine kleine RPC in der Migration aus T012 (`playerboard_veo_request_analysis_refresh(team_id)`, Recht wie Sync) statt eines direkten Updates mit Service Role.
+- [ ] T021 `apps/api/src/routes/playerboard/veo.ts`: `refreshAnalysis` auswerten und `playerboard_veo_links.analysis_refresh_requested_at` setzen. Die Route prüft `playerboard.manage` schon selbst und arbeitet wie der übrige Sync mit dem Service-Client, eine eigene RPC ist deshalb nicht nötig.
 - [ ] T022 `apps/web/app/pages/playerboard/veo.vue` und `apps/web/app/composables/usePlayerboardVeo.ts`: Knopf „Analyse neu laden“ neben „Jetzt abgleichen“, mit Erklärung: „Holt die Spielanalysen aller Spiele erneut von Veo, z. B. nach Korrekturen in Veo.“
 
 ### Abschluss PR 1
