@@ -131,21 +131,24 @@ export function registerClubScheduleRoutes(app: FastifyInstance, context: ApiRou
       fetchAllRows<Record<string, unknown>>((from, to) =>
         client.from('submissions').select('fixture_id, created_at').eq('department_id', params.id).not('fixture_id', 'is', null).range(from, to)),
       fetchAllRows<Record<string, unknown>>((from, to) =>
-        client.from('composition_sessions').select('fixture_id, created_at').eq('department_id', params.id).not('fixture_id', 'is', null).not('post_id', 'is', null).range(from, to)),
+        client.from('composition_sessions').select('fixture_id, posts!inner(created_at)').eq('department_id', params.id).not('fixture_id', 'is', null).range(from, to)),
       fetchAllRows<Record<string, unknown>>((from, to) =>
         client.from('submissions').select('club_event_id, created_at').eq('department_id', params.id).not('club_event_id', 'is', null).range(from, to)),
       fetchAllRows<Record<string, unknown>>((from, to) =>
-        client.from('composition_sessions').select('club_event_id, created_at').eq('department_id', params.id).not('club_event_id', 'is', null).not('post_id', 'is', null).range(from, to)),
+        client.from('composition_sessions').select('club_event_id').eq('department_id', params.id).not('club_event_id', 'is', null).not('post_id', 'is', null).range(from, to)),
     ])
     if (upcomingFixtures.error) throw upcomingFixtures.error
     if (playedFixtures.error) throw playedFixtures.error
     if (upcomingEvents.error) throw upcomingEvents.error
 
     const postsCreatedAtByFixture = new Map<string, string[]>()
-    for (const row of [...submissionFixtures, ...sessionFixtures]) {
-      const fixtureId = row.fixture_id as string
-      postsCreatedAtByFixture.set(fixtureId, [...(postsCreatedAtByFixture.get(fixtureId) ?? []), row.created_at as string])
-    }
+    // Bei der Textwerkstatt zaehlt der Beitrag selbst, nicht die Sitzung: sie kann vor dem Anpfiff
+    // begonnen und erst danach uebernommen worden sein.
+    const fixtureLinks = [
+      ...submissionFixtures.map((row) => ({ fixtureId: row.fixture_id as string, createdAt: row.created_at as string })),
+      ...sessionFixtures.map((row) => ({ fixtureId: row.fixture_id as string, createdAt: (row.posts as { created_at: string }).created_at })),
+    ]
+    for (const link of fixtureLinks) postsCreatedAtByFixture.set(link.fixtureId, [...(postsCreatedAtByFixture.get(link.fixtureId) ?? []), link.createdAt])
     const eventIdsWithPost = new Set([...submissionEvents, ...sessionEvents].map((row) => row.club_event_id as string))
     // Fuer das Ergebnis zaehlen nur Beitraege, die nach dem Anpfiff entstanden sind -- die
     // Ankuendigung desselben Spiels erzaehlt es nicht.
