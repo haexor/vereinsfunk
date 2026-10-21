@@ -170,43 +170,9 @@ export const UpdateImageStylePresetRequestSchema = ImageStylePresetFieldsSchema.
   isActive: z.boolean().optional(),
 }).superRefine(checkImageStylePresetFields)
 
-// Bildstil-Nachbesserung: zustandslose Vorschau eines noch nicht gespeicherten Entwurfs (Bildstil,
-// PR fabric.js-Editor). name ist hier -- anders als bei Create/Update -- optional: die Vorschau muss
-// schon fuer einen frisch angelegten, noch namenlosen Entwurf funktionieren (siehe
-// emptyImageStylePresetDraft() in apps/web/app/utils/imageStylePresetDraft.ts).
-export const PreviewImageStylePresetRequestSchema = ImageStylePresetFieldsSchema.extend({
-  name: z.string().trim().max(80).optional(),
-  organizationId: UuidSchema,
-  departmentId: UuidSchema.optional(),
-  teamId: UuidSchema.optional(),
-}).superRefine((preset, context) => {
-  checkImageStylePresetFields({ ...preset, name: preset.name ?? '' }, context)
-  requireDepartmentForTeam(preset, context)
-})
-
-// Immer WebP, anders als ApplyImageStyleRenderResponse: die Vorschau geht nicht in den
-// 'rendered-media'-Bucket (der nur image/jpeg und image/png zulaesst), sondern als data:-URL in ein
-// Canvas -- WebP behaelt den Alphakanal bei einem Bruchteil der Base64-Groesse (siehe encodePreview
-// in apps/api/src/services/imageStyleRendering.ts).
-export const PreviewImageStylePresetResponseSchema = z.object({
-  imageBase64: z.string().min(1),
-  contentType: z.literal('image/webp'),
-  width: z.int(),
-  height: z.int(),
-  filterProvider: z.string(),
-})
-
-// Die Filtergalerie verwendet dieselbe serverseitige Rendering-Pipeline wie die große
-// Vorschau. CSS-Annäherungen wären hier irreführend, insbesondere für die kuratierten
-// G'MIC-Effekte, die im Browser gar nicht ausgeführt werden.
-export const ImageStyleFilterPreviewsRequestSchema = z
-  .object({
-    organizationId: UuidSchema,
-    departmentId: UuidSchema.optional(),
-    teamId: UuidSchema.optional(),
-  })
-  .superRefine(requireDepartmentForTeam)
-
+// Filtergalerie der Bildwerkstatt (POST /v1/image-style-workshop/filter-previews): dieselbe
+// serverseitige Rendering-Pipeline wie style-render. CSS-Annaeherungen waeren hier irrefuehrend,
+// insbesondere fuer die kuratierten G'MIC-Effekte, die im Browser gar nicht ausgefuehrt werden.
 export const ImageStyleFilterPreviewSchema = z.object({
   filter: ImageStyleFilterSchema,
   imageBase64: z.string().min(1),
@@ -239,9 +205,6 @@ export type CreateImageStylePresetRequest = z.infer<typeof CreateImageStylePrese
 export type UpdateImageStylePresetRequest = z.infer<typeof UpdateImageStylePresetRequestSchema>
 export type ApplyImageStyleRenderRequest = z.infer<typeof ApplyImageStyleRenderRequestSchema>
 export type ApplyImageStyleRenderResponse = z.infer<typeof ApplyImageStyleRenderResponseSchema>
-export type PreviewImageStylePresetRequest = z.infer<typeof PreviewImageStylePresetRequestSchema>
-export type PreviewImageStylePresetResponse = z.infer<typeof PreviewImageStylePresetResponseSchema>
-export type ImageStyleFilterPreviewsRequest = z.infer<typeof ImageStyleFilterPreviewsRequestSchema>
 export type ImageStyleFilterPreviewsResponse = z.infer<
   typeof ImageStyleFilterPreviewsResponseSchema
 >
