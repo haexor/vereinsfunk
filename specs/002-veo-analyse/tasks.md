@@ -199,34 +199,34 @@ Monorepo, das Arbeitsverzeichnis ist ein Worktree unter `.worktrees/`. Pfade sin
   - Form exakt nach [contracts/veo-analysis.md](contracts/veo-analysis.md) „analysis“, mit `veoUrl` aus `veo_match_slug`
 - [X] T031 [P] [US1] Schemas `PlayerboardVeoMatchAnalysisSchema` und `PlayerboardVeoMatchTracksSchema` in `packages/contracts/src/playerboardVeoAnalysis.ts`, mit Tests.
 - [X] T032 [US1] `apps/api/src/routes/playerboard/veoAnalysis.ts` (neu) mit `GET /v1/playerboard/teams/:teamId/veo/matches/:fixtureId/analysis` und `…/tracks`, registriert in `apps/api/src/routes/playerboard/index.ts`. Muster für Modulprüfung, Fehlerabbildung und Nutzer-Client ist `GET …/veo/matches` in `veo.ts`.
-- [ ] T033 [P] [US1] `apps/web/app/components/PlayerboardPitch.vue`:
+- [X] T033 [P] [US1] `apps/web/app/components/PlayerboardPitch.vue` (PR 2: volles Feld mit Drittel-Linien; Halbfeld, Querformat und die übrigen Zonen kommen mit T044 und T073):
   - SVG-Spielfeld in den Varianten `full` (234 × 150), `half` und `landscape` (627 × 402)
   - Zonen-Overlays `thirds`, `3-lanes`, `5-lanes`, `9-zones`, `18-zones` (Maße aus Inv. §3.4)
   - Slot für Markierungen in normierten Koordinaten
   - Richtungspfeil und `aria`-Beschreibung über Prop
-- [ ] T034 [P] [US1] `apps/web/app/components/PlayerboardPitchHeatmap.vue`: Canvas unter `PlayerboardPitch`. Rezept aus Inv. §3.6d: σ 0,8, bilinear, < 5 % transparent, Gamma 0,8, Verlauf Grün → Gelb → Orange. Die Rechenschritte liegen als reine Funktion in `packages/domain` (T010). Textersatz: „Schwerpunkt im <Drittel>“.
-- [ ] T035 [P] [US1] `apps/web/app/components/PlayerboardVeoStatComparison.vue`: gespiegelte Balken wir/Gegner nach Inv. §1a.2, unterlegener Wert abgeschwächt, Ballbesitzminuten dreiteilig, Wahl der Halbzeit.
-- [ ] T036 [P] [US1] `apps/web/app/components/PlayerboardVeoShotMap.vue`:
+- [X] T034 [P] [US1] `apps/web/app/components/PlayerboardPitchHeatmap.vue`: Canvas unter `PlayerboardPitch`. Rezept aus Inv. §3.6d: σ 0,8, bilinear, < 5 % transparent, Gamma 0,8, Verlauf Grün → Gelb → Orange. Die Rechenschritte liegen als reine Funktion in `packages/domain` (T010). Textersatz: „Schwerpunkt im <Drittel>“.
+- [X] T035 [P] [US1] `apps/web/app/components/PlayerboardVeoStatComparison.vue`: gespiegelte Balken wir/Gegner nach Inv. §1a.2, unterlegener Wert abgeschwächt, Ballbesitzminuten dreiteilig, Wahl der Halbzeit.
+- [X] T036 [P] [US1] `apps/web/app/components/PlayerboardVeoShotMap.vue`:
   - Tore und Schüsse beider Mannschaften auf dem Spielfeld
   - Filter nach Mannschaft und Halbzeit
   - Zahlen und Quoten aus T028
   - Liste „Schüsse ohne Ort“
   - Marker mit Link ins Veo-Video (`videoTimeMs − 3 s`, neuer Tab, R-11)
   - Tor und Schuss unterschieden durch Form und Füllung
-- [ ] T037 [P] [US1] Komponenten `apps/web/app/components/PlayerboardVeoThirds.vue` (Pass- und Ballbesitzdrittel), `apps/web/app/components/PlayerboardVeoPassStrings.vue` (Histogramm und Kacheln) und `apps/web/app/components/PlayerboardVeoMomentum.vue` (geglätteter SVG-Pfad, Lücken außerhalb der Halbzeiten, Anteile je Seite).
-- [ ] T038 [US1] Heatmap der Mannschaft:
+- [X] T037 [P] [US1] Komponenten `apps/web/app/components/PlayerboardVeoThirds.vue` (Pass- und Ballbesitzdrittel), `apps/web/app/components/PlayerboardVeoPassStrings.vue` (Histogramm und Kacheln) und `apps/web/app/components/PlayerboardVeoMomentum.vue` (geglätteter SVG-Pfad, Lücken außerhalb der Halbzeiten, Anteile je Seite).
+- [X] T038 [US1] Heatmap der Mannschaft:
   - Wahl der Halbzeit und Schieber für den Zeitabschnitt in 60-s-Schritten, mit `mm:ss`-Anzeige
   - Positionsdaten lädt der Composable bei Bedarf über `…/tracks`
   - Ohne Positionsdaten gilt der Fallback aus R-05.
-- [ ] T039 [P] [US1] `apps/web/app/components/PlayerboardVeoEvents.vue`: Ereignisliste mit Zeitleiste, Filter nach Art, Mannschaft, Spieler und Halbzeit (Inv. §1a.12), Spielminute nach Inv. §3.3, Link ins Video je Eintrag.
-- [ ] T040 [US1] `apps/web/app/composables/usePlayerboardVeoAnalysis.ts` und Seite `apps/web/app/pages/playerboard/spiele/[fixtureId].vue`:
+- [X] T039 [P] [US1] `apps/web/app/components/PlayerboardVeoEvents.vue`: Ereignisliste mit Zeitleiste, Filter nach Art, Mannschaft, Spieler und Halbzeit (Inv. §1a.12), Spielminute nach Inv. §3.3, Link ins Video je Eintrag.
+- [X] T040 [US1] `apps/web/app/composables/usePlayerboardVeoAnalysis.ts` und Seite `apps/web/app/pages/playerboard/spiele/[fixtureId].vue`:
   - Reiter Mannschaft | Spieler | Ereignisse (Reiter Spieler zunächst mit der bestehenden `PlayerboardVeoPlayerTable`)
   - Hinweise je Teil aus `availability` (FR-066), deutsche Erklärtexte „So liest du …“ je Grafik (FR-004)
   - Link „In Veo öffnen“
   - Ohne seitliches Scrollen bei 360 px
-- [ ] T041 [US1] `apps/web/app/components/PlayerboardVeoMatchCard.vue` und `apps/web/app/pages/playerboard/spiele.vue`: Jede Spielkarte führt zur Spielauswertung.
-- [ ] T042 [P] [US1] Web-Tests in `apps/web/app/utils/playerboardVeoAnalysis.test.ts`: Abbildung `availability` → Hinweistext, Video-Link aus Slug und Zeit, Formatierung der Minuten. Quelltext-Test, dass die Seite jede Teilansicht nur bei verfügbarem Teil rendert.
-- [ ] T043 [US1] Prüfung nach [quickstart.md](quickstart.md) §2 (Teile von Story 1) und §4 mit `run-web`; Abweichungen von Veo beheben oder in `scope.md` begründen. PR 2 öffnen.
+- [X] T041 [US1] `apps/web/app/components/PlayerboardVeoMatchCard.vue` und `apps/web/app/pages/playerboard/spiele/index.vue` (vorher `spiele.vue`): Jede Spielkarte führt zur Spielauswertung.
+- [X] T042 [P] [US1] Web-Tests in `apps/web/app/utils/playerboardVeoAnalysis.test.ts`: Abbildung `availability` → Hinweistext, Video-Link aus Slug und Zeit, Formatierung der Minuten. Quelltext-Test, dass die Seite jede Teilansicht nur bei verfügbarem Teil rendert.
+- [ ] T043 [US1] (lokal geprüft: C1-Spiel vom 23.09. bei 1280 und 360 px ohne seitliches Scrollen und ohne Konsolenfehler; offen ist der Vergleich Seite an Seite mit Veo) Prüfung nach [quickstart.md](quickstart.md) §2 (Teile von Story 1) und §4 mit `run-web`; Abweichungen von Veo beheben oder in `scope.md` begründen. PR 2 öffnen.
 
 **Checkpoint**: Story 1 ist für sich nutzbar.
 
