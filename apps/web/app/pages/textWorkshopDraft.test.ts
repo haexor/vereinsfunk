@@ -46,4 +46,26 @@ describe('Textwerkstatt-Entwurf', () => {
     expect(page).toContain("version_not_current: 'Inzwischen gibt es eine neuere Fassung dieses Beitrags.")
     expect(page).toContain('notice.value = REQUEST_APPROVAL_ERROR_MESSAGES[code] ??')
   })
+
+  // Kalender und Anlassvorschlaege verlinkten schon auf ?fixtureId=/?clubEventId=, die Seite
+  // ignorierte beides und zeigte ein leeres Formular.
+  it('startet aus einem Termin-Link einen neuen Beitrag mit dem Termin statt den letzten Entwurf', () => {
+    const page = readFileSync(join(PAGES_DIR, 'erstellen.vue'), 'utf8')
+
+    expect(page).toContain('const linkedOccasion = occasionReferenceFromQuery(route.query)')
+    expect(page).toContain("else if (linkedOccasion && linkedOccasion !== 'invalid') {")
+    expect(page).toContain('if (occasion.value) communicationGoal.value = occasion.value.suggestedGoal')
+    expect(page).toContain('<TextWorkshopOccasion v-if="occasion" :occasion="occasion" :timezone="organizationTimezone" @remove="clearOccasion" />')
+  })
+
+  it('erzeugt aus den Fakten des Termins auch ohne eigenen Text und behaelt den Termin im Entwurf', () => {
+    const page = readFileSync(join(PAGES_DIR, 'erstellen.vue'), 'utf8')
+
+    expect(page).toContain("if (!contentText.value.trim() && !Object.keys(occasionFacts.value).length)")
+    expect(page).toContain('return { facts: { ...occasionFacts.value }, observations, quotes: [] }')
+    expect(page).toContain('targetPlatforms: selectedPlatforms.value, ...occasionReference(occasion.value),')
+    expect(page).toContain("maxCharactersOverride: String(maxCharactersOverride.value), ...occasionReference(occasion.value) }")
+    // Ein nur geoeffneter Termin-Link legt beim Verlassen keinen Entwurf an.
+    expect(page).toContain('const hasContent = hasDraftContent() || ((explicit || required) && occasion.value !== null)')
+  })
 })
