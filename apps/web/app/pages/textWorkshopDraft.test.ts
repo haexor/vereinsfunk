@@ -65,6 +65,8 @@ describe('Textwerkstatt-Entwurf', () => {
     expect(page).toContain('return { facts: { ...occasionFacts.value }, observations, quotes: [] }')
     expect(page).toContain('targetPlatforms: selectedPlatforms.value, ...occasionReference(occasion.value),')
     expect(page).toContain("maxCharactersOverride: String(maxCharactersOverride.value), ...occasionReference(occasion.value) }")
+    // Beim Wiedereroeffnen verschwinden die Fakten nur aus dem Text, wenn der Anlass wirklich geladen ist.
+    expect(page).toContain("...(occasion.value ? [] : Object.entries(draftSession.source_material.facts)")
     // Ein nur geoeffneter Termin-Link legt beim Verlassen keinen Entwurf an.
     expect(page).toContain('const hasContent = hasDraftContent() || ((explicit || required) && occasion.value !== null)')
   })

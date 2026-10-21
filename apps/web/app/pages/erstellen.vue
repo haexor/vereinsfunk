@@ -284,7 +284,8 @@ async function loadDraftFromPost(postId: string) {
     const linked = { fixtureId: draftSession.fixture_id ?? undefined, clubEventId: draftSession.club_event_id ?? undefined }
     await applyOccasion(linked)
     contentText.value = [
-      ...(linked.fixtureId || linked.clubEventId ? [] : Object.entries(draftSession.source_material.facts).map(([key, value]) => `${key}: ${value}`)),
+      // Laedt der Anlass nicht (anderer Bereich, Netzfehler), bleiben die Fakten als Text erhalten.
+      ...(occasion.value ? [] : Object.entries(draftSession.source_material.facts).map(([key, value]) => `${key}: ${value}`)),
       ...draftSession.source_material.observations,
       ...draftSession.source_material.quotes.map((quote) => quote.text),
     ].join('\n')
