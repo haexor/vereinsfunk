@@ -90,6 +90,14 @@ export const systemLookup: AddressLookup = async (hostname) => (await lookup(hos
  * (Playwright-Navigation fuer die KI-Markenerkennung) dieselbe DNS-Rebinding-Pruefung fuer jeden
  * einzelnen von Chromium selbst ausgeloesten Request braucht -- Playwrights eigenes Networking
  * laeuft nicht durch fetch()/fetchPublicUrl().
+ *
+ * Bekannte Restschuld: kein DNS-Pinning. fetch() und Chromium loesen den Namen nach dieser Pruefung
+ * selbst noch einmal auf; ein Angreifer-DNS mit kurzer TTL kann dann eine interne Adresse liefern.
+ * Solange nur https mit Zertifikatspruefung erlaubt ist, scheitert eine solche Verbindung am
+ * TLS-Handshake -- es bleibt ein blindes Abtasten interner Ports. Wird je http:// erlaubt oder die
+ * Zertifikatspruefung abgeschaltet (etwa fuer einen lokalen LLM-Server), muss die gepruefte Adresse
+ * an die Verbindung gebunden werden (undici-Agent mit connect.lookup, fuer Chromium
+ * --host-resolver-rules).
  */
 export async function assertResolvesPublicly(hostname: string, resolve: AddressLookup): Promise<void> {
   const bare = hostname.replace(/^\[|]$/g, '')
