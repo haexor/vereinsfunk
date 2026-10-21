@@ -369,7 +369,8 @@ export const PlayerboardVeoStatusSchema = z.object({
   runs: z.array(PlayerboardVeoSyncRunSchema),
 })
 
-export const PlayerboardVeoSyncRequestSchema = z.object({ teamId: UuidSchema }).strict()
+// refreshAnalysis (Spec 002): der Lauf holt die Spielanalyse aller Spiele neu, z. B. nach Korrekturen in Veo.
+export const PlayerboardVeoSyncRequestSchema = z.object({ teamId: UuidSchema, refreshAnalysis: z.boolean().optional() }).strict()
 
 export const PlayerboardVeoSyncAcceptedSchema = z.object({
   runId: UuidSchema,

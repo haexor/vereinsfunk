@@ -62,6 +62,12 @@ Punkte mit **[Testabruf]** stützten sich zuerst nur auf den Code der Veo-App. A
 
 Die heutigen Summenwerte bleiben bei jedem Lauf für alle Spiele, wie in Paket 053.
 
+**Zeitbudget je Lauf** (nach dem lokalen Abgleich der C1 ergänzt):
+- Analysepakete werden nur geholt, solange der Lauf jünger als 5 Minuten ist. Hatchets `executionTimeout` ist 10 Minuten. Ein Spiel mit Positionsdaten braucht etwa 2–3 Minuten, der erste Abgleich der C1 mit 8 Spielen dauerte 20 Minuten.
+- Was nicht mehr ins Budget passt, holt der nächste Lauf nach, die neuesten Spiele zuerst. Der Lauf gilt deshalb nicht als fehlgeschlagen.
+- „Analyse neu laden“ gilt für jedes Spiel, dessen Paket älter ist als die Anforderung. Ein unterbrochenes Neuladen setzt so fort, statt von vorn zu beginnen. Das Feld wird erst geleert, wenn kein Paket verschoben wurde.
+- Ausbau: ein eigener Workflow je Spiel, falls Mannschaften mit langer Historie dazukommen.
+
 **Rationale**: Je Spiel kommen etwa 12 bis 14 Abrufe dazu, Tracking nicht mitgezählt. Bei 40 Spielen und täglichem Lauf wären das sonst über 500 Abrufe täglich gegen eine inoffizielle API. Korrekturen in Veo passieren erfahrungsgemäß in den Tagen nach dem Spiel.
 
 **Alternatives considered**:

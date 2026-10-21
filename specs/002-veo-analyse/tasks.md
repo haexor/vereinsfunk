@@ -121,8 +121,8 @@ Monorepo, das Arbeitsverzeichnis ist ein Worktree unter `.worktrees/`. Pfade sin
 
 ### Abgleich im Worker
 
-- [ ] T013 [P] Zod-Schema der Schreibdaten `PlayerboardVeoAnalysisWriteSchema` in `packages/contracts/src/playerboardVeoAnalysis.ts` (neu, Export in `packages/contracts/src/index.ts`): Form des `p_analysis`-JSON mit normierten Orten, Matrizen als base64 und Verfügbarkeit je Teil (`AnalysisPart`, `AvailabilityReason` aus dem Vertrag). Test `packages/contracts/src/playerboardVeoAnalysis.test.ts`: gültige Daten werden akzeptiert; `x` > 1, ein unbekannter Teil und eine unbekannte Begründung werden abgelehnt.
-- [ ] T014 [P] Test `apps/worker/src/veoAnalysisSync.test.ts`, vor T015, mit Fake-`fetch` auf die Testdaten aus T004:
+- [X] T013 [P] Zod-Schema der Schreibdaten `PlayerboardVeoAnalysisWriteSchema` in `packages/contracts/src/playerboardVeoAnalysis.ts` (neu, Export in `packages/contracts/src/index.ts`): Form des `p_analysis`-JSON mit normierten Orten, Matrizen als base64 und Verfügbarkeit je Teil (`AnalysisPart`, `AvailabilityReason` aus dem Vertrag). Test `packages/contracts/src/playerboardVeoAnalysis.test.ts`: gültige Daten werden akzeptiert; `x` > 1, ein unbekannter Teil und eine unbekannte Begründung werden abgelehnt.
+- [X] T014 [P] Test `apps/worker/src/veoAnalysisSync.test.ts`, vor T015, mit Fake-`fetch` auf die Testdaten aus T004:
   - Ein Spiel wird zu genau einem Schreibaufruf mit normierten Orten.
   - Ein fehlender Teil (404) wird als `unavailable` mit Grund `not_provided` vermerkt.
   - `upstream_error` bekommt einen zweiten Versuch und lässt danach das Paket weg.
@@ -130,23 +130,23 @@ Monorepo, das Arbeitsverzeichnis ist ein Worktree unter `.worktrees/`. Pfade sin
   - Halbzeiten nicht bestätigt: `pending` mit `periods_missing`.
   - Veo rechnet noch: `pending` mit `veo_processing`.
   - Ins Log kommen nur Zähler und Status.
-- [ ] T015 `apps/worker/src/veoAnalysisSync.ts`: holt das Analysepaket eines Spiels mit den Funktionen aus T007, normiert mit `packages/domain` (T010), verdichtet Tracking auf 1 Hz und prüft mit dem Schema aus T013. Weitere Regeln aus dem Testabruf (research.md):
+- [X] T015 `apps/worker/src/veoAnalysisSync.ts`: holt das Analysepaket eines Spiels mit den Funktionen aus T007, normiert mit `packages/domain` (T010), verdichtet Tracking auf 1 Hz und prüft mit dem Schema aus T013. Weitere Regeln aus dem Testabruf (research.md):
   - Positionsdaten nur holen, wenn für das Spiel noch keine gespeichert sind. Zwischen den 30-s-Fenstern eine kurze Pause.
   - RAS-Abrufe ohne `Authorization`-Header.
   - Passnetz mit `periods: [{ periodId: <Nummer>, ownSide }]`.
   - Ereignistypen `possession` und `*_target` verwerfen; bei `pass` Ziel und Empfänger aus den Attributen übernehmen.
   - `x`/`z` vor dem Normieren auf [0, 1] begrenzen.
   - Freischaltfelder (`has_tracking_data`, `type`, `is_confirmed`) nicht als Bedingung nutzen. Die Wiederholungsregel wird aus `veoSync.ts` übernommen (`withRetry` gemeinsam nutzen statt kopieren).
-- [ ] T016 Test in `apps/worker/src/veoSync.test.ts` ergänzen, vor T017:
+- [X] T016 Test in `apps/worker/src/veoSync.test.ts` ergänzen, vor T017:
   - Analyse nur für Spiele, die `analysis_status in ('none', 'pending')` haben, deren Anstoß höchstens 14 Tage zurückliegt oder deren Mannschaft `analysis_refresh_requested_at` gesetzt hat.
   - Ein Fehler im Analysepaket lässt `apply_match` desselben Spiels bestehen, und der Lauf endet mit der Fehlerklasse.
   - Nach einem Lauf mit Neuladen ist `analysis_refresh_requested_at` geleert.
-- [ ] T017 `apps/worker/src/veoSync.ts`: Nach `applyMatch` wird für passende Spiele `VeoAnalysisSync` aufgerufen und `repository.applyAnalysis` geschrieben. Die Regel bekommt einen `ponytail:`-Kommentar nach R-03. Im Repository `apps/worker/src/context.ts` kommen `analysisCandidates(teamId)`, `applyAnalysis(runId, veoMatchId, analysis)` (RPC aus T012) und `clearAnalysisRefresh(teamId)` dazu. `toMatchWrite` übernimmt die `periodValues` der Spieler aus T008.
+- [X] T017 `apps/worker/src/veoSync.ts`: Nach `applyMatch` wird für passende Spiele `VeoAnalysisSync` aufgerufen und `repository.applyAnalysis` geschrieben. Die Regel bekommt einen `ponytail:`-Kommentar nach R-03. Im Repository `apps/worker/src/context.ts` kommen `analysisCandidates(teamId)`, `applyAnalysis(runId, veoMatchId, analysis)` (RPC aus T012) und `clearAnalysisRefresh(teamId)` dazu. `toMatchWrite` übernimmt die `periodValues` der Spieler aus T008.
 - [X] T018 Migration aus T012 ergänzen: `playerboard_veo_apply_match` schreibt `period_values` aus `players[].stats[].periodValues`. Den Fall prüft `supabase/tests/playerboard_veo_analysis.test.sql` (Fall 3) statt `playerboard_veo.test.sql`, weil dort schon ein Lauf mit Spielerwerten aufgebaut ist.
 
 ### „Analyse neu laden“
 
-- [ ] T019 [P] `packages/contracts/src/playerboard.ts`: `PlayerboardVeoSyncRequestSchema` bekommt `refreshAnalysis: z.boolean().optional()` (bleibt `strict`).
+- [X] T019 [P] `packages/contracts/src/playerboard.ts`: `PlayerboardVeoSyncRequestSchema` bekommt `refreshAnalysis: z.boolean().optional()` (bleibt `strict`).
 - [ ] T020 Test in `apps/api/src/playerboardVeo.routes.test.ts`, vor T021: `POST /v1/playerboard/veo/sync` mit `refreshAnalysis: true` setzt `analysis_refresh_requested_at`. Ohne das Recht für „Jetzt abgleichen“ gibt es `403`.
 - [ ] T021 `apps/api/src/routes/playerboard/veo.ts`: `refreshAnalysis` auswerten und `playerboard_veo_links.analysis_refresh_requested_at` setzen. Die Route prüft `playerboard.manage` schon selbst und arbeitet wie der übrige Sync mit dem Service-Client, eine eigene RPC ist deshalb nicht nötig.
 - [ ] T022 `apps/web/app/pages/playerboard/veo.vue` und `apps/web/app/composables/usePlayerboardVeo.ts`: Knopf „Analyse neu laden“ neben „Jetzt abgleichen“, mit Erklärung: „Holt die Spielanalysen aller Spiele erneut von Veo, z. B. nach Korrekturen in Veo.“
